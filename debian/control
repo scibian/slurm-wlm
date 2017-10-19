@@ -13,12 +13,12 @@ Build-Depends:
  python,
  libglade2-dev,
  libgtk2.0-dev,
- default-libmysqlclient-dev,
+ libmysqlclient-dev,
  libpam0g-dev,
  libperl-dev,
  chrpath,
  libpam0g-dev,
- liblua5.1-0-dev,
+ liblua5.2-dev,
  libhwloc-dev,
  dh-autoreconf,
  dh-exec,
@@ -55,9 +55,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
- munge,
- adduser,
- ucf
+ munge
 Replaces: slurm-llnl (<< 14.03), slurmdbd (<< 14.03.9-5)
 Breaks: slurm-llnl (<< 14.03), slurmdbd (<< 14.03.9-5)
 Conflicts: sinfo (<< 0.0.47-4)
@@ -89,8 +87,6 @@ Depends:
  ${misc:Depends},
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
- adduser,
- ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)
@@ -125,8 +121,6 @@ Depends:
  slurm-client (= ${binary:Version}),
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
- adduser,
- ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)
@@ -321,7 +315,9 @@ Package: slurm-wlm-basic-plugins
 Architecture: any
 Depends:
  ${shlibs:Depends},
- ${misc:Depends}
+ ${misc:Depends},
+ adduser,
+ ucf
 Replaces: slurm-llnl-basic-plugins (<< 14.03)
 Breaks: slurm-llnl-basic-plugins (<< 14.03)
 Description: SLURM basic plugins
@@ -377,7 +373,6 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
- adduser,
  munge,
  lsb-base (>= 3.2-12),
  ucf
@@ -452,6 +447,7 @@ Package: libpam-slurm
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
 Depends:
+ libpam-runtime,
  ${shlibs:Depends},
  ${misc:Depends}
 Description: PAM module to authenticate using the SLURM resource manager

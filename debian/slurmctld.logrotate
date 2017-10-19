@@ -11,7 +11,7 @@
   sharedscripts
   size=5M
   postrotate
-      /usr/sbin/invoke-rc.d --quiet slurmctld reconfig >/dev/null
+      /bin/systemctl kill --signal=HUP slurmctld.service
       /bin/sleep 1
   endscript
 }

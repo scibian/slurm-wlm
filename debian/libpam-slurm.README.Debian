@@ -1,0 +1,22 @@
+This package installs and configures automatically the PAM module pam_slurm.so
+provided by Slurm workload manager. The purpose of this module is to prevent
+users from login on the host if they have no running Slurm job on this host.
+As a side note, root and Slurm user (generally slurm) are not impacted.
+
+Since this module could prevent users for login on their own computer (which
+could potentially lead to unwanted situation), the PAM configuration provided
+by this package is enable only if the debconf parameter libpam-slurm/enable is
+true. Its default value is false. The debconf question has a low priority.
+
+To enable this PAM module interactively after having installed the libpam-slurm
+package, run as root:
+
+# dpkg-reconfigure --priority=low libpam-slurm
+
+To enable this PAM module non-interactively, preseed the debconf parameter:
+
+# cat <<EOF >libpam-slurm.preseed
+libpam-slurm libpam-slurm/enable boolean true
+EOF
+# debconf-set-selections < libpam-slurm.preseed
+# DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libpam-slurm

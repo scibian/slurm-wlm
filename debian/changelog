@@ -1,3 +1,15 @@
+slurm-llnl (17.02.2-1~calibre9+2) calibre9; urgency=medium
+
+  * Add undisclosed security fix
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 19 Oct 2017 11:55:36 +0200
+
+slurm-llnl (17.02.2-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 27 Apr 2017 11:08:26 +0200
+
 slurm-llnl (17.02.2-1) UNRELEASED; urgency=medium
 
   * New upstream release.
@@ -5,6 +17,14 @@ slurm-llnl (17.02.2-1) UNRELEASED; urgency=medium
   * Update libslurm{db,}31.symbols
 
  -- Mehdi Dogguy <mehdi@debian.org>  Thu, 27 Apr 2017 00:01:35 +0200
+
+slurm-llnl (17.02.1.2-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9
+  * Remove prolog fix patch as merged upstream
+  * Remove cgroup release agent everywhere
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 05 Apr 2017 13:29:57 +0200
 
 slurm-llnl (17.02.1.2-1) unstable; urgency=medium
 
@@ -52,6 +72,26 @@ slurm-llnl (16.05.7-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 14 Dec 2016 11:01:06 +0100
 
+slurm-llnl (16.05.6-1~calibre9+3) calibre9; urgency=medium
+
+  * Use lua 5.2
+
+ -- Thomas Hamel <thomas-externe.hamel@edf.fr>  Fri, 17 Feb 2017 13:47:53 +0000
+
+slurm-llnl (16.05.6-1~calibre9+2) calibre9; urgency=medium
+
+  * Add patch to fix prolog handling.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 22 Dec 2016 15:12:18 +0100
+
+slurm-llnl (16.05.6-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9.
+  * Change back build-dep to libmysqlclient-dev since default is not available
+    in jessie.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 16 Nov 2016 16:27:29 +0100
+
 slurm-llnl (16.05.6-1) unstable; urgency=medium
 
   * Update libslurm{,db} symbols files
@@ -70,6 +110,21 @@ slurm-llnl (16.05.5-1) unstable; urgency=medium
   * Update symbol files
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 30 Sep 2016 16:08:43 +0200
+
+slurm-llnl (16.05.4-1~calibre9+2) calibre9; urgency=medium
+
+  * debconf to control PAM slurm module activation
+  * use upstream cgroup release agent example
+  * better defaults for cgroup.conf example
+  * set RSS/MEMLOCK limits unlimited for slurmd
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 11 Oct 2016 12:11:38 +0200
+
+slurm-llnl (16.05.4-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 27 Sep 2016 15:09:16 +0200
 
 slurm-llnl (16.05.4-1) unstable; urgency=medium
 
@@ -115,6 +170,32 @@ slurm-llnl (15.08.10-1) unstable; urgency=medium
     by dh_makeshlibs
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 03 May 2016 17:19:24 +0200
+
+slurm-llnl (15.08.8-1~calibre9+4) calibre9; urgency=low
+
+  * Add patch to fix multiple/constraints support on heterogeneous nodes.
+  * Only include *.conf in plugstack.conf.d/
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 11 Apr 2016 10:10:42 +0200
+
+slurm-llnl (15.08.8-1~calibre9+3) calibre9; urgency=low
+
+  * Fix patch: faster shutdown when waiting for NHC
+
+ -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Wed, 16 Mar 2016 09:28:16 +0000
+
+slurm-llnl (15.08.8-1~calibre9+2) calibre9; urgency=low
+
+  * New patch: Slurmd waits for health check during start 
+
+ -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Fri, 04 Mar 2016 14:28:16 +0000
+
+slurm-llnl (15.08.8-1+c9+1) calibre9; urgency=low
+
+  * Backport to Calibre9
+  * Remove adduser from slurmdbd deps
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 26 Feb 2016 14:22:37 +0100
 
 slurm-llnl (15.08.8-1) unstable; urgency=medium
 
@@ -239,6 +320,77 @@ slurm-llnl (14.11.6-1) unstable; urgency=medium
   * Add missing dep for -client on -basic-plugins (Closes: #783662)
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 20 May 2015 16:47:32 +0200
+
+slurm-llnl (14.11.4-1+c9+4) calibre9; urgency=medium
+
+  * Add slurm-client-emulator with all binaries built in emulator mode.
+    Binaries have appended suffix -emulator to avoid conflicts.
+
+ -- Ana Guerrero Lopez <ana-externe.guerrero@edf.fr>  Wed, 25 Nov 2015 10:51:41 +0100
+
+slurm-llnl (14.11.4-1+c9+3) calibre9; urgency=medium
+
+  * Add package slurm-wlm-emulator. This package provides binaries that are
+    already in the slurmd and slurmctld package. These packages binaries
+    have now the suffix -wlm and the binaries in slurm-wln-emulator got
+    the suffix -wlm-emulator.
+    The binaries are handled with alternatives, having the emulator package
+    a higher priority value.
+
+ -- Ana Guerrero Lopez <ana-externe.guerrero@edf.fr>  Fri, 06 Nov 2015 10:11:27 +0100
+
+slurm-llnl (14.11.4-1+c9+2) calibre8; urgency=low
+
+  * Move user slurm into slurm-wlm-basic-plugins pkg
+  * Use systemctl to send SIGHUP to daemons
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 09 Apr 2015 14:36:10 +0200
+
+slurm-llnl (14.11.4-1+c8+1) calibre8; urgency=low
+
+  * New upstream release.
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 26 Feb 2015 15:32:05 +0100
+
+slurm-llnl (14.11.3-1+c8+1) calibre8; urgency=low
+
+  * Imported Upstream version 14.11.3
+  * Removed patch nowait-pmi-rank-0 since merged upstream
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 19 Jan 2015 09:35:31 +0100
+
+slurm-llnl (14.11.2-1+c8+2) calibre8; urgency=low
+
+  * Install plugstack.conf with plugins package
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 02 Jan 2015 15:08:55 +0100
+
+slurm-llnl (14.11.2-1+c8+1) calibre8; urgency=low
+
+  * New upstream version 14.11.2
+  * Bump SONAME to 28
+  * Updated d/libslurm[db]28.symbols
+  * Remove patch honor-without-rpath-hwloc since merged upstream
+  * Remove patch manpages since merged upstream
+  * Disable autoreconf since not needed anymore
+  * Updated patch nowait-pmi-rank-0 with upstream proposal
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 31 Dec 2014 09:47:31 +0100
+
+slurm-llnl (14.03.9-5+c8+1) calibre8; urgency=low
+
+  * Backport to calibre8
+  * Set memlock ulimit to infinity for slurmctld
+  * Remove useless init scripts
+  * Manually create tmpfiles in daemons postinst since debhelper
+    in wheezy does not do it by itself.
+  * Automatically configure PAM with libpam-slurm pkg
+  * Add new -dbg packages with debug symbols
+  * Add missing dep to plugins on slurm-client
+  * Fix typo in -doc pkg description
+  * Add patch to avoid delay on commit for PMI rank 0
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Dec 2014 16:27:36 +0100
 
 slurm-llnl (14.03.9-5) unstable; urgency=medium
 

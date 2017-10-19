@@ -1,3 +1,4 @@
-mail-path
-header
-sacctmgr-increase-buffer
+0001-mail-path.patch
+0002-header.patch
+0003-sacctmgr-increase-buffer.patch
+0004-fix-cve-2017-15566.patch

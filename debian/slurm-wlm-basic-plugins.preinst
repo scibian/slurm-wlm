@@ -1,5 +1,5 @@
 #!/bin/sh
-# preinst script for slurm-client
+# preinst script for slurmctld
 #
 # see: dh_installdeb(1)
 
@@ -19,42 +19,29 @@ case "$1" in
       if [ $(id -u slurm 2>/dev/null) ]; then
         SLURMUID=$(id -u slurm 2>/dev/null)
         SLURMGID=$(id -g slurm 2>/dev/null)
-        SLURMHOME=$(eval echo ~slurm)
         if [ "$SLURMUID" != "64030" ] || [ "$SLURMGID" != "64030" ] ; then
           deluser --quiet slurm
-          adduser --quiet --system --group --uid 64030 --no-create-home \
-                  --home /nonexistent slurm
-        fi
-        if [ "$SLURMHOME" != "/nonexistent" ] && [ ! -e $SLURMHOME ] && \
-           [ ! -e /var/run/slurm-llnl/slurmctld.pid ] && \
-           [ ! -e /var/run/slurm-llnl/slurmdbd.pid ] ; then
-             usermod --home /nonexistent slurm
+          adduser --quiet --system --group --uid 64030 --no-create-home slurm
         fi
       else
-        adduser --quiet --system --group --uid 64030 --no-create-home \
-                --home /nonexistent slurm
+        adduser --quiet --system --group --uid 64030 --no-create-home slurm
       fi
+
     ;;
 
     upgrade)
       if [ $(id -u slurm 2>/dev/null) ]; then
         SLURMUID=$(id -u slurm 2>/dev/null)
         SLURMGID=$(id -g slurm 2>/dev/null)
-        SLURMHOME=$(eval echo ~slurm)
         if [ "$SLURMUID" != "64030" ] || [ "$SLURMGID" != "64030" ] ; then
           deluser --quiet slurm
-          adduser --quiet --system --group --uid 64030 --no-create-home \
-                  --home /nonexistent slurm
-        fi
-        if [ "$SLURMHOME" != "/nonexistent" ] && [ ! -e $SLURMHOME ] && \
-           [ ! -e /var/run/slurm-llnl/slurmctld.pid ] && \
-           [ ! -e /var/run/slurm-llnl/slurmdbd.pid ] ; then
-            usermod --home /nonexistent slurm
+          adduser --quiet --system --group --uid 64030 --no-create-home slurm
         fi
       else
-        adduser --quiet --system --group --uid 64030 --no-create-home \
-                --home /nonexistent slurm
+        adduser --quiet --system --group --uid 64030 --no-create-home slurm
       fi
+
+
     ;;
 
     abort-upgrade)

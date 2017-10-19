@@ -62,6 +62,10 @@ override_dh_auto_install:
 		debian/tmp/usr/bin/q*; do \
 			pod2man $$i > debian/tmp/usr/share/man/man1/$$(basename $$i).1; \
 	done
+	
+	# PAM config
+	# installed here manually because dh_install is not able to rename files
+	install -D -m 644 -p debian/libpam-slurm.pam-auth-update debian/libpam-slurm/usr/share/pam-configs/slurm
 
 	# Remove embedded jquery.min.js
 	rm -f debian/tmp/usr/share/doc/slurm-wlm-doc/html/jquery.min.js

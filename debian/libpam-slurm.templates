@@ -1,0 +1,7 @@
+Template: libpam-slurm/enable
+Type: boolean
+Default: false
+_Description: Enable Slurm PAM module?
+ Slurm PAM module restricts access to the host to users running Slurm jobs
+ only. By enabling this module, you might not have access to your host anymore
+ except for root and slurm users. Do you want to enable this PAM module?

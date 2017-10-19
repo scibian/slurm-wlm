@@ -16,23 +16,6 @@ set -e
 
 case "$1" in
     install)
-      if [ $(id -u slurm 2>/dev/null) ]; then
-        SLURMUID=$(id -u slurm 2>/dev/null)
-        SLURMGID=$(id -g slurm 2>/dev/null)
-        SLURMHOME=$(eval echo ~slurm)
-        if [ "$SLURMUID" != "64030" ] || [ "$SLURMGID" != "64030" ] ; then
-          deluser --quiet slurm
-          adduser --quiet --system --group --uid 64030 --no-create-home --home /nonexistent slurm
-        fi
-        if [ "$SLURMHOME" != "/nonexistent" ] && [ ! -e $SLURMHOME ] && \
-           [ ! -e /var/run/slurm-llnl/slurmctld.pid ] && \
-           [ ! -e /var/run/slurm-llnl/slurmdbd.pid ] ; then
-            usermod --home /nonexistent slurm || true
-        fi
-      else
-        adduser --quiet --system --group --uid 64030 --no-create-home --home /nonexistent slurm
-      fi
-
       # Copying relevant changes from the old default file
       if [ -e /etc/default/slurm-llnl -a ! -e /etc/default/slurmdbd ] ; then
         if grep "SLURMDBD_OPTIONS" /etc/default/slurm-llnl | grep -qv '^ *#' 2>/dev/null ; then
@@ -53,26 +36,7 @@ case "$1" in
       fi
     ;;
 
-    upgrade)
-      if [ $(id -u slurm 2>/dev/null) ]; then
-        SLURMUID=$(id -u slurm 2>/dev/null)
-        SLURMGID=$(id -g slurm 2>/dev/null)
-        SLURMHOME=$(eval echo ~slurm)
-        if [ "$SLURMUID" != "64030" ] || [ "$SLURMGID" != "64030" ] ; then
-          deluser --quiet slurm
-          adduser --quiet --system --group --uid 64030 --no-create-home --home /nonexistent slurm
-        fi
-        if [ "$SLURMHOME" != "/nonexistent" ] && [ ! -e $SLURMHOME ] && \
-           [ ! -e /var/run/slurm-llnl/slurmctld.pid ] && \
-           [ ! -e /var/run/slurm-llnl/slurmdbd.pid ] ; then
-            usermod --home /nonexistent slurm || true
-        fi
-      else
-        adduser --quiet --system --group --uid 64030 --no-create-home --home /nonexistent slurm
-      fi
-    ;;
-
-    abort-upgrade)
+    upgrade|abort-upgrade)
     ;;
 
     *)

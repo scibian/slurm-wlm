@@ -1,5 +1,5 @@
 #!/bin/sh
-# postrm script for slurm-client
+# postrm script for slurmctld
 #
 # see: dh_installdeb(1)
 
@@ -20,6 +20,11 @@ set -e
 
 case "$1" in
        purge)
+         # Killing all slurm owned process
+         pkill -9 -u slurm || true
+         deluser --quiet slurm || true
+         rm -rf /var/run/slurm-llnl
+
          SCONF=/etc/slurm-llnl/slurm.conf
          if [ -e $SCONF ] ; then
            CRYPTOTYPE=$(grep CryptoType $SCONF | grep -v "^ *#" || true)
