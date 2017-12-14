@@ -1,3 +1,9 @@
+slurm-llnl (17.02.2-1sci8u1) scibian8; urgency=medium
+
+  * Scibian8 rebuild.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 14 Dec 2017 15:51:55 +0100
+
 slurm-llnl (17.02.2-1~calibre9+2) calibre9; urgency=medium
 
   * Add undisclosed security fix
