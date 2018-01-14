@@ -57,6 +57,7 @@
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/strnatcmp.h"
+#include "src/common/strlcpy.h"
 #include "src/common/timers.h"
 #include "src/common/working_cluster.h"
 #include "src/common/xassert.h"
@@ -474,7 +475,7 @@ bracket: 	open_bracket = strchr(parse, '[');
 	}
 
 	/* nullify consecutive separators and push str beyond them */
-	while ((**str != '\0') && (strchr(sep, **str) != '\0'))
+	while ((**str != '\0') && (strchr(sep, **str) != NULL))
 		*(*str)++ = '\0';
 
 	return tok;
@@ -777,7 +778,7 @@ static hostrange_t hostrange_delete_host(hostrange_t hr, unsigned long n)
 	hostrange_t new = NULL;
 
 	assert(hr != NULL);
-	assert(n >= hr->lo && n <= hr->hi);
+	assert((n >= hr->lo) && (n <= hr->hi));
 
 	if (n == hr->lo)
 		hr->lo++;
@@ -1101,7 +1102,7 @@ static int hostrange_hn_within(hostrange_t hr, hostname_t hn)
 			strncat(hn->prefix, hn->suffix, ldiff);
 			/* Now adjust the suffix of the hostname object. */
 			hn->suffix += ldiff;
-			/* And the numeric representation just incase
+			/* And the numeric representation just in case
 			 * whatever we just tacked on to the prefix
 			 * had something other than 0 in it.
 			 *
@@ -1261,7 +1262,7 @@ static hostlist_t hostlist_new(void)
 	if (!new)
 		goto fail1;
 
-	assert(new->magic = HOSTLIST_MAGIC);
+	assert((new->magic = HOSTLIST_MAGIC));
 	slurm_mutex_init(&new->mutex);
 
 	new->hr = (hostrange_t *) malloc(HOSTLIST_CHUNK * sizeof(hostrange_t));
@@ -1426,7 +1427,7 @@ static void hostlist_delete_range(hostlist_t hl, int n)
 
 	assert(hl != NULL);
 	assert(hl->magic == HOSTLIST_MAGIC);
-	assert(n < hl->nranges && n >= 0);
+	assert((n < hl->nranges) && (n >= 0));
 
 	old = hl->hr[n];
 	for (i = n; i < hl->nranges - 1; i++)
@@ -1792,8 +1793,7 @@ _push_range_list(hostlist_t hl, char *prefix, struct _range *range,
 	char *p, *q;
 	char new_prefix[1024], tmp_prefix[1024];
 
-	strncpy(tmp_prefix, prefix, sizeof(tmp_prefix));
-	tmp_prefix[sizeof(tmp_prefix) - 1] = '\0';
+	strlcpy(tmp_prefix, prefix, sizeof(tmp_prefix));
 	if (((p = strrchr(tmp_prefix, '[')) != NULL) &&
 	    ((q = strrchr(p, ']')) != NULL)) {
 		struct _range *prefix_range = NULL;
@@ -1984,7 +1984,7 @@ void hostlist_destroy(hostlist_t hl)
 	for (i = 0; i < hl->nranges; i++)
 		hostrange_destroy(hl->hr[i]);
 	free(hl->hr);
-	assert(hl->magic = 0x1);
+	assert((hl->magic = 0x1));
 	UNLOCK_HOSTLIST(hl);
 	slurm_mutex_destroy(&hl->mutex);
 	free(hl);
@@ -3311,7 +3311,7 @@ static hostlist_iterator_t hostlist_iterator_new(void)
 	i->idx = 0;
 	i->depth = -1;
 	i->next = i;
-	assert(i->magic = HOSTLIST_MAGIC);
+	assert((i->magic = HOSTLIST_MAGIC));
 	return i;
 }
 
@@ -3362,7 +3362,7 @@ void hostlist_iterator_destroy(hostlist_iterator_t i)
 		}
 	}
 	UNLOCK_HOSTLIST(i->hl);
-	assert(i->magic = 0x1);
+	assert((i->magic = 0x1));
 	free(i);
 }
 

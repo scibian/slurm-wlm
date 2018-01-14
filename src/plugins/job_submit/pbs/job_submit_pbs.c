@@ -147,11 +147,16 @@ static void _decr_depend_cnt(struct job_record *job_ptr)
  * later. */
 static void *_dep_agent(void *args)
 {
+	/* Locks: Write job, read node, read partition */
+	slurmctld_lock_t job_write_lock = {
+		READ_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK, NO_LOCK };
+
 	struct job_record *job_ptr = (struct job_record *) args;
 	char *end_ptr = NULL, *tok;
 	int cnt = 0;
 
 	usleep(100000);
+	lock_slurmctld(job_write_lock);
 	if (job_ptr && job_ptr->details && (job_ptr->magic == JOB_MAGIC) &&
 	    job_ptr->comment && strstr(job_ptr->comment, "on:")) {
 		char *new_depend = job_ptr->details->dependency;
@@ -163,6 +168,8 @@ static void *_dep_agent(void *args)
 	}
 	if (cnt == 0)
 		set_job_prio(job_ptr);
+	unlock_slurmctld(job_write_lock);
+
 	return NULL;
 }
 
@@ -171,9 +178,6 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 	uint32_t job_id;
 	char *last_ptr = NULL, *new_dep = NULL, *tok, *type;
 	struct job_record *job_ptr;
-        pthread_attr_t attr;
-	pthread_t dep_thread;
-
 
 	tok = strtok_r(depend, ":", &last_ptr);
 	if (!xstrcmp(tok, "before"))
@@ -229,11 +233,7 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 			new_dep = NULL;
 			_decr_depend_cnt(job_ptr);
 
-			slurm_attr_init(&attr);
-			pthread_attr_setdetachstate(&attr,
-						    PTHREAD_CREATE_DETACHED);
-			pthread_create(&dep_thread, &attr, _dep_agent, job_ptr);
-			slurm_attr_destroy(&attr);
+			slurm_thread_create_detached(NULL, _dep_agent, job_ptr);
 		}
 		tok = strtok_r(NULL, ":", &last_ptr);
 	}

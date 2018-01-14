@@ -61,21 +61,42 @@ static void _get_size_str(char *buf, size_t buf_size, uint64_t num)
 		snprintf(buf, buf_size, "INFINITE");
 	} else if (num == 0) {
 		snprintf(buf, buf_size, "0");
+
 	} else if ((num % ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024)) == 0) {
 		tmp64 = num / ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024);
-		snprintf(buf, buf_size, "%"PRIu64"P", tmp64);
+		snprintf(buf, buf_size, "%"PRIu64"PiB", tmp64);
+	} else if ((num % ((uint64_t)1000 * 1000 * 1000 * 1000 * 1000)) == 0) {
+		tmp64 = num / ((uint64_t)1000 * 1000 * 1000 * 1000 * 1000);
+		snprintf(buf, buf_size, "%"PRIu64"PB", tmp64);
+
 	} else if ((num % ((uint64_t)1024 * 1024 * 1024 * 1024)) == 0) {
 		tmp64 = num / ((uint64_t)1024 * 1024 * 1024 * 1024);
-		snprintf(buf, buf_size, "%"PRIu64"T", tmp64);
+		snprintf(buf, buf_size, "%"PRIu64"TiB", tmp64);
+	} else if ((num % ((uint64_t)1000 * 1000 * 1000 * 1000)) == 0) {
+		tmp64 = num / ((uint64_t)1000 * 1000 * 1000 * 1000);
+		snprintf(buf, buf_size, "%"PRIu64"TB", tmp64);
+
 	} else if ((num % ((uint64_t)1024 * 1024 * 1024)) == 0) {
 		tmp64 = num / ((uint64_t)1024 * 1024 * 1024);
-		snprintf(buf, buf_size, "%"PRIu64"G", tmp64);
+		snprintf(buf, buf_size, "%"PRIu64"GiB", tmp64);
+	} else if ((num % ((uint64_t)1000 * 1000 * 1000)) == 0) {
+		tmp64 = num / ((uint64_t)1000 * 1000 * 1000);
+		snprintf(buf, buf_size, "%"PRIu64"GB", tmp64);
+
 	} else if ((num % ((uint64_t)1024 * 1024)) == 0) {
 		tmp64 = num / ((uint64_t)1024 * 1024);
-		snprintf(buf, buf_size, "%"PRIu64"M", tmp64);
+		snprintf(buf, buf_size, "%"PRIu64"MiB", tmp64);
+	} else if ((num % ((uint64_t)1000 * 1000)) == 0) {
+		tmp64 = num / ((uint64_t)1000 * 1000);
+		snprintf(buf, buf_size, "%"PRIu64"MB", tmp64);
+
 	} else if ((num % 1024) == 0) {
 		tmp64 = num / 1024;
-		snprintf(buf, buf_size, "%"PRIu64"K", tmp64);
+		snprintf(buf, buf_size, "%"PRIu64"KiB", tmp64);
+	} else if ((num % 1000) == 0) {
+		tmp64 = num / 1000;
+		snprintf(buf, buf_size, "%"PRIu64"KB", tmp64);
+
 	} else {
 		tmp64 = num;
 		snprintf(buf, buf_size, "%"PRIu64"", tmp64);
@@ -102,7 +123,8 @@ extern int slurm_load_burst_buffer_info(burst_buffer_info_msg_t **
 	req_msg.msg_type = REQUEST_BURST_BUFFER_INFO;
 	req_msg.data     = NULL;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {

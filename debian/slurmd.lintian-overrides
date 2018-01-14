@@ -1,2 +1,2 @@
 slurmd: hardening-no-bindnow
-spelling-error-in-binary
+slurmd: binary-or-shlib-defines-rpath

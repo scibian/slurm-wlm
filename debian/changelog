@@ -1,10 +1,59 @@
-slurm-llnl (17.02.2-1) UNRELEASED; urgency=medium
+slurm-llnl (17.11.2-1) unstable; urgency=medium
 
+  [ Mehdi Dogguy ]
+  * New upstream release
+    - Refresh patches
+  * Drop old transitional packages (Closes: #878864) and old Replaces
+    and Breaks statements.
+  * Fix default pidfile for slurm daemons (See: #885759)
+  * Use --runstatedir instead of --localstatedir in debian/rules to
+    specify run state directory.
+  * Override call to dh_shlibdeps so that dpkg-shlibdeps finds
+    libslurmfull.so
+  * Override lintian error binary-or-shlib-defines-rpath: Slurm provides
+    a private shared library. Its location matches the future name of the
+    source package.
+
+  [ Gennaro Oliva ]
+  * Drop unused lintian spelling-error-in-binary overrides
+  * Update d/copyright
+  * Upgrade Standards-Version to 4.1.2, no changes needed
+
+ -- Mehdi Dogguy <mehdi@debian.org>  Sun, 14 Jan 2018 10:59:47 +0100
+
+slurm-llnl (17.02.9-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2017-15566 (Closes: #880530)
+  * Add new symbols to libslurm31 and libslurmdb31
+  * Modify header patch to remove google script in the footer
+  * Rename header patch
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 05 Nov 2017 01:02:24 +0100
+
+slurm-llnl (17.02.7-1) unstable; urgency=medium
+
+  * New upstream release
+  * Rightly moving slurmdbd symbols in slurmdbd debug package
+  * Switch from -dbg packages to automatic -dbgsym
+  * Change package priority to optional as required by the new standard
+  * Change d/copyright format uri to https
+  * Standard version upgraded to 4.1.1
+  * Increase debhelper version dependency to get rid of dh-systemd
+  * Add srun, sbatch and sacct autopkgtests
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sat, 07 Oct 2017 01:25:22 +0200
+
+slurm-llnl (17.02.5-1) unstable; urgency=medium
+
+  [ Mehdi Dogguy and Gennaro Oliva ]
   * New upstream release.
   * Refresh patches.
   * Update libslurm{db,}31.symbols
 
- -- Mehdi Dogguy <mehdi@debian.org>  Thu, 27 Apr 2017 00:01:35 +0200
+  [ Gennaro Oliva ]
+  * Update d/copyright and switch to copyright-format 1.0
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 03 Jul 2017 15:30:51 +0200
 
 slurm-llnl (17.02.1.2-1) unstable; urgency=medium
 

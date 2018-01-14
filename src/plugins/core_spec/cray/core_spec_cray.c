@@ -113,7 +113,7 @@ extern int core_spec_p_set(uint64_t cont_id, uint16_t core_count)
 #if _DEBUG
 	char *spec_type;
 	int spec_count;
-	if (core_count == (uint16_t) NO_VAL) {
+	if (core_count == NO_VAL16) {
 		spec_type  = "Cores";
 		spec_count = 0;
 	} else if (core_count & CORE_SPEC_THREAD) {
@@ -134,7 +134,7 @@ extern int core_spec_p_set(uint64_t cont_id, uint16_t core_count)
 	int i;
 
 	// Skip core spec setup for no specialized cores
-	if ((core_count == (uint16_t) NO_VAL) ||
+	if ((core_count == NO_VAL16) ||
 	    (core_count == CORE_SPEC_THREAD)) {
 		return SLURM_SUCCESS;
 	}
@@ -155,7 +155,7 @@ extern int core_spec_p_set(uint64_t cont_id, uint16_t core_count)
 		}
 	}
 	if (rc != 0) {
-		error("job_set_corespec(%"PRIu64", %"PRIu16") failed: %m",
+		debug("job_set_corespec(%"PRIu64", %"PRIu16") failed: %m",
 		      cont_id, core_count);
 		return SLURM_ERROR;
 	}
@@ -229,7 +229,7 @@ extern int core_spec_p_suspend(uint64_t cont_id, uint16_t core_count)
 #if _DEBUG
 	char *spec_type;
 	int spec_count;
-	if (core_count == (uint16_t) NO_VAL) {
+	if (core_count == NO_VAL16) {
 		spec_type  = "Cores";
 		spec_count = 0;
 	} else if (core_count & CORE_SPEC_THREAD) {
@@ -257,7 +257,7 @@ extern int core_spec_p_resume(uint64_t cont_id, uint16_t core_count)
 #if _DEBUG
 	char *spec_type;
 	int spec_count;
-	if (core_count == (uint16_t) NO_VAL) {
+	if (core_count == NO_VAL16) {
 		spec_type  = "Cores";
 		spec_count = 0;
 	} else if (core_count & CORE_SPEC_THREAD) {

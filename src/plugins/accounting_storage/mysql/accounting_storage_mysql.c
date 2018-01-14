@@ -65,16 +65,6 @@
 #include "as_mysql_user.h"
 #include "as_mysql_wckey.h"
 
-/* These are defined here so when we link with something other than
- * the slurmctld we will have these symbols defined.  They will get
- * overwritten when linking with the slurmctld.
- */
-#if defined (__APPLE__)
-char *slurmctld_cluster_name  __attribute__((weak_import)) = NULL;
-#else
-char *slurmctld_cluster_name = NULL;
-#endif
-
 List as_mysql_cluster_list = NULL;
 /* This total list is only used for converting things, so no
    need to keep it upto date even though it lives until the
@@ -130,6 +120,7 @@ char *cluster_day_table = "usage_day_table";
 char *cluster_hour_table = "usage_hour_table";
 char *cluster_month_table = "usage_month_table";
 char *cluster_table = "cluster_table";
+char *convert_version_table = "convert_version_table";
 char *federation_table = "federation_table";
 char *event_table = "event_table";
 char *job_table = "job_table";
@@ -156,6 +147,7 @@ char *step_view = "step_view";
 char *step_ext_view = "step_ext_view";
 
 uint64_t debug_flags = 0;
+bool backup_dbd = 0;
 
 static char *default_qos_str = NULL;
 
@@ -533,9 +525,9 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ "plugin_id_select", "smallint unsigned default 0" },
 		{ "flags", "int unsigned default 0" },
 		{ "federation", "tinytext not null" },
+		{ "features", "text not null default ''" },
 		{ "fed_id", "int unsigned default 0 not null" },
 		{ "fed_state", "smallint unsigned not null" },
-		{ "fed_weight", "int unsigned default 1 not null" },
 		{ NULL, NULL}
 	};
 
@@ -549,13 +541,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ NULL, NULL}
 	};
 
+	storage_field_t convert_version_table_fields[] = {
+		{ "mod_time", "bigint unsigned default 0 not null" },
+		{ "version", "int default 0" },
+		{ NULL, NULL}
+	};
+
 	storage_field_t federation_table_fields[] = {
 		{ "creation_time", "int unsigned not null" },
 		{ "mod_time", "int unsigned default 0 not null" },
 		{ "deleted", "tinyint default 0" },
 		{ "name", "tinytext not null" },
 		{ "flags", "int unsigned default 0" },
-		{ "priority", "int unsigned default 0" },
 		{ NULL, NULL}
 	};
 
@@ -683,14 +680,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		/* "@mtrm := REPLACE(CONCAT(@mtrm, max_tres_run_mins), " */
 		/* "\\\',,\\\', \\\',\\\'), '); " */
 		"set @s = concat(@s, "
-		"'@mtpj := REPLACE(CONCAT(@mtpj, max_tres_pj), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtpn := REPLACE(CONCAT(@mtpn, max_tres_pn), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtmpj := REPLACE(CONCAT(@mtmpj, max_tres_mins_pj), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtrm := REPLACE(CONCAT(@mtrm, max_tres_run_mins), "
-		"\\\',,\\\', \\\',\\\'), "
+		"'@mtpj := CONCAT(@mtpj, "
+		"if (@mtpj != \\\'\\\' && max_tres_pj != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_pj), "
+		"@mtpn := CONCAT(@mtpn, "
+		"if (@mtpn != \\\'\\\' && max_tres_pn != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_pn), "
+		"@mtmpj := CONCAT(@mtmpj, "
+		"if (@mtmpj != \\\'\\\' && max_tres_mins_pj != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_mins_pj), "
+		"@mtrm := CONCAT(@mtrm, "
+		"if (@mtrm != \\\'\\\' && max_tres_run_mins != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_run_mins), "
 		"@my_acct_new := parent_acct from \"', "
 		"cluster, '_', my_table, '\" where "
 		"acct = \\\'', @my_acct, '\\\' && user=\\\'\\\''); "
@@ -812,6 +813,15 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	int rc = SLURM_SUCCESS, rc2;
 	ListIterator itr = NULL;
 
+	/* Make the convert version table since we will check that going
+	 * forward to see if we need to update or not.
+	 */
+
+	if (mysql_db_create_table(mysql_conn, convert_version_table,
+				  convert_version_table_fields,
+				  ", primary key (version))") == SLURM_ERROR)
+		return SLURM_ERROR;
+
 	/* Make the cluster table first since we build other tables
 	   built off this one */
 	if (mysql_db_create_table(mysql_conn, cluster_table,
@@ -834,29 +844,49 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 	else {
+		if ((rc = as_mysql_convert_get_bad_tres(mysql_conn)) !=
+		    SLURM_SUCCESS) {
+			error("issue getting bad tres");
+			return rc;
+		} else if (backup_dbd) {
+			/*
+			 * We do not want to create/check the database if we are
+			 * the backup (see Bug 3827). This is only handled on
+			 * the primary.
+			 */
+			return rc;
+		}
 		/* We always want CPU to be the first one, so create
 		   it now.  We also add MEM here, the others tres
 		   are site specific and could vary.  None but CPU
 		   matter on order though.  CPU always has to be 1.
+
+		   TRES_OFFSET is needed since there's no way to force
+		   the number of first automatic id in MySQL. auto_increment
+		   value is lost on mysqld restart. Bug 4553.
 		*/
 		query = xstrdup_printf(
-			"insert into %s (creation_time, id, type) values "
-			"(%ld, %d, 'cpu'), "
-			"(%ld, %d, 'mem'), "
-			"(%ld, %d, 'energy'), "
-			"(%ld, %d, 'node') "
-			"on duplicate key update deleted=0, type=VALUES(type);",
+			"insert into %s (creation_time, id, deleted, type) values "
+			"(%ld, %d, 0, 'cpu'), "
+			"(%ld, %d, 0, 'mem'), "
+			"(%ld, %d, 0, 'energy'), "
+			"(%ld, %d, 0, 'node'), "
+			"(%ld, %d, 0, 'billing'), "
+			"(%ld, %d, 1, 'dynamic_offset') "
+			"on duplicate key update deleted=VALUES(deleted), type=VALUES(type);",
 			tres_table,
 			now, TRES_CPU,
 			now, TRES_MEM,
 			now, TRES_ENERGY,
-			now, TRES_NODE);
+			now, TRES_NODE,
+			now, TRES_BILLING,
+			now, TRES_OFFSET);
 		if (debug_flags & DEBUG_FLAG_DB_QOS)
 			DB_DEBUG(mysql_conn->conn, "%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS)
-			fatal("problem adding tres 'cpu'");
+			fatal("problem adding static tres");
 	}
 
 	slurm_mutex_lock(&as_mysql_cluster_list_lock);
@@ -877,10 +907,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		return SLURM_ERROR;
 	}
 
-	if (as_mysql_convert_tables(mysql_conn) != SLURM_SUCCESS) {
-		error("issue converting tables");
+	if ((rc = as_mysql_convert_tables_pre_create(mysql_conn)) !=
+	    SLURM_SUCCESS) {
 		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
-		return SLURM_ERROR;
+		error("issue converting tables before create");
+		return rc;
+	} else if (backup_dbd) {
+		/*
+		 * We do not want to create/check the database if we are the
+		 * backup (see Bug 3827). This is only handled on the primary.
+		 */
+		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+		return rc;
 	}
 
 	/* might as well do all the cluster centric tables inside this
@@ -894,10 +932,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 			break;
 	}
 	list_iterator_destroy(itr);
-	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
-
-	if (rc != SLURM_SUCCESS)
+	if (rc != SLURM_SUCCESS) {
+		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
 		return rc;
+	}
+
+	rc = as_mysql_convert_tables_post_create(mysql_conn);
+
+	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	if (rc != SLURM_SUCCESS) {
+		error("issue converting tables after create");
+		return rc;
+	}
 
 	if (mysql_db_create_table(mysql_conn, acct_coord_table,
 				  acct_coord_table_fields,
@@ -999,6 +1045,13 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 				  federation_table_fields,
 				  ", primary key (name(20)))") == SLURM_ERROR)
 		return SLURM_ERROR;
+
+	rc = as_mysql_convert_non_cluster_tables_post_create(mysql_conn);
+
+	if (rc != SLURM_SUCCESS) {
+		error("issue converting non-cluster tables after create");
+		return rc;
+	}
 
 	rc2 = mysql_db_query(mysql_conn, get_parent_proc);
 	if (rc2 != SLURM_SUCCESS)
@@ -1214,7 +1267,10 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "id_wckey", "int unsigned not null" },
 		{ "id_user", "int unsigned not null" },
 		{ "id_group", "int unsigned not null" },
+		{ "pack_job_id", "int unsigned not null" },
+		{ "pack_job_offset", "int unsigned not null" },
 		{ "kill_requid", "int default -1 not null" },
+		{ "mcs_label", "tinytext default ''" },
 		{ "mem_req", "bigint unsigned default 0 not null" },
 		{ "nodelist", "text" },
 		{ "nodes_alloc", "int unsigned not null" },
@@ -1232,6 +1288,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "gres_alloc", "text not null default ''" },
 		{ "gres_used", "text not null default ''" },
 		{ "wckey", "tinytext not null default ''" },
+		{ "work_dir", "text not null default ''" },
 		{ "track_steps", "tinyint not null" },
 		{ "tres_alloc", "text not null default ''" },
 		{ "tres_req", "text not null default ''" },
@@ -1256,6 +1313,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "time_start", "bigint unsigned default 0 not null"},
 		{ "time_end", "bigint unsigned default 0 not null" },
 		{ "tres", "text not null default ''" },
+		{ "unused_wall", "double unsigned default 0.0 not null" },
 		{ NULL, NULL}
 	};
 
@@ -1296,7 +1354,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "min_cpu_node", "int unsigned default 0 not null" },
 		{ "ave_cpu", "double unsigned default 0.0 not null" },
 		{ "act_cpufreq", "double unsigned default 0.0 not null" },
-		{ "consumed_energy", "double unsigned default 0.0 not null" },
+		{ "consumed_energy", "bigint unsigned default 0 not null" },
 		{ "req_cpufreq_min", "int unsigned default 0 not null" },
 		{ "req_cpufreq", "int unsigned default 0 not null" }, /* max */
 		{ "req_cpufreq_gov", "int unsigned default 0 not null" },
@@ -1406,7 +1464,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	 * these queries. sacct_def2 is for plain sacct queries. */
 	if (mysql_db_create_table(mysql_conn, table_name, job_table_fields,
 				  ", primary key (job_db_inx), "
-				  "unique index (id_job, "
+				  "unique index (id_job, time_submit), "
+				  "key old_tuple (id_job, "
 				  "id_assoc, time_submit), "
 				  "key rollup (time_eligible, time_end), "
 				  "key rollup2 (time_end, time_eligible), "
@@ -1415,6 +1474,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  "key qos (id_qos), "
 				  "key association (id_assoc), "
 				  "key array_job (id_array_job), "
+				  "key pack_job (pack_job_id), "
 				  "key reserv (id_resv), "
 				  "key sacct_def (id_user, time_start, "
 				  "time_end), "
@@ -2008,8 +2068,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 			xstrfmtcat(query,
 				   "update %s set "
 				   "mod_time=%ld, deleted=1, "
-				   "flags=DEFAULT, "
-				   "priority=DEFAULT "
+				   "flags=DEFAULT "
 				   "where deleted=0 && (%s);",
 				   federation_table, now,
 				   name_char);
@@ -2394,6 +2453,17 @@ extern int init ( void )
 			fatal("%s requires ClusterName in slurm.conf",
 			      plugin_name);
 		xfree(cluster_name);
+	} else if (slurmdbd_conf && slurmdbd_conf->dbd_backup) {
+		char node_name_short[128];
+		char node_name_long[128];
+		if (gethostname(node_name_long, sizeof(node_name_long)))
+			fatal("getnodename: %m");
+		if (gethostname_short(node_name_short, sizeof(node_name_short)))
+			fatal("getnodename_short: %m");
+		if (!xstrcmp(node_name_short, slurmdbd_conf->dbd_backup) ||
+		    !xstrcmp(node_name_long, slurmdbd_conf->dbd_backup) ||
+		    !xstrcmp(slurmdbd_conf->dbd_backup, "localhost"))
+			backup_dbd = true;
 	}
 
 	mysql_db_info = create_mysql_db_info(SLURM_MYSQL_PLUGIN_AS);
@@ -2421,8 +2491,37 @@ extern int init ( void )
 		verbose("%s failed", plugin_name);
 		if (mysql_db_rollback(mysql_conn))
 			error("rollback failed");
+		/*
+		 * Turns out if you create a table after a change you can not
+		 * rollback.  This rolls back the potential changes we need to
+		 * deal with again on convert failure.
+		 */
+		if (bad_tres_list) {
+			char *query = NULL;
+			slurmdb_tres_rec_t *tres_rec;
+			ListIterator itr = list_iterator_create(bad_tres_list);
+
+			while ((tres_rec = list_next(itr))) {
+				xstrfmtcat(query,
+					   "update %s set id=%u where id=%u;",
+					   tres_table, tres_rec->id,
+					   tres_rec->rec_count);
+			}
+			list_iterator_destroy(itr);
+
+			/*
+			 * Ignore the return of these 2 mysql functions.  We
+			 * have already failed here so if these fail we can't do
+			 * much about it.  We will just go with whatever the
+			 * orignal rc was that got us here.
+			 */
+			(void)mysql_db_query(mysql_conn, query);
+			xfree(query);
+			(void)mysql_db_commit(mysql_conn);
+		}
 	}
 
+	FREE_NULL_LIST(bad_tres_list);
 	destroy_mysql_conn(mysql_conn);
 
 	return rc;
@@ -2494,6 +2593,12 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 
 	if ((rc != SLURM_SUCCESS) && (rc != ESLURM_CLUSTER_DELETED))
 		return rc;
+	/*
+	 * We should never get here since check_connection will return
+	 * ESLURM_DB_CONNECTION when !mysql_conn, but Coverity doesn't
+	 * understand that. CID 44841.
+	 */
+	xassert(mysql_conn);
 
 	debug4("got %d commits", list_count(mysql_conn->update_list));
 
@@ -2532,7 +2637,6 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		char *query = NULL;
 		MYSQL_RES *result = NULL;
 		MYSQL_ROW row;
-		bool get_qos_count = 0;
 		ListIterator itr = NULL, itr2 = NULL, itr3 = NULL;
 		char *rem_cluster = NULL, *cluster_name = NULL;
 		slurmdb_update_object_t *object = NULL;
@@ -2565,7 +2669,7 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 			if (!object->objects || !list_count(object->objects))
 				continue;
 			/* We only care about clusters removed here. */
-			switch(object->type) {
+			switch (object->type) {
 			case SLURMDB_REMOVE_CLUSTER:
 				itr3 = list_iterator_create(object->objects);
 				while ((rem_cluster = list_next(itr3))) {
@@ -2588,9 +2692,6 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		list_iterator_destroy(itr);
 		list_iterator_destroy(itr2);
 		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
-
-		if (get_qos_count)
-			_set_qos_cnt(mysql_conn);
 	}
 	xfree(mysql_conn->pre_commit_query);
 	list_flush(mysql_conn->update_list);
@@ -3041,10 +3142,12 @@ extern int clusteracct_storage_p_fini_ctld(mysql_conn_t *mysql_conn,
 extern int clusteracct_storage_p_cluster_tres(mysql_conn_t *mysql_conn,
 					      char *cluster_nodes,
 					      char *tres_str_in,
-					      time_t event_time)
+					      time_t event_time,
+					      uint16_t rpc_version)
 {
 	return as_mysql_cluster_tres(mysql_conn,
-				     cluster_nodes, &tres_str_in, event_time);
+				     cluster_nodes, &tres_str_in,
+				     event_time, rpc_version);
 }
 
 /*

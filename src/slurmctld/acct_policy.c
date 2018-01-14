@@ -55,6 +55,20 @@ enum {
 	ACCT_POLICY_JOB_FINI
 };
 
+typedef enum {
+	TRES_USAGE_OKAY,
+	TRES_USAGE_CUR_EXCEEDS_LIMIT,
+	TRES_USAGE_REQ_EXCEEDS_LIMIT,
+	TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE
+} acct_policy_tres_usage_t;
+
+typedef struct pack_limits {
+	slurmdb_assoc_rec_t *assoc_ptr;
+	struct job_record *job_ptr;
+	slurmdb_qos_rec_t *qos_ptr_1;
+	slurmdb_qos_rec_t *qos_ptr_2;
+} pack_limits_t;
+
 static int _get_tres_state_reason(int tres_pos, int unk_reason)
 {
 	switch (tres_pos) {
@@ -70,6 +84,8 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			return WAIT_ASSOC_MAX_CPU_PER_JOB;
 		case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
 			return WAIT_ASSOC_MAX_CPU_MINS_PER_JOB;
+		case WAIT_ASSOC_MAX_UNK_PER_NODE:
+			return WAIT_ASSOC_MAX_CPU_PER_NODE;
 		case WAIT_QOS_GRP_UNK:
 			return WAIT_QOS_GRP_CPU;
 		case WAIT_QOS_GRP_UNK_MIN:
@@ -105,6 +121,8 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			return WAIT_ASSOC_MAX_MEM_PER_JOB;
 		case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
 			return WAIT_ASSOC_MAX_MEM_MINS_PER_JOB;
+		case WAIT_ASSOC_MAX_UNK_PER_NODE:
+			return WAIT_ASSOC_MAX_MEM_PER_NODE;
 		case WAIT_QOS_GRP_UNK:
 			return WAIT_QOS_GRP_MEM;
 		case WAIT_QOS_GRP_UNK_MIN:
@@ -128,7 +146,7 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			break;
 		}
 		break;
-	case TRES_ARRAY_ENEGRY:
+	case TRES_ARRAY_ENERGY:
 		switch (unk_reason) {
 		case WAIT_ASSOC_GRP_UNK:
 			return WAIT_ASSOC_GRP_ENERGY;
@@ -140,6 +158,8 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			return WAIT_ASSOC_MAX_ENERGY_PER_JOB;
 		case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
 			return WAIT_ASSOC_MAX_ENERGY_MINS_PER_JOB;
+		case WAIT_ASSOC_MAX_UNK_PER_NODE:
+			return WAIT_ASSOC_MAX_ENERGY_PER_NODE;
 		case WAIT_QOS_GRP_UNK:
 			return WAIT_QOS_GRP_ENERGY;
 		case WAIT_QOS_GRP_UNK_MIN:
@@ -196,6 +216,43 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			break;
 		}
 		break;
+	case TRES_ARRAY_BILLING:
+		switch (unk_reason) {
+		case WAIT_ASSOC_GRP_UNK:
+			return WAIT_ASSOC_GRP_BILLING;
+		case WAIT_ASSOC_GRP_UNK_MIN:
+			return WAIT_ASSOC_GRP_BILLING_MIN;
+		case WAIT_ASSOC_GRP_UNK_RUN_MIN:
+			return WAIT_ASSOC_GRP_BILLING_RUN_MIN;
+		case WAIT_ASSOC_MAX_UNK_PER_JOB:
+			return WAIT_ASSOC_MAX_BILLING_PER_JOB;
+		case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
+			return WAIT_ASSOC_MAX_BILLING_MINS_PER_JOB;
+		case WAIT_ASSOC_MAX_UNK_PER_NODE:
+			return WAIT_ASSOC_MAX_BILLING_PER_NODE;
+		case WAIT_QOS_GRP_UNK:
+			return WAIT_QOS_GRP_BILLING;
+		case WAIT_QOS_GRP_UNK_MIN:
+			return WAIT_QOS_GRP_BILLING_MIN;
+		case WAIT_QOS_GRP_UNK_RUN_MIN:
+			return WAIT_QOS_GRP_BILLING_RUN_MIN;
+		case WAIT_QOS_MAX_UNK_PER_JOB:
+			return WAIT_QOS_MAX_BILLING_PER_JOB;
+		case WAIT_QOS_MAX_UNK_PER_NODE:
+			return WAIT_QOS_MAX_BILLING_PER_NODE;
+		case WAIT_QOS_MAX_UNK_PER_ACCT:
+			return WAIT_QOS_MAX_BILLING_PER_ACCT;
+		case WAIT_QOS_MAX_UNK_PER_USER:
+			return WAIT_QOS_MAX_BILLING_PER_USER;
+		case WAIT_QOS_MAX_UNK_MINS_PER_JOB:
+			return WAIT_QOS_MAX_BILLING_MINS_PER_JOB;
+		case WAIT_QOS_MIN_UNK:
+			return WAIT_QOS_MIN_BILLING;
+		default:
+			return unk_reason;
+			break;
+		}
+		break;
 	default:
 		if (!xstrcmp("gres", assoc_mgr_tres_array[tres_pos]->type))
 			switch (unk_reason) {
@@ -209,6 +266,8 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 				return WAIT_ASSOC_MAX_GRES_PER_JOB;
 			case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
 				return WAIT_ASSOC_MAX_GRES_MINS_PER_JOB;
+			case WAIT_ASSOC_MAX_UNK_PER_NODE:
+				return WAIT_ASSOC_MAX_GRES_PER_NODE;
 			case WAIT_QOS_GRP_UNK:
 				return WAIT_QOS_GRP_GRES;
 			case WAIT_QOS_GRP_UNK_MIN:
@@ -276,6 +335,8 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 				return WAIT_ASSOC_MAX_BB_PER_JOB;
 			case WAIT_ASSOC_MAX_UNK_MINS_PER_JOB:
 				return WAIT_ASSOC_MAX_BB_MINS_PER_JOB;
+			case WAIT_ASSOC_MAX_UNK_PER_NODE:
+				return WAIT_ASSOC_MAX_BB_PER_NODE;
 			case WAIT_QOS_GRP_UNK:
 				return WAIT_QOS_GRP_BB;
 			case WAIT_QOS_GRP_UNK_MIN:
@@ -322,8 +383,7 @@ static void _set_qos_order(struct job_record *job_ptr,
 			 * partition then use that otherwise use the
 			 * partition's QOS as the king.
 			 */
-			if (((slurmdb_qos_rec_t *)job_ptr->qos_ptr)->flags
-			    & QOS_FLAG_OVER_PART_QOS) {
+			if (job_ptr->qos_ptr->flags & QOS_FLAG_OVER_PART_QOS) {
 				*qos_ptr_1 = job_ptr->qos_ptr;
 				*qos_ptr_2 = job_ptr->part_ptr->qos_ptr;
 			} else {
@@ -431,12 +491,11 @@ static slurmdb_used_limits_t *_get_user_used_limits(
 
 static bool _valid_job_assoc(struct job_record *job_ptr)
 {
-	slurmdb_assoc_rec_t assoc_rec, *assoc_ptr;
+	slurmdb_assoc_rec_t assoc_rec;
 
-	assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
-	if ((assoc_ptr == NULL) ||
-	    (assoc_ptr->id  != job_ptr->assoc_id) ||
-	    (assoc_ptr->uid != job_ptr->user_id)) {
+	if ((job_ptr->assoc_ptr == NULL) ||
+	    (job_ptr->assoc_ptr->id  != job_ptr->assoc_id) ||
+	    (job_ptr->assoc_ptr->uid != job_ptr->user_id)) {
 		error("Invalid assoc_ptr for jobid=%u", job_ptr->job_id);
 		memset(&assoc_rec, 0, sizeof(slurmdb_assoc_rec_t));
 
@@ -447,7 +506,6 @@ static bool _valid_job_assoc(struct job_record *job_ptr)
 
 		if (assoc_mgr_fill_in_assoc(acct_db_conn, &assoc_rec,
 					    accounting_enforce,
-					    (slurmdb_assoc_rec_t **)
 					    &job_ptr->assoc_ptr, false)) {
 			info("_validate_job_assoc: invalid account or "
 			     "partition for uid=%u jobid=%u",
@@ -465,14 +523,13 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 				    uint32_t job_cnt)
 {
 	slurmdb_used_limits_t *used_limits = NULL, *used_limits_a = NULL;
-	slurmdb_assoc_rec_t *assoc_ptr = job_ptr->assoc_ptr;
 	int i;
 
-	if (!qos_ptr || !assoc_ptr)
+	if (!qos_ptr || !job_ptr->assoc_ptr)
 		return;
 
 	used_limits_a =	_get_acct_used_limits(&qos_ptr->usage->acct_limit_list,
-					      assoc_ptr->acct);
+					      job_ptr->assoc_ptr->acct);
 
 	used_limits = _get_user_used_limits(&qos_ptr->usage->user_limit_list,
 					    job_ptr->user_id);
@@ -484,32 +541,47 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 		used_limits_a->submit_jobs += job_cnt;
 		break;
 	case ACCT_POLICY_REM_SUBMIT:
-		if (qos_ptr->usage->grp_used_submit_jobs)
+		if (qos_ptr->usage->grp_used_submit_jobs >= job_cnt)
 			qos_ptr->usage->grp_used_submit_jobs -= job_cnt;
-		else
+		else {
+			qos_ptr->usage->grp_used_submit_jobs = 0;
 			debug2("acct_policy_remove_job_submit: "
 			       "grp_submit_jobs underflow for qos %s",
 			       qos_ptr->name);
+		}
 
-		if (used_limits->submit_jobs)
+		if (used_limits->submit_jobs >= job_cnt)
 			used_limits->submit_jobs -= job_cnt;
-		else
+		else {
+			used_limits->submit_jobs = 0;
 			debug2("acct_policy_remove_job_submit: "
 			       "used_submit_jobs underflow for "
 			       "qos %s user %d",
 			       qos_ptr->name, used_limits->uid);
+		}
 
-		if (used_limits_a->submit_jobs)
+		if (used_limits_a->submit_jobs >= job_cnt)
 			used_limits_a->submit_jobs -= job_cnt;
-		else
+		else {
+			used_limits_a->submit_jobs = 0;
 			debug2("acct_policy_remove_job_submit: "
 			       "used_submit_jobs underflow for "
 			       "qos %s account %s",
 			       qos_ptr->name, used_limits_a->acct);
+		}
+
 		break;
 	case ACCT_POLICY_JOB_BEGIN:
 		qos_ptr->usage->grp_used_jobs++;
 		for (i=0; i<slurmctld_tres_cnt; i++) {
+			/* tres_alloc_cnt for ENERGY is currently after the
+			 * fact, so don't add it here or you will get underflows
+			 * when you remove it.  If this ever changes this will
+			 * have to be moved to a new TRES ARRAY probably.
+			 */
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
+
 			used_limits->tres[i] += job_ptr->tres_alloc_cnt[i];
 			used_limits_a->tres[i] += job_ptr->tres_alloc_cnt[i];
 
@@ -531,6 +603,13 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 		used_limits_a->jobs++;
 		break;
 	case ACCT_POLICY_JOB_FINI:
+		/*
+		 * If tres_alloc_cnt doesn't exist means ACCT_POLICY_JOB_BEGIN
+		 * was never called so no need to clean up that which was never
+		 * set up.
+		 */
+		if (!job_ptr->tres_alloc_cnt)
+			break;
 		qos_ptr->usage->grp_used_jobs--;
 		if ((int32_t)qos_ptr->usage->grp_used_jobs < 0) {
 			qos_ptr->usage->grp_used_jobs = 0;
@@ -539,6 +618,8 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 		}
 
 		for (i=0; i<slurmctld_tres_cnt; i++) {
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
 			if (job_ptr->tres_alloc_cnt[i] >
 			    qos_ptr->usage->grp_used_tres[i]) {
 				qos_ptr->usage->grp_used_tres[i] = 0;
@@ -597,9 +678,16 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 
 }
 
+static int _find_qos_part(void *x, void *key)
+{
+	if ((slurmdb_qos_rec_t *) x == (slurmdb_qos_rec_t *) key)
+		return 1;	/* match */
+
+	return 0;
+}
+
 static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 {
-	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_assoc_rec_t *assoc_ptr = NULL;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
 				   READ_LOCK, NO_LOCK, NO_LOCK };
@@ -617,9 +705,12 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		priority_g_job_end(job_ptr);
 	else if (type == ACCT_POLICY_JOB_BEGIN) {
 		uint64_t time_limit_secs = (uint64_t)job_ptr->time_limit * 60;
-		for (i=0; i<slurmctld_tres_cnt; i++)
+		for (i=0; i<slurmctld_tres_cnt; i++) {
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
 			used_tres_run_secs[i] =
 				job_ptr->tres_alloc_cnt[i] * time_limit_secs;
+		}
 	} else if (((type == ACCT_POLICY_ADD_SUBMIT) ||
 		    (type == ACCT_POLICY_REM_SUBMIT)) &&
 		   job_ptr->array_recs && job_ptr->array_recs->task_cnt)
@@ -627,16 +718,106 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 
 	assoc_mgr_lock(&locks);
 
-	_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
+	/*
+	 * If we have submitted to multiple partitions we need to handle all of
+	 * them on submit and remove if the job was cancelled before it ran
+	 * (!job_ptr->tres_alloc_str).
+	 */
+	if (((type == ACCT_POLICY_ADD_SUBMIT) ||
+	    (type == ACCT_POLICY_REM_SUBMIT)) &&
+	    job_ptr->part_ptr_list &&
+	    (IS_JOB_PENDING(job_ptr) || !job_ptr->tres_alloc_str)) {
+		bool job_first = false;
+		ListIterator part_itr;
+		struct part_record *part_ptr;
+		List part_qos_list = NULL;
 
-	_qos_adjust_limit_usage(type, job_ptr, qos_ptr_1,
-				used_tres_run_secs, job_cnt);
-	_qos_adjust_limit_usage(type, job_ptr, qos_ptr_2,
-				used_tres_run_secs, job_cnt);
+		if (job_ptr->qos_ptr &&
+		    (((slurmdb_qos_rec_t *)job_ptr->qos_ptr)->flags
+		     & QOS_FLAG_OVER_PART_QOS))
+			job_first = true;
 
-	assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
+		if (job_first) {
+			_qos_adjust_limit_usage(type, job_ptr, job_ptr->qos_ptr,
+						used_tres_run_secs, job_cnt);
+			part_qos_list = list_create(NULL);
+			list_push(part_qos_list, job_ptr->qos_ptr);
+		}
+
+		part_itr = list_iterator_create(job_ptr->part_ptr_list);
+		while ((part_ptr = list_next(part_itr))) {
+			if (!part_ptr->qos_ptr)
+				continue;
+			if (!part_qos_list)
+				part_qos_list = list_create(NULL);
+			if (list_find_first(part_qos_list, _find_qos_part,
+					    part_ptr->qos_ptr))
+				continue;
+			list_push(part_qos_list, part_ptr->qos_ptr);
+			_qos_adjust_limit_usage(type, job_ptr,
+						part_ptr->qos_ptr,
+						used_tres_run_secs, job_cnt);
+		}
+		list_iterator_destroy(part_itr);
+
+		if (!job_first && (!part_qos_list ||
+		    !list_find_first(part_qos_list, _find_qos_part,
+				     job_ptr->qos_ptr)))
+			_qos_adjust_limit_usage(type, job_ptr, job_ptr->qos_ptr,
+						used_tres_run_secs, job_cnt);
+
+		FREE_NULL_LIST(part_qos_list);
+	} else {
+		slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
+
+		/*
+		 * Here if the job is starting and we had a part_ptr_list before
+		 * hand we need to remove the submit from all partition qos
+		 * outside of the one we actually are going to run on.
+		 */
+		if ((type == ACCT_POLICY_JOB_BEGIN) &&
+		    job_ptr->part_ptr_list) {
+			ListIterator part_itr;
+			struct part_record *part_ptr;
+			List part_qos_list = list_create(NULL);
+
+			if (job_ptr->qos_ptr)
+				list_push(part_qos_list, job_ptr->qos_ptr);
+			if (job_ptr->part_ptr && job_ptr->part_ptr->qos_ptr &&
+			    job_ptr->qos_ptr != job_ptr->part_ptr->qos_ptr)
+				list_push(part_qos_list,
+					  job_ptr->part_ptr->qos_ptr);
+
+			part_itr = list_iterator_create(job_ptr->part_ptr_list);
+			while ((part_ptr = list_next(part_itr))) {
+				if (!part_ptr->qos_ptr)
+					continue;
+
+				if (list_find_first(part_qos_list,
+						    _find_qos_part,
+						    part_ptr->qos_ptr))
+					continue;
+				_qos_adjust_limit_usage(ACCT_POLICY_REM_SUBMIT,
+							job_ptr,
+							part_ptr->qos_ptr,
+							used_tres_run_secs,
+							job_cnt);
+			}
+			list_iterator_destroy(part_itr);
+			FREE_NULL_LIST(part_qos_list);
+		}
+
+		_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
+
+		_qos_adjust_limit_usage(type, job_ptr, qos_ptr_1,
+					used_tres_run_secs, job_cnt);
+		_qos_adjust_limit_usage(type, job_ptr, qos_ptr_2,
+					used_tres_run_secs, job_cnt);
+	}
+
+	assoc_ptr = job_ptr->assoc_ptr;
 	while (assoc_ptr) {
-		switch(type) {
+		switch (type) {
 		case ACCT_POLICY_ADD_SUBMIT:
 			assoc_ptr->usage->used_submit_jobs += job_cnt;
 			break;
@@ -652,6 +833,9 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		case ACCT_POLICY_JOB_BEGIN:
 			assoc_ptr->usage->used_jobs++;
 			for (i=0; i<slurmctld_tres_cnt; i++) {
+				if (i == TRES_ARRAY_ENERGY)
+					continue;
+
 				assoc_ptr->usage->grp_used_tres[i] +=
 					job_ptr->tres_alloc_cnt[i];
 				assoc_ptr->usage->grp_used_tres_run_secs[i] +=
@@ -676,7 +860,9 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 				       "underflow for account %s",
 				       assoc_ptr->acct);
 
-			for (i=0; i<slurmctld_tres_cnt; i++) {
+			for (i = 0; i < slurmctld_tres_cnt; i++) {
+				if (i == TRES_ARRAY_ENERGY)
+					continue;
 				if (job_ptr->tres_alloc_cnt[i] >
 				    assoc_ptr->usage->grp_used_tres[i]) {
 					assoc_ptr->usage->grp_used_tres[i] = 0;
@@ -688,9 +874,10 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 					       assoc_ptr->id, assoc_ptr->acct,
 					       assoc_ptr->user,
 					       assoc_ptr->partition);
-				} else
+				} else {
 					assoc_ptr->usage->grp_used_tres[i] -=
 						job_ptr->tres_alloc_cnt[i];
+				}
 			}
 
 			break;
@@ -806,67 +993,6 @@ static bool _validate_tres_limits_for_assoc(
 	return true;
 }
 
-/*
- * _validate_tres_usage_limits_for_assoc - validate the tres requested
- * against limits
- * of an association as well as qos skipping any limit an admin set
- *
- * OUT - tres_pos - if false is returned position in array of failed limit
- * IN - tres_limit_array - TRES limits from an association
- * IN - qos_tres_limit_array - TRES limits QOS has imposed already
- * IN - tres_req_cnt - TRES requested from the job
- * IN - tres_usage - TRES usage in use right now by the assoc (running jobs)
- * IN - curr_usage - TRES usage from the association (in minutes)
- * IN - admin_limit_set - TRES limits that have been overridden by an admin
- * IN - safe_limits - if the safe flag was set on AccountingStorageEnforce
- *
- * RET - True if no limit is violated, false otherwise with tres_pos
- * being set to the position of the failed limit.
- */
-static int _validate_tres_usage_limits_for_assoc(
-	int *tres_pos,
-	uint64_t *tres_limit_array,
-	uint64_t *qos_tres_limit_array,
-	uint64_t *tres_req_cnt,
-	uint64_t *tres_usage,
-	uint64_t *curr_usage,
-	uint16_t *admin_limit_set,
-	bool safe_limits)
-{
-	int i;
-	uint64_t usage = 0;
-
-	xassert(tres_limit_array);
-	xassert(qos_tres_limit_array);
-
-	for (i = 0; i < g_tres_count; i++) {
-		(*tres_pos) = i;
-
-		if ((admin_limit_set
-		     && admin_limit_set[i] == ADMIN_SET_LIMIT) ||
-		    (qos_tres_limit_array[i] != INFINITE64) ||
-		    (tres_limit_array[i] == INFINITE64))
-			continue;
-
-		if (curr_usage && (curr_usage[i] >= tres_limit_array[i]))
-			return 1;
-
-		if (safe_limits) {
-			xassert(tres_req_cnt);
-			if (tres_req_cnt[i] > tres_limit_array[i])
-				return 2;
-
-			if (curr_usage)
-				usage = curr_usage[i];
-			if (tres_usage &&
-			    ((tres_req_cnt[i] + tres_usage[i]) >
-			     (tres_limit_array[i] - usage)))
-				return 3;
-		}
-	}
-
-	return 0;
-}
 
 /*
  * _validate_tres_limits_for_qos - validate the tres requested against limits
@@ -933,7 +1059,7 @@ static bool _validate_tres_limits_for_qos(
 		if (divisor)
 			job_tres /= divisor;
 
-		if (out_grp_tres_array) {
+		if (out_grp_tres_array && grp_tres_array) {
 			if (out_grp_tres_array[i] == INFINITE64)
 				out_grp_tres_array[i] = grp_tres_array[i];
 
@@ -1004,8 +1130,6 @@ static bool _validate_time_limit(uint32_t *time_limit_in,
 	return true;
 }
 
-
-
 /*
  * _validate_tres_time_limits - validate the tres requested
  * against limits of an association as well as qos skipping any limit
@@ -1074,24 +1198,118 @@ static bool _validate_tres_time_limits(
 }
 
 /*
+ * _validate_tres_usage_limits - validate the TRES requested against
+ * specified limits; when checking for safe limits, also take into
+ * consideration already used and currently running TRES resources
+ *
+ * OUT - tres_pos - if function returns other than TRES_USAGE_OKAY,
+ *                  position in TRES array of failed limit
+ * IN - tres_limit_array - count of various TRES limits to check against
+ * OUT - out_tres_limit_array - optional; assigned values from tres_limit_array
+ *                              when out_tres_limit_set is true,
+ *                              skipped when any of:
+ *                              1) admin_limit_set is set and is an admin
+ *                                 limit
+ *                              2) out_tres_limit_array is set and its value
+ *                                 has been changed since initially being set
+ *                                 to INFINITE64
+ *                              3) tres_limit_array is INFINITE64
+ * IN - tres_req_cnt - must be set when safe_limits is true; the following
+ *                     is checked with tres_req_cnt:
+ *                     1) tres_req_cnt > tres_limit_array,
+ *                        return TRES_USAGE_REQ_EXCEEDS_LIMIT
+ *                     2) when tres_usage is set:
+ *                        (tres_req_cnt + tres_usage) >
+ *                        (tres_limit_array - curr_usage),
+ *                        return TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE
+ *                        curr_usage will be 0 when not passed
+ * IN - tres_usage - TRES (currently running if curr_usage is set, already used
+ *                   otherwise) optional; This value is used primarily only if
+ *                   safe_limits is true.  It will be added to tres_req_cnt to
+ *                   count as extra time to observe, see tres_req_cnt section
+ *                   above for tres_usage interaction
+ * IN - curr_usage - TRES (already used) optional; when set, check if:
+ *                   1) curr_usage > tres_limit_array
+ *                      return TRES_USAGE_CUR_EXCEEDS_LIMIT
+ *                   2) when safe_limits is true, see tres_req_cnt section
+ *                      above for curr_usage interaction
+ * IN - admin_limit_set - limits that have been overridden by an admin, see
+ *                        out_tres_limit_array section above for interaction
+ * IN - safe_limits - requires tres_req_cnt when true; see tres_req_cnt
+ *                    section above for interaction
+ * IN - out_tres_limit_set - out_tres_limit_array is set as described above
+ *      when true; out_tres_limit_array is not modified when false
+ * RET - TRES_USAGE_OKAY if no limit is violated, otherwise one of the other
+ *       acct_policy_tres_usage_t enumerations with tres_pos being set to the
+ *       position of the failed limit.
+ */
+static acct_policy_tres_usage_t _validate_tres_usage_limits(
+	int *tres_pos,
+	uint64_t *tres_limit_array,
+	uint64_t *out_tres_limit_array,
+	uint64_t *tres_req_cnt,
+	uint64_t *tres_usage,
+	uint64_t *curr_usage,
+	uint16_t *admin_limit_set,
+	bool safe_limits,
+	bool out_tres_limit_set)
+{
+	int i;
+	uint64_t usage = 0;
+
+	xassert(tres_limit_array);
+
+	for (i = 0; i < g_tres_count; i++) {
+		(*tres_pos) = i;
+
+		if ((admin_limit_set &&
+		     admin_limit_set[i] == ADMIN_SET_LIMIT) ||
+		    (out_tres_limit_array &&
+		     out_tres_limit_array[i] != INFINITE64) ||
+		    (tres_limit_array[i] == INFINITE64))
+			continue;
+
+		if (out_tres_limit_set && out_tres_limit_array)
+			out_tres_limit_array[i] = tres_limit_array[i];
+
+		if (curr_usage && (curr_usage[i] >= tres_limit_array[i]))
+			return TRES_USAGE_CUR_EXCEEDS_LIMIT;
+
+		if (safe_limits) {
+			xassert(tres_req_cnt);
+			if (tres_req_cnt[i] > tres_limit_array[i])
+				return TRES_USAGE_REQ_EXCEEDS_LIMIT;
+
+			if (curr_usage)
+				usage = curr_usage[i];
+			if (tres_usage &&
+			    ((tres_req_cnt[i] + tres_usage[i]) >
+			     (tres_limit_array[i] - usage)))
+				return TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE;
+		}
+	}
+
+	return TRES_USAGE_OKAY;
+}
+
+/*
  * _validate_tres_usage_limits_for_qos - validate the tres requested
- * against limits of an association as well as qos skipping any limit
- * an admin set
+ * against limits of an qos skipping any limit an admin set
  *
  * OUT - tres_pos - if false is returned position in array of failed limit
  * IN - tres_limit_array - TRES limits from an association
  * IN/OUT - out_tres_limit_array - TRES limits QOS has imposed already, if a new
  *                                 limit is found the limit is filled in.
  * IN - tres_req_cnt - TRES requested from the job
- * IN - tres_usage - TRES usage in use right now by the QOS (running jobs)
- * IN - curr_usage - TRES usage from the QOS (in minutes)
+ * IN - tres_usage - TRES usage from the QOS (in minutes)
+ * IN - curr_usage - TRES usage in use right now by the QOS (running jobs)
  * IN - admin_limit_set - TRES limits that have been overridden by an admin
  * IN - safe_limits - if the safe flag was set on AccountingStorageEnforce
  *
  * RET - True if no limit is violated, false otherwise with tres_pos
  * being set to the position of the failed limit.
  */
-static int _validate_tres_usage_limits_for_qos(
+static acct_policy_tres_usage_t _validate_tres_usage_limits_for_qos(
 	int *tres_pos,
 	uint64_t *tres_limit_array,
 	uint64_t *out_tres_limit_array,
@@ -1101,41 +1319,53 @@ static int _validate_tres_usage_limits_for_qos(
 	uint16_t *admin_limit_set,
 	bool safe_limits)
 {
-	uint64_t usage = 0;
-	int i;
+	return _validate_tres_usage_limits(tres_pos,
+					   tres_limit_array,
+					   out_tres_limit_array,
+					   tres_req_cnt,
+					   tres_usage,
+					   curr_usage,
+					   admin_limit_set,
+					   safe_limits,
+					   true);
+}
 
-	xassert(tres_limit_array);
-	xassert(out_tres_limit_array);
-
-	for (i = 0; i < g_tres_count; i++) {
-		(*tres_pos) = i;
-
-		if ((admin_limit_set
-		     && admin_limit_set[i] == ADMIN_SET_LIMIT) ||
-		    (out_tres_limit_array[i] != INFINITE64) ||
-		    (tres_limit_array[i] == INFINITE64))
-			continue;
-
-		out_tres_limit_array[i] = tres_limit_array[i];
-
-		if (curr_usage && (curr_usage[i] >= tres_limit_array[i]))
-			return 1;
-
-		if (safe_limits) {
-			xassert(tres_req_cnt);
-			if (tres_req_cnt[i] > tres_limit_array[i])
-				return 2;
-
-			if (curr_usage)
-				usage = curr_usage[i];
-			if (tres_usage &&
-			    ((tres_req_cnt[i] + tres_usage[i]) >
-			     (tres_limit_array[i] - usage)))
-				return 3;
-		}
-	}
-
-	return 0;
+/*
+ * _validate_tres_usage_limits_for_assoc - validate the tres requested
+ * against limits of an association as well as qos skipping any limit
+ * an admin set
+ *
+ * OUT - tres_pos - if false is returned position in array of failed limit
+ * IN - tres_limit_array - TRES limits from an association
+ * IN - qos_tres_limit_array - TRES limits QOS has imposed already
+ * IN - tres_req_cnt - TRES requested from the job
+ * IN - tres_usage - TRES usage from the association (in minutes)
+ * IN - curr_usage - TRES usage in use right now by the assoc (running jobs)
+ * IN - admin_limit_set - TRES limits that have been overridden by an admin
+ * IN - safe_limits - if the safe flag was set on AccountingStorageEnforce
+ *
+ * RET - True if no limit is violated, false otherwise with tres_pos
+ * being set to the position of the failed limit.
+ */
+static acct_policy_tres_usage_t _validate_tres_usage_limits_for_assoc(
+	int *tres_pos,
+	uint64_t *tres_limit_array,
+	uint64_t *qos_tres_limit_array,
+	uint64_t *tres_req_cnt,
+	uint64_t *tres_usage,
+	uint64_t *curr_usage,
+	uint16_t *admin_limit_set,
+	bool safe_limits)
+{
+	return _validate_tres_usage_limits(tres_pos,
+					   tres_limit_array,
+					   qos_tres_limit_array,
+					   tres_req_cnt,
+					   tres_usage,
+					   curr_usage,
+					   admin_limit_set,
+					   safe_limits,
+					   false);
 }
 
 static int _qos_policy_validate(job_desc_msg_t *job_desc,
@@ -1725,8 +1955,8 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 	uint64_t tres_run_mins[slurmctld_tres_cnt];
 	slurmdb_used_limits_t *used_limits = NULL, *used_limits_a = NULL;
 	bool safe_limits = false;
-	int rc = true;
-	int i, tres_pos = 0;
+	int rc = true, i, tres_pos = 0;
+	acct_policy_tres_usage_t tres_usage;
 	slurmdb_assoc_rec_t *assoc_ptr = job_ptr->assoc_ptr;
 
 	if (!qos_ptr || !qos_out_ptr || !assoc_ptr)
@@ -1754,13 +1984,13 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 	used_limits = _get_user_used_limits(&qos_ptr->usage->user_limit_list,
 					    job_ptr->user_id);
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos, qos_ptr->grp_tres_mins_ctld,
 		qos_out_ptr->grp_tres_mins_ctld, job_tres_time_limit,
 		tres_run_mins, tres_usage_mins, job_ptr->limit_set.tres,
 		safe_limits);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK_MIN);
@@ -1775,7 +2005,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK_MIN);
@@ -1791,7 +2021,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		/*
 		 * If we're using safe limits start
 		 * the job only if there are
@@ -1821,7 +2051,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
@@ -1831,16 +2061,16 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 	 * cpu requirement has exceeded the limit for all CPUs
 	 * usable by the QOS
 	 */
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos,
 		qos_ptr->grp_tres_ctld,	qos_out_ptr->grp_tres_ctld,
 		tres_req_cnt, qos_ptr->usage->grp_used_tres,
 		NULL, job_ptr->limit_set.tres, 1);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		/* not possible because the curr_usage sent in is NULL */
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK);
@@ -1855,7 +2085,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK);
@@ -1872,23 +2102,23 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		       tres_req_cnt[tres_pos]);
 		rc = false;
 		goto end_it;
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
 
 	/* we don't need to check grp_jobs here */
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos,
 		qos_ptr->grp_tres_run_mins_ctld,
 		qos_out_ptr->grp_tres_run_mins_ctld,
 		job_tres_time_limit, tres_run_mins, NULL, NULL, 1);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		/* not possible because the curr_usage sent in is NULL */
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK_RUN_MIN);
@@ -1903,7 +2133,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = _get_tres_state_reason(
 			tres_pos, WAIT_QOS_GRP_UNK_RUN_MIN);
@@ -1920,7 +2150,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
@@ -2030,16 +2260,16 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		goto end_it;
 	}
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos,
 		qos_ptr->max_tres_pa_ctld, qos_out_ptr->max_tres_pa_ctld,
 		tres_req_cnt, used_limits_a->tres,
 		NULL, job_ptr->limit_set.tres, 1);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		/* not possible because the curr_usage sent in is NULL */
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		/* Hold the job if it exceeds the per-acct
 		 * TRES limit for the given QOS
 		 */
@@ -2059,7 +2289,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		/* Hold the job if the user has exceeded
 		 * the QOS per-user TRES limit with their
 		 * current usage */
@@ -2080,21 +2310,21 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		       tres_req_cnt[tres_pos]);
 		rc = false;
 		goto end_it;
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos,
 		qos_ptr->max_tres_pu_ctld, qos_out_ptr->max_tres_pu_ctld,
 		tres_req_cnt, used_limits->tres,
 		NULL, job_ptr->limit_set.tres, 1);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		/* not possible because the curr_usage sent in is NULL */
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		/* Hold the job if it exceeds the per-user
 		 * TRES limit for the given QOS
 		 */
@@ -2113,7 +2343,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		/* Hold the job if the user has exceeded
 		 * the QOS per-user TRES limit with their
 		 * current usage */
@@ -2133,7 +2363,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 		       tres_req_cnt[tres_pos]);
 		rc = false;
 		goto end_it;
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
@@ -2149,6 +2379,8 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 	/* we don't need to check max_wall_pj here */
 
 end_it:
+	if (!rc)
+		job_ptr->qos_blocking_ptr = qos_ptr;
 
 	return rc;
 }
@@ -2161,6 +2393,7 @@ static int _qos_job_time_out(struct job_record *job_ptr,
 	uint64_t tres_usage_mins[slurmctld_tres_cnt];
 	uint32_t wall_mins;
 	int rc = true, tres_pos = 0, i;
+	acct_policy_tres_usage_t tres_usage;
 	time_t now = time(NULL);
 
 	if (!qos_ptr || !qos_out_ptr)
@@ -2179,12 +2412,12 @@ static int _qos_job_time_out(struct job_record *job_ptr,
 			(uint64_t)(qos_ptr->usage->usage_tres_raw[i] / 60.0);
 	wall_mins = qos_ptr->usage->grp_used_wall / 60;
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos, qos_ptr->grp_tres_mins_ctld,
 		qos_out_ptr->grp_tres_mins_ctld, NULL,
 		NULL, tres_usage_mins, NULL, 0);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		last_job_update = now;
 		info("Job %u timed out, "
 		     "the job is at or exceeds QOS %s's "
@@ -2199,11 +2432,11 @@ static int _qos_job_time_out(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		/* not possible safe_limits is 0 */
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		/* not possible safe_limits is 0 */
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
@@ -2227,15 +2460,15 @@ static int _qos_job_time_out(struct job_record *job_ptr,
 		}
 	}
 
-	i = _validate_tres_usage_limits_for_qos(
+	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos, qos_ptr->max_tres_mins_pj_ctld,
 		qos_out_ptr->max_tres_mins_pj_ctld, job_tres_usage_mins,
 		NULL, NULL, NULL, 1);
-	switch (i) {
-	case 1:
+	switch (tres_usage) {
+	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 		/* not possible curr_usage is NULL */
 		break;
-	case 2:
+	case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 		last_job_update = now;
 		info("Job %u timed out, "
 		     "the job is at or exceeds QOS %s's "
@@ -2249,9 +2482,9 @@ static int _qos_job_time_out(struct job_record *job_ptr,
 		rc = false;
 		goto end_it;
 		break;
-	case 3:
+	case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 		/* not possible tres_usage is NULL */
-	default:
+	case TRES_USAGE_OKAY:
 		/* all good */
 		break;
 	}
@@ -2328,6 +2561,8 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 	memset(used_tres_run_secs, 0, sizeof(used_tres_run_secs));
 	memset(new_used_tres_run_secs, 0, sizeof(new_used_tres_run_secs));
 	for (i=0; i<slurmctld_tres_cnt; i++) {
+		if (i == TRES_ARRAY_ENERGY)
+			continue;
 		used_tres_run_secs[i] =
 			job_ptr->tres_alloc_cnt[i] * time_limit_secs;
 		new_used_tres_run_secs[i] =
@@ -2343,7 +2578,7 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 	_qos_alter_job(job_ptr, qos_ptr_2,
 		       used_tres_run_secs, new_used_tres_run_secs);
 
-	assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
+	assoc_ptr = job_ptr->assoc_ptr;
 	while (assoc_ptr) {
 		for (i=0; i<slurmctld_tres_cnt; i++) {
 			if (used_tres_run_secs[i] == new_used_tres_run_secs[i])
@@ -2369,21 +2604,21 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 	assoc_mgr_unlock(&locks);
 }
 
-extern bool acct_policy_validate(job_desc_msg_t *job_desc,
-				 struct part_record *part_ptr,
-				 slurmdb_assoc_rec_t *assoc_in,
-				 slurmdb_qos_rec_t *qos_ptr,
-				 uint32_t *reason,
-				 acct_policy_limit_set_t *acct_policy_limit_set,
-				 bool update_call)
+static bool _acct_policy_validate(job_desc_msg_t *job_desc,
+				  struct part_record *part_ptr,
+				  slurmdb_assoc_rec_t *assoc_in,
+				  slurmdb_qos_rec_t *qos_ptr_1,
+				  slurmdb_qos_rec_t *qos_ptr_2,
+				  uint32_t *reason,
+				  acct_policy_limit_set_t *
+					acct_policy_limit_set,
+				  bool update_call)
 {
-	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_qos_rec_t qos_rec;
 	slurmdb_assoc_rec_t *assoc_ptr = assoc_in;
 	int parent = 0, job_cnt = 1;
 	char *user_name = NULL;
 	bool rc = true;
-	struct job_record job_rec;
 	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 				   READ_LOCK, NO_LOCK, NO_LOCK };
 	bool strict_checking;
@@ -2404,11 +2639,6 @@ extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 	assoc_mgr_lock(&locks);
 
 	assoc_mgr_set_qos_tres_cnt(&qos_rec);
-
-	job_rec.qos_ptr = qos_ptr;
-	job_rec.part_ptr = part_ptr;
-
-	_set_qos_order(&job_rec, &qos_ptr_1, &qos_ptr_2);
 
 	if (qos_ptr_1) {
 		strict_checking =
@@ -2708,7 +2938,165 @@ end_it:
 }
 
 /*
- * Determine of the specified job can execute right now or is currently
+ * acct_policy_validate - validate that a job request can be satisfied without
+ * exceeding any association or QOS limit.
+ * job_desc IN - job descriptor being submitted
+ * part_ptr IN - pointer to (one) partition to which the job is being submitted
+ * assoc_in IN - pointer to assocation to which the job is being submitted
+ * qos_ptr IN - pointer to QOS to which the job is being submitted
+ * state_reason OUT - if non-NULL, set to reason for rejecting the job
+ * acct_policy_limit_set IN/OUT - limits set for the job, pre-allocated storage
+ *		is filled in by acct_policy_validate
+ * update_call IN - true if request to update existing job request
+ * RET true if valid
+ */
+extern bool acct_policy_validate(job_desc_msg_t *job_desc,
+				 struct part_record *part_ptr,
+				 slurmdb_assoc_rec_t *assoc_in,
+				 slurmdb_qos_rec_t *qos_ptr,
+				 uint32_t *reason,
+				 acct_policy_limit_set_t *acct_policy_limit_set,
+				 bool update_call)
+{
+	slurmdb_qos_rec_t *qos_ptr_1 = NULL, *qos_ptr_2 = NULL;
+	struct job_record job_rec;
+	bool rc;
+	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+				   READ_LOCK, NO_LOCK, NO_LOCK };
+
+	assoc_mgr_lock(&locks);
+	job_rec.qos_ptr = qos_ptr;
+	job_rec.part_ptr = part_ptr;
+	_set_qos_order(&job_rec, &qos_ptr_1, &qos_ptr_2);
+	assoc_mgr_unlock(&locks);
+	rc = _acct_policy_validate(job_desc, part_ptr, assoc_in,
+				   qos_ptr_1, qos_ptr_2, reason,
+				   acct_policy_limit_set, update_call);
+	return rc;
+}
+
+static void _pack_list_del(void *x)
+{
+	xfree(x);
+}
+
+/*
+ * acct_policy_validate_pack - validate that a pack job as a whole (all
+ * components at once) can be satisfied without exceeding any association
+ * limit. Build a list of every job's assocation and QOS information then combine
+ * usage information for every job sharing an assocation and test that against
+ * the appropriate limit.
+ *
+ * NOTE: This test is imperfect. Each job actually has up to 3 sets of limits
+ * to test (assocation, job QOS and partition QOS). Ideally each would be tested
+ * independently, but that is complicated due to QOS limits overriding the
+ * assocation limits and the ability to have 3 sets of limits for each job.
+ * This only tests the association limit for each pack job component based
+ * upon that component's job and partition QOS.
+ *
+ * NOTE: That a pack job passes this test does not mean that it will be able
+ * to run. For example, this test assumues resource allocation at the CPU level.
+ * If each task is allocated one core, with 2 CPUs, then the CPU limit test
+ * would not be accurate.
+ *
+ * submit_job_list IN - list of "struct job_record" entries (already created)
+ * RET true if valid
+ */
+extern bool acct_policy_validate_pack(List submit_job_list)
+{
+	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+				   READ_LOCK, NO_LOCK, NO_LOCK };
+	List pack_limit_list;
+	ListIterator iter1, iter2;
+	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
+	struct job_record *job_ptr1, *job_ptr2;
+	pack_limits_t *job_limit1, *job_limit2;
+	bool rc = true;
+	job_desc_msg_t job_desc;
+	bool build_job_desc = true;
+	acct_policy_limit_set_t acct_policy_limit_set;
+	int i, job_cnt;
+	uint32_t reason = 0;
+	int tres_req_size = sizeof(uint64_t) * g_tres_count;
+
+	memset(&acct_policy_limit_set, 0, sizeof(acct_policy_limit_set_t));
+	acct_policy_limit_set.tres =
+		xmalloc(sizeof(uint16_t) * slurmctld_tres_cnt);
+
+	/* Build list of QOS, assocation, and job pointers */
+	pack_limit_list = list_create(_pack_list_del);
+	iter1 = list_iterator_create(submit_job_list);
+	assoc_mgr_lock(&locks);
+	while ((job_ptr1 = (struct job_record *) list_next(iter1))) {
+		qos_ptr_1 = NULL;
+		qos_ptr_2 = NULL;
+		_set_qos_order(job_ptr1, &qos_ptr_1, &qos_ptr_2);
+		job_limit1 = xmalloc(sizeof(pack_limits_t));
+		job_limit1->assoc_ptr = job_ptr1->assoc_ptr;
+		job_limit1->job_ptr   = job_ptr1;
+		job_limit1->qos_ptr_1 = qos_ptr_1;
+		job_limit1->qos_ptr_2 = qos_ptr_2;
+		list_append(pack_limit_list, job_limit1);
+	}
+	assoc_mgr_unlock(&locks);
+	list_iterator_destroy(iter1);
+
+	iter1 = list_iterator_create(pack_limit_list);
+	while ((job_limit1 = (pack_limits_t *) list_next(iter1))) {
+		job_ptr1 = job_limit1->job_ptr;
+		if (build_job_desc) {
+			build_job_desc = false;
+			job_desc.time_limit = job_ptr1->time_limit;
+			job_desc.tres_req_cnt = xmalloc(tres_req_size);
+			job_desc.user_id = job_ptr1->user_id;
+		}
+		if (job_limit1->assoc_ptr) {
+			job_cnt = 1;
+			memcpy(job_desc.tres_req_cnt, job_ptr1->tres_req_cnt,
+			       tres_req_size);
+			iter2 = list_iterator_create(pack_limit_list);
+			while ((job_limit2 = (pack_limits_t *)
+					     list_next(iter2))) {
+				if ((job_limit2 == job_limit1) ||
+				    (job_limit2->assoc_ptr !=
+				     job_limit1->assoc_ptr))
+					continue;
+				job_ptr2 = job_limit2->job_ptr;
+				for (i = 0 ; i < g_tres_count; i++) {
+					job_desc.tres_req_cnt[i] +=
+						job_ptr2->tres_req_cnt[i];
+				}
+				job_cnt++;
+			}
+			list_iterator_destroy(iter2);
+			if (job_cnt > 1) {
+				job_desc.array_bitmap = bit_alloc(job_cnt);
+				bit_nset(job_desc.array_bitmap, 0, job_cnt - 1);
+				rc = _acct_policy_validate(&job_desc,
+						job_ptr1->part_ptr,
+						job_limit1->assoc_ptr,
+						job_limit1->qos_ptr_1,
+						job_limit1->qos_ptr_2,
+						&reason,
+						&acct_policy_limit_set,
+						false);
+				bit_free(job_desc.array_bitmap);
+				if (!rc)
+					break;
+			}
+		}
+	}
+	list_iterator_destroy(iter1);
+
+	xfree(job_desc.tres_req_cnt);
+	list_destroy(pack_limit_list);
+	xfree(acct_policy_limit_set.tres);
+
+	return rc;
+}
+
+/*
+ * Determine if the specified job can execute right now or is currently
  * blocked by an association or QOS limit. Does not re-validate job state.
  */
 extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
@@ -2728,13 +3116,14 @@ extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
 }
 
 /*
- * acct_policy_job_runnable_pre_select - Determine of the specified
+ * acct_policy_job_runnable_pre_select - Determine if the specified
  *	job can execute right now or not depending upon accounting
  *	policy (e.g. running job limit for this association). If the
  *	association limits prevent the job from ever running (lowered
  *	limits since job submission), then cancel the job.
  */
-extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr)
+extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr,
+						bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_qos_rec_t qos_rec;
@@ -2771,7 +3160,8 @@ extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr)
 
 	slurmdb_init_qos_rec(&qos_rec, 0, INFINITE);
 
-	assoc_mgr_lock(&locks);
+	if (!assoc_mgr_locked)
+		assoc_mgr_lock(&locks);
 
 	assoc_mgr_set_qos_tres_cnt(&qos_rec);
 
@@ -2939,7 +3329,8 @@ extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr)
 		parent = 1;
 	}
 end_it:
-	assoc_mgr_unlock(&locks);
+	if (!assoc_mgr_locked)
+		assoc_mgr_unlock(&locks);
 	slurmdb_free_qos_rec_members(&qos_rec);
 
 	return rc;
@@ -2950,7 +3341,8 @@ end_it:
  *	selected for the job verify the counts don't exceed aggregated limits.
  */
 extern bool acct_policy_job_runnable_post_select(
-	struct job_record *job_ptr, uint64_t *tres_req_cnt)
+	struct job_record *job_ptr, uint64_t *tres_req_cnt,
+	bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_qos_rec_t qos_rec;
@@ -2961,7 +3353,8 @@ extern bool acct_policy_job_runnable_post_select(
 	uint32_t time_limit;
 	bool rc = true;
 	bool safe_limits = false;
-	int i, tres_pos;
+	int i, tres_pos = 0;
+	acct_policy_tres_usage_t tres_usage;
 	int parent = 0; /* flag to tell us if we are looking at the
 			 * parent or not
 			 */
@@ -2998,6 +3391,8 @@ extern bool acct_policy_job_runnable_post_select(
 		job_ptr->state_reason = WAIT_NO_REASON;
 	}
 
+	job_ptr->qos_blocking_ptr = NULL;
+
 	/* clang needs this memset to avoid a warning */
 	memset(tres_run_mins, 0, sizeof(tres_run_mins));
 	memset(tres_usage_mins, 0, sizeof(tres_usage_mins));
@@ -3015,7 +3410,8 @@ extern bool acct_policy_job_runnable_post_select(
 
 	slurmdb_init_qos_rec(&qos_rec, 0, INFINITE);
 
-	assoc_mgr_lock(&locks);
+	if (!assoc_mgr_locked)
+		assoc_mgr_lock(&locks);
 
 	assoc_mgr_set_qos_tres_cnt(&qos_rec);
 
@@ -3056,14 +3452,14 @@ extern bool acct_policy_job_runnable_post_select(
 		 * If the association has a GrpCPUMins limit set (and there
 		 * is no QOS with GrpCPUMins set) we may hold the job
 		 */
-		i = _validate_tres_usage_limits_for_assoc(
+		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos, assoc_ptr->grp_tres_mins_ctld,
 			qos_rec.grp_tres_mins_ctld,
 			job_tres_time_limit, tres_run_mins,
 			tres_usage_mins, job_ptr->limit_set.tres,
 			safe_limits);
-		switch (i) {
-		case 1:
+		switch (tres_usage) {
+		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK_MIN);
@@ -3080,7 +3476,7 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		case 2:
+		case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK_MIN);
@@ -3098,7 +3494,7 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		case 3:
+		case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 			/*
 			 * If we're using safe limits start
 			 * the job only if there are
@@ -3129,22 +3525,22 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		default:
+		case TRES_USAGE_OKAY:
 			/* all good */
 			break;
 		}
 
 
-		i = _validate_tres_usage_limits_for_assoc(
+		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos,
 			assoc_ptr->grp_tres_ctld, qos_rec.grp_tres_ctld,
 			tres_req_cnt, assoc_ptr->usage->grp_used_tres,
 			NULL, job_ptr->limit_set.tres, 1);
-		switch (i) {
-		case 1:
+		switch (tres_usage) {
+		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 			/* not possible because the curr_usage sent in is NULL*/
 			break;
-		case 2:
+		case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK);
@@ -3161,7 +3557,7 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		case 3:
+		case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK);
@@ -3180,23 +3576,23 @@ extern bool acct_policy_job_runnable_post_select(
 			       tres_req_cnt[tres_pos]);
 			rc = false;
 			goto end_it;
-		default:
+		case TRES_USAGE_OKAY:
 			/* all good */
 			break;
 		}
 
 		/* we don't need to check grp_jobs here */
 
-		i = _validate_tres_usage_limits_for_assoc(
+		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos,
 			assoc_ptr->grp_tres_run_mins_ctld,
 			qos_rec.grp_tres_run_mins_ctld,
 			job_tres_time_limit, tres_run_mins, NULL, NULL, 1);
-		switch (i) {
-		case 1:
+		switch (tres_usage) {
+		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 			/* not possible because the curr_usage sent in is NULL*/
 			break;
-		case 2:
+		case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK_RUN_MIN);
@@ -3213,7 +3609,7 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		case 3:
+		case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK_RUN_MIN);
@@ -3233,7 +3629,7 @@ extern bool acct_policy_job_runnable_post_select(
 			rc = false;
 			goto end_it;
 			break;
-		default:
+		case TRES_USAGE_OKAY:
 			/* all good */
 			break;
 		}
@@ -3332,7 +3728,8 @@ extern bool acct_policy_job_runnable_post_select(
 		parent = 1;
 	}
 end_it:
-	assoc_mgr_unlock(&locks);
+	if (!assoc_mgr_locked)
+		assoc_mgr_unlock(&locks);
 	slurmdb_free_qos_rec_members(&qos_rec);
 
 	return rc;
@@ -3536,7 +3933,7 @@ extern int acct_policy_update_pending_job(struct job_record *job_ptr)
 }
 
 /*
- * acct_policy_job_runnable - Determine of the specified job has timed
+ * acct_policy_job_runnable - Determine if the specified job has timed
  *	out based on it's QOS or association.
  */
 extern bool acct_policy_job_time_out(struct job_record *job_ptr)
@@ -3551,7 +3948,8 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 	assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 				   READ_LOCK, NO_LOCK, NO_LOCK };
 	time_t now;
-	int i, tres_pos;
+	int i, tres_pos = 0;
+	acct_policy_tres_usage_t tres_usage;
 
 	/* Now see if we are enforcing limits.  If Safe is set then
 	 * return false as well since we are being safe if the limit
@@ -3568,7 +3966,7 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 
 	_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
 
-	assoc =	(slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
+	assoc =	job_ptr->assoc_ptr;
 
 	now = time(NULL);
 
@@ -3582,10 +3980,14 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 	/* find out how many cpu minutes this job has been
 	 * running for. We add 1 here to make it so we can check for
 	 * just > instead of >= in our checks */
-	for (i=0; i<slurmctld_tres_cnt; i++)
+	for (i=0; i<slurmctld_tres_cnt; i++) {
+		if (i == TRES_ARRAY_ENERGY)
+			continue;
+
 		if (job_ptr->tres_alloc_cnt[i])
 			job_tres_usage_mins[i] =
 				(time_delta * job_ptr->tres_alloc_cnt[i]) + 1;
+	}
 
 	/* check the first QOS setting it's values in the qos_rec */
 	if (qos_ptr_1 && !_qos_job_time_out(job_ptr, qos_ptr_1,
@@ -3607,12 +4009,12 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 					   / 60.0);
 		wall_mins = assoc->usage->grp_used_wall / 60;
 
-		i = _validate_tres_usage_limits_for_assoc(
+		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos, assoc->grp_tres_mins_ctld,
 			qos_rec.grp_tres_mins_ctld, NULL,
 			NULL, tres_usage_mins, NULL, 0);
-		switch (i) {
-		case 1:
+		switch (tres_usage) {
+		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 			last_job_update = now;
 			info("Job %u timed out, "
 			     "the job is at or exceeds assoc %u(%s/%s/%s) "
@@ -3627,11 +4029,11 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 			job_ptr->state_reason = FAIL_TIMEOUT;
 			goto job_failed;
 			break;
-		case 2:
+		case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 			/* not possible safe_limits is 0 */
-		case 3:
+		case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 			/* not possible safe_limits is 0 */
-		default:
+		case TRES_USAGE_OKAY:
 			/* all good */
 			break;
 		}
@@ -3650,15 +4052,15 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 			break;
 		}
 
-		i = _validate_tres_usage_limits_for_assoc(
+		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos, assoc->max_tres_mins_ctld,
 			qos_rec.max_tres_mins_pj_ctld, job_tres_usage_mins,
 			NULL, NULL, NULL, 1);
-		switch (i) {
-		case 1:
+		switch (tres_usage) {
+		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
 			/* not possible curr_usage is NULL */
 			break;
-		case 2:
+		case TRES_USAGE_REQ_EXCEEDS_LIMIT:
 			last_job_update = now;
 			info("Job %u timed out, "
 			     "the job is at or exceeds assoc %u(%s/%s/%s) "
@@ -3673,9 +4075,9 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 			job_ptr->state_reason = FAIL_TIMEOUT;
 			goto job_failed;
 			break;
-		case 3:
+		case TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE:
 			/* not possible tres_usage is NULL */
-		default:
+		case TRES_USAGE_OKAY:
 			/* all good */
 			break;
 		}

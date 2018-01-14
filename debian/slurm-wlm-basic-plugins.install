@@ -1,1 +1,1 @@
-usr/lib/*/slurm/*.so
+usr/lib/*/slurm-wlm/*.so

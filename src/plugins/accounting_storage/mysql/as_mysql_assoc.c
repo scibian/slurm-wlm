@@ -1112,11 +1112,14 @@ static int _setup_assoc_cond_limits(
 	if (!assoc_cond)
 		return 0;
 
+	/*
+	 * Don't use prefix here, always use t1 or we could get extra "deleted"
+	 * entries we don't want.
+	 */
 	if (assoc_cond->with_deleted)
-		xstrfmtcat(*extra, " (%s.deleted=0 || %s.deleted=1)",
-			   prefix, prefix);
+		xstrfmtcat(*extra, " (t1.deleted=0 || t1.deleted=1)");
 	else
-		xstrfmtcat(*extra, " %s.deleted=0", prefix);
+		xstrfmtcat(*extra, " t1.deleted=0");
 
 	if (assoc_cond->only_defs) {
 		set = 1;
@@ -2141,20 +2144,16 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 		 */
 		slurmdb_combine_tres_strings(
 			&assoc->max_tres_pj, parent_mtpj,
-			TRES_STR_FLAG_NONE);
-		xfree(parent_mtpj);
+			TRES_STR_FLAG_SORT_ID);
 		slurmdb_combine_tres_strings(
 			&assoc->max_tres_pn, parent_mtpn,
-			TRES_STR_FLAG_NONE);
-		xfree(parent_mtpn);
+			TRES_STR_FLAG_SORT_ID);
 		slurmdb_combine_tres_strings(
 			&assoc->max_tres_mins_pj, parent_mtmpj,
-			TRES_STR_FLAG_NONE);
-		xfree(parent_mtmpj);
+			TRES_STR_FLAG_SORT_ID);
 		slurmdb_combine_tres_strings(
 			&assoc->max_tres_run_mins, parent_mtrm,
-			TRES_STR_FLAG_NONE);
-		xfree(parent_mtrm);
+			TRES_STR_FLAG_SORT_ID);
 
 		assoc->qos_list = list_create(slurm_destroy_char);
 
@@ -2241,6 +2240,10 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 		//info("parent id is %d", assoc->parent_id);
 		//log_assoc_rec(assoc);
 	}
+	xfree(parent_mtpj);
+	xfree(parent_mtpn);
+	xfree(parent_mtmpj);
+	xfree(parent_mtrm);
 	mysql_free_result(result);
 
 	FREE_NULL_LIST(delta_qos_list);

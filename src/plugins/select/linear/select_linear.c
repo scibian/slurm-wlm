@@ -603,7 +603,8 @@ static int _job_count_bitmap(struct cr_record *cr_ptr,
 		cpus_per_core  = cpu_cnt / (core_end_bit - core_start_bit + 1);
 		gres_cores = gres_plugin_job_test(job_ptr->gres_list,
 						  gres_list, use_total_gres,
-						  NULL, 0, 0, job_ptr->job_id,
+						  NULL, core_start_bit,
+						  core_end_bit, job_ptr->job_id,
 						  node_ptr->name);
 		gres_cpus = gres_cores;
 		if (gres_cpus != NO_VAL) {
@@ -2320,7 +2321,7 @@ static int _rm_job_from_nodes(struct cr_record *cr_ptr,
 		if (!bit_test(job_resrcs_ptr->node_bitmap, i))
 			continue;
 		node_offset++;
-		if (!bit_test(job_ptr->node_bitmap, i))
+		if (!job_ptr->node_bitmap || !bit_test(job_ptr->node_bitmap, i))
 			continue;
 
 		node_ptr = node_record_table_ptr + i;
@@ -3580,12 +3581,12 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 	slurm_mutex_lock(&cr_mutex);
 	_free_cr(cr_ptr);
 	cr_ptr = NULL;
-	slurm_mutex_unlock(&cr_mutex);
 
 	select_node_ptr = node_ptr;
 	select_node_cnt = node_cnt;
 	select_fast_schedule = slurm_get_fast_schedule();
 	cr_init_global_core_data(node_ptr, node_cnt, select_fast_schedule);
+	slurm_mutex_unlock(&cr_mutex);
 
 	return SLURM_SUCCESS;
 }
@@ -3655,15 +3656,15 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 		return EINVAL;
 	}
 
-	if (job_ptr->details->core_spec != (uint16_t) NO_VAL) {
+	if (job_ptr->details->core_spec != NO_VAL16) {
 		verbose("select/linear: job %u core_spec(%u) not supported",
 			job_ptr->job_id, job_ptr->details->core_spec);
-		job_ptr->details->core_spec = (uint16_t) NO_VAL;
+		job_ptr->details->core_spec = NO_VAL16;
 	}
 
 	if (job_ptr->details->share_res)
 		max_share = job_ptr->part_ptr->max_share & ~SHARED_FORCE;
-	else	/* ((shared == 0) || (shared == (uint16_t) NO_VAL)) */
+	else	/* ((shared == 0) || (shared == NO_VAL16)) */
 		max_share = 1;
 
 	if (mode == SELECT_MODE_WILL_RUN) {

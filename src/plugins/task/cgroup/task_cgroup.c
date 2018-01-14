@@ -242,7 +242,7 @@ extern int task_p_pre_setuid (stepd_step_rec_t *job)
  * task_p_pre_launch_priv() is called prior to exec of application task.
  * in privileged mode, just after slurm_spank_task_init_privileged
  */
-extern int task_p_pre_launch_priv (stepd_step_rec_t *job)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
 {
 
 	if (use_cpuset) {
@@ -252,7 +252,7 @@ extern int task_p_pre_launch_priv (stepd_step_rec_t *job)
 
 	if (use_memory) {
 		/* attach the task to the memory cgroup */
-		task_cgroup_memory_attach_task(job);
+		task_cgroup_memory_attach_task(job, pid);
 	}
 
 	if (use_devices) {
@@ -325,15 +325,12 @@ extern char* task_cgroup_create_slurm_cg (xcgroup_ns_t* ns) {
 	}
 #endif
 
-	/* create slurm cgroup in the ns (it could already exist)
-	 * disable notify_on_release to avoid the removal/creation
-	 * of this cgroup for each last/first running job on the node */
+	/* create slurm cgroup in the ns (it could already exist) */
 	if (xcgroup_create(ns,&slurm_cg,pre,
 			   getuid(), getgid()) != XCGROUP_SUCCESS) {
 		xfree(pre);
 		return pre;
 	}
-	slurm_cg.notify = 0;
 	if (xcgroup_instantiate(&slurm_cg) != XCGROUP_SUCCESS) {
 		error("unable to build slurm cgroup for ns %s: %m",
 		      ns->subsystems);

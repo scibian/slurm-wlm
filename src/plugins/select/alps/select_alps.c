@@ -312,10 +312,10 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 		job_ptr->details->min_cpus = 0;
 	}
 
-	if (job_ptr->details->core_spec != (uint16_t) NO_VAL) {
+	if (job_ptr->details->core_spec != NO_VAL16) {
 		verbose("select/alps: job %u core_spec(%u) not supported",
 			job_ptr->job_id, job_ptr->details->core_spec);
-		job_ptr->details->core_spec = (uint16_t) NO_VAL;
+		job_ptr->details->core_spec = NO_VAL16;
 	}
 
 	return other_job_test(job_ptr, bitmap, min_nodes, max_nodes,
@@ -940,7 +940,7 @@ extern void select_p_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
 		/* init the rest of the dim sizes. All current (2011)
 		 * XT/XE installations have a maximum dimension of 3,
 		 * smaller systems deploy a 2D Torus which has no
-		 * connectivity in X-dimension.  Just incase they
+		 * connectivity in X-dimension.  Just in case they
 		 * decide to change it where we only get 2 instead of
 		 * 3 we will initialize it later. */
 		for (i = 1; i < dims; i++)

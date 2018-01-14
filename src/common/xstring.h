@@ -185,6 +185,11 @@ char *xstrtolower(char *str);
 char *xstrchr(const char *s1, int c);
 
 /*
+ * safe strrchr (handles NULL values)
+ */
+char *xstrrchr(const char *s1, int c);
+
+/*
  * safe strcmp (handles NULL values)
  */
 int xstrcmp(const char *s1, const char *s2);
@@ -198,6 +203,11 @@ int xstrncmp(const char *s1, const char *s2, size_t n);
  * safe strcasecmp (handles NULL values)
  */
 int xstrcasecmp(const char *s1, const char *s2);
+
+/*
+ * safe strncasecmp (handles NULL values)
+ */
+int xstrncasecmp(const char *s1, const char *s2, size_t n);
 
 /* safe case insensitive version of strstr(). */
 char *xstrcasestr(char *haystack, char *needle);

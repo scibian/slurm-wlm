@@ -1,2 +1,2 @@
 sview: hardening-no-bindnow
-spelling-error-in-binary
+sview: binary-or-shlib-defines-rpath
