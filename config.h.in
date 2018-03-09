@@ -15,9 +15,6 @@
 /* Define to 1 if using glib-2.32.0 or higher */
 #undef GLIB_NEW_THREADS
 
-/* Define to 1 if licensed under terms of the GNU General Public License. */
-#undef GPL_LICENSED
-
 /* Define to 1 if using gtk+-2.14.0 or higher */
 #undef GTK2_USE_GET_FOCUS
 
@@ -32,9 +29,6 @@
 
 /* Define to 1 if 3-dimensional architecture */
 #undef HAVE_3D
-
-/* Define to 1 if 4-dimensional architecture */
-#undef HAVE_4D
 
 /* Define to 1 for Cray XT/XE systems using ALPS */
 #undef HAVE_ALPS_CRAY
@@ -100,9 +94,6 @@
 /* Define to 1 if you have the <errno.h> header file. */
 #undef HAVE_ERRNO_H
 
-/* Define to 1 if function EVP_MD_CTX_cleanup exists. */
-#undef HAVE_EVP_MD_CTX_CLEANUP
-
 /* Define to 1 if you have the `faccessat' function. */
 #undef HAVE_FACCESSAT
 
@@ -129,9 +120,6 @@
 
 /* Define to 1 if hwloc library found */
 #undef HAVE_HWLOC
-
-/* Define to 1 if hwloc library supports PCI devices */
-#undef HAVE_HWLOC_PCI
 
 /* Define to 1 if you have the `inet_aton' function. */
 #undef HAVE_INET_ATON
@@ -160,6 +148,9 @@
 /* Define to 1 if you have a functional curl library. */
 #undef HAVE_LIBCURL
 
+/* Define to 1 if you have the `ucp' library (-lucp). */
+#undef HAVE_LIBUCP
+
 /* Define to 1 if you have `z' library (-lz) */
 #undef HAVE_LIBZ
 
@@ -169,11 +160,8 @@
 /* Define to 1 if you have the <linux/sched.h> header file. */
 #undef HAVE_LINUX_SCHED_H
 
-/* Compile with Lua 5.1 */
-#undef HAVE_LUA_5_1
-
-/* Compile with Lua 5.2 */
-#undef HAVE_LUA_5_2
+/* Define to 1 if we have the Lua library */
+#undef HAVE_LUA
 
 /* Define to 1 if you have 'lz4' library (-llz4) */
 #undef HAVE_LZ4
@@ -236,14 +224,8 @@
 /* Define to 1 if you have the <paths.h> header file. */
 #undef HAVE_PATHS_H
 
-/* define if you have permapi_h */
-#undef HAVE_PERMAPI_H
-
 /* Define to 1 if pmix library found */
 #undef HAVE_PMIX
-
-/* Define if you have Posix semaphores. */
-#undef HAVE_POSIX_SEMS
 
 /* Define if libc sets program_invocation_name */
 #undef HAVE_PROGRAM_INVOCATION_NAME
@@ -283,6 +265,9 @@
 
 /* Define to 1 if you have the <socket.h> header file. */
 #undef HAVE_SOCKET_H
+
+/* Define to 1 if libssh2 found */
+#undef HAVE_SSH2
 
 /* Define to 1 if you have the `statfs' function. */
 #undef HAVE_STATFS
@@ -325,6 +310,9 @@
 
 /* Define to 1 if you have the <sysint.h> header file. */
 #undef HAVE_SYSINT_H
+
+/* Define systemd presence */
+#undef HAVE_SYSTEMD
 
 /* Define to 1 if you have the <sys/dr.h> header file. */
 #undef HAVE_SYS_DR_H
@@ -376,6 +364,9 @@
 
 /* Define to 1 if you have the <termcap.h> header file. */
 #undef HAVE_TERMCAP_H
+
+/* Define to 1 if ucx library found */
+#undef HAVE_UCX
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
@@ -475,14 +466,19 @@
 /* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
 
+/* Define to 1 if `major', `minor', and `makedev' are declared in <mkdev.h>.
+   */
+#undef MAJOR_IN_MKDEV
+
+/* Define to 1 if `major', `minor', and `makedev' are declared in
+   <sysmacros.h>. */
+#undef MAJOR_IN_SYSMACROS
+
 /* Define to 1 for memory leak debugging. */
 #undef MEMORY_LEAK_DEBUG
 
 /* Enable multiple slurmd on one node */
 #undef MULTIPLE_SLURMD
-
-/* Define to 1 if with non thread-safe code */
-#undef MYSQL_NOT_THREAD_SAFE
 
 /* Define to 1 if you are building a production release. */
 #undef NDEBUG
@@ -613,6 +609,9 @@
 
 /* Define the project's version. */
 #undef VERSION
+
+/* Using internal Slurm X11 support */
+#undef WITH_SLURM_X11
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */

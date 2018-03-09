@@ -58,7 +58,6 @@ static int _call_external_program(stepd_step_rec_t *job);
 void step_terminate_monitor_start(stepd_step_rec_t *job)
 {
 	slurm_ctl_conf_t *conf;
-	pthread_attr_t attr;
 
 	slurm_mutex_lock(&lock);
 
@@ -72,16 +71,13 @@ void step_terminate_monitor_start(stepd_step_rec_t *job)
 	program_name = xstrdup(conf->unkillable_program);
 	slurm_conf_unlock();
 
-	slurm_attr_init(&attr);
-	pthread_create(&tid, &attr, _monitor, job);
-	slurm_attr_destroy(&attr);
+	slurm_thread_create(&tid, _monitor, job);
+
 	running_flag = 1;
 	recorded_jobid = job->jobid;
 	recorded_stepid = job->stepid;
 
 	slurm_mutex_unlock(&lock);
-
-	return;
 }
 
 void step_terminate_monitor_stop(void)
@@ -99,7 +95,7 @@ void step_terminate_monitor_stop(void)
 	}
 
 	stop_flag = 1;
-	debug("step_terminate_monitor_stop signalling condition");
+	debug("step_terminate_monitor_stop signaling condition");
 	slurm_cond_signal(&cond);
 	slurm_mutex_unlock(&lock);
 
@@ -130,6 +126,8 @@ static void *_monitor(void *arg)
 	if (rc == ETIMEDOUT) {
 		char entity[24], time_str[24];
 		time_t now = time(NULL);
+		int rc;
+
 		_call_external_program(job);
 
 		if (job->stepid == SLURM_BATCH_SCRIPT) {
@@ -144,16 +142,17 @@ static void *_monitor(void *arg)
 		}
 		slurm_make_time_str(&now, time_str, sizeof(time_str));
 
-		if (job->state != SLURMSTEPD_STEP_RUNNING) {
+		if (job->state < SLURMSTEPD_STEP_RUNNING) {
 			error("*** %s STEPD TERMINATED ON %s AT %s DUE TO JOB NOT RUNNING ***",
 			      entity, job->node_name, time_str);
+			rc = ESLURMD_JOB_NOTRUNNING;
 		} else {
 			error("*** %s STEPD TERMINATED ON %s AT %s DUE TO JOB NOT ENDING WITH SIGNALS ***",
 			      entity, job->node_name, time_str);
+			rc = ESLURMD_KILL_TASK_FAILED;
 		}
 
-		stepd_cleanup(NULL, job, NULL, NULL, SLURM_ERROR, 0);
-		abort();
+	        exit(stepd_cleanup(NULL, job, NULL, NULL, rc, 0));
 	} else if (rc != 0) {
 		error("Error waiting on condition in _monitor: %m");
 	}
@@ -172,8 +171,7 @@ static int _call_external_program(stepd_step_rec_t *job)
 	int max_wait = 300; /* seconds */
 	int time_remaining;
 
-	if ((job->state != SLURMSTEPD_STEP_RUNNING) ||
-	    program_name == NULL || program_name[0] == '\0')
+	if (program_name == NULL || program_name[0] == '\0')
 		return 0;
 
 	debug("step_terminate_monitor: unkillable after %d sec, calling: %s",

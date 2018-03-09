@@ -73,6 +73,7 @@ typedef struct slurm_bb_ops {
 	int		(*job_test_stage_in) (struct job_record *job_ptr,
 					      bool test_only);
 	int		(*job_begin) (struct job_record *job_ptr);
+	int		(*job_revoke_alloc) (struct job_record *job_ptr);
 	int		(*job_start_stage_out) (struct job_record *job_ptr);
 	int		(*job_test_post_run) (struct job_record *job_ptr);
 	int		(*job_test_stage_out) (struct job_record *job_ptr);
@@ -95,6 +96,7 @@ static const char *syms[] = {
 	"bb_p_job_try_stage_in",
 	"bb_p_job_test_stage_in",
 	"bb_p_job_begin",
+	"bb_p_job_revoke_alloc",
 	"bb_p_job_start_stage_out",
 	"bb_p_job_test_post_run",
 	"bb_p_job_test_stage_out",
@@ -296,8 +298,8 @@ extern int bb_g_reconfig(void)
  */
 extern uint64_t bb_g_get_system_size(char *name)
 {
-	uint64_t i, size = 0;
-	int offset = 0;
+	uint64_t size = 0;
+	int i, offset = 0;
 
 	(void) bb_g_init();
 
@@ -369,6 +371,75 @@ extern int bb_g_job_validate2(struct job_record *job_ptr, char **err_msg)
 	return rc;
 }
 
+
+/* Return true if pack job separator in the script */
+static bool _pack_check(char *tok)
+{
+	if (strncmp(tok + 1, "SLURM",  5) &&
+	    strncmp(tok + 1, "SBATCH", 6))
+		return false;
+	if (!strstr(tok+6, "packjob"))
+		return false;
+	return true;
+}
+
+/*
+ * Convert a pack job batch script into a script containing only the portions
+ * relevant to a specific pack job component.
+ *
+ * script IN - Whole job batch script
+ * pack_job_offset IN - Zero origin pack job component ID
+ * RET script for that job component, call xfree() to release memory
+ */
+extern char *bb_g_build_pack_script(char *script, uint32_t pack_job_offset)
+{
+	char *result = NULL, *tmp = NULL;
+	char *tok, *save_ptr = NULL;
+	bool fini = false;
+	int cur_offset = 0;
+	DEF_TIMERS;
+
+	START_TIMER;
+	tmp = xstrdup(script);
+	tok = strtok_r(tmp, "\n", &save_ptr);
+	while (tok) {
+		if (!result) {
+			xstrfmtcat(result, "%s\n", tok);
+		} else if (tok[0] != '#') {
+			fini = true;
+		} else if (_pack_check(tok)) {
+			cur_offset++;
+			if (cur_offset > pack_job_offset)
+				fini = true;
+		} else if (cur_offset == pack_job_offset) {
+			xstrfmtcat(result, "%s\n", tok);
+		}
+		if (fini)
+			break;
+		tok = strtok_r(NULL, "\n", &save_ptr);
+	}
+
+	if (pack_job_offset == 0) {
+		while (tok) {
+			char *sep = "";
+			if ((tok[0] == '#') &&
+			    (((tok[1] == 'B') && (tok[2] == 'B')) ||
+			     ((tok[1] == 'D') && (tok[2] == 'W')))) {
+				sep = "#EXCLUDED ";
+				tok++;
+			}
+			xstrfmtcat(result, "%s%s\n", sep, tok);
+			tok = strtok_r(NULL, "\n", &save_ptr);
+		}
+	} else if (result) {
+		xstrcat(result, "exit 0\n");
+	}
+	xfree(tmp);
+	END_TIMER2(__func__);
+
+	return result;
+}
+
 /*
  * Fill in the tres_cnt (in MB) based off the job record
  * NOTE: Based upon job-specific burst buffers, excludes persistent buffers
@@ -394,7 +465,7 @@ extern void bb_g_job_set_tres_cnt(struct job_record *job_ptr,
 }
 
 /* sort jobs by expected start time */
-extern int _sort_job_queue(void *x, void *y)
+static int _sort_job_queue(void *x, void *y)
 {
 	struct job_record *job_ptr1 = *(struct job_record **) x;
 	struct job_record *job_ptr2 = *(struct job_record **) y;
@@ -521,6 +592,32 @@ extern int bb_g_job_begin(struct job_record *job_ptr)
 	slurm_mutex_lock(&g_context_lock);
 	for (i = 0; i < g_context_cnt; i++) {
 		rc2 = (*(ops[i].job_begin))(job_ptr);
+		if (rc2 != SLURM_SUCCESS)
+			rc = rc2;
+	}
+	slurm_mutex_unlock(&g_context_lock);
+	END_TIMER2(__func__);
+
+	return rc;
+}
+
+/* Revoke allocation, but do not release resources.
+ * Executed after bb_g_job_begin() if there was an allocation failure.
+ * Does not release previously allocated resources.
+ *
+ * Returns a SLURM errno.
+ */
+extern int bb_g_job_revoke_alloc(struct job_record *job_ptr)
+{
+	DEF_TIMERS;
+	int i, rc = SLURM_SUCCESS, rc2;
+
+	START_TIMER;
+	if (bb_g_init() != SLURM_SUCCESS)
+		rc = SLURM_ERROR;
+	slurm_mutex_lock(&g_context_lock);
+	for (i = 0; i < g_context_cnt; i++) {
+		rc2 = (*(ops[i].job_revoke_alloc))(job_ptr);
 		if (rc2 != SLURM_SUCCESS)
 			rc = rc2;
 	}

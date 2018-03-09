@@ -319,7 +319,7 @@ int	slurm_get_cpuset(char *path, pid_t pid, size_t size, cpu_set_t *mask)
 		return SLURM_ERROR;
 	}
 	mstr[rc] = '\0';
-	str_to_cpuset(mask, mstr);
+	(void) task_str_to_cpuset(mask, mstr);
 
 	snprintf(file_path, sizeof(file_path), "%s/tasks", path);
 	fd = open(file_path, O_CREAT | O_RDONLY, 0700);
@@ -354,7 +354,7 @@ int	slurm_memset_available(void)
 int	slurm_set_memset(char *path, nodemask_t *new_mask)
 {
 	char file_path[PATH_MAX];
-	char mstr[1 + CPU_SETSIZE * 4], tmp[10];
+	char mstr[1 + CPU_SETSIZE * 4], tmp[16];
 	int fd, i, max_node;
 	ssize_t rc;
 

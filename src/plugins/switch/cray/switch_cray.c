@@ -69,6 +69,10 @@
 
 uint64_t debug_flags = 0;
 
+#if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
+static bool lustre_no_flush = false;
+#endif
+
 /*
  * These variables are required by the generic plugin interface.  If they
  * are not found in the plugin, the plugin loader will ignore it.
@@ -96,6 +100,7 @@ uint64_t debug_flags = 0;
 const char plugin_name[] = "switch CRAY plugin";
 const char plugin_type[] = "switch/cray";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
+const uint32_t plugin_id      = SWITCH_PLUGIN_CRAY;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -123,6 +128,7 @@ int fini(void)
 
 extern int switch_p_reconfig(void)
 {
+	debug_flags = slurm_get_debug_flags();
 	return SLURM_SUCCESS;
 }
 
@@ -414,9 +420,11 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 {
 
 #if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
-	slurm_cray_jobinfo_t *sw_job = (slurm_cray_jobinfo_t *) job->switch_job;
+	slurm_cray_jobinfo_t *sw_job = job->switch_job ?
+		(slurm_cray_jobinfo_t *)job->switch_job->data : NULL;
 	int rc, num_ptags;
-	int mem_scaling, cpu_scaling;
+	char *launch_params;
+	int exclusive = 0, mem_scaling = 100, cpu_scaling = 100;
 	int *ptags = NULL;
 	char *err_msg = NULL;
 	uint64_t cont_id = job->cont_id;
@@ -484,29 +492,50 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 	/*
 	 * Configure the network
 	 *
-	 * I'm setting exclusive flag to zero for now until we can figure out a
-	 * way to guarantee that the application not only has exclusive access
-	 * to the node but also will not be suspended.  This may not happen.
-	 *
 	 * Cray shmem still uses the network, even when it's using only one
 	 * node, so we must always configure the network.
 	 */
-	cpu_scaling = get_cpu_scaling(job);
-	if (cpu_scaling == -1) {
-		return SLURM_ERROR;
+	launch_params = slurm_get_launch_params();
+	if (launch_params && strstr(launch_params, "cray_net_exclusive")) {
+		/*
+		 * Grant exclusive access and all aries resources to the job.
+		 * Not recommended if you may run multiple steps within
+		 * the job, and will cause problems if you suspend or allow
+		 * nodes to be shared across multiple jobs.
+		 */
+		/*
+		 * TODO: determine if this can be managed per-job, rather
+		 * than globally across the cluster.
+		 */
+		exclusive = 1;
 	}
+	if (launch_params && strstr(launch_params, "lustre_no_flush")) {
+		/* Lustre cache flush can cause job bus errors, see bug 4309 */
+		lustre_no_flush = true;
+	}
+	xfree(launch_params);
 
-	mem_scaling = get_mem_scaling(job);
-	if (mem_scaling == -1) {
-		return SLURM_ERROR;
+	if (!exclusive) {
+		/*
+		 * Calculate percentages of cpu and mem to assign to
+		 * non-exclusive jobs.
+		 */
+
+		cpu_scaling = get_cpu_scaling(job);
+		if (cpu_scaling == -1)
+			return SLURM_ERROR;
+
+		mem_scaling = get_mem_scaling(job);
+		if (mem_scaling == -1)
+			return SLURM_ERROR;
 	}
 
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
-		CRAY_INFO("Network Scaling: CPU %d Memory %d",
-			  cpu_scaling, mem_scaling);
+		CRAY_INFO("Network Scaling: Exclusive %d CPU %d Memory %d",
+			  exclusive, cpu_scaling, mem_scaling);
 	}
 
-	rc = alpsc_configure_nic(&err_msg, 0, cpu_scaling, mem_scaling,
+	rc = alpsc_configure_nic(&err_msg, exclusive, cpu_scaling, mem_scaling,
 				 cont_id, sw_job->num_cookies,
 				 (const char **) sw_job->cookies,
 				 &num_ptags, &ptags, NULL);
@@ -587,6 +616,23 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 	if (rc != 1) {
 		free_alpsc_pe_info(&alpsc_pe_info);
 		return SLURM_ERROR;
+	}
+
+	/*
+	 * Also write a placement file with the legacy apid to support old
+	 * statically linked Cray PMI applications. We can't simply symlink
+	 * the old format to the new because the apid is written to the file.
+	 */
+	if (sw_job->apid != SLURM_ID_HASH_LEGACY(sw_job->apid)) {
+		rc = alpsc_write_placement_file(&err_msg,
+			SLURM_ID_HASH_LEGACY(sw_job->apid),
+			cmd_index, &alpsc_pe_info, control_nid,	control_soc,
+			num_branches, &alpsc_branch_info);
+		ALPSC_CN_DEBUG("alpsc_write_placement_file");
+		if (rc != 1) {
+			free_alpsc_pe_info(&alpsc_pe_info);
+			return SLURM_ERROR;
+		}
 	}
 #endif
 	/* Clean up alpsc_pe_info*/
@@ -677,30 +723,10 @@ extern int switch_p_job_fini(switch_jobinfo_t *jobinfo)
 
 #ifdef HAVE_NATIVE_CRAY
 	int rc;
-	char *path_name = NULL;
-
-	/*
-	 * Remove the APID directory LEGACY_SPOOL_DIR/<APID>
-	 */
-	path_name = xstrdup_printf(LEGACY_SPOOL_DIR "%" PRIu64, job->apid);
-
-	// Stolen from ALPS
-	recursive_rmdir(path_name);
-	xfree(path_name);
-
-	/*
-	 * Remove the ALPS placement file.
-	 * LEGACY_SPOOL_DIR/places<APID>
-	 */
-	path_name = xstrdup_printf(LEGACY_SPOOL_DIR "places%" PRIu64,
-				   job->apid);
-	rc = remove(path_name);
-	if (rc) {
-		CRAY_ERR("remove %s failed: %m", path_name);
-		xfree(path_name);
-		return SLURM_ERROR;
+	rc = remove_spool_files(job->apid);
+	if (rc != SLURM_SUCCESS) {
+	    return rc;
 	}
-	xfree(path_name);
 #endif
 
 #if defined(HAVE_NATIVE_CRAY_GA) || defined(HAVE_CRAY_NETWORK)
@@ -758,21 +784,23 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 		reset_gpu(job);
 	}
 #endif
-	// Flush Lustre Cache
-	rc = alpsc_flush_lustre(&err_msg);
-	ALPSC_CN_DEBUG("alpsc_flush_lustre");
-	if (rc != 1) {
-		return SLURM_ERROR;
-	}
+	if (!lustre_no_flush) {
+		// Flush Lustre Cache
+		rc = alpsc_flush_lustre(&err_msg);
+		ALPSC_CN_DEBUG("alpsc_flush_lustre");
+		if (rc != 1) {
+			return SLURM_ERROR;
+		}
 
-	// Flush virtual memory
-	rc = system("echo 3 > /proc/sys/vm/drop_caches");
-	if (rc != -1) {
-		rc = WEXITSTATUS(rc);
-	}
-	if (rc) {
-		CRAY_ERR("Flushing virtual memory failed. Return code: %d",
-			 rc);
+		// Flush virtual memory
+		rc = system("echo 3 > /proc/sys/vm/drop_caches");
+		if (rc != -1) {
+			rc = WEXITSTATUS(rc);
+		}
+		if (rc) {
+			CRAY_ERR("Flushing virtual memory failed. Return code: %d",
+				 rc);
+		}
 	}
 
 	END_TIMER;
@@ -930,7 +958,8 @@ extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
 		job->jobid, job->stepid);
 #endif
 #if defined(HAVE_NATIVE_CRAY_GA) && !defined(HAVE_CRAY_NETWORK)
-	slurm_cray_jobinfo_t *jobinfo = (slurm_cray_jobinfo_t *)job->switch_job;
+	slurm_cray_jobinfo_t *jobinfo = job->switch_job ?
+		(slurm_cray_jobinfo_t *)job->switch_job->data : NULL;
 	char *err_msg = NULL;
 	int rc;
 	DEF_TIMERS;
@@ -982,7 +1011,8 @@ extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
 		job->jobid, job->stepid);
 #endif
 #if defined(HAVE_NATIVE_CRAY_GA) && !defined(HAVE_CRAY_NETWORK)
-	slurm_cray_jobinfo_t *jobinfo = (slurm_cray_jobinfo_t *)job->switch_job;
+	slurm_cray_jobinfo_t *jobinfo = job->switch_job ?
+		(slurm_cray_jobinfo_t *)job->switch_job->data : NULL;
 	char *err_msg = NULL;
 	int rc;
 	DEF_TIMERS;

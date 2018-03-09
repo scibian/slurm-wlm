@@ -57,6 +57,20 @@
 #define	debug4			slurm_debug4
 #define	debug5			slurm_debug5
 
+/*
+ * Allow up to 999 static TRES
+ * NOTE: If this changes for some reason you will also need to update the 1001
+ * in accounting_storage_mysql.c...
+ *
+ * 	if (mysql_db_create_table(mysql_conn, tres_table,
+ *				  tres_table_fields,
+ *				  ", primary key (id), "
+ *				  "unique index (type(20), name(20))) "
+ *				  "auto_increment=1001")
+ *
+ */
+#define TRES_OFFSET 1000
+
 #include "src/common/assoc_mgr.h"
 #include "src/common/macros.h"
 #include "src/common/slurmdbd_defs.h"
@@ -81,6 +95,7 @@ extern char *cluster_day_table;
 extern char *cluster_hour_table;
 extern char *cluster_month_table;
 extern char *cluster_table;
+extern char *convert_version_table;
 extern char *federation_table;
 extern char *event_table;
 extern char *job_table;
@@ -105,6 +120,7 @@ extern List as_mysql_total_cluster_list;
 extern pthread_mutex_t as_mysql_cluster_list_lock;
 
 extern uint64_t debug_flags;
+extern bool backup_dbd;
 
 typedef enum {
 	QOS_LEVEL_NONE,

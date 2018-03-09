@@ -1,0 +1,44 @@
+From c43df3a78b0f235f3502a395321690e492dc7bcc Mon Sep 17 00:00:00 2001
+From: Felip Moll <felip.moll@schedmd.com>
+Date: Fri, 5 Jan 2018 14:58:09 -0700
+Subject: [PATCH] Avoid node hang in COMPLETING state
+
+Avoid setting node in COMPLETING state indefinitely if the job initiating
+the node reboot is cancelled while the reboot in in progress. Bug
+introduced in commit 7d24678477d49c5305792b00883bf79c55ee3307
+
+Bug 4536
+---
+ NEWS                     | 2 ++
+ src/slurmctld/node_mgr.c | 4 ++--
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/NEWS b/NEWS
+index e3a85268ba..6e521b33a8 100644
+--- a/NEWS
++++ b/NEWS
+@@ -20,6 +20,8 @@ documents those changes that are of interest to users and administrators.
+  -- Fix potential deadlock in _run_prog() in power save code.
+  -- MYSQL - Add dynamic_offset in the database to force range for auto
+     increment ids for the tres_table.
++ -- Avoid setting node in COMPLETING state indefinitely if the job initiating
++    the node reboot is cancelled while the reboot in in progress. 
+ 
+ * Changes in Slurm 17.02.9
+ ==========================
+diff --git a/src/slurmctld/node_mgr.c b/src/slurmctld/node_mgr.c
+index 0105e441c9..891f609696 100644
+--- a/src/slurmctld/node_mgr.c
++++ b/src/slurmctld/node_mgr.c
+@@ -3653,8 +3653,8 @@ extern void make_node_comp(struct node_record *node_ptr,
+ 		}
+ 	}
+ 
+-	if (!IS_NODE_DOWN(node_ptr))  {
+-		/* Don't verify  RPC if DOWN */
++	if (!IS_NODE_DOWN(node_ptr) && !IS_NODE_POWER_UP(node_ptr)) {
++		/* Don't verify RPC if node in DOWN or POWER_UP state */
+ 		(node_ptr->comp_job_cnt)++;
+ 		node_ptr->node_state |= NODE_STATE_COMPLETING;
+ 		bit_set(cg_node_bitmap, inx);
+

@@ -1,0 +1,95 @@
+Description: Check for current cwd in multi-prog when building file
+ path Add cwd argument for when using --chdir
+Author: Felip Moll <felip.moll@schedmd.com>
+Date: Fri, 12 Jan 2018 13:22:35 +0100
+
+Bug: https://bugs.schedmd.com/show_bug.cgi?id=4621
+Forwarded: no
+
+Index: slurm-llnl/src/plugins/launch/slurm/launch_slurm.c
+===================================================================
+--- slurm-llnl.orig/src/plugins/launch/slurm/launch_slurm.c
++++ slurm-llnl/src/plugins/launch/slurm/launch_slurm.c
+@@ -833,7 +833,8 @@ extern int launch_p_step_launch(srun_job
+ 		 */
+ 		if (srun_opt->multi_prog) {
+ 			mpir_set_multi_name(job->ntasks,
+-					    launch_params.argv[0]);
++					    launch_params.argv[0],
++					    launch_params.cwd);
+ 		} else {
+ 			mpir_set_executable_names(launch_params.argv[0],
+ 						  job->pack_task_offset,
+Index: slurm-llnl/src/srun/libsrun/multi_prog.c
+===================================================================
+--- slurm-llnl.orig/src/srun/libsrun/multi_prog.c
++++ slurm-llnl/src/srun/libsrun/multi_prog.c
+@@ -66,7 +66,7 @@
+ /* Given a program name, translate it to a fully qualified pathname
+  * as needed based upon the PATH environment variable */
+ static char *
+-_build_path(char* fname)
++_build_path(const char * cwd, char* fname)
+ {
+ 	int i;
+ 	char *path_env = NULL, *dir = NULL, *ptrptr = NULL;
+@@ -88,6 +88,12 @@ _build_path(char* fname)
+ 	if ((file_name[0] == '/') || (file_name[0] == '.'))
+ 		return file_name;
+ 
++	/* search for the file using cwd*/
++	snprintf(file_path, sizeof(file_path), "%s/%s", cwd, file_name);
++	if ((stat(file_path, &buf) == 0)
++	    && (! S_ISDIR(buf.st_mode)))
++		return file_path;
++
+ 	/* search for the file using PATH environment variable */
+ 	dir = getenv("PATH");
+ 	if (!dir) {
+@@ -134,12 +140,12 @@ _set_range(int low_num, int high_num, ch
+ }
+ 
+ static void
+-_set_exec_names(char *ranks, char *exec_name, int ntasks)
++_set_exec_names(char *ranks, const char *cwd, char *exec_name, int ntasks)
+ {
+ 	char *ptrptr = NULL, *exec_path = NULL;
+ 	int low_num, high_num, num, i;
+ 
+-	exec_path = _build_path(exec_name);
++	exec_path = _build_path(cwd, exec_name);
+ 	if ((ranks[0] == '*') && (ranks[1] == '\0')) {
+ 		low_num = 0;
+ 		high_num = ntasks - 1;
+@@ -179,7 +185,7 @@ _set_exec_names(char *ranks, char *exec_
+ }
+ 
+ extern int
+-mpir_set_multi_name(int ntasks, const char *config_fname)
++mpir_set_multi_name(int ntasks, const char *config_fname, const char * cwd)
+ {
+ 	FILE *config_fd;
+ 	char line[BUF_SIZE];
+@@ -244,7 +250,7 @@ mpir_set_multi_name(int ntasks, const ch
+ 			fclose(config_fd);
+ 			return -1;
+ 		}
+-		_set_exec_names(ranks, exec_name, ntasks);
++		_set_exec_names(ranks, cwd, exec_name, ntasks);
+ 	}
+ 	fclose(config_fd);
+ 	return 0;
+Index: slurm-llnl/src/srun/libsrun/multi_prog.h
+===================================================================
+--- slurm-llnl.orig/src/srun/libsrun/multi_prog.h
++++ slurm-llnl/src/srun/libsrun/multi_prog.h
+@@ -51,7 +51,8 @@ extern void mpir_init(int num_tasks);
+ extern void mpir_set_executable_names(const char *executable_name,
+ 				      uint32_t task_offset,
+ 				      uint32_t task_count);
+-extern int  mpir_set_multi_name(int ntasks, const char *config_fname);
++extern int  mpir_set_multi_name(int ntasks, const char *config_fname,
++				const char * cwd);
+ 
+ /*
+  * Verify that we have a valid executable program specified for each task

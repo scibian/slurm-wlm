@@ -1,4 +1,11 @@
-0001-mail-path.patch
-0002-header.patch
-0003-sacctmgr-increase-buffer.patch
-0004-fix-cve-2017-15566.patch
+mail-path
+remove-google-javascript
+sacctmgr-increase-buffer
+pidfile-path
+rpath
+cwd-in-multi-prog
+test_exec-feature-to-multi-prog-option-of-srun
+Fix_issues_when_starting_the_backup_slurmdbd
+b31fa177c1ca26dcd2d5cd952e692ef87d95b528
+Avoid-node-hang-in-COMPLETING-state
+cve-2018-7033

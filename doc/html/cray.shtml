@@ -24,13 +24,12 @@
   Linux cluster.
 </p>
 
-<p>Since version 14.03, Slurm is designed to operate as a workload
-  manager on Cray XC systems (Cascade) without the use of ALPS.  In
-  addition to providing the same look and feel of a regular Linux
-  cluster this also allows for many functionalities previously not
-  available, such as...
+<p>Slurm is designed to operate as a workload manager on Cray XC systems
+  (Cascade) without the use of ALPS. In addition to providing the same look and
+  feel of a regular Linux cluster this also allows for many functionalities
+  such as:
 <ul>
-<li>Ability to run multiple jobs per node.</li>
+<li>Ability to run multiple jobs per node</li>
 <li>Ability to status running jobs with sstat</li>
 <li>Full accounting support for job steps</li>
 <li>Ability to run multiple jobs/steps in background from the same
@@ -193,7 +192,12 @@ details.</p>
   listed in this file it can be used to set up your Cray system to run
   Slurm natively.
 </p>
-
+<p>
+  On larger systems, you may wish to set the PMI_MMAP_SYNC_WAIT_TIME
+  environment variable in your users' profiles to a larger value than
+  the default (180 seconds) to prevent PMI from falsely detecting job
+  launch failures.
+</p>
 <h2><a name="ha">High Availability</a></h2>
 <p>
 A backup controller can be setup in or outside the Cray. However, when the
@@ -208,6 +212,6 @@ is down and prevents any new jobs from being started.
 
 <p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 23 December 2015</p>
+<p style="text-align:center;">Last modified 7 September 2017</p>
 
 <!--#include virtual="footer.txt"-->
