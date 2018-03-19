@@ -59,6 +59,14 @@ the file accepts one device per line and it permits lines like /dev/sda* or /dev
 See also an example of this file in etc/cgroup_allowed_devices_file.conf.example.
 
 .TP
+\fBAllowedKmemSpace\fR=<number>
+Constrain the job cgroup kernel memory to this amount of the allocated memory,
+specified in bytes. The \fBAllowedKmemSpace\fR must be between the upper and
+lower memory limits, specified by \fBMaxKmemPercent\fR and \fBMinKmemSpace\fR,
+respectivley. If \fBAllowedKmemSpace\fR goes beyond the upper or lower limit,
+it will be reset to that upper or lower limit, whichever has been exceeded.
+
+.TP
 \fBAllowedRAMSpace\fR=<number>
 Constrain the job cgroup RAM to this percentage of the allocated memory.
 The percentage supplied may be expressed as floating point
@@ -75,6 +83,9 @@ to \fBAllowedRAMSpace\fR. The supplied percentage may be expressed as a
 floating point number, e.g. 50.5.  If the limit is exceeded, the job steps
 will be killed and a warning message will be written to standard error.
 Also see \fBConstrainSwapSpace\fR.
+NOTE: Setting AllowedSwapSpace to 0 does not restrict the Linux kernel from
+using swap space. To control how the kernel uses swap space, see
+\fBMemorySwappiness\fR.
 
 .TP
 \fBConstrainCores\fR=<yes|no>
@@ -106,6 +117,11 @@ which case the job's RAM limit will be set to its swap space limit if
 \fBConstrainSwapSpace\fR is set to "yes".
 Also see \fBAllowedSwapSpace\fR, \fBAllowedRAMSpace\fR and
 \fBConstrainSwapSpace\fR.
+NOTE: When enabled, ConstrainRAMSpace can lead to a noticiable decline in
+per-node job throughout. Sites with high-throughput requirements should
+carefully weigh the tradeoff between per-node throughput, versus potential
+problems that can arise from unconstrained memory usage on the node. See
+<https://slurm.schedmd.com/high_throughput.html> for further discussion.
 
 .TP
 \fBConstrainSwapSpace\fR=<yes|no>
@@ -139,6 +155,16 @@ The default value is 100.
 \fBMaxKmemPercent\fR=\fIPERCENT\fR
 Set an upper bound in percent of total Kmem for a job. The \fIPERCENT\fR may be an
 arbitrary floating point number. The default value is 100.
+
+.TP
+\fBMemorySwappiness\fR=<number>
+Configure the kernel's priority for swapping out anonymous pages (such as
+program data) verses file cache pages for the job cgroup. Valid values are
+between 0 and 100, inclusive. A value of 0 prevents the kernel from swapping
+out program data. A value of 100 gives equal priorioty to swapping out file
+cache or anonymous pages. If not set, then the kernel's default swappiness
+value will be used. Either \fBConstrainRAMSpace\fR or \fBConstrainSwapSpace\fR
+must be set to \fByes\fR in order for this parameter to be applied.
 
 .TP
 \fBMinKmemSpace\fR=<number>

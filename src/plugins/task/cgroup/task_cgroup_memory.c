@@ -83,6 +83,7 @@ static uint64_t percent_in_bytes (uint64_t mb, float percent)
 extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 {
 	xcgroup_t memory_cg;
+	bool set_swappiness;
 
 	/* initialize user/job/jobstep cgroup relative paths */
 	user_cgroup_path[0]='\0';
@@ -101,8 +102,18 @@ extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 
 	/* Enable memory.use_hierarchy in the root of the cgroup.
 	 */
-	xcgroup_create(&memory_ns, &memory_cg, "", 0, 0);
+	if (xcgroup_create(&memory_ns, &memory_cg, "", 0, 0)
+	    != XCGROUP_SUCCESS) {
+		error("task/cgroup: unable to create root memory cgroup: %m");
+		return SLURM_ERROR;
+	}
 	xcgroup_set_param(&memory_cg, "memory.use_hierarchy","1");
+
+	set_swappiness = (slurm_cgroup_conf->memory_swappiness != NO_VAL64);
+	if (set_swappiness)
+		xcgroup_set_uint64_param(&memory_cg, "memory.swappiness",
+					 slurm_cgroup_conf->memory_swappiness);
+
 	xcgroup_destroy(&memory_cg);
 
 	constrain_kmem_space = slurm_cgroup_conf->constrain_kmem_space;
@@ -135,27 +146,31 @@ extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	max_kmem_percent = slurm_cgroup_conf->max_kmem_percent;
 	min_kmem_space = slurm_cgroup_conf->min_kmem_space * 1024 * 1024;
 
-	debug ("task/cgroup/memory: total:%luM allowed:%.4g%%(%s), "
-	       "swap:%.4g%%(%s), max:%.4g%%(%luM) "
-	       "max+swap:%.4g%%(%luM) min:%luM "
-	       "kmem:%.4g%%(%luM %s) min:%luM",
-	       (unsigned long) totalram,
-	       allowed_ram_space,
-	       constrain_ram_space?"enforced":"permissive",
+	debug("task/cgroup/memory: total:%"PRIu64"M allowed:%.4g%%(%s), "
+	      "swap:%.4g%%(%s), max:%.4g%%(%"PRIu64"M) "
+	      "max+swap:%.4g%%(%"PRIu64"M) min:%"PRIu64"M "
+	      "kmem:%.4g%%(%"PRIu64"M %s) min:%"PRIu64"M "
+	      "swappiness:%"PRIu64"(%s)",
 
-	       allowed_swap_space,
-	       constrain_swap_space?"enforced":"permissive",
-	       slurm_cgroup_conf->max_ram_percent,
-	       (unsigned long) (max_ram/(1024*1024)),
+	      totalram, allowed_ram_space,
+	      constrain_ram_space ? "enforced" : "permissive",
 
-	       slurm_cgroup_conf->max_swap_percent,
-	       (unsigned long) (max_swap/(1024*1024)),
-	       (unsigned long) slurm_cgroup_conf->min_ram_space,
+	      allowed_swap_space,
+	      constrain_swap_space ? "enforced" : "permissive",
+	      slurm_cgroup_conf->max_ram_percent,
+	      (uint64_t) (max_ram / (1024 * 1024)),
 
-	       slurm_cgroup_conf->max_kmem_percent,
-	       (unsigned long) (max_kmem/(1024*1024)),
-	       constrain_kmem_space?"enforced":"permissive",
-	       (unsigned long) slurm_cgroup_conf->min_kmem_space);
+	      slurm_cgroup_conf->max_swap_percent,
+	      (uint64_t) (max_swap / (1024 * 1024)),
+	      slurm_cgroup_conf->min_ram_space,
+
+	      slurm_cgroup_conf->max_kmem_percent,
+	      (uint64_t) (max_kmem / (1024 * 1024)),
+	      constrain_kmem_space ? "enforced" : "permissive",
+	      slurm_cgroup_conf->min_kmem_space,
+
+	      set_swappiness ? slurm_cgroup_conf->memory_swappiness : 0,
+	      set_swappiness ? "set" : "unset");
 
         /*
          *  Warning: OOM Killer must be disabled for slurmstepd
@@ -197,9 +212,7 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	 * After that, try to remove the user memcg. If it fails, it is due
 	 * to jobs that are still running for the same user on the node or
 	 * because of tasks attached directly to the user cg by an other
-	 * component (PAM). The user memcg was created with the
-	 * notify_on_release=1 flag (default) so it will be removed
-	 * automatically after that.
+	 * component (PAM).
 	 * For now, do not try to detect if only externally attached tasks
 	 * are present to see if they can be be moved to an orhpan memcg.
 	 * That could be done in the future, if it is necessary.
@@ -306,7 +319,7 @@ static uint64_t kmem_limit_in_bytes (uint64_t mlb)
 
 static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 			     char *path, uint64_t mem_limit, uid_t uid,
-			     gid_t gid, uint32_t notify)
+			     gid_t gid)
 {
 	uint64_t mlb = mem_limit_in_bytes (mem_limit, true);
 	uint64_t mlb_soft = mem_limit_in_bytes(mem_limit, false);
@@ -314,8 +327,6 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 
 	if (xcgroup_create (ns, cg, path, uid, gid) != XCGROUP_SUCCESS)
 		return -1;
-
-	cg->notify = notify;
 
 	if (xcgroup_instantiate (cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy (cg);
@@ -338,9 +349,9 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 	 * Also constrain kernel memory (if available).
 	 * See https://lwn.net/Articles/516529/
 	 */
-
-	xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes",
-				  kmem_limit_in_bytes(mlb));
+	if (constrain_kmem_space)
+		xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes",
+					  kmem_limit_in_bytes(mlb));
 
 	/* this limit has to be set only if ConstrainSwapSpace is set to yes */
 	if ( constrain_swap_space ) {
@@ -472,11 +483,9 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	/*
 	 * Create job cgroup in the memory ns (it could already exist)
 	 * and set the associated memory limits.
-	 * Disable notify_on_release for this memcg, it will be
-	 * manually removed by the plugin at the end of the step.
 	 */
 	if (memcg_initialize (&memory_ns, &job_memory_cg, job_cgroup_path,
-	                      job->job_mem, getuid(), getgid(), 0) < 0) {
+	                      job->job_mem, getuid(), getgid()) < 0) {
 		xcgroup_destroy (&user_memory_cg);
 		goto error;
 	}
@@ -484,11 +493,9 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	/*
 	 * Create step cgroup in the memory ns (it should not exists)
 	 * and set the associated memory limits.
-	 * Disable notify_on_release for the step memcg, it will be
-	 * manually removed by the plugin at the end of the step.
 	 */
 	if (memcg_initialize (&memory_ns, &step_memory_cg, jobstep_cgroup_path,
-	                      job->step_mem, uid, gid, 0) < 0) {
+	                      job->step_mem, uid, gid) < 0) {
 		xcgroup_destroy(&user_memory_cg);
 		xcgroup_destroy(&job_memory_cg);
 		goto error;
@@ -502,15 +509,10 @@ error:
 	return fstatus;
 }
 
-extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job)
+extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job, pid_t pid)
 {
 	int fstatus = SLURM_ERROR;
-	pid_t pid;
 
-	/*
-	 * Attach the current task to the step memory cgroup
-	 */
-	pid = getpid();
 	if (xcgroup_add_pids(&step_memory_cg, &pid, 1) != XCGROUP_SUCCESS) {
 		error("task/cgroup: unable to add task[pid=%u] to "
 		      "memory cg '%s'",pid,step_memory_cg.path);
@@ -556,7 +558,8 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 				 * reached the value set in
 				 * memory.memsw.limit_in_bytes.
 				 */
-				error("Exceeded step memory limit at some point.");
+				error("Step %u.%u hit memory+swap limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid, job->stepid);
 				rc = ENOMEM;
 			} else if (failcnt_non_zero(&step_memory_cg,
 						    "memory.failcnt")) {
@@ -564,16 +567,19 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 				 * memory limit has reached the value set
 				 * in memory.limit_in_bytes.
 				 */
-				error("Exceeded step memory limit at some point.");
+				error("Step %u.%u hit memory limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid, job->stepid);
 				rc = ENOMEM;
 			}
 			if (failcnt_non_zero(&job_memory_cg,
 					     "memory.memsw.failcnt")) {
-				error("Exceeded job memory limit at some point.");
+				error("Job %u hit memory+swap limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid);
 				rc = ENOMEM;
 			} else if (failcnt_non_zero(&job_memory_cg,
 						    "memory.failcnt")) {
-				error("Exceeded job memory limit at some point.");
+				error("Job %u hit memory limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid);
 				rc = ENOMEM;
 			}
 			xcgroup_unlock(&memory_cg);

@@ -202,7 +202,7 @@ slurm_auth_credential_t *slurm_auth_create(char *opts)
 	cred->len      = 0;
 	cred->cr_errno = SLURM_SUCCESS;
 
-	xassert(cred->magic = MUNGE_MAGIC);
+	xassert((cred->magic = MUNGE_MAGIC));
 
 	/*
 	 *  Temporarily block SIGALARM to avoid misleading
@@ -422,7 +422,7 @@ slurm_auth_unpack( Buf buf )
 	cred->len      = 0;
 	cred->cr_errno = SLURM_SUCCESS;
 
-	xassert(cred->magic = MUNGE_MAGIC);
+	xassert((cred->magic = MUNGE_MAGIC));
 
 	safe_unpackstr_malloc(&cred->m_str, &size, buf);
 	return cred;
@@ -660,22 +660,29 @@ _print_cred(munge_ctx_t ctx)
 	cred_info_destroy(mi);
 }
 
-/* Convert AuthInfo to a socket path. Accepts "socket=<path>[,]"
+/*
+ * Convert AuthInfo to a socket path. Accepts two input formats:
+ * 1) <path>		(Old format)
+ * 2) socket=<path>[,]	(New format)
  * NOTE: Caller must xfree return value
  */
 static char *_auth_opts_to_socket(char *opts)
 {
 	char *socket = NULL, *sep, *tmp;
 
-	if (opts) {
-		tmp = strstr(opts, "socket=");
-		if (tmp) {	/* New format */
-			socket = xstrdup(tmp + 7);
-			sep = strchr(socket, ',');
-			if (sep)
-				sep[0] = '\0';
-		}
-	}
+	if (!opts)
+		return NULL;
+
+	tmp = strstr(opts, "socket=");
+	if (tmp) {	/* New format */
+		socket = xstrdup(tmp + 7);
+		sep = strchr(socket, ',');
+		if (sep)
+			sep[0] = '\0';
+	} else if (strchr(opts, '='))
+		;	/* New format, but socket not specified */
+	else
+		socket = xstrdup(opts);	/* Old format */
 
 	return socket;
 }

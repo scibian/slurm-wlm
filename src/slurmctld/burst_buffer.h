@@ -114,6 +114,16 @@ extern int bb_g_job_validate(struct job_descriptor *job_desc,
 extern int bb_g_job_validate2(struct job_record *job_ptr, char **err_msg);
 
 /*
+ * Convert a pack job batch script into a script containing only the portions
+ * relevant to a specific pack job component.
+ *
+ * script IN - Whole job batch script
+ * pack_job_offset IN - Zero origin pack job component ID
+ * RET script for that job component, call xfree() to release memory
+ */
+extern char *bb_g_build_pack_script(char *script, uint32_t pack_job_offset);
+
+/*
  * Fill in the tres_cnt (in MB) based off the job record
  * NOTE: Based upon job-specific burst buffers, excludes persistent buffers
  * IN job_ptr - job record
@@ -154,6 +164,14 @@ extern int bb_g_job_test_stage_in(struct job_record *job_ptr, bool test_only);
  * Returns a SLURM errno.
  */
 extern int bb_g_job_begin(struct job_record *job_ptr);
+
+/* Revoke allocation, but do not release resources.
+ * Executed after bb_g_job_begin() if there was an allocation failure.
+ * Does not release previously allocated resources.
+ *
+ * Returns a SLURM errno.
+ */
+extern int bb_g_job_revoke_alloc(struct job_record *job_ptr);
 
 /*
  * Trigger a job's burst buffer stage-out to begin

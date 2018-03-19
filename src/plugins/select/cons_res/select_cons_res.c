@@ -194,6 +194,7 @@ static bool select_state_initializing = true;
 static int select_node_cnt = 0;
 static int preempt_reorder_cnt = 1;
 static bool preempt_strict_order = false;
+static int  bf_window_scale      = 0;
 
 struct select_nodeinfo {
 	uint16_t magic;		/* magic number */
@@ -416,13 +417,25 @@ static void _destroy_part_data(struct part_res_record *this_ptr)
 	}
 }
 
+static int _sort_part_prio(void *x, void *y)
+{
+	struct part_res_record *part1 = *(struct part_res_record **) x;
+	struct part_res_record *part2 = *(struct part_res_record **) y;
+
+	if (part1->part_ptr->priority_tier > part2->part_ptr->priority_tier)
+		return -1;
+	if (part1->part_ptr->priority_tier < part2->part_ptr->priority_tier)
+		return 1;
+	return 0;
+}
 
 /* (re)create the global select_part_record array */
 static void _create_part_data(void)
 {
+	List part_rec_list = NULL;
 	ListIterator part_iterator;
 	struct part_record *p_ptr;
-	struct part_res_record *this_ptr;
+	struct part_res_record *this_ptr, *last_ptr = NULL;
 	int num_parts;
 
 	_destroy_part_data(select_part_record);
@@ -433,11 +446,10 @@ static void _create_part_data(void)
 		return;
 	info("cons_res: preparing for %d partitions", num_parts);
 
-	select_part_record = xmalloc(sizeof(struct part_res_record));
-	this_ptr = select_part_record;
-
+	part_rec_list = list_create(NULL);
 	part_iterator = list_iterator_create(part_list);
 	while ((p_ptr = (struct part_record *) list_next(part_iterator))) {
+		this_ptr = xmalloc(sizeof(struct part_res_record));
 		this_ptr->part_ptr = p_ptr;
 		this_ptr->num_rows = p_ptr->max_share;
 		if (this_ptr->num_rows & SHARED_FORCE)
@@ -449,15 +461,22 @@ static void _create_part_data(void)
 			this_ptr->num_rows = 1;
 		/* we'll leave the 'row' array blank for now */
 		this_ptr->row = NULL;
-		num_parts--;
-		if (num_parts) {
-			this_ptr->next =xmalloc(sizeof(struct part_res_record));
-			this_ptr = this_ptr->next;
-		}
+		list_append(part_rec_list, this_ptr);
 	}
 	list_iterator_destroy(part_iterator);
 
-	/* should we sort the select_part_record list by priority here? */
+	/* Sort the select_part_records by priority */
+	list_sort(part_rec_list, _sort_part_prio);
+	part_iterator = list_iterator_create(part_rec_list);
+	while ((this_ptr = (struct part_res_record *)list_next(part_iterator))){
+		if (last_ptr)
+			last_ptr->next = this_ptr;
+		else
+			select_part_record = this_ptr;
+		last_ptr = this_ptr;
+	}
+	list_iterator_destroy(part_iterator);
+	list_destroy(part_rec_list);
 }
 
 
@@ -950,7 +969,10 @@ static int _job_expand(struct job_record *from_job_ptr,
 	bitstr_t *tmp_bitmap, *tmp_bitmap2;
 
 	xassert(from_job_ptr);
+	xassert(from_job_ptr->details);
 	xassert(to_job_ptr);
+	xassert(to_job_ptr->details);
+
 	if (from_job_ptr->job_id == to_job_ptr->job_id) {
 		error("select/cons_res: attempt to merge job %u with self",
 		      from_job_ptr->job_id);
@@ -1107,22 +1129,17 @@ static int _job_expand(struct job_record *from_job_ptr,
 	to_job_ptr->job_resrcs = new_job_resrcs_ptr;
 
 	to_job_ptr->cpu_cnt = to_job_ptr->total_cpus;
-	if (to_job_ptr->details) {
-		to_job_ptr->details->min_cpus = to_job_ptr->total_cpus;
-		to_job_ptr->details->max_cpus = to_job_ptr->total_cpus;
-	}
+	to_job_ptr->details->min_cpus = to_job_ptr->total_cpus;
+	to_job_ptr->details->max_cpus = to_job_ptr->total_cpus;
 	from_job_ptr->total_cpus   = 0;
 	from_job_resrcs_ptr->ncpus = 0;
-	if (from_job_ptr->details) {
-		from_job_ptr->details->min_cpus = 0;
-		from_job_ptr->details->max_cpus = 0;
-	}
+	from_job_ptr->details->min_cpus = 0;
+	from_job_ptr->details->max_cpus = 0;
 
 	from_job_ptr->total_nodes   = 0;
 	from_job_resrcs_ptr->nhosts = 0;
 	from_job_ptr->node_cnt      = 0;
-	if (from_job_ptr->details)
-		from_job_ptr->details->min_nodes = 0;
+	from_job_ptr->details->min_nodes = 0;
 	to_job_ptr->total_nodes     = new_job_resrcs_ptr->nhosts;
 	to_job_ptr->node_cnt        = new_job_resrcs_ptr->nhosts;
 
@@ -1433,9 +1450,9 @@ static struct multi_core_data * _create_default_mc(void)
 {
 	struct multi_core_data *mc_ptr;
 	mc_ptr = xmalloc(sizeof(struct multi_core_data));
-	mc_ptr->sockets_per_node = (uint16_t) NO_VAL;
-	mc_ptr->cores_per_socket = (uint16_t) NO_VAL;
-	mc_ptr->threads_per_core = (uint16_t) NO_VAL;
+	mc_ptr->sockets_per_node = NO_VAL16;
+	mc_ptr->cores_per_socket = NO_VAL16;
+	mc_ptr->threads_per_core = NO_VAL16;
 /*	mc_ptr is initialized to zero by xmalloc*/
 /*	mc_ptr->ntasks_per_socket = 0; */
 /*	mc_ptr->ntasks_per_core   = 0; */
@@ -1541,7 +1558,7 @@ static int _run_now(struct job_record *job_ptr, bitstr_t *bitmap,
 	struct node_use_record *future_usage;
 	bool remove_some_jobs = false;
 	uint16_t pass_count = 0;
-	uint16_t mode = (uint16_t) NO_VAL;
+	uint16_t mode = NO_VAL16;
 	uint16_t tmp_cr_type = cr_type;
 	bool preempt_mode = false;
 
@@ -1733,7 +1750,7 @@ static time_t _guess_job_end(struct job_record * job_ptr, time_t now)
 	}
 	if (over_time_limit == 0) {
 		end_time = job_ptr->end_time + slurmctld_conf.kill_wait;
-	} else if (over_time_limit == (uint16_t) INFINITE) {
+	} else if (over_time_limit == INFINITE16) {
 		end_time = now + (365 * 24 * 60 * 60);	/* one year */
 	} else {
 		end_time = job_ptr->end_time + slurmctld_conf.kill_wait +
@@ -1822,8 +1839,6 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 
 	/* Build list of running and suspended jobs */
 	cr_job_list = list_create(NULL);
-	if (!cr_job_list)
-		fatal("list_create: memory allocation error");
 	job_iterator = list_iterator_create(job_list);
 	while ((tmp_job_ptr = (struct job_record *) list_next(job_iterator))) {
 		bool cleaning = _job_cleaning(tmp_job_ptr);
@@ -1929,7 +1944,10 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 			}
 			if (!last_job_ptr)	/* Should never happen */
 				break;
-			time_window *= 2;
+			if (bf_window_scale)
+				time_window += bf_window_scale;
+			else
+				time_window *= 2;
 			rc = cr_job_test(job_ptr, bitmap, min_nodes,
 					 max_nodes, req_nodes,
 					 SELECT_MODE_WILL_RUN, tmp_cr_type,
@@ -2122,6 +2140,16 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 			      preempt_reorder_cnt);
 		}
 	}
+        if (sched_params &&
+            (tmp_ptr = strstr(sched_params, "bf_window_linear="))) {
+		bf_window_scale = atoi(tmp_ptr + 17);
+		if (bf_window_scale <= 0) {
+			fatal("Invalid SchedulerParameters bf_window_linear: %d",
+			      bf_window_scale);
+		}
+	} else
+		bf_window_scale = 0;
+
 	if (sched_params && strstr(sched_params, "pack_serial_at_end"))
 		pack_serial_at_end = true;
 	else
@@ -2258,8 +2286,8 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t * bitmap,
 		return EINVAL;
 
 	if (slurm_get_use_spec_resources() == 0)
-		job_ptr->details->core_spec = (uint16_t) NO_VAL;
-	if ((job_ptr->details->core_spec != (uint16_t) NO_VAL) &&
+		job_ptr->details->core_spec = NO_VAL16;
+	if ((job_ptr->details->core_spec != NO_VAL16) &&
 	    (job_ptr->details->whole_node != 1)) {
 		info("Setting Exclusive mode for job %u with CoreSpec=%u",
 		      job_ptr->job_id, job_ptr->details->core_spec);
@@ -3245,7 +3273,7 @@ static void _spec_core_filter(bitstr_t *node_bitmap, bitstr_t **core_bitmap)
 {
 	bitstr_t *spec_core_map;
 
-	spec_core_map = make_core_bitmap(node_bitmap, (uint16_t) NO_VAL);
+	spec_core_map = make_core_bitmap(node_bitmap, NO_VAL16);
 	bit_not(spec_core_map);
 
 	xassert(core_bitmap);
@@ -3342,9 +3370,7 @@ extern bitstr_t * select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 			_make_core_bitmap_filtered(switches_bitmap[i], 1);
 
 		if (*core_bitmap) {
-			bit_not(*core_bitmap);
-			bit_and(switches_core_bitmap[i], *core_bitmap);
-			bit_not(*core_bitmap);
+			bit_and_not(switches_core_bitmap[i], *core_bitmap);
 		}
 		bit_fmt(str, sizeof(str), switches_core_bitmap[i]);
 		switches_cpu_cnt[i] = bit_set_count(switches_core_bitmap[i]);
@@ -3641,13 +3667,13 @@ extern int cr_cpus_per_core(struct job_details *details, int node_inx)
 
 	if (details && details->mc_ptr) {
 		multi_core_data_t *mc_ptr = details->mc_ptr;
-		if ((mc_ptr->ntasks_per_core != (uint16_t) INFINITE) &&
+		if ((mc_ptr->ntasks_per_core != INFINITE16) &&
 		    (mc_ptr->ntasks_per_core)) {
 			ncpus_per_core = MIN(threads_per_core,
 					     (mc_ptr->ntasks_per_core *
 					      details->cpus_per_task));
 		}
-		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
+		if ((mc_ptr->threads_per_core != NO_VAL16) &&
 		    (mc_ptr->threads_per_core <  ncpus_per_core)) {
 			ncpus_per_core = mc_ptr->threads_per_core;
 		}

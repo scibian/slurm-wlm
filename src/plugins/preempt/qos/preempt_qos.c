@@ -68,7 +68,7 @@ extern int init(void)
 	char *sched_params;
 	verbose("preempt/qos loaded");
 	sched_params = slurm_get_sched_params();
-	if (xstrcasestr(sched_params, "preempt_youngest_order"))
+	if (xstrcasestr(sched_params, "preempt_youngest_first"))
 		youngest_order = true;
 	xfree(sched_params);
 	return SLURM_SUCCESS;
@@ -200,8 +200,8 @@ static int _sort_by_prio(void *x, void *y)
 static int _sort_by_youngest(void *x, void *y)
 {
 	int rc;
-	struct job_record *j1 = (struct job_record *) x;
-	struct job_record *j2 = (struct job_record *) y;
+	struct job_record *j1 = *(struct job_record **) x;
+	struct job_record *j2 = *(struct job_record **) y;
 
 	if (j1->start_time < j2->start_time)
 		rc = 1;
@@ -215,9 +215,8 @@ static int _sort_by_youngest(void *x, void *y)
 
 extern uint16_t job_preempt_mode(struct job_record *job_ptr)
 {
-	if (job_ptr->qos_ptr &&
-	    ((slurmdb_qos_rec_t *)job_ptr->qos_ptr)->preempt_mode)
-		return ((slurmdb_qos_rec_t *)job_ptr->qos_ptr)->preempt_mode;
+	if (job_ptr->qos_ptr && job_ptr->qos_ptr->preempt_mode)
+		return job_ptr->qos_ptr->preempt_mode;
 
 	return (slurm_get_preempt_mode() & (~PREEMPT_MODE_GANG));
 }

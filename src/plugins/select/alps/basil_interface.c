@@ -232,7 +232,9 @@ extern int basil_inventory(void)
 	static time_t last_inv_run = 0;
 
 	if ((now - last_inv_run) < inv_interval)
-		return SLURM_SUCCESS;
+		return slurm_alps_mismatch_time ?
+			ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE :
+			SLURM_SUCCESS;
 
 	last_inv_run = now;
 
@@ -402,12 +404,13 @@ extern int basil_inventory(void)
 		/* If SLURM and ALPS state are not in synchronization,
 		 * do not schedule any more jobs until waiting at least
 		 * SyncTimeout seconds. */
-		if (slurm_alps_mismatch_time == 0) {
+		if (slurm_alps_mismatch_time == 0)
 			slurm_alps_mismatch_time = now;
-		} else if (cray_conf->sync_timeout == 0) {
-			/* Wait indefinitely */
-		} else if (difftime(now, slurm_alps_mismatch_time) <
-			   cray_conf->sync_timeout) {
+
+		/* cray_conf->sync_timeout == 0: Wait indefinitely */
+		if ((cray_conf->sync_timeout == 0) ||
+		    (difftime(now, slurm_alps_mismatch_time) <
+		     cray_conf->sync_timeout)) {
 			return ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
 		} else if (!logged_sync_timeout) {
 			error("Could not synchronize SLURM with ALPS for %u "
@@ -1057,7 +1060,7 @@ extern int do_basil_confirm(struct job_record *job_ptr)
 
 /**
  * do_basil_signal  -  pass job signal on to any APIDs
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  * Only signal job if an ALPS reservation exists (non-0 reservation ID).
  */
@@ -1096,7 +1099,7 @@ void *_sig_basil(void *args)
 
 /**
  * queue_basil_signal  -  queue job signal on to any APIDs
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  * IN delay   - how long to delay the signal, in seconds
  * Only signal job if an ALPS reservation exists (non-0 reservation ID).
@@ -1116,7 +1119,7 @@ extern void queue_basil_signal(struct job_record *job_ptr, int signal,
 	}
 	if (resv_id == 0)
 		return;
-	if ((delay == 0) || (delay == (uint16_t) NO_VAL)) {
+	if ((delay == 0) || (delay == NO_VAL16)) {
 		/* Send the signal now */
 		int rc = basil_signal_apids(resv_id, signal, NULL);
 

@@ -176,7 +176,6 @@ static char *capmc_path = NULL;
 static uint32_t capmc_poll_freq = 45;	/* capmc state polling frequency */
 static uint32_t capmc_retries = DEFAULT_CAPMC_RETRIES;
 static uint32_t capmc_timeout = 0;	/* capmc command timeout in msec */
-static bitstr_t *capmc_node_bitmap = NULL;	/* Nodes found by capmc */
 static char *cnselect_path = NULL;
 static bool debug_flag = false;
 static uint16_t default_mcdram = KNL_CACHE;
@@ -670,6 +669,11 @@ static void _json_parse_mcdram_cfg_object(json_object *jobj, mcdram_cfg_t *ent)
 	int64_t x;
 	const char *p;
 
+	/* Initialize object */
+	ent->dram_size   = NO_VAL;
+	ent->mcdram_pct  = NO_VAL16;
+	ent->mcdram_size = NO_VAL;
+
 	json_object_object_foreachC(jobj, iter) {
 		type = json_object_get_type(iter.val);
 		switch (type) {
@@ -677,6 +681,8 @@ static void _json_parse_mcdram_cfg_object(json_object *jobj, mcdram_cfg_t *ent)
 			x = json_object_get_int64(iter.val);
 			if (xstrcmp(iter.key, "nid") == 0) {
 				ent->nid = x;
+			} else if (xstrcmp(iter.key, "mcdram_pct") == 0) {
+				ent->mcdram_pct = x;
 			}
 			break;
 		case json_type_string:
@@ -1284,14 +1290,19 @@ next_tok:	tok1 = strtok_r(NULL, ",", &save_ptr1);
 	xfree(tmp_str1);
 }
 
-/* Remove all KNL MCDRAM and NUMA type GRES from this node (it isn't KNL),
- * returns count of KNL features found. */
+/*
+ * Remove all KNL MCDRAM and NUMA type GRES from this node (it isn't KNL),
+ * returns count of KNL features found.
+ */
 static int _strip_knl_features(char **node_feature)
 {
 	char *tmp_str1, *tok1, *save_ptr1 = NULL;
 	char *tmp_str2 = NULL, *sep = "";
 	int cnt = 0;
 
+	xassert(node_feature);
+	if (*node_feature == NULL)
+		return cnt;
 	tmp_str1 = xstrdup(*node_feature);
 	tok1 = strtok_r(tmp_str1, ",", &save_ptr1);
 	while (tok1) {
@@ -1416,6 +1427,10 @@ static void _update_all_node_features(
 			error("Removed KNL features from non-KNL node %s",
 			      node_ptr->name);
 		}
+		if (!node_ptr->gres) {
+			node_ptr->gres =
+				xstrdup(node_ptr->config_ptr->gres);
+		}
 		gres_plugin_node_feature(node_ptr->name, "hbm", 0,
 					 &node_ptr->gres, &node_ptr->gres_list);
 	}
@@ -1476,6 +1491,10 @@ static void _update_node_features(struct node_record *node_ptr,
 				node_ptr->gres =
 					xstrdup(node_ptr->config_ptr->gres);
 			}
+			if (!node_ptr->gres) {
+				node_ptr->gres =
+					xstrdup(node_ptr->config_ptr->gres);
+			}
 			gres_plugin_node_feature(node_ptr->name, "hbm",
 						 mcdram_size, &node_ptr->gres,
 						 &node_ptr->gres_list);
@@ -1511,6 +1530,10 @@ static void _update_node_features(struct node_record *node_ptr,
 		if (node_inx) {
 			error("Removed KNL features from non-KNL node %s",
 			      node_ptr->name);
+		}
+		if (!node_ptr->gres) {
+			node_ptr->gres =
+				xstrdup(node_ptr->config_ptr->gres);
 		}
 		gres_plugin_node_feature(node_ptr->name, "hbm", 0,
 					 &node_ptr->gres, &node_ptr->gres_list);
@@ -1760,24 +1783,15 @@ extern int init(void)
 	gres_plugin_add("hbm");
 
 	if (ume_check_interval && run_in_daemon("slurmd")) {
-		pthread_attr_t attr;
-		slurm_attr_init(&attr);
 		slurm_mutex_lock(&ume_mutex);
-		if (pthread_create(&ume_thread, &attr, _ume_agent, NULL)) {
-			error("%s: Unable to start UME monitor thread: %m",
-			       __func__);
-		}
+		slurm_thread_create(&ume_thread, _ume_agent, NULL);
 		slurm_mutex_unlock(&ume_mutex);
-		slurm_attr_destroy(&attr);
 	}
 
 	slurm_mutex_lock(&queue_mutex);
 	if (queue_thread == 0) {
-		pthread_attr_t attr;
-		slurm_attr_init(&attr);
 		/* since we do a join on this later we don't make it detached */
-		if (pthread_create(&queue_thread, &attr, _queue_agent, NULL))
-			fatal("Unable to start %s thread: %m", plugin_type);
+		slurm_thread_create(&queue_thread, _queue_agent, NULL);
 	}
 	slurm_mutex_unlock(&queue_mutex);
 
@@ -1810,7 +1824,6 @@ extern int fini(void)
 	xfree(mc_path);
 	xfree(mcdram_per_node);
 	xfree(syscfg_path);
-	FREE_NULL_BITMAP(capmc_node_bitmap);
 	FREE_NULL_BITMAP(knl_node_bitmap);
 
 	return SLURM_SUCCESS;
@@ -1835,6 +1848,7 @@ static void _check_node_status(void)
 	char *resp_msg, **script_argv;
 	int i, nid, num_ent, retry, status = 0;
 	struct node_record *node_ptr;
+	bitstr_t *capmc_node_bitmap = NULL;
 	DEF_TIMERS;
 
 	script_argv = xmalloc(sizeof(char *) * 4); /* NULL terminated */
@@ -1878,7 +1892,6 @@ static void _check_node_status(void)
 	}
 	xfree(resp_msg);
 
-	FREE_NULL_BITMAP(capmc_node_bitmap);
 	capmc_node_bitmap = bit_alloc(100000);
 	json_object_object_foreachC(j_obj, iter) {
 		/* NOTE: The error number "e" and message "err_msg"
@@ -1929,6 +1942,7 @@ static void _check_node_status(void)
 		if (avail_node_bitmap)
 			bit_clear(avail_node_bitmap, i);
 	}
+	FREE_NULL_BITMAP(capmc_node_bitmap);
 }
 
 /* Put any disabled nodes into DRAIN state */
@@ -2289,10 +2303,16 @@ static int _update_node_state(char *node_list, bool set_locks)
 				continue;
 			if (mcdram_cfg[i].mcdram_pct !=
 			    mcdram_cfg2[k].cache_pct) {
-				info("%s: HBM mismatch between capmc and cnselect for nid %u (%u != %d)",
-				     __func__, mcdram_cfg[i].nid,
-				     mcdram_cfg[i].mcdram_pct,
-				     mcdram_cfg2[k].cache_pct);
+				if (mcdram_cfg[i].mcdram_pct == NO_VAL16) {
+					info("%s: No mcdram_pct from capmc for nid %u",
+					     __func__, mcdram_cfg[i].nid);
+				} else {
+					info("%s: HBM mismatch between capmc "
+					     "and cnselect for nid %u (%u != %d)",
+					     __func__, mcdram_cfg[i].nid,
+					     mcdram_cfg[i].mcdram_pct,
+					     mcdram_cfg2[k].cache_pct);
+				}
 				mcdram_cfg[i].mcdram_pct =
 					mcdram_cfg2[k].cache_pct;
 				xfree(mcdram_cfg[i].mcdram_cfg);
@@ -2310,10 +2330,16 @@ static int _update_node_state(char *node_list, bool set_locks)
 				continue;
 			if (xstrcmp(numa_cfg[i].numa_cfg,
 				    numa_cfg2[k].numa_cfg)) {
-				info("%s: NUMA mismatch between capmc and cnselect for nid %u (%s != %s)",
-				     __func__, numa_cfg[i].nid,
-				     numa_cfg[i].numa_cfg,
-				     numa_cfg2[k].numa_cfg);
+				if (!numa_cfg[i].numa_cfg) {
+					info("%s: No numa_cfg from capmc for nid %u",
+					     __func__, numa_cfg[i].nid);
+				} else {
+					info("%s: NUMA mismatch between capmc "
+					     "and cnselect for nid %u (%s != %s)",
+					     __func__, numa_cfg[i].nid,
+					     numa_cfg[i].numa_cfg,
+					     numa_cfg2[k].numa_cfg);
+				}
 				xfree(numa_cfg[i].numa_cfg);
 				numa_cfg[i].numa_cfg =
 					xstrdup(numa_cfg2[k].numa_cfg);
@@ -2354,15 +2380,19 @@ static int _update_node_state(char *node_list, bool set_locks)
 		time_t now = time(NULL);
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
-			if (node_ptr->last_response > now)
-				continue;	/* Reboot in likely progress */
-			xfree(node_ptr->features_act);
 			_strip_knl_opts(&node_ptr->features);
-			if (node_ptr->features && !node_ptr->features_act) {
-				node_ptr->features_act =
-					xstrdup(node_ptr->features);
+			if (node_ptr->last_response > now) {
+				/* Reboot likely in progress.
+				 * Preserve active KNL features and merge
+				 * with configured non-KNL features */
+				_merge_strings(&node_ptr->features_act,
+					       node_ptr->features, 0);
 			} else {
-				_strip_knl_opts(&node_ptr->features_act);
+				xfree(node_ptr->features_act);
+				if (node_ptr->features) {
+					node_ptr->features_act =
+						xstrdup(node_ptr->features);
+				}
 			}
 		}
 		_update_all_node_features(mcdram_cap, mcdram_cap_cnt,
@@ -2467,6 +2497,13 @@ extern char *node_features_p_job_xlate(char *job_features)
 	}
 	xfree(tmp);
 
+	/*
+	 * No MCDRAM or NUMA features specified. This might be a non-KNL node.
+	 * In that case, do not set the default any MCDRAM or NUMA features.
+	 */
+	if (!has_mcdram && !has_numa)
+		return xstrdup(job_features);
+
 	/* Add default options */
 	if (!has_mcdram) {
 		tmp = _knl_mcdram_str(default_mcdram);
@@ -2500,11 +2537,13 @@ extern int node_features_p_node_set(char *active_features)
 	return SLURM_SUCCESS;
 }
 
-/* Note the active features associated with a set of nodes have been updated.
+/*
+ * Note the active features associated with a set of nodes have been updated.
  * Specifically update the node's "hbm" GRES value as needed.
  * IN active_features - New active features
  * IN node_bitmap - bitmap of nodes changed
- * RET error code */
+ * RET error code
+ */
 extern int node_features_p_node_update(char *active_features,
 				       bitstr_t *node_bitmap)
 {
@@ -2555,64 +2594,245 @@ extern int node_features_p_node_update(char *active_features,
 	return rc;
 }
 
-/* Translate a node's feature specification by replacing any features associated
- * with this plugin in the original value with the new values, preserving any
- * features that are not associated with this plugin
- * IN new_features - newly specific features (active or available)
- * IN orig_features - original features (active or available)
- * IN mode - 1=registration, 2=update
- * RET node's new merged features, must be xfreed */
+/*
+ * Return TRUE if the specified node update request is valid with respect
+ * to features changes (i.e. don't permit a non-KNL node to set KNL features).
+ *
+ * arg IN - Pointer to struct node_record record
+ * update_node_msg IN - Pointer to update request
+ */
+extern bool node_features_p_node_update_valid(void *arg,
+					update_node_msg_t *update_node_msg)
+{
+	struct node_record *node_ptr = (struct node_record *) arg;
+	char *tmp, *save_ptr = NULL, *tok;
+	bool is_knl = false, invalid_feature = false;
+
+	/* No feature changes */
+	if (!update_node_msg->features && !update_node_msg->features_act)
+		return true;
+
+	/* Determine if this is KNL node based upon current features */
+	if (node_ptr->features && node_ptr->features[0]) {
+		tmp = xstrdup(node_ptr->features);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if (_knl_mcdram_token(tok) || _knl_numa_token(tok)) {
+				is_knl = true;
+				break;
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
+	}
+	if (is_knl)
+		return true;
+
+	/* Validate that AvailableFeatures update request has no KNL modes */
+	if (update_node_msg->features) {
+		tmp = xstrdup(update_node_msg->features);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if (_knl_mcdram_token(tok) || _knl_numa_token(tok)) {
+				invalid_feature = true;
+				break;
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
+		if (invalid_feature) {
+			info("Invalid AvailableFeatures update request (%s) for non-KNL node %s",
+			     update_node_msg->features, node_ptr->name);
+			return false;
+		}
+	}
+
+	/* Validate that ActiveFeatures update request has no KNL modes */
+	if (update_node_msg->features_act) {
+		tmp = xstrdup(update_node_msg->features_act);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if (_knl_mcdram_token(tok) || _knl_numa_token(tok)) {
+				invalid_feature = true;
+				break;
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
+		if (invalid_feature) {
+			info("Invalid ActiveFeatures update request (%s) for non-KNL node %s",
+			     update_node_msg->features_act, node_ptr->name);
+			return false;
+		}
+	}
+
+	/*
+	 * For non-KNL node, active and available features must match
+	 */
+	if (!update_node_msg->features) {
+		update_node_msg->features =
+			xstrdup(update_node_msg->features_act);
+	} else if (!update_node_msg->features_act) {
+		update_node_msg->features_act =
+			xstrdup(update_node_msg->features);
+	} else if (xstrcmp(update_node_msg->features,
+			   update_node_msg->features_act)) {
+		info("Invalid ActiveFeatures != AvailableFeatures (%s != %s) for non-KNL node %s",
+		     update_node_msg->features, update_node_msg->features_act,
+		     node_ptr->name);
+		return false;
+	}
+
+	return true;
+}
+
+/* Return TRUE if this (one) feature name is under this plugin's control */
+extern bool node_features_p_changible_feature(char *feature)
+{
+	if (_knl_mcdram_token(feature) || _knl_numa_token(feature))
+		return true;
+	return false;
+}
+
+/*
+ * Translate a node's feature specification by replacing any features associated
+ *	with this plugin in the original value with the new values, preserving
+ *	any features that are not associated with this plugin
+ * IN new_features - newly active features
+ * IN orig_features - original active features
+ * IN avail_features - original available features
+ * RET node's new merged features, must be xfreed
+ */
 extern char *node_features_p_node_xlate(char *new_features, char *orig_features,
-					int mode)
+					char *avail_features)
 {
 	char *node_features = NULL;
 	char *tmp, *save_ptr = NULL, *sep = "", *tok;
-	bool non_knl_features = false;
+	uint16_t new_mcdram = 0, new_numa = 0;
+	uint16_t tmp_mcdram, tmp_numa;
+	bool is_knl = false;
+
+	if (avail_features) {
+		tmp = xstrdup(avail_features);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if (_knl_mcdram_token(tok) || _knl_numa_token(tok)) {
+				is_knl = true;
+			} else {
+				xstrfmtcat(node_features, "%s%s", sep, tok);
+				sep = ",";
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
+		if (!is_knl) {
+			xfree(node_features);
+			sep = "";
+		}
+	}
+
+	if (new_features) {
+		/* Copy non-KNL features */
+		if (!is_knl && new_features) {
+			tmp = xstrdup(new_features);
+			tok = strtok_r(tmp, ",", &save_ptr);
+			while (tok) {
+				if ((_knl_mcdram_token(tok) == 0) &&
+				    (_knl_numa_token(tok)   == 0)) {
+					xstrfmtcat(node_features, "%s%s", sep,
+						   tok);
+					sep = ",";
+				}
+				tok = strtok_r(NULL, ",", &save_ptr);
+			}
+			xfree(tmp);
+		}
+
+		/* Copy new KNL features in MCDRAM/NUMA order */
+		tmp = xstrdup(new_features);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if ((tmp_mcdram = _knl_mcdram_token(tok)))
+				new_mcdram |= tmp_mcdram;
+			else if ((tmp_numa = _knl_numa_token(tok)))
+				new_numa |= tmp_numa;
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
+
+		if (is_knl && ((new_mcdram == 0) || (new_numa == 0))) {
+			/*
+			 * New active features lacks current MCDRAM or NUMA,
+			 * copy values from original
+			 */
+			tmp = xstrdup(orig_features);
+			tok = strtok_r(tmp, ",", &save_ptr);
+			while (tok) {
+				if ((new_mcdram == 0) &&
+				    (tmp_mcdram = _knl_mcdram_token(tok)))
+					new_mcdram |= tmp_mcdram;
+				else if ((new_numa == 0) &&
+					 (tmp_numa = _knl_numa_token(tok)))
+					new_numa |= tmp_numa;
+				tok = strtok_r(NULL, ",", &save_ptr);
+			}
+			xfree(tmp);
+		}
+		if (new_mcdram) {
+			tmp = _knl_mcdram_str(new_mcdram);
+			xstrfmtcat(node_features, "%s%s", sep, tmp);
+			xfree(tmp);
+			sep = ",";
+		}
+		if (new_numa) {
+			tmp = _knl_numa_str(new_numa);
+			xstrfmtcat(node_features, "%s%s", sep, tmp);
+			xfree(tmp);
+		}
+	}
+
+	return node_features;
+}
+
+/* Translate a node's new feature specification into a "standard" ordering
+ * RET node's new merged features, must be xfreed */
+extern char *node_features_p_node_xlate2(char *new_features)
+{
+	char *node_features = NULL;
+	char *tmp, *save_ptr = NULL, *sep = "", *tok;
+	uint16_t new_mcdram = 0, new_numa = 0;
+	uint16_t tmp_mcdram, tmp_numa;
 
 	if (new_features) {
 		tmp = xstrdup(new_features);
 		tok = strtok_r(tmp, ",", &save_ptr);
 		while (tok) {
-			if ((_knl_mcdram_token(tok) != 0) ||
-			    (_knl_numa_token(tok)   != 0)) {
+			if ((tmp_mcdram = _knl_mcdram_token(tok))) {
+				new_mcdram |= tmp_mcdram;
+			} else if ((tmp_numa = _knl_numa_token(tok))) {
+				new_numa |= tmp_numa;
+			} else {
 				xstrfmtcat(node_features, "%s%s", sep, tok);
 				sep = ",";
-			} else
-				non_knl_features = true;
+			}
 			tok = strtok_r(NULL, ",", &save_ptr);
 		}
 		xfree(tmp);
-	}
-
-	if ((mode == 2) &&
-	    (non_knl_features || (new_features && (new_features[0] == '\0')))) {
-		/* Complete replacement of active features if node update RPC
-		 * and specified features empty or contain non-KNL values */
-		xfree(node_features);
-		node_features = xstrdup(new_features);
-		return node_features;
-	}
-
-	if (!node_features) {	/* No new info from compute node */
-		node_features = xstrdup(orig_features);
-		return node_features;
-	}
-
-	tmp = xstrdup(orig_features);
-	tok = strtok_r(tmp, ",", &save_ptr);
-	while (tok) {
-		if ((_knl_mcdram_token(tok) == 0) &&
-		    (_knl_numa_token(tok)   == 0)) {
-			xstrfmtcat(node_features, "%s%s", sep, tok);
+		if (new_mcdram) {
+			tmp = _knl_mcdram_str(new_mcdram);
+			xstrfmtcat(node_features, "%s%s", sep, tmp);
+			xfree(tmp);
 			sep = ",";
 		}
-		tok = strtok_r(NULL, ",", &save_ptr);
+		if (new_numa) {
+			tmp = _knl_numa_str(new_numa);
+			xstrfmtcat(node_features, "%s%s", sep, tmp);
+			xfree(tmp);
+		}
 	}
-	xfree(tmp);
 
 	return node_features;
 }
-
 
 /* Perform set up for step launch
  * mem_sort IN - Trigger sort of memory pages (KNL zonesort)
@@ -2622,11 +2842,18 @@ extern void node_features_p_step_config(bool mem_sort, bitstr_t *numa_bitmap)
 #ifdef HAVE_NUMA
 	if (mem_sort && (numa_available() != -1)) {
 		struct stat sb;
-		int buf_len, fd, i, len;
+		int buf_len, fd, i, len, rc;
 		char buf[8];
 
-		if (stat(ZONE_SORT_PATH, &sb) == -1)
-			(void) system(MODPROBE_PATH " zonesort_module");
+		if (stat(ZONE_SORT_PATH, &sb) == -1) {
+			rc = system(MODPROBE_PATH " zonesort_module");
+			if (rc != -1)
+				rc = WEXITSTATUS(rc);
+			if (rc) {
+				verbose("%s: zonesort execution failure. Return code: %d",
+					__func__, rc);
+			}
+		}
 		if ((fd = open(ZONE_SORT_PATH, O_WRONLY | O_SYNC)) == -1) {
 			error("%s: Could not open file %s: %m",
 			      __func__, ZONE_SORT_PATH);

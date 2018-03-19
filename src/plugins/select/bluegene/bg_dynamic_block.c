@@ -82,7 +82,7 @@ extern List create_dynamic_block(List block_list,
 	memset(&blockreq, 0, sizeof(select_ba_request_t));
 	memcpy(start_geo, request->geometry, sizeof(start_geo));
 
-	/* We need to lock this just incase a blocks_overlap is called
+	/* We need to lock this just in case a blocks_overlap is called
 	   which will in turn reset and set the system as it sees fit.
 	*/
 	slurm_mutex_lock(&block_state_mutex);
@@ -300,7 +300,7 @@ try_small_again:
 
 	//debug("going to create %d", request->size);
 	if (!new_ba_request(request)) {
-		if (request->geometry[0] != (uint16_t)NO_VAL) {
+		if (request->geometry[0] != NO_VAL16) {
 			char *geo = give_geo(request->geometry,
 					     SYSTEM_DIMENSIONS, 1);
 			error("Problems with request for size %d geo %s",

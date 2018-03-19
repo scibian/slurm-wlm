@@ -1,9 +1,9 @@
 /*****************************************************************************\
  *  as_mysql_convert.h - functions dealing with converting from tables in
- *                    slurm <= 14.11.
+ *                    slurm <= 17.02.
  *****************************************************************************
  *
- *  Copyright (C) 2015 SchedMD LLC.
+ *  Copyright (C) 2015-2017 SchedMD LLC.
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
@@ -41,10 +41,23 @@
 
 #include "accounting_storage_mysql.h"
 
-extern int as_mysql_convert_event_table(mysql_conn_t *mysql_conn, char *table);
+/* See bug 4553 */
+extern List bad_tres_list;
 
-extern int as_mysql_convert_usage_table(mysql_conn_t *mysql_conn, char *table);
+/* Fill in the bad_tres_list with anything from bug 4553 */
+extern int as_mysql_convert_get_bad_tres(mysql_conn_t *mysql_conn);
 
-extern int as_mysql_convert_tables(mysql_conn_t *mysql_conn);
+/* Functions for converting tables before they are created in new schema */
+extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn);
+
+/* Functions for converting tables after they are created */
+extern int as_mysql_convert_tables_post_create(mysql_conn_t *mysql_conn);
+
+/*
+ * Functions for converting tables that aren't cluster centric as the other
+ * functions in this deal with.
+ */
+extern int as_mysql_convert_non_cluster_tables_post_create(
+	mysql_conn_t *mysql_conn);
 
 #endif

@@ -93,9 +93,14 @@ void block_sigwinch(void)
 void pty_thread_create(srun_job_t *job)
 {
 	slurm_addr_t pty_addr;
-	pthread_attr_t attr;
+	uint16_t *ports;
 
-	if ((job->pty_fd = slurm_init_msg_engine_port(0)) < 0) {
+	if ((ports = slurm_get_srun_port_range()))
+		job->pty_fd = slurm_init_msg_engine_ports(ports);
+	else
+		job->pty_fd = slurm_init_msg_engine_port(0);
+
+	if (job->pty_fd < 0) {
 		error("init_msg_engine_port: %m");
 		return;
 	}
@@ -106,13 +111,7 @@ void pty_thread_create(srun_job_t *job)
 	job->pty_port = ntohs(((struct sockaddr_in) pty_addr).sin_port);
 	debug2("initialized job control port %hu", job->pty_port);
 
-	slurm_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	if ((pthread_create(&job->pty_id, &attr, &_pty_thread, (void *) job))) {
-		job->pty_id = 0;
-		error("pthread_create(pty_thread): %m");
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create_detached(NULL, _pty_thread, job);
 }
 
 static void  _handle_sigwinch(int sig)
@@ -157,7 +156,7 @@ static void *_pty_thread(void *arg)
 
 	while (job->state <= SRUN_JOB_RUNNING) {
 		debug2("waiting for SIGWINCH");
-		if (poll(NULL, 0, -1) < 1) {
+		if ((poll(NULL, 0, -1) < 1) && (errno != EINTR)) {
 			debug("%s: poll error %m", __func__);
 			continue;
 		}
@@ -167,6 +166,6 @@ static void *_pty_thread(void *arg)
 		}
 		winch = 0;
 	}
-	slurm_close(fd);
+	close(fd);
 	return NULL;
 }

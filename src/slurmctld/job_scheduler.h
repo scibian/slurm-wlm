@@ -86,18 +86,21 @@ extern bool deadline_ok(struct job_record *job_ptr, char *func);
  * epilog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	terminated.
  * IN job_ptr - pointer to job that has been terminated
- * RET SLURM_SUCCESS(0) or error code
  */
-extern int epilog_slurmctld(struct job_record *job_ptr);
+extern void epilog_slurmctld(struct job_record *job_ptr);
 
 /*
  * job_is_completing - Determine if jobs are in the process of completing.
+ * IN/OUT  eff_cg_bitmap - optional bitmap of all relevent completing nodes,
+ *                         relevenace determined by filtering via CompleteWait
+ *                         if NULL, function will terminate at first completing
+ *                         job
  * RET - True of any job is in the process of completing AND
  *	 CompleteWait is configured non-zero
  * NOTE: This function can reduce resource fragmentation, which is a
  * critical issue on Elan interconnect based systems.
  */
-extern bool job_is_completing(void);
+extern bool job_is_completing(bitstr_t *eff_cg_bitmap);
 
 /* Determine if a pending job will run using only the specified nodes
  * (in job_desc_msg->req_nodes), build response message and return
@@ -147,9 +150,8 @@ extern void prolog_running_decr(struct job_record *job_ptr);
  * prolog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	been allocated resources.
  * IN job_ptr - pointer to job that will be initiated
- * RET SLURM_SUCCESS(0) or error code
  */
-extern int prolog_slurmctld(struct job_record *job_ptr);
+extern void prolog_slurmctld(struct job_record *job_ptr);
 
 /*
  * reboot_job_nodes - Reboot the compute nodes allocated to a job.

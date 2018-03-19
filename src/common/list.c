@@ -119,7 +119,7 @@ struct listNode {
 };
 
 struct listIterator {
-	struct list          *list;         /* the list being iterated           */
+	struct xlist         *list;         /* the list being iterated           */
 	struct listNode      *pos;          /* the next node to be iterated      */
 	struct listNode     **prev;         /* addr of 'next' ptr to prv It node */
 	struct listIterator  *iNext;        /* iterator chain for list_destroy() */
@@ -128,7 +128,7 @@ struct listIterator {
 #endif /* !NDEBUG */
 };
 
-struct list {
+struct xlist {
 	struct listNode      *head;         /* head of the list                  */
 	struct listNode     **tail;         /* addr of last node's 'next' ptr    */
 	struct listIterator  *iNext;        /* iterator chain for list_destroy() */
@@ -191,7 +191,7 @@ list_create (ListDelF f)
 	l->fDel = f;
 	l->count = 0;
 	slurm_mutex_init(&l->mutex);
-	assert(l->magic = LIST_MAGIC);      /* set magic via assert abuse */
+	assert((l->magic = LIST_MAGIC));      /* set magic via assert abuse */
 
 	return l;
 }
@@ -212,7 +212,7 @@ list_destroy (List l)
 	while (i) {
 		assert(i->magic == LIST_MAGIC);
 		iTmp = i->iNext;
-		assert(i->magic = ~LIST_MAGIC); /* clear magic via assert abuse */
+		assert((i->magic = ~LIST_MAGIC)); /* clear magic via assert abuse */
 		list_iterator_free(i);
 		i = iTmp;
 	}
@@ -224,7 +224,7 @@ list_destroy (List l)
 		list_node_free(p);
 		p = pTmp;
 	}
-	assert(l->magic = ~LIST_MAGIC);     /* clear magic via assert abuse */
+	assert((l->magic = ~LIST_MAGIC));     /* clear magic via assert abuse */
 	slurm_mutex_unlock(&l->mutex);
 	slurm_mutex_destroy(&l->mutex);
 	list_free(l);
@@ -611,7 +611,7 @@ list_iterator_create (List l)
 	i->prev = &l->head;
 	i->iNext = l->iNext;
 	l->iNext = i;
-	assert(i->magic = LIST_MAGIC);      /* set magic via assert abuse */
+	assert((i->magic = LIST_MAGIC));      /* set magic via assert abuse */
 
 	slurm_mutex_unlock(&l->mutex);
 
@@ -655,7 +655,7 @@ list_iterator_destroy (ListIterator i)
 	}
 	slurm_mutex_unlock(&i->list->mutex);
 
-	assert(i->magic = ~LIST_MAGIC);     /* clear magic via assert abuse */
+	assert((i->magic = ~LIST_MAGIC));     /* clear magic via assert abuse */
 	list_iterator_free(i);
 }
 
@@ -861,7 +861,7 @@ list_node_destroy (List l, ListNode *pp)
 static List
 list_alloc (void)
 {
-	return(list_alloc_aux(sizeof(struct list), &list_free_lists));
+	return(list_alloc_aux(sizeof(struct xlist), &list_free_lists));
 }
 
 /* list_free()
