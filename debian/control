@@ -1,7 +1,7 @@
 Source: slurm-llnl
 Section: admin
 Priority: optional
-Maintainer: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Maintainer: Scibian Project <packaging@scibian.org>
 Uploaders: Rémi Palancher <remi@rezib.org>, Mehdi Dogguy <mehdi@debian.org>
 Build-Depends:
  debhelper (>= 9.20150101+deb8u2),
@@ -29,8 +29,8 @@ Build-Depends:
  libhdf5-dev
 Standards-Version: 4.1.2
 Homepage: http://slurm.schedmd.com
-Vcs-Browser: https://anonscm.debian.org/git/collab-maint/slurm-llnl.git
-Vcs-Git: https://anonscm.debian.org/git/collab-maint/slurm-llnl.git
+Vcs-Browser: https://github.com/scibian/slurm-llnl
+Vcs-Git: https://github.com/scibian/slurm-llnl.git
 
 Package: slurm-wlm
 Architecture: any
