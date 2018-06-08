@@ -10,3 +10,5 @@ b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 Avoid-node-hang-in-COMPLETING-state
 cve-2018-7033
 0012-slurmctld-Check-UID-in-pack_job-before-hiding.patch
+cve-2018-10995
+fix-removing-array-jobs-in-slurmctld

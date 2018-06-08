@@ -1,3 +1,10 @@
+slurm-llnl (17.11.2-1sci8u3) scibian8; urgency=medium
+
+  * Add undisclosed security fix for CVE-2018-10995
+  * Add patch to fix removing array job in slurmctld
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 08 Jun 2018 09:49:56 +0200
+
 slurm-llnl (17.11.2-1sci9u1) scibian9; urgency=medium
 
   * Rebuild for scibian9
