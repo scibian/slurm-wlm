@@ -12,3 +12,4 @@ cve-2018-7033
 0012-slurmctld-Check-UID-in-pack_job-before-hiding.patch
 cve-2018-10995
 fix-removing-array-jobs-in-slurmctld
+add-username-lua
