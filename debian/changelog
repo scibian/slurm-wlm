@@ -1,3 +1,9 @@
+slurm-llnl (17.11.2-1sci9u3) scibian9; urgency=medium
+
+  * Patch to add user_name in Lua job submit interface
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Oct 2018 15:29:38 +0200
+
 slurm-llnl (17.11.2-1sci9u2) scibian9; urgency=medium
 
   * Scibian9 rebuild.
