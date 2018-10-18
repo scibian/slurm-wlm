@@ -1,3 +1,9 @@
+slurm-llnl (17.11.2-1sci8u4) scibian8; urgency=medium
+
+  * Patch to add user_name in Lua job submit interface.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Oct 2018 15:28:12 +0200
+
 slurm-llnl (17.11.2-1sci8u3) scibian8; urgency=medium
 
   * Add undisclosed security fix for CVE-2018-10995
