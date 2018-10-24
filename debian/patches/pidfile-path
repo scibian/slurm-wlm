@@ -7,7 +7,7 @@ Last-Update: 2018-01-11
 
 --- a/src/common/read_config.h
 +++ b/src/common/read_config.h
-@@ -166,9 +166,9 @@
+@@ -163,9 +163,9 @@
  #else
  #  define DEFAULT_SELECT_TYPE       "select/linear"
  #endif
@@ -23,7 +23,7 @@ Last-Update: 2018-01-11
 +++ b/src/slurmdbd/read_config.h
 @@ -48,7 +48,7 @@
  
- #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/none"
+ #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/munge"
  //#define DEFAULT_SLURMDBD_JOB_PURGE	12
 -#define DEFAULT_SLURMDBD_PIDFILE	"/var/run/slurmdbd.pid"
 +#define DEFAULT_SLURMDBD_PIDFILE	"/var/run/slurm-llnl/slurmdbd.pid"

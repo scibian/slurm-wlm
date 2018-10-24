@@ -1,3 +1,88 @@
+slurm-llnl (18.08.3-1) unstable; urgency=medium
+
+  * New upstream release
+  * Update libslurm33.symbols
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 24 Oct 2018 23:51:22 +0200
+
+slurm-llnl (18.08.2-1) unstable; urgency=medium
+
+  * New upstream release
+  * Fix sacct test script (Closes: #910886)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 23 Oct 2018 16:40:57 +0200
+
+slurm-llnl (18.08.1-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #909653)
+  * Update libslurm{,db} symbols file to soname 33
+  * Modifiy the mail patch since /usr/bin/mail is now supported upstream
+  * Refresh patches and remove parts included upstream
+  * Update d/copyright
+  * Update html configurators
+  * Fix typos in the some man pages
+  * Update simple configuration files
+  * Remove unused cgroup release agent script
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 08 Oct 2018 01:23:32 +0200
+
+slurm-llnl (17.11.9-1) unstable; urgency=medium
+
+  * New upstream release
+  * Bump standard version to 4.2.0
+    Passing verbose options to commands in d/rules
+  * Update libslurm32.symbols
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 10 Aug 2018 15:25:19 +0200
+
+slurm-llnl (17.11.8-1) unstable; urgency=medium
+
+  * New upstream release
+  * Bump standard version to 4.1.5 (no changes)
+  * Update html configurators
+  * Update libslurm32 symbols file
+  * Disable pdf and ttf compression to improve html doc usability
+  * Add man2html dependency to enable html man pages in doc
+  * Add libssh2 dependency to enable native X11 forwarding
+  * Add libcurl dependency to build jobcomp/elasticsearch plugin
+  * Add lz4 dependency to enable lz4 compression to sbcast
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 27 Jul 2018 10:06:43 +0200
+
+slurm-llnl (17.11.7-1) unstable; urgency=high
+
+  * New upstream release fixes CVE-2018-10995
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 06 Jun 2018 11:15:08 +0200
+
+slurm-llnl (17.11.6-1) unstable; urgency=medium
+
+  * New upstream release
+  * Update Vcs info with the new salsa.d.o git repo
+  * Change Maintainer to HPC Team
+  * Add Gennaro Oliva as Uploader
+  * Bump standard version to 4.1.4 (no changes)
+  * Rename the header files directory to slurm (Closes: #887924)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 22 May 2018 11:43:27 +0200
+
+slurm-llnl (17.11.5-1) unstable; urgency=medium
+
+  [ Mehdi Dogguy ]
+  * Add an empty /etc/slurm-llnl/plugstack.conf.d directory for plugin
+    configuration and associated configuration file plugstack.conf
+
+  [ Gennaro Oliva ]
+  * Bump debhelper compat level to 10
+  * Bump standard version to 4.1.3
+  * Delete old transitional packages' files
+  * New upstream release fixes CVE-2018-7033
+  * Update libslurm{,db}32 symbols files
+  * Fix slurmdbd.conf.5 and slurm.conf.5 man pages
+  * Fix a typo in the mpiexec wrapper man page
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sat, 17 Mar 2018 08:50:51 +0100
+
 slurm-llnl (17.11.2-1) unstable; urgency=medium
 
   [ Mehdi Dogguy ]
