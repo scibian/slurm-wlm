@@ -9,11 +9,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -29,15 +29,17 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+
+#define _GNU_SOURCE
 
 #include "config.h"
 
@@ -52,6 +54,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -80,13 +83,13 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/plugstack.h"
-#include "src/common/safeopen.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_mpi.h"
 #include "src/common/strlcpy.h"
 #include "src/common/switch.h"
+#include "src/common/tres_frequency.h"
 #include "src/common/util-net.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
@@ -119,15 +122,6 @@
 
 #define RETRY_DELAY 15		/* retry every 15 seconds */
 #define MAX_RETRY   240		/* retry 240 times (one hour max) */
-
-/*
- *  List of signals to block in this process
- */
-static int mgr_sigarray[] = {
-	SIGINT,  SIGTERM, SIGTSTP,
-	SIGQUIT, SIGPIPE, SIGUSR1,
-	SIGUSR2, SIGALRM, SIGHUP, 0
-};
 
 struct priv_state {
 	uid_t	saved_uid;
@@ -164,10 +158,10 @@ typedef struct kill_thread {
 /*
  * Job manager related prototypes
  */
-static int  _access(const char *path, int modes, uid_t uid, gid_t gid);
+static bool _access(const char *path, int modes, uid_t uid,
+		    int ngids, gid_t *gids);
 static void _send_launch_failure(launch_tasks_request_msg_t *,
 				 slurm_addr_t *, int, uint16_t);
-static int  _drain_node(char *reason);
 static int  _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized);
 static int  _become_user(stepd_step_rec_t *job, struct priv_state *ps);
 static void  _set_prio_process (stepd_step_rec_t *job);
@@ -180,9 +174,6 @@ static int  _slurmd_job_log_init(stepd_step_rec_t *job);
 static void _wait_for_io(stepd_step_rec_t *job);
 static int  _send_exit_msg(stepd_step_rec_t *job, uint32_t *tid, int n,
 			   int status);
-static void _wait_for_children_slurmstepd(stepd_step_rec_t *job);
-static int  _send_pending_exit_msgs(stepd_step_rec_t *job);
-static void _send_step_complete_msgs(stepd_step_rec_t *job);
 static void _set_job_state(stepd_step_rec_t *job, slurmstepd_state_t new_state);
 static void _wait_for_all_tasks(stepd_step_rec_t *job);
 static int  _wait_for_any_task(stepd_step_rec_t *job, bool waitflag);
@@ -242,24 +233,55 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 	 * it is resumed */
 	wait_for_resumed(resp_msg->msg_type);
 	while (1) {
-		rc = slurm_send_only_node_msg(resp_msg);
-		if ((rc == SLURM_SUCCESS) || (errno != ETIMEDOUT))
-			break;
+		if (resp_msg->protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+			int msg_rc = 0;
+			msg_rc = slurm_send_recv_rc_msg_only_one(resp_msg,
+								 &rc, 0);
+			/* Both must be zero for a successful transmission. */
+			if (!msg_rc && !rc)
+				break;
+		} else {
+			/*
+			 * Old unreliable method. See slurm_send_only_node_msg()
+			 * for further details.
+			 */
+			rc = slurm_send_only_node_msg(resp_msg);
+			if (rc == SLURM_SUCCESS)
+				break;
+		}
 
 		if (!max_retry)
-			max_retry = (nnodes / 1024) + 1;
+			max_retry = (nnodes / 1024) + 5;
 
-		if (retry > max_retry)
+		debug("%s: %d/%d failed to send msg type %u: %m",
+		      __func__, retry, max_retry, resp_msg->msg_type);
+
+		if (retry >= max_retry)
 			break;
 
-		debug3("%s: failed to send msg type %u: %m",
-			__func__, resp_msg->msg_type);
 		usleep(delay);
 		if (delay < 800000)
 			delay *= 2;
 		retry++;
 	}
 	return rc;
+}
+
+static void _local_jobacctinfo_aggregate(
+	jobacctinfo_t *dest, jobacctinfo_t *from)
+{
+	/*
+	 * Here to make any sense for some variables we need to move the
+	 * Max to the total (i.e. Mem VMem) since the total might be
+	 * incorrect data, this way the total/ave will be of the Max
+	 * values.
+	 */
+	from->tres_usage_in_tot[TRES_ARRAY_MEM] =
+		from->tres_usage_in_max[TRES_ARRAY_MEM];
+	from->tres_usage_in_tot[TRES_ARRAY_VMEM] =
+		from->tres_usage_in_max[TRES_ARRAY_VMEM];
+
+	jobacctinfo_aggregate(dest, from);
 }
 
 /*
@@ -394,10 +416,10 @@ batch_finish(stepd_step_rec_t *job, int rc)
 			job->jobid, rc, step_complete.step_rc);
 		_send_complete_batch_script_msg(job, rc, step_complete.step_rc);
 	} else {
-		_wait_for_children_slurmstepd(job);
+		stepd_wait_for_children_slurmstepd(job);
 		verbose("job %u.%u completed with slurm_rc = %d, job_rc = %d",
 			job->jobid, job->stepid, rc, step_complete.step_rc);
-		_send_step_complete_msgs(job);
+		stepd_send_step_complete_msgs(job);
 	}
 
 	/* Do not purge directory until slurmctld is notified of batch job
@@ -699,8 +721,7 @@ _send_exit_msg(stepd_step_rec_t *job, uint32_t *tid, int n, int status)
 	return SLURM_SUCCESS;
 }
 
-static void
-_wait_for_children_slurmstepd(stepd_step_rec_t *job)
+extern void stepd_wait_for_children_slurmstepd(stepd_step_rec_t *job)
 {
 	int left = 0;
 	int rc;
@@ -778,6 +799,10 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	msg.jobacct = jobacctinfo_create(NULL);
 	/************* acct stuff ********************/
 	if (!acct_sent) {
+		/*
+		 * No need to call _local_jobaccinfo_aggregate, job->jobacct
+		 * already has the modified total for this node in the step.
+		 */
 		jobacctinfo_aggregate(step_complete.jobacct, job->jobacct);
 		jobacctinfo_getinfo(step_complete.jobacct,
 				    JOBACCT_DATA_TOTAL, msg.jobacct,
@@ -906,8 +931,7 @@ _bit_getrange(int start, int size, int *first, int *last)
  * not yet signaled their completion, so there will be gaps in the
  * completed node bitmap, requiring that more than one message be sent.
  */
-static void
-_send_step_complete_msgs(stepd_step_rec_t *job)
+extern void stepd_send_step_complete_msgs(stepd_step_rec_t *job)
 {
 	int start, size;
 	int first = -1, last = -1;
@@ -973,7 +997,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	int rc = SLURM_SUCCESS;
 
 #ifdef WITH_SLURM_X11
-	int x11_pipe[2];
+	int x11_pipe[2] = {0, 0};
 
 	if (job->x11 && (pipe(x11_pipe) < 0)) {
 		error("x11 pipe: %m");
@@ -1004,14 +1028,18 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 		setpgid(0, 0);
 		setsid();
 		acct_gather_profile_g_child_forked();
+
+		_unblock_signals();
+
 #ifdef WITH_SLURM_X11
 		if (job->x11) {
-			int display;
+			int display, len = 0;
+			char *xauthority;
 
 			close(x11_pipe[0]);
 
 			/* will create several detached threads to process */
-			if (setup_x11_forward(job, &display)) {
+			if (setup_x11_forward(job, &display, &xauthority)) {
 				/* ssh forwarding setup failed */
 				error("x11 port forwarding setup failed");
 				exit(127);
@@ -1023,6 +1051,23 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 				error("%s: failed sending display number back: %m",
 				      __func__);
 			}
+
+			/* send back temporary xauthority file location */
+			if (xauthority)
+				len = strlen(xauthority) + 1;
+
+			if (write(x11_pipe[1], &len, sizeof(int))
+			    != sizeof(int)) {
+				error("%s: failed sending XAUTHORITY back: %m",
+				      __func__);
+			}
+
+			if (write(x11_pipe[1], xauthority, len) != len) {
+				error("%s: failed sending XAUTHORITY back: %m",
+				      __func__);
+			}
+
+			xfree(xauthority);
 			close(x11_pipe[1]);
 
 			/*
@@ -1042,7 +1087,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			 * work, it will not keep a process named "slurmstepd"
 			 */
 
-			execl(SLEEP_CMD, "sleep", "1000000", NULL);
+			execl(SLEEP_CMD, "sleep", "100000000", NULL);
 			error("execl: %m");
 			sleep(1);
 			exit(0);
@@ -1086,6 +1131,8 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	 * needs to be marked as having failed as well.
 	 */
 	if (job->x11) {
+		int len;
+
 		close(x11_pipe[1]);
 		if (read(x11_pipe[0], &job->x11_display, sizeof(int))
 		    != sizeof(int)) {
@@ -1093,9 +1140,26 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			      __func__);
 			job->x11_display = 0;
 		}
+
+		if (read(x11_pipe[0], &len, sizeof(int)) != sizeof(int)) {
+			error("%s: failed retrieving x11 authority value: %m",
+			      __func__);
+		}
+
+		if (len)
+			job->x11_xauthority = xmalloc(len);
+
+		if (read(x11_pipe[0], job->x11_xauthority, len) != len) {
+			error("%s: failed retrieving x11 authority value: %m",
+			      __func__);
+		}
+
 		close(x11_pipe[0]);
 
 		debug("x11 forwarding local display is %d", job->x11_display);
+		if (job->x11_xauthority)
+			debug("x11 forwarding local xauthority is %s",
+			      job->x11_xauthority);
 	}
 #endif
 
@@ -1119,7 +1183,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 				    JOBACCT_DATA_RUSAGE, &rusage,
 				    SLURM_PROTOCOL_VERSION);
 		job->jobacct->energy.consumed_energy = 0;
-		jobacctinfo_aggregate(job->jobacct, jobacct);
+		_local_jobacctinfo_aggregate(job->jobacct, jobacct);
 		jobacctinfo_destroy(jobacct);
 	}
 	acct_gather_profile_g_task_end(pid);
@@ -1148,8 +1212,8 @@ fail1:
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
 
 	if (step_complete.rank > -1)
-		_wait_for_children_slurmstepd(job);
-	_send_step_complete_msgs(job);
+		stepd_wait_for_children_slurmstepd(job);
+	stepd_send_step_complete_msgs(job);
 
 	return rc;
 }
@@ -1187,8 +1251,8 @@ job_manager(stepd_step_rec_t *job)
 	if ((acct_gather_conf_init() != SLURM_SUCCESS)          ||
 	    (core_spec_g_init() != SLURM_SUCCESS)		||
 	    (switch_init(1) != SLURM_SUCCESS)			||
-	    (slurmd_task_init() != SLURM_SUCCESS)		||
 	    (slurm_proctrack_init() != SLURM_SUCCESS)		||
+	    (slurmd_task_init() != SLURM_SUCCESS)		||
 	    (checkpoint_init(ckpt_type) != SLURM_SUCCESS)	||
 	    (jobacct_gather_init() != SLURM_SUCCESS)		||
 	    (acct_gather_profile_init() != SLURM_SUCCESS)	||
@@ -1235,7 +1299,7 @@ job_manager(stepd_step_rec_t *job)
 	 * will then set the frontend node to DRAIN.
 	 *
 	 * ALso note that we do not check the reservation for batch jobs with
-	 * a reservation ID of zero and no CPUs. These are SLURM job
+	 * a reservation ID of zero and no CPUs. These are Slurm job
 	 * allocations containing no compute nodes and thus have no ALPS
 	 * reservation.
 	 */
@@ -1244,7 +1308,7 @@ job_manager(stepd_step_rec_t *job)
 		if (rc != SLURM_SUCCESS) {
 			/*
 			 * Transient error: slurmctld knows this condition to
-			 * mean that the ALPS (not the SLURM) reservation
+			 * mean that the ALPS (not the Slurm) reservation
 			 * failed and tries again.
 			 */
 			if (rc == READY_JOB_ERROR)
@@ -1336,7 +1400,6 @@ job_manager(stepd_step_rec_t *job)
 
 	io_close_task_fds(job);
 
-	xsignal_block (mgr_sigarray);
 	reattach_job = job;
 
 	/* Attach slurmstepd to system cgroups, if configured */
@@ -1408,15 +1471,19 @@ fail2:
 	task_g_post_step(job);
 
 	/*
-	 * Reset cpu frequency if it was changed
+	 * Reset CPU and TRES frequencies if changed
 	 */
-	if (job->cpu_freq_min != NO_VAL || job->cpu_freq_max != NO_VAL ||
-	    job->cpu_freq_gov != NO_VAL)
+	if ((job->cpu_freq_min != NO_VAL) || (job->cpu_freq_max != NO_VAL) ||
+	    (job->cpu_freq_gov != NO_VAL))
 		cpu_freq_reset(job);
+	if (job->tres_freq)
+		tres_freq_reset(job);
 
-	/* Notify srun of completion AFTER frequency reset to avoid race
-	 * condition starting another job on these CPUs. */
-	while (_send_pending_exit_msgs(job)) {;}
+	/*
+	 * Notify srun of completion AFTER frequency reset to avoid race
+	 * condition starting another job on these CPUs.
+	 */
+	while (stepd_send_pending_exit_msgs(job)) {;}
 
 	/*
 	 * This just cleans up all of the PAM state in case rc == 0
@@ -1447,8 +1514,8 @@ fail1:
 		if (job->aborted)
 			info("job_manager exiting with aborted job");
 		else
-			_wait_for_children_slurmstepd(job);
-		_send_step_complete_msgs(job);
+			stepd_wait_for_children_slurmstepd(job);
+		stepd_send_step_complete_msgs(job);
 	}
 
 	if (!job->batch && core_spec_g_clear(job->cont_id))
@@ -1638,10 +1705,10 @@ static void _unblock_signals (void)
 	sigset_t set;
 	int i;
 
-	for (i = 0; mgr_sigarray[i]; i++) {
+	for (i = 0; slurmstepd_blocked_signals[i]; i++) {
 		/* eliminate pending signals, then set to default */
-		xsignal(mgr_sigarray[i], SIG_IGN);
-		xsignal(mgr_sigarray[i], SIG_DFL);
+		xsignal(slurmstepd_blocked_signals[i], SIG_IGN);
+		xsignal(slurmstepd_blocked_signals[i], SIG_DFL);
 	}
 	sigemptyset(&set);
 	xsignal_set_mask (&set);
@@ -1659,7 +1726,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	jobacct_id_t jobacct_id;
 	char *oom_value;
 	List exec_wait_list = NULL;
-	char *esc;
 	DEF_TIMERS;
 	START_TIMER;
 
@@ -1670,6 +1736,12 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		error("Failed to invoke task plugins: one of task_p_pre_setuid functions returned error");
 		return SLURM_ERROR;
 	}
+
+	/*
+	 * Create hwloc xml file here to avoid threading issues later.
+	 * This has to be done after task_g_pre_setuid().
+	 */
+	xcpuinfo_hwloc_topo_load(NULL, conf->hwloc_xml, false);
 
 	/*
 	 * Temporarily drop effective privileges, except for the euid.
@@ -1720,15 +1792,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		error ("_drop_privileges: %m");
 		rc = SLURM_ERROR;
 		goto fail2;
-	}
-
-	/*
-	 * If there is an \ in the path, remove it.
-	 */
-	esc = is_path_escaped(job->cwd);
-	if (esc) {
-		xfree(job->cwd);
-		job->cwd = esc;
 	}
 
 	if (chdir(job->cwd) < 0) {
@@ -1954,8 +2017,7 @@ fail1:
  * the client) Aggregate these tasks into a single task exit message.
  *
  */
-static int
-_send_pending_exit_msgs(stepd_step_rec_t *job)
+extern int stepd_send_pending_exit_msgs(stepd_step_rec_t *job)
 {
 	int  i;
 	int  nsent  = 0;
@@ -2087,7 +2149,7 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 			*/
 			if (jobacct->energy.consumed_energy)
 				job->jobacct->energy.consumed_energy = 0;
-			jobacctinfo_aggregate(job->jobacct, jobacct);
+			_local_jobacctinfo_aggregate(job->jobacct, jobacct);
 			jobacctinfo_destroy(jobacct);
 		}
 		acct_gather_profile_g_task_end(pid);
@@ -2181,7 +2243,7 @@ _wait_for_all_tasks(stepd_step_rec_t *job)
 			/* Send partial completion message only.
 			 * The full completion message can only be sent
 			 * after resetting CPU frequencies */
-			while (_send_pending_exit_msgs(job)) {;}
+			while (stepd_send_pending_exit_msgs(job)) {;}
 		}
 	}
 }
@@ -2249,7 +2311,7 @@ _make_batch_dir(stepd_step_rec_t *job)
 	if ((mkdir(path, 0750) < 0) && (errno != EEXIST)) {
 		error("mkdir(%s): %m", path);
 		if (errno == ENOSPC)
-			_drain_node("SlurmdSpoolDir is full");
+			stepd_drain_node("SlurmdSpoolDir is full");
 		goto error;
 	}
 
@@ -2269,58 +2331,74 @@ error:
 	return NULL;
 }
 
-static char *
-_make_batch_script(batch_job_launch_msg_t *msg, char *path)
+static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 {
-	FILE *fp = NULL;
-	char  script[MAXPATHLEN];
+	int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC;
+	int fd, length;
+	char *script = NULL;
+	char *output;
 
 	if (msg->script == NULL) {
-		error("_make_batch_script: called with NULL script");
+		error("%s: called with NULL script", __func__);
 		return NULL;
 	}
 
-	snprintf(script, sizeof(script), "%s/%s", path, "slurm_script");
-
-again:
-	if ((fp = safeopen(script, "w", SAFEOPEN_CREATE_ONLY)) == NULL) {
-		if ((errno != EEXIST) || (unlink(script) < 0))  {
-			error("couldn't open `%s': %m", script);
-			goto error;
-		}
-		goto again;
+	/* note: should replace this with a length as part of msg */
+	if ((length = strlen(msg->script)) < 1) {
+		error("%s: called with empty script", __func__);
+		return NULL;
 	}
 
-	if (fputs(msg->script, fp) < 0) {
-		(void) fclose(fp);
-		error("fputs: %m");
-		if (errno == ENOSPC)
-			_drain_node("SlurmdSpoolDir is full");
+	xstrfmtcat(script, "%s/%s", path, "slurm_script");
+
+	if ((fd = open(script, flags, S_IRWXU)) < 0) {
+		error("couldn't open `%s': %m", script);
 		goto error;
 	}
 
-	if (fclose(fp) < 0) {
-		error("fclose: %m");
+	if (lseek(fd, length - 1, SEEK_SET) == -1) {
+		error("%s: lseek to %d failed on `%s`: %m",
+		      __func__, length, script);
+		close(fd);
+		goto error;
 	}
+
+	output = mmap(0, length, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
+	if (output == MAP_FAILED) {
+		error("%s: mmap failed", __func__);
+		close(fd);
+		goto error;
+	}
+
+	if (write(fd, "", 1) == -1) {
+		error("%s: write failed", __func__);
+		if (errno == ENOSPC)
+			stepd_drain_node("SlurmdSpoolDir is full");
+		close(fd);
+		goto error;
+	}
+
+	(void) close(fd);
+
+	memcpy(output, msg->script, length);
+
+	munmap(output, length);
 
 	if (chown(script, (uid_t) msg->uid, (gid_t) -1) < 0) {
 		error("chown(%s): %m", path);
 		goto error;
 	}
 
-	if (chmod(script, 0500) < 0) {
-		error("chmod: %m");
-	}
-
-	return xstrdup(script);
+	return script;
 
 error:
 	(void) unlink(script);
+	xfree(script);
 	return NULL;
 
 }
 
-static int _drain_node(char *reason)
+extern int stepd_drain_node(char *reason)
 {
 	slurm_msg_t req_msg;
 	update_node_msg_t update_node_msg;
@@ -2716,26 +2794,36 @@ _become_user(stepd_step_rec_t *job, struct priv_state *ps)
  * modes IN: desired access
  * uid IN: user ID to access the file
  * gid IN: group ID to access the file
- * RET 0 on success, -1 on failure
+ * RET true on success, false on failure
  */
-static int _access(const char *path, int modes, uid_t uid, gid_t gid)
+static bool _access(const char *path, int modes, uid_t uid,
+		    int ngids, gid_t *gids)
 {
 	struct stat buf;
-	int f_mode;
+	int f_mode, i;
+
+	if (!gids)
+		return false;
 
 	if (stat(path, &buf) != 0)
-		return -1;
+		return false;
 
 	if (buf.st_uid == uid)
 		f_mode = (buf.st_mode >> 6) & 07;
-	else if (buf.st_gid == gid)
-		f_mode = (buf.st_mode >> 3) & 07;
-	else
-		f_mode = buf.st_mode & 07;
+	else {
+		for (i=0; i < ngids; i++)
+			if (buf.st_gid == gids[i])
+				break;
+		if (i < ngids)	/* one of the gids matched */
+			f_mode = (buf.st_mode >> 3) & 07;
+		else		/* uid and gid failed, test against all */
+			f_mode = buf.st_mode & 07;
+	}
 
 	if ((f_mode & modes) == modes)
-		return 0;
-	return -1;
+		return true;
+
+	return false;
 }
 
 /*
@@ -2765,7 +2853,7 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 
 	debug("[job %u] attempting to run %s [%s]", job->jobid, name, path);
 
-	if (_access(path, 5, job->uid, job->gid) < 0) {
+	if (!_access(path, 5, job->uid, job->ngids, job->gids)) {
 		error("Could not run %s [%s]: access denied", name, path);
 		return -1;
 	}

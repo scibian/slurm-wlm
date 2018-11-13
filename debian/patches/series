@@ -3,6 +3,8 @@ remove-google-javascript
 sacctmgr-increase-buffer
 pidfile-path
 rpath
+man-pages-typos
+mpiexec-man-page
 cwd-in-multi-prog
 test_exec-feature-to-multi-prog-option-of-srun
 Fix_issues_when_starting_the_backup_slurmdbd

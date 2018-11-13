@@ -66,6 +66,9 @@ EOF
 
 adduser --disabled-password --gecos "" --no-create-home --quiet slurmtest
 
+# slurmdbd needs a little time to initialize its db
+sleep 5
+
 sacctmgr -i add cluster cluster
 sacctmgr -i add account slurmtest Cluster=cluster
 sacctmgr -i add user slurmtest Account=slurmtest
