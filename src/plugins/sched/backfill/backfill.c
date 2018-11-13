@@ -20,11 +20,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -40,13 +40,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -202,7 +202,8 @@ static void _load_config(void);
 static bool _many_pending_rpcs(void);
 static bool _more_work(time_t last_backfill_time);
 static uint32_t _my_sleep(int usec);
-static int  _num_feature_count(struct job_record *job_ptr, bool *has_xor);
+static int  _num_feature_count(struct job_record *job_ptr, bool *has_xand,
+			       bool *has_xor);
 static int  _pack_find_map(void *x, void *key);
 static void _pack_map_del(void *x);
 static void _pack_rec_del(void *x);
@@ -231,8 +232,8 @@ static void _dump_job_sched(struct job_record *job_ptr, time_t end_time,
 	slurm_make_time_str(&job_ptr->start_time, begin_buf, sizeof(begin_buf));
 	slurm_make_time_str(&end_time, end_buf, sizeof(end_buf));
 	node_list = bitmap2node_name(avail_bitmap);
-	info("Job %u to start at %s, end at %s on %s",
-	     job_ptr->job_id, begin_buf, end_buf, node_list);
+	info("%pJ to start at %s, end at %s on nodes %s in partition %s",
+	     job_ptr, begin_buf, end_buf, node_list, job_ptr->part_ptr->name);
 	xfree(node_list);
 }
 
@@ -246,7 +247,7 @@ static void _dump_job_test(struct job_record *job_ptr, bitstr_t *avail_bitmap,
 	else
 		slurm_make_time_str(&start_time, begin_buf, sizeof(begin_buf));
 	node_list = bitmap2node_name(avail_bitmap);
-	info("Test job %u at %s on %s", job_ptr->job_id, begin_buf, node_list);
+	info("Test %pJ at %s on %s", job_ptr, begin_buf, node_list);
 	xfree(node_list);
 }
 
@@ -295,14 +296,23 @@ static bool _many_pending_rpcs(void)
 	return false;
 }
 
-/* test if job has feature count specification */
-static int _num_feature_count(struct job_record *job_ptr, bool *has_xor)
+/*
+ * Report summary of job's feature specification
+ * IN job_ptr - job to schedule
+ * OUT has_xand - true if features are XANDed together
+ * OUT has_xor - true if features are XORed together
+ * RET Total count for ALL job features, even counts with XAND separator
+ */
+static int _num_feature_count(struct job_record *job_ptr, bool *has_xand,
+			      bool *has_xor)
 {
 	struct job_details *detail_ptr = job_ptr->details;
 	int rc = 0;
 	ListIterator feat_iter;
 	job_feature_t *feat_ptr;
 
+	*has_xand = false;
+	*has_xor = false;
 	if (detail_ptr->feature_list == NULL)	/* no constraints */
 		return rc;
 
@@ -310,6 +320,8 @@ static int _num_feature_count(struct job_record *job_ptr, bool *has_xor)
 	while ((feat_ptr = (job_feature_t *) list_next(feat_iter))) {
 		if (feat_ptr->count)
 			rc++;
+		if (feat_ptr->op_code == FEATURE_OP_XAND)
+			*has_xand = true;
 		if (feat_ptr->op_code == FEATURE_OP_XOR)
 			*has_xor = true;
 	}
@@ -326,7 +338,8 @@ static int _clear_qos_blocked_times(void *x, void *arg)
 	return 0;
 }
 
-/* Attempt to schedule a specific job on specific available nodes
+/*
+ * Attempt to schedule a specific job on specific available nodes
  * IN job_ptr - job to schedule
  * IN/OUT avail_bitmap - nodes available/selected to use
  * IN exc_core_bitmap - cores which can not be used
@@ -338,76 +351,113 @@ static int  _try_sched(struct job_record *job_ptr, bitstr_t **avail_bitmap,
 {
 	bitstr_t *low_bitmap = NULL, *tmp_bitmap = NULL;
 	int rc = SLURM_SUCCESS;
-	bool has_xor = false;
-	int feat_cnt = _num_feature_count(job_ptr, &has_xor);
+	bool has_xand = false, has_xor = false;
+	int feat_cnt = _num_feature_count(job_ptr, &has_xand, &has_xor);
 	struct job_details *detail_ptr = job_ptr->details;
+	List feature_cache = detail_ptr->feature_list;
 	List preemptee_candidates = NULL;
 	List preemptee_job_list = NULL;
 	ListIterator feat_iter;
 	job_feature_t *feat_ptr;
+	job_feature_t *feature_base;
 
-	if (feat_cnt) {
-		/* Ideally schedule the job feature by feature,
-		 * but I don't want to add that complexity here
-		 * right now, so clear the feature counts and try
-		 * to schedule. This will work if there is only
-		 * one feature count. It should work fairly well
-		 * in cases where there are multiple feature
-		 * counts. */
-		int i = 0, list_size;
-		uint16_t *feat_cnt_orig = NULL, high_cnt = 0;
-
-		/* Clear the feature counts */
-		list_size = list_count(detail_ptr->feature_list);
-		feat_cnt_orig = xmalloc(sizeof(uint16_t) * list_size);
-		feat_iter = list_iterator_create(detail_ptr->feature_list);
-		while ((feat_ptr = (job_feature_t *) list_next(feat_iter))) {
-			high_cnt = MAX(high_cnt, feat_ptr->count);
-			feat_cnt_orig[i++] = feat_ptr->count;
-			feat_ptr->count = 0;
-		}
-		list_iterator_destroy(feat_iter);
-
-		if ((job_req_node_filter(job_ptr, *avail_bitmap, true) !=
-		     SLURM_SUCCESS) ||
-		    (bit_set_count(*avail_bitmap) < high_cnt)) {
-			rc = ESLURM_NODES_BUSY;
-		} else {
-			preemptee_candidates =
-				slurm_find_preemptable_jobs(job_ptr);
-			rc = select_g_job_test(job_ptr, *avail_bitmap,
-					       high_cnt, max_nodes, req_nodes,
-					       SELECT_MODE_WILL_RUN,
-					       preemptee_candidates,
-					       &preemptee_job_list,
-					       exc_core_bitmap);
-			FREE_NULL_LIST(preemptee_job_list);
-		}
-
-		/* Restore the feature counts */
-		i = 0;
-		feat_iter = list_iterator_create(detail_ptr->feature_list);
-		while ((feat_ptr = (job_feature_t *) list_next(feat_iter))) {
-			feat_ptr->count = feat_cnt_orig[i++];
-		}
-		list_iterator_destroy(feat_iter);
-		xfree(feat_cnt_orig);
-	} else if (has_xor) {
-		/* Cache the feature information and test the individual
-		 * features, one at a time */
-		job_feature_t feature_base;
-		List feature_cache = detail_ptr->feature_list;
-		time_t low_start = 0;
-
-		detail_ptr->feature_list = list_create(NULL);
-		feature_base.count = 0;
-		feature_base.op_code = FEATURE_OP_END;
-		list_append(detail_ptr->feature_list, &feature_base);
+	if (has_xand || feat_cnt) {
+		/*
+		 * Cache the feature information and test the individual
+		 * features (or sets of features in parenthesis), one at a time
+		 */
+		time_t high_start = 0;
+		uint32_t feat_min_node;
 
 		tmp_bitmap = bit_copy(*avail_bitmap);
 		feat_iter = list_iterator_create(feature_cache);
 		while ((feat_ptr = (job_feature_t *) list_next(feat_iter))) {
-			feature_base.name = feat_ptr->name;
+			detail_ptr->feature_list =
+				list_create(feature_list_delete);
+			feature_base = xmalloc(sizeof(job_feature_t));
+			feature_base->name = xstrdup(feat_ptr->name);
+			feature_base->op_code = feat_ptr->op_code;
+			list_append(detail_ptr->feature_list, feature_base);
+			while ((feat_ptr->paren > 0) &&
+			       ((feat_ptr = (job_feature_t *)
+					    list_next(feat_iter)))) {
+				feature_base = xmalloc(sizeof(job_feature_t));
+				feature_base->name = xstrdup(feat_ptr->name);
+				feature_base->op_code = feat_ptr->op_code;
+				list_append(detail_ptr->feature_list,
+					    feature_base);
+			}
+			feature_base->op_code = FEATURE_OP_END;
+			feat_min_node = MAX(1, feature_base->count);
+
+			if ((job_req_node_filter(job_ptr, *avail_bitmap, true)
+			     == SLURM_SUCCESS) &&
+			    (bit_set_count(*avail_bitmap) >= feat_min_node)) {
+				preemptee_candidates =
+					slurm_find_preemptable_jobs(job_ptr);
+				rc = select_g_job_test(job_ptr, *avail_bitmap,
+						       feat_min_node, max_nodes,
+						       req_nodes,
+						       SELECT_MODE_WILL_RUN,
+						       preemptee_candidates,
+						       &preemptee_job_list,
+						       exc_core_bitmap);
+				FREE_NULL_LIST(preemptee_job_list);
+				if ((rc == SLURM_SUCCESS) &&
+				    ((high_start == 0) ||
+				     (high_start < job_ptr->start_time))) {
+					high_start = job_ptr->start_time;
+					low_bitmap = *avail_bitmap;
+					*avail_bitmap = NULL;
+				}
+			}
+			FREE_NULL_BITMAP(*avail_bitmap);
+			*avail_bitmap = bit_copy(tmp_bitmap);
+			list_destroy(detail_ptr->feature_list);
+		}
+		list_iterator_destroy(feat_iter);
+		FREE_NULL_BITMAP(tmp_bitmap);
+		if (high_start) {
+			job_ptr->start_time = high_start;
+			rc = SLURM_SUCCESS;
+			FREE_NULL_BITMAP(*avail_bitmap);
+			*avail_bitmap = low_bitmap;
+		} else {
+			rc = ESLURM_NODES_BUSY;
+			FREE_NULL_BITMAP(low_bitmap);
+		}
+
+		/* Restore the original feature information */
+		detail_ptr->feature_list = feature_cache;
+	} else if (has_xor) {
+		/*
+		 * Cache the feature information and test the individual
+		 * features (or sets of features in parenthesis), one at a time
+		 */
+		job_feature_t *feature_base;
+		List feature_cache = detail_ptr->feature_list;
+		time_t low_start = 0;
+
+		tmp_bitmap = bit_copy(*avail_bitmap);
+		feat_iter = list_iterator_create(feature_cache);
+		while ((feat_ptr = (job_feature_t *) list_next(feat_iter))) {
+			detail_ptr->feature_list =
+				list_create(feature_list_delete);
+			feature_base = xmalloc(sizeof(job_feature_t));
+			feature_base->name = xstrdup(feat_ptr->name);
+			feature_base->op_code = feat_ptr->op_code;
+			list_append(detail_ptr->feature_list, feature_base);
+			while ((feat_ptr->paren > 0) &&
+			       ((feat_ptr = (job_feature_t *)
+					    list_next(feat_iter)))) {
+				feature_base = xmalloc(sizeof(job_feature_t));
+				feature_base->name = xstrdup(feat_ptr->name);
+				feature_base->op_code = feat_ptr->op_code;
+				list_append(detail_ptr->feature_list,
+					    feature_base);
+			}
+			feature_base->op_code = FEATURE_OP_END;
+
 			if ((job_req_node_filter(job_ptr, *avail_bitmap, true)
 			     == SLURM_SUCCESS) &&
 			    (bit_set_count(*avail_bitmap) >= min_nodes)) {
@@ -431,12 +481,14 @@ static int  _try_sched(struct job_record *job_ptr, bitstr_t **avail_bitmap,
 			}
 			FREE_NULL_BITMAP(*avail_bitmap);
 			*avail_bitmap = bit_copy(tmp_bitmap);
+			list_destroy(detail_ptr->feature_list);
 		}
 		list_iterator_destroy(feat_iter);
 		FREE_NULL_BITMAP(tmp_bitmap);
 		if (low_start) {
 			job_ptr->start_time = low_start;
 			rc = SLURM_SUCCESS;
+			FREE_NULL_BITMAP(*avail_bitmap);
 			*avail_bitmap = low_bitmap;
 		} else {
 			rc = ESLURM_NODES_BUSY;
@@ -444,7 +496,6 @@ static int  _try_sched(struct job_record *job_ptr, bitstr_t **avail_bitmap,
 		}
 
 		/* Restore the original feature information */
-		list_destroy(detail_ptr->feature_list);
 		detail_ptr->feature_list = feature_cache;
 	} else if (detail_ptr->feature_list) {
 		if ((job_req_node_filter(job_ptr, *avail_bitmap, true) !=
@@ -1000,12 +1051,38 @@ static bool _job_runnable_now(struct job_record *job_ptr)
 		return false;
 	if (IS_JOB_COMPLETING(job_ptr))	/* Started, requeue and completing */
 		return false;
+	/*
+	 * Already reserved resources for either bf_max_job_array_resv or
+	 * max_run_tasks number of jobs in the array. If max_run_tasks is 0, it
+	 * wasn't set, so ignore it.
+	 */
+	if (job_ptr->array_recs &&
+	    ((job_ptr->array_recs->pend_run_tasks >= bf_max_job_array_resv) ||
+	     (job_ptr->array_recs->max_run_tasks &&
+	      (job_ptr->array_recs->pend_run_tasks >=
+	     job_ptr->array_recs->max_run_tasks))))
+		return false;
+
 	select_g_select_jobinfo_get(job_ptr->select_jobinfo,
 				    SELECT_JOBDATA_CLEANING, &cleaning);
 	if (cleaning)			/* Started, requeue and completing */
 		return false;
 
 	return true;
+}
+
+static void _restore_preempt_state(struct job_record *job_ptr,
+				   time_t *tmp_preempt_start_time,
+				   bool *tmp_preempt_in_progress)
+{
+	if ((*tmp_preempt_start_time != 0)
+	    && (job_ptr->details->preempt_start_time == 0)) {
+		job_ptr->details->preempt_start_time =
+			*tmp_preempt_start_time;
+		job_ptr->preempt_in_progress = *tmp_preempt_in_progress;
+		*tmp_preempt_start_time = 0;
+		*tmp_preempt_in_progress = false;
+	}
 }
 
 static int _attempt_backfill(void)
@@ -1050,6 +1127,8 @@ static int _attempt_backfill(void)
 	int part_inx = -1, user_inx = -1;
 	uint32_t qos_flags = 0;
 	time_t qos_blocked_until = 0, qos_part_blocked_until = 0;
+	time_t tmp_preempt_start_time = 0;
+	bool tmp_preempt_in_progress = false;
 	/* QOS Read lock */
 	assoc_mgr_lock_t qos_read_lock =
 		{ NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
@@ -1070,7 +1149,7 @@ static int _attempt_backfill(void)
 	 * Needs to be done with the node-state lock taken.
 	 */
 	START_TIMER;
-	if (select_g_update_block(NULL)) {
+	if (select_g_update_basil()) {
 		debug4("backfill: not scheduling due to ALPS");
 		return SLURM_SUCCESS;
 	}
@@ -1179,7 +1258,9 @@ static int _attempt_backfill(void)
 
 	sort_job_queue(job_queue);
 	while (1) {
-		uint32_t bf_job_id, bf_array_task_id, bf_job_priority;
+		uint32_t bf_job_id, bf_array_task_id, bf_job_priority,
+			prio_reserve;
+		bool get_boot_time = false;
 
 		job_queue_rec = (job_queue_rec_t *) list_pop(job_queue);
 		if (!job_queue_rec) {
@@ -1194,6 +1275,10 @@ static int _attempt_backfill(void)
 		bf_job_priority  = job_queue_rec->priority;
 		bf_array_task_id = job_queue_rec->array_task_id;
 		xfree(job_queue_rec);
+
+		/* Restore preemption state if needed. */
+		_restore_preempt_state(job_ptr, &tmp_preempt_start_time,
+				       &tmp_preempt_in_progress);
 
 		if (slurmctld_config.shutdown_time ||
 		    (difftime(time(NULL),orig_sched_start) >= bf_max_time)){
@@ -1282,8 +1367,8 @@ static int _attempt_backfill(void)
 				job_ptr->assoc_id = assoc_rec.id;
 				last_job_update = now;
 			} else {
-				debug("backfill: JobId=%u has invalid association",
-				      job_ptr->job_id);
+				debug("backfill: %pJ has invalid association",
+				      job_ptr);
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason =
 					WAIT_ASSOC_RESOURCE_LIMIT;
@@ -1303,8 +1388,8 @@ static int _attempt_backfill(void)
 				!bit_test(job_ptr->assoc_ptr->usage->valid_qos,
 					  job_ptr->qos_id))
 			    && !job_ptr->limit_set.qos) {
-				debug("backfill: JobId=%u has invalid QOS",
-				      job_ptr->job_id);
+				debug("backfill: %pJ has invalid QOS",
+				      job_ptr);
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason = FAIL_QOS;
 				last_job_update = now;
@@ -1333,12 +1418,9 @@ static int _attempt_backfill(void)
 		else
 			qos_part_blocked_until = 0;
 
-		if (part_policy_valid_qos(job_ptr->part_ptr,
-					  job_ptr->qos_ptr) != SLURM_SUCCESS) {
+		if (part_policy_valid_qos(job_ptr->part_ptr, job_ptr->qos_ptr,
+					  job_ptr) != SLURM_SUCCESS) {
 			assoc_mgr_unlock(&qos_read_lock);
-			xfree(job_ptr->state_desc);
-			job_ptr->state_reason = WAIT_QOS;
-			last_job_update = now;
 			continue;
 		}
 		assoc_mgr_unlock(&qos_read_lock);
@@ -1348,9 +1430,17 @@ static int _attempt_backfill(void)
 			continue;
 		}
 
+		if (!(prio_reserve = acct_policy_get_prio_thresh(
+			      job_ptr, false)))
+			prio_reserve = bf_min_prio_reserve;
+
+		if (prio_reserve && (debug_flags & DEBUG_FLAG_BACKFILL))
+			info("backfill: %pJ has a prio_reserve of %u",
+			     job_ptr, prio_reserve);
+
 		job_no_reserve = 0;
-		if (bf_min_prio_reserve &&
-		    (job_ptr->priority < bf_min_prio_reserve)) {
+		if (prio_reserve &&
+		    (job_ptr->priority < prio_reserve)) {
 			job_no_reserve = TEST_NOW_ONLY;
 		} else if (bf_min_age_reserve && job_ptr->details->begin_time) {
 			pend_time = difftime(time(NULL),
@@ -1370,10 +1460,22 @@ static int _attempt_backfill(void)
 			}
 		}
 
+		if (tmp_preempt_in_progress)
+			continue; 	/* scheduled in another partition */
+
 		orig_start_time = job_ptr->start_time;
 		orig_time_limit = job_ptr->time_limit;
 
 next_task:
+		/*
+		 * Save the current preemption state. Reset preemption state
+		 * in the job_ptr so a job array can preempt multiple jobs.
+		 */
+		tmp_preempt_in_progress = job_ptr->preempt_in_progress;
+		tmp_preempt_start_time = job_ptr->details->preempt_start_time;
+		job_ptr->details->preempt_start_time = 0;
+		job_ptr->preempt_in_progress = false;
+
 		job_test_count++;
 		slurmctld_diag_stats.bf_last_depth++;
 		already_counted = false;
@@ -1381,8 +1483,6 @@ next_task:
 		if (!IS_JOB_PENDING(job_ptr) ||	/* Started in other partition */
 		    (job_ptr->priority == 0))	/* Job has been held */
 			continue;
-		if (job_ptr->preempt_in_progress)
-			continue; 	/* scheduled in another partition */
 		if (!avail_front_end(job_ptr))
 			continue;	/* No available frontend for this job */
 		if (!_job_part_valid(job_ptr, part_ptr))
@@ -1400,12 +1500,15 @@ next_task:
 				continue;
 		}
 		job_ptr->part_ptr = part_ptr;
+		if (job_limits_check(&job_ptr, true) != WAIT_NO_REASON) {
+			/* should never happen */
+			continue;
+		}
 
 		if (debug_flags & DEBUG_FLAG_BACKFILL) {
-			char job_id_str[64];
-			info("backfill test for %s Prio=%u Partition=%s",
-			     jobid2fmt(job_ptr, job_id_str, sizeof(job_id_str)),
-			     job_ptr->priority, job_ptr->part_ptr->name);
+			info("backfill test for %pJ Prio=%u Partition=%s",
+			     job_ptr, job_ptr->priority,
+			     job_ptr->part_ptr->name);
 		}
 
 		/* Test to see if we've exceeded any per user/partition limit */
@@ -1439,14 +1542,11 @@ next_task:
 			}
 			if (skip_job) {
 				if (debug_flags & DEBUG_FLAG_BACKFILL)
-					info("backfill: have already "
-					     "checked %u jobs for user %u on "
-					     "partition %s; skipping "
-					     "job %u",
+					info("backfill: have already checked %u jobs for user %u on partition %s; skipping %pJ",
 					     max_backfill_job_per_user_part,
 					     job_ptr->user_id,
 					     job_ptr->part_ptr->name,
-					     job_ptr->job_id);
+					     job_ptr);
 				continue;
 			}
 		}
@@ -1463,13 +1563,10 @@ next_task:
 			}
 			if (skip_job) {
 				if (debug_flags & DEBUG_FLAG_BACKFILL)
-					info("backfill: have already "
-					     "checked %u jobs for "
-					     "partition %s; skipping "
-					     "job %u",
+					info("backfill: have already checked %u jobs for partition %s; skipping %pJ",
 					     max_backfill_job_per_part,
 					     job_ptr->part_ptr->name,
-					     job_ptr->job_id);
+					     job_ptr);
 				continue;
 			}
 		}
@@ -1504,11 +1601,11 @@ next_task:
 				if (njobs[j] >= max_backfill_job_per_assoc) {
 					/* skip job */
 					if (debug_flags & DEBUG_FLAG_BACKFILL)
-						info("backfill: have already checked %u jobs for user %u, assoc %u; skipping job %u",
+						info("backfill: have already checked %u jobs for user %u, assoc %u; skipping %pJ",
 						     max_backfill_job_per_assoc,
 						     job_ptr->user_id,
 						     job_ptr->assoc_id,
-						     job_ptr->job_id);
+						     job_ptr);
 					continue;
 				}
 			}
@@ -1547,13 +1644,10 @@ next_task:
 				if ((njobs[j] + 1) > max_backfill_job_per_user){
 					/* skip job */
 					if (debug_flags & DEBUG_FLAG_BACKFILL) {
-						info("backfill: have already "
-						     "checked %u jobs for "
-						     "user %u; skipping "
-						     "job %u",
+						info("backfill: have already checked %u jobs for user %u; skipping %pJ",
 						     max_backfill_job_per_user,
 						     job_ptr->user_id,
-						     job_ptr->job_id);
+						     job_ptr);
 					}
 					continue;
 				}
@@ -1583,8 +1677,7 @@ next_task:
 		    (license_job_test(job_ptr, time(NULL), true) !=
 		     SLURM_SUCCESS)) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
-				info("backfill: job %u not runable now",
-				     job_ptr->job_id);
+				info("backfill: %pJ not runable now", job_ptr);
 			continue;
 		}
 
@@ -1594,20 +1687,19 @@ next_task:
 
 		if (error_code == ESLURM_ACCOUNTING_POLICY) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
-				info("backfill: job %u acct policy node limit",
-				     job_ptr->job_id);
+				info("backfill: %pJ acct policy node limit",
+				     job_ptr);
 			continue;
 		} else if (error_code ==
 			   ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
-				info("backfill: job %u node count too high",
-				     job_ptr->job_id);
+				info("backfill: %pJ node count too high",
+				     job_ptr);
 			continue;
 		} else if (error_code != SLURM_SUCCESS) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
-				info("backfill: error setting nodes for job %u: %s",
-				     job_ptr->job_id,
-				     slurm_strerror(error_code));
+				info("backfill: error setting nodes for %pJ: %s",
+				     job_ptr, slurm_strerror(error_code));
 			continue;
 		}
 
@@ -1708,9 +1800,11 @@ next_task:
 			test_time_count = 0;
 			START_TIMER;
 
-			/* With bf_continue configured, the original job could
+			/*
+			 * With bf_continue configured, the original job could
 			 * have been scheduled or cancelled and purged.
-			 * Revalidate job the record here. */
+			 * Revalidate job the record here.
+			 */
 			if ((job_ptr->magic  != JOB_MAGIC) ||
 			    (job_ptr->job_id != save_job_id))
 				continue;
@@ -1738,8 +1832,8 @@ next_task:
 				  &exc_core_bitmap, &resv_overlap, false);
 		if (j != SLURM_SUCCESS) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
-				info("backfill: job %u reservation defer",
-				     job_ptr->job_id);
+				info("backfill: %pJ reservation defer",
+				     job_ptr);
 			_set_job_time_limit(job_ptr, orig_time_limit);
 			continue;
 		}
@@ -1790,7 +1884,7 @@ next_task:
 		     (!bit_super_set(job_ptr->details->req_node_bitmap,
 				     avail_bitmap))) ||
 		    (job_req_node_filter(job_ptr, avail_bitmap, true))) {
-			if (later_start) {
+			if (later_start && !job_no_reserve) {
 				job_ptr->start_time = 0;
 				goto TRY_LATER;
 			}
@@ -1812,8 +1906,8 @@ next_task:
 		bit_not(resv_bitmap);
 
 		/* this is the time consuming operation */
-		debug2("backfill: entering _try_sched for job %u.",
-		       job_ptr->job_id);
+		debug2("backfill: entering _try_sched for %pJ.",
+		       job_ptr);
 
 		if (!already_counted) {
 			slurmctld_diag_stats.bf_last_depth_try++;
@@ -1826,6 +1920,7 @@ next_task:
 					    &active_bitmap);
 		job_ptr->bit_flags |= BACKFILL_TEST;
 		job_ptr->bit_flags |= job_no_reserve;	/* 0 or TEST_NOW_ONLY */
+
 		if (active_bitmap) {
 			j = _try_sched(job_ptr, &active_bitmap, min_nodes,
 				       max_nodes, req_nodes, exc_core_bitmap);
@@ -1835,6 +1930,8 @@ next_task:
 				active_bitmap = NULL;
 				test_fini = 1;
 			} else {
+				if (node_features_g_overlap(active_bitmap))
+					get_boot_time = true;
 				FREE_NULL_BITMAP(active_bitmap);
 				save_share_res  = job_ptr->details->share_res;
 				save_whole_node = job_ptr->details->whole_node;
@@ -1850,9 +1947,8 @@ next_task:
 			 * available after node reboot */
 			bitstr_t *tmp_core_bitmap = NULL;
 			bitstr_t *tmp_node_bitmap = NULL;
-			debug2("backfill: entering _try_sched for job %u. "
-			       "Need to use features which can be made "
-			       "available after node reboot", job_ptr->job_id);
+			debug2("backfill: entering _try_sched for %pJ. Need to use features which can be made available after node reboot",
+			       job_ptr);
 			/* Determine impact of any advance reservations */
 			resv_end = 0;
 			j = job_test_resv(job_ptr, &start_res, false,
@@ -1870,7 +1966,8 @@ next_task:
 				bit_and(avail_bitmap, tmp_node_bitmap);
 				FREE_NULL_BITMAP(tmp_node_bitmap);
 			}
-			boot_time = node_features_g_boot_time();
+			if (get_boot_time)
+				boot_time = node_features_g_boot_time();
 			orig_end_time = end_time;
 			end_time += boot_time;
 
@@ -1904,7 +2001,7 @@ next_task:
 		now = time(NULL);
 		if (j != SLURM_SUCCESS) {
 			_set_job_time_limit(job_ptr, orig_time_limit);
-			if (later_start) {
+			if (later_start && !job_no_reserve) {
 				job_ptr->start_time = 0;
 				goto TRY_LATER;
 			}
@@ -1919,8 +2016,13 @@ next_task:
 			job_ptr->start_time = start_res;
 			last_job_update = now;
 		}
+		/*
+		 * avail_bitmap at this point contains a bitmap of nodes
+		 * selected for this job to be allocated
+		 */
 		if ((job_ptr->start_time <= now) &&
-		    (bit_overlap(avail_bitmap, cg_node_bitmap) > 0)) {
+		    (bit_overlap(avail_bitmap, cg_node_bitmap) ||
+		     bit_overlap(avail_bitmap, rs_node_bitmap))) {
 			/* Need to wait for in-progress completion/epilog */
 			job_ptr->start_time = now + 1;
 			later_start = 0;
@@ -1940,12 +2042,11 @@ next_task:
 				job_ptr->state_reason=WAIT_BURST_BUFFER_STAGING;
 				job_ptr->start_time = now + 1;
 			}
-			debug3("sched: JobId=%u. State=%s. Reason=%s. "
-			       "Priority=%u.",
-			       job_ptr->job_id,
-			       job_state_string(job_ptr->job_state),
-			       job_reason_string(job_ptr->state_reason),
-			       job_ptr->priority);
+			sched_debug3("%pJ. State=%s. Reason=%s. Priority=%u.",
+				     job_ptr,
+				     job_state_string(job_ptr->job_state),
+				     job_reason_string(job_ptr->state_reason),
+				     job_ptr->priority);
 			last_job_update = now;
 			_set_job_time_limit(job_ptr, orig_time_limit);
 			later_start = 0;
@@ -1961,8 +2062,8 @@ next_task:
 			/* get fed job lock from origin cluster */
 			if (fed_mgr_job_lock(job_ptr)) {
 				if (debug_flags & DEBUG_FLAG_BACKFILL)
-					info("backfill: JobId=%u can't get fed job lock from origin cluster to backfill job",
-					     job_ptr->job_id);
+					info("backfill: %pJ can't get fed job lock from origin cluster to backfill job",
+					     job_ptr);
 				rc = ESLURM_FED_JOB_LOCK;
 				goto skip_start;
 			}
@@ -1970,10 +2071,12 @@ next_task:
 			rc = _start_job(job_ptr, resv_bitmap);
 
 			if (rc == SLURM_SUCCESS) {
-				/* If the following fails because of network
+				/*
+				 * If the following fails because of network
 				 * connectivity, the origin cluster should ask
 				 * when it comes back up if the cluster_lock
-				 * cluster actually started the job */
+				 * cluster actually started the job
+				 */
 				fed_mgr_job_start(job_ptr, job_ptr->start_time);
 			} else {
 				fed_mgr_job_unlock(job_ptr);
@@ -2001,21 +2104,32 @@ skip_start:
 				acct_policy_alter_job(job_ptr, comp_time_limit);
 				job_ptr->time_limit = comp_time_limit;
 				job_ptr->limit_set.time = 1;
+			} else if (deadline_time_limit &&
+				   (rc == SLURM_SUCCESS)) {
+				acct_policy_alter_job(job_ptr, comp_time_limit);
+				job_ptr->time_limit = comp_time_limit;
+				reset_time = true;
 			} else {
 				acct_policy_alter_job(job_ptr, orig_time_limit);
 				_set_job_time_limit(job_ptr, orig_time_limit);
 			}
-			/* Only set end_time if start_time is set,
-			 * or else end_time will be small (ie. 1969). */
-			if (job_ptr->start_time) {
+			/*
+			 * Only set end_time if start_time is set,
+			 * or else end_time will be small (ie. 1969).
+			 */
+			if (IS_JOB_FINISHED(job_ptr)) {
+				/* Zero size or killed on startup */
+			} else if (job_ptr->start_time) {
 				if (job_ptr->time_limit == INFINITE)
 					hard_limit = YEAR_SECONDS;
 				else
 					hard_limit = job_ptr->time_limit * 60;
 				job_ptr->end_time = job_ptr->start_time +
 						    hard_limit;
-				/* Only set if start_time. end_time must be set
-				 * beforehand for _reset_job_time_limit. */
+				/*
+				 * Only set if start_time. end_time must be set
+				 * beforehand for _reset_job_time_limit.
+				 */
 				if (reset_time) {
 					_reset_job_time_limit(job_ptr, now,
 							      node_space);
@@ -2067,9 +2181,8 @@ skip_start:
 				}
 			} else if (rc != SLURM_SUCCESS) {
 				if (debug_flags & DEBUG_FLAG_BACKFILL) {
-					info("backfill: planned start of job %u"
-					     " failed: %s", job_ptr->job_id,
-					     slurm_strerror(rc));
+					info("backfill: planned start of %pJ failed: %s",
+					     job_ptr, slurm_strerror(rc));
 				}
 				/* Drop through and reserve these resources.
 				 * Likely due to state changes during sleep.
@@ -2130,8 +2243,8 @@ skip_start:
 			/* Try later when some nodes currently reserved for
 			 * pending jobs are free */
 			if (debug_flags & DEBUG_FLAG_BACKFILL) {
-				info("backfill: Try later job %u later_start %ld",
-			             job_ptr->job_id, later_start);
+				info("backfill: Try later %pJ later_start %ld",
+			             job_ptr, later_start);
 			}
 			job_ptr->start_time = 0;
 			goto TRY_LATER;
@@ -2196,12 +2309,9 @@ skip_start:
 			later_start = job_ptr->start_time;
 			job_ptr->start_time = 0;
 			if (debug_flags & DEBUG_FLAG_BACKFILL) {
-				info("backfill: Job %u overlaps with existing "
-				     "reservation start_time=%u "
-				     "end_reserve=%u boot_time=%u "
-				     "later_start %ld", job_ptr->job_id,
-				     start_time, end_reserve, boot_time,
-				     later_start);
+				info("backfill: %pJ overlaps with existing reservation start_time=%u end_reserve=%u boot_time=%u later_start %ld",
+				     job_ptr, start_time, end_reserve,
+				     boot_time, later_start);
 			}
 			goto TRY_LATER;
 		}
@@ -2251,10 +2361,8 @@ skip_start:
 							  tres_req_cnt, true)) {
 				assoc_mgr_unlock(&locks);
 				if (debug_flags & DEBUG_FLAG_BACKFILL) {
-					info("backfill: adding reservation for "
-					     "job %u blocked by "
-					     "acct_policy_job_runnable_post_select",
-					     job_ptr->job_id);
+					info("backfill: adding reservation for %pJ blocked by acct_policy_job_runnable_post_select",
+					     job_ptr);
 				}
 				continue;
 			}
@@ -2262,8 +2370,10 @@ skip_start:
 		}
 		if (debug_flags & DEBUG_FLAG_BACKFILL)
 			_dump_job_sched(job_ptr, end_reserve, avail_bitmap);
-		if (qos_flags & QOS_FLAG_NO_RESERVE)
+		if (qos_flags & QOS_FLAG_NO_RESERVE) {
+			_set_job_time_limit(job_ptr, orig_time_limit);
 			continue;
+		}
 		if (bf_job_part_count_reserve) {
 			bool do_reserve = true;
 			for (j = 0; j < bf_parts; j++) {
@@ -2299,11 +2409,25 @@ skip_start:
 			} else {
 				test_array_count++;
 			}
+
+			/*
+			 * Don't consider the next task if it would exceed the
+			 * maximum number of runnable tasks. If max_run_tasks is
+			 * 0, then it wasn't set, so ignore it.
+			 */
 			if ((test_array_count < bf_max_job_array_resv) &&
-			    (test_array_count < job_ptr->array_recs->task_cnt))
+			    (test_array_count <
+			     job_ptr->array_recs->task_cnt) &&
+			    (!job_ptr->array_recs->max_run_tasks ||
+			     (job_ptr->array_recs->pend_run_tasks <
+			     job_ptr->array_recs->max_run_tasks)))
 				goto next_task;
 		}
 	}
+
+	/* Restore preemption state if needed. */
+	_restore_preempt_state(job_ptr, &tmp_preempt_start_time,
+			       &tmp_preempt_in_progress);
 
 	_job_pack_deadlock_fini();
 	_pack_start_test(node_space);
@@ -2363,7 +2487,7 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		job_ptr->details->exc_node_bitmap = bit_copy(resv_bitmap);
 	if (job_ptr->array_recs)
 		is_job_array_head = true;
-	rc = select_nodes(job_ptr, false, NULL, NULL, NULL);
+	rc = select_nodes(job_ptr, false, NULL, NULL, false);
 	if (is_job_array_head && job_ptr->details) {
 		struct job_record *base_job_ptr;
 		base_job_ptr = find_job_record(job_ptr->array_job_id);
@@ -2383,27 +2507,13 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		FREE_NULL_BITMAP(orig_exc_nodes);
 	if (rc == SLURM_SUCCESS) {
 		/* job initiated */
-		char job_id_str[64];
 		last_job_update = time(NULL);
-		info("backfill: Started %s in %s on %s",
-		     jobid2fmt(job_ptr, job_id_str, sizeof(job_id_str)),
-		     job_ptr->part_ptr->name, job_ptr->nodes);
+		info("backfill: Started %pJ in %s on %s",
+		     job_ptr, job_ptr->part_ptr->name, job_ptr->nodes);
 		power_g_job_start(job_ptr);
 		if (job_ptr->batch_flag == 0)
-			srun_allocate(job_ptr->job_id);
-		else if (
-#ifdef HAVE_BG
-			/*
-			 * On a bluegene system we need to run the prolog
-			 * while the job is CONFIGURING so this can't work
-			 * off the CONFIGURING flag as done elsewhere.
-			 */
-			!job_ptr->details ||
-			!job_ptr->details->prolog_running
-#else
-			!IS_JOB_CONFIGURING(job_ptr)
-#endif
-			)
+			srun_allocate(job_ptr);
+		else if (!IS_JOB_CONFIGURING(job_ptr))
 			launch_job(job_ptr);
 		slurmctld_diag_stats.backfilled_jobs++;
 		slurmctld_diag_stats.last_backfilled_jobs++;
@@ -2421,13 +2531,13 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		/* This happens when a job has sharing disabled and
 		 * a selected node is still completing some job,
 		 * which should be a temporary situation. */
-		verbose("backfill: Failed to start JobId=%u with %s avail: %s",
-			job_ptr->job_id, node_list, slurm_strerror(rc));
+		verbose("backfill: Failed to start %pJ with %s avail: %s",
+			job_ptr, node_list, slurm_strerror(rc));
 		xfree(node_list);
 		fail_jobid = job_ptr->job_id;
 	} else {
-		debug3("backfill: Failed to start JobId=%u: %s",
-		       job_ptr->job_id, slurm_strerror(rc));
+		debug3("backfill: Failed to start %pJ: %s",
+		       job_ptr, slurm_strerror(rc));
 	}
 
 	return rc;
@@ -2503,8 +2613,8 @@ static void _reset_job_time_limit(struct job_record *job_ptr, time_t now,
 	job_time_adj_resv(job_ptr);
 
 	if (orig_time_limit != job_ptr->time_limit) {
-		info("backfill: job %u time limit changed from %u to %u",
-		     job_ptr->job_id, orig_time_limit, job_ptr->time_limit);
+		info("backfill: %pJ time limit changed from %u to %u",
+		     job_ptr, orig_time_limit, job_ptr->time_limit);
 	}
 }
 
@@ -2780,9 +2890,8 @@ static time_t _pack_start_find(struct job_record *job_ptr, time_t now)
 
 		if (latest_start && (debug_flags & DEBUG_FLAG_HETERO_JOBS)) {
 			long int delay = MAX(0, latest_start - time(NULL));
-			info("Job %u+%u (%u) in partition %s expected to start in %ld secs",
-			     job_ptr->pack_job_id, job_ptr->pack_job_offset,
-			     job_ptr->job_id, job_ptr->part_ptr->name, delay);
+			info("%pJ in partition %s expected to start in %ld secs",
+			     job_ptr, job_ptr->part_ptr->name, delay);
 		}
 	}
 
@@ -2850,9 +2959,8 @@ static void _pack_start_set(struct job_record *job_ptr, time_t latest_start,
 		if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
 			time_t latest_start = _pack_start_compute(map, 0);
 			long int delay = MAX(0, latest_start - time(NULL));
-			info("Job %u+%u (%u) in partition %s set to start in %ld secs",
-			     job_ptr->pack_job_id, job_ptr->pack_job_offset,
-			     job_ptr->job_id, job_ptr->part_ptr->name, delay);
+			info("%pJ in partition %s set to start in %ld secs",
+			     job_ptr, job_ptr->part_ptr->name, delay);
 		}
 	}
 }
@@ -3021,9 +3129,8 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 				   &exc_core_bitmap, &resv_overlap, false);
 		FREE_NULL_BITMAP(exc_core_bitmap);
 		if (rc != SLURM_SUCCESS) {
-			error("Pack job %u+%u (%u) failed to start due to reservation",
-			      job_ptr->pack_job_id, job_ptr->pack_job_offset,
-			      job_ptr->job_id);
+			error("%pJ failed to start due to reservation",
+			      job_ptr);
 			FREE_NULL_BITMAP(avail_bitmap);
 			break;
 		}
@@ -3040,9 +3147,8 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 		}
 
 		if (fed_mgr_job_lock(job_ptr)) {
-			error("Pack job %u+%u (%u) failed to start due to fed job lock",
-			      job_ptr->pack_job_id, job_ptr->pack_job_offset,
-			      job_ptr->job_id);
+			error("%pJ failed to start due to fed job lock",
+			      job_ptr);
 			FREE_NULL_BITMAP(avail_bitmap);
 			continue;
 		}
@@ -3061,10 +3167,7 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 			 */
 			fed_mgr_job_start(job_ptr, job_ptr->start_time);
 			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Pack job %u+%u (%u) started",
-				     job_ptr->pack_job_id,
-				     job_ptr->pack_job_offset,
-				     job_ptr->job_id);
+				info("%pJ started", job_ptr);
 			}
 			if (!used_bitmap && job_ptr->node_bitmap)
 				used_bitmap = bit_copy(job_ptr->node_bitmap);
@@ -3072,9 +3175,7 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 				bit_or(used_bitmap, job_ptr->node_bitmap);
 		} else {
 			fed_mgr_job_unlock(job_ptr);
-			error("Pack job %u+%u (%u) failed to start",
-			      job_ptr->pack_job_id, job_ptr->pack_job_offset,
-			      job_ptr->job_id);
+			error("%pJ failed to start", job_ptr);
 			break;
 		}
 		if (job_ptr->time_min) {
@@ -3089,8 +3190,10 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 			else
 				hard_limit = job_ptr->time_limit * 60;
 			job_ptr->end_time = job_ptr->start_time + hard_limit;
-			/* Only set if start_time. end_time must be set
-			 * beforehand for _reset_job_time_limit. */
+			/*
+			 * Only set if start_time. end_time must be set
+			 * beforehand for _reset_job_time_limit.
+			 */
 			if (reset_time)
 				_reset_job_time_limit(job_ptr, now, node_space);
 		}
@@ -3123,9 +3226,8 @@ static void _pack_kill_now(pack_job_map_t *map)
 		job_ptr = rec->job_ptr;
 		if (IS_JOB_PENDING(job_ptr))
 			continue;
-		info("Deallocate job %u+%u (%u) due to pack job start failure",
-		     job_ptr->pack_job_id, job_ptr->pack_job_offset,
-		     job_ptr->job_id);
+		info("Deallocate %pJ due to pack job start failure",
+		     job_ptr);
 		job_ptr->details->begin_time = now + cred_lifetime + 1;
 		job_ptr->end_time   = now;
 		job_ptr->job_state  = JOB_PENDING | JOB_COMPLETING;
@@ -3133,8 +3235,10 @@ static void _pack_kill_now(pack_job_map_t *map)
 		build_cg_bitmap(job_ptr);
 		job_completion_logger(job_ptr, false);
 		deallocate_nodes(job_ptr, false, false, false);
-		/* Since the job_completion_logger() removes the submit,
-		 * we need to add it again, but don't stage-out burst buffer */
+		/*
+		 * Since the job_completion_logger() removes the submit,
+		 * we need to add it again, but don't stage-out burst buffer
+		 */
 		save_bitflags = job_ptr->bit_flags;
 		job_ptr->bit_flags |= JOB_KILL_HURRY;
 		acct_policy_add_job_submit(job_ptr);
@@ -3201,9 +3305,6 @@ static void _pack_start_test(node_space_map_t *node_space)
 	}
 	list_iterator_destroy(iter);
 }
-
-
-
 
 static void _deadlock_global_list_del(void *x)
 {
@@ -3316,7 +3417,7 @@ static bool _job_pack_deadlock_test(struct job_record *job_ptr)
 	list_sort(dl_part_ptr->deadlock_job_list, _deadlock_job_list_sort);
 
 	/*
-	 * Log current table of pack job start times by parition
+	 * Log current table of pack job start times by partition
 	 */
 	if (debug_flags & DEBUG_FLAG_BACKFILL) {
 		part_iter = list_iterator_create(deadlock_global_list);
