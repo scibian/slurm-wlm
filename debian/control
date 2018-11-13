@@ -22,7 +22,6 @@ Build-Depends:
  liblua5.2-dev,
  libhwloc-dev,
  dh-exec,
- dh-systemd (>= 1.5),
  librrd-dev,
  libipmimonitoring-dev,
  hdf5-helpers,
