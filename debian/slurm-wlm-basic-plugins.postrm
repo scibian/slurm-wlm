@@ -1,5 +1,5 @@
 #!/bin/sh
-# postrm script for slurmctld
+# postrm script for slurm-wlm-basic-plugins
 #
 # see: dh_installdeb(1)
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# preinst script for slurmctld
+# preinst script for slurm-wlm-basic-plugins
 #
 # see: dh_installdeb(1)
 
