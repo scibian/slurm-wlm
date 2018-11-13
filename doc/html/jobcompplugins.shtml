@@ -4,9 +4,9 @@
 
 <h2> Overview</h2>
 <p>This document describes Slurm job completion logging plugins and the API that defines
-them. It is intended as a resource to programmers wishing to write their own SLURM
+them. It is intended as a resource to programmers wishing to write their own Slurm
 job completion logging plugins.</p>
-<p>Slurm job completion logging plugins are Slurm plugins that implement the SLURM
+<p>Slurm job completion logging plugins are Slurm plugins that implement the Slurm
 API for logging job information upon their completion. This may be used to log job information
 to a text file, database, etc. The plugins must conform to the Slurm Plugin API with the following
 specifications:</p>
@@ -15,6 +15,7 @@ The major type must be &quot;jobcomp.&quot; The minor type can be any recognizab
 abbreviation for the type of scheduler. We recommend, for example:</p>
 <ul>
 <li><b>none</b> &mdash; No job logging.</li>
+<li><b>elasticsearch</b> &mdash; Log job information to an Elasticsearch server.</li>
 <li><b>filetxt</b> &mdash; Log job information to a text file.</li>
 <li><b>mysql</b> &mdash; Job completion is written to a mysql database.</li>
 <li><b>script</b> &mdash; Execute a script passing in job information in environment variables.</li>
@@ -79,8 +80,8 @@ SLURM_SUCCESS. </p>
 <p><b>Note</b>: These init and fini functions are not the same as those
 described in the <span class="commandline">dlopen (3)</span> system library.
 The C run-time system co-opts those symbols for its own initialization.
-The system <span class="commandline">_init()</span> is called before the SLURM
-<span class="commandline">init()</span>, and the SLURM
+The system <span class="commandline">_init()</span> is called before the Slurm
+<span class="commandline">init()</span>, and the Slurm
 <span class="commandline">fini()</span> is called before the system's
 <span class="commandline">_fini()</span>.</p>
 
@@ -153,6 +154,6 @@ void slurm_jobcomp_archive(List selected_parts, void *params)
 
 <p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 27 March 2015</p>
+<p style="text-align:center;">Last modified 6 June 2018</p>
 
 <!--#include virtual="footer.txt"-->

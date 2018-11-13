@@ -26,11 +26,10 @@ may be found in the <a href="https://slurm.schedmd.com/archive/">archive</a>.
 <li><a href="nonstop.html">Failure Management Support</a></li>
 <li><a href="checkpoint_blcr.html">Slurm Checkpoint/Restart with BLCR</a></li>
 <li><a href="job_exit_code.html">Job Exit Codes</a></li>
+<li><a href="resource_binding.html">Resource Binding</a></li>
 <li>Specific Systems</li>
 <ul>
-<li><a href="bluegene.html">BlueGene/Q User and Administrator Guide</a></li>
 <li><a href="cray.html">Cray User and Administrator Guide with Native Slurm</a></li>
-<li><a href="cray_alps.html">Cray User and Administrator Guide with ALPS</a></li>
 <li><a href="ibm-pe.html">IBM Parallel Environment User and Administrator Guide</a></li>
 <li><a href="intel_knl.html">Intel Knights Landing (KNL) User and Administrator Guide</a></li>
 </ul>
@@ -46,6 +45,7 @@ may be found in the <a href="https://slurm.schedmd.com/archive/">archive</a>.
 <li><a href="configurator.html">Configuration Tool (Full version)</a></li>
 <li><a href="configurator.easy.html">Configuration Tool (Simplified version)</a></li>
 <li><a href="cpu_management.html">CPU Management User and Administrator Guide</a></li>
+<li><a href="elasticsearch.html">Elasticsearch Guide</a></li>
 <li><a href="nonstop.html">Failure Management Support</a></li>
 <li><a href="federation.html">Federated Scheduling Guide</a></li>
 <li><a href="pam_slurm_adopt.html">Job Containment with pam_slurm_adopt</a></li>
@@ -69,7 +69,7 @@ may be found in the <a href="https://slurm.schedmd.com/archive/">archive</a>.
 <li><a href="sched_config.html">Scheduling Configuration Guide</a></li>
 <li><a href="cons_res.html">Consumable Resources Guide</a></li>
 <li><a href="core_spec.html">Core Specialization</a></li>
-<li><a href="elastic_computing.html">Elastic Computing</a></li>
+<li><a href="elastic_computing.html">Elastic Computing (Cloud Bursting)</a></li>
 <li><a href="gang_scheduling.html">Gang Scheduling</a></li>
 <li><a href="gres.html">Generic Resource (GRES) Scheduling</a></li>
 <li><a href="high_throughput.html">High Throughput Computing Guide</a></li>
@@ -87,9 +87,7 @@ may be found in the <a href="https://slurm.schedmd.com/archive/">archive</a>.
 </ul>
 <li>Specific Systems</li>
 <ul>
-<li><a href="bluegene.html">Blue Gene User and Administrator Guide</a></li>
 <li><a href="cray.html">Cray User and Administrator Guide with Native Slurm</a></li>
-<li><a href="cray_alps.html">Cray User and Administrator Guide with ALPS</a></li>
 <li><a href="ibm-pe.html">IBM Parallel Environment User and Administrator Guide</a></li>
 </ul>
 </ul>
@@ -141,6 +139,6 @@ may be found in the <a href="https://slurm.schedmd.com/archive/">archive</a>.
 </li>
 </ul>
 
-<p style="text-align:center;">Last modified 12 December 2017</p>
+<p style="text-align:center;">Last modified 18 June 2018</p>
 
 <!--#include virtual="footer.txt"-->

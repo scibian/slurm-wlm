@@ -188,22 +188,14 @@ by configuration, but here is a suggested starting point:
     Compute and Login Nodes</li>
 	<ul>
 	<li>slurm</li>
-	<li>slurm-devel</li>
-	<li>slurm-munge</li>
 	<li>slurm-perlapi</li>
-	<li>slurm-plugins</li>
-	<li>slurm-sjobexit (only prior to version 17.02)</li>
-	<li>slurm-sjstat (only prior to version 17.02)</</li>
-	<li>slurm-torque</li>
+	<li>slurm-slurmctld (only on the head node)</li>
+	<li>slurm-slurmd (only on the compute nodes)</li>
 	</ul>
-<li>Slurmdbd Node</li>
+<li>SlurmDBD Node</li>
 	<ul>
 	<li>slurm</li>
-	<li>slurm-devel</li>
-	<li>slurm-munge</li>
-	<li>slurm-plugins</li>
 	<li>slurm-slurmdbd</li>
-	<li>slurm-sql</li>
 	</ul>
 </ul>
 
@@ -277,7 +269,7 @@ build time by defining SAVE_MAX_WAIT to a different value than five.</p>
 <p>There must be a uniform user and group name space (including
 UIDs and GIDs) across the cluster.
 It is not necessary to permit user logins to the control hosts
-(<b>ControlMachine</b> or <b>BackupController</b>), but the
+(<b>SlurmctldHost</b>), but the
 users and groups must be resolvable on those hosts.</p>
 
 <h3>Authentication of Slurm communications</h3>
@@ -358,10 +350,7 @@ When installed, the Slurm PAM module will prevent users from logging
 into any node that has not be assigned to that user.
 On job termination, any processes initiated by the user outside of
 Slurm's control may be killed using an <i>Epilog</i> script configured
-in <i>slurm.conf</i>.
-An example of such a script is included as <i>etc/slurm.epilog.clean</i>.
-Without these mechanisms any user can login to any compute node,
-even those allocated to other users.</p>
+in <i>slurm.conf</i>.</p>
 
 <h2><a name="Config"></a>Configuration</h2>
 <p>The Slurm configuration file includes a wide variety of parameters.
@@ -395,12 +384,6 @@ numbers of entries. The node range expression can contain one
 pair of square brackets with a sequence of comma separated
 numbers and/or ranges of numbers separated by a &quot;-&quot;
 (e.g. &quot;linux[0-64,128]&quot;, or &quot;lx[15,18,32-33]&quot;).
-On BlueGene systems only, the square brackets should contain
-pairs of three digit numbers separated by a &quot;x&quot;.
-These numbers indicate the boundaries of a rectangular prism
-(e.g. &quot;bgl[000x144,400x544]&quot;).
-See our <a href="bluegene.html">Blue Gene User and Administrator Guide</a>
-for more details.
 Up to two numeric ranges can be included in the expression
 (e.g. &quot;rack[0-63]_blade[0-41]&quot;).
 If one or more numeric expressions are included, one of them
@@ -435,10 +418,8 @@ manually edited for more complex configurations.</p>
 #
 # Sample /etc/slurm.conf for mcr.llnl.gov
 #
-ControlMachine=mcri
-ControlAddr=emcri
-BackupController=mcrj
-BackupAddr=emcrj
+SlurmctldHost=mcri(12.34.56.78)
+SlurmctldHost=mcrj(12.34.56.79)
 #
 AuthType=auth/munge
 Epilog=/usr/local/slurm/etc/epilog
@@ -630,8 +611,6 @@ BackupAddr        = eadevj
 BackupController  = adevj
 BOOT_TIME         = 01/10-09:19:21
 CheckpointType    = checkpoint/none
-ControlAddr       = eadevi
-ControlMachine    = adevi
 ...
 WaitTime          = 0
 
@@ -733,7 +712,7 @@ The recommended upgrade order is as follows:</p>
     execute "scontrol reconfig" for them to take effect</li>
 <li>Shutdown the slurmctld daemon(s)</li>
 <li>Shutdown the slurmd daemons on the compute nodes</li>
-<li>Copy the contents of the configured SlurmStateDir directory (in case
+<li>Copy the contents of the configured StateSaveLocation directory (in case
     of any possible failure)</li>
 <li>Upgrade the slurmctld and slurmd daemons</li>
 <li>Restart the slurmd daemons on the compute nodes</li>
@@ -769,6 +748,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 04 October 2017</p>
+<p style="text-align:center;">Last modified 14 June 2018</p>
 
 <!--#include virtual="footer.txt"-->

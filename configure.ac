@@ -28,33 +28,9 @@ AC_CONFIG_HEADERS([slurm/slurm.h])
 
 X_AC_RPATH
 
-dnl This sets the first compiler to be C instead of C++ (which would happen
-dnl if X_AC_BGQ was the first thing called.
+dnl This sets the first compiler to be C instead of C++.
 X_AC_DATABASES
 
-X_AC_BG
-
-dnl This needs to be close to the front to set CFLAGS=-m64, but needs to
-dnl be after something that does a AC_LINK_IFELSE or the compiler configure
-dnl checks for will be C++ instead of C.
-X_AC_BGQ
-
-dnl We need to know if this is a Q system
-AM_CONDITIONAL(BGQ_LOADED, test "x$ac_bgq_loaded" = "xyes")
-AC_SUBST(BGQ_LOADED)
-
-dnl ok now check if We are on a real L or P system, (test if to build srun
-dnl or not.  If we are emulating things we should build it.
-AM_CONDITIONAL(REAL_BGQ_LOADED, test "x$ac_real_bluegene_loaded" = "xyes")
-AC_SUBST(REAL_BGQ_LOADED)
-
-
-dnl ok now check if any bluegene was loaded.
-AM_CONDITIONAL(BLUEGENE_LOADED, test "x$ac_bluegene_loaded" = "xyes")
-AC_SUBST(BLUEGENE_LOADED)
-
-
-dnl
 dnl Check to see if this architecture should use slurm_* prefix function
 dnl aliases for plugins.
 dnl
@@ -355,7 +331,7 @@ dnl
 X_AC_SYSTEMD
 
 dnl
-dnl Check for compilation of SLURM auth modules:
+dnl Check for compilation of Slurm auth modules:
 dnl
 X_AC_MUNGE
 
@@ -394,12 +370,12 @@ AC_SUBST(UTIL_LIBS)
 LIBS="$savedLIBS"
 
 dnl
-dnl Check for compilation of SLURM with BLCR support:
+dnl Check for compilation of Slurm with BLCR support:
 dnl
 X_AC_BLCR
 
 dnl
-dnl Check for compilation of SLURM with CURL support:
+dnl Check for compilation of Slurm with CURL support:
 dnl
 LIBCURL_CHECK_CONFIG
 
@@ -422,6 +398,7 @@ AC_CONFIG_FILES([Makefile
 		 contribs/Makefile
 		 contribs/cray/Makefile
 		 contribs/cray/csm/Makefile
+		 contribs/cray/slurmsmwd/Makefile
 		 contribs/lua/Makefile
 		 contribs/mic/Makefile
 		 contribs/pam/Makefile
@@ -437,6 +414,7 @@ AC_CONFIG_FILES([Makefile
 		 contribs/sgather/Makefile
 		 contribs/sgi/Makefile
 		 contribs/sjobexit/Makefile
+		 contribs/pmi/Makefile
 		 contribs/pmi2/Makefile
 		 doc/Makefile
 		 doc/man/Makefile
@@ -475,7 +453,6 @@ AC_CONFIG_FILES([Makefile
 		 src/slurmd/slurmstepd/Makefile
 		 src/slurmdbd/Makefile
 		 src/smap/Makefile
-		 src/smd/Makefile
 		 src/sprio/Makefile
 		 src/squeue/Makefile
 		 src/srun/Makefile
@@ -507,6 +484,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/acct_gather_profile/Makefile
 		 src/plugins/acct_gather_profile/hdf5/Makefile
 		 src/plugins/acct_gather_profile/hdf5/sh5util/Makefile
+		 src/plugins/acct_gather_profile/influxdb/Makefile
 		 src/plugins/acct_gather_profile/none/Makefile
 		 src/plugins/auth/Makefile
 		 src/plugins/auth/munge/Makefile
@@ -562,7 +540,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/launch/Makefile
 		 src/plugins/launch/aprun/Makefile
 		 src/plugins/launch/poe/Makefile
-		 src/plugins/launch/runjob/Makefile
 		 src/plugins/launch/slurm/Makefile
 		 src/plugins/mcs/Makefile
 		 src/plugins/mcs/account/Makefile
@@ -577,7 +554,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/power/cray/Makefile
 		 src/plugins/power/none/Makefile
 		 src/plugins/preempt/Makefile
-		 src/plugins/preempt/job_prio/Makefile
 		 src/plugins/preempt/none/Makefile
 		 src/plugins/preempt/partition_prio/Makefile
 		 src/plugins/preempt/qos/Makefile
@@ -602,10 +578,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/select/alps/Makefile
 		 src/plugins/select/alps/libalps/Makefile
 		 src/plugins/select/alps/libemulate/Makefile
-		 src/plugins/select/bluegene/Makefile
-		 src/plugins/select/bluegene/ba_bgq/Makefile
-		 src/plugins/select/bluegene/bl_bgq/Makefile
-		 src/plugins/select/bluegene/sfree/Makefile
 		 src/plugins/select/cons_res/Makefile
 		 src/plugins/select/cray/Makefile
 		 src/plugins/select/linear/Makefile
