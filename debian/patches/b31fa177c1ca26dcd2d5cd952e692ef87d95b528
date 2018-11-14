@@ -13,7 +13,7 @@ Index: slurm-llnl/doc/man/man5/slurm.conf.5
 ===================================================================
 --- slurm-llnl.orig/doc/man/man5/slurm.conf.5
 +++ slurm-llnl/doc/man/man5/slurm.conf.5
-@@ -980,7 +980,10 @@ Note that the \fBHealthCheckProgram\fR w
+@@ -915,7 +915,10 @@ Note that the \fBHealthCheckProgram\fR w
  on all nodes to minimize its impact upon parallel programs.
  This program is will be killed if it does not terminate normally within
  60 seconds.
@@ -29,7 +29,7 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
 ===================================================================
 --- slurm-llnl.orig/src/slurmd/slurmd/slurmd.c
 +++ slurm-llnl/src/slurmd/slurmd/slurmd.c
-@@ -119,6 +119,8 @@
+@@ -120,6 +120,8 @@
  #  define MAXHOSTNAMELEN	64
  #endif
  
@@ -38,7 +38,7 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
  #define MAX_THREADS		256
  
  #define _free_and_set(__dst, __src) \
-@@ -210,6 +212,7 @@ static void      _usage(void);
+@@ -211,6 +213,7 @@ static void      _usage(void);
  static void      _usr_handler(int);
  static int       _validate_and_convert_cpu_list(void);
  static void      _wait_for_all_threads(int secs);
@@ -46,17 +46,17 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
  
  int
  main (int argc, char **argv)
-@@ -364,7 +367,8 @@ main (int argc, char **argv)
+@@ -365,7 +368,8 @@ main (int argc, char **argv)
  	slurm_conf_install_fork_handlers();
  	record_launched_jobs();
  
 -	run_script_health_check();
 +	/* Wait for a successful health check if HealthCheckInterval != 0 */
 +	_wait_health_check();
- 	slurm_thread_create_detached(NULL, _registration_engine, NULL);
  
  	msg_aggr_sender_init(conf->hostname, conf->port,
-@@ -2370,6 +2374,28 @@ static void _resource_spec_fini(void)
+ 			     conf->msg_aggr_window_time,
+@@ -2473,6 +2477,28 @@ static void _resource_spec_fini(void)
  }
  
  /*
