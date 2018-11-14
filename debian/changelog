@@ -1,3 +1,16 @@
+slurm-llnl (18.08.3-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Remove patch applied upstream
+  * Minimize diff with debian package
+  * Remove implicit build-dep on dh-systemd
+  * Remove useless command in daemon postinst
+  * Fix package name in preinst/postrm headers
+  * Adapt wait health patch for new upstream release
+  * Remove useless mv in d/rules
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Nov 2018 17:29:17 +0100
+
 slurm-llnl (18.08.3-1) unstable; urgency=medium
 
   * New upstream release
