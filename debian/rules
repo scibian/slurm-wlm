@@ -84,9 +84,6 @@ override_dh_auto_install:
 	mv -v debian/tmp/usr/sbin/slurmd debian/tmp/usr/sbin/slurmd-wlm
 	mv -v debian/tmp/usr/sbin/slurmstepd debian/tmp/usr/sbin/slurmstepd-wlm
 
-	# Rename headers directory (for compatibility reasons)
-	mv debian/tmp/usr/include/slurm-wlm debian/tmp/usr/include/slurm
-
 	dh_auto_install --builddirectory build-emulator  --destdir=$(CURDIR)/debian/tmp-emulator
 	# Rename binaries in the emulator packages
 	mv -v debian/tmp-emulator/usr/sbin/slurmctld debian/tmp-emulator/usr/sbin/slurmctld-wlm-emulator
