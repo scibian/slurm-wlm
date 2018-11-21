@@ -1,3 +1,10 @@
+slurm-llnl (18.08.3-1sci9u2) scibian9; urgency=medium
+
+  * Add support for pmix
+  * Add patch to fix dlopen of PMIx v3 library
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 21 Nov 2018 10:56:35 +0100
+
 slurm-llnl (18.08.3-1sci9u1) scibian9; urgency=medium
 
   * Backport to scibian9
