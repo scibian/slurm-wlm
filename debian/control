@@ -29,7 +29,8 @@ Build-Depends:
  man2html,
  libssh2-1-dev,
  libcurl4-openssl-dev,
- liblz4-dev
+ liblz4-dev,
+ libpmix-dev
 Standards-Version: 4.2.1
 Homepage: http://slurm.schedmd.com
 Vcs-Browser: https://github.com/scibian/slurm-llnl
@@ -211,6 +212,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
+ libpmix2,
  adduser,
  ucf
 Description: SLURM basic plugins
