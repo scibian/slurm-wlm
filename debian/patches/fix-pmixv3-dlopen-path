@@ -1,0 +1,21 @@
+Description: Set dlopen path with PMIx v3
+Author: Rémi Palancher <remi-externe.palancher@edf.fr>
+Forwarded: no
+Last-Update: 2018-11-21
+
+diff --git a/src/plugins/mpi/pmix/mpi_pmix.c b/src/plugins/mpi/pmix/mpi_pmix.c
+index 6737ed3..375fa98 100644
+--- a/src/plugins/mpi/pmix/mpi_pmix.c
++++ b/src/plugins/mpi/pmix/mpi_pmix.c
+@@ -104,8 +104,10 @@ static void *_libpmix_open(void)
+ 	xstrfmtcat(full_path, "%s/", PMIXP_V1_LIBPATH);
+ #elif defined PMIXP_V2_LIBPATH
+ 	xstrfmtcat(full_path, "%s/", PMIXP_V2_LIBPATH);
++#elif defined PMIXP_V3_LIBPATH
++	xstrfmtcat(full_path, "%s/", PMIXP_V3_LIBPATH);
+ #endif
+-	xstrfmtcat(full_path, "libpmix.so");
++	xstrfmtcat(full_path, "libpmix.so.2");
+ 	lib_plug = dlopen(full_path, RTLD_LAZY | RTLD_GLOBAL);
+ 	xfree(full_path);
+ 
