@@ -432,6 +432,11 @@ plugins. Slurm's ability to execute such an application can be disabled on the
 entire cluster by adding "disable_hetero_steps" to Slurm's SchedulerParameters
 configuration parameter.</p>
 
+<p><b>IMPORTANT:</b> While the srun command can be used to launch heterogeneous
+job steps, mpirun would require substantial modification to support
+heterogeneous applications. We are aware of no such mpirun development efforts
+at this time.</p>
+
 <p>By default, the applications launched by a single execution of the srun
 command (even for different components of the heterogeneous job) are combined
 into one MPI_COMM_WORLD with non-overlapping task IDs.</p>
@@ -579,7 +584,7 @@ determined by examining Slurm environment variables.</p>
 memory in the future.
 This typically requires the backfill scheduler be able to allocate each
 component of a heterogeneous job on a different node in order to begin its
-resource allocation, even if multiple compoents of the job do actually get
+resource allocation, even if multiple components of the job do actually get
 allocated resources on the same node.</p>
 
 <p>In a federation of clusters, a heterogeneous job will execute entirely on
@@ -701,8 +706,7 @@ a heterogeneous job with 3 components.
 Such a situation will have an adverse effect upon scheduling other jobs,
 especially other heterogeneous jobs.</p>
 
-<p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 13 July 2018</p>
+<p style="text-align:center;">Last modified 16 October 2018</p>
 
 <!--#include virtual="footer.txt"-->

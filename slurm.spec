@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	18.08.3
+Version:	18.08.4
 %define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager
@@ -313,6 +313,10 @@ notifies slurm about failed nodes.
 make %{?_smp_mflags}
 
 %install
+
+# Ignore redundant standard rpaths and insecure relative rpaths,
+# for RHEL based distros which use "check-rpaths" tool.
+export QA_RPATHS=0x5
 
 # Strip out some dependencies
 

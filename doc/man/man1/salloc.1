@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "July 2018" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "November 2018" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -254,6 +254,12 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+
+\fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
+modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+Specification of multiple KNL modes requires the use of a heterogeneous job.
+
 .TP
 \fBParenthesis\fR
 Parenthesis can be used to group like node features together. For example
@@ -463,6 +469,8 @@ Gang scheduling of resources in the partition is also not supported.
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
+In other words, only one job by that name and owned by that user can be running
+or suspended at any point in time.
 .RE
 
 .TP
@@ -526,7 +534,7 @@ The available generic consumable resources is configurable by the system
 administrator.
 A list of available generic consumable resources will be printed and the
 command will exit if the option argument is "help".
-Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
+Examples of use include "\-\-gres=gpu:2,mic:1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 
 .TP
@@ -651,9 +659,7 @@ Multiple license names should be comma separated (e.g.
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
 The job will be submitted to the one cluster providing the earliest expected
 job initiation time. The default value is the current cluster. A value of
-\(aq\fIall\fR' will query to run on all clusters.  Note the
-\fB\-\-export\fR option to control environment variables exported
-between clusters.
+\(aq\fIall\fR' will query to run on all clusters.
 Note that the SlurmDBD must be up for this option to work properly.
 
 .TP
@@ -1454,6 +1460,12 @@ slurm.conf this value is ignored.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fInode name list\fR>
 Explicitly exclude certain nodes from the resources granted to the job.
 
+.TP
+\fB\-\-x11\fR[=<\fIall\fR|\fIfirst\fR|\fIlast\fR>]
+Sets up X11 forwarding on all, first or last node(s) of the allocation. This
+option is only enabled if Slurm was compiled with X11 support and
+PrologFlags=x11 is defined in the slurm.conf. Default is \fIall\fR.
+
 .SH "INPUT ENVIRONMENT VARIABLES"
 .PP
 Upon startup, salloc will read and handle the options set in the following
@@ -1674,8 +1686,14 @@ SLURM_NODE_ALIASES=ec0:1.2.3.4:foo,ec1:1.2.3.5:bar
 \fBSLURM_NTASKS\fR
 Same as \fB\-n, \-\-ntasks\fR
 .TP
+\fBSLURM_NTASKS_PER_CORE\fR
+Set to value of the \-\-ntasks\-per\-core\fR option, if specified.
+.TP
 \fBSLURM_NTASKS_PER_NODE\fR
 Set to value of the \-\-ntasks\-per\-node\fR option, if specified.
+.TP
+\fBSLURM_NTASKS_PER_SOCKET\fR
+Set to value of the \-\-ntasks\-per\-socket\fR option, if specified.
 .TP
 \fBSLURM_PROFILE\fR
 Same as \fB\-\-profile\fR

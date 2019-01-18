@@ -198,7 +198,7 @@ static void _job_array_comp(struct job_record *job_ptr, bool was_running,
 static int  _job_create(job_desc_msg_t * job_specs, int allocate, int will_run,
 			struct job_record **job_rec_ptr, uid_t submit_uid,
 			char **err_msg, uint16_t protocol_version);
-static void _job_timed_out(struct job_record *job_ptr);
+static void _job_timed_out(struct job_record *job_ptr, bool preempted);
 static void _kill_dependent(struct job_record *job_ptr);
 static void _list_delete_job(void *job_entry);
 static int  _list_find_job_old(void *job_entry, void *key);
@@ -4786,7 +4786,7 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 				bf_min_age_reserve = min_age;
 		}
 
-		if ((sched_params = slurm_get_sched_params()) &&
+		if (sched_params &&
 		    (xstrcasestr(sched_params, "allow_zero_lic")))
 			validate_cfgd_licenses = false;
 
@@ -5561,6 +5561,7 @@ extern int job_str_signal(char *job_id_str, uint16_t signal, uint16_t flags,
 			/* task_id_bitmap changes, so we need a copy of it */
 			bitstr_t *task_id_bitmap_orig =
 				bit_copy(job_ptr->array_recs->task_id_bitmap);
+
 			bit_and_not(job_ptr->array_recs->task_id_bitmap,
 				array_bitmap);
 			xfree(job_ptr->array_recs->task_id_str);
@@ -5583,6 +5584,23 @@ extern int job_str_signal(char *job_id_str, uint16_t signal, uint16_t flags,
 			} else {
 				_job_array_comp(job_ptr, false, false);
 				job_count -= (orig_task_cnt - new_task_count);
+				/*
+				 * Since we are altering the job array's
+				 * task_cnt we must go alter this count in the
+				 * acct_policy code as if they are finishing
+				 * (accrue_cnt/job_submit etc...).
+				 */
+				if (job_ptr->array_recs->task_cnt >
+				    new_task_count) {
+					uint32_t tmp_state = job_ptr->job_state;
+					job_ptr->job_state = JOB_CANCELLED;
+
+					job_ptr->array_recs->task_cnt -=
+						new_task_count;
+					acct_policy_remove_job_submit(job_ptr);
+					job_ptr->bit_flags &= ~JOB_ACCRUE_OVER;
+					job_ptr->job_state = tmp_state;
+				}
 			}
 
 			/*
@@ -7637,6 +7655,17 @@ _read_data_array_from_file(int fd, char *file_name, char ***data,
 					     name_len)) {
 					continue;
 				}
+
+				/*
+				 * If we are are the front we can not overwrite
+				 * that spot, we can clear it an then add to the
+				 * end of the array.
+				 */
+				if (i == 0) {
+					array_ptr[0][0] = '\0';
+					i = rec_cnt;
+					break;
+				}
 				/* over-write duplicate */
 				memcpy(&buffer[pos],
 				       job_ptr->details->env_sup[j], env_len);
@@ -8219,9 +8248,30 @@ extern bool valid_tres_cnt(char *tres)
 			}
 
 			val = strtoll(sep, &end_ptr, 10);
-			if (((end_ptr[0] != '\0') || (val < 0) ||
+			/* First only check numeric component for validity */
+			if (((val < 0) ||
 			    (val == LLONG_MAX)) ||
 			    (!valid_name && (val != 0))) {
+				rc = false;
+				break;
+			}
+
+			/*
+			 * Now check that any count modifier is valid.
+			 * First check that modifier is not more than 1 char
+			 */
+			if ((end_ptr[0] != '\0') && (end_ptr[1] != '\0')) {
+				rc = false;
+				break;
+			}
+
+			/* Test for valid char: [null|k|K|m|M|g|G|t|T|p|P] */
+			if ((end_ptr[0] != '\0') &&
+			    (end_ptr[0] != 'k') && (end_ptr[0] != 'K') &&
+			    (end_ptr[0] != 'm') && (end_ptr[0] != 'M') &&
+			    (end_ptr[0] != 'g') && (end_ptr[0] != 'G') &&
+			    (end_ptr[0] != 't') && (end_ptr[0] != 'T') &&
+			    (end_ptr[0] != 'p') && (end_ptr[0] != 'P')) {
 				rc = false;
 				break;
 			}
@@ -8520,7 +8570,7 @@ void job_time_limit(void)
 				     __func__, job_ptr);
 				job_ptr->job_state = JOB_PREEMPTED |
 						     JOB_COMPLETING;
-				_job_timed_out(job_ptr);
+				_job_timed_out(job_ptr, true);
 				xfree(job_ptr->state_desc);
 			}
 			goto time_check;
@@ -8535,7 +8585,7 @@ void job_time_limit(void)
 			/* job inactive, kill it */
 			info("%s: inactivity time limit reached for %pJ",
 			     __func__, job_ptr);
-			_job_timed_out(job_ptr);
+			_job_timed_out(job_ptr, false);
 			job_ptr->state_reason = FAIL_INACTIVE_LIMIT;
 			xfree(job_ptr->state_desc);
 			goto time_check;
@@ -8600,7 +8650,7 @@ void job_time_limit(void)
 			if (job_ptr->end_time <= over_run) {
 				last_job_update = now;
 				info("Time limit exhausted for %pJ", job_ptr);
-				_job_timed_out(job_ptr);
+				_job_timed_out(job_ptr, false);
 				job_ptr->state_reason = FAIL_TIMEOUT;
 				xfree(job_ptr->state_desc);
 				goto time_check;
@@ -8612,7 +8662,7 @@ void job_time_limit(void)
 		    (job_ptr->resv_ptr->end_time + resv_over_run) < time(NULL)){
 			last_job_update = now;
 			info("Reservation ended for %pJ", job_ptr);
-			_job_timed_out(job_ptr);
+			_job_timed_out(job_ptr, false);
 			job_ptr->state_reason = FAIL_TIMEOUT;
 			xfree(job_ptr->state_desc);
 			goto time_check;
@@ -8630,7 +8680,7 @@ void job_time_limit(void)
 
 		if (job_ptr->state_reason == FAIL_TIMEOUT) {
 			last_job_update = now;
-			_job_timed_out(job_ptr);
+			_job_timed_out(job_ptr, false);
 			xfree(job_ptr->state_desc);
 			goto time_check;
 		}
@@ -8857,7 +8907,7 @@ extern int job_update_tres_cnt(struct job_record *job_ptr, int node_inx)
 }
 
 /* Terminate a job that has exhausted its time limit */
-static void _job_timed_out(struct job_record *job_ptr)
+static void _job_timed_out(struct job_record *job_ptr, bool preempted)
 {
 	xassert(job_ptr);
 
@@ -8870,7 +8920,7 @@ static void _job_timed_out(struct job_record *job_ptr)
 			job_ptr->job_state = JOB_TIMEOUT | JOB_COMPLETING;
 		build_cg_bitmap(job_ptr);
 		job_completion_logger(job_ptr, false);
-		deallocate_nodes(job_ptr, true, false, false);
+		deallocate_nodes(job_ptr, !preempted, false, preempted);
 	} else
 		job_signal(job_ptr, SIGKILL, 0, 0, false);
 	return;
@@ -11545,6 +11595,7 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	    !xstrcmp(job_specs->partition, job_ptr->partition)) {
 		sched_debug("update_job: new partition identical to old partition %pJ",
 			    job_ptr);
+		xfree(job_specs->partition);
 	} else if (job_specs->partition) {
 		if (!IS_JOB_PENDING(job_ptr)) {
 			error_code = ESLURM_JOB_NOT_PENDING;
@@ -11631,6 +11682,14 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	}
 
 	use_qos_ptr = new_qos_ptr ? new_qos_ptr : job_ptr->qos_ptr;
+
+	if (job_specs->bitflags & RESET_ACCRUE_TIME) {
+		if (!IS_JOB_PENDING(job_ptr) || !detail_ptr) {
+			error_code = ESLURM_JOB_NOT_PENDING;
+			goto fini;
+		} else
+			acct_policy_remove_accrue_time(job_ptr, false);
+	}
 
 	/*
 	 * Must check req_nodes to set the job_ptr->details->req_node_bitmap
@@ -11884,6 +11943,7 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 					    job_ptr->licenses)) {
 		sched_debug("update_job: new licenses identical to old licenses \"%s\"",
 			    job_ptr->licenses);
+		xfree(job_specs->licenses);
 	} else if (job_specs->licenses) {
 		bool valid, pending = IS_JOB_PENDING(job_ptr);
 		license_list = license_validate(job_specs->licenses, true, true,

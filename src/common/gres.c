@@ -1276,13 +1276,15 @@ extern int gres_plugin_node_config_unpack(Buf buffer, char *node_name)
 		if (j >= gres_context_cnt) {
 			/*
 			 * GresPlugins is inconsistently configured.
-			 * Not a fatal error. Skip this data.
+			 * Not a fatal error, but skip this data.
 			 */
-			error("%s: no plugin configured to unpack data "
-			      "type %s from node %s",
-			      __func__, tmp_name, node_name);
+			error("%s: No plugin configured to process GRES data from node %s (Name:%s Type:%s PluginID:%u Count:%"PRIu64")",
+			      __func__, node_name, tmp_name, tmp_type,
+			      plugin_id, count64);
 			xfree(tmp_cpus);
+			xfree(tmp_links);
 			xfree(tmp_name);
+			xfree(tmp_type);
 			continue;
 		}
 		p = xmalloc(sizeof(gres_slurmd_conf_t));
@@ -1309,6 +1311,7 @@ unpack_error:
 	xfree(tmp_cpus);
 	xfree(tmp_links);
 	xfree(tmp_name);
+	xfree(tmp_type);
 	slurm_mutex_unlock(&gres_context_lock);
 	return SLURM_ERROR;
 }
@@ -3289,10 +3292,6 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 			prev_save_ptr += offset;
 		} else	/* No more GRES */
 			prev_save_ptr = NULL;
-	} else if (sep[0] == '\0') {
-		/* Malformed input (e.g. "gpu:tesla:") */
-		my_rc = ESLURM_INVALID_GRES;
-		goto fini;
 	} else if ((sep[0] >= '0') && (sep[0] <= '9')) {
 		value = strtoull(sep, &end_ptr, 10);
 		if (value == ULLONG_MAX) {
@@ -3311,6 +3310,9 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 		} else if ((end_ptr[0] == 't') || (end_ptr[0] == 'T')) {
 			value *= ((uint64_t)1024 * 1024 * 1024 * 1024);
 			end_ptr++;
+		} else if ((end_ptr[0] == 'p') || (end_ptr[0] == 'P')) {
+			value *= ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024);
+			end_ptr++;
 		}
 		if (end_ptr[0] == ',') {
 			end_ptr++;
@@ -3321,6 +3323,10 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 		*cnt = value;
 		offset = end_ptr - name;
 		prev_save_ptr += offset;
+	} else {
+		/* Malformed input (e.g. "gpu:tesla:") */
+		my_rc = ESLURM_INVALID_GRES;
+		goto fini;
 	}
 
 	/* Find the job GRES record */
@@ -7101,6 +7107,9 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 			end_ptr++;
 		} else if ((end_ptr[0] == 't') || (end_ptr[0] == 'T')) {
 			value *= ((uint64_t)1024 * 1024 * 1024 * 1024);
+			end_ptr++;
+		} else if ((end_ptr[0] == 'p') || (end_ptr[0] == 'P')) {
+			value *= ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024);
 			end_ptr++;
 		}
 		if (end_ptr[0] == ',') {

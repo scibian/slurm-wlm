@@ -1,9 +1,117 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 18.08.4
+==========================
+ -- burst_buffer/cray - avoid launching a job that would be immediately
+    cancelled due to a DataWarp failure.
+ -- Fix message sent to user to display preempted instead of time limit when
+    a job is preempted.
+ -- Fix memory leak when a failure happens processing a nodes gres config.
+ -- Improve error message when failures happen processing a nodes gres config.
+ -- When building rpms ignore redundant standard rpaths and insecure relative
+    rpaths, for RHEL based distros which use "check-rpaths" tool.
+ -- Don't skip jobs in scontrol hold.
+ -- Avoid locking the job_list when unneeded.
+ -- Allow --cpu-bind=verbose to be used with SLURM_HINT environment variable.
+ -- Make it so fixing runaway jobs will not alter the same job requeued
+    when not runaway.
+ -- Avoid checking state when searching for runaway jobs.
+ -- Remove redundant check for end time of job when searching for runaway jobs.
+ -- Make sure that we properly check for runawayjobs where another job might
+    have the same id (for example, if a job was requeued) by also checking the
+    submit time.
+ -- Add scontrol update job ResetAccrueTime to clear a job's time
+    previously accrued for priority.
+ -- cons_res: Delay exiting cr_job_test until after cores/cpus are calculated
+    and distributed.
+ -- Fix bug where binary in cwd would trump binary in PATH with test_exec.
+ -- Fix check to test printf("%s\n", NULL); to not require
+    -Wno-format-truncation CFLAG.
+ -- Fix JobAcctGatherParams=UsePss to report the correct usage.
+ -- Fix minor memory leak in pmix plugin.
+ -- Fix minor memory leak in slurmctld when reading configuration.
+ -- Handle return codes correctly from pthread_* functions.
+ -- Fix minor memory leak when a slurmd is unable to contact a slurmctld
+    when trying to register.
+ -- Fix sreport sizesbyaccount report when using Flatview and accounts.
+ -- Fix incorrect shift when dealing with node weights and scheduling.
+ -- libslurm/perl - Fix segfault caused by incorrect hv_to_slurm_ctl_conf.
+ -- Add qos and assoc options to confirmation dialogs.
+ -- Handle updating identical license or partition information correctly.
+ -- Makes sure accounts and QOS' are all lower case to match documentation
+    when read in from the slurm.conf file.
+ -- Don't consider partitions without enough nodes in reservation,
+    main scheduler.
+ -- Set SLURM_NTASKS correctly if having to determine from other options.
+ -- Removed GCP scripts from contribs. Now located at:
+    https://github.com/SchedMD/slurm-gcp.
+ -- Don't check existence of srun --prolog or --epilog executables when set to
+    "none" and SLURM_TEST_EXEC is used.
+ -- Add "P" suffix support to job and step tres specifications.
+ -- When doing a reconfigure handle QOS' GrpJobsAccrue correctly.
+ -- Remove unneeded extra parentheses from sh5util.
+ -- Fix jobacct_gather/cgroup to work correctly when more than one task is
+    started on a node.
+ -- If requesting --ntasks-per-node with no tasks set tasks correctly.
+ -- Accept modifiers for TRES originally added in 6f0342e0358.
+ -- Don't remove reservation on slurmctld restart if nodes are removed from
+    configuration.
+ -- Fix bad xfree in task/cgroup.
+ -- Fix removing counters if a job array isn't subject to limits and is
+    canceled while pending.
+ -- Make sure SLURM_NTASKS_PER_NODE is set correctly when env is overwritten
+    by the command line.
+ -- Clean up step on a failed node correctly.
+ -- mpi/pmix: Fixed the logging of collective state.
+ -- mpi/pmix: Make multi-slurmd work correctly when using ring communication.
+ -- mpi/pmix: Fix double invocation of the PMIx lib fence callback.
+ -- mpi/pmix: Remove unneeded libpmix callback drop in tree-based coll.
+ -- Fix race condition in route/topology when the slurmctld is reconfigured.
+ -- In route/topology validate the slurmctld doesn't try to initialize the
+    node system.
+ -- Fix issue when requesting invalid gres.
+ -- Validate job_ptr in backfill before restoring preempt state.
+ -- Fix issue when job's environment is minimal and only contains variables
+    Slurm is going to replace internally.
+ -- When handling runaway jobs remove all usage before rollup to remove any
+    time that wasn't existent instead of just updating lines that have time
+    with a lesser time.
+ -- salloc - set SLURM_NTASKS_PER_CORE and SLURM_NTASKS_PER_SOCKET in the
+    environment if the corresponding command line options are used.
+ -- slurmd - fix handling of the -f flag to specify alternate config file
+    locations.
+ -- Fix scheduling logic to avoid using nodes that require a reboot for KNL
+    node change when possible.
+ -- Fix scheduling logic bug. There should have been a test for _not_
+    NODE_SET_REBOOT to continue.
+ -- Fix a scheuling logic bug with respect to XOR operation support when there
+    are down nodes.
+ -- If there is a constraint construct of the form "[...&...]"
+    then an error is generated if more than one of those specifications
+    contains KNL NUMA or MCDRAM modes.
+ -- Fix stepd segfault race if slurmctld hasn't registered with the launching
+    slurmd yet delivering it's TRES list.
+ -- Add SchedulerParameters option of bf_ignore_newly_avail_nodes to avoid
+    scheduling lower priority jobs on resources that become available during
+    the backfill scheduling cycle when bf_continue is enabled.
+ -- Decrement message_connections in stepd code on error path correctly.
+ -- Decrease an error message to be debug.
+ -- Fix missing suffixes in squeue.
+ -- pam_slurm_adopt - send an error message to the user if no Slurm jobs
+    can be located on the node.
+ -- Run SlurmctldPrimaryOffProg when the primary slurmctld process shuts down.
+ -- job_submit/lua: Add several slurmctld return codes.
+ -- job_submit/lua: Add user/group info to jobs.
+ -- Fix formatting issues when printing uint64_t.
+ -- Bump RLIMIT_NOFILE for daemons in systemd services.
+ -- Expand %x in job name in 'scontrol show job'.
+ -- salloc/sbatch/srun - print warning if mutually exclusive options of --mem
+    and --mem-per-cpu are both set.
+
 * Changes in Slurm 18.08.3
 ==========================
- -- Fix regression in 18.08.2 that caused dbd messages to not be queued up
+ -- Fix regression in 18.08.1 that caused dbd messages to not be queued up
     when the dbd was down.
  -- Fix regression in 18.08.1 that can cause a slurmctld crash when splitting
     job array elements.

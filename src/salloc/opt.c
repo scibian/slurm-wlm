@@ -1691,6 +1691,7 @@ static bool _opt_verify(void)
 			     "to mem-per-cpu");
 			opt.pn_min_memory = opt.mem_per_cpu;
 		}
+		info("WARNING: --mem and --mem-per-cpu are mutually exclusive.");
 	}
 
         /* Check to see if user has specified enough resources to
@@ -1850,10 +1851,22 @@ static bool _opt_verify(void)
 		}
 	}
 
+	if ((opt.ntasks_per_core > 0) &&
+	    (getenv("SLURM_NTASKS_PER_CORE") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_CORE", "%d",
+			opt.ntasks_per_core);
+	}
+
 	if ((opt.ntasks_per_node > 0) &&
 	    (getenv("SLURM_NTASKS_PER_NODE") == NULL)) {
 		setenvf(NULL, "SLURM_NTASKS_PER_NODE", "%d",
 			opt.ntasks_per_node);
+	}
+
+	if ((opt.ntasks_per_socket > 0) &&
+	    (getenv("SLURM_NTASKS_PER_SOCKET") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_SOCKET", "%d",
+			opt.ntasks_per_socket);
 	}
 
 	if (opt.profile)

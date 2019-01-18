@@ -434,7 +434,6 @@ scontrol_hold(char *op, char *job_str)
 				slurm_free_job_array_resp(resp);
 				resp = NULL;
 			}
-			job_msg.job_id_str = _next_job_id();
 		}
 		return rc;
 	} else if (job_str) {
@@ -753,10 +752,15 @@ extern int scontrol_update_job(int argc, char **argv)
 			}
 			val++;
 			vallen = strlen(val);
-		} else if (xstrncasecmp(tag, "Nice", MAX(strlen(tag), 2)) == 0){
-			/* "Nice" is the only tag that might not have an
-			   equal sign, so it is handled specially. */
+		}
+		/* Handle any tags that might not have an equal sign here */
+		else if (xstrncasecmp(tag, "Nice", MAX(strlen(tag), 2)) == 0) {
 			job_msg.nice = NICE_OFFSET + 100;
+			update_cnt++;
+			continue;
+		} else if (!xstrncasecmp(tag, "ResetAccrueTime",
+					 MAX(strlen(tag), 3))) {
+			job_msg.bitflags |= RESET_ACCRUE_TIME;
 			update_cnt++;
 			continue;
 		} else if (!val && argv[i + 1]) {
