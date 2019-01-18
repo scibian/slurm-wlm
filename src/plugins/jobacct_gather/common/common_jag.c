@@ -193,6 +193,7 @@ static int _get_pss(char *proc_smaps_file, jag_prec_t *prec)
         /* Sanity checks */
 
         if (pss > 0 && prec->tres_data[TRES_ARRAY_MEM].size_read > pss) {
+		pss *= 1024; /* Scale KB to B */
                 prec->tres_data[TRES_ARRAY_MEM].size_read = pss;
         }
 
@@ -578,8 +579,6 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 		_get_process_io_data_line(fd2, prec);
 		fclose(io_fp);
 	}
-	if (callbacks->prec_extra)
-		(*(callbacks->prec_extra))(prec);
 }
 
 static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
@@ -971,6 +970,14 @@ extern void jag_common_poll_data(
 		double last_total_cputime;
 		if (!(prec = list_find_first(prec_list, _find_prec, jobacct)))
 			continue;
+
+		/*
+		 * Only jobacct_gather/cgroup uses prec_extra, and we want to
+		 * make sure we call it once per task, so call it here as we
+		 * iterate through the tasks instead of in get_precs.
+		 */
+		if (callbacks->prec_extra)
+			(*(callbacks->prec_extra))(prec, jobacct->id.taskid);
 
 #if _DEBUG
 		info("pid:%u ppid:%u rss:%"PRIu64" B",

@@ -306,7 +306,7 @@ int main(int argc, char **argv)
 	slurmctld_diag_stats.latency +=  now.tv_usec - start.tv_usec;
 
 	if (slurmctld_diag_stats.latency > 200)
-		error("High latency for gettimeofday(): %d nanoseconds",
+		error("High latency for 1000 calls to gettimeofday(): %d microseconds",
 		      slurmctld_diag_stats.latency);
 
 	/*
@@ -804,6 +804,14 @@ int main(int argc, char **argv)
 
 		/* stop the heartbeat last */
 		heartbeat_stop();
+
+		/*
+		 * Run SlurmctldPrimaryOffProg only if we are the primary
+		 * (backup_inx == 0). The backup controllers (backup_inx > 0)
+		 * already run it when dropping to standby mode.
+		 */
+		if (slurmctld_primary)
+			_run_primary_prog(false);
 
 		if (slurmctld_config.resume_backup == false)
 			break;

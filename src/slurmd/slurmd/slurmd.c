@@ -132,6 +132,8 @@ slurmd_conf_t * conf = NULL;
 int fini_job_cnt = 0;
 uint32_t *fini_job_id = NULL;
 pthread_mutex_t fini_job_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t tres_mutex     = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  tres_cond      = PTHREAD_COND_INITIALIZER;
 
 /*
  * count of active threads
@@ -599,6 +601,14 @@ static void _handle_node_reg_resp(slurm_msg_t *resp_msg)
 		debug("%s: slurmctld sent back %u TRES.",
 		       __func__, g_tres_count);
 		assoc_mgr_unlock(&locks);
+
+		/*
+		 * Signal any threads potentially waiting to run.
+		 */
+		slurm_mutex_lock(&tres_mutex);
+		slurm_cond_broadcast(&tres_cond);
+		slurm_mutex_unlock(&tres_mutex);
+
 		/* assoc_mgr_post_tres_list will destroy the list */
 		resp->tres_list = NULL;
 	}
@@ -637,13 +647,15 @@ send_registration_msg(uint32_t status, bool startup)
 		req.msg_type = MESSAGE_NODE_REGISTRATION_STATUS;
 		req.data     = msg;
 
-		if (slurm_send_recv_controller_msg(&req, &resp_msg,
-						   working_cluster_rec) < 0) {
+		ret_val = slurm_send_recv_controller_msg(&req, &resp_msg,
+							 working_cluster_rec);
+		slurm_free_node_registration_status_msg(msg);
+
+		if (ret_val < 0) {
 			error("Unable to register: %m");
 			ret_val = SLURM_FAILURE;
 			goto fail;
 		}
-		slurm_free_node_registration_status_msg(msg);
 
 		_handle_node_reg_resp(&resp_msg);
 		if (resp_msg.msg_type != RESPONSE_SLURM_RC) {
@@ -1531,6 +1543,14 @@ _slurmd_init(void)
 	 * defaults and command line.
 	 */
 	_read_config();
+
+	/*
+	 * Make sure all further plugin init() calls see this value to ensure
+	 * they read from the correct directory, and that the slurmstepd
+	 * picks up the correct configuration when fork()'d.
+	 * Required for correct operation of the -f flag.
+	 */
+	setenv("SLURM_CONF", conf->conffile, 1);
 
 	/*
 	 * Create slurmd spool directory if necessary.

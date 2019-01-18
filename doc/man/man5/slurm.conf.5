@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "August 2018" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "December 2018" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -245,7 +245,7 @@ No filesystem data are collected.
 \fBacct_gather_filesystem/lustre\fR
 Lustre filesystem traffic data are collected from the counters found in
 /proc/fs/lustre/.
-In order to account for per job lustre traffic, add the "disk/lustre" TRES to
+In order to account for per job lustre traffic, add the "fs/lustre" TRES to
 \fIAccountingStorageTRES\fR.
 .RE
 
@@ -506,7 +506,7 @@ The cryptographic signature tool to be used in the creation of
 job step credentials.
 The slurmctld daemon must be restarted for a change in \fBCryptoType\fR
 to take effect.
-Acceptable values at present include "crypto/munge" and "crypto/openssl".
+Acceptable values at present include "crypto/munge".
 The default value is "crypto/munge" and is the recommended.
 
 .TP
@@ -1267,16 +1267,9 @@ the compute nodes
 Identifies the mechanism to be used to launch application tasks.
 Acceptable values include:
 .RS
-.TP 15
-\fBlaunch/aprun\fR
-For use with Cray systems with ALPS and the default value for those systems
-.TP
-\fBlaunch/poe\fR
-For use with IBM Parallel Environment (PE) and the default value for systems
-with the IBM NRT library installed.
 .TP
 \fBlaunch/slurm\fR
-For all other systems and the default value for those systems
+The default value.
 .RE
 
 .TP
@@ -2013,7 +2006,7 @@ NOTE: see "man cgroup.conf" for configuration details
 which uses Cray proprietary process tracking
 .TP
 \fBproctrack/linuxproc\fR
-which uses linux process tree using parent process IDs
+which uses linux process tree using parent process IDs.
 .TP
 \fBproctrack/lua\fR
 which uses a site\-specific LUA script to track processes
@@ -2075,6 +2068,7 @@ This container may be used for user processes not launched under Slurm control,
 for example the PAM module may place processes launch through a direct user
 login into this container.
 Setting the Contain implicitly sets the Alloc flag.
+You must set ProctrackType=proctrack/cgroup when using the Contain flag.
 .TP
 \fBNoHold\fR
 If set, the Alloc flag should also be set.  This will allow for salloc to not
@@ -2511,6 +2505,13 @@ or node state changes.
 This can result in lower priority jobs being backfill scheduled instead
 of newly arrived higher priority jobs, but will permit more queued jobs to be
 considered for backfill scheduling.
+.TP
+\fBbf_ignore_newly_avail_nodes\fR
+If set, then only resources available at the beginning of a backfill cycle
+will be considered for use. Otherwise resources made available during that
+backfill cycle (during a yield with bf_continue set) may be used for lower
+priority jobs, delaying the initiation of higher priority jobs.
+Disabled by default.
 .TP
 \fBbf_interval=#\fR
 The number of seconds between backfill iterations.
@@ -3684,7 +3685,6 @@ Acceptable values include
 "switch/cray" for Cray systems,
 "switch/none" for switches not requiring special processing for job launch
 or termination (Ethernet, and InfiniBand) and
-"switch/nrt" for IBM's Network Resource Table API.
 The default value is "switch/none".
 All Slurm daemons, commands and running jobs must be restarted for a
 change in \fBSwitchType\fR to take effect.
@@ -4100,8 +4100,6 @@ through the host database (/etc/hosts) or DNS, depending on the resolver
 settings.  Note that if the short form of the hostname is not used, it
 may prevent use of hostlist expressions (the numeric portion in brackets
 must be at the end of the string).
-Only short hostname forms are compatible with the switch/nrt plugin at
-this time.
 It may also be an arbitrary string if \fBNodeHostname\fR is specified.
 If the \fBNodeName\fR is "DEFAULT", the values specified
 with that record will apply to subsequent node specifications
@@ -4124,8 +4122,6 @@ through the host database (/etc/hosts) or DNS, depending on the resolver
 settings.  Note that if the short form of the hostname is not used, it
 may prevent use of hostlist expressions (the numeric portion in brackets
 must be at the end of the string).
-Only short hostname forms are compatible with the switch/nrt plugin at
-this time.
 A node range expression can be used to specify a set of nodes.
 If an expression is used, the number of nodes identified by
 \fBNodeHostname\fR on a line in the configuration file must
@@ -5370,11 +5366,11 @@ Cluster name specified in the slurm.conf will be used.
 \fBEXAMPLE\fR
 .RE
 ClusterName=linux
-.RE
+.br
 include /home/slurm/etc/%c_config
-.RE
+.br
 # Above line interpreted as
-.RE
+.br
 # "include /home/slurm/etc/linux_config"
 
 .SH "FILE AND DIRECTORY PERMISSIONS"
