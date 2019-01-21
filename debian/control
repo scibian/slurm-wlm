@@ -1,11 +1,12 @@
 Source: slurm-llnl
 Section: admin
 Priority: optional
-Maintainer: Scibian Project <packaging@scibian.org>
-Uploaders: Rémi Palancher <remi@rezib.org>, Mehdi Dogguy <mehdi@debian.org>
+Maintainer: Debian HPC Team <debian-hpc@lists.debian.org>
+Uploaders: Rémi Palancher <remi@rezib.org>,
+           Mehdi Dogguy <mehdi@debian.org>,
+           Gennaro Oliva <oliva.g@na.icar.cnr.it>,
 Build-Depends:
- debhelper (>= 9.20150101+deb8u2),
- autotools-dev,
+ debhelper (>= 10),
  libmunge-dev,
  libncurses5-dev,
  libssl-dev,
@@ -20,17 +21,20 @@ Build-Depends:
  libpam0g-dev,
  liblua5.2-dev,
  libhwloc-dev,
- dh-autoreconf,
  dh-exec,
  dh-systemd (>= 1.5),
  librrd-dev,
  libipmimonitoring-dev,
  hdf5-helpers,
- libhdf5-dev
-Standards-Version: 4.1.2
+ libhdf5-dev,
+ man2html,
+ libssh2-1-dev,
+ libcurl4-openssl-dev,
+ liblz4-dev
+Standards-Version: 4.2.1
 Homepage: http://slurm.schedmd.com
-Vcs-Browser: https://github.com/scibian/slurm-llnl
-Vcs-Git: https://github.com/scibian/slurm-llnl.git
+Vcs-Browser: https://salsa.debian.org/hpc-team/slurm-wlm
+Vcs-Git: https://salsa.debian.org/hpc-team/slurm-wlm.git
 
 Package: slurm-wlm
 Architecture: any
@@ -53,7 +57,9 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
- munge
+ munge,
+ adduser,
+ ucf
 Conflicts: sinfo (<< 0.0.47-4)
 Description: SLURM client side commands
  SLURM stands for Simple Linux Utility for Resource Management, it
@@ -61,21 +67,6 @@ Description: SLURM client side commands
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains all client side commands.
-
-Package: slurm-client-dbg
-Architecture: any
-Section: debug
-Depends:
- slurm-client (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM client side commands
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- .
- This package contains the debugging symbols for all client side
- commands.
 
 Package: slurmd
 Architecture: any
@@ -93,20 +84,6 @@ Description: SLURM compute node daemon
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains the compute node demon slurmd.
-
-Package: slurmd-dbg
-Architecture: any
-Section: debug
-Depends:
- slurmd (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM compute node daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for the compute node daemon
- slurmd.
 
 Package: slurmctld
 Architecture: any
@@ -126,21 +103,7 @@ Description: SLURM central management daemon
  interconnect agnostic.
  This package contains the central management demon slurmctld.
 
-Package: slurmctld-dbg
-Architecture: any
-Section: debug
-Depends:
- slurmctld (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM central management daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for central management
- daemon slurmctld.
-
-Package: libslurmdb32
+Package: libslurmdb33
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
@@ -150,7 +113,7 @@ Description: Runtime library files for the SLURM DataBase Daemon
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM DataBase Daemon runtime library.
 
-Package: libslurm32
+Package: libslurm33
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
@@ -160,57 +123,15 @@ Description: Runtime library files for SLURM
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM runtime library.
 
-Package: libslurmdb32-dbg
-Architecture: any
-Section: debug
-Depends:
- libslurmdb32 (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM slurmdbd runtime library
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for slurmdbd runtime
- library.
-
-Package: libslurm32-dbg
-Architecture: any
-Section: debug
-Depends:
- libslurm32 (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM slurm runtime library
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for slurm runtime
- library.
-
 Package: libpmi0
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, slurm-wlm-basic-plugins (= ${binary:Version}),
 Description: SLURM PMI library implementation
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM PMI runtime implementation.
-
-Package: libpmi0-dbg
-Architecture: any
-Section: debug
-Depends:
- libpmi0 (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM PMI library implementation
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for SLURM PMI library
- implementation.
 
 Package: libpmi2-0
 Section: libs
@@ -222,27 +143,13 @@ Description: SLURM PMI2 library implementation
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM PMI2 runtime implementation.
 
-Package: libpmi2-0-dbg
-Architecture: any
-Section: debug
-Depends:
- libpmi0 (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM PMI2 library implementation
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the debugging symbols for SLURM PMI2 library
- implementation.
-
 Package: libslurm-dev
 Section: libdevel
 Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libslurm32 (= ${binary:Version})
+ libslurm33 (= ${binary:Version})
 Conflicts: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
 Replaces: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
 Description: SLURM development files
@@ -256,7 +163,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libslurmdb32 (= ${binary:Version})
+ libslurmdb33 (= ${binary:Version})
 Description: SLURM DataBase Daemon development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
@@ -269,7 +176,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi0 (= ${binary:Version}),
- libslurm32 (= ${binary:Version})
+ libslurm33 (= ${binary:Version})
 Description: SLURM PMI library implementation development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
@@ -283,7 +190,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi2-0 (= ${binary:Version}),
- libslurm32 (= ${binary:Version})
+ libslurm33 (= ${binary:Version})
 Description: SLURM PMI2 library implementation development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
@@ -306,27 +213,11 @@ Package: slurm-wlm-basic-plugins
 Architecture: any
 Depends:
  ${shlibs:Depends},
- ${misc:Depends},
- adduser,
- ucf
+ ${misc:Depends}
 Description: SLURM basic plugins
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM basic plugins
-
-Package: slurm-wlm-basic-plugins-dbg
-Architecture: any
-Section: debug
-Depends:
- slurm-wlm-basic-plugins (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for SLURM basic plugins
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- .
- This package contains the debugging symbols for basic plugins.
 
 Package: slurm-wlm-basic-plugins-dev
 Section: devel
@@ -369,20 +260,6 @@ Description: Secure enterprise-wide interface to a database for SLURM
  used to securely manage the accounting data for several Slurm
  clusters in a central location and sacctmgr a command for managing
  user accounts in SlurmDBD.
-
-Package: slurmdbd-dbg
-Architecture: any
-Section: debug
-Depends:
- slurmdbd (= ${binary:Version}),
- ${misc:Depends}
-Description: debugging symbols for slurmdbd daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- .
- This package contains the debugging symbols for slurmdbd daemon.
 
 Package: libslurm-perl
 Section: perl

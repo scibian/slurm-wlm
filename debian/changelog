@@ -1,98 +1,87 @@
-slurm-llnl (17.11.2-1sci8u4) scibian8; urgency=medium
+slurm-llnl (18.08.3-1) unstable; urgency=medium
 
-  * Patch to add user_name in Lua job submit interface.
+  * New upstream release
+  * Update libslurm33.symbols
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Oct 2018 15:28:12 +0200
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 24 Oct 2018 23:51:22 +0200
 
-slurm-llnl (17.11.2-1sci8u3) scibian8; urgency=medium
+slurm-llnl (18.08.2-1) unstable; urgency=medium
 
-  * Add undisclosed security fix for CVE-2018-10995
-  * Add patch to fix removing array job in slurmctld
+  * New upstream release
+  * Fix sacct test script (Closes: #910886)
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 08 Jun 2018 09:49:56 +0200
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 23 Oct 2018 16:40:57 +0200
 
-slurm-llnl (17.11.2-1sci8u2) scibian8; urgency=medium
+slurm-llnl (18.08.1-1) unstable; urgency=medium
 
-  [ Thomas HAMEL ]
-  * slurmctld: Check UID in pack_job before hiding
+  * New upstream release (Closes: #909653)
+  * Update libslurm{,db} symbols file to soname 33
+  * Modifiy the mail patch since /usr/bin/mail is now supported upstream
+  * Refresh patches and remove parts included upstream
+  * Update d/copyright
+  * Update html configurators
+  * Fix typos in the some man pages
+  * Update simple configuration files
+  * Remove unused cgroup release agent script
 
- -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Thu, 26 Apr 2018 11:44:28 +0200
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 08 Oct 2018 01:23:32 +0200
 
-slurm-llnl (17.11.2-1sci8u1) scibian8; urgency=medium
+slurm-llnl (17.11.9-1) unstable; urgency=medium
 
-  * Scibian8 rebuild
+  * New upstream release
+  * Bump standard version to 4.2.0
+    Passing verbose options to commands in d/rules
+  * Update libslurm32.symbols
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 19 Mar 2018 15:10:14 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 10 Aug 2018 15:25:19 +0200
 
-slurm-llnl (17.11.2-1~calibre9u10) calibre9; urgency=medium
+slurm-llnl (17.11.8-1) unstable; urgency=medium
 
-  * Update security patch to fix reg with shared libs
+  * New upstream release
+  * Bump standard version to 4.1.5 (no changes)
+  * Update html configurators
+  * Update libslurm32 symbols file
+  * Disable pdf and ttf compression to improve html doc usability
+  * Add man2html dependency to enable html man pages in doc
+  * Add libssh2 dependency to enable native X11 forwarding
+  * Add libcurl dependency to build jobcomp/elasticsearch plugin
+  * Add lz4 dependency to enable lz4 compression to sbcast
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 09 Mar 2018 09:39:16 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 27 Jul 2018 10:06:43 +0200
 
-slurm-llnl (17.11.2-1~calibre9u9) calibre9; urgency=medium
+slurm-llnl (17.11.7-1) unstable; urgency=high
 
-  * Update security patch with update from SchedMD
+  * New upstream release fixes CVE-2018-10995
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 05 Mar 2018 15:48:49 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 06 Jun 2018 11:15:08 +0200
 
-slurm-llnl (17.11.2-1~calibre9u8) calibre9; urgency=medium
+slurm-llnl (17.11.6-1) unstable; urgency=medium
 
-  * Add undisclosed security fix
+  * New upstream release
+  * Update Vcs info with the new salsa.d.o git repo
+  * Change Maintainer to HPC Team
+  * Add Gennaro Oliva as Uploader
+  * Bump standard version to 4.1.4 (no changes)
+  * Rename the header files directory to slurm (Closes: #887924)
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 05 Mar 2018 11:11:34 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 22 May 2018 11:43:27 +0200
 
-slurm-llnl (17.11.2-1~calibre9u7) calibre9; urgency=medium
+slurm-llnl (17.11.5-1) unstable; urgency=medium
 
-  * upstream patch Avoid-node-hang-in-COMPLETING-state
+  [ Mehdi Dogguy ]
+  * Add an empty /etc/slurm-llnl/plugstack.conf.d directory for plugin
+    configuration and associated configuration file plugstack.conf
 
- -- Thomas Hamel <thomas-externe.hamel@edf.fr>  Tue, 30 Jan 2018 14:58:25 +0100
+  [ Gennaro Oliva ]
+  * Bump debhelper compat level to 10
+  * Bump standard version to 4.1.3
+  * Delete old transitional packages' files
+  * New upstream release fixes CVE-2018-7033
+  * Update libslurm{,db}32 symbols files
+  * Fix slurmdbd.conf.5 and slurm.conf.5 man pages
+  * Fix a typo in the mpiexec wrapper man page
 
-slurm-llnl (17.11.2-1~calibre9u6) calibre9; urgency=medium
-
-  * Revert of upstream commit b31fa177c1ca26dcd2d5cd952e692ef87d95b528
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 25 Jan 2018 11:02:46 +0100
-
-slurm-llnl (17.11.2-1~calibre9u5) calibre9; urgency=medium
-
-  * Add patch to fix issues when starting the backup slurmdbd.
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 23 Jan 2018 18:31:20 +0100
-
-slurm-llnl (17.11.2-1~calibre9u4) calibre9; urgency=medium
-
-  * Rename include directory back to /usr/include/slurm for compatibility
-    reasons.
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 16 Jan 2018 11:43:58 +0100
-
-slurm-llnl (17.11.2-1~calibre9u3) calibre9; urgency=medium
-
-  * Add fixes for https://bugs.schedmd.com/show_bug.cgi?id=4621
-    - debian/patches/cwd-in-multi-prog
-    - debian/patches/test_exec-feature-to-multi-prog-option-of-srun
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 16 Jan 2018 10:29:50 +0100
-
-slurm-llnl (17.11.2-1~calibre9u2) calibre9; urgency=medium
-
-  * Add dh-systemd to build dependencies
-  * Lower minimal required version for debhelper to something suitable
-    on Debian 8.
-  * Use configure flag --localstatedir instead of --runstatedir since
-    the latter is not valid with Jessie's version of libtool.
-  * Do not use dh_strip's --no-automatic-dbgsym flag as it comes with
-    newer versions of debhelper.
-  * Add needed -dbg packages, as they are not auto-generated in Jessie
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Mon, 15 Jan 2018 09:02:00 +0100
-
-slurm-llnl (17.11.2-1~calibre9u1) calibre9; urgency=medium
-
-  * Backport to Calibre9
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Sun, 14 Jan 2018 14:51:26 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sat, 17 Mar 2018 08:50:51 +0100
 
 slurm-llnl (17.11.2-1) unstable; urgency=medium
 
@@ -150,32 +139,6 @@ slurm-llnl (17.02.5-1) unstable; urgency=medium
   * Update d/copyright and switch to copyright-format 1.0
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 03 Jul 2017 15:30:51 +0200
-
-slurm-llnl (17.02.2-1sci8u1) scibian8; urgency=medium
-
-  * Scibian8 rebuild.
-
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 14 Dec 2017 15:51:55 +0100
-
-slurm-llnl (17.02.2-1~calibre9+2) calibre9; urgency=medium
-
-  * Add undisclosed security fix
-
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 19 Oct 2017 11:55:36 +0200
-
-slurm-llnl (17.02.2-1~calibre9+1) calibre9; urgency=medium
-
-  * Backport to Calibre9
-
- -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 27 Apr 2017 11:08:26 +0200
-
-slurm-llnl (17.02.1.2-1~calibre9+1) calibre9; urgency=medium
-
-  * Backport to Calibre9
-  * Remove prolog fix patch as merged upstream
-  * Remove cgroup release agent everywhere
-
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 05 Apr 2017 13:29:57 +0200
 
 slurm-llnl (17.02.1.2-1) unstable; urgency=medium
 

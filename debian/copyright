@@ -6,7 +6,7 @@ Source: https://slurm.schedmd.com
 Files: *
 Copyright: 2001-2009 The Regents of the University of California
            2004,2008-2011 Lawrence Livermore National Security, LLC
-           2010-2017 SchedMD LLC
+           2010-2018 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: debian/*
@@ -54,7 +54,6 @@ Files: src/api/pmi_server.c
        contribs/spank_core.c
        src/sattach/sattach.c
        src/sview/admin_info.c
-       src/sview/block_info.c
        src/sview/common.c
        src/sview/front_end_info.c
        testsuite/expect/globals
@@ -64,7 +63,7 @@ Files: src/api/pmi_server.c
        src/sview/resv_info.c
 Copyright: 2002-2009 The Regents of the University of California
            2008-2012 Lawrence Livermore National Security, LLC
-           2011-2017 SchedMD LLC
+           2011-2018 SchedMD LLC
 License: GPL-2+
 
 Files: testsuite/expect/test7.17.prog.c
@@ -186,6 +185,7 @@ Files: src/plugins/mpi/pmix/mpi_pmix.c
        src/plugins/mpi/pmix/pmixp_client_v2.c
        src/plugins/mpi/pmix/pmixp_coll.c
        src/plugins/mpi/pmix/pmixp_coll.h
+       src/plugins/mpi/pmix/pmixp_coll_tree.c
        src/plugins/mpi/pmix/pmixp_common.h
        src/plugins/mpi/pmix/pmixp_conn.c
        src/plugins/mpi/pmix/pmixp_conn.h
@@ -211,7 +211,11 @@ Files: src/plugins/mpi/pmix/mpi_pmix.c
        src/plugins/mpi/pmix/pmixp_utils.c
        src/plugins/mpi/pmix/pmixp_utils.h
 Copyright: 2014-2015 Artem Polyakov
-           2015-2017 Mellanox Technologies, Inc
+           2015-2018 Mellanox Technologies, Inc
+License: GPL-2+ with OpenSSL exception
+
+Files: src/plugins/mpi/pmix/pmixp_coll_ring.c
+Copyright: 2018 Mellanox Technologies, Inc
 License: GPL-2+ with OpenSSL exception
 
 Files: src/plugins/select/alps/basil_alps.h
@@ -376,6 +380,10 @@ Files: contribs/torque/pbsnodes.pl
        contribs/torque/qstat.pl
 Copyright: 2007 The Regents of the University of California
            2006-2007 Cluster Resources, Inc
+License: GPL-2+ with OpenSSL exception
+
+Files: contribs/cray/slurmsmwd/*
+Copyright: 2017 Regents of the University of California
 License: GPL-2+ with OpenSSL exception
 
 Files: src/plugins/mpi/pmi2/agent.c
@@ -557,7 +565,7 @@ License: GPL-2
 
 Files: auxdir/config.guess
        auxdir/config.sub
-Copyright: 1992-2016 Free Software Foundation, Inc
+Copyright: 1992-2018 Free Software Foundation, Inc
 License: GPL-3
 
 Files: aclocal.m4
@@ -663,11 +671,18 @@ Files: src/plugins/acct_gather_energy/ibmaem/acct_gather_energy_ibmaem.c
 Copyright: 2015 Leibniz Supercomputing Centre
 License: GPL-2+ with OpenSSL exception
 
+Files: src/plugins/acct_gather_profile/influxdb/acct_gather_profile_influxdb.c
+Copyright: 2016 F. Hoffmann - La Roche
+           2013 Bull
+           2013 SchedMD LLC
+           2002 The Regents of the University of California
+License: GPL-2+ with OpenSSL exception
+
 Files: src/plugins/job_submit/require_timelimit/job_submit_require_timelimit.c
 Copyright: 2013 Rensselaer Polytechnic Institute
 License: GPL-2+ with OpenSSL exception
 
-Files: src/api/pmi.c
+Files: contribs/pmi/pmi.c
 Copyright: 2002 University of Chicago
            2005-2007 The Regents of the University of California
            2008-2010 Lawrence Livermore National Security, LLC

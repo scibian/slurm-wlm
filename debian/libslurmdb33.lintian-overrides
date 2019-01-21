@@ -12,4 +12,4 @@
 # This happens because because slurm_job_preempt_mode is contained in
 # /usr/sbin/slurmctld and will never be referenced when running sinfo.
 hardening-no-bindnow
-binary-or-shlib-defines-rpath
+spelling-error-in-binary
