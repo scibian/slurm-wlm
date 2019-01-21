@@ -1,3 +1,9 @@
+slurm-llnl (18.08.3-1sci8u2) scibian8; urgency=medium
+
+  * New upstream release for scibian8.
+
+ -- M'hamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Mon, 21 Jan 2019 14:53:36 +0100
+
 slurm-llnl (18.08.3-1) unstable; urgency=medium
 
   * New upstream release
