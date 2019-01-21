@@ -6,7 +6,7 @@ Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
            Gennaro Oliva <oliva.g@na.icar.cnr.it>,
 Build-Depends:
- debhelper (>= 10),
+ debhelper (>= 9),
  libmunge-dev,
  libncurses5-dev,
  libssl-dev,
