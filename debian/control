@@ -5,6 +5,7 @@ Maintainer: Debian HPC Team <debian-hpc@lists.debian.org>
 Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
            Gennaro Oliva <oliva.g@na.icar.cnr.it>,
+           M'hamed Bouaziz <mhamed-externe.bouaziz@edf.fr>
 Build-Depends:
  debhelper (>= 9),
  autotools-dev,
@@ -35,8 +36,8 @@ Build-Depends:
  liblz4-dev
 Standards-Version: 4.2.1
 Homepage: http://slurm.schedmd.com
-Vcs-Browser: https://salsa.debian.org/hpc-team/slurm-wlm
-Vcs-Git: https://salsa.debian.org/hpc-team/slurm-wlm.git
+Vcs-Browser: https://github.com/scibian/slurm-llnl
+Vcs-Git: https://github.com/scibian/slurm-llnl.git
 
 Package: slurm-wlm
 Architecture: any
