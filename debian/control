@@ -1,7 +1,7 @@
 Source: slurm-llnl
 Section: admin
 Priority: optional
-Maintainer: Debian HPC Team <debian-hpc@lists.debian.org>
+Maintainer: Scibian Project <packaging@scibian.org>
 Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
            Gennaro Oliva <oliva.g@na.icar.cnr.it>,
