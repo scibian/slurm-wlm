@@ -83,7 +83,7 @@ Description: debugging symbols for SLURM client side commands
  interconnect agnostic.
  .
  This package contains the debugging symbols for all client side
-commands.
+ commands.
 
 Package: slurmd
 Architecture: any
@@ -114,7 +114,7 @@ Description: debugging symbols for SLURM compute node daemon
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains the debugging symbols for the compute node daemon
-slurmd.
+ slurmd.
 
 Package: slurmctld
 Architecture: any
@@ -146,7 +146,7 @@ Description: debugging symbols for SLURM central management daemon
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains the debugging symbols for central management
-daemon slurmctld.
+ daemon slurmctld.
 
 Package: libslurmdb33
 Section: libs
@@ -190,7 +190,7 @@ Description: debugging symbols for SLURM PMI library implementation
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains the debugging symbols for SLURM PMI library
-implementation.
+ implementation.
 
 Package: libpmi2-0
 Section: libs
@@ -214,7 +214,7 @@ Description: debugging symbols for SLURM PMI2 library implementation
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains the debugging symbols for SLURM PMI2 library
-implementation.
+ implementation.
 
 Package: libslurm-dev
 Section: libdevel
@@ -358,7 +358,7 @@ Description: debugging symbols for slurmdbd daemon
  SLURM stands for Simple Linux Utility for Resource Management, it
  is an open-source cluster resource management and job scheduling system
  that strives to be simple, scalable, portable, fault-tolerant, and
-interconnect agnostic.
+ interconnect agnostic.
 
 Package: libslurm-perl
 Section: perl

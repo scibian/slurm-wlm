@@ -123,17 +123,17 @@ override_dh_strip:
 	dh_strip -pslurmctld --dbg-package=slurmctld-dbg
 	dh_strip -pslurmdbd --dbg-package=slurmdbd-dbg
 	# we do not care about debug symbols for those pkgs
-	dh_strip -plibslurmdb-perl --no-automatic-dbgsym
-	dh_strip -plibslurm-perl --no-automatic-dbgsym
-	dh_strip -psview --no-automatic-dbgsym
-	dh_strip -plibpam-slurm --no-automatic-dbgsym
-	dh_strip -pslurm-wlm-emulator --no-automatic-dbgsym
-	dh_strip -pslurm-client-emulator --no-automatic-dbgsym
-	dh_strip -plibpmi0-dev --no-automatic-dbgsym
-	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
-	dh_strip -plibslurmdb-dev --no-automatic-dbgsym
-	dh_strip -plibslurm-dev --no-automatic-dbgsym
-	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
+	dh_strip -plibslurmdb-perl
+	dh_strip -plibslurm-perl 
+	dh_strip -psview 
+	dh_strip -plibpam-slurm 
+	dh_strip -pslurm-wlm-emulator 
+	dh_strip -pslurm-client-emulator 
+	dh_strip -plibpmi0-dev 
+	dh_strip -plibpmi2-0-dev 
+	dh_strip -plibslurmdb-dev 
+	dh_strip -plibslurm-dev 
+	dh_strip -pslurm-wlm-basic-plugins-dev 
 	strip --verbose --strip-debug --remove-section=.comment \
 		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
 
