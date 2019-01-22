@@ -113,8 +113,8 @@ override_dh_auto_install:
 	mv -v debian/tmp-emulator/usr/bin/sstat	debian/tmp-emulator/usr/bin/sstat-emulator
 
 override_dh_strip:
-	dh_strip -plibslurm32 --dbg-package=libslurm32-dbg
-	dh_strip -plibslurmdb32 --dbg-package=libslurmdb32-dbg
+	dh_strip -plibslurm33
+	dh_strip -plibslurmdb33
 	dh_strip -plibpmi0 --dbg-package=libpmi0-dbg
 	dh_strip -plibpmi2-0 --dbg-package=libpmi2-0-dbg
 	dh_strip -pslurm-wlm-basic-plugins --dbg-package=slurm-wlm-basic-plugins-dbg
@@ -123,18 +123,18 @@ override_dh_strip:
 	dh_strip -pslurmctld --dbg-package=slurmctld-dbg
 	dh_strip -pslurmdbd --dbg-package=slurmdbd-dbg
 	# we do not care about debug symbols for those pkgs
-	dh_strip -plibslurmdb-perl
-	dh_strip -plibslurm-perl
-	dh_strip -psview
-	dh_strip -plibpam-slurm
-	dh_strip -pslurm-wlm-emulator
-	dh_strip -pslurm-client-emulator
-	dh_strip -plibpmi0-dev
-	dh_strip -plibpmi2-0-dev
-	dh_strip -plibslurmdb-dev
-	dh_strip -plibslurm-dev
-	dh_strip -pslurm-wlm-basic-plugins-dev
-	strip --strip-debug --remove-section=.comment \
+	dh_strip -plibslurmdb-perl --no-automatic-dbgsym
+	dh_strip -plibslurm-perl --no-automatic-dbgsym
+	dh_strip -psview --no-automatic-dbgsym
+	dh_strip -plibpam-slurm --no-automatic-dbgsym
+	dh_strip -pslurm-wlm-emulator --no-automatic-dbgsym
+	dh_strip -pslurm-client-emulator --no-automatic-dbgsym
+	dh_strip -plibpmi0-dev --no-automatic-dbgsym
+	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
+	dh_strip -plibslurmdb-dev --no-automatic-dbgsym
+	dh_strip -plibslurm-dev --no-automatic-dbgsym
+	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
+	strip --verbose --strip-debug --remove-section=.comment \
 		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
 
 override_dh_auto_test:
