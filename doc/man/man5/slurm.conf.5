@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "December 2018" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "February 2019" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -121,13 +121,13 @@ Also see \fBDefaultStoragePort\fR.
 \fBAccountingStorageTRES\fR
 Comma separated list of resources you wish to track on the cluster.
 These are the resources requested by the sbatch/srun job when it
-is submitted.  Currently this consists of any GRES, BB (burst buffer) or
+is submitted. Currently this consists of any GRES, BB (burst buffer) or
 license along with CPU, Memory, Node, Energy, FS/[Disk|Lustre], IC/OFED, Pages,
 and VMem. By default Billing, CPU, Energy, Memory, Node, FS/Disk, Pages and VMem
-are tracked.
+are tracked. These default TRES cannot be disabled, but only appended to.
 AccountingStorageTRES=gres/craynetwork,license/iop1
-will track billing, cpu, energy, memory, nodes, FS/disk along with a
-gres called craynetwork as well as a license called iop1.  Whenever these
+will track billing, cpu, energy, memory, nodes, fs/disk, pages and vmem along
+with a gres called craynetwork as well as a license called iop1. Whenever these
 resources are used on the cluster they are recorded. The TRES are automatically
 set up in the database on the start of the slurmctld.
 
@@ -403,6 +403,12 @@ Comma separated options identifying communication options.
 Used specifically on a Cray using an Aries Ghal interconnect.  This will check
 to see if the system is quiescing when sending a message, and if so, we wait
 until it is done before sending.
+.TP
+\fBNoAddrCache\fR By default, Slurm will cache a node's network address after
+successfully establishing the node's network address. This option disables the
+cache and Slurm will look up the node's network address each time a connection
+is made. This is useful, for example, in a cloud environment where the node
+addresses come and go out of DNS.
 .TP
 \fBNoCtldInAddrAny\fR
 Used to directly bind to the address of what the node resolves to running
@@ -915,7 +921,8 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
 on all nodes to minimize its impact upon parallel programs.
 This program is will be killed if it does not terminate normally within
 60 seconds.
-This program will also be executed when the slurmd daemon is first started.
+This program will also be executed when the slurmd daemon is first started and
+before it registers with the slurmctld daemon.
 By default, no program will be executed.
 
 .TP
@@ -1258,8 +1265,9 @@ Lock the slurmstepd process's current memory in RAM.
 Lock the slurmstepd process's current and future memory in RAM.
 .TP
 \fBtest_exec\fR
-Validate the executable command's existence prior to attempting launch on
-the compute nodes
+Have srun verify existence of the executable program along with user
+execute permission on the node where srun was called before attempting to
+launch it on nodes in the step.
 .RE
 
 .TP
@@ -1530,9 +1538,12 @@ default value for \fBWindowTime\fR is 100 milliseconds.
 \fBOverTimeLimit\fR
 Number of minutes by which a job can exceed its time limit before
 being canceled.
-The configured job time limit is treated as a \fIsoft\fR limit.
-Adding \fBOverTimeLimit\fR to the \fIsoft\fR limit provides a \fIhard\fR
-limit, at which point the job is canceled.
+Normally a job's time limit is treated as a \fIhard\fR limit and the job will be
+killed upon reaching that limit.
+Configuring \fBOverTimeLimit\fR will result in the job's time limit being
+treated like a \fIsoft\fR limit.
+Adding the \fBOverTimeLimit\fR value to the \fIsoft\fR time limit provides a
+\fIhard\fR time limit, at which point the job is canceled.
 This is particularly useful for backfill scheduling, which bases upon
 each job's soft time limit.
 The default value is zero.
@@ -1931,6 +1942,7 @@ PriorityWeightTRES=CPU=1000,Mem=2000,GRES/gpu=3000
 
 Applicable only if PriorityType=priority/multifactor and if
 AccountingStorageTRES is configured with each TRES Type.
+Negative values are allowed.
 The default values are 0.
 
 .TP
@@ -2219,6 +2231,7 @@ once it becomes idle after the command "scontrol reboot_nodes" is executed by
 an authorized user or a job is submitted with the "\-\-reboot" option.
 After rebooting, the node is returned to normal use.
 See \fBResumeTimeout\fR to configure the time you expect a reboot to finish in.
+A node will be marked DOWN if it doesn't reboot within \fBResumeTimeout\fR.
 
 .TP
 \fBReconfigFlags\fR
@@ -2314,12 +2327,12 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 
 .TP
 \fBResumeTimeout\fR
-Maximum time permitted (in second) between when a node resume request
+Maximum time permitted (in seconds) between when a node resume request
 is issued and when the node is actually available for use.
 Nodes which fail to respond in this time frame will be marked DOWN and
 the jobs scheduled on the node requeued.
 Nodes which reboot after this time frame will be marked DOWN with a reason of
-"unexpected reboot."
+"Node unexpectedly rebooted."
 The default value is 60 seconds.
 Related configuration options include \fBResumeProgram\fR, \fBResumeRate\fR,
 \fBSuspendRate\fR, \fBSuspendTime\fR, \fBSuspendTimeout\fR, \fBSuspendProgram\fR,
@@ -2506,6 +2519,38 @@ This can result in lower priority jobs being backfill scheduled instead
 of newly arrived higher priority jobs, but will permit more queued jobs to be
 considered for backfill scheduling.
 .TP
+\fBbf_hetjob_prio=[min|avg|max]\fR
+At the beginning of each backfill scheduling cycle, a list of pending to be
+scheduled jobs is sorted according to the precedence order configured in
+\fBPriorityType\fR. This option instructs the scheduler to alter the sorting
+algorithm to ensure that all components belonging to the same heterogeneous job
+will be attempted to be scheduled consecutively (thus not fragmented in the
+resulting list). More specifically, all components from the same heterogeneous
+job will be treated as if they all have the same priority (minimum, average or
+maximum depending upon this option's parameter) when compared with other jobs
+(or other heterogeneous job components). The original order will be preserved
+within the same heterogeneous job. Note that the operation is calculated for
+the \fBPriorityTier\fR layer and for the \fBPriority\fR resulting from the
+priority/multifactor plugin calculations. When enabled, if any heterogeneous job
+requested an advanced reservation, then all of that job's components will be
+treated as if they had requested an advanced reservation (and get
+preferential treatment in scheduling).
+
+Note that this operation does not update the \fBPriority\fR values of the
+heterogeneous job components, only their order within the list, so the output of
+the sprio command will not be effected.
+
+Heterogeneous jobs have special scheduling properties: they are only scheduled
+by the backfill scheduling plugin, each of their components is considered
+separately when reserving resources (and might have different \fBPriorityTier\fR
+or different \fBPriority\fR values), and no heterogeneous job component is
+actually allocated resources until all if its components can be initiated.
+This may imply potential scheduling deadlock scenarios because components
+from different heterogeneous jobs can start reserving resources in an
+interleaved fashion (not consecutively), but none of the jobs can reserve
+resources for all components and start. Enabling this option can help to
+mitigate this problem. By default, this option is disabled.
+.TP
 \fBbf_ignore_newly_avail_nodes\fR
 If set, then only resources available at the beginning of a backfill cycle
 will be considered for use. Otherwise resources made available during that
@@ -2553,7 +2598,7 @@ submitted to.
 \fBbf_max_job_assoc=#\fR
 The maximum number of jobs per user association to attempt starting with the
 backfill scheduler.
-This setting is similar to to \fBbf_max_job_user\fR but is handy if a user
+This setting is similar to \fBbf_max_job_user\fR but is handy if a user
 has multiple assocations equating to basically different users.
 One can set this limit to prevent users from flooding the backfill
 queue with jobs that cannot start and that prevent jobs from other users
@@ -3272,6 +3317,15 @@ Multiple options may be comma-separated.
 Permit setting triggers from non-root/slurm_user users. SlurmUser must also
 be set to root to permit these triggers to work. See the \fBstrigger\fR man
 page for additional details.
+.TP
+\fBcloud_dns\fR
+By default, Slurm expects that the network addresses for cloud nodes won't
+won't be know until creation of the node and that Slurm will be notified of the
+node's address (e.g. \fBscontrol update nodename=<name> nodeaddr=<addr>\fR).
+Since Slurm communications rely on the node configuration found in the
+slurm.conf, Slurm will tell the client command, after waiting for all nodes to
+boot, each node's ip address. However, in environments where the nodes are in
+DNS, this step can be avoided by configuring this option.
 .RE
 
 .TP
@@ -3599,7 +3653,7 @@ into this directory.
 Specifies the nodes which are to not be placed in power save mode, even
 if the node remains idle for an extended period of time.
 Use Slurm's hostlist expression to identify nodes with an optional ":" separator
-and count of nodes to exclude from the preceeding range.
+and count of nodes to exclude from the preceding range.
 For example "nid[10-20]:4" will prevent 4 usable nodes (i.e IDLE and not 
 DOWN, DRAINING or already powered down) in the set "nid[10-20]" from being
 powered down.
@@ -4015,6 +4069,10 @@ If set, xauth data on the compute node will be placed in a temporary file
 \fBXAUTHORITY\fR environment variable will be injected into the job's
 environment (as well as any process captured by pam_slurm_adopt).
 This can help avoid file locking contention on the user's home directory.
+.TP 8
+\fBuse_raw_hostname\fR
+If set, xauth hostname will use the raw value of gethostname() instead
+of the local part-only (as is used elsewhere within Slurm).
 .RE
 
 .LP
@@ -4746,12 +4804,14 @@ Specifies, in units of seconds, the preemption grace time
 to be extended to a job which has been selected for preemption.
 The default value is zero, no preemption grace time is allowed on
 this partition.
-Once a job has been selected for preemption, it's end time is set to the
-current time plus GraceTime. The job is immediately sent SIGCONT and SIGTERM
+Once a job has been selected for preemption, its end time is set to the current
+time plus GraceTime. The job's tasks are immediately sent SIGCONT and SIGTERM
 signals in order to provide notification of its imminent termination.
 This is followed by the SIGCONT, SIGTERM and SIGKILL signal sequence upon
-reaching its new end time.
-(Meaningful only for PreemptMode=CANCEL)
+reaching its new end time. This second set of signals is sent to both the
+tasks \fBand\fR the containing batch script, if applicable.
+Meaningful only for PreemptMode=CANCEL.
+See also the global \fBKillWait\fR configuration parameter.
 
 .TP
 \fBHidden\fR
@@ -5036,6 +5096,8 @@ The weighted amount of a resource can be adjusted by adding a suffix of K,M,G,T
 or P after the billing weight. For example, a memory weight of "mem=.25" on a
 job allocated 8GB will be billed 2048 (8192MB *.25) units. A memory weight of
 "mem=.25G" on the same job will be billed 2 (8192MB * (.25/1024)) units.
+
+Negative values are allowed.
 
 When a job is allocated 1 CPU and 8 GB of memory on a partition configured with
 TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0", the billable TRES will be:

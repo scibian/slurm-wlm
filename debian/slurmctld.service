@@ -9,7 +9,9 @@ Type=forking
 EnvironmentFile=-/etc/default/slurmctld
 ExecStart=/usr/sbin/slurmctld $SLURMCTLD_OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
-PIDFile=/var/run/slurm-llnl/slurmctld.pid
+PIDFile=/run/slurmctld.pid
+LimitNOFILE=65536
+TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target

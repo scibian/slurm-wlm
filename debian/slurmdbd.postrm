@@ -25,16 +25,7 @@ case "$1" in
          fi
          rm -rf /etc/slurm-llnl/slurmdbd.conf
          rm -rf /var/log/slurm-llnl/slurmdbd*log*
-         if [    ! -e /usr/sbin/slurmctld \
-              -a ! -e /usr/sbin/slurmd \
-              -a ! -e /usr/bin/squeue ] ; then
-           pkill -9 -u 64030 || true
-           # Deleting slurm user
-           if [ -n "$(id -u slurm 2>/dev/null)" ] ; then
-             deluser --quiet slurm || true
-           fi
-           rm -rf /var/run/slurm-llnl
-         fi
+         pkill -9 -u slurm slurmdbd || true
         ;;
 
        remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

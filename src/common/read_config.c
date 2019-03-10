@@ -118,6 +118,7 @@ static s_p_hashtbl_t *default_nodename_tbl;
 static s_p_hashtbl_t *default_partition_tbl;
 static bool	local_test_config = false;
 static int	local_test_config_rc = SLURM_SUCCESS;
+static bool     no_addr_cache = false;
 
 inline static void _normalize_debug_level(uint16_t *level);
 static int _init_slurm_conf(const char *file_name);
@@ -2677,7 +2678,8 @@ extern int slurm_conf_get_addr(const char *node_name, slurm_addr_t *address)
 					slurm_conf_unlock();
 					return SLURM_FAILURE;
 				}
-				p->addr_initialized = true;
+				if (!no_addr_cache)
+					p->addr_initialized = true;
 			}
 			*address = p->addr;
 			slurm_conf_unlock();
@@ -3235,6 +3237,10 @@ static int _init_slurm_conf(const char *file_name)
 		rc = SLURM_ERROR;
 	conf_ptr->slurm_conf = xstrdup(name);
 
+	no_addr_cache = false;
+	if (xstrcasestr("NoAddrCache", conf_ptr->comm_params))
+		no_addr_cache = true;
+
 	return rc;
 }
 
@@ -3475,6 +3481,29 @@ static uint16_t _health_node_state(char *state_str)
 	xfree(tmp_str);
 
 	return state_num;
+}
+
+/* Return TRUE if a comma-delimited token "hbm" is found */
+static bool _have_hbm_token(char *gres_plugins)
+{
+	char *tmp, *tok, *save_ptr = NULL;
+	bool rc = false;
+
+	if (!gres_plugins)
+		return false;
+
+	tmp = xstrdup(gres_plugins);
+	tok = strtok_r(tmp, ",", &save_ptr);
+	while (tok) {
+		if (!xstrcasecmp(tok, "hbm")) {
+			rc = true;
+			break;
+		}
+		tok = strtok_r(NULL, ",", &save_ptr);
+	}
+	xfree(tmp);
+
+	return rc;
 }
 
 /*
@@ -4024,6 +4053,15 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 
 	(void) s_p_get_string(&conf->node_features_plugins,
 			     "NodeFeaturesPlugins", hashtbl);
+
+	if (xstrstr(conf->node_features_plugins, "knl_") &&
+	    !_have_hbm_token(conf->gres_plugins)) {
+		/* KNL nodes implicitly add GRES type of "hbm" */
+		if (conf->gres_plugins && conf->gres_plugins[0])
+			xstrcat(conf->gres_plugins, ",hbm");
+		else
+			xstrcat(conf->gres_plugins, "hbm");
+	}
 
 	if (!s_p_get_string(&conf->accounting_storage_tres,
 			    "AccountingStorageTRES", hashtbl))

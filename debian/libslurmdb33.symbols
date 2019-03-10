@@ -1,4 +1,5 @@
 libslurmdb.so.33 libslurmdb33 #MINVER#
+* Build-Depends-Package: libslurmdb-dev
 #MISSING: 17.11.2~# slurm_accept_msg_conn@Base 2.2.0
 #MISSING: 14.11.0# slurm_accept_stream@Base 2.2.0
 #MISSING: 17.11.2~# slurm_accounting_enforce_string@Base 2.2.0
@@ -1163,6 +1164,7 @@ libslurmdb.so.33 libslurmdb33 #MINVER#
  slurmdb_init_res_rec@Base 14.03.0
  slurmdb_init_tres_cond@Base 15.08.0
  slurmdb_init_wckey_rec@Base 2.2.0
+ slurmdb_job_cond_def_start_end@Base 18.08.6.2
  slurmdb_job_modify@Base 17.11.2
  slurmdb_jobcomp_fini@Base 17.11.2
  slurmdb_jobcomp_init@Base 17.11.2

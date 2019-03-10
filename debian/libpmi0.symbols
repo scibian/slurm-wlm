@@ -1,4 +1,5 @@
 libpmi.so.0 libpmi0 #MINVER#
+* Build-Depends-Package: libpmi0-dev
  PMI_Abort@Base 1.3.8
  PMI_Args_to_keyval@Base 1.3.8
  PMI_Barrier@Base 1.3.8

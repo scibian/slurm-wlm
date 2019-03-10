@@ -6,7 +6,7 @@
 #              resources and distributes work to those resources.
 #
 # processname: /usr/sbin/slurmd
-# pidfile: /var/run/slurm-llnl/slurmd.pid
+# pidfile: /run/slurmd.pid
 #
 # config: /etc/default/slurmd
 #
@@ -105,23 +105,6 @@ start() {
   CRYPTOTYPE=${CRYPTOTYPE%#*}
   if [ "$CRYPTOTYPE" = "crypto/openssl" ] ; then
     checkcertkey $1
-  fi
-
-  # Create run-time variable data
-  mkdir -p /var/run/slurm-llnl
-  chown slurm:slurm /var/run/slurm-llnl
-
-  # Checking if SlurmdSpoolDir is under run
-  if [ "$1" = "slurmd" ] ; then
-    SDIRLOCATION=$(grep SlurmdSpoolDir /etc/slurm-llnl/slurm.conf \
-                       | grep -v "^ *#")
-    SDIRLOCATION=${SDIRLOCATION##*=}
-    SDIRLOCATION=${SDIRLOCATION%#*}
-    if [ "${SDIRLOCATION}" = "/var/run/slurm-llnl/slurmd" ] ; then
-      if ! [ -e /var/run/slurm-llnl/slurmd ] ; then
-        ln -s /var/lib/slurm-llnl/slurmd /var/run/slurm-llnl/slurmd
-      fi
-    fi
   fi
 
   desc="$(get_daemon_description $1)"
