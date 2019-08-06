@@ -1514,7 +1514,31 @@ static void _slurm_rpc_allocate_pack(slurm_msg_t * msg)
 			_kill_job_on_msg_fail(pack_job_id);
 		list_destroy(resp);
 	} else {
+		char *aggregate_user_msg = NULL;
+
 send_msg:	info("%s: %s ", __func__, slurm_strerror(error_code));
+
+		/*
+		 * If job is rejected, add the job submit message to the error
+		 * message to avoid it getting lost. Was saved off earlier.
+		 */
+		for (inx = 0; inx < pack_cnt; inx++) {
+			if (!job_submit_user_msg[inx])
+				continue;
+
+			xstrfmtcat(aggregate_user_msg, "%s%d: %s",
+				   (aggregate_user_msg ? "\n" : ""),
+				    inx, job_submit_user_msg[inx]);
+		}
+		if (aggregate_user_msg) {
+			char *tmp_err_msg = err_msg;
+			err_msg = aggregate_user_msg;
+			if (tmp_err_msg) {
+				xstrfmtcat(err_msg, "\n%s", tmp_err_msg);
+				xfree(tmp_err_msg);
+			}
+		}
+
 		if (err_msg)
 			slurm_send_rc_err_msg(msg, error_code, err_msg);
 		else
@@ -1711,6 +1735,21 @@ send_msg:
 			_throttle_fini(&active_rpc_cnt);
 		}
 		info("%s: %s ", __func__, slurm_strerror(error_code));
+
+		/*
+		 * If job is rejected, add the job submit message to the error
+		 * message to avoid it getting lost. Was saved off earlier.
+		 */
+		if (job_submit_user_msg) {
+			char *tmp_err_msg = err_msg;
+			err_msg = job_submit_user_msg;
+			job_submit_user_msg = NULL;
+			if (tmp_err_msg) {
+				xstrfmtcat(err_msg, "\n%s", tmp_err_msg);
+				xfree(tmp_err_msg);
+			}
+		}
+
 		if (err_msg)
 			slurm_send_rc_err_msg(msg, error_code, err_msg);
 		else
@@ -4093,6 +4132,21 @@ send_msg:
 
 	if (reject_job) {
 		info("%s: %s", __func__, slurm_strerror(error_code));
+
+		/*
+		 * If job is rejected, add the job submit message to the error
+		 * message to avoid it getting lost. Was saved off earlier.
+		 */
+		if (job_submit_user_msg) {
+			char *tmp_err_msg = err_msg;
+			err_msg = job_submit_user_msg;
+			job_submit_user_msg = NULL;
+			if (tmp_err_msg) {
+				xstrfmtcat(err_msg, "\n%s", tmp_err_msg);
+				xfree(tmp_err_msg);
+			}
+		}
+
 		if (err_msg)
 			slurm_send_rc_err_msg(msg, error_code, err_msg);
 		else
@@ -4279,8 +4333,13 @@ static void _slurm_rpc_submit_batch_pack_job(slurm_msg_t *msg)
 		}
 		if (!job_desc_msg->burst_buffer) {
 			xfree(job_desc_msg->script);
-			job_desc_msg->script =
-				bb_g_build_pack_script(script, pack_job_offset);
+			if (!(job_desc_msg->script = bb_g_build_pack_script(
+				      script, pack_job_offset))) {
+				error_code =
+					ESLURM_INVALID_BURST_BUFFER_REQUEST;
+				reject_job = true;
+				break;
+			}
 		}
 		job_desc_msg->pack_job_offset = pack_job_offset;
 		error_code = job_allocate(job_desc_msg,
@@ -4366,6 +4425,21 @@ send_msg:
 	END_TIMER2("_slurm_rpc_submit_batch_pack_job");
 	if (reject_job) {
 		info("%s: %s", __func__, slurm_strerror(error_code));
+
+		/*
+		 * If job is rejected, add the job submit message to the error
+		 * message to avoid it getting lost. Was saved off earlier.
+		 */
+		if (job_submit_user_msg) {
+			char *tmp_err_msg = err_msg;
+			err_msg = job_submit_user_msg;
+			job_submit_user_msg = NULL;
+			if (tmp_err_msg) {
+				xstrfmtcat(err_msg, "\n%s", tmp_err_msg);
+				xfree(tmp_err_msg);
+			}
+		}
+
 		if (err_msg)
 			slurm_send_rc_err_msg(msg, error_code, err_msg);
 		else
@@ -4987,7 +5061,7 @@ static void _slurm_rpc_resv_delete(slurm_msg_t * msg)
 
 	/* return result */
 	if (error_code) {
-		info("_slurm_rpc_delete_reservation partition=%s: %s",
+		info("_slurm_rpc_delete_reservation reservation=%s: %s",
 		     resv_desc_ptr->name, slurm_strerror(error_code));
 		slurm_send_rc_msg(msg, error_code);
 	} else {
@@ -6067,10 +6141,13 @@ inline static void _slurm_rpc_reboot_nodes(slurm_msg_t * msg)
 			continue;
 		}
 		node_ptr->node_state |= NODE_STATE_REBOOT;
-		node_ptr->boot_req_time = now;
-		node_ptr->last_response = now + slurmctld_config.boot_time;
+		node_ptr->boot_req_time = (time_t) 0;
+		node_ptr->last_response = now + slurmctld_conf.resume_timeout;
 		if (reboot_msg) {
 			node_ptr->next_state = reboot_msg->next_state;
+			if (node_ptr->next_state == NODE_RESUME)
+				bit_set(rs_node_bitmap, i);
+
 			if (reboot_msg->reason) {
 				xfree(node_ptr->reason);
 				node_ptr->reason = xstrdup(reboot_msg->reason);
@@ -6298,7 +6375,9 @@ inline static void _slurm_rpc_burst_buffer_status(slurm_msg_t *msg)
 	response_msg.data = &status_resp_msg;
 	status_resp_msg.status_resp = bb_g_get_status(status_req_msg->argc,
 						      status_req_msg->argv);
-	response_msg.data_size = strlen(status_resp_msg.status_resp) + 1;
+	if (status_resp_msg.status_resp)
+		response_msg.data_size =
+			strlen(status_resp_msg.status_resp) + 1;
 	slurm_send_node_msg(msg->conn_fd, &response_msg);
 	xfree(status_resp_msg.status_resp);
 }

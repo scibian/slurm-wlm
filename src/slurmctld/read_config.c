@@ -142,6 +142,27 @@ static void _sync_part_prio(void);
 static int  _update_preempt(uint16_t old_enable_preempt);
 
 
+/*
+ * Setup the global response_cluster_rec
+ */
+static void _set_response_cluster_rec()
+{
+	if (response_cluster_rec)
+		return;
+
+	response_cluster_rec = xmalloc(sizeof(slurmdb_cluster_rec_t));
+	response_cluster_rec->name = xstrdup(slurmctld_conf.cluster_name);
+	if (slurmctld_conf.slurmctld_addr) {
+		response_cluster_rec->control_host =
+			xstrdup(slurmctld_conf.slurmctld_addr);
+	} else {
+		response_cluster_rec->control_host =
+			xstrdup(slurmctld_conf.control_addr[0]);
+	}
+	response_cluster_rec->control_port = slurmctld_conf.slurmctld_port;
+	response_cluster_rec->rpc_version = SLURM_PROTOCOL_VERSION;
+}
+
 /* Verify that Slurm directories are secure, not world writable */
 static void _stat_slurm_dirs(void)
 {
@@ -386,6 +407,7 @@ static int _build_bitmaps(void)
 
 	/* initialize the idle and up bitmaps */
 	FREE_NULL_BITMAP(avail_node_bitmap);
+	FREE_NULL_BITMAP(bf_ignore_node_bitmap);
 	FREE_NULL_BITMAP(booting_node_bitmap);
 	FREE_NULL_BITMAP(cg_node_bitmap);
 	FREE_NULL_BITMAP(future_node_bitmap);
@@ -395,6 +417,7 @@ static int _build_bitmaps(void)
 	FREE_NULL_BITMAP(up_node_bitmap);
 	FREE_NULL_BITMAP(rs_node_bitmap);
 	avail_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
+	bf_ignore_node_bitmap = bit_alloc(node_record_count);
 	booting_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	cg_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
 	future_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
@@ -429,16 +452,23 @@ static int _build_bitmaps(void)
 			bit_set(booting_node_bitmap, i);
 		if (IS_NODE_COMPLETING(node_ptr))
 			bit_set(cg_node_bitmap, i);
-		if (IS_NODE_IDLE(node_ptr) || IS_NODE_ALLOCATED(node_ptr)) {
+		if (IS_NODE_IDLE(node_ptr) ||
+		    IS_NODE_ALLOCATED(node_ptr) ||
+		    (IS_NODE_REBOOT(node_ptr) &&
+		     (node_ptr->next_state == NODE_RESUME))) {
 			if ((drain_flag == 0) &&
 			    (!IS_NODE_NO_RESPOND(node_ptr)))
-				bit_set(avail_node_bitmap, i);
+				make_node_avail(i);
 			bit_set(up_node_bitmap, i);
 		}
 		if (IS_NODE_POWER_SAVE(node_ptr))
 			bit_set(power_node_bitmap, i);
 		if (IS_NODE_FUTURE(node_ptr))
 			bit_set(future_node_bitmap, i);
+
+		if (IS_NODE_REBOOT(node_ptr) &&
+		    (node_ptr->next_state == NODE_RESUME))
+			bit_set(rs_node_bitmap, i);
 	}
 
 	return error_code;
@@ -1458,6 +1488,8 @@ int read_slurm_conf(int recover, bool reconfig)
 	if (reconfig && (slurm_mcs_reconfig() != SLURM_SUCCESS))
 		fatal("Failed to reconfigure mcs plugin");
 
+	_set_response_cluster_rec();
+
 	slurmctld_conf.last_update = time(NULL);
 	END_TIMER2("read_slurm_conf");
 	return error_code;
@@ -1698,7 +1730,7 @@ static void _gres_reconfig(bool reconfig)
 	struct node_record *node_ptr;
 	char *gres_name;
 	bool gres_changed;
-	int i;
+	int i, total_threads, total_cores;
 
 	if (reconfig) {
 		gres_plugin_reconfig(&gres_changed);
@@ -1711,6 +1743,27 @@ static void _gres_reconfig(bool reconfig)
 				gres_name = node_ptr->config_ptr->gres;
 			gres_plugin_init_node_config(node_ptr->name, gres_name,
 						     &node_ptr->gres_list);
+			if (!IS_NODE_CLOUD(node_ptr))
+				continue;
+
+			/*
+			 * Load in gres for node now. By default Slurm gets this
+			 * information when the node registers for the first
+			 * time, which can take a while for a node in the cloud
+			 * to boot.
+			 */
+			gres_plugin_node_config_load(
+				node_ptr->config_ptr->cpus, node_ptr->name,
+				NULL);
+			total_cores = node_ptr->config_ptr->sockets *
+				node_ptr->config_ptr->cores;
+			total_threads = total_cores *
+				node_ptr->config_ptr->threads;
+			gres_plugin_node_config_validate(
+				node_ptr->name, node_ptr->config_ptr->gres,
+				&node_ptr->gres, &node_ptr->gres_list,
+				total_threads, total_cores,
+				slurmctld_conf.fast_schedule, NULL);
 		}
 	}
 }

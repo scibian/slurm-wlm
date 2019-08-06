@@ -1,3 +1,37 @@
+slurm-llnl (18.08.6.2-1) unstable; urgency=medium
+
+  * New upstream release 18.08.6.2
+  * Update libslurm{,db} symbols file
+  * Refresh remove-google-javascript patch
+  * Update postinst scripts to move pid file under /run when
+    /run/slurm-llnl is used (Closes: #885759)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 10 Mar 2019 01:42:38 +0100
+
+slurm-llnl (18.08.5.2-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2019-6438 (Closes: #920997)
+  * debian/patches/man-pages-typos: removed, applied upstream
+  * Add Build-Depends-Package field to symbol files
+  * Handling slurm user inside the plugin package as suggested by
+    Karl Kornel (Closes: #850891)
+  * Allow using a slurm user with a different UID if created before
+    installation (Closes: #851103)
+  * Move pid files under /run (Closes: #885759)
+  * Change static libs strip options for standard version 4.3.0
+  * Fix a typo in the perl code
+  * Remove rc4 symlink creation in slurmdbd.postinst
+  * Update service files to sync with upstream
+  * Update init scripts with the new pid files
+  * Remove init scripts symlinks for old SlurmdSpoolDir and StateSaveLocation
+  * Sync configurators with upstream
+  * Bump debhelper compat level to 11
+  * Remove --without-blcr configure option not needed anymore
+  * Add libfreeipmi-dev build dependency to enable freeipmi support
+  * Remove old d/NEWS file
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 17 Feb 2019 13:32:52 +0100
+
 slurm-llnl (18.08.3-1sci9u3) scibian9; urgency=medium
 
   * set TasksMax=infinity in systemd conf

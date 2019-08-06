@@ -29,10 +29,6 @@ Display information for specific accounts (comma separated list).
 Display information for all users.
 
 .TP
-\fB\-h\fR, \fB\-\-noheader\fR
-No header will be added to the beginning of the output.
-
-.TP
 \fB\-l\fR, \fB\-\-long\fR
 Long listing - includes the normalized usage information.
 
@@ -43,8 +39,17 @@ Note that the SlurmDBD must be up for this option to work properly.
 
 .TP
 \fB\-m\fR, \fB\-\-partition\fR
-Is there are association based partition in the system
+If there are association based partitions in the system
 print their names.
+
+.TP
+\fB\-n\fR, \fB\-\-noheader\fR
+No header will be added to the beginning of the output.
+
+.TP
+\fB\-o\fR, \fB\-\-format=\fR
+Comma separated list of fields (use
+"--helpformat" for a list of available fields).
 
 .TP
 \fB\-p\fR, \fB\-\-parsable\fR
@@ -122,6 +127,11 @@ the effective usage charged to them or their accounts.
 The TRES-minutes limit set on the account. The total number of cpu
 minutes that can possibly be used by past, present and future jobs
 running from this account and its children.
+
+.TP
+\f3GrpTRESRaw\fP
+The raw TRES usage that has been used by jobs running from
+this account and its children.
 
 .TP
 \f3TRESRunMins\fP

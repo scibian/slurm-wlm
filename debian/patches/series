@@ -3,7 +3,7 @@ remove-google-javascript
 sacctmgr-increase-buffer
 pidfile-path
 rpath
-man-pages-typos
 mpiexec-man-page
 b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 fix-pmixv3-dlopen-path
+fix-perl-doc

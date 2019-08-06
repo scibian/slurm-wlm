@@ -25,6 +25,7 @@ case "$1" in
          fi
          rm -rf /etc/slurm-llnl/slurmdbd.conf
          rm -rf /var/log/slurm-llnl/slurmdbd*log*
+         pkill -9 -u slurm slurmdbd || true
         ;;
 
        remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)

@@ -20,11 +20,8 @@ set -e
 
 case "$1" in
        purge)
-         # Killing all slurm owned process
-         pkill -9 -u slurm || true
-         deluser --quiet slurm || true
-         rm -rf /var/run/slurm-llnl
 
+         # Delete slurm host key and cert
          SCONF=/etc/slurm-llnl/slurm.conf
          if [ -e $SCONF ] ; then
            CRYPTOTYPE=$(grep CryptoType $SCONF | grep -v "^ *#" || true)
@@ -43,28 +40,32 @@ case "$1" in
               if [ -n "${KEYFILE}${CERTFILE}" ] ; then
                 rm -f ${KEYFILE} ${CERTFILE}
               fi
-             rm -f /etc/slurm-llnl/slurm.key
-             rm -f /etc/slurm-llnl/slurm.cert
            fi
          fi
-         if [    ! -e /usr/sbin/slurmctld \
-              -a ! -e /usr/sbin/slurmdbd \
-              -a ! -e /usr/sbin/slurmd ] ; then
 
-           # Deleting slurm user
-           if [ -n "$(id -u slurm 2>/dev/null)" ] ; then
-             deluser --quiet slurm || true
-           fi
-           rm -rf /var/run/slurm-llnl
-           if which ucf >/dev/null; then
-             ucf --purge /etc/slurm-llnl/slurm.conf
-           fi
-           rm -f /etc/slurm-llnl/slurm.conf
+         if which ucf >/dev/null; then
+           ucf --purge /etc/slurm/slurm.conf
+         fi
+
+	 # Delete slurm configuration files
+         rm -f /etc/slurm-llnl/slurm.conf
+
+         # Deleting slurm user only if has the reserved ids
+         if [ -n "$(id -u slurm 2>/dev/null)" ] ; then
+
+           SLURMUID=$(id -u slurm 2>/dev/null)
+           SLURMGID=$(id -g slurm 2>/dev/null)
+
+           if [ "$SLURMUID" = "64030" ] && [ "$SLURMGID" = "64030" ] ; then
+
+              deluser --quiet slurm || true
+
+	   fi
+
          fi
          ;;
 
        remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
-
         ;;
 
 

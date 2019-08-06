@@ -6,7 +6,7 @@ Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
            Gennaro Oliva <oliva.g@na.icar.cnr.it>,
 Build-Depends:
- debhelper (>= 10),
+ debhelper (>= 11),
  libmunge-dev,
  libncurses5-dev,
  libssl-dev,
@@ -25,6 +25,7 @@ Build-Depends:
  librrd-dev,
  libipmimonitoring-dev,
  hdf5-helpers,
+ libfreeipmi-dev,
  libhdf5-dev,
  man2html,
  libssh2-1-dev,
@@ -57,7 +58,8 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
- munge
+ munge,
+ ucf
 Conflicts: sinfo (<< 0.0.47-4)
 Description: SLURM client side commands
  SLURM stands for Simple Linux Utility for Resource Management, it
@@ -73,6 +75,7 @@ Depends:
  ${misc:Depends},
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
+ ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)
@@ -91,6 +94,7 @@ Depends:
  slurm-client (= ${binary:Version}),
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
+ ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)

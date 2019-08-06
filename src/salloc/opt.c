@@ -446,6 +446,7 @@ env_vars_t env_vars[] = {
   {"SALLOC_GPUS_PER_NODE", OPT_STRING,     &opt.gpus_per_node, NULL          },
   {"SALLOC_GPUS_PER_SOCKET", OPT_STRING,   &opt.gpus_per_socket, NULL        },
   {"SALLOC_GPUS_PER_TASK", OPT_STRING,     &opt.gpus_per_task, NULL          },
+  {"SALLOC_GRES",          OPT_STRING,     &opt.gres,          NULL          },
   {"SALLOC_GRES_FLAGS",    OPT_GRES_FLAGS, NULL,               NULL          },
   {"SALLOC_IMMEDIATE",     OPT_IMMEDIATE,  NULL,               NULL          },
   {"SALLOC_HINT",          OPT_HINT,       NULL,               NULL          },
@@ -1691,6 +1692,7 @@ static bool _opt_verify(void)
 			     "to mem-per-cpu");
 			opt.pn_min_memory = opt.mem_per_cpu;
 		}
+		info("WARNING: --mem and --mem-per-cpu are mutually exclusive.");
 	}
 
         /* Check to see if user has specified enough resources to
@@ -1850,10 +1852,22 @@ static bool _opt_verify(void)
 		}
 	}
 
+	if ((opt.ntasks_per_core > 0) &&
+	    (getenv("SLURM_NTASKS_PER_CORE") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_CORE", "%d",
+			opt.ntasks_per_core);
+	}
+
 	if ((opt.ntasks_per_node > 0) &&
 	    (getenv("SLURM_NTASKS_PER_NODE") == NULL)) {
 		setenvf(NULL, "SLURM_NTASKS_PER_NODE", "%d",
 			opt.ntasks_per_node);
+	}
+
+	if ((opt.ntasks_per_socket > 0) &&
+	    (getenv("SLURM_NTASKS_PER_SOCKET") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_SOCKET", "%d",
+			opt.ntasks_per_socket);
 	}
 
 	if (opt.profile)
@@ -2182,7 +2196,7 @@ static void _usage(void)
 "              [--gpus-per-node=n] [--gpus-per-socket=n]  [--gpus-per-task=n]\n"
 "              [--mem-per-gpu=MB]\n"
 #endif
-"              [executable [args...]]\n");
+"              [command [args...]]\n");
 }
 
 static void _help(void)
@@ -2190,7 +2204,7 @@ static void _help(void)
 	slurm_ctl_conf_t *conf;
 
         printf (
-"Usage: salloc [OPTIONS...] [executable [args...]]\n"
+"Usage: salloc [OPTIONS...] [command [args...]]\n"
 "\n"
 "Parallel run options:\n"
 "  -A, --account=name          charge job to specified account\n"

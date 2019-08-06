@@ -1,4 +1,5 @@
 libpmi2.so.0 libpmi2-0 #MINVER#
+* Build-Depends-Package: libpmi2-0-dev
  PMI2_Abort@Base 16.05.6
  PMI2_Finalize@Base 16.05.6
  PMI2_Info_GetJobAttr@Base 16.05.6

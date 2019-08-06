@@ -94,6 +94,8 @@ typedef enum {
 
 /* Global variables */
 bitstr_t *avail_node_bitmap = NULL;	/* bitmap of available nodes */
+bitstr_t *bf_ignore_node_bitmap = NULL; /* bitmap of nodes to ignore during a
+					 * backfill cycle */
 bitstr_t *booting_node_bitmap = NULL;	/* bitmap of booting nodes */
 bitstr_t *cg_node_bitmap    = NULL;	/* bitmap of completing nodes */
 bitstr_t *future_node_bitmap = NULL;	/* bitmap of FUTURE nodes */
@@ -124,7 +126,6 @@ static int	_update_node_avail_features(char *node_names,
 static int	_update_node_gres(char *node_names, char *gres);
 static int	_update_node_weight(char *node_names, uint32_t weight);
 static bool 	_valid_node_state_change(uint32_t old, uint32_t new);
-
 
 /* dump_all_node_state - save the state of all nodes to file */
 int dump_all_node_state ( void )
@@ -526,7 +527,8 @@ extern int load_all_node_state ( bool state_only )
 				node_ptr->reason_uid = reason_uid;
 			}
 
-			if (node_ptr->node_state & NODE_STATE_POWER_UP)
+			if (IS_NODE_POWER_UP(node_ptr) ||
+			    IS_NODE_REBOOT(node_ptr))
 				node_ptr->boot_req_time = boot_req_time;
 
 			if (!slurmctld_conf.fast_schedule) {
@@ -1531,7 +1533,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 				node_ptr->node_state &= (~NODE_STATE_FAIL);
 				if (!IS_NODE_NO_RESPOND(node_ptr) ||
 				     IS_NODE_POWER_SAVE(node_ptr))
-					bit_set (avail_node_bitmap, node_inx);
+					make_node_avail(node_inx);
 				bit_set (idle_node_bitmap, node_inx);
 				bit_set (up_node_bitmap, node_inx);
 				if (IS_NODE_POWER_SAVE(node_ptr))
@@ -1542,7 +1544,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 				if (!IS_NODE_DRAIN(node_ptr) &&
 				    !IS_NODE_FAIL(node_ptr)  &&
 				    !IS_NODE_NO_RESPOND(node_ptr))
-					bit_set(avail_node_bitmap, node_inx);
+					make_node_avail(node_inx);
 				bit_set (up_node_bitmap, node_inx);
 				bit_clear (idle_node_bitmap, node_inx);
 			} else if ((state_val == NODE_STATE_DRAIN) ||
@@ -3274,7 +3276,7 @@ static void _sync_bitmaps(struct node_record *node_ptr, int job_count)
 	    IS_NODE_FAIL(node_ptr) || IS_NODE_NO_RESPOND(node_ptr))
 		bit_clear (avail_node_bitmap, node_inx);
 	else
-		bit_set   (avail_node_bitmap, node_inx);
+		make_node_avail(node_inx);
 	if (IS_NODE_DOWN(node_ptr))
 		bit_clear (up_node_bitmap, node_inx);
 	else
@@ -3546,9 +3548,14 @@ void set_node_down_ptr (struct node_record *node_ptr, char *reason)
 	if ((node_ptr->reason == NULL) ||
 	    (xstrncmp(node_ptr->reason, "Not responding", 14) == 0)) {
 		xfree(node_ptr->reason);
-		node_ptr->reason = xstrdup(reason);
-		node_ptr->reason_time = now;
-		node_ptr->reason_uid = slurmctld_conf.slurm_user_id;
+		if (reason) {
+			node_ptr->reason = xstrdup(reason);
+			node_ptr->reason_time = now;
+			node_ptr->reason_uid = slurmctld_conf.slurm_user_id;
+		} else {
+			node_ptr->reason_time = 0;
+			node_ptr->reason_uid = NO_VAL;
+		}
 	}
 	_make_node_down(node_ptr, now);
 	(void) kill_running_job_by_node_name(node_ptr->name);
@@ -3724,6 +3731,19 @@ extern void make_node_alloc(struct node_record *node_ptr,
 	node_ptr->reason_uid = NO_VAL;
 
 	last_node_update = time (NULL);
+}
+
+/* make_node_avail - flag specified node as available */
+extern void make_node_avail(int node_inx)
+{
+	bit_set(avail_node_bitmap, node_inx);
+
+	/*
+	 * If we are in the middle of a backfill cycle, this bitmap is
+	 * used (when bf_ignore_newly_avail_nodes is enabled) to avoid
+	 * scheduling lower priority jobs on to newly available resources.
+	 */
+	bit_set(bf_ignore_node_bitmap, node_inx);
 }
 
 /* make_node_comp - flag specified node as completing a job
@@ -3915,7 +3935,7 @@ void make_node_idle(struct node_record *node_ptr,
 	    IS_NODE_NO_RESPOND(node_ptr))
 		bit_clear(avail_node_bitmap, inx);
 	else
-		bit_set(avail_node_bitmap, inx);
+		make_node_avail(inx);
 
 	if ((IS_NODE_DRAIN(node_ptr) || IS_NODE_FAIL(node_ptr)) &&
 	    (node_ptr->run_job_cnt == 0) && (node_ptr->comp_job_cnt == 0)) {
@@ -3932,12 +3952,12 @@ void make_node_idle(struct node_record *node_ptr,
 		node_ptr->node_state = NODE_STATE_ALLOCATED | node_flags;
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		     !IS_NODE_FAIL(node_ptr) && !IS_NODE_DRAIN(node_ptr))
-			bit_set(avail_node_bitmap, inx);
+			make_node_avail(inx);
 	} else {
 		node_ptr->node_state = NODE_STATE_IDLE | node_flags;
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		     !IS_NODE_FAIL(node_ptr) && !IS_NODE_DRAIN(node_ptr))
-			bit_set(avail_node_bitmap, inx);
+			make_node_avail(inx);
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		    !IS_NODE_COMPLETING(node_ptr))
 			bit_set(idle_node_bitmap, inx);
@@ -4000,6 +4020,7 @@ extern void node_fini (void)
 	FREE_NULL_LIST(active_feature_list);
 	FREE_NULL_LIST(avail_feature_list);
 	FREE_NULL_BITMAP(avail_node_bitmap);
+	FREE_NULL_BITMAP(bf_ignore_node_bitmap);
 	FREE_NULL_BITMAP(booting_node_bitmap);
 	FREE_NULL_BITMAP(cg_node_bitmap);
 	FREE_NULL_BITMAP(future_node_bitmap);
@@ -4047,4 +4068,45 @@ extern void reset_node_free_mem(char *node_name, uint64_t free_mem)
 	} else
 		error("reset_node_free_mem unable to find node %s", node_name);
 #endif
+}
+
+
+/*
+ * Check for nodes that haven't rebooted yet.
+ *
+ * If the node hasn't booted by ResumeTimeout, mark the node as down.
+ */
+extern void check_reboot_nodes()
+{
+	int i;
+	struct node_record *node_ptr;
+	time_t now = time(NULL);
+	uint16_t resume_timeout = slurmctld_conf.resume_timeout;
+
+	for (i = 0; i < node_record_count; i++) {
+		node_ptr = &node_record_table_ptr[i];
+
+		if (IS_NODE_REBOOT(node_ptr) &&
+		    node_ptr->boot_req_time &&
+		    (node_ptr->boot_req_time + resume_timeout < now)) {
+			char *timeout_msg = "reboot timed out";
+
+			set_node_down_ptr(node_ptr, NULL);
+			node_ptr->node_state &= (~NODE_STATE_REBOOT);
+			node_ptr->node_state &= (~NODE_STATE_DRAIN);
+
+			if ((node_ptr->next_state != NO_VAL) &&
+			    node_ptr->reason) {
+				xstrfmtcat(node_ptr->reason, " : %s",
+					   timeout_msg);
+			} else {
+				xfree(node_ptr->reason);
+				node_ptr->reason = xstrdup(timeout_msg);
+			}
+			node_ptr->reason_time = now;
+			node_ptr->reason_uid = slurmctld_conf.slurm_user_id;
+
+			bit_clear(rs_node_bitmap, i);
+		}
+	}
 }

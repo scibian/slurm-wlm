@@ -268,6 +268,8 @@ extern List avail_feature_list;	/* list of available node features */
 \*****************************************************************************/
 extern bitstr_t *avail_node_bitmap;	/* bitmap of available nodes,
 					 * state not DOWN, DRAIN or FAILING */
+extern bitstr_t *bf_ignore_node_bitmap;	/* bitmap of nodes made available during
+					 * backfill cycle */
 extern bitstr_t *booting_node_bitmap;	/* bitmap of booting nodes */
 extern bitstr_t *cg_node_bitmap;	/* bitmap of completing nodes */
 extern bitstr_t *future_node_bitmap;	/* bitmap of FUTURE nodes */
@@ -466,6 +468,8 @@ extern time_t last_job_update;	/* time of last update to job records */
 #define FEATURE_OP_END  4		/* last entry lacks separator */
 typedef struct job_feature {
 	char *name;			/* name of feature */
+	bool changeable;		/* return value of
+					 * node_features_g_changeable_feature */
 	uint16_t count;			/* count of nodes with this feature */
 	uint8_t op_code;		/* separator, see FEATURE_OP_ above */
 	bitstr_t *node_bitmap_active;	/* nodes with this feature active */
@@ -613,6 +617,16 @@ typedef struct {
 					   sibling names */
 } job_fed_details_t;
 
+#define HETJOB_PRIO_MIN	0x0001	/* Sort by mininum component priority[tier] */
+#define HETJOB_PRIO_MAX	0x0002	/* Sort by maximum component priority[tier] */
+#define HETJOB_PRIO_AVG	0x0004	/* Sort by average component priority[tier] */
+
+typedef struct {
+	bool any_resv;			/* at least one component with resv */
+	uint32_t priority_tier;		/* whole hetjob calculated tier */
+	uint32_t priority;		/* whole hetjob calculated priority */
+} pack_details_t;
+
 /*
  * NOTE: When adding fields to the job_record, or any underlying structures,
  * be sure to sync with job_array_split.
@@ -747,6 +761,7 @@ struct job_record {
 	char *origin_cluster;		/* cluster name that the job was
 					 * submitted from */
 	uint16_t other_port;		/* port for client communications */
+	pack_details_t *pack_details;	/* hetjob details */
 	uint32_t pack_job_id;		/* lead job ID of pack job leader */
 	char *pack_job_id_set;		/* job IDs for all components */
 	uint32_t pack_job_offset;	/* pack job index */
@@ -1151,6 +1166,9 @@ extern void dump_step_desc(job_step_create_request_msg_t *step_spec);
 /* Remove one node from a job's allocation */
 extern void excise_node_from_job(struct job_record *job_ptr,
 				 struct node_record *node_ptr);
+
+/* make_node_avail - flag specified node as available */
+extern void make_node_avail(int node_inx);
 
 /*
  * Copy a job's feature list
@@ -2703,5 +2721,12 @@ extern bool valid_tres_cnt(char *tres);
  * This is currently a subset of all defined TRES.
  */
 extern bool valid_tres_name(char *name);
+
+/*
+ * Check for nodes that haven't rebooted yet.
+ *
+ * If the node hasn't booted by ResumeTimeout, mark the node as down.
+ */
+extern void check_reboot_nodes();
 
 #endif /* !_HAVE_SLURMCTLD_H */

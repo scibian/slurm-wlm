@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "July 2018" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "February 2019" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -35,6 +35,24 @@ The following document describes the influence of various options on the
 allocation of cpus to jobs and tasks.
 .br
 https://slurm.schedmd.com/cpu_management.html
+
+.SH "RETURN VALUE"
+sbatch will return 0 on success or error code on failure.
+
+.SH "SCRIPT PATH RESOLUTION"
+
+.nr step 1 1
+The batch script is resolved in the following order:
+.br
+.IP \n[step]. 3
+If script starts with ".", then path is constructed as:
+current working directory / script
+.IP \n+[step].
+If script starts with a "/", then path is considered absolute.
+.IP \n+[step].
+If script is in current working directory.
+.IP \n+[step].
+If script can be resolved through PATH. See \fBpath_resolution\fR(7).
 
 .SH "OPTIONS"
 .LP
@@ -159,7 +177,7 @@ vertical bar separators. For example:
 The \-\-batch argument must be a subset of the job's
 \fB\-\-constraint\fR=<\fIlist\fR> argument (i.e. the job can not request only
 KNL nodes, but require the script to execute on a Haswell node).
-If the request can not be satisifed from the resources allocated to the job,
+If the request can not be satisfied from the resources allocated to the job,
 the batch script will execute on the first node of the job allocation.
 
 .TP
@@ -298,6 +316,12 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+
+\fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
+modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+Specification of multiple KNL modes requires the use of a heterogeneous job.
+
 .TP
 \fBParenthesis\fR
 Parenthesis can be used to group like node features together. For example
@@ -508,6 +532,8 @@ Gang scheduling of resources in the partition is also not supported.
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
+In other words, only one job by that name and owned by that user can be running
+or suspended at any point in time.
 .RE
 
 .TP
@@ -536,22 +562,30 @@ partition's \fBOverSubscribe\fR option takes precedence over the job's option.
 
 .TP
 \fB\-\-export\fR=<\fIenvironment variables [ALL] | NONE\fR>
-Identify which environment variables are propagated to the launched application,
-by default all are propagated.
+Identify which environment variables from the submission environment are
+propagated to the launched application. By default, \fIall\fR are propagated.
 Multiple environment variable names should be comma separated.
 Environment variable names may be specified to propagate the current
 value (e.g. "\-\-export=EDITOR") or specific values
-may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").  In these two examples
-the environment propagated will only contain the variable "EDITOR"
-and nothing else.
-If one desires to add to the environment instead of replacing it have the
-argument include \fIALL\fR (e.g. "\-\-export=EDITOR,ALL").  This will propagate
-"EDITOR" along with the current environment.
-If one desires no environment variables be propagated use the argument
-\fINONE\fR.
-Regardless of this setting, the appropriate "SLURM_*" task environment variables
-are always exported to the environment.
-This option particularly important for jobs that are submitted on one cluster
+may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").
+In these two examples, the \fIpropagated\fR environment will only contain the
+variable \fIEDITOR\fR, along with \fISLURM_*\fR environment variables.
+However, Slurm will then implicitly attempt to load the user's environment on
+the node where the script is being executed, as if \fI\-\-get\-user\-env\fR was
+specified. This will happen whenever \fINONE\fR or environment variables are
+specified.
+If one desires to add to the submission environment instead of
+replacing it, have the argument include \fIALL\fR
+(e.g. "\-\-export=ALL,EDITOR=/bin/emacs"). Make sure \fIALL\fR is specified
+first, since sbatch applies the environment from left to right, overwriting
+as necessary.
+Environment variables propagated from the submission environment will always
+overwrite environment variables found in the user environment on the node.
+If one desires no environment variables be propagated from the submitting
+machine, use the argument \fINONE\fR.
+Regardless of this setting, the appropriate \fISLURM_*\fR
+task environment variables are always exported to the environment.
+This option is particularly important for jobs that are submitted on one cluster
 and execute on a different cluster (e.g. with different paths).
 
 .TP
@@ -611,7 +645,7 @@ The available generic consumable resources is configurable by the system
 administrator.
 A list of available generic consumable resources will be printed and the
 command will exit if the option argument is "help".
-Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
+Examples of use include "\-\-gres=gpu:2,mic:1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 
 .TP
@@ -1638,6 +1672,12 @@ the sbatch-generated wrapper script is used.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fInode name list\fR>
 Explicitly exclude certain nodes from the resources granted to the job.
 
+.TP
+\fB\-\-x11\fR[=<\fIall\fR|\fIbatch\fR|\fIfirst\fR|\fIlast\fR>]
+Sets up X11 forwarding on all, batch host, first or last node(s) of the
+allocation. This option is only enabled if Slurm was compiled with X11 support
+and PrologFlags=x11 is defined in the slurm.conf. Default is \fIbatch\fR.
+
 .SH \fBfilename pattern\fR
 .PP
 \fBsbatch\fR allows for a filename pattern to contain one or more replacement
@@ -1752,6 +1792,9 @@ Same as \fB\-\-export\fR
 .TP
 \fBSBATCH_GET_USER_ENV\fR
 Same as \fB\-\-get\-user\-env\fR
+.TP
+\fBSBATCH_GRES\fR
+Same as \-\-gres\fR
 .TP
 \fBSBATCH_GRES_FLAGS\fR
 Same as \-\-gres\-flags\fR

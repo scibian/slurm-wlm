@@ -185,7 +185,7 @@ static void _set_core_resrcs(slurmctld_resv_t *resv_ptr);
 static void _set_tres_cnt(slurmctld_resv_t *resv_ptr,
 			  slurmctld_resv_t *old_resv_ptr);
 static void _set_nodes_flags(slurmctld_resv_t *resv_ptr, time_t now,
-			     uint32_t flags);
+			     uint32_t flags, bool reset_all);
 static int  _update_account_list(slurmctld_resv_t *resv_ptr,
 				 char *accounts);
 static int  _update_uid_list(slurmctld_resv_t *resv_ptr, char *users);
@@ -2952,7 +2952,8 @@ extern int delete_resv(reservation_name_msg_t *resv_desc_ptr)
 		if (resv_ptr->flags_set_node) {
 			resv_ptr->flags_set_node = false;
 			_set_nodes_flags(resv_ptr, now,
-					 (NODE_STATE_RES | NODE_STATE_MAINT));
+					 (NODE_STATE_RES | NODE_STATE_MAINT),
+					 false);
 			last_node_update = now;
 		}
 
@@ -3192,7 +3193,6 @@ static bool _validate_one_reservation(slurmctld_resv_t *resv_ptr)
 {
 	bool account_not = false, user_not = false;
 	slurmctld_resv_t old_resv_ptr;
-	bitstr_t *node_bitmap;
 
 	if ((resv_ptr->name == NULL) || (resv_ptr->name[0] == '\0')) {
 		error("Read reservation without name");
@@ -3255,6 +3255,7 @@ static bool _validate_one_reservation(slurmctld_resv_t *resv_ptr)
 		resv_ptr->user_list = user_list;
 		resv_ptr->user_not  = user_not;
 	}
+
 	if ((resv_ptr->flags & RESERVE_FLAG_PART_NODES) &&
 	    resv_ptr->part_ptr && resv_ptr->part_ptr->node_bitmap) {
 		memset(&old_resv_ptr, 0, sizeof(slurmctld_resv_t));
@@ -3283,18 +3284,35 @@ static bool _validate_one_reservation(slurmctld_resv_t *resv_ptr)
 		xfree(old_resv_ptr.tres_str);
 		last_resv_update = time(NULL);
 	} else if (resv_ptr->node_list) {	/* Change bitmap last */
-		if (xstrcasecmp(resv_ptr->node_list, "ALL") == 0) {
-			node_bitmap = bit_alloc(node_record_count);
-			bit_nset(node_bitmap, 0, (node_record_count - 1));
-		} else if (node_name2bitmap(resv_ptr->node_list,
-					    false, &node_bitmap)) {
-			error("Reservation %s has invalid nodes (%s)",
-			      resv_ptr->name, resv_ptr->node_list);
-			return false;
-		}
-
+		/*
+		 * Node bitmap must be recreated in any case, i.e. when
+		 * they grow because adding new nodes to slurm.conf
+		 */
 		FREE_NULL_BITMAP(resv_ptr->node_bitmap);
-		resv_ptr->node_bitmap = node_bitmap;
+		if (node_name2bitmap(resv_ptr->node_list, false,
+				     &resv_ptr->node_bitmap)) {
+			char *new_node_list;
+			resv_ptr->node_cnt = bit_set_count(
+				resv_ptr->node_bitmap);
+			if (!resv_ptr->node_cnt) {
+				error("Reservation %s has no nodes left, deleting it",
+				      resv_ptr->name);
+				return false;
+			}
+			new_node_list = bitmap2node_name(resv_ptr->node_bitmap);
+			info("Reservation %s has invalid nodes (%s), shrinking to (%s)",
+			     resv_ptr->name, resv_ptr->node_list,
+			     new_node_list);
+			xfree(resv_ptr->node_list);
+			resv_ptr->node_list = new_node_list;
+			new_node_list = NULL;
+			memset(&old_resv_ptr, 0, sizeof(slurmctld_resv_t));
+			old_resv_ptr.tres_str = resv_ptr->tres_str;
+			resv_ptr->tres_str = NULL;
+			_set_tres_cnt(resv_ptr, &old_resv_ptr);
+			xfree(old_resv_ptr.tres_str);
+			last_resv_update = time(NULL);
+		}
 	}
 
 	return true;
@@ -5692,7 +5710,8 @@ extern int set_node_maint_mode(bool reset_all)
 			     (now >= resv_ptr->end_time  ))) {
 				flags = NODE_STATE_MAINT;
 				resv_ptr->flags_set_node = false;
-				_set_nodes_flags(resv_ptr, now, flags);
+				_set_nodes_flags(resv_ptr, now, flags,
+						 reset_all);
 				last_node_update = now;
 			}
 		}
@@ -5709,7 +5728,7 @@ extern int set_node_maint_mode(bool reset_all)
 			if (resv_ptr->flags & RESERVE_FLAG_MAINT)
 				flags |= NODE_STATE_MAINT;
 			resv_ptr->flags_set_node = true;
-			_set_nodes_flags(resv_ptr, now, flags);
+			_set_nodes_flags(resv_ptr, now, flags, reset_all);
 			last_node_update = now;
 		}
 
@@ -5813,10 +5832,11 @@ extern void update_part_nodes_in_resv(struct part_record *part_ptr)
 }
 
 static void _set_nodes_flags(slurmctld_resv_t *resv_ptr, time_t now,
-			     uint32_t flags)
+			     uint32_t flags, bool reset_all)
 {
 	int i, i_first, i_last;
 	struct node_record *node_ptr;
+	uint32_t old_state;
 
 	if (!resv_ptr->node_bitmap) {
 		if ((resv_ptr->flags & RESERVE_FLAG_ANY_NODES) == 0) {
@@ -5840,14 +5860,17 @@ static void _set_nodes_flags(slurmctld_resv_t *resv_ptr, time_t now,
 			continue;
 
 		node_ptr = node_record_table_ptr + i;
+		old_state = node_ptr->node_state;
 		if (resv_ptr->flags_set_node)
 			node_ptr->node_state |= flags;
 		else
 			node_ptr->node_state &= (~flags);
-		/* mark that this node is now down and in maint mode
-		 * or was removed from maint mode */
-		if (IS_NODE_DOWN(node_ptr) || IS_NODE_DRAIN(node_ptr) ||
-		    IS_NODE_FAIL(node_ptr)) {
+		/* mark that this node is now down if maint mode flag changed */
+		bool state_change = ((old_state ^ node_ptr->node_state)
+				    & NODE_STATE_MAINT) || reset_all;
+		if (state_change && (IS_NODE_DOWN(node_ptr) ||
+				    IS_NODE_DRAIN(node_ptr) ||
+				    IS_NODE_FAIL(node_ptr))) {
 			clusteracct_storage_g_node_down(
 				acct_db_conn,
 				node_ptr, now, NULL,

@@ -7,7 +7,7 @@ echo "GRANT ALL PRIVILEGES ON slurm.* TO 'slurm'@'localhost';" | mariadb
 
 cat > /etc/slurm-llnl/slurmdbd.conf << EOF
 AuthType=auth/munge
-AuthInfo=/var/run/munge/munge.socket.2
+AuthInfo=/run/munge/munge.socket.2
 DbdHost=localhost
 DebugLevel=3
 StorageHost=localhost
@@ -16,7 +16,7 @@ StoragePass=shazaam
 StorageType=accounting_storage/mysql
 StorageUser=slurm
 LogFile=/var/log/slurm-llnl/slurmdbd.log
-PidFile=/var/run/slurm-llnl/slurmdbd.pid
+PidFile=/run/slurmdbd.pid
 SlurmUser=slurm
 EOF
 
@@ -29,9 +29,9 @@ CryptoType=crypto/munge
 MpiDefault=none
 ProctrackType=proctrack/pgid
 ReturnToService=1
-SlurmctldPidFile=/var/run/slurm-llnl/slurmctld.pid
+SlurmctldPidFile=/run/slurmctld.pid
 SlurmctldPort=6817
-SlurmdPidFile=/var/run/slurm-llnl/slurmd.pid
+SlurmdPidFile=/run/slurmd.pid
 SlurmdPort=6818
 SlurmdSpoolDir=/var/lib/slurm-llnl/slurmd
 SlurmUser=slurm

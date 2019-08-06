@@ -20,10 +20,10 @@ set -e
 
 case "$1" in
        purge)
-         rm -rf /var/run/slurm-llnl/slurmctld
          rm -rf /var/lib/slurm-llnl/slurmctld
          rm -f /var/log/slurm-llnl/slurmctld*.log*
-        ;;
+         pkill -9 -u slurm slurmctld || true
+         ;;
 
        remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
 
