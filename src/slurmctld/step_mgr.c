@@ -275,7 +275,13 @@ static void _internal_step_complete(struct job_record *job_ptr,
 				    struct step_record *step_ptr)
 {
 	struct jobacctinfo *jobacct = (struct jobacctinfo *)step_ptr->jobacct;
-	if (jobacct && job_ptr->tres_alloc_cnt &&
+	bool add_energy = true;
+
+	if ((slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN) &&
+	    (step_ptr->step_id != SLURM_EXTERN_CONT))
+		add_energy = false;
+
+	if (add_energy && jobacct && job_ptr->tres_alloc_cnt &&
 	    (jobacct->energy.consumed_energy != NO_VAL64)) {
 		if (job_ptr->tres_alloc_cnt[TRES_ARRAY_ENERGY] == NO_VAL64)
 			job_ptr->tres_alloc_cnt[TRES_ARRAY_ENERGY] = 0;
@@ -1533,6 +1539,13 @@ _pick_step_nodes (struct job_record  *job_ptr,
 			list_next(step_iterator))) {
 			if (step_ptr->state < JOB_RUNNING)
 				continue;
+
+			if (!step_ptr->step_node_bitmap) {
+				error("%s: %pS has no step_node_bitmap",
+				      __func__, step_ptr);
+				continue;
+			}
+
 			bit_or(nodes_idle, step_ptr->step_node_bitmap);
 			if (slurmctld_conf.debug_flags & DEBUG_FLAG_STEPS) {
 				char *temp;

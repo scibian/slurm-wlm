@@ -446,6 +446,7 @@ env_vars_t env_vars[] = {
   {"SALLOC_GPUS_PER_NODE", OPT_STRING,     &opt.gpus_per_node, NULL          },
   {"SALLOC_GPUS_PER_SOCKET", OPT_STRING,   &opt.gpus_per_socket, NULL        },
   {"SALLOC_GPUS_PER_TASK", OPT_STRING,     &opt.gpus_per_task, NULL          },
+  {"SALLOC_GRES",          OPT_STRING,     &opt.gres,          NULL          },
   {"SALLOC_GRES_FLAGS",    OPT_GRES_FLAGS, NULL,               NULL          },
   {"SALLOC_IMMEDIATE",     OPT_IMMEDIATE,  NULL,               NULL          },
   {"SALLOC_HINT",          OPT_HINT,       NULL,               NULL          },
@@ -2195,7 +2196,7 @@ static void _usage(void)
 "              [--gpus-per-node=n] [--gpus-per-socket=n]  [--gpus-per-task=n]\n"
 "              [--mem-per-gpu=MB]\n"
 #endif
-"              [executable [args...]]\n");
+"              [command [args...]]\n");
 }
 
 static void _help(void)
@@ -2203,7 +2204,7 @@ static void _help(void)
 	slurm_ctl_conf_t *conf;
 
         printf (
-"Usage: salloc [OPTIONS...] [executable [args...]]\n"
+"Usage: salloc [OPTIONS...] [command [args...]]\n"
 "\n"
 "Parallel run options:\n"
 "  -A, --account=name          charge job to specified account\n"

@@ -502,6 +502,7 @@ env_vars_t env_vars[] = {
   {"SBATCH_EXCLUSIVE",     OPT_EXCLUSIVE,  NULL,               NULL          },
   {"SBATCH_EXPORT",        OPT_STRING,     &sbopt.export_env,  NULL          },
   {"SBATCH_GET_USER_ENV",  OPT_GET_USER_ENV, NULL,             NULL          },
+  {"SBATCH_GRES",          OPT_STRING,     &opt.gres,          NULL          },
   {"SBATCH_GRES_FLAGS",    OPT_GRES_FLAGS, NULL,               NULL          },
   {"SBATCH_GPUS",          OPT_STRING,     &opt.gpus,          NULL          },
   {"SBATCH_GPU_BIND",      OPT_STRING,     &opt.gpu_bind,      NULL          },
@@ -885,7 +886,7 @@ static struct option long_options[] = {
 };
 
 static char *opt_string =
-	"+ba:A:B:c:C:d:D:e:F:G:hHi:IJ:kL:m:M:n:N:o:Op:P:q:QsS:t:uU:vVw:Wx:";
+	"+a:A:B:c:C:d:D:e:F:G:hHi:IJ:kL:m:M:n:N:o:Op:P:q:QsS:t:uU:vVw:Wx:";
 char *pos_delimit;
 
 
@@ -988,7 +989,7 @@ extern char *process_options_first_pass(int argc, char **argv)
 		char *cmd       = sbopt.script_argv[0];
 		int  mode       = R_OK;
 
-		if ((fullpath = search_path(opt.cwd, cmd, true, mode, false))) {
+		if ((fullpath = search_path(opt.cwd, cmd, false, mode, false))) {
 			xfree(sbopt.script_argv[0]);
 			sbopt.script_argv[0] = fullpath;
 		}

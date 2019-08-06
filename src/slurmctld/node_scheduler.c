@@ -410,6 +410,18 @@ extern void allocate_nodes(struct job_record *job_ptr)
 	int i;
 	struct node_record *node_ptr;
 	bool has_cloud = false, has_cloud_power_save = false;
+	static bool cloud_dns = false;
+	static time_t sched_update = 0;
+
+	if (sched_update != slurmctld_conf.last_update) {
+		char *ctld_params = slurm_get_slurmctld_params();
+
+		if (xstrcasestr(ctld_params, "cloud_dns"))
+			cloud_dns = true;
+		xfree(ctld_params);
+
+		sched_update = slurmctld_conf.last_update;
+	}
 
 	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
 	     i++, node_ptr++) {
@@ -428,7 +440,9 @@ extern void allocate_nodes(struct job_record *job_ptr)
 	license_job_get(job_ptr);
 
 	if (has_cloud) {
-		if (has_cloud_power_save) {
+		if (cloud_dns) {
+			job_ptr->wait_all_nodes = 1;
+		} else if (has_cloud_power_save) {
 			job_ptr->alias_list = xstrdup("TBD");
 			job_ptr->wait_all_nodes = 1;
 		} else
@@ -1965,6 +1979,7 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 			FREE_NULL_BITMAP(avail_bitmap);
 			avail_bitmap = bit_copy(job_ptr->details->
 						req_node_bitmap);
+			bit_and_not(avail_bitmap, rs_node_bitmap);
 		}
 		for (i = 0; i < node_set_size; i++) {
 			int count1 = 0, count2 = 0;
@@ -2003,8 +2018,6 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 						share_node_bitmap);
 					bit_and_not(node_set_ptr[i].my_bitmap,
 						    cg_node_bitmap);
-					bit_and_not(node_set_ptr[i].my_bitmap,
-						    rs_node_bitmap);
 				} else {
 					bit_and(node_set_ptr[i].my_bitmap,
 						idle_node_bitmap);
@@ -2013,9 +2026,11 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 			} else {
 				bit_and_not(node_set_ptr[i].my_bitmap,
 					    cg_node_bitmap);
-				bit_and_not(node_set_ptr[i].my_bitmap,
-					    rs_node_bitmap);
 			}
+
+			bit_and_not(node_set_ptr[i].my_bitmap,
+				    rs_node_bitmap);
+
 			if (!nodes_busy) {
 				count2 = bit_set_count(node_set_ptr[i].
 						       my_bitmap);
@@ -2282,6 +2297,10 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 		error_code = ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
 	} else if (!runable_avail && !nodes_busy) {
 		error_code = ESLURM_NODE_NOT_AVAIL;
+	} else if (job_ptr->details->req_node_bitmap &&
+		   bit_overlap(job_ptr->details->req_node_bitmap,
+			       rs_node_bitmap)) {
+		error_code = ESLURM_NODES_BUSY;
 	} else if (!preempt_flag && job_ptr->details->req_node_bitmap) {
 		/* specific nodes required */
 		if (shared) {
@@ -2293,20 +2312,14 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 					cg_node_bitmap)) {
 				error_code = ESLURM_NODES_BUSY;
 			}
-			if (bit_overlap(job_ptr->details->req_node_bitmap,
-					rs_node_bitmap)) {
-				error_code = ESLURM_NODES_BUSY;
-			}
 		} else if (!bit_super_set(job_ptr->details->req_node_bitmap,
 					  idle_node_bitmap)) {
 			error_code = ESLURM_NODES_BUSY;
 			/* Note: IDLE nodes are not COMPLETING */
 		}
 	} else if (job_ptr->details->req_node_bitmap &&
-		   (bit_overlap(job_ptr->details->req_node_bitmap,
-			       cg_node_bitmap) ||
-		    bit_overlap(job_ptr->details->req_node_bitmap,
-			       rs_node_bitmap))) {
+		   bit_overlap(job_ptr->details->req_node_bitmap,
+			       cg_node_bitmap)) {
 		error_code = ESLURM_NODES_BUSY;
 	}
 
@@ -2669,6 +2682,9 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		 (error_code != ESLURM_RESERVATION_MAINT)) {
 		/* Select resources for the job here */
 		job_array_pre_sched(job_ptr);
+		if (job_ptr->job_resrcs)
+			error("%s: calling _get_req_features() for %pJ with not NULL job resources",
+			      __func__, job_ptr);
 		error_code = _get_req_features(node_set_ptr, node_set_size,
 					       &select_bitmap, job_ptr,
 					       part_ptr, min_nodes, max_nodes,
@@ -3967,6 +3983,7 @@ end_node_set:
 		} else {
 			job_ptr->state_reason = FAIL_BAD_CONSTRAINTS;
 		}
+		FREE_NULL_BITMAP(reboot_bitmap);
 		return rc;
 	}
 

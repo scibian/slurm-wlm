@@ -703,6 +703,7 @@ EXTRA_DIST = \
 	test7.17_configs/test7.17.7/slurm.conf	\
 	test7.18			\
 	test7.18.prog.c			\
+	test7.19			\
 	test9.1				\
 	test9.2				\
 	test9.3				\
@@ -744,6 +745,7 @@ EXTRA_DIST = \
 	test12.6.prog.c			\
 	test12.7			\
 	test12.8			\
+	test12.9			\
 	test13.1			\
 	test13.2			\
 	test14.1			\
@@ -969,6 +971,7 @@ EXTRA_DIST = \
 	test28.8			\
 	test28.9			\
 	test28.10			\
+	test28.11			\
 	test29.1                        \
 	test29.2                        \
 	test29.3                        \
