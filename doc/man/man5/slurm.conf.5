@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "February 2019" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "May 2019" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -115,6 +115,10 @@ NULL.  Also see \fBDefaultStoragePass\fR.
 \fBAccountingStoragePort\fR
 The listening port of the accounting storage database server.
 Only used for database type storage plugins, ignored otherwise.
+The default value is SLURMDBD_PORT as established at system
+build time. If no value is explicitly specified, it will be set to 6819.
+This value must be equal to the \fBDbdPort\fR parameter in the
+slurmdbd.conf file.
 Also see \fBDefaultStoragePort\fR.
 
 .TP
@@ -1032,7 +1036,7 @@ The PSS value will be saved as RSS.
 Kill steps that are being detected to use more memory than requested, every
 time accounting information is gathered by JobAcctGather plugin.
 This parameter will not kill a job directly, but only the step.
-See \fBMemLimitEnforce\fB for that purpose. This parameter should be used
+See \fBMemLimitEnforce\fR for that purpose. This parameter should be used
 with caution as if jobs exceeds its memory allocation it may affect other
 processes and/or machine health.
 NOTE: It is recommended to limit memory by enabling task/cgroup
@@ -1433,7 +1437,7 @@ a node cannot be shared with other users.
 \fBMemLimitEnforce\fR
 If set to yes then Slurm will terminate the job if it exceeds the value
 requested using the \-\-mem\-per\-cpu option of salloc/sbatch/srun.
-This is useful in combination with \fBJobAcctGaterParams=OverMemoryKill\fB.
+This is useful in combination with \fBJobAcctGatherParams=OverMemoryKill\fR.
 Used when jobs need to specify \-\-mem\-per\-cpu for scheduling and they should
 be terminated if they exceed the estimated value.
 The default value is 'no', which disables this enforcing mechanism.
@@ -1457,6 +1461,8 @@ Slurm's active database. Set the values of \fBMaxJobCount\fR and
 to ensure the slurmctld daemon does not exhaust
 its memory or other resources. The default value is 300 seconds.
 A value of zero prevents any job record purging.
+Jobs are not purged during a backfill cycle, so it can take longer than
+MinJobAge seconds to purge a job if using the backfill scheduling plugin.
 In order to eliminate some possible race conditions, the minimum non\-zero
 value for \fBMinJobAge\fR recommended is 2.
 
@@ -2519,6 +2525,16 @@ This can result in lower priority jobs being backfill scheduled instead
 of newly arrived higher priority jobs, but will permit more queued jobs to be
 considered for backfill scheduling.
 .TP
+\fBbf_hetjob_immediate\fR
+Instruct the backfill scheduler to attempt to start a heterogeneous job as
+soon as all of its components are determined able to do so. Otherwise, the
+backfill scheduler will delay heterogeneous jobs initiation attempts until
+after the rest of the queue has been processed. This delay may result in lower
+priority jobs being allocated resources, which could delay the initiation of
+the heterogeneous job due to account and/or QOS limits being reached. This
+option is disabled by default. If enabled and \fBbf_hetjob_prio=min\fR is not
+set, then it would be automatically set.
+.TP
 \fBbf_hetjob_prio=[min|avg|max]\fR
 At the beginning of each backfill scheduling cycle, a list of pending to be
 scheduled jobs is sorted according to the precedence order configured in
@@ -2661,10 +2677,10 @@ when locks are released) before discontinuing, even if maximum job counts have
 not been reached.
 This option applies only to \fBSchedulerType=sched/backfill\fR.
 The default value is the value of bf_interval (which defaults to 30 seconds).
-NOTE: This needs to be high enough that scheduling isn't always disabled, and
-low enough that our interactive workload can get through in a reasonable period
-of time.  Certainly needs to be below 256 (the default RPC thread limit).
-Running around the middle (150) may give you good results.
+NOTE: When increasing the amount of time spent in the backfill scheduling cycle,
+Slurm can be prevented from responding to client requests in a timely manner.
+To address this you can use \fBmax_rpc_cnt\fR to specify a number of queued RPCs
+before the scheduler stops to respond to these requests.
 .TP
 \fBbf_min_age_reserve=#\fR
 The backfill and main scheduling logic will not reserve resources for pending
@@ -2837,7 +2853,10 @@ larger than this value, defer scheduling of jobs.
 This can improve Slurm's ability to process requests at a cost of initiating
 new jobs less frequently.
 The default value is zero, which disables this option.
-If a value is set, then a value of 10 or higher is recommended.
+If a value is set, then a value of 10 or higher is recommended. It may require
+some tuning for each system, but needs to be high enough that scheduling isn't
+always disabled, and low enough that requests can get through in a reasonable
+period of time.
 .TP
 \fBmax_sched_time=#\fR
 How long, in seconds, that the main scheduling loop will execute for before
@@ -3319,8 +3338,8 @@ be set to root to permit these triggers to work. See the \fBstrigger\fR man
 page for additional details.
 .TP
 \fBcloud_dns\fR
-By default, Slurm expects that the network addresses for cloud nodes won't
-won't be know until creation of the node and that Slurm will be notified of the
+By default, Slurm expects that the network address for a cloud node won't
+be known until the creation of the node and that Slurm will be notified of the
 node's address (e.g. \fBscontrol update nodename=<name> nodeaddr=<addr>\fR).
 Since Slurm communications rely on the node configuration found in the
 slurm.conf, Slurm will tell the client command, after waiting for all nodes to
@@ -4212,7 +4231,7 @@ The default value is 1.
 \fBCoreSpecCount\fR
 Number of cores reserved for system use.
 These cores will not be available for allocation to user jobs.
-Depending upon the \fBTaskPluginParameter\fR option of \fBSlurmOffSpec\fR,
+Depending upon the \fBTaskPluginParam\fR option of \fBSlurmdOffSpec\fR,
 Slurm daemons (i.e. slurmd and slurmstepd) may either be confined to these
 resources (the default) or prevented from using these resources.
 Isolation of the Slurm daemons from user jobs may improve application performance.
@@ -4253,7 +4272,7 @@ The default value is 1.
 A comma delimited list of Slurm abstract CPU IDs reserved for system use.
 The list will be expanded to include all other CPUs, if any, on the same cores.
 These cores will not be available for allocation to user jobs.
-Depending upon the \fBTaskPluginParameter\fR option of \fBSlurmOffSpec\fR,
+Depending upon the \fBTaskPluginParam\fR option of \fBSlurmdOffSpec\fR,
 Slurm daemons (i.e. slurmd and slurmstepd) may either be confined to these
 resources (the default) or prevented from using these resources.
 Isolation of the Slurm daemons from user jobs may improve application performance.

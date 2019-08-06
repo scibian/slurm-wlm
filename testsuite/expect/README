@@ -368,6 +368,7 @@ test7.16   Verify that auth/munge credential is properly validated.
 test7.17   Test GRES APIs.
 test7.18   Test of slurm_hostlist_find().
 test7.19   Test sbatch/srun/salloc path resolving
+test7.20   Test lua JobSubmitPlugin
 
 test9.#    System stress testing. Exercises all commands and daemons.
 =====================================================================
@@ -424,6 +425,7 @@ test12.6   Test hdf5 acct_gather_profile (--profile=task)
 test12.7   Validate that -D shows the correct state when jobs are requeued.
 test12.8   Validate that a job step reports TIMEOUT inside accounting.
 test12.9   Test of sacct functionality for array jobs.
+test12.10  Test of sacct with -s R, -S and -E options
 
 test13.#   Testing of switch plugins
 ====================================
@@ -649,6 +651,7 @@ test21.35  Validate DenyOnLimit QoS flag is enforced on QoS and Associations.
 test21.36  Validate that sacctmgr lost jobs fixes lost jobs.
 test21.37  sacctmgr show stats
 test21.38  sacctmgr modify limits for nested accounts with multiple users
+test21.39  sacctmgr create qos/account job and then delete account/qos
 
 test22.#   Testing of sreport commands and options.
 	   These also test the sacctmgr archive dump/load functions.
@@ -721,11 +724,6 @@ test29.4   Validate smd -d (--drain-node), and -R (--reason) set.
 test29.5   Validate smd -r (--replace-node) option.
 test29.7   Validates that the smd -j (--job-info) display.
 test29.8   Validate that the MaxSpareNodeCount is enforced
-
-
-test30.#   Test of RPM builds.
-==============================
-test30.1   Validates that RPMs are built with the correct prefix.
 
 
 test31.#   Test of Slurm Epilog and Prolog.

@@ -1,6 +1,110 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 18.08.8
+==========================
+ -- Update "xauth list" to use the same 10000ms timeout as the other xauth
+    commands.
+ -- Fix issue in gres code to handle a gres cnt of 0.
+ -- Don't purge jobs if backfill is running.
+ -- Verify job is pending add/removing accrual time.
+ -- Don't abort when the job doesn't have an association that was removed
+    before the job was able to make it to the database.
+ -- Set state_reason if select_nodes() fails job for QOS or Account.
+ -- Avoid seg_fault on referencing association without a valid_qos bitmap.
+ -- If Association/QOS is removed on a pending job set that job as ineligible.
+ -- When changing a jobs account/qos always make sure you remove the old limits.
+ -- Don't reset a FAIL_QOS or FAIL_ACCOUNT job reason until the qos or
+    account changed.
+ -- Restore "sreport -T ALL" functionality.
+ -- Correctly typecast signals being sent through the api.
+ -- Properly initialize structures throughout Slurm.
+ -- Sync "numtask" squeue format option for jobs and steps to "numtasks".
+ -- Fix sacct -PD to avoid CA before start jobs.
+ -- Fix potential deadlock with backup slurmctld.
+ -- Fixed issue with jobs not appearing in sacct after dependency satisfied.
+ -- Fix showing non-eligible jobs when asking with -j and not -s.
+ -- Fix issue with backfill scheduler scheduling tasks of an array
+    when not the head job.
+ -- accounting_storage/mysql - fix SIGABRT in the archive load logic.
+ -- accounting_storage/mysql - fix memory leak in the archive load logic.
+ -- Limit records per single SQL statement when loading archived data.
+ -- Fix unnecessary reloading of job submit plugins.
+ -- Allow job submit plugins to be turned on/off with a reconfigure.
+ -- Fix segfault when loading/unloading Lua job submit plugin multiple times.
+ -- Fix printing duplicate error messages of jobs rejected by job submit plugin.
+ -- Fix printing of job submit plugin messages of het jobs without pack id.
+ -- Fix memory leak in group_cache.c
+ -- Fix jobs stuck from FedJobLock when requeueing in a federation
+ -- Fix requeueing job in a federation of clusters with differing associations
+ -- sacctmgr - free memory before exiting in 'sacctmgr show runaway'.
+ -- Fix seff showing memory overflow when steps tres mem usage is 0.
+ -- Upon archive file name collision, create new archive file instead of
+    overwriting the old one to prevent lost records.
+ -- Limit archive files to 50000 records per file so that archiving large
+    databases will succeed.
+ -- Remove stray newlines in SPANK plugin error messages.
+ -- Fix archive loading events.
+ -- In select/cons_res: Only allocate 1 CPU per node with the --overcommit and
+    --nodelist options.
+ -- Fix main scheduler from potentially not running through whole queue.
+ -- cons_res/job_test - prevent a job from overallocating a node memory.
+ -- cons_res/job_test - fix to consider a node's current allocated memory when
+    testing a job's memory request.
+ -- Fix issue where multi-node job steps on cloud nodes wouldn't finish cleaning
+    up until the end of the job (rather than the end of the step).
+ -- Fix issue with a 17.11 sbcast call to a 18.08 daemon.
+ -- Add new job bit_flags of JOB_DEPENDENT.
+ -- Make it so dependent jobs reset the AccrueTime and do not count against any
+    AccrueTime limits.
+ -- Fix sacctmgr --parsable2 output for reservations and tres.
+ -- Prevent slurmctld from potential segfault after job_start_data() called
+    for completing job.
+ -- Fix jobs getting on nodes with "scontrol reboot asap".
+ -- Record node reboot events to database.
+ -- Fix node reboot failure message getting to event table.
+ -- Don't write "(null)" to event table when no event reason exists.
+ -- Fix minor memory leak when clearing runaway jobs.
+ -- Avoid flooding slurmctld and logging when prolog complete RPC errors occur.
+ -- Fix GCC 9 compiler warnings.
+ -- Fix seff human readable memory string for values below a megabyte.
+ -- Fix dump/load of rejected heterogeneous jobs.
+ -- For heterogeneous jobs, do not count the each component against the QOS or
+    association job limit multiple times.
+ -- slurmdbd - avoid reservation flag column corruption with the use of newer
+    flags, instead preserve the older flag fields that we can still fit in the
+    smallint field, and discard the rest.
+ -- Fix security issue in accounting_storage/mysql plugin on archive file loads
+    by always escaping strings within the slurmdbd. CVE-2019-12838.
+
+* Changes in Slurm 18.08.7
+==========================
+ -- Set debug statement to debug2 to avoid benign error messages.
+ -- Add SchedulerParameters option of bf_hetjob_immediate to attempt to start
+    a heterogeneous job as soon as all of its components are determined able to
+    do so.
+ -- Fix underflow causing decay thread to exit.
+ -- Fix main scheduler not considering hetjobs when building the job queue.
+ -- Fix regression for sacct to display old jobs without a start time.
+ -- Fix setting correct number of gres topology bits.
+ -- Update hetjobs pending state reason when appropriate.
+ -- Fix accounting_storage/filetxt's understanding of TRES.
+ -- Set Accrue time when not enforcing limits.
+ -- Fix srun segfault when requesting a hetjob with test_exec or bcast options.
+ -- Hide multipart priorities log message behind Priority debug flag.
+ -- sched/backfill - Make hetjobs sensitive to bf_max_job_start.
+ -- Fix slurmctld segfault due to job's partition pointer NULL dereference.
+ -- Fix issue with OR'ed job dependencies.
+ -- Add new job's bit_flags of INVALID_DEPEND to prevent rebuilding a job's
+    dependency string when it has at least one invalid and purged dependency.
+ -- Promote federation unsynced siblings log message from debug to info.
+ -- burst_buffer/cray - fix slurmctld SIGABRT due to illegal read/writes.
+ -- burst_buffer/cray - fix memory leak due to unfreed job script content.
+ -- node_features/knl_cray - fix script_argv use-after-free.
+ -- burst_buffer/cray - fix script_argv use-after-free.
+ -- Fix invalid reads of size 1 due to non null-terminated string reads.
+ -- Add extra debug2 logs to identify why BadConstraints reason is set.
+
 * Changes in Slurm 18.08.6-2
 ============================
  -- Remove deadlock situation when logging and --enable-debug is used.

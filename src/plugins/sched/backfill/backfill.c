@@ -127,7 +127,7 @@ typedef struct pack_job_rec {
 
 typedef struct pack_job_map {
 	uint32_t comp_time_limit;	/* Time limit for pack job */
-	time_t prev_start;		/* Time when expected to start from last test */
+	time_t prev_start;		/* Expected start time from last test */
 	uint32_t pack_job_id;
 	List pack_job_list;		/* List of pack_job_rec_t */
 } pack_job_map_t;
@@ -170,7 +170,9 @@ static int bf_max_job_array_resv = BF_MAX_JOB_ARRAY_RESV;
 static int bf_min_age_reserve = 0;
 static uint32_t bf_min_prio_reserve = 0;
 static List deadlock_global_list;
+static bool bf_hetjob_immediate = false;
 static uint16_t bf_hetjob_prio = 0;
+static uint32_t job_start_cnt = 0;
 static int max_backfill_job_cnt = 100;
 static int max_backfill_job_per_assoc = 0;
 static int max_backfill_job_per_part = 0;
@@ -217,7 +219,11 @@ static void _pack_start_clear(void);
 static time_t _pack_start_find(struct job_record *job_ptr, time_t now);
 static void _pack_start_set(struct job_record *job_ptr, time_t latest_start,
 			    uint32_t comp_time_limit);
-static void _pack_start_test(node_space_map_t *node_space);
+static void _pack_start_test_single(node_space_map_t *node_space,
+				    pack_job_map_t *map, bool single);
+static int  _pack_start_test_list(void *map, void *node_space);
+static void _pack_start_test(node_space_map_t *node_space,
+			     uint32_t pack_job_id);
 static void _reset_job_time_limit(struct job_record *job_ptr, time_t now,
 				  node_space_map_t *node_space);
 static int  _set_hetjob_details(void *x, void *arg);
@@ -869,6 +875,14 @@ static void _load_config(void)
 			      tmp_ptr);
 	}
 
+	bf_hetjob_immediate = false;
+	if (sched_params && (strstr(sched_params, "bf_hetjob_immediate")))
+		bf_hetjob_immediate = true;
+
+	if (bf_hetjob_immediate && !bf_hetjob_prio) {
+		bf_hetjob_prio |= HETJOB_PRIO_MIN;
+		info("bf_hetjob_immediate automatically sets bf_hetjob_prio=min");
+	}
 
 	if (sched_params && (tmp_ptr = strstr(sched_params, "max_rpc_cnt=")))
 		defer_rpc_cnt = atoi(tmp_ptr + 12);
@@ -919,8 +933,6 @@ static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2)
 		slurmctld_diag_stats.bf_cycle_max = slurmctld_diag_stats.
 						    bf_cycle_last;
 	}
-
-	slurmctld_diag_stats.bf_active = 0;
 }
 
 static int _list_find_all(void *x, void *key)
@@ -979,6 +991,11 @@ extern void *backfill_agent(void *args)
 			short_sleep = true;
 			continue;
 		}
+
+		slurm_mutex_lock(&check_bf_running_lock);
+		slurmctld_diag_stats.bf_active = 1;
+		slurm_mutex_unlock(&check_bf_running_lock);
+
 		lock_slurmctld(all_locks);
 		if ((backfill_cnt++ % 2) == 0)
 			_pack_start_clear();
@@ -986,6 +1003,11 @@ extern void *backfill_agent(void *args)
 		last_backfill_time = time(NULL);
 		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
+
+		slurm_mutex_lock(&check_bf_running_lock);
+		slurmctld_diag_stats.bf_active = 0;
+		slurm_mutex_unlock(&check_bf_running_lock);
+
 		short_sleep = false;
 	}
 	FREE_NULL_LIST(pack_job_list);
@@ -1304,14 +1326,14 @@ static int _attempt_backfill(void)
 	bool already_counted;
 	uint32_t reject_array_job_id = 0;
 	struct part_record *reject_array_part = NULL;
-	uint32_t job_start_cnt = 0, start_time;
+	uint32_t start_time;
 	time_t config_update = slurmctld_conf.last_update;
 	time_t part_update = last_part_update;
 	struct timeval start_tv;
 	uint32_t test_array_job_id = 0;
 	uint32_t test_array_count = 0;
 	uint32_t job_no_reserve;
-	bool resv_overlap = false;
+	bool is_job_array_head, resv_overlap = false;
 	uint8_t save_share_res = 0, save_whole_node = 0;
 	int test_fini;
 	int user_part_inx1 = -1, user_part_inx2 = -1;
@@ -1326,10 +1348,11 @@ static int _attempt_backfill(void)
 		  NO_LOCK, NO_LOCK, NO_LOCK };
 
 	bf_sleep_usec = 0;
+	job_start_cnt = 0;
 
 	if (!fed_mgr_sibs_synced()) {
-		debug("backfill: %s returning, federation siblings not synced yet",
-		      __func__);
+		info("backfill: %s returning, federation siblings not synced yet",
+		     __func__);
 		return SLURM_SUCCESS;
 	}
 
@@ -1392,7 +1415,6 @@ static int _attempt_backfill(void)
 	slurmctld_diag_stats.bf_last_depth = 0;
 	slurmctld_diag_stats.bf_last_depth_try = 0;
 	slurmctld_diag_stats.bf_when_last_cycle = now;
-	slurmctld_diag_stats.bf_active = 1;
 
 	node_space = xmalloc(sizeof(node_space_map_t) *
 			     (max_backfill_job_cnt * 2 + 1));
@@ -1541,6 +1563,12 @@ static int _attempt_backfill(void)
 		 */
 		_pack_start_set(job_ptr, (now + YEAR_SECONDS), NO_VAL);
 
+		if (job_ptr->pack_job_id &&
+		    (job_ptr->state_reason == WAIT_NO_REASON)) {
+			xfree(job_ptr->state_desc);
+			job_ptr->state_reason = WAIT_RESOURCES;
+		}
+
 		if (!_job_runnable_now(job_ptr))
 			continue;
 		if (!part_ptr)
@@ -1588,6 +1616,8 @@ static int _attempt_backfill(void)
 			if (job_ptr->assoc_ptr
 			    && (accounting_enforce & ACCOUNTING_ENFORCE_QOS)
 			    && ((job_ptr->qos_id >= g_qos_count) ||
+				!job_ptr->assoc_ptr->usage ||
+				!job_ptr->assoc_ptr->usage->valid_qos ||
 				!bit_test(job_ptr->assoc_ptr->usage->valid_qos,
 					  job_ptr->qos_id))
 			    && !job_ptr->limit_set.qos) {
@@ -1668,6 +1698,11 @@ static int _attempt_backfill(void)
 
 		orig_start_time = job_ptr->start_time;
 		orig_time_limit = job_ptr->time_limit;
+
+		if (job_ptr->array_recs && (job_ptr->array_task_id == NO_VAL))
+			is_job_array_head = true;
+		else
+			is_job_array_head = false;
 
 next_task:
 		/*
@@ -2414,11 +2449,15 @@ skip_start:
 					}
 					break;
 				}
-				if (job_ptr->array_task_id != NO_VAL) {
+				if (is_job_array_head &&
+				    (job_ptr->array_task_id != NO_VAL)) {
 					/* Try starting next task of job array */
 					job_ptr = find_job_record(job_ptr->
 								  array_job_id);
-					if (job_ptr && IS_JOB_PENDING(job_ptr))
+					if (job_ptr &&
+					    IS_JOB_PENDING(job_ptr) &&
+					    (bb_g_job_test_stage_in(
+						    job_ptr, false) == 1))
 						goto next_task;
 				}
 				continue;
@@ -2433,6 +2472,11 @@ skip_start:
 			_pack_start_set(job_ptr, job_ptr->start_time,
 					comp_time_limit);
 			_set_job_time_limit(job_ptr, orig_time_limit);
+			if (bf_hetjob_immediate &&
+			    (!max_backfill_jobs_start ||
+			     (job_start_cnt < max_backfill_jobs_start)))
+				_pack_start_test(node_space,
+						 job_ptr->pack_job_id);
 		}
 
 		if ((job_ptr->start_time > now) && (job_no_reserve != 0)) {
@@ -2635,7 +2679,10 @@ skip_start:
 			       &tmp_preempt_in_progress);
 
 	_job_pack_deadlock_fini();
-	_pack_start_test(node_space);
+	if (!bf_hetjob_immediate &&
+	    (!max_backfill_jobs_start ||
+	     (job_start_cnt < max_backfill_jobs_start)))
+		_pack_start_test(node_space, 0);
 
 	xfree(bf_part_jobs);
 	xfree(bf_part_resv);
@@ -3456,59 +3503,102 @@ static void _pack_kill_now(pack_job_map_t *map)
 }
 
 /*
- * If all components of a pack job can start now, then do so
+ * If all components of a heterogeneous job can start now, then do so
+ * node_space IN - map of available resources through time
+ * map IN - info about this heterogeneous job
+ * single IN - true if testing single heterogeneous jobs
  */
-static void _pack_start_test(node_space_map_t *node_space)
+static void _pack_start_test_single(node_space_map_t *node_space,
+				    pack_job_map_t *map, bool single)
 {
-	ListIterator iter;
-	pack_job_map_t *map;
 	time_t now = time(NULL);
 	int rc;
 
-	iter = list_iterator_create(pack_job_list);
-	while ((map = (pack_job_map_t *) list_next (iter))) {
-		if (!_pack_job_full(map)) {
-			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Pack job %u has indefinite start time",
-				     map->pack_job_id);
-			}
-			map->prev_start = now + YEAR_SECONDS;
-			continue;
-		}
+	if (!map)
+		return;
 
-		map->prev_start = _pack_start_compute(map, 0);
-		if (map->prev_start > now) {
-			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Pack job %u should be able to start in %u seconds",
-				     map->pack_job_id,
-				     (uint32_t) (map->prev_start - now));
-			}
-			continue;
-		}
-
-		if (!_pack_job_limit_check(map, now)) {
-			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Pack job %u prevented from starting by account/QOS limit",
-				     map->pack_job_id);
-			}
-			map->prev_start = now + YEAR_SECONDS;
-			continue;
-		}
-
+	if (!_pack_job_full(map)) {
 		if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-			info("Attempting to start pack job %u",
+			info("Pack job %u has indefinite start time",
 			     map->pack_job_id);
 		}
-		rc = _pack_start_now(map, node_space);
-		if (rc != SLURM_SUCCESS) {
-			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Failed to start pack job %u",
-				     map->pack_job_id);
-			}
-			_pack_kill_now(map);
+		if (!single)
+			map->prev_start = now + YEAR_SECONDS;
+		return;
+	}
+
+	map->prev_start = _pack_start_compute(map, 0);
+	if (map->prev_start > now) {
+		if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
+			info("Pack job %u should be able to start in %u seconds",
+			     map->pack_job_id,
+			     (uint32_t) (map->prev_start - now));
+		}
+		return;
+	}
+
+	if (!_pack_job_limit_check(map, now)) {
+		if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
+			info("Pack job %u prevented from starting by account/QOS limit",
+			     map->pack_job_id);
+		}
+		map->prev_start = now + YEAR_SECONDS;
+		return;
+	}
+
+	if (debug_flags & DEBUG_FLAG_HETERO_JOBS)
+		info("Attempting to start pack job %u", map->pack_job_id);
+
+	rc = _pack_start_now(map, node_space);
+	if (rc != SLURM_SUCCESS) {
+		if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
+			info("Failed to start pack job %u",
+			     map->pack_job_id);
+		}
+		_pack_kill_now(map);
+	} else {
+		job_start_cnt += list_count(map->pack_job_list);
+		if (max_backfill_jobs_start &&
+		    (job_start_cnt >= max_backfill_jobs_start)) {
+			if (debug_flags & DEBUG_FLAG_BACKFILL)
+				info("backfill: bf_max_job_start limit of %d reached",
+				     max_backfill_jobs_start);
 		}
 	}
-	list_iterator_destroy(iter);
+
+}
+
+static int _pack_start_test_list(void *map, void *node_space)
+{
+	if (!max_backfill_jobs_start ||
+	    (job_start_cnt < max_backfill_jobs_start))
+		_pack_start_test_single(node_space, map, false);
+
+	return SLURM_SUCCESS;
+}
+
+
+/*
+ * If all components of a heterogeneous job can start now, then do so
+ * node_space IN - map of available resources through time
+ * pack_job_id IN - the ID of the heterogeneous job to evaluate,
+ *		    if zero then evaluate all heterogeneous jobs
+ */
+static void _pack_start_test(node_space_map_t *node_space, uint32_t pack_job_id)
+{
+	pack_job_map_t *map = NULL;
+
+	if (!pack_job_id) {
+		/* Test all maps. */
+		(void)list_for_each(pack_job_list,
+				    _pack_start_test_list, node_space);
+	} else {
+		/* Test single map. */
+		map = (pack_job_map_t *)list_find_first(pack_job_list,
+							_pack_find_map,
+							&pack_job_id);
+		_pack_start_test_single(node_space, map, true);
+	}
 }
 
 static void _deadlock_global_list_del(void *x)

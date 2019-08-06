@@ -2,8 +2,8 @@
 # DEPRECATED, NOT MAINTAINED, WILL BE REMOVED IN A FUTURE RELEASE.
 
 Name:		slurm
-Version:	18.08.6
-%define rel	2
+Version:	18.08.8
+%define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager
 
@@ -658,10 +658,14 @@ test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_energy_ipmi.so  &&
    echo %{_libdir}/slurm/acct_gather_energy_ipmi.so  >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_energy_rapl.so  &&
    echo %{_libdir}/slurm/acct_gather_energy_rapl.so  >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_energy_xcc.so  &&
+   echo %{_libdir}/slurm/acct_gather_energy_xcc.so  >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_interconnect_ofed.so &&
    echo %{_libdir}/slurm/acct_gather_interconnect_ofed.so >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_profile_hdf5.so &&
    echo %{_libdir}/slurm/acct_gather_profile_hdf5.so >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_profile_influxdb.so &&
+   echo %{_libdir}/slurm/acct_gather_profile_influxdb.so >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/burst_buffer_cray.so        &&
    echo %{_libdir}/slurm/burst_buffer_cray.so        >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/checkpoint_blcr.so          &&
