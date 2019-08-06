@@ -2538,7 +2538,8 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 	/* may exit() if an error with the multi_prog script */
 	(void) launch_g_handle_multi_prog_verify(command_pos, &opt);
 
-	if (!sropt.multi_prog && (sropt.test_exec || sropt.bcast_flag)) {
+	if (!sropt.multi_prog && (sropt.test_exec || sropt.bcast_flag) &&
+	    sropt.argv && sropt.argv[command_pos]) {
 
 		if ((fullpath = search_path(opt.cwd, sropt.argv[command_pos],
 					    true, X_OK, true))) {
@@ -3259,7 +3260,7 @@ static char *_read_file(char *fname)
 		fatal("Could not stat burst buffer specification file %s: %m",
 		      fname);
 	}
-	file_buf = xmalloc(stat_buf.st_size);
+	file_buf = xmalloc(stat_buf.st_size + 1);
 	while (stat_buf.st_size > offset) {
 		i = read(fd, file_buf + offset, stat_buf.st_size - offset);
 		if (i < 0) {
@@ -3273,6 +3274,7 @@ static char *_read_file(char *fname)
 		offset += i;
 	}
 	close(fd);
+	file_buf[stat_buf.st_size] = '\0';
 	return file_buf;
 }
 

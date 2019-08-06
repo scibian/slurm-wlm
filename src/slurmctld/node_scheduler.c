@@ -2683,8 +2683,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		/* Select resources for the job here */
 		job_array_pre_sched(job_ptr);
 		if (job_ptr->job_resrcs)
-			error("%s: calling _get_req_features() for %pJ with not NULL job resources",
-			      __func__, job_ptr);
+			debug2("%s: calling _get_req_features() for %pJ with not NULL job resources",
+			       __func__, job_ptr);
 		error_code = _get_req_features(node_set_ptr, node_set_size,
 					       &select_bitmap, job_ptr,
 					       part_ptr, min_nodes, max_nodes,
@@ -3982,6 +3982,10 @@ end_node_set:
 			rc = ESLURM_NODES_BUSY;
 		} else {
 			job_ptr->state_reason = FAIL_BAD_CONSTRAINTS;
+			debug2("%s: setting %pJ to \"%s\" (%s)",
+			       __func__, job_ptr,
+			       job_reason_string(job_ptr->state_reason),
+			       slurm_strerror(rc));
 		}
 		FREE_NULL_BITMAP(reboot_bitmap);
 		return rc;

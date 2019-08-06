@@ -1042,6 +1042,13 @@ enum ctx_keys {
 #define GRES_DISABLE_BIND  0x00080000	/* Disable CPU/GRES binding */
 #define JOB_WAS_RUNNING    0x00100000  /* Job was running */
 #define RESET_ACCRUE_TIME  0x00200000   /* Reset the job's accrue time */
+#define INVALID_DEPEND     0x00400000	/* Job has invalid dependency(ies). */
+/* GAP FOR TWO NEW 19.05 FLAGS */
+#define USE_DEFAULT_ACCT   0x02000000	/* Job submitted to default account */
+#define USE_DEFAULT_PART   0x04000000	/* Job submitted to default partition */
+#define USE_DEFAULT_QOS    0x08000000	/* Job submitted with default QOS */
+#define USE_DEFAULT_WCKEY  0x10000000	/* Job submitted with default WCKEY */
+#define JOB_DEPENDENT      0x20000000	/* Job dependent or invalid depend */
 
 #define X11_FORWARD_ALL		0x0001	/* all nodes should setup forward */
 #define X11_FORWARD_BATCH	0x0002  /* only the batch node */
@@ -3365,10 +3372,9 @@ typedef struct job_step_kill_msg {
 	char *sibling;
 } job_step_kill_msg_t;
 
-/* NOTE: Only 8 bits available for kill flags. kill_tasks_msg_t->signal is
- * uint32_t and only 12 bits are used for the signal. These flags are << 24
- * leaving 8 bits for flags.
- * See _signal_batch_job() controller and _rpc_signal_tasks() in slurmd. */
+/*
+ * NOTE:  See _signal_batch_job() controller and _rpc_signal_tasks() in slurmd.
+ */
 #define KILL_JOB_BATCH	 0x0001	/* signal batch shell only */
 #define KILL_JOB_ARRAY	 0x0002	/* kill all elements of a job array */
 #define KILL_STEPS_ONLY	 0x0004	/* Do not signal batch script */
