@@ -327,7 +327,7 @@ static int _gres_find_name_internal(char *name, char *key, uint32_t plugin_id)
 		}
 
 		if (!name) {
-			debug("%s: couldn't find name (%s)", __func__, name);
+			debug("%s: couldn't find name", __func__);
 			return 0;
 		}
 	}
@@ -1775,6 +1775,21 @@ static bitstr_t *_links_str2bitmap(char *links, char *node_name)
 	return NULL;
 }
 
+static void _gres_bit_alloc_resize(gres_node_state_t *gres_data,
+				   uint64_t gres_bits)
+{
+	if (!gres_bits) {
+		FREE_NULL_BITMAP(gres_data->gres_bit_alloc);
+		return;
+	}
+
+	if (!gres_data->gres_bit_alloc)
+		gres_data->gres_bit_alloc = bit_alloc(gres_bits);
+	else if (gres_bits != bit_size(gres_data->gres_bit_alloc))
+		gres_data->gres_bit_alloc =
+			bit_realloc(gres_data->gres_bit_alloc, gres_bits);
+}
+
 static int _node_config_validate(char *node_name, char *orig_config,
 				 char **new_config, gres_state_t *gres_ptr,
 				 int cpu_cnt, int core_cnt,
@@ -1884,7 +1899,7 @@ static int _node_config_validate(char *node_name, char *orig_config,
 						     set_cnt * sizeof(char *));
 		if (gres_data->gres_bit_alloc)
 			gres_data->gres_bit_alloc = bit_realloc(
-				gres_data->gres_bit_alloc, set_cnt);
+				gres_data->gres_bit_alloc, gres_cnt);
 		gres_data->topo_cnt = set_cnt;
 
 		iter = list_iterator_create(gres_conf_list);
@@ -1940,7 +1955,7 @@ static int _node_config_validate(char *node_name, char *orig_config,
 			gres_data->topo_gres_bitmap[i] = bit_alloc(gres_cnt);
 			gres_data->topo_gres_cnt_alloc[i] = 0;
 			for (j = 0; j < gres_slurmd_conf->count; j++) {
-				if (gres_inx >= set_cnt) {
+				if (gres_inx >= gres_cnt) {
 					/* Ignore excess GRES on node */
 					break;
 				}
@@ -1988,15 +2003,7 @@ static int _node_config_validate(char *node_name, char *orig_config,
 			      MAX_GRES_BITMAP);
 			gres_data->gres_cnt_avail = MAX_GRES_BITMAP;
 		}
-		if (gres_data->gres_bit_alloc == NULL) {
-			gres_data->gres_bit_alloc =
-				bit_alloc(gres_data->gres_cnt_avail);
-		} else if (gres_data->gres_cnt_avail !=
-			   bit_size(gres_data->gres_bit_alloc)) {
-			gres_data->gres_bit_alloc =
-				bit_realloc(gres_data->gres_bit_alloc,
-					    gres_data->gres_cnt_avail);
-		}
+		_gres_bit_alloc_resize(gres_data, gres_data->gres_cnt_avail);
 	}
 
 	if ((fast_schedule < 2) &&
@@ -2246,17 +2253,8 @@ static int _node_reconfig(char *node_name, char *orig_config, char **new_config,
 	else if (gres_data->gres_cnt_avail == NO_VAL64)
 		gres_data->gres_cnt_avail = 0;
 
-	if (context_ptr->has_file) {
-		if (gres_data->gres_bit_alloc == NULL) {
-			gres_data->gres_bit_alloc =
-				bit_alloc(gres_data->gres_cnt_avail);
-		} else if (gres_data->gres_cnt_avail !=
-			   bit_size(gres_data->gres_bit_alloc)) {
-			gres_data->gres_bit_alloc =
-				bit_realloc(gres_data->gres_bit_alloc,
-					    gres_data->gres_cnt_avail);
-		}
-	}
+	if (context_ptr->has_file)
+		_gres_bit_alloc_resize(gres_data, gres_data->gres_cnt_avail);
 
 	if ((fast_schedule < 2) &&
 	    (gres_data->gres_cnt_found != NO_VAL64) &&
@@ -2438,7 +2436,7 @@ extern int gres_plugin_node_state_unpack(List *gres_list, Buf buffer,
 		}
 		gres_node_ptr = _build_gres_node_state();
 		gres_node_ptr->gres_cnt_avail = gres_cnt_avail;
-		if (has_bitmap) {
+		if (has_bitmap && gres_cnt_avail) {
 			gres_node_ptr->gres_bit_alloc =
 				bit_alloc(gres_cnt_avail);
 		}

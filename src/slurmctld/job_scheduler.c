@@ -143,6 +143,7 @@ static int sched_pend_thread = 0;
 static bool sched_running = false;
 static struct timeval sched_last = {0, 0};
 static uint32_t max_array_size = NO_VAL;
+static bool bf_hetjob_immediate = false;
 static uint16_t bf_hetjob_prio = 0;
 #ifdef HAVE_ALPS_CRAY
 static int sched_min_interval = 1000000;
@@ -512,9 +513,6 @@ extern List build_job_queue(bool clear_start, bool backfill)
 
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
-		if (!backfill && job_ptr->pack_job_id)
-			continue;
-
 		if (IS_JOB_PENDING(job_ptr))
 			acct_policy_handle_accrue_time(job_ptr, false);
 
@@ -634,7 +632,7 @@ extern bool job_is_completing(bitstr_t *eff_cg_bitmap)
 			 * completing jobs is not required */
 			if (!eff_cg_bitmap)
 				break;
-			else
+			else if (job_ptr->part_ptr)
 				bit_or(eff_cg_bitmap,
 				       job_ptr->part_ptr->node_bitmap);
 		}
@@ -1029,7 +1027,7 @@ static bool _all_partition_priorities_same(void)
  */
 extern int schedule(uint32_t job_limit)
 {
-	static int sched_job_limit = -1;
+	static uint32_t sched_job_limit = NO_VAL;
 	int job_count = 0;
 	struct timeval now;
 	long delta_t;
@@ -1047,12 +1045,14 @@ extern int schedule(uint32_t job_limit)
 		delta_t +=  now.tv_usec - sched_last.tv_usec;
 	}
 
+	if (job_limit == NO_VAL)
+		job_limit = 0;			/* use system default */
 	slurm_mutex_lock(&sched_mutex);
-	if (sched_job_limit == 0)
+	if (sched_job_limit == INFINITE)
 		;				/* leave unlimited */
-	else if (job_limit == 0)
-		sched_job_limit = 0;		/* set unlimited */
-	else if (sched_job_limit == -1)
+	else if (job_limit == INFINITE)
+		sched_job_limit = INFINITE;	/* set unlimited */
+	else if (sched_job_limit == NO_VAL)
 		sched_job_limit = job_limit;	/* set initial value */
 	else
 		sched_job_limit += job_limit;	/* test more jobs */
@@ -1064,7 +1064,7 @@ extern int schedule(uint32_t job_limit)
 		sched_last.tv_usec = now.tv_usec;
 		sched_running = true;
 		job_limit = sched_job_limit;
-		sched_job_limit = -1;
+		sched_job_limit = NO_VAL;
 		slurm_mutex_unlock(&sched_mutex);
 
 		job_count = _schedule(job_limit);
@@ -1113,7 +1113,7 @@ static void *_sched_agent(void *args)
 			break;
 	}
 
-	job_cnt = schedule(1);
+	job_cnt = schedule(0);
 	slurm_mutex_lock(&sched_mutex);
 	sched_pend_thread = 0;
 	slurm_mutex_unlock(&sched_mutex);
@@ -1330,6 +1330,15 @@ static int _schedule(uint32_t job_limit)
 				      tmp_ptr);
 		}
 
+		bf_hetjob_immediate = false;
+		if (sched_params && strstr(sched_params, "bf_hetjob_immediate"))
+			bf_hetjob_immediate = true;
+
+		if (bf_hetjob_immediate && !bf_hetjob_prio) {
+			bf_hetjob_prio |= HETJOB_PRIO_MIN;
+			info("bf_hetjob_immediate automatically sets bf_hetjob_prio=min");
+		}
+
 		if (sched_params &&
 		    (tmp_ptr = strstr(sched_params, "partition_job_depth="))) {
 			max_jobs_per_part = atoi(tmp_ptr + 20);
@@ -1432,7 +1441,7 @@ static int _schedule(uint32_t job_limit)
 	}
 
 	if (!fed_mgr_sibs_synced()) {
-		sched_debug("schedule() returning, federation siblings not synced yet");
+		sched_info("schedule() returning, federation siblings not synced yet");
 		goto out;
 	}
 
@@ -1457,6 +1466,7 @@ static int _schedule(uint32_t job_limit)
 			    (job_ptr->state_reason != WAIT_NODE_NOT_AVAIL))
 				continue;
 			job_ptr->state_reason = WAIT_FRONT_END;
+			xfree(job_ptr->state_desc);
 		}
 		list_iterator_destroy(job_iterator);
 
@@ -1779,6 +1789,8 @@ next_task:
 			if (job_ptr->assoc_ptr
 			    && (accounting_enforce & ACCOUNTING_ENFORCE_QOS)
 			    && ((job_ptr->qos_id >= g_qos_count) ||
+				!job_ptr->assoc_ptr->usage ||
+				!job_ptr->assoc_ptr->usage->valid_qos ||
 				!bit_test(job_ptr->assoc_ptr->usage->valid_qos,
 					  job_ptr->qos_id))
 			    && !job_ptr->limit_set.qos) {
@@ -2027,6 +2039,10 @@ skip_start:
 			xfree(job_ptr->state_desc);
 			job_ptr->start_time = job_ptr->end_time = now;
 			job_ptr->priority = 0;
+			debug2("%s: setting %pJ to \"%s\" (%s)",
+			       __func__, job_ptr,
+			       job_reason_string(job_ptr->state_reason),
+			       slurm_strerror(error_code));
 		}
 
 		if (job_ptr->details && job_ptr->details->req_node_bitmap &&
@@ -2174,11 +2190,8 @@ extern int sort_job_queue2(void *x, void *y)
 	     job_rec2->job_ptr->pack_job_id)) {
 		if ((details = job_rec1->job_ptr->pack_details))
 			has_resv1 = details->any_resv;
-		else {
-			error("%s: %pJ has no pack_details", __func__,
-			      job_rec1->job_ptr);
+		else
 			has_resv1 = (job_rec1->job_ptr->resv_id != 0);
-		}
 	} else
 		has_resv1 = (job_rec1->job_ptr->resv_id != 0);
 
@@ -2187,11 +2200,8 @@ extern int sort_job_queue2(void *x, void *y)
 	     job_rec1->job_ptr->pack_job_id)) {
 		if ((details = job_rec2->job_ptr->pack_details))
 			has_resv2 = details->any_resv;
-		else {
-			error("%s: %pJ has no pack_details", __func__,
-			      job_rec2->job_ptr);
+		else
 			has_resv2 = (job_rec2->job_ptr->resv_id != 0);
-		}
 	} else
 		has_resv2 = (job_rec2->job_ptr->resv_id != 0);
 
@@ -2206,11 +2216,8 @@ extern int sort_job_queue2(void *x, void *y)
 		     job_rec2->job_ptr->pack_job_id)) {
 			if ((details = job_rec1->job_ptr->pack_details))
 				p1 = details->priority_tier;
-			else {
-				error("%s: %pJ has no pack_details", __func__,
-				      job_rec1->job_ptr);
+			else
 				p1 = job_rec1->part_ptr->priority_tier;
-			}
 		} else
 			p1 = job_rec1->part_ptr->priority_tier;
 
@@ -2219,11 +2226,8 @@ extern int sort_job_queue2(void *x, void *y)
 		     job_rec1->job_ptr->pack_job_id)) {
 			if ((details = job_rec2->job_ptr->pack_details))
 				p2 = details->priority_tier;
-			else {
-				error("%s: %pJ has no pack_details", __func__,
-				      job_rec2->job_ptr);
+			else
 				p2 = job_rec2->part_ptr->priority_tier;
-			}
 		} else
 			p2 = job_rec2->part_ptr->priority_tier;
 
@@ -2239,8 +2243,6 @@ extern int sort_job_queue2(void *x, void *y)
 		if ((details = job_rec1->job_ptr->pack_details))
 			p1 = details->priority;
 		else {
-			error("%s: %pJ has no pack_details", __func__,
-			      job_rec1->job_ptr);
 			if (job_rec1->job_ptr->part_ptr_list &&
 			    job_rec1->job_ptr->priority_array)
 				p1 = job_rec1->priority;
@@ -2261,8 +2263,6 @@ extern int sort_job_queue2(void *x, void *y)
 		if ((details = job_rec2->job_ptr->pack_details))
 			p2 = details->priority;
 		else {
-			error("%s: %pJ has no pack_details", __func__,
-			      job_rec2->job_ptr);
 			if (job_rec2->job_ptr->part_ptr_list &&
 			    job_rec2->job_ptr->priority_array)
 				p2 = job_rec2->priority;
@@ -2977,8 +2977,10 @@ extern int test_job_dependency(struct job_record *job_ptr)
 
 	if ((job_ptr->details == NULL) ||
 	    (job_ptr->details->depend_list == NULL) ||
-	    (list_count(job_ptr->details->depend_list) == 0))
+	    (list_count(job_ptr->details->depend_list) == 0)) {
+		job_ptr->bit_flags &= ~JOB_DEPENDENT;
 		return 0;
+	}
 
 	depend_iter = list_iterator_create(job_ptr->details->depend_list);
 	while ((dep_ptr = list_next(depend_iter))) {
@@ -3044,20 +3046,16 @@ extern int test_job_dependency(struct job_record *job_ptr)
 					depends = true;
 				else if (!array_complete)
 					clear_dep = true;
-				else {
+				else
 					failure = true;
-					break;
-				}
 			} else if (dep_ptr->depend_type ==
 				   SLURM_DEPEND_AFTER_OK) {
 				if (!array_completed)
 					depends = true;
 				else if (array_complete)
 					clear_dep = true;
-				else {
+				else
 					failure = true;
-					break;
-				}
 			} else if (dep_ptr->depend_type ==
 				   SLURM_DEPEND_AFTER_CORRESPOND) {
 				if ((job_ptr->array_task_id == NO_VAL) ||
@@ -3073,10 +3071,8 @@ extern int test_job_dependency(struct job_record *job_ptr)
 						depends = true;
 					else if (IS_JOB_COMPLETE(dcjob_ptr))
 						clear_dep = true;
-					else {
+					else
 						failure = true;
-						break;
-					}
 				} else {
 					if (!array_completed)
 						depends = true;
@@ -3086,10 +3082,8 @@ extern int test_job_dependency(struct job_record *job_ptr)
 						 (job_ptr->array_task_id ==
 						  NO_VAL)) {
 						depends = true;
-					} else {
+					} else
 						failure = true;
-						break;
-					}
 				}
 			}
 
@@ -3110,42 +3104,35 @@ extern int test_job_dependency(struct job_record *job_ptr)
 				depends = true;
 			else if (!IS_JOB_COMPLETE(djob_ptr))
 				clear_dep = true;
-			else {
+			else
 				failure = true;
-				break;
-			}
 		} else if (dep_ptr->depend_type == SLURM_DEPEND_AFTER_OK) {
 			if (!IS_JOB_COMPLETED(djob_ptr))
 				depends = true;
 			else if (IS_JOB_COMPLETE(djob_ptr))
 				clear_dep = true;
-			else {
+			else
 				failure = true;
-				break;
-			}
 		} else if (dep_ptr->depend_type ==
 			   SLURM_DEPEND_AFTER_CORRESPOND) {
 			if (!IS_JOB_COMPLETED(djob_ptr))
 				depends = true;
 			else if (IS_JOB_COMPLETE(djob_ptr))
 				clear_dep = true;
-			else {
+			else
 				failure = true;
-				break;
-			}
 		} else if (dep_ptr->depend_type == SLURM_DEPEND_EXPAND) {
 			time_t now = time(NULL);
 			if (IS_JOB_PENDING(djob_ptr)) {
 				depends = true;
-			} else if (IS_JOB_COMPLETED(djob_ptr)) {
-				failure = true;
-				break;
-			} else if ((djob_ptr->end_time != 0) &&
+			} else if (IS_JOB_COMPLETED(djob_ptr))
+					failure = true;
+			else if ((djob_ptr->end_time != 0) &&
 				   (djob_ptr->end_time > now)) {
 				job_ptr->time_limit = djob_ptr->end_time - now;
 				job_ptr->time_limit /= 60;  /* sec to min */
 			}
-			if (job_ptr->details && djob_ptr->details) {
+			if (!failure && job_ptr->details && djob_ptr->details) {
 				job_ptr->details->share_res =
 					djob_ptr->details->share_res;
 				job_ptr->details->whole_node =
@@ -3159,12 +3146,27 @@ extern int test_job_dependency(struct job_record *job_ptr)
 				depends = true;
 		} else
 			failure = true;
-		if (clear_dep) {
-			rebuild_str = true;
+		if (failure) {
+			job_ptr->bit_flags |= INVALID_DEPEND;
+			if ((dep_ptr->depend_flags & SLURM_FLAGS_OR) &&
+			    list_peek_next(depend_iter)) {
+				failure = false;
+				depends = true;
+			} else
+				break;
+		} else if (clear_dep) {
 			if (dep_ptr->depend_flags & SLURM_FLAGS_OR) {
 				or_satisfied = true;
+				depends = false;
+				job_ptr->bit_flags &= ~INVALID_DEPEND;
+				if (job_ptr->state_reason == WAIT_DEP_INVALID) {
+					job_ptr->state_reason = WAIT_NO_REASON;
+					xfree(job_ptr->state_desc);
+				}
 				break;
 			}
+			if (!(job_ptr->bit_flags & INVALID_DEPEND))
+				rebuild_str = true;
 			list_delete_item(depend_iter);
 		}
 	}
@@ -3178,6 +3180,13 @@ extern int test_job_dependency(struct job_record *job_ptr)
 		results = 2;
 	else if (depends)
 		results = 1;
+
+	if (results) {
+		job_ptr->bit_flags |= JOB_DEPENDENT;
+		acct_policy_remove_accrue_time(job_ptr, false);
+	} else {
+		job_ptr->bit_flags &= ~JOB_DEPENDENT;
+	}
 
 	return results;
 }
@@ -3714,7 +3723,13 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	if (job_ptr == NULL)
 		return ESLURM_INVALID_JOB_ID;
 
-	if ((job_ptr->details == NULL) || (!IS_JOB_PENDING(job_ptr)))
+	/*
+	 * NOTE: Do not use IS_JOB_PENDING since that doesn't take
+	 * into account the COMPLETING FLAG which we need to since we don't want
+	 * to schedule a requeued job until it is actually done completing
+	 * the first time.
+	 */
+	if ((job_ptr->details == NULL) || (job_ptr->job_state != JOB_PENDING))
 		return ESLURM_DISABLED;
 
 	if (job_ptr->part_ptr_list) {

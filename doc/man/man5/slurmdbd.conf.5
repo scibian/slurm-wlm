@@ -1,4 +1,4 @@
-.TH "slurmdbd.conf" "5" "Slurm Configuration File" "August 2018" "Slurm Configuration File"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "May 2019" "Slurm Configuration File"
 
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
@@ -34,6 +34,11 @@ element is set to true.  Default is /tmp.  The format for this files name is
 .na
 $ArchiveDir/$ClusterName_$ArchiveObject_archive_$BeginTimeStamp_$endTimeStamp
 .ad
+We limit archive files to 50000 records per file. If more than 50000 records
+exist during that time period, they will be written to a new file.  Subsequent
+archive files during the same time period will have ".<number>" appended
+to the file, for example .2, with the number increasing by one for each file in
+the same time period.
 
 .TP
 \fBArchiveEvents\fR
@@ -175,7 +180,7 @@ This value must be specified.
 \fBDbdPort\fR
 The port number that the Slurm Database Daemon (slurmdbd) listens
 to for work. The default value is SLURMDBD_PORT as established at system
-build time. If none is explicitly specified, it will be set to 6819.
+build time. If no value is explicitly specified, it will be set to 6819.
 This value must be equal to the \fBAccountingStoragePort\fR parameter in the
 slurm.conf file.
 

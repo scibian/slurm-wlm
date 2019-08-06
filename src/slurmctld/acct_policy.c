@@ -2565,12 +2565,12 @@ static void _add_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 		used_limits_u2->accrue_cnt += cnt;
 
 	while (assoc_ptr) {
-		assoc_ptr->usage->accrue_cnt += cnt;
-		/* info("adding it to %u(%s/%s/%s) %p %d", */
+		/* info("adding it to %u(%s/%s/%s) %p %d %d", */
 		/*      assoc_ptr->id, assoc_ptr->acct, */
 		/*      assoc_ptr->user, assoc_ptr->partition, */
 		/*      assoc_ptr->usage, */
-		/*      assoc_ptr->usage->accrue_cnt); */
+		/*      assoc_ptr->usage->accrue_cnt, cnt); */
+		assoc_ptr->usage->accrue_cnt += cnt;
 		/* now go up the hierarchy */
 		assoc_ptr = assoc_ptr->usage->parent_assoc_ptr;
 	}
@@ -2655,7 +2655,7 @@ static void _remove_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 
 	while (assoc_ptr) {
 		if (assoc_ptr->usage->accrue_cnt >= cnt) {
-			/* info("removing it to %u(%s/%s/%s) %p %d %d", */
+			/* info("removing it from %u(%s/%s/%s) %p %d %d", */
 			/*      assoc_ptr->id, assoc_ptr->acct, */
 			/*      assoc_ptr->user, assoc_ptr->partition, */
 			/*      assoc_ptr->usage, */
@@ -3143,7 +3143,12 @@ extern bool acct_policy_validate_pack(List submit_job_list)
 			list_iterator_destroy(iter2);
 			if (job_cnt > 1) {
 				job_desc.array_bitmap = bit_alloc(job_cnt);
-				bit_nset(job_desc.array_bitmap, 0, job_cnt - 1);
+				/*
+				 * SET NO BITS. Make this look like zero jobs
+				 * are being added. The job count was already
+				 * validated when each individual component of
+				 * the heterogeneous job was created.
+				*/
 				rc = _acct_policy_validate(&job_desc,
 						job_ptr1->part_ptr,
 						job_limit1->assoc_ptr,
@@ -4112,27 +4117,9 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
 				   NO_LOCK, NO_LOCK, NO_LOCK };
 
-	/* check to see if we are enforcing limits */
-	if (!(accounting_enforce & ACCOUNTING_ENFORCE_LIMITS))
-		return SLURM_SUCCESS;
-
 	details_ptr = job_ptr->details;
 	if (!details_ptr) {
 		error("%s: no details", __func__);
-		return SLURM_ERROR;
-	}
-
-	/* If Job is held don't accrue time */
-	if (!job_ptr->priority)
-		return SLURM_SUCCESS;
-
-	/* No accrue_time and the job isn't pending, bail */
-	if (!details_ptr->accrue_time && !IS_JOB_PENDING(job_ptr))
-		return SLURM_SUCCESS;
-
-	assoc_ptr = job_ptr->assoc_ptr;
-	if (!assoc_ptr) {
-		fatal_abort("%s: no assoc_ptr", __func__);
 		return SLURM_ERROR;
 	}
 
@@ -4141,12 +4128,34 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 
 	/*
 	 * ACCRUE_ALWAYS flag will always force the accrue_time to be the
-	 * submit_time.  Accrue limits don't work with this flag.
+	 * submit_time (Not begin).  Accrue limits don't work with this flag.
 	 */
 	if (priority_flags & PRIORITY_FLAGS_ACCRUE_ALWAYS) {
 		if (!details_ptr->accrue_time)
 			details_ptr->accrue_time = details_ptr->submit_time;
 		return SLURM_SUCCESS;
+	}
+
+	/* Always set accrue_time to begin time when not enforcing limits. */
+	if (!(accounting_enforce & ACCOUNTING_ENFORCE_LIMITS)) {
+		if (!details_ptr->accrue_time)
+			details_ptr->accrue_time = details_ptr->begin_time;
+		return SLURM_SUCCESS;
+	}
+
+	/* If Job is held or dependent don't accrue time */
+	if (!job_ptr->priority || (job_ptr->bit_flags & JOB_DEPENDENT))
+		return SLURM_SUCCESS;
+
+	/* No accrue_time and the job isn't pending, bail */
+	if (!details_ptr->accrue_time && !IS_JOB_PENDING(job_ptr))
+		return SLURM_SUCCESS;
+
+	assoc_ptr = job_ptr->assoc_ptr;
+	if (!assoc_ptr) {
+		debug("%s: no assoc_ptr, this usually means the association was removed right after the job (%pJ) was started, but didn't make it to the database before it was removed.",
+		      __func__, job_ptr);
+		return SLURM_ERROR;
 	}
 
 	if (!assoc_mgr_locked)
@@ -4262,7 +4271,8 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 	if ((max_jobs_accrue == INFINITE) ||
 	    (create_cnt && (!job_ptr->array_recs ||
 			    !job_ptr->array_recs->task_cnt))) {
-		if (!details_ptr->accrue_time) {
+		if (!details_ptr->accrue_time &&
+		    job_ptr->details->begin_time) {
 			/*
 			 * If no limit and begin_time hasn't happened yet
 			 * then set accrue_time to now.
@@ -4374,13 +4384,18 @@ extern void acct_policy_add_accrue_time(struct job_record *job_ptr,
 	if (!(accounting_enforce & ACCOUNTING_ENFORCE_LIMITS))
 		return;
 
-	/* If Job is held don't accrue time */
-	if (!job_ptr->priority)
+	/* If Job is held or dependent don't accrue time */
+	if (!job_ptr->priority || (job_ptr->bit_flags & JOB_DEPENDENT))
+		return;
+
+	/* Job has to be pending to accrue time. */
+	if (!IS_JOB_PENDING(job_ptr))
 		return;
 
 	assoc_ptr = job_ptr->assoc_ptr;
 	if (!assoc_ptr) {
-		fatal_abort("%s: no assoc_ptr", __func__);
+		debug("%s: no assoc_ptr, this usually means the association was removed right after the job (%pJ) was started, but didn't make it to the database before it was removed.",
+		      __func__, job_ptr);
 		return;
 	}
 
@@ -4445,15 +4460,19 @@ extern void acct_policy_remove_accrue_time(struct job_record *job_ptr,
 	if (!job_ptr->details || !job_ptr->details->accrue_time)
 		return;
 
+	/* Job has to be pending to accrue time. */
+	if (!IS_JOB_PENDING(job_ptr))
+		return;
+
 	if (!assoc_mgr_locked)
 		assoc_mgr_lock(&locks);
 
 	assoc_ptr = job_ptr->assoc_ptr;
 	if (!assoc_ptr) {
-		fatal_abort("%s: no assoc_ptr", __func__);
+		debug("%s: no assoc_ptr, this usually means the association was removed right after the job (%pJ) was started, but didn't make it to the database before it was removed.",
+		      __func__, job_ptr);
 		goto end_it;
 	}
-
 	_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
 
 	if (qos_ptr_1) {
@@ -4516,7 +4535,8 @@ extern uint32_t acct_policy_get_prio_thresh(struct job_record *job_ptr,
 
 	assoc_ptr = job_ptr->assoc_ptr;
 	if (!assoc_ptr) {
-		fatal_abort("%s: no assoc_ptr", __func__);
+		debug("%s: no assoc_ptr, this usually means the association was removed right after the job (%pJ) was started, but didn't make it to the database before it was removed.",
+		      __func__, job_ptr);
 		return 0;
 	}
 
