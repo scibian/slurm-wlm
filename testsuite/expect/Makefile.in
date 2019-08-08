@@ -704,6 +704,7 @@ EXTRA_DIST = \
 	test7.18			\
 	test7.18.prog.c			\
 	test7.19			\
+	test7.20			\
 	test9.1				\
 	test9.2				\
 	test9.3				\
@@ -746,6 +747,7 @@ EXTRA_DIST = \
 	test12.7			\
 	test12.8			\
 	test12.9			\
+	test12.10			\
 	test13.1			\
 	test13.2			\
 	test14.1			\
@@ -918,6 +920,7 @@ EXTRA_DIST = \
 	test21.36			\
 	test21.37			\
 	test21.38			\
+	test21.39			\
 	inc21.30.1                      \
 	inc21.30.2                      \
 	inc21.30.3                      \
@@ -980,7 +983,6 @@ EXTRA_DIST = \
 	test29.6                        \
 	test29.7			\
 	test29.8			\
-	test30.1			\
 	test31.1			\
 	test31.2			\
 	test32.1			\
