@@ -113,8 +113,8 @@ override_dh_auto_install:
 	mv -v debian/tmp-emulator/usr/bin/sstat	debian/tmp-emulator/usr/bin/sstat-emulator
 
 override_dh_strip:
-	dh_strip -plibslurm33
-	dh_strip -plibslurmdb33
+	dh_strip -plibslurm33 --dbg-package=libslurm33-dbg
+	dh_strip -plibslurmdb33 --dbg-package=libslurmdb33-dbg
 	dh_strip -plibpmi0 --dbg-package=libpmi0-dbg
 	dh_strip -plibpmi2-0 --dbg-package=libpmi2-0-dbg
 	dh_strip -pslurm-wlm-basic-plugins --dbg-package=slurm-wlm-basic-plugins-dbg

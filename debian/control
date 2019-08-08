@@ -171,6 +171,34 @@ Description: Runtime library files for SLURM
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM runtime library.
 
+Package: libslurmdb33-dbg
+Architecture: any
+Section: debug
+Depends:
+ libslurmdb33 (= ${binary:Version}),
+ ${misc:Depends}
+Description: debugging symbols for SLURM slurmdbd runtime library
+ SLURM stands for Simple Linux Utility for Resource Management, it
+ is an open-source cluster resource management and job scheduling system
+ that strives to be simple, scalable, portable, fault-tolerant, and
+ interconnect agnostic.
+ This package contains the debugging symbols for slurmdbd runtime
+ library.
+
+Package: libslurm33-dbg
+Architecture: any
+Section: debug
+Depends:
+ libslurm33 (= ${binary:Version}),
+ ${misc:Depends}
+Description: debugging symbols for SLURM slurm runtime library
+ SLURM stands for Simple Linux Utility for Resource Management, it
+ is an open-source cluster resource management and job scheduling system
+ that strives to be simple, scalable, portable, fault-tolerant, and
+ interconnect agnostic.
+ This package contains the debugging symbols for slurm runtime
+ library.
+
 Package: libpmi0
 Section: libs
 Architecture: any
