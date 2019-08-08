@@ -4,4 +4,5 @@ sacctmgr-increase-buffer
 pidfile-path
 rpath
 mpiexec-man-page
+b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 fix-perl-doc

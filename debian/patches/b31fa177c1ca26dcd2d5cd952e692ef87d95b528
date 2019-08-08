@@ -13,11 +13,12 @@ Index: slurm-llnl/doc/man/man5/slurm.conf.5
 ===================================================================
 --- slurm-llnl.orig/doc/man/man5/slurm.conf.5
 +++ slurm-llnl/doc/man/man5/slurm.conf.5
-@@ -980,7 +980,10 @@ Note that the \fBHealthCheckProgram\fR w
+@@ -925,8 +925,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
  on all nodes to minimize its impact upon parallel programs.
  This program is will be killed if it does not terminate normally within
  60 seconds.
--This program will also be executed when the slurmd daemon is first started.
+-This program will also be executed when the slurmd daemon is first started and
+-before it registers with the slurmctld daemon.
 +When slurmd is first started, this program will be run repeatedly until
 +it returns an exit code of 0, and will block slurmd from registering with
 +slurmctld until this has been satisfied.
@@ -53,10 +54,10 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
 -	run_script_health_check();
 +	/* Wait for a successful health check if HealthCheckInterval != 0 */
 +	_wait_health_check();
- 	slurm_thread_create_detached(NULL, _registration_engine, NULL);
  
  	msg_aggr_sender_init(conf->hostname, conf->port,
-@@ -2370,6 +2374,28 @@ static void _resource_spec_fini(void)
+ 			     conf->msg_aggr_window_time,
+@@ -2472,6 +2476,28 @@ static void _resource_spec_fini(void)
  }
  
  /*
