@@ -1,3 +1,14 @@
+slurm-llnl (18.08.8-0sci8u1) scibian8; urgency=medium
+
+  * Backport latest debian package on scibian8
+  * New upstream release 18.08.8
+  * Adapt and re-enable wait health check patch
+  * Remove patches merged upstream
+  * Remove useless debian/libslurm32*
+  * Re-add wrongly removed libslurm*-dbg packages
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 08 Aug 2019 15:02:46 +0200
+
 slurm-llnl (18.08.6.2-1) unstable; urgency=medium
 
   * New upstream release 18.08.6.2
