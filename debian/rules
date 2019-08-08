@@ -138,3 +138,6 @@ override_dh_strip:
 		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
 
 override_dh_auto_test:
+
+override_dh_compress:
+	dh_compress -X.pdf -X.ttf
