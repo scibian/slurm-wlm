@@ -465,7 +465,6 @@ Select one value for <B>SwitchType</B>:<BR>
 <input type="radio" name="switch_type" value="cray"> <B>Cray</B>: Cray proprietary interconnect<BR>
 <input type="radio" name="switch_type" value="none" checked> <B>None</B>: No special
 handling required (InfiniBand, Myrinet, Ethernet, etc.)<BR>
-<input type="radio" name="switch_type" value="nrt"> <B>NRT</B>: IBM Network Resource Table<BR>
 <P>
 
 <H2>Default MPI Type</H2>
@@ -600,11 +599,11 @@ levels of logging verbosity from 0 (quiet) to 7 (extremely verbose).
 Each may also be configured to use debug files. Use fully qualified
 pathnames for the files.
 <P>
-<input type="text" name="slurmctld_debug" value="3"> <B>SlurmctldDebug</B> (0 to 7)
+<input type="text" name="slurmctld_debug" value="info"> <B>SlurmctldDebug</B> (default is info)
 <P>
 <input type="text" name="slurmctld_logfile" value=""> <B>SlurmctldLogFile</B> (default is none, log goes to syslog)
 <P>
-<input type="text" name="slurmd_debug" value="3"> <B>SlurmdDebug</B> (0 to 7)
+<input type="text" name="slurmd_debug" value="info"> <B>SlurmdDebug</B> (default is info)
 <P>
 <input type="text" name="slurmd_logfile" value=""> <B>SlurmdLogFile</B> (default is none,
 log goes to syslog, string "%h" in name gets replaced with hostname)

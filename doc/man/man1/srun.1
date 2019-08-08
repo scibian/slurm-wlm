@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "July 2018" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "November 2018" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -24,6 +24,21 @@ https://slurm.schedmd.com/cpu_management.html
 srun will return the highest exit code of all tasks run or the highest signal
 (with the high-order bit set in an 8-bit integer -- e.g. 128 + signal) of any
 task that exited with a signal.
+
+.SH "EXECUTABLE PATH RESOLUTION"
+
+.nr step 1 1
+The executable is resolved in the following order:
+.br
+.IP \n[step]. 3
+If executable starts with ".", then path is constructed as:
+current working directory / executable
+.IP \n+[step].
+If executable starts with a "/", then path is considered absolute.
+.IP \n+[step].
+If executable can be resolved through PATH. See \fBpath_resolution\fR(7).
+.IP \n+[step].
+If executable is in current working directory.
 
 .SH "OPTIONS"
 .LP
@@ -287,6 +302,12 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+
+\fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
+modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+Specification of multiple KNL modes requires the use of a heterogeneous job.
+
 .TP
 \fBParenthesis\fR
 Parenthesis can be used to group like node features together. For example
@@ -689,6 +710,8 @@ Gang scheduling of resources in the partition is also not supported.
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
+In other words, only one job by that name and owned by that user can be running
+or suspended at any point in time.
 .RE
 
 .TP
@@ -762,21 +785,24 @@ See \fBEXAMPLE\fR below.
 
 .TP
 \fB\-\-export\fR=<\fIenvironment variables [ALL] | NONE\fR>
-Identify which environment variables are propagated to the launched application,
-by default all are propagated.
+Identify which environment variables are propagated to the launched application.
+By default, \fIall\fR are propagated.
 Multiple environment variable names should be comma separated.
 Environment variable names may be specified to propagate the current
 value (e.g. "\-\-export=EDITOR") or specific values
-may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").  In these two examples
-the environment propagated will only contain the variable "EDITOR"
-and nothing else.
-If one desires to add to the environment instead of replacing it have the
-argument include \fIALL\fR (e.g. "\-\-export=EDITOR,ALL").  This will propagate
-"EDITOR" along with the current environment.
-If one desires no environment variables be propagated use the argument
+may be exported (e.g. "\-\-export=EDITOR=/bin/emacs"). In these two examples,
+the propagated environment will only contain the variable \fIEDITOR\fR.
+If one desires to add to the environment instead of replacing it, have the
+argument include \fIALL\fR (e.g. "\-\-export=ALL,EDITOR=/bin/emacs").
+This will propagate \fIEDITOR\fR along with the current environment.
+Unlike sbatch, if \fIALL\fR is specified, any additional specified environment
+variables are ignored.
+If one desires no environment variables be propagated, use the argument
 \fINONE\fR.
-Regardless of this setting, the appropriate "SLURM_*" task environment variables
-are always exported to the environment.
+Regardless of this setting, the appropriate \fISLURM_*\fR task environment
+variables are always exported to the environment.
+\fIsrun\fR may deviate from the above behavior if the default launch plugin,
+\fIlaunch/slurm\fR, is not used.
 
 .TP
 \fB\-\-gid\fR=<\fIgroup\fR>
@@ -796,7 +822,7 @@ The available generic consumable resources is configurable by the system
 administrator.
 A list of available generic consumable resources will be printed and the
 command will exit if the option argument is "help".
-Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
+Examples of use include "\-\-gres=gpu:2,mic:1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 NOTE: This option applies to job and step allocations. By default, a job step
 is allocated all of the generic resources that have allocated to the job.
@@ -1169,7 +1195,11 @@ Also see \fB\-\-mem\-per\-cpu\fR.
 \fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
 
 NOTE: A memory size specification of zero is treated as a special case and
-grants the job access to all of the memory on each node.
+grants the job access to all of the memory on each node for newly submitted jobs
+and all available job memory to a new job steps.
+
+Specificing new memory limits for job steps are only advisory.
+
 If the job is allocated multiple nodes in a heterogeneous cluster, the memory
 limit on each node will be that of the node in the allocation with the smallest
 memory size (same limit will apply to every node in the job's allocation).
@@ -2141,6 +2171,12 @@ allocated to this job. The host list will be assumed to be a filename
 if it contains a "/"character. This option applies to job allocations.
 
 .TP
+\fB\-\-x11\fR[=<\fIall\fR|\fIfirst\fR|\fIlast\fR>]
+Sets up X11 forwarding on all, first or last node(s) of the allocation. This
+option is only enabled if Slurm was compiled with X11 support and
+PrologFlags=x11 is defined in the slurm.conf. Default is \fIall\fR.
+
+.TP
 \fB\-Z\fR, \fB\-\-no\-allocate\fR
 Run the specified tasks on a set of nodes without creating a Slurm
 "job" in the Slurm queue structure, bypassing the normal resource
@@ -2397,7 +2433,7 @@ Same as \fB\-v, \-\-verbose\fR
 \fBSLURM_DELAY_BOOT\fR
 Same as \fB\-\-delay\-boot\fR
 .TP
-\fBfBSLURMD_DEBUG\fR
+\fBSLURMD_DEBUG\fR
 Same as \fB\-d, \-\-slurmd\-debug\fR
 .TP
 \fBSLURM_DEPENDENCY\fR
@@ -2568,8 +2604,9 @@ Same as \fB\-\-task\-epilog\fR
 Same as \fB\-\-task\-prolog
 .TP
 \fBSLURM_TEST_EXEC\fR
-if defined, then verify existence of the executable program on the local
-computer before attempting to launch it on compute nodes.
+If defined, srun will verify existence of the executable program along with user
+execute permission on the node where srun was called before attempting to
+launch it on nodes in the step.
 .TP
 \fBSLURM_THREAD_SPEC\fR
 Same as \fB\-\-thread\-spec\fR

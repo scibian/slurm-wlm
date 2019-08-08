@@ -3,5 +3,5 @@ remove-google-javascript
 sacctmgr-increase-buffer
 pidfile-path
 rpath
-man-pages-typos
 mpiexec-man-page
+fix-perl-doc

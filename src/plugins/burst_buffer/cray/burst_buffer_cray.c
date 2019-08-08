@@ -2132,6 +2132,7 @@ static void *_start_teardown(void *x)
 			}
 			if ((bb_job = _get_bb_job(job_ptr)))
 				bb_job->state = BB_STATE_COMPLETE;
+			job_ptr->job_state &= (~JOB_STAGE_OUT);
 			if (!IS_JOB_PENDING(job_ptr) &&	/* No email if requeue */
 			    (job_ptr->mail_type & MAIL_JOB_STAGE_OUT)) {
 				/*
@@ -4102,11 +4103,16 @@ static void *_start_pre_run(void *x)
 		else
 			bb_job->state = BB_STATE_RUNNING;
 	}
-	if (job_ptr)
+	if (job_ptr) {
+		if (run_kill_job)
+			job_ptr->job_state &= ~JOB_CONFIGURING;
 		prolog_running_decr(job_ptr);
+	}
 	slurm_mutex_unlock(&bb_state.bb_mutex);
-	if (run_kill_job)
+	if (run_kill_job) {
+		/* bb_mutex must be unlocked before calling this */
 		_kill_job(job_ptr, hold_job);
+	}
 	unlock_slurmctld(job_write_lock);
 
 	xfree(resp_msg);

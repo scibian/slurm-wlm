@@ -1382,6 +1382,11 @@ static bitstr_t *_get_pack_group(const int argc, char **argv,
 	while ((opt_char = getopt_long(argc, argv, opt_string,
 				       optz, &option_index)) != -1) {
 		switch (opt_char) {
+		case '?':
+			fprintf(stderr,
+				"Try \"srun --help\" for more information\n");
+			exit(error_exit);
+			break;
 		case LONG_OPT_PACK_GROUP:
 			xfree(sropt.pack_group);
 			sropt.pack_group = xstrdup(optarg);
@@ -2427,6 +2432,7 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 			     "to mem-per-cpu");
 			opt.pn_min_memory = opt.mem_per_cpu;
 		}
+		info("WARNING: --mem and --mem-per-cpu are mutually exclusive.");
 	}
 
 	if (sropt.pty) {
@@ -2495,7 +2501,7 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 
 	if (sropt.test_exec) {
 		/* Validate command's existence */
-		if (sropt.prolog) {
+		if (sropt.prolog && xstrcasecmp(sropt.prolog, "none")) {
 			if ((fullpath = search_path(opt.cwd, sropt.prolog,
 						    true, R_OK|X_OK, true)))
 				sropt.prolog = fullpath;
@@ -2503,7 +2509,7 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 				error("prolog '%s' not found in PATH or CWD (%s), or wrong permissions",
 				      sropt.prolog, opt.cwd);
 		}
-		if (sropt.epilog) {
+		if (sropt.epilog && xstrcasecmp(sropt.epilog, "none")) {
 			if ((fullpath = search_path(opt.cwd, sropt.epilog,
 						    true, R_OK|X_OK, true)))
 				sropt.epilog = fullpath;
@@ -2594,7 +2600,9 @@ static bool _opt_verify(void)
 	}
 
 	if (opt.hint_env &&
-	    (!opt.hint_set && !sropt.cpu_bind_type_set &&
+	    (!opt.hint_set &&
+	     ((sropt.cpu_bind_type == CPU_BIND_VERBOSE) ||
+	      !sropt.cpu_bind_type_set) &&
 	     !opt.ntasks_per_core_set && !opt.threads_per_core_set)) {
 		if (verify_hint(opt.hint_env,
 				&opt.sockets_per_node,

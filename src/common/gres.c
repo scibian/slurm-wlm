@@ -731,6 +731,19 @@ static int _log_gres_slurmd_conf(void *x, void *arg)
 	return 0;
 }
 
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmd,slurmstepd");
+	}
+
+	return run;
+}
+
 /* Make sure that specified file name exists, wait up to 20 seconds or generate
  * fatal error and exit. */
 static void _my_stat(char *file_name)
@@ -738,6 +751,9 @@ static void _my_stat(char *file_name)
 	struct stat config_stat;
 	bool sent_msg = false;
 	int i;
+
+	if (!_run_in_daemon())
+		return;
 
 	for (i = 0; i < 20; i++) {
 		if (i)
@@ -861,6 +877,8 @@ static int _parse_gres_config(void **dest, slurm_parser_enum_t type,
 	gres_slurmd_conf_t *p;
 	uint64_t tmp_uint64;
 	char *tmp_str, *last;
+	bool cores_flag = false, cpus_flag = false;
+	char *type_str = NULL;
 
 	tbl = s_p_hashtbl_create(_gres_options);
 	s_p_parse_line(tbl, *leftover, leftover);
@@ -878,23 +896,29 @@ static int _parse_gres_config(void **dest, slurm_parser_enum_t type,
 	}
 
 	p->cpu_cnt = gres_cpu_cnt;
-	if (s_p_get_string(&p->cpus, "Cores", tbl) ||
-	    s_p_get_string(&p->cpus, "CPUs", tbl)) {
+	if (s_p_get_string(&p->cpus, "Cores", tbl)) {
+		cores_flag = true;
+		type_str = "Cores";
+	} else if (s_p_get_string(&p->cpus, "CPUs", tbl)) {
+		cpus_flag = true;
+		type_str = "CPUs";
+	}
+	if (cores_flag || cpus_flag) {
 		char *local_cpus = NULL;
 		p->cpus_bitmap = bit_alloc(gres_cpu_cnt);
 		if (xcpuinfo_ops.xcpuinfo_abs_to_mac) {
 			i = (xcpuinfo_ops.xcpuinfo_abs_to_mac)
 				(p->cpus, &local_cpus);
 			if (i != SLURM_SUCCESS) {
-				fatal("Invalid gres data for %s, Cores=%s",
-				      p->name, p->cpus);
+				error("Invalid GRES data for %s, %s=%s",
+				      p->name, type_str, p->cpus);
 			}
 		} else
 			local_cpus = xstrdup(p->cpus);
 		if ((bit_size(p->cpus_bitmap) == 0) ||
 		    bit_unfmt(p->cpus_bitmap, local_cpus) != 0) {
-			fatal("Invalid gres data for %s, Cores=%s (only %u Cores are available)",
-			      p->name, p->cpus, gres_cpu_cnt);
+			fatal("Invalid GRES data for %s, %s=%s (only %u CPUs are available)",
+			      p->name, type_str, p->cpus, gres_cpu_cnt);
 		}
 		xfree(local_cpus);
 	}
@@ -1030,6 +1054,8 @@ static void _validate_config(slurm_gres_context_t *context_ptr)
 			fatal("gres.conf duplicate records for %s",
 			      context_ptr->gres_name);
 		}
+		if (has_file)
+			context_ptr->has_file = true;
 	}
 	list_iterator_destroy(iter);
 }
@@ -1101,8 +1127,11 @@ extern int gres_plugin_node_config_load(uint32_t cpu_cnt, char *node_name,
 	}
 
 	slurm_mutex_lock(&gres_context_lock);
-	if (!gres_node_name && node_name)
+	if (xstrcmp(gres_node_name, node_name)) {
+		xfree(gres_node_name);
 		gres_node_name = xstrdup(node_name);
+	}
+
 	gres_cpu_cnt = cpu_cnt;
 	tbl = s_p_hashtbl_create(_gres_options);
 	if (s_p_parse_file(tbl, NULL, gres_conf_file, false) == SLURM_ERROR)
@@ -1276,13 +1305,15 @@ extern int gres_plugin_node_config_unpack(Buf buffer, char *node_name)
 		if (j >= gres_context_cnt) {
 			/*
 			 * GresPlugins is inconsistently configured.
-			 * Not a fatal error. Skip this data.
+			 * Not a fatal error, but skip this data.
 			 */
-			error("%s: no plugin configured to unpack data "
-			      "type %s from node %s",
-			      __func__, tmp_name, node_name);
+			error("%s: No plugin configured to process GRES data from node %s (Name:%s Type:%s PluginID:%u Count:%"PRIu64")",
+			      __func__, node_name, tmp_name, tmp_type,
+			      plugin_id, count64);
 			xfree(tmp_cpus);
+			xfree(tmp_links);
 			xfree(tmp_name);
+			xfree(tmp_type);
 			continue;
 		}
 		p = xmalloc(sizeof(gres_slurmd_conf_t));
@@ -1309,6 +1340,7 @@ unpack_error:
 	xfree(tmp_cpus);
 	xfree(tmp_links);
 	xfree(tmp_name);
+	xfree(tmp_type);
 	slurm_mutex_unlock(&gres_context_lock);
 	return SLURM_ERROR;
 }
@@ -1698,32 +1730,32 @@ static uint64_t _get_tot_gres_cnt(uint32_t plugin_id, uint64_t *set_cnt)
 extern int gres_gresid_to_gresname(uint32_t gres_id, char* gres_name,
 				   int gres_name_len)
 {
-	ListIterator iter;
-	gres_slurmd_conf_t *gres_slurmd_conf;
 	int rc = SLURM_SUCCESS;
 	int      found = 0;
+	int i;
 
-	if (gres_conf_list == NULL) {
-		/* Should not reach this as if there are GRES id's then there
-		 * must have been a gres_conf_list.
-		 */
-		info("%s--The gres_conf_list is NULL!!!", __func__);
-		snprintf(gres_name, gres_name_len, "%u", gres_id);
-		return rc;
+	/*
+	 * Check GresTypes from slurm.conf (gres_context) for GRES type name
+	 */
+	slurm_mutex_lock(&gres_context_lock);
+	for (i = 0; i < gres_context_cnt; ++i) {
+		if (gres_id == gres_context[i].plugin_id) {
+			strlcpy(gres_name, gres_context[i].gres_name,
+				gres_name_len);
+			found = 1;
+			break;
+		}
 	}
+	slurm_mutex_unlock(&gres_context_lock);
 
-	iter = list_iterator_create(gres_conf_list);
-	while ((gres_slurmd_conf = (gres_slurmd_conf_t *) list_next(iter))) {
-		if (gres_slurmd_conf->plugin_id != gres_id)
-			continue;
-		strlcpy(gres_name, gres_slurmd_conf->name, gres_name_len);
-		found = 1;
-		break;
-	}
-	list_iterator_destroy(iter);
-
-	if (!found)	/* Could not find GRES type name, use id */
+	/*
+	 * If can't find GRES type name, emit error and default to GRES type ID
+	 */
+	if (!found) {
+		error("Could not find GRES type name in slurm.conf that corresponds to GRES type ID `%d`.  Using ID as GRES type name instead.",
+		      gres_id);
 		snprintf(gres_name, gres_name_len, "%u", gres_id);
+	}
 
 	return rc;
 }
@@ -1850,6 +1882,9 @@ static int _node_config_validate(char *node_name, char *orig_config,
 						   set_cnt * sizeof(uint32_t));
 		gres_data->topo_type_name = xrealloc(gres_data->topo_type_name,
 						     set_cnt * sizeof(char *));
+		if (gres_data->gres_bit_alloc)
+			gres_data->gres_bit_alloc = bit_realloc(
+				gres_data->gres_bit_alloc, set_cnt);
 		gres_data->topo_cnt = set_cnt;
 
 		iter = list_iterator_create(gres_conf_list);
@@ -1903,9 +1938,20 @@ static int _node_config_validate(char *node_name, char *orig_config,
 				_links_str2bitmap(gres_slurmd_conf->links,
 						  node_name);
 			gres_data->topo_gres_bitmap[i] = bit_alloc(gres_cnt);
+			gres_data->topo_gres_cnt_alloc[i] = 0;
 			for (j = 0; j < gres_slurmd_conf->count; j++) {
+				if (gres_inx >= set_cnt) {
+					/* Ignore excess GRES on node */
+					break;
+				}
 				bit_set(gres_data->topo_gres_bitmap[i],
-					gres_inx++);
+					gres_inx);
+				if (gres_data->gres_bit_alloc &&
+				    bit_test(gres_data->gres_bit_alloc,
+					     gres_inx)) {
+					gres_data->topo_gres_cnt_alloc[i]++;
+				}
+				gres_inx++;
 			}
 			gres_data->topo_type_id[i] =
 				_build_id(gres_slurmd_conf->type_name);
@@ -3289,10 +3335,6 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 			prev_save_ptr += offset;
 		} else	/* No more GRES */
 			prev_save_ptr = NULL;
-	} else if (sep[0] == '\0') {
-		/* Malformed input (e.g. "gpu:tesla:") */
-		my_rc = ESLURM_INVALID_GRES;
-		goto fini;
 	} else if ((sep[0] >= '0') && (sep[0] <= '9')) {
 		value = strtoull(sep, &end_ptr, 10);
 		if (value == ULLONG_MAX) {
@@ -3311,6 +3353,9 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 		} else if ((end_ptr[0] == 't') || (end_ptr[0] == 'T')) {
 			value *= ((uint64_t)1024 * 1024 * 1024 * 1024);
 			end_ptr++;
+		} else if ((end_ptr[0] == 'p') || (end_ptr[0] == 'P')) {
+			value *= ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024);
+			end_ptr++;
 		}
 		if (end_ptr[0] == ',') {
 			end_ptr++;
@@ -3321,6 +3366,10 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 		*cnt = value;
 		offset = end_ptr - name;
 		prev_save_ptr += offset;
+	} else {
+		/* Malformed input (e.g. "gpu:tesla:") */
+		my_rc = ESLURM_INVALID_GRES;
+		goto fini;
 	}
 
 	/* Find the job GRES record */
@@ -7101,6 +7150,9 @@ next:	if (prev_save_ptr[0] == '\0') {	/* Empty input token */
 			end_ptr++;
 		} else if ((end_ptr[0] == 't') || (end_ptr[0] == 'T')) {
 			value *= ((uint64_t)1024 * 1024 * 1024 * 1024);
+			end_ptr++;
+		} else if ((end_ptr[0] == 'p') || (end_ptr[0] == 'P')) {
+			value *= ((uint64_t)1024 * 1024 * 1024 * 1024 * 1024);
 			end_ptr++;
 		}
 		if (end_ptr[0] == ',') {

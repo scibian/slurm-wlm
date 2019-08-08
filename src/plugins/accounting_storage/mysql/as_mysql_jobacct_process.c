@@ -269,13 +269,10 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 		itr = list_iterator_create(job_cond->step_list);
 		while ((selected_step = list_next(itr))) {
 			if (selected_step->array_task_id != NO_VAL) {
-				if (array_job_ids)
-					xstrcat(array_job_ids, " ,");
 				if (array_task_ids)
 					xstrcat(array_task_ids, " ,");
-				xstrfmtcat(array_job_ids, "%u",
-					   selected_step->jobid);
-				xstrfmtcat(array_task_ids, "%u",
+				xstrfmtcat(array_task_ids, "(%u, %u)",
+					   selected_step->jobid,
 					   selected_step->array_task_id);
 			} else if (selected_step->pack_job_offset != NO_VAL) {
 				if (pack_job_ids)
@@ -328,14 +325,15 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 			sep = " || ";
 		}
 		if (array_job_ids) {
-			xstrfmtcat(*extra, "%s(t1.id_array_job in (%s)",
+			xstrfmtcat(*extra, "%s(t1.id_array_job in (%s))",
 				   sep, array_job_ids);
-			if (array_task_ids) {
-				xstrfmtcat(*extra,
-					   " && t1.id_array_task in (%s)",
-					   array_task_ids);
-			}
-			xstrcat(*extra, ")");
+			sep = " || ";
+		}
+
+		if (array_task_ids) {
+			xstrfmtcat(*extra,
+				   "%s((t1.id_array_job, t1.id_array_task) in (%s))",
+				   sep, array_task_ids);
 		}
 
 		xstrcat(*extra, ")");
@@ -367,32 +365,22 @@ static void _state_time_string(char **extra, char *cluster_name, uint32_t state,
 
 	switch(base_state) {
 	case JOB_PENDING:
-		if (start) {
-			if (!end) {
-				xstrfmtcat(*extra,
-					   "(t1.time_eligible && "
-					   "((!t1.time_start && !t1.time_end) "
-					   "|| (%d between t1.time_eligible "
-					   "and t1.time_start)))",
-					   start);
-			} else {
-				xstrfmtcat(*extra,
-					   "(t1.time_eligible && ((%d between "
-					   "t1.time_eligible and "
-					   "t1.time_start) || "
-					   "(t1.time_eligible "
-					   "between %d and %d)) || "
-					   "(!t1.time_start && (%d between "
-					   "t1.time_eligible and "
-					   "t1.time_end)))",
-					   start, start,
-					   end, start);
-			}
-		} else if (end) {
-			xstrfmtcat(*extra, "(t1.time_eligible && "
-				   "t1.time_eligible < %d)",
-				   end);
-		}
+		/*
+		 * Generic Query assuming that -S and -E are properly set in
+		 * slurmdb_job_cond_def_start_end
+		 *
+		 * (job eligible)         &&
+		 * (( time_start && -S < time_start) ||
+		 *  (!time_start && job eligible))   &&
+		 * (-E > time_eligible)
+		 */
+		xstrfmtcat(*extra,
+			   "(t1.time_eligible && "
+			   "(( t1.time_start && %d < t1.time_start) || "
+			   "(!t1.time_start && t1.time_eligible)) && "
+			   "(%d > t1.time_eligible))",
+			   start,
+			   end);
 		break;
 	case JOB_SUSPENDED:
 		xstrfmtcat(*extra,
@@ -405,28 +393,20 @@ static void _state_time_string(char **extra, char *cluster_name, uint32_t state,
 			   start);
 		break;
 	case JOB_RUNNING:
-		if (start) {
-			if (!end) {
-				xstrfmtcat(*extra,
-					   "(t1.time_start && "
-					   "((!t1.time_end && t1.state=%d) || "
-					   "(%d between t1.time_start "
-					   "and t1.time_end)))",
-					   base_state, start);
-			} else {
-				xstrfmtcat(*extra,
-					   "(t1.time_start && "
-					   "((%d between t1.time_start "
-					   "and t1.time_end) "
-					   "|| (t1.time_start between "
-					   "%d and %d)))",
-					   start, start,
-					   end);
-			}
-		} else if (end) {
-			xstrfmtcat(*extra, "(t1.time_start && "
-				   "t1.time_start < %d)", end);
-		}
+		/*
+		 * Generic Query assuming that -S and -E are properly set in
+		 * slurmdb_job_cond_def_start_end
+		 *
+		 * (job started)                     &&
+		 * (-S < time_end || still running)  &&
+		 * (-E > time_start)
+		 */
+		xstrfmtcat(*extra,
+			   "(t1.time_start && "
+			   "((%d < t1.time_end || (!t1.time_end && t1.state=%d))) && "
+			   "((%d > t1.time_start)))",
+			   start, base_state,
+			   end);
 		break;
 	case JOB_COMPLETE:
 	case JOB_CANCELLED:
@@ -991,6 +971,10 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			/* figure this out by start stop */
 			step->suspended =
 				slurm_atoul(step_row[STEP_REQ_SUSPENDED]);
+
+			/* fix the suspended number to be correct */
+			if (step->state == JOB_SUSPENDED)
+				step->suspended = now - step->suspended;
 			if (!step->start) {
 				step->elapsed = 0;
 			} else if (!step->end) {
@@ -1406,6 +1390,8 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 
 	if (!job_cond || (job_cond->flags & JOBCOND_FLAG_RUNAWAY))
 		return 0;
+
+	slurmdb_job_cond_def_start_end(job_cond);
 
 	if (job_cond->acct_list && list_count(job_cond->acct_list)) {
 		set = 0;

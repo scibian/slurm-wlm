@@ -29,12 +29,13 @@ Build-Depends:
  librrd-dev,
  libipmimonitoring-dev,
  hdf5-helpers,
+ libfreeipmi-dev,
  libhdf5-dev,
  man2html,
  libssh2-1-dev,
  libcurl4-openssl-dev,
  liblz4-dev
-Standards-Version: 4.2.1
+Standards-Version: 4.3.0
 Homepage: http://slurm.schedmd.com
 Vcs-Browser: https://github.com/scibian/slurm-llnl
 Vcs-Git: https://github.com/scibian/slurm-llnl.git
@@ -61,7 +62,6 @@ Depends:
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
  munge,
- adduser,
  ucf
 Conflicts: sinfo (<< 0.0.47-4)
 Description: SLURM client side commands
@@ -93,6 +93,7 @@ Depends:
  ${misc:Depends},
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
+ ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)
@@ -125,6 +126,7 @@ Depends:
  slurm-client (= ${binary:Version}),
  openssl,
  slurm-wlm-basic-plugins (= ${binary:Version}),
+ ucf,
  munge,
  openssl (>= 0.9.8g-9),
  lsb-base (>= 3.2-12)
@@ -287,7 +289,8 @@ Package: slurm-wlm-basic-plugins
 Architecture: any
 Depends:
  ${shlibs:Depends},
- ${misc:Depends}
+ ${misc:Depends},
+ adduser
 Description: SLURM basic plugins
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.

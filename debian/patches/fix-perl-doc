@@ -1,0 +1,16 @@
+Description: Fix perl doc
+ Fix a typo in the perl code
+Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Last-Update: 2019-15-02
+
+--- a/contribs/perlapi/libslurm/perl/lib/Slurm.pm
++++ b/contribs/perlapi/libslurm/perl/lib/Slurm.pm
+@@ -155,7 +155,7 @@ Create a Slurm object. For now the objec
+ 
+ =over 2
+ 
+-=item * IN $conf_file: the SLURM configuration file. If omitted, the default SLURM configuration file will be used (file specified by environment variable SLURM_CONF or the file slurm.conf under directroy specified in compile time).
++=item * IN $conf_file: the SLURM configuration file. If omitted, the default SLURM configuration file will be used (file specified by environment variable SLURM_CONF or the file slurm.conf under directory specified in compile time).
+ 
+ =item * RET: blessed opaque Slurm object. On error C<undef> is returned.
+     
