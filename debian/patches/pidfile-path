@@ -7,10 +7,10 @@ Last-Update: 2018-12-13
 
 --- a/src/common/read_config.h
 +++ b/src/common/read_config.h
-@@ -163,9 +163,9 @@ extern uint16_t drop_priv_flag;
- #else
+@@ -153,9 +153,9 @@
  #  define DEFAULT_SELECT_TYPE       "select/linear"
  #endif
+ #define DEFAULT_SITE_FACTOR_PLUGIN  "site_factor/none"
 -#define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 +#define DEFAULT_SLURMCTLD_PIDFILE   "/run/slurmctld.pid"
  #define DEFAULT_SLURMCTLD_TIMEOUT   120

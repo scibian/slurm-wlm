@@ -59,7 +59,7 @@
 #  include <json/json.h>
 #endif
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
 #define POLLRDHUP POLLHUP
 #endif
 
@@ -122,11 +122,13 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-slurmctld_config_t slurmctld_config __attribute__((weak_import));
-bitstr_t *avail_node_bitmap __attribute__((weak_import));
+extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
+extern bitstr_t *avail_node_bitmap __attribute__((weak_import));
+extern active_feature_list __attribute__((weak_import));
 #else
 slurmctld_config_t slurmctld_config;
 bitstr_t *avail_node_bitmap;
+List active_feature_list;
 #endif
 
 /*
@@ -157,16 +159,6 @@ bitstr_t *avail_node_bitmap;
 const char plugin_name[]        = "node_features knl_cray plugin";
 const char plugin_type[]        = "node_features/knl_cray";
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
-
-/* These are defined here so when we link with something other than
- * the slurmctld we will have these symbols defined.  They will get
- * overwritten when linking with the slurmctld.
- */
-#if defined (__APPLE__)
-List active_feature_list __attribute__((weak_import));
-#else
-List active_feature_list;
-#endif
 
 /* Configuration Parameters */
 static uint16_t allow_mcdram = KNL_MCDRAM_FLAG;

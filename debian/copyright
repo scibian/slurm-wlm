@@ -44,7 +44,6 @@ Files: src/api/pmi_server.c
        src/sview/bb_info.c
        src/sview/gthread_helper.c
        src/sview/gthread_helper.h
-       testsuite/expect/driveregress.py
        testsuite/expect/globals_federation
        testsuite/expect/slurm_status
        contribs/perlapi/libslurmdb/perl/Slurmdb.pm
@@ -148,7 +147,8 @@ Files: src/api/powercap_info.c
 Copyright: 2009,2012,2013,2015-2016 CEA/DAM/DIF
 License: GPL-2+ with OpenSSL exception
 
-Files: src/common/cpu_frequency.c
+Files: src/api/resource_functions.c
+       src/common/cpu_frequency.c
        src/common/cpu_frequency.h
        src/common/slurm_acct_gather_filesystem.c
        src/common/slurm_acct_gather_filesystem.h
@@ -158,7 +158,6 @@ Files: src/common/cpu_frequency.c
        src/common/slurm_acct_gather_profile.h
        src/common/slurm_route.c
        src/common/slurm_route.h
-       src/db_api/resource_functions.c
        src/plugins/accounting_storage/mysql/as_mysql_resource.c
        src/plugins/accounting_storage/mysql/as_mysql_resource.h
        src/plugins/acct_gather_profile/hdf5/hdf5_api.c
@@ -218,29 +217,10 @@ Files: src/plugins/mpi/pmix/pmixp_coll_ring.c
 Copyright: 2018 Mellanox Technologies, Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/select/alps/basil_alps.h
-       src/plugins/select/alps/basil_interface.c
-       src/plugins/select/alps/basil_interface.h
-       src/plugins/select/alps/libalps/atoul.c
-       src/plugins/select/alps/libalps/basil_mysql_routines.c
-       src/plugins/select/alps/libalps/do_confirm.c
-       src/plugins/select/alps/libalps/do_query.c
-       src/plugins/select/alps/libalps/do_release.c
-       src/plugins/select/alps/libalps/do_reserve.c
-       src/plugins/select/alps/libalps/memory_handling.c
-       src/plugins/select/alps/libalps/parser_basil_1.0.c
-       src/plugins/select/alps/libalps/parser_basil_1.1.c
-       src/plugins/select/alps/libalps/parser_basil_3.1.c
-       src/plugins/select/alps/libalps/parser_basil_4.0.c
-       src/plugins/select/alps/libalps/parser_basil_5.1.c
-       src/plugins/select/alps/libalps/parser_basil_5.2.c
-       src/plugins/select/alps/libalps/parser_common.c
-       src/plugins/select/alps/libalps/parser_internal.h
-       src/plugins/select/alps/libalps/popen2.c
-       src/plugins/select/alps/nodespec.c
-       src/plugins/select/alps/parser_common.h
+Files: contribs/cray/libalps_test_programs.tar.gz
 Copyright: 2009-2011 Centro Svizzero di Calcolo Scientifico (CSCS)
-License: GPL-2
+           1996-2003 Maximum Entropy Data Consultants Ltd
+License: GPL-2 and LGPL-2.1+
 
 Files: src/common/proc_args.h
        src/common/slurm_resource_info.c
@@ -253,9 +233,6 @@ Files: src/common/proc_args.h
        src/plugins/select/cons_res/job_test.h
        src/plugins/select/cons_res/select_cons_res.c
        src/plugins/select/linear/select_linear.h
-       src/plugins/select/serial/dist_tasks.h
-       src/plugins/select/serial/job_test.c
-       src/plugins/select/serial/job_test.h
        src/plugins/task/affinity/affinity.c
        src/plugins/task/affinity/affinity.h
        src/plugins/task/affinity/dist_tasks.h
@@ -263,8 +240,7 @@ Files: src/common/proc_args.h
 Copyright: 2005-2008 Hewlett-Packard Development Company, L.P
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/checkpoint/blcr/checkpoint_blcr.c
-       src/plugins/mpi/pmi2/agent.h
+Files: src/plugins/mpi/pmi2/agent.h
        src/plugins/mpi/pmi2/client.c
        src/plugins/mpi/pmi2/client.h
        src/plugins/mpi/pmi2/info.c
@@ -279,23 +255,22 @@ Files: src/plugins/checkpoint/blcr/checkpoint_blcr.c
        src/plugins/mpi/pmi2/spawn.c
        src/plugins/mpi/pmi2/spawn.h
        src/plugins/mpi/pmi2/tree.h
-       src/srun_cr/srun_cr.c
 Copyright: 2007-2009,2011-2013 National University of Defense Technology, China
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/job_submit/cray/job_submit_cray.c
-       src/plugins/select/cray/ccm.c
-       src/plugins/select/cray/ccm.h
-       src/plugins/select/cray/select_cray.c
-       src/plugins/switch/cray/cookies.c
-       src/plugins/switch/cray/gpu.c
-       src/plugins/switch/cray/iaa.c
-       src/plugins/switch/cray/pe_info.c
-       src/plugins/switch/cray/scaling.c
-       src/plugins/switch/cray/switch_cray.c
-       src/plugins/switch/cray/switch_cray.h
-       src/plugins/switch/cray/util.c
-       src/plugins/task/cray/task_cray.c
+Files: src/plugins/job_submit/cray_aries/job_submit_cray_aries.c
+       src/plugins/select/cray_aries/ccm.c
+       src/plugins/select/cray_aries/ccm.h
+       src/plugins/select/cray_aries/select_cray_aries.c
+       src/plugins/switch/cray_aries/cookies.c
+       src/plugins/switch/cray_aries/gpu.c
+       src/plugins/switch/cray_aries/iaa.c
+       src/plugins/switch/cray_aries/pe_info.c
+       src/plugins/switch/cray_aries/scaling.c
+       src/plugins/switch/cray_aries/switch_cray_aries.c
+       src/plugins/switch/cray_aries/switch_cray_aries.h
+       src/plugins/switch/cray_aries/util.c
+       src/plugins/task/cray_aries/task_cray_aries.c
 Copyright: 2013,2014,2016 SchedMD LLC
            2013,2014,2016 Cray Inc
 License: GPL-2+ with OpenSSL exception
@@ -359,15 +334,12 @@ License: GPL-2+ with OpenSSL exception
 Files: src/common/proc_args.c
        src/plugins/select/cons_res/job_test.c
        src/plugins/select/cons_res/select_cons_res.h
-       src/plugins/select/serial/select_serial.h
        src/slurmctld/gang.c
 Copyright: 2005-2008 Hewlett-Packard Development Company, L.P
            2010-2015 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: contribs/skilling.c
-       src/plugins/select/alps/libemulate/hilbert.c
-       src/plugins/select/alps/libemulate/hilbert.h
        src/plugins/topology/3d_torus/hilbert.c
        src/plugins/topology/3d_torus/hilbert.h
 Copyright: 1996-2003 Maximum Entropy Data Consultants Ltd
@@ -606,11 +578,6 @@ Copyright: 2006-2008 Hewlett-Packard Development Company, L.P
            2012 Bull
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/select/alps/libalps/basil_request.c
-Copyright: 2009-2011 Centro Svizzero di Calcolo Scientifico (CSCS)
-           2011 SchedMD LLC
-License: GPL-2
-
 Files: src/plugins/select/linear/select_linear.c
 Copyright: 2004-2007 The Regents of the University of California
            2008-2010 Lawrence Livermore National Security, LLC
@@ -774,10 +741,6 @@ Files: testsuite/expect/test1.53.prog.c
 Copyright: 2002-2007 The Regents of the University of California
            2008-2009 Lawrence Livermore National Security, LLC
 License: None
-
-Files: testsuite/expect/mpi-testscripts/barrier_timed.c
-Copyright: 1995 IBM Corp
-License: IBM
 
 Files: auxdir/ax_check_zlib.m4
 Copyright: 2008 Loic Dachary
@@ -1251,26 +1214,6 @@ License: GPL-3+
 Comment:
  On Debian systems, the full text of the GNU General Public License
  version 3, can be found at `/usr/share/common-licenses/GPL-3'.
-
-License: IBM
- Copyright IBM Corp. 1995
- .
- IBM Corp. hereby grants a non-exclusive license to use, copy, modify, and
- distribute this software for any purpose and without fee provided that the
- above copyright notice and the following paragraphs appear in all copies.
- .
- IBM Corp. makes no representation that the test cases comprising this
- suite are correct or are an accurate representation of any standard.
- .
- In no event shall IBM be liable to any party for direct, indirect, special
- incidental, or consequential damage arising out of the use of this software
- even if IBM Corp. has been advised of the possibility of such damage.
- .
- IBM CORP. SPECIFICALLY DISCLAIMS ANY WARRANTIES INCLUDING, BUT NOT LIMITED
- TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS ON AN "AS IS" BASIS AND IBM
- CORP. HAS NO OBLIGATION TO PROVIDE MAINTENANCE, SUPPORT, UPDATES,
- ENHANCEMENTS, OR MODIFICATIONS.
 
 License: GPL-2+ with Autoconf exception
  This program is free software; you can redistribute it and/or modify it

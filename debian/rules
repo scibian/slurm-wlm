@@ -9,6 +9,10 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-bindnow
 # include defs of all DEB_HOST_*/DEB_BUILD_* vars
 include /usr/share/dpkg/architecture.mk
 
+ifneq ($(DEB_TARGET_ARCH_BITS),64)
+  ENABLEDEPRECATED = --enable-deprecated
+endif
+
 %:
 	dh $@ --builddirectory
 
@@ -22,8 +26,8 @@ override_dh_auto_clean:
 # hardening-no-fortify-functions
 # Notice that -g in CFLAGS is still provided by dpkg-buildflags
 override_dh_auto_configure:
-	dh_auto_configure -- --sysconfdir=/etc/slurm-llnl --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd
-	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm-llnl --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd
+	dh_auto_configure -- --sysconfdir=/etc/slurm-llnl --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd $(ENABLEDEPRECATED)
+	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm-llnl --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd $(ENABLEDEPRECATED)
 
 override_dh_auto_build:
 	dh_auto_build
@@ -41,6 +45,9 @@ override_dh_auto_install:
 	
 	# run make install for libpam-slurm pkg
 	$(MAKE) -C obj-$(DEB_BUILD_GNU_TYPE)/contribs/pam install DESTDIR=$(CURDIR)/debian/tmp
+	
+	# run make install for libpam-slurm-adopt pkg
+	$(MAKE) -C obj-$(DEB_BUILD_GNU_TYPE)/contribs/pam_slurm_adopt install DESTDIR=$(CURDIR)/debian/tmp
 	
 	# run make install for libslurm[db]-perl pkgs
 	$(MAKE) -C obj-$(DEB_BUILD_GNU_TYPE)/contribs/perlapi install DESTDIR=$(CURDIR)/debian/tmp PERL_MM_OPT="INSTALLDIRS=vendor"
@@ -105,8 +112,7 @@ override_dh_auto_install:
 	mv -v debian/tmp-emulator/usr/bin/sstat	debian/tmp-emulator/usr/bin/sstat-emulator
 
 override_dh_strip:
-	dh_strip -plibslurm33
-	dh_strip -plibslurmdb33
+	dh_strip -plibslurm34
 	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
 	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
@@ -119,11 +125,11 @@ override_dh_strip:
 	dh_strip -plibslurm-perl --no-automatic-dbgsym
 	dh_strip -psview --no-automatic-dbgsym
 	dh_strip -plibpam-slurm --no-automatic-dbgsym
+	dh_strip -plibpam-slurm-adopt --no-automatic-dbgsym
 	dh_strip -pslurm-wlm-emulator --no-automatic-dbgsym
 	dh_strip -pslurm-client-emulator --no-automatic-dbgsym
 	dh_strip -plibpmi0-dev --no-automatic-dbgsym
 	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
-	dh_strip -plibslurmdb-dev --no-automatic-dbgsym
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
 	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \

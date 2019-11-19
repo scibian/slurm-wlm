@@ -293,7 +293,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 	case SORTID_FLAGS:
 		f = parse_resv_flags(new_text, __func__);
 		type = "flags";
-		if (f == NO_VAL)
+		if (f == INFINITE64)
 			goto return_error;
 		resv_msg->flags = f;
 		break;
@@ -673,7 +673,7 @@ static void _update_info_resv(List info_list,
 	set_for_update(model, SORTID_UPDATED);
 
 	itr = list_iterator_create(info_list);
-	while ((sview_resv_info = (sview_resv_info_t*) list_next(itr))) {
+	while ((sview_resv_info = list_next(itr))) {
 		/* This means the tree_store changed (added new column
 		   or something). */
 		if (last_model != model)
@@ -814,14 +814,14 @@ need_refresh:
 		treeview = create_treeview_2cols_attach_to_table(
 			popup_win->table);
 		spec_info->display_widget =
-			gtk_widget_ref(GTK_WIDGET(treeview));
+			g_object_ref(GTK_WIDGET(treeview));
 	} else {
 		treeview = GTK_TREE_VIEW(spec_info->display_widget);
 		update = 1;
 	}
 
 	itr = list_iterator_create(info_list);
-	while ((sview_resv_info = (sview_resv_info_t*) list_next(itr))) {
+	while ((sview_resv_info = list_next(itr))) {
 		resv_ptr = sview_resv_info->resv_ptr;
 		if (!xstrcmp(resv_ptr->name, name)) {
 			j=0;
@@ -1128,7 +1128,7 @@ extern void get_info_resv(GtkTable *table, display_data_t *display_data)
 		label = gtk_label_new("Not available in a federated view");
 		gtk_table_attach_defaults(GTK_TABLE(table), label, 0, 1, 0, 1);
 		gtk_widget_show(label);
-		display_widget = gtk_widget_ref(label);
+		display_widget = g_object_ref(label);
 		goto end_it;
 	}
 
@@ -1151,7 +1151,7 @@ extern void get_info_resv(GtkTable *table, display_data_t *display_data)
 		label = gtk_label_new(error_char);
 		gtk_table_attach_defaults(table, label, 0, 1, 0, 1);
 		gtk_widget_show(label);
-		display_widget = gtk_widget_ref(GTK_WIDGET(label));
+		display_widget = g_object_ref(GTK_WIDGET(label));
 		goto end_it;
 	}
 
@@ -1207,7 +1207,7 @@ display_it:
 		gtk_tree_selection_set_mode(
 			gtk_tree_view_get_selection(tree_view),
 			GTK_SELECTION_MULTIPLE);
-		display_widget = gtk_widget_ref(GTK_WIDGET(tree_view));
+		display_widget = g_object_ref(GTK_WIDGET(tree_view));
 		gtk_table_attach_defaults(table,
 					  GTK_WIDGET(tree_view),
 					  0, 1, 0, 1);
@@ -1274,7 +1274,7 @@ extern void specific_info_resv(popup_info_t *popup_win)
 					  label,
 					  0, 1, 0, 1);
 		gtk_widget_show(label);
-		spec_info->display_widget = gtk_widget_ref(label);
+		spec_info->display_widget = g_object_ref(label);
 		goto end_it;
 	}
 
@@ -1296,7 +1296,7 @@ display_it:
 			gtk_tree_view_get_selection(tree_view),
 			GTK_SELECTION_MULTIPLE);
 		spec_info->display_widget =
-			gtk_widget_ref(GTK_WIDGET(tree_view));
+			g_object_ref(GTK_WIDGET(tree_view));
 		gtk_table_attach_defaults(popup_win->table,
 					  GTK_WIDGET(tree_view),
 					  0, 1, 0, 1);

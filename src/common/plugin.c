@@ -219,6 +219,14 @@ plugin_load_from_file(plugin_handle_t *p, const char *fq_path)
 	return EPLUGIN_SUCCESS;
 }
 
+/*
+ * Load plugin and setup linking
+ * IN type_name - name of plugin
+ * IN n_syms - number of pointers in ptrs
+ * IN names - pointer list of symbols to link
+ * IN ptr - list of pointers to set with pointers given in names
+ * RET opaque ptr to handler or PLUGIN_INVALID_HANDLE on error
+ */
 plugin_handle_t
 plugin_load_and_link(const char *type_name, int n_syms,
 		     const char *names[], void *ptrs[])
@@ -269,9 +277,16 @@ plugin_load_and_link(const char *type_name, int n_syms,
 					xfree(file_name);
 					break;
 				} else {
-					(void) dlclose(plug);
-					err = EPLUGIN_MISSING_SYMBOL;
-					plug = PLUGIN_INVALID_HANDLE;
+					/*
+					 * Plugin loading failed part way
+					 * through loading, it is unknown what
+					 * actually happened but now process
+					 * memory is suspect and we are going to
+					 * abort since this should only ever
+					 * happen during development.
+					 */
+					fatal("%s: Plugin loading failed due to missing symbols. Plugin is corrupted.",
+					      __func__);
 				}
 			} else
 				plug = PLUGIN_INVALID_HANDLE;
@@ -429,14 +444,7 @@ extern plugin_context_t *plugin_context_create(
 	/* Get plugin list. */
 	if (!c->plugin_list) {
 		char *plugin_dir;
-		c->plugin_list = plugrack_create();
-		if (!c->plugin_list) {
-			error("cannot create plugin manager");
-			goto fail;
-		}
-		plugrack_set_major_type(c->plugin_list, plugin_type);
-		plugrack_set_paranoia(
-			c->plugin_list, PLUGRACK_PARANOIA_NONE, 0);
+		c->plugin_list = plugrack_create(plugin_type);
 		plugin_dir = slurm_get_plugin_dir();
 		plugrack_read_dir(c->plugin_list, plugin_dir);
 		xfree(plugin_dir);

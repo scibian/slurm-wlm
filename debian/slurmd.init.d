@@ -60,30 +60,6 @@ fi
 # setup library paths for slurm and munge support
 export LD_LIBRARY_PATH=$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
-#Function to check for cert and key presence
-checkcertkey()
-{
-  MISSING=""
-  keyfile=""
-  certfile=""
-
-  if [ "$1" = "slurmd" ] ; then
-    keyfile=$(grep JobCredentialPublicCertificate $CONFDIR/slurm.conf \
-                  | grep -v "^ *#")
-    keyfile=${keyfile##*=}
-    keyfile=${keyfile%#*}
-    [ -e $keyfile ] || MISSING="$keyfile"
-  fi
-
-  if [ "${MISSING}" != "" ] ; then
-    echo Not starting slurmd
-    echo $MISSING not found
-    echo Please follow the instructions in \
-      /usr/share/doc/slurmd/README.cryptotype-openssl
-    exit 0
-  fi
-}
-
 get_daemon_description()
 {
     case $1 in
@@ -100,13 +76,6 @@ get_daemon_description()
 }
 
 start() {
-  CRYPTOTYPE=$(grep CryptoType $CONFDIR/slurm.conf | grep -v "^ *#")
-  CRYPTOTYPE=${CRYPTOTYPE##*=}
-  CRYPTOTYPE=${CRYPTOTYPE%#*}
-  if [ "$CRYPTOTYPE" = "crypto/openssl" ] ; then
-    checkcertkey $1
-  fi
-
   desc="$(get_daemon_description $1)"
   log_daemon_msg "Starting $desc" "$1"
   unset HOME MAIL USER USERNAME

@@ -64,7 +64,7 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-slurmd_conf_t *conf __attribute__((weak_import)) = NULL;
+extern slurmd_conf_t *conf __attribute__((weak_import));
 #else
 slurmd_conf_t *conf = NULL;
 #endif
@@ -83,6 +83,7 @@ slurmd_conf_t *conf = NULL;
 
 #define XCC_FLAG_NONE 0x00000000
 #define XCC_FLAG_FAKE 0x00000001
+#define XCC_EXPECTED_RSPLEN 16 /* Must match cmd_rq[] response expectations */
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -438,7 +439,7 @@ static int _init_ipmi_config (void)
 cleanup:
 	ipmi_ctx_close(ipmi_ctx);
 	ipmi_ctx_destroy(ipmi_ctx);
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 /*
@@ -466,8 +467,9 @@ static xcc_raw_single_data_t *_read_ipmi_values(void)
 
         debug3("ipmi_cmd_raw: %s", ipmi_ctx_errormsg(ipmi_ctx));
 
-        if (rs_len < 0) {
-		error("Invalid ipmi response length");
+        if (rs_len != XCC_EXPECTED_RSPLEN) {
+		error("Invalid ipmi response length for XCC raw command: "
+		      "%d bytes, expected %d", rs_len, XCC_EXPECTED_RSPLEN);
 		return NULL;
 	}
 
@@ -527,7 +529,7 @@ static int _thread_update_node_energy(void)
 		xcc_energy.consumed_energy = 0;
 		xcc_energy.base_consumed_energy = 0;
 		xcc_energy.previous_consumed_energy = 0;
-		xcc_energy.base_watts = 0;
+		xcc_energy.ave_watts = 0;
 	} else {
 		xcc_energy.previous_consumed_energy =
 			xcc_energy.consumed_energy;
@@ -581,18 +583,12 @@ static int _thread_update_node_energy(void)
 			round((double)xcc_energy.base_consumed_energy /
 			      (double)elapsed);
 
-		/* base_watts is used as TresUsageOutAve (AvePower) */
-		xcc_energy.base_watts = ((xcc_energy.base_watts * readings) +
+		/* ave_watts is used as TresUsageOutAve (AvePower) */
+		xcc_energy.ave_watts = ((xcc_energy.ave_watts * readings) +
 					 xcc_energy.current_watts) /
 					 (readings + 1);
 		readings++;
 	}
-	/*
-	 * FIXME: base_watts is now used to hold ave watts, seems renaming it is
-	 * a good idea.  Currently it is only displayed in sview
-	 * to print out labeled under Lowest Joules?  That seems confusing.  We
-	 * should fix it in the future.
-	 */
 
 	if (debug_flags & DEBUG_FLAG_ENERGY) {
 		info("%s: XCC current_watts: %u consumed energy last interval: %"PRIu64"(current reading %"PRIu64") Joules, elapsed time: %u Seconds, first read energy counter val: %"PRIu64" ave watts: %u",
@@ -602,7 +598,7 @@ static int _thread_update_node_energy(void)
 		     xcc_energy.consumed_energy,
 		     elapsed,
 		     first_consumed_energy,
-		     xcc_energy.base_watts);
+		     xcc_energy.ave_watts);
 	}
 	return SLURM_SUCCESS;
 }
@@ -613,7 +609,7 @@ static int _thread_update_node_energy(void)
 static int _thread_init(void)
 {
 	static bool first = true;
-	static int first_init = SLURM_FAILURE;
+	static int first_init = SLURM_ERROR;
 
 	/*
 	 * If we are here we are a new slurmd thread serving
@@ -1020,8 +1016,8 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 		/* ipmi initialisation parameters */
 		s_p_get_uint32(&slurm_ipmi_conf.authentication_type,
 			       "EnergyIPMIAuthenticationType", tbl);
-		s_p_get_boolean(&(slurm_ipmi_conf.adjustment),
-				"EnergyIPMICalcAdjustment", tbl);
+		(void) s_p_get_boolean(&(slurm_ipmi_conf.adjustment),
+				       "EnergyIPMICalcAdjustment", tbl);
 		s_p_get_uint32(&slurm_ipmi_conf.cipher_suite_id,
 			       "EnergyIPMICipherSuiteId", tbl);
 		s_p_get_uint32(&slurm_ipmi_conf.disable_auto_probe,
@@ -1030,8 +1026,6 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 			       "EnergyIPMIDriverAddress", tbl);
 		s_p_get_string(&slurm_ipmi_conf.driver_device,
 			       "EnergyIPMIDriverDevice", tbl);
-		s_p_get_uint32(&slurm_ipmi_conf.driver_type,
-			       "EnergyIPMIDriverType", tbl);
 		s_p_get_uint32(&slurm_ipmi_conf.driver_type,
 			       "EnergyIPMIDriverType", tbl);
 		s_p_get_uint32(&slurm_ipmi_conf.freq,
@@ -1056,7 +1050,7 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 			       "EnergyIPMIUsername", tbl);
 		s_p_get_uint32(&slurm_ipmi_conf.workaround_flags,
 			       "EnergyIPMIWorkaroundFlags", tbl);
-		s_p_get_boolean(&tmp_bool, "EnergyXCCFake", tbl);
+		(void) s_p_get_boolean(&tmp_bool, "EnergyXCCFake", tbl);
 		if (tmp_bool) {
 			slurm_ipmi_conf.flags |= XCC_FLAG_FAKE;
 			/*

@@ -1,3 +1,42 @@
+slurm-llnl (19.05.4-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+
+  [ Martijn Kruiten ]
+  * Include slurmdb.h in libslurm-dev (Closes: #944606)
+  * Remove conflicting docs from the slurmd and slurmctld packages
+    (Closes: #942453)
+  * Credit to Martijn for libpam-slurm-adopt in release 19.05.3.2-1.
+    Sorry for not mentioning it before and thank you very much for your
+    contribution!
+
+  [ Gennaro Oliva ]
+  * Remove useless libglade2 build dep (better later than never)
+  * Remove libssh2 build dep
+  * Remove crypto/openssl related stuff
+  * Use python3 to generate html doc (Closes: #938499)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 19 Nov 2019 17:43:13 +0100
+
+slurm-llnl (19.05.3.2-2) unstable; urgency=medium
+
+  * Enable deprecated configure option on 32bit archs
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 15 Oct 2019 09:31:57 +0200
+
+slurm-llnl (19.05.3.2-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2019-12838 (Closes: #931880)
+  * Remove libslurmdb packages as it was merged into libslurm
+  * Bump standard version to 4.4.1 (no changes)
+  * Update d/copyright
+  * Sync configurators with upstream
+  * Refresh patches
+  * Increase libslurm version to 34
+  * Update libslurm symbols file
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 08 Oct 2019 18:18:52 +0200
+
 slurm-llnl (18.08.6.2-1) unstable; urgency=medium
 
   * New upstream release 18.08.6.2

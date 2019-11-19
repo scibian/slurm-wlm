@@ -1,5 +1,5 @@
 /*****************************************************************************\
- **  mpi_pmix.c - Main plugin callbacks for PMIx support in SLURM
+ **  mpi_pmix.c - Main plugin callbacks for PMIx support in Slurm
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
  *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
@@ -104,8 +104,11 @@ static void *_libpmix_open(void)
 	xstrfmtcat(full_path, "%s/", PMIXP_V1_LIBPATH);
 #elif defined PMIXP_V2_LIBPATH
 	xstrfmtcat(full_path, "%s/", PMIXP_V2_LIBPATH);
+#elif defined PMIXP_V3_LIBPATH
+	xstrfmtcat(full_path, "%s/", PMIXP_V3_LIBPATH);
 #endif
 	xstrfmtcat(full_path, "libpmix.so");
+
 	lib_plug = dlopen(full_path, RTLD_LAZY | RTLD_GLOBAL);
 	xfree(full_path);
 
@@ -128,7 +131,7 @@ extern int init(void)
 	libpmix_plug = _libpmix_open();
 	if (!libpmix_plug) {
 		PMIXP_ERROR("pmi/pmix: can not load PMIx library");
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	return SLURM_SUCCESS;
 }
@@ -207,7 +210,7 @@ extern mpi_plugin_client_state_t *p_mpi_hook_client_prelaunch(
 	uint16_t *task_cnt;
 
 	PMIXP_DEBUG("setup process mapping in srun");
-	if ((job->pack_jobid == NO_VAL) || (job->pack_jobid == job->jobid)) {
+	if ((job->pack_jobid == NO_VAL) || (job->pack_task_offset == 0)) {
 		nnodes = job->step_layout->node_cnt;
 		ntasks = job->step_layout->task_cnt;
 		task_cnt = job->step_layout->tasks;

@@ -27,7 +27,7 @@ Slurm can be configured to use multiple slurmctld_plugstack plugins if desired.<
 If specified, identifies the version of Slurm used to build this plugin and
 any attempt to load the plugin from a different version of Slurm will result
 in an error.
-If not specified, then the plugin may be loadeed by Slurm commands and
+If not specified, then the plugin may be loaded by Slurm commands and
 daemons from any version, however this may result in difficult to diagnose
 failures due to changes in the arguments to plugin functions or changes
 in other Slurm functions used by the plugin.</p>
@@ -69,7 +69,7 @@ The fini function will be called when the slurmctld daemon stops accepting RPCs.
 Other functions can be called at any time.
 In the case of the backup slurmctld daemon, the init and fini functions may
 be called multiple times (when it assumes control functions and then when it
-reliquishes them to the primary slurmctld daemon).</p>
+relinquishes them to the primary slurmctld daemon).</p>
 
 
 <p style="text-align:center;">Last modified 24 January 2018</p>

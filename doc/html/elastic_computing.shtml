@@ -64,6 +64,9 @@ configuration found in the slurm.conf, Slurm will tell the client command,
 after waiting for all nodes to boot, each node's ip address. However, in
 environments where the nodes are in DNS, this step can be avoided by
 configuring this option.
+<dt><b>SlurmctldParameters=idle_on_node_suspend</b>
+<dd>Mark nodes as idle, regardless of current state, when suspending nodes with
+SuspendProgram so that nodes will be eligible to be resumed at a later time.
 <dt><b>SuspendExcNodes</b>
 <dd>Nodes not subject to suspend/resume logic. This may be used to avoid
 suspending and resuming nodes which are not in the cloud. Alternately the
@@ -73,8 +76,8 @@ provisioned from cloud.
 <dd>The program executed when a node is no longer required and can be
 relinquished to the cloud.
 <dt><b>SuspendTime</b>
-<dd>The time interval that a node will be left idle before a request is made to
-relinquish it. Units are seconds.
+<dd>The time interval that a node will be left idle or down before a request is
+made to relinquish it. Units are in seconds.
 <dt><b>TCPTimeout</b>
 <dd>Time permitted for TCP connections to be established. This value may need
 to be increased from the default (2 seconds) to account for latency between
@@ -185,6 +188,6 @@ expands (adds resources).</li>
 </ul>
 
 
-<p style="text-align:center;">Last modified 29 May 2019</p>
+<p style="text-align:center;">Last modified 11 November 2019</p>
 
 <!--#include virtual="footer.txt"-->

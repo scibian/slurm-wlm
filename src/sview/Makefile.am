@@ -7,8 +7,8 @@ if BUILD_SVIEW
 
 bin_PROGRAMS = sview
 
-sview_LDADD = $(LIB_SLURMDB) $(DL_LIBS)
-sview_DEPENDENCIES = $(LIB_SLURM_BUILD) $(LIB_SLURMDB_BUILD)
+sview_LDADD = $(LIB_SLURM) $(DL_LIBS)
+sview_DEPENDENCIES = $(LIB_SLURM_BUILD)
 
 noinst_HEADERS = sview.h gthread_helper.h
 sview_SOURCES = sview.c popups.c grid.c part_info.c job_info.c \
@@ -21,7 +21,7 @@ $(sview_LDADD) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`
 
 sview_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(BG_LDFLAGS) $(GTK_LIBS)
-sview_CFLAGS = $(GTK_CFLAGS)
+sview_CFLAGS = $(GTK_CFLAGS) -DGTK_DISABLE_DEPRECATED
 
 else
 
