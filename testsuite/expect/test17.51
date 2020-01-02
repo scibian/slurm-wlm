@@ -221,11 +221,9 @@ if {$found == 0} {
 	 set exit_code 1
 }
 set found 0
-#test sacct if accounting
-# Wait a little after the job started for it to be in the database. This may not
-# be enough time for every system, so we may need to wait longer.
-sleep 5
+#test sacct if accounting, wait a few seconds for accounting data to reach DB
 if { [test_account_storage] != 0 } {
+	sleep 5
 	spawn $sacct -j $job_id --noheader -o "mcslabel"
 	expect {
 		-re "$user_name" {

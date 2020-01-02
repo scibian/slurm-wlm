@@ -39,6 +39,7 @@ source ./inc22.1.1
 source ./inc22.1.2
 source ./inc22.1.3
 source ./inc22.1.4
+source ./inc22.1.5
 source ./inc22.1.fed
 
 set test_id     "22.1"
@@ -296,7 +297,7 @@ if {!$user1acct1 || !$user1acct2 || !$user1acct3 || !$user2acct1 || !$user2acct2
 	exit $exit_code
 }
 
-#get the user association ids for the jobs we plan to add
+#get the wckey ids for the jobs we plan to add
 set user1wckey1 0
 set user2wckey1 0
 set my_pid [eval spawn $sacctmgr -n -p list wckeys users=$users wckeys=$wckey1 cluster=$cluster1 format="user,wckey,id"]
@@ -314,7 +315,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr list associations not responding\n"
+		send_user "\nFAILURE: sacctmgr list wckeys not responding\n"
 		slow_kill $my_pid
 		incr exit_code 1
 	}
@@ -323,7 +324,7 @@ expect {
 	}
 }
 
-if {!$user1wckey1 || !$user1wckey1} {
+if {!$user1wckey1 || !$user2wckey1} {
 	send_user "\nFAILURE:  Didn't get one of the user wckeys $user1wckey1 $user2wckey1.\n"
 	incr exit_code 1
 	remove_user "" "" $users
@@ -473,7 +474,7 @@ proc create_sql {cluster sql_in sql_rem} {
 	# Use sacct to see if the job loaded
 	#
 	set matches 0
-	set my_pid [eval spawn $sacct -p -C $cluster --format=cluster,account,associd,wckey,wckeyid,start,end,elapsed --noheader --start=$start_str --end=$end_str]
+	set my_pid [eval spawn $sacct -p -M $cluster --format=cluster,account,associd,wckey,wckeyid,start,end,elapsed --noheader --start=$start_str --end=$end_str]
 	expect {
 		-re "There was a problem" {
 			send_user "FAILURE: there was a problem with the sacct command\n"
@@ -618,6 +619,10 @@ if {$exit_code ne 0} {
 	end_it
 }
 set exit_code [inc22_1_4]
+if {$exit_code ne 0} {
+	end_it
+}
+set exit_code [inc22_1_5]
 if {$exit_code ne 0} {
 	end_it
 }

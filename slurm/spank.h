@@ -160,7 +160,9 @@ enum spank_item {
     S_JOB_ALLOC_MEM,         /* Job allocated memory in MB (uint64_t *)      */
     S_STEP_ALLOC_CORES,      /* Step alloc'd cores in list format  (char **) */
     S_STEP_ALLOC_MEM,        /* Step alloc'd memory in MB (uint64_t *)       */
-    S_SLURM_RESTART_COUNT    /* Job restart count (uint32_t *)               */
+    S_SLURM_RESTART_COUNT,   /* Job restart count (uint32_t *)               */
+    S_JOB_ARRAY_ID,          /* Slurm job array id (uint32_t *) or 0         */
+    S_JOB_ARRAY_TASK_ID,     /* Slurm job array task id (uint32_t *)         */
 };
 
 typedef enum spank_item spank_item_t;
@@ -302,8 +304,10 @@ spank_err_t spank_option_register (spank_t spank, struct spank_option *opt);
  *  Check whether spank plugin option [opt] has been activated.
  *   If the option takes an argument, then the option argument
  *   (if found) will be returned in *optarg.
- *  This function can only be invoked from slurm_spank_job_prolog() and
- *   slurm_spank_job_epilog().
+ *  This function can be invoked from the following functions:
+ *  slurm_spank_job_prolog, slurm_spank_local_user_init, slurm_spank_user_init,
+ *  slurm_spank_task_init_privileged, slurm_spank_task_init,
+ *  slurm_spank_task_exit, and slurm_spank_job_epilog.
  *
  *  Returns
  *   ESPANK_SUCCESS if the option was used by user. In this case

@@ -58,10 +58,12 @@ char *job_req_inx[] = {
 	"t1.admin_comment",
 	"t1.array_max_tasks",
 	"t1.array_task_str",
+	"t1.constraints",
 	"t1.cpus_req",
 	"t1.derived_ec",
 	"t1.derived_es",
 	"t1.exit_code",
+	"t1.flags",
 	"t1.id_array_job",
 	"t1.id_array_task",
 	"t1.id_assoc",
@@ -85,6 +87,7 @@ char *job_req_inx[] = {
 	"t1.partition",
 	"t1.priority",
 	"t1.state",
+	"t1.state_reason_prev",
 	"t1.system_comment",
 	"t1.time_eligible",
 	"t1.time_end",
@@ -111,10 +114,12 @@ enum {
 	JOB_REQ_ADMIN_COMMENT,
 	JOB_REQ_ARRAY_MAX,
 	JOB_REQ_ARRAY_STR,
+	JOB_REQ_CONSTRAINTS,
 	JOB_REQ_REQ_CPUS,
 	JOB_REQ_DERIVED_EC,
 	JOB_REQ_DERIVED_ES,
 	JOB_REQ_EXIT_CODE,
+	JOB_REQ_FLAGS,
 	JOB_REQ_ARRAYJOBID,
 	JOB_REQ_ARRAYTASKID,
 	JOB_REQ_ASSOCID,
@@ -138,6 +143,7 @@ enum {
 	JOB_REQ_PARTITION,
 	JOB_REQ_PRIORITY,
 	JOB_REQ_STATE,
+	JOB_REQ_STATE_REASON,
 	JOB_REQ_SYSTEM_COMMENT,
 	JOB_REQ_ELIGIBLE,
 	JOB_REQ_END,
@@ -355,14 +361,6 @@ static void _state_time_string(char **extra, char *cluster_name, uint32_t state,
 		return;
 	}
 
-	switch(state) {
-	case JOB_RESIZING:
-	case JOB_REQUEUE:
-		break;
-	default:
-		base_state = state & JOB_STATE_BASE;
-	}
-
 	switch(base_state) {
 	case JOB_PENDING:
 		/*
@@ -418,23 +416,27 @@ static void _state_time_string(char **extra, char *cluster_name, uint32_t state,
 	case JOB_TIMEOUT:
 	case JOB_NODE_FAIL:
 	case JOB_PREEMPTED:
+	case JOB_BOOT_FAIL:
 	case JOB_DEADLINE:
-	default:
-		xstrfmtcat(*extra, "(t1.state='%u' && (t1.time_end && ",
-			   base_state);
-		if (start) {
-			if (!end) {
-				xstrfmtcat(*extra, "(t1.time_end >= %d)))",
-					   start);
-			} else {
-				xstrfmtcat(*extra,
-					   "(t1.time_end between %d and %d)))",
-					   start, end);
-			}
-		} else if (end) {
-			xstrfmtcat(*extra, "(t1.time_end <= %d)))", end);
-		}
+	case JOB_OOM:
+	case JOB_REQUEUE:
+	case JOB_RESIZING:
+	case JOB_REVOKED:
+		/*
+		 * Query assuming that -S and -E are properly set in
+		 * slurmdb_job_cond_def_start_end
+		 *
+		 * Job ending *in* the time window with the specified state.
+		 */
+		xstrfmtcat(*extra,
+		           "(t1.state='%u' && (t1.time_end && "
+		           "(t1.time_end between %d and %d)))",
+		           base_state, start, end);
 		break;
+	default:
+		error("Unsupported state requested: %s",
+		      job_state_string(base_state));
+		xstrfmtcat(*extra, "(t1.state='%u')", base_state);
 	}
 
 	return;
@@ -577,7 +579,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 	   easy to look for duplicates, it is also easy to sort the
 	   resized jobs.
 	*/
-	xstrcat(query, " group by id_job, time_submit desc");
+	xstrcat(query, " order by id_job, time_submit desc");
 
 	if (debug_flags & DEBUG_FLAG_DB_JOB)
 		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
@@ -752,6 +754,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 					      query, 0))) {
 					FREE_NULL_LIST(job_list);
 					job_list = NULL;
+					xfree(query);
 					break;
 				}
 				xfree(query);
@@ -808,6 +811,9 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->derived_es = xstrdup(row[JOB_REQ_DERIVED_ES]);
 		job->admin_comment = xstrdup(row[JOB_REQ_ADMIN_COMMENT]);
 		job->system_comment = xstrdup(row[JOB_REQ_SYSTEM_COMMENT]);
+		job->constraints = xstrdup(row[JOB_REQ_CONSTRAINTS]);
+		job->flags = slurm_atoul(row[JOB_REQ_FLAGS]);
+		job->state_reason_prev = slurm_atoul(row[JOB_REQ_STATE_REASON]);
 
 		if (row[JOB_REQ_PARTITION])
 			job->partition = xstrdup(row[JOB_REQ_PARTITION]);
@@ -1425,6 +1431,65 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 			if (set)
 				xstrcat(*extra, " || ");
 			xstrfmtcat(*extra, "t1.id_assoc='%s'", object);
+			set = 1;
+		}
+		list_iterator_destroy(itr);
+		xstrcat(*extra, ")");
+	}
+
+	if (job_cond->constraint_list &&
+	    list_count(job_cond->constraint_list)) {
+		set = 0;
+		if (*extra)
+			xstrcat(*extra, " && (");
+		else
+			xstrcat(*extra, " where (");
+
+		itr = list_iterator_create(job_cond->constraint_list);
+		while ((object = list_next(itr))) {
+			if (set)
+				xstrcat(*extra, " && ");
+			if (object[0])
+				xstrfmtcat(*extra,
+					   "t1.constraints like '%%%s%%'",
+					   object);
+			else
+				xstrcat(*extra, "t1.constraints=''");
+
+			set = 1;
+		}
+		list_iterator_destroy(itr);
+		xstrcat(*extra, ")");
+	}
+
+	if (job_cond->db_flags != SLURMDB_JOB_FLAG_NOTSET) {
+		set = 1;
+		if (*extra)
+			xstrcat(*extra, " && (");
+		else
+			xstrcat(*extra, " where (");
+
+		if (job_cond->db_flags == SLURMDB_JOB_FLAG_NONE)
+			xstrfmtcat(*extra, "t1.flags = %u", job_cond->db_flags);
+		else
+			xstrfmtcat(*extra, "t1.flags & %u", job_cond->db_flags);
+
+		xstrcat(*extra, ")");
+	}
+
+	if (job_cond->reason_list && list_count(job_cond->reason_list)) {
+		set = 0;
+		if (*extra)
+			xstrcat(*extra, " && (");
+		else
+			xstrcat(*extra, " where (");
+
+		itr = list_iterator_create(job_cond->reason_list);
+		while ((object = list_next(itr))) {
+			if (set)
+				xstrcat(*extra, " || ");
+			xstrfmtcat(*extra, "t1.state_reason_prev='%s'",
+				   object);
 			set = 1;
 		}
 		list_iterator_destroy(itr);

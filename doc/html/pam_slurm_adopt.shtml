@@ -49,10 +49,16 @@ You might have the following account stack in sshd:</p>
 account    required      pam_nologin.so
 account    include       password-auth
 ...
-account    required      pam_slurm_adopt.so
+-account    required      pam_slurm_adopt.so
 </pre>
 
-<p>pam_slurm_adopt must be used with the task/cgroup plugin.
+<p>Note the "-" before the account entry for pam_slurm_adopt. It allows
+PAM to fail gracefully if the pam_slurm_adopt.so file is not found. If Slurm
+is on a shared filesystem, such as NFS, then this is suggested to avoid being
+locked out of a node while the shared filesystem is mounting or down.</p>
+
+<p>pam_slurm_adopt must be used with the task/cgroup task plugin and either the
+proctrack/cgroup or the proctrack/cray_aries proctrack plugin.
 The pam_systemd module will conflict with pam_slurm_adopt, so you need to
 disable it in all files that are included in sshd or system-auth (e.g.
 password-auth, common-session, etc.). You should also stop and mask
@@ -247,6 +253,19 @@ NodeName in <b>slurm.conf</b> that this host operates as.
 </dd>
 </dl>
 
+<dl compact>
+<dt><b>service</b></dt>
+<dd>The pam service name for which this module should run. By default
+it only runs for sshd for which it was designed for. A
+different service name can be specified like "login" or "*" to
+allow the module to in any service context. For local pam logins
+this module could cause unexpected behaviour or even security
+issues. Therefore if the service name does not match then this
+module will not perform the adoption logic and returns
+PAM_IGNORE immediately.
+</dd>
+</dl>
+
 </dl>
 
 <h2><a name="SLURM_CONFIG">Slurm Configuration</a></h2>
@@ -290,6 +309,6 @@ break process adoption with pam_slurm_adopt.</p>
 <p>SELinux may conflict with pam_slurm_adopt, so it might need to be
 disabled.</p>
 
-<p style="text-align:center;">Last modified 11 December 2018</p>
+<p style="text-align:center;">Last modified 29 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

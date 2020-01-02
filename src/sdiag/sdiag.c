@@ -88,7 +88,6 @@ int main(int argc, char **argv)
 			_sort_rpc();
 			rc = _print_stats();
 #ifdef MEMORY_LEAK_DEBUG
-			uid_cache_clear();
 			slurm_free_stats_response_msg(buf);
 			xfree(rpc_type_ave_time);
 			xfree(rpc_user_ave_time);
@@ -184,7 +183,7 @@ static int _print_stats(void)
 		       buf->bf_queue_len_sum / buf->bf_cycle_counter);
 	}
 
-	printf("\nLatency for gettimeofday() (x1000): %d microseconds\n",
+	printf("\nLatency for 1000 calls to gettimeofday(): %d microseconds\n",
 	       buf->gettimeofday_latency);
 
 	printf("\nRemote Procedure Call statistics by message type\n");
@@ -198,11 +197,16 @@ static int _print_stats(void)
 
 	printf("\nRemote Procedure Call statistics by user\n");
 	for (i = 0; i < buf->rpc_user_size; i++) {
+		char *user = uid_to_string_or_null(buf->rpc_user_id[i]);
+		if (!user)
+			xstrfmtcat(user, "%u", buf->rpc_user_id[i]);
+
 		printf("\t%-16s(%8u) count:%-6u "
 		       "ave_time:%-6u total_time:%"PRIu64"\n",
-		       uid_to_string_cached((uid_t)buf->rpc_user_id[i]),
-		       buf->rpc_user_id[i], buf->rpc_user_cnt[i],
+		       user, buf->rpc_user_id[i], buf->rpc_user_cnt[i],
 		       rpc_user_ave_time[i], buf->rpc_user_time[i]);
+
+		xfree(user);
 	}
 
 	printf("\nPending RPC statistics\n");

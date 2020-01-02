@@ -90,9 +90,9 @@
 } while (0)
 
 
-/* Ensure valid bitmap size, prevent overflow in buffer size calcuation */
+/* Ensure valid bitmap size, prevent overflow in buffer size calculation */
 #define _assert_valid_size(bit) do {	\
-	assert((bit) >= 0);		\
+	assert((bit) > 0);		\
 	assert((bit) <= 0x40000000); 	\
 } while (0)
 
@@ -519,7 +519,7 @@ bit_fls(bitstr_t *b)
 
 	bit = _bitstr_bits(b) - 1;	/* zero origin */
 
-	while (bit >= 0 && 		/* test partitial words */
+	while (bit >= 0 && 		/* test partial words */
 		(_bit_word(bit) == _bit_word(bit + 1))) {
 		if (bit_test(b, bit)) {
 			value = bit;
@@ -1241,7 +1241,7 @@ int32_t *bitfmt2int(char *bit_str_ptr)
 }
 
 /*
- * intbitfmt - convert a array of interger (start/end) pairs
+ * intbitfmt - convert a array of integer (start/end) pairs
  *	terminated by -1 (e.g. "0, 30, 45, 45, 50, 60, -1") to a
  *	string describing bitmap (output from bit_fmt, e.g. "0-30,45,50-60")
  * input: int array

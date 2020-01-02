@@ -26,8 +26,8 @@ Current TRES Types are:
 <p>
   The Billing TRES is calculated from a partition's TRESBillingWeights. Though
   TRES weights on a partition may be defined as doubles, the Billing TRES values
-  for a job are stored as integers. This is not the case when calcuating a job's
-  fairshare where the value is treated as a double.
+  for a job are stored as integers. This is not the case when calculating a
+  job's fairshare where the value is treated as a double.
 </p>
 
 <p>
@@ -82,11 +82,9 @@ we would also include gres/gpu for accounting gpus in requests like
 AccountingStorageTRES is configured with each TRES Type.
 The default values are 0.</p>
 
-<p>
-  The Billing TRES is not avaiable for priority calculations because the number
-  isn't generated until after the job has been allocated resources -- since the
-  number can change for different partitions.
-<p>
+<p>The Billing TRES is not available for priority calculations because the
+number isn't generated until after the job has been allocated resources &mdash;
+since the number can change for different partitions.<p>
 </li>
 
 <li><b>TRESBillingWeights</b>

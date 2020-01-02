@@ -115,6 +115,7 @@ enum fed_job_update_type {
 
 typedef struct {
 	uint32_t        cluster_lock;
+	uint32_t        flags;
 	uint32_t        job_id;
 	job_info_msg_t *job_info_msg;
 	job_step_kill_msg_t *kill_msg;
@@ -124,7 +125,6 @@ typedef struct {
 	uint64_t        siblings_viable;
 	char           *siblings_str;
 	time_t          start_time;
-	uint32_t        state;
 	char           *submit_cluster;
 	job_desc_msg_t *submit_desc;
 	uint16_t        submit_proto_ver;
@@ -503,7 +503,7 @@ fini:
 	return SLURM_SUCCESS;
 }
 
-static void _mark_self_as_drained()
+static void _mark_self_as_drained(void)
 {
 	List ret_list;
 	slurmdb_cluster_cond_t cluster_cond;
@@ -532,7 +532,7 @@ static void _mark_self_as_drained()
 	FREE_NULL_LIST(ret_list);
 }
 
-static void _remove_self_from_federation()
+static void _remove_self_from_federation(void)
 {
 	List ret_list;
 	slurmdb_federation_cond_t fed_cond;
@@ -948,7 +948,7 @@ static int _persist_update_job_resp(slurmdb_cluster_rec_t *conn,
  * IN job_id      - the job's id
  * IN return_code - return code of job.
  * IN start_time  - time the fed job started
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 static int _persist_fed_job_revoke(slurmdb_cluster_rec_t *conn, uint32_t job_id,
 				   uint32_t return_code, time_t start_time)
@@ -1013,7 +1013,7 @@ static int _persist_fed_job_response(slurmdb_cluster_rec_t *conn, uint32_t job_i
  * IN job_id     - the job's id
  * IN cluster_id - cluster id of the cluster locking
  * IN do_lock    - true == lock, false == unlock
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 static int _persist_fed_job_lock_bool(slurmdb_cluster_rec_t *conn,
 				      uint32_t job_id, uint32_t cluster_id,
@@ -1038,7 +1038,7 @@ static int _persist_fed_job_lock_bool(slurmdb_cluster_rec_t *conn,
 	req_msg.data             = &sib_msg;
 
 	if (_send_recv_msg(conn, &req_msg, &resp_msg, false)) {
-		rc = SLURM_PROTOCOL_ERROR;
+		rc = SLURM_ERROR;
 		goto end_it;
 	}
 
@@ -1047,12 +1047,12 @@ static int _persist_fed_job_lock_bool(slurmdb_cluster_rec_t *conn,
 		if ((rc = slurm_get_return_code(resp_msg.msg_type,
 						resp_msg.data))) {
 			slurm_seterrno(rc);
-			rc = SLURM_PROTOCOL_ERROR;
+			rc = SLURM_ERROR;
 		}
 		break;
 	default:
 		slurm_seterrno(SLURM_UNEXPECTED_MSG_ERROR);
-		rc = SLURM_PROTOCOL_ERROR;
+		rc = SLURM_ERROR;
 		break;
 	}
 
@@ -1084,7 +1084,7 @@ static int _persist_fed_job_unlock(slurmdb_cluster_rec_t *conn, uint32_t job_id,
  * IN job_id     - the job's id
  * IN cluster_id - cluster id of the cluster that started the job
  * IN start_time - time the fed job started
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 static int _persist_fed_job_start(slurmdb_cluster_rec_t *conn,
 				  uint32_t job_id, uint32_t cluster_id,
@@ -1170,10 +1170,10 @@ static int _persist_fed_job_cancel(slurmdb_cluster_rec_t *conn, uint32_t job_id,
  * IN conn       - sibling connection
  * IN job_id     - the job's id
  * IN start_time - time the fed job started
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 static int _persist_fed_job_requeue(slurmdb_cluster_rec_t *conn,
-				    uint32_t job_id, uint32_t state)
+				    uint32_t job_id, uint32_t flags)
 {
 	int rc;
 	requeue_msg_t requeue_req;
@@ -1185,7 +1185,7 @@ static int _persist_fed_job_requeue(slurmdb_cluster_rec_t *conn,
 
 	requeue_req.job_id     = job_id;
 	requeue_req.job_id_str = NULL;
-	requeue_req.state      = state;
+	requeue_req.flags      = flags;
 
 	slurm_msg_t_init(&tmp_msg);
 	tmp_msg.msg_type         = REQUEST_JOB_REQUEUE;
@@ -1388,7 +1388,7 @@ static int _remove_sibling_bit(struct job_record *job_ptr,
 /*
  * Remove all pending federated jobs from the origin cluster.
  */
-static void _cleanup_removed_origin_jobs()
+static void _cleanup_removed_origin_jobs(void)
 {
 	ListIterator job_itr;
 	struct job_record *job_ptr;
@@ -1802,7 +1802,7 @@ static void _handle_fed_job_requeue(fed_job_update_info_t *job_update_info)
 
 	lock_slurmctld(job_write_lock);
 	if ((rc = job_requeue(job_update_info->uid, job_update_info->job_id,
-			      NULL, false, job_update_info->state)))
+			      NULL, false, job_update_info->flags)))
 		error("failed to requeue fed JobId=%u - rc:%d",
 		      job_update_info->job_id, rc);
 	unlock_slurmctld(job_write_lock);
@@ -2051,7 +2051,7 @@ extern int _handle_fed_job_sync(fed_job_update_info_t *job_update_info)
  * independently get the job read lock. */
 extern int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 {
-        int rc = SLURM_PROTOCOL_SUCCESS;
+        int rc = SLURM_SUCCESS;
 	List jobids;
         slurm_msg_t req_msg, job_msg;
 	sib_msg_t sib_msg = {0};
@@ -2388,6 +2388,32 @@ static void _spawn_threads(void)
 	slurm_mutex_unlock(&job_update_mutex);
 }
 
+static void _add_missing_fed_job_info()
+{
+	struct job_record *job_ptr;
+	ListIterator job_itr;
+
+	slurmctld_lock_t job_read_lock = { .job = READ_LOCK };
+
+	/* Sanity check and add any missing job_info structs */
+	lock_slurmctld(job_read_lock);
+	job_itr = list_iterator_create(job_list);
+	while ((job_ptr = list_next(job_itr))) {
+		uint32_t origin_id;
+
+		if (!_is_fed_job(job_ptr, &origin_id))
+			continue;
+
+		if (!_find_fed_job_info(job_ptr->job_id)) {
+			info("adding missing fed_job_info for job %pJ",
+			     job_ptr);
+			add_fed_job_info(job_ptr);
+		}
+	}
+	list_iterator_destroy(job_itr);
+	unlock_slurmctld(job_read_lock);
+}
+
 extern int fed_mgr_init(void *db_conn)
 {
 	int rc = SLURM_SUCCESS;
@@ -2500,6 +2526,9 @@ extern int fed_mgr_init(void *db_conn)
 	slurmdb_destroy_federation_rec(state_fed);
 
 end_it:
+	/* Call whether state file existed or not. */
+	_add_missing_fed_job_info();
+
 	inited = true;
 	slurm_mutex_unlock(&init_mutex);
 
@@ -2610,7 +2639,7 @@ static void _pack_fed_job_info(fed_job_info_t *job_info, Buf buffer,
 			       uint16_t protocol_version)
 {
 	int i;
-	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		pack32(job_info->cluster_lock, buffer);
 		pack32(job_info->job_id, buffer);
 		pack64(job_info->siblings_active, buffer);
@@ -2634,7 +2663,7 @@ static int _unpack_fed_job_info(fed_job_info_t **job_info_pptr, Buf buffer,
 
 	*job_info_pptr = job_info;
 
-	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&job_info->cluster_lock, buffer);
 		safe_unpack32(&job_info->job_id, buffer);
 		safe_unpack64(&job_info->siblings_active, buffer);
@@ -2663,7 +2692,7 @@ static void _dump_fed_job_list(Buf buffer, uint16_t protocol_version)
 	uint32_t count = NO_VAL;
 	fed_job_info_t *fed_job_info;
 
-	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		/*
 		 * Need to be in the lock to prevent the window between getting
 		 * the count and actually looping on the list.
@@ -2697,7 +2726,7 @@ static List _load_fed_job_list(Buf buffer, uint16_t protocol_version)
 	fed_job_info_t *tmp_job_info = NULL;
 	List tmp_list = NULL;
 
-	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&count, buffer);
 		if (count > NO_VAL)
 			goto unpack_error;
@@ -2807,6 +2836,8 @@ static slurmdb_federation_rec_t *_state_load(char *state_save_location)
 	slurmdb_federation_rec_t *ret_fed = NULL;
 	List tmp_list = NULL;
 
+	slurmctld_lock_t job_read_lock = { .job = READ_LOCK };
+
 	state_file = xstrdup_printf("%s/%s", state_save_location,
 				    FED_MGR_STATE_FILE);
 	if (!(buffer = create_mmap_buf(state_file))) {
@@ -2866,12 +2897,14 @@ static slurmdb_federation_rec_t *_state_load(char *state_save_location)
 
 		slurm_mutex_lock(&fed_job_list_mutex);
 		if (fed_job_list) {
+			lock_slurmctld(job_read_lock);
 			while ((tmp_info = list_pop(tmp_list))) {
 				if (find_job_record(tmp_info->job_id))
 					list_append(fed_job_list, tmp_info);
 				else
 					_destroy_fed_job_info(tmp_info);
 			}
+			unlock_slurmctld(job_read_lock);
 		}
 		slurm_mutex_unlock(&fed_job_list_mutex);
 
@@ -2977,11 +3010,11 @@ extern int fed_mgr_add_sibling_conn(slurm_persist_conn_t *persist_conn,
 	/* Preserve the persist_conn so that the cluster can get the remote
 	 * side's hostname and port to talk back to if it doesn't have it yet.
 	 * See _open_controller_conn().
-	 * Don't lock the the cluster's lock here because a (almost)deadlock
+	 * Don't lock the cluster's lock here because a (almost)deadlock
 	 * could occur if this cluster is opening a connection to the remote
 	 * cluster at the same time the remote cluster is connecting to this
 	 * cluster since the both sides will have the mutex locked in order to
-	 * send/recv. If it did happen the the connection will eventually
+	 * send/recv. If it did happen the connection will eventually
 	 * timeout and resolved itself. */
 	cluster->fed.recv = persist_conn;
 
@@ -3095,7 +3128,7 @@ extern int fed_mgr_update_job(uint32_t job_id, job_desc_msg_t *job_specs,
  * IN msg - contains the original job_desc buffer to send to the siblings.
  * IN alloc_only - true if just an allocation. false if a batch job.
  * IN dest_sibs - bitmap of viable siblings to submit to.
- * RET returns SLURM_SUCCESS if all siblings recieved the job sucessfully or
+ * RET returns SLURM_SUCCESS if all siblings received the job sucessfully or
  * 	SLURM_ERROR if any siblings failed to receive the job. If a sibling
  * 	fails, then the sucessful siblings will be updated with the correct
  * 	sibling bitmap.
@@ -3121,6 +3154,7 @@ static int _submit_sibling_jobs(job_desc_msg_t *job_desc, slurm_msg_t *msg,
 	sib_msg.fed_siblings = job_desc->fed_siblings_viable;
 	sib_msg.job_id       = job_desc->job_id;
 	sib_msg.resp_host    = job_desc->resp_host;
+	sib_msg.submit_host  = job_desc->alloc_node;
 
 	slurm_msg_t_init(&req_msg);
 	req_msg.msg_type = REQUEST_SIB_MSG;
@@ -3762,7 +3796,7 @@ next_lock:
 	/* have to release the lock on those that said yes */
 	_job_unlock_spec_sibs(job_ptr, replied_sibs);
 
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 static int _slurmdbd_conn_active()
@@ -3818,7 +3852,7 @@ extern int fed_mgr_job_lock(struct job_record *job_ptr)
 						   job_ptr->job_id,
 						   cluster_id);
 		} else {
-			rc = SLURM_FAILURE;
+			rc = SLURM_ERROR;
 		}
 
 		if (!rc) {
@@ -4269,11 +4303,11 @@ extern char *fed_mgr_cluster_ids_to_names(uint64_t cluster_ids)
  * after epilog) in fed_mgr_job_requeue().
  *
  * IN job_ptr - job to requeue.
- * IN state   - the state of the requeue (e.g. JOB_RECONFIG_FAIL).
+ * IN flags   - flags for the requeue (e.g. JOB_RECONFIG_FAIL).
  * RET returns SLURM_SUCCESS if siblings submitted successfully, SLURM_ERROR
  * 	otherwise.
  */
-extern int fed_mgr_job_requeue_test(struct job_record *job_ptr, uint32_t state)
+extern int fed_mgr_job_requeue_test(struct job_record *job_ptr, uint32_t flags)
 {
 	uint32_t origin_id;
 
@@ -4293,7 +4327,7 @@ extern int fed_mgr_job_requeue_test(struct job_record *job_ptr, uint32_t state)
 			     job_ptr, origin_id);
 
 		_persist_fed_job_requeue(origin_cluster, job_ptr->job_id,
-					 state);
+					 flags);
 
 		job_ptr->job_state |= JOB_REQUEUE_FED;
 
@@ -4948,6 +4982,7 @@ static int _q_sib_job_submission(slurm_msg_t *msg, bool interactive_job)
 	job_desc_msg_t *job_desc      = sib_msg->data;
 	job_desc->job_id              = sib_msg->job_id;
 	job_desc->fed_siblings_viable = sib_msg->fed_siblings;
+	job_desc->alloc_node          = sib_msg->submit_host;
 	if (interactive_job)
 		job_desc->resp_host = xstrdup(sib_msg->resp_host);
 
@@ -5100,7 +5135,7 @@ static int _q_sib_job_requeue(slurm_msg_t *msg, uint32_t uid)
 
 	job_update_info->type   = FED_JOB_REQUEUE;
 	job_update_info->job_id = req_ptr->job_id;
-	job_update_info->state  = req_ptr->state;
+	job_update_info->flags  = req_ptr->flags;
 	job_update_info->uid    = uid;
 
 	_append_job_update(job_update_info);

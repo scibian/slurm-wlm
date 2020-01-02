@@ -124,6 +124,8 @@ extern char *slurmdb_cluster_fed_states_str(uint32_t states);
 extern uint32_t str_2_cluster_fed_states(char *states);
 extern char *slurmdb_federation_flags_str(uint32_t flags);
 extern uint32_t str_2_federation_flags(char *flags, int option);
+extern char *slurmdb_job_flags_str(uint32_t flags);
+extern uint32_t str_2_job_flags(char *flags);
 extern char *slurmdb_qos_str(List qos_list, uint32_t level);
 extern uint32_t str_2_slurmdb_qos(List qos_list, char *level);
 extern char *slurmdb_qos_flags_str(uint32_t flags);
@@ -292,5 +294,6 @@ extern char *slurmdb_ave_tres_usage(char *tres_string, int tasks);
 extern int slurmdb_setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec);
 
 extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond);
+extern int slurmdb_job_sort_by_submit_time(void *v1, void *v2);
 
 #endif
