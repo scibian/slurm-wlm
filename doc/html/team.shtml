@@ -14,18 +14,22 @@ Lead Slurm developers are:
 <li>Marshall Garey (SchedMD)</li>
 <li>Albert Gil (SchedMD)</li>
 <li>Michael Hinton (SchedMD)</li>
+<li>Gavin Howard (SchedMD)</li>
 <li>Morris Jette (SchedMD)</li>
 <li>Felip Moll (SchedMD)</li>
 <li>Ben Roberts (SchedMD)</li>
 <li>Alejandro (Alex) Sanchez (SchedMD)</li>
+<li>Marcin Stolarek (SchedMD)</li>
+<li>Chad Vizino (SchedMD)</li>
 <li>Tim Wickberg (SchedMD)</li>
+<li>Douglas Wightman (SchedMD)</li>
 </ul>
 
 <p>Slurm contributors include:</p>
 <ul>
 <!-- MAJOR CONTRIBUTING ORGANIZATIONS, PLEASE KEEP IN ALPHABETICAL ORDER -->
 <li><a href="http://www.bsc.es">Barcelona Supercomputing Center</a></li>
-<li><a href="http://www.bull.com">Bull</a></li>
+<li><a href="http://www.bull.com">Bull/Atos</a></li>
 <li><a href="http://www.cea.fr">CEA</a></li>
 <li><a href="http://www.cray.com">Cray</a></li>
 <li><a href="http://www.fhcrc.org">Fred Hutchinson Cancer Research Center</a></li>
@@ -191,6 +195,7 @@ Lead Slurm developers are:
 <li>Mark Nelson (IBM)</li>
 <li>Jessica Nettelblad (UPPMAX)</li>
 <li>Ole H. Nielsen (Technical University of Denmark)</li>
+<li>Bas Nijholt (Delft University of Technology)</li>
 <li>Jim Nordby (Cray)</li>
 <li>Michal Novotny (Masaryk University, Czech Republic)</li>
 <br>
@@ -238,6 +243,7 @@ Lead Slurm developers are:
 <li>Uwe Sauter (High Performance Computing Center Stuttgart, Germany)</li>
 <li>Chris Scheller (University of Michigan)</li>
 <li>Rod Schultz (Bull)</li>
+<li>Josh Schwartz (Cray)</li>
 <li>Samuel Senoner (Vienna University of Technology, Austria)</li>
 <li>Tim Shaw (SchedMD)</li>
 <li>David Singleton</li>
@@ -258,6 +264,7 @@ Lead Slurm developers are:
 <li>Adam Todorski (Rensselaer Polytechnic Institute)</li>
 <li>Giovanni Torres (National Institutes of Health)</li>
 <li>Stephen Trofinoff (Swiss National Supercomputing Centre)</li>
+<li>Robert Tweedy (Emory University)</li>
 <br>
 <li>Garrison Vaughan</li>
 <br>
@@ -279,6 +286,6 @@ Lead Slurm developers are:
 <!-- INDIVIDUALS, PLEASE KEEP IN ALPHABETICAL ORDER -->
 </ul>
 
-<p style="text-align:center;">Last modified 22 September 2017</p>
+<p style="text-align:center;">Last modified 7 May 2019</p>
 
 <!--#include virtual="footer.txt"-->

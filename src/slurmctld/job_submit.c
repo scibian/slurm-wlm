@@ -106,10 +106,9 @@ extern int job_submit_plugin_init(void)
 	tmp_plugin_list = xstrdup(submit_plugin_list);
 	names = tmp_plugin_list;
 	while ((type = strtok_r(names, ",", &last))) {
-		xrealloc(ops,
-			 (sizeof(slurm_submit_ops_t) * (g_context_cnt + 1)));
-		xrealloc(g_context,
-			 (sizeof(plugin_context_t *) * (g_context_cnt + 1)));
+		xrecalloc(ops, g_context_cnt + 1, sizeof(slurm_submit_ops_t));
+		xrecalloc(g_context, g_context_cnt + 1,
+			  sizeof(plugin_context_t *));
 		if (xstrncmp(type, "job_submit/", 11) == 0)
 			type += 11; /* backward compatibility */
 		type = xstrdup_printf("job_submit/%s", type);
@@ -226,6 +225,10 @@ extern int job_submit_plugin_submit(struct job_descriptor *job_desc,
 	xassert(verify_lock(PART_LOCK, READ_LOCK));
 
 	START_TIMER;
+
+	/* Set to NO_VAL so that it can only be set by the job submit plugin. */
+	job_desc->site_factor = NO_VAL;
+
 	rc = job_submit_plugin_init();
 	slurm_mutex_lock(&g_context_lock);
 	/* NOTE: On function entry read locks are set on config, job, node and
@@ -258,6 +261,10 @@ extern int job_submit_plugin_modify(struct job_descriptor *job_desc,
 	xassert(verify_lock(PART_LOCK, READ_LOCK));
 
 	START_TIMER;
+
+	/* Set to NO_VAL so that it can only be set by the job submit plugin. */
+	job_desc->site_factor = NO_VAL;
+
 	rc = job_submit_plugin_init();
 	slurm_mutex_lock(&g_context_lock);
 	for (i = 0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)

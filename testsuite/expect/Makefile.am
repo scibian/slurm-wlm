@@ -2,13 +2,6 @@
 AUTOMAKE_OPTIONS = foreign
 
 EXTRA_DIST = \
-	mpi-testscripts/allred.c	\
-	mpi-testscripts/allred_timed.c	\
-	mpi-testscripts/alltoall.c	\
-	mpi-testscripts/alltoall_timed.c	\
-	mpi-testscripts/barrier_timed.c	\
-	mpi-testscripts/Makefile	\
-	mpi-testscripts/script.slurm.sh	\
 	globals				\
 	globals_accounting		\
 	README				\
@@ -140,6 +133,7 @@ EXTRA_DIST = \
 	test1.113			\
 	test1.114			\
 	test1.115			\
+	test1.117			\
 	test2.1				\
 	test2.2				\
 	test2.3				\
@@ -186,12 +180,15 @@ EXTRA_DIST = \
 	inc3.11.6			\
 	inc3.11.7			\
 	inc3.11.8			\
+	inc3.11.9			\
+	inc3.11.10			\
 	test3.12			\
 	test3.13			\
 	test3.14			\
 	test3.15			\
 	test3.16			\
 	test3.17			\
+	test3.18			\
 	test4.1				\
 	test4.2				\
 	test4.3				\
@@ -234,6 +231,7 @@ EXTRA_DIST = \
 	test6.13.prog.c			\
 	test6.14			\
 	test6.15			\
+	test6.15.prog.c			\
 	test6.16			\
 	test6.17			\
 	test7.1				\
@@ -248,6 +246,7 @@ EXTRA_DIST = \
 	test7.5.prog.c			\
 	test7.6				\
 	test7.6.prog.c			\
+	test7.7				\
 	test7.9				\
 	test7.9.prog.c			\
 	test7.10			\
@@ -283,6 +282,8 @@ EXTRA_DIST = \
 	test7.18.prog.c			\
 	test7.19			\
 	test7.20			\
+	test7.21			\
+	test7.21.prog.c			\
 	test9.1				\
 	test9.2				\
 	test9.3				\
@@ -385,7 +386,6 @@ EXTRA_DIST = \
 	test17.4			\
 	test17.5			\
 	test17.6			\
-	test17.7			\
 	test17.8			\
 	test17.9			\
 	test17.10			\
@@ -524,6 +524,8 @@ EXTRA_DIST = \
 	inc22.1.2                       \
 	inc22.1.3                       \
 	inc22.1.4                       \
+	inc22.1.5                       \
+	inc22.1.fed                     \
 	test22.2			\
 	test23.1			\
 	test23.2			\
@@ -534,9 +536,10 @@ EXTRA_DIST = \
 	test24.3.prog.c			\
 	test24.4			\
 	test24.4.prog.c			\
+	test24.5			\
+	test24.6			\
+	test24.7			\
 	test25.1			\
-	test26.1			\
-	test26.2			\
 	test27.1			\
 	test27.2			\
 	test27.3			\
@@ -553,6 +556,8 @@ EXTRA_DIST = \
 	test28.9			\
 	test28.10			\
 	test28.11			\
+	test28.12			\
+	test28.13			\
 	test29.1                        \
 	test29.2                        \
 	test29.3                        \
@@ -592,6 +597,7 @@ EXTRA_DIST = \
 	test35.3			\
 	test35.4			\
 	test35.5			\
+	test35.6			\
 	test36.1			\
 	test36.2			\
 	test36.3			\
@@ -630,7 +636,41 @@ EXTRA_DIST = \
 	test38.14			\
 	test38.15			\
 	test38.16			\
-	test38.17
+	test38.17			\
+	test39.1			\
+	test39.2			\
+	test39.3			\
+	test39.4			\
+	test39.5			\
+	test39.6			\
+	test39.7			\
+	test39.8			\
+	test39.9			\
+	test39.10			\
+	test39.11			\
+	test39.12			\
+	test39.13			\
+	test39.14			\
+	test39.15			\
+	test39.16			\
+	test39.17			\
+	test39.18			\
+	test39.18.prog.c		\
+	test39.18.ulong.c		\
+	test39.19			\
+	test39.20			\
+	test39.21			\
+	test39.21.prog.cu		\
+	test39.22			\
+	test39.23			\
+	test40.1			\
+	test40.2			\
+	test40.3			\
+	test40.4			\
+	test40.5			\
+	test40.6			\
+	test40.8			\
+	test40.8.prog.cu
 
 distclean-local:
 	rm -rf *error *output

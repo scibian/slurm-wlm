@@ -117,7 +117,7 @@ static int  _preserve_select_type_param(slurm_ctl_conf_t * ctl_conf_ptr,
 					uint16_t old_select_type_p);
 static int  _preserve_plugins(slurm_ctl_conf_t * ctl_conf_ptr,
 			      char *old_auth_type, char *old_checkpoint_type,
-			      char *old_crypto_type, char *old_sched_type,
+			      char *old_cred_type, char *old_sched_type,
 			      char *old_select_type, char *old_switch_type,
 			      char *old_bb_type);
 static void _purge_old_node_state(struct node_record *old_node_table_ptr,
@@ -145,7 +145,7 @@ static int  _update_preempt(uint16_t old_enable_preempt);
 /*
  * Setup the global response_cluster_rec
  */
-static void _set_response_cluster_rec()
+static void _set_response_cluster_rec(void)
 {
 	if (response_cluster_rec)
 		return;
@@ -161,6 +161,19 @@ static void _set_response_cluster_rec()
 	}
 	response_cluster_rec->control_port = slurmctld_conf.slurmctld_port;
 	response_cluster_rec->rpc_version = SLURM_PROTOCOL_VERSION;
+	response_cluster_rec->plugin_id_select = select_get_plugin_id();
+}
+
+/*
+ * Free the global response_cluster_rec
+ */
+extern void cluster_rec_free(void)
+{
+	if (response_cluster_rec) {
+		xfree(response_cluster_rec->control_host);
+		xfree(response_cluster_rec->name);
+		xfree(response_cluster_rec);
+	}
 }
 
 /* Verify that Slurm directories are secure, not world writable */
@@ -463,6 +476,8 @@ static int _build_bitmaps(void)
 		}
 		if (IS_NODE_POWER_SAVE(node_ptr))
 			bit_set(power_node_bitmap, i);
+		if (IS_NODE_POWERING_DOWN(node_ptr))
+			bit_clear(avail_node_bitmap, i);
 		if (IS_NODE_FUTURE(node_ptr))
 			bit_set(future_node_bitmap, i);
 
@@ -927,7 +942,7 @@ static int _reset_part_prio(void *x, void *arg)
 static void _sync_part_prio(void)
 {
 	/* reset global value from part list */
-	part_max_priority = 0;
+	part_max_priority = DEF_PART_MAX_PRIORITY;
 	list_for_each(part_list, _set_max_part_prio, NULL);
 	/* renormalize values after finding new max */
 	list_for_each(part_list, _reset_part_prio, NULL);
@@ -1091,7 +1106,7 @@ int read_slurm_conf(int recover, bool reconfig)
 	char *old_auth_type       = xstrdup(slurmctld_conf.authtype);
 	char *old_bb_type         = xstrdup(slurmctld_conf.bb_type);
 	char *old_checkpoint_type = xstrdup(slurmctld_conf.checkpoint_type);
-	char *old_crypto_type     = xstrdup(slurmctld_conf.crypto_type);
+	char *old_cred_type       = xstrdup(slurmctld_conf.cred_type);
 	uint16_t old_preempt_mode = slurmctld_conf.preempt_mode;
 	char *old_preempt_type    = xstrdup(slurmctld_conf.preempt_type);
 	char *old_sched_type      = xstrdup(slurmctld_conf.schedtype);
@@ -1100,11 +1115,7 @@ int read_slurm_conf(int recover, bool reconfig)
 	char *state_save_dir      = xstrdup(slurmctld_conf.state_save_location);
 	char *mpi_params;
 	uint16_t old_select_type_p = slurmctld_conf.select_type_param;
-	char *tok, *save_ptr = NULL;
-	bool over_memory_kill = false;
-	bool cgroup_mem_confinement= false;
-	char *task_plugin_type = NULL;
-	slurm_cgroup_conf_t slurm_cgroup_conf;
+	bool cgroup_mem_confinement = false;
 
 	/* initialization */
 	START_TIMER;
@@ -1149,40 +1160,17 @@ int read_slurm_conf(int recover, bool reconfig)
 		return error_code;
 	}
 
-	if (slurmctld_conf.job_acct_gather_params) {
-		tok = strtok_r(slurmctld_conf.job_acct_gather_params,
-			       ",", &save_ptr);
-		while(tok) {
-			if (xstrcasecmp(tok, "OverMemoryKill") == 0) {
-				over_memory_kill = true;
-				break;
-			}
-			tok = strtok_r(NULL, ",", &save_ptr);
-		}
-	}
+	if (reconfig)
+		xcgroup_reconfig_slurm_cgroup_conf();
 
-	memset(&slurm_cgroup_conf, 0, sizeof(slurm_cgroup_conf_t));
-	if (!read_slurm_cgroup_conf(&slurm_cgroup_conf)) {
-		task_plugin_type = slurm_get_task_plugin();
+	cgroup_mem_confinement = xcgroup_mem_cgroup_job_confinement();
 
-		if ((slurm_cgroup_conf.constrain_ram_space ||
-		     slurm_cgroup_conf.constrain_swap_space) &&
-		    strstr(task_plugin_type, "cgroup"))
-			cgroup_mem_confinement = true;
-
-		xfree(task_plugin_type);
-		free_slurm_cgroup_conf(&slurm_cgroup_conf);
-	}
-
-	if (slurmctld_conf.mem_limit_enforce || over_memory_kill) {
-		if (cgroup_mem_confinement)
-			fatal("Incompatible memory enforcement mechanisms task/cgroup and JobAcctGather are set. You must disable one of them.");
-		else
-			info("Memory enforcing by using JobAcctGather's mechanism is discouraged, task/cgroup is recommended where available.");
-	} else {
-		if (!cgroup_mem_confinement)
-			info("No memory enforcing mechanism configured.");
-	}
+	if (slurmctld_conf.job_acct_oom_kill && cgroup_mem_confinement)
+		fatal("Jobs memory is being constrained by both TaskPlugin cgroup and JobAcctGather plugin. This enables two incompatible memory enforcement mechanisms, one of them must be disabled.");
+	else if (slurmctld_conf.job_acct_oom_kill)
+		info("Memory enforcing by using JobAcctGather's mechanism is discouraged, task/cgroup is recommended where available.");
+	else if (!cgroup_mem_confinement)
+		info("No memory enforcing mechanism configured.");
 
 	if (layouts_init() != SLURM_SUCCESS) {
 		if (test_config) {
@@ -1458,7 +1446,7 @@ int read_slurm_conf(int recover, bool reconfig)
 	/* Update plugins as possible */
 	rc = _preserve_plugins(&slurmctld_conf,
 			       old_auth_type, old_checkpoint_type,
-			       old_crypto_type, old_sched_type,
+			       old_cred_type, old_sched_type,
 			       old_select_type, old_switch_type, old_bb_type);
 	error_code = MAX(error_code, rc);	/* not fatal */
 
@@ -1504,6 +1492,7 @@ int read_slurm_conf(int recover, bool reconfig)
 		_acct_restore_active_jobs();
 
 	/* Sync select plugin with synchronized job/node/part data */
+	gres_plugin_reconfig();		/* Clear gres/mps counters */
 	select_g_reconfigure();
 	if (reconfig && (slurm_mcs_reconfig() != SLURM_SUCCESS))
 		fatal("Failed to reconfigure mcs plugin");
@@ -1749,11 +1738,10 @@ static void _gres_reconfig(bool reconfig)
 {
 	struct node_record *node_ptr;
 	char *gres_name;
-	bool gres_changed;
-	int i, total_threads, total_cores;
+	int i;
 
 	if (reconfig) {
-		gres_plugin_reconfig(&gres_changed);
+		gres_plugin_reconfig();
 	} else {
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
@@ -1767,22 +1755,20 @@ static void _gres_reconfig(bool reconfig)
 				continue;
 
 			/*
-			 * Load in gres for node now. By default Slurm gets this
+			 * Load in GRES for node now. By default Slurm gets this
 			 * information when the node registers for the first
 			 * time, which can take a while for a node in the cloud
 			 * to boot.
 			 */
 			gres_plugin_node_config_load(
 				node_ptr->config_ptr->cpus, node_ptr->name,
-				NULL);
-			total_cores = node_ptr->config_ptr->sockets *
-				node_ptr->config_ptr->cores;
-			total_threads = total_cores *
-				node_ptr->config_ptr->threads;
+				node_ptr->gres_list, NULL, NULL);
 			gres_plugin_node_config_validate(
 				node_ptr->name, node_ptr->config_ptr->gres,
 				&node_ptr->gres, &node_ptr->gres_list,
-				total_threads, total_cores,
+				node_ptr->config_ptr->threads,
+				node_ptr->config_ptr->cores,
+				node_ptr->config_ptr->sockets,
 				slurmctld_conf.fast_schedule, NULL);
 		}
 	}
@@ -2487,7 +2473,7 @@ static int _update_preempt(uint16_t old_preempt_mode)
  */
 static int  _preserve_plugins(slurm_ctl_conf_t * ctl_conf_ptr,
 		char *old_auth_type, char *old_checkpoint_type,
-		char *old_crypto_type, char *old_sched_type,
+		char *old_cred_type, char *old_sched_type,
 		char *old_select_type, char *old_switch_type,
 		char *old_bb_type)
 {
@@ -2517,12 +2503,12 @@ static int  _preserve_plugins(slurm_ctl_conf_t * ctl_conf_ptr,
 		xfree(old_checkpoint_type);
 	}
 
-	if (xstrcmp(old_crypto_type, ctl_conf_ptr->crypto_type)) {
-		xfree(ctl_conf_ptr->crypto_type);
-		ctl_conf_ptr->crypto_type = old_crypto_type;
-		rc = ESLURM_INVALID_CRYPTO_TYPE_CHANGE;
+	if (xstrcmp(old_cred_type, ctl_conf_ptr->cred_type)) {
+		xfree(ctl_conf_ptr->cred_type);
+		ctl_conf_ptr->cred_type = old_cred_type;
+		rc = ESLURM_INVALID_CRED_TYPE_CHANGE;
 	} else {	/* free duplicate value */
-		xfree(old_crypto_type);
+		xfree(old_cred_type);
 	}
 
 	if (xstrcmp(old_sched_type, ctl_conf_ptr->schedtype)) {
@@ -2879,8 +2865,7 @@ _compare_hostnames(struct node_record *old_node_table,
 	for (cc = 0; cc < node_count; cc++)
 		hostset_insert(set, node_table[cc].name);
 
-	set_size = MAXHOSTNAMELEN * node_count * sizeof(char)
-		+ node_count * sizeof(char) + 1;
+	set_size = MAXHOSTNAMELEN * node_count + node_count + 1;
 
 	old_ranged = xmalloc(set_size);
 	ranged = xmalloc(set_size);

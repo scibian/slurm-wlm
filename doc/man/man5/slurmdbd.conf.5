@@ -1,4 +1,4 @@
-.TH "slurmdbd.conf" "5" "Slurm Configuration File" "May 2019" "Slurm Configuration File"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "July 2019" "Slurm Configuration File"
 
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
@@ -128,6 +128,11 @@ default Munge daemon provides authentication within a cluster.
 In that case, this will specify the pathname of the socket to use. Per default
 this value is left unspecified, which results in the default authentication
 mechanism being used.
+
+.TP
+\fBAuthAltTypes\fR
+Command separated list of alternative authentication plugins that the slurmdbd
+will permit for communication.
 
 .TP
 \fBAuthType\fR
@@ -511,11 +516,15 @@ If not set (default), then job step records are never purged.
 
 .TP
 \fBSlurmUser\fR
-The name of the user that the \fBslurmctld\fR daemon executes as.
+The name of the user that the \fBslurmdbd\fR daemon executes as.
 This user must exist on the machine executing the Slurm Database Daemon
-and have the same user ID as the hosts on which \fBslurmctld\fR execute.
+and have the same UID as the hosts on which \fBslurmctld\fR execute.
 For security purposes, a user other than "root" is recommended.
-The default value is "root".
+The default value is "root". This name should also be the same SlurmUser
+on all clusters reporting to the SlurmDBD.
+NOTE: If this user is different from the one set for \fBslurmctld\fR and is not
+root, it must be added to accounting with AdminLevel=Admin and \fBslurmctld\fR
+must be restarted.
 
 .TP
 \fBStorageHost\fR
@@ -566,18 +575,18 @@ with to store the job accounting data.
 Time permitted for TCP connection to be established. Default value is 2 seconds.
 
 .TP
+\fBTrackSlurmctldDown\fR
+Boolean yes or no.  If set the slurmdbd will mark all idle resources on the
+cluster as down when a slurmctld disconnects or is no longer reachable.  The
+default is no.
+
+.TP
 \fBTrackWCKey\fR
 Boolean yes or no.  Used to set display and track of the Workload
 Characterization Key. Must be set to track wckey usage.  This must be set to
 generate rolled up usage tables from WCKeys.
 NOTE: If TrackWCKey is set here and not in your various slurm.conf files all
 jobs will be attributed to their default WCKey.
-
-.TP
-\fBTrackSlurmctldDown\fR
-Boolean yes or no.  If set the slurmdbd will mark all idle resources on the
-cluster as down when a slurmctld disconnects or is no longer reachable.  The
-default is no.
 
 .SH "EXAMPLE"
 .LP

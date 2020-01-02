@@ -409,7 +409,7 @@ static char *_getline(const char *prompt)
 		buf[len-1] = '\0';
 	else
 		len++;
-	line = malloc(len * sizeof(char));
+	line = malloc(len);
 	if (!line)
 		return NULL;
 	strlcpy(line, buf, len);
@@ -430,7 +430,7 @@ static void _job_rep (int argc, char **argv)
 	/* For backwards compatibility we just look at the 1st char
 	 * by default since Sizes was the original name */
 	if (!xstrncasecmp(argv[0], "SizesByAccount", MAX(command_len, 1))) {
-		error_code = job_sizes_grouped_by_top_acct(
+		error_code = job_sizes_grouped_by_acct(
 			(argc - 1), &argv[1]);
 	} else if (!xstrncasecmp(argv[0],
 				 "SizesByWcKey", MAX(command_len, 8))) {
@@ -439,7 +439,7 @@ static void _job_rep (int argc, char **argv)
 	} else if (!xstrncasecmp(argv[0],
 				"SizesByAccountAndWcKey",
 				MAX(command_len, 15))) {
-		error_code = job_sizes_grouped_by_top_acct_and_wckey(
+		error_code = job_sizes_grouped_by_acct_and_wckey(
 			(argc - 1), &argv[1]);
 	} else {
 		exit_code = 1;
@@ -910,16 +910,19 @@ sreport [<OPTION>] [<COMMAND>]                                             \n\
                                   or WCKeyUtilizationByUser, List of wckeys\n\
                                   to include in report.  Default is all.   \n\
                                                                            \n\
-     job     - Accounts=<OPT>   - List of accounts to use for the report   \n\
-                                  Default is all.  The SizesbyAccount(*)   \n\
-                                  report only displays 1 hierarchical level.\n\
-                                  If accounts are specified the next layer \n\
-                                  of accounts under those specified will be\n\
-                                  displayed, not the accounts specified.   \n\
-                                  In the SizesByAccount(*) reports the     \n\
-                                  default for accounts is root.  This      \n\
-                                  explanation does not apply when ran with \n\
-                                  the FlatView option.                     \n\
+     job     - Accounts=<OPT>   - List of accounts to use for the report.  \n\
+                                  Default is all, which will show only     \n\
+                                  one line corresponding to the totals of  \n\
+                                  all accounts in the hierarchy.           \n\
+                                  This explanation does not apply when ran \n\
+                                  with the FlatView or AcctAsParent option.\n\
+             - AcctAsParent     - When used with the SizesbyAccount(*)     \n\
+                                  will take specified accounts as parents  \n\
+                                  and the next layer of accounts under     \n\
+                                  those specified will be displayed.       \n\
+                                  Default is root if no Accounts specified.\n\
+                                  When FlatView is used, this option is    \n\
+                                  ignored.                                 \n\
              - FlatView         - When used with the SizesbyAccount(*)     \n\
                                   will not group accounts in a             \n\
                                   hierarchical level, but print each       \n\

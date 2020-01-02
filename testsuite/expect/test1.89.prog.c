@@ -27,7 +27,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 #define _GNU_SOURCE
-#define __USE_GNU
 #include <errno.h>
 #include <inttypes.h>
 #include <sched.h>
@@ -42,12 +41,7 @@ static void _load_mask(cpu_set_t *mask)
 {
 	int rc;
 
-#ifdef SCHED_GETAFFINITY_THREE_ARGS
-	rc = sched_getaffinity((pid_t) 0, (unsigned int) sizeof(cpu_set_t),
-		mask);
-#else
-	rc = sched_getaffinity((pid_t) 0, mask);
-#endif
+	rc = sched_getaffinity((pid_t) 0, sizeof(cpu_set_t), mask);
 	if (rc != 0) {
 		fprintf(stderr, "ERROR: sched_getaffinity: %s\n",
 			strerror(errno));

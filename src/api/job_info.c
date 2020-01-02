@@ -221,7 +221,7 @@ extern void slurm_get_job_stdin(char *buf, int buf_size, job_info_t * job_ptr)
 	else if (job_ptr->batch_flag == 0)
 		snprintf(buf, buf_size, "%s", "");
 	else
-		snprintf(buf, buf_size, "%s", "StdIn=/dev/null");
+		snprintf(buf, buf_size, "%s", "/dev/null");
 }
 
 /* Given a job record pointer, return its stdout path in buf */
@@ -350,7 +350,6 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	char *tmp6_ptr;
 	char tmp_line[1024 * 128];
 	char tmp_path[MAXPATHLEN];
-	char *ionodes = NULL;
 	uint16_t exit_status = 0, term_sig = 0;
 	job_resources_t *job_resrcs = job_ptr->job_resrcs;
 	char *out = NULL;
@@ -385,6 +384,10 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 			xstrfmtcat(out, "ArrayJobId=%u ArrayTaskId=%u ",
 				   job_ptr->array_job_id,
 				   job_ptr->array_task_id);
+		}
+		if (job_ptr->array_max_tasks) {
+			xstrfmtcat(out, "ArrayTaskThrottle=%u ",
+				   job_ptr->array_max_tasks);
 		}
 	} else if (job_ptr->pack_job_id) {
 		xstrfmtcat(out, "PackJobId=%u PackJobOffset=%u ",
@@ -536,24 +539,36 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 	xstrcat(out, line_end);
 
-	/****** Line 10 ******/
-	if (job_ptr->preempt_time == 0)
-		xstrcat(out, "PreemptTime=None ");
-	else {
-		slurm_make_time_str(&job_ptr->preempt_time, time_str, sizeof(time_str));
-		xstrfmtcat(out, "PreemptTime=%s ", time_str);
+	/****** Line ******/
+	/*
+	 * only print this line if preemption is enabled and job started
+	 * 	see src/slurmctld/job_mgr.c:pack_job, 'preemptable'
+	 */
+	if (job_ptr->preemptable_time) {
+		slurm_make_time_str(&job_ptr->preemptable_time,
+				    time_str, sizeof(time_str));
+		xstrfmtcat(out, "PreemptEligibleTime=%s ", time_str);
+
+		if (job_ptr->preempt_time == 0)
+			xstrcat(out, "PreemptTime=None");
+		else {
+			slurm_make_time_str(&job_ptr->preempt_time, time_str,
+					    sizeof(time_str));
+			xstrfmtcat(out, "PreemptTime=%s", time_str);
+		}
+
+		xstrcat(out, line_end);
 	}
 
+	/****** Line 10 ******/
 	if (job_ptr->suspend_time) {
 		slurm_make_time_str(&job_ptr->suspend_time, time_str, sizeof(time_str));
 		xstrfmtcat(out, "SuspendTime=%s ", time_str);
 	} else
 		xstrcat(out, "SuspendTime=None ");
 
-	xstrfmtcat(out, "SecsPreSuspend=%ld", (long int)job_ptr->pre_sus_time);
-	xstrcat(out, line_end);
+	xstrfmtcat(out, "SecsPreSuspend=%ld ", (long int)job_ptr->pre_sus_time);
 
-	/****** Line ******/
 	slurm_make_time_str(&job_ptr->last_sched_eval, time_str,
 			    sizeof(time_str));
 	xstrfmtcat(out, "LastSchedEval=%s", time_str);
@@ -571,10 +586,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 	/****** Line 13 ******/
 	xstrfmtcat(out, "%s=%s", nodelist, job_ptr->nodes);
-	if (job_ptr->nodes && ionodes) {
-		xstrfmtcat(out, "[%s]", ionodes);
-		xfree(ionodes);
-	}
+
 	if (job_ptr->sched_nodes)
 		xstrfmtcat(out, " Sched%s=%s", nodelist, job_ptr->sched_nodes);
 
@@ -618,7 +630,10 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrfmtcat(out, "NumCPUs=%s ", tmp_line);
 
 	xstrfmtcat(out, "NumTasks=%u ", job_ptr->num_tasks);
-	xstrfmtcat(out, "CPUs/Task=%u ", job_ptr->cpus_per_task);
+	if (job_ptr->cpus_per_task == NO_VAL16)
+		xstrfmtcat(out, "CPUs/Task=N/A ");
+	else
+		xstrfmtcat(out, "CPUs/Task=%u ", job_ptr->cpus_per_task);
 
 	if (job_ptr->boards_per_node == NO_VAL16)
 		xstrcat(out, "ReqB:S:C:T=*:");
@@ -753,7 +768,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 						hl_last);
 					xstrfmtcat(out,
 						   "  Nodes=%s CPU_IDs=%s "
-						   "Mem=%"PRIu64" GRES_IDX=%s",
+						   "Mem=%"PRIu64" GRES=%s",
 						   last_hosts, tmp2,
 						   last_mem_alloc_ptr ?
 						   last_mem_alloc : 0,
@@ -794,7 +809,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 		if (hostlist_count(hl_last)) {
 			last_hosts = hostlist_ranged_string_xmalloc(hl_last);
-			xstrfmtcat(out, "  Nodes=%s CPU_IDs=%s Mem=%"PRIu64" GRES_IDX=%s",
+			xstrfmtcat(out, "  Nodes=%s CPU_IDs=%s Mem=%"PRIu64" GRES=%s",
 				 last_hosts, tmp2,
 				 last_mem_alloc_ptr ? last_mem_alloc : 0,
 				 gres_last);
@@ -1218,7 +1233,7 @@ static int _load_fed_jobs(slurm_msg_t *req_msg,
 		xfree(hash_job_id);
 	}
 
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -1499,7 +1514,7 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 		break;
 	}
 
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -1804,7 +1819,7 @@ int slurm_job_cpus_allocated_str_on_node(char *cpus,
  * OUT job_id -  ID of the job or NO_VAL
  * OUT node_name - name of the remote slurmd
  * IN node_name_size - size of the node_name buffer
- * RET SLURM_PROTOCOL_SUCCESS or SLURM_FAILURE on error
+ * RET SLURM_SUCCESS or SLURM_ERROR on error
  */
 extern int
 slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
@@ -1837,7 +1852,7 @@ slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
 		addr.sin_family = AF_INET;
 		target_slurmd = inet_addr("127.0.0.1"); //choose a test target
 		*/
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	} else
 		memcpy(&target_slurmd, req.ip_src, 4);
 
@@ -1868,7 +1883,7 @@ slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
 	}
 
 	slurm_free_network_callerid_msg(resp_msg.data);
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 static int
@@ -2049,7 +2064,7 @@ static int _load_fed_job_prio(slurm_msg_t *req_msg,
 	if (!*factors_resp) {
 		*factors_resp =
 			xmalloc(sizeof(priority_factors_response_msg_t));
-		return SLURM_PROTOCOL_SUCCESS;
+		return SLURM_SUCCESS;
 	}
 
 	/* Find duplicate job records and jobs local to other clusters and set
@@ -2081,10 +2096,8 @@ static int _load_fed_job_prio(slurm_msg_t *req_msg,
 			continue;
 		hash_job_inx = prio_obj->job_id % JOB_HASH_SIZE;
 		if (prio_obj->partition) {
-			uint32_t hf_hashv = 0;
 			HASH_FCN(prio_obj->partition,
-				 strlen(prio_obj->partition), 1000000,
-				 hf_hashv, hash_part_inx);
+				 strlen(prio_obj->partition), hash_part_inx);
 		} else {
 			hash_part_inx = 0;
 		}
@@ -2125,7 +2138,7 @@ static int _load_fed_job_prio(slurm_msg_t *req_msg,
 		xfree(hash_part_id);
 	}
 
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 /*
