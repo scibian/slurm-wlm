@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "June 2018" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "May 2019" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -98,6 +98,12 @@ Does not support federated cluster information (local data only).
 .IP
 
 .TP
+\f3\-C \fP\f2constraint_list\fP\f3,\fP \f3\-\-constraints\fP\f3=\fP\f2constraint_list\fP
+Comma separated list to filter jobs based on what constraints/features the job
+requested.  Multiple options will be treated as 'and' not 'or', so the job would
+need all constraints specified to be returned not one or the other.
+
+.TP
 \f3\-\-delimiter\f3=\fP\f2characters\fP
 ASCII characters used to separate the fields when specifying
 the \f3\-p\fP or \f3\-P\fP options. The default delimiter
@@ -137,33 +143,34 @@ Account             AdminComment        AllocCPUS           AllocGRES
 AllocNodes          AllocTRES           AssocID             AveCPU
 AveCPUFreq          AveDiskRead         AveDiskWrite        AvePages
 AveRSS              AveVMSize           BlockID             Cluster
-Comment             ConsumedEnergy      ConsumedEnergyRaw   CPUTime
-CPUTimeRAW          DerivedExitCode     Elapsed             ElapsedRaw
-Eligible            End                 ExitCode            GID
-Group               JobID               JobIDRaw            JobName
-Layout              MaxDiskRead         MaxDiskReadNode     MaxDiskReadTask
-MaxDiskWrite        MaxDiskWriteNode    MaxDiskWriteTask    MaxPages
-MaxPagesNode        MaxPagesTask        MaxRSS              MaxRSSNode
-MaxRSSTask          MaxVMSize           MaxVMSizeNode       MaxVMSizeTask
-McsLabel            MinCPU              MinCPUNode          MinCPUTask
-NCPUS               NNodes              NodeList            NTasks
-Priority            Partition           QOS                 QOSRAW
-ReqCPUFreq          ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov
-ReqCPUS             ReqGRES             ReqMem              ReqNodes
-ReqTRES             Reservation         ReservationId       Reserved
-ResvCPU             ResvCPURAW          Start               State
-Submit              Suspended           SystemCPU           SystemComment
-Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
-TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
-TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
-TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin
-TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot     UID
-User                UserCPU             WCKey               WCKeyID
-WorkDir
+Comment             Constraints         ConsumedEnergy      ConsumedEnergyRaw
+CPUTime             CPUTimeRAW          DerivedExitCode     Elapsed
+ElapsedRaw          Eligible            End                 ExitCode
+Flags               GID                 Group               JobID
+JobIDRaw            JobName             Layout              MaxDiskRead
+MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite        MaxDiskWriteNode
+MaxDiskWriteTask    MaxPages            MaxPagesNode        MaxPagesTask
+MaxRSS              MaxRSSNode          MaxRSSTask          MaxVMSize
+MaxVMSizeNode       MaxVMSizeTask       McsLabel            MinCPU
+MinCPUNode          MinCPUTask          NCPUS               NNodes
+NodeList            NTasks              Priority            Partition
+QOS                 QOSRAW              Reason              ReqCPUFreq
+ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov       ReqCPUS
+ReqGRES             ReqMem              ReqNodes            ReqTRES
+Reservation         ReservationId       Reserved            ResvCPU
+ResvCPURAW          Start               State               Submit
+Suspended           SystemCPU           SystemComment       Timelimit
+TimelimitRaw        TotalCPU            TRESUsageInAve      TRESUsageInMax
+TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin      TRESUsageInMinNode
+TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve     TRESUsageOutMax
+TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin     TRESUsageOutMinNode
+TRESUsageOutMinTask TRESUsageOutTot     UID                 User
+UserCPU             WCKey               WCKeyID             WorkDir
 .ft 1
 .fi
 .RE
 .IP
+
 NOTE: When using with Ave[RSS|VM]Size or their values in
 TRESUsageIn[Ave|Tot].  They represent the average/total of the highest
 watermarks over all ranks in the step.  When using sstat they represent the
@@ -202,6 +209,12 @@ named \f2file\fP instead of the current Slurm job accounting log
 file. Only applicable when running the filetxt plugin.
 
 .TP
+\f3\-F \fP\f2flag_list\fP\f3,\fP  \f3\-\-flags\fP\f3=\fP\f2flag_list\fP
+Comma separated list to filter jobs based on what various ways the jobs were
+handled.  Current flags are SchedSubmit, SchedMain, SchedBackfill.  These
+particular options describe the scheduler that started the job.
+
+.TP
 \f3\-g \fP\f2gid_list\fP\f3, \-\-gid=\fP\f2gid_list\fP \f3\-\-group=\fP\f2group_list\fP
 Displays the statistics only for the jobs started with the GID
 or the GROUP specified by the \f2gid_list\fP or the \f2group_list\fP operand, which is a comma\-separated
@@ -225,9 +238,7 @@ The
 parameter is a comma\-separated list of jobs.
 Space characters are not permitted in this list.
 NOTE: A step id of 'batch' will display the information about the
-batch step.  The batch step information is only available after the
-batch job is complete unlike regular steps which are available when
-they start.
+batch step.
 .IP
 By default sacct shows only jobs with Eligible time, but with this
 option the non-eligible will be also shown.
@@ -341,7 +352,12 @@ Comma separated list of partitions to select jobs and job steps
 from. The default is all partitions.
 
 .TP
-\f3\-s \fP\f2state_list\fP \f3, \-\-state\fP\f3=\fP\f2state_list\fP
+\f3\-R \fP\f2reason_list\fP\f3,\fP  \f3\-\-reason\fP\f3=\fP\f2reason_list\fP
+Comma separated list to filter jobs based on what reason the job wasn't
+scheduled outside resources/priority.
+
+.TP
+\f3\-s \fP\f2state_list\fP\f3,\fP \f3\-\-state\fP\f3=\fP\f2state_list\fP
 Selects jobs based on their state during the time period given.
 Unless otherwise specified, the start and end time will be the
 current time when the \f3\-\-state\fP option is specified and
@@ -416,12 +432,12 @@ Print version.
 \f3\-\-whole\-hetjob=[yes|no]\fP
 When querying heterogeneous jobs, Slurm by default retrieves the information
 about all the components of the job if the pack_job_id (leader) is selected. If
-a non-leader hetjob component is selected only that component is retrieved by
-default. This behavior can be changed by using this option. If set to 'yes' or
-no value is set, then information about all the components will be retrieved no
-matter which component is selected in the job filter. Otherwise, if set to 'no'
-then only the selected hetjob components will be retrieved, even when selecting
-the leader.
+a non\-leader heterogeneous job component is selected only that component is
+retrieved by default. This behavior can be changed by using this option. If
+set to 'yes' or no value is set, then information about all the components
+will be retrieved no matter which component is selected in the job filter.
+Otherwise, if set to 'no' then only the selected heterogeneous job components
+will be retrieved, even when selecting the leader.
 
 .TP
 \f3\-W \fP\f2wckey_list\fP\f3, \-\-wckeys=\fP\f2wckey_list\fP
@@ -801,7 +817,7 @@ to print suspended jobs you must request SUSPENDED at a different call
 from RUNNING.
 
 NOTE: The RUNNING state will return any jobs completed (cancelled or otherwise)
-in the time period requested as the job was also RUNNING durning that time.  If
+in the time period requested as the job was also RUNNING during that time.  If
 you are only looking for jobs that finished, please choose the appropriate
 state(s) without the RUNNING state.
 
@@ -972,18 +988,18 @@ values of \fB\-\-starttime\fR  and \fB\-\-endtime\fR options are:
 .TP
 \f3WITHOUT EITHER \fB\-\-jobs\fR NOR \fB\-\-state\fR\fP specified:
 .RS
-.IP\fB\-\-\-starttime\fR
+.IP \fB\-\-\-starttime\fR
 Defaults to Midnight.
-.IP\fB\-\-\-endtime\fR
+.IP \fB\-\-\-endtime\fR
 Defaults to Now.
 .RE
 
 .TP
 \f3WITH \fB\-\-jobs\fR AND WITHOUT \fB\-\-state\fR\fP specified:
 .RS
-.IP\fB\-\-\-starttime\fR
+.IP \fB\-\-\-starttime\fR
 Defaults to Epoch 0.
-.IP\fB\-\-\-endtime\fR
+.IP \fB\-\-\-endtime\fR
 Defaults to Now.
 .RE
 
@@ -1000,9 +1016,9 @@ specified.
 .TP
 \f3WITH BOTH \fB\-\-jobs\fR AND \fB\-\-state\fR\fP specified:
 .RS
-.IP\fB\-\-\-starttime\fR
+.IP \fB\-\-\-starttime\fR
 Defaults to Epoch 0.
-.IP\fB\-\-\-endtime\fR
+.IP \fB\-\-\-endtime\fR
 Defaults to \-\-starttime or to Now if \-\-starttime is not
 specified.
 .RE

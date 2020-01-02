@@ -33,6 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE
+
 #include "affinity.h"
 
 /* Older versions of sched.h (ie. Centos5) don't include CPU_OR. */
@@ -226,19 +228,13 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 	return false;
 }
 
-/* For sysctl() functions */
-#if defined(__FreeBSD__) || defined(__NetBSD__)
-#include <sys/types.h>
-#include <sys/sysctl.h>
-#endif
-
 #define	BUFFLEN	127
 
 /* Return true if Power7 processor */
 static bool _is_power_cpu(void)
 {
 	if (is_power == -1) {
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#ifdef HAVE_SYSCTLBYNAME
 
 		char    buffer[BUFFLEN+1];
 		size_t  len = BUFFLEN;
@@ -333,10 +329,8 @@ int slurm_setaffinity(pid_t pid, size_t size, const cpu_set_t *mask)
 #ifdef __FreeBSD__
         rval = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID,
 				pid, size, mask);
-#elif defined(SCHED_GETAFFINITY_THREE_ARGS)
-	rval = sched_setaffinity(pid, size, mask);
 #else
-	rval = sched_setaffinity(pid, mask);
+	rval = sched_setaffinity(pid, size, mask);
 #endif
 	if (rval) {
 		verbose("sched_setaffinity(%d,%zu,0x%s) failed: %m",
@@ -363,10 +357,8 @@ int slurm_getaffinity(pid_t pid, size_t size, cpu_set_t *mask)
 #ifdef __FreeBSD__
         rval = cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID,
 				pid, size, mask);
-#elif defined(SCHED_GETAFFINITY_THREE_ARGS)
-	rval = sched_getaffinity(pid, size, mask);
 #else
-	rval = sched_getaffinity(pid, mask);
+	rval = sched_getaffinity(pid, size, mask);
 #endif
 	if (rval) {
 		verbose("sched_getaffinity(%d,%zu,0x%s) failed with status %d",

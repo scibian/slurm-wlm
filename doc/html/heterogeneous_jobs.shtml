@@ -47,7 +47,6 @@ A list of propagated options follows.</p>
 <li>--acctg-freq</li>
 <li>--begin</li>
 <li>--checkpoint</li>
-<li>--checkpoint-dir</li>
 <li>--cluster-constraint</li>
 <li>--clusters</li>
 <li>--comment</li>
@@ -108,7 +107,7 @@ A list of propagated options follows.</p>
 <p>The task distribution specification applies separately within each job
 component. Consider for example a heterogeneous job with each component being
 allocated 4 CPUs on 2 nodes. In our example, job component zero is allocated
-2 CPUs on node "nid00001" and 2 CPUs on node "nid00002". Job component zero is
+2 CPUs on node "nid00001" and 2 CPUs on node "nid00002". Job component one is
 allocated 2 CPUs on node "nid00003" and 2 CPUs on node "nid00004". A task
 distribution of "cyclic" will distribute the first 4 tasks in a cyclic fashion
 on nodes "nid00001" and "nid00002", then distribute the next 4 tasks in a cyclic
@@ -242,7 +241,7 @@ first component. We refer to this as the "heterogeneous job leader".</li>
 <li><i>pack_job_id_set</i>: Regular expression identifying all <i>job_id</i>
 values associated with the job.</li>
 <li><i>pack_job_offset</i>: A unique sequence number applied to each component
-of the heterogeneous job. The first component will have a <i>>pack_job_offset</i>
+of the heterogeneous job. The first component will have a <i>pack_job_offset</i>
 value of 0, the next a value of 1, etc.</li>
 </ul>
 
@@ -316,7 +315,7 @@ A request to modify a job by specifying the pack_job_id will modify all
 components of a heterogeneous job.
 For example:</p>
 <pre>
-# Change the account of compnent 2 of heterogeneous job 123:
+# Change the account of component 2 of heterogeneous job 123:
 $ scontrol update jobid=123+2 account=abc
 
 # Change the time limit of all components of heterogeneous job 123:
@@ -499,12 +498,12 @@ error: Attempt to run a job step with pack-group value of 2,
 <h2><a name="env_var">Environment Variables</a></h2>
 
 <p>Slurm environment variables will be set independently for each component of
-the job by appending "_PACK_GROUP_" and a sequence number the the usual name.
+the job by appending "_PACK_GROUP_" and a sequence number the usual name.
 In addition, the "SLURM_JOB_ID" environment variable will contain the job ID
 of the heterogeneous job leader and "SLURM_PACK_SIZE" will contain the number of
 components in the job. If using srun with a single specific pack group (for
 instance --pack-group=1) "SLURM_JOB_ID" will contain the job ID of that specific
-component, behaving like a regular (non hetjob). For example:</p>
+component, behaving like a regular (non-heterogeneous job). For example:</p>
 <pre>
 $ salloc -N1 : -N2 bash
 salloc: Pending job allocation 11741
@@ -615,8 +614,6 @@ The more frequently executed scheduling logic only starts jobs on a first-in
 first-out (FIFO) basis and lacks logic for concurrently scheduling all
 components of a heterogeneous job.</p>
 
-<p>Heterogeneous jobs are not supported with Slurm's select/serial plugin.</p>
-
 <p>Heterogeneous jobs are not supported on Cray ALPS systems.</p>
 
 <p>Heterogeneous jobs are not supported on IBM PE systems.</p>
@@ -714,6 +711,6 @@ Such a situation will have an adverse effect upon scheduling other jobs,
 especially other heterogeneous jobs.</p>
 
 
-<p style="text-align:center;">Last modified 16 October 2018</p>
+<p style="text-align:center;">Last modified 9 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

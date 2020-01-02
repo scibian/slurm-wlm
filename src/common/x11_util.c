@@ -2,7 +2,7 @@
  *  x11_util.c - x11 forwarding support functions
  *		 also see src/slurmd/slurmstepd/x11_forwarding.[ch]
  *****************************************************************************
- *  Copyright (C) 2017 SchedMD LLC.
+ *  Copyright (C) 2017-2019 SchedMD LLC.
  *  Written by Tim Wickberg <tim@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -36,6 +36,9 @@
 \*****************************************************************************/
 
 #include <regex.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "src/common/list.h"
 #include "src/common/read_config.h"
@@ -75,12 +78,31 @@ uint16_t x11_str2flags(const char *str)
 	return flags;
 }
 
-
-/* set target port based on DISPLAY */
-extern int x11_get_display_port(void)
+const char *x11_flags2str(uint16_t flags)
 {
-	int port;
+	if (flags & X11_FORWARD_ALL)
+		return "all";
+	if (flags & X11_FORWARD_BATCH)
+		return "batch";
+	if (flags & X11_FORWARD_FIRST)
+		return "first";
+	if (flags & X11_FORWARD_LAST)
+		return "last";
+
+	return "unset";
+}
+
+/*
+ * Get local TCP port for X11 from DISPLAY environment variable, alongside an
+ * xmalloc()'d hostname in *target. If the port returned is 0, *target returns
+ * an xmalloc()'d string pointing to the local UNIX socket.
+ *
+ * Warning - will call exit(-1) if not able to retrieve.
+ */
+extern void x11_get_display(uint16_t *port, char **target)
+{
 	char *display, *port_split, *port_period;
+	*target = NULL;
 
 	display = xstrdup(getenv("DISPLAY"));
 
@@ -90,9 +112,19 @@ extern int x11_get_display_port(void)
 	}
 
 	if (display[0] == ':') {
-		error("Cannot forward to local display. "
-		      "Can only use X11 forwarding with network displays.");
-		exit(-1);
+		struct stat st;
+		char *screen_period;
+		*port = 0;
+		screen_period = strchr(display, '.');
+		if (screen_period)
+			*screen_period = '\0';
+		xstrfmtcat(*target, "/tmp/.X11-unix/X%s", display + 1);
+		xfree(display);
+		if (stat(*target, &st) != 0) {
+			error("Cannot stat() local X11 socket `%s`", *target);
+			exit(-1);
+		}
+		return;
 	}
 
 	/*
@@ -105,6 +137,7 @@ extern int x11_get_display_port(void)
 		      "Cannot use X11 forwarding.");
 		exit(-1);
 	}
+	*port_split = '\0';
 
 	/*
 	 * Handle the "screen" portion of the display port.
@@ -115,11 +148,8 @@ extern int x11_get_display_port(void)
 	if (port_period)
 		*port_period = '\0';
 
-	port = atoi(port_split) + X11_TCP_PORT_OFFSET;
-
-	xfree(display);
-
-	return port;
+	*port = atoi(port_split) + X11_TCP_PORT_OFFSET;
+	*target = display;
 }
 
 extern char *x11_get_xauth(void)
@@ -151,7 +181,8 @@ extern char *x11_get_xauth(void)
 	xauth_argv[1] = xstrdup("list");
 	xauth_argv[2] = xstrdup(getenv("DISPLAY"));
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, &status);
+	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, 0,
+			     &status);
 
 	debug2("%s: result from xauth: %s", __func__, result);
 
@@ -198,7 +229,8 @@ extern int x11_set_xauth(char *xauthority, char *cookie,
 	xauth_argv[i++] = NULL;
 	xassert(i < 10);
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, &status);
+	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, 0,
+			     &status);
 
 	free_command_argv(xauth_argv);
 
@@ -224,7 +256,8 @@ extern int x11_delete_xauth(char *xauthority, char *host, uint16_t display)
 	xauth_argv[i++] = NULL;
 	xassert(i < 10);
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, &status);
+	result = run_command("xauth", XAUTH_PATH, xauth_argv, 10000, 0,
+			     &status);
 
 	free_command_argv(xauth_argv);
 

@@ -113,8 +113,8 @@ static pthread_mutex_t lua_lock = PTHREAD_MUTEX_INITIALIZER;
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-int accounting_enforce __attribute__((weak_import)) = 0;
-void *acct_db_conn  __attribute__((weak_import)) = NULL;
+extern int accounting_enforce __attribute__((weak_import));
+extern void *acct_db_conn  __attribute__((weak_import));
 #else
 int accounting_enforce = 0;
 void *acct_db_conn = NULL;
@@ -348,12 +348,14 @@ static int _job_rec_field(const struct job_record *job_ptr,
 			lua_pushnumber (L, 0);
 	} else if (!xstrcmp(name, "min_mem_per_node")) {
 		if (job_ptr->details &&
+		    (job_ptr->details->pn_min_memory != NO_VAL64) &&
 		    !(job_ptr->details->pn_min_memory & MEM_PER_CPU))
 			lua_pushnumber(L, job_ptr->details->pn_min_memory);
 		else
 			lua_pushnil(L);
 	} else if (!xstrcmp(name, "min_mem_per_cpu")) {
 		if (job_ptr->details &&
+		    (job_ptr->details->pn_min_memory != NO_VAL64) &&
 		    (job_ptr->details->pn_min_memory & MEM_PER_CPU))
 			lua_pushnumber(L, job_ptr->details->pn_min_memory &
 				       ~MEM_PER_CPU);
@@ -364,6 +366,8 @@ static int _job_rec_field(const struct job_record *job_ptr,
 			lua_pushnumber (L, job_ptr->details->min_nodes);
 		else
 			lua_pushnumber (L, 0);
+	} else if (!xstrcmp(name, "name")) {
+		lua_pushstring (L, job_ptr->name);
 	} else if (!xstrcmp(name, "nice")) {
 		if (job_ptr->details)
 			lua_pushnumber (L, job_ptr->details->nice);
@@ -403,6 +407,13 @@ static int _job_rec_field(const struct job_record *job_ptr,
 		lua_pushnumber (L, job_ptr->reboot);
 	} else if (!xstrcmp(name, "req_switch")) {
 		lua_pushnumber (L, job_ptr->req_switch);
+	} else if (!xstrcmp(name, "site_factor")) {
+		if (job_ptr->site_factor == NO_VAL)
+			lua_pushnumber(L, job_ptr->site_factor);
+		else
+			lua_pushnumber(L,
+				       (((int64_t)job_ptr->site_factor)
+					- NICE_OFFSET));
 	} else if (!xstrcmp(name, "spank_job_env")) {
 		if ((job_ptr->spank_job_env_size == 0) ||
 		    (job_ptr->spank_job_env == NULL)) {
@@ -821,9 +832,11 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 	} else if (!xstrcmp(name, "min_cpus")) {
 		lua_pushnumber (L, job_desc->min_cpus);
 	} else if (!xstrcmp(name, "min_mem_per_node") &&
+		   (job_desc->pn_min_memory != NO_VAL64) &&
 		   !(job_desc->pn_min_memory & MEM_PER_CPU)) {
 		lua_pushnumber (L, job_desc->pn_min_memory);
 	} else if (!xstrcmp(name, "min_mem_per_cpu") &&
+		   (job_desc->pn_min_memory != NO_VAL64) &&
 		   (job_desc->pn_min_memory & MEM_PER_CPU)) {
 		lua_pushnumber (L, (job_desc->pn_min_memory & (~MEM_PER_CPU)));
 	} else if (!xstrcmp(name, "min_nodes")) {
@@ -876,6 +889,13 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->script);
 	} else if (!xstrcmp(name, "shared")) {
 		lua_pushnumber (L, job_desc->shared);
+	} else if (!xstrcmp(name, "site_factor")) {
+		if (job_desc->site_factor == NO_VAL)
+			lua_pushnumber(L, job_desc->site_factor);
+		else
+			lua_pushnumber(L,
+				       (((int64_t)job_desc->site_factor)
+					- NICE_OFFSET));
 	} else if (!xstrcmp(name, "sockets_per_board")) {
 		lua_pushnumber (L, job_desc->sockets_per_board);
 	} else if (!xstrcmp(name, "sockets_per_node")) {
@@ -1151,6 +1171,11 @@ static int _set_job_req_field(lua_State *L)
 			job_desc->script = xstrdup(value_str);
 	} else if (!xstrcmp(name, "shared")) {
 		job_desc->shared = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "site_factor")) {
+		job_desc->site_factor = luaL_checknumber(L, 3);
+		if (job_desc->site_factor != NO_VAL)
+			job_desc->site_factor =
+				NICE_OFFSET + job_desc->site_factor;
 	} else if (!xstrcmp(name, "sockets_per_node")) {
 		job_desc->sockets_per_node = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "std_err")) {
@@ -1266,16 +1291,32 @@ static int _part_rec_field(const struct part_record *part_ptr,
 	if (part_ptr == NULL) {
 		error("_get_part_field: part_ptr is NULL");
 		lua_pushnil (L);
+	} else if (!xstrcmp(name, "allow_accounts")) {
+		lua_pushstring (L, part_ptr->allow_accounts);
+	} else if (!xstrcmp(name, "allow_alloc_nodes")) {
+		lua_pushstring (L, part_ptr->allow_alloc_nodes);
+	} else if (!xstrcmp(name, "allow_groups")) {
+		lua_pushstring (L, part_ptr->allow_groups);
 	} else if (!xstrcmp(name, "allow_qos")) {
 		lua_pushstring (L, part_ptr->allow_qos);
+	} else if (!xstrcmp(name, "alternate")) {
+		lua_pushstring (L, part_ptr->alternate);
+	} else if (!xstrcmp(name, "billing_weights_str")) {
+		lua_pushstring (L, part_ptr->billing_weights_str);
 	} else if (!xstrcmp(name, "default_time")) {
 		lua_pushnumber (L, part_ptr->default_time);
 	} else if (!xstrcmp(name, "def_mem_per_cpu") &&
+		  (part_ptr->def_mem_per_cpu != NO_VAL64) &&
 		  (part_ptr->def_mem_per_cpu & MEM_PER_CPU)) {
 		lua_pushnumber (L, part_ptr->def_mem_per_cpu & (~MEM_PER_CPU));
 	} else if (!xstrcmp(name, "def_mem_per_node") &&
+		  (part_ptr->def_mem_per_cpu != NO_VAL64) &&
 		  !(part_ptr->def_mem_per_cpu & MEM_PER_CPU)) {
 		lua_pushnumber (L, part_ptr->def_mem_per_cpu);
+	} else if (!xstrcmp(name, "deny_accounts")) {
+		lua_pushstring (L, part_ptr->deny_accounts);
+	} else if (!xstrcmp(name, "deny_qos")) {
+		lua_pushstring (L, part_ptr->deny_qos);
 	} else if (!xstrcmp(name, "flag_default")) {
 		int is_default = 0;
 		if (part_ptr->flags & PART_FLAG_DEFAULT)
@@ -1286,9 +1327,11 @@ static int _part_rec_field(const struct part_record *part_ptr,
 	} else if (!xstrcmp(name, "max_cpus_per_node")) {
 		lua_pushnumber (L, part_ptr->max_cpus_per_node);
 	} else if (!xstrcmp(name, "max_mem_per_cpu") &&
+		  (part_ptr->max_mem_per_cpu != NO_VAL64) &&
 		  (part_ptr->max_mem_per_cpu & MEM_PER_CPU)) {
 		lua_pushnumber (L, part_ptr->max_mem_per_cpu & (~MEM_PER_CPU));
 	} else if (!xstrcmp(name, "max_mem_per_node") &&
+		  (part_ptr->max_mem_per_cpu != NO_VAL64) &&
 		  !(part_ptr->max_mem_per_cpu & MEM_PER_CPU)) {
 		lua_pushnumber (L, part_ptr->max_mem_per_cpu);
 	} else if (!xstrcmp(name, "max_nodes")) {
@@ -1471,10 +1514,10 @@ static void _register_lua_slurm_output_functions (void)
 	/*
 	 * Error codes: slurm.SUCCESS, slurm.FAILURE, slurm.ERROR, etc.
 	 */
-	lua_pushnumber (L, SLURM_FAILURE);
-	lua_setfield (L, -2, "FAILURE");
 	lua_pushnumber (L, SLURM_ERROR);
 	lua_setfield (L, -2, "ERROR");
+	lua_pushnumber (L, SLURM_ERROR);
+	lua_setfield (L, -2, "FAILURE");
 	lua_pushnumber (L, SLURM_SUCCESS);
 	lua_setfield (L, -2, "SUCCESS");
 	lua_pushnumber (L, ESLURM_ACCESS_DENIED);
@@ -1642,13 +1685,20 @@ static int _load_script(void)
 	}
 	
 	if (st.st_mtime <= lua_script_last_loaded) {
+		debug3("%s: skipping loading Lua script: %s", __func__,
+		       lua_script_path);
 		return SLURM_SUCCESS;
 	}
+	debug3("%s: loading Lua script: %s", __func__, lua_script_path);
 
 	/*
 	 *  Initilize lua
 	 */
-	L = luaL_newstate();
+	if ((L = luaL_newstate()) == NULL) {
+		error("%s: luaL_newstate() failed to allocate.", __func__);
+		return SLURM_ERROR;
+	}
+
 	luaL_openlibs(L);
 	if (luaL_loadfile(L, lua_script_path)) {
 		if (L_orig) {
@@ -1727,7 +1777,7 @@ static int _load_script(void)
 
 	if (L_orig)
 		lua_close(L_orig);
-	lua_script_last_loaded = time(NULL);
+	lua_script_last_loaded = st.st_mtime;
 	return SLURM_SUCCESS;
 }
 
@@ -1753,6 +1803,7 @@ int init(void)
 int fini(void)
 {
 	if (L) {
+		debug3("%s: Unloading Lua script", __func__);
 		lua_close(L);
 		L = NULL;
 		lua_script_last_loaded = 0;
@@ -1768,7 +1819,8 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid,
 	int rc = SLURM_ERROR;
 	slurm_mutex_lock (&lua_lock);
 
-	(void) _load_script();
+	if ((rc = _load_script()))
+		goto out;
 
 	/*
 	 *  All lua script functions should have been verified during

@@ -380,10 +380,10 @@
 #    define strong_alias(name, aliasname) \
      extern __typeof (name) aliasname __attribute ((alias (#name)))
 #  else
-     /* dummy function definition,
-      * confirm "aliasname" is free and waste "name" */
 #    define strong_alias(name, aliasname) \
-     extern void aliasname(int name)
+     __asm__(".global _" #aliasname); \
+     __asm__(".set _" #aliasname ", _" #name); \
+     extern __typeof (name) aliasname
 #  endif
 #endif
 
@@ -401,7 +401,7 @@ do {									\
 } while (0)
 
 /* There are places where we put NO_VAL or INFINITE into a float or double
- * Use fuzzy_equal below to test for those values rather than an comparision
+ * Use fuzzy_equal below to test for those values rather than an comparison
  * which could fail due to rounding errors. */
 #define FUZZY_EPSILON 0.00001
 #define fuzzy_equal(v1, v2) ((((v1)-(v2)) > -FUZZY_EPSILON) && (((v1)-(v2)) < FUZZY_EPSILON))

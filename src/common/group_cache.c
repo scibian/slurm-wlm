@@ -168,8 +168,17 @@ static int _group_cache_lookup_internal(gids_cache_needle_t *needle, gid_t **gid
 
 	/* Cache lookup failed or entry value was too old, fetch new
 	 * value and insert it into cache.  */
+#if defined(__APPLE__)
+	/*
+	 * macOS has (int *) for the third argument instead
+	 * of (gid_t *) like FreeBSD, NetBSD, and Linux.
+	 */
+	while (getgrouplist(entry->username, entry->gid,
+			    (int *)entry->gids, &entry->ngids) == -1) {
+#else
 	while (getgrouplist(entry->username, entry->gid,
 			    entry->gids, &entry->ngids) == -1) {
+#endif
 		/* group list larger than array, resize array to fit */
 		entry->gids = xrealloc(entry->gids,
 				       entry->ngids * sizeof(gid_t));
@@ -177,11 +186,12 @@ static int _group_cache_lookup_internal(gids_cache_needle_t *needle, gid_t **gid
 
 out:
 	ngids = entry->ngids;
+	xfree(*gids);
 	*gids = copy_gids(entry->ngids, entry->gids);
 
 	slurm_mutex_unlock(&gids_mutex);
 
-	END_TIMER3("group_cache_lookup(), you might consider enabling LaunchParameters=send_gids",
+	END_TIMER3("group_cache_lookup() took",
 		   3000000);
 
 	return ngids;
@@ -240,6 +250,20 @@ extern gid_t *copy_gids(int ngids, gid_t *gids)
 	size = ngids * sizeof(gid_t);
 	result = xmalloc(size);
 	memcpy(result, gids, size);
+
+	return result;
+}
+
+extern char **copy_gr_names(int ngids, char **gr_names)
+{
+	char **result;
+
+	if (!ngids || !gr_names)
+		return NULL;
+
+	result = xcalloc(ngids, sizeof(char *));
+	for (int i = 0; i < ngids; i++)
+		result[i] = xstrdup(gr_names[i]);
 
 	return result;
 }

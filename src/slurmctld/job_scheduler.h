@@ -172,17 +172,6 @@ extern int reboot_job_nodes(struct job_record *job_ptr);
 extern void rebuild_job_part_list(struct job_record *job_ptr);
 
 /*
- * Given that one batch job just completed, attempt to launch a suitable
- * replacement batch job in a response messge as a REQUEST_BATCH_JOB_LAUNCH
- * message type, alternately send a return code fo SLURM_SUCCESS
- * msg IN - The original message from slurmd
- * fini_job_ptr IN - Pointer to job that just completed and needs replacement
- * locked IN - whether the job_write lock is locked or not.
- * RET true if there are pending jobs that might use the resources
- */
-extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job, bool locked);
-
-/*
  * schedule - attempt to schedule all pending jobs
  *	pending jobs for each partition will be scheduled in priority
  *	order until a request fails
@@ -233,5 +222,21 @@ extern int test_job_dependency(struct job_record *job_ptr);
  * RET returns an error code from slurm_errno.h
  */
 extern int update_job_dependency(struct job_record *job_ptr, char *new_depend);
+
+/*
+ * When an array job is rejected for some reason, the remaining array tasks will
+ * get skipped by both the main scheduler and the backfill scheduler (it's an
+ * optimization). Hence, their reasons should match the reason of the first job.
+ * This function sets those reasons.
+ *
+ * job_ptr		(IN) The current job being evaluated, after it has gone
+ * 			through the scheduling loop.
+ * reject_array_job	(IN) A pointer to the first job (array task) in the most
+ * 			recently rejected array job. If job_ptr belongs to the
+ * 			same array as reject_array_job, then set job_ptr's
+ * 			reason to match reject_array_job.
+ */
+extern void fill_array_reasons(struct job_record *job_ptr,
+			       struct job_record *reject_arr_job);
 
 #endif /* !_JOB_SCHEDULER_H */

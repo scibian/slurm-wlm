@@ -719,6 +719,21 @@ extern void print_fields(type_t type, void *object)
 					     tmp_char,
 					     (curr_inx == field_count));
 			break;
+		case PRINT_CONSTRAINTS:
+			switch(type) {
+			case JOB:
+				tmp_char = job->constraints;
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
 		case PRINT_CONSUMED_ENERGY:
 			switch (type) {
 			case JOB:
@@ -940,6 +955,24 @@ extern void print_fields(type_t type, void *object)
 			}
 			field->print_routine(field,
 					     outbuf,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_FLAGS:
+			switch(type) {
+			case JOB:
+				tmp_int = job->flags;
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_int = SLURMDB_JOB_FLAG_NONE;
+				break;
+			}
+			if (tmp_int != SLURMDB_JOB_FLAG_NONE)
+				tmp_char = slurmdb_job_flags_str(tmp_int);
+
+			field->print_routine(field,
+					     tmp_char,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_GID:
@@ -1774,6 +1807,22 @@ extern void print_fields(type_t type, void *object)
 			}
 			field->print_routine(field,
 					     tmp_int,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_REASON:
+			switch(type) {
+			case JOB:
+				tmp_char = job_reason_string(
+					job->state_reason_prev);
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_REQ_CPUFREQ_MIN:

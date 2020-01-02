@@ -1,0 +1,24 @@
+Description: Use python3 to create html pages
+ Use python3 to run scripts that generate man pages
+Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Origin: Debian
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=938499
+Forwarded: not-needed
+Last-Update: 2019-11-19
+
+--- slurm-llnl-19.05.4.orig/doc/html/shtml2html.py
++++ slurm-llnl-19.05.4/doc/html/shtml2html.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ 
+ import re
+ import sys
+--- slurm-llnl-19.05.4.orig/doc/man/man2html.py
++++ slurm-llnl-19.05.4/doc/man/man2html.py
+@@ -1,4 +1,4 @@
+-#!/usr/bin/env python
++#!/usr/bin/env python3
+ 
+ import re
+ import sys

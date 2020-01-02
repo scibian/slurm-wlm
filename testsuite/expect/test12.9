@@ -48,8 +48,6 @@ if { [test_account_storage] == 0 } {
 if {[test_front_end]} {
         send_user "\nWARNING: This test is incompatible with front-end systems\n"
         exit $exit_code
-} elseif {[test_serial]} {
-	set task_num 1
 } else {
 	set task_num 2
 }
@@ -62,7 +60,7 @@ proc run_sacct { jobs exp_match_1 exp_match_2 } {
 	set expected_matches [expr $exp_match_1 + $exp_match_2]
 
 	# Now test sacct
-	spawn $sacct --noheader -j $jobs
+	spawn $sacct --noheader --starttime=00:00 -j $jobs
 	expect {
 		-re "$array1_job_id" {
 			incr matches_1
@@ -103,7 +101,7 @@ set array1_job_id 0
 set array2_job_id 0
 set timeout $max_job_delay
 
-spawn $sbatch -N1 --array=0-5 --output=/dev/null --wrap=exit
+spawn $sbatch -N1 --array=0-5 --output=/dev/null -t1 --wrap=exit
 expect {
 	-re "Submitted batch job ($number)" {
 		set array1_job_id $expect_out(1,string)
@@ -122,7 +120,7 @@ expect {
 	}
 }
 
-eval spawn $sbatch -N1 --array=0-5 --output=/dev/null --wrap=exit
+eval spawn $sbatch -N1 --array=0-5 --output=/dev/null -t1 --wrap=exit
 expect {
 	-re "Submitted batch job ($number)" {
 		set array2_job_id $expect_out(1,string)
@@ -148,10 +146,12 @@ if {[expect_extern_step]} {
 }
 
 #
-# Wait for last job to complete
+# Wait for both jobs to complete
 #
-if {[wait_for_job $array2_job_id "DONE"] != 0} {
+if {[wait_for_job $array1_job_id "DONE"] || [wait_for_job $array2_job_id "DONE"]} {
 	send_user "\nFAILURE: waiting for jobs to complete\n"
+	cancel_job $array1_job_id
+	cancel_job $array2_job_id
 	exit 1
 }
 
@@ -165,5 +165,8 @@ run_sacct "$array1_job_id\_1,$array2_job_id\_3" $expected_steps $expected_steps
 # Now test sacct first full array and one task from the second array
 run_sacct "$array1_job_id,$array2_job_id\_3" [expr $expected_steps * 6] $expected_steps
 
+# Now test sacct one task from the first array and the second full
+run_sacct "$array1_job_id\_2,$array2_job_id" $expected_steps [expr $expected_steps * 6]
+
 send_user "\nSUCCESS\n"
-exit 0
+exit $exit_code
