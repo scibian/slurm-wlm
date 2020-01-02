@@ -1,3 +1,11 @@
+slurm-llnl (19.05.5-0sci9u1) scibian9; urgency=medium
+
+  * New upstream release 19.05.5.
+  * Adapt pmix v3 patch to new upstream release
+  * Adapt b31fa17 patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 02 Jan 2020 15:05:59 +0100
+
 slurm-llnl (19.05.4-1) UNRELEASED; urgency=medium
 
   * New upstream release
