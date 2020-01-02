@@ -275,7 +275,6 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libpmix2,
  adduser,
  ucf
 Description: SLURM basic plugins
