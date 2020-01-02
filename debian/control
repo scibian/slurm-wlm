@@ -31,8 +31,7 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
- liblz4-dev,
- libpmix-dev
+ liblz4-dev
 Standards-Version: 4.4.1
 Homepage: http://slurm.schedmd.com
 Vcs-Browser: https://github.com/scibian/slurm-llnl
