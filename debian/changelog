@@ -97,13 +97,6 @@ slurm-llnl (18.08.5.2-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 17 Feb 2019 13:32:52 +0100
 
-<<<<<<< HEAD
-slurm-llnl (18.08.3-1sci8u2) scibian8; urgency=medium
-
-  * New upstream release for scibian8.
-
- -- M'hamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Mon, 21 Jan 2019 14:53:36 +0100
-=======
 slurm-llnl (18.08.3-1sci9u3) scibian9; urgency=medium
 
   * set TasksMax=infinity in systemd conf
@@ -129,7 +122,12 @@ slurm-llnl (18.08.3-1sci9u1) scibian9; urgency=medium
   * Remove useless mv in d/rules
 
  -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Nov 2018 17:29:17 +0100
->>>>>>> scibian/19.05.5-0sci9u1
+
+slurm-llnl (18.08.3-1sci8u2) scibian8; urgency=medium
+
+  * New upstream release for scibian8.
+
+ -- M'hamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Mon, 21 Jan 2019 14:53:36 +0100
 
 slurm-llnl (18.08.3-1) unstable; urgency=medium
 
@@ -215,8 +213,6 @@ slurm-llnl (17.11.5-1) unstable; urgency=medium
   * Fix a typo in the mpiexec wrapper man page
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sat, 17 Mar 2018 08:50:51 +0100
-<<<<<<< HEAD
-=======
 
 slurm-llnl (17.11.2-1sci9u3) scibian9; urgency=medium
 
@@ -326,7 +322,6 @@ slurm-llnl (17.11.2-1~calibre9u1) calibre9; urgency=medium
   * Backport to Calibre9
 
  -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Sun, 14 Jan 2018 14:51:26 +0100
->>>>>>> scibian/19.05.5-0sci9u1
 
 slurm-llnl (17.11.2-1) unstable; urgency=medium
 
@@ -384,8 +379,6 @@ slurm-llnl (17.02.5-1) unstable; urgency=medium
   * Update d/copyright and switch to copyright-format 1.0
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 03 Jul 2017 15:30:51 +0200
-<<<<<<< HEAD
-=======
 
 slurm-llnl (17.02.2-1sci8u1) scibian8; urgency=medium
 
@@ -412,7 +405,6 @@ slurm-llnl (17.02.1.2-1~calibre9+1) calibre9; urgency=medium
   * Remove cgroup release agent everywhere
 
  -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 05 Apr 2017 13:29:57 +0200
->>>>>>> scibian/19.05.5-0sci9u1
 
 slurm-llnl (17.02.1.2-1) unstable; urgency=medium
 
