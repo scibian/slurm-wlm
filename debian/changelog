@@ -1,3 +1,10 @@
+slurm-llnl (19.05.5-0sci8u1) scibian8; urgency=medium
+
+  * Backport to scibian8
+  * Drop support of pmix
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 02 Jan 2020 16:10:52 +0100
+
 slurm-llnl (19.05.5-0sci9u1) scibian9; urgency=medium
 
   * New upstream release 19.05.5.
