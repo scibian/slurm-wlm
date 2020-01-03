@@ -1,8 +1,9 @@
-slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
+slurm-llnl (19.05.5-0sci8u3) scibian8; urgency=medium
 
+  * Remove systemd unit parameters unknown on S8
   * Add new missing symbol in libslurm34
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 03 Jan 2020 14:27:30 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 03 Jan 2020 14:28:56 +0100
 
 slurm-llnl (19.05.5-0sci8u2) scibian8; urgency=medium
 
