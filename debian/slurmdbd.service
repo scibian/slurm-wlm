@@ -11,7 +11,6 @@ ExecStart=/usr/sbin/slurmdbd $SLURMDBD_OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/slurmdbd.pid
 LimitNOFILE=65536
-TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target

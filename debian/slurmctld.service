@@ -12,7 +12,6 @@ ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/slurmctld.pid
 LimitMEMLOCK=infinity
 LimitNOFILE=65536
-TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target
