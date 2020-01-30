@@ -1,3 +1,9 @@
+slurm-llnl (19.05.5-0sci10u1) scibian10; urgency=medium
+
+  * New release for scibian10.
+
+ -- MHamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Thu, 30 Jan 2020 14:56:15 +0100
+
 slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
 
   * Add new missing symbol in libslurm34
