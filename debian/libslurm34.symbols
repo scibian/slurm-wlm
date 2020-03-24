@@ -1000,6 +1000,7 @@ libslurm.so.34 libslurm34 #MINVER#
  slurm_slurmdbd_free_id_rc_msg@Base 17.02.2
  slurm_slurmdbd_free_list_msg@Base 17.02.2
  slurm_slurmdbd_free_usage_msg@Base 17.02.2
+ slurm_slurmdbd_pack_fini_msg@Base 19.05.5
  slurm_sort_char_list_asc@Base 1.3.9
  slurm_sort_char_list_desc@Base 1.3.9
  slurm_sort_key_pairs@Base 2.1.0
