@@ -1,3 +1,10 @@
+slurm-llnl (19.05.7-0sci10u1) scibian10; urgency=medium
+
+  * New upstreamm release 19.05.7
+  * Adjust man page patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 11:58:07 +0200
+
 slurm-llnl (19.05.5-2) unstable; urgency=medium
 
   * Declare libslurm-dev Breaks+Replaces relation with the old
