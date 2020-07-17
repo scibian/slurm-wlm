@@ -71,6 +71,7 @@ extern bitstr_t *avail_node_bitmap __attribute__((weak_import));
 extern uint16_t *cr_node_num_cores __attribute__((weak_import));
 extern uint32_t *cr_node_cores_offset __attribute__((weak_import));
 extern int slurmctld_tres_cnt __attribute__((weak_import));
+extern bitstr_t *idle_node_bitmap __attribute__((weak_import));
 #else
 slurmctld_config_t slurmctld_config;
 slurm_ctl_conf_t slurmctld_conf;
@@ -85,6 +86,7 @@ bitstr_t *avail_node_bitmap;
 uint16_t *cr_node_num_cores;
 uint32_t *cr_node_cores_offset;
 int slurmctld_tres_cnt = 0;
+bitstr_t *idle_node_bitmap;
 #endif
 
 /*
@@ -329,7 +331,7 @@ static bitstr_t **_core_bitmap_to_array(bitstr_t *core_bitmap)
 {
 	bitstr_t **core_array = NULL;
 	int i, i_first, i_last, j, c;
-	int node_inx, last_node_inx = 0, core_offset;
+	int node_inx = 0, core_offset;
 	char tmp[128];
 
 	if (!core_bitmap)
@@ -348,9 +350,10 @@ static bitstr_t **_core_bitmap_to_array(bitstr_t *core_bitmap)
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(core_bitmap, i))
 			continue;
-		for (j = last_node_inx; j < select_node_cnt; j++) {
+		for (j = node_inx; j < select_node_cnt; j++) {
 			if (i < select_node_record[j].cume_cores) {
 				node_inx = j;
+				i = select_node_record[j].cume_cores - 1;
 				break;
 			}
 		}
@@ -369,6 +372,7 @@ static bitstr_t **_core_bitmap_to_array(bitstr_t *core_bitmap)
 			if (bit_test(core_bitmap, core_offset + c))
 				bit_set(core_array[node_inx], c);
 		}
+		node_inx++;
 	}
 
 #if _DEBUG
@@ -642,7 +646,8 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 		if (fini ||
 		    !avail_cores[i] ||
 		    !bit_test(avail_node_bitmap, i) ||
-		    (bit_set_count(avail_cores[i]) <
+		    (bit_set_count_range(avail_cores[i], 0,
+					 core_cnt[local_node_offset]) <
 		     core_cnt[local_node_offset])) {
 			FREE_NULL_BITMAP(avail_cores[i]);
 			continue;
@@ -695,7 +700,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 	char tmp[128];
 	bitstr_t **tmp_cores;
 #endif
-	bitstr_t **avail_cores, **local_cores = NULL;
+	bitstr_t **avail_cores = NULL, **local_cores = NULL;
 	bitstr_t *picked_node_bitmap;
 	char str[300];
 	int cores_per_node = 0, extra_cores_needed = -1;
@@ -848,8 +853,11 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 			info("%s: %s: reservation request can not be satisfied",
 			     plugin_type, __func__);
 			FREE_NULL_BITMAP(picked_node_bitmap);
+			if (local_cores != avail_cores)
+				free_core_array(&avail_cores);
 			free_core_array(&local_cores);
 		} else {
+			free_core_array(exc_cores);
 			*exc_cores = avail_cores;
 		}
 	} else { /* Reservation is using full nodes */
@@ -2654,6 +2662,7 @@ fini:	for (i = 0; i < switch_record_cnt; i++) {
 			FREE_NULL_BITMAP(picked_node_bitmap);
 			picked_node_bitmap = NULL;
 		} else {
+			FREE_NULL_BITMAP(*core_bitmap);
 			*core_bitmap =
 				_array_to_core_bitmap(picked_core_bitmap);
 		}

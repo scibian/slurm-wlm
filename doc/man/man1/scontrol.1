@@ -1,4 +1,4 @@
-.TH scontrol "1" "Slurm Commands" "August 2019" "Slurm Commands"
+.TH scontrol "1" "Slurm Commands" "February 2020" "Slurm Commands"
 
 .SH "NAME"
 scontrol \- view or modify Slurm configuration and state.
@@ -274,8 +274,8 @@ The Slurm controller (slurmctld) forwards the request all other daemons
 (slurmd daemon on each compute node). Running jobs continue execution.
 Most configuration parameters can be changed by just running this command,
 however, Slurm daemons should be shutdown and restarted if any of these
-parameters are to be changed: AuthType, BackupAddr, BackupController,
-ControlAddr, ControlMach, PluginDir, StateSaveLocation, SlurmctldPort
+parameters are to be changed: AuthType, ControlMach, PluginDir,
+StateSaveLocation, SlurmctldHost, SlurmctldPort,
 or SlurmdPort. The slurmctld daemon and all slurmd daemons must be
 restarted if nodes are added to or removed from the cluster.
 
@@ -658,7 +658,7 @@ The specified deadline must be later than the current time.
 Only pending jobs can have the deadline updated.
 Only the Slurm administrator or root can change this parameter.
 .TP
-\fBDelayBoot\fP=<time_spec>
+\fIDelayBoot\fP=<time_spec>
 Change the time to decide whether to reboot nodes in order to satisfy job's
 feature specification if the job has been eligible to run for less than this
 time period. See salloc/sbatch man pages option \-\-delay\-boot.
@@ -841,7 +841,7 @@ Only the Slurm administrator or root can increase job's priority.
 Set the job's QOS (Quality Of Service) to the specified value.
 Value may be cleared with blank data value, "QOS=".
 .TP
-\fBReboot\fP=<yes|no>
+\fIReboot\fP=<yes|no>
 Set the job's flag that specifies whether to force the allocated nodes to reboot
 before starting the job. This is only supported with some system configurations
 and therefore it could be silently ignored.
@@ -1204,6 +1204,28 @@ Update slurm.conf with any changes meant to be persistent across normal
 restarts of slurmctld or the execution of \fBscontrol reconfig\fR.
 
 .TP
+\fINodeAddr\fP=<node address>
+Name that a node should be referred to in establishing a communications path.
+This name will be used as an argument to the gethostbyname() function for
+identification. If a node range expression is used to designate multiple nodes,
+they must exactly match the entries in the \fINodeName\fP
+(e.g. "NodeName=lx[0\-7] NodeAddr=elx[0\-7]"). \fINodeAddr\fP may also contain
+IP addresses.
+
+.TP
+\fINodeHostname\fP=<node hostname>
+Typically this would be the string that "/bin/hostname \-s" returns.
+It may also be the fully qualified domain name as returned by
+"/bin/hostname \-f" (e.g. "foo1.bar.com"), or any valid domain name associated
+with the host through the host database (/etc/hosts) or DNS, depending on the
+resolver settings. Note that if the short form of the hostname is not used, it
+may prevent use of hostlist expressions (the numeric portion in brackets must be
+at the end of the string). A node range expression can be used to specify a set
+of nodes. If an expression is used, the number of nodes identified by
+\fINodeHostname\fP must be identical to the number of nodes identified by
+\fINodeName\fP.
+
+.TP
 \fIReason\fP=<reason>
 Identify the reason the node is in a "DOWN", "DRAINED", "DRAINING",
 "FAILING" or "FAIL" state.
@@ -1494,7 +1516,10 @@ have already begun execution.
 Set the minimum number of nodes which will be allocated to any single job
 in the partition.
 Changing the \fIMinNodes\fP of a partition has no effect upon jobs that
-have already begun execution.
+have already begun execution. Increasing this value may prevent pending jobs
+from starting, even if they were submitted without -N/--nodes specification.
+If you do get in that situation, updating the \fIMinNodes\fP value of a
+pending job using the scontrol command will allow that job to be scheduled.
 
 .TP
 \fINodes\fP=<name>
@@ -1808,7 +1833,7 @@ See \fIANY_NODES\fR.
 .TP
 \fIMAINT\fR
 Maintenance mode, receives special accounting treatment.
-This partition is permitted to use resources that are already in another
+This reservation is permitted to use resources that are already in another
 reservation.
 .TP
 \fINO_HOLD_JOBS_AFTER\fR
@@ -1950,6 +1975,19 @@ Type of entities to show, default is not used.
 \fInolayout\fP
 If not used, only entities with defining the tree are shown.
 With the option, only leaves are shown.
+
+.SH "PERFORMANCE"
+.PP
+Executing \fBscontrol\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBscontrol\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBscontrol\fR or other Slurm client commands that send remote
+procedure calls to \fBslurmctld\fR from loops in shell scripts or other
+programs. Ensure that programs limit calls to \fBscontrol\fR to the minimum
+necessary for the information you are trying to gather.
 
 .SH "ENVIRONMENT VARIABLES"
 .PP

@@ -562,7 +562,7 @@ proc mod_acct { name acct_mod_desc_in acct_mod_assoc_vals_in acct_mod_acct_vals_
 }
 
 #
-# Use sacctmgr to add an user
+# Use sacctmgr to add a user
 #
 proc add_user { name user_req_in } {
 	global sacctmgr timeout
@@ -1685,7 +1685,7 @@ proc reset_qos_usage { cluster qos } {
 
 ###############################################################
 #
-# Proc: check_wckey_tracking
+# Proc: check_wckey_tracking_slurmdbd
 #
 # Purpose: Check to see that wcky tracking is enabled in the
 # SlurmDBD
@@ -1694,7 +1694,7 @@ proc reset_qos_usage { cluster qos } {
 #
 #
 ###############################################################
-proc check_wckey_tracking { } {
+proc check_wckey_tracking_slurmdbd { } {
 	global sacctmgr
 
 	log_user 0

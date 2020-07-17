@@ -638,7 +638,7 @@ static uint32_t _my_sleep(int64_t usec)
 
 static void _load_config(void)
 {
-	char *sched_params, *tmp_ptr;
+	char *sched_params, *tmp_ptr, *tmp_str = NULL;
 
 	sched_params = slurm_get_sched_params();
 	debug_flags  = slurm_get_debug_flags();
@@ -680,8 +680,13 @@ static void _load_config(void)
 
 	if ((tmp_ptr = xstrcasestr(sched_params, "bf_max_job_test=")))
 		max_backfill_job_cnt = atoi(tmp_ptr + 16);
+	else if ((tmp_ptr = xstrcasestr(sched_params, "max_job_bf="))) {
+		error("Invalid parameter max_job_bf. The option is no longer supported, please use bf_max_job_test instead.");
+		max_backfill_job_cnt = atoi(tmp_ptr + 11);
+	}
 	else
 		max_backfill_job_cnt = 100;
+
 	if (max_backfill_job_cnt < 1 ||
 	    max_backfill_job_cnt > MAX_BF_MAX_JOB_TEST) {
 		error("Invalid SchedulerParameters bf_max_job_test: %d",
@@ -869,7 +874,8 @@ static void _load_config(void)
 	}
 
 	bf_hetjob_prio = 0;
-	if ((tmp_ptr = xstrcasestr(sched_params, "bf_hetjob_prio="))) {
+	tmp_str = xstrdup(sched_params);
+	if ((tmp_ptr = xstrcasestr(tmp_str, "bf_hetjob_prio="))) {
 		tmp_ptr = strtok(tmp_ptr + 15, ",");
 		if (!xstrcasecmp(tmp_ptr, "min"))
 			bf_hetjob_prio |= HETJOB_PRIO_MIN;
@@ -881,6 +887,7 @@ static void _load_config(void)
 			error("Invalid SchedulerParameters bf_hetjob_prio: %s",
 			      tmp_ptr);
 	}
+	xfree(tmp_str);
 
 	bf_hetjob_immediate = false;
 	if (xstrcasestr(sched_params, "bf_hetjob_immediate"))
@@ -3419,7 +3426,6 @@ static int _pack_start_now(pack_job_map_t *map, node_space_map_t *node_space)
 				bit_or(used_bitmap, job_ptr->node_bitmap);
 		} else {
 			fed_mgr_job_unlock(job_ptr);
-			error("%pJ failed to start", job_ptr);
 			break;
 		}
 		if (job_ptr->time_min) {
