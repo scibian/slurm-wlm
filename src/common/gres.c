@@ -4407,17 +4407,25 @@ static int _test_gres_cnt(gres_job_state_t *job_gres_data,
 	 * Ensure gres_per_job is multiple of gres_per_task
 	 * Ensure task count is consistent with GRES parameters
 	 */
-	if (job_gres_data->gres_per_job && job_gres_data->gres_per_task) {
-		if (job_gres_data->gres_per_job % job_gres_data->gres_per_task){
-			/* gres_per_job not multiple of gres_per_task */
+	if (job_gres_data->gres_per_task) {
+		if(job_gres_data->gres_per_job) {
+			if (job_gres_data->gres_per_job %
+			    job_gres_data->gres_per_task) {
+				/* gres_per_job not multiple of gres_per_task */
+				return -1;
+			}
+			req_tasks = job_gres_data->gres_per_job /
+				    job_gres_data->gres_per_task;
+			if (*num_tasks == NO_VAL)
+				*num_tasks = req_tasks;
+			else if (*num_tasks != req_tasks)
+				return -1;
+		} else if (*num_tasks != NO_VAL) {
+			job_gres_data->gres_per_job = *num_tasks *
+						job_gres_data->gres_per_task;
+		} else {
 			return -1;
 		}
-		req_tasks = job_gres_data->gres_per_job /
-			    job_gres_data->gres_per_task;
-		if (*num_tasks == NO_VAL)
-			*num_tasks = req_tasks;
-		else if (*num_tasks != req_tasks)
-			return -1;
 	}
 
 	/*
@@ -9687,6 +9695,11 @@ extern bool gres_plugin_job_mem_set(List job_gres_list,
 			mem_per_gres = job_data_ptr->mem_per_gres;
 		else
 			mem_per_gres = job_data_ptr->def_mem_per_gres;
+		/*
+		 * The logic below is correct because the only mem_per_gres
+		 * is --mem-per-gpu adding another option will require change
+		 * to take MAX of mem_per_gres for all types.
+		 */
 		if ((mem_per_gres == 0) || !job_data_ptr->gres_cnt_node_select)
 			continue;
 		rc = true;
@@ -9697,13 +9710,10 @@ extern bool gres_plugin_job_mem_set(List job_gres_list,
 			node_off++;
 			gres_cnt = job_data_ptr->gres_cnt_node_select[i];
 			mem_size = mem_per_gres * gres_cnt;
-			if (first_set) {
+			if (first_set)
 				job_res->memory_allocated[node_off] = mem_size;
-			} else {
-				job_res->memory_allocated[node_off] = MAX(
-					job_res->memory_allocated[node_off],
-					mem_size);
-			}
+			else
+				job_res->memory_allocated[node_off] += mem_size;
 		}
 		first_set = false;
 	}
@@ -12240,6 +12250,9 @@ extern uint64_t gres_plugin_step_count(List step_gres_list, char *gres_name)
 	gres_step_state_t *gres_step_ptr = NULL;
 	ListIterator gres_iter;
 	int i;
+
+	if (!step_gres_list)
+		return gres_cnt;
 
 	slurm_mutex_lock(&gres_context_lock);
 	for (i = 0; i < gres_context_cnt; i++) {

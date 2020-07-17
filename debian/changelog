@@ -1,18 +1,14 @@
-slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
+slurm-llnl (19.05.5-2) unstable; urgency=medium
 
-  * Add new missing symbol in libslurm34
+  * Declare libslurm-dev Breaks+Replaces relation with the old
+    libslurmdb-dev package (Closes: #949249)
+  * Bump standard version to 4.5.0 (no changes)
+  * Move slurm-client-emulator, slurm-wlm and spank man pages to
+    section 7
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 03 Jan 2020 14:27:30 +0100
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 24 Mar 2020 10:58:42 +0100
 
-slurm-llnl (19.05.5-0sci9u1) scibian9; urgency=medium
-
-  * New upstream release 19.05.5.
-  * Adapt pmix v3 patch to new upstream release
-  * Adapt b31fa17 patch to new upstream release
-
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 02 Jan 2020 15:05:59 +0100
-
-slurm-llnl (19.05.4-1) UNRELEASED; urgency=medium
+slurm-llnl (19.05.5-1) unstable; urgency=medium
 
   * New upstream release
 
@@ -29,8 +25,27 @@ slurm-llnl (19.05.4-1) UNRELEASED; urgency=medium
   * Remove libssh2 build dep
   * Remove crypto/openssl related stuff
   * Use python3 to generate html doc (Closes: #938499)
+  * Update libslurm symbols file
+  * Add support for pmix (Closes: #948008)
 
- -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 19 Nov 2019 17:43:13 +0100
+  [ Christian Ehrhardt ] 
+  * Improve sacct test
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 16 Jan 2020 22:46:11 +0100
+
+slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
+
+  * Add new missing symbol in libslurm34
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 03 Jan 2020 14:27:30 +0100
+
+slurm-llnl (19.05.5-0sci9u1) scibian9; urgency=medium
+
+  * New upstream release 19.05.5.
+  * Adapt pmix v3 patch to new upstream release
+  * Adapt b31fa17 patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 02 Jan 2020 15:05:59 +0100
 
 slurm-llnl (19.05.3.2-2) unstable; urgency=medium
 

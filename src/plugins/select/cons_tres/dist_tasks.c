@@ -714,9 +714,11 @@ static int _compute_c_b_task_dist(struct job_record *job_ptr,
 			    ((avail_cpus[n] - job_res->cpus[n]) <
 			     job_ptr->details->cpus_per_task))
 				break;
-			if (!_tres_tasks_avail(gres_task_limit, job_res, n))
+			if (!over_subscribe &&
+			    !_tres_tasks_avail(gres_task_limit, job_res, n))
 				break;
-			if (_at_tpn_limit(n, job_ptr, "fill allocated", false))
+			if (!over_subscribe &&
+			    _at_tpn_limit(n, job_ptr, "fill allocated", false))
 				break;
 			tid++;
 			job_res->tasks_per_node[n]++;
@@ -755,16 +757,18 @@ static int _compute_c_b_task_dist(struct job_record *job_ptr,
 			rem_tasks = vpus[n] / job_ptr->details->cpus_per_task;
 			rem_tasks = MAX(rem_tasks, 1);
 			for (t = 0; ((t < rem_tasks) && (tid < maxtasks)); t++){
-				if (!over_subscribe &&
-				    ((avail_cpus[n] - job_res->cpus[n]) <
-				     job_ptr->details->cpus_per_task))
-					break;
-				if (!_tres_tasks_avail(gres_task_limit,
-						       job_res, n))
-					break;
-				if (_at_tpn_limit(n, job_ptr, "fill additional",
-						  false))
-					break;
+				if (!over_subscribe) {
+					if ((avail_cpus[n] - job_res->cpus[n]) <
+					    job_ptr->details->cpus_per_task)
+						break;
+					if (!_tres_tasks_avail(gres_task_limit,
+							       job_res, n))
+						break;
+					if (_at_tpn_limit(n, job_ptr,
+							  "fill additional",
+							  false))
+						break;
+				}
 				tid++;
 				job_res->tasks_per_node[n]++;
 				for (l = 0; l < job_ptr->details->cpus_per_task;
@@ -792,12 +796,15 @@ static int _compute_c_b_task_dist(struct job_record *job_ptr,
 	while (tid < maxtasks) {
 		bool more_tres_tasks = false;
 		for (n = 0; ((n < job_res->nhosts) && (tid < maxtasks)); n++) {
-			if (test_tres_tasks &&
-			    !_tres_tasks_avail(gres_task_limit, job_res, n))
-				continue;
-			if (_at_tpn_limit(n, job_ptr, "fill non-dedicated CPUs",
-					  true))
-				continue;
+			if (test_tres_tasks) {
+				if (!_tres_tasks_avail(gres_task_limit,
+						       job_res, n))
+					continue;
+				if (_at_tpn_limit(n, job_ptr,
+						  "fill non-dedicated CPUs",
+						  true))
+					continue;
+			}
 			more_tres_tasks = true;
 			tid++;
 			job_res->tasks_per_node[n]++;
@@ -1095,7 +1102,7 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 				     j++, k++) {
 					if (!bit_test(core_map, k))
 						continue;
-					if (sock_str)
+					if (core_str)
 						sep = ",";
 					else
 						sep = "";

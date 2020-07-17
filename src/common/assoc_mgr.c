@@ -201,7 +201,8 @@ static slurmdb_assoc_rec_t *_find_assoc_rec(
 	slurmdb_assoc_rec_t *assoc_ptr;
 	int inx;
 
-	if (assoc->id)
+	/* We can only use _find_assoc_rec_id if we are not on the slurmdbd */
+	if (assoc->id && assoc_mgr_cluster_name)
 		return _find_assoc_rec_id(assoc->id);
 
 	if (!assoc_hash) {
@@ -409,6 +410,36 @@ static int _addto_used_info(slurmdb_assoc_rec_t *assoc1,
 	assoc1->usage->used_submit_jobs += assoc2->usage->used_submit_jobs;
 	assoc1->usage->usage_raw += assoc2->usage->usage_raw;
 
+	/*
+	 * Basically copied from src/slurmctld/acct_policy.c
+	 * _add_usage_node_bitmap().
+	 */
+	if (assoc2->usage->grp_node_bitmap) {
+		int i_first, i_last;
+		if (assoc1->usage->grp_node_bitmap)
+			bit_or(assoc1->usage->grp_node_bitmap,
+			       assoc2->usage->grp_node_bitmap);
+		else
+			assoc1->usage->grp_node_bitmap =
+				bit_copy(assoc2->usage->grp_node_bitmap);
+
+		if (!assoc1->usage->grp_node_job_cnt)
+			assoc1->usage->grp_node_job_cnt = xcalloc(
+				bit_size(assoc1->usage->grp_node_bitmap),
+				sizeof(uint16_t));
+
+		i_first = bit_ffs(assoc2->usage->grp_node_bitmap);
+		if (i_first != -1) {
+			i_last = bit_fls(assoc2->usage->grp_node_bitmap);
+			for (int i = i_first; i <= i_last; i++) {
+				if (!bit_test(assoc2->usage->grp_node_bitmap,
+					      i))
+					continue;
+				assoc1->usage->grp_node_job_cnt[i] +=
+					assoc2->usage->grp_node_job_cnt[i];
+			}
+		}
+	}
 	return SLURM_SUCCESS;
 }
 
@@ -427,6 +458,13 @@ static int _clear_used_assoc_info(slurmdb_assoc_rec_t *assoc)
 	assoc->usage->accrue_cnt = 0;
 	assoc->usage->used_jobs  = 0;
 	assoc->usage->used_submit_jobs = 0;
+
+	if (assoc->usage->grp_node_bitmap)
+		bit_clear_all(assoc->usage->grp_node_bitmap);
+	if (assoc->usage->grp_node_job_cnt)
+		memset(assoc->usage->grp_node_job_cnt, 0,
+		       sizeof(uint16_t) * node_record_count);
+
 	/* do not reset usage_raw or grp_used_wall.
 	 * if you need to reset it do it
 	 * else where since sometimes we call this and do not want
@@ -2926,6 +2964,21 @@ extern int assoc_mgr_fill_in_wckey(void *db_conn, slurmdb_wckey_rec_t *wckey,
 
 	itr = list_iterator_create(assoc_mgr_wckey_list);
 	while ((found_wckey = list_next(itr))) {
+		/* only and always check for on the slurmdbd */
+		if (!assoc_mgr_cluster_name) {
+			if (!wckey->cluster) {
+				error("No cluster name was given "
+				      "to check against, "
+				      "we need one to get a wckey.");
+				continue;
+			}
+
+			if (xstrcasecmp(wckey->cluster, found_wckey->cluster)) {
+				debug4("not the right cluster");
+				continue;
+			}
+		}
+
 		if (wckey->id) {
 			if (wckey->id == found_wckey->id) {
 				ret_wckey = found_wckey;
@@ -2950,23 +3003,6 @@ extern int assoc_mgr_fill_in_wckey(void *db_conn, slurmdb_wckey_rec_t *wckey,
 				debug4("not the right name %s != %s",
 				       wckey->name, found_wckey->name);
 				continue;
-			}
-
-			/* only check for on the slurmdbd */
-			if (!assoc_mgr_cluster_name) {
-				if (!wckey->cluster) {
-					error("No cluster name was given "
-					      "to check against, "
-					      "we need one to get a wckey.");
-					continue;
-				}
-
-				if (found_wckey->cluster
-				    && xstrcasecmp(wckey->cluster,
-						   found_wckey->cluster)) {
-					debug4("not the right cluster");
-					continue;
-				}
 			}
 		}
 		ret_wckey = found_wckey;
@@ -4184,6 +4220,12 @@ extern int assoc_mgr_update_wckeys(slurmdb_update_object_t *update, bool locked)
 
 		list_iterator_reset(itr);
 		while ((rec = list_next(itr))) {
+			/* only and always check for on the slurmdbd */
+			if (!assoc_mgr_cluster_name &&
+			    xstrcasecmp(object->cluster, rec->cluster)) {
+				debug4("not the right cluster");
+				continue;
+			}
 			if (object->id) {
 				if (object->id == rec->id) {
 					break;
@@ -4200,15 +4242,6 @@ extern int assoc_mgr_update_wckeys(slurmdb_update_object_t *update, bool locked)
 					|| xstrcasecmp(object->name,
 						       rec->name))) {
 					debug4("not the right wckey");
-					continue;
-				}
-
-				/* only check for on the slurmdbd */
-				if (!assoc_mgr_cluster_name && object->cluster
-				    && (!rec->cluster
-					|| xstrcasecmp(object->cluster,
-						       rec->cluster))) {
-					debug4("not the right cluster");
 					continue;
 				}
 				break;
@@ -4843,6 +4876,10 @@ extern int assoc_mgr_update_qos(slurmdb_update_object_t *update, bool locked)
 	return rc;
 }
 
+/*
+ * NOTE: This function only works when assoc_mgr_cluster_name is defined.  This
+ * does not currently work for the slurmdbd.
+ */
 extern int assoc_mgr_update_res(slurmdb_update_object_t *update, bool locked)
 {
 	slurmdb_res_rec_t *rec = NULL;

@@ -45,9 +45,10 @@ set tq2     "test$test_id-qos.2"
 
 # account options
 array set acct_1 {}
-set acct(Organization)  "Account_Org_A1"
-set acct(Description)   "Test_Account_A1"
-set acct(Qos) $tq1
+set acct_1(Organization)  "Account_Org_A1"
+set acct_1(Description)   "Test_Account_A1"
+set acct_1(Qos) $tq1
+set acct_1(Cluster) [get_cluster_name]
 
 # user options
 array set user_req_1 {}
@@ -69,7 +70,7 @@ print_header $test_id
 
 # Create test assoc and accounts
 proc create_accounts {} {
-	global ta1 tq1 tq2 tu1 user_req_1 qos_1 qos_2
+	global ta1 acct_1 tq1 tq2 tu1 user_req_1 qos_1 qos_2
 	log_info "create account and QOS"
 
 	# Create test assoc and accounts
