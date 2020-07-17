@@ -41,23 +41,6 @@
 
 #define _DEBUG 0	/* Enables module specific debugging */
 
-/*
- * These symbols are defined here so when we link with something other
- * than the slurmctld we will have these symbols defined. They will get
- * overwritten when linking with the slurmctld.
- */
-#if defined (__APPLE__)
-extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
-extern bitstr_t *idle_node_bitmap __attribute__((weak_import));
-extern struct node_record *node_record_table_ptr __attribute__((weak_import));
-extern List job_list __attribute__((weak_import));
-#else
-slurmctld_config_t slurmctld_config;
-bitstr_t *idle_node_bitmap;
-struct node_record *node_record_table_ptr;
-List job_list;
-#endif
-
 typedef enum {
 	HANDLE_JOB_RES_ADD,
 	HANDLE_JOB_RES_REM,
@@ -1059,7 +1042,7 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(job_resrcs_ptr->node_bitmap, i))
 			continue;
-		if (job_resrcs_ptr->whole_node) {
+		if (job_resrcs_ptr->whole_node == 1) {
 			if (!core_array[i]) {
 				if (type != HANDLE_JOB_RES_TEST)
 					error("%s: %s: core_array[%d] is NULL %d",
@@ -2575,19 +2558,6 @@ static int _eval_nodes(struct job_record *job_ptr, gres_mc_data_t *mc_ptr,
 			if (avail_cpus == 0) {
 				bit_clear(node_map, i);
 				node_ptr = NULL;
-				/*
-				 * If first_pass == true then _select_cores()
-				 * enforces GRES binding to cores, even if
-				 * enforce_binding == false. Set avail_res_cnt
-				 * to something we can use to eliminate nodes
-				 * with low resource availability and retry.
-				 */
-				if (first_pass && !enforce_binding &&
-				    job_ptr->gres_list &&
-				    (avail_res_array[i]->avail_res_cnt == 0)) {
-					avail_res_array[i]->avail_res_cnt =
-						avail_res_array[i]->avail_cpus;
-				}
 			}
 			avail_cpu_per_node[i] = avail_cpus;
 		}
@@ -5951,10 +5921,7 @@ static avail_res_t *_can_job_run_on_node(struct job_record *job_ptr,
 			(0xff - near_gpu_cnt);
 	}
 
-	for (i = 0; i < avail_res->sock_cnt; i++)
-		cpus += avail_res->avail_cores_per_sock[i];
-	cpus *= avail_res->vpus;
-	cpus -= avail_res->spec_threads;
+	cpus = avail_res->max_cpus;
 
 	if (cr_type & CR_MEMORY) {
 		/*
@@ -6029,6 +5996,7 @@ static avail_res_t *_can_job_run_on_node(struct job_record *job_ptr,
 	}
 
 	avail_res->avail_cpus = cpus;
+	avail_res->avail_res_cnt = cpus + avail_res->avail_gpus;
 	_avail_res_log(avail_res, node_ptr->name);
 
 	return avail_res;
@@ -6310,8 +6278,7 @@ static int _verify_node_state(struct part_res_record *cr_part_ptr,
 			continue;
 		node_ptr = select_node_record[i].node_ptr;
 		/* node-level memory check */
-		if ((job_ptr->details->pn_min_memory) &&
-		    (cr_type & CR_MEMORY)) {
+		if (min_mem && (cr_type & CR_MEMORY)) {
 			avail_mem = select_node_record[i].real_memory -
 				    select_node_record[i].mem_spec_limit;
 			if (avail_mem > node_usage[i].alloc_memory) {
