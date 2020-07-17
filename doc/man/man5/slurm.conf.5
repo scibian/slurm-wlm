@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "November 2019" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "February 2020" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -237,10 +237,10 @@ network traffic by the jobs.
 Configurable values at present are:
 .RS
 .TP 20
-\fBacct_gather_infiniband/none\fR
+\fBacct_gather_interconnect/none\fR
 No infiniband network data are collected.
 .TP
-\fBacct_gather_infiniband/ofed\fR
+\fBacct_gather_interconnect/ofed\fR
 Infiniband network traffic data are collected from the hardware monitoring
 counters of Infiniband devices through the OFED library.
 In order to account for per job network traffic, add the "ic/ofed" TRES to
@@ -374,8 +374,7 @@ The maximum time (in seconds) that a batch job is permitted for
 launching before being considered missing and releasing the
 allocation. The default value is 10 (seconds). Larger values may be
 required if more time is required to execute the \fBProlog\fR, load
-user environment variables (for Moab spawned jobs), or if the slurmd
-daemon gets paged from memory.
+user environment variables, or if the slurmd daemon gets paged from memory.
 .br
 .br
 \fBNote\fR: The test for a job being successfully launched is only performed when
@@ -867,11 +866,10 @@ Also see \fBMaxJobId\fR
 
 .TP
 \fBGetEnvTimeout\fR
-Used for Moab scheduled jobs only. Controls how long job should wait
-in seconds for loading the user's environment before attempting to
-load it from a cache file. Applies when the srun or sbatch
-\fI\-\-get\-user\-env\fR option is used. If set to 0 then always load
-the user's environment from the cache file.
+Controls how long the job should wait (in seconds) to load the user's
+environment before attempting to load it from a cache file.
+Applies when the salloc or sbatch \fI\-\-get\-user\-env\fR option is used.
+If set to 0 then always load the user's environment from the cache file.
 The default value is 2 seconds.
 
 .TP
@@ -1053,7 +1051,7 @@ for energy profiling using the acct_gather_energy plugin
 .TP
 \fBnetwork=\fI<interval>\fR
 where \fI<interval>\fR is the sampling interval in seconds
-for infiniband profiling using the acct_gather_infiniband
+for infiniband profiling using the acct_gather_interconnect
 plugin.
 .TP
 \fBfilesystem=\fI<interval>\fR
@@ -1096,11 +1094,9 @@ The PSS value will be saved as RSS.
 \fBOverMemoryKill\fR
 Kill jobs or steps that are being detected to use more memory than requested
 every time accounting information is gathered by the JobAcctGather plugin.
-This parameter will not kill a job directly, but only the step.
-See \fBMemLimitEnforce\fR for that purpose. This parameter should be used
-with caution as if jobs exceeds its memory allocation it may affect other
-processes and/or machine health.
-NOTE: It is recommended to limit memory by enabling task/cgroup
+This parameter should be used with caution because a job exceeding its memory
+allocation may affect other processes and/or machine health.
+NOTE: If available, it is recommended to limit memory by enabling task/cgroup
 in TaskPlugin and making use of ConstrainRAMSpace=yes cgroup.conf instead
 of using this JobAcctGather mechanism for memory enforcement, since the former
 has a lower resolution (JobAcctGatherFreq) and OOMs could happen at some point.
@@ -1485,20 +1481,6 @@ only users with the same group can share the nodes.
 .TP
 \fBmcs/user\fR
 a node cannot be shared with other users.
-.RE
-
-.TP
-\fBMemLimitEnforce\fR
-If set to yes then Slurm will terminate the job if it exceeds the value
-requested using the \-\-mem\-per\-cpu option of salloc/sbatch/srun.
-This is useful in combination with \fBJobAcctGatherParams=OverMemoryKill\fR.
-Used when jobs need to specify \-\-mem\-per\-cpu for scheduling and they should
-be terminated if they exceed the estimated value.
-The default value is 'no', which disables this enforcing mechanism.
-NOTE: It is recommended to limit memory by enabling task/cgroup
-in TaskPlugin and making use of ConstrainRAMSpace=yes cgroup.conf instead
-of using this JobAcctGather mechanism for memory enforcement, since the former
-has a lower resolution (JobAcctGatherFreq) and OOMs could happen at some point.
 .RE
 
 .TP
@@ -2620,9 +2602,6 @@ extended period of time.
 Setting this option will cause the backfill scheduler to continue processing
 pending jobs from its original job list after releasing locks even if job
 or node state changes.
-This can result in lower priority jobs being backfill scheduled instead
-of newly arrived higher priority jobs, but will permit more queued jobs to be
-considered for backfill scheduling.
 .TP
 \fBbf_hetjob_immediate\fR
 Instruct the backfill scheduler to attempt to start a heterogeneous job as
@@ -2665,13 +2644,6 @@ from different heterogeneous jobs can start reserving resources in an
 interleaved fashion (not consecutively), but none of the jobs can reserve
 resources for all components and start. Enabling this option can help to
 mitigate this problem. By default, this option is disabled.
-.TP
-\fBbf_ignore_newly_avail_nodes\fR
-If set, then only resources available at the beginning of a backfill cycle
-will be considered for use. Otherwise resources made available during that
-backfill cycle (during a yield with bf_continue set) may be used for lower
-priority jobs, delaying the initiation of higher priority jobs.
-Disabled by default.
 .TP
 \fBbf_interval=#\fR
 The number of seconds between backfill iterations.
@@ -3806,7 +3778,7 @@ Fully qualified pathname of a directory into which the Slurm controller,
 \fBslurmctld\fR, saves its state (e.g. "/usr/local/slurm/checkpoint").
 Slurm state will saved here to recover from system failures.
 \fBSlurmUser\fR must be able to create files in this directory.
-If you have a \fBBackupController\fR configured, this location should be
+If you have a secondary \fBSlurmctldHost\fR configured, this location should be
 readable and writable by both systems.
 Since all running and pending job information is stored here, the use of
 a reliable file system (e.g. RAID) is recommended.
@@ -5477,11 +5449,11 @@ Ensure that any nodes added to the cluster have the current
 slurm.conf file installed.
 .LP
 \fBCAUTION:\fR If two nodes are simultaneously configured as the
-primary controller (two nodes on which \fBControlMachine\fR specify
+primary controller (two nodes on which \fBSlurmctldHost\fR specify
 the local host and the \fBslurmctld\fR daemon is executing on each),
 system behavior will be destructive.
-If a compute node has an incorrect \fBControlMachine\fR or
-\fBBackupController\fR parameter, that node may be rendered
+If a compute node has an incorrect \fBSlurmctldHost\fR
+parameter, that node may be rendered
 unusable, but no other harm will result.
 
 .SH "EXAMPLE"

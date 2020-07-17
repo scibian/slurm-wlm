@@ -27,9 +27,9 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
- liblz4-dev,
- libpmix-dev
-Standards-Version: 4.4.1
+ libpmix-dev,
+ liblz4-dev
+Standards-Version: 4.5.0
 Homepage: http://slurm.schedmd.com
 Vcs-Browser: https://github.com/scibian/slurm-llnl
 Vcs-Git: https://github.com/scibian/slurm-llnl.git
@@ -136,7 +136,8 @@ Depends:
  ${misc:Depends},
  libslurm34 (= ${binary:Version})
 Conflicts: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
-Replaces: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
+Breaks: libslurmdb-dev
+Replaces: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev, libslurmdb-dev
 Description: SLURM development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
