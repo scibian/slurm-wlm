@@ -1,6 +1,57 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 19.05.7
+==========================
+ -- Fix handling of -m/--distribution options for across socket/2nd level by
+    task/affinity plugin.
+ -- Fix grp_node_bitmap error when slurmctld started before slurmdbd.
+ -- Fix compilation issues in GCC10.
+ -- Fix distributing job steps across idle nodes within a job.
+ -- Break infinite loop in cons_tres dealing with incorrect tasks per tres
+    request resulting in slurmctld hang.
+ -- priority/multifactor - gracefully handle NULL list of associations or array
+    of siblings when calculating FairTree fairshare.
+ -- Fix cons_tres --exclusive=user to allocate only requested number of CPUs.
+ -- Add MySQL deadlock detection and automatic retry mechanism.
+ -- Fix _verify_node_state memory requested as --mem-per-gpu DefMemPerGPU.
+ -- Factor in ntasks-per-core=1 with cons_tres.
+ -- Fix formatting in error message in cons_tres.
+ -- Fix gpu bind issue when CPUs=Cores and ThreadsPerCore > 1 on a node.
+ -- Fix --mem-per-gpu for heterogenous --gres requests.
+ -- Fix slurmctld load order in load_all_part_state().
+ -- Fix getting system counts for named GRES/TRES.
+ -- MySQL - Fix for handing typed GRES for association rollups.
+ -- Fix step allocations when tasks_per_core > 1.
+
+* Changes in Slurm 19.05.6
+==========================
+ -- Fix OverMemoryKill.
+ -- Fix memory leak in scontrol show config.
+ -- Remove PART_NODES reservation flag after ignoring it at creation.
+ -- Fix deprecation of MemLimitEnforce parameter.
+ -- X11 forwarding - alter Xauthority regex to work when "FamilyWild" cookies
+    are present in the "xauth list" output.
+ -- Fix memory leak when utilizing core reservations.
+ -- Fix issue where adding WCKeys and then using them right away didn't always
+    work.
+ -- Add cosmetic batch step to correct component in a hetjob.
+ -- Fix to make scontrol write config create a usable config without editing.
+ -- Fix memory leak when pinging backup controller.
+ -- Fix issue with 'scontrol update' not enforcing all QoS / Association limits.
+ -- Fix to properly schedule certain jobs with cons_tres plugin.
+ -- Fix FIRST_CORES for reservations when using cons_tres.
+ -- Fix sbcast -C argument parsing.
+ -- Replace/deprecate max_job_bf with bf_max_job_test and print error message.
+ -- sched/backfill - fix options parsing when bf_hetjob_prio enabled.
+ -- Fix for --gpu-bind when no gpus requested.
+ -- Fix sshare -l crash with large values.
+ -- Fix printing NULL job and step pointers.
+ -- Break infinite loop in cons_tres dealing with incorrect tasks per tres
+    request resulting in slurmctld hang.
+ -- Improve handling of --gpus-per-task to make sure appropriate number of GPUs
+    is assigned to job.
+
 * Changes in Slurm 19.05.5
 ==========================
  -- Fix both socket-[un]constrained GRES issues that would lead to incorrect

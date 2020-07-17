@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "December 2019" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "January 2020" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -43,17 +43,16 @@ sbatch will return 0 on success or error code on failure.
 
 .SH "SCRIPT PATH RESOLUTION"
 
-.nr step 1 1
 The batch script is resolved in the following order:
 .br
-.IP \n[step]. 3
+.IP 1. 3
 If script starts with ".", then path is constructed as:
 current working directory / script
-.IP \n+[step].
+.IP 2.
 If script starts with a "/", then path is considered absolute.
-.IP \n+[step].
+.IP 3.
 If script is in current working directory.
-.IP \n+[step].
+.IP 4.
 If script can be resolved through PATH. See \fBpath_resolution\fR(7).
 .P
 Current working directory is the calling process working directory unless the
@@ -118,7 +117,7 @@ for energy profiling using the acct_gather_energy plugin
 .TP
 \fBnetwork=\fI<interval>\fR
 where \fI<interval>\fR is the sampling interval in seconds
-for infiniband profiling using the acct_gather_infiniband
+for infiniband profiling using the acct_gather_interconnect
 plugin.
 .TP
 \fBfilesystem=\fI<interval>\fR
@@ -445,7 +444,6 @@ accounting information will be present.
 \fB\-\-cpus\-per\-gpu\fR=<\fIncpus\fR>
 Advise Slurm that ensuing job steps will require \fIncpus\fR processors per
 allocated GPU.
-Requires the \fB\-\-gpus\fR option.
 Not compatible with the \fB\-\-cpus\-per\-task\fR option.
 
 .TP
@@ -566,35 +564,56 @@ The default shared/exclusive behavior depends on system configuration and the
 partition's \fBOverSubscribe\fR option takes precedence over the job's option.
 
 .TP
-\fB\-\-export\fR=<\fIenvironment variables [ALL] | NONE\fR>
+\fB\-\-export\fR=<\fI[ALL,]environment variables\fR|\fIALL\fR|\fINONE\fR>
 Identify which environment variables from the submission environment are
-propagated to the launched application. By default, \fIall\fR are propagated.
-Multiple environment variable names should be comma separated.
-Environment variable names may be specified to propagate the current
-value (e.g. "\-\-export=EDITOR") or specific values
-may be exported (e.g. "\-\-export=EDITOR=/bin/emacs").
-In these two examples, the \fIpropagated\fR environment will only contain the
-variable \fIEDITOR\fR, along with \fISLURM_*\fR environment variables.
-However, Slurm will then implicitly attempt to load the user's environment on
-the node where the script is being executed, as if \fI\-\-get\-user\-env\fR was
-specified. This will happen whenever \fINONE\fR or environment variables are
-specified.
-If one desires to add to the submission environment instead of
-replacing it, have the argument include \fIALL\fR
-(e.g. "\-\-export=ALL,EDITOR=/bin/emacs"). Make sure \fIALL\fR is specified
-first, since sbatch applies the environment from left to right, overwriting
-as necessary.
-Environment variables propagated from the submission environment will always
-overwrite environment variables found in the user environment on the node.
-If one desires no environment variables be propagated from the submitting
-machine, use the argument \fINONE\fR.
-Regardless of this setting, the appropriate \fISLURM_*\fR
-task environment variables are always exported to the environment.
+propagated to the launched application.
+.RS
+.TP 10
+\fB\-\-export\fR=\fIALL\fR
+.br
+Default mode if \fB\-\-export\fR is not specified. All of the users environment
+will be loaded (either from callers environment or clean environment if
+\fI\-\-get\-user\-env\fR is specified).
+.TP
+\fB\-\-export\fR=\fINONE\fR
+.br
+None of the user environment will be defined. User must use absolute path to
+the binary to be executed that will define the environment. User can not specify
+explicit environment variables with \fINONE\fR. \fI\-\-get\-user\-env\fR will
+be ignored.
+.br
 This option is particularly important for jobs that are submitted on one cluster
 and execute on a different cluster (e.g. with different paths).
 To avoid steps inheriting environment export settings (e.g. \fINONE\fR) from
 sbatch command, the environment variable SLURM_EXPORT_ENV should be set to
 \fIALL\fR in the job script.
+.TP
+\fB\-\-export\fR=<\fI[ALL,]environment variables>\fR
+.br
+Exports all SLURM* environment variables along with explicitly defined
+variables. Multiple environment variable names should be comma separated.
+Environment variable names may be specified to propagate the current
+value (e.g. "\-\-export=EDITOR") or specific values may be exported
+(e.g. "\-\-export=EDITOR=/bin/emacs"). If \fIALL\fR is specified, then all user
+environment variables will be loaded and will take precedence over any
+explicitly given environment variables.
+.RS 5
+.TP 5
+Example: \fB\-\-export\fR=EDITOR,ARG1=test
+.br
+In this example, the propagated environment will only contain the
+variable \fIEDITOR\fR from the user's environment, \fISLURM_*\fR environment
+variables, and \fIARG1\fR=test.
+.TP
+Example: \fB\-\-export\fR=ALL,EDITOR=/bin/emacs
+.br
+There are two possible outcomes for this example. If the caller has the
+\fIEDITOR\fR environment variable defined, then the job's environment will
+inherit the variable from the caller's environment.  If the caller doesn't
+have an environment variable defined for \fIEDITOR\fR, then the job's
+environment will use the value given by \fB--export\fR.
+.RE
+.RE
 
 .TP
 \fB\-\-export\-file\fR=<\fIfilename\fR | \fIfd\fR>
@@ -634,7 +653,6 @@ If \fImode\fR not specified, the mode established at Slurm build time
 is used.
 Example of use include "\-\-get\-user\-env", "\-\-get\-user\-env=10"
 "\-\-get\-user\-env=10L", and "\-\-get\-user\-env=S".
-This option was originally created for use by Moab.
 
 .TP
 \fB\-\-gid\fR=<\fIgroup\fR>
@@ -752,13 +770,14 @@ See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-node\fR and
 Specify the number of GPUs required for the job on each task to be spawned
 in the job's resource allocation.
 An optional GPU type specification can be supplied.
-This option requires the specification of a task count.
-For example "\-\-gpus\-per\-task=volta:1".
-Multiple options can be requested in a comma separated list, for example:
-"\-\-gpus\-per\-task=volta:3,kepler:1".
-Requires job to specify a task count (\-\-nodes).
-See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
-\fB\-\-gpus\-per\-node\fR options.
+This option requires the specification of a task count (e.g. \-n or \-\-ntasks
+options). For example "\-\-gpus\-per\-task=volta:1". Multiple options can be
+requested in a comma separated list, for example:
+"\-\-gpus\-per\-task=volta:3,kepler:1". See also the \fB\-\-gpus\fR,
+\fB\-\-gpus\-per\-socket\fR and \fB\-\-gpus\-per\-node\fR options.
+.br
+NOTE: This option will not have any impact on GPU binding, specifically
+it won't limit the number of devices set for CUDA_VISIBLE_DEVICES.
 
 .TP
 \fB\-\-gres\fR=<\fIlist\fR>
@@ -1880,6 +1899,19 @@ job128\-00.out, job128\-01.out, ...
 .RS -10
 .PP
 
+.SH "PERFORMANCE"
+.PP
+Executing \fBsbatch\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBsbatch\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBsbatch\fR or other Slurm client commands that send remote
+procedure calls to \fBslurmctld\fR from loops in shell scripts or other
+programs. Ensure that programs limit calls to \fBsbatch\fR to the minimum
+necessary for the information you are trying to gather.
+
 .SH "INPUT ENVIRONMENT VARIABLES"
 .PP
 Upon startup, sbatch will read and handle the options set in the following
@@ -2240,7 +2272,7 @@ comma separated and in the same order as SLURM_JOB_NODELIST.
 If two or more consecutive nodes are to have the same task
 count, that count is followed by "(x#)" where "#" is the
 repetition count. For example, "SLURM_TASKS_PER_NODE=2(x3),1"
-indicates that the first three nodes will each execute three
+indicates that the first three nodes will each execute two
 tasks and the fourth node will execute one task.
 .TP
 \fBSLURM_TASK_PID\fR

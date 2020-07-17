@@ -1543,6 +1543,14 @@ _pick_step_nodes (struct job_record *job_ptr,
 			if (step_ptr->state < JOB_RUNNING)
 				continue;
 
+			/*
+			 * Don't consider the batch and extern steps when
+			 * looking for "idle" nodes.
+			 */
+			if ((step_ptr->step_id == SLURM_BATCH_SCRIPT) ||
+			    (step_ptr->step_id == SLURM_EXTERN_CONT))
+				continue;
+
 			if (!step_ptr->step_node_bitmap) {
 				error("%s: %pS has no step_node_bitmap",
 				      __func__, step_ptr);
@@ -1862,7 +1870,8 @@ static int _count_cpus(struct job_record *job_ptr, bitstr_t *bitmap,
  *	and step's allocation */
 static void _pick_step_cores(struct step_record *step_ptr,
 			     job_resources_t *job_resrcs_ptr,
-			     int job_node_inx, uint16_t task_cnt)
+			     int job_node_inx, uint16_t task_cnt,
+			     uint16_t cpus_per_core)
 {
 	int bit_offset, core_inx, i, sock_inx;
 	uint16_t sockets, cores;
@@ -1882,8 +1891,11 @@ static void _pick_step_cores(struct step_record *step_ptr,
 		use_all_cores = true;
 	else
 		use_all_cores = false;
-	if (step_ptr->cpus_per_task > 0)
-		cpu_cnt *= step_ptr->cpus_per_task;
+
+	if (step_ptr->cpus_per_task > 0) {
+		cpu_cnt *= step_ptr->cpus_per_task + cpus_per_core - 1;
+		cpu_cnt	/= cpus_per_core;
+	}
 
 	/* select idle cores first */
 	for (sock_inx=0; sock_inx<sockets; sock_inx++) {
@@ -1943,6 +1955,19 @@ static void _pick_step_cores(struct step_record *step_ptr,
 				return;
 		}
 	}
+}
+
+static bool _use_one_thread_per_core(struct job_record *job_ptr)
+{
+	job_resources_t *job_resrcs_ptr = job_ptr->job_resrcs;
+
+	if ((job_resrcs_ptr->whole_node != 1) &&
+	    (slurmctld_conf.select_type_param & (CR_CORE | CR_SOCKET)) &&
+	    (job_ptr->details &&
+	     (job_ptr->details->cpu_bind_type != NO_VAL16) &&
+	     (job_ptr->details->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)))
+		return true;
+	return false;
 }
 
 /* Update a job's record of allocated CPUs when a job step gets scheduled */
@@ -2029,10 +2054,21 @@ extern void step_alloc_lps(struct step_record *step_ptr)
 			}
 		}
 		if (pick_step_cores) {
+			uint16_t cpus_per_core = 1;
+			/*
+			 * Here we're setting number of CPUs per core
+			 * if we don't enforce 1 thread per core
+			 *
+			 * TODO: move cpus_per_core to slurm_step_layout_t
+			 */
+			if (!_use_one_thread_per_core(job_ptr))
+				cpus_per_core =
+					node_record_table_ptr[i_node].threads;
 			_pick_step_cores(step_ptr, job_resrcs_ptr,
 					 job_node_inx,
 					 step_ptr->step_layout->
-					 tasks[step_node_inx]);
+					 tasks[step_node_inx],
+					 cpus_per_core);
 		}
 		if (slurmctld_conf.debug_flags & DEBUG_FLAG_CPU_BIND)
 			_dump_step_layout(step_ptr);
@@ -2935,13 +2971,7 @@ extern slurm_step_layout_t *step_layout_create(struct step_record *step_ptr,
 			 * of cpus available if we only want to run 1
 			 * thread per core.
 			 */
-			if ((job_resrcs_ptr->whole_node != 1)
-			    && (slurmctld_conf.select_type_param
-				& (CR_CORE | CR_SOCKET))
-			    && (job_ptr->details &&
-				(job_ptr->details->cpu_bind_type != NO_VAL16)
-				&& (job_ptr->details->cpu_bind_type
-				    & CPU_BIND_ONE_THREAD_PER_CORE))) {
+			if (_use_one_thread_per_core(job_ptr)) {
 				uint16_t threads;
 				if (slurmctld_conf.fast_schedule)
 					threads = node_ptr->config_ptr->threads;
@@ -4872,9 +4902,22 @@ extern struct step_record *build_extern_step(struct job_record *job_ptr)
 	return step_ptr;
 }
 
-extern struct step_record *build_batch_step(struct job_record *job_ptr)
+extern struct step_record *build_batch_step(struct job_record *job_ptr_in)
 {
-	struct step_record *step_ptr = _create_step_record(job_ptr, 0);
+	struct job_record *job_ptr;
+	struct step_record *step_ptr;
+
+	if (job_ptr_in->pack_job_id) {
+		job_ptr = find_job_record(job_ptr_in->pack_job_id);
+		if (!job_ptr) {
+			error("%s: hetjob master is corrupt! This should never happen",
+			      __func__);
+			job_ptr = job_ptr_in;
+		}
+	} else
+		job_ptr = job_ptr_in;
+
+	step_ptr = _create_step_record(job_ptr, 0);
 
 	step_ptr->step_layout = fake_slurm_step_layout_create(
 		job_ptr->batch_host, NULL, NULL, 1, 1);

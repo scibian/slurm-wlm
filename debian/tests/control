@@ -10,5 +10,5 @@ Depends: slurmctld, slurmd, slurm-client
 
 Tests: sacct
 Features: no-build-needed,isolation-container
-Restrictions: needs-root
+Restrictions: needs-root, allow-stderr
 Depends: slurmctld, slurmd, slurm-client, slurmdbd, mariadb-client, mariadb-server
