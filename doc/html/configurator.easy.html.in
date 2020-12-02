@@ -21,8 +21,10 @@ You should have received a copy of the GNU General Public License along
 with Slurm; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 -->
-<HTML>
-<HEAD><TITLE>Slurm System Configuration Tool</TITLE>
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<title>Slurm System Configuration Tool</title>
 <SCRIPT type="text/javascript">
 <!--
 function get_field(name,form)
@@ -181,9 +183,9 @@ function displayfile()
 -->
 </SCRIPT>
 <!-- <div style='visibility:hidden;text-align:left;background:#ccc;border:1px solid black;position: absolute;left:100;z-index:1;padding:5;' id='out_box'></div> -->
-</HEAD>
-<BODY>
-<FORM name=config>
+</head>
+<body>
+<form name=config>
 <H1>Slurm Version @SLURM_MAJOR@.@SLURM_MINOR@ Configuration Tool - Easy Version</H1>
 <P>This form can be used to create a Slurm configuration file with
 you controlling many of the important configuration parameters.</P>
@@ -225,7 +227,7 @@ Hostname values should should not be the fully qualified domain
 name (e.g. use <I>tux</I> rather than <I>tux.abc.com</I>).
 <P>
 <input type="text" name="control_machine" value="linux0"> <B>SlurmctldHost</B>:
-Master Controller Hostname
+Primary Controller Hostname
 <P>
 
 <H2>Compute Machines</H2>
@@ -304,7 +306,7 @@ This must be a unique directory on each compute server (local disk).
 The use of a highly reliable file system (e.g. RAID) is recommended.
 <P>
 <input type="text" name="state_save_location" value="/var/spool"> <B>StateSaveLocation</B>:
-Slurmctld state save directory </B>
+Slurmctld state save directory
 <P>
 <input type="text" name="slurmd_spool_dir" value="/var/spool/slurmd"> <B>SlurmdSpoolDir</B>:
 Slurmd state save directory
@@ -368,7 +370,10 @@ control<BR>
 <H2>Resource Selection</H2>
 Define resource (node) selection algorithm to be used.<BR>
 Select one value for <B>SelectType</B>:<BR>
-<input type="radio" name="select_type" value="cons_res" checked>
+<input type="radio" name="select_type" value="cons_tres" checked>
+<b>cons_tres</b>: Allocate individual processors, memory, GPUs, and other
+trackable resources<br />
+<input type="radio" name="select_type" value="cons_res">
 <B>Cons_res</B>: Allocate individual processors and memory<BR>
 <input type="radio" name="select_type" value="cray_aries">
 <B>Cray XC</B>: Cray XC systems running native Slurm without ALPS<BR>
@@ -423,7 +428,6 @@ CPU affinity support
 <input type="radio" name="task_plugin" value="cgroup"> <B>Cgroup</B>:
 Allocated resources constraints enforcement using Linux Control Groups
 (see cgroup.conf man page)
-</DL></DL>
 <P>
 
 <H2>Event Logging</H2>
@@ -444,6 +448,8 @@ determined by system type<BR>
 Select one value for <B>JobAcctGatherType</B>:<BR>
 <input type="radio" name="job_acct_gather_type" value="none" checked> <B>None</B>: No
 job accounting<BR>
+<input type="radio" name="job_acct_gather_type" value="cgroup"> <b>cgroup</b>:
+Specifc Linux cgroup information gathered, use with Linux systems only<br>
 <input type="radio" name="job_acct_gather_type" value="linux"> <B>Linux</B>: Specifc
 Linux process table information gathered, use with Linux systems only<BR>
 
@@ -481,9 +487,10 @@ Specify a specify the fully qualified pathname for the file.
 <BR>
 <input type=button value="Submit" onClick="javascript:displayfile()">
 <input type=reset value="Reset Form">
-<P>
-</FORM>
-<HR>
+</form>
+<hr>
+<p>
 <a href="disclaimer.html" target="_blank" class="privacy">Legal Notices</a><br>
-Last modified 10 April 2018</P>
-</BODY>
+Last modified 10 April 2018</p>
+</body>
+</html>

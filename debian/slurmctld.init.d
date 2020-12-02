@@ -23,7 +23,7 @@
 ### END INIT INFO
 
 BINDIR=/usr/bin
-CONFDIR=/etc/slurm-llnl
+CONFDIR=/etc/slurm
 LIBDIR=/usr/lib
 SBINDIR=/usr/sbin
 

@@ -38,10 +38,6 @@
 
 #include "config.h"
 
-#ifndef __USE_ISOC99
-#define __USE_ISOC99
-#endif
-
 #define _GNU_SOURCE
 
 #include <ctype.h>		/* isdigit    */
@@ -62,11 +58,17 @@
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/proc_args.h"
+#include "src/common/parse_time.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+enum {
+	RESV_NEW, /* It is a new reservation */
+	RESV_ADD, /* It is a reservation update with += */
+	RESV_REM, /* It is an reservation  update with -= */
+};
 
 /* print this version of Slurm */
 void print_slurm_version(void)
@@ -205,6 +207,41 @@ void set_distribution(task_dist_states_t distribution,
 }
 
 /*
+ * Get the size of the plane distribution and put it in plane_size.
+ *
+ * An invalid plane size is zero, negative, or larger than INT_MAX.
+ *
+ * Return SLURM_DIST_PLANE for a valid plane size, SLURM_DIST_UNKNOWN otherwise.
+ */
+static task_dist_states_t _parse_plane_dist(const char *tok,
+					    uint32_t *plane_size)
+{
+	long tmp_long;
+	char *endptr, *plane_size_str;
+
+	/*
+	 * Check for plane size given after '=' sign or in SLURM_DIST_PLANESIZE
+	 * environment variable.
+	 */
+	if ((plane_size_str = strchr(tok, '=')))
+		plane_size_str++;
+	else if (!(plane_size_str = getenv("SLURM_DIST_PLANESIZE")))
+		return SLURM_DIST_UNKNOWN; /* No plane size given */
+	else if (*plane_size_str == '\0')
+		return SLURM_DIST_UNKNOWN; /* No plane size given */
+
+	tmp_long = strtol(plane_size_str, &endptr, 10);
+	if ((plane_size_str == endptr) || (*endptr != '\0')) {
+		/* No valid digits or there are characters after plane_size */
+		return SLURM_DIST_UNKNOWN;
+	} else if ((tmp_long > INT_MAX) || (tmp_long <= 0) ||
+		   ((errno == ERANGE) && (tmp_long == LONG_MAX)))
+		return SLURM_DIST_UNKNOWN; /* Number is too high/low */
+	*plane_size = (uint32_t)tmp_long;
+	return SLURM_DIST_PLANE;
+}
+
+/*
  * verify that a distribution type in arg is of a known form
  * returns the task_dist_states, or -1 if state is unknown
  */
@@ -227,28 +264,23 @@ task_dist_states_t verify_dist_type(const char *arg, uint32_t *plane_size)
 	if (!arg)
 		return result;
 
+	if (!xstrncasecmp(arg, "plane", 5)) {
+		/*
+		 * plane distribution can't be with any other type,
+		 * so just parse plane distribution and then break
+		 */
+		return _parse_plane_dist(arg, plane_size);
+	}
+
 	tmp = xstrdup(arg);
 	tok = strtok_r(tmp, ",", &save_ptr);
 	while (tok) {
-		bool lllp_dist = false, plane_dist = false;
+		bool lllp_dist = false;
 		len = strlen(tok);
 		dist_str = strchr(tok, ':');
 		if (dist_str != NULL) {
 			/* -m cyclic|block:cyclic|block */
 			lllp_dist = true;
-		} else {
-			/* -m plane=<plane_size> */
-			dist_str = strchr(tok, '=');
-			if (!dist_str)
-				dist_str = getenv("SLURM_DIST_PLANESIZE");
-			else {
-				len = dist_str - tok;
-				dist_str++;
-			}
-			if (dist_str) {
-				*plane_size = atoi(dist_str);
-				plane_dist = true;
-			}
 		}
 
 		cur_ptr = tok;
@@ -353,14 +385,16 @@ task_dist_states_t verify_dist_type(const char *arg, uint32_t *plane_size)
 				== 0) {
 				result = SLURM_DIST_BLOCK_CFULL_CFULL;
 			}
-		} else if (plane_dist) {
-			if (xstrncasecmp(tok, "plane", len) == 0) {
-				result = SLURM_DIST_PLANE;
-			}
 		} else {
 			if (xstrncasecmp(tok, "cyclic", len) == 0) {
 				result = SLURM_DIST_CYCLIC;
-			} else if (xstrncasecmp(tok, "block", len) == 0) {
+			} else if ((xstrncasecmp(tok, "block", len) == 0) ||
+				   (xstrncasecmp(tok, "*", len) == 0)) {
+				/*
+				 * We can get here with syntax like this:
+				 * -m *,pack
+				 * '*' means get default (block for node dist).
+				 */
 				result = SLURM_DIST_BLOCK;
 			} else if ((xstrncasecmp(tok, "arbitrary", len) == 0) ||
 				   (xstrncasecmp(tok, "hostfile", len) == 0)) {
@@ -873,7 +907,7 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 					(~CPU_BIND_ONE_THREAD_PER_CORE);
 			}
 			if (*ntasks_per_core == NO_VAL)
-				*ntasks_per_core = INFINITE;
+				*ntasks_per_core = INFINITE16;
 		} else if (xstrcasecmp(tok, "nomultithread") == 0) {
 			*min_threads = 1;
 			if (cpu_bind_type) {
@@ -1006,16 +1040,10 @@ char *print_mail_type(const uint16_t type)
 	return buf;
 }
 
-static void
-_freeF(void *data)
-{
-	xfree(data);
-}
-
 static List
 _create_path_list(void)
 {
-	List l = list_create(_freeF);
+	List l = list_create(xfree_ptr);
 	char *path;
 	char *c, *lc;
 
@@ -1187,16 +1215,33 @@ char *print_commandline(const int script_argc, char **script_argv)
 int get_signal_opts(char *optarg, uint16_t *warn_signal, uint16_t *warn_time,
 		    uint16_t *warn_flags)
 {
+	static bool daemon_run = false, daemon_set = false;
 	char *endptr;
 	long num;
 
 	if (optarg == NULL)
 		return -1;
 
-	if (!xstrncasecmp(optarg, "B:", 2)) {
-		*warn_flags = KILL_JOB_BATCH;
-		optarg += 2;
+	if (!xstrncasecmp(optarg, "R", 1)) {
+		*warn_flags |= KILL_JOB_RESV;
+		optarg++;
 	}
+
+	if (run_in_daemon(&daemon_run, &daemon_set, "sbatch")) {
+		if (!xstrncasecmp(optarg, "B", 1)) {
+			*warn_flags |= KILL_JOB_BATCH;
+			optarg++;
+		}
+
+		/* easiest way to handle BR and RB */
+		if (!xstrncasecmp(optarg, "R", 1)) {
+			*warn_flags |= KILL_JOB_RESV;
+			optarg++;
+		}
+	}
+
+	if (*optarg == ':')
+		optarg++;
 
 	endptr = strchr(optarg, '@');
 	if (endptr)
@@ -1227,8 +1272,13 @@ extern char *signal_opts_to_cmdline(uint16_t warn_signal, uint16_t warn_time,
 {
 	char *cmdline = NULL, *sig_name;
 
-	if (warn_flags == KILL_JOB_BATCH)
-		xstrcat(cmdline, "B:");
+	if (warn_flags & KILL_JOB_RESV)
+		xstrcat(cmdline, "R");
+	if (warn_flags & KILL_JOB_BATCH)
+		xstrcat(cmdline, "B");
+
+	if ((warn_flags & KILL_JOB_RESV) || (warn_flags & KILL_JOB_BATCH))
+		xstrcat(cmdline, ":");
 
 	sig_name = sig_num2name(warn_signal);
 	xstrcat(cmdline, sig_name);
@@ -1463,35 +1513,38 @@ void print_db_notok(const char *cname, bool isenv)
  *
  * flagstr IN - reservation flag string
  * msg IN - string to append to error message (e.g. function name)
+ * resv_msg_ptr IN/OUT - sets flags and times in ptr.
  * RET equivalent reservation flag bits
  */
-extern uint64_t parse_resv_flags(const char *flagstr, const char *msg)
+extern uint64_t parse_resv_flags(const char *flagstr, const char *msg,
+				 resv_desc_msg_t  *resv_msg_ptr)
 {
-	int flip;
+	int op = RESV_NEW;
 	uint64_t outflags = 0;
-	const char *curr = flagstr;
+	char *curr = xstrdup(flagstr), *start = curr;
 	int taglen = 0;
 
 	while (*curr != '\0') {
-		flip = 0;
 		if (*curr == '+') {
+			op = RESV_ADD;
 			curr++;
 		} else if (*curr == '-') {
-			flip = 1;
+			op = RESV_REM;
 			curr++;
 		}
 		taglen = 0;
-		while (curr[taglen] != ',' && curr[taglen] != '\0')
+		while (curr[taglen] != ',' && curr[taglen] != '\0'
+		       && curr[taglen] != '=')
 			taglen++;
 
-		if (xstrncasecmp(curr, "Maintenance", MAX(taglen,1)) == 0) {
+		if (xstrncasecmp(curr, "Maintenance", MAX(taglen,3)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_MAINT;
 			else
 				outflags |= RESERVE_FLAG_MAINT;
 		} else if ((xstrncasecmp(curr, "Overlap", MAX(taglen,1))
-			    == 0) && (!flip)) {
+			    == 0) && (op != RESV_REM)) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_OVERLAP;
 			/*
@@ -1501,87 +1554,110 @@ extern uint64_t parse_resv_flags(const char *flagstr, const char *msg)
 			 */
 		} else if (xstrncasecmp(curr, "Flex", MAX(taglen,1)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_FLEX;
 			else
 				outflags |= RESERVE_FLAG_FLEX;
 		} else if (xstrncasecmp(curr, "Ignore_Jobs", MAX(taglen,1))
 			   == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_IGN_JOB;
 			else
 				outflags |= RESERVE_FLAG_IGN_JOBS;
 		} else if (xstrncasecmp(curr, "Daily", MAX(taglen,1)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_DAILY;
 			else
 				outflags |= RESERVE_FLAG_DAILY;
 		} else if (xstrncasecmp(curr, "Weekday", MAX(taglen,1)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_WEEKDAY;
 			else
 				outflags |= RESERVE_FLAG_WEEKDAY;
 		} else if (xstrncasecmp(curr, "Weekend", MAX(taglen,1)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_WEEKEND;
 			else
 				outflags |= RESERVE_FLAG_WEEKEND;
 		} else if (xstrncasecmp(curr, "Weekly", MAX(taglen,1)) == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_WEEKLY;
 			else
 				outflags |= RESERVE_FLAG_WEEKLY;
 		} else if (!xstrncasecmp(curr, "Any_Nodes", MAX(taglen,1)) ||
 			   !xstrncasecmp(curr, "License_Only", MAX(taglen,1))) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_ANY_NODES;
 			else
 				outflags |= RESERVE_FLAG_ANY_NODES;
 		} else if (xstrncasecmp(curr, "Static_Alloc", MAX(taglen,1))
 			   == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_STATIC;
 			else
 				outflags |= RESERVE_FLAG_STATIC;
 		} else if (xstrncasecmp(curr, "Part_Nodes", MAX(taglen, 2))
 			   == 0) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_PART_NODES;
 			else
 				outflags |= RESERVE_FLAG_PART_NODES;
-		} else if (xstrncasecmp(curr, "PURGE_COMP", MAX(taglen, 2))
-			   == 0) {
+		} else if (!xstrncasecmp(curr, "magnetic", MAX(taglen, 3)) ||
+			   !xstrncasecmp(curr, "promiscuous", MAX(taglen, 2))) {
 			curr += taglen;
-			if (flip)
+			if (op == RESV_REM)
+				outflags |= RESERVE_FLAG_NO_PROM;
+			else
+				outflags |= RESERVE_FLAG_PROM;
+		} else if (!xstrncasecmp(curr, "PURGE_COMP", MAX(taglen, 2))) {
+			if (curr[taglen] == '=') {
+				int num_end;
+				taglen++;
+
+				num_end = taglen;
+				while (curr[num_end] != ',' &&
+				       curr[num_end] != '\0')
+					num_end++;
+				if (curr[num_end] == ',') {
+					curr[num_end] = '\0';
+					num_end++;
+				}
+				if (resv_msg_ptr)
+					resv_msg_ptr->purge_comp_time =
+						time_str2secs(curr+taglen);
+				taglen = num_end;
+			}
+			curr += taglen;
+			if (op == RESV_REM)
 				outflags |= RESERVE_FLAG_NO_PURGE_COMP;
 			else
 				outflags |= RESERVE_FLAG_PURGE_COMP;
 		} else if (!xstrncasecmp(curr, "First_Cores", MAX(taglen,1)) &&
-			   !flip) {
+			   op != RESV_REM) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_FIRST_CORES;
 		} else if (!xstrncasecmp(curr, "Time_Float", MAX(taglen,1)) &&
-			   !flip) {
+			   op == RESV_NEW) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_TIME_FLOAT;
 		} else if (!xstrncasecmp(curr, "Replace", MAX(taglen, 1)) &&
-			   !flip) {
+			   op != RESV_REM) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_REPLACE;
 		} else if (!xstrncasecmp(curr, "Replace_Down", MAX(taglen, 8))
-			   && !flip) {
+			   && op != RESV_REM) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_REPLACE_DOWN;
 		} else if (!xstrncasecmp(curr, "NO_HOLD_JOBS_AFTER_END",
-					 MAX(taglen, 1)) && !flip) {
+					 MAX(taglen, 1)) && op != RESV_REM) {
 			curr += taglen;
 			outflags |= RESERVE_FLAG_NO_HOLD_JOBS;
 		} else {
@@ -1593,6 +1669,14 @@ extern uint64_t parse_resv_flags(const char *flagstr, const char *msg)
 			curr++;
 		}
 	}
+
+	if (resv_msg_ptr && (outflags != INFINITE64)) {
+		if (resv_msg_ptr->flags == NO_VAL64)
+			resv_msg_ptr->flags = outflags;
+		else
+			resv_msg_ptr->flags |= outflags;
+	}
+	xfree(start);
 	return outflags;
 }
 

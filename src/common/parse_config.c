@@ -88,7 +88,6 @@ strong_alias(transfer_s_p_options,	slurm_transfer_s_p_options);
 
 #define CONF_HASH_LEN 173
 
-static regex_t keyvalue_re;
 static char *keyvalue_pattern =
 	"^[[:space:]]*"
 	"([[:alnum:]_.]+)" /* key */
@@ -96,24 +95,6 @@ static char *keyvalue_pattern =
 	"((\"([^\"]*)\")|([^[:space:]]+))" /* value: quoted with whitespace,
 					    * or unquoted and no whitespace */
 	"([[:space:]]|$)";
-static bool keyvalue_initialized = false;
-static bool pthread_atfork_set = false;
-
-/* The following mutex and atfork() handler protect against receiving
- * a corrupted keyvalue_re state in a forked() child. While regexec() itself
- * appears to be thread-safe (due to internal locking), a process fork()'d
- * while a regexec() is running in a separate thread will inherit an internally
- * locked keyvalue_re leading to deadlock. This appears to have been fixed in
- * glibc with a release in 2013, although I do not know the exact version.
- */
-static pthread_mutex_t s_p_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static void _s_p_atfork_child(void)
-{
-	slurm_mutex_init(&s_p_lock);
-	keyvalue_initialized = false;
-	pthread_atfork_set = false;
-}
 
 struct s_p_values {
 	char *key;
@@ -121,6 +102,7 @@ struct s_p_values {
 	slurm_parser_operator_t operator;
 	int data_count;
 	void *data;
+	regex_t *keyvalue_re;
 	int (*handler)(void **data, slurm_parser_enum_t type,
 		       const char *key, const char *value,
 		       const char *line, char **leftover);
@@ -133,6 +115,12 @@ typedef struct _expline_values_st {
 	s_p_hashtbl_t*	index;
 	s_p_hashtbl_t**	values;
 } _expline_values_t;
+
+static bool _run_in_daemon(void)
+{
+	static bool run = false, set = false;
+	return run_in_daemon(&run, &set, "slurmctld,slurmd,slurmdbd");
+}
 
 /*
  * NOTE - "key" is case insensitive.
@@ -153,7 +141,11 @@ static void _conf_hashtbl_insert(s_p_hashtbl_t *hashtbl,
 	int idx;
 
 	xassert(value);
-	idx = _conf_hashtbl_index(value->key);
+	if (!value->key && value->keyvalue_re)
+		/* Inserting a holder for the regex_t of the structure. */
+		idx = 0;
+	else
+		idx = _conf_hashtbl_index(value->key);
 	value->next = hashtbl[idx];
 	hashtbl[idx] = value;
 }
@@ -210,6 +202,23 @@ s_p_hashtbl_t *s_p_hashtbl_create(const s_p_options_t options[])
 			value->data = expdata;
 		}
 		_conf_hashtbl_insert(hashtbl, value);
+	}
+
+	/*
+	 * Here we use hashtbl[0] as a place holder for the regex_t of the
+	 * structure.  If it doesn't exist put it in.  It will be initialized
+	 * later.
+	 */
+	if (!hashtbl[0]) {
+		value = xmalloc(sizeof(s_p_values_t));
+		value->next = hashtbl[0];
+		hashtbl[0] = value;
+	}
+
+	hashtbl[0]->keyvalue_re = xmalloc(sizeof(regex_t));
+	if (regcomp(hashtbl[0]->keyvalue_re, keyvalue_pattern, REG_EXTENDED)) {
+		/* FIXME - should be fatal? */
+		error("keyvalue regex compilation failed");
 	}
 
 	return hashtbl;
@@ -283,6 +292,11 @@ void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl) {
 	if (!hashtbl)
 		return;
 
+	if (hashtbl[0] && hashtbl[0]->keyvalue_re) {
+		regfree(hashtbl[0]->keyvalue_re);
+		xfree(hashtbl[0]->keyvalue_re);
+	}
+
 	for (i = 0; i < CONF_HASH_LEN; i++) {
 		for (p = hashtbl[i]; p != NULL; p = next) {
 			next = p->next;
@@ -290,38 +304,10 @@ void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl) {
 		}
 	}
 	xfree(hashtbl);
-
-	/*
-	 * Now clear the global variables to free their memory as well.
-	 */
-	slurm_mutex_lock(&s_p_lock);
-	if (keyvalue_initialized) {
-		regfree(&keyvalue_re);
-		keyvalue_initialized = false;
-	}
-	slurm_mutex_unlock(&s_p_lock);
-
-}
-
-static void _keyvalue_regex_init(void)
-{
-	slurm_mutex_lock(&s_p_lock);
-	if (!keyvalue_initialized) {
-		if (regcomp(&keyvalue_re, keyvalue_pattern,
-			    REG_EXTENDED) != 0) {
-			/* FIXME - should be fatal? */
-			error("keyvalue regex compilation failed");
-		}
-		keyvalue_initialized = true;
-	}
-	if (!pthread_atfork_set) {
-		pthread_atfork(NULL, NULL, _s_p_atfork_child);
-		pthread_atfork_set = true;
-	}
-	slurm_mutex_unlock(&s_p_lock);
 }
 
 /*
+ * IN hashtbl - table to work off
  * IN line - string to be search for a key=value pair
  * OUT key - pointer to the key string (caller must free with xfree())
  * OUT value - pointer to the value string (caller must free with xfree())
@@ -329,7 +315,7 @@ static void _keyvalue_regex_init(void)
  *                 of the unsearched portion of the string
  * Return 0 when a key-value pair is found, and -1 otherwise.
  */
-static int _keyvalue_regex(const char *line,
+static int _keyvalue_regex(s_p_hashtbl_t *hashtbl, const char *line,
 			   char **key, char **value, char **remaining,
 			   slurm_parser_operator_t *operator)
 {
@@ -343,7 +329,9 @@ static int _keyvalue_regex(const char *line,
 	*operator = S_P_OPERATOR_SET;
 	memset(pmatch, 0, sizeof(regmatch_t)*nmatch);
 
-	if (regexec(&keyvalue_re, line, nmatch, pmatch, 0)
+	xassert(hashtbl[0]->keyvalue_re);
+
+	if (regexec(hashtbl[0]->keyvalue_re, line, nmatch, pmatch, 0)
 	    == REG_NOMATCH) {
 		return -1;
 	}
@@ -563,6 +551,18 @@ s_p_hashtbl_t* _hashtbl_copy_keys(const s_p_hashtbl_t* from_hashtbl,
 			if (change_destroyer) {
 				val_copy->destroy = destroy;
 			}
+			/*
+			 * We cannot copy a regex since a regfree() on either
+			 * the original or the copy can affect the other one.
+			 */
+			if (val_ptr->keyvalue_re != NULL) {
+				val_copy->keyvalue_re = xmalloc(
+					sizeof(regex_t));
+				if (regcomp(val_copy->keyvalue_re,
+					    keyvalue_pattern, REG_EXTENDED)) {
+					error("keyvalue regex compilation failed");
+				}
+			}
 			_conf_hashtbl_insert(to_hashtbl, val_copy);
 		}
 	}
@@ -576,7 +576,7 @@ static int _handle_common(s_p_values_t *v,
 			  void* (*convert)(const char* key, const char* value))
 {
 	if (v->data_count != 0) {
-		if (run_in_daemon("slurmctld,slurmd,slurmdbd"))
+		if (_run_in_daemon())
 			error("%s 1 specified more than once, latest value used",
 			      v->key);
 		xfree(v->data);
@@ -682,7 +682,7 @@ static int _handle_pointer(s_p_values_t *v, const char *value,
 			return rc == 0 ? 0 : -1;
 	} else {
 		if (v->data_count != 0) {
-			if (run_in_daemon("slurmctld,slurmd,slurmdbd"))
+			if (_run_in_daemon())
 				error("%s 2 specified more than once, latest value used",
 				      v->key);
 			xfree(v->data);
@@ -1011,9 +1011,7 @@ int s_p_parse_line(s_p_hashtbl_t *hashtbl, const char *line, char **leftover)
 	char *new_leftover;
 	slurm_parser_operator_t op;
 
-	_keyvalue_regex_init();
-
-	while (_keyvalue_regex(ptr, &key, &value, &new_leftover, &op) == 0) {
+	while (_keyvalue_regex(hashtbl, ptr, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
 			_handle_keyvalue_match(p, value,
@@ -1045,9 +1043,7 @@ static int _parse_next_key(s_p_hashtbl_t *hashtbl,
 	char *new_leftover;
 	slurm_parser_operator_t op;
 
-	_keyvalue_regex_init();
-
-	if (_keyvalue_regex(line, &key, &value, &new_leftover, &op) == 0) {
+	if (_keyvalue_regex(hashtbl, line, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
 			_handle_keyvalue_match(p, value,
@@ -1193,7 +1189,6 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 		return SLURM_ERROR;
 	}
 
-	_keyvalue_regex_init();
 	for (i = 0; ; i++) {
 		if (i == 1) {	/* Long once, on first retry */
 			error("s_p_parse_file: unable to status file %s: %m, "
@@ -1279,7 +1274,6 @@ int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 	}
 
 	line_number = 0;
-	_keyvalue_regex_init();
 	while (remaining_buf(buffer) > 0) {
 		safe_unpackstr_xmalloc(&tmp_str, &utmp32, buffer);
 		if (tmp_str != NULL) {
@@ -1522,6 +1516,18 @@ static s_p_hashtbl_t* _parse_expline_adapt_table(const s_p_hashtbl_t* hashtbl)
 					_parse_line_expanded_handler;
 				val_copy->destroy =
 					_parse_line_expanded_destroyer;
+			}
+			/*
+			 * We cannot copy a regex since a regfree() on either
+			 * the original or the copy can affect the other one.
+			 */
+			if (val_ptr->keyvalue_re != NULL) {
+				val_copy->keyvalue_re = xmalloc(
+					sizeof(regex_t));
+				if (regcomp(val_copy->keyvalue_re,
+					    keyvalue_pattern, REG_EXTENDED)) {
+					error("keyvalue regex compilation failed");
+				}
 			}
 			_conf_hashtbl_insert(to_hashtbl, val_copy);
 		}
@@ -2180,6 +2186,8 @@ extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
 	Buf buffer = init_buf(0);
 	s_p_values_t *p;
 	int i;
+
+	xassert(hashtbl);
 
 	pack32(cnt, buffer);
 

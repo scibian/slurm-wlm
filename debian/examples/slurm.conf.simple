@@ -25,9 +25,6 @@
 SlurmctldHost=workstation
 #SlurmctldHost=
 #
-AuthType=auth/munge
-#CheckpointType=checkpoint/none
-CryptoType=crypto/munge
 #DisableRootJobs=NO
 #EnforcePartLimits=NO
 #Epilog=
@@ -37,9 +34,6 @@ CryptoType=crypto/munge
 #GresTypes=
 #GroupUpdateForce=0
 #GroupUpdateTime=600
-#JobCheckpointDir=/var/lib/slurm-llnl/checkpoint
-#JobCredentialPrivateKey=
-#JobCredentialPublicCertificate=
 #JobFileAppend=0
 #JobRequeue=1
 #JobSubmitPlugins=1
@@ -69,16 +63,15 @@ SlurmctldPidFile=/run/slurmctld.pid
 SlurmctldPort=6817
 SlurmdPidFile=/run/slurmd.pid
 SlurmdPort=6818
-SlurmdSpoolDir=/var/lib/slurm-llnl/slurmd
+SlurmdSpoolDir=/var/lib/slurm/slurmd
 SlurmUser=slurm
 #SlurmdUser=root
 #SrunEpilog=
 #SrunProlog=
-StateSaveLocation=/var/lib/slurm-llnl/slurmctld
+StateSaveLocation=/var/lib/slurm/slurmctld
 SwitchType=switch/none
 #TaskEpilog=
 TaskPlugin=task/affinity
-TaskPluginParam=Sched
 #TaskProlog=
 #TopologyPlugin=topology/tree
 #TmpFS=/tmp
@@ -110,11 +103,10 @@ Waittime=0
 #
 # SCHEDULING
 #DefMemPerCPU=0
-FastSchedule=1
 #MaxMemPerCPU=0
 #SchedulerTimeSlice=30
 SchedulerType=sched/backfill
-SelectType=select/cons_res
+SelectType=select/cons_tres
 SelectTypeParameters=CR_Core
 #
 #
@@ -153,10 +145,10 @@ JobCompType=jobcomp/none
 #JobContainerType=job_container/none
 JobAcctGatherFrequency=30
 JobAcctGatherType=jobacct_gather/none
-SlurmctldDebug=3
-SlurmctldLogFile=/var/log/slurm-llnl/slurmctld.log
-SlurmdDebug=3
-SlurmdLogFile=/var/log/slurm-llnl/slurmd.log
+SlurmctldDebug=info
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdDebug=info
+SlurmdLogFile=/var/log/slurm/slurmd.log
 #SlurmSchedLogFile=
 #SlurmSchedLogLevel=
 #

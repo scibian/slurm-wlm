@@ -1,0 +1,96 @@
+Description: Remove acute accent in manual pages
+ Remove acute accent in manual pages detect by lintian
+Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=10141
+Last-Update: 2020-11-04
+
+--- a/doc/man/man1/sacctmgr.1
++++ b/doc/man/man1/sacctmgr.1
+@@ -422,7 +422,7 @@
+ 
+ .TP
+ \fIPriority\fP
+-What priority will be added to a job\'s priority when using this association.
++What priority will be added to a job's priority when using this association.
+ This is overridden if set directly on a user.
+ Default is the cluster's limit.
+ To clear a previously set value use the modify command with a new value of \-1.
+@@ -700,13 +700,13 @@
+ .TP
+ \fIQos\fP
+ .RS
+-Valid QOS\' for this association.
++Valid QOS' for this association.
+ .RE
+ 
+ .TP
+ \fIQosRaw\fP
+ .RS
+-QOS\' ID.
++QOS' ID.
+ .RE
+ 
+ .TP
+@@ -723,7 +723,7 @@
+ 
+ .TP
+ \fIPriority\fP
+-What priority will be added to a job\'s priority when using this association.
++What priority will be added to a job's priority when using this association.
+ 
+ .TP
+ \fIWithRawQOSLevel\fP
+@@ -1328,7 +1328,7 @@
+ 
+ .TP
+ \fIPreempt\fP
+-Other QOS\' this QOS can preempt.
++Other QOS' this QOS can preempt.
+ 
+ \fBNOTE\fP: The \fIPriority\fP of a QOS is NOT related to QOS preemption, only
+ \fIPreempt\fP is used to define which QOS can preempt others.
+@@ -1356,7 +1356,7 @@
+ 
+ .TP
+ \fIPriority\fP
+-What priority will be added to a job\'s priority when using this QOS.
++What priority will be added to a job's priority when using this QOS.
+ 
+ \fBNOTE\fP: The \fIPriority\fP of a QOS is NOT related to QOS preemption, see
+ \fIPreempt\fP instead.
+@@ -1523,7 +1523,7 @@
+ 
+ .TP
+ \fIPreempt\fP
+-Other QOS\' this QOS can preempt.
++Other QOS' this QOS can preempt.
+ Setting a Preempt to '' (two single
+ quotes with nothing between them) restores its default setting.  You
+ can also use the operator += and \-= to add or remove certain QOS's
+@@ -1540,7 +1540,7 @@
+ 
+ .TP
+ \fIPriority\fP
+-What priority will be added to a job\'s priority when using this QOS.
++What priority will be added to a job's priority when using this QOS.
+ To clear a previously set value use the modify command with a new value of \-1.
+ 
+ .TP
+--- a/doc/man/man3/slurm_free_job_info_msg.3
++++ b/doc/man/man3/slurm_free_job_info_msg.3
+@@ -275,13 +275,13 @@
+ \fBslurm_load_jobs\fR function.
+ .LP
+ \fBslurm_get_end_time\fR Returns the expected termination time of a specified
+-Slurm job. The time corresponds to the exhaustion of the job\'s or partition\'s
++Slurm job. The time corresponds to the exhaustion of the job's or partition's
+ time limit. NOTE: The data is cached locally and only retrieved from the
+ Slurm controller once per minute.
+ .LP
+ \fBslurm_get_rem_time\fR Returns the number of seconds remaining before the
+ expected termination time of a specified Slurm job id. The time corresponds
+-to the exhaustion of the job\'s or partition\'s time limit. NOTE: The data is
++to the exhaustion of the job's or partition's time limit. NOTE: The data is
+ cached locally and only retrieved from the Slurm controller once per minute.
+ .LP
+ \fBslurm_job_cpus_allocated_on_node\fR and

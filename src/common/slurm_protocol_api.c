@@ -961,6 +961,25 @@ char *slurm_get_priority_weight_tres(void)
 	return weights;
 }
 
+/* slurm_get_prep_plugins
+ * returns the PrEpPlugins from slurmctld_conf object
+ * RET char *    - PrEpPlugins, MUST be xfreed by caller
+ */
+char *slurm_get_prep_plugins(void)
+{
+	char *plugins = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		plugins = xstrdup(conf->prep_plugins);
+		slurm_conf_unlock();
+	}
+
+	return plugins;
+}
+
 static int _get_tres_id(char *type, char *name)
 {
 	slurmdb_tres_rec_t tres_rec;
@@ -1227,42 +1246,6 @@ extern char *slurm_get_bb_type(void)
 	return bb_type;
 }
 
-/* slurm_get_checkpoint_type
- * returns the checkpoint_type from slurmctld_conf object
- * RET char *    - checkpoint type, MUST be xfreed by caller
- */
-extern char *slurm_get_checkpoint_type(void)
-{
-	char *checkpoint_type = NULL;
-	slurm_ctl_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		checkpoint_type = xstrdup(conf->checkpoint_type);
-		slurm_conf_unlock();
-	}
-	return checkpoint_type;
-}
-
-/* slurm_get_checkpoint_dir
- * returns the job_ckpt_dir from slurmctld_conf object
- * RET char *    - checkpoint dir, MUST be xfreed by caller
- */
-extern char *slurm_get_checkpoint_dir(void)
-{
-	char *checkpoint_dir = NULL;
-	slurm_ctl_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		checkpoint_dir = xstrdup(conf->job_ckpt_dir);
-		slurm_conf_unlock();
-	}
-	return checkpoint_dir;
-}
-
 /* slurm_get_cluster_name
  * returns the cluster name from slurmctld_conf object
  * RET char *    - cluster name,  MUST be xfreed by caller
@@ -1423,23 +1406,6 @@ extern uint16_t slurm_get_propagate_prio_process(void)
 	return propagate_prio;
 }
 
-/* slurm_get_fast_schedule
- * returns the value of fast_schedule in slurmctld_conf object
- */
-extern uint16_t slurm_get_fast_schedule(void)
-{
-	uint16_t fast_val = 0;
-	slurm_ctl_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		fast_val = conf->fast_schedule;
-		slurm_conf_unlock();
-	}
-	return fast_val;
-}
-
 /* slurm_get_route_plugin
  * returns the value of route_plugin in slurmctld_conf object
  * RET char *    - route type, MUST be xfreed by caller
@@ -1471,27 +1437,10 @@ extern uint16_t slurm_get_track_wckey(void)
 		track_wckey = slurmdbd_conf->track_wckey;
 	} else {
 		conf = slurm_conf_lock();
-		track_wckey = conf->track_wckey;
+		track_wckey = conf->conf_flags & CTL_CONF_WCKEY ? 1 : 0;
 		slurm_conf_unlock();
 	}
 	return track_wckey;
-}
-
-/* slurm_get_use_spec_resources
- * returns the value of use_spec_resources in slurmctld_conf object
- */
-extern uint16_t slurm_get_use_spec_resources(void)
-{
-	uint16_t use_spec_val = 0;
-	slurm_ctl_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		use_spec_val = conf->use_spec_resources;
-		slurm_conf_unlock();
-	}
-	return use_spec_val;
 }
 
 /* slurm_set_tree_width
@@ -1858,6 +1807,20 @@ char *slurm_get_accounting_storage_backup_host(void)
 	return storage_host;
 }
 
+char *slurm_get_accounting_storage_ext_host(void)
+{
+	char *ext_host = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		ext_host = xstrdup(conf->accounting_storage_ext_host);
+		slurm_conf_unlock();
+	}
+	return ext_host;
+}
+
 /* slurm_get_accounting_storage_host
  * returns the storage host from slurmctld_conf object
  * RET char *    - storage host,  MUST be xfreed by caller
@@ -2175,6 +2138,24 @@ int slurm_set_accounting_storage_port(uint32_t storage_port)
 	return 0;
 }
 
+/*
+ * slurm_get_dependency_params
+ * RET dependency_params must be xfreed by caller
+ */
+char *slurm_get_dependency_params(void)
+{
+	char *dependency_params = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		dependency_params = xstrdup(conf->dependency_params);
+		slurm_conf_unlock();
+	}
+	return dependency_params;
+}
+
 /* slurm_get_preempt_mode
  * returns the PreemptMode value from slurmctld_conf object
  * RET uint16_t   - PreemptMode value (See PREEMPT_MODE_* in slurm.h)
@@ -2479,6 +2460,20 @@ char *slurm_get_jobcomp_host(void)
 		slurm_conf_unlock();
 	}
 	return storage_host;
+}
+
+char *slurm_get_jobcomp_params(void)
+{
+	char *param = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		param = xstrdup(conf->job_comp_params);
+		slurm_conf_unlock();
+	}
+	return param;
 }
 
 /* slurm_get_jobcomp_pass
@@ -3212,22 +3207,6 @@ int slurm_init_msg_engine_ports(uint16_t *ports)
 	return s;
 }
 
-/* In the socket implementation it creates a socket, binds to it, and
- *	listens for connections.
- *
- * IN  addr_name - address to bind the msg server to (NULL means any)
- * IN  port      - port to bind the msg server to
- * RET int       - file descriptor of the connection created
- */
-int slurm_init_msg_engine_addrname_port(char *addr_name, uint16_t port)
-{
-	slurm_addr_t addr;
-
-	slurm_setup_sockaddr(&addr, port);
-
-	return slurm_init_msg_engine(&addr);
-}
-
 /**********************************************************************\
  * msg connection establishment functions used by msg clients
 \**********************************************************************/
@@ -3448,8 +3427,9 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer)
 	}
 
 	if (rc != SLURM_SUCCESS) {
-		error("%s: %s has authentication error: %m",
-		      __func__, rpc_num2string(header.msg_type));
+		error("%s: %s has authentication error: %s",
+		      __func__, rpc_num2string(header.msg_type),
+		      slurm_strerror(rc));
 		(void) g_slurm_auth_destroy(auth_cred);
 		rc = SLURM_PROTOCOL_AUTHENTICATION_ERROR;
 		goto total_return;
@@ -3548,12 +3528,15 @@ int slurm_receive_msg(int fd, slurm_msg_t *msg, int timeout)
 
 	if (timeout <= 0)
 		/* convert secs to msec */
-		timeout  = slurm_get_msg_timeout() * 1000;
+		timeout  = slurm_get_msg_timeout() * MSEC_IN_SEC;
 
-	else if (timeout > (slurm_get_msg_timeout() * 10000)) {
+	else if (timeout > (slurm_get_msg_timeout() * MSEC_IN_SEC * 10)) {
+		/* consider 10x the timeout to be very long */
 		debug("%s: You are receiving a message with very long "
-		      "timeout of %d seconds", __func__, (timeout/1000));
-	} else if (timeout < 1000) {
+		      "timeout of %d seconds", __func__,
+		      (timeout / MSEC_IN_SEC));
+	} else if (timeout < MSEC_IN_SEC) {
+		/* consider a less than 1 second to be very short */
 		error("%s: You are receiving a message with a very short "
 		      "timeout of %d msecs", __func__, timeout);
 	}
@@ -3652,7 +3635,7 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 	 *  the message.
 	 */
 	if (slurm_msg_recvfrom_timeout(fd, &buf, &buflen, 0, timeout) < 0) {
-		forward_init(&header.forward, NULL);
+		forward_init(&header.forward);
 		rc = errno;
 		goto total_return;
 	}
@@ -3704,7 +3687,7 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 	}
 
 	if ((auth_cred = g_slurm_auth_unpack(buffer, header.version)) == NULL) {
-		error("authentication: %m");
+		error("%s: authentication: %m", __func__);
 		free_buf(buffer);
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
@@ -3719,7 +3702,8 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 	}
 
 	if (rc != SLURM_SUCCESS) {
-		error("authentication: %m");
+		error("%s: %s has authentication error: %m",
+		      __func__, rpc_num2string(header.msg_type));
 		(void) g_slurm_auth_destroy(auth_cred);
 		free_buf(buffer);
 		rc = SLURM_PROTOCOL_AUTHENTICATION_ERROR;
@@ -3833,20 +3817,18 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 
 	msg->ret_list = list_create(destroy_data_info);
 
-	if (timeout <= 0)
+	if (timeout <= 0) {
 		/* convert secs to msec */
 		timeout  = slurm_get_msg_timeout() * 1000;
-
-	if (timeout >= (slurm_get_msg_timeout() * 10000)) {
+	} else if (timeout < 1000) {
+		debug("%s: You are sending a message with a very short timeout of %d milliseconds",
+		      __func__, timeout);
+	} else if (timeout >= (slurm_get_msg_timeout() * 10000)) {
 		debug("slurm_receive_msg_and_forward: "
 		      "You are sending a message with timeout's greater "
 		      "than %d seconds, your's is %d seconds",
 		      (slurm_get_msg_timeout() * 10),
 		      (timeout/1000));
-	} else if (timeout < 1000) {
-		debug("slurm_receive_msg_and_forward: "
-		      "You are sending a message with a very short timeout of "
-		      "%d milliseconds", timeout);
 	}
 
 	/*
@@ -3855,7 +3837,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 	 *  the message.
 	 */
 	if (slurm_msg_recvfrom_timeout(fd, &buf, &buflen, 0, timeout) < 0) {
-		forward_init(&header.forward, NULL);
+		forward_init(&header.forward);
 		rc = errno;
 		goto total_return;
 	}
@@ -3927,7 +3909,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 		msg->forward_struct->ret_list = msg->ret_list;
 		/* take out the amount of timeout from this hop */
 		msg->forward_struct->timeout = header.forward.timeout;
-		if (msg->forward_struct->timeout <= 0)
+		if (!msg->forward_struct->timeout)
 			msg->forward_struct->timeout = message_timeout;
 		msg->forward_struct->fwd_cnt = header.forward.cnt;
 
@@ -3941,7 +3923,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 	}
 
 	if ((auth_cred = g_slurm_auth_unpack(buffer, header.version)) == NULL) {
-		error("authentication: %m");
+		error("%s: authentication: %m", __func__);
 		free_buf(buffer);
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
@@ -3956,7 +3938,8 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 	}
 
 	if (rc != SLURM_SUCCESS) {
-		error("authentication: %m");
+		error("%s: %s has authentication error: %m",
+		      __func__, rpc_num2string(header.msg_type));
 		(void) g_slurm_auth_destroy(auth_cred);
 		free_buf(buffer);
 		rc = SLURM_PROTOCOL_AUTHENTICATION_ERROR;
@@ -3971,6 +3954,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 	msg->flags = header.flags;
 
 	if (header.msg_type == MESSAGE_COMPOSITE) {
+		slurm_send_rc_msg(msg, SLURM_SUCCESS);
 		msg_aggr_add_comp(buffer, auth_cred, &header);
 		goto total_return;
 	}
@@ -4095,7 +4079,7 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 	}
 
 	if (msg->forward.init != FORWARD_INIT) {
-		forward_init(&msg->forward, NULL);
+		forward_init(&msg->forward);
 		msg->ret_list = NULL;
 	}
 
@@ -4117,7 +4101,7 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 		}
 	}
 	if (auth_cred == NULL) {
-		error("authentication: %m");
+		error("%s: authentication: %m", __func__);
 		slurm_seterrno_ret(SLURM_PROTOCOL_AUTHENTICATION_ERROR);
 	}
 
@@ -4135,7 +4119,7 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 	rc = g_slurm_auth_pack(auth_cred, buffer, header.version);
 	(void) g_slurm_auth_destroy(auth_cred);
 	if (rc) {
-		error("authentication: %m");
+		error("%s: authentication: %m", __func__);
 		free_buf(buffer);
 		slurm_seterrno_ret(SLURM_PROTOCOL_AUTHENTICATION_ERROR);
 	}
@@ -4625,7 +4609,7 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 	 * since we KNOW that we are only sending to one node (the controller),
 	 * we initialize some forwarding variables to disable forwarding.
 	 */
-	forward_init(&request_msg->forward, NULL);
+	forward_init(&request_msg->forward);
 	request_msg->ret_list = NULL;
 	request_msg->forward_struct = NULL;
 
@@ -4906,13 +4890,11 @@ void slurm_send_msg_maybe(slurm_msg_t *req)
  * IN nodelist	  - list of nodes to send to.
  * IN msg	  - a slurm_msg struct to be sent by the function
  * IN timeout	  - how long to wait in milliseconds
- * IN quiet       - if set, reduce logging details
  * RET List	  - List containing the responses of the children
  *		    (if any) we forwarded the message to. List
  *		    containing type (ret_data_info_t).
  */
-List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg,
-			  int timeout, bool quiet)
+List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout)
 {
 	List ret_list = NULL;
 	hostlist_t hl = NULL;
@@ -4946,7 +4928,8 @@ List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg,
 List slurm_send_addr_recv_msgs(slurm_msg_t *msg, char *name, int timeout)
 {
 	static pthread_mutex_t conn_lock = PTHREAD_MUTEX_INITIALIZER;
-	static uint16_t conn_timeout = NO_VAL16;
+	static uint16_t conn_timeout = NO_VAL16, tcp_timeout = 2;
+	char addrbuf[32];
 	List ret_list = NULL;
 	int fd = -1;
 	ret_data_info_t *ret_data_info = NULL;
@@ -4954,22 +4937,34 @@ List slurm_send_addr_recv_msgs(slurm_msg_t *msg, char *name, int timeout)
 	int i;
 
 	slurm_mutex_lock(&conn_lock);
-	if (conn_timeout == NO_VAL16)
-		conn_timeout = MIN(slurm_get_msg_timeout(), 10);
+	if (conn_timeout == NO_VAL16) {
+		conn_timeout = MAX(5, slurm_get_msg_timeout() / 2);
+		tcp_timeout = MAX(0, slurm_get_tcp_timeout() - 1);
+	}
 	slurm_mutex_unlock(&conn_lock);
+	slurm_print_slurm_addr(&msg->address, addrbuf, sizeof(addrbuf));
 
 	/* This connect retry logic permits Slurm hierarchical communications
 	 * to better survive slurmd restarts */
 	for (i = 0; i <= conn_timeout; i++) {
-		if (i)
-			sleep(1);
 		fd = slurm_open_msg_conn(&msg->address);
-		if ((fd >= 0) || (errno != ECONNREFUSED))
+		if ((fd >= 0) || (errno != ECONNREFUSED && errno != ETIMEDOUT))
 			break;
-		if (i == 0)
-			debug3("connect refused, retrying");
+
+		if (errno == ETIMEDOUT) {
+			if (i == 0)
+				debug3("Timed out connecting to %s, retrying...",
+					addrbuf);
+			i += tcp_timeout;
+		} else {
+			if (i == 0)
+				debug3("Connection refused by %s, retrying...",
+				addrbuf);
+			sleep(1);
+		}
 	}
 	if (fd < 0) {
+		debug2("Failed to connect to %s, %m", addrbuf);
 		mark_as_failed_forward(&ret_list, name,
 				       SLURM_COMMUNICATIONS_CONNECTION_ERROR);
 		errno = SLURM_COMMUNICATIONS_CONNECTION_ERROR;
@@ -5014,7 +5009,7 @@ int slurm_send_recv_rc_msg_only_one(slurm_msg_t *req, int *rc, int timeout)
 	 * since we KNOW that we are only sending to one node,
 	 * we initialize some forwarding variables to disable forwarding.
 	 */
-	forward_init(&req->forward, NULL);
+	forward_init(&req->forward);
 	req->ret_list = NULL;
 	req->forward_struct = NULL;
 
@@ -5337,7 +5332,7 @@ extern int slurm_forward_data(
 	msg.msg_type = REQUEST_FORWARD_DATA;
 	msg.data = &req;
 
-	if ((ret_list = slurm_send_recv_msgs(*nodelist, &msg, 0, false))) {
+	if ((ret_list = slurm_send_recv_msgs(*nodelist, &msg, 0))) {
 		if (list_count(ret_list) > 1)
 			redo_nodelist = true;
 
@@ -5392,7 +5387,7 @@ extern void slurm_setup_sockaddr(struct sockaddr_in *sin, uint16_t port)
 		char *comm_params = slurm_get_comm_parameters();
 		char *var;
 
-		if (run_in_daemon("slurmctld"))
+		if (running_in_slurmctld())
 			var = "NoCtldInAddrAny";
 		else
 			var = "NoInAddrAny";

@@ -2,7 +2,7 @@ Description: Fix an rpath issue
  The libdir has to match the source package name in order to host
  slurm's private shared library.
 Author: Mehdi Dogguy <mehdi@debian.org>
-Forwarded: no
+Forwarded: not-needed
 Last-Update: 2018-01-12
 
 --- a/configure.ac

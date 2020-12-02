@@ -28,6 +28,9 @@ source ./globals
 
 set file_in	"bash"
 
+# Increase timeout to account for sbatch --wait backoff
+set timeout 20
+
 proc test_sbatch { local } {
 	global sbatch number file_in
 

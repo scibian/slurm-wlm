@@ -81,7 +81,9 @@ typedef struct {
 
 typedef struct {
 	time_t end;
+	uint32_t flags;
 	int id;
+	hostlist_t hl;
 	List local_assocs; /* list of assocs to spread unused time
 			      over of type local_id_usage_t */
 	List loc_tres;
@@ -120,6 +122,7 @@ static void _destroy_local_resv_usage(void *object)
 {
 	local_resv_usage_t *r_usage = (local_resv_usage_t *)object;
 	if (r_usage) {
+		FREE_NULL_HOSTLIST(r_usage->hl);
 		FREE_NULL_LIST(r_usage->local_assocs);
 		FREE_NULL_LIST(r_usage->loc_tres);
 		xfree(r_usage);
@@ -805,10 +808,57 @@ static void _create_id_usage_insert(char *cluster_name, int type,
 		   "alloc_secs=VALUES(alloc_secs);", now);
 }
 
+static int _add_resv_usage_to_cluster(void *object, void *arg)
+{
+	local_resv_usage_t *r_usage = (local_resv_usage_t *)object;
+	local_cluster_usage_t *c_usage = (local_cluster_usage_t *)arg;
+
+	xassert(c_usage);
+
+	/*
+	 * Only record time for the clusters that have
+	 * registered, or if a reservation has the IGNORE_JOBS
+	 * flag we don't have an easy way to distinguish the
+	 * cpus a job not running in the reservation, but on
+	 * it's cpus.
+	 * We still need them for figuring out unused wall time,
+	 * but for cluster utilization we will just ignore them.
+	 */
+	if (r_usage->flags & RESERVE_FLAG_IGN_JOBS)
+		return SLURM_SUCCESS;
+
+	/*
+	 * Since this reservation was added to the
+	 * cluster and only certain people could run
+	 * there we will use this as allocated time on
+	 * the system.  If the reservation was a
+	 * maintenance then we add the time to planned
+	 * down time.
+	 */
+
+	_add_time_tres_list(c_usage->loc_tres,
+			    r_usage->loc_tres,
+			    (r_usage->flags & RESERVE_FLAG_MAINT) ?
+			    TIME_PDOWN : TIME_ALLOC, 0, 0);
+
+	/* slurm_make_time_str(&r_usage->start, start_char, */
+	/* 		    sizeof(start_char)); */
+	/* slurm_make_time_str(&r_usage->end, end_char, */
+	/* 		    sizeof(end_char)); */
+	/* info("adding this much %lld to cluster %s " */
+	/*      "%d %d %s - %s", */
+	/*      r_usage->total_time, c_usage->name, */
+	/*      (row_flags & RESERVE_FLAG_MAINT),  */
+	/*      r_usage->id, start_char, end_char); */
+
+	return SLURM_SUCCESS;
+}
+
 static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 						   char *cluster_name,
 						   time_t curr_start,
 						   time_t curr_end,
+						   List resv_usage_list,
 						   List cluster_down_list)
 {
 	local_cluster_usage_t *c_usage = NULL;
@@ -869,6 +919,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 		time_t row_start = slurm_atoul(row[EVENT_REQ_START]);
 		time_t row_end = slurm_atoul(row[EVENT_REQ_END]);
 		uint16_t state = slurm_atoul(row[EVENT_REQ_STATE]);
+		time_t local_start, local_end;
 		int seconds;
 
 		if (row_start < curr_start)
@@ -924,59 +975,203 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 			continue;
 		}
 
-		/* only record down time for the cluster we
-		   are looking for.  If it was during this
-		   time period we would already have it.
-		*/
-		if (c_usage) {
-			time_t local_start = row_start;
-			time_t local_end = row_end;
-			int seconds;
-			if (c_usage->start > local_start)
-				local_start = c_usage->start;
-			if (c_usage->end < local_end)
-				local_end = c_usage->end;
-			seconds = (local_end - local_start);
-			if (seconds > 0) {
-				_add_tres_time_2_list(c_usage->loc_tres,
-						      row[EVENT_REQ_TRES],
-						      TIME_DOWN,
-						      seconds, 0, 0);
+		/*
+		 * Only record down time for the cluster we
+		 * are looking for.  If it was during this
+		 * time period we would already have it.
+		 */
+		if (!c_usage)
+			continue;
 
-				/* Now remove this time if there was a
-				   disconnected slurmctld during the
-				   down time.
-				*/
-				list_iterator_reset(d_itr);
-				while ((loc_c_usage = list_next(d_itr))) {
-					int temp_end = row_end;
-					int temp_start = row_start;
-					if (loc_c_usage->start > local_start)
-						temp_start = loc_c_usage->start;
-					if (loc_c_usage->end < temp_end)
-						temp_end = loc_c_usage->end;
-					seconds = (temp_end - temp_start);
-					if (seconds < 1)
-						continue;
+		local_start = row_start;
+		local_end = row_end;
 
-					_remove_job_tres_time_from_cluster(
-						loc_c_usage->loc_tres,
-						c_usage->loc_tres, seconds);
-					/* info("Node %s was down for " */
-					/*      "%d seconds while " */
-					/*      "cluster %s's slurmctld " */
-					/*      "wasn't responding", */
-					/*      row[EVENT_REQ_NAME], */
-					/*      seconds, cluster_name); */
-				}
-			}
+		if (local_start < c_usage->start)
+			local_start = c_usage->start;
+		if (local_end > c_usage->end)
+			local_end = c_usage->end;
+
+		/* Don't worry about it if the time is less than 1 second. */
+		if ((seconds = (local_end - local_start)) < 1)
+			continue;
+
+		_add_tres_time_2_list(c_usage->loc_tres,
+				      row[EVENT_REQ_TRES],
+				      TIME_DOWN,
+				      seconds, 0, 0);
+
+		/*
+		 * Now remove this time if there was a
+		 * disconnected slurmctld during the down time.
+		 */
+		list_iterator_reset(d_itr);
+		while ((loc_c_usage = list_next(d_itr))) {
+			time_t temp_end = row_end;
+			time_t temp_start = row_start;
+			if (loc_c_usage->start > temp_start)
+				temp_start = loc_c_usage->start;
+			if (loc_c_usage->end < temp_end)
+				temp_end = loc_c_usage->end;
+			seconds = (temp_end - temp_start);
+			if (seconds < 1)
+				continue;
+
+			_remove_job_tres_time_from_cluster(
+				loc_c_usage->loc_tres,
+				c_usage->loc_tres, seconds);
+			/* info("Node %s was down for " */
+			/*      "%d seconds while " */
+			/*      "cluster %s's slurmctld " */
+			/*      "wasn't responding", */
+			/*      row[EVENT_REQ_NAME], */
+			/*      seconds, cluster_name); */
 		}
 	}
 	mysql_free_result(result);
 
 	list_iterator_destroy(d_itr);
 
+	if (c_usage)
+		(void)list_for_each(resv_usage_list,
+				    _add_resv_usage_to_cluster,
+				    c_usage);
 	return c_usage;
+}
+
+extern int _setup_resv_usage(mysql_conn_t *mysql_conn,
+			     char *cluster_name,
+			     time_t curr_start,
+			     time_t curr_end,
+			     List resv_usage_list,
+			     int dims)
+{
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row;
+	int i;
+	char *query;
+	char *resv_str = NULL;
+	local_resv_usage_t *r_usage = NULL;
+	char *resv_req_inx[] = {
+		"id_resv",
+		"assoclist",
+		"flags",
+		"nodelist",
+		"tres",
+		"time_start",
+		"time_end",
+		"unused_wall"
+	};
+	enum {
+		RESV_REQ_ID,
+		RESV_REQ_ASSOCS,
+		RESV_REQ_FLAGS,
+		RESV_REQ_NODES,
+		RESV_REQ_TRES,
+		RESV_REQ_START,
+		RESV_REQ_END,
+		RESV_REQ_UNUSED,
+		RESV_REQ_COUNT
+	};
+
+	/* now get the reservations during this time */
+
+	i=0;
+	xstrfmtcat(resv_str, "%s", resv_req_inx[i]);
+	for(i=1; i<RESV_REQ_COUNT; i++)
+		xstrfmtcat(resv_str, ", %s", resv_req_inx[i]);
+
+	query = xstrdup_printf("select %s from \"%s_%s\" where "
+			       "(time_start < %ld && time_end >= %ld) "
+			       "order by time_start",
+			       resv_str, cluster_name, resv_table,
+			       curr_end, curr_start);
+	xfree(resv_str);
+	if (debug_flags & DEBUG_FLAG_DB_USAGE)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+
+	result = mysql_db_query_ret(mysql_conn, query, 0);
+	xfree(query);
+
+	if (!result)
+		return SLURM_ERROR;
+
+	/*
+	 * If a reservation overlaps another reservation we
+	 * total up everything here as if they didn't but when
+	 * calculating the total time for a cluster we will
+	 * remove the extra time received.  This may result in
+	 * unexpected results with association based reports
+	 * since the association is given the total amount of
+	 * time of each reservation, thus equaling more time
+	 * than is available.  Job/Cluster/Reservation reports
+	 * should be fine though since we really don't over
+	 * allocate resources.  The issue with us not being
+	 * able to handle overlapping reservations here is
+	 * unless the reservation completely overlaps the
+	 * other reservation we have no idea how many cpus
+	 * should be removed since this could be a
+	 * heterogeneous system.  This same problem exists
+	 * when a reservation is created with the ignore_jobs
+	 * option which will allow jobs to continue to run in the
+	 * reservation that aren't suppose to.
+	 */
+	while ((row = mysql_fetch_row(result))) {
+		time_t row_start = slurm_atoul(row[RESV_REQ_START]);
+		time_t row_end = slurm_atoul(row[RESV_REQ_END]);
+		int unused;
+		int resv_seconds;
+		time_t orig_start = row_start;
+
+		if (row_start >= curr_start) {
+			/*
+			 * This is the first time we are seeing this
+			 * reservation, so set our unused to be 0.
+			 * This is mostly helpful when
+			 * rerolling set it back to 0.
+			 */
+			unused = 0;
+		} else
+			unused = slurm_atoul(row[RESV_REQ_UNUSED]);
+
+		if (row_start <= curr_start)
+			row_start = curr_start;
+
+		if (!row_end || row_end > curr_end)
+			row_end = curr_end;
+
+		/* Don't worry about it if the time is less
+		 * than 1 second.
+		 */
+		if ((resv_seconds = (row_end - row_start)) < 1)
+			continue;
+
+		r_usage = xmalloc(sizeof(local_resv_usage_t));
+		r_usage->flags = slurm_atoul(row[RESV_REQ_FLAGS]);
+		r_usage->id = slurm_atoul(row[RESV_REQ_ID]);
+
+		r_usage->local_assocs = list_create(xfree_ptr);
+		slurm_addto_char_list(r_usage->local_assocs,
+				      row[RESV_REQ_ASSOCS]);
+		r_usage->loc_tres =
+			list_create(_destroy_local_tres_usage);
+
+		_add_tres_2_list(r_usage->loc_tres,
+				 row[RESV_REQ_TRES], resv_seconds);
+
+		/*
+		 * Original start is needed when updating the
+		 * reservation's unused_wall later on.
+		 */
+		r_usage->orig_start = orig_start;
+		r_usage->start = row_start;
+		r_usage->end = row_end;
+		r_usage->unused_wall = unused + resv_seconds;
+		r_usage->hl = hostlist_create_dims(row[RESV_REQ_NODES], dims);
+		list_append(resv_usage_list, r_usage);
+	}
+	mysql_free_result(result);
+
+	return SLURM_SUCCESS;
 }
 
 extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
@@ -986,7 +1181,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 {
 	int rc = SLURM_SUCCESS;
 	int add_sec = 3600;
-	int i=0;
+	int i=0, dims;
 	time_t now = time(NULL);
 	time_t curr_start = start;
 	time_t curr_end = curr_start + add_sec;
@@ -1051,27 +1246,6 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 		SUSPEND_REQ_COUNT
 	};
 
-	char *resv_req_inx[] = {
-		"id_resv",
-		"assoclist",
-		"flags",
-		"tres",
-		"time_start",
-		"time_end",
-		"unused_wall"
-	};
-	char *resv_str = NULL;
-	enum {
-		RESV_REQ_ID,
-		RESV_REQ_ASSOCS,
-		RESV_REQ_FLAGS,
-		RESV_REQ_TRES,
-		RESV_REQ_START,
-		RESV_REQ_END,
-		RESV_REQ_UNUSED,
-		RESV_REQ_COUNT
-	};
-
 	i=0;
 	xstrfmtcat(job_str, "%s", job_req_inx[i]);
 	for(i=1; i<JOB_REQ_COUNT; i++) {
@@ -1084,11 +1258,30 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 		xstrfmtcat(suspend_str, ", %s", suspend_req_inx[i]);
 	}
 
-	i=0;
-	xstrfmtcat(resv_str, "%s", resv_req_inx[i]);
-	for(i=1; i<RESV_REQ_COUNT; i++) {
-		xstrfmtcat(resv_str, ", %s", resv_req_inx[i]);
+	/* We need to figure out the dimensions of this cluster */
+	query = xstrdup_printf("select dimensions from %s where name='%s'",
+			       cluster_table, cluster_name);
+	if (debug_flags & DEBUG_FLAG_DB_USAGE)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	result = mysql_db_query_ret(mysql_conn, query, 0);
+	xfree(query);
+
+	if (!result) {
+		error("%s: error querying cluster_table", __func__);
+		rc = SLURM_ERROR;
+		goto end_it;
 	}
+	row = mysql_fetch_row(result);
+
+	if (!row) {
+		error("%s: no cluster by name %s known",
+		      __func__, cluster_name);
+		rc = SLURM_ERROR;
+		goto end_it;
+	}
+
+	dims = atoi(row[0]);
+	mysql_free_result(result);
 
 /* 	info("begin start %s", slurm_ctime2(&curr_start)); */
 /* 	info("begin end %s", slurm_ctime2(&curr_end)); */
@@ -1107,138 +1300,19 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 /* 		info("start %s", slurm_ctime2(&curr_start)); */
 /* 		info("end %s", slurm_ctime2(&curr_end)); */
 
+		if ((rc = _setup_resv_usage(mysql_conn, cluster_name,
+					    curr_start, curr_end,
+					    resv_usage_list, dims))
+		    != SLURM_SUCCESS)
+			goto end_it;
+
 		c_usage = _setup_cluster_usage(mysql_conn, cluster_name,
 					       curr_start, curr_end,
+					       resv_usage_list,
 					       cluster_down_list);
-
-		// now get the reservations during this time
-		query = xstrdup_printf("select %s from \"%s_%s\" where "
-				       "(time_start < %ld && time_end >= %ld) "
-				       "order by time_start",
-				       resv_str, cluster_name, resv_table,
-				       curr_end, curr_start);
-
-		if (debug_flags & DEBUG_FLAG_DB_USAGE)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
-		if (!(result = mysql_db_query_ret(
-			      mysql_conn, query, 0))) {
-			rc = SLURM_ERROR;
-			goto end_it;
-		}
-		xfree(query);
 
 		if (c_usage)
 			xassert(c_usage->loc_tres);
-
-		/* If a reservation overlaps another reservation we
-		   total up everything here as if they didn't but when
-		   calculating the total time for a cluster we will
-		   remove the extra time received.  This may result in
-		   unexpected results with association based reports
-		   since the association is given the total amount of
-		   time of each reservation, thus equaling more time
-		   than is available.  Job/Cluster/Reservation reports
-		   should be fine though since we really don't over
-		   allocate resources.  The issue with us not being
-		   able to handle overlapping reservations here is
-		   unless the reservation completely overlaps the
-		   other reservation we have no idea how many cpus
-		   should be removed since this could be a
-		   heterogeneous system.  This same problem exists
-		   when a reservation is created with the ignore_jobs
-		   option which will allow jobs to continue to run in the
-		   reservation that aren't suppose to.
-		*/
-		while ((row = mysql_fetch_row(result))) {
-			time_t row_start = slurm_atoul(row[RESV_REQ_START]);
-			time_t row_end = slurm_atoul(row[RESV_REQ_END]);
-			uint32_t row_flags = slurm_atoul(row[RESV_REQ_FLAGS]);
-			int unused;
-			int resv_seconds;
-			time_t orig_start = row_start;
-
-			if (row_start >= curr_start) {
-				/*
-				 * This is the first time we are seeing this
-				 * reservation, so set our unused to be 0.
-				 * This is mostly helpful when
-				 * rerolling set it back to 0.
-				 */
-				unused = 0;
-			} else
-				unused = slurm_atoul(row[RESV_REQ_UNUSED]);
-
-			if (row_start <= curr_start)
-				row_start = curr_start;
-
-			if (!row_end || row_end > curr_end)
-				row_end = curr_end;
-
-			/* Don't worry about it if the time is less
-			 * than 1 second.
-			 */
-			if ((resv_seconds = (row_end - row_start)) < 1)
-				continue;
-
-			r_usage = xmalloc(sizeof(local_resv_usage_t));
-			r_usage->id = slurm_atoul(row[RESV_REQ_ID]);
-
-			r_usage->local_assocs = list_create(slurm_destroy_char);
-			slurm_addto_char_list(r_usage->local_assocs,
-					      row[RESV_REQ_ASSOCS]);
-			r_usage->loc_tres =
-				list_create(_destroy_local_tres_usage);
-
-			_add_tres_2_list(r_usage->loc_tres,
-					 row[RESV_REQ_TRES], resv_seconds);
-
-			/*
-			 * Original start is needed when updating the
-			 * reservation's unused_wall later on.
-			 */
-			r_usage->orig_start = orig_start;
-			r_usage->start = row_start;
-			r_usage->end = row_end;
-			r_usage->unused_wall = unused + resv_seconds;
-			list_append(resv_usage_list, r_usage);
-
-			/* Since this reservation was added to the
-			   cluster and only certain people could run
-			   there we will use this as allocated time on
-			   the system.  If the reservation was a
-			   maintenance then we add the time to planned
-			   down time.
-			*/
-
-
-			/*
-			 * Only record time for the clusters that have
-			 * registered, or if a reservation has the IGNORE_JOBS
-			 * flag we don't have an easy way to distinguish the
-			 * cpus a job not running in the reservation, but on
-			 * it's cpus.
-			 * We still need them for figuring out unused wall time,
-			 * but for cluster utilization we will just ignore them.
-			 */
-			if (!c_usage || (row_flags & RESERVE_FLAG_IGN_JOBS))
-				continue;
-
-			_add_time_tres_list(c_usage->loc_tres,
-					    r_usage->loc_tres,
-					    (row_flags & RESERVE_FLAG_MAINT) ?
-					    TIME_PDOWN : TIME_ALLOC, 0, 0);
-
-			/* slurm_make_time_str(&r_usage->start, start_char, */
-			/* 		    sizeof(start_char)); */
-			/* slurm_make_time_str(&r_usage->end, end_char, */
-			/* 		    sizeof(end_char)); */
-			/* info("adding this much %lld to cluster %s " */
-			/*      "%d %d %s - %s", */
-			/*      r_usage->total_time, c_usage->name, */
-			/*      (row_flags & RESERVE_FLAG_MAINT),  */
-			/*      r_usage->id, start_char, end_char); */
-		}
-		mysql_free_result(result);
 
 		/* now get the jobs during this time only  */
 		query = xstrdup_printf("select %s from \"%s_%s\" as job "
@@ -1456,18 +1530,36 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 
 					loc_seconds = (temp_end - temp_start);
 
-					if (loc_seconds > 0) {
-						_add_time_tres_list(
-							r_usage->loc_tres,
-							loc_tres, TIME_ALLOC,
-							loc_seconds, 1);
-						if ((rc = _update_unused_wall(
-							     r_usage,
-							     loc_tres,
-							     loc_seconds))
-						    != SLURM_SUCCESS)
-							goto end_it;
-					}
+					if (loc_seconds <= 0)
+						continue;
+
+					if (c_usage &&
+					    (r_usage->flags &
+					     RESERVE_FLAG_IGN_JOBS))
+						/*
+						 * job usage was not
+						 * bundled with resv
+						 * usage so need to
+						 * account for it
+						 * individually here
+						 */
+						_add_tres_time_2_list(
+							c_usage->loc_tres,
+							row[JOB_REQ_TRES],
+							TIME_ALLOC,
+							loc_seconds,
+							0, 0);
+
+					_add_time_tres_list(
+						r_usage->loc_tres,
+						loc_tres, TIME_ALLOC,
+						loc_seconds, 1);
+					if ((rc = _update_unused_wall(
+						     r_usage,
+						     loc_tres,
+						     loc_seconds))
+					    != SLURM_SUCCESS)
+						goto end_it;
 				}
 
 				_transfer_loc_tres(&loc_tres, a_usage);
@@ -1707,7 +1799,6 @@ end_it:
 	xfree(query);
 	xfree(suspend_str);
 	xfree(job_str);
-	xfree(resv_str);
 	_destroy_local_cluster_usage(c_usage);
 
 	if (a_itr)
@@ -1763,7 +1854,7 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 	char *unit_name;
 
 	while (curr_start < end) {
-		if (!slurm_localtime_r(&curr_start, &start_tm)) {
+		if (!localtime_r(&curr_start, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      curr_start);
 			return SLURM_ERROR;

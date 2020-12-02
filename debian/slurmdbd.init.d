@@ -23,7 +23,7 @@
 
 SBINDIR=/usr/sbin
 LIBDIR=/usr/lib
-CONFFILE="/etc/slurm-llnl/slurmdbd.conf"
+CONFFILE="/etc/slurm/slurmdbd.conf"
 DESCRIPTION="slurm-wlm database server interface"
 NAME="slurmdbd"
 

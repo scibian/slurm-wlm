@@ -92,7 +92,7 @@ int immediate_exit = 1;
 typedef struct env_vars env_vars_t;
 
 static void  _opt_env(void);
-static void  _opt_args(int argc, char **argv, int pack_offset);
+static void  _opt_args(int argc, char **argv, int het_job_offset);
 static bool  _opt_verify(void);
 static void  _set_options(int argc, char **argv);
 
@@ -107,10 +107,10 @@ static void  _set_options(int argc, char **argv);
  * argc      IN - Count of elements in argv
  * argv      IN - Array of elements to parse
  * argc_off OUT - Offset of first non-parsable element
- * pack_inx  IN - offset of job pack
+ * het_job_inx  IN - offset of hetjob
  */
 extern int initialize_and_process_args(int argc, char **argv, int *argc_off,
-				       int pack_inx)
+				       int het_job_inx)
 {
 	/* initialize option defaults */
 	slurm_reset_all_options(&opt, first_pass);
@@ -127,7 +127,7 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off,
 	_opt_env();
 
 	/* initialize options with argv */
-	_opt_args(argc, argv, pack_inx);
+	_opt_args(argc, argv, het_job_inx);
 	if (argc_off)
 		*argc_off = optind;
 
@@ -207,7 +207,9 @@ env_vars_t env_vars[] = {
   { "SLURM_HINT", LONG_OPT_HINT },
   { "SALLOC_KILL_CMD", 'K' },
   { "SALLOC_MEM_BIND", LONG_OPT_MEM_BIND },
+  { "SALLOC_MEM_PER_CPU", LONG_OPT_MEM_PER_CPU },
   { "SALLOC_MEM_PER_GPU", LONG_OPT_MEM_PER_GPU },
+  { "SALLOC_MEM_PER_NODE", LONG_OPT_MEM },
   { "SALLOC_NETWORK", LONG_OPT_NETWORK },
   { "SALLOC_NO_BELL", LONG_OPT_NO_BELL },
   { "SALLOC_NO_KILL", 'k' },
@@ -264,12 +266,13 @@ static void _set_options(int argc, char **argv)
 	}
 
 	slurm_option_table_destroy(optz);
+	xfree(opt_string);
 }
 
 /*
  * _opt_args() : set options via commandline args and popt
  */
-static void _opt_args(int argc, char **argv, int pack_offset)
+static void _opt_args(int argc, char **argv, int het_job_offset)
 {
 	int i;
 	char **rest = NULL;
@@ -277,7 +280,7 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 	_set_options(argc, argv);
 
 	if ((optind < argc) && !xstrcmp(argv[optind], ":")) {
-		debug("pack job separator");
+		debug("hetjob component separator");
 	} else {
 		command_argc = 0;
 		if (optind < argc) {
@@ -295,7 +298,7 @@ static void _opt_args(int argc, char **argv, int pack_offset)
 		command_argv[i] = NULL;	/* End of argv's (for possible execv) */
 	}
 
-	if (cli_filter_plugin_pre_submit(&opt, pack_offset)) {
+	if (cli_filter_plugin_pre_submit(&opt, het_job_offset)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
@@ -650,6 +653,14 @@ static bool _opt_verify(void)
 		opt.x11_magic_cookie = x11_get_xauth();
 	}
 
+	if (saopt.no_shell && !opt.job_name)
+		opt.job_name = xstrdup("no-shell");
+
+	if (opt.gpus_per_socket && (opt.sockets_per_node == NO_VAL)) {
+		error("--gpus-per-socket option requires --sockets-per-node specification");
+		exit(error_exit);
+	}
+
 	return verified;
 }
 
@@ -755,7 +766,7 @@ static void _usage(void)
 "              [--verbose] [--gid=group] [--uid=user] [--licenses=names]\n"
 "              [--clusters=cluster_names]\n"
 "              [--contiguous] [--mincpus=n] [--mem=MB] [--tmp=MB] [-C list]\n"
-"              [--account=name] [--dependency=type:jobid] [--comment=name]\n"
+"              [--account=name] [--dependency=type:jobid[+time]] [--comment=name]\n"
 "              [--mail-type=type] [--mail-user=user] [--nice[=value]]\n"
 "              [--bell] [--no-bell] [--kill-command[=signal]] [--spread-job]\n"
 "              [--nodefile=file] [--nodelist=hosts] [--exclude=hosts]\n"
@@ -778,7 +789,7 @@ static void _help(void)
 	slurm_ctl_conf_t *conf;
 
         printf (
-"Usage: salloc [OPTIONS...] [command [args...]]\n"
+"Usage: salloc [OPTIONS(0)...] [ : [OPTIONS(N)]] [command(0) [args(0)...]]\n"
 "\n"
 "Parallel run options:\n"
 "  -A, --account=name          charge job to specified account\n"
@@ -790,7 +801,7 @@ static void _help(void)
 "      --comment=name          arbitrary comment\n"
 "      --cpu-freq=min[-max[:gov]] requested cpu frequency (and governor)\n"
 "      --delay-boot=mins       delay boot for desired node features\n"
-"  -d, --dependency=type:jobid defer job until condition on jobid is satisfied\n"
+"  -d, --dependency=type:jobid[:time] defer job until condition on jobid is satisfied\n"
 "      --deadline=time         remove the job if no ending possible before\n"
 "                              this deadline (start > (deadline - time[-min]))\n"
 "  -D, --chdir=path            change working directory\n"
@@ -830,7 +841,7 @@ static void _help(void)
 "  -Q, --quiet                 quiet mode (suppress informational messages)\n"
 "      --reboot                reboot compute nodes before starting job\n"
 "  -s, --oversubscribe         oversubscribe resources with other jobs\n"
-"      --signal=[B:]num[@time] send signal when time limit within time seconds\n"
+"      --signal=[R:]num[@time] send signal when time limit within time seconds\n"
 "      --spread-job            spread job across as many nodes as possible\n"
 "      --switches=max-switches{@max-time-to-wait}\n"
 "                              Optimum switches and max time to wait for optimum\n"

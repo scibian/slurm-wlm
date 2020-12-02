@@ -104,7 +104,7 @@ typedef struct slurm_acct_storage_ops {
 				    slurmdb_federation_cond_t *fed_cond,
 				    slurmdb_federation_rec_t *fed);
 	List (*modify_job)         (void *db_conn, uint32_t uid,
-				    slurmdb_job_modify_cond_t *job_cond,
+				    slurmdb_job_cond_t *job_cond,
 				    slurmdb_job_rec_t *job);
 	List (*modify_qos)         (void *db_conn, uint32_t uid,
 				    slurmdb_qos_cond_t *qos_cond,
@@ -172,14 +172,12 @@ typedef struct slurm_acct_storage_ops {
 	int (*roll_usage)          (void *db_conn,
 				    time_t sent_start, time_t sent_end,
 				    uint16_t archive_data,
-				    rollup_stats_t *rollup_stats);
+				    List *rollup_stats_list_in);
 	int  (*fix_runaway_jobs)   (void *db_conn, uint32_t uid, List jobs);
-	int  (*node_down)          (void *db_conn,
-				    struct node_record *node_ptr,
-				    time_t event_time,
-				    char *reason, uint32_t reason_uid);
-	int  (*node_up)            (void *db_conn,
-				    struct node_record *node_ptr,
+	int  (*node_down)          (void *db_conn, node_record_t *node_ptr,
+				    time_t event_time, char *reason,
+				    uint32_t reason_uid);
+	int  (*node_up)            (void *db_conn, node_record_t *node_ptr,
 				    time_t event_time);
 	int  (*cluster_tres)       (void *db_conn, char *cluster_nodes,
 				    char *tres_str_in, time_t event_time,
@@ -188,15 +186,11 @@ typedef struct slurm_acct_storage_ops {
 	int  (*register_disconn_ctld)(void *db_conn, char *control_host);
 	int  (*fini_ctld)          (void *db_conn,
 				    slurmdb_cluster_rec_t *cluster_rec);
-	int  (*job_start)          (void *db_conn, struct job_record *job_ptr);
-	int  (*job_complete)       (void *db_conn,
-				    struct job_record *job_ptr);
-	int  (*step_start)         (void *db_conn,
-				    struct step_record *step_ptr);
-	int  (*step_complete)      (void *db_conn,
-				    struct step_record *step_ptr);
-	int  (*job_suspend)        (void *db_conn,
-				    struct job_record *job_ptr);
+	int  (*job_start)          (void *db_conn, job_record_t *job_ptr);
+	int  (*job_complete)       (void *db_conn, job_record_t *job_ptr);
+	int  (*step_start)         (void *db_conn, step_record_t *step_ptr);
+	int  (*step_complete)      (void *db_conn, step_record_t *step_ptr);
+	int  (*job_suspend)        (void *db_conn, job_record_t *job_ptr);
 	List (*get_jobs_cond)      (void *db_conn, uint32_t uid,
 				    slurmdb_job_cond_t *job_cond);
 	int (*archive_dump)        (void *db_conn,
@@ -306,7 +300,7 @@ static uint16_t enforce = 0;
  * go ahead.
  */
 extern int jobacct_storage_job_start_direct(void *db_conn,
-					    struct job_record *job_ptr)
+					    job_record_t *job_ptr)
 {
 	if (with_slurmdbd && !job_ptr->db_index)
 		return SLURM_SUCCESS;
@@ -529,7 +523,7 @@ extern List acct_storage_g_modify_federations(
 }
 
 extern List acct_storage_g_modify_job(void *db_conn, uint32_t uid,
-				      slurmdb_job_modify_cond_t *job_cond,
+				      slurmdb_job_cond_t *job_cond,
 				      slurmdb_job_rec_t *job)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
@@ -781,12 +775,12 @@ extern int acct_storage_g_get_usage(void *db_conn,  uint32_t uid,
 extern int acct_storage_g_roll_usage(void *db_conn,
 				     time_t sent_start, time_t sent_end,
 				     uint16_t archive_data,
-				     rollup_stats_t *rollup_stats)
+				     List *rollup_stats_list_in)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;
 	return (*(ops.roll_usage))(db_conn, sent_start, sent_end, archive_data,
-				   rollup_stats);
+				   rollup_stats_list_in);
 }
 
 extern int acct_storage_g_fix_runaway_jobs(void *db_conn,
@@ -799,7 +793,7 @@ extern int acct_storage_g_fix_runaway_jobs(void *db_conn,
 }
 
 extern int clusteracct_storage_g_node_down(void *db_conn,
-					   struct node_record *node_ptr,
+					   node_record_t *node_ptr,
 					   time_t event_time,
 					   char *reason, uint32_t reason_uid)
 {
@@ -810,7 +804,7 @@ extern int clusteracct_storage_g_node_down(void *db_conn,
 }
 
 extern int clusteracct_storage_g_node_up(void *db_conn,
-					 struct node_record *node_ptr,
+					 node_record_t *node_ptr,
 					 time_t event_time)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
@@ -865,7 +859,7 @@ extern int clusteracct_storage_g_fini_ctld(void *db_conn,
  * typically when it begins execution, but possibly earlier
  */
 extern int jobacct_storage_g_job_start(void *db_conn,
-				       struct job_record *job_ptr)
+				       job_record_t *job_ptr)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;
@@ -896,7 +890,7 @@ extern int jobacct_storage_g_job_start(void *db_conn,
  * load into the storage the end of a job
  */
 extern int jobacct_storage_g_job_complete(void *db_conn,
-					  struct job_record *job_ptr)
+					  job_record_t *job_ptr)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;
@@ -908,8 +902,7 @@ extern int jobacct_storage_g_job_complete(void *db_conn,
 /*
  * load into the storage the start of a job step
  */
-extern int jobacct_storage_g_step_start(void *db_conn,
-					struct step_record *step_ptr)
+extern int jobacct_storage_g_step_start(void *db_conn, step_record_t *step_ptr)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;
@@ -922,7 +915,7 @@ extern int jobacct_storage_g_step_start(void *db_conn,
  * load into the storage the end of a job step
  */
 extern int jobacct_storage_g_step_complete(void *db_conn,
-					   struct step_record *step_ptr)
+					   step_record_t *step_ptr)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;
@@ -935,7 +928,7 @@ extern int jobacct_storage_g_step_complete(void *db_conn,
  * load into the storage a suspension of a job
  */
 extern int jobacct_storage_g_job_suspend(void *db_conn,
-					 struct job_record *job_ptr)
+					 job_record_t *job_ptr)
 {
 	if (slurm_acct_storage_init(NULL) < 0)
 		return SLURM_ERROR;

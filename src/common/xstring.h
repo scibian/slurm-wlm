@@ -100,18 +100,16 @@ void _xiso8601timecat(char **str, bool);
 void _xrfc5424timecat(char **str, bool);
 
 /*
-** concatenate printf-style formatted string onto str
-** return value is result from vsnprintf(3)
-*/
-int _xstrfmtcat(char **str, const char *fmt, ...)
-  __attribute__ ((format (printf, 2, 3)));
+ * Concatenate printf-style formatted string onto str
+ */
+void _xstrfmtcat(char **str, const char *fmt, ...)
+	__attribute__((format(printf, 2, 3)));
 
 /*
  * Concatenate printf-style formatted string onto str at position pos.
- * Return value is result from vsnprintf(3).
  */
-int _xstrfmtcatat(char **str, char **pos, const char *fmt, ...)
-	__attribute__ ((format (printf, 3, 4)));
+void _xstrfmtcatat(char **str, char **pos, const char *fmt, ...)
+	__attribute__((format(printf, 3, 4)));
 
 /*
 ** concatenate range of memory from start to end (not including end)
@@ -211,5 +209,11 @@ char *xstrstr(const char *haystack, const char *needle);
 
 /* safe case insensitive version of strstr(). */
 char *xstrcasestr(const char *haystack, const char *needle);
+
+/*
+ * Trims white space before and after string in place.
+ * Will left shift the string values to remove white space.
+ */
+void xstrtrim(char *string);
 
 #endif /* !_XSTRING_H */

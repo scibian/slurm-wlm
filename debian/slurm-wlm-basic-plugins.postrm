@@ -25,8 +25,11 @@ case "$1" in
            ucf --purge /etc/slurm/slurm.conf
          fi
 
-	 # Delete slurm configuration files
-         rm -f /etc/slurm-llnl/slurm.conf
+         # Delete slurm configuration files
+         rm -rf /etc/slurm
+
+         # Delete old slurm configuration files
+         rm -rf /etc/slurm-llnl
 
          # Deleting slurm user only if has the reserved ids
          if [ -n "$(id -u slurm 2>/dev/null)" ] ; then
