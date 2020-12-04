@@ -1,10 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test label option with pack job allocation.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -30,27 +26,19 @@
 ############################################################################
 source ./globals
 
-set test_id	"38.12"
 set exit_code	0
-set prompt	"PROMPT: "
 set timeout	60
 
-print_header $test_id
-
-if {[test_front_end]} {
-        send_user "\nWARNING: This test is incompatible with front-end systems\n"
-        exit $exit_code
+if {[get_config_param "FrontendName"] ne "MISSING"} {
+        skip "This test is incompatible with front-end systems"
 }
-if {[test_pack_step] == 0} {
-	send_user "\nWARNING: heterogeneous steps not currently supported\n"
-	exit $exit_code
+if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
+	skip "This test requires SchedulerType = sched/backfill"
 }
 
-set def_part_name [default_partition]
-set nb_nodes [get_node_cnt_in_part $def_part_name]
+set nb_nodes [get_node_cnt_in_part]
 if {$nb_nodes < 3} {
-	send_user "\nWARNING: Need 3 or more nodes in default partition\n"
-	exit $exit_code
+	skip "Need 3 or more nodes in default partition"
 }
 
 proc end_it { exit_code } {
@@ -58,7 +46,10 @@ proc end_it { exit_code } {
 	if {$pack_job_id > 0} {
 		exec $scancel $pack_job_id
 	}
-	exit $exit_code
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	}
+	pass
 }
 
 set pack_job_id 0
@@ -70,18 +61,18 @@ spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
 		set pack_job_id $expect_out(1,string)
-		send "export PS1=\"$prompt\"\r"
+		send "$reset_bash_prompt\r"
 		exp_continue
 	}
-	-re "\"$prompt" {
-		# skip this, just echo of setting prompt"
+	-re "\"$test_prompt\"" {
+		# skip this, just echo of setting test_prompt
 		exp_continue
 	}
-	-re "$prompt" {
-		#send_user "Job initiated\n"
+	-re "$test_prompt" {
+		#log_debug "Job initiated"
 	}
 	timeout {
-		log_error "salloc : allocation not granted in $timeout seconds\n"
+		log_error "salloc: allocation not granted in $timeout seconds"
 		end_it 1
 	}
 	eof {
@@ -89,23 +80,23 @@ expect {
 	}
 }
 if {$pack_job_id == 0} {
-	log_error "salloc failure\n"
+	log_error "salloc failure"
 	end_it 1
 }
 
-send_user "\n\nCollect Nodenames\n\n"
+log_debug "Collect Nodenames"
 
 send "$squeue -j $pack_job_id -o\"NAME=%N\" --noheader\r"
 expect {
 	-re "--noheader" {
 		exp_continue
 	}
-	-re "NAME=($alpha_numeric_under)" {
+	-re "NAME=($re_word_str)" {
 		set component($index) $expect_out(1,string)
 		incr index
 		exp_continue
 	}
-	-re "$prompt" {
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
@@ -118,7 +109,7 @@ if {$index != 3} {
 	end_it 1
 }
 
-send_user "\n\nTest Sending Srun w/ --label To Various Components\n\n"
+log_info "Test Sending Srun w/ --label To Various Components"
 
 set matches 0
 send "$srun --label --mpi=none --pack-group=0-2 printenv SLURMD_NODENAME\r"
@@ -127,12 +118,11 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "$prompt" {
-		send_user "\n\n"
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -140,7 +130,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "srun failure ($matches != 1)\n"
+	log_error "srun failure ($matches != 1)"
 	end_it 1
 }
 
@@ -151,12 +141,11 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "$prompt" {
-		send_user "\n\n"
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -164,7 +153,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "srun failure ($matches != 1)\n"
+	log_error "srun failure ($matches != 1)"
 	end_it 1
 }
 
@@ -175,12 +164,11 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "$prompt" {
-		send_user "\n\n"
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -188,7 +176,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "srun failure ($matches != 1)\n"
+	log_error "srun failure ($matches != 1)"
 	end_it 1
 }
 
@@ -199,12 +187,11 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "$prompt" {
-		send_user "\n\n"
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -212,7 +199,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	log_error "srun failure ($matches != 4)\n"
+	log_error "srun failure ($matches != 4)"
 	end_it 1
 }
 
@@ -223,11 +210,11 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "$prompt" {
+	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -235,13 +222,12 @@ expect {
 	}
 }
 if {$matches != 3} {
-	log_error "srun failure ($matches != 3)\n"
+	log_error "srun failure ($matches != 3)"
 	end_it 1
 }
 
 
 for {set inx 0} {$inx < 3} {incr inx} {
-	send_user "\n\n"
 	set matches 0
 	send "$srun -O -n3 --label --mpi=none --pack-group=$inx printenv SLURMD_NODENAME\r"
 	expect {
@@ -249,11 +235,11 @@ for {set inx 0} {$inx < 3} {incr inx} {
 			incr matches
 			exp_continue
 		}
-		-re "$prompt" {
+		-re "$test_prompt" {
 			#break
 		}
 		timeout {
-			log_error "srun not responding\n"
+			log_error "srun not responding"
 			end_it 1
 		}
 		eof {
@@ -261,7 +247,7 @@ for {set inx 0} {$inx < 3} {incr inx} {
 		}
 	}
 	if {$matches != 3} {
-		log_error "srun failure ($matches != 3)\n"
+		log_error "srun failure ($matches != 3)"
 		end_it 1
 	}
 }
@@ -269,7 +255,7 @@ for {set inx 0} {$inx < 3} {incr inx} {
 send "exit\r"
 expect {
 	timeout {
-		log_error "srun not responding\n"
+		log_error "srun not responding"
 		end_it 1
 	}
 	eof {
@@ -277,5 +263,4 @@ expect {
 	}
 }
 
-send_user "\nSUCCESS\n"
 end_it 0
