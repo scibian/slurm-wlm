@@ -25,37 +25,64 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 
-#
-# List of files backed up used for save/restore_conf
-#
-set _global_bkp_register {}
-set _global_bkp_noexist  {}
 
 ################################################################
 #
-# Proc: _wait_for_single_job
+# NAME
+#	_wait_for_single_job - waits for a job to reach the desired state
 #
-# Purpose:  Wait for a previously submitted Slurm job to reach
-# the desired state. Polls every $poll_interval seconds.
+# SYNOPSIS
+#	_wait_for_single_job ?options? job_id desired_state
 #
-# Returns: A non-zero return code indicates a failure.
+# DESCRIPTION
+#	Wait for a previously submitted Slurm job to reach the desired state.
 #
-# Input: job_id   -- The Slurm job id of a job we want to
-#                    wait for.
-#        desired_state -- The state you want the job to attain before
-#                         returning.  Currently supports:
-#                            DONE any terminated state
-#                            PENDING job is pending
-#                            RUNNING job is running
-#                            SPECIAL_EXIT
-#                            SUSPENDED job is suspended
+# OPTIONS
+#	-timeout <integer_number>
+#		time in seconds to wait for the job to be in the desired state
+#		before timing out (default is 360)
+#	-pollinterval <integer_number>
+#		time in seconds between each job state check (default is 1)
+#
+# ARGUMENTS
+#	job_id
+#		The Slurm job id of a job we want to wait for.
+#	desired_state
+#		The state you want the job to attain before
+#		returning.  Currently supports:
+#			DONE any terminated state
+#			PENDING job is pending
+#			RUNNING job is running
+#			SPECIAL_EXIT
+#			SUSPENDED job is suspended
+#
+# RETURN VALUE
+#	RETURN_SUCCESS, or non-zero on error.
 #
 # NOTE: We sleep for two seconds before replying that a job is
 # done to give time for I/O completion (stdout/stderr files)
 #
 ################################################################
-proc _wait_for_single_job { job_id desired_state } {
-	global scontrol max_job_state_delay poll_interval
+
+proc _wait_for_single_job args {
+	global scontrol
+
+	set timeout       360
+	set poll_interval 1
+	while {[llength $args]} {
+		switch -glob -- [lindex $args 0] {
+			-time*  {set args [lassign $args - timeout]}
+			-poll*  {set args [lassign $args - poll_interval]}
+			-*      {fail "Unknown option: [lindex $args 0]"}
+			default break
+		}
+	}
+	set argument_count [llength $args]
+	if {$argument_count != 2} {
+		fail "Invalid number of arguments ($argument_count): $args"
+	} else {
+		lassign $args job_id desired_state
+	}
 
 	# First verify that desired_state is supported
 	switch $desired_state {
@@ -65,14 +92,14 @@ proc _wait_for_single_job { job_id desired_state } {
 		"SPECIAL_EXIT" {}
 		"SUSPENDED" {}
 		default {
-			send_user "WARNING: wait_for_single_job with invalid state: $desired_state\n"
-			return 1
+			log_warn "Invalid desired state: $desired_state"
+			return $::RETURN_ERROR
 		}
 	}
 
 	if {$job_id == 0} {
-		send_user "WARNING: wait_for_single_job with invalid job ID: $job_id\n"
-		return 1
+		log_warn "Invalid job ID: $job_id"
+		return $::RETURN_ERROR
 	}
 
 	set my_delay    0
@@ -96,61 +123,54 @@ proc _wait_for_single_job { job_id desired_state } {
 			"PREEMPTED" -
 			"TIMEOUT" {
 				if {[string compare $desired_state "DONE"] == 0} {
-					send_user "Job $job_id is DONE ($state)\n"
+					log_debug "Job $job_id is DONE ($state)"
 					sleep 2
-					return 0
+					return $::RETURN_SUCCESS
 				}
 				if {[string compare $desired_state "RUNNING"] == 0} {
-					send_user "Job $job_id is $state, "
-					send_user "but we wanted RUNNING\n"
+					log_debug "Job $job_id is $state, but we wanted RUNNING"
 				}
 				if {[string compare $desired_state "SUSPENDED"] == 0} {
-					send_user "Job $job_id is $state, "
-					send_user "but we wanted SUSPENDED\n"
+					log_debug "Job $job_id is $state, but we wanted SUSPENDED"
 				}
-				return 1
+				return $::RETURN_ERROR
 			}
 			"PENDING" {
 				if {[string compare $desired_state "PENDING"] == 0} {
-					send_user "Job $job_id is PENDING\n"
-					return 0
+					log_debug "Job $job_id is PENDING"
+					return $::RETURN_SUCCESS
 				}
-				send_user "Job $job_id is in state $state, "
-				send_user "desire $desired_state\n"
+				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"RUNNING" {
 				if {[string compare $desired_state "RUNNING"] == 0} {
-					send_user "Job $job_id is RUNNING\n"
-					return 0
+					log_debug "Job $job_id is RUNNING"
+					return $::RETURN_SUCCESS
 				}
-				send_user "Job $job_id is in state $state, "
-				send_user "desire $desired_state\n"
+				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"SPECIAL_EXIT" {
 				if {[string compare $desired_state "SPECIAL_EXIT"] == 0} {
-					send_user "Job $job_id is SPECIAL_EXIT\n"
-					return 0
+					log_debug "Job $job_id is SPECIAL_EXIT"
+					return $::RETURN_SUCCESS
 				}
-				send_user "Job $job_id is in state $state, "
-				send_user "desire $desired_state\n"
+				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"SUSPENDED" {
 				if {[string compare $desired_state "SUSPENDED"] == 0} {
-					send_user "Job $job_id is SUSPENDED\n"
-					return 0
+					log_debug "Job $job_id is SUSPENDED"
+					return $::RETURN_SUCCESS
 				}
-				send_user "Job $job_id is in state $state, "
-				send_user "desire $desired_state\n"
+				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			default {
-				send_user "Job $job_id is in state $state, "
-				send_user "desire $desired_state\n"
+				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 		}
 
-		if { $my_delay > $max_job_state_delay } {
-			send_user "WARNING: Timeout waiting for job state $desired_state\n"
-			return 1
+		if { $my_delay > $timeout } {
+			log_warn "Timeout waiting for job state $desired_state"
+			return $::RETURN_TIMEOUT
 		}
 
 		exec sleep $poll_interval
