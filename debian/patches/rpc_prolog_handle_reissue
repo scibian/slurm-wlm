@@ -1,0 +1,24 @@
+Description: Handle cred reissue in _rpc_prolog().
+ 
+ Handle reissued credentials (requeud jobs) when running prolog in slurmd.
+ Without this commit, if the reissued credential is not handled before by
+ _rpc_batch_job(), _rpc_prolog() can find the old cred in its cache and will
+ consider the prolog as having already run, leading to the prolog not being
+ run on some requeued jobs.
+Author: Rémi Palancher <remi-externe.palancher@edf.fr>
+Forwarded: https://github.com/SchedMD/slurm/commit/7f775494c91cd432d8f2e1967c318d6951fc0ade
+Last-Update: 2020-12-04
+
+diff --git a/src/slurmd/slurmd/req.c b/src/slurmd/slurmd/req.c
+index 9a38d05..b250216 100644
+--- a/src/slurmd/slurmd/req.c
++++ b/src/slurmd/slurmd/req.c
+@@ -2238,6 +2238,8 @@ static void _rpc_prolog(slurm_msg_t *msg)
+ 		error("%s: Error talking to slurmctld: %m", __func__);
+ 	}
+ 
++	slurm_cred_handle_reissue(conf->vctx, req->cred, false);
++
+ 	slurm_mutex_lock(&prolog_mutex);
+ 	first_job_run = !slurm_cred_jobid_cached(conf->vctx, req->job_id);
+ 	if (first_job_run) {
