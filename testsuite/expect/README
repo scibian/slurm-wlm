@@ -28,31 +28,44 @@
 
 This directory contains a battery of Slurm regression tests. The tests make
 use of the "expect" scripting language. You can create "globals.local" and
-identify locations of files to be used in testing, especially the variable
-"slurm_dir". These tests expect single node jobs submitted to the default
-partition to respond within a 120 seconds.  If that is not the case, modify
-the value of "max_job_delay" in the "globals.local" file to an appropriate
-value or the tests will report failures due to timeouts.  If there are file
-propagation delays (e.g. due to NFS), the value of "max_file_delay" in the
-"globals.local" file may need modification. For example:
-    $ cat globals.local
-    set slurm_dir     "/usr/local"
-    set max_job_delay 300
+configure several testsuite variables, for example:
 
+slurm_dir:                    slurm installation directory (prefix) [/usr]
+build_dir:                    slurm build directory [../..]
+testsuite_cleanup_on_failure: run cleanup and remove test_dir on failure [true]
+testsuite_shared_dir:         cluster-wide shared directory [.]
+testsuite_log_level:          logging threshold [$LOG_LEVEL_DEBUG]
+testsuite_log_format:         specifies the tracing fields used in logging
+testsuite_colorize:           boolean that turns colorization on or off
+testsuite_subtest_fatal:      first failing subtest aborts the test [false]
+
+The testsuite needs at least one cluster-wide shared file system.
+By default, we assume that it's the testsuite/expect directory (i.e. ".").
+Files created within this directory on one node in the cluster should be
+visible to all other nodes in the cluster.
+
+For the valid fields usable with testsuite_log_format, see the header
+comments for the _log_format procedure. See also the default defintion of
+testsuite_log_format in globals for an example of syntax.
+
+The "globals.local" file can be in the directory containing this README, or
+the one configured in the environment variable SLURM_LOCAL_GLOBALS_FILE.
 Each test can be executed independently. Upon successful completion, the test
 will print "SUCCESS" and terminate with an exit code of zero. Upon failure,
-the test will typically print "FAILURE" and an explanation of the failure.
-The message "WARNING" indicates that the cluster configuration can not fully
-test some option (e.g. only one node or partition) and the test terminates
-with an exit code of zero. In the event of a configuration problem or other
-catastrophic test failure other messages could be printed and their cause
-should be investigated. In either case, failing tests will terminate with a
-non-zero exit code and successful tests will terminate with a zero exit code.
+the test will print "FAILURE" and terminate with a positive exit code. If a
+test fails its precondition checks, it will print "SKIPPED" and terminate with
+a negative exit code. Use the fail, skip or pass procedures to end the test.
 
-The test is designed to be executed from a cluster-wide file system.
-File created on one node in the cluster should be visible to all other
-nodes in the cluster. If not executed in such an environment, many tests
-will fail.
+A test can expect to have some global variables defined that it can make use
+of within the test. These include:
+
+test_name:  the name of the test script, e.g. test1.1
+test_id:    the numeric suffix for the test, e.g. 1.1
+test_dir:   a temporary subdirectory created within the testsuite_shared_dir *
+
+* The test_dir will get removed at the end of the test unless the test failed
+  and testsuite_cleanup_on_failure was set to false. The test_dir will be
+  (removed and) recreated the next time the test is run.
 
 The script "regression" will execute all of the tests and summarize the
 results. Standard output contains detailed logging of all events, which is
@@ -373,6 +386,10 @@ test7.19   Test sbatch/srun/salloc path resolving
 test7.20   Test lua JobSubmitPlugin
 test7.21   Test spank plugins that link against libslurm
 
+test8.#    Testing of advanced reservation functionality.
+=========================================================
+test8.12   Test reservation with flags=FLEX
+
 test9.#    System stress testing. Exercises all commands and daemons.
 =====================================================================
 test9.1    Stress test of stdin broadcast.
@@ -639,6 +656,7 @@ test21.37  sacctmgr show stats
 test21.38  sacctmgr modify limits for nested accounts with multiple users
 test21.39  sacctmgr create qos/account job and then delete account/qos
 test21.40  Test association plus partition/job QoS unique node limits enforced
+test21.43  Test usagefactor
 
 test22.#   Testing of sreport commands and options.
 	   These also test the sacctmgr archive dump/load functions.
@@ -715,6 +733,7 @@ test31.#   Test of Slurm Epilog and Prolog.
 ===========================================
 test31.1   Validate proper epilog and prolog child process management.
 test31.2   Validate that job is set to requeue held state at prolog failure.
+test31.3   Validate Prolog and Epilog Environment Variables.
 
 
 test32.#   Test of sgather command and options.

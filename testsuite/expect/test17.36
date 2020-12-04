@@ -2,10 +2,6 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test that the OverSubscribe option in partitions is being enforced.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2014 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -30,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set test_id       17.36
 set file_in       "test$test_id\_sc"
 set test_part_1   "test$test_id\_part_1"
 set test_part_2   "test$test_id\_part_2"
@@ -47,25 +42,32 @@ set job_id        0
 set node_name     ""
 set exit_code     0
 
-print_header $test_id
-
-if {[test_linear]} {
-	send_user "\nWARNING: test is not compatible with a config of SelectType=select/linear\n"
-	exit $exit_code
+if {[check_config_select "linear"]} {
+	skip "Test is not compatible with a config of SelectType=select/linear"
 }
-if {[is_super_user] == 0} {
-	send_user "\nWARNING: This test can't be run except as SlurmUser\n"
-	exit 0
+if {![is_super_user]} {
+	skip "This test can't be run except as SlurmUser"
 }
-if {[test_select_type_params "CR_SOCKET"]} {
-	send_user "\nWARNING: This test is incompatible with CR_SOCKET allocations\n"
-	exit 0
+set select_type_parameters [get_config_param "SelectTypeParameters"]
+if {[param_contains $select_type_parameters "CR_SOCKET*"]} {
+	skip "This test is incompatible with CR_SOCKET allocations"
 }
-if {[test_select_type_params "CR_CORE"]} {
+if {[param_contains $select_type_parameters "CR_CORE*"]} {
 	set cr_core 1
 }
-if {[test_select_type_params "CR_CPU"]} {
+if {[param_contains $select_type_parameters "CR_CPU*"]} {
 	set cr_cpu 1
+}
+
+set node_name [get_nodes_by_request "-N1 --exclusive -t1"]
+if { [llength $node_name] != 1 } {
+	skip "This test need to be able to submit jobs with at least -N1 --exclusive -t1"
+}
+if {[get_node_param $node_name "CoreSpecCount"] != "MISSING"} {
+	skip "This test is incompatible with nodes that have a CoreSpecCount (e.g. $node_name)"
+}
+if {[get_node_param $node_name "CPUSpecList"] != "MISSING"} {
+	skip "This test is incompatible with nodes that have a CPUSpecList (e.g. $node_name)"
 }
 
 log_user 0
@@ -107,7 +109,7 @@ proc cr_core_cpu { node } {
 			exp_continue
 		}
 		timeout {
-			send_user "\nFAILURE: scontrol is not responding\n"
+			log_error "scontrol is not responding"
 			set exit_code 1
 		}
 		eof {
@@ -121,8 +123,7 @@ proc cr_core_cpu { node } {
 	} elseif { $cr_core == 1 } {
 		return [expr $core_cnt * $socket_cnt]
 	} else {
-		send_user "\nFAILURE: an error occurred when getting the cpu or"
-		send_user " core count\n"
+		log_error "an error occurred when getting the cpu or core count"
 		set exit_code 1
 	}
 
@@ -141,7 +142,7 @@ proc default_queue_depth { } {
 			exp_continue
 		}
 		timeout {
-			send_user "\nFAILURE: scontrol is not responding\n"
+			log_error "scontrol is not responding"
 			set exit_code 1
 		}
 		eof {
@@ -160,7 +161,7 @@ proc create_part {part oversubscribe node} {
 	spawn $scontrol create partitionname=$part OverSubscribe=$oversubscribe nodes=$node
 	expect {
 		timeout {
-			send_user "\nFAILURE: scontrol is not responding\n"
+			log_error "scontrol is not responding"
 			set exit_code 1
 		}
 		eof {
@@ -176,7 +177,7 @@ proc delete_part {part} {
 	spawn $scontrol delete partitionname=$part
 	expect {
 		timeout {
-			send_user "\nFAILURE: scontrol is not responding\n"
+			log_error "scontrol is not responding"
 			set exit_code 1
 		}
 		eof {
@@ -197,7 +198,7 @@ proc sub_job { job oversubscribe part } {
 				exp_continue
 			}
 			timeout {
-				send_user "\nFAILURE: sbatch is not responding\n"
+				log_error "sbatch is not responding"
 				set exit_code 1
 			}
 			eof {
@@ -212,7 +213,7 @@ proc sub_job { job oversubscribe part } {
 				exp_continue
 			}
 			timeout {
-				send_user "\nFAILURE: sbatch is not responding\n"
+				log_error "sbatch is not responding"
 				set exit_code 1
 			}
 			eof {
@@ -221,7 +222,7 @@ proc sub_job { job oversubscribe part } {
 		}
 	}
 	if {$job_id == 0} {
-		send_user "\nFAILURE: sbatch did not submit job\n"
+		log_error "sbatch did not submit job"
 		set exit_code 1
 	}
 
@@ -233,32 +234,22 @@ proc check_job { exp_num_jobs } {
 
 	# Wait a bit for the job to start
 	if {[wait_for_job ${job_id}_0 "RUNNING"] != 0} {
-		send_user "\nFAILURE: error waiting for job ${job_id}_0 to start\n"
+		log_error "Error waiting for job ${job_id}_0 to start"
 		cancel_job ${job_id}_0
 		set exit_code 1
 	}
 
-	set job_cnt 0
-	# If gang scheduling is configured, some jobs will be suspended
-	spawn $squeue --job=$job_id --state=RUNNING,SUSPENDED -Oname --noheader
-	expect {
-		-re "$file_in" {
-			incr job_cnt 1
-			exp_continue
+	# Wait for the expected number of jobs to be running
+	if [
+		wait_for {$job_cnt == $exp_num_jobs} {
+			set job_cnt [
+				regexp -all "$file_in" [
+					run_command_output -fail "$squeue --job=$job_id --state=RUNNING,SUSPENDED -Oname --noheader"
+				]
+			]
 		}
-		timeout {
-			send_user "\nFAILURE: squeue is not responding\n"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-
-	if { $job_cnt != $exp_num_jobs } {
-		send_user "\nFAILURE: the number of possible jobs that could "
-		send_user "run were not reached ($job_cnt != $exp_num_jobs).\n"
-		send_user "FAILURE: This could be due to memory or other limits.\n"
+	] {
+		log_error "The number of possible jobs that could run were not reached ($job_cnt != $exp_num_jobs). This could be due to memory or other limits."
 		set exit_code 1
 	}
 }
@@ -277,7 +268,7 @@ proc check_part { } {
 			exp_continue
 		}
 		timeout {
-			send_user "\nFAILURE: scontrol not responding\n"
+			log_error "scontrol not responding"
 			set exit_code 1
 		}
 		eof {
@@ -287,7 +278,7 @@ proc check_part { } {
 	log_user 1
 
 	if {$found == 1} {
-		send_user "\WARNING: partition $part_name already exists\n"
+		log_warn "Partition $part_name already exists"
 		delete_part $test_part_1
 		delete_part $test_part_2
 		delete_part $test_part_3
@@ -303,69 +294,18 @@ exec $bin_rm -f $file_in
 
 make_bash_script $file_in "sleep 10"
 
-spawn $sbatch -N1 -t1 -o/dev/null --exclusive $file_in
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: sbatch is not reponding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	send_user "\nFAILURE: sbatch did not submit job\n"
-	exit $exit_code
-}
-
-# Wait a bit for job to start
-if {[wait_for_job $job_id "RUNNING"] != 0} {
-	send_user "\nFAILURE: error waiting for job $job_id to start\n"
-	cancel_job $job_id
-	set exit_code 1
-}
-
-# Identify node to use for testing
-set got_node 0
-spawn $scontrol show job $job_id
-expect {
-	-re "NodeList=($alpha_numeric_under)" {
-		set node_name $expect_out(1,string)
-		set got_node 1
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: scontrol is not responding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
-if {$got_node != 1} {
-	send_user "\nFAILURE: no node was set for job\n"
-	exit 1
-}
-
-cancel_job $job_id
-
 ####################################
 #
 # Test partition with oversubscribe=NO
 #
 ####################################
-send_user "\n\nTest partition with oversubscribe=NO\n"
+log_info "Test partition with oversubscribe=NO"
 
 # Determine the number of cores or CPUs
 set num_jobs [cr_core_cpu $node_name]
 set job_start [default_queue_depth]
 if { $num_jobs >= $job_start } {
-	send_user "\nWARNING: default_queue_depth less than core count ($num_jobs < $job_start), can not run this test\n"
-	exit $exit_code
+	skip "default_queue_depth less than core count ($num_jobs < $job_start), can not run this test"
 }
 
 # Create first test partition
@@ -390,13 +330,12 @@ delete_part $test_part_1
 #
 ####################################
 set new_job_limit [expr $num_jobs * 2]
-if { [test_gang] == 1 } {
-	send_user "\n\nTest partition with oversubscribe=YES:2 incompatible with gang scheduling\n"
+if [param_contains [get_config_param "PreemptMode"] "GANG"] {
+	log_info "Test partition with oversubscribe=YES:2 incompatible with gang scheduling"
 } elseif { $new_job_limit >= $job_start } {
-        send_user "\nWARNING: default_queue_depth less than desired job count ($new_job_limit < $job_start), can not run oversubscribe=YES:2\n"
-
+        skip "default_queue_depth less than desired job count ($new_job_limit < $job_start), can not run oversubscribe=YES:2"
 } else {
-	send_user "\n\nTest partition with oversubscribe=YES:2\n"
+	log_info "Test partition with oversubscribe=YES:2"
 #	Make a new partition with oversubscribe=yes:2
 	create_part $test_part_2 "YES:$oversubscribe_j_cnt" $node_name
 
@@ -417,7 +356,7 @@ if { [test_gang] == 1 } {
 # Test partition with oversubscribe=EXCLUSIVE
 #
 ########################################
-send_user "\n\nTest partition with oversubscribe=EXCLUSIVE\n"
+log_info "Test partition with oversubscribe=EXCLUSIVE"
 
 # Make a new partition with oversubscribe=EXCLUSIVE
 create_part $test_part_3 "EXCLUSIVE" $node_name
@@ -435,8 +374,6 @@ delete_part $test_part_3
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-	send_user "\nSUCCESS\n"
 } else {
-	send_user "\nFAILURE\n"
+	fail "Test failed due to previous errors"
 }
-exit $exit_code

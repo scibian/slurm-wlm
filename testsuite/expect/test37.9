@@ -14,10 +14,6 @@
 #          fedr/fed2/...
 #          fedr/fed3/...
 #          3. controllers are up and running.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -45,7 +41,6 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
-set test_id     "37.9"
 set exit_code   0
 set fed_name    "feda"
 set user_name   ""
@@ -57,25 +52,19 @@ set my_sinfo "${fed_slurm_base}/$fedc1/bin/sinfo"
 set my_sprio "${fed_slurm_base}/$fedc1/bin/sprio"
 set my_squeue "${fed_slurm_base}/$fedc1/bin/squeue"
 set my_scontrol "${fed_slurm_base}/$fedc1/bin/scontrol"
-set min_job_age [expr {[get_min_job_age] + 65}]
+regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
+set min_job_age [expr {$min_job_age + 65}]
 set file_in          "test$test_id.in"
-
-set eol "\r\n"
-
-print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if { [test_account_storage] == 0 } {
-	log_warn "This test can't be run without a usable AccountStorageType"
-	exit 0
+if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
+	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	log_warn "This test can't be run without being an Accounting administrator.\n \
-	 	  Use: sacctmgr mod user \$USER set admin=admin."
-	exit 0
+if {[string compare [get_admin_level] "Administrator"]} {
+	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
 proc sbatch { args } {
@@ -218,7 +207,7 @@ proc scontrol_show { category tasks regex option } {
 
 }
 
-proc cancel_all_jobs { } {
+proc cancel_federation_jobs { } {
 	global scancel user_name fedc1 fedc2 fedc3
 
 	spawn $scancel -M$fedc1,$fedc2,$fedc3 --user $user_name
@@ -234,7 +223,7 @@ proc cleanup { } {
 	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
 	global test_id bin_bash my_sacctmgr
 
-	cancel_all_jobs
+	cancel_federation_jobs
 	exec $bin_rm -f $file_in
 	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
 
@@ -244,22 +233,20 @@ proc cleanup { } {
 proc end_it { exit_code } {
 	global test_id
 	cleanup
-	if {$exit_code == 0} {
-		print_success $test_id
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 	}
-	exit $exit_code
+	pass
 }
 
 #start test
 
-if {[test_federation_setup]} {
-	log_warn "WARNING: This test can't be run without fed_slurm_base,\
-		fedc1, fedc2, fedc3 setup in globals.local."
-	exit 0
+if {![check_federation_setup]} {
+	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
 }
 
-if {[test_all_up]} {
-	exit 0
+if {![check_federation_up]} {
+	skip "This test can't be run without all clusters up"
 }
 
 set user_name [get_my_user_name]
@@ -277,11 +264,11 @@ if {[setup_federation $fed_name]} {
 }
 
 # get number of nodes per cluster
-set node_count [available_nodes "" ""]
+set node_count [available_nodes]
 
-send_user "\n################################################################\n"
-send_user "Setup cluster features"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Setup cluster features"
+log_info "################################################################"
 
 set matches 0
 set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
@@ -303,7 +290,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -312,7 +299,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -336,7 +323,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -345,7 +332,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -369,7 +356,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -378,15 +365,15 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
 make_bash_script $file_in "env; $my_srun sleep 900 & $my_srun sleep 900"
 
-send_user "\n################################################################\n"
-send_user "verify federated squeue output"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Verify federated squeue output"
+log_info "################################################################"
 
 set ji0 [sbatch]
 set ji1 [sbatch]
@@ -464,11 +451,11 @@ set output [wait_for_fed_job $ji2 RUNNING $fedc1,$fedc2,$fedc3]
 
 verify $ji2 $output
 
-send_user "\n################################################################\n"
-send_user "verify federated sinfo output"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Verify federated sinfo output"
+log_info "################################################################"
 
-cancel_all_jobs
+cancel_federation_jobs
 
 set regex "(debug\\*\\s+($fedc1|$fedc2|$fedc3)\\s+up\\s+infinite\\s+10\\s+idle\\s+($fedc1|$fedc2|$fedc3)_\\\[1-10\\\]\\s*)"
 
@@ -485,9 +472,9 @@ if {[info exists env(SPRIO_FORMAT)]} {
     unset env(SPRIO_FORMAT)
 }
 
-send_user "\n################################################################\n"
-send_user "verify federated sprio output"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Verify federated sprio output"
+log_info "################################################################"
 
 set ji0 [sbatch]
 wait_for_fed_job $ji0 RUNNING $fedc1,$fedc2,$fedc3
@@ -510,11 +497,11 @@ sprio "-M$fedc1" "(\\s+($ji3|$ji4).+\\n){2}"
 sprio "-M$fedc2" "(\\s+($ji3|$ji5).+\\n){2}"
 sprio "-M$fedc3" "(\\s+($ji3|$ji6).+\\n){2}"
 
-send_user "\n################################################################\n"
-send_user "verify federated scontrol show jobs output"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Verify federated scontrol show jobs output"
+log_info "################################################################"
 
-cancel_all_jobs
+cancel_federation_jobs
 
 set reg1 ""
 set reg2 ""

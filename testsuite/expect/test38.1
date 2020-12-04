@@ -4,10 +4,6 @@
 #
 # Reqs:    1. Using slurmdbd accounting storage type and is up
 #          2. controllers are up and running.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -34,12 +30,13 @@
 source ./globals
 source ./globals_hetero_jobs
 
-set test_id      "38.1"
+if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
+	skip "This test requires SchedulerType = sched/backfill"
+}
+
 set exit_code    0
 set file_in      "test$test_id.in"
 set job_id       0
-
-print_header $test_id
 
 proc sbatch {} {
 	global number sbatch file_in bin_sleep
@@ -74,7 +71,7 @@ proc sbatch {} {
 	return $job_id
 }
 
-proc cancel_all_jobs { } {
+proc cancel_job_id { } {
 	global scancel job_id
 
 	if {$job_id != 0} {
@@ -92,12 +89,14 @@ proc cleanup { } {
 
 proc end_it { exit_code } {
 	global test_id
-	cancel_all_jobs
+	cancel_job_id
 	if {$exit_code == 0} {
 		cleanup
-		print_success $test_id
 	}
-	exit $exit_code
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	}
+	pass
 }
 
 #start test
@@ -110,9 +109,9 @@ make_bash_script $file_in "#SBATCH --cpus-per-task=4 --mem-per-cpu=10 --ntasks=1
 
 $bin_sleep 300"
 
-send_user "\n################################################################\n"
-send_user "Submit packjob and verify output from scontrol show job"
-send_user "\n################################################################\n"
+log_info "################################################################"
+log_info "Submit packjob and verify output from scontrol show job"
+log_info "################################################################"
 
 set job_id [sbatch]
 
