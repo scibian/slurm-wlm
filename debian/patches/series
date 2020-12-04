@@ -9,3 +9,5 @@ fix-pmixv3-dlopen-path
 fix-perl-doc
 use-python3
 miscellanea-manpages
+add-missing-locks-slurmd-creds
+rpc_prolog_handle_reissue
