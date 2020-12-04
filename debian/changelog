@@ -1,3 +1,10 @@
+slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
+
+  * New upstream version 19.05.8
+  * 2 patches to fix creds handling for requeued jobs
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 04 Dec 2020 13:35:14 +0100
+
 slurm-llnl (19.05.7-0sci9u1) scibian9; urgency=medium
 
   * New upstream release 19.05.7
