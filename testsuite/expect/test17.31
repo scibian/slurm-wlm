@@ -2,10 +2,6 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Tests #PBS entry functionality in a batch script.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -32,7 +28,6 @@
 ############################################################################
 source ./globals
 
-set test_id     "17.31"
 set exit_code   0
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
@@ -43,13 +38,9 @@ set node_cnt    3
 set ppn_cnt     2
 set min_mem     1024
 
-print_header $test_id
-
-set available [available_nodes $partition ""]
+set available [available_nodes]
 if {$available < $node_cnt} {
-	send_user "\nWARNING: not enough nodes currently available"
-	send_user " ($available avail, $node_cnt needed)\n"
-	exit $exit_code
+	skip "Not enough nodes currently available ($available avail, $node_cnt needed)"
 }
 
 log_user 0
@@ -68,7 +59,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: scontrol not responding\n"
+		log_error "scontrol not responding"
 		set exit_code 1
 		slow_kill $scontrol_pid
 		exp_continue
@@ -78,7 +69,7 @@ expect {
 	}
 }
 log_user 1
-send_user "Actual configuration: min_cpus=$ppn_cnt  min_mem=$min_mem\n\n"
+log_debug "Actual configuration: min_cpus=$ppn_cnt  min_mem=$min_mem"
 append min_mem_mb $min_mem "mb"
 
 #
@@ -100,7 +91,7 @@ expect {
 	-re "mem$whitespace: ($number)G" {
 		set mem $expect_out(1,string)
 		if { $mem * 1024 != $min_mem } {
-			send_user "\nFAILURE: Min memory is different ($mem) than requested ($min_mem)\n"
+			log_error "Min memory is different ($mem) than requested ($min_mem)"
 			set exit_code 1
 		} else {
 			incr matches
@@ -110,7 +101,7 @@ expect {
 	-re "mem$whitespace: ($number)" {
 		set mem $expect_out(1,string)
 		if { $mem != $min_mem } {
-			send_user "\nFAILURE: Min memory is different ($mem) than requested ($min_mem)\n"
+			log_error "Min memory is different ($mem) than requested ($min_mem)"
 			set exit_code 1
 		} else {
 			incr matches
@@ -120,7 +111,7 @@ expect {
 	-re "nodes$whitespace: ($number)" {
 		set nodes $expect_out(1,string)
 		if { $nodes != $node_cnt } {
-			send_user "\nFAILURE: Bad node count allocated\n"
+			log_error "Bad node count allocated"
 			set exit_code 1
 		} else {
 			incr matches
@@ -131,7 +122,7 @@ expect {
 		set cpu_count $expect_out(1,string)
 		set cpus_per_node [expr $cpu_count / $node_cnt]
 		if { $cpus_per_node != $ppn_cnt } {
-			send_user "\nFAILURE: PPN count not sent correctly asked for $ppn_cnt but got $cpus_per_node\n"
+			log_error "PPN count not sent correctly asked for $ppn_cnt but got $cpus_per_node"
 			set exit_code 1
 		} else {
 			incr matches
@@ -143,12 +134,12 @@ expect {
 		exp_continue
 	}
 	"error: Batch job submission failed" {
-		send_user "\nWARNING: this might be legitimate, depending upon configuration\n"
+		log_warn "This might be legitimate, depending upon configuration"
 		exp_continue
 	}
 
 	timeout {
-		send_user "\nFAILURE: sbatch not responding\n"
+		log_error "sbatch not responding"
 		set exit_code 1
 		slow_kill $sbatch_pid
 		exp_continue
@@ -157,12 +148,12 @@ expect {
 		wait
 	}
 }
-if {$matches != 3} {
-	send_user "\nFAILURE: sbatch didn't read the correct options from batch file ($matches of 3)\n"
-	set exit_code 1
-}
+
 if {$job_id != 0} {
 	cancel_job $job_id
+}
+if {$matches != 3} {
+	fail "sbatch didn't read the correct options from batch file ($matches of 3)"
 }
 
 #
@@ -170,6 +161,6 @@ if {$job_id != 0} {
 #
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out
-	send_user "\nSUCCESS\n"
+} else {
+	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
-exit $exit_code

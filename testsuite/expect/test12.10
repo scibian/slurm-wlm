@@ -1,10 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of Slurm sacct with -s R, -S and -E options
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Albert Gil <albert.gil@schedmd.com>
@@ -30,12 +26,9 @@
 
 source ./globals
 
-set test_id     "12.10"
 set exit_code   0
 set timeout     60
 set ntest       0
-
-print_header $test_id
 
 ############################################################################
 #
@@ -133,9 +126,8 @@ proc get_time { } {
 #
 ############################################################################
 
-if { [test_account_storage] == 0 } {
-	log_warn "This test can't be run without a usable AccountStorageType."
-	exit 0
+if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
+	skip "This test can't be run without a usable AccountStorageType."
 }
 
 ############################################################################
@@ -219,7 +211,7 @@ exec $bin_sleep 2
 # Start a long job (will be cancelled)
 # Test job will depend on it to test non-eligible
 #
-set def_node [get_idle_node_in_part [default_partition]]
+set def_node [get_idle_node_in_part]
 set pid_depend [spawn $sbatch -t5 -w $def_node --exclusive -J queue-test$test_id --output=/dev/null --error=/dev/null --wrap "$bin_sleep 300"]
 expect {
 	-re "Submitted batch job ($number)" {
@@ -246,7 +238,7 @@ wait_for_job $jobid_dependent "RUNNING"
 # Start a long job (will be cancelled)
 # Test job will wait until this job, to test eligible
 #
-set def_node [get_idle_node_in_part [default_partition]]
+set def_node [get_idle_node_in_part]
 set pid_queue [spawn $sbatch -t5 -w $def_node --exclusive -J queue-test$test_id --output=/dev/null --error=/dev/null --wrap "$bin_sleep 300"]
 expect {
 	-re "Submitted batch job ($number)" {
@@ -2539,10 +2531,9 @@ log_info "QeC      : $QeC"
 log_info "TestCases: $ntest"
 log_info "Failures : $failures"
 
-if {$failures == 0} {
-	print_success $test_id
-} else {
-	print_failure $test_id
-	set exit_code 1
+if {$failures != 0} {
+	fail "Test failed due to previous failures (\$failures = $failures)"
 }
-exit $exit_code
+if {$exit_code != 0} {
+	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+}
