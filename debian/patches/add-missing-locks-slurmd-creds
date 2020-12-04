@@ -1,0 +1,107 @@
+Description: Add missing locks in slurmd creds management
+ Add missing locks in slurm_cred_revoked(), and optional lock in
+ slurm_cred_handle_reissue().
+ 
+ _rpc_batch_job->slurm_cred_handle_reissue() uses pointers from
+ _find_job_state() without lock.
+ 
+ This fix #9306 in SchedMD bugzilla (slurmd segfaults) and it helps
+ fixing slurmd SPANK prolog not being run sometimes for requeued jobs,
+ leading to crash of private-tmpdir SPANK plugin in slurmstepd
+ init_post_opt() while trying to bind-mount /tmp on uncreated
+ directories.
+Author: Dominik Bartkiewicz <bart@schedmd.com>
+Forwarded: https://github.com/SchedMD/slurm/commit/78fff09186bbf5b3d49055144c3b576b670061de
+ and https://github.com/SchedMD/slurm/commit/8f9bfe5fb65837adfcbe2a02d12febd9455655e9
+Last-Update: 2020-12-04
+
+diff --git a/src/common/slurm_cred.c b/src/common/slurm_cred.c
+index 243fcb2..6dc2f39 100644
+--- a/src/common/slurm_cred.c
++++ b/src/common/slurm_cred.c
+@@ -931,7 +931,7 @@ slurm_cred_verify(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
+ 		goto error;
+ 	}
+ 
+-	slurm_cred_handle_reissue(ctx, cred);
++	slurm_cred_handle_reissue(ctx, cred, true);
+ 
+ 	if (_credential_revoked(ctx, cred)) {
+ 		slurm_seterrno(ESLURMD_CREDENTIAL_REVOKED);
+@@ -1881,9 +1881,14 @@ _credential_replayed(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
+ }
+ 
+ extern void
+-slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
++slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred, bool locked)
+ {
+-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
++	job_state_t  *j;
++
++	if (!locked)
++		slurm_mutex_lock(&ctx->mutex);
++
++	j = _find_job_state(ctx, cred->jobid);
+ 
+ 	if (j != NULL && j->revoked && (cred->ctime > j->revoked)) {
+ 		/* The credential has been reissued.  Purge the
+@@ -1897,20 +1902,26 @@ slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
+ 		j->expiration = 0;
+ 		_clear_expired_job_states(ctx);
+ 	}
++	if (!locked)
++		slurm_mutex_unlock(&ctx->mutex);
+ }
+ 
+ extern bool
+ slurm_cred_revoked(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
+ {
+-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
++	job_state_t  *j;
++	bool rc = false;
+ 
+-	if ((j == NULL) || (j->revoked == (time_t)0))
+-		return false;
++	slurm_mutex_lock(&ctx->mutex);
+ 
+-	if (cred->ctime <= j->revoked)
+-		return true;
++	j = _find_job_state(ctx, cred->jobid);
+ 
+-	return false;
++	if (j && (j->revoked != (time_t)0) && (cred->ctime <= j->revoked))
++		rc = true;
++
++	slurm_mutex_unlock(&ctx->mutex);
++
++	return rc;
+ }
+ 
+ static bool
+diff --git a/src/common/slurm_cred.h b/src/common/slurm_cred.h
+index cf6fe89..03828e1 100644
+--- a/src/common/slurm_cred.h
++++ b/src/common/slurm_cred.h
+@@ -251,7 +251,8 @@ int slurm_cred_rewind(slurm_cred_ctx_t ctx, slurm_cred_t *cred);
+  * this credential is a reissue, then the old credential is cleared
+  * from the cred context "ctx".
+  */
+-void slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred);
++void slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
++			       bool locked);
+ 
+ /*
+  * Revoke all credentials for job id jobid
+diff --git a/src/slurmd/slurmd/req.c b/src/slurmd/slurmd/req.c
+index e4af8f0..9a38d05 100644
+--- a/src/slurmd/slurmd/req.c
++++ b/src/slurmd/slurmd/req.c
+@@ -2361,7 +2361,7 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
+ 		goto done;
+ 	}
+ 
+-	slurm_cred_handle_reissue(conf->vctx, req->cred);
++	slurm_cred_handle_reissue(conf->vctx, req->cred, false);
+ 	if (slurm_cred_revoked(conf->vctx, req->cred)) {
+ 		error("Job %u already killed, do not launch batch job",
+ 		      req->job_id);
