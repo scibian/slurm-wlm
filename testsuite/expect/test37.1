@@ -2,10 +2,6 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr federation functionality
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2016 SchedMD LLC.
 # Written by Brian Christiansen <brian@schedmd.com>
@@ -32,13 +28,10 @@
 source ./globals
 source ./globals_accounting
 
-set test_id     "37.1"
 set test_id_2   "37_1"
 set exit_code   0
 
 set max_federations 64
-
-set eol "\r\n"
 
 # Test Clusters
 set tc1		"tc1_$test_id_2"
@@ -52,20 +45,16 @@ set fed2 	"fed2_$test_id_2"
 set fed3 	"fed3_$test_id_2"
 
 set timeout	60
-print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if { [test_account_storage] == 0 } {
-	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
-	exit 0
+if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
+	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\n"
-	send_user "Use: sacctmgr mod user \$USER set admin=admin.\n"
-	exit 0
+if {[string compare [get_admin_level] "Administrator"]} {
+	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
 proc delete_object { object names } {
@@ -75,27 +64,27 @@ proc delete_object { object names } {
 	set my_pid [spawn $sacctmgr -i delete $object $names]
 	expect {
 		-re "privilege to perform this action" {
-			send_user "FAILURE: don't have privileges."
+			log_error "Don't have privileges"
 			incr rc
 			exp_continue
 		}
 		-re "(There was a problem|Unknown condition|Bad format on|Bad MaxWall|Unknown option)" {
-			send_user "FAILURE: there was a problem with the sacctmgr command\n"
+			log_error "There was a problem with the sacctmgr command"
 			incr rc
 			exp_continue
 		}
 		-re "Problem getting" {
-			send_user "FAILURE: there was a problem getting information from the database\n"
+			log_error "There was a problem getting information from the database"
 			incr rc
 			exp_continue
 		}
 		-re "Problem adding" {
-			send_user "FAILURE: there was an unknown problem\n"
+			log_error "There was an unknown problem"
 			incr rc
 			exp_continue
 		}
 		-re "No associations" {
-			send_user "FAILURE: your command didn't return anything\n"
+			log_error "Your command didn't return anything"
 			incr rc
 			exp_continue
 		}
@@ -108,7 +97,7 @@ proc delete_object { object names } {
 			exp_continue
 		}
 		timeout {
-			send_user "\nFAILURE: sacctmgr delete not responding\n"
+			log_error "sacctmgr delete not responding"
 			slow_kill $my_pid
 			incr rc
 		}
@@ -118,7 +107,7 @@ proc delete_object { object names } {
 	}
 
 	if {$matches != 1} {
-		send_user "\nFAILURE: sacctmgr had a problem deleting $object got $matches\n"
+		log_error "sacctmgr had a problem deleting $object got $matches"
 		incr rc
 	}
 
@@ -146,12 +135,10 @@ proc cleanup { } {
 }
 
 proc end_it { exit_code } {
-	global test_id
-	cleanup
-	if {$exit_code == 0} {
-		print_success $test_id
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 	}
-	exit $exit_code
+	pass
 }
 
 #
@@ -160,11 +147,9 @@ proc end_it { exit_code } {
 set nothing 0
 set matches 0
 
-cleanup
 if {$exit_code != 0} {
-	exit $exit_code
+	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
-
 
 ######MAIN######
 #####################################
@@ -173,12 +158,12 @@ if {$exit_code != 0} {
 set matches 0
 set my_pid [spawn $sacctmgr -i add federation $fed1 cluster=$tc1]
 expect {
-	-re "The cluster $tc1 doesn't exist. Please add first." {
+	-re "The cluster $tc1 doesn't exist\\. Please add first\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -187,23 +172,23 @@ expect {
 	}
 }
 if {$exit_code || $matches == 0} {
-	send_user "FAILURE: adding invalid federation failed unpexectedly.\n"
+	log_error "Adding invalid federation failed unpexectedly"
 	end_it 1
 }
 
 set matches 0
 set my_pid [spawn $sacctmgr -i add federation $fed1 cluster=$tc1,$tc2]
 expect {
-	-re "The cluster $tc1 doesn't exist. Please add first." {
+	-re "The cluster $tc1 doesn't exist\\. Please add first\\." {
 		incr matches
 		exp_continue
 	}
-	-re "The cluster $tc2 doesn't exist. Please add first." {
+	-re "The cluster $tc2 doesn't exist\\. Please add first\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -212,7 +197,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "FAILURE: adding invalid federation failed unpexectedly.\n"
+	log_error "Adding invalid federation failed unpexectedly"
 	end_it 1
 }
 
@@ -222,12 +207,12 @@ if {$exit_code || $matches != 2} {
 set matches 0
 set my_pid [spawn $sacctmgr -i add cluster $tc1 federation=$fed1]
 expect {
-	-re "The federation $fed1 doesn't exist." {
+	-re "The federation $fed1 doesn't exist\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -236,7 +221,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -255,7 +240,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -264,7 +249,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly"
 	end_it 1
 }
 
@@ -280,7 +265,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -289,7 +274,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly. Got $matches"
 	end_it 1
 }
 
@@ -299,12 +284,12 @@ if {$exit_code || $matches != 2} {
 set matches 0
 set my_pid [spawn $sacctmgr -i add federation $fed1]
 expect {
-	-re "This federation $fed1 already exists.  Not adding.$eol" {
+	-re "This federation $fed1 already exists\\.  Not adding\\.$eol" {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -313,7 +298,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly"
 	end_it 1
 }
 
@@ -332,7 +317,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -341,7 +326,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly"
 	end_it 1
 }
 
@@ -361,7 +346,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -370,7 +355,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly"
 	end_it 1
 }
 
@@ -390,7 +375,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -399,7 +384,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: adding federation failed unpexectedly.\n"
+	log_error "Adding federation failed unpexectedly"
 	end_it 1
 }
 
@@ -431,7 +416,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -440,7 +425,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -471,7 +456,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -480,7 +465,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -504,7 +489,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -513,7 +498,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -539,7 +524,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -548,7 +533,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -572,7 +557,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -581,7 +566,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -614,7 +599,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -623,7 +608,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 6} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -634,12 +619,12 @@ if {$exit_code || $matches != 6} {
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation $fed1 $fed2 set clusters=$tc1]
 expect {
-	-re "Can't assign clusters to multiple federations." {
+	-re "Can't assign clusters to multiple federations\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -648,7 +633,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -658,12 +643,12 @@ if {$exit_code || $matches != 1} {
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation set clusters=$tc1]
 expect {
-	-re "Can't assign clusters to multiple federations." {
+	-re "Can't assign clusters to multiple federations\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -672,19 +657,19 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation set clusters=$tc1 where cluster=$tc1]
 expect {
-	-re "Can't assign clusters to multiple federations." {
+	-re "Can't assign clusters to multiple federations\\." {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -693,7 +678,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -724,7 +709,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -733,7 +718,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -757,7 +742,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -766,7 +751,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -790,7 +775,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -799,7 +784,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -823,7 +808,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -832,7 +817,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -863,7 +848,7 @@ if {$exit_code || $matches != 4} {
 #		exp_continue
 #	}
 #	timeout {
-#		send_user "\nFAILURE: sacctmgr add not responding\n"
+#		log_error "sacctmgr add not responding"
 #		slow_kill $my_pid
 #		set exit_code 1
 #	}
@@ -872,7 +857,7 @@ if {$exit_code || $matches != 4} {
 #	}
 #}
 #if {$exit_code || $matches != 5} {
-#	send_user "$matches FAILURE: unexpected error.\n"
+#	log_error "Unexpected error"
 #	end_it 1
 #}
 #
@@ -896,7 +881,7 @@ if {$exit_code || $matches != 4} {
 #		exp_continue
 #	}
 #	timeout {
-#		send_user "\nFAILURE: sacctmgr add not responding\n"
+#		log_error "sacctmgr add not responding"
 #		slow_kill $my_pid
 #		set exit_code 1
 #	}
@@ -905,7 +890,7 @@ if {$exit_code || $matches != 4} {
 #	}
 #}
 #if {$exit_code || $matches != 4} {
-#	send_user "$matches FAILURE: unexpected error.\n"
+#	log_error "Unexpected error"
 #	end_it 1
 #}
 #
@@ -937,7 +922,7 @@ if {$exit_code || $matches != 4} {
 #		exp_continue
 #	}
 #	timeout {
-#		send_user "\nFAILURE: sacctmgr add not responding\n"
+#		log_error "sacctmgr add not responding"
 #		slow_kill $my_pid
 #		set exit_code 1
 #	}
@@ -946,7 +931,7 @@ if {$exit_code || $matches != 4} {
 #	}
 #}
 #if {$exit_code || $matches != 6} {
-#	send_user "$matches FAILURE: unexpected error.\n"
+#	log_error "Unexpected error"
 #	end_it 1
 #}
 #
@@ -977,7 +962,7 @@ if {$exit_code || $matches != 4} {
 #		exp_continue
 #	}
 #	timeout {
-#		send_user "\nFAILURE: sacctmgr add not responding\n"
+#		log_error "sacctmgr add not responding"
 #		slow_kill $my_pid
 #		set exit_code 1
 #	}
@@ -986,7 +971,7 @@ if {$exit_code || $matches != 4} {
 #	}
 #}
 #if {$exit_code || $matches != 5} {
-#	send_user "$matches FAILURE: unexpected error.\n"
+#	log_error "Unexpected error"
 #	end_it 1
 #}
 #
@@ -1008,7 +993,7 @@ if {$exit_code || $matches != 4} {
 #		exp_continue
 #	}
 #	timeout {
-#		send_user "\nFAILURE: sacctmgr add not responding\n"
+#		log_error "sacctmgr add not responding"
 #		slow_kill $my_pid
 #		set exit_code 1
 #	}
@@ -1017,7 +1002,7 @@ if {$exit_code || $matches != 4} {
 #	}
 #}
 #if {$exit_code || $matches != 3} {
-#	send_user "$matches FAILURE: unexpected error.\n"
+#	log_error "Unexpected error"
 #	end_it 1
 #}
 
@@ -1049,7 +1034,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1058,7 +1043,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1082,7 +1067,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1091,7 +1076,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1120,7 +1105,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1129,7 +1114,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1153,7 +1138,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1162,7 +1147,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1191,7 +1176,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1200,7 +1185,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1224,7 +1209,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1233,7 +1218,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1261,7 +1246,7 @@ expect {
 		send "y"
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1270,7 +1255,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: adding invalid federation failed unpexectedly.\n"
+	log_error "Adding invalid federation failed unpexectedly"
 	end_it 1
 }
 
@@ -1305,7 +1290,7 @@ expect {
 		send "y"
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1315,7 +1300,7 @@ expect {
 }
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1324,7 +1309,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 7} {
-	send_user "$matches FAILURE: adding invalid federation failed unpexectedly.\n"
+	log_error "Adding invalid federation failed unpexectedly"
 	end_it 1
 }
 
@@ -1352,7 +1337,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1361,7 +1346,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error"
 	end_it 1
 }
 
@@ -1388,7 +1373,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1397,7 +1382,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1413,7 +1398,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1422,7 +1407,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1445,7 +1430,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1454,7 +1439,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1475,7 +1460,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1484,7 +1469,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1501,7 +1486,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1510,7 +1495,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1535,7 +1520,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1544,7 +1529,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1560,7 +1545,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1569,7 +1554,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1580,7 +1565,7 @@ set matches 0
 set my_pid [spawn $sacctmgr -i modify cluster $tc4 set fedstate=DRAIN]
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1600,7 +1585,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1609,7 +1594,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1625,7 +1610,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1634,7 +1619,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1651,7 +1636,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1660,7 +1645,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1676,7 +1661,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1685,7 +1670,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1714,7 +1699,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1723,7 +1708,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1739,7 +1724,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1748,7 +1733,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1757,7 +1742,7 @@ if {$exit_code || $matches != 2} {
 set my_pid [spawn $sacctmgr -i modify cluster $tc4 set fedstate=DRAIN]
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1790,7 +1775,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1799,7 +1784,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1815,7 +1800,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1824,7 +1809,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1849,7 +1834,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1858,7 +1843,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1874,7 +1859,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1883,7 +1868,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1896,7 +1881,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1905,7 +1890,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1920,7 +1905,7 @@ if {$exit_code || $matches != 1} {
 set my_pid [spawn $sacctmgr -i modify cluster $tc1 $tc2 $tc3 set federation=]
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1953,7 +1938,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1962,7 +1947,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -1982,7 +1967,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -1991,7 +1976,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2023,7 +2008,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2032,7 +2017,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 6} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2052,7 +2037,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2061,7 +2046,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2085,7 +2070,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2094,7 +2079,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2115,7 +2100,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2124,7 +2109,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2152,7 +2137,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2161,7 +2146,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2180,7 +2165,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2189,7 +2174,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2217,7 +2202,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2226,7 +2211,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2242,7 +2227,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2251,7 +2236,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2266,7 +2251,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2275,7 +2260,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "FAILURE: failed testing mod with + and =\n"
+	log_error "Failed testing mod with + and ="
 	end_it 1
 }
 
@@ -2287,7 +2272,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2296,7 +2281,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 1} {
-	send_user "FAILURE: failed testing mod with - and =\n"
+	log_error "Failed testing mod with - and ="
 	end_it 1
 }
 
@@ -2332,7 +2317,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2341,7 +2326,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 6} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2373,7 +2358,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2382,7 +2367,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 6} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2398,7 +2383,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2407,7 +2392,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2425,7 +2410,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2434,7 +2419,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2445,7 +2430,7 @@ if {$exit_code || $matches != 4} {
 set my_pid [spawn $sacctmgr -i delete federation $fed2 $fed3]
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2478,7 +2463,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2487,7 +2472,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: adding federation with clusters failed.\n"
+	log_error "Adding federation with clusters failed. Got $matches"
 	end_it 1
 }
 
@@ -2516,7 +2501,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2525,7 +2510,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: adding federation with clusters failed.\n"
+	log_error "Adding federation with clusters failed. Got $matches"
 	end_it 1
 }
 
@@ -2545,7 +2530,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2554,7 +2539,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: deleting clusters with federation=.\n"
+	log_error "Deleting clusters with federation=. Got $matches"
 	end_it 1
 }
 
@@ -2584,7 +2569,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2593,7 +2578,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2621,7 +2606,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr delete cluster not responding\n"
+		log_error "sacctmgr delete cluster not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2630,7 +2615,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: deleting clusters with federation=.\n"
+	log_error "Deleting clusters with federation=. Got $matches"
 	end_it 1
 }
 
@@ -2642,7 +2627,7 @@ if {$exit_code || $matches != 5} {
 set my_pid [spawn $sacctmgr -i modify federation $fed1 set clusters=]
 expect {
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2679,7 +2664,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2688,7 +2673,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 66} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2717,7 +2702,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2726,7 +2711,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2746,7 +2731,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2755,7 +2740,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2775,7 +2760,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2784,7 +2769,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 3} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2800,7 +2785,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2809,7 +2794,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != $max_federations} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2826,7 +2811,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2835,7 +2820,7 @@ expect {
 	}
 }
 if {$exit_code || $matches } {
-	send_user "$matches FAILURE: found cluster still on federation when it should have been deleted.\n"
+	log_error "Found cluster still on federation when it should have been deleted. Got $matches"
 	end_it 1
 }
 
@@ -2853,7 +2838,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2862,7 +2847,7 @@ expect {
 	}
 }
 if {$exit_code || $matches } {
-	send_user "$matches FAILURE: found federation when it should have been deleted.\n"
+	log_error "Found federation when it should have been deleted. Got $matches"
 	end_it 1
 }
 
@@ -2874,7 +2859,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2883,7 +2868,7 @@ expect {
 	}
 }
 if {$exit_code || $matches } {
-	send_user "$matches FAILURE: found federation on cluster when it was deleted.\n"
+	log_error "Found federation on cluster when it was deleted. Got $mattches"
 	end_it 1
 }
 
@@ -2906,7 +2891,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2915,7 +2900,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != $max_federations} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -2947,7 +2932,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2956,7 +2941,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 set matches 0
@@ -2971,7 +2956,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -2980,7 +2965,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -3008,7 +2993,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3017,7 +3002,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 set matches 0
@@ -3032,7 +3017,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3041,7 +3026,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -3065,7 +3050,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3074,7 +3059,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 set matches 0
@@ -3089,7 +3074,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3098,7 +3083,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -3122,7 +3107,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3131,7 +3116,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 set matches 0
@@ -3146,7 +3131,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3155,7 +3140,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
@@ -3183,7 +3168,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr mod not responding\n"
+		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3192,7 +3177,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 5} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 set matches 0
@@ -3207,7 +3192,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user "\nFAILURE: sacctmgr add not responding\n"
+		log_error "sacctmgr add not responding"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -3216,7 +3201,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 2} {
-	send_user "$matches FAILURE: unexpected error.\n"
+	log_error "Unexpected error. Got $matches"
 	end_it 1
 }
 
