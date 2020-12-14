@@ -130,8 +130,7 @@ const char *_jobstep_format =
  * Print the record to the log file.
  */
 
-static int _print_record(struct job_record *job_ptr,
-			 time_t time, char *data)
+static int _print_record(job_record_t *job_ptr, time_t time, char *data)
 {
 	static int   rc=SLURM_SUCCESS;
 	if (!job_ptr->details) {
@@ -376,7 +375,7 @@ extern List acct_storage_p_modify_federations(
 }
 
 extern List acct_storage_p_modify_job(void *db_conn, uint32_t uid,
-				      slurmdb_job_modify_cond_t *job_cond,
+				      slurmdb_job_cond_t *job_cond,
 				      slurmdb_job_rec_t *job)
 {
 	return SLURM_SUCCESS;
@@ -610,7 +609,7 @@ extern int acct_storage_p_get_usage(void *db_conn, uid_t uid,
 extern int acct_storage_p_roll_usage(void *db_conn,
 				     time_t sent_start, time_t sent_end,
 				     uint16_t archive_data,
-				     rollup_stats_t *rollup_stats)
+				     List *rollup_stats_list_in)
 {
 	int rc = SLURM_SUCCESS;
 
@@ -624,14 +623,14 @@ extern int acct_storage_p_fix_runaway_jobs(void *db_conn, uint32_t uid,
 }
 
 extern int clusteracct_storage_p_node_down(void *db_conn,
-					   struct node_record *node_ptr,
+					   node_record_t *node_ptr,
 					   time_t event_time, char *reason,
 					   uint32_t reason_uid)
 {
 	return SLURM_SUCCESS;
 }
 extern int clusteracct_storage_p_node_up(void *db_conn,
-					 struct node_record *node_ptr,
+					 node_record_t *node_ptr,
 					 time_t event_time)
 {
 	return SLURM_SUCCESS;
@@ -667,8 +666,7 @@ extern int clusteracct_storage_p_cluster_tres(void *db_conn,
 /*
  * load into the storage the start of a job
  */
-extern int jobacct_storage_p_job_start(void *db_conn,
-				       struct job_record *job_ptr)
+extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr)
 {
 	int	rc = SLURM_SUCCESS;
 	char	buf[BUFFER_SIZE], *account, *nodes;
@@ -728,8 +726,7 @@ extern int jobacct_storage_p_job_start(void *db_conn,
 /*
  * load into the storage the end of a job
  */
-extern int jobacct_storage_p_job_complete(void *db_conn,
-					  struct job_record *job_ptr)
+extern int jobacct_storage_p_job_complete(void *db_conn, job_record_t *job_ptr)
 {
 	char buf[BUFFER_SIZE];
 	uint32_t job_state;
@@ -780,8 +777,7 @@ extern int jobacct_storage_p_job_complete(void *db_conn,
 /*
  * load into the storage the start of a job step
  */
-extern int jobacct_storage_p_step_start(void *db_conn,
-					struct step_record *step_ptr)
+extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 {
 	char buf[BUFFER_SIZE];
 	int cpus = 0, rc;
@@ -868,7 +864,7 @@ extern int jobacct_storage_p_step_start(void *db_conn,
  * load into the storage the end of a job step
  */
 extern int jobacct_storage_p_step_complete(void *db_conn,
-					   struct step_record *step_ptr)
+					   step_record_t *step_ptr)
 {
 	char buf[BUFFER_SIZE];
 	time_t now;
@@ -1016,8 +1012,7 @@ extern int jobacct_storage_p_step_complete(void *db_conn,
 /*
  * load into the storage a suspension of a job
  */
-extern int jobacct_storage_p_suspend(void *db_conn,
-				     struct job_record *job_ptr)
+extern int jobacct_storage_p_suspend(void *db_conn, job_record_t *job_ptr)
 {
 	char buf[BUFFER_SIZE];
 	static time_t	now = 0;

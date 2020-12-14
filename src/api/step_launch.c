@@ -99,7 +99,6 @@ static void _print_launch_msg(launch_tasks_request_msg_t *msg,
 /**********************************************************************
  * Message handler declarations
  **********************************************************************/
-static pid_t  srun_ppid = (pid_t) 0;
 static uid_t  slurm_uid;
 static bool   force_terminated_job = false;
 static int    task_exit_signal = 0;
@@ -141,13 +140,13 @@ extern void slurm_step_launch_params_t_init(slurm_step_launch_params_t *ptr)
 	ptr->cpu_freq_min = NO_VAL;
 	ptr->cpu_freq_max = NO_VAL;
 	ptr->cpu_freq_gov = NO_VAL;
-	ptr->node_offset  = NO_VAL;
-	ptr->pack_jobid   = NO_VAL;
-	ptr->pack_nnodes  = NO_VAL;
-	ptr->pack_ntasks  = NO_VAL;
-	ptr->pack_offset  = NO_VAL;
-	ptr->pack_step_cnt = NO_VAL;
-	ptr->pack_task_offset = NO_VAL;
+	ptr->het_job_node_offset  = NO_VAL;
+	ptr->het_job_id   = NO_VAL;
+	ptr->het_job_nnodes  = NO_VAL;
+	ptr->het_job_ntasks  = NO_VAL;
+	ptr->het_job_offset  = NO_VAL;
+	ptr->het_job_step_cnt = NO_VAL;
+	ptr->het_job_task_offset = NO_VAL;
 }
 
 /*
@@ -162,7 +161,7 @@ extern int slurm_mpi_plugin_init(char *plugin_name)
 }
 
 /*
- * For a pack job step, rebuild the MPI data structure to show what is running
+ * For a hetjob step, rebuild the MPI data structure to show what is running
  * in a single MPI_COMM_WORLD
  */
 static void _rebuild_mpi_layout(slurm_step_ctx_t *ctx,
@@ -170,9 +169,9 @@ static void _rebuild_mpi_layout(slurm_step_ctx_t *ctx,
 {
 	slurm_step_layout_t *new_step_layout, *orig_step_layout;
 
-	ctx->launch_state->mpi_info->pack_jobid = params->pack_jobid;
-	ctx->launch_state->mpi_info->pack_task_offset =
-		params->pack_task_offset;
+	ctx->launch_state->mpi_info->het_job_id = params->het_job_id;
+	ctx->launch_state->mpi_info->het_job_task_offset =
+		params->het_job_task_offset;
 	new_step_layout = xmalloc(sizeof(slurm_step_layout_t));
 	orig_step_layout = ctx->launch_state->mpi_info->step_layout;
 	ctx->launch_state->mpi_info->step_layout = new_step_layout;
@@ -180,15 +179,15 @@ static void _rebuild_mpi_layout(slurm_step_ctx_t *ctx,
 		new_step_layout->front_end =
 			xstrdup(orig_step_layout->front_end);
 	}
-	new_step_layout->node_cnt = params->pack_nnodes;
-	new_step_layout->node_list = xstrdup(params->pack_node_list);
+	new_step_layout->node_cnt = params->het_job_nnodes;
+	new_step_layout->node_list = xstrdup(params->het_job_node_list);
 	new_step_layout->plane_size = orig_step_layout->plane_size;
 	new_step_layout->start_protocol_ver =
 		orig_step_layout->start_protocol_ver;
-	new_step_layout->tasks = params->pack_task_cnts;
-	new_step_layout->task_cnt = params->pack_ntasks;
+	new_step_layout->tasks = params->het_job_task_cnts;
+	new_step_layout->task_cnt = params->het_job_ntasks;
 	new_step_layout->task_dist = orig_step_layout->task_dist;
-	new_step_layout->tids = params->pack_tids;
+	new_step_layout->tids = params->het_job_tids;
 }
 
 /*
@@ -233,7 +232,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 		return SLURM_ERROR;
 	}
 
-	if (params->pack_jobid && (params->pack_jobid != NO_VAL))
+	if (params->het_job_id && (params->het_job_id != NO_VAL))
 		_rebuild_mpi_layout(ctx, params);
 
 	mpi_env = xmalloc(sizeof(char *));  /* Needed for setenvf used by MPI */
@@ -260,17 +259,17 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.spank_job_env_size = params->spank_job_env_size;
 	launch.cred = ctx->step_resp->cred;
 	launch.job_step_id = ctx->step_resp->job_step_id;
-	launch.node_offset = params->node_offset;
-	launch.pack_step_cnt = params->pack_step_cnt;
-	launch.pack_jobid  = params->pack_jobid;
-	launch.pack_nnodes = params->pack_nnodes;
-	launch.pack_ntasks = params->pack_ntasks;
-	launch.pack_offset = params->pack_offset;
-	launch.pack_task_offset = params->pack_task_offset;
-	launch.pack_task_cnts = params->pack_task_cnts;
-	launch.pack_tids = params->pack_tids;
-	launch.pack_tid_offsets = params->pack_tid_offsets;
-	launch.pack_node_list = params->pack_node_list;
+	launch.het_job_node_offset = params->het_job_node_offset;
+	launch.het_job_step_cnt = params->het_job_step_cnt;
+	launch.het_job_id = params->het_job_id;
+	launch.het_job_nnodes = params->het_job_nnodes;
+	launch.het_job_ntasks = params->het_job_ntasks;
+	launch.het_job_offset = params->het_job_offset;
+	launch.het_job_task_offset = params->het_job_task_offset;
+	launch.het_job_task_cnts = params->het_job_task_cnts;
+	launch.het_job_tids = params->het_job_tids;
+	launch.het_job_tid_offsets = params->het_job_tid_offsets;
+	launch.het_job_node_list = params->het_job_node_list;
 	if (params->env == NULL) {
 		/*
 		 * If the user didn't specify an environment, then use the
@@ -280,7 +279,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	} else {
 		env_array_merge(&env, (const char **)params->env);
 	}
-	if (params->pack_ntasks != NO_VAL)
+	if (params->het_job_ntasks != NO_VAL)
 		preserve_env = true;
 	env_array_for_step(&env, ctx->step_resp, &launch,
 			   ctx->launch_state->resp_port[0], preserve_env);
@@ -326,8 +325,6 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.partition	= params->partition;
 	if (params->pty)
 		launch.flags |= LAUNCH_PTY;
-	launch.ckpt_dir         = params->ckpt_dir;
-	launch.restart_dir      = params->restart_dir;
 	launch.acctg_freq	= params->acctg_freq;
 	launch.open_mode        = params->open_mode;
 	launch.options          = job_options_create();
@@ -360,8 +357,8 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 						 launch.nnodes,
 						 ctx->step_resp->cred,
 						 params->labelio,
-						 params->pack_offset,
-						 params->pack_task_offset);
+						 params->het_job_offset,
+						 params->het_job_task_offset);
 		if (ctx->launch_state->io.normal == NULL) {
 			rc = SLURM_ERROR;
 			goto fail1;
@@ -460,16 +457,16 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	launch.spank_job_env_size = params->spank_job_env_size;
 	launch.cred = ctx->step_resp->cred;
 	launch.job_step_id = ctx->step_resp->job_step_id;
-	launch.pack_step_cnt = params->pack_step_cnt;
-	launch.pack_jobid  = params->pack_jobid;
-	launch.pack_nnodes = params->pack_nnodes;
-	launch.pack_ntasks = params->pack_ntasks;
-	launch.pack_offset = params->pack_offset;
-	launch.pack_task_offset = params->pack_task_offset;
-	launch.pack_task_cnts = params->pack_task_cnts;
-	launch.pack_tids = params->pack_tids;
-	launch.pack_tid_offsets = params->pack_tid_offsets;
-	launch.pack_node_list = params->pack_node_list;
+	launch.het_job_step_cnt = params->het_job_step_cnt;
+	launch.het_job_id = params->het_job_id;
+	launch.het_job_nnodes = params->het_job_nnodes;
+	launch.het_job_ntasks = params->het_job_ntasks;
+	launch.het_job_offset = params->het_job_offset;
+	launch.het_job_task_offset = params->het_job_task_offset;
+	launch.het_job_task_cnts = params->het_job_task_cnts;
+	launch.het_job_tids = params->het_job_tids;
+	launch.het_job_tid_offsets = params->het_job_tid_offsets;
+	launch.het_job_node_list = params->het_job_node_list;
 	if (params->env == NULL) {
 		/*
 		 * if the user didn't specify an environment, grab the
@@ -481,7 +478,7 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	}
 	if (first_ctx->launch_state->resp_port)
 		resp_port = first_ctx->launch_state->resp_port[0];
-	if (params->pack_ntasks != NO_VAL)
+	if (params->het_job_ntasks != NO_VAL)
 		preserve_env = true;
 	env_array_for_step(&env, ctx->step_resp, &launch, resp_port,
 			   preserve_env);
@@ -520,8 +517,6 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	launch.partition	= params->partition;
 	if (params->pty)
 		launch.flags |= LAUNCH_PTY;
-	launch.ckpt_dir         = params->ckpt_dir;
-	launch.restart_dir      = params->restart_dir;
 	launch.acctg_freq	= params->acctg_freq;
 	launch.open_mode        = params->open_mode;
 	launch.options          = job_options_create();
@@ -555,8 +550,8 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 						 launch.nnodes,
 						 ctx->step_resp->cred,
 						 params->labelio,
-						 params->pack_offset,
-						 params->pack_task_offset);
+						 params->het_job_offset,
+						 params->het_job_task_offset);
 		if (ctx->launch_state->io.normal == NULL) {
 			rc = SLURM_ERROR;
 			goto fail1;
@@ -813,7 +808,7 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 		sls->io.normal = NULL;
 	}
 
-	mpi_hook_client_fini(sls->mpi_state);
+	sls->mpi_rc = mpi_hook_client_fini(sls->mpi_state);
 	slurm_mutex_unlock(&sls->lock);
 }
 
@@ -914,7 +909,7 @@ RESEND:	slurm_msg_t_init(&req);
 	debug2("sending signal %d to step %u.%u on hosts %s",
 	       signo, ctx->job_id, ctx->step_resp->job_step_id, name);
 
-	if (!(ret_list = slurm_send_recv_msgs(name, &req, 0, false))) {
+	if (!(ret_list = slurm_send_recv_msgs(name, &req, 0))) {
 		error("fwd_signal: slurm_send_recv_msgs really failed badly");
 		xfree(name);
 		return;
@@ -979,8 +974,8 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 	sls->abort_action_taken = false;
 	/* NOTE: No malloc() of sls->mpi_info required */
 	sls->mpi_info->jobid = ctx->step_req->job_id;
-	sls->mpi_info->pack_jobid = NO_VAL;
-	sls->mpi_info->pack_task_offset = NO_VAL;
+	sls->mpi_info->het_job_id = NO_VAL;
+	sls->mpi_info->het_job_task_offset = NO_VAL;
 	sls->mpi_info->stepid = ctx->step_resp->job_step_id;
 	sls->mpi_info->step_layout = layout;
 	sls->mpi_state = NULL;
@@ -1737,12 +1732,10 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 #ifdef HAVE_FRONT_END
 	slurm_cred_get_args(ctx->step_resp->cred, &cred_args);
 	//info("hostlist=%s", cred_args.step_hostlist);
-	ret_list = slurm_send_recv_msgs(cred_args.step_hostlist, &msg, timeout,
-					false);
+	ret_list = slurm_send_recv_msgs(cred_args.step_hostlist, &msg, timeout);
 	slurm_cred_free_args(&cred_args);
 #else
-	ret_list = slurm_send_recv_msgs(nodelist,
-					&msg, timeout, false);
+	ret_list = slurm_send_recv_msgs(nodelist, &msg, timeout);
 #endif
 	if (ret_list == NULL) {
 		error("slurm_send_recv_msgs failed miserably: %m");
@@ -1820,22 +1813,15 @@ static void _print_launch_msg(launch_tasks_request_msg_t *msg,
 		(long) msg->gid, msg->cwd, nodeid);
 }
 
-void record_ppid(void)
-{
-	srun_ppid = getppid();
-}
-
 /* This is used to initiate an OpenMPI checkpoint program,
  * but is written to be general purpose */
 static void
 _exec_prog(slurm_msg_t *msg)
 {
 	pid_t child;
-	int pfd[2], status, exit_code = 0, i;
+	int pfd[2], status;
 	ssize_t len;
-	char *argv[4], buf[256] = "";
-	time_t now = time(NULL);
-	bool checkpoint = false;
+	char buf[256] = "";
 	srun_exec_msg_t *exec_msg = msg->data;
 
 	if ((exec_msg->argc < 1) || (exec_msg->argv == NULL) ||
@@ -1852,31 +1838,10 @@ _exec_prog(slurm_msg_t *msg)
 			exec_msg->job_id, exec_msg->step_id);
 	}
 
-	if (xstrcmp(exec_msg->argv[0], "ompi-checkpoint") == 0) {
-		if (srun_ppid)
-			checkpoint = true;
-		else {
-			error("Can not create checkpoint, no srun_ppid set");
-			exit_code = EINVAL;
-			goto fini;
-		}
-	}
-	if (checkpoint) {
-		/* OpenMPI specific checkpoint support */
-		info("Checkpoint started at %s", slurm_ctime2(&now));
-		for (i=0; (exec_msg->argv[i] && (i<2)); i++) {
-			argv[i] = exec_msg->argv[i];
-		}
-		snprintf(buf, sizeof(buf), "%ld", (long) srun_ppid);
-		argv[i] = buf;
-		argv[i+1] = NULL;
-	}
-
 	if (pipe(pfd) == -1) {
 		snprintf(buf, sizeof(buf), "pipe: %s", strerror(errno));
 		error("%s", buf);
-		exit_code = errno;
-		goto fini;
+		return;
 	}
 
 	child = fork();
@@ -1891,38 +1856,18 @@ _exec_prog(slurm_msg_t *msg)
 		dup2(pfd[1], 2);	/* stderr to pipe */
 		close(pfd[0]);
 		close(pfd[1]);
-		if (checkpoint)
-			execvp(exec_msg->argv[0], argv);
-		else
-			execvp(exec_msg->argv[0], exec_msg->argv);
+		execvp(exec_msg->argv[0], exec_msg->argv);
 		error("execvp(%s): %m", exec_msg->argv[0]);
 	} else if (child < 0) {
 		snprintf(buf, sizeof(buf), "fork: %s", strerror(errno));
 		error("%s", buf);
-		exit_code = errno;
-		goto fini;
+		return;
 	} else {
 		close(pfd[1]);
 		len = read(pfd[0], buf, sizeof(buf));
 		if (len >= 1)
 			close(pfd[0]);
 		waitpid(child, &status, 0);
-		exit_code = WEXITSTATUS(status);
-	}
-
-fini:	if (checkpoint) {
-		now = time(NULL);
-		if (exit_code) {
-			info("Checkpoint completion code %d at %s",
-			     exit_code, slurm_ctime2(&now));
-		} else {
-			info("Checkpoint completed successfully at %s",
-			     slurm_ctime2(&now));
-		}
-		if (buf[0])
-			info("Checkpoint location: %s", buf);
-		slurm_checkpoint_complete(exec_msg->job_id, exec_msg->step_id,
-			time(NULL), (uint32_t) exit_code, buf);
 	}
 }
 

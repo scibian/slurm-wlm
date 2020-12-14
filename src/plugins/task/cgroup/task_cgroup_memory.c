@@ -338,13 +338,13 @@ static uint64_t swap_limit_in_bytes (uint64_t mem)
 }
 
 /*
+ * Return kmem memory limit in bytes given a memory limit in bytes.
  * If Kmem space is disabled, it set to max percent of its RAM usage.
  */
 static uint64_t kmem_limit_in_bytes (uint64_t mlb)
 {
-	uint64_t totalKmem = percent_in_bytes(mlb, max_kmem_percent);
-	if ( ! constrain_kmem_space )
-		return totalKmem;
+	uint64_t totalKmem = mlb * (max_kmem_percent / 100.0);
+
 	if ( allowed_kmem_space < 0 ) {	/* Initial value */
 		if ( mlb > totalKmem )
 			return totalKmem;
@@ -570,7 +570,6 @@ static int _register_oom_notifications(char * cgpath)
 {
 	char *control_file = NULL, *event_file = NULL, *line = NULL;
 	int rc = SLURM_SUCCESS, event_fd = -1, cfd = -1, efd = -1;
-	size_t ret;
 	oom_event_args_t *event_args;
 
 	if ((cgpath == NULL) || (cgpath[0] == '\0')) {
@@ -579,13 +578,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(control_file, "%s/%s", cgpath, OOM_CONTROL);
-
-	if (ret >= PATH_MAX) {
-		error("%s: path to %s is too long.", __func__, OOM_CONTROL);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(control_file, "%s/%s", cgpath, OOM_CONTROL);
 
 	if ((cfd = open(control_file, O_RDONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, control_file);
@@ -593,13 +586,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(event_file, "%s/%s", cgpath, EVENT_CONTROL);
-
-	if (ret >= PATH_MAX) {
-		error("%s: path to %s is too long.", __func__, EVENT_CONTROL);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(event_file, "%s/%s", cgpath, EVENT_CONTROL);
 
 	if ((efd = open(event_file, O_WRONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, event_file);
@@ -613,17 +600,11 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(line, "%d %d", event_fd, cfd);
-
-	if (ret >= LINE_MAX) {
-		error("%s: line is too long: %s", __func__, line);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(line, "%d %d", event_fd, cfd);
 
 	oom_kill_count = 0;
 
-	if (write(efd, line, ret + 1) == -1) {
+	if (write(efd, line, strlen(line) + 1) == -1) {
 		error("%s: Cannot write to %s", __func__, event_file);
 		rc = SLURM_ERROR;
 		goto fini;
@@ -698,8 +679,8 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	xfree(slurm_cgpath);
 
 	/* build job cgroup relative path if no set (should not be) */
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 	if (*job_cgroup_path == '\0') {
@@ -865,8 +846,8 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 		goto fail_xcgroup_lock;
 	}
 
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 	if (job->stepid == SLURM_BATCH_SCRIPT)

@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test for multiple, out of order srun --pack-group options
+# Purpose: Test for multiple, out of order srun --het-group options
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -58,7 +58,7 @@ if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
 }
 
-make_bash_script $file_in1 "$srun -l --mpi=none --pack-group=0,2 ./$file_in2 : --pack-group=1 ./$file_in3"
+make_bash_script $file_in1 "$srun -l --mpi=none --het-group=0,2 ./$file_in2 : --het-group=1 ./$file_in3"
 make_bash_script $file_in2 "$bin_echo FILE2"
 make_bash_script $file_in3 "$bin_echo FILE3"
 

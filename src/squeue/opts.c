@@ -64,6 +64,7 @@
 #define OPT_LONG_LOCAL        0x106
 #define OPT_LONG_SIBLING      0x107
 #define OPT_LONG_FEDR         0x108
+#define OPT_LONG_ME           0x109
 
 /* FUNCTIONS */
 static List  _build_job_list( char* str );
@@ -111,6 +112,7 @@ parse_command_line( int argc, char* *argv )
 		{"licenses",   required_argument, 0, 'L'},
 		{"cluster",    required_argument, 0, 'M'},
 		{"clusters",   required_argument, 0, 'M'},
+		{"me",         no_argument,       0, OPT_LONG_ME},
 		{"name",       required_argument, 0, 'n'},
                 {"noconvert",  no_argument,       0, OPT_LONG_NOCONVERT},
 		{"node",       required_argument, 0, 'w'},
@@ -329,6 +331,11 @@ parse_command_line( int argc, char* *argv )
 			break;
 		case OPT_LONG_LOCAL:
 			params.local_flag = true;
+			break;
+		case OPT_LONG_ME:
+			xfree(params.users);
+			xstrfmtcat(params.users, "%u", geteuid());
+			params.user_list = _build_user_list(params.users);
 			break;
 		case OPT_LONG_SIBLING:
 			params.sibling_flag = true;
@@ -1037,17 +1044,6 @@ extern int parse_long_format( char* format_long )
 					field_size,
 					right_justify,
 					suffix );
-			else if (!xstrcasecmp(token, "chptdir"))
-				step_format_add_chpt_dir( params.format_list,
-							  field_size,
-							  right_justify,
-							  suffix );
-			else if ( !xstrcasecmp(token, "chptinter"))
-				step_format_add_chpt_interval(
-					params.format_list,
-					field_size,
-					right_justify,
-					suffix );
 			else if ( !xstrcasecmp(token, "jobid"))
 				step_format_add_job_id( params.format_list,
 							field_size,
@@ -1694,21 +1690,25 @@ extern int parse_long_format( char* format_long )
 							field_size,
 							right_justify,
 							suffix );
-			else if (!xstrcasecmp(token, "packjobid"))
-				job_format_add_pack_job_id(params.format_list,
-							field_size,
-							right_justify,
-							suffix );
-			else if (!xstrcasecmp(token, "packjoboffset"))
-				job_format_add_pack_job_offset(params.format_list,
-							field_size,
-							right_justify,
-							suffix );
-			else if (!xstrcasecmp(token, "packjobidset"))
-				job_format_add_pack_job_id_set(params.format_list,
-							field_size,
-							right_justify,
-							suffix );
+			/* Maintaining "pack*" for retrocompatibility */
+			else if (!xstrcasecmp(token, "packjobid") ||
+				 !xstrcasecmp(token, "hetjobid"))
+				job_format_add_het_job_id(params.format_list,
+							  field_size,
+							  right_justify,
+							  suffix );
+			else if (!xstrcasecmp(token, "packjoboffset") ||
+				 !xstrcasecmp(token, "hetjoboffset"))
+				job_format_add_het_job_offset(params.format_list,
+							      field_size,
+							      right_justify,
+							      suffix );
+			else if (!xstrcasecmp(token, "packjobidset") ||
+				 !xstrcasecmp(token, "hetjobidset"))
+				job_format_add_het_job_id_set(params.format_list,
+							      field_size,
+							      right_justify,
+							      suffix );
 			else {
 				job_format_add_invalid( params.format_list,
 							field_size,
@@ -1787,7 +1787,7 @@ static void
 _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 		   char **suffix)
 {
-	char *ptr;
+	char *end_ptr = NULL, *ptr;
 
 	xassert(token);
 	ptr = strchr(token, ':');
@@ -1799,7 +1799,9 @@ _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 		} else {
 			*right_justify = false;
 		}
-		*field_size = atoi(ptr + 1);
+		*field_size = strtol(ptr + 1, &end_ptr, 10);
+		if (end_ptr[0] != '\0')
+			*suffix = xstrdup(end_ptr);
 	} else {
 		*right_justify = false;
 		*field_size = 20;

@@ -66,6 +66,7 @@
 #include "src/slurmd/common/core_spec_plugin.h"
 #include "src/slurmd/common/slurmstepd_init.h"
 #include "src/slurmd/common/setproctitle.h"
+#include "src/common/slurm_acct_gather_energy.h"
 #include "src/slurmd/common/proctrack.h"
 #include "src/slurmd/common/xcpuinfo.h"
 #include "src/slurmd/slurmd/slurmd.h"
@@ -141,7 +142,6 @@ main (int argc, char **argv)
 
 	/* fork handlers cause mutexes on some global data structures
 	 * to be re-initialized after the fork. */
-	list_install_fork_handlers();
 	slurm_conf_install_fork_handlers();
 
 	/* sets job->msg_handle and job->msgid */
@@ -173,6 +173,8 @@ main (int argc, char **argv)
 #endif
 	}
 	xfree(launch_params);
+
+	acct_gather_energy_g_set_data(ENERGY_DATA_STEP_PTR, job);
 
 	/* This does most of the stdio setup, then launches all the tasks,
 	 * and blocks until the step is complete */
@@ -254,6 +256,8 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	Buf buffer = NULL;
 	slurmd_conf_t *confl, *local_conf = NULL;
 	int tmp_int = 0;
+	List tmp_list = NULL;
+	assoc_mgr_lock_t locks = { .tres = WRITE_LOCK };
 
 	/*  First check to see if we've already initialized the
 	 *   global slurmd_conf_t in 'conf'. Allocate memory if not.
@@ -273,6 +277,11 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	rc = unpack_slurmd_conf_lite_no_alloc(confl, buffer);
 	if (rc == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
+
+	slurm_unpack_list(&tmp_list,
+			  slurmdb_unpack_tres_rec,
+			  slurmdb_destroy_tres_rec,
+			  buffer, SLURM_PROTOCOL_VERSION);
 
 	free_buf(buffer);
 
@@ -294,12 +303,28 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	} else
 		confl->log_opts.syslog_level  = LOG_LEVEL_QUIET;
 
+	/*
+	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
+	 * up in the log.
+	 */
+	log_alter(confl->log_opts, 0, confl->logfile);
+	log_set_timefmt(confl->log_fmt);
+	debug2("debug level is %d.", confl->debug_level);
+
 	confl->acct_freq_task = NO_VAL16;
 	tmp_int = acct_gather_parse_freq(PROFILE_TASK,
 				       confl->job_acct_gather_freq);
 	if (tmp_int != -1)
 		confl->acct_freq_task = tmp_int;
 
+	xassert(tmp_list);
+
+	assoc_mgr_lock(&locks);
+	assoc_mgr_post_tres_list(tmp_list);
+	debug2("%s: slurmd sent %u TRES.", __func__, g_tres_count);
+	/* assoc_mgr_post_tres_list destroys tmp_list */
+	tmp_list = NULL;
+	assoc_mgr_unlock(&locks);
 
 	return (confl);
 
@@ -309,26 +334,33 @@ rwfail:
 	return (NULL);
 }
 
-static int get_jobid_uid_from_env (uint32_t *jobidp, uid_t *uidp)
+static int _get_jobid_uid_gid_from_env(uint32_t *jobid, uid_t *uid, gid_t *gid)
 {
 	const char *val;
 	char *p;
 
-	if (!(val = getenv ("SLURM_JOBID")))
-		return error ("Unable to get SLURM_JOBID in env!");
+	if (!(val = getenv("SLURM_JOBID")))
+		return error("Unable to get SLURM_JOBID in env!");
 
-	*jobidp = (uint32_t) strtoul (val, &p, 10);
+	*jobid = (uint32_t) strtoul(val, &p, 10);
 	if (*p != '\0')
-		return error ("Invalid SLURM_JOBID=%s", val);
+		return error("Invalid SLURM_JOBID=%s", val);
 
-	if (!(val = getenv ("SLURM_UID")))
-		return error ("Unable to get SLURM_UID in env!");
+	if (!(val = getenv("SLURM_UID")))
+		return error("Unable to get SLURM_UID in env!");
 
-	*uidp = (uid_t) strtoul (val, &p, 10);
+	*uid = (uid_t) strtoul(val, &p, 10);
 	if (*p != '\0')
-		return error ("Invalid SLURM_UID=%s", val);
+		return error("Invalid SLURM_UID=%s", val);
 
-	return (0);
+	if (!(val = getenv("SLURM_JOB_GID")))
+		return error("Unable to get SLURM_JOB_GID in env!");
+
+	*gid = (gid_t) strtoul(val, &p, 10);
+	if (*p != '\0')
+		return error("Invalid SLURM_JOB_GID=%s", val);
+
+	return SLURM_SUCCESS;
 }
 
 static int _handle_spank_mode (int argc, char **argv)
@@ -336,6 +368,7 @@ static int _handle_spank_mode (int argc, char **argv)
 	char *prefix = NULL;
 	const char *mode = argv[2];
 	uid_t uid = (uid_t) -1;
+	gid_t gid = (gid_t) -1;
 	uint32_t jobid = (uint32_t) -1;
 	log_options_t lopts = LOG_OPTS_INITIALIZER;
 
@@ -359,23 +392,23 @@ static int _handle_spank_mode (int argc, char **argv)
 	 *   This could happen if slurmstepd is run standalone for
 	 *   testing.
 	 */
-	if ((conf = read_slurmd_conf_lite (STDIN_FILENO)))
-		log_alter (conf->log_opts, 0, conf->logfile);
+	conf = read_slurmd_conf_lite (STDIN_FILENO);
 	close (STDIN_FILENO);
 
 	slurm_conf_init(NULL);
 
-	if (get_jobid_uid_from_env (&jobid, &uid) < 0)
-		return error ("spank environment invalid");
+	if (_get_jobid_uid_gid_from_env(&jobid, &uid, &gid))
+		return error("spank environment invalid");
 
-	debug("Running spank/%s for jobid [%u] uid [%u]", mode, jobid, uid);
+	debug("Running spank/%s for jobid [%u] uid [%u] gid [%u]",
+	      mode, jobid, uid, gid);
 
 	if (xstrcmp (mode, "prolog") == 0) {
-		if (spank_job_prolog (jobid, uid) < 0)
+		if (spank_job_prolog(jobid, uid, gid) < 0)
 			return (-1);
 	}
 	else if (xstrcmp (mode, "epilog") == 0) {
-		if (spank_job_epilog (jobid, uid) < 0)
+		if (spank_job_epilog(jobid, uid, gid) < 0)
 			return (-1);
 	}
 	else {
@@ -487,46 +520,10 @@ _init_from_slurmd(int sock, char **argv,
 	uint16_t port;
 	char buf[16];
 	uint32_t jobid = 0, stepid = 0;
-	List tmp_list = NULL;
-	assoc_mgr_lock_t locks = { .tres = WRITE_LOCK };
 
 	/* receive conf from slurmd */
 	if (!(conf = read_slurmd_conf_lite(sock)))
 		fatal("Failed to read conf from slurmd");
-
-	/*
-	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
-	 * up in the log.
-	 */
-	log_alter(conf->log_opts, 0, conf->logfile);
-	log_set_timefmt(conf->log_fmt);
-
-	debug2("debug level is %d.", conf->debug_level);
-
-	/* Receive TRES information for slurmd */
-	safe_read(sock, &len, sizeof(int));
-	if (len > 0) {
-		incoming_buffer = xmalloc(len);
-		safe_read(sock, incoming_buffer, len);
-		buffer = create_buf(incoming_buffer, len);
-		slurm_unpack_list(&tmp_list,
-				  slurmdb_unpack_tres_rec,
-				  slurmdb_destroy_tres_rec,
-				  buffer, SLURM_PROTOCOL_VERSION);
-		free_buf(buffer);
-	} else {
-		fatal("%s: We didn't get any tres from slurmd. This should never happen.",
-		      __func__);
-	}
-
-	xassert(tmp_list);
-
-	assoc_mgr_lock(&locks);
-	assoc_mgr_post_tres_list(tmp_list);
-	debug2("%s: slurmd sent %u TRES.", __func__, g_tres_count);
-	/* assoc_mgr_post_tres_list destroys tmp_list */
-	tmp_list = NULL;
-	assoc_mgr_unlock(&locks);
 
 	/* receive cgroup conf from slurmd */
 	if (xcgroup_read_conf(sock) != SLURM_SUCCESS)
@@ -701,7 +698,7 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 		gres_plugin_job_set_env(&job->env, job->job_gres_list, 0);
 	} else if (msg->msg_type == REQUEST_LAUNCH_TASKS) {
 		gres_plugin_step_set_env(&job->env, job->step_gres_list, 0,
-					 NULL, NULL, -1);
+					 NULL, -1);
 	}
 
 	/*

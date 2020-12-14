@@ -62,18 +62,18 @@ typedef enum {
 	TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE
 } acct_policy_tres_usage_t;
 
-typedef struct pack_limits {
+typedef struct het_job_limits {
 	slurmdb_assoc_rec_t *assoc_ptr;
-	struct job_record *job_ptr;
+	job_record_t *job_ptr;
 	slurmdb_qos_rec_t *qos_ptr_1;
 	slurmdb_qos_rec_t *qos_ptr_2;
-} pack_limits_t;
+} het_job_limits_t;
 
 /*
  * Update a job's allocated node count to reflect only nodes that are not
  * already allocated to this association.  Needed to enforce GrpNode limit.
  */
-static void _get_unique_job_node_cnt(struct job_record *job_ptr,
+static void _get_unique_job_node_cnt(job_record_t *job_ptr,
 				     bitstr_t *grp_node_bitmap,
 				     uint64_t *node_cnt)
 {
@@ -129,7 +129,7 @@ static void _get_unique_job_node_cnt(struct job_record *job_ptr,
  * This includes grp_node_bitmap, grp_node_job_cnt and
  * grp_used_tres[TRES_ARRAY_NODE] of an object (qos, assoc, etc).
  */
-static void _add_usage_node_bitmap(struct job_record *job_ptr,
+static void _add_usage_node_bitmap(job_record_t *job_ptr,
 				   bitstr_t **grp_node_bitmap,
 				   uint16_t **grp_node_job_cnt,
 				   uint64_t *grp_used_tres)
@@ -142,10 +142,10 @@ static void _add_usage_node_bitmap(struct job_record *job_ptr,
 	xassert(grp_used_tres);
 
 	if (!job_ptr->job_resrcs || !job_ptr->job_resrcs->node_bitmap) {
-		if (IS_JOB_PENDING(job_ptr) && job_ptr->pack_job_id) {
+		if (IS_JOB_PENDING(job_ptr) && job_ptr->het_job_id) {
 			/*
 			 * Hetjobs reach here as part of testing before any
-			 * resource allocation. See _pack_job_limit_check()
+			 * resource allocation. See _het_job_limit_check()
 			 * in src/plugins/sched/backfill/backfill.c
 			 */
 		} else if (job_ptr->node_cnt == 0) {
@@ -184,7 +184,7 @@ static void _add_usage_node_bitmap(struct job_record *job_ptr,
  * This includes grp_node_bitmap, grp_node_job_cnt and
  * grp_used_tres[TRES_ARRAY_NODE] of an object (qos, assoc, etc).
  */
-static void _rm_usage_node_bitmap(struct job_record *job_ptr,
+static void _rm_usage_node_bitmap(job_record_t *job_ptr,
 				  bitstr_t *grp_node_bitmap,
 				  uint16_t *grp_node_job_cnt,
 				  uint64_t *grp_used_tres)
@@ -194,10 +194,10 @@ static void _rm_usage_node_bitmap(struct job_record *job_ptr,
 	xassert(grp_used_tres);
 
 	if (!job_ptr->job_resrcs || !job_ptr->job_resrcs->node_bitmap) {
-		if (IS_JOB_PENDING(job_ptr) && job_ptr->pack_job_id) {
+		if (IS_JOB_PENDING(job_ptr) && job_ptr->het_job_id) {
 			/*
 			 * Hetjobs reach here as part of testing before any
-			 * resource allocation. See _pack_job_limit_check()
+			 * resource allocation. See _het_job_limit_check()
 			 * in src/plugins/sched/backfill/backfill.c
 			 */
 		} else if (job_ptr->node_cnt == 0) {
@@ -548,7 +548,7 @@ static int _find_used_limits_for_user(void *x, void *key)
 	return 0;
 }
 
-static bool _valid_job_assoc(struct job_record *job_ptr)
+static bool _valid_job_assoc(job_record_t *job_ptr)
 {
 	slurmdb_assoc_rec_t assoc_rec;
 
@@ -575,7 +575,7 @@ static bool _valid_job_assoc(struct job_record *job_ptr)
 	return true;
 }
 
-static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
+static void _qos_adjust_limit_usage(int type, job_record_t *job_ptr,
 				    slurmdb_qos_rec_t *qos_ptr,
 				    uint64_t *used_tres_run_secs,
 				    uint32_t job_cnt)
@@ -641,6 +641,8 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 			 */
 			if (i == TRES_ARRAY_ENERGY)
 				continue;
+			if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
+				continue;
 
 			used_limits->tres[i] += job_ptr->tres_alloc_cnt[i];
 			used_limits_a->tres[i] += job_ptr->tres_alloc_cnt[i];
@@ -694,6 +696,10 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 		for (i=0; i<slurmctld_tres_cnt; i++) {
 			if (i == TRES_ARRAY_ENERGY)
 				continue;
+
+			if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
+				continue;
+
 			if (job_ptr->tres_alloc_cnt[i] >
 			    qos_ptr->usage->grp_used_tres[i]) {
 				qos_ptr->usage->grp_used_tres[i] = 0;
@@ -777,7 +783,7 @@ static int _find_qos_part(void *x, void *key)
 	return 0;
 }
 
-static void _adjust_limit_usage(int type, struct job_record *job_ptr)
+static void _adjust_limit_usage(int type, job_record_t *job_ptr)
 {
 	slurmdb_assoc_rec_t *assoc_ptr = NULL;
 	assoc_mgr_lock_t locks =
@@ -803,6 +809,9 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		for (i = 0; i < slurmctld_tres_cnt; i++) {
 			if (i == TRES_ARRAY_ENERGY)
 				continue;
+			if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
+				continue;
+
 			used_tres_run_secs[i] =
 				job_ptr->tres_alloc_cnt[i] * time_limit_secs;
 		}
@@ -833,7 +842,7 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 	    (IS_JOB_PENDING(job_ptr) || !job_ptr->tres_alloc_str)) {
 		bool job_first = false;
 		ListIterator part_itr;
-		struct part_record *part_ptr;
+		part_record_t *part_ptr;
 		List part_qos_list = NULL;
 
 		if (job_ptr->qos_ptr &&
@@ -893,7 +902,7 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		if ((type == ACCT_POLICY_JOB_BEGIN) &&
 		    job_ptr->part_ptr_list) {
 			ListIterator part_itr;
-			struct part_record *part_ptr;
+			part_record_t *part_ptr;
 			List part_qos_list = list_create(NULL);
 
 			if (job_ptr->qos_ptr)
@@ -962,6 +971,10 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 			for (i = 0; i < slurmctld_tres_cnt; i++) {
 				if (i == TRES_ARRAY_ENERGY)
 					continue;
+				if (job_ptr->tres_alloc_cnt[i] ==
+				    NO_CONSUME_VAL64)
+					continue;
+
 				if (i != TRES_ARRAY_NODE) {
 					assoc_ptr->usage->grp_used_tres[i] +=
 						job_ptr->tres_alloc_cnt[i];
@@ -993,6 +1006,10 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 				if ((i == TRES_ARRAY_ENERGY) ||
 				    (i == TRES_ARRAY_NODE))
 					continue;
+				if (job_ptr->tres_alloc_cnt[i] ==
+				    NO_CONSUME_VAL64)
+					continue;
+
 				if (job_ptr->tres_alloc_cnt[i] >
 				    assoc_ptr->usage->grp_used_tres[i]) {
 					assoc_ptr->usage->grp_used_tres[i] = 0;
@@ -1039,7 +1056,7 @@ static void _set_time_limit(uint32_t *time_limit, uint32_t part_max_time,
 		(*time_limit) = limit_max_time;
 }
 
-static void _qos_alter_job(struct job_record *job_ptr,
+static void _qos_alter_job(job_record_t *job_ptr,
 			   slurmdb_qos_rec_t *qos_ptr,
 			   uint64_t *used_tres_run_secs,
 			   uint64_t *new_used_tres_run_secs)
@@ -1500,7 +1517,7 @@ static acct_policy_tres_usage_t _validate_tres_usage_limits_for_assoc(
 
 static int _qos_policy_validate(job_desc_msg_t *job_desc,
 				slurmdb_assoc_rec_t *assoc_ptr,
-				struct part_record *part_ptr,
+				part_record_t *part_ptr,
 				slurmdb_qos_rec_t *qos_ptr,
 				slurmdb_qos_rec_t *qos_out_ptr,
 				uint32_t *reason,
@@ -1883,7 +1900,7 @@ end_it:
 	return rc;
 }
 
-static int _qos_job_runnable_pre_select(struct job_record *job_ptr,
+static int _qos_job_runnable_pre_select(job_record_t *job_ptr,
 					slurmdb_qos_rec_t *qos_ptr,
 					slurmdb_qos_rec_t *qos_out_ptr)
 {
@@ -2081,7 +2098,7 @@ end_it:
 	return rc;
 }
 
-static int _qos_job_runnable_post_select(struct job_record *job_ptr,
+static int _qos_job_runnable_post_select(job_record_t *job_ptr,
 					 slurmdb_qos_rec_t *qos_ptr,
 					 slurmdb_qos_rec_t *qos_out_ptr,
 					 uint64_t *tres_req_cnt,
@@ -2493,7 +2510,7 @@ end_it:
 	return rc;
 }
 
-static int _qos_job_time_out(struct job_record *job_ptr,
+static int _qos_job_time_out(job_record_t *job_ptr,
 			     slurmdb_qos_rec_t *qos_ptr,
 			     slurmdb_qos_rec_t *qos_out_ptr,
 			     uint64_t *job_tres_usage_mins)
@@ -2595,7 +2612,7 @@ end_it:
  * acct_policy_add_job_submit - Note that a job has been submitted for
  *	accounting policy purposes.
  */
-extern void acct_policy_add_job_submit(struct job_record *job_ptr)
+extern void acct_policy_add_job_submit(job_record_t *job_ptr)
 {
 	_adjust_limit_usage(ACCT_POLICY_ADD_SUBMIT, job_ptr);
 }
@@ -2605,7 +2622,7 @@ extern void acct_policy_add_job_submit(struct job_record *job_ptr)
  *      not had started or been allocated resources) for accounting
  *      policy purposes.
  */
-extern void acct_policy_remove_job_submit(struct job_record *job_ptr)
+extern void acct_policy_remove_job_submit(job_record_t *job_ptr)
 {
 	_adjust_limit_usage(ACCT_POLICY_REM_SUBMIT, job_ptr);
 }
@@ -2614,7 +2631,7 @@ extern void acct_policy_remove_job_submit(struct job_record *job_ptr)
  * acct_policy_job_begin - Note that a job is starting for accounting
  *	policy purposes.
  */
-extern void acct_policy_job_begin(struct job_record *job_ptr)
+extern void acct_policy_job_begin(job_record_t *job_ptr)
 {
 	_adjust_limit_usage(ACCT_POLICY_JOB_BEGIN, job_ptr);
 }
@@ -2623,7 +2640,7 @@ extern void acct_policy_job_begin(struct job_record *job_ptr)
  * acct_policy_job_fini - Note that a job is completing for accounting
  *	policy purposes.
  */
-extern void acct_policy_job_fini(struct job_record *job_ptr)
+extern void acct_policy_job_fini(job_record_t *job_ptr)
 {
 	/* if end_time_exp == NO_VAL this has already happened */
 	if (job_ptr->end_time_exp != (time_t)NO_VAL)
@@ -2632,7 +2649,7 @@ extern void acct_policy_job_fini(struct job_record *job_ptr)
 		debug2("We have already ran the job_fini for %pJ", job_ptr);
 }
 
-extern void acct_policy_alter_job(struct job_record *job_ptr,
+extern void acct_policy_alter_job(job_record_t *job_ptr,
 				  uint32_t new_time_limit)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
@@ -2660,6 +2677,9 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 	for (i=0; i<slurmctld_tres_cnt; i++) {
 		if (i == TRES_ARRAY_ENERGY)
 			continue;
+		if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
+			continue;
+
 		used_tres_run_secs[i] =
 			job_ptr->tres_alloc_cnt[i] * time_limit_secs;
 		new_used_tres_run_secs[i] =
@@ -2885,7 +2905,7 @@ static void _remove_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 }
 
 static bool _acct_policy_validate(job_desc_msg_t *job_desc,
-				  struct part_record *part_ptr,
+				  part_record_t *part_ptr,
 				  slurmdb_assoc_rec_t *assoc_in,
 				  slurmdb_qos_rec_t *qos_ptr_1,
 				  slurmdb_qos_rec_t *qos_ptr_2,
@@ -3233,7 +3253,7 @@ end_it:
  * RET true if valid
  */
 extern bool acct_policy_validate(job_desc_msg_t *job_desc,
-				 struct part_record *part_ptr,
+				 part_record_t *part_ptr,
 				 slurmdb_assoc_rec_t *assoc_in,
 				 slurmdb_qos_rec_t *qos_ptr,
 				 uint32_t *reason,
@@ -3241,7 +3261,7 @@ extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 				 bool update_call)
 {
 	slurmdb_qos_rec_t *qos_ptr_1 = NULL, *qos_ptr_2 = NULL;
-	struct job_record job_rec;
+	job_record_t job_rec;
 	bool rc;
 	assoc_mgr_lock_t locks =
 		{ .assoc = READ_LOCK, .qos = READ_LOCK, .tres = READ_LOCK };
@@ -3257,13 +3277,8 @@ extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 	return rc;
 }
 
-static void _pack_list_del(void *x)
-{
-	xfree(x);
-}
-
 /*
- * acct_policy_validate_pack - validate that a pack job as a whole (all
+ * acct_policy_validate_het_job - validate that a hetjob as a whole (all
  * components at once) can be satisfied without exceeding any association
  * limit. Build a list of every job's association and QOS information then combine
  * usage information for every job sharing an association and test that against
@@ -3273,26 +3288,26 @@ static void _pack_list_del(void *x)
  * to test (association, job QOS and partition QOS). Ideally each would be tested
  * independently, but that is complicated due to QOS limits overriding the
  * association limits and the ability to have 3 sets of limits for each job.
- * This only tests the association limit for each pack job component based
+ * This only tests the association limit for each hetjob component based
  * upon that component's job and partition QOS.
  *
- * NOTE: That a pack job passes this test does not mean that it will be able
+ * NOTE: That a hetjob passes this test does not mean that it will be able
  * to run. For example, this test assumues resource allocation at the CPU level.
  * If each task is allocated one core, with 2 CPUs, then the CPU limit test
  * would not be accurate.
  *
- * submit_job_list IN - list of "struct job_record" entries (already created)
+ * submit_job_list IN - list of job_record_t entries (already created)
  * RET true if valid
  */
-extern bool acct_policy_validate_pack(List submit_job_list)
+extern bool acct_policy_validate_het_job(List submit_job_list)
 {
 	assoc_mgr_lock_t locks =
 		{ .assoc = READ_LOCK, .qos = READ_LOCK, .tres = READ_LOCK };
-	List pack_limit_list;
+	List het_job_limit_list;
 	ListIterator iter1, iter2;
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
-	struct job_record *job_ptr1, *job_ptr2;
-	pack_limits_t *job_limit1, *job_limit2;
+	job_record_t *job_ptr1, *job_ptr2;
+	het_job_limits_t *job_limit1, *job_limit2;
 	bool rc = true;
 	job_desc_msg_t job_desc;
 	bool build_job_desc = true;
@@ -3306,25 +3321,25 @@ extern bool acct_policy_validate_pack(List submit_job_list)
 		xmalloc(sizeof(uint16_t) * slurmctld_tres_cnt);
 
 	/* Build list of QOS, association, and job pointers */
-	pack_limit_list = list_create(_pack_list_del);
+	het_job_limit_list = list_create(xfree_ptr);
 	iter1 = list_iterator_create(submit_job_list);
 	assoc_mgr_lock(&locks);
-	while ((job_ptr1 = (struct job_record *) list_next(iter1))) {
+	while ((job_ptr1 = list_next(iter1))) {
 		qos_ptr_1 = NULL;
 		qos_ptr_2 = NULL;
 		acct_policy_set_qos_order(job_ptr1, &qos_ptr_1, &qos_ptr_2);
-		job_limit1 = xmalloc(sizeof(pack_limits_t));
+		job_limit1 = xmalloc(sizeof(het_job_limits_t));
 		job_limit1->assoc_ptr = job_ptr1->assoc_ptr;
 		job_limit1->job_ptr   = job_ptr1;
 		job_limit1->qos_ptr_1 = qos_ptr_1;
 		job_limit1->qos_ptr_2 = qos_ptr_2;
-		list_append(pack_limit_list, job_limit1);
+		list_append(het_job_limit_list, job_limit1);
 	}
 	assoc_mgr_unlock(&locks);
 	list_iterator_destroy(iter1);
 
-	iter1 = list_iterator_create(pack_limit_list);
-	while ((job_limit1 = (pack_limits_t *) list_next(iter1))) {
+	iter1 = list_iterator_create(het_job_limit_list);
+	while ((job_limit1 = list_next(iter1))) {
 		job_ptr1 = job_limit1->job_ptr;
 		if (build_job_desc) {
 			build_job_desc = false;
@@ -3336,9 +3351,8 @@ extern bool acct_policy_validate_pack(List submit_job_list)
 			job_cnt = 1;
 			memcpy(job_desc.tres_req_cnt, job_ptr1->tres_req_cnt,
 			       tres_req_size);
-			iter2 = list_iterator_create(pack_limit_list);
-			while ((job_limit2 = (pack_limits_t *)
-					     list_next(iter2))) {
+			iter2 = list_iterator_create(het_job_limit_list);
+			while ((job_limit2 = list_next(iter2))) {
 				if ((job_limit2 == job_limit1) ||
 				    (job_limit2->assoc_ptr !=
 				     job_limit1->assoc_ptr))
@@ -3376,7 +3390,7 @@ extern bool acct_policy_validate_pack(List submit_job_list)
 	list_iterator_destroy(iter1);
 
 	xfree(job_desc.tres_req_cnt);
-	list_destroy(pack_limit_list);
+	list_destroy(het_job_limit_list);
 	xfree(acct_policy_limit_set.tres);
 
 	return rc;
@@ -3386,7 +3400,7 @@ extern bool acct_policy_validate_pack(List submit_job_list)
  * Determine if the specified job can execute right now or is currently
  * blocked by an association or QOS limit. Does not re-validate job state.
  */
-extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
+extern bool acct_policy_job_runnable_state(job_record_t *job_ptr)
 {
 	/* If any more limits are added this will need to be added to */
 	if ((job_ptr->state_reason >= WAIT_QOS_GRP_CPU
@@ -3409,7 +3423,7 @@ extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
  *	association limits prevent the job from ever running (lowered
  *	limits since job submission), then cancel the job.
  */
-extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr,
+extern bool acct_policy_job_runnable_pre_select(job_record_t *job_ptr,
 						bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
@@ -3639,9 +3653,9 @@ end_it:
  * acct_policy_job_runnable_post_select - After nodes have been
  *	selected for the job verify the counts don't exceed aggregated limits.
  */
-extern bool acct_policy_job_runnable_post_select(
-	struct job_record *job_ptr, uint64_t *tres_req_cnt,
-	bool assoc_mgr_locked)
+extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
+						 uint64_t *tres_req_cnt,
+						 bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_qos_rec_t qos_rec;
@@ -4007,7 +4021,7 @@ end_it:
 	return rc;
 }
 
-extern uint32_t acct_policy_get_max_nodes(struct job_record *job_ptr,
+extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
 					  uint32_t *wait_reason)
 {
 	uint64_t max_nodes_limit = INFINITE64, qos_max_p_limit = INFINITE64,
@@ -4121,7 +4135,7 @@ extern uint32_t acct_policy_get_max_nodes(struct job_record *job_ptr,
  *	the association/qos limits prevent the job from running (lowered
  *	limits since job submission), then reset its reason field.
  */
-extern int acct_policy_update_pending_job(struct job_record *job_ptr)
+extern int acct_policy_update_pending_job(job_record_t *job_ptr)
 {
 	job_desc_msg_t job_desc;
 	acct_policy_limit_set_t acct_policy_limit_set;
@@ -4205,7 +4219,7 @@ extern int acct_policy_update_pending_job(struct job_record *job_ptr)
  * acct_policy_job_runnable - Determine if the specified job has timed
  *	out based on it's QOS or association.
  */
-extern bool acct_policy_job_time_out(struct job_record *job_ptr)
+extern bool acct_policy_job_time_out(job_record_t *job_ptr)
 {
 	uint64_t job_tres_usage_mins[slurmctld_tres_cnt];
 	uint64_t time_delta;
@@ -4254,6 +4268,8 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 	 */
 	for (i = 0; i < slurmctld_tres_cnt; i++) {
 		if (i == TRES_ARRAY_ENERGY)
+			continue;
+		if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
 			continue;
 
 		if (job_ptr->tres_alloc_cnt[i]) {
@@ -4359,10 +4375,10 @@ job_failed:
 	return false;
 }
 
-extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
+extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 					  bool assoc_mgr_locked)
 {
-	struct job_record *old_job_ptr;
+	job_record_t *old_job_ptr;
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_assoc_rec_t *assoc_ptr;
 	struct job_details *details_ptr;
@@ -4371,7 +4387,7 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 
 	uint32_t max_jobs_accrue = INFINITE;
 	int create_cnt = 0, i, rc = SLURM_SUCCESS;
-	time_t now;
+	time_t now = time(NULL);
 	bool parent = false;
 	static time_t sched_update = 0;
 	static uint16_t priority_flags = 0;
@@ -4404,8 +4420,12 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 		return SLURM_SUCCESS;
 	}
 
-	/* If Job is held or dependent don't accrue time */
-	if (!job_ptr->priority || (job_ptr->bit_flags & JOB_DEPENDENT))
+	/*
+	 * If the job is not eligible because it is either held, dependent or
+	 * because its begin time is in the future don't accrue time.
+	 */
+	if (!job_ptr->priority || (job_ptr->bit_flags & JOB_DEPENDENT) ||
+	    (details_ptr->begin_time && (details_ptr->begin_time > now)))
 		return SLURM_SUCCESS;
 
 	/* No accrue_time and the job isn't pending, bail */
@@ -4574,8 +4594,6 @@ extern int acct_policy_handle_accrue_time(struct job_record *job_ptr,
 		goto endit;
 	}
 
-	now = time(NULL);
-
 	create_cnt = MIN(create_cnt, job_ptr->array_recs->task_cnt);
 
 	/* How many can we spin off? */
@@ -4632,7 +4650,7 @@ endit:
 	return rc;
 }
 
-extern void acct_policy_add_accrue_time(struct job_record *job_ptr,
+extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 					bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
@@ -4706,7 +4724,7 @@ extern void acct_policy_add_accrue_time(struct job_record *job_ptr,
 		assoc_mgr_unlock(&locks);
 }
 
-extern void acct_policy_remove_accrue_time(struct job_record *job_ptr,
+extern void acct_policy_remove_accrue_time(job_record_t *job_ptr,
 					   bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
@@ -4784,7 +4802,7 @@ end_it:
 		assoc_mgr_unlock(&locks);
 }
 
-extern uint32_t acct_policy_get_prio_thresh(struct job_record *job_ptr,
+extern uint32_t acct_policy_get_prio_thresh(job_record_t *job_ptr,
 					    bool assoc_mgr_locked)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
@@ -4823,7 +4841,7 @@ extern uint32_t acct_policy_get_prio_thresh(struct job_record *job_ptr,
 	return prio_thresh;
 }
 
-extern time_t acct_policy_get_preemptable_time(struct job_record *job_ptr)
+extern time_t acct_policy_get_preemptable_time(job_record_t *job_ptr)
 {
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	uint32_t min1, min2, conf_min;
@@ -4848,7 +4866,7 @@ extern time_t acct_policy_get_preemptable_time(struct job_record *job_ptr)
 		return start;
 }
 
-extern bool acct_policy_is_job_preempt_exempt(struct job_record *job_ptr)
+extern bool acct_policy_is_job_preempt_exempt(job_record_t *job_ptr)
 {
 	time_t now = time(0);
 
@@ -4860,7 +4878,7 @@ extern bool acct_policy_is_job_preempt_exempt(struct job_record *job_ptr)
 	return now < preempt_time;
 }
 
-extern void acct_policy_set_qos_order(struct job_record *job_ptr,
+extern void acct_policy_set_qos_order(job_record_t *job_ptr,
 				      slurmdb_qos_rec_t **qos_ptr_1,
 				      slurmdb_qos_rec_t **qos_ptr_2)
 {

@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "May 2019" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "August 2020" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -144,28 +144,29 @@ AllocNodes          AllocTRES           AssocID             AveCPU
 AveCPUFreq          AveDiskRead         AveDiskWrite        AvePages
 AveRSS              AveVMSize           BlockID             Cluster
 Comment             Constraints         ConsumedEnergy      ConsumedEnergyRaw
-CPUTime             CPUTimeRAW          DerivedExitCode     Elapsed
-ElapsedRaw          Eligible            End                 ExitCode
-Flags               GID                 Group               JobID
-JobIDRaw            JobName             Layout              MaxDiskRead
-MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite        MaxDiskWriteNode
-MaxDiskWriteTask    MaxPages            MaxPagesNode        MaxPagesTask
-MaxRSS              MaxRSSNode          MaxRSSTask          MaxVMSize
-MaxVMSizeNode       MaxVMSizeTask       McsLabel            MinCPU
-MinCPUNode          MinCPUTask          NCPUS               NNodes
-NodeList            NTasks              Priority            Partition
-QOS                 QOSRAW              Reason              ReqCPUFreq
-ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov       ReqCPUS
-ReqGRES             ReqMem              ReqNodes            ReqTRES
-Reservation         ReservationId       Reserved            ResvCPU
-ResvCPURAW          Start               State               Submit
-Suspended           SystemCPU           SystemComment       Timelimit
-TimelimitRaw        TotalCPU            TRESUsageInAve      TRESUsageInMax
-TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin      TRESUsageInMinNode
-TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve     TRESUsageOutMax
-TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin     TRESUsageOutMinNode
-TRESUsageOutMinTask TRESUsageOutTot     UID                 User
-UserCPU             WCKey               WCKeyID             WorkDir
+CPUTime             CPUTimeRAW          DBIndex             DerivedExitCode
+Elapsed             ElapsedRaw          Eligible            End
+ExitCode            Flags               GID                 Group
+JobID               JobIDRaw            JobName             Layout
+MaxDiskRead         MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite
+MaxDiskWriteNode    MaxDiskWriteTask    MaxPages            MaxPagesNode
+MaxPagesTask        MaxRSS              MaxRSSNode          MaxRSSTask
+MaxVMSize           MaxVMSizeNode       MaxVMSizeTask       McsLabel
+MinCPU              MinCPUNode          MinCPUTask          NCPUS
+NNodes              NodeList            NTasks              Priority
+Partition           QOS                 QOSRAW              Reason
+ReqCPUFreq          ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov
+ReqCPUS             ReqGRES             ReqMem              ReqNodes
+ReqTRES             Reservation         ReservationId       Reserved
+ResvCPU             ResvCPURAW          Start               State
+Submit              Suspended           SystemCPU           SystemComment
+Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
+TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
+TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
+TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin
+TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot     UID
+User                UserCPU             WCKey               WCKeyID
+WorkDir
 .ft 1
 .fi
 .RE
@@ -187,15 +188,21 @@ Select jobs in any state before the specified time.  If states are
 given with the \-s option return jobs in this state before this period.
 See the \fBDEFAULT TIME WINDOW\fR for more details.
 
-Valid time formats are...
-.sp
-HH:MM[:SS] [AM|PM]
+Valid time formats are:
 .br
-MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
+HH:MM[:SS][AM|PM]
 .br
-MM/DD[/YY]\-HH:MM[:SS]
+MMDD[YY][\-HH:MM[:SS]]
+.br
+MM.DD[.YY][\-HH:MM[:SS]]
+.br
+MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+today, midnight, noon, fika (3 PM), teatime (4 PM)
+.br
+now
 .IP
 
 .TP
@@ -268,14 +275,16 @@ Show only jobs local to this cluster. Ignore other clusters in this federation
 Equivalent to specifying:
 .IP
 .na
-\-\-format=jobid,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,
-avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,
-maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,
-alloccpus,elapsed,state,exitcode,maxdiskread,maxdiskreadnode,maxdiskreadtask,
+\-\-format=jobid,jodidraw,jobname,partition,maxvmsize,maxvmsizenode,
+maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,
+maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,
+alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,
+reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,
 avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,
-allocgres,reqgres,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,
-tresusageinmax,tresusageinmaxn,tresusageinmaxt,tresusageoutmax,tresusageoutmaxn,
-tresusageoutmaxt,tresusageoutave,tresusageinave
+allocgres,reqgres,reqtres,alloctres,tresusageinave,tresusageinmax,
+tresusageinmaxn,tresusageinmaxt,tresusageinmin,tresusageinminn,tresusageinmint,
+tresusageintot,tresusageoutmax,tresusageoutmaxn,
+tresusageoutmaxt,tresusageoutave,tresusageouttot
 .ad
 
 .TP
@@ -390,15 +399,21 @@ only jobs in this state at this time will be returned. If the '\-j' option is
 used, then the default time is Unix Epoch 0. See the \fBDEFAULT TIME WINDOW\fR
 for more details.
 
-Valid time formats are...
-.sp
-HH:MM[:SS] [AM|PM]
+Valid time formats are:
 .br
-MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
+HH:MM[:SS][AM|PM]
 .br
-MM/DD[/YY]\-HH:MM[:SS]
+MMDD[YY][\-HH:MM[:SS]]
+.br
+MM.DD[.YY][\-HH:MM[:SS]]
+.br
+MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+today, midnight, noon, fika (3 PM), teatime (4 PM)
+.br
+now
 
 .TP
 \f3\-T\fP\f3,\fP \f3\-\-truncate\fP
@@ -431,9 +446,9 @@ Print version.
 .TP
 \f3\-\-whole\-hetjob=[yes|no]\fP
 When querying heterogeneous jobs, Slurm by default retrieves the information
-about all the components of the job if the pack_job_id (leader) is selected. If
-a non\-leader heterogeneous job component is selected only that component is
-retrieved by default. This behavior can be changed by using this option. If
+about all the components of the job if the het_job_id (leader id) is selected.
+If a non\-leader heterogeneous job component id is selected only that component
+is retrieved by default. This behavior can be changed by using this option. If
 set to 'yes' or no value is set, then information about all the components
 will be retrieved no matter which component is selected in the job filter.
 Otherwise, if set to 'no' then only the selected heterogeneous job components
@@ -458,6 +473,9 @@ allowed in the \f2assoc_list\fP. Default is all associations\&.
 Only show statistics relevant to the job allocation itself, not taking steps
 into consideration.
 
+\fBNOTE\fR: Without including steps, utilization statistics for job
+allocation(s) will be reported as zero.
+
 .SS "Job Accounting Fields"
 The following describes each job accounting field:
 .RS
@@ -473,6 +491,9 @@ Count of allocated CPUs. Equivalent to \f3NCPUS\fP.
 \f3AllocGRES\fP
 Names and counts of generic resources allocated.
 
+NOTE: When a generic resource is configured with the no_consume flag,
+the allocation will be printed with a zero.
+
 .TP
 \f3AllocNodes\fP
 Number of nodes allocated to the job/step.  0 if the job is pending.
@@ -482,6 +503,9 @@ Number of nodes allocated to the job/step.  0 if the job is pending.
 Trackable resources. These are the resources allocated to the job/step
 after the job started running.  For pending jobs this should be blank.
 For more details see AccountingStorageTRES in slurm.conf.
+
+NOTE: When a generic resource is configured with the no_consume flag,
+the allocation will be printed with a zero.
 
 .TP
 \f3Account\fP
@@ -617,7 +641,7 @@ Array jobs are in the form:
 .IP
 Heterogeneous jobs are in the form:
 .IP
-\f2PackJobID+PackJobOffset\fP\c
+\f2HetJobID+HetJobOffset\fP\c
 \&.
 
 .TP
@@ -751,6 +775,21 @@ Requested CPU frequency for the step, in kHz.
 Note: This value applies only to a job step. No value is reported for the job.
 
 .TP
+\f3ReqCPUFreqGov\fP
+Requested CPU frequency governor for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
+\f3ReqCPUFreqMax\fP
+Maximum requested CPU frequency for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
+\f3ReqCPUFreqMin\fP
+Minimum requested CPU frequency for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
 \f3ReqCPUS\fP
 Number of requested CPUs.
 
@@ -880,6 +919,24 @@ Node for which each maximum TRES usage out occurred.
 Task for which each maximum TRES usage out occurred.
 
 .TP
+\f3TresUsageInMin\fP
+Tres minimum usage in by all tasks in job.
+NOTE: If corresponding TresUsageInMinTask is -1 the metric is node centric
+instead of task.
+
+.TP
+\f3TresUsageInMinNode\fP
+Node for which each minimum TRES usage out occurred.
+
+.TP
+\f3TresUsageInMinTask\fP
+Task for which each minimum TRES usage out occurred.
+
+.TP
+\f3TresUsageInTot\fP
+Tres total usage in by all tasks in job.
+
+.TP
 \f3TresUsageOutAve\fP
 Tres average usage out by all tasks in job.
 NOTE: If corresponding TresUsageOutMaxTask is -1 the metric is node centric
@@ -898,6 +955,10 @@ Node for which each maximum TRES usage out occurred.
 .TP
 \f3TresUsageOutMaxTask\fP
 Task for which each maximum TRES usage out occurred.
+
+.TP
+\f3TresUsageOutTot\fP
+Tres total usage out by all tasks in job.
 
 .TP
 \f3UID\fP
@@ -1154,10 +1215,6 @@ the time will be the job's start time. The end time will be the specified \-E
 option if the job ends after the specified time, otherwise it will be
 the jobs end time.
 
-NOTE: If no \-s (\-\-state) option is given sacct will
-display jobs that ran during the specified time, otherwise it returns
-jobs that were in the state requested during that period of time.
-
 Without \-T (normal operation) sacct output would be like this.
 .RS
 .PP
@@ -1191,7 +1248,43 @@ is useful when determining exact run times during any given period.
 4         2014\-07\-03T11:40:00   2014\-07\-03T11:45:21   COMPLETED
 5         2014\-07\-03T11:41:01   2014\-07\-03T12:00:00   RUNNING
 
+.ft 1
+.fi
+.RE
+.PP
+\fBNOTE\fR: If no \fB\-s\fR (\fB\-\-state\fR) option is given sacct will
+display eligible jobs during the specified period of time, otherwise it
+will return jobs that were in the state requested during that period of
+time.
 
+This example demonstrates the differences running sacct with and without
+the \fB\-\-state\fR flag for the same time period. Without the
+\fB\-\-state\fR option, all eligible jobs in that time period are shown.
+.RS
+.PP
+.nf
+.ft 3
+# sacct -S11:20:00 -E11:25:00 -X -ojobid,start,end,state
+       JobID               Start                 End      State
+------------ ------------------- ------------------- ----------
+2955                    11:15:12            11:20:12  COMPLETED
+2956                    11:20:13            11:25:13  COMPLETED
+.ft 1
+.fi
+.RE
+.PP
+With the \fB\-\-state=pending\fR option, only job 2956 will be shown because
+it had a dependency on 2955 and was still PENDING from 11:20:00 until it
+started at 11:21:13. Note that even though we requested PENDING jobs, the
+State shows as COMPLETED because that is the current State of the job.
+.RS
+.PP
+.nf
+.ft 3
+# sacct --state=pending -S11:20:00 -E11:25:00 -X -ojobid,start,end,state
+       JobID               Start                 End      State
+------------ ------------------- ------------------- ----------
+2956                    11:20:13            11:25:13  COMPLETED
 .ft 1
 .fi
 .RE

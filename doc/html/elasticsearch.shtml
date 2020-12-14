@@ -62,8 +62,26 @@ the Elasticsearch server URL, including the port number after the semicolon
 The plugin will remove any trailing slashes from that URL, and append
 <b>/slurm/jobcomp</b> at the end. The first part of the path &mdash;
 <b>slurm</b> &mdash; defines the Elasticsearch <i>index</i> name and the second
-&mdash; <b>jobcomp</b> &mdash; is the <i>index type</i> name.
+&mdash; <b>jobcomp</b> &mdash; is the <i>index type</i> name. Since
+Elasticsearch 8.0 the APIs that accept types are removed. Future versions of
+Slurm will allow this option to specify a fully configured URL endpoint.
 These concepts are further described in the Elasticsearch documentation.
+</li>
+<li>
+<a href="slurm.conf.html#OPT_JobCompParams"><b>JobCompParams</b></a> should be
+set to the Elasticsearch server connecting comma delimited options:
+<ul>
+<li>
+<pre>JobCompParams=timeout=5</pre>
+Use a timeout when communication with Elasticsearch server. After the timeout,
+error out and queue job record for 30 seconds to try again.
+</li>
+<li>
+<pre>JobCompParams=connect_timeout=5</pre>
+Use a timeout when connecting to Elasticsearch server. After the timeout,
+error out and queue job record for 30 seconds to try again.
+</li>
+</ul>
 </li>
 <li>
 <a href="slurm.conf.html#OPT_DebugFlags"><b>DebugFlags</b></a> could include
