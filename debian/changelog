@@ -1,3 +1,11 @@
+slurm-wlm (20.02.6-2sci8u1) scibian8; urgency=medium
+
+  * Backport to scibian8
+  * Update patch NHC before slurmd registering to apply on new upstream release
+  * Remove add-missing-locks-slurmd-creds patch applied in new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 15 Dec 2020 09:21:40 +0100
+
 slurm-wlm (20.02.6-2) unstable; urgency=medium
 
   * Fix pmix support (Closes: #954272)
