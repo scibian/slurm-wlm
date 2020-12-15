@@ -238,12 +238,12 @@ extern List acct_storage_g_modify_federations(
 
 /*
  * modify existing job in the accounting system
- * IN:  slurmdb_job_modify_cond_t *job_cond
+ * IN:  slurmdb_job_cond_t *job_cond
  * IN:  slurmdb_job_rec_t *job
  * RET: List containing (char *'s) else NULL on error
  */
 extern List acct_storage_g_modify_job(void *db_conn, uint32_t uid,
-				      slurmdb_job_modify_cond_t *job_cond,
+				      slurmdb_job_cond_t *job_cond,
 				      slurmdb_job_rec_t *job);
 
 /*
@@ -511,12 +511,13 @@ extern int acct_storage_g_get_usage(
  * IN: sent_start (option time to do a re-roll or start from this point)
  * IN: sent_end (option time to do a re-roll or end at this point)
  * IN: archive_data (if 0 old data is not archived in a monthly rollup)
+ * OUT: rollup_stats_list_in (list containing stats about each clusters rollup)
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
 extern int acct_storage_g_roll_usage(void *db_conn,
 				     time_t sent_start, time_t sent_end,
 				     uint16_t archive_data,
-				     rollup_stats_t *rollup_stats);
+				     List *rollup_stats_list_in);
 
 /*
  * Fix runaway jobs
@@ -583,12 +584,11 @@ extern int acct_storage_g_shutdown(void *db_conn);
 /*********************** CLUSTER ACCOUNTING STORAGE **************************/
 
 extern int clusteracct_storage_g_node_down(void *db_conn,
-					   struct node_record *node_ptr,
+					   node_record_t *node_ptr,
 					   time_t event_time,
 					   char *reason, uint32_t reason_uid);
 
-extern int clusteracct_storage_g_node_up(void *db_conn,
-					 struct node_record *node_ptr,
+extern int clusteracct_storage_g_node_up(void *db_conn, node_record_t *node_ptr,
 					 time_t event_time);
 
 extern int clusteracct_storage_g_cluster_tres(void *db_conn,
@@ -607,37 +607,37 @@ extern int clusteracct_storage_g_fini_ctld(void *db_conn,
  * load into the storage the start of a job
  */
 extern int jobacct_storage_job_start_direct(void *db_conn,
-					    struct job_record *job_ptr);
+					    job_record_t *job_ptr);
 /*
  * load into the storage information about a job,
  * typically when it begins execution, but possibly earlier
  */
 extern int jobacct_storage_g_job_start(void *db_conn,
-				       struct job_record *job_ptr);
+				       job_record_t *job_ptr);
 
 /*
  * load into the storage the end of a job
  */
 extern int jobacct_storage_g_job_complete(void *db_conn,
-					  struct job_record *job_ptr);
+					  job_record_t *job_ptr);
 
 /*
  * load into the storage the start of a job step
  */
 extern int jobacct_storage_g_step_start(void *db_conn,
-					struct step_record *step_ptr);
+					step_record_t *step_ptr);
 
 /*
  * load into the storage the end of a job step
  */
 extern int jobacct_storage_g_step_complete(void *db_conn,
-					   struct step_record *step_ptr);
+					   step_record_t *step_ptr);
 
 /*
  * load into the storage a suspension of a job
  */
 extern int jobacct_storage_g_job_suspend(void *db_conn,
-					 struct job_record *job_ptr);
+					 job_record_t *job_ptr);
 
 /*
  * get info from the storage

@@ -315,13 +315,13 @@ static void _update_all_node_features(
 				numa_cfg_t *numa_cfg, int numa_cfg_cnt);
 static void _update_cpu_bind(void);
 static void _update_mcdram_pct(char *tok, int mcdram_num);
-static void _update_node_features(struct node_record *node_ptr,
+static void _update_node_features(node_record_t *node_ptr,
 				  mcdram_cap_t *mcdram_cap, int mcdram_cap_cnt,
 				  mcdram_cfg_t *mcdram_cfg, int mcdram_cfg_cnt,
 				  numa_cap_t *numa_cap, int numa_cap_cnt,
 				  numa_cfg_t *numa_cfg, int numa_cfg_cnt);
 static int _update_node_state(char *node_list, bool set_locks);
-static void _validate_node_features(struct node_record *node_ptr);
+static void _validate_node_features(node_record_t *node_ptr);
 
 /* Function used both internally and externally */
 extern int node_features_p_node_update(char *active_features,
@@ -1266,7 +1266,7 @@ static char *_run_script(char *cmd_path, char **script_argv, int *status)
 		setpgid(0, 0);
 		execv(cmd_path, script_argv);
 		error("%s: execv(%s): %m", __func__, cmd_path);
-		exit(127);
+		_exit(127);
 	} else if (cpid < 0) {
 		close(pfd[0]);
 		close(pfd[1]);
@@ -1379,7 +1379,7 @@ next_tok:	tok1 = strtok_r(NULL, ",", &save_ptr1);
 	xfree(tmp_str1);
 }
 
-static void _make_node_down(struct node_record *node_ptr)
+static void _make_node_down(node_record_t *node_ptr)
 {
 	if (!avail_node_bitmap) {
 		/*
@@ -1400,7 +1400,7 @@ static void _make_node_down(struct node_record *node_ptr)
  * Determine that the actual KNL mode matches the available and current node
  * features, otherwise DRAIN the node
  */
-static void _validate_node_features(struct node_record *node_ptr)
+static void _validate_node_features(node_record_t *node_ptr)
 {
 	char *tmp_str, *tok, *save_ptr = NULL;
 	uint16_t actual_mcdram = 0, actual_numa = 0;
@@ -1485,7 +1485,7 @@ static void _update_all_node_features(
 				numa_cap_t *numa_cap, int numa_cap_cnt,
 				numa_cfg_t *numa_cfg, int numa_cfg_cnt)
 {
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	char node_name[32], *prefix;
 	int i, node_inx, numa_inx, width = 5;
 	uint64_t mcdram_size;
@@ -1603,7 +1603,7 @@ static void _update_all_node_features(
  * Update a specific node's features and features_act fields based upon
  * its current configuration provided by capmc
  */
-static void _update_node_features(struct node_record *node_ptr,
+static void _update_node_features(node_record_t *node_ptr,
 				  mcdram_cap_t *mcdram_cap, int mcdram_cap_cnt,
 				  mcdram_cfg_t *mcdram_cfg, int mcdram_cfg_cnt,
 				  numa_cap_t *numa_cap, int numa_cap_cnt,
@@ -1819,8 +1819,9 @@ static void *_ume_agent(void *args)
 		if (shutdown_time)
 			break;
 		/* Sleep before retry */
-		req.tv_sec  =  ume_check_interval / 1000000;
-		req.tv_nsec = (ume_check_interval % 1000000) * 1000;
+		req.tv_sec  =  ume_check_interval / USEC_IN_SEC;
+		req.tv_nsec = (ume_check_interval % USEC_IN_SEC) *
+			      NSEC_IN_USEC;
 		(void) nanosleep(&req, NULL);
 	}
 
@@ -1965,7 +1966,7 @@ extern int init(void)
 	}
 	gres_plugin_add("hbm");
 
-	if (ume_check_interval && run_in_daemon("slurmd")) {
+	if (ume_check_interval && running_in_slurmd()) {
 		slurm_mutex_lock(&ume_mutex);
 		slurm_thread_create(&ume_thread, _ume_agent, NULL);
 		slurm_mutex_unlock(&ume_mutex);
@@ -2031,7 +2032,7 @@ static void _check_node_status(void)
 	json_object *j_value;
 	char *resp_msg, **script_argv;
 	int i, nid, num_ent, retry, status = 0;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	bitstr_t *capmc_node_bitmap = NULL;
 	DEF_TIMERS;
 
@@ -2225,7 +2226,7 @@ static int _update_node_state(char *node_list, bool set_locks)
 	numa_cfg2_t *numa_cfg2 = NULL;
 	int mcdram_cap_cnt = 0, mcdram_cfg_cnt = 0, mcdram_cfg2_cnt = 0;
 	int numa_cap_cnt = 0, numa_cfg_cnt = 0, numa_cfg2_cnt = 0;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	hostlist_t host_list;
 	char *node_name;
 
@@ -2769,7 +2770,7 @@ extern int node_features_p_node_update(char *active_features,
 	int rc = SLURM_SUCCESS, numa_inx = -1;
 	int mcdram_inx = 0;
 	uint64_t mcdram_size;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	char *save_ptr = NULL, *tmp, *tok;
 
 	if (mcdram_per_node == NULL)
@@ -2834,13 +2835,13 @@ extern int node_features_p_node_update(char *active_features,
  * Return TRUE if the specified node update request is valid with respect
  * to features changes (i.e. don't permit a non-KNL node to set KNL features).
  *
- * arg IN - Pointer to struct node_record record
+ * arg IN - Pointer to node_record_t record
  * update_node_msg IN - Pointer to update request
  */
 extern bool node_features_p_node_update_valid(void *arg,
 					update_node_msg_t *update_node_msg)
 {
-	struct node_record *node_ptr = (struct node_record *) arg;
+	node_record_t *node_ptr = (node_record_t *) arg;
 	char *tmp, *save_ptr = NULL, *tok;
 	bool is_knl = false, invalid_feature = false;
 

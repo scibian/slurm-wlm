@@ -59,6 +59,7 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/proc_args.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/strlcpy.h"
@@ -389,16 +390,16 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 			xstrfmtcat(out, "ArrayTaskThrottle=%u ",
 				   job_ptr->array_max_tasks);
 		}
-	} else if (job_ptr->pack_job_id) {
-		xstrfmtcat(out, "PackJobId=%u PackJobOffset=%u ",
-			   job_ptr->pack_job_id, job_ptr->pack_job_offset);
+	} else if (job_ptr->het_job_id) {
+		xstrfmtcat(out, "HetJobId=%u HetJobOffset=%u ",
+			   job_ptr->het_job_id, job_ptr->het_job_offset);
 	}
 	xstrfmtcat(out, "JobName=%s", job_ptr->name);
 	xstrcat(out, line_end);
 
 	/****** Line ******/
-	if (job_ptr->pack_job_id_set) {
-		xstrfmtcat(out, "PackJobIdSet=%s", job_ptr->pack_job_id_set);
+	if (job_ptr->het_job_id_set) {
+		xstrfmtcat(out, "HetJobIdSet=%s", job_ptr->het_job_id_set);
 		xstrcat(out, line_end);
 	}
 
@@ -703,7 +704,11 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrcat(out, line_end);
 
 	if (job_resrcs && job_resrcs->core_bitmap &&
-		   ((last = bit_fls(job_resrcs->core_bitmap)) != -1)) {
+	    ((last = bit_fls(job_resrcs->core_bitmap)) != -1)) {
+
+		xstrfmtcat(out, "JOB_GRES=%s", job_ptr->gres_total);
+		xstrcat(out, line_end);
+
 		hl = hostlist_create(job_resrcs->nodes);
 		if (!hl) {
 			error("slurm_sprint_job_info: hostlist_create: %s",
@@ -779,6 +784,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 					hostlist_destroy(hl_last);
 					hl_last = hostlist_create(NULL);
 				}
+
 				strcpy(tmp2, tmp1);
 				if (rel_node_inx < job_ptr->gres_detail_cnt) {
 					gres_last = job_ptr->
@@ -1003,6 +1009,12 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 		xstrcat(out, line_end);
 		xstrfmtcat(out, "TresPerTask=%s", job_ptr->tres_per_task);
 	}
+
+	/****** Line ******/
+	xstrcat(out, line_end);
+	xstrfmtcat(out, "MailUser=%s MailType=%s",
+		   job_ptr->mail_user,
+		   print_mail_type(job_ptr->mail_type));
 
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
@@ -1461,7 +1473,8 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 
 	if (cluster_flags & CLUSTER_FLAG_MULTSD) {
 		if ((this_addr = getenv("SLURMD_NODENAME"))) {
-			slurm_conf_get_addr(this_addr, &req_msg.address);
+			slurm_conf_get_addr(this_addr, &req_msg.address,
+					    req_msg.flags);
 		} else {
 			this_addr = "localhost";
 			slurm_set_addr(&req_msg.address,

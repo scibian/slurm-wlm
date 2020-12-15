@@ -1,3 +1,29 @@
+slurm-wlm (20.02.6-2) unstable; urgency=medium
+
+  * Fix pmix support (Closes: #954272)
+  * Fix srun autopkgtest
+  * Tweak slurm.conf for autopkgtest
+  * Add mpi autopkgtest
+  * Bump standard version to 4.5.1 (no changes)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 02 Dec 2020 01:13:08 +0100
+
+slurm-wlm (20.02.6-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #974721, #974722)
+  * Refresh miscellanea-manpages and mail-path patches
+  * Remove use-python3 patch included upstream
+  * Remove smap command
+  * Remove cray.conf.5 man page
+  * Bump libslurm to soname 35
+  * Update configurators
+  * Fix the slurmdbd example file (Closes: #949734)
+  * Remove llnl from the source package name and from the
+    configuration, lib and log directory names
+  * Remove PM Green patch: bug fixed upstream
+  * Update d/copyright
+  * Update libslurm35.symbols
+
 slurm-llnl (19.05.8-0sci10u1) scibian10; urgency=medium
 
   * New upstream version 19.05.8
@@ -11,6 +37,17 @@ slurm-llnl (19.05.7-0sci10u1) scibian10; urgency=medium
   * Adjust man page patch to new upstream release
 
  -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 11:58:07 +0200
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 17 Nov 2020 00:11:42 +0100
+
+slurm-llnl (19.05.5-2.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Add __attribute__((__common__)) to some "tentative import"
+    declarations in src/plugins/select/cons_tres/job_test.c
+  * Move definiton of "opt" from scanel.h to scanel.c
+
+ -- Peter Michael Green <plugwash@debian.org>  Sat, 22 Aug 2020 22:59:50 +0000
 
 slurm-llnl (19.05.5-2) unstable; urgency=medium
 

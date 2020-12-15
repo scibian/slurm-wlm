@@ -63,16 +63,18 @@ typedef struct {
 	char *path;
 } gres_device_t;
 
-#define GRES_CONF_OLD_FILE	0x01	/* File= is configured. No independent
-					 * information about Type= option.*/
 #define GRES_CONF_HAS_FILE	0x02	/* File= is configured */
 #define GRES_CONF_HAS_TYPE	0x04	/* Type= is configured */
+#define GRES_CONF_COUNT_ONLY	0x08	/* GRES lacks plugin to load */
+#define GRES_CONF_LOADED        0x10    /* used to avoid loading a plugin
+					 * multiple times */
 
 #define GRES_NO_CONSUME		0x0001	/* Requesting no consume of resources */
 
 /* GRES AutoDetect options */
 #define GRES_AUTODETECT_NONE    0x00000000
 #define GRES_AUTODETECT_NVML    0x00000001
+#define GRES_AUTODETECT_RSMI    0x00000002
 
 /* Gres state information gathered by slurmd daemon */
 typedef struct gres_slurmd_conf {
@@ -127,7 +129,7 @@ typedef struct gres_node_state {
 
 	/*
 	 * Total resources available for allocation to jobs.
-	 * gres_cnt_found or gres_cnt_config, depending upon FastSchedule
+	 * gres_cnt_found or gres_cnt_config, depending upon config_overrides
 	 */
 	uint64_t gres_cnt_avail;
 
@@ -410,6 +412,11 @@ extern void gres_plugin_recv_stepd(int fd);
 extern int gres_plugin_init_node_config(char *node_name, char *orig_config,
 					List *gres_list);
 
+/*
+ * Return how many gres Names are on the system.
+ */
+extern int gres_plugin_get_gres_cnt(void);
+
 /* Add a GRES record. This is used by the node_features plugin after the
  * slurm.conf file is read and the initial GRES records are built by
  * gres_plugin_init(). */
@@ -427,14 +434,15 @@ extern int gres_plugin_node_config_unpack(Buf buffer, char *node_name);
  * Called immediately after gres_plugin_node_config_unpack().
  * IN node_name - name of the node for which the gres information applies
  * IN orig_config - Gres information supplied from merged slurm.conf/gres.conf
- * IN/OUT new_config - Updated gres info from slurm.conf if FastSchedule=0
+ * IN/OUT new_config - Updated gres info from slurm.conf
  * IN/OUT gres_list - List of Gres records for this node to track usage
  * IN threads_per_core - Count of CPUs (threads) per core on this node
  * IN cores_per_sock - Count of cores per socket on this node
  * IN sock_cnt - Count of sockets on this node
- * IN fast_schedule - 0: Validate and use actual hardware configuration
- *		      1: Validate hardware config, but use slurm.conf config
- *		      2: Don't validate hardware, use slurm.conf configuration
+ * IN config_overrides - true: Don't validate hardware, use slurm.conf
+ *                             configuration
+ *		         false: Validate hardware config, but use slurm.conf
+ *                              config
  * OUT reason_down - set to an explanation of failure, if any, don't set if NULL
  */
 extern int gres_plugin_node_config_validate(char *node_name,
@@ -443,7 +451,7 @@ extern int gres_plugin_node_config_validate(char *node_name,
 					    List *gres_list,
 					    int threads_per_core,
 					    int cores_per_sock, int sock_cnt,
-					    uint16_t fast_schedule,
+					    bool config_overrides,
 					    char **reason_down);
 
 /*
@@ -464,9 +472,10 @@ extern void gres_plugin_node_feature(char *node_name,
  * IN new_gres - Updated GRES information supplied from slurm.conf or scontrol
  * IN/OUT gres_str - Node's current GRES string, updated as needed
  * IN/OUT gres_list - List of Gres records for this node to track usage
- * IN fast_schedule - 0: Validate and use actual hardware configuration
- *		      1: Validate hardware config, but use slurm.conf config
- *		      2: Don't validate hardware, use slurm.conf configuration
+ * IN config_overrides - true: Don't validate hardware, use slurm.conf
+ *                             configuration
+ *		         false: Validate hardware config, but use slurm.conf
+ *                              config
  * IN cores_per_sock - Number of cores per socket on this node
  * IN sock_per_node - Total count of sockets on this node (on any board)
  */
@@ -474,7 +483,7 @@ extern int gres_plugin_node_reconfig(char *node_name,
 				     char *new_gres,
 				     char **gres_str,
 				     List *gres_list,
-				     uint16_t fast_schedule,
+				     bool config_overrides,
 				     int cores_per_sock,
 				     int sock_per_node);
 
@@ -617,6 +626,7 @@ extern List gres_plugin_epilog_build_env(List job_gres_list, char *node_list);
  */
 extern void gres_plugin_epilog_set_env(char ***epilog_env_ptr,
 				       List epilog_gres_list, int node_inx);
+
 
 /*
  * Given a job's requested GRES configuration, validate it and build a GRES list
@@ -813,13 +823,15 @@ extern void gres_plugin_job_core_filter(List job_gres_list, List node_gres_list,
  * IN core_end_bit   - index into core_bitmap for this node's last core
  * IN job_id         - job's ID (for logging)
  * IN node_name      - name of the node (for logging)
+ * IN disable binding- --gres-flags=disable-binding
  * RET: NO_VAL    - All cores on node are available
  *      otherwise - Count of available cores
  */
 extern uint32_t gres_plugin_job_test(List job_gres_list, List node_gres_list,
 				     bool use_total_gres, bitstr_t *core_bitmap,
 				     int core_start_bit, int core_end_bit,
-				     uint32_t job_id, char *node_name);
+				     uint32_t job_id, char *node_name,
+				     bool disable_binding);
 
 /*
  * Determine how many cores on each socket of a node can be used by this job
@@ -863,6 +875,7 @@ extern List gres_plugin_job_test2(List job_gres_list, List node_gres_list,
  * IN cpus_per_core   - Count of CPUs per core on this node
  * IN sock_per_node   - sockets requested by job per node or NO_VAL
  * IN task_per_node   - tasks requested by job per node or NO_VAL16
+ * IN whole_node      - we are requesting the whole node or not
  * OUT avail_gpus     - Count of available GPUs on this node
  * OUT near_gpus      - Count of GPUs available on sockets with available CPUs
  * RET - 0 if job can use this node, -1 otherwise (some GRES limit prevents use)
@@ -876,6 +889,7 @@ extern int gres_plugin_job_core_filter2(List sock_gres_list, uint64_t avail_mem,
 					uint16_t cpus_per_core,
 					uint32_t sock_per_node,
 					uint16_t task_per_node,
+					bool whole_node,
 					uint16_t *avail_gpus,
 					uint16_t *near_gpus);
 
@@ -931,7 +945,7 @@ extern int gres_plugin_job_core_filter4(List *sock_gres_list, uint32_t job_id,
 					struct job_resources *job_res,
 					uint8_t overcommit,
 					gres_mc_data_t *tres_mc_ptr,
-					struct node_record *node_table_ptr);
+					node_record_t *node_table_ptr);
 
 /*
  * Determine if job GRES specification includes a tres-per-task specification
@@ -977,6 +991,42 @@ extern int gres_plugin_job_min_cpus(uint32_t node_count,
 extern int gres_plugin_job_min_cpu_node(uint32_t sockets_per_node,
 					uint32_t tasks_per_node,
 					List job_gres_list);
+
+/*
+ * Fill in job_gres_list with the total amount of GRES on a node.
+ * OUT job_gres_list - This list will be destroyed and remade with all GRES on
+ *                     node.
+ * IN node_gres_list - node's gres_list built by
+ *		       gres_plugin_node_config_validate()
+ * IN job_id      - job's ID (for logging)
+ * IN node_name   - name of the node (for logging)
+ * RET SLURM_SUCCESS or error code
+ */
+extern int gres_plugin_job_select_whole_node(
+	List *job_gres_list, List node_gres_list,
+	uint32_t job_id, char *node_name);
+
+/*
+ * Select and allocate all GRES on a node to a job and update node and job GRES
+ * information
+ * IN job_gres_list - job's gres_list built by gres_plugin_job_whole_node().
+ * IN node_gres_list - node's gres_list built by
+ *		       gres_plugin_node_config_validate()
+ * IN node_cnt    - total number of nodes originally allocated to the job
+ * IN node_index  - zero-origin global node index
+ * IN node_offset - zero-origin index in job allocation to the node of interest
+ * IN job_id      - job's ID (for logging)
+ * IN node_name   - name of the node (for logging)
+ * IN core_bitmap - cores allocated to this job on this node (NULL if not
+ *                  available)
+ * IN user_id     - job's user ID
+ * RET SLURM_SUCCESS or error code
+ */
+extern int gres_plugin_job_alloc_whole_node(
+	List job_gres_list, List node_gres_list,
+	int node_cnt, int node_index, int node_offset,
+	uint32_t job_id, char *node_name,
+	bitstr_t *core_bitmap, uint32_t user_id);
 
 /*
  * Select and allocate GRES to a job and update node and job GRES information
@@ -1169,12 +1219,11 @@ extern void gres_plugin_step_hardware_fini(void);
  * IN step_gres_list - generated by gres_plugin_step_alloc()
  * IN accel_bind_type - GRES binding options (old format, a bitmap)
  * IN tres_bind - TRES binding directives (new format, a string)
- * IN tres_freq - TRES power management directives
  * IN local_proc_id - task rank, local to this compute node only
  */
 extern void gres_plugin_step_set_env(char ***job_env_ptr, List step_gres_list,
 				     uint16_t accel_bind_type, char *tres_bind,
-				     char *tres_freq, int local_proc_id);
+				     int local_proc_id);
 
 /*
  * Log a step's current gres state
@@ -1283,10 +1332,12 @@ extern int gres_get_job_info(List job_gres_list, char *gres_name,
  * IN job_gres_list  - job's GRES data structure
  * OUT gres_detail_cnt - Number of elements (nodes) in gres_detail_str
  * OUT gres_detail_str - Description of GRES on each node
+ * OUT total_gres_str - String containing all gres in the job and counts.
  */
 extern void gres_build_job_details(List job_gres_list,
 				   uint32_t *gres_detail_cnt,
-				   char ***gres_detail_str);
+				   char ***gres_detail_str,
+				   char **total_gres_str);
 
 enum gres_step_data_type {
 	GRES_STEP_DATA_COUNT,	/* data-> uint64_t  */
@@ -1366,6 +1417,7 @@ extern char *gres_flags2str(uint8_t config_flags);
  */
 extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 			     int cpu_cnt, char *cpu_aff_abs_range,
-			     char *device_file, char *type, char *links);
+			     bitstr_t *cpu_aff_mac_bitstr, char *device_file,
+			     char *type, char *links);
 
 #endif /* !_GRES_H */

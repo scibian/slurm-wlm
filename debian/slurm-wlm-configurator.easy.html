@@ -130,7 +130,6 @@ function displayfile()
    "# <br>" +
    "# <br>" +
    "# SCHEDULING <br>" +
-   "FastSchedule=" + get_radio_value(document.config.fast_schedule) + "<br>" +
    "SchedulerType=sched/" + get_radio_value(document.config.sched_type) + "<br>" +
    "SelectType=select/" + get_radio_value(document.config.select_type) + "<br>" +
    get_select_type_params() + "<br>" +
@@ -185,7 +184,7 @@ function displayfile()
 </HEAD>
 <BODY>
 <FORM name=config>
-<H1>Slurm Version 19.02 Configuration Tool - Easy Version</H1>
+<H1>Slurm Version 20.02 Configuration Tool - Easy Version</H1>
 <P>This form can be used to create a Slurm configuration file with
 you controlling many of the important configuration parameters.</P>
 
@@ -194,7 +193,7 @@ has fewer  options for creating a Slurm configuration file. The full version
 of the Slurm configuration tool is available at
 <a href="file:///usr/share/doc/slurmctld/slurm-wlm-configurator.html">slurm-wlm-configurator.html</a>.</p>
 
-<P><B>This tool supports Slurm version 19.02 only.</B>
+<P><B>This tool supports Slurm version 20.02 only.</B>
 Configuration files for other versions of Slurm should be built
 using the tool distributed with it in <i>doc/html/configurator.html</i>.
 Some parameters will be set to default values, but you can
@@ -226,7 +225,7 @@ Hostname values should should not be the fully qualified domain
 name (e.g. use <I>tux</I> rather than <I>tux.abc.com</I>).
 <P>
 <input type="text" name="control_machine" value="linux0"> <B>SlurmctldHost</B>:
-Master Controller Hostname
+Primary Controller Hostname
 <P>
 
 <H2>Compute Machines</H2>
@@ -304,10 +303,10 @@ The location of a directory where slurmd saves state should also be defined.
 This must be a unique directory on each compute server (local disk).
 The use of a highly reliable file system (e.g. RAID) is recommended.
 <P>
-<input type="text" name="state_save_location" value="/var/lib/slurm-llnl/slurmctld"> <B><font color="red">StateSaveLocation</font></B>:
+<input type="text" name="state_save_location" value="/var/lib/slurm/slurmctld"> <B><font color="red">StateSaveLocation</font></B>:
 Slurmctld state save directory </B>
 <P>
-<input type="text" name="slurmd_spool_dir" value="/var/lib/slurm-llnl/slurmd"> <B><font color="red">SlurmdSpoolDir</font></B>:
+<input type="text" name="slurmd_spool_dir" value="/var/lib/slurm/slurmd"> <B><font color="red">SlurmdSpoolDir</font></B>:
 Slurmd state save directory
 <P>
 Define when a non-responding (DOWN) node is returned to service.<BR>
@@ -328,19 +327,6 @@ Select one value for <B>SchedulerType</B>:<BR>
 FIFO with backfill<BR>
 <input type="radio" name="sched_type" value="builtin">  <B>Builtin</B>: First-In
 First-Out (FIFO)<BR>
-<P>
-Define what node configuration (sockets, cores, memory, etc.) should be used.
-Using values defined in the configuration file will provide faster scheduling.<BR>
-Select one value for <B>FastSchedule</B>:<BR>
-<input type="radio" name="fast_schedule" value="0">
-<B>0</B>: Use node configuration values actually found on each node
-(if configured with with gang scheduling or allocation of individual
-processors to jobs rather than only whole node allocations, the processor
-count on the node should match the configured value to avoid having extra
-processors left idle)<BR>
-<input type="radio" name="fast_schedule" value="1" checked>
-<B>1</B>: Use node configuration values defined in configuration file.
-Mark node DOWN if registers with fewer resources<BR>
 <P>
 
 <H2>Interconnect</H2>
@@ -382,7 +368,10 @@ control<BR>
 <H2>Resource Selection</H2>
 Define resource (node) selection algorithm to be used.<BR>
 Select one value for <B>SelectType</B>:<BR>
-<input type="radio" name="select_type" value="cons_res" checked>
+<input type="radio" name="select_type" value="cons_tres" checked>
+<b>cons_tres</b>: Allocate individual processors, memory, GPUs, and other
+trackable resources<br />
+<input type="radio" name="select_type" value="cons_res">
 <B>Cons_res</B>: Allocate individual processors and memory<BR>
 <input type="radio" name="select_type" value="cray_aries">
 <B>Cray XC</B>: Cray XC systems running native Slurm without ALPS<BR>
@@ -446,9 +435,9 @@ levels of logging verbosity from 0 (quiet) to 7 (extremely verbose).
 Each may also be configured to use debug files. Use fully qualified
 pathnames for the files.
 <P>
-<input type="text" name="slurmctld_logfile" value="/var/log/slurm-llnl/slurmctld.log"> <B><font color="red">SlurmctldLogFile</font></B> (default is none, log goes to syslog)
+<input type="text" name="slurmctld_logfile" value="/var/log/slurm/slurmctld.log"> <B><font color="red">SlurmctldLogFile</font></B> (default is none, log goes to syslog)
 <P>
-<input type="text" name="slurmd_logfile" value="/var/log/slurm-llnl/slurmd.log"> <B><font color="red">SlurmdLogFile</font></B> (default is none, 
+<input type="text" name="slurmd_logfile" value="/var/log/slurm/slurmd.log"> <B><font color="red">SlurmdLogFile</font></B> (default is none,
 log goes to syslog, string "%h" in name gets replaced with hostname)
 <P>
 

@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdlib.h>
+#include <sys/mman.h>	/* memfd_create */
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -238,7 +239,7 @@ extern void bb_clear_config(bb_config_t *config_ptr, bool fini)
 /* Find a per-job burst buffer record for a specific job.
  * If not found, return NULL. */
 extern bb_alloc_t *bb_find_alloc_rec(bb_state_t *state_ptr,
-				     struct job_record *job_ptr)
+				     job_record_t *job_ptr)
 {
 	bb_alloc_t *bb_alloc = NULL;
 
@@ -319,6 +320,131 @@ extern bb_user_t *bb_find_user_rec(uint32_t user_id, bb_state_t *state_ptr)
 	user_ptr->user_id = user_id;
 	state_ptr->bb_uhash[inx] = user_ptr;
 	return user_ptr;
+}
+
+#ifdef HAVE_MEMFD_CREATE
+char *_handle_replacement(job_record_t *job_ptr)
+{
+	char *replaced = NULL, *p, *q;
+
+	if (!job_ptr->burst_buffer)
+		return xstrdup("");
+
+	/* throw a script header on in case something downstream cares */
+	xstrcat(replaced, "#!/bin/sh\n");
+
+	p = q = job_ptr->burst_buffer;
+
+	while (*p != '\0') {
+		if (*p == '%') {
+			xmemcat(replaced, q, p);
+			p++;
+
+			switch (*p) {
+			case '%':	/* '%%' -> '%' */
+				xstrcatchar(replaced, '%');
+				break;
+			case 'A':	/* '%A' => array master job id */
+				xstrfmtcat(replaced, "%u",
+					   job_ptr->array_job_id);
+				break;
+			case 'a':	/* '%a' => array task id */
+				xstrfmtcat(replaced, "%u",
+					   job_ptr->array_task_id);
+				break;
+			case 'd':	/* '%d' => workdir */
+				xstrcat(replaced, job_ptr->details->work_dir);
+				break;
+			case 'j':	/* '%j' => jobid */
+				xstrfmtcat(replaced, "%u", job_ptr->job_id);
+				break;
+			case 'u':	/* '%u' => user name */
+				if (!job_ptr->user_name)
+					job_ptr->user_name =
+						uid_to_string_or_null(
+							job_ptr->user_id);
+				xstrcat(replaced, job_ptr->user_name);
+				break;
+			case 'x':	/* '%x' => job name */
+				xstrcat(replaced, job_ptr->name);
+				break;
+			default:
+				break;
+			}
+
+			q = ++p;
+		} else if (*p == '\\' && *(p+1) == '\\') {
+			/* '\\' => stop further symbol processing */
+			xstrcat(replaced, p);
+			q = p;
+			break;
+		} else
+			p++;
+	}
+
+	if (p != q)
+		xmemcat(replaced, q, p);
+
+	/* throw an extra terminating newline in for good measure */
+	xstrcat(replaced, "\n");
+
+	return replaced;
+}
+#endif
+
+char *bb_handle_job_script(job_record_t *job_ptr, bb_job_t *bb_job)
+{
+	char *script = NULL;
+
+	if (bb_job->memfd_path) {
+		/*
+		 * Already have an existing symbol-replaced script, so use it.
+		 */
+		return xstrdup(bb_job->memfd_path);
+	}
+
+	if (bb_job->need_symbol_replacement) {
+#ifdef HAVE_MEMFD_CREATE
+		/*
+		 * Create a memfd-backed temporary file to write out the
+		 * symbol-replaced BB script. memfd files will automatically be
+		 * cleaned up on process termination. This will be recreated if
+		 * the slurmctld restarts, otherwise kept in memory for the
+		 * lifespan of the job.
+		 */
+		char *filename = NULL, *bb;
+		pid_t pid = getpid();
+
+		xstrfmtcat(filename, "bb_job_script.%u", job_ptr->job_id);
+
+		bb_job->memfd = memfd_create(filename, MFD_CLOEXEC);
+		if (bb_job->memfd < 0)
+			fatal("%s: failed memfd_create: %m", __func__);
+		xstrfmtcat(bb_job->memfd_path, "/proc/%lu/fd/%d",
+			   (unsigned long) pid, bb_job->memfd);
+
+		bb = _handle_replacement(job_ptr);
+		safe_write(bb_job->memfd, bb, strlen(bb));
+		xfree(bb);
+
+		return xstrdup(bb_job->memfd_path);
+
+	rwfail:
+		xfree(bb);
+		fatal("%s: could not write script file, likely out of memory",
+		      __func__);
+#else
+		error("%s: symbol replacement requested, but not available as memfd_create() could not be found at compile time. "
+		      "Falling back to the unreplaced job script.",
+		      __func__);
+#endif
+	}
+
+	xstrfmtcat(script, "%s/hash.%d/job.%u/script",
+		   slurmctld_conf.state_save_location, (job_ptr->job_id % 10),
+		   job_ptr->job_id);
+
+	return script;
 }
 
 #if _SUPPORT_ALT_POOL
@@ -629,7 +755,7 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 	int i;
 
 
-	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		packstr(config_ptr->allow_users_str, buffer);
 		packstr(config_ptr->create_buffer,   buffer);
 		packstr(config_ptr->default_pool,    buffer);
@@ -638,34 +764,6 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 		pack32(config_ptr->flags,            buffer);
 		packstr(config_ptr->get_sys_state,   buffer);
 		packstr(config_ptr->get_sys_status,   buffer);
-		pack64(config_ptr->granularity,      buffer);
-		pack32(config_ptr->pool_cnt,         buffer);
-		for (i = 0; i < config_ptr->pool_cnt; i++) {
-			packstr(config_ptr->pool_ptr[i].name, buffer);
-			pack64(config_ptr->pool_ptr[i].total_space, buffer);
-			pack64(config_ptr->pool_ptr[i].granularity, buffer);
-			pack64(config_ptr->pool_ptr[i].unfree_space, buffer);
-			pack64(config_ptr->pool_ptr[i].used_space, buffer);
-		}
-		pack32(config_ptr->other_timeout,    buffer);
-		packstr(config_ptr->start_stage_in,  buffer);
-		packstr(config_ptr->start_stage_out, buffer);
-		packstr(config_ptr->stop_stage_in,   buffer);
-		packstr(config_ptr->stop_stage_out,  buffer);
-		pack32(config_ptr->stage_in_timeout, buffer);
-		pack32(config_ptr->stage_out_timeout,buffer);
-		pack64(state_ptr->total_space,       buffer);
-		pack64(state_ptr->unfree_space,      buffer);
-		pack64(state_ptr->used_space,        buffer);
-		pack32(config_ptr->validate_timeout, buffer);
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		packstr(config_ptr->allow_users_str, buffer);
-		packstr(config_ptr->create_buffer,   buffer);
-		packstr(config_ptr->default_pool,    buffer);
-		packstr(config_ptr->deny_users_str,  buffer);
-		packstr(config_ptr->destroy_buffer,  buffer);
-		pack32(config_ptr->flags,            buffer);
-		packstr(config_ptr->get_sys_state,   buffer);
 		pack64(config_ptr->granularity,      buffer);
 		pack32(config_ptr->pool_cnt,         buffer);
 		for (i = 0; i < config_ptr->pool_cnt; i++) {
@@ -837,8 +935,8 @@ extern int bb_job_queue_sort(void *x, void *y)
 {
 	bb_job_queue_rec_t *job_rec1 = *(bb_job_queue_rec_t **) x;
 	bb_job_queue_rec_t *job_rec2 = *(bb_job_queue_rec_t **) y;
-	struct job_record *job_ptr1 = job_rec1->job_ptr;
-	struct job_record *job_ptr2 = job_rec2->job_ptr;
+	job_record_t *job_ptr1 = job_rec1->job_ptr;
+	job_record_t *job_ptr2 = job_rec2->job_ptr;
 
 	if (job_ptr1->start_time > job_ptr2->start_time)
 		return 1;
@@ -864,7 +962,7 @@ extern int bb_preempt_queue_sort(void *x, void *y)
  * use is expected to begin (i.e. each job's expected start time) */
 extern void bb_set_use_time(bb_state_t *state_ptr)
 {
-	struct job_record *job_ptr;
+	job_record_t *job_ptr;
 	bb_alloc_t *bb_alloc = NULL;
 	time_t now = time(NULL);
 	int i;
@@ -965,7 +1063,7 @@ extern bb_alloc_t *bb_alloc_name_rec(bb_state_t *state_ptr, char *name,
  * Return a pointer to that record.
  * Use bb_free_alloc_rec() to purge the returned record. */
 extern bb_alloc_t *bb_alloc_job_rec(bb_state_t *state_ptr,
-				    struct job_record *job_ptr,
+				    job_record_t *job_ptr,
 				    bb_job_t *bb_job)
 {
 	bb_alloc_t *bb_alloc = NULL;
@@ -1000,8 +1098,8 @@ extern bb_alloc_t *bb_alloc_job_rec(bb_state_t *state_ptr,
 /* Allocate a burst buffer record for a job and increase the job priority
  * if so configured.
  * Use bb_free_alloc_rec() to purge the returned record. */
-extern bb_alloc_t *bb_alloc_job(bb_state_t *state_ptr,
-				struct job_record *job_ptr, bb_job_t *bb_job)
+extern bb_alloc_t *bb_alloc_job(bb_state_t *state_ptr, job_record_t *job_ptr,
+				bb_job_t *bb_job)
 {
 	bb_alloc_t *bb_alloc;
 
@@ -1122,6 +1220,8 @@ static void _bb_job_del2(bb_job_t *bb_job)
 	int i;
 
 	if (bb_job) {
+		(void) close(bb_job->memfd);
+
 		xfree(bb_job->account);
 		for (i = 0; i < bb_job->buf_cnt; i++) {
 			xfree(bb_job->buf_ptr[i].access);
@@ -1131,6 +1231,7 @@ static void _bb_job_del2(bb_job_t *bb_job)
 		}
 		xfree(bb_job->buf_ptr);
 		xfree(bb_job->job_pool);
+		xfree(bb_job->memfd_path);
 		xfree(bb_job->partition);
 		xfree(bb_job->qos);
 		xfree(bb_job);
@@ -1284,8 +1385,8 @@ extern void bb_limit_rem(uint32_t user_id, uint64_t bb_size, char *pool,
  * state_ptr IN - Pointer to burst_buffer plugin state info
  * NOTE: assoc_mgr association and qos read lock should be set before this.
  */
-extern int bb_post_persist_create(struct job_record *job_ptr,
-				  bb_alloc_t *bb_alloc, bb_state_t *state_ptr)
+extern int bb_post_persist_create(job_record_t *job_ptr, bb_alloc_t *bb_alloc,
+				  bb_state_t *state_ptr)
 {
 	int rc = SLURM_SUCCESS;
 	slurmdb_reservation_rec_t resv;

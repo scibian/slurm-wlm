@@ -1,3 +1,19 @@
+slurmctld (20.02.6-1) unstable; urgency=medium
+
+  The configuration directory has been moved from /etc/slurm-llnl to
+  /etc/slurm. The upgrade process will copy the existing configuration
+  files. The directory is managed by the slurm-wlm-basic-plugin package
+  that will handle the transition for any kind of host (client hosts,
+  slurmctld, slurmd and slurmdbd server hosts).
+
+  The new recommend locations for the Slurm state files are under
+  /var/lib/slurm and for the log files are under /var/log/slurm, but you
+  can safely keep using the old locations (/var/lib/slurm-llnl and
+  /var/log/slurm-llnl). The packages scripts will still handle log
+  rotation and directory removal on purging.
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 05 Nov 2020 02:05:15 +0100
+
 slurmctld (18.08.5.2-1) unstable; urgency=medium
 
   If you are upgrading Slurm from stretch or an older version of Debian,

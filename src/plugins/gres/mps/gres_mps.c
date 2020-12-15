@@ -311,25 +311,28 @@ static void _distribute_count(List gres_conf_list, List gpu_conf_list,
 }
 
 /* Merge MPS records back to original list, updating and reordering as needed */
-static void _merge_lists(List gres_conf_list, List gpu_conf_list,
-			 List mps_conf_list)
+static int _merge_lists(List gres_conf_list, List gpu_conf_list,
+			List mps_conf_list)
 {
 	ListIterator gpu_itr, mps_itr;
 	gres_slurmd_conf_t *gpu_record, *mps_record;
 
+	if (!list_count(gpu_conf_list) && list_count(mps_conf_list)) {
+		error("%s: MPS specified without any GPU found", plugin_name);
+		return SLURM_ERROR;
+	}
+
 	/*
-	 * If gres/mps has Count, but no File specification and there is more
-	 * than one gres/gpu record, then evenly distribute gres/mps Count
-	 * evenly over all gres/gpu file records
+	 * If gres/mps has Count, but no File specification, then evenly
+	 * distribute gres/mps Count over all gres/gpu file records
 	 */
-	if ((list_count(mps_conf_list) == 1) &&
-	    (list_count(gpu_conf_list) >  1)) {
+	if (list_count(mps_conf_list) == 1) {
 		mps_record = list_peek(mps_conf_list);
 		if (!mps_record->file) {
 			_distribute_count(gres_conf_list, gpu_conf_list,
 					  mps_record->count);
 			list_flush(mps_conf_list);
-			return;
+			return SLURM_SUCCESS;
 		}
 	}
 
@@ -396,6 +399,7 @@ static void _merge_lists(List gres_conf_list, List gpu_conf_list,
 		(void) list_delete_item(mps_itr);
 	}
 	list_iterator_destroy(mps_itr);
+	return SLURM_SUCCESS;
 }
 
 extern int init(void)
@@ -451,11 +455,6 @@ static int _compute_local_id(char *dev_file_name)
 	return local_id;
 }
 
-static void _mps_conf_del(void *x)
-{
-	xfree(x);
-}
-
 static uint64_t _build_mps_dev_info(List gres_conf_list)
 {
 	uint64_t mps_count = 0;
@@ -464,7 +463,7 @@ static uint64_t _build_mps_dev_info(List gres_conf_list)
 	mps_dev_info_t *mps_conf;
 	ListIterator iter;
 
-	mps_info = list_create(_mps_conf_del);
+	mps_info = list_create(xfree_ptr);
 	iter = list_iterator_create(gres_conf_list);
 	while ((gres_conf = list_next(iter))) {
 		if (gres_conf->plugin_id != mps_plugin_id)
@@ -527,13 +526,15 @@ extern int node_config_load(List gres_conf_list, node_config_load_t *config)
 	 * Merge MPS records back to original list, updating and reordering
 	 * as needed.
 	 */
-	_merge_lists(gres_conf_list, gpu_conf_list, mps_conf_list);
+	rc = _merge_lists(gres_conf_list, gpu_conf_list, mps_conf_list);
 	FREE_NULL_LIST(gpu_conf_list);
 	FREE_NULL_LIST(mps_conf_list);
+	if (rc != SLURM_SUCCESS)
+		fatal("%s: failed to merge MPS and GPU configuration", plugin_name);
 
 	rc = common_node_config_load(gres_conf_list, gres_name, &gres_devices);
 	if (rc != SLURM_SUCCESS)
-		fatal("%s failed to load configuration", plugin_name);
+		fatal("%s: failed to load configuration", plugin_name);
 	if (_build_mps_dev_info(gres_conf_list) == 0)
 		_remove_mps_recs(gres_conf_list);
 
@@ -733,7 +734,7 @@ extern void recv_stepd(int fd)
 
 	safe_read(fd, &mps_cnt, sizeof(int));
 	if (mps_cnt) {
-		mps_info = list_create(_mps_conf_del);
+		mps_info = list_create(xfree_ptr);
 		for (i = 0; i < mps_cnt; i++) {
 			mps_ptr = xmalloc(sizeof(mps_dev_info_t));
 			safe_read(fd, &mps_ptr->count, sizeof(uint64_t));
@@ -850,6 +851,9 @@ extern void epilog_set_env(char ***epilog_env_ptr,
 		return;
 
 	if (!gres_devices)
+		return;
+
+	if (epilog_info->node_cnt == 0)	/* no_consume */
 		return;
 
 	if (node_inx > epilog_info->node_cnt) {

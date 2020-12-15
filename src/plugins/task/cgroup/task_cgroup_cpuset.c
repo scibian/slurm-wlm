@@ -526,6 +526,7 @@ static int _task_cgroup_cpuset_dist_cyclic(
 {
 #if HWLOC_API_VERSION >= 0x00020000
 	hwloc_bitmap_t allowed_cpuset;
+	bool allowed_cpuset_alloc = false;
 #endif
 	hwloc_obj_t obj;
 	uint32_t  s_ix;		/* socket index */
@@ -648,6 +649,7 @@ static int _task_cgroup_cpuset_dist_cyclic(
 #if HWLOC_API_VERSION >= 0x00020000
 			if (obj) {
 				allowed_cpuset = hwloc_bitmap_alloc();
+				allowed_cpuset_alloc = true;
 				hwloc_bitmap_and(allowed_cpuset,
 						 global_allowed_cpuset,
 						 obj->cpuset);
@@ -714,8 +716,10 @@ static int _task_cgroup_cpuset_dist_cyclic(
 			} else
 				s_ix++;
 #if HWLOC_API_VERSION >= 0x00020000
-			if (obj)
+			if (allowed_cpuset_alloc) {
 				hwloc_bitmap_free(allowed_cpuset);
+				allowed_cpuset_alloc = false;
+			}
 #endif
 		}
 		/* if it succeeds, switch to the next task, starting
@@ -1108,8 +1112,8 @@ again:
 	xfree(slurm_cgpath);
 
 	/* build job cgroup relative path if no set (should not be) */
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 	if (*job_cgroup_path == '\0') {
@@ -1199,17 +1203,15 @@ again:
 	}
 
 	/*
-	 * check that user's cpuset cgroup is consistant and add the job cores
+	 * Check that user's cpuset cgroup is consistent and add the job cores.
+	 * This will set cpuset.mems and cpuset.cpus to the ancestor value and
+	 * after we'll set it to job's allocated cores.
 	 */
-	rc = xcgroup_get_param(&user_cpuset_cg, cpuset_meta, &cpus, &cpus_size);
-	if (rc != XCGROUP_SUCCESS || cpus_size == 1) {
-		/* initialize the cpusets as it was non-existent */
-		if (_xcgroup_cpuset_init(&user_cpuset_cg) != XCGROUP_SUCCESS) {
-			(void)xcgroup_delete(&user_cpuset_cg);
-			xcgroup_destroy(&user_cpuset_cg);
-			xfree(cpus);
-			goto error;
-		}
+	if (_xcgroup_cpuset_init(&user_cpuset_cg) != XCGROUP_SUCCESS) {
+		(void)xcgroup_delete(&user_cpuset_cg);
+		xcgroup_destroy(&user_cpuset_cg);
+		xfree(cpus);
+		goto error;
 	}
 	user_alloc_cores = xstrdup(job_alloc_cores);
 	if ((cpus != NULL) && (cpus_size > 1)) {

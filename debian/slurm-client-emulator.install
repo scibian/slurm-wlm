@@ -7,7 +7,6 @@ debian/tmp-emulator/usr/bin/sbcast-emulator 	/usr/bin/
 debian/tmp-emulator/usr/bin/srun-emulator 		/usr/bin/
 debian/tmp-emulator/usr/bin/squeue-emulator 	/usr/bin/
 debian/tmp-emulator/usr/bin/sprio-emulator 		/usr/bin/
-debian/tmp-emulator/usr/bin/smap-emulator 		/usr/bin/
 debian/tmp-emulator/usr/bin/sdiag-emulator 		/usr/bin/
 debian/tmp-emulator/usr/bin/strigger-emulator 	/usr/bin/
 debian/tmp-emulator/usr/bin/sinfo-emulator 		/usr/bin/

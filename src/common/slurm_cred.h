@@ -251,7 +251,8 @@ int slurm_cred_rewind(slurm_cred_ctx_t ctx, slurm_cred_t *cred);
  * this credential is a reissue, then the old credential is cleared
  * from the cred context "ctx".
  */
-void slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred);
+void slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
+			       bool locked);
 
 /*
  * Revoke all credentials for job id jobid
@@ -355,7 +356,7 @@ void slurm_cred_print(slurm_cred_t *cred);
 
 typedef struct {
 	uint32_t job_id;
-	uint32_t pack_jobid;
+	uint32_t het_job_id;
 	uid_t uid;
 	gid_t gid;
 	char *user_name;

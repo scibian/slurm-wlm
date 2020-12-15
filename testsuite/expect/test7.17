@@ -60,7 +60,7 @@ expect {
 	}
 }
 if {$cpu_match != 1} {
-	log_error "Number of CPUs is incorrect"
+	log_error "Number of COREs is incorrect"
 	set exit_code 1
 }
 

@@ -71,6 +71,9 @@ typedef struct {
 	int		(*pack)		(void *cred, Buf buf,
 					 uint16_t protocol_version);
 	void *		(*unpack)	(Buf buf, uint16_t protocol_version);
+	int		(*thread_config) (const char *token, const char *username);
+	void		(*thread_clear) (void);
+	char *		(*token_generate) (const char *username, int lifespan);
 } slurm_auth_ops_t;
 /*
  * These strings must be kept in the same order as the fields
@@ -87,6 +90,9 @@ static const char *syms[] = {
 	"slurm_auth_get_host",
 	"slurm_auth_pack",
 	"slurm_auth_unpack",
+	"slurm_auth_thread_config",
+	"slurm_auth_thread_clear",
+	"slurm_auth_token_generate",
 };
 
 /*
@@ -104,6 +110,7 @@ extern int slurm_auth_init(char *auth_type)
 	char *auth_alt_types = NULL, *list = NULL;
 	char *auth_plugin_type = NULL, *type, *last = NULL;
 	char *plugin_type = "auth";
+	static bool daemon_run = false, daemon_set = false;
 
 	if (init_run && (g_context_num > 0))
 		return retval;
@@ -113,11 +120,13 @@ extern int slurm_auth_init(char *auth_type)
 	if (g_context_num > 0)
 		goto done;
 
-	if (auth_type)
+	if (getenv("SLURM_JWT")) {
+		slurm_set_auth_type("auth/jwt");
+	} else if (auth_type)
 		slurm_set_auth_type(auth_type);
 
 	type = auth_plugin_type = slurm_get_auth_type();
-	if (run_in_daemon("slurmctld,slurmdbd"))
+	if (run_in_daemon(&daemon_run, &daemon_set, "slurmctld,slurmdbd"))
 		list = auth_alt_types = slurm_get_auth_alt_types();
 	g_context_num = 0;
 	if (!auth_plugin_type || auth_plugin_type[0] == '\0')
@@ -359,5 +368,36 @@ void *g_slurm_auth_unpack(Buf buf, uint16_t protocol_version)
 	}
 
 unpack_error:
+	return NULL;
+}
+
+int g_slurm_auth_thread_config(const char *token, const char *username)
+{
+	if (slurm_auth_init(NULL) < 0)
+		return SLURM_ERROR;
+
+	return (*(ops[0].thread_config))(token, username);
+}
+
+void g_slurm_auth_thread_clear(void)
+{
+	if (slurm_auth_init(NULL) < 0)
+		return;
+
+	(*(ops[0].thread_clear))();
+}
+
+char *g_slurm_auth_token_generate(int plugin_id, const char *username,
+				  int lifespan)
+{
+	if (slurm_auth_init(NULL) < 0)
+		return NULL;
+
+	for (int i = 0; i < g_context_num; i++) {
+		if (plugin_id == *(ops[i].plugin_id)) {
+			return (*(ops[i].token_generate))(username, lifespan);
+		}
+	}
+
 	return NULL;
 }

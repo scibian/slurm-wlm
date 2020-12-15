@@ -147,18 +147,16 @@ scontrol_parse_res_options(int argc, char **argv, const char *msg,
 			if (plus_minus) {
 				char *tmp =
 					_process_plus_minus(plus_minus, val);
-				f = parse_resv_flags(tmp, msg);
+				f = parse_resv_flags(tmp, msg, resv_msg_ptr);
 				xfree(tmp);
 				plus_minus = '\0';
 			} else {
-				f = parse_resv_flags(val, msg);
+				f = parse_resv_flags(val, msg, resv_msg_ptr);
 			}
 			if (f == INFINITE64) {
+				exit_code = 1;
 				return SLURM_ERROR;
-			} else if (resv_msg_ptr->flags == NO_VAL)
-				resv_msg_ptr->flags = f;
-			else
-				resv_msg_ptr->flags |= f;
+			}
 		} else if (!xstrncasecmp(tag, "Users", MAX(taglen, 1))) {
 			if (resv_msg_ptr->users) {
 				exit_code = 1;
@@ -212,7 +210,7 @@ scontrol_parse_res_options(int argc, char **argv, const char *msg,
 			}
 			resv_msg_ptr->duration = (uint32_t)duration;
 			if (plus_minus) {
-				if (resv_msg_ptr->flags == NO_VAL)
+				if (resv_msg_ptr->flags == NO_VAL64)
 					resv_msg_ptr->flags =
 						PLUS_MINUS(plus_minus);
 				else
@@ -220,6 +218,16 @@ scontrol_parse_res_options(int argc, char **argv, const char *msg,
 						PLUS_MINUS(plus_minus);
 				plus_minus = '\0';
 			}
+		} else if (!xstrncasecmp(tag, "MaxStartDelay",
+					 MAX(taglen, 2))) {
+			duration = time_str2secs(val);
+
+			if (duration < 0) {
+				exit_code = 1;
+				error("Invalid duration %s.  %s", argv[i], msg);
+				return SLURM_ERROR;
+			}
+			resv_msg_ptr->max_start_delay = (uint32_t)duration;
 		} else if (xstrncasecmp(tag, "NodeCnt", MAX(taglen,5)) == 0 ||
 			   xstrncasecmp(tag, "NodeCount", MAX(taglen,5)) == 0) {
 
@@ -324,17 +332,17 @@ extern int
 scontrol_update_res(int argc, char **argv)
 {
 	resv_desc_msg_t resv_msg;
-	int err, ret = 0;
+	int ret = 0;
 	int free_user_str = 0, free_acct_str = 0, free_tres_license = 0,
 		free_tres_bb = 0, free_tres_corecnt = 0, free_tres_nodecnt = 0;
 
 	slurm_init_resv_desc_msg (&resv_msg);
-	err = scontrol_parse_res_options(argc, argv, "No reservation update.",
+	ret = scontrol_parse_res_options(argc, argv, "No reservation update.",
 					 &resv_msg, &free_user_str,
 					 &free_acct_str, &free_tres_license,
 					 &free_tres_bb, &free_tres_corecnt,
 					 &free_tres_nodecnt);
-	if (err)
+	if (ret)
 		goto SCONTROL_UPDATE_RES_CLEANUP;
 
 	if (resv_msg.name == NULL) {
@@ -343,8 +351,8 @@ scontrol_update_res(int argc, char **argv)
 		goto SCONTROL_UPDATE_RES_CLEANUP;
 	}
 
-	err = slurm_update_reservation(&resv_msg);
-	if (err) {
+	ret = slurm_update_reservation(&resv_msg);
+	if (ret) {
 		exit_code = 1;
 		slurm_perror("Error updating the reservation");
 		ret = slurm_get_errno();
@@ -383,16 +391,16 @@ scontrol_create_res(int argc, char **argv)
 	char *new_res_name = NULL;
 	int free_user_str = 0, free_acct_str = 0, free_tres_license = 0,
 		free_tres_bb = 0, free_tres_corecnt = 0, free_tres_nodecnt = 0;
-	int err, ret = 0;
+	int ret = 0;
 
 	slurm_init_resv_desc_msg (&resv_msg);
-	err = scontrol_parse_res_options(argc, argv, "No reservation created.",
+	ret = scontrol_parse_res_options(argc, argv, "No reservation created.",
 					 &resv_msg, &free_user_str,
 					 &free_acct_str, &free_tres_license,
 					 &free_tres_bb, &free_tres_corecnt,
 					 &free_tres_nodecnt);
 
-	if (err)
+	if (ret)
 		goto SCONTROL_CREATE_RES_CLEANUP;
 
 	if (resv_msg.start_time == (time_t)NO_VAL) {
@@ -426,22 +434,22 @@ scontrol_create_res(int argc, char **argv)
 	 */
 	if ((resv_msg.partition != NULL) && (resv_msg.node_list != NULL) &&
 	    (xstrcasecmp(resv_msg.node_list, "ALL") == 0)) {
-		if (resv_msg.flags == NO_VAL)
+		if (resv_msg.flags == NO_VAL64)
 			resv_msg.flags = RESERVE_FLAG_PART_NODES;
 		else
 			resv_msg.flags |= RESERVE_FLAG_PART_NODES;
 	}
 
 	/*
-	 * If "ALL" is specified for the nodes and RESERVE_FLAG_PART_NODES
-	 * flag is set make sure a partition name is specified.
+	 * If RESERVE_FLAG_PART_NODES is specified for the reservation,
+	 * make sure a partition name is specified and nodes=ALL.
 	 */
-	if ((resv_msg.partition == NULL) && (resv_msg.node_list != NULL) &&
-	    (xstrcasecmp(resv_msg.node_list, "ALL") == 0) &&
-	    (resv_msg.flags != NO_VAL) &&
-	    (resv_msg.flags & RESERVE_FLAG_PART_NODES)) {
+	if ((resv_msg.flags != NO_VAL64) &&
+            (resv_msg.flags & RESERVE_FLAG_PART_NODES) &&
+	    (!resv_msg.partition ||
+	     (xstrcasecmp(resv_msg.node_list, "ALL")))) {
 		exit_code = 1;
-		error("Part_Nodes flag requires specifying a Partition.  No reservation created.");
+		error("PART_NODES flag requires specifying a Partition and ALL nodes.  No reservation created.");
 		goto SCONTROL_CREATE_RES_CLEANUP;
 	}
 
@@ -461,7 +469,7 @@ scontrol_create_res(int argc, char **argv)
 			error("CoreCnt, Nodes, NodeCnt, BurstBuffer, Licenses or Watts must be specified.  No reservation created.");
 			goto SCONTROL_CREATE_RES_CLEANUP;
 		}
-		if (resv_msg.flags == NO_VAL)
+		if (resv_msg.flags == NO_VAL64)
 			resv_msg.flags = RESERVE_FLAG_PART_NODES;
 		else
 			resv_msg.flags |= RESERVE_FLAG_PART_NODES;
@@ -487,6 +495,10 @@ scontrol_create_res(int argc, char **argv)
 	if (!new_res_name) {
 		exit_code = 1;
 		slurm_perror("Error creating the reservation");
+		if ((errno == ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE) ||
+		    (errno == ESLURM_NODES_BUSY))
+			printf("Note, unless nodes are directly requested a reservation must exist in a single partition.\n"
+			       "If no partition is requested the default partition is assumed.\n");
 		ret = slurm_get_errno();
 	} else {
 		printf("Reservation created: %s\n", new_res_name);

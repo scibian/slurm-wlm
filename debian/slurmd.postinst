@@ -19,10 +19,10 @@ set -e
 STARTOPTION="start"
 case "$1" in
     configure)
-      chown slurm:slurm /var/lib/slurm-llnl
-      chown slurm:slurm /var/lib/slurm-llnl/slurmd
-      chown slurm:slurm /var/lib/slurm-llnl/checkpoint
-      chown slurm:slurm /var/log/slurm-llnl
+      chown slurm:slurm /var/lib/slurm
+      chown slurm:slurm /var/lib/slurm/slurmd
+      chown slurm:slurm /var/lib/slurm/checkpoint
+      chown slurm:slurm /var/log/slurm
 
       # Check for a major release upgrade from version 1
       OLDMAJREL=$(echo $2 | sed "s/\..*//")
