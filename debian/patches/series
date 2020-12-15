@@ -9,5 +9,4 @@ fix-pmixv3-dlopen-path
 fix-perl-doc
 miscellanea-manpages
 remove-acute-accent-in-manual
-add-missing-locks-slurmd-creds
 rpc_prolog_handle_reissue
