@@ -188,7 +188,7 @@ extern int xcpuinfo_hwloc_topo_load(
 
 	if (full && first_full) {
 		/* Always regenerate file on slurmd startup */
-		if (run_in_daemon("slurmd"))
+		if (running_in_slurmd())
 			check_file = false;
 		first_full = false;
 	}
@@ -333,12 +333,12 @@ extern int xcpuinfo_hwloc_topo_get(
 		xfree(sched_params);
 	}
 
-	/* number of objects */
-	depth = hwloc_get_type_depth(topology, HWLOC_OBJ_GROUP);
-	if (depth != HWLOC_TYPE_DEPTH_UNKNOWN) {
-		actual_boards = MAX(hwloc_get_nbobjs_by_depth(topology, depth),
-				    1);
-	}
+	/* Groups below root obj are interpreted as boards */
+	obj = hwloc_get_root_obj(topology);
+	obj = hwloc_get_next_child(topology, obj, NULL);
+	if (!hwloc_compare_types(HWLOC_OBJ_GROUP, obj->type))
+		actual_boards =
+			MAX(hwloc_get_nbobjs_by_depth(topology, obj->depth), 1);
 
 	/*
 	 * Count sockets/NUMA containing any cores.

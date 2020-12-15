@@ -2,6 +2,7 @@ Description: Fix perl doc
  Fix a typo in the perl code
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Last-Update: 2019-07-15
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=10139
 
 --- a/contribs/perlapi/libslurm/perl/lib/Slurm.pm
 +++ b/contribs/perlapi/libslurm/perl/lib/Slurm.pm

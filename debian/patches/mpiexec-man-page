@@ -2,6 +2,7 @@ Description: Fix a typo in the mpiexec man page
  Fix a typo in the mpiexec perl wrapper that produces the corresponding
  man page
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=10140
 
 --- a/contribs/torque/mpiexec.pl
 +++ b/contribs/torque/mpiexec.pl

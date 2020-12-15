@@ -39,7 +39,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include <assert.h>
+#include "config.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,22 +79,22 @@
 
 /* check signature */
 #define _assert_bitstr_valid(name) do { \
-	assert((name) != NULL); \
-	assert(_bitstr_magic(name) == BITSTR_MAGIC \
+	xassert((name) != NULL); \
+	xassert(_bitstr_magic(name) == BITSTR_MAGIC \
 			    || _bitstr_magic(name) == BITSTR_MAGIC_STACK); \
 } while (0)
 
 /* check bit position */
 #define _assert_bit_valid(name,bit) do { \
-	assert((bit) >= 0); \
-	assert((bit) < _bitstr_bits(name)); 	\
+	xassert((bit) >= 0); \
+	xassert((bit) < _bitstr_bits(name)); 	\
 } while (0)
 
 
 /* Ensure valid bitmap size, prevent overflow in buffer size calculation */
 #define _assert_valid_size(bit) do {	\
-	assert((bit) > 0);		\
-	assert((bit) <= 0x40000000); 	\
+	xassert((bit) > 0);		\
+	xassert((bit) <= 0x40000000); 	\
 } while (0)
 
 /*
@@ -144,6 +145,7 @@ strong_alias(bit_fls,		slurm_bit_fls);
 strong_alias(bit_fill_gaps,	slurm_bit_fill_gaps);
 strong_alias(bit_super_set,	slurm_bit_super_set);
 strong_alias(bit_overlap,	slurm_bit_overlap);
+strong_alias(bit_overlap_any,	slurm_bit_overlap_any);
 strong_alias(bit_equal,		slurm_bit_equal);
 strong_alias(bit_copy,		slurm_bit_copy);
 strong_alias(bit_pick_cnt,	slurm_bit_pick_cnt);
@@ -198,8 +200,8 @@ bitstr_t *bit_realloc(bitstr_t *b, bitoff_t nbits)
 void
 bit_free(bitstr_t *b)
 {
-	assert(b);
-	assert(_bitstr_magic(b) == BITSTR_MAGIC);
+	xassert(b);
+	xassert(_bitstr_magic(b) == BITSTR_MAGIC);
 	_bitstr_magic(b) = 0;
 	xfree(b);
 }
@@ -274,7 +276,7 @@ bit_nset(bitstr_t *b, bitoff_t start, bitoff_t stop)
 	while (stop >= start && (stop+1) % 8 > 0)    /* partial last byte? */
 		bit_set(b, stop--);
 	if (stop > start) {                          /* now do whole bytes */
-		assert((stop-start+1) % 8 == 0);
+		xassert((stop-start+1) % 8 == 0);
 		memset(_bit_byteaddr(b, start), 0xff, (stop-start+1) / 8);
 	}
 }
@@ -297,7 +299,7 @@ bit_nclear(bitstr_t *b, bitoff_t start, bitoff_t stop)
 	while (stop >= start && (stop+1) % 8 > 0)/* partial last byte? */
 		bit_clear(b, stop--);
 	if (stop > start) {			/* now do whole bytes */
-		assert((stop-start+1) % 8 == 0);
+		xassert((stop-start+1) % 8 == 0);
 		memset(_bit_byteaddr(b, start), 0, (stop-start+1) / 8);
 	}
 }
@@ -366,7 +368,7 @@ bit_nffc(bitstr_t *b, int32_t n)
 	int32_t cnt = 0;
 
 	_assert_bitstr_valid(b);
-	assert(n > 0 && n < _bitstr_bits(b));
+	xassert(n > 0 && n < _bitstr_bits(b));
 
 	for (bit = 0; bit < _bitstr_bits(b); bit++) {
 		if (bit_test(b, bit)) {		/* fail */
@@ -397,7 +399,7 @@ bit_noc(bitstr_t *b, int32_t n, int32_t seed)
 	int32_t cnt = 0;
 
 	_assert_bitstr_valid(b);
-	assert(n > 0 && n <= _bitstr_bits(b));
+	xassert(n > 0 && n <= _bitstr_bits(b));
 
 	if ((seed + n) >= _bitstr_bits(b))
 		seed = _bitstr_bits(b);	/* skip offset test, too small */
@@ -445,7 +447,7 @@ bit_nffs(bitstr_t *b, int32_t n)
 	int32_t cnt = 0;
 
 	_assert_bitstr_valid(b);
-	assert(n > 0 && n <= _bitstr_bits(b));
+	xassert(n > 0 && n <= _bitstr_bits(b));
 
 	for (bit = 0; bit <= _bitstr_bits(b) - n; bit++) {
 		if (!bit_test(b, bit)) {	/* fail */
@@ -581,7 +583,7 @@ bit_super_set(bitstr_t *b1, bitstr_t *b2)
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8) {
 		if (b1[_bit_word(bit)] != (b1[_bit_word(bit)] &
@@ -628,7 +630,7 @@ bit_and(bitstr_t *b1, bitstr_t *b2)
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
 		b1[_bit_word(bit)] &= b2[_bit_word(bit)];
@@ -645,7 +647,7 @@ void bit_and_not(bitstr_t *b1, bitstr_t *b2)
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
 		b1[_bit_word(bit)] &= ~b2[_bit_word(bit)];
@@ -678,7 +680,7 @@ bit_or(bitstr_t *b1, bitstr_t *b2)
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
 		b1[_bit_word(bit)] |= b2[_bit_word(bit)];
@@ -695,7 +697,7 @@ void bit_or_not(bitstr_t *b1, bitstr_t *b2)
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
 		b1[_bit_word(bit)] |= ~b2[_bit_word(bit)];
@@ -729,7 +731,7 @@ bit_copybits(bitstr_t *dest, bitstr_t *src)
 
 	_assert_bitstr_valid(dest);
 	_assert_bitstr_valid(src);
-	assert(bit_size(src) == bit_size(dest));
+	xassert(bit_size(src) == bit_size(dest));
 
 	len = (_bitstr_words(bit_size(src)) - BITSTR_OVERHEAD)*sizeof(bitstr_t);
 	memcpy(&dest[BITSTR_OVERHEAD], &src[BITSTR_OVERHEAD], len);
@@ -811,32 +813,54 @@ bit_set_count_range(bitstr_t *b, int32_t start, int32_t end)
 	return count;
 }
 
-/*
- * return number of bits set in b1 that are also set in b2, 0 if no overlap
- */
-extern int32_t
-bit_overlap(bitstr_t *b1, bitstr_t *b2)
+static int32_t _bit_overlap_internal(bitstr_t *b1, bitstr_t *b2, bool count_it)
 {
 	int32_t count = 0;
+	int64_t anded;
 	bitoff_t bit, bit_cnt;
 	int32_t word_size = sizeof(bitstr_t) * 8;
 
 	_assert_bitstr_valid(b1);
 	_assert_bitstr_valid(b2);
-	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
 	bit_cnt = _bitstr_bits(b1);
 	for (bit = 0; bit < bit_cnt; bit += word_size) {
 		if ((bit + word_size - 1) >= bit_cnt)
 			break;
-		count += hweight(b1[_bit_word(bit)] & b2[_bit_word(bit)]);
+		anded = b1[_bit_word(bit)] & b2[_bit_word(bit)];
+		if (count_it)
+			count += hweight(anded);
+		else if (anded)
+			return 1;
 	}
 	for ( ; bit < bit_cnt; bit++) {
-		if (bit_test(b1, bit) && bit_test(b2, bit))
-			count++;
+		if (bit_test(b1, bit) && bit_test(b2, bit)) {
+			if (count_it)
+				count++;
+			else
+				return 1;
+		}
 	}
 
 	return count;
+}
+
+/*
+ * return number of bits set in b1 that are also set in b2, 0 if no overlap
+ */
+extern int32_t bit_overlap(bitstr_t *b1, bitstr_t *b2)
+{
+	return _bit_overlap_internal(b1, b2, 1);
+}
+
+/*
+ * return 1 if there is at least one bit set in b1 that is also set in b2, 0 if
+ * no overlap
+ */
+extern int32_t bit_overlap_any(bitstr_t *b1, bitstr_t *b2)
+{
+	return _bit_overlap_internal(b1, b2, 0);
 }
 
 /*
@@ -920,7 +944,7 @@ bit_rotate_copy(bitstr_t *b1, int32_t n, bitoff_t nbits)
 
 	_assert_bitstr_valid(b1);
 	bitsize = bit_size(b1);
-	assert(nbits >= bitsize);
+	xassert(nbits >= bitsize);
 	deltasize = nbits - bitsize;
 
 	/* normalize n to a single positive rotation */
@@ -1028,11 +1052,11 @@ bit_pick_cnt(bitstr_t *b, bitoff_t nbits)
  */
 char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 {
-	int32_t count = 0, ret, size, word;
-	bitoff_t start, bit;
+	int32_t count = 0, word;
+	bitoff_t bit;
 
 	_assert_bitstr_valid(b);
-	assert(len > 0);
+	xassert(len > 0);
 	*str = '\0';
 	for (bit = 0; bit < _bitstr_bits(b); ) {
 		word = _bit_word(bit);
@@ -1042,8 +1066,10 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 		}
 
 		if (bit_test(b, bit)) {
+			int32_t ret, size;
+			bitoff_t start = bit;
+
 			count++;
-			start = bit;
 			while (bit+1 < _bitstr_bits(b) && bit_test(b, bit+1)) {
 				bit++;
 				count++;
@@ -1057,7 +1083,10 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 				               "%"BITSTR_FMT"-%"BITSTR_FMT",",
 					       start, bit);
 			}
-			assert(ret != -1);
+
+			xassert(ret != -1);
+			if (ret == -1)
+				error("failed to write to string -- this should never happen");
 		}
 		bit++;
 	}
@@ -1273,8 +1302,8 @@ int inx2bitstr(bitstr_t *b, int32_t *inx)
 	int32_t *p, bit_cnt;
 	int rc = 0;
 
-	assert(b);
-	assert(inx);
+	xassert(b);
+	xassert(inx);
 
 	bit_cnt = _bitstr_bits(b);
 	if (bit_cnt > 0)
@@ -1388,11 +1417,18 @@ char * bit_fmt_hexmask(bitstr_t * bitmap)
  */
 int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 {
-	int32_t bit_index = 0, len = strlen(str);
+	int32_t bit_index = 0, len;
 	int rc = 0;
-	const char *curpos = str + len - 1;
+	const char *curpos;
 	int32_t current;
-	bitoff_t bitsize = bit_size(bitmap);
+	bitoff_t bitsize;
+
+	if (!bitmap || !str)
+		return -1;
+
+	len = strlen(str);
+	bitsize = bit_size(bitmap);
+	curpos = str + len - 1;
 
 	bit_nclear(bitmap, 0, bitsize - 1);
 	if (xstrncmp(str, "0x", 2) == 0) {	/* Bypass 0x */
@@ -1412,16 +1448,41 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 		} else {			/* not a valid hex digit */
 		    	current = 0;
 			rc = -1;
+			break;
 		}
 
-		if ((current & 1) && (bit_index   < bitsize))
-			bit_set(bitmap, bit_index);
-		if ((current & 2) && (bit_index+1 < bitsize))
-			bit_set(bitmap, bit_index+1);
-		if ((current & 4) && (bit_index+2 < bitsize))
-			bit_set(bitmap, bit_index+2);
-		if ((current & 8) && (bit_index+3 < bitsize))
-			bit_set(bitmap, bit_index+3);
+		if (current & 1) {
+			if (bit_index < bitsize)
+				bit_set(bitmap, bit_index);
+			else {
+				rc = -1;
+				break;
+			}
+		}
+		if (current & 2) {
+			if ((bit_index + 1) < bitsize)
+				bit_set(bitmap, bit_index + 1);
+			else {
+				rc = -1;
+				break;
+			}
+		}
+		if (current & 4) {
+			if ((bit_index + 2) < bitsize)
+				bit_set(bitmap, bit_index + 2);
+			else {
+				rc = -1;
+				break;
+			}
+		}
+		if (current & 8) {
+			if ((bit_index + 3) < bitsize)
+				bit_set(bitmap, bit_index + 3);
+			else {
+				rc = -1;
+				break;
+			}
+		}
 		len--;
 		curpos--;
 		bit_index+=4;
@@ -1506,7 +1567,7 @@ bit_get_bit_num(bitstr_t *b, int32_t pos)
 
 	_assert_bitstr_valid(b);
 	bit_cnt = _bitstr_bits(b);
-	assert(pos <= bit_cnt);
+	xassert(pos <= bit_cnt);
 
 	for (bit = 0; bit < bit_cnt; bit++) {
 		if (bit_test(b, bit)) {	/* we got one */
@@ -1533,11 +1594,15 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 {
 	bitoff_t bit;
 	int32_t cnt = -1;
+#ifndef NDEBUG
 	bitoff_t bit_cnt;
+#endif
 
 	_assert_bitstr_valid(b);
+#ifndef NDEBUG
 	bit_cnt = _bitstr_bits(b);
-	assert(pos <= bit_cnt);
+	xassert(pos <= bit_cnt);
+#endif
 
 	if (!bit_test(b, pos)) {
 		error("bit %"BITSTR_FMT" not set", pos);

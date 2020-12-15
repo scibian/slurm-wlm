@@ -36,6 +36,9 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/assoc_mgr.h"
 
+/* Max runaway jobs per single sql statement. */
+#define RUNAWAY_JOBS_PER_PASS 1000
+
 static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_job_cond_t *job_cond,
 		     List format_list)
@@ -58,8 +61,7 @@ static int _set_cond(int *start, int argc, char **argv,
 		if (!end ||
 		    !xstrncasecmp(argv[i], "Cluster", MAX(command_len, 1))) {
 			if (!job_cond->cluster_list)
-				job_cond->cluster_list =
-					list_create(slurm_destroy_char);
+				job_cond->cluster_list = list_create(xfree_ptr);
 			if (slurm_addto_char_list(job_cond->cluster_list,
 						  argv[i]+end))
 				set = 1;
@@ -94,7 +96,7 @@ static void _print_runaway_jobs(List format_list, List jobs)
 
 	if (!format_list || !list_count(format_list)) {
 		if (!format_list)
-			format_list = list_create(slurm_destroy_char);
+			format_list = list_create(xfree_ptr);
 		slurm_addto_char_list(
 			format_list,
 			"ID%-12,Name,Part,Cluster,State%10,Submit,Start,End");
@@ -222,8 +224,7 @@ static List _get_runaway_jobs(slurmdb_job_cond_t *job_cond)
 	if (!job_cond->cluster_list || !list_count(job_cond->cluster_list)) {
 		char *cluster = slurm_get_cluster_name();
 		if (!job_cond->cluster_list)
-			job_cond->cluster_list =
-				list_create(slurm_destroy_char);
+			job_cond->cluster_list = list_create(xfree_ptr);
 		slurm_addto_char_list(job_cond->cluster_list, cluster);
 		xfree(cluster);
 	}
@@ -292,10 +293,11 @@ cleanup:
 extern int sacctmgr_list_runaway_jobs(int argc, char **argv)
 {
 	List runaway_jobs = NULL;
+	List process_jobs = list_create(slurmdb_destroy_job_rec);
 	int rc = SLURM_SUCCESS;
 	int i=0;
 	char *cluster_str;
-	List format_list = list_create(slurm_destroy_char);
+	List format_list = list_create(xfree_ptr);
 	slurmdb_job_cond_t *job_cond = xmalloc(sizeof(slurmdb_job_cond_t));
 	char *ask_msg = "\nWould you like to fix these runaway jobs?\n"
 			"(This will set the end time for each job to the "
@@ -320,21 +322,25 @@ extern int sacctmgr_list_runaway_jobs(int argc, char **argv)
 	slurmdb_destroy_job_cond(job_cond);
 
 	if (!runaway_jobs) {
-		xfree(cluster_str);
-		return SLURM_ERROR;
+		rc = SLURM_ERROR;
+		goto end_it;
 	}
 
 	if (!list_count(runaway_jobs)) {
 		printf("Runaway Jobs: No runaway jobs found on cluster %s\n",
 		       cluster_str);
-		xfree(cluster_str);
-		return SLURM_SUCCESS;
+		rc = SLURM_SUCCESS;
+		goto end_it;
 	}
-	xfree(cluster_str);
 
 	_print_runaway_jobs(format_list, runaway_jobs);
 
-	rc = slurmdb_jobs_fix_runaway(db_conn, runaway_jobs);
+	while (!rc && list_transfer_max(process_jobs, runaway_jobs,
+					RUNAWAY_JOBS_PER_PASS)) {
+		rc = slurmdb_jobs_fix_runaway(db_conn, process_jobs);
+		list_flush(process_jobs);
+	}
+
 	if (rc == SLURM_SUCCESS) {
 		if (commit_check(ask_msg))
 			slurmdb_connection_commit(db_conn, 1);
@@ -345,8 +351,10 @@ extern int sacctmgr_list_runaway_jobs(int argc, char **argv)
 	} else
 		error("Failed to fix runaway job: %s\n",
 		      slurm_strerror(rc));
-
+end_it:
+	xfree(cluster_str);
 	FREE_NULL_LIST(runaway_jobs);
+	FREE_NULL_LIST(process_jobs);
 
 	return rc;
 }

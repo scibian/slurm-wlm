@@ -143,7 +143,7 @@ extern int common_node_config_load(List gres_conf_list,
 			if (gres_device->dev_num == -1)
 				gres_device->dev_num = ++max_dev_num;
 			if (debug_flags & DEBUG_FLAG_GRES) {
-				info("%s device number %d(%s):%s",
+				debug("%s device number %d(%s):%s",
 				     gres_name, gres_device->dev_num,
 				     gres_device->path, gres_device->major);
 			}
@@ -261,7 +261,7 @@ extern void common_gres_set_env(List gres_devices, char ***env_ptr,
 			if (i >= len) {
 				/*
 				 * This can happen if GRES count in slurm.conf
-				 * and gres.conf differ and FastSchedule!= 0
+				 * and gres.conf differ
 				 */
 				error("%s: gres_list size different from count of gres_devices",
 				      __func__);

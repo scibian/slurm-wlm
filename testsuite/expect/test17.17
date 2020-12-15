@@ -34,7 +34,24 @@ set file_err     "test$test_id.error"
 set file_in      "test$test_id.input"
 set file_out     "test$test_id.output"
 set job_id1      0
+set job_id2      0
 set nodelist_name ""
+set gpu_tot      0
+set job_tres_cnt 0
+
+set timeout $max_job_delay
+
+set node_name [get_nodes_by_request "--gres=gpu:2 -n1 -t1"]
+if { [llength $node_name] != 1 } {
+	skip "This test need to be able to submit jobs with at least --gres=gpu:2"
+}
+if {![param_contains [get_config_param "AccountingStorageTRES"] "gres/gpu"]} {
+	skip "This test requires AccountingStorageTRES=gres/gpu"
+}
+
+# Get the total number of GPUs in the test node
+set gres_node [get_node_param $node_name "Gres"]
+set gpu_tot   [dict get [count_gres $gres_node] "gpu"]
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
@@ -133,6 +150,52 @@ if {$waited == 0} {
 }
 
 cancel_job $job_id1
+
+#
+# Verify that all GPUs are allocated with the --exclusive flag
+#
+set sbatch_pid2 [spawn $sbatch -t1 -N1 -w $node_name --gres=gpu --exclusive --output=$file_out $file_in]
+expect {
+	-re "Submitted batch job ($number)" {
+		set job_id2 $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		log_error "sbatch not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+if {$job_id2 == 0} {
+	fail "sbatch failed to report jobid"
+}
+
+if {[wait_for_job $job_id2 "RUNNING"] != 0} {
+	fail "waiting for job to start running"
+}
+
+# Check all GRES of the node were allocated on the job
+set gres_dict_job  [count_gres [get_job_param  $job_id2   "JOB_GRES"]]
+set gres_dict_node [count_gres [get_node_param $node_name "Gres"]]
+
+dict for {gres_name gres_count} $gres_dict_node {
+	if {![dict exists $gres_dict_job $gres_name]} {
+		log_error "Gres $gres_name on node $node_name not allocated on job $job_id2 with --exclusive"
+		set exit_code 1
+	} else {
+		set gres_count_job [dict get $gres_dict_job $gres_name]
+		if { $gres_count_job != $gres_count } {
+			log_error "Gres $gres_name on node $node_name not fully allocated on job $job_id2 with --exclusive ($gres_count_job != $gres_count)"
+			set exit_code 1
+		}
+	}
+}
+
+cancel_job $job_id2
+
+
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_err $file_in $file_out
 } else {

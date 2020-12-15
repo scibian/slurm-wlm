@@ -177,9 +177,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_INVALID_AUTHTYPE_CHANGE,
 	  "AuthType change requires restart of all Slurm daemons and "
 	  "commands to take effect"},
-	{ ESLURM_INVALID_CHECKPOINT_TYPE_CHANGE,
-	  "CheckpointType change requires restart of all Slurm daemons "
-	  "to take effect"					},
+	{ ESLURM_ACTIVE_FEATURE_NOT_SUBSET,
+	  "Active features not subset of available features"	},
 	{ ESLURM_INVALID_CRED_TYPE_CHANGE,
 	  "CredType change requires restart of all Slurm daemons "
 	  "to take effect"					},
@@ -248,7 +247,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_PORTS_INVALID,
 	  "Requires more ports than can be reserved"		},
 	{ ESLURM_PROLOG_RUNNING,
-	  "SlurmctldProlog is still running"			},
+	  "PrologSlurmctld is still running"			},
 	{ ESLURM_NO_STEPS,
 	  "Job steps can not be run on this cluster"		},
 	{ ESLURM_INVALID_BLOCK_STATE,
@@ -336,11 +335,11 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Reservation already started"				},
 	{ ESLURM_SUBMISSIONS_DISABLED,
 	  "System submissions disabled"				},
-	{ ESLURM_NOT_PACK_JOB,
+	{ ESLURM_NOT_HET_JOB,
 	  "Job not heterogeneous job"				},
-	{ ESLURM_NOT_PACK_JOB_LEADER,
+	{ ESLURM_NOT_HET_JOB_LEADER,
 	  "Job not heterogeneous job leader"			},
-	{ ESLURM_NOT_PACK_WHOLE,
+	{ ESLURM_NOT_WHOLE_HET_JOB,
 	  "Operation not permitted on individual component of heterogeneous job" },
 	{ ESLURM_CORE_RESERVATION_UPDATE,
 	  "Core-based reservation can not be updated"		},
@@ -372,6 +371,13 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Invalid --nice value"				},
 	{ ESLURM_INVALID_TIME_MIN_LIMIT,
 	  "Invalid time-min specification (exceeds job's time or other limits)"},
+	{ ESLURM_DEFER,
+	  "Immediate execution impossible. "
+	  "Individual job submission scheduling attempts deferred"},
+	{ ESLURM_CONFIGLESS_DISABLED,
+	  "ConfigLess mode is disabled"				},
+	{ ESLURM_ENVIRONMENT_MISSING,
+	  "Environment is missing in job"			},
 
 	/* slurmd error codes */
 	{ ESLURMD_PIPE_ERROR_ON_TASK_SPAWN,

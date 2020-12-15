@@ -33,9 +33,8 @@ For more details, see <a href="slurm.conf.html#OPT_GresTypes">GresTypes</a> and 
 </P>
 
 <P>Note that the GRES specification for each node works in the same fashion
-as the other resources managed. Depending upon the value of the
-<I>FastSchedule</I> parameter, nodes which are found to have fewer resources
-than configured will be placed in a DOWN state.</P>
+as the other resources managed. Nodes which are found to have fewer resources
+than configured will be placed in a DRAIN state.</P>
 
 <P>Snippet from an example <I>slurm.conf</I> file:</P>
 <PRE>
@@ -48,9 +47,15 @@ NodeName=tux[0-7] Gres=gpu:tesla:2,gpu:kepler:2,mps:400,bandwidth:lustre:no_cons
 file describing which resources are available on the node, their count,
 associated device files and cores which should be used with those resources.</P>
 
+<p>There are cases where you may want to define a Generic Resource on a node
+without specifying a quantity of that GRES. For example, the filesystem type
+of a node doesn't decrease in value as jobs run on that node.
+You can use the <b>no_consume</b> flag to allow users to request a GRES
+without having a defined count that gets used as it is requested.</p>
+
 <P>If <i>AutoDetect=nvml</i> is set in <I>gres.conf</I>,
 and the <i>NVIDIA Management Library</i> (NVML) is installed on the node and was
-enabled during Slurm configuration, configuration details will automatically be
+found during Slurm configuration, configuration details will automatically be
 filled in for any system-detected NVIDIA GPU. This removes the need to
 explicitly configure GPUs in gres.conf, though the <i>Gres=</i> line in
 slurm.conf is still required in order to tell slurmctld how many GRES to expect.
@@ -83,7 +88,7 @@ Name=mps Count=200  File=/dev/nvidia0
 Name=mps Count=200  File=/dev/nvidia1
 Name=mps Count=100  File=/dev/nvidia2
 Name=mps Count=100  File=/dev/nvidia3
-Name=bandwidth Type=lustre Count=4G
+Name=bandwidth Type=lustre Count=4G Flags=CountOnly
 </PRE>
 
 <p> In this example, since <i>AutoDetect=nvml</i> is specified, <i>Cores</i>
@@ -425,6 +430,6 @@ to a physical device</pre>
 explicitly defined in the offload pragmas.</P>
 <!-------------------------------------------------------------------------->
 
-<p style="text-align: center;">Last modified 2 October 2019</p>
+<p style="text-align: center;">Last modified 23 July 2020</p>
 
 <!--#include virtual="footer.txt"-->

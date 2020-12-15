@@ -18,16 +18,7 @@ set -e
 #
 case "$1" in
     configure)
-      chown slurm:slurm /var/log/slurm-llnl
-      if [ -n "$2" ] && dpkg --compare-versions $2 lt 18.08.5.2-1 ; then
-        if [ -e /etc/slurm-llnl/slurmdbd.conf ] ; then
-           # Move PID file location
-           olddir="\(/var\)\?/run/slurm-llnl"
-           newdir="/run"
-           sed -i "s@^\(\s*PidFile\s*=\s*\)$olddir@\1$newdir@i" \
-		/etc/slurm-llnl/slurmdbd.conf
-        fi
-      fi
+      chown slurm:slurm /var/log/slurm
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

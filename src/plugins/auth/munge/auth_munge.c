@@ -327,9 +327,10 @@ char *slurm_auth_get_host(slurm_auth_credential_t *cred)
 	} else {
 		slurm_addr_t addr = { .sin_addr.s_addr = cred->addr.s_addr };
 		uint16_t port;
-		error("%s: Lookup failed: %s", __func__, host_strerror(h_err));
 		hostname = xmalloc(16);
 		slurm_get_ip_str(&addr, &port, hostname, 16);
+		error("%s: Lookup failed for %s: %s",
+		      __func__, hostname, host_strerror(h_err));
 	}
 
 	return hostname;
@@ -501,4 +502,20 @@ static void _print_cred(munge_ctx_t ctx)
 		      plugin_type, munge_ctx_strerror(ctx));
 	else
 		info("DECODED: %s", slurm_ctime2_r(&decoded, buf));
+}
+
+int slurm_auth_thread_config(const char *token, const char *username)
+{
+	/* not supported */
+	return SLURM_ERROR;
+}
+
+void slurm_auth_thread_clear(void)
+{
+	/* no op */
+}
+
+char *slurm_auth_token_generate(const char *username, int lifespan)
+{
+	return NULL;
 }
