@@ -1,7 +1,7 @@
 [Unit]
 Description=Slurm node daemon
 After=munge.service network.target remote-fs.target
-ConditionPathExists=/etc/slurm-llnl/slurm.conf
+ConditionPathExists=/etc/slurm/slurm.conf
 Documentation=man:slurmd(8)
 
 [Service]

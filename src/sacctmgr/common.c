@@ -566,7 +566,9 @@ static print_field_t *_get_print_field(char *object)
 		   !xstrncasecmp("MaxSubmitJobsPerAcct", object,
 				 MAX(command_len, 17)) ||
 		   !xstrncasecmp("MaxSubmitJobsPA", object,
-				 MAX(command_len, 15))) {
+				 MAX(command_len, 15)) ||
+		   !xstrncasecmp("MaxSubmitPA", object,
+				 MAX(command_len, 11))) {
 		field->type = PRINT_MAXSA;
 		field->name = xstrdup("MaxSubmitPA");
 		field->len = 11;
@@ -574,7 +576,9 @@ static print_field_t *_get_print_field(char *object)
 	} else if (!xstrncasecmp("MaxSubmitJobsPerUser", object,
 				 MAX(command_len, 10)) ||
 		   !xstrncasecmp("MaxSubmitJobsPU", object,
-				 MAX(command_len, 10))) {
+				 MAX(command_len, 10)) ||
+		   !xstrncasecmp("MaxSubmitPU", object,
+				 MAX(command_len, 6))) {
 		field->type = PRINT_MAXS; /* used same as MaxSubmitJobs */
 		field->name = xstrdup("MaxSubmitPU");
 		field->len = 11;
@@ -881,7 +885,7 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 	}
 
 	if (!assoc_cond->cluster_list)
-		assoc_cond->cluster_list = list_create(slurm_destroy_char);
+		assoc_cond->cluster_list = list_create(xfree_ptr);
 
 	if (!list_count(assoc_cond->cluster_list)) {
 		char *temp = slurm_get_cluster_name();
@@ -1013,7 +1017,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 	qos_cond->description_list = NULL;
 
 	if (!cluster_list)
-		cluster_list = list_create(slurm_destroy_char);
+		cluster_list = list_create(xfree_ptr);
 
 	if (!list_count(cluster_list)) {
 		char *temp = slurm_get_cluster_name();
@@ -2242,15 +2246,13 @@ extern int sacctmgr_validate_cluster_list(List cluster_list)
 	int rc = SLURM_SUCCESS;
 	ListIterator itr = NULL, itr_c = NULL;
 
-	if (cluster_list) {
-		slurmdb_cluster_cond_t cluster_cond;
-		slurmdb_init_cluster_cond(&cluster_cond, 0);
-		cluster_cond.cluster_list = cluster_list;
+	xassert(cluster_list);
 
-		temp_list = slurmdb_clusters_get(db_conn, &cluster_cond);
-	} else
-		temp_list = slurmdb_clusters_get(db_conn, NULL);
+	slurmdb_cluster_cond_t cluster_cond;
+	slurmdb_init_cluster_cond(&cluster_cond, 0);
+	cluster_cond.cluster_list = cluster_list;
 
+	temp_list = slurmdb_clusters_get(db_conn, &cluster_cond);
 
 	itr_c = list_iterator_create(cluster_list);
 	itr = list_iterator_create(temp_list);
@@ -2259,8 +2261,14 @@ extern int sacctmgr_validate_cluster_list(List cluster_list)
 
 		list_iterator_reset(itr);
 		while ((cluster_rec = list_next(itr))) {
-			if (!xstrcasecmp(cluster_rec->name, cluster))
+			if (!xstrcasecmp(cluster_rec->name, cluster)) {
+				if (cluster_rec->flags & CLUSTER_FLAG_EXT) {
+					fprintf(stderr, " The cluster '%s' is an external cluster. Can't work with it.\n",
+						cluster);
+					list_delete_item(itr_c);
+				}
 				break;
+			}
 		}
 		if (!cluster_rec) {
 			exit_code=1;

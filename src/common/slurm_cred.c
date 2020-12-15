@@ -124,7 +124,7 @@ struct sbcast_cred {
 	time_t ctime;		/* Time that the cred was created	*/
 	time_t expiration;	/* Time at which cred is no longer good	*/
 	uint32_t jobid;		/* Slurm job id for this credential	*/
-	uint32_t pack_jobid;    /* Slurm het leader for the job         */
+	uint32_t het_job_id;	/* Slurm hetjob leader id for the job	*/
 	uint32_t uid;		/* user for which this cred is valid	*/
 	uint32_t gid;		/* user's primary group id 		*/
 	char *user_name;	/* user_name as a string		*/
@@ -263,7 +263,6 @@ static bool _exkey_is_valid(slurm_cred_ctx_t ctx);
 
 static cred_state_t * _cred_state_create(slurm_cred_ctx_t ctx, slurm_cred_t *c);
 static job_state_t  * _job_state_create(uint32_t jobid);
-static void           _cred_state_destroy(cred_state_t *cs);
 static void           _job_state_destroy(job_state_t   *js);
 
 static job_state_t  * _find_job_state(slurm_cred_ctx_t ctx, uint32_t jobid);
@@ -299,7 +298,6 @@ static void _job_state_pack_one(job_state_t *j, Buf buffer);
 static void _cred_state_pack_one(cred_state_t *s, Buf buffer);
 
 static void _sbast_cache_add(sbcast_cred_t *sbcast_cred);
-static void _sbcast_cache_del(void *x);
 
 static int _slurm_cred_init(void)
 {
@@ -346,7 +344,7 @@ static int _slurm_cred_init(void)
 		retval = SLURM_ERROR;
 		goto done;
 	}
-	sbcast_cache_list = list_create(_sbcast_cache_del);
+	sbcast_cache_list = list_create(xfree_ptr);
 	init_run = true;
 
 done:
@@ -646,8 +644,10 @@ slurm_cred_create(slurm_cred_ctx_t ctx, slurm_cred_arg_t *arg,
 	slurm_mutex_lock(&ctx->mutex);
 	xassert(ctx->magic == CRED_CTX_MAGIC);
 	xassert(ctx->type == SLURM_CRED_CREATOR);
-	if (_slurm_cred_sign(ctx, cred, protocol_version) < 0)
+	if (_slurm_cred_sign(ctx, cred, protocol_version) < 0) {
+		slurm_mutex_unlock(&ctx->mutex);
 		goto fail;
+	}
 
 	slurm_mutex_unlock(&ctx->mutex);
 	slurm_mutex_unlock(&cred->mutex);
@@ -655,7 +655,6 @@ slurm_cred_create(slurm_cred_ctx_t ctx, slurm_cred_arg_t *arg,
 	return cred;
 
 fail:
-	slurm_mutex_unlock(&ctx->mutex);
 	slurm_mutex_unlock(&cred->mutex);
 	slurm_cred_destroy(cred);
 	return NULL;
@@ -931,7 +930,7 @@ slurm_cred_verify(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
 		goto error;
 	}
 
-	slurm_cred_handle_reissue(ctx, cred);
+	slurm_cred_handle_reissue(ctx, cred, true);
 
 	if (_credential_revoked(ctx, cred)) {
 		slurm_seterrno(ESLURMD_CREDENTIAL_REVOKED);
@@ -1125,8 +1124,8 @@ slurm_cred_begin_expiration(slurm_cred_ctx_t ctx, uint32_t jobid)
 	}
 
 	j->expiration  = time(NULL) + ctx->expiry_window;
-	debug2("set revoke expiration for jobid %u to %"PRIu64" UTS",
-	       j->jobid, (uint64_t) j->expiration);
+	debug2("set revoke expiration for jobid %u to %ld UTS",
+	       j->jobid, j->expiration);
 	slurm_mutex_unlock(&ctx->mutex);
 	return SLURM_SUCCESS;
 
@@ -1572,7 +1571,7 @@ _verifier_ctx_init(slurm_cred_ctx_t ctx)
 	xassert(ctx->type == SLURM_CRED_VERIFIER);
 
 	ctx->job_list   = list_create((ListDelF) _job_state_destroy);
-	ctx->state_list = list_create((ListDelF) _cred_state_destroy);
+	ctx->state_list = list_create(xfree_ptr);
 
 	return;
 }
@@ -1881,9 +1880,14 @@ _credential_replayed(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 }
 
 extern void
-slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
+slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred, bool locked)
 {
-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
+	job_state_t  *j;
+
+	if (!locked)
+		slurm_mutex_lock(&ctx->mutex);
+
+	j = _find_job_state(ctx, cred->jobid);
 
 	if (j != NULL && j->revoked && (cred->ctime > j->revoked)) {
 		/* The credential has been reissued.  Purge the
@@ -1897,20 +1901,26 @@ slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 		j->expiration = 0;
 		_clear_expired_job_states(ctx);
 	}
+	if (!locked)
+		slurm_mutex_unlock(&ctx->mutex);
 }
 
 extern bool
 slurm_cred_revoked(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 {
-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
+	job_state_t  *j;
+	bool rc = false;
 
-	if ((j == NULL) || (j->revoked == (time_t)0))
-		return false;
+	slurm_mutex_lock(&ctx->mutex);
 
-	if (cred->ctime <= j->revoked)
-		return true;
+	j = _find_job_state(ctx, cred->jobid);
 
-	return false;
+	if (j && (j->revoked != (time_t)0) && (cred->ctime <= j->revoked))
+		rc = true;
+
+	slurm_mutex_unlock(&ctx->mutex);
+
+	return rc;
 }
 
 static bool
@@ -1926,8 +1936,8 @@ _credential_revoked(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 	}
 
 	if (cred->ctime <= j->revoked) {
-		debug3("cred for %u revoked. expires at %"PRIu64" UTS",
-		       j->jobid, (uint64_t) j->expiration);
+		debug3("cred for %u revoked. expires at %ld UTS",
+		       j->jobid, j->expiration);
 		return true;
 	}
 
@@ -2008,10 +2018,8 @@ _clear_expired_job_states(slurm_cred_ctx_t ctx)
 
 	i = list_iterator_create(ctx->job_list);
 	while ((j = list_next(i))) {
-		debug3("state for jobid %u: ctime:%"PRIu64" revoked:%"PRIu64" "
-		       "expires:%"PRIu64"",
-		       j->jobid, (uint64_t)j->ctime, (uint64_t)j->revoked,
-		       (uint64_t)j->expiration);
+		debug3("state for jobid %u: ctime:%ld revoked:%ld expires:%ld",
+		       j->jobid, j->ctime, j->revoked, j->expiration);
 		if (j->revoked && (now > j->expiration)) {
 			list_delete_item(i);
 		}
@@ -2066,13 +2074,6 @@ _cred_state_create(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 }
 
 static void
-_cred_state_destroy(cred_state_t *s)
-{
-	xfree(s);
-}
-
-
-static void
 _cred_state_pack_one(cred_state_t *s, Buf buffer)
 {
 	pack32(s->jobid, buffer);
@@ -2094,7 +2095,7 @@ _cred_state_unpack_one(Buf buffer)
 	return s;
 
 unpack_error:
-	_cred_state_destroy(s);
+	xfree(s);
 	return NULL;
 }
 
@@ -2118,9 +2119,8 @@ static job_state_t *_job_state_unpack_one(Buf buffer)
 	safe_unpack_time(&j->ctime, buffer);
 	safe_unpack_time(&j->expiration, buffer);
 
-	debug3("cred_unpack: job %u ctime:%"PRIu64" revoked:%"PRIu64" expires:%"PRIu64,
-	       j->jobid, (uint64_t)j->ctime, (uint64_t)j->revoked,
-	       (uint64_t)j->expiration);
+	debug3("cred_unpack: job %u ctime:%ld revoked:%ld expires:%ld",
+	       j->jobid, j->ctime, j->revoked, j->expiration);
 
 	if ((j->revoked) && (j->expiration == (time_t) MAX_TIME)) {
 		info("Warning: revoke on job %u has no expiration",
@@ -2169,7 +2169,7 @@ _cred_state_unpack(slurm_cred_ctx_t ctx, Buf buffer)
 		if (now < s->expiration)
 			list_append(ctx->state_list, s);
 		else
-			_cred_state_destroy(s);
+			xfree(s);
 	}
 
 	return;
@@ -2239,7 +2239,7 @@ static void _pack_sbcast_cred(sbcast_cred_t *sbcast_cred, Buf buffer,
 		pack_time(sbcast_cred->ctime, buffer);
 		pack_time(sbcast_cred->expiration, buffer);
 		pack32(sbcast_cred->jobid, buffer);
-		pack32(sbcast_cred->pack_jobid, buffer);
+		pack32(sbcast_cred->het_job_id, buffer);
 		pack32(sbcast_cred->uid, buffer);
 		pack32(sbcast_cred->gid, buffer);
 		packstr(sbcast_cred->user_name, buffer);
@@ -2276,7 +2276,7 @@ sbcast_cred_t *create_sbcast_cred(slurm_cred_ctx_t ctx,
 	sbcast_cred->ctime = time(NULL);
 	sbcast_cred->expiration = arg->expiration;
 	sbcast_cred->jobid = arg->job_id;
-	sbcast_cred->pack_jobid = arg->pack_jobid;
+	sbcast_cred->het_job_id = arg->het_job_id;
 	sbcast_cred->uid = arg->uid;
 	sbcast_cred->gid = arg->gid;
 	sbcast_cred->user_name = xstrdup(arg->user_name);
@@ -2341,11 +2341,6 @@ static void _sbast_cache_add(sbcast_cred_t *sbcast_cred)
 	new_cache_rec->expire = sbcast_cred->expiration;
 	new_cache_rec->value  = sig_num;
 	list_append(sbcast_cache_list, new_cache_rec);
-}
-
-static void _sbcast_cache_del(void *x)
-{
-	xfree(x);
 }
 
 /* Extract contents of an sbcast credential verifying the digital signature.
@@ -2486,7 +2481,7 @@ sbcast_cred_t *unpack_sbcast_cred(Buf buffer, uint16_t protocol_version)
 		safe_unpack_time(&sbcast_cred->ctime, buffer);
 		safe_unpack_time(&sbcast_cred->expiration, buffer);
 		safe_unpack32(&sbcast_cred->jobid, buffer);
-		safe_unpack32(&sbcast_cred->pack_jobid, buffer);
+		safe_unpack32(&sbcast_cred->het_job_id, buffer);
 		safe_unpack32(&sbcast_cred->uid, buffer);
 		safe_unpack32(&sbcast_cred->gid, buffer);
 		safe_unpackstr_xmalloc(&sbcast_cred->user_name, &uint32_tmp,

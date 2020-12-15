@@ -1,4 +1,4 @@
-Source: slurm-llnl
+Source: slurm-wlm
 Section: admin
 Priority: optional
 Maintainer: Scibian Project <packaging@scibian.org>
@@ -144,7 +144,7 @@ Description: debugging symbols for SLURM central management daemon
  This package contains the debugging symbols for central management
  daemon slurmctld.
 
-Package: libslurm34
+Package: libslurm35
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
@@ -154,11 +154,11 @@ Description: Runtime library files for SLURM
  is an open-source cluster resource management and job scheduling.
  This package contains the SLURM runtime library.
 
-Package: libslurm34-dbg
+Package: libslurm35-dbg
 Architecture: any
 Section: debug
 Depends:
- libslurm34 (= ${binary:Version}),
+ libslurm35 (= ${binary:Version}),
  ${misc:Depends}
 Description: debugging symbols for SLURM slurm runtime library
  SLURM stands for Simple Linux Utility for Resource Management, it
@@ -222,7 +222,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libslurm34 (= ${binary:Version})
+ libslurm35 (= ${binary:Version})
 Conflicts: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
 Breaks: libslurmdb-dev
 Replaces: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev, libslurmdb-dev
@@ -238,7 +238,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi0 (= ${binary:Version}),
- libslurm34 (= ${binary:Version})
+ libslurm35 (= ${binary:Version})
 Description: SLURM PMI library implementation development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.
@@ -252,7 +252,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi2-0 (= ${binary:Version}),
- libslurm34 (= ${binary:Version})
+ libslurm35 (= ${binary:Version})
 Description: SLURM PMI2 library implementation development files
  SLURM, the Simple Linux Utility for Resource Management,
  is an open-source cluster resource management and job scheduling.

@@ -41,11 +41,7 @@ set matches 0
 set rpc_rec_cnt 0
 set as_pid [spawn $sacctmgr show stats]
 expect {
-	-re "Rollup statistics" {
-		incr matches
-		exp_continue
-	}
-	-re "Month *count:$number" {
+	-re "sacctmgr show stats" {
 		incr matches
 		exp_continue
 	}
@@ -78,9 +74,8 @@ expect {
 if {$rpc_rec_cnt > 0} {
 	incr matches
 }
-if {$matches != 6} {
-	fail "sacctmgr show stats response bad ($matches != 6)"
-}
+subtest {$matches == 5} "sacctmgr should show all expected sections" "($matches != 5)"
+
 if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

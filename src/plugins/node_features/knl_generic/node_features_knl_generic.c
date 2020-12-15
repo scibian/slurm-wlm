@@ -623,7 +623,7 @@ static char *_run_script(char *cmd_path, char **script_argv, int *status)
 		setpgid(0, 0);
 		execv(cmd_path, script_argv);
 		error("%s: execv(%s): %m", __func__, cmd_path);
-		exit(127);
+		_exit(127);
 	} else if (cpid < 0) {
 		close(pfd[0]);
 		close(pfd[1]);
@@ -789,8 +789,9 @@ static void *_ume_agent(void *args)
 		if (shutdown_time)
 			break;
 		/* Sleep before retry */
-		req.tv_sec  =  ume_check_interval / 1000000;
-		req.tv_nsec = (ume_check_interval % 1000000) * 1000;
+		req.tv_sec  =  ume_check_interval / USEC_IN_SEC;
+		req.tv_nsec = (ume_check_interval % USEC_IN_SEC) *
+			      NSEC_IN_USEC;
 		(void) nanosleep(&req, NULL);
 	}
 
@@ -963,7 +964,7 @@ extern int init(void)
 	gres_plugin_add("hbm");
 
 	if ((rc == SLURM_SUCCESS) &&
-	    ume_check_interval && run_in_daemon("slurmd")) {
+	    ume_check_interval && running_in_slurmd()) {
 		slurm_mutex_lock(&ume_mutex);
 		slurm_thread_create(&ume_thread, _ume_agent, NULL);
 		slurm_mutex_unlock(&ume_mutex);
@@ -1664,7 +1665,7 @@ extern int node_features_p_node_update(char *active_features,
 	int rc = SLURM_SUCCESS, numa_inx = -1;
 	int mcdram_inx = 0;
 	uint64_t mcdram_size;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	char *save_ptr = NULL, *tmp, *tok;
 
 	if (mcdram_per_node == NULL) {
@@ -1737,13 +1738,13 @@ extern int node_features_p_node_update(char *active_features,
  * Return TRUE if the specified node update request is valid with respect
  * to features changes (i.e. don't permit a non-KNL node to set KNL features).
  *
- * arg IN - Pointer to struct node_record record
+ * arg IN - Pointer to node_record_t record
  * update_node_msg IN - Pointer to update request
  */
 extern bool node_features_p_node_update_valid(void *arg,
 					update_node_msg_t *update_node_msg)
 {
-	struct node_record *node_ptr = (struct node_record *) arg;
+	node_record_t *node_ptr = (node_record_t *) arg;
 	char *tmp, *save_ptr = NULL, *tok;
 	bool is_knl = false, invalid_feature = false;
 

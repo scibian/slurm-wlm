@@ -31,7 +31,6 @@ Files: src/api/pmi_server.c
        src/slurmd/slurmstepd/step_terminate_monitor.h
        src/sview/submit_info.c
        src/sview/sview.h
-       testsuite/expect/regression
        testsuite/expect/regression.py
        testsuite/slurm_unit/api/manual/cancel-tst.c
        testsuite/slurm_unit/api/manual/complete-tst.c

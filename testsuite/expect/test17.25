@@ -36,7 +36,7 @@ set timeout          $max_job_delay
 set account	     "dummy_acct"
 
 if [param_contains [get_config_param "AccountingStorageEnforce"] "associations"] {
-	log_warn "Using users default account instead of $account since associations are enforced"
+	log_warn "Using user's default account instead of $account since associations are enforced"
 	set account [get_default_acct 0]
 }
 

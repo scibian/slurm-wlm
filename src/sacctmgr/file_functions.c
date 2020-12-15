@@ -189,7 +189,13 @@ static void _destroy_sacctmgr_file_opts(void *object)
 	}
 }
 
-static sacctmgr_file_opts_t *_parse_options(char *options)
+/*
+ * NOTE: make_lower only applies to the first parsed option. This is needed
+ * for parsing the User column, which may be case-sensitive if the slurmdbd
+ * reports PERSIST_FLAG_P_USER_CASE on the connection. All other options
+ * are currently case-insensitive, and will be normalized to lowercase.
+ */
+static sacctmgr_file_opts_t *_parse_options(char *options, bool make_lower)
 {
 	int start=0, i=0, end=0, quote = 0;
  	char *sub = NULL;
@@ -237,7 +243,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 			end++;
 		}
 
-		option = strip_quotes(sub+end, NULL, 1);
+		option = strip_quotes(sub+end, NULL, make_lower);
 
 		if (!end) {
 			if (file_opts->name) {
@@ -248,6 +254,9 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 				break;
 			}
 			file_opts->name = xstrdup(option);
+
+			/* remaining options should be converted to lowercase */
+			make_lower = true;
 		} else if (end && !strlen(option)) {
 			debug("blank field given for %s discarding", sub);
 		} else if (!xstrncasecmp(sub, "AdminLevel",
@@ -256,8 +265,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 		} else if (!xstrncasecmp(sub, "Coordinator",
 					 MAX(command_len, 2))) {
 			if (!file_opts->coord_list)
-				file_opts->coord_list =
-					list_create(slurm_destroy_char);
+				file_opts->coord_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->coord_list, option);
 		} else if (!xstrncasecmp(sub, "Classification",
 					 MAX(command_len, 2))) {
@@ -270,8 +278,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 					 MAX(command_len, 8))) {
 			file_opts->def_wckey = xstrdup(option);
 			if (!file_opts->wckey_list)
-				file_opts->wckey_list =
-					list_create(slurm_destroy_char);
+				file_opts->wckey_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->wckey_list, option);
 		} else if (!xstrncasecmp(sub, "Description",
 					 MAX(command_len, 3))) {
@@ -285,8 +292,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 		} else if (!xstrncasecmp(sub, "WCKeys",
 					 MAX(command_len, 2))) {
 			if (!file_opts->wckey_list)
-				file_opts->wckey_list =
-					list_create(slurm_destroy_char);
+				file_opts->wckey_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->wckey_list, option);
 		} else if (!sacctmgr_set_assoc_rec(
 				   &file_opts->assoc_rec, sub, option,
@@ -334,7 +340,7 @@ static int _print_out_assoc(List assoc_list, bool user, bool add)
 	if (!assoc_list || !list_count(assoc_list))
 		return rc;
 
-	format_list = list_create(slurm_destroy_char);
+	format_list = list_create(xfree_ptr);
 	if (user)
 		slurm_addto_char_list(format_list,
 				      "User,Account");
@@ -646,7 +652,7 @@ static int _mod_assoc(sacctmgr_file_opts_t *file_opts,
 		char *now_qos = NULL, *new_qos = NULL;
 
 		if (!mod_assoc.qos_list)
-			mod_assoc.qos_list = list_create(slurm_destroy_char);
+			mod_assoc.qos_list = list_create(xfree_ptr);
 		while ((new_qos = list_next(new_qos_itr))) {
 			while ((now_qos = list_next(now_qos_itr))) {
 				if (!xstrcmp(new_qos, now_qos))
@@ -1717,7 +1723,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 	mod_user_list = list_create(slurmdb_destroy_user_rec);
 	mod_assoc_list = list_create(slurmdb_destroy_assoc_rec);
 
-	format_list = list_create(slurm_destroy_char);
+	format_list = list_create(xfree_ptr);
 
 	while ((num_lines = _get_next_line(line, BUFFER_SIZE, fd)) > 0) {
 		lc += num_lines;
@@ -1770,7 +1776,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 				break;
 			}
 
-			file_opts = _parse_options(line+start);
+			file_opts = _parse_options(line + start, true);
 
 			if (!file_opts) {
 				exit_code = 1;
@@ -1813,10 +1819,9 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 					my_uid);
 				FREE_NULL_LIST(curr_user_list);
 				fclose(fd);
-				_destroy_sacctmgr_file_opts(file_opts);
 				xfree(cluster_name);
 				xfree(parent);
-				return;
+				goto end_it;
 
 			} else {
 				if (my_uid != slurm_get_slurm_user_id()
@@ -1830,10 +1835,9 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 						"privileges to load files.\n");
 					FREE_NULL_LIST(curr_user_list);
 					fclose(fd);
-					_destroy_sacctmgr_file_opts(file_opts);
 					xfree(cluster_name);
 					xfree(parent);
-					return;
+					goto end_it;
 				}
 			}
 			xfree(user_name);
@@ -1958,7 +1962,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 		}
 
 		if (!xstrcasecmp("Parent", object)) {
-			file_opts = _parse_options(line+start);
+			file_opts = _parse_options(line + start, true);
 			xfree(parent);
 
 			if (!file_opts) {
@@ -1993,7 +1997,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 
 		if (!xstrcasecmp("Project", object)
 		    || !xstrcasecmp("Account", object)) {
-			file_opts = _parse_options(line+start);
+			file_opts = _parse_options(line + start, true);
 
 			if (!file_opts) {
 				exit_code=1;
@@ -2090,7 +2094,8 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 			file_opts = NULL;
 			continue;
 		} else if (!xstrcasecmp("User", object)) {
-			file_opts = _parse_options(line+start);
+			file_opts = _parse_options(line + start,
+						   user_case_norm);
 
 			if (!file_opts) {
 				exit_code=1;
@@ -2353,6 +2358,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 			slurm_strerror(rc));
 	}
 
+end_it:
 	FREE_NULL_LIST(format_list);
 	FREE_NULL_LIST(mod_acct_list);
 	FREE_NULL_LIST(acct_list);

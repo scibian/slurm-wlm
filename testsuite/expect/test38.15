@@ -42,9 +42,9 @@ if {$nb_nodes < 3} {
 }
 
 proc end_it { exit_code } {
-	global pack_job_id scancel
-	if {$pack_job_id > 0} {
-		exec $scancel $pack_job_id
+	global het_job_id scancel
+	if {$het_job_id > 0} {
+		exec $scancel $het_job_id
 	}
 	if {$exit_code != 0} {
 		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
@@ -52,7 +52,7 @@ proc end_it { exit_code } {
 	pass
 }
 
-set pack_job_id 0
+set het_job_id 0
 set component(0) 0
 set matches 0
 set index 0
@@ -60,7 +60,7 @@ set timeout $max_job_delay
 spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
-		set pack_job_id $expect_out(1,string)
+		set het_job_id $expect_out(1,string)
 		send "$reset_bash_prompt\r"
 		exp_continue
 	}
@@ -79,7 +79,7 @@ expect {
 		wait
 	}
 }
-if {$pack_job_id == 0} {
+if {$het_job_id == 0} {
 	log_error "salloc failure"
 	end_it 1
 }
@@ -92,7 +92,7 @@ env | grep SLURMD_NODENAME
 "
 
 set matches 0
-send "$srun --label --mpi=none --pack-group=0-2 $file_in\r"
+send "$srun --label --mpi=none --het-group=0-2 $file_in\r"
 expect {
 	-re "($number): SLURMD_NODENAME" {
 		incr matches
@@ -122,7 +122,7 @@ env | grep SLURMD_NODENAME
 "
 
 set matches 0
-send "$srun --label --mpi=none --pack-group=0-2 $file_in\r"
+send "$srun --label --mpi=none --het-group=0-2 $file_in\r"
 expect {
 	-re "($number): SLURMD_NODENAME" {
 		incr matches

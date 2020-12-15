@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test pack job step output file labling and different commands/args
+# Purpose: Test hetjob step output file labling and different commands/args
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Morris Jette <jette@schedmd.com>
@@ -28,7 +28,7 @@ source ./globals
 
 set exit_code	0
 set file_out    test${test_id}.output
-set pack_job_id	0
+set het_job_id	0
 
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
