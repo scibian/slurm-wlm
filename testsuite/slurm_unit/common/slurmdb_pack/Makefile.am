@@ -23,7 +23,6 @@ TESTS += pack_user_rec-test \
 	 pack_assoc_rec-test \
 	 pack_assoc_usage-test \
 	 pack_assoc_rec_with_usage-test \
-	 pack_event_cond-test \
 	 pack_event_rec-test
 
 pack_user_rec_test_CFLAGS = $(MYCFLAGS)
@@ -61,9 +60,6 @@ pack_assoc_usage_test_LDADD  = $(LDADD) @CHECK_LIBS@
 
 pack_assoc_rec_with_usage_test_CFLAGS = $(MYCFLAGS)
 pack_assoc_rec_with_usage_test_LDADD  = $(LDADD) @CHECK_LIBS@
-
-pack_event_cond_test_CFLAGS = $(MYCFLAGS)
-pack_event_cond_test_LDADD  = $(LDADD) @CHECK_LIBS@
 
 pack_event_rec_test_CFLAGS = $(MYCFLAGS)
 pack_event_rec_test_LDADD  = $(LDADD) @CHECK_LIBS@

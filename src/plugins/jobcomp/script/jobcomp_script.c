@@ -152,10 +152,10 @@ struct jobcomp_info {
 	uint32_t exit_code;
 	uint32_t db_flags;
 	uint32_t derived_ec;
+	uint32_t pack_job_id;
+	uint32_t pack_job_offset;
 	uint32_t uid;
 	uint32_t gid;
-	uint32_t het_job_id;
-	uint32_t het_job_offset;
 	uint32_t limit;
 	uint32_t nprocs;
 	uint32_t nnodes;
@@ -182,7 +182,7 @@ struct jobcomp_info {
 	char *std_err;
 };
 
-static struct jobcomp_info *_jobcomp_info_create(job_record_t *job)
+static struct jobcomp_info * _jobcomp_info_create (struct job_record *job)
 {
 	enum job_states state;
 	struct jobcomp_info *j = xmalloc(sizeof(struct jobcomp_info));
@@ -215,8 +215,8 @@ static struct jobcomp_info *_jobcomp_info_create(job_record_t *job)
 		j->qos = NULL;
 	j->array_job_id = job->array_job_id;
 	j->array_task_id = job->array_task_id;
-	j->het_job_id = job->het_job_id;
-	j->het_job_offset = job->het_job_offset;
+	j->pack_job_id = job->pack_job_id;
+	j->pack_job_offset = job->pack_job_offset;
 
 	if (IS_JOB_RESIZING(job)) {
 		state = JOB_RESIZING;
@@ -403,12 +403,9 @@ static char ** _create_environment (struct jobcomp_info *job)
 	_env_append_fmt (&env, "DERIVED_EC", "%d:%d", tmp_int, tmp_int2);
 	_env_append_fmt (&env, "ARRAYJOBID", "%u", job->array_job_id);
 	_env_append_fmt (&env, "ARRAYTASKID", "%u", job->array_task_id);
-	if (job->het_job_id) {
-		/* Continue supporting the old terms. */
-		_env_append_fmt (&env, "PACKJOBID", "%u", job->het_job_id);
-		_env_append_fmt (&env, "PACKJOBOFFSET", "%u", job->het_job_offset);
-		_env_append_fmt (&env, "HETJOBID", "%u", job->het_job_id);
-		_env_append_fmt (&env, "HETJOBOFFSET", "%u", job->het_job_offset);
+	if (job->pack_job_id) {
+		_env_append_fmt (&env, "PACKJOBID", "%u", job->pack_job_id);
+		_env_append_fmt (&env, "PACKJOBOFFSET", "%u", job->pack_job_offset);
 	}
 	_env_append_fmt (&env, "UID",   "%u",  job->uid);
 	_env_append_fmt (&env, "GID",   "%u",  job->gid);
@@ -491,16 +488,16 @@ static void _jobcomp_child (char * script, struct jobcomp_info *job)
 	log_reinit ();
 
 	if (_redirect_stdio () < 0)
-		_exit (1);
+		exit (1);
 
 	if (chdir (tmpdir) != 0) {
 		error ("jobcomp/script: chdir (%s): %m", tmpdir);
-		_exit(1);
+		exit(1);
 	}
 
 	if (!(env = _create_environment (job))) {
 		error ("jobcomp/script: Failed to create env!");
-		_exit (1);
+		exit (1);
 	}
 
 	execve(script, args, env);
@@ -509,7 +506,7 @@ static void _jobcomp_child (char * script, struct jobcomp_info *job)
 	 * Failure of execve implies error
 	 */
 	error ("jobcomp/script: execve(%s): %m", script);
-	_exit (1);
+	exit (1);
 }
 
 static int _jobcomp_exec_child (char *script, struct jobcomp_info *job)
@@ -617,7 +614,7 @@ extern int slurm_jobcomp_set_location (char * location)
 	return SLURM_SUCCESS;
 }
 
-int slurm_jobcomp_log_record(job_record_t *record)
+int slurm_jobcomp_log_record (struct job_record *record)
 {
 	struct jobcomp_info * job;
 

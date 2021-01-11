@@ -52,19 +52,6 @@ proc inc3_11_11_resv_create { res_name args } {
 	}
 }
 
-proc inc3_11_11_resv_fail { res_name args } {
-
-	global user_name
-
-	set cmd "StartTime=now+60minutes Duration=1 User=$user_name $args"
-	set ret_code [create_res $res_name $cmd]
-	if {$ret_code == 0} {
-		inc3_11_11_fini "Reservation should have failed to create (Within: inc3.11.11)" 1
-	} else {
-		log_info "Expected error. You can turn that frown upside-down.(Within: inc3.11.11)"
-	}
-}
-
 proc inc3_11_11_resv_update_s { res_name args } {
 	global user_name
 
@@ -112,7 +99,6 @@ proc inc3_11_11 {} {
 
 	log_info "+++++ STARTING TEST 11 (Within: inc3.11.11) +++++"
 
-
 	set part_nodes [available_nodes_hostnames $def_partition true]
 	set one_node [get_idle_node_in_part $def_partition]
 
@@ -145,14 +131,8 @@ proc inc3_11_11 {} {
 	inc3_11_11_resv_test $res_name $def_partition "SPEC_NODES" $one_node
 	inc3_11_11_delete_resv $res_name
 
-	inc3_11_11_resv_fail $res_name flags=part_nodes
-	inc3_11_11_resv_fail $res_name flags=part_nodes partition=$def_partition
-	inc3_11_11_resv_fail $res_name flags=part_nodes nodes=$one_node
-	inc3_11_11_resv_fail $res_name flags=part_nodes nodes=ALL
-	inc3_11_11_resv_fail $res_name flags=part_nodes partition=$def_partition nodes=$one_node
-
-	inc3_11_11_resv_create $res_name partition=$def_partition nodes=ALL flags=part_nodes
-	inc3_11_11_resv_test   $res_name $def_partition "SPEC_NODES,PART_NODES" $part_nodes
+	inc3_11_11_resv_create $res_name partition=$def_partition nodes=$one_node flags=part_nodes
+	inc3_11_11_resv_test $res_name $def_partition "SPEC_NODES" $one_node
 	inc3_11_11_delete_resv $res_name
 
 	inc3_11_11_fini $res_name "inc3_11_11 all good" 0

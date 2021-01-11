@@ -10,9 +10,11 @@
 
 AUTOMAKE_OPTIONS = foreign
 
-AM_CPPFLAGS     = -I$(top_srcdir) -DSBINDIR=\"$(sbindir)\"
+AM_CPPFLAGS     = -I$(top_srcdir) $(lua_CFLAGS) -DSBINDIR=\"$(sbindir)\"
 
 noinst_PROGRAMS = libcommon.o libeio.o libspank.o
+# This is needed if compiling on windows
+EXEEXT=
 
 noinst_LTLIBRARIES = 			\
 	libcommon.la 			\
@@ -38,9 +40,8 @@ libcommon_la_SOURCES = 			\
 	net.c net.h                     \
 	log.c log.h			\
 	cbuf.c cbuf.h			\
-	data.c data.h			\
 	bitstring.c bitstring.h 	\
-	slurm_mpi.c slurm_mpi.h         \
+	mpi.c slurm_mpi.h               \
 	pack.c pack.h			\
 	parse_config.c parse_config.h	\
 	parse_value.c parse_value.h	\
@@ -48,11 +49,7 @@ libcommon_la_SOURCES = 			\
 	plugrack.c plugrack.h		\
 	power.c power.h			\
 	print_fields.c print_fields.h	\
-	slurm_resolv.c slurm_resolv.h	\
-	fetch_config.c fetch_config.h	\
-	prep.c prep.h			\
 	read_config.c read_config.h	\
-	run_in_daemon.c run_in_daemon.h	\
 	node_select.c node_select.h	\
 	env.c env.h      		\
 	fd.c fd.h       		\
@@ -105,6 +102,7 @@ libcommon_la_SOURCES = 			\
 	slurm_resource_info.h		\
 	hostlist.c hostlist.h		\
 	slurm_step_layout.c slurm_step_layout.h	\
+	checkpoint.c checkpoint.h	\
 	job_resources.c job_resources.h	\
 	parse_time.c parse_time.h	\
 	job_options.c job_options.h	\
@@ -124,6 +122,7 @@ libcommon_la_SOURCES = 			\
 	layouts_mgr.h layouts_mgr.c	\
 	mapping.c mapping.h		\
 	xcgroup_read_config.c xcgroup_read_config.h \
+	xlua.c xlua.h                   \
 	callerid.c callerid.h		\
 	group_cache.c group_cache.h	\
 	slurm_persist_conn.c slurm_persist_conn.h \
@@ -182,4 +181,5 @@ global_defaults.c : $(top_builddir)/config.h Makefile
 	   echo	"char *default_plugin_path = \"$(pkglibdir)\";"; \
 	   echo \
 	   "char *default_slurm_config_file = \"$(sysconfdir)/slurm.conf\";"; \
+	   echo "char *default_plugstack = \"$(sysconfdir)/plugstack.conf\";";\
 	 ) > global_defaults.c

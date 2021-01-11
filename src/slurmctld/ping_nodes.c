@@ -147,7 +147,7 @@ void ping_nodes (void)
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr = NULL;
 #else
-	node_record_t *node_ptr = NULL;
+	struct node_record *node_ptr = NULL;
 	time_t old_cpu_load_time = now - slurmctld_conf.slurmd_timeout;
 	time_t old_free_mem_time = now - slurmctld_conf.slurmd_timeout;
 #endif
@@ -267,8 +267,7 @@ void ping_nodes (void)
 	     i < node_record_count; i++, node_ptr++) {
 		if (IS_NODE_FUTURE(node_ptr) ||
 		    IS_NODE_POWER_SAVE(node_ptr) ||
-		    IS_NODE_POWER_UP(node_ptr) ||
-		    (IS_NODE_DOWN(node_ptr) && IS_NODE_REBOOT(node_ptr)))
+		    IS_NODE_POWER_UP(node_ptr))
 			continue;
 		if ((slurmctld_conf.slurmd_timeout == 0) &&
 		    (!restart_flag)			 &&
@@ -384,7 +383,7 @@ extern void run_health_check(void)
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #else
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	int node_test_cnt = 0, node_limit, node_states, run_cyclic;
 	static int base_node_loc = -1;
 	static time_t cycle_start_time = (time_t) 0;
@@ -471,7 +470,11 @@ extern void run_health_check(void)
 			continue;
 		if (node_states != HEALTH_CHECK_NODE_ANY) {
 			uint16_t cpus_total, cpus_used = 0;
-			cpus_total = node_ptr->config_ptr->cpus;
+			if (slurmctld_conf.fast_schedule) {
+				cpus_total = node_ptr->config_ptr->cpus;
+			} else {
+				cpus_total = node_ptr->cpus;
+			}
 			if (!IS_NODE_IDLE(node_ptr)) {
 				select_g_select_nodeinfo_get(
 						node_ptr->select_nodeinfo,
@@ -532,7 +535,7 @@ extern void update_nodes_acct_gather_data(void)
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #else
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 #endif
 	int i;
 	char *host_str = NULL;

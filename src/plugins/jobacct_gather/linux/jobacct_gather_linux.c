@@ -213,13 +213,26 @@ static void _get_offspring_data(List prec_list, jag_prec_t *ancestor, pid_t pid)
 	return;
 }
 
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmstepd");
+	}
+
+	return run;
+}
+
 /*
  * init() is called when the plugin is loaded, before any other functions
  * are called.  Put global initialization here.
  */
 extern int init (void)
 {
-	if (running_in_slurmstepd()) {
+	if (_run_in_daemon()) {
 		jag_common_init(0);
 	}
 	debug("%s loaded", plugin_name);
@@ -229,7 +242,7 @@ extern int init (void)
 
 extern int fini (void)
 {
-	if (running_in_slurmstepd()) {
+	if (_run_in_daemon()) {
 		/* just to make sure it closes things up since we call it
 		 * from here */
 		acct_gather_energy_fini();
@@ -261,7 +274,7 @@ extern void jobacct_gather_p_poll_data(
 	static jag_callbacks_t callbacks;
 	static bool first = 1;
 
-	xassert(running_in_slurmstepd());
+	xassert(_run_in_daemon());
 
 	if (first) {
 		memset(&callbacks, 0, sizeof(jag_callbacks_t));

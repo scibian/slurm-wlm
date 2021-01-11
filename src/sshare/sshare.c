@@ -114,7 +114,8 @@ int main (int argc, char **argv)
 			break;
 		case 'A':
 			if (!req_msg.acct_list)
-				req_msg.acct_list = list_create(xfree_ptr);
+				req_msg.acct_list =
+					list_create(slurm_destroy_char);
 			slurm_addto_char_list(req_msg.acct_list, optarg);
 			break;
 		case 'e':
@@ -160,7 +161,8 @@ int main (int argc, char **argv)
 			}
 			all_users = 0;
 			if (!req_msg.user_list)
-				req_msg.user_list = list_create(xfree_ptr);
+				req_msg.user_list =
+					list_create(slurm_destroy_char);
 			_addto_name_char_list(req_msg.user_list, optarg, 0);
 			break;
 		case 'U':
@@ -210,7 +212,8 @@ int main (int argc, char **argv)
 		struct passwd *pwd;
 		if ((pwd = getpwuid(getuid()))) {
 			if (!req_msg.user_list) {
-				req_msg.user_list = list_create(xfree_ptr);
+				req_msg.user_list =
+					list_create(slurm_destroy_char);
 			}
 			temp = xstrdup(pwd->pw_name);
 			list_append(req_msg.user_list, temp);
@@ -221,14 +224,22 @@ int main (int argc, char **argv)
 		}
 	}
 
-	if (verbosity && req_msg.acct_list && list_count(req_msg.acct_list)) {
-		ListIterator itr = list_iterator_create(req_msg.acct_list);
-		fprintf(stderr, "Accounts requested:\n");
-		while ((temp = list_next(itr)))
-			fprintf(stderr, "\t: %s\n", temp);
-		list_iterator_destroy(itr);
-	} else if (verbosity) {
-		fprintf(stderr, "Accounts requested:\n\t: all\n");
+	if (req_msg.acct_list && list_count(req_msg.acct_list)) {
+		if (verbosity) {
+			fprintf(stderr, "Accounts requested:\n");
+			ListIterator itr = list_iterator_create(req_msg.acct_list);
+			while ((temp = list_next(itr)))
+				fprintf(stderr, "\t: %s\n", temp);
+			list_iterator_destroy(itr);
+		}
+	} else {
+		if (req_msg.acct_list
+		   && list_count(req_msg.acct_list)) {
+			FREE_NULL_LIST(req_msg.acct_list);
+		}
+		if (verbosity)
+			fprintf(stderr, "Accounts requested:\n\t: all\n");
+
 	}
 
 	if (clusters)
@@ -236,8 +247,6 @@ int main (int argc, char **argv)
 	else
 		exit_code = _single_cluster(&req_msg);
 
-	FREE_NULL_LIST(req_msg.acct_list);
-	FREE_NULL_LIST(req_msg.user_list);
 	exit(exit_code);
 }
 
@@ -273,8 +282,7 @@ static int _multi_cluster(shares_request_msg_t *req_msg)
 			printf("\n");
 		printf("CLUSTER: %s\n", working_cluster_rec->name);
 		rc2 = _single_cluster(req_msg);
-		if (rc2)
-			rc = 1;
+		rc  = MAX(rc, rc2);
 	}
 	list_iterator_destroy(itr);
 

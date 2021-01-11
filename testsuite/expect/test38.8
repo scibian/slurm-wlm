@@ -51,9 +51,9 @@ if {$nb_nodes < 3} {
 }
 
 proc end_it { exit_code } {
-	global het_job_id scancel
-	if {$het_job_id > 0} {
-		exec $scancel $het_job_id
+	global pack_job_id scancel
+	if {$pack_job_id > 0} {
+		exec $scancel $pack_job_id
 	}
 	if {$exit_code != 0} {
 		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
@@ -61,7 +61,7 @@ proc end_it { exit_code } {
 	pass
 }
 
-set het_job_id 0
+set pack_job_id 0
 set matches 0
 set index 0
 set sid 0
@@ -69,7 +69,7 @@ set timeout $max_job_delay
 spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
-		set het_job_id $expect_out(1,string)
+		set pack_job_id $expect_out(1,string)
 		send "$reset_bash_prompt\r"
 		exp_continue
 	}
@@ -88,7 +88,7 @@ expect {
 		wait
 	}
 }
-if {$het_job_id == 0} {
+if {$pack_job_id == 0} {
 	log_error "salloc failure"
 	end_it 1
 }
@@ -122,9 +122,9 @@ expect {
 }
 
 # Now test sacct
-spawn $sacct -j $het_job_id
+spawn $sacct -j $pack_job_id
 expect {
-	-re "$het_job_id\\+\[0-2\]" {
+	-re "$pack_job_id\\+\[0-2\]" {
 		incr matches
 		exp_continue
 	}
@@ -149,9 +149,9 @@ if {$has_prolog_flags} {
 for {set inx 0} {$inx < 3} {incr inx} {
 	set bad_matches 0
 	set matches 0
-	spawn $sacct -j $het_job_id+$inx
+	spawn $sacct -j $pack_job_id+$inx
 	expect {
-		-re "$het_job_id\\+($number)" {
+		-re "$pack_job_id\\+($number)" {
 			if {$expect_out(1,string) == $inx} {
 				incr matches
 			} else {

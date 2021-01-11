@@ -53,11 +53,11 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-extern switch_record_t *switch_record_table __attribute__((weak_import));
+extern struct switch_record *switch_record_table __attribute__((weak_import));
 extern int switch_record_cnt __attribute__((weak_import));
 extern int switch_levels __attribute__((weak_import));
 #else
-switch_record_t *switch_record_table = NULL;
+struct switch_record *switch_record_table = NULL;
 int switch_record_cnt = 0;
 int switch_levels = 0;
 #endif
@@ -112,7 +112,7 @@ extern int init(void)
 	}
 	xfree(topotype);
 	debug_flags = slurm_get_debug_flags();
-	run_in_slurmctld = running_in_slurmctld();
+	run_in_slurmctld = run_in_daemon("slurmctld");
 	verbose("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }

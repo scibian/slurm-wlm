@@ -38,7 +38,6 @@
 \*****************************************************************************/
 
 #include "as_mysql_job.h"
-#include "as_mysql_jobacct_process.h"
 #include "as_mysql_usage.h"
 #include "as_mysql_wckey.h"
 
@@ -49,21 +48,7 @@
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_time.h"
 
-typedef struct {
-	char *cluster;
-	uint32_t new;
-	uint32_t old;
-} id_switch_t;
-
-static int _find_id_switch(void *x, void *key)
-{
-	id_switch_t *id_switch = (id_switch_t *)x;
-	uint32_t id = *(uint32_t *)key;
-
-	if (id_switch->old == id)
-		return 1;
-	return 0;
-}
+#define BUFFER_SIZE 4096
 
 static char *_average_tres_usage(uint32_t *tres_ids, uint64_t *tres_cnts,
 				 int tres_cnt, int tasks)
@@ -279,7 +264,8 @@ no_wckeyid:
 
 /* extern functions */
 
-extern int as_mysql_job_start(mysql_conn_t *mysql_conn, job_record_t *job_ptr)
+extern int as_mysql_job_start(mysql_conn_t *mysql_conn,
+			      struct job_record *job_ptr)
 {
 	int rc = SLURM_SUCCESS;
 	char *nodes = NULL, *jname = NULL;
@@ -471,7 +457,7 @@ no_rollup_change:
 		query = xstrdup_printf(
 			"insert into \"%s_%s\" "
 			"(id_job, mod_time, id_array_job, id_array_task, "
-			"het_job_id, het_job_offset, "
+			"pack_job_id, pack_job_offset, "
 			"id_assoc, id_qos, id_user, "
 			"id_group, nodelist, id_resv, timelimit, "
 			"time_eligible, time_submit, time_start, "
@@ -517,7 +503,7 @@ no_rollup_change:
 			   "'%s', %u, %u, %u, %u, %u, %"PRIu64", %u, %u",
 			   job_ptr->job_id,
 			   job_ptr->array_job_id, array_task_id,
-			   job_ptr->het_job_id, job_ptr->het_job_offset,
+			   job_ptr->pack_job_id, job_ptr->pack_job_offset,
 			   job_ptr->assoc_id, job_ptr->qos_id,
 			   job_ptr->user_id, job_ptr->group_id, nodes,
 			   job_ptr->resv_id, job_ptr->time_limit,
@@ -577,7 +563,7 @@ no_rollup_change:
 			   "state=greatest(state, %u), priority=%u, "
 			   "cpus_req=%u, nodes_alloc=%u, "
 			   "mem_req=%"PRIu64", id_array_job=%u, id_array_task=%u, "
-			   "het_job_id=%u, het_job_offset=%u, flags=%u, "
+			   "pack_job_id=%u, pack_job_offset=%u, flags=%u, "
 			   "state_reason_prev=%u",
 			   job_ptr->assoc_id, job_ptr->user_id,
 			   job_ptr->group_id, nodes,
@@ -588,7 +574,7 @@ no_rollup_change:
 			   job_ptr->total_nodes,
 			   job_ptr->details->pn_min_memory,
 			   job_ptr->array_job_id, array_task_id,
-			   job_ptr->het_job_id, job_ptr->het_job_offset,
+			   job_ptr->pack_job_id, job_ptr->pack_job_offset,
 			   job_ptr->db_flags,
 			   job_ptr->state_reason_prev_db);
 
@@ -706,7 +692,7 @@ no_rollup_change:
 			   "id_assoc=%u, id_resv=%u, "
 			   "timelimit=%u, mem_req=%"PRIu64", "
 			   "id_array_job=%u, id_array_task=%u, "
-			   "het_job_id=%u, het_job_offset=%u, "
+			   "pack_job_id=%u, pack_job_offset=%u, "
 			   "flags=%u, state_reason_prev=%u, "
 			   "time_eligible=%ld, mod_time=UNIX_TIMESTAMP() "
 			   "where job_db_inx=%"PRIu64,
@@ -716,7 +702,7 @@ no_rollup_change:
 			   job_ptr->resv_id, job_ptr->time_limit,
 			   job_ptr->details->pn_min_memory,
 			   job_ptr->array_job_id, array_task_id,
-			   job_ptr->het_job_id, job_ptr->het_job_offset,
+			   job_ptr->pack_job_id, job_ptr->pack_job_offset,
 			   job_ptr->db_flags, job_ptr->state_reason_prev_db,
 			   begin_time, job_ptr->db_index);
 
@@ -739,23 +725,28 @@ no_rollup_change:
 }
 
 extern List as_mysql_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
-				slurmdb_job_cond_t *job_cond,
+				slurmdb_job_modify_cond_t *job_cond,
 				slurmdb_job_rec_t *job)
 {
 	List ret_list = NULL;
 	int rc = SLURM_SUCCESS;
 	char *object = NULL;
-	char *vals = NULL, *cond_char = NULL;
+	char *vals = NULL, *query = NULL, *cond_char = NULL;
 	time_t now = time(NULL);
 	char *user_name = NULL;
-	List job_list = NULL;
-	slurmdb_job_rec_t *job_rec;
-	ListIterator itr;
-	List id_switch_list = NULL;
-	id_switch_t *id_switch;
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row;
 
 	if (!job_cond || !job) {
 		error("we need something to change");
+		return NULL;
+	} else if (job_cond->job_id == NO_VAL) {
+		errno = SLURM_NO_CHANGE_IN_DATA;
+		error("Job ID was not specified for job modification\n");
+		return NULL;
+	} else if (!job_cond->cluster) {
+		errno = SLURM_NO_CHANGE_IN_DATA;
+		error("Cluster was not specified for job modification\n");
 		return NULL;
 	} else if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return NULL;
@@ -770,221 +761,86 @@ extern List as_mysql_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
 		xstrfmtcat(vals, ", system_comment='%s'",
 			   job->system_comment);
 
-	if (job->wckey)
-		xstrfmtcat(vals, ", wckey='%s'", job->wckey);
-
 	if (!vals) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
 		error("No change specified for job modification");
 		return NULL;
 	}
-	job_cond->flags |= JOBCOND_FLAG_NO_STEP;
-	job_cond->flags |= JOBCOND_FLAG_DBD_UID;
-	job_cond->flags |= JOBCOND_FLAG_NO_DEFAULT_USAGE;
 
-	job_list = as_mysql_jobacct_process_get_jobs(mysql_conn, uid, job_cond);
+	if (job_cond->submit_time)
+		xstrfmtcat(cond_char, "&& time_submit=%d ",
+			   (int)job_cond->submit_time);
 
-	if (!job_list || !list_count(job_list)) {
-		errno = SLURM_NO_CHANGE_IN_DATA;
-		if (debug_flags & DEBUG_FLAG_DB_JOB)
-			DB_DEBUG(mysql_conn->conn,
-				 "%s: Job(s) not found\n",
-				 __func__);
+	/* Here we want to get the last job submitted here */
+	query = xstrdup_printf("select job_db_inx, id_job, time_submit, "
+			       "id_user "
+			       "from \"%s_%s\" where deleted=0 "
+			       "&& id_job=%u %s"
+			       "order by time_submit desc limit 1;",
+			       job_cond->cluster, job_table,
+			       job_cond->job_id, cond_char ? cond_char : "");
+	xfree(cond_char);
+
+	if (debug_flags & DEBUG_FLAG_DB_JOB)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(vals);
-		FREE_NULL_LIST(job_list);
+		xfree(query);
 		return NULL;
 	}
 
-	user_name = uid_to_string((uid_t) uid);
-
-	itr = list_iterator_create(job_list);
-	while ((job_rec = list_next(itr))) {
+	if ((row = mysql_fetch_row(result))) {
 		char tmp_char[25];
-		char *vals_mod = NULL;
+		time_t time_submit = atol(row[2]);
 
-		if ((uid != job_rec->uid) &&
+		if ((uid != atoi(row[3])) &&
 		    !is_user_min_admin_level(mysql_conn, uid,
 					     SLURMDB_ADMIN_OPERATOR)) {
 			errno = ESLURM_ACCESS_DENIED;
-			rc = SLURM_ERROR;
-			break;
+			xfree(vals);
+			xfree(query);
+			mysql_free_result(result);
+			return NULL;
 		}
 
-		slurm_make_time_str(&job_rec->submit,
-				    tmp_char, sizeof(tmp_char));
+		slurm_make_time_str(&time_submit, tmp_char, sizeof(tmp_char));
 
-		xstrfmtcat(cond_char, "job_db_inx=%"PRIu64, job_rec->db_index);
-		object = xstrdup_printf("%u submitted at %s",
-					job_rec->jobid, tmp_char);
+		xstrfmtcat(cond_char, "job_db_inx=%s", row[0]);
+		object = xstrdup_printf("%s submitted at %s", row[1], tmp_char);
 
-		if (!ret_list)
-			ret_list = list_create(xfree_ptr);
+		ret_list = list_create(slurm_destroy_char);
 		list_append(ret_list, object);
-
-		/*
-		 * Grab the wckey id to update the job now.
-		 */
-		if (job->wckey) {
-			uint32_t wckeyid = _get_wckeyid(mysql_conn,
-							&job->wckey,
-							job_rec->uid,
-							job_rec->cluster,
-							job_rec->associd);
-			if (!wckeyid) {
-				rc = SLURM_ERROR;
-				break;
-			}
-			vals_mod = xstrdup_printf("%s, id_wckey='%u'",
-						  vals, wckeyid);
-			id_switch = NULL;
-			if (!id_switch_list)
-				id_switch_list = list_create(xfree_ptr);
-			else {
-				id_switch = list_find_first(
-					id_switch_list,
-					_find_id_switch,
-					&job_rec->wckeyid);
-			}
-
-			if (!id_switch) {
-				id_switch = xmalloc(sizeof(id_switch_t));
-				id_switch->cluster = job_rec->cluster;
-				id_switch->old = job_rec->wckeyid;
-				id_switch->new = wckeyid;
-				list_append(id_switch_list, id_switch);
-			}
-		} else
-			vals_mod = vals;
-
-		rc = modify_common(mysql_conn, DBD_MODIFY_JOB, now, user_name,
-				   job_table, cond_char, vals_mod,
-				   job_rec->cluster);
-		xfree(cond_char);
-
-		if (job->wckey)
-			xfree(vals_mod);
-
-		if (rc != SLURM_SUCCESS)
-			break;
+		mysql_free_result(result);
+	} else {
+		errno = ESLURM_INVALID_JOB_ID;
+		if (debug_flags & DEBUG_FLAG_DB_JOB)
+			DB_DEBUG(mysql_conn->conn,
+				 "as_mysql_modify_job: Job not found\n%s",
+				 query);
+		xfree(vals);
+		xfree(query);
+		mysql_free_result(result);
+		return NULL;
 	}
-	list_iterator_destroy(itr);
+	xfree(query);
 
-	xfree(vals);
+	user_name = uid_to_string((uid_t) uid);
+	rc = modify_common(mysql_conn, DBD_MODIFY_JOB, now, user_name,
+			   job_table, cond_char, vals, job_cond->cluster);
 	xfree(user_name);
-
+	xfree(cond_char);
+	xfree(vals);
 	if (rc == SLURM_ERROR) {
-		error("Couldn't modify job(s)");
+		error("Couldn't modify job");
 		FREE_NULL_LIST(ret_list);
 		ret_list = NULL;
-	} else if (id_switch_list) {
-		struct tm hour_tm;
-		time_t usage_start, usage_end;
-		char *time_str = NULL;
-		char *query = NULL;
-
-		if (!job_cond->usage_end)
-			job_cond->usage_end = now;
-
-		if (!localtime_r(&job_cond->usage_end, &hour_tm)) {
-			error("Couldn't get localtime from end %ld",
-			      job_cond->usage_end);
-			FREE_NULL_LIST(ret_list);
-			ret_list = NULL;
-			goto endit;
-		}
-		hour_tm.tm_sec = 0;
-		hour_tm.tm_min = 0;
-
-		usage_end = slurm_mktime(&hour_tm);
-
-		if (!job_cond->usage_start)
-			usage_start = 0;
-		else {
-			if (!localtime_r(&job_cond->usage_start, &hour_tm)) {
-				error("Couldn't get localtime from start %ld",
-				      job_cond->usage_start);
-				FREE_NULL_LIST(ret_list);
-				ret_list = NULL;
-				goto endit;
-			}
-			hour_tm.tm_sec = 0;
-			hour_tm.tm_min = 0;
-
-			usage_start = slurm_mktime(&hour_tm);
-		}
-
-		time_str = xstrdup_printf(
-			"(time_start < %ld && time_start >= %ld)",
-			usage_end, usage_start);
-
-		itr = list_iterator_create(id_switch_list);
-		while ((id_switch = list_next(itr))) {
-			char *use_table = NULL;
-
-			for (int i = 0; i < 3; i++) {
-				switch (i) {
-				case 0:
-					use_table = wckey_hour_table;
-					break;
-				case 1:
-					use_table = wckey_day_table;
-					break;
-				case 2:
-					use_table = wckey_month_table;
-					break;
-				}
-
-				use_table = xstrdup_printf(
-					"%s_%s",
-					id_switch->cluster, use_table);
-				/*
-				 * Move any of the new id lines into the old id.
-				 */
-				query = xstrdup_printf(
-					"insert into \"%s\" (creation_time, mod_time, id, id_tres, time_start, alloc_secs) "
-					"select creation_time, %ld, %u, id_tres, time_start, @ASUM:=SUM(alloc_secs) from \"%s\" where (id=%u || id=%u) && %s group by id_tres, time_start on duplicate key update alloc_secs=@ASUM;",
-					use_table,
-					now, id_switch->old, use_table,
-					id_switch->new, id_switch->old,
-					time_str);
-
-				/* Delete all traces of the new id */
-				xstrfmtcat(query,
-					   "delete from \"%s\" where id=%u && %s;",
-					   use_table, id_switch->new, time_str);
-
-				/* Now we just need to switch the ids */
-				xstrfmtcat(query,
-					   "update \"%s\" set mod_time=%ld, id=%u where id=%u && %s;",
-					   use_table, now, id_switch->new, id_switch->old, time_str);
-
-
-				xfree(use_table);
-				if (debug_flags & DEBUG_FLAG_DB_JOB)
-					DB_DEBUG(mysql_conn->conn,
-						 "query\n%s", query);
-				rc = mysql_db_query(mysql_conn, query);
-				xfree(query);
-				if (rc != SLURM_SUCCESS)
-					break;
-			}
-			if (rc != SLURM_SUCCESS) {
-				FREE_NULL_LIST(ret_list);
-				ret_list = NULL;
-				break;
-			}
-		}
-		list_iterator_destroy(itr);
-		xfree(time_str);
 	}
-endit:
-	FREE_NULL_LIST(job_list);
-	FREE_NULL_LIST(id_switch_list);
+
 	return ret_list;
 }
 
 extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
-				 job_record_t *job_ptr)
+				 struct job_record *job_ptr)
 {
 	char *query = NULL;
 	int rc = SLURM_SUCCESS, job_state;
@@ -1134,12 +990,12 @@ extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 }
 
 extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
-			       step_record_t *step_ptr)
+			       struct step_record *step_ptr)
 {
 	int tasks = 0, nodes = 0, task_dist = 0;
 	int rc = SLURM_SUCCESS;
 	char temp_bit[BUF_SIZE];
-	char *node_list = NULL;
+	char node_list[BUFFER_SIZE];
 	char *node_inx = NULL;
 	time_t start_time, submit_time;
 	char *query = NULL;
@@ -1169,7 +1025,8 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 			tasks = step_ptr->job_ptr->details->num_tasks;
 		else
 			tasks = step_ptr->cpu_count;
-		node_list = step_ptr->job_ptr->nodes;
+		snprintf(node_list, BUFFER_SIZE, "%s",
+			 step_ptr->job_ptr->nodes);
 		nodes = step_ptr->step_layout->node_cnt;
 		task_dist = step_ptr->step_layout->task_dist;
 		node_inx = step_ptr->network;
@@ -1182,7 +1039,7 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 		 * We overload tres_per_node with the node name of where the
 		 * script was running.
 		 */
-		node_list = step_ptr->tres_per_node;
+		snprintf(node_list, BUFFER_SIZE, "%s", step_ptr->tres_per_node);
 		nodes = tasks = 1;
 		if (!step_ptr->tres_alloc_str)
 			xstrfmtcat(step_ptr->tres_alloc_str,
@@ -1191,6 +1048,8 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 				   TRES_CPU, 1,
 				   TRES_NODE, 1);
 	} else {
+		char *temp_nodes = NULL;
+
 		if (step_ptr->step_node_bitmap) {
 			node_inx = bit_fmt(temp_bit, sizeof(temp_bit),
 					   step_ptr->step_node_bitmap);
@@ -1215,13 +1074,15 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 			}
 
 			nodes = step_ptr->job_ptr->total_nodes;
-			node_list = step_ptr->job_ptr->nodes;
+			temp_nodes = step_ptr->job_ptr->nodes;
 		} else {
 			tasks = step_ptr->step_layout->task_cnt;
 			nodes = step_ptr->step_layout->node_cnt;
 			task_dist = step_ptr->step_layout->task_dist;
-			node_list = step_ptr->step_layout->node_list;
+			temp_nodes = step_ptr->step_layout->node_list;
 		}
+
+		snprintf(node_list, BUFFER_SIZE, "%s", temp_nodes);
 	}
 
 	if (!step_ptr->job_ptr->db_index) {
@@ -1276,7 +1137,7 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 }
 
 extern int as_mysql_step_complete(mysql_conn_t *mysql_conn,
-				  step_record_t *step_ptr)
+				  struct step_record *step_ptr)
 {
 	time_t now;
 	uint16_t comp_status;
@@ -1538,8 +1399,9 @@ extern int as_mysql_step_complete(mysql_conn_t *mysql_conn,
 	return rc;
 }
 
-extern int as_mysql_suspend(mysql_conn_t *mysql_conn, uint64_t old_db_inx,
-			    job_record_t *job_ptr)
+extern int as_mysql_suspend(mysql_conn_t *mysql_conn,
+			    uint64_t old_db_inx,
+			    struct job_record *job_ptr)
 {
 	char *query = NULL;
 	int rc = SLURM_SUCCESS;

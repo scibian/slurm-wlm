@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import re
 import sys
@@ -120,11 +120,6 @@ def llnl_references(line):
         lineFix = line.replace(manStr,htmlStr)
         if lineFix != line:
             return lineFix
-        manStr = '<A HREF="/cgi-bin/man/man2html?8+logrotate">logrotate</A>'
-        htmlStr = 'logrotate'
-        lineFix = line.replace(manStr,htmlStr)
-        if lineFix != line:
-            return lineFix
         return line
 
 def relative_reference(lineIn):
@@ -164,6 +159,7 @@ def include_virtual(matchobj):
         filename = matchobj.group(2)
 
     if os.access(filename, os.F_OK):
+        #print 'Including file', filename
         lines = open(filename, 'r').read()
         return lines
     else:
@@ -190,6 +186,7 @@ def url_rewrite(matchobj):
             newname = location[:-6] + '.html'
         else:
             newname = location[:-6] + '.html' + matchobj.group(3)
+        #print 'Rewriting', location, 'to', newname
         return matchobj.group(1) + newname + matchobj.group(4)
     else:
         return matchobj.group(0)

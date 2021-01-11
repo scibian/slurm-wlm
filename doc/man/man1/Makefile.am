@@ -12,6 +12,7 @@ man1_MANS = \
 	sdiag.1	\
 	sinfo.1   \
 	slurm.1 \
+	smap.1 \
 	sprio.1 \
 	squeue.1 \
 	sreport.1 \
@@ -43,6 +44,7 @@ html_DATA = \
 	scontrol.html \
 	sdiag.html \
 	sinfo.html \
+	smap.html \
 	sprio.html \
 	squeue.html \
 	sreport.html \

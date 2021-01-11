@@ -47,8 +47,6 @@
 #include "src/common/proc_args.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_resource_info.h"
-#include "src/common/tres_bind.h"
-#include "src/common/tres_frequency.h"
 #include "src/common/uid.h"
 #include "src/common/util-net.h"
 #include "src/common/x11_util.h"
@@ -65,19 +63,8 @@
  * This takes one argument: the desired field in slurm_opt_t.
  * The function name will be automatically generated as arg_set_##field.
  */
-#define ADD_DATA_ERROR(str, rc)					\
-	do {							\
-		data_t *err = data_set_dict(			\
-			data_list_append(errors));		\
-		data_set_string(				\
-			data_key_set(err, "error"), str);	\
-		data_set_int(					\
-			data_key_set(err, "errno"), rc);	\
-	} while (0)
-
 #define COMMON_STRING_OPTION(field)	\
 COMMON_STRING_OPTION_SET(field)		\
-COMMON_STRING_OPTION_SET_DATA(field)	\
 COMMON_STRING_OPTION_GET(field)		\
 COMMON_STRING_OPTION_RESET(field)
 #define COMMON_STRING_OPTION_GET_AND_RESET(field)	\
@@ -92,18 +79,6 @@ static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 	opt->field = xstrdup(arg);				\
 								\
 	return SLURM_SUCCESS;					\
-}
-#define COMMON_STRING_OPTION_SET_DATA(field)			\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-__attribute__((nonnull (1, 2)));				\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-{								\
-	xfree(opt->field);					\
-	return data_get_string_converted(arg, &opt->field);	\
 }
 #define COMMON_STRING_OPTION_GET(field)				\
 static char *arg_get_##field(slurm_opt_t *opt)			\
@@ -122,7 +97,6 @@ static void arg_reset_##field(slurm_opt_t *opt)			\
 
 #define COMMON_SBATCH_STRING_OPTION(field)	\
 COMMON_SBATCH_STRING_OPTION_SET(field)		\
-COMMON_SBATCH_STRING_OPTION_SET_DATA(field)	\
 COMMON_SBATCH_STRING_OPTION_GET(field)		\
 COMMON_SBATCH_STRING_OPTION_RESET(field)
 #define COMMON_SBATCH_STRING_OPTION_SET(field)			\
@@ -137,22 +111,6 @@ static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 	opt->sbatch_opt->field = xstrdup(arg);			\
 								\
 	return SLURM_SUCCESS;					\
-}
-#define COMMON_SBATCH_STRING_OPTION_SET_DATA(field)		\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-__attribute__((nonnull (1, 2)));				\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-{								\
-	if (!opt->sbatch_opt)					\
-		return SLURM_ERROR;				\
-								\
-	xfree(opt->sbatch_opt->field);				\
-	return data_get_string_converted(arg,			\
-		&opt->sbatch_opt->field);			\
 }
 #define COMMON_SBATCH_STRING_OPTION_GET(field)			\
 static char *arg_get_##field(slurm_opt_t *opt)			\
@@ -224,16 +182,6 @@ static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 								\
 	return SLURM_SUCCESS;					\
 }								\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-__attribute__((nonnull (1, 2)));				\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-				const data_t *arg,		\
-				data_t *errors)			\
-{								\
-	return data_copy_bool_converted(arg, &opt->field);	\
-}								\
 static char *arg_get_##field(slurm_opt_t *opt)			\
 __attribute__((nonnull));					\
 static char *arg_get_##field(slurm_opt_t *opt)			\
@@ -273,7 +221,6 @@ static void arg_reset_##field(slurm_opt_t *opt)			\
 
 #define COMMON_INT_OPTION(field, option)			\
 COMMON_INT_OPTION_SET(field, option)				\
-COMMON_INT_OPTION_SET_DATA(field)				\
 COMMON_INT_OPTION_GET(field)					\
 COMMON_OPTION_RESET(field, 0)
 #define COMMON_INT_OPTION_GET_AND_RESET(field)			\
@@ -288,31 +235,6 @@ static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 								\
 	return SLURM_SUCCESS;					\
 }
-
-#define COMMON_INT_OPTION_SET_DATA(field)			\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-			   const data_t *arg,			\
-			   data_t *errors)			\
-__attribute__((nonnull (1, 2)));				\
-static int arg_set_data_##field(slurm_opt_t *opt,		\
-			   const data_t *arg,			\
-			   data_t *errors)			\
-{								\
-	int64_t val;						\
-	int rc = data_get_int_converted(arg, &val);		\
-	if (rc)							\
-		ADD_DATA_ERROR("Unable to read integer value",	\
-			       rc);				\
-	else if (val >= INT_MAX) {				\
-		rc = SLURM_ERROR;				\
-		ADD_DATA_ERROR("Integer too large", rc);	\
-	} else if (val <= INT_MIN) {				\
-		rc = SLURM_ERROR;				\
-		ADD_DATA_ERROR("Integer too small", rc);	\
-	} else							\
-		opt->field = (int) val;				\
-	return rc;						\
-}
 #define COMMON_INT_OPTION_GET(field)				\
 static char *arg_get_##field(slurm_opt_t *opt)			\
 __attribute__((nonnull));					\
@@ -323,33 +245,17 @@ static char *arg_get_##field(slurm_opt_t *opt)			\
 
 #define COMMON_MBYTES_OPTION(field, option)			\
 COMMON_MBYTES_OPTION_SET(field, option)				\
-COMMON_MBYTES_OPTION_SET_DATA(field, option)			\
 COMMON_MBYTES_OPTION_GET(field)					\
 COMMON_OPTION_RESET(field, NO_VAL64)
 #define COMMON_MBYTES_OPTION_SET(field, option)			\
 static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 {								\
 	if ((opt->field = str_to_mbytes2(arg)) == NO_VAL64) {	\
-		error("Invalid " #option " specification");	\
+		error("Invalid ##field specification");		\
 		exit(-1);					\
 	}							\
 								\
-	return SLURM_SUCCESS;					\
-}
-#define COMMON_MBYTES_OPTION_SET_DATA(field, option)			\
-static int arg_set_data_##field(slurm_opt_t *opt, const data_t *arg,	\
-				data_t *errors)				\
-{									\
-	char *str = NULL;						\
-	int rc;								\
-	if ((rc = data_get_string_converted(arg, &str)))		\
-		ADD_DATA_ERROR("Invalid " #option " specification string", \
-			       rc);					\
-	else if ((opt->field = str_to_mbytes2(str)) == NO_VAL64)	\
-		ADD_DATA_ERROR("Invalid " #option " specification",	\
-			       (rc = SLURM_ERROR));			\
-	xfree(str);							\
-	return rc;							\
+        return SLURM_SUCCESS;					\
 }
 #define COMMON_MBYTES_OPTION_GET_AND_RESET(field)		\
 COMMON_MBYTES_OPTION_GET(field)					\
@@ -385,6 +291,8 @@ typedef struct {
 	/*
 	 * Add new members below here:
 	 */
+	bool set;		/* Has the option been set */
+	bool set_by_env;	/* Has the option been set by env var */
 	bool reset_each_pass;	/* Reset on all HetJob passes or only first */
 	bool sbatch_early_pass;	/* For sbatch - run in the early pass. */
 				/* For salloc/srun - this is ignored, and will
@@ -399,20 +307,9 @@ typedef struct {
 	int (*set_func_salloc)(slurm_opt_t *, const char *);
 	int (*set_func_sbatch)(slurm_opt_t *, const char *);
 	int (*set_func_srun)(slurm_opt_t *, const char *);
-
-	/*
-	 * data_t handlers
-	 * IN opt - job component options
-	 * IN arg - job component entry
-	 * IN/OUT errors - appends new dictionary to list of error details
-	 */
-	int (*set_func_data)(slurm_opt_t *opt, const data_t *arg,
-			     data_t *errors);
-
 	/* Return must be xfree()'d */
 	char *(*get_func)(slurm_opt_t *);
 	void (*reset_func)(slurm_opt_t *);
-
 } slurm_cli_opt_t;
 
 /*
@@ -515,7 +412,6 @@ static slurm_cli_opt_t slurm_opt_account = {
 	.has_arg = required_argument,
 	.val = 'A',
 	.set_func = arg_set_account,
-	.set_func_data = arg_set_data_account,
 	.get_func = arg_get_account,
 	.reset_func = arg_reset_account,
 };
@@ -530,13 +426,11 @@ static int arg_set_acctg_freq(slurm_opt_t *opt, const char *arg)
 	return SLURM_SUCCESS;
 }
 COMMON_STRING_OPTION_GET_AND_RESET(acctg_freq);
-COMMON_STRING_OPTION_SET_DATA(acctg_freq);
 static slurm_cli_opt_t slurm_opt_acctg_freq = {
 	.name = "acctg-freq",
 	.has_arg = required_argument,
 	.val = LONG_OPT_ACCTG_FREQ,
 	.set_func = arg_set_acctg_freq,
-	.set_func_data = arg_set_data_acctg_freq,
 	.get_func = arg_get_acctg_freq,
 	.reset_func = arg_reset_acctg_freq,
 };
@@ -579,7 +473,6 @@ static slurm_cli_opt_t slurm_opt_array = {
 	.has_arg = required_argument,
 	.val = 'a',
 	.set_func_sbatch = arg_set_array_inx,
-	.set_func_data = arg_set_data_array_inx,
 	.get_func = arg_get_array_inx,
 	.reset_func = arg_reset_array_inx,
 };
@@ -590,7 +483,6 @@ static slurm_cli_opt_t slurm_opt_batch = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_BATCH,
 	.set_func_sbatch = arg_set_batch_features,
-	.set_func_data = arg_set_data_batch_features,
 	.get_func = arg_get_batch_features,
 	.reset_func = arg_reset_batch_features,
 };
@@ -601,7 +493,6 @@ static slurm_cli_opt_t slurm_opt_bbf = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_BURST_BUFFER_FILE,
 	.set_func = arg_set_burst_buffer_file,
-	.set_func_data = arg_set_data_burst_buffer_file,
 	.get_func = arg_get_burst_buffer_file,
 	.reset_func = arg_reset_burst_buffer_file,
 };
@@ -653,22 +544,6 @@ static int arg_set_begin(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_begin(slurm_opt_t *opt, const data_t *arg,
-			      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (!(opt->begin = parse_time(str, 0))) {
-		rc = ESLURM_INVALID_TIME_VALUE;
-		ADD_DATA_ERROR("Unable to parse time", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_begin(slurm_opt_t *opt)
 {
 	char time_str[32];
@@ -681,7 +556,6 @@ static slurm_cli_opt_t slurm_opt_begin = {
 	.has_arg = required_argument,
 	.val = 'b',
 	.set_func = arg_set_begin,
-	.set_func_data = arg_set_data_begin,
 	.get_func = arg_get_begin,
 	.reset_func = arg_reset_begin,
 };
@@ -727,7 +601,6 @@ static slurm_cli_opt_t slurm_opt_bb = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_BURST_BUFFER_SPEC,
 	.set_func = arg_set_burst_buffer,
-	.set_func_data = arg_set_data_burst_buffer,
 	.get_func = arg_get_burst_buffer,
 	.reset_func = arg_reset_burst_buffer,
 	.reset_each_pass = true,
@@ -739,7 +612,6 @@ static slurm_cli_opt_t slurm_opt_c_constraint = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_CLUSTER_CONSTRAINT,
 	.set_func = arg_set_c_constraint,
-	.set_func_data = arg_set_data_c_constraint,
 	.get_func = arg_get_c_constraint,
 	.reset_func = arg_reset_c_constraint,
 };
@@ -750,24 +622,6 @@ static int arg_set_chdir(slurm_opt_t *opt, const char *arg)
 		opt->chdir = xstrdup(arg);
 	else
 		opt->chdir = make_full_path(arg);
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_chdir(slurm_opt_t *opt, const data_t *arg,
-			      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (is_full_path(str)) {
-		opt->chdir = str;
-		str = NULL;
-	} else
-		opt->chdir = make_full_path(str);
-
-	xfree(str);
 
 	return SLURM_SUCCESS;
 }
@@ -790,9 +644,61 @@ static slurm_cli_opt_t slurm_opt_chdir = {
 	.has_arg = required_argument,
 	.val = 'D',
 	.set_func = arg_set_chdir,
-	.set_func_data = arg_set_data_chdir,
 	.get_func = arg_get_chdir,
 	.reset_func = arg_reset_chdir,
+};
+
+static int arg_set_ckpt_interval(slurm_opt_t *opt, const char *arg)
+{
+	int tmp;
+
+	if (!opt->sbatch_opt && !opt->srun_opt)
+		return SLURM_ERROR;
+
+	tmp = time_str2mins(arg);
+	if ((tmp < 0) && (tmp != INFINITE)) {
+		error("Invalid --checkpoint specification");
+		exit(-1);
+	}
+
+	if (opt->sbatch_opt)
+		opt->sbatch_opt->ckpt_interval = tmp;
+	if (opt->srun_opt)
+		opt->srun_opt->ckpt_interval = tmp;
+
+	return SLURM_SUCCESS;
+}
+static char *arg_get_ckpt_interval(slurm_opt_t *opt)
+{
+	int tmp = 0;
+	char time_str[32];
+
+	if (!opt->sbatch_opt && !opt->srun_opt)
+		return xstrdup("invalid-context");
+
+	if (opt->sbatch_opt)
+		tmp = opt->sbatch_opt->ckpt_interval;
+	if (opt->srun_opt)
+		tmp = opt->srun_opt->ckpt_interval;
+
+	mins2time_str(tmp, time_str, sizeof(time_str));
+	return xstrdup(time_str);
+}
+static void arg_reset_ckpt_interval(slurm_opt_t *opt)
+{
+	if (opt->sbatch_opt)
+		opt->sbatch_opt->ckpt_interval = 0;
+	if (opt->srun_opt)
+		opt->srun_opt->ckpt_interval = 0;
+}
+static slurm_cli_opt_t slurm_opt_checkpoint = {
+	.name = "checkpoint",
+	.has_arg = required_argument,
+	.val = LONG_OPT_CHECKPOINT,
+	.set_func_sbatch = arg_set_ckpt_interval,
+	.set_func_srun = arg_set_ckpt_interval,
+	.get_func = arg_get_ckpt_interval,
+	.reset_func = arg_reset_ckpt_interval,
 };
 
 /* --clusters and --cluster are equivalent */
@@ -802,7 +708,6 @@ static slurm_cli_opt_t slurm_opt_clusters = {
 	.has_arg = required_argument,
 	.val = 'M',
 	.set_func = arg_set_clusters,
-	.set_func_data = arg_set_data_clusters,
 	.get_func = arg_get_clusters,
 	.reset_func = arg_reset_clusters,
 };
@@ -811,7 +716,6 @@ static slurm_cli_opt_t slurm_opt_cluster = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_CLUSTER,
 	.set_func = arg_set_clusters,
-	.set_func_data = arg_set_data_clusters,
 	.get_func = arg_get_clusters,
 	.reset_func = arg_reset_clusters,
 };
@@ -822,7 +726,6 @@ static slurm_cli_opt_t slurm_opt_comment = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_COMMENT,
 	.set_func = arg_set_comment,
-	.set_func_data = arg_set_data_comment,
 	.get_func = arg_get_comment,
 	.reset_func = arg_reset_comment,
 };
@@ -868,7 +771,6 @@ static slurm_cli_opt_t slurm_opt_constraint = {
 	.has_arg = required_argument,
 	.val = 'C',
 	.set_func = arg_set_constraint,
-	.set_func_data = arg_set_data_constraint,
 	.get_func = arg_get_constraint,
 	.reset_func = arg_reset_constraint,
 	.reset_each_pass = true,
@@ -880,7 +782,6 @@ static slurm_cli_opt_t slurm_opt_contiguous = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_CONTIGUOUS,
 	.set_func = arg_set_contiguous,
-	.set_func_data = arg_set_data_contiguous,
 	.get_func = arg_get_contiguous,
 	.reset_func = arg_reset_contiguous,
 	.reset_each_pass = true,
@@ -894,24 +795,6 @@ static int arg_set_core_spec(slurm_opt_t *opt, const char *arg)
 	opt->core_spec = parse_int("--core-spec", arg, false);
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_core_spec(slurm_opt_t *opt, const data_t *arg,
-				  data_t *errors)
-{
-	int rc;
-	int64_t val;
-
-	if ((rc = data_get_int_converted(arg, &val)))
-		ADD_DATA_ERROR("Unable to read int", rc);
-	else if (val < 0)
-		ADD_DATA_ERROR("Invalid core specification", rc);
-	else {
-		if (opt->srun_opt)
-			opt->srun_opt->core_spec_set = (val > 0);
-		opt->core_spec = val;
-	}
-
-	return rc;
 }
 static char *arg_get_core_spec(slurm_opt_t *opt)
 {
@@ -932,7 +815,6 @@ static slurm_cli_opt_t slurm_opt_core_spec = {
 	.has_arg = required_argument,
 	.val = 'S',
 	.set_func = arg_set_core_spec,
-	.set_func_data = arg_set_data_core_spec,
 	.get_func = arg_get_core_spec,
 	.reset_func = arg_reset_core_spec,
 	.reset_each_pass = true,
@@ -940,14 +822,12 @@ static slurm_cli_opt_t slurm_opt_core_spec = {
 
 COMMON_INT_OPTION_SET(cores_per_socket, "--cores-per-socket");
 COMMON_INT_OPTION_GET(cores_per_socket);
-COMMON_INT_OPTION_SET_DATA(cores_per_socket);
 COMMON_OPTION_RESET(cores_per_socket, NO_VAL);
 static slurm_cli_opt_t slurm_opt_cores_per_socket = {
 	.name = "cores-per-socket",
 	.has_arg = required_argument,
 	.val = LONG_OPT_CORESPERSOCKET,
 	.set_func = arg_set_cores_per_socket,
-	.set_func_data = arg_set_data_cores_per_socket,
 	.get_func = arg_get_cores_per_socket,
 	.reset_func = arg_reset_cores_per_socket,
 	.reset_each_pass = true,
@@ -1019,22 +899,6 @@ static int arg_set_cpu_freq(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_cpu_freq(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if ((rc = cpu_freq_verify_cmdline(str, &opt->cpu_freq_min,
-					       &opt->cpu_freq_max,
-					       &opt->cpu_freq_gov)))
-		ADD_DATA_ERROR("Unable to parse CPU frequency", rc);
-	xfree(str);
-
-	return rc;
-}
 static char *arg_get_cpu_freq(slurm_opt_t *opt)
 {
 	return cpu_freq_to_cmdline(opt->cpu_freq_min,
@@ -1052,7 +916,6 @@ static slurm_cli_opt_t slurm_opt_cpu_freq = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_CPU_FREQ,
 	.set_func = arg_set_cpu_freq,
-	.set_func_data = arg_set_data_cpu_freq,
 	.get_func = arg_get_cpu_freq,
 	.reset_func = arg_reset_cpu_freq,
 	.reset_each_pass = true,
@@ -1064,7 +927,6 @@ static slurm_cli_opt_t slurm_opt_cpus_per_gpu = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_CPUS_PER_GPU,
 	.set_func = arg_set_cpus_per_gpu,
-	.set_func_data = arg_set_data_cpus_per_gpu,
 	.get_func = arg_get_cpus_per_gpu,
 	.reset_func = arg_reset_cpus_per_gpu,
 	.reset_each_pass = true,
@@ -1083,39 +945,6 @@ static int arg_set_cpus_per_task(slurm_opt_t *opt, const char *arg)
 	opt->cpus_set = true;
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_cpus_per_task(slurm_opt_t *opt, const data_t *arg,
-				      data_t *errors)
-{
-	int64_t val;
-	int rc = data_get_int_converted(arg, &val);
-	if (rc)
-		ADD_DATA_ERROR("Unable to read integer value", rc);
-	else if (val >= INT_MAX) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Integer too large", SLURM_ERROR);
-	} else if (val < 1) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("cpus per task much be greater than 0", SLURM_ERROR);
-	} else {
-		int old_cpus_per_task = opt->cpus_per_task;
-		opt->cpus_per_task = (int) val;
-
-		if (opt->cpus_set && opt->srun_opt &&
-		    (old_cpus_per_task < opt->cpus_per_task)) {
-			char str[1024];
-
-			snprintf(str, sizeof(str),
-				"Job step's --cpus-per-task value exceeds that of job (%d > %d). Job step may never run.",
-				opt->cpus_per_task, old_cpus_per_task);
-
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR(str, rc);
-		}
-
-		opt->cpus_set = true;
-	}
-	return rc;
-}
 COMMON_INT_OPTION_GET(cpus_per_task);
 static void arg_reset_cpus_per_task(slurm_opt_t *opt)
 {
@@ -1127,7 +956,6 @@ static slurm_cli_opt_t slurm_opt_cpus_per_task = {
 	.has_arg = required_argument,
 	.val = 'c',
 	.set_func = arg_set_cpus_per_task,
-	.set_func_data = arg_set_data_cpus_per_task,
 	.get_func = arg_get_cpus_per_task,
 	.reset_func = arg_reset_cpus_per_task,
 	.reset_each_pass = true,
@@ -1142,23 +970,6 @@ static int arg_set_deadline(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_deadline(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (!(opt->deadline = parse_time(str, 0))) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid deadline time", rc);
-	}
-
-	xfree(str);
-
-	return rc;
-}
 static char *arg_get_deadline(slurm_opt_t *opt)
 {
 	char time_str[32];
@@ -1171,7 +982,6 @@ static slurm_cli_opt_t slurm_opt_deadline = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_DEADLINE,
 	.set_func = arg_set_deadline,
-	.set_func_data = arg_set_data_deadline,
 	.get_func = arg_get_deadline,
 	.reset_func = arg_reset_deadline,
 };
@@ -1215,22 +1025,6 @@ static int arg_set_delay_boot(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_delay_boot(slurm_opt_t *opt, const data_t *arg,
-				   data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if ((opt->delay_boot = time_str2secs(str)) == NO_VAL) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid delay boot specification", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_delay_boot(slurm_opt_t *opt)
 {
 	char time_str[32];
@@ -1245,65 +1039,8 @@ static slurm_cli_opt_t slurm_opt_delay_boot = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_DELAY_BOOT,
 	.set_func = arg_set_delay_boot,
-	.set_func_data = arg_set_data_delay_boot,
 	.get_func = arg_get_delay_boot,
 	.reset_func = arg_reset_delay_boot,
-};
-
-static data_for_each_cmd_t _parse_env(const char *key, const data_t *data, void *arg)
-{
-	int rc = DATA_FOR_EACH_FAIL;
-	char ***env = arg;
-	char *ebuf = NULL;
-
-	if (!data_get_string_converted(data, &ebuf)) {
-		env_array_append(env, key, ebuf);
-		rc = DATA_FOR_EACH_CONT;
-	}
-	xfree(ebuf);
-
-	return rc;
-}
-
-static int arg_set_data_environment(slurm_opt_t *opt, const data_t *arg,
-				    data_t *errors)
-{
-	if (data_get_type(arg) != DATA_TYPE_DICT) {
-		ADD_DATA_ERROR("environment must be a dictionary", SLURM_ERROR);
-		return SLURM_ERROR;
-	}
-
-	/*
-	 * always start with a fresh environment if client
-	 * provides one explicitly
-	 */
-	if (opt->environment)
-		env_array_free(opt->environment);
-	opt->environment = env_array_create();
-
-	if (data_dict_for_each_const(arg, _parse_env, &opt->environment) < 0) {
-		ADD_DATA_ERROR("failure parsing environment", SLURM_ERROR);
-		return SLURM_ERROR;
-	}
-
-	return SLURM_SUCCESS;
-}
-static void arg_reset_environment(slurm_opt_t *opt)
-{
-	env_array_free(opt->environment);
-	opt->environment = NULL;
-}
-static char *arg_get_environment(slurm_opt_t *opt)
-{
-	return NULL;
-}
-static slurm_cli_opt_t slurm_opt_environment = {
-	.name = "environment",
-	.val = LONG_OPT_ENVIRONMENT,
-	.has_arg = required_argument,
-	.set_func_data = arg_set_data_environment,
-	.get_func = arg_get_environment,
-	.reset_func = arg_reset_environment,
 };
 
 COMMON_STRING_OPTION(dependency);
@@ -1312,7 +1049,6 @@ static slurm_cli_opt_t slurm_opt_dependency = {
 	.has_arg = required_argument,
 	.val = 'd',
 	.set_func = arg_set_dependency,
-	.set_func_data = arg_set_data_dependency,
 	.get_func = arg_get_dependency,
 	.reset_func = arg_reset_dependency,
 };
@@ -1337,27 +1073,6 @@ static int arg_set_distribution(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_distribution(slurm_opt_t *opt, const data_t *arg,
-				     data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		/* FIXME: ignore SLURM_DIST_PLANESIZE envvar for slurmrestd */
-		opt->distribution = verify_dist_type(str, &opt->plane_size);
-
-		if (opt->distribution == SLURM_DIST_UNKNOWN) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid distribution", rc);
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_distribution(slurm_opt_t *opt)
 {
 	char *dist = xstrdup(format_task_dist_states(opt->distribution));
@@ -1375,7 +1090,6 @@ static slurm_cli_opt_t slurm_opt_distribution = {
 	.has_arg = required_argument,
 	.val = 'm',
 	.set_func = arg_set_distribution,
-	.set_func_data = arg_set_data_distribution,
 	.get_func = arg_get_distribution,
 	.reset_func = arg_reset_distribution,
 	.reset_each_pass = true,
@@ -1404,27 +1118,6 @@ static int arg_set_efname(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_efname(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->efname);
-		if (!xstrcasecmp(str, "none"))
-			opt->efname = xstrdup("/dev/null");
-		else {
-			opt->efname = str;
-			str = NULL;
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_STRING_OPTION_GET(efname);
 COMMON_STRING_OPTION_RESET(efname);
 static slurm_cli_opt_t slurm_opt_error = {
@@ -1433,7 +1126,6 @@ static slurm_cli_opt_t slurm_opt_error = {
 	.val = 'e',
 	.set_func_sbatch = arg_set_efname,
 	.set_func_srun = arg_set_efname,
-	.set_func_data = arg_set_data_efname,
 	.get_func = arg_get_efname,
 	.reset_func = arg_reset_efname,
 };
@@ -1444,7 +1136,6 @@ static slurm_cli_opt_t slurm_opt_exclude = {
 	.has_arg = required_argument,
 	.val = 'x',
 	.set_func = arg_set_exclude,
-	.set_func_data = arg_set_data_exclude,
 	.get_func = arg_get_exclude,
 	.reset_func = arg_reset_exclude,
 };
@@ -1467,34 +1158,6 @@ static int arg_set_exclusive(slurm_opt_t *opt, const char *arg)
 	}
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_exclusive(slurm_opt_t *opt, const data_t *arg,
-				  data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		if (!str || !xstrcasecmp(str, "exclusive")) {
-			if (opt->srun_opt)
-				opt->srun_opt->exclusive = true;
-			opt->shared = JOB_SHARED_NONE;
-		} else if (!xstrcasecmp(str, "oversubscribe")) {
-			opt->shared = JOB_SHARED_OK;
-		} else if (!xstrcasecmp(str, "user")) {
-			opt->shared = JOB_SHARED_USER;
-		} else if (!xstrcasecmp(str, "mcs")) {
-			opt->shared = JOB_SHARED_MCS;
-		} else {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid exclusive specification", rc);
-		}
-	}
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_exclusive(slurm_opt_t *opt)
 {
@@ -1522,7 +1185,6 @@ static slurm_cli_opt_t slurm_opt_exclusive = {
 	.has_arg = optional_argument,
 	.val = LONG_OPT_EXCLUSIVE,
 	.set_func = arg_set_exclusive,
-	.set_func_data = arg_set_data_exclusive,
 	.get_func = arg_get_exclusive,
 	.reset_func = arg_reset_shared,
 	.reset_each_pass = true,
@@ -1575,7 +1237,6 @@ static slurm_cli_opt_t slurm_opt_export_file = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_EXPORT_FILE,
 	.set_func_sbatch = arg_set_export_file,
-	.set_func_data = arg_set_data_export_file,
 	.get_func = arg_get_export_file,
 	.reset_func = arg_reset_export_file,
 };
@@ -1655,36 +1316,6 @@ static int arg_set_get_user_env(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_get_user_env(slurm_opt_t *opt, const data_t *arg,
-				     data_t *errors)
-{
-	int rc = SLURM_SUCCESS;
-	char *str = NULL;
-
-	if ((data_get_type(arg) == DATA_TYPE_NULL))
-		opt->get_user_env_time = 0;
-	else if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		char *end_ptr;
-
-		opt->get_user_env_time = strtol(str, &end_ptr, 10);
-
-		if (!end_ptr || (end_ptr[0] == '\0'))
-			opt->get_user_env_mode = -1; /* not set */
-		else if ((end_ptr[0] == 's') || (end_ptr[0] == 'S'))
-			opt->get_user_env_mode = 1;
-		else if ((end_ptr[0] == 'l') || (end_ptr[0] == 'L'))
-			opt->get_user_env_mode = 2;
-		else {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid get user environment specification", rc);
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_get_user_env(slurm_opt_t *opt)
 {
 	if (opt->get_user_env_mode == 1)
@@ -1706,7 +1337,6 @@ static slurm_cli_opt_t slurm_opt_get_user_env = {
 	.val = LONG_OPT_GET_USER_ENV,
 	.set_func_salloc = arg_set_get_user_env,
 	.set_func_sbatch = arg_set_get_user_env,
-	.set_func_data = arg_set_data_get_user_env,
 	.get_func = arg_get_get_user_env,
 	.reset_func = arg_reset_get_user_env,
 };
@@ -1725,22 +1355,6 @@ static int arg_set_gid(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_gid(slurm_opt_t *opt, const data_t *arg,
-			    data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (gid_from_string(str, &opt->gid) < 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid or unknown gid", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_INT_OPTION_GET(gid);
 COMMON_OPTION_RESET(gid, getgid());
 static slurm_cli_opt_t slurm_opt_gid = {
@@ -1748,114 +1362,27 @@ static slurm_cli_opt_t slurm_opt_gid = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_GID,
 	.set_func = arg_set_gid,
-	.set_func_data = arg_set_data_gid,
 	.get_func = arg_get_gid,
 	.reset_func = arg_reset_gid,
 };
 
-static int arg_set_gpu_bind(slurm_opt_t *opt, const char *arg)
-{
-	xfree(opt->gpu_bind);
-	xfree(opt->tres_bind);
-	opt->gpu_bind = xstrdup(arg);
-	xstrfmtcat(opt->tres_bind, "gpu:%s", opt->gpu_bind);
-	if (tres_bind_verify_cmdline(opt->tres_bind)) {
-		error("Invalid --gpu-bind argument: %s", opt->tres_bind);
-		exit(1);
-	}
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_gpu_bind(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->gpu_bind);
-		xfree(opt->tres_bind);
-		opt->gpu_bind = xstrdup(str);
-		xstrfmtcat(opt->tres_bind, "gpu:%s", opt->gpu_bind);
-		if (tres_bind_verify_cmdline(opt->tres_bind)) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid --gpu-bind argument", rc);
-			xfree(opt->gpu_bind);
-			xfree(opt->tres_bind);
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
-static void arg_reset_gpu_bind(slurm_opt_t *opt)
-{
-	xfree(opt->gpu_bind);
-	xfree(opt->tres_bind);
-}
-COMMON_STRING_OPTION_GET(gpu_bind);
+COMMON_STRING_OPTION(gpu_bind);
 static slurm_cli_opt_t slurm_opt_gpu_bind = {
 	.name = "gpu-bind",
 	.has_arg = required_argument,
 	.val = LONG_OPT_GPU_BIND,
 	.set_func = arg_set_gpu_bind,
-	.set_func_data = arg_set_data_gpu_bind,
 	.get_func = arg_get_gpu_bind,
 	.reset_func = arg_reset_gpu_bind,
 	.reset_each_pass = true,
 };
 
-static int arg_set_gpu_freq(slurm_opt_t *opt, const char *arg)
-{
-	xfree(opt->gpu_freq);
-	xfree(opt->tres_freq);
-	opt->gpu_freq = xstrdup(arg);
-	xstrfmtcat(opt->tres_freq, "gpu:%s", opt->gpu_freq);
-	if (tres_freq_verify_cmdline(opt->tres_freq)) {
-		error("Invalid --gpu-freq argument: %s", opt->tres_freq);
-		exit(1);
-	}
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_gpu_freq(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->gpu_freq);
-		xfree(opt->tres_freq);
-		opt->gpu_freq = xstrdup(str);
-		xstrfmtcat(opt->tres_freq, "gpu:%s", opt->gpu_freq);
-		if (tres_freq_verify_cmdline(opt->tres_freq)) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid --gpu-freq argument", rc);
-			xfree(opt->gpu_freq);
-			xfree(opt->tres_freq);
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
-static void arg_reset_gpu_freq(slurm_opt_t *opt)
-{
-	xfree(opt->gpu_freq);
-	xfree(opt->tres_freq);
-}
-COMMON_STRING_OPTION_GET(gpu_freq);
+COMMON_STRING_OPTION(gpu_freq);
 static slurm_cli_opt_t slurm_opt_gpu_freq = {
 	.name = "gpu-freq",
 	.has_arg = required_argument,
 	.val = LONG_OPT_GPU_FREQ,
 	.set_func = arg_set_gpu_freq,
-	.set_func_data = arg_set_data_gpu_freq,
 	.get_func = arg_get_gpu_freq,
 	.reset_func = arg_reset_gpu_freq,
 	.reset_each_pass = true,
@@ -1867,7 +1394,6 @@ static slurm_cli_opt_t slurm_opt_gpus = {
 	.has_arg = required_argument,
 	.val = 'G',
 	.set_func = arg_set_gpus,
-	.set_func_data = arg_set_data_gpus,
 	.get_func = arg_get_gpus,
 	.reset_func = arg_reset_gpus,
 	.reset_each_pass = true,
@@ -1879,7 +1405,6 @@ static slurm_cli_opt_t slurm_opt_gpus_per_node = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_GPUS_PER_NODE,
 	.set_func = arg_set_gpus_per_node,
-	.set_func_data = arg_set_data_gpus_per_node,
 	.get_func = arg_get_gpus_per_node,
 	.reset_func = arg_reset_gpus_per_node,
 	.reset_each_pass = true,
@@ -1891,7 +1416,6 @@ static slurm_cli_opt_t slurm_opt_gpus_per_socket = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_GPUS_PER_SOCKET,
 	.set_func = arg_set_gpus_per_socket,
-	.set_func_data = arg_set_data_gpus_per_socket,
 	.get_func = arg_get_gpus_per_socket,
 	.reset_func = arg_reset_gpus_per_socket,
 	.reset_each_pass = true,
@@ -1903,7 +1427,6 @@ static slurm_cli_opt_t slurm_opt_gpus_per_task = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_GPUS_PER_TASK,
 	.set_func = arg_set_gpus_per_task,
-	.set_func_data = arg_set_data_gpus_per_task,
 	.get_func = arg_get_gpus_per_task,
 	.reset_func = arg_reset_gpus_per_task,
 	.reset_each_pass = true,
@@ -1921,33 +1444,12 @@ static int arg_set_gres(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_gres(slurm_opt_t *opt, const data_t *arg,
-			     data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (!xstrcasecmp(str, "help") || !xstrcasecmp(str, "list")) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("GRES \"help\" not supported", rc);
-	} else {
-		xfree(opt->gres);
-		opt->gres = str;
-		str = NULL;
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_STRING_OPTION_GET_AND_RESET(gres);
 static slurm_cli_opt_t slurm_opt_gres = {
 	.name = "gres",
 	.has_arg = required_argument,
 	.val = LONG_OPT_GRES,
 	.set_func = arg_set_gres,
-	.set_func_data = arg_set_data_gres,
 	.get_func = arg_get_gres,
 	.reset_func = arg_reset_gres,
 	.reset_each_pass = true,
@@ -1968,30 +1470,6 @@ static int arg_set_gres_flags(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_gres_flags(slurm_opt_t *opt, const data_t *arg,
-				   data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		/* clear both flag options first */
-		opt->job_flags &= ~(GRES_DISABLE_BIND|GRES_ENFORCE_BIND);
-		if (!xstrcasecmp(str, "disable-binding")) {
-			opt->job_flags |= GRES_DISABLE_BIND;
-		} else if (!xstrcasecmp(str, "enforce-binding")) {
-			opt->job_flags |= GRES_ENFORCE_BIND;
-		} else {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid GRES flags", rc);
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_gres_flags(slurm_opt_t *opt)
 {
 	if (opt->job_flags & GRES_DISABLE_BIND)
@@ -2010,7 +1488,6 @@ static slurm_cli_opt_t slurm_opt_gres_flags = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_GRES_FLAGS,
 	.set_func = arg_set_gres_flags,
-	.set_func_data = arg_set_data_gres_flags,
 	.get_func = arg_get_gres_flags,
 	.reset_func = arg_reset_gres_flags,
 	.reset_each_pass = true,
@@ -2050,7 +1527,6 @@ static slurm_cli_opt_t slurm_opt_hint = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_HINT,
 	.set_func = arg_set_hint,
-	.set_func_data = arg_set_data_hint,
 	.get_func = arg_get_hint,
 	.reset_func = arg_reset_hint,
 	.reset_each_pass = true,
@@ -2062,12 +1538,11 @@ static slurm_cli_opt_t slurm_opt_hold = {
 	.has_arg = no_argument,
 	.val = 'H',
 	.set_func = arg_set_hold,
-	.set_func_data = arg_set_data_hold,
 	.get_func = arg_get_hold,
 	.reset_func = arg_reset_hold,
 };
 
-static int arg_set_ignore_pbs(slurm_opt_t *opt, const char *arg)
+static int arg_set_get_ignore_pbs(slurm_opt_t *opt, const char *arg)
 {
 	if (!opt->sbatch_opt)
 		return SLURM_ERROR;
@@ -2076,14 +1551,14 @@ static int arg_set_ignore_pbs(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static char *arg_get_ignore_pbs(slurm_opt_t *opt)
+static char *arg_get_get_ignore_pbs(slurm_opt_t *opt)
 {
 	if (!opt->sbatch_opt)
 		return xstrdup("invalid-context");
 
 	return xstrdup(opt->sbatch_opt->ignore_pbs ? "set" : "unset");
 }
-static void arg_reset_ignore_pbs(slurm_opt_t *opt)
+static void arg_reset_get_ignore_pbs(slurm_opt_t *opt)
 {
 	if (opt->sbatch_opt)
 		opt->sbatch_opt->ignore_pbs = false;
@@ -2092,9 +1567,10 @@ static slurm_cli_opt_t slurm_opt_ignore_pbs = {
 	.name = "ignore-pbs",
 	.has_arg = no_argument,
 	.val = LONG_OPT_IGNORE_PBS,
-	.set_func_sbatch = arg_set_ignore_pbs,
-	.get_func = arg_get_ignore_pbs,
-	.reset_func = arg_reset_ignore_pbs,
+	.sbatch_early_pass = true,
+	.set_func_sbatch = arg_set_get_ignore_pbs,
+	.get_func = arg_get_get_ignore_pbs,
+	.reset_func = arg_reset_get_ignore_pbs,
 };
 
 static int arg_set_immediate(slurm_opt_t *opt, const char *arg)
@@ -2133,30 +1609,6 @@ static int arg_set_ifname(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_ifname(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->ifname);
-		if (!xstrcasecmp(str, "none"))
-			opt->ifname = xstrdup("/dev/null");
-		else {
-			opt->ifname = str;
-			str = NULL;
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_STRING_OPTION_GET(ifname);
 COMMON_STRING_OPTION_RESET(ifname);
 static slurm_cli_opt_t slurm_opt_input = {
@@ -2165,7 +1617,6 @@ static slurm_cli_opt_t slurm_opt_input = {
 	.val = 'i',
 	.set_func_sbatch = arg_set_ifname,
 	.set_func_srun = arg_set_ifname,
-	.set_func_data = arg_set_data_ifname,
 	.get_func = arg_get_ifname,
 	.reset_func = arg_reset_ifname,
 };
@@ -2209,7 +1660,6 @@ static slurm_cli_opt_t slurm_opt_job_name = {
 	.has_arg = required_argument,
 	.val = 'J',
 	.set_func = arg_set_job_name,
-	.set_func_data = arg_set_data_job_name,
 	.get_func = arg_get_job_name,
 	.reset_func = arg_reset_job_name,
 };
@@ -2302,21 +1752,6 @@ static int arg_set_kill_on_invalid_dep(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_kill_on_invalid_dep(slurm_opt_t *opt, const data_t *arg,
-					    data_t *errors)
-{
-	int rc;
-	bool kill;
-
-	if ((rc = data_copy_bool_converted(arg, &kill)))
-		ADD_DATA_ERROR("Unable to read boolean", rc);
-	else if (kill)
-		opt->job_flags |= KILL_INV_DEP;
-	else
-		opt->job_flags |= NO_KILL_INV_DEP;
-
-	return rc;
-}
 static char *arg_get_kill_on_invalid_dep(slurm_opt_t *opt)
 {
 	if (opt->job_flags & KILL_INV_DEP)
@@ -2335,7 +1770,6 @@ static slurm_cli_opt_t slurm_opt_kill_on_invalid_dep = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_KILL_INV_DEP,
 	.set_func_sbatch = arg_set_kill_on_invalid_dep,
-	.set_func_data = arg_set_data_kill_on_invalid_dep,
 	.get_func = arg_get_kill_on_invalid_dep,
 	.reset_func = arg_reset_kill_on_invalid_dep,
 };
@@ -2356,7 +1790,6 @@ static slurm_cli_opt_t slurm_opt_licenses = {
 	.has_arg = required_argument,
 	.val = 'L',
 	.set_func = arg_set_licenses,
-	.set_func_data = arg_set_data_licenses,
 	.get_func = arg_get_licenses,
 	.reset_func = arg_reset_licenses,
 	.reset_each_pass = true,
@@ -2372,22 +1805,6 @@ static int arg_set_mail_type(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_mail_type(slurm_opt_t *opt, const data_t *arg,
-				  data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if ((opt->mail_type |= parse_mail_type(str)) == INFINITE16) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid mail type specification", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_mail_type(slurm_opt_t *opt)
 {
 	return xstrdup(print_mail_type(opt->mail_type));
@@ -2398,7 +1815,6 @@ static slurm_cli_opt_t slurm_opt_mail_type = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_MAIL_TYPE,
 	.set_func = arg_set_mail_type,
-	.set_func_data = arg_set_data_mail_type,
 	.get_func = arg_get_mail_type,
 	.reset_func = arg_reset_mail_type,
 	.reset_each_pass = true,
@@ -2410,7 +1826,6 @@ static slurm_cli_opt_t slurm_opt_mail_user = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_MAIL_USER,
 	.set_func = arg_set_mail_user,
-	.set_func_data = arg_set_data_mail_user,
 	.get_func = arg_get_mail_user,
 	.reset_func = arg_reset_mail_user,
 	.reset_each_pass = true,
@@ -2456,7 +1871,6 @@ static slurm_cli_opt_t slurm_opt_mcs_label = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_MCS_LABEL,
 	.set_func = arg_set_mcs_label,
-	.set_func_data = arg_set_data_mcs_label,
 	.get_func = arg_get_mcs_label,
 	.reset_func = arg_reset_mcs_label,
 };
@@ -2477,28 +1891,12 @@ static int arg_set_mem(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_mem(slurm_opt_t *opt, const data_t *arg, data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if ((opt->pn_min_memory = str_to_mbytes2(str)) == NO_VAL64) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid memory specification", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_MBYTES_OPTION_GET_AND_RESET(pn_min_memory);
 static slurm_cli_opt_t slurm_opt_mem = {
 	.name = "mem",
 	.has_arg = required_argument,
 	.val = LONG_OPT_MEM,
 	.set_func = arg_set_mem,
-	.set_func_data = arg_set_data_mem,
 	.get_func = arg_get_pn_min_memory,
 	.reset_func = arg_reset_pn_min_memory,
 };
@@ -2510,26 +1908,6 @@ static int arg_set_mem_bind(slurm_opt_t *opt, const char *arg)
 		exit(-1);
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_mem_bind(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	xfree(opt->mem_bind);
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (xstrcasestr(str, "help")) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("memory binding help not supported", rc);
-	} else if ((rc = slurm_verify_mem_bind(str, &opt->mem_bind,
-					       &opt->mem_bind_type)))
-		ADD_DATA_ERROR("Invalid memory binding specification", rc);
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_mem_bind(slurm_opt_t *opt)
 {
@@ -2558,38 +1936,34 @@ static slurm_cli_opt_t slurm_opt_mem_bind = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_MEM_BIND,
 	.set_func = arg_set_mem_bind,
-	.set_func_data = arg_set_data_mem_bind,
 	.get_func = arg_get_mem_bind,
 	.reset_func = arg_reset_mem_bind,
 	.reset_each_pass = true,
 };
 
-COMMON_MBYTES_OPTION(mem_per_cpu, --mem-per-cpu);
+COMMON_MBYTES_OPTION(mem_per_cpu, "--mem-per-cpu");
 static slurm_cli_opt_t slurm_opt_mem_per_cpu = {
 	.name = "mem-per-cpu",
 	.has_arg = required_argument,
 	.val = LONG_OPT_MEM_PER_CPU,
 	.set_func = arg_set_mem_per_cpu,
-	.set_func_data = arg_set_data_mem_per_cpu,
 	.get_func = arg_get_mem_per_cpu,
 	.reset_func = arg_reset_mem_per_cpu,
 	.reset_each_pass = true,
 };
 
-COMMON_MBYTES_OPTION(mem_per_gpu, --mem-per-gpu);
+COMMON_MBYTES_OPTION(mem_per_gpu, "--mem-per-gpu");
 static slurm_cli_opt_t slurm_opt_mem_per_gpu = {
 	.name = "mem-per-gpu",
 	.has_arg = required_argument,
 	.val = LONG_OPT_MEM_PER_GPU,
 	.set_func = arg_set_mem_per_gpu,
-	.set_func_data = arg_set_data_mem_per_gpu,
 	.get_func = arg_get_mem_per_gpu,
 	.reset_func = arg_reset_mem_per_gpu,
 	.reset_each_pass = true,
 };
 
 COMMON_INT_OPTION_SET(pn_min_cpus, "--mincpus");
-COMMON_INT_OPTION_SET_DATA(pn_min_cpus);
 COMMON_INT_OPTION_GET(pn_min_cpus);
 COMMON_OPTION_RESET(pn_min_cpus, -1);
 static slurm_cli_opt_t slurm_opt_mincpus = {
@@ -2597,7 +1971,6 @@ static slurm_cli_opt_t slurm_opt_mincpus = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_MINCPUS,
 	.set_func = arg_set_pn_min_cpus,
-	.set_func_data = arg_set_data_pn_min_cpus,
 	.get_func = arg_get_pn_min_cpus,
 	.reset_func = arg_reset_pn_min_cpus,
 	.reset_each_pass = true,
@@ -2659,7 +2032,6 @@ static slurm_cli_opt_t slurm_opt_network = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_NETWORK,
 	.set_func = arg_set_network,
-	.set_func_data = arg_set_data_network,
 	.get_func = arg_get_network,
 	.reset_func = arg_reset_network,
 	.reset_each_pass = true,
@@ -2684,23 +2056,6 @@ static int arg_set_nice(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_nice(slurm_opt_t *opt, const data_t *arg,
-			     data_t *errors)
-{
-	int64_t val;
-	int rc = SLURM_SUCCESS;
-
-	if (data_get_type(arg) == DATA_TYPE_NULL)
-		opt->nice = 100;
-	else if ((rc = data_get_int_converted(arg, &val)))
-		ADD_DATA_ERROR("Unable to read integer value", rc);
-	else if (llabs(val) >= (NICE_OFFSET - 3)) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Nice too large", rc);
-	} else
-		opt->nice = (int) val;
-	return rc;
-}
 static char *arg_get_nice(slurm_opt_t *opt)
 {
 	return xstrdup_printf("%d", opt->nice);
@@ -2711,7 +2066,6 @@ static slurm_cli_opt_t slurm_opt_nice = {
 	.has_arg = optional_argument,
 	.val = LONG_OPT_NICE,
 	.set_func = arg_set_nice,
-	.set_func_data = arg_set_data_nice,
 	.get_func = arg_get_nice,
 	.reset_func = arg_reset_nice,
 };
@@ -2756,27 +2110,6 @@ static int arg_set_no_kill(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_no_kill(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc = SLURM_SUCCESS;
-	char *str = NULL;
-
-	if (data_get_type(arg) == DATA_TYPE_NULL)
-		opt->no_kill = true;
-	else if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (!xstrcasecmp(str, "set"))
-		opt->no_kill = true;
-	else if (!xstrcasecmp(str, "off") || !xstrcasecmp(str, "no"))
-		opt->no_kill = false;
-	else {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid no kill specification", rc);
-	}
-	xfree(str);
-	return rc;
-}
 static char *arg_get_no_kill(slurm_opt_t *opt)
 {
 	return xstrdup(opt->no_kill ? "set" : "unset");
@@ -2787,23 +2120,12 @@ static slurm_cli_opt_t slurm_opt_no_kill = {
 	.has_arg = optional_argument,
 	.val = 'k',
 	.set_func = arg_set_no_kill,
-	.set_func_data = arg_set_data_no_kill,
 	.get_func = arg_get_no_kill,
 	.reset_func = arg_reset_no_kill,
 };
 
 /* see --requeue below as well */
 static int arg_set_no_requeue(slurm_opt_t *opt, const char *arg)
-{
-	if (!opt->sbatch_opt)
-		return SLURM_ERROR;
-
-	opt->sbatch_opt->requeue = 0;
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_no_requeue(slurm_opt_t *opt, const data_t *arg,
-				   data_t *errors)
 {
 	if (!opt->sbatch_opt)
 		return SLURM_ERROR;
@@ -2833,7 +2155,6 @@ static slurm_cli_opt_t slurm_opt_no_requeue = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_NO_REQUEUE,
 	.set_func_sbatch = arg_set_no_requeue,
-	.set_func_data = arg_set_data_no_requeue,
 	.get_func = arg_get_requeue,
 	.reset_func = arg_reset_requeue,
 };
@@ -2884,7 +2205,6 @@ static slurm_cli_opt_t slurm_opt_nodefile = {
 	.has_arg = required_argument,
 	.val = 'F',
 	.set_func = arg_set_nodefile,
-	.set_func_data = NULL, /* avoid security issues of reading user files */
 	.get_func = arg_get_nodefile,
 	.reset_func = arg_reset_nodefile,
 	.reset_each_pass = true,
@@ -2898,31 +2218,12 @@ static int arg_set_nodelist(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_nodelist(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->nodefile);
-		xfree(opt->nodelist);
-		opt->nodelist = str;
-		str = NULL;
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_STRING_OPTION_GET_AND_RESET(nodelist);
 static slurm_cli_opt_t slurm_opt_nodelist = {
 	.name = "nodelist",
 	.has_arg = required_argument,
 	.val = 'w',
 	.set_func = arg_set_nodelist,
-	.set_func_data = arg_set_data_nodelist,
 	.get_func = arg_get_nodelist,
 	.reset_func = arg_reset_nodelist,
 	.reset_each_pass = true,
@@ -2934,63 +2235,6 @@ static int arg_set_nodes(slurm_opt_t *opt, const char *arg)
 					   &opt->max_nodes)))
 		exit(-1);
 	return SLURM_SUCCESS;
-}
-
-typedef struct {
-	int min;
-	int max;
-	data_t *errors;
-} node_cnt_t;
-
-static data_for_each_cmd_t _parse_nodes_counts(const data_t *data, void *arg)
-{
-	node_cnt_t *nodes = arg;
-	data_t *errors = nodes->errors;
-	int64_t val;
-	int rc;
-
-	if ((rc = data_get_int_converted(data, &val))) {
-		ADD_DATA_ERROR("Invalid node count", rc);
-		return DATA_FOR_EACH_FAIL;
-	}
-
-	nodes->min = nodes->max;
-	nodes->max = (int) val;
-
-	return DATA_FOR_EACH_CONT;
-}
-
-static int arg_set_data_nodes(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc = SLURM_SUCCESS;
-	char *str = NULL;
-
-	if (data_get_type(arg) == DATA_TYPE_LIST) {
-		node_cnt_t counts =
-			{ .min = NO_VAL, .max = NO_VAL, .errors = errors };
-
-		if (data_get_list_length(arg) != 2) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid node count list size", rc);
-		} else if (data_list_for_each_const(arg, _parse_nodes_counts,
-						    &counts) < 0) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid node count specification", rc);
-		} else {
-			opt->min_nodes = counts.min;
-			opt->max_nodes = counts.max;
-		}
-	} else if ((rc = data_get_string_converted(arg, &str))) {
-		ADD_DATA_ERROR("Unable to read string", rc);
-	} else if (!(opt->nodes_set = verify_node_count(str, &opt->min_nodes,
-						      &opt->max_nodes))) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid node count string", rc);
-	}
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_nodes(slurm_opt_t *opt)
 {
@@ -3009,7 +2253,6 @@ static slurm_cli_opt_t slurm_opt_nodes = {
 	.has_arg = required_argument,
 	.val = 'N',
 	.set_func = arg_set_nodes,
-	.set_func_data = arg_set_data_nodes,
 	.get_func = arg_get_nodes,
 	.reset_func = arg_reset_nodes,
 	.reset_each_pass = true,
@@ -3020,25 +2263,6 @@ static int arg_set_ntasks(slurm_opt_t *opt, const char *arg)
 	opt->ntasks = parse_int("--ntasks", arg, true);
 	opt->ntasks_set = true;
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_ntasks(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int64_t val;
-	int rc = data_get_int_converted(arg, &val);
-	if (rc)
-		ADD_DATA_ERROR("Unable to read integer value", rc);
-	else if (val >= INT_MAX) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("ntasks too large", rc);
-	} else if (val <= 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("ntasks too small", rc);
-	} else {
-		opt->ntasks = (int) val;
-		opt->ntasks_set = true;
-	}
-	return rc;
 }
 COMMON_INT_OPTION_GET(ntasks);
 static void arg_reset_ntasks(slurm_opt_t *opt)
@@ -3051,14 +2275,12 @@ static slurm_cli_opt_t slurm_opt_ntasks = {
 	.has_arg = required_argument,
 	.val = 'n',
 	.set_func = arg_set_ntasks,
-	.set_func_data = arg_set_data_ntasks,
 	.get_func = arg_get_ntasks,
 	.reset_func = arg_reset_ntasks,
 	.reset_each_pass = true,
 };
 
 COMMON_INT_OPTION_SET(ntasks_per_core, "--ntasks-per-core");
-COMMON_INT_OPTION_SET_DATA(ntasks_per_core);
 COMMON_INT_OPTION_GET(ntasks_per_core);
 COMMON_OPTION_RESET(ntasks_per_core, NO_VAL);
 static slurm_cli_opt_t slurm_opt_ntasks_per_core = {
@@ -3066,14 +2288,12 @@ static slurm_cli_opt_t slurm_opt_ntasks_per_core = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_NTASKSPERCORE,
 	.set_func = arg_set_ntasks_per_core,
-	.set_func_data = arg_set_data_ntasks_per_core,
 	.get_func = arg_get_ntasks_per_core,
 	.reset_func = arg_reset_ntasks_per_core,
 	.reset_each_pass = true,
 };
 
 COMMON_INT_OPTION_SET(ntasks_per_node, "--ntasks-per-node");
-COMMON_INT_OPTION_SET_DATA(ntasks_per_node);
 COMMON_INT_OPTION_GET(ntasks_per_node);
 COMMON_OPTION_RESET(ntasks_per_node, NO_VAL);
 static slurm_cli_opt_t slurm_opt_ntasks_per_node = {
@@ -3081,14 +2301,12 @@ static slurm_cli_opt_t slurm_opt_ntasks_per_node = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_NTASKSPERNODE,
 	.set_func = arg_set_ntasks_per_node,
-	.set_func_data = arg_set_data_ntasks_per_node,
 	.get_func = arg_get_ntasks_per_node,
 	.reset_func = arg_reset_ntasks_per_node,
 	.reset_each_pass = true,
 };
 
 COMMON_INT_OPTION_SET(ntasks_per_socket, "--ntasks-per-socket");
-COMMON_INT_OPTION_SET_DATA(ntasks_per_socket);
 COMMON_INT_OPTION_GET(ntasks_per_socket);
 COMMON_OPTION_RESET(ntasks_per_socket, NO_VAL);
 static slurm_cli_opt_t slurm_opt_ntasks_per_socket = {
@@ -3096,7 +2314,6 @@ static slurm_cli_opt_t slurm_opt_ntasks_per_socket = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_NTASKSPERSOCKET,
 	.set_func = arg_set_ntasks_per_socket,
-	.set_func_data = arg_set_data_ntasks_per_socket,
 	.get_func = arg_get_ntasks_per_socket,
 	.reset_func = arg_reset_ntasks_per_socket,
 	.reset_each_pass = true,
@@ -3124,40 +2341,6 @@ static int arg_set_open_mode(slurm_opt_t *opt, const char *arg)
 		opt->srun_opt->open_mode = tmp;
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_open_mode(slurm_opt_t *opt, const data_t *arg,
-				  data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		uint8_t tmp = 0;
-
-		if (str && (str[0] == 'a' || str[0] == 'A'))
-			tmp = OPEN_MODE_APPEND;
-		else if (str && (str[0] == 't' || str[0] == 'T'))
-			tmp = OPEN_MODE_TRUNCATE;
-		else {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid open mode specification", rc);
-		}
-
-		if (!rc) {
-			if (opt->sbatch_opt)
-				opt->sbatch_opt->open_mode = tmp;
-			if (opt->srun_opt)
-				opt->srun_opt->open_mode = tmp;
-		}
-	}
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_open_mode(slurm_opt_t *opt)
 {
@@ -3190,7 +2373,6 @@ static slurm_cli_opt_t slurm_opt_open_mode = {
 	.val = LONG_OPT_OPEN_MODE,
 	.set_func_sbatch = arg_set_open_mode,
 	.set_func_srun = arg_set_open_mode,
-	.set_func_data = arg_set_data_open_mode,
 	.get_func = arg_get_open_mode,
 	.reset_func = arg_reset_open_mode,
 };
@@ -3208,30 +2390,6 @@ static int arg_set_ofname(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_ofname(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		xfree(opt->ofname);
-		if (!xstrcasecmp(str, "none"))
-			opt->ofname = xstrdup("/dev/null");
-		else {
-			opt->ofname = str;
-			str = NULL;
-		}
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_STRING_OPTION_GET(ofname);
 COMMON_STRING_OPTION_RESET(ofname);
 static slurm_cli_opt_t slurm_opt_output = {
@@ -3240,7 +2398,6 @@ static slurm_cli_opt_t slurm_opt_output = {
 	.val = 'o',
 	.set_func_sbatch = arg_set_ofname,
 	.set_func_srun = arg_set_ofname,
-	.set_func_data = arg_set_data_ofname,
 	.get_func = arg_get_ofname,
 	.reset_func = arg_reset_ofname,
 };
@@ -3251,7 +2408,6 @@ static slurm_cli_opt_t slurm_opt_overcommit = {
 	.has_arg = no_argument,
 	.val = 'O',
 	.set_func = arg_set_overcommit,
-	.set_func_data = arg_set_data_overcommit,
 	.get_func = arg_get_overcommit,
 	.reset_func = arg_reset_overcommit,
 	.reset_each_pass = true,
@@ -3270,70 +2426,46 @@ static int arg_set_oversubscribe(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_oversubscribe(slurm_opt_t *opt, const data_t *arg,
-				      data_t *errors)
-{
-	if (opt->srun_opt)
-		opt->srun_opt->exclusive = false;
-
-	opt->shared = JOB_SHARED_OK;
-
-	return SLURM_SUCCESS;
-}
-
 static slurm_cli_opt_t slurm_opt_oversubscribe = {
 	.name = "oversubscribe",
 	.has_arg = no_argument,
 	.val = 's',
 	.set_func = arg_set_oversubscribe,
-	.set_func_data = arg_set_data_oversubscribe,
 	.get_func = arg_get_exclusive,
 	.reset_func = arg_reset_shared,
 	.reset_each_pass = true,
 };
 
-static int arg_set_het_group(slurm_opt_t *opt, const char *arg)
+static int arg_set_pack_group(slurm_opt_t *opt, const char *arg)
 {
 	if (!opt->srun_opt)
 		return SLURM_ERROR;
 
-	xfree(opt->srun_opt->het_group);
-	opt->srun_opt->het_group = xstrdup(arg);
+	xfree(opt->srun_opt->pack_group);
+	opt->srun_opt->pack_group = xstrdup(arg);
 
 	return SLURM_SUCCESS;
 }
-static char *arg_get_het_group(slurm_opt_t *opt)
+static char *arg_get_pack_group(slurm_opt_t *opt)
 {
 	if (!opt->srun_opt)
 		return xstrdup("invalid-context");
 
-	return xstrdup(opt->srun_opt->het_group);
+	return xstrdup(opt->srun_opt->pack_group);
 }
-static void arg_reset_het_group(slurm_opt_t *opt)
+static void arg_reset_pack_group(slurm_opt_t *opt)
 {
 	if (opt->srun_opt)
-		xfree(opt->srun_opt->het_group);
+		xfree(opt->srun_opt->pack_group);
 }
-
-/* Continue support for pack-group */
 static slurm_cli_opt_t slurm_opt_pack_group = {
 	.name = "pack-group",
 	.has_arg = required_argument,
-	.val = LONG_OPT_HET_GROUP,
+	.val = LONG_OPT_PACK_GROUP,
 	.srun_early_pass = true,
-	.set_func_srun = arg_set_het_group,
-	.get_func = arg_get_het_group,
-	.reset_func = arg_reset_het_group,
-};
-
-static slurm_cli_opt_t slurm_opt_het_group = {
-	.name = "het-group",
-	.has_arg = required_argument,
-	.val = LONG_OPT_HET_GROUP,
-	.srun_early_pass = true,
-	.set_func_srun = arg_set_het_group,
-	.get_func = arg_get_het_group,
-	.reset_func = arg_reset_het_group,
+	.set_func_srun = arg_set_pack_group,
+	.get_func = arg_get_pack_group,
+	.reset_func = arg_reset_pack_group,
 };
 
 static int arg_set_parsable(slurm_opt_t *opt, const char *arg)
@@ -3372,7 +2504,6 @@ static slurm_cli_opt_t slurm_opt_partition = {
 	.has_arg = required_argument,
 	.val = 'p',
 	.set_func = arg_set_partition,
-	.set_func_data = arg_set_data_partition,
 	.get_func = arg_get_partition,
 	.reset_func = arg_reset_partition,
 	.reset_each_pass = true,
@@ -3383,23 +2514,6 @@ static int arg_set_power(slurm_opt_t *opt, const char *arg)
 	opt->power = power_flags_id(arg);
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_power(slurm_opt_t *opt, const data_t *arg,
-			      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else
-		opt->power = power_flags_id(str);
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_power(slurm_opt_t *opt)
 {
@@ -3413,7 +2527,6 @@ static slurm_cli_opt_t slurm_opt_power = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_POWER,
 	.set_func = arg_set_power,
-	.set_func_data = arg_set_data_power,
 	.get_func = arg_get_power,
 	.reset_func = arg_reset_power,
 	.reset_each_pass = true,
@@ -3448,42 +2561,12 @@ static int arg_set_priority(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_priority(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	int64_t val;
-	char *str = NULL;
-
-	if ((rc = data_get_int_converted(arg, &val))) {
-		if ((rc = data_get_string_converted(arg, &str)))
-			ADD_DATA_ERROR("Unable to read string", rc);
-		else if (!xstrcasecmp(str, "TOP"))
-			opt->priority = NO_VAL - 1;
-		else {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid priority", rc);
-		}
-	} else if (val >= NO_VAL) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Priority too large", rc);
-	} else if (val <= 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Priority must be >0", rc);
-	} else
-		opt->priority = (int) val;
-
-	xfree(str);
-
-	return rc;
-}
 COMMON_INT_OPTION_GET_AND_RESET(priority);
 static slurm_cli_opt_t slurm_opt_priority = {
 	.name = "priority",
 	.has_arg = required_argument,
 	.val = LONG_OPT_PRIORITY,
 	.set_func = arg_set_priority,
-	.set_func_data = arg_set_data_priority,
 	.get_func = arg_get_priority,
 	.reset_func = arg_reset_priority,
 };
@@ -3492,26 +2575,7 @@ static int arg_set_profile(slurm_opt_t *opt, const char *arg)
 {
 	opt->profile = acct_gather_profile_from_string(arg);
 
-	if (opt->profile == ACCT_GATHER_PROFILE_NOT_SET) {
-		error("invalid --profile=%s option", arg);
-		exit(-1);
-	}
-
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_profile(slurm_opt_t *opt, const data_t *arg,
-				data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else
-		opt->profile = acct_gather_profile_from_string(str);
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_profile(slurm_opt_t *opt)
 {
@@ -3523,7 +2587,6 @@ static slurm_cli_opt_t slurm_opt_profile = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_PROFILE,
 	.set_func = arg_set_profile,
-	.set_func_data = arg_set_data_profile,
 	.get_func = arg_get_profile,
 	.reset_func = arg_reset_profile,
 };
@@ -3599,7 +2662,6 @@ static slurm_cli_opt_t slurm_opt_qos = {
 	.has_arg = required_argument,
 	.val = 'q',
 	.set_func = arg_set_qos,
-	.set_func_data = arg_set_data_qos,
 	.get_func = arg_get_qos,
 	.reset_func = arg_reset_qos,
 };
@@ -3610,7 +2672,6 @@ static int arg_set_quiet(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-COMMON_INT_OPTION_SET_DATA(quiet);
 COMMON_INT_OPTION_GET_AND_RESET(quiet);
 static slurm_cli_opt_t slurm_opt_quiet = {
 	.name = "quiet",
@@ -3618,7 +2679,6 @@ static slurm_cli_opt_t slurm_opt_quiet = {
 	.val = 'Q',
 	.sbatch_early_pass = true,
 	.set_func = arg_set_quiet,
-	.set_func_data = arg_set_data_quiet,
 	.get_func = arg_get_quiet,
 	.reset_func = arg_reset_quiet,
 };
@@ -3639,7 +2699,6 @@ static slurm_cli_opt_t slurm_opt_reboot = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_REBOOT,
 	.set_func = arg_set_reboot,
-	.set_func_data = arg_set_data_reboot,
 	.get_func = arg_get_reboot,
 	.reset_func = arg_reset_reboot,
 };
@@ -3684,23 +2743,12 @@ static int arg_set_requeue(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_requeue(slurm_opt_t *opt, const data_t *arg,
-				data_t *errors)
-{
-	if (!opt->sbatch_opt)
-		return SLURM_ERROR;
-
-	opt->sbatch_opt->requeue = 1;
-
-	return SLURM_SUCCESS;
-}
 /* arg_get_requeue and arg_reset_requeue defined before with --no-requeue */
 static slurm_cli_opt_t slurm_opt_requeue = {
 	.name = "requeue",
 	.has_arg = no_argument,
 	.val = LONG_OPT_REQUEUE,
 	.set_func_sbatch = arg_set_requeue,
-	.set_func_data = arg_set_data_requeue,
 	.get_func = arg_get_requeue,
 	.reset_func = arg_reset_requeue,
 };
@@ -3711,7 +2759,6 @@ static slurm_cli_opt_t slurm_opt_reservation = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_RESERVATION,
 	.set_func = arg_set_reservation,
-	.set_func_data = arg_set_data_reservation,
 	.get_func = arg_get_reservation,
 	.reset_func = arg_reset_reservation,
 };
@@ -3764,22 +2811,6 @@ static int arg_set_signal(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_signal(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (get_signal_opts(str, &opt->warn_signal, &opt->warn_time,
-				 &opt->warn_flags)) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid SIGNAL specification", rc);
-	}
-	xfree(str);
-	return rc;
-}
 static char *arg_get_signal(slurm_opt_t *opt)
 {
 	return signal_opts_to_cmdline(opt->warn_signal, opt->warn_time,
@@ -3796,7 +2827,6 @@ static slurm_cli_opt_t slurm_opt_signal = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_SIGNAL,
 	.set_func = arg_set_signal,
-	.set_func_data = arg_set_data_signal,
 	.get_func = arg_get_signal,
 	.reset_func = arg_reset_signal,
 };
@@ -3832,7 +2862,6 @@ static slurm_cli_opt_t slurm_opt_slurmd_debug = {
 };
 
 COMMON_INT_OPTION_SET(sockets_per_node, "--sockets-per-node");
-COMMON_INT_OPTION_SET_DATA(sockets_per_node);
 COMMON_INT_OPTION_GET(sockets_per_node);
 COMMON_OPTION_RESET(sockets_per_node, NO_VAL);
 static slurm_cli_opt_t slurm_opt_sockets_per_node = {
@@ -3840,20 +2869,12 @@ static slurm_cli_opt_t slurm_opt_sockets_per_node = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_SOCKETSPERNODE,
 	.set_func = arg_set_sockets_per_node,
-	.set_func_data = arg_set_data_sockets_per_node,
 	.get_func = arg_get_sockets_per_node,
 	.reset_func = arg_reset_sockets_per_node,
 	.reset_each_pass = true,
 };
 
 static int arg_set_spread_job(slurm_opt_t *opt, const char *arg)
-{
-	opt->job_flags |= SPREAD_JOB;
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_spread_job(slurm_opt_t *opt, const data_t *arg,
-				   data_t *errors)
 {
 	opt->job_flags |= SPREAD_JOB;
 
@@ -3874,7 +2895,6 @@ static slurm_cli_opt_t slurm_opt_spread_job = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_SPREAD_JOB,
 	.set_func = arg_set_spread_job,
-	.set_func_data = arg_set_data_spread_job,
 	.get_func = arg_get_spread_job,
 	.reset_func = arg_reset_spread_job,
 	.reset_each_pass = true,
@@ -3896,13 +2916,11 @@ static void arg_reset_switch_req(slurm_opt_t *opt)
 {
 	opt->req_switch = -1;
 }
-COMMON_INT_OPTION_SET_DATA(req_switch);
 static slurm_cli_opt_t slurm_opt_switch_req = {
 	.name = NULL, /* envvar only */
 	.has_arg = required_argument,
 	.val = LONG_OPT_SWITCH_REQ,
 	.set_func = arg_set_switch_req,
-	.set_func_data = arg_set_data_req_switch,
 	.get_func = arg_get_switch_req,
 	.reset_func = arg_reset_switch_req,
 	.reset_each_pass = true,
@@ -3913,20 +2931,6 @@ static int arg_set_switch_wait(slurm_opt_t *opt, const char *arg)
 	opt->wait4switch = time_str2secs(arg);
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_switch_wait(slurm_opt_t *opt, const data_t *arg,
-				    data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else
-		opt->wait4switch = time_str2secs(str);
-
-	xfree(str);
-	return rc;
 }
 static char *arg_get_switch_wait(slurm_opt_t *opt)
 {
@@ -3944,7 +2948,6 @@ static slurm_cli_opt_t slurm_opt_switch_wait = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_SWITCH_WAIT,
 	.set_func = arg_set_switch_wait,
-	.set_func_data = arg_set_data_switch_wait,
 	.get_func = arg_get_switch_wait,
 	.reset_func = arg_reset_switch_wait,
 	.reset_each_pass = true,
@@ -3967,112 +2970,6 @@ static int arg_set_switches(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-
-static int _handle_data_switches_str(slurm_opt_t *opt, char *arg,
-				     data_t *errors)
-{
-	int rc = SLURM_SUCCESS;
-	char *split = xstrchr(arg, '@');
-
-	if (split) {
-		split[0] = '\0';
-		split++;
-		opt->wait4switch = time_str2secs(split);
-
-		rc = _handle_data_switches_str(opt, arg, errors);
-	} else
-		opt->req_switch = atoi(arg);
-
-	return rc;
-}
-
-static int _handle_data_switches_data(slurm_opt_t *opt, const data_t *arg,
-				      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else
-		rc = _handle_data_switches_str(opt, str, errors);
-
-	xfree(str);
-
-	return rc;
-}
-
-typedef struct {
-	slurm_opt_t *opt;
-	data_t *errors;
-} data_foreach_switches_t;
-
-data_for_each_cmd_t
-	_foreach_data_switches(const char *key, const data_t *data, void *arg)
-{
-	data_foreach_switches_t *args = arg;
-	data_t *errors = args->errors;
-
-	if (!xstrcasecmp("count", key)) {
-		int64_t val;
-
-		if (data_get_int_converted(data, &val)) {
-			ADD_DATA_ERROR("Invalid count specification",
-				       SLURM_ERROR);
-			return DATA_FOR_EACH_FAIL;
-		}
-
-		args->opt->req_switch = (int) val;
-	} else if (!xstrcasecmp("timeout", key)) {
-		char *str = NULL;
-
-		if (data_get_string_converted(data, &str)) {
-			return DATA_FOR_EACH_FAIL;
-			ADD_DATA_ERROR("Invalid timeout specification",
-				       SLURM_ERROR);
-		}
-
-		args->opt->wait4switch = time_str2secs(str);
-		xfree(str);
-	} else {
-		ADD_DATA_ERROR("unknown key in switches specification",
-				       SLURM_ERROR);
-		return DATA_FOR_EACH_FAIL;
-	}
-
-	return DATA_FOR_EACH_CONT;
-}
-
-static int arg_set_data_switches(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc = SLURM_SUCCESS;
-	int64_t val;
-
-	if (data_get_type(arg) == DATA_TYPE_DICT) {
-		data_foreach_switches_t args = {
-			.opt = opt,
-			.errors = errors,
-		};
-		if (data_dict_for_each_const(arg, _foreach_data_switches,
-					     &args) < 0) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid switch specification", rc);
-		}
-	} else if ((rc = data_get_int_converted(arg, &val)))
-		return _handle_data_switches_data(opt, arg, errors);
-	else if (val >= INT_MAX) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Integer too large", rc);
-	} else if (val <= 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Must request at least 1 switch", rc);
-	} else
-		opt->req_switch = (int) val;
-
-	return rc;
-}
-
 static char *arg_get_switches(slurm_opt_t *opt)
 {
 	if (opt->wait4switch != -1) {
@@ -4094,7 +2991,6 @@ static slurm_cli_opt_t slurm_opt_switches = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_SWITCHES,
 	.set_func = arg_set_switches,
-	.set_func_data = arg_set_data_switches,
 	.get_func = arg_get_switches,
 	.reset_func = arg_reset_switches,
 	.reset_each_pass = true,
@@ -4143,19 +3039,6 @@ static int arg_set_test_only(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_test_only(slurm_opt_t *opt, const data_t *arg,
-				  data_t *errors)
-{
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if (opt->sbatch_opt)
-		opt->sbatch_opt->test_only = true;
-	if (opt->srun_opt)
-		opt->srun_opt->test_only = true;
-
-	return SLURM_SUCCESS;
-}
 static char *arg_get_test_only(slurm_opt_t *opt)
 {
 	bool tmp = false;
@@ -4183,7 +3066,6 @@ static slurm_cli_opt_t slurm_opt_test_only = {
 	.val = LONG_OPT_TEST_ONLY,
 	.set_func_sbatch = arg_set_test_only,
 	.set_func_srun = arg_set_test_only,
-	.set_func_data = arg_set_data_test_only,
 	.get_func = arg_get_test_only,
 	.reset_func = arg_reset_test_only,
 };
@@ -4195,27 +3077,6 @@ static int arg_set_thread_spec(slurm_opt_t *opt, const char *arg)
 	opt->core_spec |= CORE_SPEC_THREAD;
 
 	return SLURM_SUCCESS;
-}
-static int arg_set_data_thread_spec(slurm_opt_t *opt, const data_t *arg,
-				    data_t *errors)
-{
-	int rc;
-	int64_t val;
-
-	if ((rc = data_get_int_converted(arg, &val)))
-		ADD_DATA_ERROR("Unable to read integer", rc);
-	else if (val >= CORE_SPEC_THREAD) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("core_spec is too large", rc);
-	} else if (val <= 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("core_spec must be >0", rc);
-	} else {
-		opt->core_spec = val;
-		opt->core_spec |= CORE_SPEC_THREAD;
-	}
-
-	return rc;
 }
 static char *arg_get_thread_spec(slurm_opt_t *opt)
 {
@@ -4229,14 +3090,12 @@ static slurm_cli_opt_t slurm_opt_thread_spec = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_THREAD_SPEC,
 	.set_func = arg_set_thread_spec,
-	.set_func_data = arg_set_data_thread_spec,
 	.get_func = arg_get_thread_spec,
 	.reset_func = arg_reset_core_spec,
 	.reset_each_pass = true,
 };
 
 COMMON_INT_OPTION_SET(threads_per_core, "--threads-per-core");
-COMMON_INT_OPTION_SET_DATA(threads_per_core);
 COMMON_INT_OPTION_GET(threads_per_core);
 COMMON_OPTION_RESET(threads_per_core, NO_VAL);
 static slurm_cli_opt_t slurm_opt_threads_per_core = {
@@ -4244,7 +3103,6 @@ static slurm_cli_opt_t slurm_opt_threads_per_core = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_THREADSPERCORE,
 	.set_func = arg_set_threads_per_core,
-	.set_func_data = arg_set_data_threads_per_core,
 	.get_func = arg_get_threads_per_core,
 	.reset_func = arg_reset_threads_per_core,
 	.reset_each_pass = true,
@@ -4265,38 +3123,12 @@ static int arg_set_time_limit(slurm_opt_t *opt, const char *arg)
 	opt->time_limit = time_limit;
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_time_limit(slurm_opt_t *opt, const data_t *arg,
-			       data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		int time_limit = time_str2mins(str);
-		if (time_limit == NO_VAL) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid time specification", rc);
-		} else if (time_limit == 0) {
-			opt->time_limit = INFINITE;
-		} else
-			opt->time_limit = time_limit;
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_TIME_DURATION_OPTION_GET_AND_RESET(time_limit);
 static slurm_cli_opt_t slurm_opt_time_limit = {
 	.name = "time",
 	.has_arg = required_argument,
 	.val = 't',
 	.set_func = arg_set_time_limit,
-	.set_func_data = arg_set_data_time_limit,
 	.get_func = arg_get_time_limit,
 	.reset_func = arg_reset_time_limit,
 };
@@ -4316,49 +3148,22 @@ static int arg_set_time_min(slurm_opt_t *opt, const char *arg)
 	opt->time_min = time_min;
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_time_min(slurm_opt_t *opt, const data_t *arg,
-				 data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else {
-		int time_limit = time_str2mins(str);
-		if (time_limit == NO_VAL) {
-			rc = SLURM_ERROR;
-			ADD_DATA_ERROR("Invalid time specification", rc);
-		} else if (time_limit == 0) {
-			opt->time_min = INFINITE;
-		} else
-			opt->time_min = time_limit;
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_TIME_DURATION_OPTION_GET_AND_RESET(time_min);
 static slurm_cli_opt_t slurm_opt_time_min = {
 	.name = "time-min",
 	.has_arg = required_argument,
 	.val = LONG_OPT_TIME_MIN,
 	.set_func = arg_set_time_min,
-	.set_func_data = arg_set_data_time_min,
 	.get_func = arg_get_time_min,
 	.reset_func = arg_reset_time_min,
 };
 
-COMMON_MBYTES_OPTION(pn_min_tmp_disk, --tmp);
+COMMON_MBYTES_OPTION(pn_min_tmp_disk, "--tmp");
 static slurm_cli_opt_t slurm_opt_tmp = {
 	.name = "tmp",
 	.has_arg = required_argument,
 	.val = LONG_OPT_TMP,
 	.set_func = arg_set_pn_min_tmp_disk,
-	.set_func_data = arg_set_data_pn_min_tmp_disk,
 	.get_func = arg_get_pn_min_tmp_disk,
 	.reset_func = arg_reset_pn_min_tmp_disk,
 	.reset_each_pass = true,
@@ -4378,22 +3183,6 @@ static int arg_set_uid(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_uid(slurm_opt_t *opt, const data_t *arg,
-			    data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (uid_from_string(str, &opt->uid) < 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid user id specification", rc);
-	}
-
-	xfree(str);
-	return rc;
-}
 COMMON_INT_OPTION_GET(uid);
 COMMON_OPTION_RESET(uid, getuid());
 static slurm_cli_opt_t slurm_opt_uid = {
@@ -4401,7 +3190,6 @@ static slurm_cli_opt_t slurm_opt_uid = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_UID,
 	.set_func = arg_set_uid,
-	.set_func_data = arg_set_data_uid,
 	.get_func = arg_get_uid,
 	.reset_func = arg_reset_uid,
 };
@@ -4424,30 +3212,6 @@ static int arg_set_umask(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_umask(slurm_opt_t *opt, const data_t *arg,
-			      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-	int32_t umask;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else if (sscanf(str, "%"SCNo32, &umask) != 1) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Invalid octal umask", rc);
-	} else if (umask < 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("umask too small", rc);
-	} else if (umask < 0 || umask > 07777) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("umask too large", rc);
-	} else
-		opt->sbatch_opt->umask = umask;
-
-	xfree(str);
-	return rc;
-}
 static char *arg_get_umask(slurm_opt_t *opt)
 {
 	if (!opt->sbatch_opt)
@@ -4465,7 +3229,6 @@ static slurm_cli_opt_t slurm_opt_umask = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_UMASK,
 	.set_func_sbatch = arg_set_umask,
-	.set_func_data = arg_set_data_umask,
 	.get_func = arg_get_umask,
 	.reset_func = arg_reset_umask,
 	.reset_each_pass = true,
@@ -4487,13 +3250,6 @@ static int arg_set_use_min_nodes(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_use_min_nodes(slurm_opt_t *opt, const data_t *arg,
-				      data_t *errors)
-{
-	opt->job_flags |= USE_MIN_NODES;
-
-	return SLURM_SUCCESS;
-}
 static char *arg_get_use_min_nodes(slurm_opt_t *opt)
 {
 	if (opt->job_flags & USE_MIN_NODES)
@@ -4509,7 +3265,6 @@ static slurm_cli_opt_t slurm_opt_use_min_nodes = {
 	.has_arg = no_argument,
 	.val = LONG_OPT_USE_MIN_NODES,
 	.set_func = arg_set_use_min_nodes,
-	.set_func_data = arg_set_data_use_min_nodes,
 	.get_func = arg_get_use_min_nodes,
 	.reset_func = arg_reset_use_min_nodes,
 	.reset_each_pass = true,
@@ -4675,27 +3430,6 @@ static int arg_set_wait_all_nodes(slurm_opt_t *opt, const char *arg)
 
 	return SLURM_SUCCESS;
 }
-static int arg_set_data_wait_all_nodes(slurm_opt_t *opt, const data_t *arg,
-				       data_t *errors)
-{
-	int64_t val;
-	int rc = data_get_int_converted(arg, &val);
-	if (rc)
-		ADD_DATA_ERROR("Unable to read integer value", rc);
-	else if (val > 1) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Wait all nodes too large", rc);
-	} else if (val < 0) {
-		rc = SLURM_ERROR;
-		ADD_DATA_ERROR("Wait all nodes too small", rc);
-	} else {
-		if (opt->salloc_opt)
-			opt->salloc_opt->wait_all_nodes = val;
-		if (opt->sbatch_opt)
-			opt->sbatch_opt->wait_all_nodes = val;
-	}
-	return rc;
-}
 static char *arg_get_wait_all_nodes(slurm_opt_t *opt)
 {
 	uint16_t tmp = NO_VAL16;
@@ -4723,7 +3457,6 @@ static slurm_cli_opt_t slurm_opt_wait_all_nodes = {
 	.val = LONG_OPT_WAIT_ALL_NODES,
 	.set_func_salloc = arg_set_wait_all_nodes,
 	.set_func_sbatch = arg_set_wait_all_nodes,
-	.set_func_data = arg_set_data_wait_all_nodes,
 	.get_func = arg_get_wait_all_nodes,
 	.reset_func = arg_reset_wait_all_nodes,
 };
@@ -4734,7 +3467,6 @@ static slurm_cli_opt_t slurm_opt_wckey = {
 	.has_arg = required_argument,
 	.val = LONG_OPT_WCKEY,
 	.set_func = arg_set_wckey,
-	.set_func_data = arg_set_data_wckey,
 	.get_func = arg_get_wckey,
 	.reset_func = arg_reset_wckey,
 };
@@ -4746,7 +3478,6 @@ static slurm_cli_opt_t slurm_opt_wrap = {
 	.val = LONG_OPT_WRAP,
 	.sbatch_early_pass = true,
 	.set_func_sbatch = arg_set_wrap,
-	.set_func_data = arg_set_data_wrap,
 	.get_func = arg_get_wrap,
 	.reset_func = arg_reset_wrap,
 };
@@ -4783,7 +3514,7 @@ static slurm_cli_opt_t slurm_opt_x11 = {
 	.reset_func = arg_reset_x11,
 };
 
-static const slurm_cli_opt_t *common_options[] = {
+static slurm_cli_opt_t *common_options[] = {
 	&slurm_opt__unknown_,
 	&slurm_opt_accel_bind,
 	&slurm_opt_account,
@@ -4797,6 +3528,7 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_bb,
 	&slurm_opt_bbf,
 	&slurm_opt_c_constraint,
+	&slurm_opt_checkpoint,
 	&slurm_opt_chdir,
 	&slurm_opt_cluster,
 	&slurm_opt_clusters,
@@ -4814,7 +3546,6 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_deadline,
 	&slurm_opt_debugger_test,
 	&slurm_opt_delay_boot,
-	&slurm_opt_environment,
 	&slurm_opt_dependency,
 	&slurm_opt_disable_status,
 	&slurm_opt_distribution,
@@ -4836,7 +3567,6 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_gres,
 	&slurm_opt_gres_flags,
 	&slurm_opt_help,
-	&slurm_opt_het_group,
 	&slurm_opt_hint,
 	&slurm_opt_hold,
 	&slurm_opt_ignore_pbs,
@@ -5001,67 +3731,6 @@ void slurm_option_table_destroy(struct option *optz)
 	optz_destroy(optz);
 }
 
-extern void slurm_free_options_members(slurm_opt_t *opt)
-{
-	if (!opt)
-		return;
-
-	slurm_reset_all_options(opt, true);
-
-	xfree(opt->chdir);
-	xfree(opt->state);
-}
-
-static void _init_state(slurm_opt_t *opt)
-{
-	if (opt->state)
-		return;
-
-	opt->state = xcalloc(sizeof(common_options),
-			     sizeof(slurm_opt_state_t));
-}
-
-extern int slurm_process_option_data(slurm_opt_t *opt, int optval,
-				     const data_t *arg, data_t *errors)
-{
-	int i;
-
-	if (!opt)
-		fatal("%s: missing slurm_opt_t struct", __func__);
-
-	for (i = 0; common_options[i]; i++) {
-		if (common_options[i]->val != optval)
-			continue;
-
-		/* Check that this is a valid match. */
-		if (!common_options[i]->set_func_data)
-			continue;
-
-		/* Match found */
-		break;
-	}
-
-	if (!common_options[i]) {
-		char str[1024];
-		snprintf(str, sizeof(str), "Unknown option: %u", optval);
-		ADD_DATA_ERROR(str, SLURM_ERROR);
-		return SLURM_ERROR;
-	}
-
-	// TODO: implement data aware spank parsing
-
-	_init_state(opt);
-
-	if (!(common_options[i]->set_func_data)(opt, arg, errors)) {
-		opt->state[i].set = true;
-		opt->state[i].set_by_data = true;
-		opt->state[i].set_by_env = false;
-		return SLURM_SUCCESS;
-	}
-
-	return SLURM_ERROR;
-}
-
 int slurm_process_option(slurm_opt_t *opt, int optval, const char *arg,
 			 bool set_by_env, bool early_pass)
 {
@@ -5156,42 +3825,35 @@ int slurm_process_option(slurm_opt_t *opt, int optval, const char *arg,
 		}
 	}
 
-	_init_state(opt);
-
 	if (!set) {
 		(common_options[i]->reset_func)(opt);
-		opt->state[i].set = false;
-		opt->state[i].set_by_data = false;
-		opt->state[i].set_by_env = false;
+		common_options[i]->set = false;
+		common_options[i]->set_by_env = false;
 		return SLURM_SUCCESS;
 	}
 
 	if (common_options[i]->set_func) {
 		if (!(common_options[i]->set_func)(opt, setarg)) {
-			opt->state[i].set = true;
-			opt->state[i].set_by_data = false;
-			opt->state[i].set_by_env = set_by_env;
+			common_options[i]->set = true;
+			common_options[i]->set_by_env = set_by_env;
 			return SLURM_SUCCESS;
 		}
 	} else if (opt->salloc_opt && common_options[i]->set_func_salloc) {
 		if (!(common_options[i]->set_func_salloc)(opt, setarg)) {
-			opt->state[i].set = true;
-			opt->state[i].set_by_data = false;
-			opt->state[i].set_by_env = set_by_env;
+			common_options[i]->set = true;
+			common_options[i]->set_by_env = set_by_env;
 			return SLURM_SUCCESS;
 		}
 	} else if (opt->sbatch_opt && common_options[i]->set_func_sbatch) {
 		if (!(common_options[i]->set_func_sbatch)(opt, setarg)) {
-			opt->state[i].set = true;
-			opt->state[i].set_by_data = false;
-			opt->state[i].set_by_env = set_by_env;
+			common_options[i]->set = true;
+			common_options[i]->set_by_env = set_by_env;
 			return SLURM_SUCCESS;
 		}
 	} else if (opt->srun_opt && common_options[i]->set_func_srun) {
 		if (!(common_options[i]->set_func_srun)(opt, setarg)) {
-			opt->state[i].set = true;
-			opt->state[i].set_by_data = false;
-			opt->state[i].set_by_env = set_by_env;
+			common_options[i]->set = true;
+			common_options[i]->set_by_env = set_by_env;
 			return SLURM_SUCCESS;
 		}
 	}
@@ -5215,7 +3877,7 @@ void slurm_print_set_options(slurm_opt_t *opt)
 	for (int i = 0; common_options[i]; i++) {
 		char *val = NULL;
 
-		if (!opt->state || !opt->state[i].set)
+		if (!common_options[i]->set)
 			continue;
 
 		if (common_options[i]->get_func)
@@ -5234,8 +3896,7 @@ extern void slurm_reset_all_options(slurm_opt_t *opt, bool first_pass)
 			continue;
 		if (common_options[i]->reset_func) {
 			(common_options[i]->reset_func)(opt);
-			if (opt->state)
-				opt->state[i].set = false;
+			common_options[i]->set = false;
 		}
 	}
 }
@@ -5243,14 +3904,9 @@ extern void slurm_reset_all_options(slurm_opt_t *opt, bool first_pass)
 /*
  * Was the option set by a cli argument?
  */
-extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
+extern bool slurm_option_set_by_cli(int optval)
 {
 	int i;
-
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
 
 	for (i = 0; common_options[i]; i++) {
 		if (common_options[i]->val == optval)
@@ -5259,9 +3915,6 @@ extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
 
 	/* This should not happen... */
 	if (!common_options[i])
-		return false;
-
-	if (!opt->state)
 		return false;
 
 	/*
@@ -5270,47 +3923,15 @@ extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
 	 * cli, and we must return false.
 	 */
 
-	return (opt->state[i].set && !opt->state[i].set_by_env);
-}
-
-/*
- * Was the option set by an data_t value?
- */
-extern bool slurm_option_set_by_data(slurm_opt_t *opt, int optval)
-{
-	int i;
-
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
-
-	for (i = 0; common_options[i]; i++) {
-		if (common_options[i]->val == optval)
-			break;
-	}
-
-	/* This should not happen... */
-	if (!common_options[i])
-		return false;
-
-	if (!opt->state)
-		return false;
-
-	return opt->state[i].set_by_data;
+	return (common_options[i]->set && !common_options[i]->set_by_env);
 }
 
 /*
  * Was the option set by an env var?
  */
-extern bool slurm_option_set_by_env(slurm_opt_t *opt, int optval)
+extern bool slurm_option_set_by_env(int optval)
 {
 	int i;
-
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
 
 	for (i = 0; common_options[i]; i++) {
 		if (common_options[i]->val == optval)
@@ -5321,10 +3942,7 @@ extern bool slurm_option_set_by_env(slurm_opt_t *opt, int optval)
 	if (!common_options[i])
 		return false;
 
-	if (!opt->state)
-		return false;
-
-	return opt->state[i].set_by_env;
+	return common_options[i]->set_by_env;
 }
 
 /*
@@ -5355,9 +3973,9 @@ extern char *slurm_option_get(slurm_opt_t *opt, const char *name)
 extern bool slurm_option_isset(slurm_opt_t *opt, const char *name)
 {
 	int i = _find_option_idx(name);
-	if (i < 0 || !opt->state)
+	if (i < 0)
 		return false;
-	return opt->state[i].set;
+	return common_options[i]->set;
 }
 
 /*
@@ -5388,10 +4006,8 @@ extern int slurm_option_set(slurm_opt_t *opt, const char *name,
 		rc = common_options[i]->set_func_srun(opt, value);
 
 	/* Ensure that the option shows up as "set". */
-	if (rc == SLURM_SUCCESS) {
-		_init_state(opt);
-		opt->state[i].set = true;
-	}
+	if (rc == SLURM_SUCCESS)
+		common_options[i]->set = true;
 
 	return rc;
 }
@@ -5405,8 +4021,7 @@ extern bool slurm_option_reset(slurm_opt_t *opt, const char *name)
 	if (i < 0)
 		return false;
 	common_options[i]->reset_func(opt);
-	if (opt->state)
-		opt->state[i].set = false;
+	common_options[i]->set = false;
 	return true;
 }
 
@@ -5429,8 +4044,7 @@ extern bool slurm_option_get_next_set(slurm_opt_t *opt, char **name,
 		return false;
 
 	while (common_options[*state] && (*state < limit) &&
-	       (!(opt->state && opt->state[*state].set) ||
-		!common_options[*state]->name))
+	       (!common_options[*state]->set || !common_options[*state]->name))
 		(*state)++;
 
 	if (*state < limit && common_options[*state]) {
@@ -5444,22 +4058,22 @@ extern bool slurm_option_get_next_set(slurm_opt_t *opt, char **name,
 
 extern void validate_memory_options(slurm_opt_t *opt)
 {
-	if ((slurm_option_set_by_cli(opt, LONG_OPT_MEM) +
-	     slurm_option_set_by_cli(opt, LONG_OPT_MEM_PER_CPU) +
-	     slurm_option_set_by_cli(opt, LONG_OPT_MEM_PER_GPU)) > 1) {
+	if ((slurm_option_set_by_cli(LONG_OPT_MEM) +
+	     slurm_option_set_by_cli(LONG_OPT_MEM_PER_CPU) +
+	     slurm_option_set_by_cli(LONG_OPT_MEM_PER_GPU)) > 1) {
 		fatal("--mem, --mem-per-cpu, and --mem-per-gpu are mutually exclusive.");
-	} else if (slurm_option_set_by_cli(opt, LONG_OPT_MEM)) {
+	} else if (slurm_option_set_by_cli(LONG_OPT_MEM)) {
 		slurm_option_reset(opt, "mem-per-cpu");
 		slurm_option_reset(opt, "mem-per-gpu");
-	} else if (slurm_option_set_by_cli(opt, LONG_OPT_MEM_PER_CPU)) {
+	} else if (slurm_option_set_by_cli(LONG_OPT_MEM_PER_CPU)) {
 		slurm_option_reset(opt, "mem");
 		slurm_option_reset(opt, "mem-per-gpu");
-	} else if (slurm_option_set_by_cli(opt, LONG_OPT_MEM_PER_GPU)) {
+	} else if (slurm_option_set_by_cli(LONG_OPT_MEM_PER_GPU)) {
 		slurm_option_reset(opt, "mem");
 		slurm_option_reset(opt, "mem-per-cpu");
-	} else if ((slurm_option_set_by_env(opt, LONG_OPT_MEM) +
-		    slurm_option_set_by_env(opt, LONG_OPT_MEM_PER_CPU) +
-		    slurm_option_set_by_env(opt, LONG_OPT_MEM_PER_GPU)) > 1) {
+	} else if ((slurm_option_set_by_env(LONG_OPT_MEM) +
+		    slurm_option_set_by_env(LONG_OPT_MEM_PER_CPU) +
+		    slurm_option_set_by_env(LONG_OPT_MEM_PER_GPU)) > 1) {
 		fatal("SLURM_MEM_PER_CPU, SLURM_MEM_PER_GPU, and SLURM_MEM_PER_NODE are mutually exclusive.");
 	}
 }

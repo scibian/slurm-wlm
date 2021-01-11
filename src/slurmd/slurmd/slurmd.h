@@ -64,21 +64,6 @@ typedef enum {
 	WINDOW_MSGS
 } msg_aggr_param_type_t;
 
-typedef struct {
-	char **gres_job_env;
-	uint32_t het_job_id;
-	uint32_t jobid;
-	uint32_t step_id;
-	char *node_list;
-	char *partition;
-	char *resv_id;
-	char **spank_job_env;
-	uint32_t spank_job_env_size;
-	uid_t uid;
-	gid_t gid;
-	char *user_name;
-} job_env_t;
-
 /*
  * Global config type
  */
@@ -90,9 +75,6 @@ typedef struct slurmd_config {
 	Buf          buf;               /* packed version of this lite config */
 	char         *cluster_name; 	/* conf ClusterName		   */
 	char         *hostname;	 	/* local hostname		   */
-	char         *conf_server;	/* slurmctld to fetch config from  */
-	char         *conf_cache;	/* cache of slurm configs          */
-					/* (if running configless)         */
 	uint16_t     cpus;              /* lowest-level logical processors */
 	uint16_t     boards;            /* total boards count              */
 	uint16_t     sockets;           /* total sockets count             */
@@ -126,11 +108,12 @@ typedef struct slurmd_config {
 					 * build parameters */
 	int           nice;		/* command line nice value spec    */
 	char         *node_name;	/* node name                       */
+	char         *node_addr;	/* node's address                  */
 	char         *node_topo_addr;   /* node's topology address         */
 	char         *node_topo_pattern;/* node's topology address pattern */
 	char         *conffile;		/* config filename                 */
 	char         *logfile;		/* slurmd logfile, if any          */
-	uint32_t     syslog_debug;	/* send output to both logfile and
+	int          syslog_debug;	/* send output to both logfile and
 					 * syslog */
 	char         *spooldir;		/* SlurmdSpoolDir		   */
 	char         *pidfile;		/* PidFile location		   */
@@ -144,12 +127,12 @@ typedef struct slurmd_config {
 	char         *stepd_loc;	/* slurmstepd path                 */
 	char         *task_prolog;	/* per-task prolog script          */
 	char         *task_epilog;	/* per-task epilog script          */
-	uint16_t      port;		/* local slurmd port               */
+	int           port;		/* local slurmd port               */
 	int           lfd;		/* slurmd listen file descriptor   */
 	pid_t         pid;		/* server pid                      */
 	log_options_t log_opts;         /* current logging options         */
 	uint16_t      log_fmt;          /* Log file timestamp format flag  */
-	uint32_t      debug_level;	/* logging detail level            */
+	int           debug_level;	/* logging detail level            */
 	uint16_t      debug_level_set;	/* debug_level set on command line */
 	uint64_t      debug_flags;	/* DebugFlags configured           */
 	int	      boot_time:1;      /* Report node boot time now (-b)  */
@@ -189,7 +172,6 @@ typedef struct slurmd_config {
 					 * on job termination */
 	char           *x11_params;	/* X11Parameters */
 	char		*gres;		/* The node's slurm.conf GRES */
-	bool		print_gres;	/* Print gres info (-G) and exit */
 } slurmd_conf_t;
 
 extern slurmd_conf_t * conf;
@@ -198,7 +180,6 @@ extern uint32_t *fini_job_id;
 extern pthread_mutex_t fini_job_mutex;
 extern pthread_mutex_t tres_mutex;
 extern pthread_cond_t  tres_cond;
-extern bool tres_packed;
 
 /* Send node registration message with status to controller
  * IN status - same values slurm error codes (for node shutdown)

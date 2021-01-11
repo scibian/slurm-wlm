@@ -218,6 +218,19 @@ static int _load_plugins(void *x, void *arg)
 	return 0;
 }
 
+static bool _running_in_slurmctld(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmctld");
+	}
+
+	return run;
+}
+
 static dynamic_plugin_data_t *_create_dynamic_plugin_data(uint32_t plugin_id)
 {
 	dynamic_plugin_data_t *jobinfo_ptr = NULL;
@@ -253,7 +266,7 @@ extern int switch_init(bool only_default)
 	plugin_args.default_plugin = switch_type;
 
 	if (only_default) {
-		plugin_names = list_create(xfree_ptr);
+		plugin_names = list_create(slurm_destroy_char);
 		list_append(plugin_names, xstrdup(switch_type));
 	} else {
 		plugin_names = plugin_get_plugins_of_type(plugin_type);
@@ -479,7 +492,7 @@ extern int switch_g_unpack_jobinfo(dynamic_plugin_data_t **jobinfo, Buf buffer,
 	 * relevant to this cluster.
 	 */
 	if ((jobinfo_ptr->plugin_id != switch_context_default) &&
-	    running_in_slurmctld()) {
+	    _running_in_slurmctld()) {
 		switch_g_free_jobinfo(jobinfo_ptr);
 		*jobinfo = _create_dynamic_plugin_data(switch_context_default);
 	}

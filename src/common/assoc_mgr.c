@@ -72,7 +72,6 @@ List assoc_mgr_wckey_list = NULL;
 static char *assoc_mgr_cluster_name = NULL;
 static int setup_children = 0;
 static pthread_rwlock_t assoc_mgr_locks[ASSOC_MGR_ENTITY_COUNT];
-static pthread_mutex_t assoc_lock_init = PTHREAD_MUTEX_INITIALIZER;
 
 static assoc_init_args_t init_setup;
 static slurmdb_assoc_rec_t **assoc_hash_id = NULL;
@@ -165,7 +164,11 @@ static bool _remove_from_assoc_list(slurmdb_assoc_rec_t *assoc)
 
 	return assoc_ptr ? 1 : 0;
 }
-
+/*
+ * find_job_record - return a pointer to the job record with the given job_id
+ * IN job_id - requested job's id
+ * RET pointer to the job's record, NULL on error
+ */
 static slurmdb_assoc_rec_t *_find_assoc_rec_id(uint32_t assoc_id)
 {
 	slurmdb_assoc_rec_t *assoc;
@@ -615,7 +618,7 @@ static int _grab_parents_qos(slurmdb_assoc_rec_t *assoc)
 	if (assoc->qos_list)
 		list_flush(assoc->qos_list);
 	else
-		assoc->qos_list = list_create(xfree_ptr);
+		assoc->qos_list = list_create(slurm_destroy_char);
 
 	parent_assoc = assoc->usage->parent_assoc_ptr;
 
@@ -1082,9 +1085,7 @@ static int _post_user_list(List user_list)
 {
 	slurmdb_user_rec_t *user = NULL;
 	ListIterator itr = list_iterator_create(user_list);
-	DEF_TIMERS;
-
-	START_TIMER;
+	//START_TIMER;
 	while ((user = list_next(itr))) {
 		uid_t pw_uid;
 		/* Just to make sure we have a default_wckey since it
@@ -1093,14 +1094,15 @@ static int _post_user_list(List user_list)
 		if (!user->default_wckey)
 			user->default_wckey = xstrdup("");
 		if (uid_from_string (user->name, &pw_uid) < 0) {
-			debug("%s: couldn't get a uid for user: %s",
-			      __func__, user->name);
+			if (slurmdbd_conf)
+				debug("post user: couldn't get a "
+				      "uid for user %s",
+				      user->name);
 			user->uid = NO_VAL;
 		} else
 			user->uid = pw_uid;
 	}
 	list_iterator_destroy(itr);
-	END_TIMER2(__func__);
 	return SLURM_SUCCESS;
 }
 
@@ -1521,7 +1523,7 @@ static int _get_assoc_mgr_tres_list(void *db_conn, int enforce)
 
 	/* If this exists we only want/care about tracking/caching these TRES */
 	if ((tres_req_str = slurm_get_accounting_storage_tres())) {
-		tres_q.type_list = list_create(xfree_ptr);
+		tres_q.type_list = list_create(slurm_destroy_char);
 		slurm_addto_char_list(tres_q.type_list, tres_req_str);
 		xfree(tres_req_str);
 	}
@@ -2048,6 +2050,19 @@ extern int assoc_mgr_init(void *db_conn, assoc_init_args_t *args,
 	/* get tres before association and qos since it is used there */
 	if ((!assoc_mgr_tres_list)
 	    && (init_setup.cache_level & ASSOC_MGR_CACHE_TRES)) {
+		/*
+		 * We need the old list just in case something changed.  If
+		 * the tres is still stored in the assoc_mgr_list we will get
+		 * it from there.  This second check can be removed 2 versions
+		 * after 18.08.
+		 */
+		if (!slurmdbd_conf &&
+		    (load_assoc_mgr_last_tres() != SLURM_SUCCESS))
+			/* We don't care about the error here.  It should only
+			 * happen if we can't find the file.  If that is the
+			 * case then we don't need to worry about old state.
+			 */
+			(void)load_assoc_mgr_state(1);
 		if (_get_assoc_mgr_tres_list(db_conn, init_setup.enforce)
 		    == SLURM_ERROR)
 			return SLURM_ERROR;
@@ -2201,13 +2216,11 @@ extern void assoc_mgr_lock(assoc_mgr_lock_t *locks)
 	static bool init_run = false;
 	xassert(_store_locks(locks));
 
-	slurm_mutex_lock(&assoc_lock_init);
 	if (!init_run) {
 		init_run = true;
 		for (int i = 0; i < ASSOC_MGR_ENTITY_COUNT; i++)
 			slurm_rwlock_init(&assoc_mgr_locks[i]);
 	}
-	slurm_mutex_unlock(&assoc_lock_init);
 
 	if (locks->assoc == READ_LOCK)
 		slurm_rwlock_rdlock(&assoc_mgr_locks[ASSOC_LOCK]);
@@ -2508,9 +2521,10 @@ extern int assoc_mgr_fill_in_assoc(void *db_conn,
 		if (!assoc->cluster)
 			assoc->cluster = assoc_mgr_cluster_name;
 	}
-	debug5("%s: looking for assoc of user=%s(%u), acct=%s, cluster=%s, partition=%s",
-	       __func__, assoc->user, assoc->uid, assoc->acct, assoc->cluster,
-	       assoc->partition);
+/* 	info("looking for assoc of user=%s(%u), acct=%s, " */
+/* 	     "cluster=%s, partition=%s", */
+/* 	     assoc->user, assoc->uid, assoc->acct, */
+/* 	     assoc->cluster, assoc->partition); */
 	if (!locked)
 		assoc_mgr_lock(&locks);
 
@@ -2536,9 +2550,7 @@ extern int assoc_mgr_fill_in_assoc(void *db_conn,
 		else
 			return SLURM_SUCCESS;
 	}
-	debug3("%s: found correct association of user=%s(%u), acct=%s, cluster=%s, partition=%s to assoc=%u acct=%s",
-	       __func__, assoc->user, assoc->uid, assoc->acct, assoc->cluster,
-	       assoc->partition, ret_assoc->id, ret_assoc->acct);
+	debug3("found correct association");
 	if (assoc_pptr)
 		*assoc_pptr = ret_assoc;
 
@@ -2683,8 +2695,7 @@ extern int assoc_mgr_fill_in_user(void *db_conn, slurmdb_user_rec_t *user,
 			return SLURM_SUCCESS;
 	}
 
-	debug3("%s: found correct user: %s(%u)",
-	       __func__, found_user->name, found_user->uid);
+	debug3("found correct user");
 	if (user_pptr)
 		*user_pptr = found_user;
 
@@ -3037,7 +3048,6 @@ extern slurmdb_admin_level_t assoc_mgr_get_admin_level(void *db_conn,
 	ListIterator itr = NULL;
 	slurmdb_user_rec_t * found_user = NULL;
 	assoc_mgr_lock_t locks = { .user = READ_LOCK };
-	slurmdb_admin_level_t level = SLURMDB_ADMIN_NOTSET;
 
 	if (!assoc_mgr_user_list)
 		if (_get_assoc_mgr_user_list(db_conn, 0) == SLURM_ERROR)
@@ -3055,13 +3065,12 @@ extern slurmdb_admin_level_t assoc_mgr_get_admin_level(void *db_conn,
 			break;
 	}
 	list_iterator_destroy(itr);
-
-	if (found_user)
-		level = found_user->admin_level;
-
 	assoc_mgr_unlock(&locks);
 
-	return level;
+	if (found_user)
+		return found_user->admin_level;
+
+	return SLURMDB_ADMIN_NOTSET;
 }
 
 extern bool assoc_mgr_is_user_acct_coord(void *db_conn,
@@ -5675,7 +5684,7 @@ extern int load_assoc_usage(void)
 	debug3("Version in assoc_usage header is %u", ver);
 	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		if (!ignore_state_errors)
-			fatal("Can not recover assoc_usage state, incompatible version, got %u need >= %u <= %u, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.",
+			fatal("Can not recover assoc_usage state, incompatible version, got %u need >= %u <= %u, start with '-i' to ignore this",
 			      ver, SLURM_MIN_PROTOCOL_VERSION,
 			      SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
@@ -5736,7 +5745,7 @@ extern int load_assoc_usage(void)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete assoc usage state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete assoc usage state file, start with '-i' to ignore this");
 	error("Incomplete assoc usage state file");
 
 	free_buf(buffer);
@@ -5780,7 +5789,7 @@ extern int load_qos_usage(void)
 	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		if (!ignore_state_errors)
 			fatal("Can not recover qos_usage state, incompatible version, "
-			      "got %u need >= %u <= %u, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.",
+			      "got %u need >= %u <= %u, start with '-i' to ignore this",
 			      ver, SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
 		error("Can not recover qos_usage state, "
@@ -5828,7 +5837,7 @@ extern int load_qos_usage(void)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete QOS usage state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete QOS usage state file, start with '-i' to ignore this");
 	error("Incomplete QOS usage state file");
 
 	free_buf(buffer);
@@ -5871,7 +5880,7 @@ extern int load_assoc_mgr_last_tres(void)
 	debug3("Version in last_tres header is %u", ver);
 	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		if (!ignore_state_errors)
-			fatal("Can not recover last_tres state, incompatible version, got %u need >= %u <= %u, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.",
+			fatal("Can not recover last_tres state, incompatible version, got %u need >= %u <= %u, start with '-i' to ignore this",
 			      ver, SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
 		error("Can not recover last_tres state, incompatible version, got %u need > %u <= %u", ver,
@@ -5903,7 +5912,7 @@ extern int load_assoc_mgr_last_tres(void)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete last_tres state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete last_tres state file, start with '-i' to ignore this");
 	error("Incomplete last_tres state file");
 
 	free_buf(buffer);
@@ -5948,7 +5957,7 @@ extern int load_assoc_mgr_state(bool only_tres)
 	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		if (!ignore_state_errors)
 			fatal("Can not recover assoc_mgr state, incompatible version, "
-			      "got %u need >= %u <= %u, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.",
+			      "got %u need >= %u <= %u, start with '-i' to ignore this",
 			      ver, SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
 		error("Can not recover assoc_mgr state, incompatible version, "
@@ -5964,6 +5973,27 @@ extern int load_assoc_mgr_state(bool only_tres)
 	while (remaining_buf(buffer) > 0) {
 		safe_unpack16(&type, buffer);
 		switch(type) {
+		/* DBD_ADD_TRES can be removed 2 versions after 18.08 */
+		case DBD_ADD_TRES:
+			error_code = slurmdbd_unpack_list_msg(
+				&msg, ver, DBD_ADD_TRES, buffer);
+			if (error_code != SLURM_SUCCESS)
+				goto unpack_error;
+			else if (!msg->my_list) {
+				error("No tres retrieved");
+				break;
+			}
+			FREE_NULL_LIST(assoc_mgr_tres_list);
+			assoc_mgr_post_tres_list(msg->my_list);
+			/*
+			 * assoc_mgr_tres_list gets set in
+			 * assoc_mgr_post_tres_list
+			 */
+			debug("Recovered %u tres",
+			      list_count(assoc_mgr_tres_list));
+			msg->my_list = NULL;
+			slurmdbd_free_list_msg(msg);
+			break;
 		case DBD_ADD_ASSOCS:
 			if (!g_tres_count)
 				fatal("load_assoc_mgr_state: "
@@ -6078,7 +6108,7 @@ extern int load_assoc_mgr_state(bool only_tres)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete assoc mgr state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete assoc mgr state file, start with '-i' to ignore this");
 	error("Incomplete assoc mgr state file");
 
 	free_buf(buffer);
@@ -6193,13 +6223,11 @@ extern int assoc_mgr_set_missing_uids()
 			if (object->name && (object->uid == NO_VAL)) {
 				if (uid_from_string(
 					    object->name, &pw_uid) < 0) {
-					debug3("%s: refresh user couldn't get uid for user %s",
-					       __func__, object->name);
-				} else {
-					debug5("%s: found uid %u for user %s",
-					       __func__, pw_uid, object->name);
+					debug3("refresh user couldn't get "
+					       "a uid for user %s",
+					       object->name);
+				} else
 					object->uid = pw_uid;
-				}
 			}
 		}
 		list_iterator_destroy(itr);
@@ -6453,7 +6481,6 @@ extern char *assoc_mgr_make_tres_str_from_array(
 	int i;
 	char *tres_str = NULL;
 	assoc_mgr_lock_t locks = { .tres = READ_LOCK };
-	uint64_t count;
 
 	if (!tres_cnt)
 		return NULL;
@@ -6472,26 +6499,20 @@ extern char *assoc_mgr_make_tres_str_from_array(
 		} else if (!tres_cnt[i])
 			continue;
 
-		count = tres_cnt[i];
-
-		/* We want to print no_consume with a 0 */
-		if (count == NO_CONSUME_VAL64)
-			count = 0;
-
 		if (flags & TRES_STR_FLAG_SIMPLE) {
 			xstrfmtcat(tres_str, "%s%u=%"PRIu64,
 				   tres_str ? "," : "",
-				   assoc_mgr_tres_array[i]->id, count);
+				   assoc_mgr_tres_array[i]->id, tres_cnt[i]);
 		} else {
 			/* Always skip these when printing out named TRES */
-			if ((count == NO_VAL64) ||
-			    (count == INFINITE64))
+			if ((tres_cnt[i] == NO_VAL64) ||
+			    (tres_cnt[i] == INFINITE64))
 				continue;
 			if ((flags & TRES_STR_CONVERT_UNITS) &&
 			    ((assoc_mgr_tres_array[i]->id == TRES_MEM) ||
 			     !xstrcasecmp(assoc_mgr_tres_array[i]->type,"bb"))){
 				char outbuf[32];
-				convert_num_unit((double)count, outbuf,
+				convert_num_unit((double)tres_cnt[i], outbuf,
 						 sizeof(outbuf), UNIT_MEGA,
 						 NO_VAL,
 						 CONVERT_NUM_UNIT_EXACT);
@@ -6504,7 +6525,7 @@ extern char *assoc_mgr_make_tres_str_from_array(
 				   !xstrcasecmp(assoc_mgr_tres_array[i]->type,
 						"ic")) {
 				char outbuf[32];
-				convert_num_unit((double)count, outbuf,
+				convert_num_unit((double)tres_cnt[i], outbuf,
 						 sizeof(outbuf), UNIT_NONE,
 						 NO_VAL,
 						 CONVERT_NUM_UNIT_EXACT);
@@ -6516,7 +6537,7 @@ extern char *assoc_mgr_make_tres_str_from_array(
 				xstrfmtcat(tres_str, "%s%s=%"PRIu64,
 					   tres_str ? "," : "",
 					   assoc_mgr_tres_name_array[i],
-					   count);
+					   tres_cnt[i]);
 			}
 		}
 	}
@@ -6590,9 +6611,6 @@ extern double assoc_mgr_tres_weighted(uint64_t *tres_cnt, double *weights,
 		double tres_value  = tres_cnt[i];
 
 		if (i == TRES_ARRAY_BILLING)
-			continue;
-
-		if (tres_cnt[i] == NO_CONSUME_VAL64)
 			continue;
 
 		debug3("TRES Weight: %s = %f * %f = %f",

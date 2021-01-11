@@ -150,21 +150,6 @@ int stepd_terminate(int fd, uint16_t protocol_version);
 extern int stepd_connect(const char *directory, const char *nodename,
 		  uint32_t jobid, uint32_t stepid, uint16_t *protocol_version);
 
-
-/*
- * Connect to a slurmstepd proccess by way of its unix domain socket.
- *
- * This is specifically intended to be used with nss_slurm to prevent possible
- * deadlocks. Neither "directory" or "nodename" may be null, and will result
- * in an error. Remove this function in 20.11.
- *
- * Returns a file descriptor for the opened socket on success alongside the
- * protocol_version for the stepd, or -1 on error.
- */
-extern int stepd_connect_nss(const char *directory, const char *nodename,
-			     uint32_t jobid, uint32_t stepid,
-			     uint16_t *protocol_version);
-
 /*
  * Retrieve a job step's current state.
  */
@@ -181,6 +166,12 @@ slurmstepd_info_t *stepd_get_info(int fd);
  * Send job notification message to a batch job
  */
 int stepd_notify_job(int fd, uint16_t protocol_version, char *message);
+
+/*
+ * Send a checkpoint request to all tasks of a job step.
+ */
+int stepd_checkpoint(int fd, uint16_t protocol_version,
+		     time_t timestamp, char *image_dir);
 
 /*
  * Send a signal to the proctrack container of a job step.

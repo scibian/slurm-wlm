@@ -6,6 +6,7 @@ SUBDIRS = \
 	acct_gather_filesystem  \
 	auth			\
 	burst_buffer		\
+	checkpoint		\
 	cli_filter		\
 	core_spec		\
 	cred			\
@@ -22,7 +23,6 @@ SUBDIRS = \
 	node_features		\
 	power			\
 	preempt			\
-	prep			\
 	priority		\
 	proctrack		\
 	route			\

@@ -106,7 +106,7 @@ typedef struct trig_mgr_info {
 	char *   res_id;	/* node name or job_id (string) */
 	bitstr_t *nodes_bitmap;	/* bitmap of requested nodes (if applicable) */
 	uint32_t job_id;	/* job ID (if applicable) */
-	job_record_t *job_ptr;	/* pointer to job record (if applicable) */
+	struct job_record *job_ptr; /* pointer to job record (if applicable) */
 	uint32_t trig_type;	/* TRIGGER_TYPE_* */
 	time_t   trig_time;	/* offset (pending) or time stamp (complete) */
 	uint32_t user_id;	/* user requesting trigger */
@@ -398,7 +398,7 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 	uint32_t job_id;
 	bitstr_t *bitmap = NULL;
 	trig_mgr_info_t * trig_add;
-	job_record_t *job_ptr;
+	struct job_record *job_ptr;
 	/* Read config and job info */
 	slurmctld_lock_t job_read_lock =
 		{ READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
@@ -468,7 +468,6 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 		if (bitmap) {
 			trig_add->nodes_bitmap = bitmap;
 			trig_add->orig_bitmap  = bit_copy(bitmap);
-			bitmap = NULL;
 		}
 		trig_add->job_id = job_id;
 		trig_add->job_ptr = job_ptr;
@@ -529,7 +528,7 @@ extern void trigger_front_end_up(front_end_record_t *front_end_ptr)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
-extern void trigger_node_down(node_record_t *node_ptr)
+extern void trigger_node_down(struct node_record *node_ptr)
 {
 	int inx = node_ptr - node_record_table_ptr;
 
@@ -542,7 +541,7 @@ extern void trigger_node_down(node_record_t *node_ptr)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
-extern void trigger_node_drained(node_record_t *node_ptr)
+extern void trigger_node_drained(struct node_record *node_ptr)
 {
 	int inx = node_ptr - node_record_table_ptr;
 
@@ -555,7 +554,7 @@ extern void trigger_node_drained(node_record_t *node_ptr)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
-extern void trigger_node_failing(node_record_t *node_ptr)
+extern void trigger_node_failing(struct node_record *node_ptr)
 {
 	int inx = node_ptr - node_record_table_ptr;
 
@@ -568,7 +567,8 @@ extern void trigger_node_failing(node_record_t *node_ptr)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
-extern void trigger_node_up(node_record_t *node_ptr)
+
+extern void trigger_node_up(struct node_record *node_ptr)
 {
 	int inx = node_ptr - node_record_table_ptr;
 
@@ -950,7 +950,7 @@ extern void trigger_state_restore(void)
 
 	if (protocol_version == NO_VAL16) {
 		if (!ignore_state_errors)
-			fatal("Can't recover trigger state, data version incompatible, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+			fatal("Can't recover trigger state, data version incompatible, start with '-i' to ignore this");
 		error("Can't recover trigger state, data version "
 		      "incompatible");
 		xfree(ver_str);
@@ -972,14 +972,14 @@ extern void trigger_state_restore(void)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete trigger data checkpoint file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete trigger data checkpoint file, start with '-i' to ignore this");
 	error("Incomplete trigger data checkpoint file");
 fini:	verbose("State of %d triggers recovered", trigger_cnt);
 	free_buf(buffer);
 }
 
 static bool _front_end_job_test(bitstr_t *front_end_bitmap,
-				job_record_t *job_ptr)
+				struct job_record *job_ptr)
 {
 #ifdef HAVE_FRONT_END
 	int i;
@@ -1059,8 +1059,8 @@ static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 
 	if (trig_in->trig_type & TRIGGER_TYPE_DOWN) {
 		if (trigger_down_nodes_bitmap &&
-		    bit_overlap_any(trig_in->job_ptr->node_bitmap,
-				    trigger_down_nodes_bitmap)) {
+		    bit_overlap(trig_in->job_ptr->node_bitmap,
+				trigger_down_nodes_bitmap)) {
 			if (slurmctld_conf.debug_flags & DEBUG_FLAG_TRIGGERS) {
 				info("trigger[%u] for job %u down",
 				     trig_in->trig_id, trig_in->job_id);
@@ -1074,8 +1074,8 @@ static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 
 	if (trig_in->trig_type & TRIGGER_TYPE_FAIL) {
 		if (trigger_fail_nodes_bitmap &&
-		    bit_overlap_any(trig_in->job_ptr->node_bitmap,
-				    trigger_fail_nodes_bitmap)) {
+		    bit_overlap(trig_in->job_ptr->node_bitmap,
+				trigger_fail_nodes_bitmap)) {
 			if (slurmctld_conf.debug_flags & DEBUG_FLAG_TRIGGERS) {
 				info("trigger[%u] for job %u node fail",
 				     trig_in->trig_id, trig_in->job_id);
@@ -1089,8 +1089,8 @@ static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 
 	if (trig_in->trig_type & TRIGGER_TYPE_UP) {
 		if (trigger_up_nodes_bitmap &&
-		    bit_overlap_any(trig_in->job_ptr->node_bitmap,
-				    trigger_up_nodes_bitmap)) {
+		    bit_overlap(trig_in->job_ptr->node_bitmap,
+				trigger_up_nodes_bitmap)) {
 			trig_in->state = 1;
 			trig_in->trig_time = now +
 					    (0x8000 - trig_in->trig_time);
@@ -1175,8 +1175,8 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->res_id = bitmap2node_name(
 					  trigger_down_nodes_bitmap);
 			trig_in->state = 1;
-		} else if (bit_overlap_any(trig_in->nodes_bitmap,
-				           trigger_down_nodes_bitmap)) {
+		} else if (bit_overlap(trig_in->nodes_bitmap,
+				       trigger_down_nodes_bitmap)) {
 			bit_and(trig_in->nodes_bitmap,
 				trigger_down_nodes_bitmap);
 			xfree(trig_in->res_id);
@@ -1203,8 +1203,8 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->res_id = bitmap2node_name(
 					  trigger_drained_nodes_bitmap);
 			trig_in->state = 1;
-		} else if (bit_overlap_any(trig_in->nodes_bitmap,
-				           trigger_drained_nodes_bitmap)) {
+		} else if (bit_overlap(trig_in->nodes_bitmap,
+				       trigger_drained_nodes_bitmap)) {
 			bit_and(trig_in->nodes_bitmap,
 				trigger_drained_nodes_bitmap);
 			xfree(trig_in->res_id);
@@ -1231,8 +1231,8 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->res_id = bitmap2node_name(
 					  trigger_fail_nodes_bitmap);
 			trig_in->state = 1;
-		} else if (bit_overlap_any(trig_in->nodes_bitmap,
-					   trigger_fail_nodes_bitmap)) {
+		} else if (bit_overlap(trig_in->nodes_bitmap,
+				       trigger_fail_nodes_bitmap)) {
 			bit_and(trig_in->nodes_bitmap,
 				trigger_fail_nodes_bitmap);
 			xfree(trig_in->res_id);
@@ -1256,7 +1256,7 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 		 * nodes have been idle for at least the offset time */
 		time_t min_idle = now - (trig_in->trig_time - 0x8000);
 		int i;
-		node_record_t *node_ptr = node_record_table_ptr;
+		struct node_record *node_ptr = node_record_table_ptr;
 		bitstr_t *trigger_idle_node_bitmap;
 
 		trigger_idle_node_bitmap = bit_alloc(node_record_count);
@@ -1271,8 +1271,8 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->res_id = bitmap2node_name(
 					  trigger_idle_node_bitmap);
 			trig_in->state = 1;
-		} else if (bit_overlap_any(trig_in->nodes_bitmap,
-					   trigger_idle_node_bitmap)) {
+		} else if (bit_overlap(trig_in->nodes_bitmap,
+				       trigger_idle_node_bitmap)) {
 			bit_and(trig_in->nodes_bitmap,
 				trigger_idle_node_bitmap);
 			xfree(trig_in->res_id);
@@ -1299,8 +1299,8 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->res_id = bitmap2node_name(
 					  trigger_up_nodes_bitmap);
 			trig_in->state = 1;
-		} else if (bit_overlap_any(trig_in->nodes_bitmap,
-					   trigger_up_nodes_bitmap)) {
+		} else if (bit_overlap(trig_in->nodes_bitmap,
+				       trigger_up_nodes_bitmap)) {
 			bit_and(trig_in->nodes_bitmap,
 				trigger_up_nodes_bitmap);
 			xfree(trig_in->res_id);

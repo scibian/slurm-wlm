@@ -57,7 +57,7 @@ if {[info procs exit] eq "exit"} {
 source ./globals_private
 
 global sacctmgr sacct salloc sattach sbatch sbcast scancel scontrol sinfo
-global smd squeue sreport srun sstat strigger
+global smap smd squeue sreport srun sstat strigger
 
 ################################################################
 #
@@ -137,6 +137,7 @@ cset sdiag       "${slurm_dir}/bin/sdiag"
 cset sgather     "${slurm_dir}/bin/sgather"
 cset sh5util     "${slurm_dir}/bin/sh5util"
 cset sinfo       "${slurm_dir}/bin/sinfo"
+cset smap        "${slurm_dir}/bin/smap"
 cset smd         "${slurm_dir}/bin/smd"
 cset sprio       "${slurm_dir}/bin/sprio"
 cset squeue      "${slurm_dir}/bin/squeue"
@@ -2310,7 +2311,7 @@ proc get_bb_types { } {
 				set task_found [lsearch $parts "burst_buffer"]
 				if { $task_found == -1 } break
 				set parts [lreplace $parts $task_found $task_found]
-			}
+		}
 			set bb_types [join $parts ","]
 			exp_continue
 		}
@@ -3176,9 +3177,18 @@ proc get_control_machine { } {
 	set control_machine ""
 	set scon_pid [spawn -noecho $scontrol show config]
 	expect {
-		# We need to handle two possible outputs of SlurmctldHost[0]:
+		# We need to handle two possible outputs of the ControlMachine / SlurmctldHost[0] option:
 		# a) hostname
 		# b) hostname(IP)
+		-re "ControlMachine *= ($re_word_str)" {
+			set par_idx [expr [string last "(" $expect_out(1,string)] -1]
+			if { $par_idx == -2 } {
+				set control_machine $expect_out(1,string)
+			} else {
+				set control_machine [string range $expect_out(1,string) 0 $par_idx]
+			}
+			exp_continue
+		}
 		-re "SlurmctldHost.0. *= ($re_word_str)" {
 			set par_idx [expr [string last "(" $expect_out(1,string)] -1]
 			if { $par_idx == -2 } {
@@ -4350,7 +4360,7 @@ proc get_het_job_ids { jobid {use_offset 0}} {
 	log_user 0
 	spawn $scontrol show job $jobid
 	expect {
-		-re "JobId=($number) HetJobId=($number) HetJobOffset=($number)" {
+		-re "JobId=($number) PackJobId=($number) PackJobOffset=($number)" {
 			if { $use_offset } {
 				lappend id_list "$expect_out(2,string)+$expect_out(3,string)"
 			} else {
@@ -5867,6 +5877,7 @@ proc get_job_param { job_id parameter_name } {
 	}
 }
 
+
 proc check_reason { job_id reason } {
 	global squeue
 
@@ -5983,7 +5994,7 @@ proc compile_against_libslurm { test_prog {use_full 0} {build_args ""} } {
 		set libfile "slurm"
 	}
 
-	set build_cmd "$bin_cc ${test_prog}.c -g -pthread -o $test_prog -I$src_dir -I$build_dir -I$slurm_dir/include -Wl,-rpath=$libline -L$libline -l$libfile -lresolv"
+	set build_cmd "$bin_cc ${test_prog}.c -g -pthread -o $test_prog -I$src_dir -I$build_dir -I$slurm_dir/include -Wl,-rpath=$libline -L$libline -l$libfile"
 
 	# Add additional arguments to the build command
 	if {$build_args != ""} {

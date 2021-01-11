@@ -73,7 +73,7 @@ on that KNL processor.</p>
 <p><a name="note"><b>NOTE</b></a>: Slurm can only
 support homogeneous nodes (e.g. the same number of cores per NUMA node).
 KNL processors with <u>68 cores</u> (a subset of KNL models) will not have
-homogeneous NUMA nodes in snc4 mode, but each NUMA node will have
+homogeneous NUMA nodes in snc4 mode, but each each NUMA node will have
 either 16 or 18 cores. This will result in Slurm using the lower core count,
 finding a total of 256 threads rather than 272 threads and setting the node
 to a DOWN state.</p>
@@ -90,7 +90,7 @@ For example, a job with a 10 minute time limit may be allocated resources at
 If the nodes require rebooting, they might not be available for use until
 10:20:00, 20 minutes after allocation, and the job will begin execution at
 that time.
-The job must complete no later than 10:30:00 in order to satisfy its time limit
+The job must complete no later than 10:30:00 in order to satisfy it's time limit
 (10 minutes after execution actually begins).
 However, the job will be charged for 30 minutes of resource use, which includes
 the boot time.</p>
@@ -191,7 +191,7 @@ be necessary, configured as <i>SyscfgTimeout=10000</i>.</p>
 <p>Slurm does not support the concept of multiple NUMA nodes
 within a single socket. If a KNL node is booted with multiple NUMA, then each
 NUMA node will appear in Slurm as a separate socket.
-In the slurm.conf configuration file, set node socket and
+In the slurm.conf configuration file, set "FastSchedule=1" and node socket and
 core counts to values which are appropriate for some NUMA mode to be used on the
 node. When the node boots and the slurmd daemon on the node starts, it will
 report to the slurmctld daemon the node's actual socket (NUMA) and core counts,
@@ -329,6 +329,6 @@ NodeName=nid[00000-00127] State=UNKNOWN
 </pre>
 
 
-<p style="text-align:center;">Last modified 9 October 2019</p>
+<p style="text-align:center;">Last modified 11 December 2017</p>
 
 <!--#include virtual="footer.txt"-->

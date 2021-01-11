@@ -61,7 +61,7 @@
  *  (messages go to stderr if log is not initialized)
  */
 extern void __xassert_failed(char *, const char *, int, const char *)
-	__attribute__((noreturn));
+	    __NORETURN_ATTR;
 
 #endif /* NDEBUG. */
 

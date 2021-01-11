@@ -91,10 +91,10 @@ static int _setup_resv_limits(slurmdb_reservation_rec_t *resv,
 		xstrfmtcat(*extra, ", assoclist='%s'", resv->assocs+start);
 	}
 
-	if (resv->flags != NO_VAL64) {
+	if (resv->flags != NO_VAL) {
 		xstrcat(*cols, ", flags");
-		xstrfmtcat(*vals, ", %"PRIu64, resv->flags);
-		xstrfmtcat(*extra, ", flags=%"PRIu64, resv->flags);
+		xstrfmtcat(*vals, ", %u", resv->flags);
+		xstrfmtcat(*extra, ", flags=%u", resv->flags);
 	}
 
 	if (resv->name) {
@@ -356,7 +356,7 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 	if (start > resv->time_start) {
 		error("There is newer record for reservation with id %u, drop modification request:",
 		      resv->id);
-		error("assocs:'%s', cluster:'%s', flags:%"PRIu64", id:%u, name:'%s', nodes:'%s', nodes_inx:'%s', time_end:%ld, time_start:%ld, time_start_prev:%ld, tres_str:'%s', unused_wall:%f",
+		error("assocs:'%s', cluster:'%s', flags:%u, id:%u, name:'%s', nodes:'%s', nodes_inx:'%s', time_end:%ld, time_start:%ld, time_start_prev:%ld, tres_str:'%s', unused_wall:%f",
 		      resv->assocs, resv->cluster, resv->flags, resv->id,
 		      resv->name, resv->nodes, resv->node_inx, resv->time_end,
 		      resv->time_start, resv->time_start_prev, resv->tres_str,
@@ -377,14 +377,30 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 		// reservation accounting wise
 		resv->name = xstrdup(row[RESV_NAME]);
 
-	if (xstrcmp(resv->assocs, row[RESV_ASSOCS]) ||
-	    (resv->flags != slurm_atoul(row[RESV_FLAGS])) ||
-	    xstrcmp(resv->nodes, row[RESV_NODE_INX]) ||
-	    xstrcmp(resv->tres_str, row[RESV_TRES]))
+	if (resv->assocs)
 		set = 1;
+	else if (row[RESV_ASSOCS] && row[RESV_ASSOCS][0])
+		resv->assocs = xstrdup(row[RESV_ASSOCS]);
+
+	if (resv->flags != NO_VAL)
+		set = 1;
+	else
+		resv->flags = slurm_atoul(row[RESV_FLAGS]);
+
+	if (resv->nodes)
+		set = 1;
+	else if (row[RESV_NODES] && row[RESV_NODES][0]) {
+		resv->nodes = xstrdup(row[RESV_NODES]);
+		resv->node_inx = xstrdup(row[RESV_NODE_INX]);
+	}
 
 	if (!resv->time_end)
 		resv->time_end = slurm_atoul(row[RESV_END]);
+
+	if (resv->tres_str)
+		set = 1;
+	else if (row[RESV_TRES] && row[RESV_TRES][0])
+		resv->tres_str = xstrdup(row[RESV_TRES]);
 
 	mysql_free_result(result);
 
@@ -403,17 +419,15 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 				       resv->cluster, resv_table,
 				       extra, resv->id, start);
 	} else {
-		if (start != resv->time_start)
-			/* time_start is already done above and we
-			 * changed something that is in need on a new
-			 * entry. */
-			query = xstrdup_printf(
-				"update \"%s_%s\" set time_end=%ld "
-				"where deleted=0 && id_resv=%u "
-				"and time_start=%ld;",
-				resv->cluster, resv_table,
-				resv->time_start,
-				resv->id, start);
+		/* time_start is already done above and we
+		 * changed something that is in need on a new
+		 * entry. */
+		query = xstrdup_printf("update \"%s_%s\" set time_end=%ld "
+				       "where deleted=0 && id_resv=%u "
+				       "and time_start=%ld;",
+				       resv->cluster, resv_table,
+				       resv->time_start,
+				       resv->id, start);
 		xstrfmtcat(query,
 			   "insert into \"%s_%s\" (id_resv%s) "
 			   "values (%u%s) "
@@ -566,7 +580,8 @@ extern List as_mysql_get_resvs(mysql_conn_t *mysql_conn, uid_t uid,
 		job_cond.usage_end = resv_cond->time_end;
 		job_cond.used_nodes = resv_cond->nodes;
 		if (!resv_cond->cluster_list)
-			resv_cond->cluster_list = list_create(xfree_ptr);
+			resv_cond->cluster_list =
+				list_create(slurm_destroy_char);
 		/*
 		 * If they didn't specify a cluster, give them the one they are
 		 * calling from.
@@ -649,7 +664,7 @@ empty:
 		resv->nodes = xstrdup(row[RESV_REQ_NODES]);
 		resv->time_start = start;
 		resv->time_end = slurm_atoul(row[RESV_REQ_END]);
-		resv->flags = slurm_atoull(row[RESV_REQ_FLAGS]);
+		resv->flags = slurm_atoul(row[RESV_REQ_FLAGS]);
 		resv->tres_str = xstrdup(row[RESV_REQ_TRES]);
 		resv->unused_wall = atof(row[RESV_REQ_UNUSED]);
 	}

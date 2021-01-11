@@ -242,7 +242,7 @@ static void _read_slurm_cgroup_conf_int(void)
 			      conf_path);
 		}
 
-		/* cgroup initialization parameters */
+		/* cgroup initialisation parameters */
 		if (!s_p_get_boolean(&slurm_cgroup_conf.cgroup_automount,
 				     "CgroupAutomount", tbl))
 			slurm_cgroup_conf.cgroup_automount = false;

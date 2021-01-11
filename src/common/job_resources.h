@@ -156,10 +156,11 @@ extern job_resources_t *create_job_resources(void);
  *
  * job_resources_t *job_resrcs_ptr = create_job_resources();
  * node_name2bitmap("dummy[2,5,12,16]", true, &(job_res_ptr->node_bitmap));
- * rc = build_job_resources(job_resrcs_ptr, node_record_table_ptr);
+ * rc = build_job_resources(job_resrcs_ptr, node_record_table_ptr,
+ *			     slurmctld_conf.fast_schedule);
  */
 extern int build_job_resources(job_resources_t *job_resrcs_ptr,
-			       void *node_rec_table);
+			       void *node_rec_table, uint16_t fast_schedule);
 
 /* Rebuild cpu_array_cnt, cpu_array_value, and cpu_array_reps based upon the
  * values of cpus in an existing data structure
@@ -179,10 +180,11 @@ extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr);
  * change in a node's socket or core count require that any job running on
  * that node be killed. Example of use:
  *
- * rc = valid_job_resources(job_resrcs_ptr, node_record_table_ptr);
+ * rc = valid_job_resources(job_resrcs_ptr, node_record_table_ptr,
+ *			     slurmctld_conf.fast_schedule);
  */
 extern int valid_job_resources(job_resources_t *job_resrcs_ptr,
-			       void *node_rec_table);
+			       void *node_rec_table, uint16_t fast_schedule);
 
 /* Make a copy of a job_resources data structure,
  * free using free_job_resources() */

@@ -51,7 +51,6 @@ slurmctld_SOURCES =     \
 	powercapping.h	\
 	preempt.c	\
 	preempt.h	\
-	prep_slurmctld.c \
 	proc_req.c	\
 	proc_req.h	\
 	read_config.c	\

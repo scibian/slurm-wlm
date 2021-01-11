@@ -417,6 +417,8 @@ static void _set_active_combo_part(GtkComboBox *combo,
 	case SORTID_PREEMPT_MODE:
 		if (!xstrcasecmp(temp_char, "cancel"))
 			action = 0;
+		else if (!xstrcasecmp(temp_char, "checkpoint"))
+			action = 1;
 		else if (!xstrcasecmp(temp_char, "off"))
 			action = 2;
 		else if (!xstrcasecmp(temp_char, "requeue"))
@@ -557,6 +559,8 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 	case SORTID_PREEMPT_MODE:
 		if (!xstrcasecmp(new_text, "cancel"))
 			part_msg->preempt_mode = PREEMPT_MODE_CANCEL;
+		else if (!xstrcasecmp(new_text, "checkpoint"))
+			part_msg->preempt_mode = PREEMPT_MODE_CHECKPOINT;
 		else if (!xstrcasecmp(new_text, "off"))
 			part_msg->preempt_mode = PREEMPT_MODE_OFF;
 		else if (!xstrcasecmp(new_text, "requeue"))
@@ -2228,6 +2232,9 @@ static GtkListStore *_create_model_part2(int type)
 				   0, "cancel", 1, SORTID_PREEMPT_MODE, -1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
+				   0, "checkpoint", 1, SORTID_PREEMPT_MODE,-1);
+		gtk_list_store_append(model, &iter);
+		gtk_list_store_set(model, &iter,
 				   0, "off", 1, SORTID_PREEMPT_MODE, -1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
@@ -2267,6 +2274,9 @@ extern GtkListStore *create_model_part(int type)
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
 				   0, "cancel", 1, SORTID_PREEMPT_MODE, -1);
+		gtk_list_store_append(model, &iter);
+		gtk_list_store_set(model, &iter,
+				   0, "checkpoint", 1, SORTID_PREEMPT_MODE,-1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
 				   0, "off", 1, SORTID_PREEMPT_MODE, -1);

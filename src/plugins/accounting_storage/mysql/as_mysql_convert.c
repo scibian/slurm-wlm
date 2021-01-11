@@ -40,13 +40,14 @@
 #include "as_mysql_tres.h"
 #include "src/common/slurm_jobacct_gather.h"
 
+List bad_tres_list = NULL;
+
 /*
  * Any time you have to add to an existing convert update this number.
  * NOTE: 6 was the first version of 18.08.
  * NOTE: 7 was the first version of 19.05.
- * NOTE: 8 was the first version of 20.02.
  */
-#define CONVERT_VERSION 8
+#define CONVERT_VERSION 7
 
 typedef struct {
 	uint64_t count;
@@ -94,37 +95,6 @@ static void _set_tres_value(char *tres_str, uint64_t *tres_array)
 
 		tmp_str++;
 	}
-}
-
-static int _convert_job_table_pre(mysql_conn_t *mysql_conn, char *cluster_name)
-{
-	int rc = SLURM_SUCCESS;
-	char *query = NULL;
-
-	if (db_curr_ver < 8) {
-		/*
-		 * Change the names pack_job_id and pack_job_offset to be het_*
-		 */
-		query = xstrdup_printf(
-			"alter table \"%s_%s\" "
-			"change pack_job_id het_job_id int unsigned not null, "
-			"change pack_job_offset het_job_offset "
-			"int unsigned not null;",
-			cluster_name, job_table);
-	}
-
-	if (query) {
-		if (debug_flags & DEBUG_FLAG_DB_QUERY)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
-
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS)
-			error("%s: Can't convert %s_%s info: %m",
-			      __func__, cluster_name, job_table);
-	}
-
-	return rc;
 }
 
 static int _convert_step_table_pre(mysql_conn_t *mysql_conn, char *cluster_name)
@@ -622,6 +592,153 @@ static int _set_db_curr_ver(mysql_conn_t *mysql_conn)
 	return rc;
 }
 
+extern int as_mysql_convert_get_bad_tres(mysql_conn_t *mysql_conn)
+{
+	char *query = NULL;
+	char *tmp = NULL;
+	int rc = SLURM_SUCCESS;
+	int i=0, auto_inc = TRES_OFFSET;
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row;
+
+	/* if this changes you will need to edit the corresponding enum */
+	char *tres_req_inx[] = {
+		"id",
+		"type",
+		"name"
+	};
+	enum {
+		SLURMDB_REQ_ID,
+		SLURMDB_REQ_TYPE,
+		SLURMDB_REQ_NAME,
+		SLURMDB_REQ_COUNT
+	};
+
+	if ((rc = _set_db_curr_ver(mysql_conn)) != SLURM_SUCCESS)
+		return rc;
+
+	/* This is only for db's not having converted to 5 yet */
+	if (db_curr_ver >= 5) {
+		debug4("%s: No conversion needed, Horray!", __func__);
+		return SLURM_SUCCESS;
+	} else if (backup_dbd) {
+		/*
+		 * We do not want to create/check the database if we are the
+		 * backup (see Bug 3827). This is only handled on the primary.
+		 *
+		 * To avoid situations where someone might upgrade the database
+		 * through the backup we want to fatal so they know what
+		 * happened instead of potentially starting with the older
+		 * database.
+		 */
+		fatal("Backup DBD can not convert database, please start the primary DBD before starting the backup.");
+		return SLURM_ERROR;
+	}
+
+	/*
+	 * Check to see if we have a bad one to start with.
+	 * Any bad one will be in id=5 and will also have a name.  If we
+	 * don't have this then we are ok.  Otherwise fatal since it may
+	 * involve manually altering the database.
+	 */
+	query = xstrdup_printf(
+		"select id from %s where id=%d && type='billing' && name!=''",
+		tres_table, TRES_BILLING);
+
+	if (debug_flags & DEBUG_FLAG_DB_QUERY)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	if ((row = mysql_fetch_row(result))) {
+		fatal("%s: There is a known bug dealing with MySQL and auto_increment numbers, unfortunately your system has hit this bug.  To temporarily resolve the issue please revert back to your last version of SlurmDBD.  Fixing this issue correctly will require manual intervention with the database.  SchedMD can assist with this.  Supported sites please open a ticket at https://bugs.schedmd.com/.  Non-supported sites please contact SchedMD at sales@schedmd.com if you would like to discuss commercial support options.",
+		      __func__);
+		return SLURM_ERROR;
+	}
+	mysql_free_result(result);
+
+	/*
+	 * Get the largest id in the tres table.
+	 */
+	query = xstrdup_printf("select MAX(id) from %s;", tres_table);
+	if (debug_flags & DEBUG_FLAG_DB_QUERY)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	if (!(row = mysql_fetch_row(result))) {
+		fatal("%s: Couldn't get auto_increment for some reason",
+		      __func__);
+		return SLURM_ERROR;
+	}
+
+	/*
+	 * Make sure it is at least TRES_OFFSET (blank/new databases will return
+	 * NULL.
+	 */
+	if (row[0] && row[0][0]) {
+		uint32_t max_id = slurm_atoul(row[0]);
+		auto_inc = MAX(auto_inc, max_id);
+	}
+
+	/*
+	 * Now get all the ones that need to me moved.
+	 */
+	xfree(tmp);
+	xstrfmtcat(tmp, "%s", tres_req_inx[i]);
+	for (i = 1; i < SLURMDB_REQ_COUNT; i++)
+		xstrfmtcat(tmp, ", %s", tres_req_inx[i]);
+
+	query = xstrdup_printf("select %s from %s where (id between 5 and 999) && type!='billing'",
+			       tmp, tres_table);
+	xfree(tmp);
+
+	if (debug_flags & DEBUG_FLAG_DB_QUERY)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	while ((row = mysql_fetch_row(result))) {
+		slurmdb_tres_rec_t *tres;
+
+		if (!bad_tres_list)
+			bad_tres_list = list_create(slurmdb_destroy_tres_rec);
+
+		tres = xmalloc(sizeof(slurmdb_tres_rec_t));
+		list_append(bad_tres_list, tres);
+
+		tres->id = slurm_atoul(row[SLURMDB_REQ_ID]);
+		/* use this to say where we are moving it to */
+		tres->rec_count = ++auto_inc;
+		if (row[SLURMDB_REQ_TYPE] && row[SLURMDB_REQ_TYPE][0])
+			tres->type = xstrdup(row[SLURMDB_REQ_TYPE]);
+		if (row[SLURMDB_REQ_NAME] && row[SLURMDB_REQ_NAME][0])
+			tres->name = xstrdup(row[SLURMDB_REQ_NAME]);
+		xstrfmtcat(query,
+			   "update %s set id=%u where id=%u;",
+			   tres_table, tres->rec_count, tres->id);
+	}
+	mysql_free_result(result);
+
+	if (query) {
+		if (debug_flags & DEBUG_FLAG_DB_QUERY)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		rc = mysql_db_query(mysql_conn, query);
+		xfree(query);
+	}
+
+	return rc;
+}
+
 extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
 {
 	int rc = SLURM_SUCCESS;
@@ -662,10 +779,6 @@ extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
 	/* make it up to date */
 	itr = list_iterator_create(as_mysql_total_cluster_list);
 	while ((cluster_name = list_next(itr))) {
-		info("pre-converting job table for %s", cluster_name);
-		if ((rc = _convert_job_table_pre(mysql_conn, cluster_name)
-		     != SLURM_SUCCESS))
-			break;
 		info("pre-converting step table for %s", cluster_name);
 		if ((rc = _convert_step_table_pre(mysql_conn, cluster_name)
 		     != SLURM_SUCCESS))

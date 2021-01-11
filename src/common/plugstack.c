@@ -68,6 +68,7 @@
 
 struct spank_plugin_operations {
 	spank_f *init;
+	spank_f *slurmd_init;
 	spank_f *job_prolog;
 	spank_f *init_post_opt;
 	spank_f *local_user_init;
@@ -81,9 +82,10 @@ struct spank_plugin_operations {
 	spank_f *exit;
 };
 
-const int n_spank_syms = 12;
+const int n_spank_syms = 13;
 const char *spank_syms[] = {
 	"slurm_spank_init",
+	"slurm_spank_slurmd_init",
 	"slurm_spank_job_prolog",
 	"slurm_spank_init_post_opt",
 	"slurm_spank_local_user_init",
@@ -141,7 +143,8 @@ enum spank_context_type {
  */
 typedef enum step_fn {
 	SPANK_INIT = 0,
-	SPANK_JOB_PROLOG = 2,
+	SPANK_SLURMD_INIT,
+	SPANK_JOB_PROLOG,
 	SPANK_INIT_POST_OPT,
 	LOCAL_USER_INIT,
 	STEP_USER_INIT,
@@ -160,7 +163,6 @@ typedef enum step_fn {
 struct job_script_info {
 	uint32_t  jobid;
 	uid_t     uid;
-	gid_t gid;
 };
 
 struct spank_handle {
@@ -446,7 +448,7 @@ spank_stack_plugin_valid_for_context (struct spank_stack *stack,
 			return (1);
 		break;
 	case S_TYPE_SLURMD:
-		if (p->ops.slurmd_exit)
+		if (p->ops.slurmd_init || p->ops.slurmd_exit)
 			return (1);
 		break;
 	case S_TYPE_LOCAL:
@@ -647,6 +649,8 @@ static const char *_step_fn_name(step_fn_t type)
 	switch (type) {
 	case SPANK_INIT:
 		return ("init");
+	case SPANK_SLURMD_INIT:
+		return ("slurmd_init");
 	case SPANK_JOB_PROLOG:
 		return ("job_prolog");
 	case SPANK_INIT_POST_OPT:
@@ -680,6 +684,8 @@ static spank_f *spank_plugin_get_fn (struct spank_plugin *sp, step_fn_t type)
 	switch (type) {
 	case SPANK_INIT:
 		return (sp->ops.init);
+	case SPANK_SLURMD_INIT:
+		return (sp->ops.slurmd_init);
 	case SPANK_JOB_PROLOG:
 		return (sp->ops.job_prolog);
 	case SPANK_INIT_POST_OPT:
@@ -757,16 +763,11 @@ static int _do_call_stack(struct spank_stack *stack,
 
 struct spank_stack *spank_stack_init(enum spank_context_type context)
 {
-	char *path;
-	struct spank_stack *stack = NULL;
+	slurm_ctl_conf_t *conf = slurm_conf_lock();
+	const char *path = conf->plugstack;
+	slurm_conf_unlock();
 
-	if (!(path = xstrdup(slurmctld_conf.plugstack)))
-		path = get_extra_conf_path("plugstack.conf");
-
-	stack = spank_stack_create(path, context);
-	xfree(path);
-
-	return stack;
+	return spank_stack_create (path, context);
 }
 
 int _spank_init(enum spank_context_type context, stepd_step_rec_t * job)
@@ -907,11 +908,11 @@ int spank_fini(stepd_step_rec_t * job)
 /*
  *  Run job_epilog or job_prolog callbacks in a private spank context.
  */
-static int spank_job_script(step_fn_t fn, uint32_t jobid, uid_t uid, gid_t gid)
+static int spank_job_script (step_fn_t fn, uint32_t jobid, uid_t uid)
 {
 	int rc = 0;
 	struct spank_stack *stack;
-	struct job_script_info jobinfo = { jobid, uid, gid };
+	struct job_script_info jobinfo = { jobid, uid };
 
 	stack = spank_stack_init (S_TYPE_JOB_SCRIPT);
 	if (!stack)
@@ -925,14 +926,14 @@ static int spank_job_script(step_fn_t fn, uint32_t jobid, uid_t uid, gid_t gid)
 	return (rc);
 }
 
-int spank_job_prolog(uint32_t jobid, uid_t uid, gid_t gid)
+int spank_job_prolog (uint32_t jobid, uid_t uid)
 {
-	return spank_job_script(SPANK_JOB_PROLOG, jobid, uid, gid);
+	return spank_job_script (SPANK_JOB_PROLOG, jobid, uid);
 }
 
-int spank_job_epilog(uint32_t jobid, uid_t uid, gid_t gid)
+int spank_job_epilog (uint32_t jobid, uid_t uid)
 {
-	return spank_job_script(SPANK_JOB_EPILOG, jobid, uid, gid);
+	return spank_job_script (SPANK_JOB_EPILOG, jobid, uid);
 }
 
 /*
@@ -1163,10 +1164,8 @@ static int _do_option_cb(struct spank_plugin_opt *opt, const char *arg,
 	 *  Set optarg and "found" so that option will be forwarded
 	 *    to remote side.
 	 */
-	if (opt->opt->has_arg) {
-		xfree(opt->optarg);
+	if (opt->opt->has_arg)
 		opt->optarg = xstrdup(arg);
-	}
 	opt->found = 1;
 	opt->set = true;
 
@@ -1589,6 +1588,7 @@ spank_option_getopt (spank_t sp, struct spank_option *opt, char **argp)
 	}
 
 	if ((sp->phase == SPANK_INIT) ||
+	    (sp->phase == SPANK_SLURMD_INIT) ||
 	    (sp->phase == SPANK_INIT_POST_OPT) ||
 	    (sp->phase == STEP_TASK_POST_FORK) ||
 	    (sp->phase == SPANK_SLURMD_EXIT) ||
@@ -1830,7 +1830,7 @@ static spank_err_t _check_spank_item_validity (spank_t spank, spank_item_t item)
 	if (spank->stack->type == S_TYPE_SLURMD)
 		return ESPANK_NOT_AVAIL;
 	else if (spank->stack->type == S_TYPE_JOB_SCRIPT) {
-		if (item != S_JOB_GID && item != S_JOB_UID && item != S_JOB_ID)
+		if (item != S_JOB_UID && item != S_JOB_ID)
 			return ESPANK_NOT_AVAIL;
 	}
 	else if (spank->stack->type == S_TYPE_LOCAL) {
@@ -1997,8 +1997,6 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 			*p2gid = launcher_job->gid;
 		else if (spank->stack->type == S_TYPE_REMOTE)
 			*p2gid = slurmd_job->gid;
-		else if (spank->stack->type == S_TYPE_JOB_SCRIPT)
-			*p2gid = s_job_info->gid;
 		else
 			*p2gid = getgid();
 		break;

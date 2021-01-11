@@ -76,7 +76,8 @@ static int _set_cond(int *start, int argc, char **argv,
 			  || !xstrncasecmp(argv[i], "Type",
 					   MAX(command_len, 2))) {
 			if (!tres_cond->type_list) {
-				tres_cond->type_list = list_create(xfree_ptr);
+				tres_cond->type_list =
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(
 				   tres_cond->type_list,
@@ -85,7 +86,8 @@ static int _set_cond(int *start, int argc, char **argv,
 		} else if (!xstrncasecmp(argv[i], "Names",
 					 MAX(command_len, 1))) {
 			if (!tres_cond->name_list) {
-				tres_cond->name_list = list_create(xfree_ptr);
+				tres_cond->name_list =
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(tres_cond->name_list,
 						  argv[i]+end))
@@ -97,7 +99,8 @@ static int _set_cond(int *start, int argc, char **argv,
 		} else if (!xstrncasecmp(argv[i], "Ids",
 					 MAX(command_len, 1))) {
 			if (!tres_cond->id_list) {
-				tres_cond->id_list = list_create(xfree_ptr);
+				tres_cond->id_list =
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(tres_cond->id_list,
 						 argv[i]+end))
@@ -125,7 +128,7 @@ int sacctmgr_list_tres(int argc, char **argv)
 	List tres_list;
 	ListIterator itr;
 	ListIterator itr2;
-	List format_list = list_create(xfree_ptr);
+	List format_list = list_create(slurm_destroy_char);
 	List print_fields_list;
 	slurmdb_tres_cond_t *tres_cond = xmalloc(sizeof(slurmdb_tres_cond_t));
 	slurmdb_tres_rec_t *tres;

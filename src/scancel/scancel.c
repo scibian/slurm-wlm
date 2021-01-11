@@ -344,7 +344,7 @@ static void _filter_job_records(void)
 		}
 
 		if ((opt.state != JOB_END) &&
-		    (job_base_state != opt.state)) {
+		    (job_ptr->job_state != opt.state)) {
 			job_ptr->job_id = 0;
 			continue;
 		}
@@ -662,7 +662,7 @@ static void _add_delay(void)
 		target_resp_time = slurm_get_msg_timeout() / 4;
 		target_resp_time = MAX(target_resp_time, 3);
 		target_resp_time = MIN(target_resp_time, 5);
-		target_resp_time *= USEC_IN_SEC;
+		target_resp_time *= 1000000;
 		debug("%s: target response time = %d", __func__,
 		      target_resp_time);
 	}
@@ -673,7 +673,7 @@ static void _add_delay(void)
 	}
 
 	/* Maximum delay of 1 second. Start at 10 msec with Fibonacci backoff */
-	my_delay = MIN((delay_time + previous_delay), USEC_IN_SEC);
+	my_delay = MIN((delay_time + previous_delay), 1000000);
 	previous_delay = delay_time;
 	delay_time = my_delay;
 	slurm_mutex_unlock(&max_delay_lock);
@@ -765,7 +765,7 @@ _cancel_job_id (void *ci)
 		if ((opt.verbose > 0) ||
 		    ((error_code != ESLURM_ALREADY_DONE) &&
 		     (error_code != ESLURM_INVALID_JOB_ID) &&
-		     ((error_code != ESLURM_NOT_WHOLE_HET_JOB) ||
+		     ((error_code != ESLURM_NOT_PACK_WHOLE) ||
 		      (opt.job_cnt != 0)))) {
 			error("Kill job error on job id %s: %s",
 			      cancel_info->job_id_str,

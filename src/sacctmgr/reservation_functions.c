@@ -75,7 +75,7 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 1))) {
 			if (!reservation_cond->cluster_list) {
 				reservation_cond->cluster_list =
-					list_create(xfree_ptr);
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(reservation_cond->cluster_list,
 						  argv[i]+end))
@@ -96,7 +96,7 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 1))) {
 			if (!reservation_cond->id_list) {
 				reservation_cond->id_list =
-					list_create(xfree_ptr);
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(reservation_cond->id_list,
 						 argv[i]+end))
@@ -105,7 +105,7 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 2))) {
 			if (!reservation_cond->name_list) {
 				reservation_cond->name_list =
-					list_create(xfree_ptr);
+					list_create(slurm_destroy_char);
 			}
 			if (slurm_addto_char_list(reservation_cond->name_list,
 						  argv[i]+end))
@@ -162,7 +162,8 @@ int sacctmgr_list_reservation(int argc, char **argv)
                 struct tm start_tm;
 		reservation_cond->time_start = time(NULL);
 
-                if (!localtime_r(&reservation_cond->time_start, &start_tm)) {
+                if (!slurm_localtime_r(&reservation_cond->time_start,
+				       &start_tm)) {
                         fprintf(stderr,
                                 " Couldn't get localtime from %ld",
                                 (long)reservation_cond->time_start);
@@ -177,7 +178,7 @@ int sacctmgr_list_reservation(int argc, char **argv)
                 reservation_cond->time_start = slurm_mktime(&start_tm);
         }
 
-	format_list = list_create(xfree_ptr);
+	format_list = list_create(slurm_destroy_char);
    	for (i=0; i<argc; i++) {
 		int command_len = strlen(argv[i]);
 		if (!xstrncasecmp(argv[i], "Where", MAX(command_len, 5))
@@ -195,7 +196,8 @@ int sacctmgr_list_reservation(int argc, char **argv)
 		if (!commit_check(warning)) {
 			exit_code = 1;
 		} else {
-			reservation_cond->cluster_list = list_create(xfree_ptr);
+			reservation_cond->cluster_list =
+				list_create(slurm_destroy_char);
 			list_append(reservation_cond->cluster_list,
 				    cluster_name);
 			cluster_name = NULL;
@@ -262,20 +264,14 @@ int sacctmgr_list_reservation(int argc, char **argv)
 					(curr_inx == field_count));
 				break;
 			case PRINT_FLAGS:
-			{
-				reserve_info_t resv_info = {
-					.flags = reservation->flags,
-				};
-
 				tmp_char = reservation_flags_string(
-					&resv_info);
+					reservation->flags);
 				field->print_routine(
 					field,
 					tmp_char,
 					(curr_inx == field_count));
 				xfree(tmp_char);
 				break;
-			}
 			case PRINT_ID:
 				field->print_routine(field,
 						     reservation->id,

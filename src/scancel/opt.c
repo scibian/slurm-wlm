@@ -211,18 +211,6 @@ static void _opt_default(void)
 	opt.wckey	= NULL;
 }
 
-static void _opt_clusters(char *clusters)
-{
-	opt.ctld = true;
-	FREE_NULL_LIST(opt.clusters);
-	opt.clusters = slurmdb_get_info_cluster(clusters);
-	if (!opt.clusters) {
-		print_db_notok(clusters, 0);
-		exit(1);
-	}
-	working_cluster_rec = list_peek(opt.clusters);
-}
-
 /*
  * opt_env(): used by initialize_and_process_args to set options via
  *            environment variables. See comments above for how to
@@ -319,16 +307,6 @@ static void _opt_env(void)
 	if ( (val=getenv("SCANCEL_WCKEY")) ) {
 		opt.wckey = xstrdup(val);
 	}
-
-	if ((val = getenv("SLURM_CLUSTERS"))) {
-		/*
-		 * We must pass in a modifiable string, and we don't want to
-		 * modify the environment.
-		 */
-		char *valdup = xstrdup(val);
-		_opt_clusters(valdup);
-		xfree(valdup);
-	}
 }
 
 /*
@@ -394,7 +372,14 @@ static void _opt_args(int argc, char **argv)
 			opt.interactive = true;
 			break;
 		case (int)'M':
-			_opt_clusters(optarg);
+			opt.ctld = true;
+			FREE_NULL_LIST(opt.clusters);
+			opt.clusters = slurmdb_get_info_cluster(optarg);
+			if (!opt.clusters) {
+				print_db_notok(optarg, 0);
+				exit(1);
+			}
+			working_cluster_rec = list_peek(opt.clusters);
 			break;
 		case (int)'n':
 			opt.job_name = xstrdup(optarg);
@@ -535,7 +520,7 @@ _xlate_job_step_ids(char **rest)
 				exit (1);
 			}
 			opt.array_id[buf_offset] = tmp_l;
-		} else if (next_str[0] == '+') {	/* Hetjob component */
+		} else if (next_str[0] == '+') {	/* Pack job component */
 			tmp_l = strtol(&next_str[1], &next_str, 10);
 			if (tmp_l < 0) {
 				error ("Invalid job id %s", id_args[i]);

@@ -33,6 +33,9 @@
 /* Define to 1 for systems with a Cray Aries network */
 #undef HAVE_CRAY_NETWORK
 
+/* Define to 1 if you have the <curses.h> header file. */
+#undef HAVE_CURSES_H
+
 /* Define to 1 if DataWarp library found */
 #undef HAVE_DATAWARP
 
@@ -88,9 +91,6 @@
 /* Define to 1 if you have the `hstrerror' function. */
 #undef HAVE_HSTRERROR
 
-/* Define if you are compiling with HTTP parser. */
-#undef HAVE_HTTP_PARSER
-
 /* Define to 1 if hwloc library found */
 #undef HAVE_HWLOC
 
@@ -114,9 +114,6 @@
 
 /* Define if headers in include/json. */
 #undef HAVE_JSON_INC
-
-/* Define if you are compiling with jwt. */
-#undef HAVE_JWT
 
 /* Define to 1 if you have the <kstat.h> header file. */
 #undef HAVE_KSTAT_H
@@ -145,9 +142,6 @@
 /* Define to 1 if you have the <mcheck.h> header file. */
 #undef HAVE_MCHECK_H
 
-/* Define to 1 if you have the `memfd_create' function. */
-#undef HAVE_MEMFD_CREATE
-
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
@@ -159,6 +153,9 @@
 
 /* Define to 1 for running on a Cray Aries system */
 #undef HAVE_NATIVE_CRAY
+
+/* Define to 1 if you have the <ncurses.h> header file. */
+#undef HAVE_NCURSES_H
 
 /* Define to 1 if you have the <netdb.h> header file. */
 #undef HAVE_NETDB_H
@@ -213,9 +210,6 @@
 
 /* Define if you are compiling with readline. */
 #undef HAVE_READLINE
-
-/* Define to 1 if RSMI library found */
-#undef HAVE_RSMI
 
 /* Define to 1 if you have the `sched_setaffinity' function. */
 #undef HAVE_SCHED_SETAFFINITY
@@ -340,11 +334,12 @@
 /* Define to 1 if you have the <values.h> header file. */
 #undef HAVE_VALUES_H
 
-/* Define if you are compiling with libyaml parser. */
-#undef HAVE_YAML
-
 /* Define if you have __progname. */
 #undef HAVE__PROGNAME
+
+/* Define to 1 if you have the external variable, _system_configuration with a
+   member named physmem. */
+#undef HAVE__SYSTEM_CONFIGURATION
 
 /* Define to 1 if the system has the `__builtin_clzll' built-in function */
 #undef HAVE___BUILTIN_CLZLL
@@ -506,9 +501,6 @@
 /* Define the default port number for slurmd */
 #undef SLURMD_PORT
 
-/* Define the default port number for slurmrestd */
-#undef SLURMRESTD_PORT
-
 /* API current age */
 #undef SLURM_API_AGE
 
@@ -562,6 +554,9 @@
 
 /* Define slurm_ prefix function aliases for plugins */
 #undef USE_ALIAS
+
+/* define if using ISO 8601 time format */
+#undef USE_ISO_8601
 
 /* Define the project's version. */
 #undef VERSION

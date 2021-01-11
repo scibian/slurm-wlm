@@ -32,6 +32,7 @@ source ./globals
 # - the first node selected has frequency scaling, wih ondemand and userspace
 # - all cpus on a node have the same scaling options.
 # - task affinity either cgroups or cpusets
+# - fastschedule=0
 
 set nerr	0
 set exit_code	0
@@ -245,8 +246,8 @@ proc test_case {opt expmin expcur expmax expgov} {
 if {![param_contains [get_affinity_types] "affinity"] && [get_config_param "TaskAffinity"] ne "yes"} {
 	skip "This test requires some form of task affinity"
 }
-if {[param_contains [get_config_param "SlurmdParameters"] "config_overrides"]} {
-	log_warn "SlurmdParameters=config_overrides is discouraged. Proceeding assuming that the number of CPUs declared is accurate."
+if {[get_config_param "FastSchedule"] != 0} {
+	log_warn "FastSchedule=0 is recommended. Proceeding assuming that the number of CPUs declared is accurate"
 }
 log_user 0
 spawn $scontrol show config

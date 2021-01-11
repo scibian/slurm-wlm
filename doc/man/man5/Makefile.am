@@ -4,6 +4,7 @@ man5_MANS = \
 	acct_gather.conf.5 \
 	burst_buffer.conf.5 \
 	cgroup.conf.5 \
+	cray.conf.5 \
 	ext_sensors.conf.5 \
 	gres.conf.5 \
 	knl.conf.5 \
@@ -20,6 +21,7 @@ html_DATA = \
 	acct_gather.conf.html \
 	burst_buffer.conf.html \
 	cgroup.conf.html \
+	cray.conf.html \
 	ext_sensors.conf.html \
 	gres.conf.html \
 	knl.conf.html \

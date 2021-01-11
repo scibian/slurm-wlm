@@ -68,14 +68,13 @@ extern int slurmdb_usage_get(void *db_conn, void *in, int type,
  * IN: sent_start (option time to do a re-roll or start from this point)
  * IN: sent_end (option time to do a re-roll or end at this point)
  * IN: archive_data (if 0 old data is not archived in a monthly rollup)
- * OUT: rollup_stats_list_in (list containing stats about each clusters rollup)
+ * IN/OUT: rollup_stats data structure in which to save rollup statistics
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
 extern int slurmdb_usage_roll(void *db_conn, time_t sent_start,
 			      time_t sent_end, uint16_t archive_data,
-			      List *rollup_stats_list_in)
+			      rollup_stats_t *rollup_stats)
 {
 	return acct_storage_g_roll_usage(db_conn, sent_start,
-					 sent_end, archive_data,
-					 rollup_stats_list_in);
+					 sent_end, archive_data, rollup_stats);
 }

@@ -63,6 +63,7 @@
 
 #include "slurm/slurm_errno.h"
 
+#include "src/common/checkpoint.h"
 #include "src/common/env.h"
 #include "src/common/gres.h"
 #include "src/common/fd.h"
@@ -228,7 +229,7 @@ _run_script_and_set_env(const char *name, const char *path,
 		setpgid(0, 0);
 		execve(path, argv, job->env);
 		error("execve(%s): %m", path);
-		_exit(127);
+		exit(127);
 	}
 
 	close(pfd[1]);
@@ -264,10 +265,10 @@ _run_script_and_set_env(const char *name, const char *path,
 /* Given a program name, translate it to a fully qualified pathname as needed
  * based upon the PATH environment variable and current working directory
  * Returns xmalloc()'d string that must be xfree()'d */
-static char *_build_path(char *fname, char **prog_env)
+extern char *_build_path(char *fname, char **prog_env, char *cwd)
 {
-	char *path_env = NULL, *dir = NULL;
-	char *file_name, *last = NULL;
+	char *path_env = NULL, *dir;
+	char *file_name;
 	struct stat stat_buf;
 	int len = PATH_MAX;
 
@@ -284,24 +285,28 @@ static char *_build_path(char *fname, char **prog_env)
 	}
 
 	if (fname[0] == '.') {
-		dir = xmalloc(len);
-		if (!getcwd(dir, len))
-			error("getcwd failed: %m");
-		snprintf(file_name, len, "%s/%s", dir, fname);
-		xfree(dir);
+		if (cwd) {
+			snprintf(file_name, len, "%s/%s", cwd, fname);
+		} else {
+			dir = (char *) xmalloc(len);
+			if (!getcwd(dir, len))
+				error("getcwd failed: %m");
+			snprintf(file_name, len, "%s/%s", dir, fname);
+			xfree(dir);
+		}
 		return file_name;
 	}
 
 	/* search for the file using PATH environment variable */
 	path_env = xstrdup(getenvp(prog_env, "PATH"));
-	if (path_env)
-		dir = strtok_r(path_env, ":", &last);
+
+	dir = strtok(path_env, ":");
 	while (dir) {
 		snprintf(file_name, len, "%s/%s", dir, fname);
 		if ((stat(file_name, &stat_buf) == 0)
 		    && (! S_ISDIR(stat_buf.st_mode)))
 			break;
-		dir = strtok_r(NULL, ":", &last);
+		dir = strtok(NULL, ":");
 	}
 	if (dir == NULL)	/* not found */
 		strlcpy(file_name, fname, len);
@@ -315,14 +320,14 @@ _setup_mpi(stepd_step_rec_t *job, int ltaskid)
 {
 	mpi_plugin_task_info_t info[1];
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL)) {
-		info->jobid   = job->het_job_id;
+	if (job->pack_jobid && (job->pack_jobid != NO_VAL)) {
+		info->jobid   = job->pack_jobid;
 		info->stepid  = job->stepid;
-		info->nnodes  = job->het_job_nnodes;
-		info->nodeid  = job->het_job_node_offset + job->nodeid;
-		info->ntasks  = job->het_job_ntasks;
+		info->nnodes  = job->pack_nnodes;
+		info->nodeid  = job->node_offset + job->nodeid;
+		info->ntasks  = job->pack_ntasks ;
 		info->ltasks  = job->node_tasks;
-		info->gtaskid = job->het_job_task_offset +
+		info->gtaskid = job->pack_task_offset +
 				job->task[ltaskid]->gtid;
 		info->ltaskid = job->task[ltaskid]->id;
 		info->self    = job->envtp->self;
@@ -355,10 +360,10 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	int saved_errno;
 	uint32_t node_offset = 0, task_offset = 0;
 
-	if (job->het_job_node_offset != NO_VAL)
-		node_offset = job->het_job_node_offset;
-	if (job->het_job_task_offset != NO_VAL)
-		task_offset = job->het_job_task_offset;
+	if (job->node_offset != NO_VAL)
+		node_offset = job->node_offset;
+	if (job->pack_task_offset != NO_VAL)
+		task_offset = job->pack_task_offset;
 
 	gtids = xmalloc(job->node_tasks * sizeof(uint32_t));
 	for (j = 0; j < job->node_tasks; j++)
@@ -366,8 +371,8 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	job->envtp->sgtids = _uint32_array_to_str(job->node_tasks, gtids);
 	xfree(gtids);
 
-	if (job->het_job_id != NO_VAL)
-		job->envtp->jobid = job->het_job_id;
+	if (job->pack_jobid != NO_VAL)
+		job->envtp->jobid = job->pack_jobid;
 	else
 		job->envtp->jobid = job->jobid;
 	job->envtp->stepid = job->stepid;
@@ -413,6 +418,16 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 
 	xfree(job->envtp->task_count);
 
+	if (task->argv[0] && *task->argv[0] != '/') {
+		/*
+		 * Normally the client (srun) expands the command name
+		 * to a fully qualified path, but in --multi-prog mode it
+		 * is left up to the server to search the PATH for the
+		 * executable.
+		 */
+		task->argv[0] = _build_path(task->argv[0], job->env, NULL);
+	}
+
 	if (!job->batch && (job->stepid != SLURM_EXTERN_CONT)) {
 		if (switch_g_job_attach(job->switch_job, &job->env,
 					job->nodeid, (uint32_t) local_proc_id,
@@ -420,13 +435,13 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 					task->gtid) < 0) {
 			error("Unable to attach to interconnect: %m");
 			log_fini();
-			_exit(1);
+			exit(1);
 		}
 
 		if (_setup_mpi(job, local_proc_id) != SLURM_SUCCESS) {
 			error("Unable to configure MPI plugin: %m");
 			log_fini();
-			_exit(1);
+			exit(1);
 		}
 	}
 
@@ -435,7 +450,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	/* task plugin hook */
 	if (task_g_pre_launch(job)) {
 		error("Failed to invoke task plugins: task_p_pre_launch error");
-		_exit(1);
+		exit(1);
 	}
 	if (!job->batch && (job->accel_bind_type || job->tres_bind)) {
 		/*
@@ -446,7 +461,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 		job->envtp->env = env_array_copy((const char **) job->env);
 		gres_plugin_step_set_env(&job->envtp->env, job->step_gres_list,
 					 job->accel_bind_type, job->tres_bind,
-					 local_proc_id);
+					 job->tres_freq, local_proc_id);
 		tmp_env = job->env;
 		job->env = job->envtp->env;
 		env_array_free(tmp_env);
@@ -454,7 +469,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 
 	if (spank_user_task(job, local_proc_id) < 0) {
 		error("Failed to invoke spank plugin stack");
-		_exit(1);
+		exit(1);
 	}
 
 	if (conf->task_prolog) {
@@ -486,22 +501,18 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 		job->env[0] = (char *)NULL;
 	}
 
+	if (job->restart_dir) {
+		info("restart from %s", job->restart_dir);
+		/* no return on success */
+		checkpoint_restart_task(job, job->restart_dir, task->gtid);
+		error("Restart task failed: %m");
+		exit(errno);
+	}
+
 	if (task->argv[0] == NULL) {
 		error("No executable program specified for this task");
-		_exit(2);
+		exit(2);
 	}
-
-	if (*task->argv[0] != '/') {
-		/*
-		 * Handle PATH resolution for the command to launch.
-		 * Need to handle this late so that SPANK and other plugins
-		 * have a chance to manipulate the PATH and/or change the
-		 * filesystem namespaces into the final arrangement, which
-		 * may affect which executable we select.
-		 */
-		task->argv[0] = _build_path(task->argv[0], job->env);
-	}
-
 
 	/* Do this last so you don't worry too much about the users
 	   limits including the slurmstepd in with it.
@@ -509,7 +520,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	if (set_user_limits(job) < 0) {
 		debug("Unable to set user limits");
 		log_fini();
-		_exit(5);
+		exit(5);
 	}
 
 	execve(task->argv[0], task->argv, job->env);
@@ -530,12 +541,12 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 				eol[0] = '\0';
 			slurm_seterrno(saved_errno);
 			error("execve(): bad interpreter(%s): %m", buf+2);
-			_exit(errno);
+			exit(errno);
 		}
 	}
 	slurm_seterrno(saved_errno);
 	error("execve(): %s: %m", task->argv[0]);
-	_exit(errno);
+	exit(errno);
 }
 
 static void

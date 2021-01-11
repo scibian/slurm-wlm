@@ -66,10 +66,9 @@ extern int immediate_exit;	/* exit code for --immediate option & busy */
  * argc      IN - Count of elements in argv
  * argv      IN - Array of elements to parse
  * argc_off OUT - Offset of first non-parsable element
- * het_job_inx  IN - offset of hetjob component
+ * pack_inx  IN - offset of job pack
  */
-extern int initialize_and_process_args(int argc, char **argv, int *argc_off,
-				       int het_job_inx);
+extern int initialize_and_process_args(int argc, char **argv, int *argc_off, int pack_inx);
 
 /* set options based upon commandline args */
 void set_options(const int argc, char **argv);

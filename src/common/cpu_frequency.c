@@ -57,12 +57,11 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_resource_info.h"
 #include "src/slurmd/slurmd/slurmd.h"
 
 #define PATH_TO_CPU	"/sys/devices/system/cpu/"
 #define LINE_LEN	100
-#define FREQ_LIST_MAX	64
+#define FREQ_LIST_MAX	32
 #define GOV_NAME_LEN	24
 
 #define GOV_CONSERVATIVE	0x01
@@ -292,7 +291,7 @@ cpu_freq_init(slurmd_conf_t *conf)
 	xfree(slurmd_spooldir);
 	slurmd_spooldir = xstrdup(conf->spooldir);
 
-	if (running_in_slurmstepd())
+	if (run_in_daemon("slurmstepd"))
 		return;
 
 	/* check for cpufreq support */
@@ -474,10 +473,6 @@ cpu_freq_cpuset_validate(stepd_step_rec_t *job)
 
 	debug_flags = slurm_get_debug_flags(); /* init for slurmstepd */
 	if (debug_flags & DEBUG_FLAG_CPU_FREQ) {
-		char cpu_bind_type_string[128];
-
-		slurm_sprint_cpu_bind_type(cpu_bind_type_string,
-				           job->cpu_bind_type);
 		info("cpu_freq_cpuset_validate: request: min=(%12d  %8x) "
 		      "max=(%12d %8x) governor=%8x",
 		      job->cpu_freq_min, job->cpu_freq_min,
@@ -486,22 +481,15 @@ cpu_freq_cpuset_validate(stepd_step_rec_t *job)
 		info("  jobid=%u, stepid=%u, tasks=%u cpu/task=%u, cpus=%u",
 		     job->jobid, job->stepid, job->node_tasks,
 		     job->cpus_per_task, job->cpus);
-		info("  cpu_bind_type=%s, cpu_bind map=%s",
-		     cpu_bind_type_string, job->cpu_bind);
+		info("  cpu_bind_type=%4x, cpu_bind map=%s",
+		     job->cpu_bind_type, job->cpu_bind);
 	}
 
 	if (!cpu_freq_count)
 		return;
 
 	if (job->cpu_bind == NULL) {
-		/*
-		 * slurm_verify_cpu_bind will set cpu_bind to NULL for manual
-		 * binding that doesn't require an argument
-		 */
-		if ((job->cpu_bind_type != CPU_BIND_NONE) &&
-		    (job->cpu_bind_type != CPU_BIND_RANK) &&
-		    (job->cpu_bind_type != CPU_BIND_LDRANK))
-			error("cpu_freq_cpuset_validate: cpu_bind string is null");
+		error("cpu_freq_cpuset_validate: cpu_bind string is null");
 		return;
 	}
 	cpu_bind = xstrdup(job->cpu_bind);
@@ -1285,8 +1273,8 @@ cpu_freq_reset(stepd_step_rec_t *job)
 		return;
 
 #ifdef HAVE_NATIVE_CRAY
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
+		jobid = job->pack_jobid;
 	else
 		jobid = job->jobid;
 #else

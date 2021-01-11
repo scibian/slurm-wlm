@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test that job arrays of hetjobs are rejected
+# Purpose: Test that job arrays of pack jobs are rejected
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Morris Jette <jette@schedmd.com>
@@ -28,7 +28,7 @@ source ./globals
 
 set exit_code	0
 set matches	0
-set het_job_id	0
+set pack_job_id	0
 
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
@@ -37,7 +37,7 @@ if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 set sbatch_pid [spawn $sbatch -a 0-1 -t1 -N1 -o /dev/null : -N1 --wrap "date"]
 expect {
 	-re "Submitted batch job ($number)" {
-		set het_job_id $expect_out(1,string)
+		set pack_job_id $expect_out(1,string)
 		exp_continue
 	}
 	-re "Invalid job array" {
@@ -53,7 +53,7 @@ expect {
 		wait
 	}
 }
-if {$het_job_id != 0} {
+if {$pack_job_id != 0} {
 	cancel_job $pack_job_id
 	fail "Heterogeneous job array should not be accepted"
 } elseif {$matches != 1} {

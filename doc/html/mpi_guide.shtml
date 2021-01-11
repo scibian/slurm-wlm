@@ -66,8 +66,8 @@ Support</a>.</p>
 
 <p>This section is intended to complement the PMIx FAQ with some notes on how to
 prepare Slurm and PMIx to work together. PMIx can be obtained from the official
-<a href="https://github.com/openpmix/openpmix">PMIx GitHub</a> repository,
-either by cloning the repository or by downloading a packaged release.</p>
+<a href="https://github.com/pmix/pmix">PMIx GitHub</a> repository, either by
+cloning the repository or by downloading a packaged release.</p>
 
 <p>Slurm support for PMIx was first included in Slurm 16.05 based on the PMIx
 v1.2 release. It has since been updated to support the PMIx v2.x and v3.x
@@ -86,14 +86,14 @@ run there is not any guarantee.
 </p>
 
 <p>Altough it is recommended to build PMIx from the
-<a href="https://github.com/openpmix/openpmix/releases">packaged releases</a>,
-here is an example on how to build PMIx v2.1 by cloning the git repository:
+<a href="https://github.com/pmix/pmix/releases">packaged releases</a>, here is
+an example on how to build PMIx v2.1 by cloning the git repository:
 </p>
 
 <pre>
 user@testbox:~/git$ mkdir -p pmix/build/2.1 pmix/install/2.1
 user@testbox:~/git$ cd pmix
-user@testbox:~/git/pmix$ git clone https://github.com/openpmix/openpmix.git source
+user@testbox:~/git/pmix$ git clone https://github.com/pmix/pmix.git source
 user@testbox:~/git/pmix$ cd source/
 user@testbox:~/git/pmix/source$ git branch -a
 user@testbox:~/git/pmix/source$ git checkout v2.1
@@ -136,7 +136,8 @@ script can be requested to point to the non default location. Here's an example:
 <pre>
 user@testbox:~/slurm/17.11/testbox/slurm$ ../../slurm/configure \
 &gt; --prefix=/home/user/slurm/17.11/testbox \
-&gt; <b>--with-pmix=/home/user/git/pmix/install/2.1</b>
+&gt; <b>--with-pmix=/home/user/git/pmix/install/2.1</b> \
+&gt; --enable-multiple-slurmd
 </pre>
 
 <p>Or the analogous with RPM based building:</p>
@@ -145,6 +146,7 @@ user@testbox:~/slurm/17.11/testbox/slurm$ ../../slurm/configure \
 [user@testbox Downloads]$ rpmbuild \
 &gt; --define '_prefix /home/user/slurm/17.11/testbox' \
 &gt; --define '_slurm_sysconfdir /home/user/slurm/17.11/testbox/etc' \
+&gt; --with multiple_slurmd \
 &gt; <b>--define '_with_pmix --with-pmix=/home/user/git/pmix/install/2.1'</b> \
 &gt; -ta slurm-17.11.1.tar.bz2
 </pre>
@@ -167,10 +169,16 @@ user@testbox:~/t$ srun --mpi=list
 srun: MPI types are...
 srun: pmix_v1
 srun: pmi2
+srun: openmpi
 srun: none
 srun: pmix
 srun: pmix_v2
 </pre>
+
+<p>NOTE: There is no need to configure Slurm with the multiple-slurmd option,
+but if it is configured with it, additional steps will be required to make PMIx
+work. That case is covered a few paragraphs below.
+</p>
 
 <p>Continuing with the configuration, if Slurm is unable to locate the PMIx
 installation and/or finds it but considers it not usable, the configure output
@@ -231,11 +239,12 @@ locations like /usr/lib64 and the package manager erroring out and reporting
 the conflict. It is planned to alleviate that by putting these libraries in a
 separate libpmi-slurm package.</p>
 
-<p>NOTE: If you are setting up a test environment using multiple-slurmd,
-the TmpFS option in your slurm.conf needs to be specified and the number of
-directory paths created needs to equal the number of nodes. These directories
-are used by the Slurm PMIx plugin to create temporal files and/or UNIX sockets.
-Here's an example setup for two nodes named compute[1-2]:</p>
+<p>NOTE: If support for multiple-slurmd is required, the TmpFS option in
+slurm.conf needs to be specified and as many directory paths as nodes be
+created. These directories are used by the Slurm PMIx plugin to create temporal
+files and/or UNIX sockets. Here's an example setup for two nodes named
+compute[1-2]:
+</p>
 
 <pre>
 TmpFS=/home/user/slurm/17.11/testbox/spool/slurmd-tmpfs-%n
@@ -253,6 +262,7 @@ both components work properly:</p>
 user@testbox:~/t$ srun --mpi=list
 srun: MPI types are...
 srun: pmi2
+srun: openmpi
 srun: none
 srun: pmix
 srun: pmix_v2
@@ -363,16 +373,11 @@ Repeated failures should be reported to your system administrator in
 order to rectify the problem by cancelling the processes holding those
 ports.</p>
 
-<p><b>NOTE</b>: OpenMPI has a limitation that does not support calls to
-<i>MPI_Comm_spawn()</i> from within a Slurm allocation. If you need to
-use the <i>MPI_Comm_spawn()</i> function you will need to use another MPI
-implementation combined with PMI-2 since PMIx doesn't support it either.</p>
-
-<p><b>NOTE</b>: Some kernels and system configurations have resulted in a locked
-memory too small for proper OpemMPI functionality, resulting in application
-failure with a segmentation fault. This may be fixed by configuring the slurmd
-daemon to execute with a larger limit. For example, add "LimitMEMLOCK=infinity"
-to your slurmd.service file.</p>
+<p>NOTE: Some kernels and system configurations have resulted in a locked memory
+too small for proper OpemMPI functionality, resulting in application failure
+with a segmentation fault. This may be fixed by configuring the slurmd daemon
+to execute with a larger limit. For example, add "LimitMEMLOCK=infinity" to
+your slurmd.service file.</p>
 
 <hr size=4 width="100%">
 
@@ -475,7 +480,7 @@ The PATH must point to the Slurm installation directory, in other words the pare
 directory of bin and lib.
 In addition, if Slurm is not configured with <i>MpiDefault=pmi2</i>, then
 the srun command must be invoked with the option <i>--mpi=pmi2</i> as shown
-in the example below.</p>
+in the example below below.</p>
 <pre>
 srun -n4 --mpi=pmi2 ./a.out
 </pre>
@@ -548,7 +553,7 @@ to launch the tasks. A simple example is shown below.</p>
 
 <p>MVAPICH2 supports launching multithreaded programs by Slurm as well as
 mpirun_rsh.
-Please note that if you intend to use srun, you need to build MVAPICH2
+Please note that if you intend to use use srun, you need to build MVAPICH2
 with Slurm support with a command line of this sort:</p>
 <pre>
 $ ./configure --with-pmi=pmi2 --with-pm=slurm
@@ -587,6 +592,6 @@ $ srun -N4 -n16 a.out
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 30 October 2020</p>
+<p style="text-align:center;">Last modified 12 February 2019</p>
 
 <!--#include virtual="footer.txt"-->

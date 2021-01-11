@@ -103,6 +103,15 @@
 #  define __STRING(arg)		#arg
 #endif
 
+/* define macros for GCC function attributes if we're using gcc */
+
+#if __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 4)
+#  define __NORETURN_ATTR				\
+          __attribute__((__noreturn__))
+#else  /* !__GNUC__ */
+#  define __NORETURN_ATTR			((void)0)
+#endif /* __GNUC__ */
+
 #define slurm_cond_init(cond, cont_attr)				\
 	do {								\
 		int err = pthread_cond_init(cond, cont_attr);		\
@@ -369,12 +378,12 @@
 #ifndef strong_alias
 #  if USE_ALIAS
 #    define strong_alias(name, aliasname) \
-     extern __typeof__(name) aliasname __attribute__((alias(#name)))
+     extern __typeof (name) aliasname __attribute ((alias (#name)))
 #  else
 #    define strong_alias(name, aliasname) \
      __asm__(".global _" #aliasname); \
      __asm__(".set _" #aliasname ", _" #name); \
-     extern __typeof__(name) aliasname
+     extern __typeof (name) aliasname
 #  endif
 #endif
 

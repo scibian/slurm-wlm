@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test hetjob: squeue
+# Purpose: Test Packjob: squeue
 #
 # Reqs:    1. Using slurmdbd accounting storage type and is up
 #          2. controllers are up and running.
@@ -28,7 +28,7 @@
 ############################################################################
 
 source ./globals
-source ./globals_het_jobs
+source ./globals_hetero_jobs
 
 set exit_code    0
 set file_in      "test$test_id.in"
@@ -103,16 +103,16 @@ proc end_it { exit_code } {
 #start test
 
 make_bash_script $file_in "#SBATCH --cpus-per-task=4 --mem-per-cpu=10 --ntasks=1 -t1
-#SBATCH hetjob
+#SBATCH packjob
 #SBATCH --cpus-per-task=2 --mem-per-cpu=2  --ntasks=1 -t1
-#SBATCH hetjob
+#SBATCH packjob
 #SBATCH --cpus-per-task=1 --mem-per-cpu=6  --ntasks=1 -t1
 
 $bin_sleep 10"
 
-log_info "\n################################################################\n"
-log_info "Submit hetjob and verify output from scontrol show job"
-log_info "\n################################################################\n"
+log_info "################################################################"
+log_info "Submit packjob and verify output from scontrol show job"
+log_info "################################################################"
 
 set job_id [sbatch]
 
@@ -120,9 +120,9 @@ set matches 0
 set id_set  0
 set id_regex "\[0-9,-\]+"
 
-set format "jobid:.16,hetjoboffset:.16,hetjobid:.16,hetjobidset:.25"
+set format "jobid:.16,packjoboffset:.16,packjobid:.16,packjobidset:.25"
 set regex "$job_id\\s+0\\s+$job_id\\s+($id_regex)"
-set header "JOBID\\s+HET_JOB_OFFSET\\s+HET_JOB_ID\\s+HET_JOB_ID_SET"
+set header "JOBID\\s+PACK_JOB_OFFSET\\s+PACK_JOB_ID\\s+PACK_JOB_ID_SET"
 
 spawn $squeue -j $job_id --Format=$format
 expect {

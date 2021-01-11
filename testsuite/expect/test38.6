@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test of SPANK plugin with hetjobs
+# Purpose: Test of SPANK plugin with pack jobs
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC
 #
@@ -55,7 +55,7 @@ proc end_it { exit_code } {
 		exec $bin_rm -f $spank_conf_file
 	}
 
-	if {$exit_code == 0} {
+    if {$exit_code == 0} {
 		exec $bin_rm -f $new_spank_conf $file_in $file_out $spank_out ${file_prog}.so
 		pass
 	} else {
@@ -189,7 +189,7 @@ expect {
 }
 
 make_bash_script $file_in "
-  $srun --mpi=none --test_suite_srun=5 --het-group=0,1 $bin_sum $spank_conf_file
+  $srun --mpi=none --test_suite_srun=5 --pack-group=0,1 $bin_sum $spank_conf_file
 "
 
 set job_id 0

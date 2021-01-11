@@ -64,12 +64,6 @@ static pthread_mutex_t proc_count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define MAX_POLL_WAIT 500
 
-/* used to initialize run_command module */
-extern void run_command_init(void)
-{
-	shutdown = 0;
-}
-
 /* used to terminate any outstanding commands */
 extern void run_command_shutdown(void)
 {
@@ -165,14 +159,14 @@ extern char *run_command(char *script_type, char *script_path,
 			for (i = 0; i < cc; i++)
 				close(i);
 			if ((cpid = fork()) < 0)
-				_exit(127);
+				exit(127);
 			else if (cpid > 0)
-				_exit(0);
+				exit(0);
 		}
 		setpgid(0, 0);
 		execv(script_path, script_argv);
 		error("%s: execv(%s): %m", __func__, script_path);
-		_exit(127);
+		exit(127);
 	} else if (cpid < 0) {
 		if (max_wait != -1) {
 			close(pfd[0]);

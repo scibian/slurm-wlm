@@ -78,15 +78,13 @@ const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 static acct_gather_energy_t *local_energy = NULL;
 static uint64_t debug_flags = 0;
-static stepd_step_rec_t *job = NULL;
 
 enum {
 	GET_ENERGY,
 	GET_POWER
 };
 
-extern void acct_gather_energy_p_conf_set(int context_id_in,
-					  s_p_hashtbl_t *tbl);
+extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl);
 
 static uint64_t _get_latest_stats(int type)
 {
@@ -126,6 +124,19 @@ static uint64_t _get_latest_stats(int type)
 	fclose(fp);
 
 	return data;
+}
+
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmd,slurmstepd");
+	}
+
+	return run;
 }
 
 static void _get_joules_task(acct_gather_energy_t *energy)
@@ -224,7 +235,7 @@ extern int acct_gather_energy_p_update_node_energy(void)
 {
 	int rc = SLURM_SUCCESS;
 
-	xassert(running_in_slurmdstepd());
+	xassert(_run_in_daemon());
 
 	if (!local_energy || local_energy->current_watts == NO_VAL)
 		return rc;
@@ -251,7 +262,7 @@ extern int init(void)
 
 extern int fini(void)
 {
-	if (!running_in_slurmdstepd())
+	if (!_run_in_daemon())
 		return SLURM_SUCCESS;
 
 	acct_gather_energy_destroy(local_energy);
@@ -267,12 +278,12 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	time_t *last_poll = (time_t *)data;
 	uint16_t *sensor_cnt = (uint16_t *)data;
 
-	xassert(running_in_slurmdstepd());
+	xassert(_run_in_daemon());
 
 	if (!local_energy) {
 		debug("%s: trying to get data %d, but no local_energy yet.",
 		      __func__, data_type);
-		acct_gather_energy_p_conf_set(0, NULL);
+		acct_gather_energy_p_conf_set(NULL);
 	}
 
 	switch (data_type) {
@@ -307,7 +318,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 {
 	int rc = SLURM_SUCCESS;
 
-	xassert(running_in_slurmdstepd());
+	xassert(_run_in_daemon());
 
 	switch (data_type) {
 	case ENERGY_DATA_RECONFIG:
@@ -316,10 +327,6 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 	case ENERGY_DATA_PROFILE:
 		_get_joules_task(local_energy);
 		_send_profile();
-		break;
-	case ENERGY_DATA_STEP_PTR:
-		/* set global job if needed later */
-		job = (stepd_step_rec_t *)data;
 		break;
 	default:
 		error("acct_gather_energy_p_set_data: unknown enum %d",
@@ -336,12 +343,11 @@ extern void acct_gather_energy_p_conf_options(s_p_options_t **full_options,
 	return;
 }
 
-extern void acct_gather_energy_p_conf_set(int context_id_in,
-					  s_p_hashtbl_t *tbl)
+extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 {
 	static bool flag_init = 0;
 
-	if (!running_in_slurmdstepd())
+	if (!_run_in_daemon())
 		return;
 
 	/* Already been here, we shouldn't need to visit again */

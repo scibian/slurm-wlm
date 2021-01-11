@@ -61,7 +61,7 @@ static pthread_mutex_t license_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void _pack_license(struct licenses *lic, Buf buffer, uint16_t protocol_version);
 
 /* Print all licenses on a list */
-static void _licenses_print(char *header, List licenses, job_record_t *job_ptr)
+static void _licenses_print(char *header, List licenses, struct job_record *job_ptr)
 {
 	ListIterator iter;
 	licenses_t *license_entry;
@@ -72,7 +72,7 @@ static void _licenses_print(char *header, List licenses, job_record_t *job_ptr)
 		return;
 
 	iter = list_iterator_create(licenses);
-  	while ((license_entry = list_next(iter))) {
+  	while ((license_entry = (licenses_t *) list_next(iter))) {
 		if (!job_ptr) {
 			info("licenses: %s=%s total=%u used=%u",
 			     header, license_entry->name,
@@ -142,8 +142,14 @@ static List _build_license_list(char *licenses, bool *valid)
 				*valid = false;
 				break;
 			}
-
-			if (token[i] == ':') {
+			/*
+			 * The '*' was still in use internally until 18.08, so
+			 * the check for '*' must stay until 20.02 at least.
+			 *
+			 * ':' is used as a separator in version 2.5 or later
+			 * '*' is used as a separator in version 2.4 or earlier
+			 */
+			if ((token[i] == ':') || (token[i] == '*')) {
 				token[i++] = '\0';
 				num = (int32_t)strtol(&token[i], &end_num, 10);
 				if (*end_num != '\0')
@@ -196,7 +202,7 @@ extern char *license_list_to_string(List license_list)
 		return licenses;
 
 	iter = list_iterator_create(license_list);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		xstrfmtcat(licenses, "%s%s:%u",
 			   sep, license_entry->name, license_entry->total);
 		sep = ",";
@@ -219,6 +225,31 @@ static void _add_res_rec_2_lic_list(slurmdb_res_rec_t *rec, bool sync)
 	list_push(license_list, license_entry);
 	last_license_update = time(NULL);
 }
+
+/* Get string of used license information. Caller must xfree return value */
+extern char *get_licenses_used(void)
+{
+	char *licenses_used = NULL;
+	licenses_t *license_entry;
+	ListIterator iter;
+
+	slurm_mutex_lock(&license_mutex);
+	if (license_list) {
+		iter = list_iterator_create(license_list);
+		while ((license_entry = (licenses_t *) list_next(iter))) {
+			if (licenses_used)
+				xstrcat(licenses_used, ",");
+			xstrfmtcat(licenses_used, "%s:%u/%u",
+			           license_entry->name, license_entry->used,
+			           license_entry->total);
+		}
+		list_iterator_destroy(iter);
+	}
+	slurm_mutex_unlock(&license_mutex);
+
+	return licenses_used;
+}
+
 
 /* Initialize licenses on this system based upon slurm.conf */
 extern int license_init(char *licenses)
@@ -261,7 +292,7 @@ extern int license_update(char *licenses)
         }
 
         iter = list_iterator_create(license_list);
-        while ((license_entry = list_next(iter))) {
+        while ((license_entry = (licenses_t *) list_next(iter))) {
 		/* Always add the remote ones, since we handle those
 		   else where. */
 		if (license_entry->remote) {
@@ -525,7 +556,7 @@ extern List license_validate(char *licenses, bool validate_configured,
 	slurm_mutex_lock(&license_mutex);
 	_licenses_print("request_license", job_license_list, NULL);
 	iter = list_iterator_create(job_license_list);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		if (license_list) {
 			match = list_find_first(license_list,
 						_license_find_rec,
@@ -573,7 +604,7 @@ extern List license_validate(char *licenses, bool validate_configured,
  *	including duplicate names. Reconstruct this job's licenses and
  *	license_list fields to eliminate duplicates.
  */
-extern void license_job_merge(job_record_t *job_ptr)
+extern void license_job_merge(struct job_record *job_ptr)
 {
 	bool valid = true;
 
@@ -590,7 +621,8 @@ extern void license_job_merge(job_record_t *job_ptr)
  * IN reboot    - true if node reboot required to start job
  * RET: SLURM_SUCCESS, EAGAIN (not available now), SLURM_ERROR (never runnable)
  */
-extern int license_job_test(job_record_t *job_ptr, time_t when, bool reboot)
+extern int license_job_test(struct job_record *job_ptr, time_t when,
+			    bool reboot)
 {
 	ListIterator iter;
 	licenses_t *license_entry, *match;
@@ -601,7 +633,7 @@ extern int license_job_test(job_record_t *job_ptr, time_t when, bool reboot)
 
 	slurm_mutex_lock(&license_mutex);
 	iter = list_iterator_create(job_ptr->license_list);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		match = list_find_first(license_list, _license_find_rec,
 			license_entry->name);
 		if (!match) {
@@ -652,7 +684,7 @@ extern List license_job_copy(List license_list_src)
 
 	license_list_dest = list_create(license_free_rec);
 	iter = list_iterator_create(license_list_src);
-	while ((license_entry_src = list_next(iter))) {
+	while ((license_entry_src = (licenses_t *) list_next(iter))) {
 		license_entry_dest = xmalloc(sizeof(licenses_t));
 		license_entry_dest->name = xstrdup(license_entry_src->name);
 		license_entry_dest->total = license_entry_src->total;
@@ -667,7 +699,7 @@ extern List license_job_copy(List license_list_src)
  * IN job_ptr - job identification
  * RET SLURM_SUCCESS or failure code
  */
-extern int license_job_get(job_record_t *job_ptr)
+extern int license_job_get(struct job_record *job_ptr)
 {
 	ListIterator iter;
 	licenses_t *license_entry, *match;
@@ -680,7 +712,7 @@ extern int license_job_get(job_record_t *job_ptr)
 
 	slurm_mutex_lock(&license_mutex);
 	iter = list_iterator_create(job_ptr->license_list);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		match = list_find_first(license_list, _license_find_rec,
 			license_entry->name);
 		if (match) {
@@ -703,7 +735,7 @@ extern int license_job_get(job_record_t *job_ptr)
  * IN job_ptr - job identification
  * RET SLURM_SUCCESS or failure code
  */
-extern int license_job_return(job_record_t *job_ptr)
+extern int license_job_return(struct job_record *job_ptr)
 {
 	ListIterator iter;
 	licenses_t *license_entry, *match;
@@ -716,7 +748,7 @@ extern int license_job_return(job_record_t *job_ptr)
 	trace_job(job_ptr, __func__, "");
 	slurm_mutex_lock(&license_mutex);
 	iter = list_iterator_create(job_ptr->license_list);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		match = list_find_first(license_list, _license_find_rec,
 			license_entry->name);
 		if (match) {
@@ -755,7 +787,7 @@ extern bool license_list_overlap(List list_1, List list_2)
 		return false;
 
 	iter = list_iterator_create(list_1);
-	while ((license_entry = list_next(iter))) {
+	while ((license_entry = (licenses_t *) list_next(iter))) {
 		if (list_find_first(list_2, _license_find_rec,
 				    license_entry->name)) {
 			match = true;

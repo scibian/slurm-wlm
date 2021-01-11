@@ -45,9 +45,11 @@
 /*
  * forward_init    - initialize forward structure
  * IN: forward     - forward_t *   - struct to store forward info
+ * IN: from        - forward_t *   - (OPTIONAL) can be NULL, can be used to
+ *                                   init the forward to this state
  * RET: VOID
  */
-extern void forward_init(forward_t *forward);
+extern void forward_init(forward_t *forward, forward_t *from);
 
 /*
  * forward_msg	      - logic to forward a message which has been received and

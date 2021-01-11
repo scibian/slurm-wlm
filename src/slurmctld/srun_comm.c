@@ -72,34 +72,34 @@ static void _srun_agent_launch(slurm_addr_t *addr, char *host,
 	agent_queue_request(agent_args);
 }
 
-static bool _pending_het_jobs(job_record_t *job_ptr)
+static bool _pending_pack_jobs(struct job_record *job_ptr)
 {
-	job_record_t *het_job_leader, *het_job;
+	struct job_record *pack_leader, *pack_job;
 	ListIterator iter;
 	bool pending_job = false;
 
-	if (job_ptr->het_job_id == 0)
+	if (job_ptr->pack_job_id == 0)
 		return false;
 
-	het_job_leader = find_job_record(job_ptr->het_job_id);
-	if (!het_job_leader) {
-		error("Hetjob leader %pJ not found", job_ptr);
+	pack_leader = find_job_record(job_ptr->pack_job_id);
+	if (!pack_leader) {
+		error("Job pack leader %pJ not found", job_ptr);
 		return false;
 	}
-	if (!het_job_leader->het_job_list) {
-		error("Hetjob leader %pJ lacks het_job_list",
+	if (!pack_leader->pack_job_list) {
+		error("Job pack leader %pJ lacks pack_job_list",
 		      job_ptr);
 		return false;
 	}
 
-	iter = list_iterator_create(het_job_leader->het_job_list);
-	while ((het_job = list_next(iter))) {
-		if (het_job_leader->het_job_id != het_job->het_job_id) {
-			error("%s: Bad het_job_list for %pJ",
-			      __func__, het_job_leader);
+	iter = list_iterator_create(pack_leader->pack_job_list);
+	while ((pack_job = (struct job_record *) list_next(iter))) {
+		if (pack_leader->pack_job_id != pack_job->pack_job_id) {
+			error("%s: Bad pack_job_list for %pJ",
+			      __func__, pack_leader);
 			continue;
 		}
-		if (IS_JOB_PENDING(het_job)) {
+		if (IS_JOB_PENDING(pack_job)) {
 			pending_job = true;
 			break;
 		}
@@ -123,9 +123,9 @@ static void _free_srun_alloc(void *x)
  * srun_allocate - notify srun of a resource allocation
  * IN job_ptr - job allocated resources
  */
-extern void srun_allocate(job_record_t *job_ptr)
+extern void srun_allocate(struct job_record *job_ptr)
 {
-	job_record_t *het_job, *het_job_leader;
+	struct job_record *pack_job, *pack_leader;
 	resource_allocation_response_msg_t *msg_arg = NULL;
 	slurm_addr_t *addr;
 	ListIterator iter;
@@ -137,7 +137,7 @@ extern void srun_allocate(job_record_t *job_ptr)
 	    !job_ptr->job_resrcs->cpu_array_cnt)
 		return;
 
-	if (job_ptr->het_job_id == 0) {
+	if (job_ptr->pack_job_id == 0) {
 		addr = xmalloc(sizeof(struct sockaddr_in));
 		slurm_set_addr(addr, job_ptr->alloc_resp_port,
 			job_ptr->resp_host);
@@ -146,32 +146,31 @@ extern void srun_allocate(job_record_t *job_ptr)
 		_srun_agent_launch(addr, job_ptr->alloc_node,
 				   RESPONSE_RESOURCE_ALLOCATION, msg_arg,
 				   job_ptr->start_protocol_ver);
-	} else if (_pending_het_jobs(job_ptr)) {
+	} else if (_pending_pack_jobs(job_ptr)) {
 		return;
-	} else if ((het_job_leader = find_job_record(job_ptr->het_job_id))) {
+	} else if ((pack_leader = find_job_record(job_ptr->pack_job_id))) {
 		addr = xmalloc(sizeof(struct sockaddr_in));
-		slurm_set_addr(addr, het_job_leader->alloc_resp_port,
-			       het_job_leader->resp_host);
+		slurm_set_addr(addr, pack_leader->alloc_resp_port,
+			       pack_leader->resp_host);
 		job_resp_list = list_create(_free_srun_alloc);
-		iter = list_iterator_create(het_job_leader->het_job_list);
-		while ((het_job = list_next(iter))) {
-			if (het_job_leader->het_job_id !=
-				het_job->het_job_id) {
-				error("%s: Bad het_job_list for %pJ",
-				      __func__, het_job_leader);
+		iter = list_iterator_create(pack_leader->pack_job_list);
+		while ((pack_job = (struct job_record *) list_next(iter))) {
+			if (pack_leader->pack_job_id != pack_job->pack_job_id) {
+				error("%s: Bad pack_job_list for %pJ",
+				      __func__, pack_leader);
 				continue;
 			}
-			msg_arg = build_alloc_msg(het_job, SLURM_SUCCESS,
+			msg_arg = build_alloc_msg(pack_job, SLURM_SUCCESS,
 						  NULL);
 			list_append(job_resp_list, msg_arg);
 			msg_arg = NULL;
 		}
 		list_iterator_destroy(iter);
 		_srun_agent_launch(addr, job_ptr->alloc_node,
-				   RESPONSE_HET_JOB_ALLOCATION, job_resp_list,
+				   RESPONSE_JOB_PACK_ALLOCATION, job_resp_list,
 				   job_ptr->start_protocol_ver);
 	} else {
-		error("%s: Can not find hetjob leader %pJ",
+		error("%s: Can not find pack job leader %pJ",
 		      __func__, job_ptr);
 	}
 }
@@ -180,7 +179,7 @@ extern void srun_allocate(job_record_t *job_ptr)
  * srun_allocate_abort - notify srun of a resource allocation failure
  * IN job_ptr - job allocated resources
  */
-extern void srun_allocate_abort(job_record_t *job_ptr)
+extern void srun_allocate_abort(struct job_record *job_ptr)
 {
 	if (job_ptr && job_ptr->alloc_resp_port && job_ptr->alloc_node &&
 	    job_ptr->resp_host) {
@@ -204,16 +203,16 @@ extern void srun_allocate_abort(job_record_t *job_ptr)
  * IN job_ptr - job to notify
  * IN node_name - name of failed node
  */
-extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
+extern void srun_node_fail(struct job_record *job_ptr, char *node_name)
 {
 #ifndef HAVE_FRONT_END
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 #endif
 	int bit_position = -1;
 	slurm_addr_t * addr;
 	srun_node_fail_msg_t *msg_arg;
 	ListIterator step_iterator;
-	step_record_t *step_ptr;
+	struct step_record *step_ptr;
 
 	xassert(job_ptr);
 	xassert(node_name);
@@ -229,7 +228,7 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 #endif
 
 	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator))) {
+	while ((step_ptr = (struct step_record *) list_next(step_iterator))) {
 		if (step_ptr->step_node_bitmap == NULL)   /* pending step */
 			continue;
 		if ((bit_position >= 0) &&
@@ -267,7 +266,7 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 extern void srun_ping (void)
 {
 	ListIterator job_iterator;
-	job_record_t *job_ptr;
+	struct job_record *job_ptr;
 	slurm_addr_t * addr;
 	time_t now = time(NULL);
 	time_t old = now - (slurmctld_conf.inactive_limit / 3) +
@@ -278,7 +277,7 @@ extern void srun_ping (void)
 		return;		/* No limit, don't bother pinging */
 
 	job_iterator = list_iterator_create(job_list);
-	while ((job_ptr = list_next(job_iterator))) {
+	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		xassert (job_ptr->magic == JOB_MAGIC);
 
 		if (!IS_JOB_RUNNING(job_ptr))
@@ -306,7 +305,7 @@ extern void srun_ping (void)
  * IN step_ptr - pointer to the slurmctld step record
  * IN timeout_val - when it is going to time out
  */
-extern void srun_step_timeout(step_record_t *step_ptr, time_t timeout_val)
+extern void srun_step_timeout(struct step_record *step_ptr, time_t timeout_val)
 {
 	slurm_addr_t *addr;
 	srun_timeout_msg_t *msg_arg;
@@ -331,12 +330,12 @@ extern void srun_step_timeout(step_record_t *step_ptr, time_t timeout_val)
  * srun_timeout - notify srun of a job's imminent timeout
  * IN job_ptr - pointer to the slurmctld job record
  */
-extern void srun_timeout(job_record_t *job_ptr)
+extern void srun_timeout (struct job_record *job_ptr)
 {
 	slurm_addr_t * addr;
 	srun_timeout_msg_t *msg_arg;
 	ListIterator step_iterator;
-	step_record_t *step_ptr;
+	struct step_record *step_ptr;
 
 	xassert(job_ptr);
 	if (!IS_JOB_RUNNING(job_ptr))
@@ -355,7 +354,7 @@ extern void srun_timeout(job_record_t *job_ptr)
 
 
 	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator)))
+	while ((step_ptr = (struct step_record *) list_next(step_iterator)))
 		srun_step_timeout(step_ptr, job_ptr->end_time);
 	list_iterator_destroy(step_iterator);
 }
@@ -363,7 +362,7 @@ extern void srun_timeout(job_record_t *job_ptr)
 /*
  * srun_user_message - Send arbitrary message to an srun job (no job steps)
  */
-extern int srun_user_message(job_record_t *job_ptr, char *msg)
+extern int srun_user_message(struct job_record *job_ptr, char *msg)
 {
 	slurm_addr_t * addr;
 	srun_user_msg_t *msg_arg;
@@ -384,7 +383,7 @@ extern int srun_user_message(job_record_t *job_ptr, char *msg)
 		return SLURM_SUCCESS;
 	} else if (job_ptr->batch_flag && IS_JOB_RUNNING(job_ptr)) {
 #ifndef HAVE_FRONT_END
-		node_record_t *node_ptr;
+		struct node_record *node_ptr;
 #endif
 		job_notify_msg_t *notify_msg_ptr;
 		agent_arg_t *agent_arg_ptr;
@@ -429,12 +428,12 @@ extern int srun_user_message(job_record_t *job_ptr, char *msg)
  * srun_job_complete - notify srun of a job's termination
  * IN job_ptr - pointer to the slurmctld job record
  */
-extern void srun_job_complete(job_record_t *job_ptr)
+extern void srun_job_complete (struct job_record *job_ptr)
 {
 	slurm_addr_t * addr;
 	srun_job_complete_msg_t *msg_arg;
 	ListIterator step_iterator;
-	step_record_t *step_ptr;
+	struct step_record *step_ptr;
 
 	xassert(job_ptr);
 
@@ -450,7 +449,7 @@ extern void srun_job_complete(job_record_t *job_ptr)
 	}
 
 	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator))) {
+	while ((step_ptr = (struct step_record *) list_next(step_iterator))) {
 		if (step_ptr->batch_step)	/* batch script itself */
 			continue;
 		srun_step_complete(step_ptr);
@@ -464,7 +463,7 @@ extern void srun_job_complete(job_record_t *job_ptr)
  * IN op - SUSPEND_JOB or RESUME_JOB (enum suspend_opts from slurm.h)
  * RET - true if message send, otherwise false
  */
-extern bool srun_job_suspend(job_record_t *job_ptr, uint16_t op)
+extern bool srun_job_suspend (struct job_record *job_ptr, uint16_t op)
 {
 	slurm_addr_t * addr;
 	suspend_msg_t *msg_arg;
@@ -490,7 +489,7 @@ extern bool srun_job_suspend(job_record_t *job_ptr, uint16_t op)
  * srun_step_complete - notify srun of a job step's termination
  * IN step_ptr - pointer to the slurmctld job step record
  */
-extern void srun_step_complete(step_record_t *step_ptr)
+extern void srun_step_complete (struct step_record *step_ptr)
 {
 	slurm_addr_t * addr;
 	srun_job_complete_msg_t *msg_arg;
@@ -513,7 +512,8 @@ extern void srun_step_complete(step_record_t *step_ptr)
  * IN step_ptr  - pointer to the slurmctld job step record
  * IN node_list - name of nodes we did not find the step on
  */
-extern void srun_step_missing(step_record_t *step_ptr, char *node_list)
+extern void srun_step_missing (struct step_record *step_ptr,
+			       char *node_list)
 {
 	slurm_addr_t * addr;
 	srun_step_missing_msg_t *msg_arg;
@@ -537,7 +537,7 @@ extern void srun_step_missing(step_record_t *step_ptr, char *node_list)
  * IN step_ptr  - pointer to the slurmctld job step record
  * IN signal - signal number
  */
-extern void srun_step_signal(step_record_t *step_ptr, uint16_t signal)
+extern void srun_step_signal (struct step_record *step_ptr, uint16_t signal)
 {
 	slurm_addr_t * addr;
 	job_step_kill_msg_t *msg_arg;
@@ -561,7 +561,7 @@ extern void srun_step_signal(step_record_t *step_ptr, uint16_t signal)
  * IN step_ptr - pointer to the slurmctld job step record
  * IN argv - command and arguments to execute
  */
-extern void srun_exec(step_record_t *step_ptr, char **argv)
+extern void srun_exec(struct step_record *step_ptr, char **argv)
 {
 	slurm_addr_t * addr;
 	srun_exec_msg_t *msg_arg;
@@ -596,7 +596,7 @@ extern void srun_exec(step_record_t *step_ptr, char **argv)
  */
 extern void srun_response(uint32_t job_id, uint32_t step_id)
 {
-	job_record_t *job_ptr = find_job_record(job_id);
+	struct job_record  *job_ptr = find_job_record (job_id);
 	time_t now = time(NULL);
 
 	if (job_ptr == NULL)

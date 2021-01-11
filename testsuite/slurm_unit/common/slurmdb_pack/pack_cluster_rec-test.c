@@ -85,7 +85,7 @@ START_TEST(pack_back2_rec)
 	pack_rec.name             = xstrdup("name");
 	pack_rec.nodes            = xstrdup("nodes");
 	pack_rec.plugin_id_select = 8;
-	pack_rec.fed.feature_list = list_create(xfree_ptr);
+	pack_rec.fed.feature_list = list_create(slurm_destroy_char);
 	slurm_addto_mode_char_list(pack_rec.fed.feature_list, "a,b,c", 0);
 	ck_assert_int_eq(list_count(pack_rec.fed.feature_list), 3);
 
@@ -263,7 +263,7 @@ START_TEST(pack_back1_rec)
 	pack_rec.name             = xstrdup("name");
 	pack_rec.nodes            = xstrdup("nodes");
 	pack_rec.plugin_id_select = 8;
-	pack_rec.fed.feature_list = list_create(xfree_ptr);
+	pack_rec.fed.feature_list = list_create(slurm_destroy_char);
 	slurm_addto_mode_char_list(pack_rec.fed.feature_list, "a,b,c", 0);
 	ck_assert_int_eq(list_count(pack_rec.fed.feature_list), 3);
 
@@ -382,10 +382,10 @@ END_TEST
  * TEST SUITE                                                                *
  ****************************************************************************/
 
-Suite *suite(void)
+Suite* suite(void)
 {
-	Suite *s = suite_create("Pack slurmdb_cluster_rec_t");
-	TCase *tc_core = tcase_create("Pack slurmdb_cluster_rec_t");
+	Suite* s = suite_create("Pack slurmdb_cluster_rec_t");
+	TCase* tc_core = tcase_create("Pack slurmdb_cluster_rec_t");
 	tcase_add_test(tc_core, invalid_protocol);
 
 	tcase_add_test(tc_core, pack_back1_null_rec);
@@ -407,7 +407,7 @@ Suite *suite(void)
 int main(void)
 {
 	int number_failed;
-	SRunner *sr = srunner_create(suite());
+	SRunner* sr = srunner_create(suite());
 
 	//srunner_set_fork_status(sr, CK_NOFORK);
 

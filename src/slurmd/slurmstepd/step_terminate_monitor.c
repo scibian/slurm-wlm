@@ -233,7 +233,7 @@ static int _call_external_program(stepd_step_rec_t *job)
 		setpgid(0, 0);
 		execv(program_name, argv);
 		error("step_terminate_monitor execv(): %m");
-		_exit(127);
+		exit(127);
 	}
 
 	opt = WNOHANG;

@@ -53,6 +53,8 @@ extern slurmdbd_msg_type_t str_2_slurmdbd_msg_type(char *msg_type)
 {
 	if (!msg_type) {
 		return NO_VAL;
+	} else if (!xstrcasecmp(msg_type, "Init")) {
+		return DBD_INIT;
 	} else if (!xstrcasecmp(msg_type, "Fini")) {
 		return DBD_FINI;
 	} else if (!xstrcasecmp(msg_type, "Add Accounts")) {
@@ -240,6 +242,12 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 	static char unk_str[64];
 
 	switch (msg_type) {
+	case DBD_INIT:
+		if (get_enum) {
+			return "DBD_INIT";
+		} else
+			return "Init";
+		break;
 	case DBD_FINI:
 		if (get_enum) {
 			return "DBD_FINI";
@@ -822,7 +830,7 @@ extern void slurmdbd_free_cluster_tres_msg(dbd_cluster_tres_msg_t *msg)
 	}
 }
 
-extern void slurmdbd_free_msg(persist_msg_t *msg)
+extern void slurmdbd_free_msg(slurmdbd_msg_t *msg)
 {
 	switch (msg->msg_type) {
 	case DBD_ADD_ACCOUNTS:
@@ -900,6 +908,9 @@ extern void slurmdbd_free_msg(persist_msg_t *msg)
 	case DBD_GET_WCKEY_USAGE:
 	case DBD_GOT_WCKEY_USAGE:
 		slurmdbd_free_usage_msg(msg->data, msg->msg_type);
+		break;
+	case DBD_INIT:
+		slurmdbd_free_init_msg(msg->data);
 		break;
 	case DBD_FINI:
 		slurmdbd_free_fini_msg(msg->data);
@@ -1050,6 +1061,14 @@ extern void slurmdbd_free_cond_msg(dbd_cond_msg_t *msg,
 	}
 }
 
+extern void slurmdbd_free_init_msg(dbd_init_msg_t *msg)
+{
+	if (msg) {
+		xfree(msg->cluster_name);
+		xfree(msg);
+	}
+}
+
 extern void slurmdbd_free_fini_msg(dbd_fini_msg_t *msg)
 {
 	xfree(msg);
@@ -1134,7 +1153,7 @@ extern void slurmdbd_free_modify_msg(dbd_modify_msg_t *msg,
 			destroy_rec = slurmdb_destroy_federation_rec;
 			break;
 		case DBD_MODIFY_JOB:
-			destroy_cond = slurmdb_destroy_job_cond;
+			destroy_cond = slurmdb_destroy_job_modify_cond;
 			destroy_rec = slurmdb_destroy_job_rec;
 			break;
 		case DBD_MODIFY_QOS:

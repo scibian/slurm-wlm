@@ -87,7 +87,7 @@
 	    (sched && (level <= highest_sched_log_level))) {	\
 		va_list ap;					\
 		va_start(ap, fmt);				\
-		_log_msg(level, sched, false, fmt, ap);		\
+		_log_msg(level, sched, fmt, ap);		\
 		va_end(ap);					\
 	}							\
 }
@@ -105,19 +105,27 @@ strong_alias(log_alter,		slurm_log_alter);
 strong_alias(log_alter_with_fp, slurm_log_alter_with_fp);
 strong_alias(log_set_fpfx,	slurm_log_set_fpfx);
 strong_alias(log_fp,		slurm_log_fp);
+strong_alias(log_fatal,		slurm_log_fatal);
 strong_alias(log_oom,		slurm_log_oom);
 strong_alias(log_has_data,	slurm_log_has_data);
 strong_alias(log_flush,		slurm_log_flush);
 strong_alias(log_var,		slurm_log_var);
-strong_alias(fatal,		slurm_fatal) __attribute__((noreturn));
-strong_alias(fatal_abort,	slurm_fatal_abort) __attribute__((noreturn));
+strong_alias(fatal,		slurm_fatal);
+strong_alias(fatal_abort,	slurm_fatal_abort);
 strong_alias(error,		slurm_error);
-strong_alias(spank_log,		slurm_spank_log);
 strong_alias(info,		slurm_info);
 strong_alias(verbose,		slurm_verbose);
+strong_alias(debug,		slurm_debug);
+strong_alias(debug2,		slurm_debug2);
+strong_alias(debug3,		slurm_debug3);
+strong_alias(debug4,		slurm_debug4);
+strong_alias(debug5,		slurm_debug5);
 strong_alias(sched_error,	slurm_sched_error);
 strong_alias(sched_info,	slurm_sched_info);
 strong_alias(sched_verbose,	slurm_sched_verbose);
+strong_alias(sched_debug,	slurm_sched_debug);
+strong_alias(sched_debug2,	slurm_sched_debug2);
+strong_alias(sched_debug3,	slurm_sched_debug3);
 
 /*
 ** struct defining a "log" type
@@ -126,8 +134,8 @@ typedef struct {
 	char *argv0;
 	char *fpfx;              /* optional prefix for logfile entries */
 	FILE *logfp;             /* log file pointer                    */
-	cbuf_t *buf;              /* stderr data buffer                  */
-	cbuf_t *fbuf;             /* logfile data buffer                 */
+	cbuf_t buf;              /* stderr data buffer                  */
+	cbuf_t fbuf;             /* logfile data buffer                 */
 	log_facility_t facility;
 	log_options_t opt;
 	unsigned initialized:1;
@@ -189,7 +197,7 @@ static size_t _make_timestamp(char *timestamp_buf, size_t max,
 {
 	time_t timestamp_t = time(NULL);
 	struct tm timestamp_tm;
-	if (!localtime_r(&timestamp_t, &timestamp_tm)) {
+	if (!slurm_localtime_r(&timestamp_t, &timestamp_tm)) {
 		fprintf(stderr, "localtime_r() failed\n");
 		return 0;
 	}
@@ -636,7 +644,7 @@ int sched_log_alter(log_options_t opt, log_facility_t fac, char *logfile)
 }
 
 /* Return the FILE * of the current logfile (or stderr if not logging to
- * a file, but NOT both). Also see log_oom() below. */
+ * a file, but NOT both). Also see log_fatal() and log_oom() below. */
 FILE *log_fp(void)
 {
 	FILE *fp;
@@ -647,6 +655,21 @@ FILE *log_fp(void)
 		fp = stderr;
 	slurm_mutex_unlock(&log_lock);
 	return fp;
+}
+
+/* Log fatal error without message buffering */
+void log_fatal(const char *file, int line, const char *msg, const char *err_str)
+{
+	if (log && log->logfp) {
+		fprintf(log->logfp, "ERROR: [%s:%d] %s: %s\n",
+			file, line, msg, err_str);
+		fflush(log->logfp);
+	}
+	if (!log || log->opt.stderr_level) {
+		fprintf(stderr, "ERROR: [%s:%d] %s: %s\n",
+			file, line, msg, err_str);
+		fflush(stderr);
+	}
 }
 
 /* Log out of memory without message buffering */
@@ -676,15 +699,14 @@ void log_set_timefmt(unsigned fmtflag)
 	}
 }
 
-/*
- * _set_idbuf()
+/* set_idbuf()
  * Write in the input buffer the current time and milliseconds
  * the process id and the current thread id.
  */
-static void _set_idbuf(char *idbuf, size_t size)
+static void
+set_idbuf(char *idbuf)
 {
 	struct timeval now;
-	char time[25];
 	char thread_name[NAMELEN];
 	int max_len = 12; /* handles current longest thread name */
 
@@ -700,11 +722,10 @@ static void _set_idbuf(char *idbuf, size_t size)
 	max_len = 0;
 	thread_name[0] = '\0';
 #endif
-	slurm_ctime2_r(&now.tv_sec, time);
 
-	snprintf(idbuf, size, "%.15s.%-6d %5d %-*s %p",
-		 time + 4, (int) now.tv_usec, (int) getpid(), max_len,
-		 thread_name, (void *) pthread_self());
+	sprintf(idbuf, "%.15s.%-6d %5d %-*s %p", slurm_ctime(&now.tv_sec) + 4,
+		(int)now.tv_usec, (int)getpid(), max_len, thread_name,
+		(void *)pthread_self());
 }
 
 /*
@@ -712,7 +733,7 @@ static void _set_idbuf(char *idbuf, size_t size)
  * the job array or hetjob component information with the raw jobid in
  * parenthesis.
  */
-static char *_jobid2fmt(job_record_t *job_ptr, char *buf, int buf_size)
+static char *_jobid2fmt(struct job_record *job_ptr, char *buf, int buf_size)
 {
 	/*
 	 * NOTE: You will notice we put a %.0s in front of the string.
@@ -726,9 +747,9 @@ static char *_jobid2fmt(job_record_t *job_ptr, char *buf, int buf_size)
 	if (job_ptr->magic != JOB_MAGIC)
 		return "%.0sJobId=CORRUPT";
 
-	if (job_ptr->het_job_id) {
+	if (job_ptr->pack_job_id) {
 		snprintf(buf, buf_size, "%%.0sJobId=%u+%u(%u)",
-			 job_ptr->het_job_id, job_ptr->het_job_offset,
+			 job_ptr->pack_job_id, job_ptr->pack_job_offset,
 			 job_ptr->job_id);
 	} else if (job_ptr->array_recs && (job_ptr->array_task_id == NO_VAL)) {
 		snprintf(buf, buf_size, "%%.0sJobId=%u_*",
@@ -750,7 +771,7 @@ static char *_jobid2fmt(job_record_t *job_ptr, char *buf, int buf_size)
  * Note that the "%.0s" trick is already included by jobid2fmt above, and
  * should not be repeated here.
  */
-static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
+static char *_stepid2fmt(struct step_record *step_ptr, char *buf, int buf_size)
 {
 	if (step_ptr == NULL)
 		return " StepId=Invalid";
@@ -870,7 +891,7 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 				{
 					int i;
 					void *ptr = NULL;
-					job_record_t *job_ptr;
+					struct job_record *job_ptr;
 					va_list	ap_copy;
 
 					va_copy(ap_copy, ap);
@@ -890,8 +911,8 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 				{
 					int i;
 					void *ptr = NULL;
-					step_record_t *step_ptr = NULL;
-					job_record_t *job_ptr = NULL;
+					struct step_record *step_ptr = NULL;
+					struct job_record *job_ptr = NULL;
 					va_list	ap_copy;
 
 					va_copy(ap_copy, ap);
@@ -972,8 +993,7 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 					xstrftimecat(substitute, "%b %d %T");
 					break;
 				case LOG_FMT_THREAD_ID:
-					_set_idbuf(substitute_on_stack,
-						   sizeof(substitute_on_stack));
+					set_idbuf(substitute_on_stack);
 					substitute = substitute_on_stack;
 					should_xfree = 0;
 					break;
@@ -1092,8 +1112,8 @@ static void xlogfmtcat(char **dst, const char *fmt, ...)
 
 }
 
-static void _log_printf(log_t *log, cbuf_t *cb, FILE *stream,
-			const char *fmt, ...)
+static void
+_log_printf(log_t *log, cbuf_t cb, FILE *stream, const char *fmt, ...)
 {
 	va_list ap;
 	int fd = -1;
@@ -1131,7 +1151,7 @@ static void _log_printf(log_t *log, cbuf_t *cb, FILE *stream,
  * log a message at the specified level to facilities that have been
  * configured to receive messages at that level
  */
-static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt, va_list args)
+static void _log_msg(log_level_t level, bool sched, const char *fmt, va_list args)
 {
 	char *pfx = "";
 	char *buf = NULL;
@@ -1171,7 +1191,6 @@ static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt,
 		case LOG_LEVEL_ERROR:
 			priority = LOG_ERR;
 			pfx = sched? "error: sched: " : "error: ";
-			pfx = spank ? "" : pfx;
 			break;
 
 		case LOG_LEVEL_INFO:
@@ -1222,11 +1241,9 @@ static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt,
 	if (level <= log->opt.stderr_level) {
 
 		fflush(stdout);
-		if (spank) {
-			_log_printf(log, log->buf, stderr, "%s\n", buf);
-		} else if (log->fmt == LOG_FMT_THREAD_ID) {
+		if (log->fmt == LOG_FMT_THREAD_ID) {
 			char tmp[64];
-			_set_idbuf(tmp, sizeof(tmp));
+			set_idbuf(tmp);
 			_log_printf(log, log->buf, stderr, "%s: %s%s\n",
 			            tmp, pfx, buf);
 		} else {
@@ -1322,21 +1339,6 @@ void fatal_abort(const char *fmt, ...)
 void log_var(const log_level_t log_lvl, const char *fmt, ...)
 {
 	LOG_MACRO(log_lvl, false, fmt);
-
-	if (log_lvl == LOG_LEVEL_FATAL) {
-		log_flush();
-		exit(1);
-	}
-}
-
-void sched_log_var(const log_level_t log_lvl, const char *fmt, ...)
-{
-	LOG_MACRO(log_lvl, true, fmt);
-
-	if (log_lvl == LOG_LEVEL_FATAL) {
-		log_flush();
-		exit(1);
-	}
 }
 
 int error(const char *fmt, ...)
@@ -1350,18 +1352,6 @@ int error(const char *fmt, ...)
 	return SLURM_ERROR;
 }
 
-/*
- * Like error(), but printed without the error: prefix so SPANK plugins
- * can have a convenient way to return messages to the user.
- */
-void spank_log(const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	_log_msg(LOG_LEVEL_ERROR, false, true, fmt, ap);
-	va_end(ap);
-}
-
 void info(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_INFO, false, fmt);
@@ -1372,17 +1362,17 @@ void verbose(const char *fmt, ...)
 	LOG_MACRO(LOG_LEVEL_VERBOSE, false, fmt);
 }
 
-void slurm_debug(const char *fmt, ...)
+void debug(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_DEBUG, false, fmt);
 }
 
-void slurm_debug2(const char *fmt, ...)
+void debug2(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_DEBUG2, false, fmt);
 }
 
-void slurm_debug3(const char *fmt, ...)
+void debug3(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_DEBUG3, false, fmt);
 }
@@ -1391,12 +1381,12 @@ void slurm_debug3(const char *fmt, ...)
  * Debug levels higher than debug3 are not written to stderr in the
  * slurmstepd process after stderr is connected back to the client (srun).
  */
-void slurm_debug4(const char *fmt, ...)
+void debug4(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_DEBUG4, false, fmt);
 }
 
-void slurm_debug5(const char *fmt, ...)
+void debug5(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_DEBUG5, false, fmt);
 }
@@ -1422,6 +1412,21 @@ void sched_verbose(const char *fmt, ...)
 	LOG_MACRO(LOG_LEVEL_VERBOSE, true, fmt);
 }
 
+void sched_debug(const char *fmt, ...)
+{
+	LOG_MACRO(LOG_LEVEL_DEBUG, true, fmt);
+}
+
+void sched_debug2(const char *fmt, ...)
+{
+	LOG_MACRO(LOG_LEVEL_DEBUG2, true, fmt);
+}
+
+void sched_debug3(const char *fmt, ...)
+{
+	LOG_MACRO(LOG_LEVEL_DEBUG3, true, fmt);
+}
+
 /* Return the highest LOG_LEVEL_* used for any logging mechanism.
  * For example, if LOG_LEVEL_INFO is returned, we know that all verbose and
  * debug type messages will be ignored. */
@@ -1432,5 +1437,5 @@ extern int get_log_level(void)
 
 extern int get_sched_log_level(void)
 {
-	return MAX(highest_log_level, highest_sched_log_level);
+	return highest_sched_log_level;
 }

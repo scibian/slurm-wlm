@@ -290,7 +290,7 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 		return SLURM_ERROR;
 	}
 	xfree(query);
-	columns = list_create(xfree_ptr);
+	columns = list_create(slurm_destroy_char);
 	while ((row = mysql_fetch_row(result))) {
 		col = xstrdup(row[0]); //Field
 		list_append(columns, col);

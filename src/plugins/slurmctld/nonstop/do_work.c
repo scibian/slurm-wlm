@@ -77,7 +77,7 @@ typedef struct job_failures {
 	uint32_t		callback_flags;
 	uint16_t		callback_port;
 	uint32_t		job_id;
-	job_record_t *		job_ptr;
+	struct job_record *	job_ptr;
 	uint32_t		fail_node_cnt;
 	uint32_t *		fail_node_cpus;
 	char **			fail_node_names;
@@ -103,7 +103,7 @@ static void _job_fail_del(void *x)
 {
 	int i;
 	job_failures_t *job_fail_ptr = (job_failures_t *) x;
-	job_record_t *job_ptr;
+	struct job_record *job_ptr;
 
 	xassert(job_fail_ptr->magic == FAILURE_MAGIC);
 	if (job_fail_ptr->pending_job_id) {
@@ -272,8 +272,6 @@ static int _update_job(job_desc_msg_t * job_specs, uid_t uid)
 {
 	slurm_msg_t msg;
 
-	slurm_msg_t_init(&msg);
-
 	msg.data= job_specs;
 	msg.conn_fd = -1;
 	return update_job(&msg, uid, true);
@@ -397,7 +395,7 @@ extern int restore_nonstop_state(void)
 
 	if (protocol_version == NO_VAL16) {
 		if (!ignore_state_errors)
-			fatal("Can not recover slurmctld/nonstop state, incompatible version, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+			fatal("Can not recover slurmctld/nonstop state, incompatible version, start with '-i' to ignore this");
 		error("*************************************************************");
 		error("Can not recover slurmctld/nonstop state, incompatible version");
 		error("*************************************************************");
@@ -425,7 +423,7 @@ extern int restore_nonstop_state(void)
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete nonstop state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete nonstop state file, start with '-i' to ignore this");
 	error("Incomplete nonstop state file");
 	free_buf(buffer);
 	return SLURM_ERROR;
@@ -446,9 +444,9 @@ extern void term_job_db(void)
 	slurm_mutex_unlock(&job_fail_mutex);
 }
 
-static uint32_t _get_job_cpus(job_record_t *job_ptr, int node_inx)
+static uint32_t _get_job_cpus(struct job_record *job_ptr, int node_inx)
 {
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	uint32_t cpus_alloc;
 	int i, j;
 
@@ -472,11 +470,11 @@ static uint32_t _get_job_cpus(job_record_t *job_ptr, int node_inx)
 
 /* Some node is failing, but we lack a specific job ID, so see what jobs
  * have registered and have this node in their job allocaiton */
-static void _failing_node(node_record_t *node_ptr)
+static void _failing_node(struct node_record *node_ptr)
 {
 	job_failures_t *job_fail_ptr;
 	ListIterator job_iterator;
-	job_record_t *job_ptr;
+	struct job_record *job_ptr;
 	time_t now = time(NULL);
 	uint32_t event_flag = 0;
 	int node_inx;
@@ -505,7 +503,8 @@ static void _failing_node(node_record_t *node_ptr)
 	slurm_mutex_unlock(&job_fail_mutex);
 }
 
-extern void node_fail_callback(job_record_t *job_ptr, node_record_t *node_ptr)
+extern void node_fail_callback(struct job_record *job_ptr,
+			       struct node_record *node_ptr)
 {
 	job_failures_t *job_fail_ptr;
 	uint32_t event_flag = 0;
@@ -549,7 +548,7 @@ extern void node_fail_callback(job_record_t *job_ptr, node_record_t *node_ptr)
 	slurm_mutex_unlock(&job_fail_mutex);
 }
 
-extern void job_begin_callback(job_record_t *job_ptr)
+extern void job_begin_callback(struct job_record *job_ptr)
 {
 	job_failures_t *job_fail_ptr = NULL;
 	struct depend_spec *depend_ptr;
@@ -576,7 +575,7 @@ extern void job_begin_callback(job_record_t *job_ptr)
 	slurm_mutex_unlock(&job_fail_mutex);
 }
 
-extern void job_fini_callback(job_record_t *job_ptr)
+extern void job_fini_callback(struct job_record *job_ptr)
 {
 	info("job_fini_callback for job:%u", job_ptr->job_id);
 	slurm_mutex_lock(&job_fail_mutex);
@@ -685,8 +684,8 @@ extern char *fail_nodes(char *cmd_ptr, uid_t cmd_uid,
 			uint32_t protocol_version)
 {
 	job_failures_t *job_fail_ptr;
-	node_record_t *node_ptr;
-	job_record_t *job_ptr;
+	struct node_record *node_ptr;
+	struct job_record *job_ptr;
 	uint32_t job_id;
 	char *sep1;
 	char *resp = NULL;
@@ -785,7 +784,7 @@ extern char *register_callback(char *cmd_ptr, uid_t cmd_uid,
 			       uint32_t protocol_version)
 {
 	job_failures_t *job_fail_ptr;
-	job_record_t *job_ptr;
+	struct job_record *job_ptr;
 	char *resp = NULL, *sep1;
 	uint32_t job_id;
 	int port_id = -1;
@@ -837,7 +836,8 @@ fini:	slurm_mutex_unlock(&job_fail_mutex);
  * and the node has the referenced feature, then the replacement node must have
  * the same feature(s).
  * Return value must be xfreed. */
-static char *_job_node_features(job_record_t *job_ptr, node_record_t *node_ptr)
+static char *_job_node_features(struct job_record *job_ptr,
+				struct node_record *node_ptr)
 {
 	node_feature_t *node_feat_ptr;
 	job_feature_t *job_feat_ptr;
@@ -884,13 +884,13 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 {
 	job_desc_msg_t job_alloc_req;
 	job_failures_t *job_fail_ptr;
-	job_record_t *job_ptr, *new_job_ptr = NULL;
+	struct job_record *job_ptr, *new_job_ptr = NULL;
 	uint32_t cpu_cnt = 0, job_id;
 	char *sep1;
 	char *resp = NULL;
 	char *node_name;
 	int i, rc;
-	node_record_t *node_ptr = NULL;
+	struct node_record *node_ptr = NULL;
 	int failed_inx = -1, node_inx = -1;
 	hostlist_t hl = NULL;
 
@@ -1079,13 +1079,13 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 {
 	job_desc_msg_t job_alloc_req;
 	job_failures_t *job_fail_ptr;
-	job_record_t *job_ptr, *new_job_ptr = NULL;
+	struct job_record *job_ptr, *new_job_ptr = NULL;
 	uint32_t cpu_cnt = 0, job_id;
 	char *sep1;
 	char *resp = NULL;
 	char *node_name, *new_node_name = NULL;
 	int i, rc;
-	node_record_t *node_ptr = NULL;
+	struct node_record *node_ptr = NULL;
 	int failed_inx = -1, node_inx = -1;
 	hostlist_t hl = NULL;
 	will_run_response_msg_t *will_run = NULL;
@@ -1521,8 +1521,8 @@ extern char *show_config(char *cmd_ptr, uid_t cmd_uid,
  */
 extern char *show_job(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 {
-	job_record_t *job_ptr;
-	node_record_t *node_ptr;
+	struct job_record *job_ptr;
+	struct node_record *node_ptr;
 	job_failures_t *job_fail_ptr;
 	uint32_t job_id;
 	char *sep1;

@@ -21,10 +21,8 @@ You should have received a copy of the GNU General Public License along
 with Slurm; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 -->
-<!DOCTYPE html>
-<html lang="en-US">
-<head>
-<title>Slurm System Configuration Tool</title>
+<HTML>
+<HEAD><TITLE>Slurm System Configuration Tool</TITLE>
 <SCRIPT type="text/javascript">
 <!--
 function get_field(name,form)
@@ -75,6 +73,21 @@ function get_select_type_params()
   } else {
     return "#SelectTypeParameters="
   }
+}
+
+// When generating TaskPluginParam return the parameters that
+// correspond to the checked task_plugin
+function get_task_plugin_param()
+{
+  for (var i=0; i<document.config.task_plugin.length; i++) {
+    if (document.config.task_plugin[i].checked) {
+       if (document.config.task_plugin[i].value == "affinity") {
+	 return "TaskPluginParam=" +
+		get_radio_value(document.config.task_plugin_param)
+       }
+    }
+  }
+  return "#TaskPluginParam="
 }
 
 function hide_box()
@@ -140,6 +153,7 @@ function displayfile()
    "SwitchType=switch/" + get_radio_value(document.config.switch_type) + "<br>" +
    get_field("TaskEpilog",document.config.task_epilog) + "<br>" +
    "TaskPlugin=task/" + get_radio_value(document.config.task_plugin) + "<br>" +
+   get_task_plugin_param() + "<br>" +
    get_field("TaskProlog",document.config.task_prolog) + "<br>" +
    "#TopologyPlugin=topology/tree <br>" +
    "#TmpFS=/tmp <br>" +
@@ -268,9 +282,9 @@ function displayfile()
 -->
 </SCRIPT>
 <!-- <div style='visibility:hidden;text-align:left;background:#ccc;border:1px solid black;position: absolute;left:100;z-index:1;padding:5;' id='out_box'></div> -->
-</head>
-<body>
-<form name=config>
+</HEAD>
+<BODY>
+<FORM name=config>
 <H1>Slurm Version @SLURM_MAJOR@.@SLURM_MINOR@ Configuration Tool</H1>
 <P>This form can be used to create a Slurm configuration file with
 you controlling many of the important configuration parameters.</P>
@@ -312,7 +326,7 @@ Hostname values should not be the fully qualified domain
 name (e.g. use <I>tux</I> rather than <I>tux.abc.com</I>).
 <P>
 <input type="text" name="control_machine" value="linux0"> <B>SlurmctldHost</B>:
-Primary Controller Hostname
+Master Controller Hostname
 <P>
 <input type="text" name="backup_controller"> <B>BackupController</B>: Backup
 Controller Hostname (optional)
@@ -470,10 +484,7 @@ control<BR>
 <H2>Resource Selection</H2>
 Define resource (node) selection algorithm to be used.<BR>
 Select one value for <B>SelectType</B>:<BR>
-<input type="radio" name="select_type" value="cons_tres" checked>
-<b>cons_tres</b>: Allocate individual processors, memory, GPUs, and other
-trackable resources<br />
-<input type="radio" name="select_type" value="cons_res">
+<input type="radio" name="select_type" value="cons_res" checked>
 <B>Cons_res</B>: Allocate individual processors and memory<BR>
 <input type="radio" name="select_type" value="cray_aries">
 <B>Cray XC</B>: Cray XC systems running native Slurm without ALPS<BR>
@@ -528,6 +539,14 @@ CPU affinity support
 <input type="radio" name="task_plugin" value="cgroup"> <B>Cgroup</B>:
 Allocated resources constraints enforcement using Linux Control Groups
 (see cgroup.conf man page)
+<DL><DL>
+<DT><B>TaskPluginParam</B> (As used by <I>TaskPlugin=Affinity</I> only):
+<DT><input type="radio" name="task_plugin_param" value="Cpusets">
+    <B>Cpusets</B>: Use <I>cpusets</I> to control task binding.
+<DT><input type="radio" name="task_plugin_param" value="Sched" checked>
+    <B>Sched</B>: Use <I>sched_setaffinity</I> (if available) to bind
+    tasks to processors. This is the default mode of operation.
+</DL></DL>
 <P>
 
 <H2>Prolog and Epilog</H2>
@@ -616,11 +635,8 @@ determined by system type<BR>
 Select one value for <B>JobAcctGatherType</B>:<BR>
 <input type="radio" name="job_acct_gather_type" value="none" checked> <B>None</B>: No
 job accounting<BR>
-<input type="radio" name="job_acct_gather_type" value="cgroup"> <b>cgroup</b>:
-Specifc Linux cgroup information gathered, use with Linux systems only<br>
 <input type="radio" name="job_acct_gather_type" value="linux"> <B>Linux</B>: Specifc
 Linux process table information gathered, use with Linux systems only<BR>
-
 <input type="text" name="job_acct_gather_frequency" value="30"> <B>JobAcctGatherFrequency</B>:
 polling interval in seconds. Zero disables periodic sampling.<BR>
 <P>
@@ -678,7 +694,7 @@ when to purge job records, how long to give a job to gracefully terminate, etc.
 <P>
 <input type="text" name="slurmctld_timeout" value="120">
 <B>SlurmctldTimeout</B>: How many seconds the backup controller waits before
-becoming the active controller
+becoming the master controller
 <P>
 <input type="text" name="slurmd_timeout" value="300">
 <B>SlurmdTimeout</B>: How many seconds the Slurm controller waits for the slurmd
@@ -709,10 +725,9 @@ before terminating all remaining tasks. A value of zero indicates unlimited wait
 <BR>
 <input type=button value="Submit" onClick="javascript:displayfile()">
 <input type=reset value="Reset Form">
-</form>
-<hr>
-<p>
+<P>
+</FORM>
+<HR>
 <a href="disclaimer.html" target="_blank" class="privacy">Legal Notices</a><br>
-Last modified 17 June 2020</p>
-</body>
-</html>
+Last modified 6 June 2018</P>
+</BODY>

@@ -44,6 +44,9 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef   __USE_ISOC99
+#  define __USE_ISOC99 /* isblank() */
+#endif
 #include <ctype.h>
 
 #include "slurm/slurm.h"
@@ -64,6 +67,9 @@ strong_alias(time_str2secs, slurm_time_str2secs);
 strong_alias(secs2time_str, slurm_secs2time_str);
 strong_alias(mins2time_str, slurm_mins2time_str);
 strong_alias(mon_abbr, slurm_mon_abbr);
+
+time_t     time_now;
+struct tm *time_now_tm;
 
 typedef struct unit_names {
 	char *name;
@@ -410,8 +416,6 @@ static int _get_date(const char *time_str, int *pos, int *month, int *mday,
  */
 extern time_t parse_time(const char *time_str, int past)
 {
-	time_t time_now;
-	struct tm time_now_tm;
 	int    hour = -1, minute = -1, second = 0;
 	int    month = -1, mday = -1, year = -1;
 	int    pos = 0;
@@ -428,7 +432,7 @@ extern time_t parse_time(const char *time_str, int past)
 	}
 
 	time_now = time(NULL);
-	localtime_r(&time_now, &time_now_tm);
+	time_now_tm = slurm_localtime(&time_now);
 
 	for (pos=0; ((time_str[pos] != '\0') && (time_str[pos] != '\n'));
 	     pos++) {
@@ -436,19 +440,18 @@ extern time_t parse_time(const char *time_str, int past)
 		    (time_str[pos] == '-') || (time_str[pos] == 'T'))
 			continue;
 		if (xstrncasecmp(time_str+pos, "today", 5) == 0) {
-			month = time_now_tm.tm_mon;
-			mday = time_now_tm.tm_mday;
-			year = time_now_tm.tm_year;
+			month = time_now_tm->tm_mon;
+			mday  = time_now_tm->tm_mday;
+			year  = time_now_tm->tm_year;
 			pos += 4;
 			continue;
 		}
 		if (xstrncasecmp(time_str+pos, "tomorrow", 8) == 0) {
 			time_t later = time_now + (24 * 60 * 60);
-			struct tm later_tm;
-			localtime_r(&later, &later_tm);
-			month = later_tm.tm_mon;
-			mday = later_tm.tm_mday;
-			year = later_tm.tm_year;
+			struct tm *later_tm = slurm_localtime(&later);
+			month = later_tm->tm_mon;
+			mday  = later_tm->tm_mday;
+			year  = later_tm->tm_year;
 			pos += 7;
 			continue;
 		}
@@ -484,7 +487,7 @@ extern time_t parse_time(const char *time_str, int past)
 			int i;
 			long delta = 0;
 			time_t later;
-			struct tm later_tm;
+			struct tm *later_tm;
 			for (i=(pos+3); ; i++) {
 				if (time_str[i] == '+') {
 					pos += i;
@@ -503,13 +506,13 @@ extern time_t parse_time(const char *time_str, int past)
 				goto prob;
 			}
 			later    = time_now + delta;
-			localtime_r(&later, &later_tm);
-			month = later_tm.tm_mon;
-			mday = later_tm.tm_mday;
-			year = later_tm.tm_year;
-			hour = later_tm.tm_hour;
-			minute = later_tm.tm_min;
-			second = later_tm.tm_sec;
+			later_tm = slurm_localtime(&later);
+			month    = later_tm->tm_mon;
+			mday     = later_tm->tm_mday;
+			year     = later_tm->tm_year;
+			hour     = later_tm->tm_hour;
+			minute   = later_tm->tm_min;
+			second   = later_tm->tm_sec;
 			continue;
 		}
 
@@ -538,46 +541,45 @@ extern time_t parse_time(const char *time_str, int past)
 	}
 	else if ((hour != -1) && (month == -1)) {
 		/* time, no date implies soonest day */
-		if (past || (hour >  time_now_tm.tm_hour)
-		    ||  ((hour == time_now_tm.tm_hour)
-			 && (minute > time_now_tm.tm_min))) {
+		if (past || (hour >  time_now_tm->tm_hour)
+		    ||  ((hour == time_now_tm->tm_hour)
+			 && (minute > time_now_tm->tm_min))) {
 			/* today */
-			month = time_now_tm.tm_mon;
-			mday = time_now_tm.tm_mday;
-			year = time_now_tm.tm_year;
+			month = time_now_tm->tm_mon;
+			mday  = time_now_tm->tm_mday;
+			year  = time_now_tm->tm_year;
 		} else {/* tomorrow */
 			time_t later = time_now + (24 * 60 * 60);
-			struct tm later_tm;
-			localtime_r(&later, &later_tm);
-			month = later_tm.tm_mon;
-			mday = later_tm.tm_mday;
-			year = later_tm.tm_year;
+			struct tm *later_tm = slurm_localtime(&later);
+			month = later_tm->tm_mon;
+			mday  = later_tm->tm_mday;
+			year  = later_tm->tm_year;
 		}
 	}
 	if (year == -1) {
 		if (past) {
-			if (month > time_now_tm.tm_mon) {
+			if (month > time_now_tm->tm_mon) {
 				/* last year */
-				year = time_now_tm.tm_year - 1;
+				year = time_now_tm->tm_year - 1;
 			} else  {
 				/* this year */
-				year = time_now_tm.tm_year;
+				year = time_now_tm->tm_year;
 			}
-		} else if ((month  >  time_now_tm.tm_mon)
-			   ||  ((month == time_now_tm.tm_mon)
-				&& (mday > time_now_tm.tm_mday))
-			   ||  ((month == time_now_tm.tm_mon)
-				&& (mday == time_now_tm.tm_mday)
-				&& (hour >  time_now_tm.tm_hour))
-			   ||  ((month == time_now_tm.tm_mon)
-				&& (mday == time_now_tm.tm_mday)
-				&& (hour == time_now_tm.tm_hour)
-				&& (minute > time_now_tm.tm_min))) {
+		} else if ((month  >  time_now_tm->tm_mon)
+			   ||  ((month == time_now_tm->tm_mon)
+				&& (mday >  time_now_tm->tm_mday))
+			   ||  ((month == time_now_tm->tm_mon)
+				&& (mday == time_now_tm->tm_mday)
+				&& (hour >  time_now_tm->tm_hour))
+			   ||  ((month == time_now_tm->tm_mon)
+				&& (mday == time_now_tm->tm_mday)
+				&& (hour == time_now_tm->tm_hour)
+				&& (minute > time_now_tm->tm_min))) {
 			/* this year */
-			year = time_now_tm.tm_year;
+			year = time_now_tm->tm_year;
 		} else {
 			/* next year */
-			year = time_now_tm.tm_year + 1;
+			year = time_now_tm->tm_year + 1;
 		}
 	}
 
@@ -620,7 +622,7 @@ static char *_relative_date_fmt(const struct tm *when)
 		time_t now = time(NULL);
 		struct tm tm;
 
-		localtime_r(&now, &tm);
+		slurm_localtime_r(&now, &tm);
 		todays_date = 1000 * (tm.tm_year + 1900) + tm.tm_yday;
 	}
 
@@ -655,7 +657,7 @@ slurm_make_time_str (time_t *time, char *string, int size)
 {
 	struct tm time_tm;
 
-	localtime_r(time, &time_tm);
+	slurm_localtime_r(time, &time_tm);
 	if ((*time == (time_t) 0) || (*time == (time_t) INFINITE)) {
 		snprintf(string, size, "Unknown");
 	} else {
@@ -665,8 +667,17 @@ slurm_make_time_str (time_t *time, char *string, int size)
 
 		if (!display_fmt) {
 			char *fmt = getenv("SLURM_TIME_FORMAT");
-			display_fmt = "%FT%T";
 
+#if defined USE_ISO_8601/*
+			 * ISO-8601 Standard Format YYYY-MM-DDTHH:MM:SS
+			 * NOTE: This is expected to break Maui, Moab
+			 *       and LSF schedulers management of SLURM.
+			 */
+			display_fmt = "%FT%T";
+#else
+			/* Format MM/DD-HH:MM:SS */
+			display_fmt = "%m/%d-%T";
+#endif
 			if ((!fmt) || (!*fmt) || (!xstrcmp(fmt, "standard"))) {
 				;
 			} else if (xstrcmp(fmt, "relative") == 0) {

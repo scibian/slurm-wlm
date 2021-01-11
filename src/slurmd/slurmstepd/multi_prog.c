@@ -135,6 +135,8 @@ extern int multi_prog_get_argv(char *config_data, char **prog_env,
 	int prog_argc = 0;
 	char **prog_argv = NULL;
 	char *local_data = NULL;
+	size_t tmp_buf_len = 256;
+	char tmp_buf[tmp_buf_len];
 	char *arg_buf = NULL;
 	bool last_line_break = false, line_break = false;
 	int line_len;
@@ -222,10 +224,14 @@ extern int multi_prog_get_argv(char *config_data, char **prog_env,
 				args_spec++;
 				if (*args_spec == 't') {
 					/* task rank */
-					xstrfmtcat(arg_buf, "%d", task_rank);
+					snprintf(tmp_buf, tmp_buf_len, "%d",
+						 task_rank);
+					xstrcat(arg_buf, tmp_buf);
 				} else if (*args_spec == 'o') {
 					/* task offset */
-					xstrfmtcat(arg_buf, "%d", task_offset);
+					snprintf(tmp_buf, tmp_buf_len, "%d",
+						 task_offset);
+					xstrcat(arg_buf, tmp_buf);
 				}
 				args_spec++;
 				goto CONT;
@@ -491,8 +497,8 @@ extern void multi_prog_parse(stepd_step_rec_t *job, uint32_t **gtid)
 
 	job->mpmd_set = xmalloc(sizeof(mpmd_set_t));
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
+		jobid = job->pack_jobid;
 	else
 		jobid = job->jobid;
 

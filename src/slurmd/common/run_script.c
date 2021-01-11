@@ -148,13 +148,19 @@ _run_one_script(const char *name, const char *path, uint32_t job_id,
 		setpgid(0, 0);
 		execve(path, argv, env);
 		error("execve(%s): %m", path);
-		_exit(127);
+		exit(127);
 	}
 
 	if (waitpid_timeout(name, cpid, &status, max_wait) < 0)
 		return (-1);
 	return status;
 }
+
+static void _xfree_f (void *x)
+{
+	xfree (x);
+}
+
 
 static int _ef (const char *p, int errnum)
 {
@@ -173,7 +179,7 @@ static List _script_list_create (const char *pattern)
 	int rc = glob (pattern, GLOB_ERR, _ef, &gl);
 	switch (rc) {
 	case 0:
-		l = list_create(xfree_ptr);
+		l = list_create ((ListDelF) _xfree_f);
 		for (i = 0; i < gl.gl_pathc; i++)
 			list_push (l, xstrdup (gl.gl_pathv[i]));
 		break;

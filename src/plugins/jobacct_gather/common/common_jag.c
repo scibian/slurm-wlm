@@ -182,6 +182,9 @@ static int _get_pss(char *proc_smaps_file, jag_prec_t *prec)
 	/* Check for error
 	 */
 	if (ferror(fp)) {
+		debug("%s: ferror() indicates error on file %s, "
+		      "process may have exited while reading",
+		      __func__, proc_smaps_file);
 		fclose(fp);
 		return -1;
 	}
@@ -260,8 +263,9 @@ static int _is_a_lwp(uint32_t pid)
 
 	fd = open(filename, O_RDONLY);
 	if (fd < 0) {
+		error("%s: open() %s failed: %m", __func__, filename);
 		xfree(filename);
-		return SLURM_ERROR;
+		return -1;
 	}
 
 again:
@@ -271,9 +275,11 @@ again:
 		goto again;
 	}
 	if (n <= 0) {
+		error("%s: %d read() attempts on %s failed: %m", __func__,
+		      attempts, filename);
 		close(fd);
 		xfree(filename);
-		return SLURM_ERROR;
+		return -1;
 	}
 	bf[n] = '\0';
 	close(fd);
@@ -358,12 +364,9 @@ static int _get_process_data_line(int in, jag_prec_t *prec) {
 	if ((nvals < 37) || (rss < 0))
 		return 0;
 
-	/*
-	 * If current pid corresponds to a Light Weight Process (Thread POSIX)
-	 * or there was an error, skip it, we will only account the original
-	 * process (pid==tgid).
-	 */
-	if (_is_a_lwp(prec->pid))
+	/* If current pid corresponds to a Light Weight Process (Thread POSIX) */
+	/* skip it, we will only account the original process (pid==tgid) */
+	if (_is_a_lwp(prec->pid) > 0)
 		return 0;
 
 	/* Copy the values that slurm records into our data structure */
@@ -474,7 +477,7 @@ static int _get_process_io_data_line(int in, jag_prec_t *prec) {
 	if (nvals < 4)
 		return 0;
 
-	if (_is_a_lwp(prec->pid))
+	if (_is_a_lwp(prec->pid) > 0)
 		return 0;
 
 	/* keep real value here since we aren't doubles */
@@ -550,10 +553,11 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 	}
 
 	if (!_get_process_data_line(fd, prec)) {
+		xfree(prec->tres_data);
+		xfree(prec);
 		fclose(stat_fp);
-		goto bail_out;
+		return;
 	}
-
 	fclose(stat_fp);
 
 	if (acct_gather_filesystem_g_get_data(prec->tres_data) < 0) {
@@ -565,31 +569,27 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 	}
 
 	/* Remove shared data from rss */
-	if (no_share_data && !_remove_share_data(proc_stat_file, prec))
-		goto bail_out;
+	if (no_share_data)
+		_remove_share_data(proc_stat_file, prec);
 
 	/* Use PSS instead if RSS */
-	if (use_pss && _get_pss(proc_smaps_file, prec) == -1)
-		goto bail_out;
+	if (use_pss) {
+		if (_get_pss(proc_smaps_file, prec) == -1) {
+			xfree(prec->tres_data);
+			xfree(prec);
+			return;
+		}
+	}
+
+	list_append(prec_list, prec);
 
 	if ((io_fp = fopen(proc_io_file, "r"))) {
 		fd2 = fileno(io_fp);
 		if (fcntl(fd2, F_SETFD, FD_CLOEXEC) == -1)
 			error("%s: fcntl: %m", __func__);
-		if (!_get_process_io_data_line(fd2, prec)) {
-			fclose(io_fp);
-			goto bail_out;
-		}
+		_get_process_io_data_line(fd2, prec);
 		fclose(io_fp);
 	}
-
-	list_append(prec_list, prec);
-	return;
-
-bail_out:
-	xfree(prec->tres_data);
-	xfree(prec);
-	return;
 }
 
 static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
@@ -615,7 +615,7 @@ static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
 		if (!npids) {
 			/* update consumed energy even if pids do not exist */
 			if (jobacct) {
-				acct_gather_energy_g_get_sum(
+				acct_gather_energy_g_get_data(
 					energy_profile,
 					&jobacct->energy);
 				jobacct->tres_usage_in_tot[TRES_ARRAY_ENERGY] =
@@ -1007,7 +1007,7 @@ extern void jag_common_poll_data(
 		 * in write fields.*/
 		debug2("energycounted = %d", energy_counted);
 		if (energy_counted == 0) {
-			acct_gather_energy_g_get_sum(
+			acct_gather_energy_g_get_data(
 				energy_profile,
 				&jobacct->energy);
 			prec->tres_data[TRES_ARRAY_ENERGY].size_read =
@@ -1037,7 +1037,7 @@ extern void jag_common_poll_data(
 			 * Even with min we want to get the max as we are
 			 * looking at a specific task aso we are always looking
 			 * at the max that task had, not the min (or lots of
-			 * things will be zero).  The min is from comparing
+			 * things will be zero).  The min is from compairing
 			 * ranks later when combining.  So here it will be the
 			 * same as the max value set above.
 			 * (same thing goes for the out)

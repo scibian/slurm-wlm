@@ -13,9 +13,9 @@ generated_html = \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
+	checkpoint_plugins.html \
 	classic_fair_share.html \
 	cli_filter_plugins.html \
-	configless_slurm.html \
 	cons_res.html \
 	cons_res_share.html \
 	containers.html \
@@ -49,7 +49,6 @@ generated_html = \
 	job_launch.html \
 	job_submit_plugins.html \
 	jobcompplugins.html \
-	jwt.html \
 	launch_plugins.html \
 	licenses.html \
 	fair_tree.html \
@@ -62,7 +61,6 @@ generated_html = \
 	mpi_guide.html \
 	mpiplugins.html \
 	multi_cluster.html \
-	network.html \
 	news.html \
 	nss_slurm.html \
 	node_features_plugins.html \
@@ -74,7 +72,6 @@ generated_html = \
 	power_save.html \
 	power_plugins.html \
 	preempt.html \
-	prep_plugins.html \
 	preemption_plugins.html \
 	priority_multifactor.html \
 	priority_multifactor3.html \
@@ -89,9 +86,9 @@ generated_html = \
 	reservations.html \
 	resource_binding.html \
 	resource_limits.html \
-	rest.html \
 	rosetta.html \
 	route_plugin.html \
+	rpc.html \
 	sched_config.html \
 	schedplugins.html \
 	select_design.html \
@@ -130,11 +127,6 @@ html_DATA = \
 	jquery.min.js \
 	k_function.gif \
 	mc_support.gif \
-	network_failover.gif \
-	network_federation.gif \
-	network_multi_cluster.gif \
-	network_srun.gif \
-	network_standard.gif \
 	plane_ex1.gif \
 	plane_ex2.gif \
 	plane_ex3.gif \

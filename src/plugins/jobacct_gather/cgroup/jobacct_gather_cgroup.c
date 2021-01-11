@@ -215,6 +215,19 @@ static void _prec_extra(jag_prec_t *prec, uint32_t taskid)
 
 }
 
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmstepd");
+	}
+
+	return run;
+}
+
 /*
  * init() is called when the plugin is loaded, before any other functions
  * are called.  Put global initialization here.
@@ -224,7 +237,7 @@ extern int init (void)
 	/* If running on the slurmctld don't do any of this since it
 	   isn't needed.
 	*/
-	if (running_in_slurmstepd()) {
+	if (_run_in_daemon()) {
 		jag_common_init(0);
 
 		/* initialize cpuinfo internal data */
@@ -261,7 +274,7 @@ extern int init (void)
 
 extern int fini (void)
 {
-	if (running_in_slurmstepd()) {
+	if (_run_in_daemon()) {
 		jobacct_gather_cgroup_cpuacct_fini();
 		jobacct_gather_cgroup_memory_fini();
 		/* jobacct_gather_cgroup_blkio_fini(); */

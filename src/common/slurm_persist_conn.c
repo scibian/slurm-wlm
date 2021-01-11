@@ -137,55 +137,37 @@ static bool _conn_readable(slurm_persist_conn_t *persist_conn)
 			time_left = -1;
 		rc = poll(&ufds, 1, time_left);
 		if (*persist_conn->shutdown)
-			break;
+			return false;
 		if (rc == -1) {
-			if ((errno == EINTR) || (errno == EAGAIN)) {
-				debug3("%s: retrying poll for fd %d: %m",
-					__func__, persist_conn->fd);
+			if ((errno == EINTR) || (errno == EAGAIN))
 				continue;
-			}
-			error("%s: poll error for fd %d: %m",
-			      __func__, persist_conn->fd);
+			error("poll: %m");
 			return false;
 		}
-		if (rc == 0) {
-			debug("%s: poll for fd %d timeout after %d msecs of total wait %d msecs.",
-			      __func__, persist_conn->fd, time_left,
-			      persist_conn->timeout);
+		if (rc == 0)
 			return false;
-		}
 		if ((ufds.revents & POLLHUP) &&
 		    ((ufds.revents & POLLIN) == 0)) {
-			debug2("%s: persistent connection for fd %d closed",
-			       __func__, persist_conn->fd);
+			debug2("persistent connection closed");
 			return false;
 		}
 		if (ufds.revents & POLLNVAL) {
-			error("%s: persistent connection for fd %d is invalid",
-			       __func__, persist_conn->fd);
+			error("persistent connection is invalid");
 			return false;
 		}
 		if (ufds.revents & POLLERR) {
-			error("%s: persistent connection for fd %d experienced an error",
-			       __func__, persist_conn->fd);
+			error("persistent connection experienced an error");
 			return false;
 		}
 		if ((ufds.revents & POLLIN) == 0) {
-			error("%s: persistent connection for fd %d missing POLLIN flag with revents 0x%"PRIx64,
-			      __func__, persist_conn->fd, (uint64_t) ufds.revents);
+			error("persistent connection %d events %d",
+			      persist_conn->fd, ufds.revents);
 			return false;
 		}
-		if (ufds.revents == POLLIN) {
-			errno = 0;
-			return true;
-		}
-
-		fatal_abort("%s: poll returned unexpected revents: 0x%"PRIx64,
-			    __func__, (uint64_t) ufds.revents);
+		/* revents == POLLIN */
+		errno = 0;
+		return true;
 	}
-
-	debug("%s: shutdown request detected for fd %d",
-	      __func__, persist_conn->fd);
 	return false;
 }
 
@@ -205,7 +187,7 @@ static void _persist_free_msg_members(slurm_persist_conn_t *persist_conn,
 				      persist_msg_t *persist_msg)
 {
 	if (persist_conn->flags & PERSIST_FLAG_DBD)
-		slurmdbd_free_msg(persist_msg);
+		slurmdbd_free_msg((slurmdbd_msg_t *)persist_msg);
 	else
 		slurm_free_msg_data(persist_msg->msg_type, persist_msg->data);
 }
@@ -736,8 +718,13 @@ extern int slurm_persist_conn_process_msg(slurm_persist_conn_t *persist_conn,
 		*out_buffer = slurm_persist_make_rc_msg(
 			persist_conn, rc, comment, persist_msg->msg_type);
 		xfree(comment);
-	} else if (first &&
-		   (persist_msg->msg_type != REQUEST_PERSIST_INIT)) {
+	}
+	/* 2 versions after 17.02 code refering to DBD_INIT can be removed as it
+	   will no longer be suppported.
+	*/
+	else if (first &&
+		 (persist_msg->msg_type != REQUEST_PERSIST_INIT) &&
+		 (persist_msg->msg_type != DBD_INIT)) {
 		comment = "Initial RPC not REQUEST_PERSIST_INIT";
 		error("CONN:%u %s type (%d)",
 		      persist_conn->fd, comment, persist_msg->msg_type);
@@ -746,7 +733,8 @@ extern int slurm_persist_conn_process_msg(slurm_persist_conn_t *persist_conn,
 			persist_conn, rc, comment,
 			REQUEST_PERSIST_INIT);
 	} else if (!first &&
-		   (persist_msg->msg_type == REQUEST_PERSIST_INIT)) {
+		   ((persist_msg->msg_type == REQUEST_PERSIST_INIT) ||
+		    (persist_msg->msg_type == DBD_INIT))) {
 		comment = "REQUEST_PERSIST_INIT sent after connection established";
 		error("CONN:%u %s", persist_conn->fd, comment);
 		rc = EINVAL;
@@ -784,7 +772,7 @@ extern int slurm_persist_conn_writeable(slurm_persist_conn_t *persist_conn)
 		if (rc == -1) {
 			if ((errno == EINTR) || (errno == EAGAIN))
 				continue;
-			error("%s: poll error: %m", __func__);
+			error("poll: %m");
 			return -1;
 		}
 		if (rc == 0)
@@ -798,33 +786,26 @@ extern int slurm_persist_conn_writeable(slurm_persist_conn_t *persist_conn)
 		 */
 		if (ufds.revents & POLLHUP ||
 		    (recv(persist_conn->fd, &temp, 1, 0) == 0)) {
-			debug2("%s: persistent connection %d is closed for writes",
-			       __func__, persist_conn->fd);
+			debug2("persistent connection is closed");
 			if (persist_conn->trigger_callbacks.dbd_fail)
 				(persist_conn->trigger_callbacks.dbd_fail)();
 			return -1;
 		}
 		if (ufds.revents & POLLNVAL) {
-			error("%s: persistent connection %d is invalid",
-			      __func__, persist_conn->fd);
+			error("persistent connection is invalid");
 			return 0;
 		}
 		if (ufds.revents & POLLERR) {
 			if (_comm_fail_log(persist_conn)) {
-				if (fd_get_socket_error(persist_conn->fd, &errno))
-					error("%s: unable to get error for persistent connection %d: %m",
-					      __func__, persist_conn->fd);
-				else
-					error("%s: persistent connection %d experienced an error: %m",
-					      __func__, persist_conn->fd);
+				error("persistent connection experienced an error: %m");
 			}
 			if (persist_conn->trigger_callbacks.dbd_fail)
 				(persist_conn->trigger_callbacks.dbd_fail)();
 			return 0;
 		}
 		if ((ufds.revents & POLLOUT) == 0) {
-			error("%s: persistent connection %d events %d",
-			      __func__, persist_conn->fd, ufds.revents);
+			error("persistent connection %d events %d",
+			      persist_conn->fd, ufds.revents);
 			return 0;
 		}
 		/* revents == POLLOUT */
@@ -853,13 +834,12 @@ extern int slurm_persist_send_msg(
 	rc = slurm_persist_conn_writeable(persist_conn);
 	if (rc == -1) {
 	re_open:
+		if (retry_cnt++ > 3)
+			return EAGAIN;
 		/* if errno is ACCESS_DENIED do not try to reopen to
 		   connection just return that */
 		if (errno == ESLURM_ACCESS_DENIED)
 			return ESLURM_ACCESS_DENIED;
-
-		if (retry_cnt++ > 3)
-			return SLURM_COMMUNICATIONS_SEND_ERROR;
 
 		if (persist_conn->flags & PERSIST_FLAG_RECONNECT) {
 			slurm_persist_conn_reopen(persist_conn, true);
@@ -964,7 +944,8 @@ extern Buf slurm_persist_msg_pack(slurm_persist_conn_t *persist_conn,
 	xassert(persist_conn);
 
 	if (persist_conn->flags & PERSIST_FLAG_DBD)
-		buffer = pack_slurmdbd_msg(req_msg, persist_conn->version);
+		buffer = pack_slurmdbd_msg((slurmdbd_msg_t *)req_msg,
+					   persist_conn->version);
 	else {
 		slurm_msg_t msg;
 
@@ -997,7 +978,7 @@ extern int slurm_persist_msg_unpack(slurm_persist_conn_t *persist_conn,
 	xassert(resp_msg);
 
 	if (persist_conn->flags & PERSIST_FLAG_DBD) {
-		rc = unpack_slurmdbd_msg(resp_msg,
+		rc = unpack_slurmdbd_msg((slurmdbd_msg_t *)resp_msg,
 					 persist_conn->version,
 					 buffer);
 	} else {
@@ -1090,9 +1071,13 @@ extern void slurm_persist_free_init_req_msg(persist_init_req_msg_t *msg)
 extern void slurm_persist_pack_rc_msg(
 	persist_rc_msg_t *msg, Buf buffer, uint16_t protocol_version)
 {
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		packstr(msg->comment, buffer);
 		pack16(msg->flags, buffer);
+		pack32(msg->rc, buffer);
+		pack16(msg->ret_info, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		packstr(msg->comment, buffer);
 		pack32(msg->rc, buffer);
 		pack16(msg->ret_info, buffer);
 	} else {
@@ -1110,9 +1095,13 @@ extern int slurm_persist_unpack_rc_msg(
 
 	*msg = msg_ptr;
 
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
 		safe_unpack16(&msg_ptr->flags, buffer);
+		safe_unpack32(&msg_ptr->rc, buffer);
+		safe_unpack16(&msg_ptr->ret_info, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
 		safe_unpack32(&msg_ptr->rc, buffer);
 		safe_unpack16(&msg_ptr->ret_info, buffer);
 	} else {

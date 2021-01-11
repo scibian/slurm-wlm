@@ -181,9 +181,11 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 
 	update_object = xmalloc(sizeof(slurmdb_update_object_t));
 
+	list_append(update_list, update_object);
 
 	update_object->type = type;
 
+	list_sort(update_list, (ListCmpF)_sort_update_object_dec);
 
 	switch(type) {
 	case SLURMDB_MODIFY_USER:
@@ -260,7 +262,7 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 		/* This should only be the name of the cluster, and is
 		   only used in the plugin for rollback purposes.
 		*/
-		update_object->objects = list_create(xfree_ptr);
+		update_object->objects = list_create(slurm_destroy_char);
 		break;
 	case SLURMDB_ADD_RES:
 		xassert(res->name);
@@ -273,24 +275,15 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 			slurmdb_destroy_res_rec);
 		break;
 	case SLURMDB_UPDATE_FEDS:
-		/*
-		 * object is already a list of slurmdb_federation_rec_t's. Just
-		 * assign update_job->objects to object. fed_mgr_update_feds()
-		 * knows to treat object as a list of federations.
-		 */
 		update_object->objects = object;
-		break;
+		return SLURM_SUCCESS;
 	case SLURMDB_UPDATE_NOTSET:
 	default:
-		slurmdb_destroy_update_object(update_object);
 		error("unknown type set in update_object: %d", type);
 		return SLURM_ERROR;
 	}
 	debug4("XXX: update object with type %d added", type);
-	if (type != SLURMDB_UPDATE_FEDS)
-		list_append(update_object->objects, object);
-	list_append(update_list, update_object);
-	list_sort(update_list, (ListCmpF)_sort_update_object_dec);
+	list_append(update_object->objects, object);
 	return SLURM_SUCCESS;
 }
 
@@ -427,14 +420,14 @@ extern int set_usage_information(char **usage_table,
 
 	/* Default is going to be the last day */
 	if (!end) {
-		if (!localtime_r(&my_time, &end_tm)) {
+		if (!slurm_localtime_r(&my_time, &end_tm)) {
 			error("Couldn't get localtime from end %ld",
 			      my_time);
 			return SLURM_ERROR;
 		}
 		end_tm.tm_hour = 0;
 	} else {
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -445,7 +438,7 @@ extern int set_usage_information(char **usage_table,
 	end = slurm_mktime(&end_tm);
 
 	if (!start) {
-		if (!localtime_r(&my_time, &start_tm)) {
+		if (!slurm_localtime_r(&my_time, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      my_time);
 			return SLURM_ERROR;
@@ -453,7 +446,7 @@ extern int set_usage_information(char **usage_table,
 		start_tm.tm_hour = 0;
 		start_tm.tm_mday--;
 	} else {
-		if (!localtime_r(&start, &start_tm)) {
+		if (!slurm_localtime_r(&start, &start_tm)) {
 			error("Couldn't get localtime from user start %ld",
 			      start);
 			return SLURM_ERROR;
@@ -465,7 +458,7 @@ extern int set_usage_information(char **usage_table,
 
 	if (end-start < 3600) {
 		end = start + 3600;
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("2 Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -661,7 +654,8 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 		return 0;
 	}
 
-	if (!localtime_r(&last_submit, &time_tm)) {
+	/* use slurm_localtime to avoid any daylight savings issues */
+	if (!slurm_localtime_r(&last_submit, &time_tm)) {
 		error("Couldn't get localtime from first "
 		      "suspend start %ld", (long)last_submit);
 		return 0;
@@ -841,7 +835,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 	struct tm time_tm;
 	uint32_t num = 2;
 
-	localtime_r(&period_start, &time_tm);
+	slurm_localtime_r((time_t *)&period_start, &time_tm);
 	time_tm.tm_sec = 0;
 	time_tm.tm_min = 0;
 
@@ -863,7 +857,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 		   time_tm.tm_mday, time_tm.tm_hour, time_tm.tm_min,
 		   time_tm.tm_sec);
 
-	localtime_r(&period_end, &time_tm);
+	slurm_localtime_r((time_t *)&period_end, &time_tm);
 	/* Add end time to file name. */
 	xstrfmtcat(name, "%4.4u-%2.2u-%2.2uT%2.2u:%2.2u:%2.2u",
 		   (time_tm.tm_year + 1900), (time_tm.tm_mon + 1),

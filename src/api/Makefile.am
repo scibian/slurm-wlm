@@ -65,6 +65,8 @@ BUILT_SOURCES = $(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) libslurm.la
 # Also, libslurmhelper, libslurm.o are for convenience, they are not installed.
 noinst_LTLIBRARIES = libslurmhelper.la
 noinst_PROGRAMS = libslurm.o
+# This is needed if compiling on windows
+EXEEXT=
 
 slurmdbapi_src =	\
 	account_functions.c \
@@ -93,6 +95,7 @@ slurmapi_src =           \
 	burst_buffer_info.c \
 	assoc_mgr_info.c    \
 	cancel.c         \
+	checkpoint.c     \
 	complete.c       \
 	config_info.c    \
 	federation_info.c \
@@ -120,7 +123,6 @@ slurmapi_src =           \
 	step_launch.h    \
 	submit.c         \
 	suspend.c        \
-	token.c          \
 	topo_info.c      \
 	triggers.c       \
 	reconfigure.c    \
@@ -185,7 +187,9 @@ $(VERSION_SCRIPT) :
 	 echo "};") > $(VERSION_SCRIPT)
 
 $(FULL_VERSION_SCRIPT) :
-	(echo "{ global: *; };") > $(FULL_VERSION_SCRIPT)
+	(echo "{ global: *;";   \
+	 echo "  local: *;"; \
+	 echo "};") > $(FULL_VERSION_SCRIPT)
 
 CLEANFILES = \
 	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT)

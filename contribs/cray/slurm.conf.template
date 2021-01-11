@@ -13,6 +13,7 @@ ControlMachine=sdb
 #BackupAddr=
 #
 AuthType=auth/munge
+#CheckpointType=checkpoint/none
 CoreSpecPlugin=cray_aries
 CredType=cred/munge
 #DisableRootJobs=NO
@@ -24,6 +25,7 @@ EnforcePartLimits=any
 GresTypes={grestypes}
 #GroupUpdateForce=0
 #GroupUpdateTime=600
+#JobCheckpointDir=/var/slurm/checkpoint
 JobContainerType=job_container/cncu
 #JobCredentialPrivateKey=
 #JobCredentialPublicCertificate=
@@ -99,6 +101,7 @@ Waittime=0
 #
 # SCHEDULING
 DefMemPerCPU={defmem}
+FastSchedule=0
 MaxMemPerCPU={maxmem}
 #SchedulerTimeSlice=30
 SchedulerType=sched/backfill

@@ -238,6 +238,7 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	job->ctx_params.cpu_freq_max = opt_local->cpu_freq_max;
 	job->ctx_params.cpu_freq_gov = opt_local->cpu_freq_gov;
 	job->ctx_params.relative = (uint16_t)srun_opt->relative;
+	job->ctx_params.ckpt_interval = (uint16_t)srun_opt->ckpt_interval;
 	job->ctx_params.exclusive = (uint16_t)srun_opt->exclusive;
 	if (opt_local->immediate == 1)
 		job->ctx_params.immediate = (uint16_t)opt_local->immediate;
@@ -297,7 +298,7 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	job->ctx_params.node_list = opt_local->nodelist;
 	job->ctx_params.network = opt_local->network;
 	job->ctx_params.no_kill = opt_local->no_kill;
-	if (slurm_option_set_by_cli(opt_local, 'J'))
+	if (slurm_option_set_by_cli('J'))
 		job->ctx_params.name = opt_local->job_name;
 	else
 		job->ctx_params.name = srun_opt->cmd_name;
@@ -307,7 +308,28 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 		xstrfmtcat(job->ctx_params.cpus_per_tres, "gpu:%d",
 			   opt_local->cpus_per_gpu);
 	}
+	xfree(opt_local->tres_bind);	/* Vestigial value from job allocate */
+	if (opt_local->gpu_bind)
+		xstrfmtcat(opt_local->tres_bind, "gpu:%s", opt_local->gpu_bind);
+	if (tres_bind_verify_cmdline(opt_local->tres_bind)) {
+		if (tres_bind_err_log) {	/* Log once */
+			error("Invalid --tres-bind argument: %s. Ignored",
+			      opt_local->tres_bind);
+			tres_bind_err_log = false;
+		}
+		xfree(opt_local->tres_bind);
+	}
 	job->ctx_params.tres_bind = xstrdup(opt_local->tres_bind);
+	xfree(opt_local->tres_freq);	/* Vestigial value from job allocate */
+	xfmt_tres_freq(&opt_local->tres_freq, "gpu", opt_local->gpu_freq);
+	if (tres_freq_verify_cmdline(opt_local->tres_freq)) {
+		if (tres_freq_err_log) {	/* Log once */
+			error("Invalid --tres-freq argument: %s. Ignored",
+			      opt_local->tres_freq);
+			tres_freq_err_log = false;
+		}
+		xfree(opt_local->tres_freq);
+	}
 	job->ctx_params.tres_freq = xstrdup(opt_local->tres_freq);
 	xfmt_tres(&job->ctx_params.tres_per_step, "gpu", opt_local->gpus);
 	xfmt_tres(&job->ctx_params.tres_per_node, "gpu",
@@ -384,22 +406,15 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 					"being configured, please wait",
 					job->ctx_params.job_id);
 			} else {
-				info("Job %u step creation temporarily disabled, retrying (%s)",
-				     job->ctx_params.job_id,
-				     slurm_strerror(rc));
+				info("Job %u step creation temporarily disabled, retrying",
+				     job->ctx_params.job_id);
 			}
 			xsignal_unblock(sig_array);
 			for (j = 0; sig_array[j]; j++)
 				xsignal(sig_array[j], signal_function);
 		} else {
-			if (rc == ESLURM_PROLOG_RUNNING)
-				verbose("Job %u step creation still disabled, retrying (%s)",
-					job->ctx_params.job_id,
-					slurm_strerror(rc));
-			else
-				info("Job %u step creation still disabled, retrying (%s)",
-				     job->ctx_params.job_id,
-				     slurm_strerror(rc));
+			verbose("Job %u step creation still disabled, retrying",
+				job->ctx_params.job_id);
 		}
 
 		if (*destroy_job) {

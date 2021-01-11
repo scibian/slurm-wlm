@@ -100,7 +100,7 @@ jobacct_gather_cgroup_cpuacct_fini(void)
 
 	/*
 	 * Move the slurmstepd back to the root cpuacct cg.
-	 * The release_agent will be called asynchronously for the step
+	 * The release_agent will asynchroneously be called for the step
 	 * cgroup. It will do the necessary cleanup.
 	 */
 	if (xcgroup_create(&cpuacct_ns,
@@ -193,8 +193,8 @@ jobacct_gather_cgroup_cpuacct_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 	gid = job->gid;
 	stepid = job->stepid;
 	taskid = jobacct_id->taskid;
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
+		jobid = job->pack_jobid;
 	else
 		jobid = job->jobid;
 

@@ -177,7 +177,7 @@ struct task_read_info {
 	uint16_t         gtaskid;
 	uint16_t         ltaskid;
 	stepd_step_rec_t    *job;		 /* pointer back to job data   */
-	cbuf_t          *buf;
+	cbuf_t           buf;
 	bool		 eof;
 	bool		 eof_msg_sent;
 };
@@ -202,7 +202,7 @@ static void *_io_thr(void *);
 static int _send_io_init_msg(int sock, srun_key_t *key, stepd_step_rec_t *job);
 static void _send_eof_msg(struct task_read_info *out);
 static struct io_buf *_task_build_message(struct task_read_info *out,
-					  stepd_step_rec_t *job, cbuf_t *cbuf);
+					  stepd_step_rec_t *job, cbuf_t cbuf);
 static void *_io_thr(void *arg);
 static void _route_msg_task_to_client(eio_obj_t *obj);
 static void _free_outgoing_msg(struct io_buf *msg, stepd_step_rec_t *job);
@@ -562,8 +562,8 @@ _local_file_write(eio_obj_t *obj, List objs)
 	buf = client->out_msg->data +
 		(client->out_msg->length - client->out_remaining);
 	n = write_labelled_message(obj->fd, buf, client->out_remaining,
-				   header.gtaskid, client->job->het_job_offset,
-				   client->job->het_job_task_offset,
+				   header.gtaskid, client->job->pack_offset,
+				   client->job->pack_task_offset,
 				   client->labelio, client->taskid_width);
 	if (n < 0) {
 		client->out_eof = true;
@@ -1788,8 +1788,8 @@ _send_eof_msg(struct task_read_info *out)
 
 
 
-static struct io_buf *_task_build_message(struct task_read_info *out,
-					  stepd_step_rec_t *job, cbuf_t *cbuf)
+static struct io_buf *
+_task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cbuf)
 {
 	struct io_buf *msg;
 	char *ptr;

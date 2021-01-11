@@ -49,7 +49,7 @@
 /* Slurm DBD message types */
 /* ANY TIME YOU ADD TO THIS LIST UPDATE THE CONVERSION FUNCTIONS! */
 typedef enum {
-	DEFUNCT_DBD_INIT = 1400,/* Connection initialization		*/
+	DBD_INIT = 1400,	/* Connection initialization		*/
 	DBD_FINI,       	/* Connection finalization		*/
 	DBD_ADD_ACCOUNTS,       /* Add new account to the mix           */
 	DBD_ADD_ACCOUNT_COORDS, /* Add new coordinatior to an account   */
@@ -162,6 +162,11 @@ typedef enum {
  * Slurm DBD protocol data structures
 \*****************************************************************************/
 
+typedef struct slurmdbd_msg {
+	uint16_t msg_type;	/* see slurmdbd_msg_type_t above */
+	void * data;		/* pointer to a message type below */
+} slurmdbd_msg_t;
+
 typedef struct {
 	List acct_list; /* list of account names (char *'s) */
 	slurmdb_user_cond_t *cond;
@@ -257,8 +262,6 @@ typedef struct dbd_job_start_msg {
 	uint64_t db_index;	/* index into the db for this job */
 	time_t   eligible_time;	/* time job becomes eligible to run */
 	uint32_t gid;	        /* group ID */
-	uint32_t het_job_id;	/* ID of hetjob leader or 0 */
-	uint32_t het_job_offset; /* Hetjob component ID, zero-origin */
 	uint32_t job_id;	/* job ID */
 	uint32_t job_state;	/* job state */
 	char *   mcs_label;	/* job mcs_label */
@@ -266,6 +269,8 @@ typedef struct dbd_job_start_msg {
 	char *   nodes;		/* hosts allocated to the job */
 	char *   node_inx;      /* ranged bitmap string of hosts
 				 * allocated to the job */
+	uint32_t pack_job_id;	/* ID of pack job leader or 0 */
+	uint32_t pack_job_offset; /* Pack job component ID, zero-origin */
 	char *   partition;	/* partition job is running on */
 	uint32_t priority;	/* job priority */
 	uint32_t qos_id;        /* qos job is running with */
@@ -400,10 +405,11 @@ extern void slurmdbd_free_buffer(void *x);
 
 extern void slurmdbd_free_acct_coord_msg(dbd_acct_coord_msg_t *msg);
 extern void slurmdbd_free_cluster_tres_msg(dbd_cluster_tres_msg_t *msg);
-extern void slurmdbd_free_msg(persist_msg_t *msg);
+extern void slurmdbd_free_msg(slurmdbd_msg_t *msg);
 extern void slurmdbd_free_rec_msg(dbd_rec_msg_t *msg, slurmdbd_msg_type_t type);
 extern void slurmdbd_free_cond_msg(dbd_cond_msg_t *msg,
 				   slurmdbd_msg_type_t type);
+extern void slurmdbd_free_init_msg(dbd_init_msg_t *msg);
 extern void slurmdbd_free_fini_msg(dbd_fini_msg_t *msg);
 extern void slurmdbd_free_job_complete_msg(dbd_job_comp_msg_t *msg);
 extern void slurmdbd_free_job_start_msg(void *in);

@@ -266,15 +266,9 @@ expect {
 }
 
 $bin_sleep 30
-if {![param_contains [get_config_param "SlurmctldParameters"] "enable_configless"]} {
-	make_bash_script $file_in "
-	$srun --test_suite_srun=5 $bin_sum $spank_conf_file
-	"
-} else {
-	make_bash_script $file_in "
-	$srun --test_suite_srun=5 $bin_sum /run/slurm/conf/plugstack.conf
-	"
-}
+make_bash_script $file_in "
+  $srun --test_suite_srun=5 $bin_sum $spank_conf_file
+"
 
 set job_id 0
 set matches 0
@@ -392,7 +386,7 @@ if {[wait_for_file $spank_out] == 0} {
 		}
 		timeout {
 			log_error "scontrol show config not responding"
-			end_it 1
+				end_it 1
 		}
 		eof {
 			wait

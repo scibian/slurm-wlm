@@ -266,12 +266,12 @@ static void _xlate_task_str(slurmdb_job_rec_t *job_ptr)
 	if (!in_buf)
 		return;
 
-	i = strlen(in_buf);
-	if (i < 3 || in_buf[1] != 'x')
+	if (strlen(in_buf) < 3 || in_buf[1] != 'x')
 		return;
 
+	i = strlen(in_buf);
 	task_bitmap = bit_alloc(i * 4);
-	(void)bit_unfmt_hexmask(task_bitmap, in_buf);
+	bit_unfmt_hexmask(task_bitmap, in_buf);
 
 	/* Check first for a step function */
 	i_first = bit_ffs(task_bitmap);
@@ -821,22 +821,6 @@ extern void print_fields(type_t type, void *object)
 					     tmp_uint64,
 					     (curr_inx == field_count));
 			break;
-		case PRINT_DB_INX:
-			switch(type) {
-			case JOB:
-				tmp_uint64 = job->db_index;
-				break;
-			case JOBSTEP:
-				tmp_uint64 = step->job_ptr->db_index;
-				break;
-			default:
-				tmp_uint64 = NO_VAL64;
-				break;
-			}
-			field->print_routine(field,
-					     tmp_uint64,
-					     (curr_inx == field_count));
-			break;
 		case PRINT_DERIVED_EC:
 			tmp_int = tmp_int2 = 0;
 			switch (type) {
@@ -1049,11 +1033,11 @@ extern void print_fields(type_t type, void *object)
 						 "%u_%u",
 						 job->array_job_id,
 						 job->array_task_id);
-				} else if (job->het_job_id) {
+				} else if (job->pack_job_id) {
 					snprintf(id, FORMAT_STRING_SIZE,
 						 "%u+%u",
-						 job->het_job_id,
-						 job->het_job_offset);
+						 job->pack_job_id,
+						 job->pack_job_offset);
 				} else {
 					snprintf(id, FORMAT_STRING_SIZE,
 						 "%u",

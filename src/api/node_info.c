@@ -286,11 +286,6 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 			line_used = true;
 		}
 
-		if (node_ptr->bcast_address) {
-			xstrfmtcat(out, "BcastAddr=%s ", node_ptr->bcast_address);
-			line_used = true;
-		}
-
 		if (node_ptr->port != slurm_get_slurmd_port()) {
 			xstrfmtcat(out, "Port=%u ", node_ptr->port);
 			line_used = true;
@@ -795,10 +790,9 @@ extern int slurm_load_node_single2(node_info_msg_t **resp, char *node_name,
 }
 
 /*
- * slurm_get_node_energy - issue RPC to get the energy data of all
+ * slurm_get_node_energy_n - issue RPC to get the energy data of all
  * configured sensors on the target machine
  * IN  host  - name of node to query, NULL if localhost
- * IN  context_id - specific plugin to query.
  * IN  delta - Use cache if data is newer than this in seconds
  * OUT sensors_cnt - number of sensors
  * OUT energy - array of acct_gather_energy_t structures on success or
@@ -806,8 +800,7 @@ extern int slurm_load_node_single2(node_info_msg_t **resp, char *node_name,
  * RET 0 on success or a slurm error code
  * NOTE: free the response using xfree
  */
-extern int slurm_get_node_energy(char *host, uint16_t context_id,
-				 uint16_t delta,
+extern int slurm_get_node_energy(char *host, uint16_t delta,
 				 uint16_t *sensor_cnt,
 				 acct_gather_energy_t **energy)
 {
@@ -828,11 +821,10 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 	slurm_msg_t_init(&resp_msg);
 
 	if (host)
-		slurm_conf_get_addr(host, &req_msg.address, req_msg.flags);
+		slurm_conf_get_addr(host, &req_msg.address);
 	else if (cluster_flags & CLUSTER_FLAG_MULTSD) {
 		if ((this_addr = getenv("SLURMD_NODENAME"))) {
-			slurm_conf_get_addr(this_addr, &req_msg.address,
-					    req_msg.flags);
+			slurm_conf_get_addr(this_addr, &req_msg.address);
 		} else {
 			this_addr = "localhost";
 			slurm_set_addr(&req_msg.address,
@@ -855,7 +847,6 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 	}
 
 	memset(&req, 0, sizeof(req));
-	req.context_id   = context_id;
 	req.delta        = delta;
 	req_msg.msg_type = REQUEST_ACCT_GATHER_ENERGY;
 	req_msg.data     = &req;

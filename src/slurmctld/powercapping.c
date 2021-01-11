@@ -103,7 +103,7 @@ bool power_layout_ready(void)
 {
 	static time_t last_error_time = (time_t) 0;
 	time_t now = time(NULL);
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	uint32_t data[2];
 	int i;
 
@@ -144,7 +144,7 @@ uint32_t powercap_get_cluster_max_watts(void)
 uint32_t powercap_get_cluster_min_watts(void)
 {
 	uint32_t min_watts = 0, tmp_watts, save_watts, down_watts;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	int i;
 
 	if (!_powercap_enabled())
@@ -244,7 +244,7 @@ int powercap_set_cluster_cap(uint32_t new_cap)
 uint32_t powercap_get_cluster_adjusted_max_watts(void)
 {
 	uint32_t adj_max_watts = 0,val;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	int i;
 
 	if (!_powercap_enabled())
@@ -291,7 +291,7 @@ uint32_t powercap_get_cluster_current_max_watts(void)
 uint32_t powercap_get_node_bitmap_maxwatts(bitstr_t *idle_bitmap)
 {
 	uint32_t max_watts = 0, val;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	int i;
 	bitstr_t *tmp_bitmap = NULL;
 
@@ -343,7 +343,8 @@ uint32_t powercap_get_node_bitmap_maxwatts(bitstr_t *idle_bitmap)
 	return max_watts;
 }
 
-uint32_t powercap_get_job_cap(job_record_t *job_ptr, time_t when, bool reboot)
+uint32_t powercap_get_job_cap(struct job_record *job_ptr, time_t when,
+			      bool reboot)
 {
 	uint32_t powercap = 0, resv_watts;
 
@@ -366,7 +367,7 @@ uint32_t powercap_get_job_cap(job_record_t *job_ptr, time_t when, bool reboot)
 uint32_t powercap_get_cpufreq(bitstr_t *select_bitmap, int k)
 {
 	int i;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	char ename[128];
 	uint32_t cpufreq = 0;
 
@@ -425,7 +426,7 @@ int *powercap_get_job_nodes_numfreq(bitstr_t *select_bitmap,
 {
 	uint16_t num_freq = 0;
 	int i, p, *allowed_freqs = NULL, new_num_freq = 0;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	char ename[128];
 	uint32_t cpufreq;
 
@@ -480,7 +481,7 @@ uint32_t powercap_get_node_bitmap_maxwatts_dvfs(bitstr_t *idle_bitmap,
 {
 	uint32_t max_watts = 0, tmp_max_watts = 0, val = 0;
 	uint32_t *tmp_max_watts_dvfs = NULL;
-	node_record_t *node_ptr;
+	struct node_record *node_ptr;
 	int i, p;
 	char ename[128], keyname[128];
 	bitstr_t *tmp_bitmap = NULL;

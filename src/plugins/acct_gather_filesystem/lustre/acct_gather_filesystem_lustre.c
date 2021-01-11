@@ -372,6 +372,20 @@ static int _update_node_filesystem(void)
 	return SLURM_SUCCESS;
 }
 
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmstepd");
+	}
+
+	return run;
+}
+
+
 /*
  * init() is called when the plugin is loaded, before any other functions
  * are called.  Put global initialization here.
@@ -380,7 +394,7 @@ extern int init(void)
 {
 	slurmdb_tres_rec_t tres_rec;
 
-	if (!running_in_slurmstepd())
+	if (!_run_in_daemon())
 		return SLURM_SUCCESS;
 
 	debug_flags = slurm_get_debug_flags();
@@ -395,7 +409,7 @@ extern int init(void)
 
 extern int fini(void)
 {
-	if (!running_in_slurmstepd())
+	if (!_run_in_daemon())
 		return SLURM_SUCCESS;
 
 	if (debug_flags & DEBUG_FLAG_FILESYSTEM)
@@ -406,7 +420,7 @@ extern int fini(void)
 
 extern int acct_gather_filesystem_p_node_update(void)
 {
-	if (running_in_slurmstepd() && (_check_lustre_fs() == SLURM_SUCCESS))
+	if (_run_in_daemon() && (_check_lustre_fs() == SLURM_SUCCESS))
 		_update_node_filesystem();
 
 	return SLURM_SUCCESS;
@@ -415,7 +429,7 @@ extern int acct_gather_filesystem_p_node_update(void)
 
 extern void acct_gather_filesystem_p_conf_set(s_p_hashtbl_t *tbl)
 {
-	if (!running_in_slurmstepd())
+	if (!_run_in_daemon())
 		return;
 
 	debug("%s loaded", plugin_name);

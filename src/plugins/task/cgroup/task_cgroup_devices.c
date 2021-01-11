@@ -225,8 +225,8 @@ extern int task_cgroup_devices_create(stepd_step_rec_t *job)
 	xfree(slurm_cgpath);
 
 	/* build job cgroup relative path if no set (should not be) */
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
+		jobid = job->pack_jobid;
 	else
 		jobid = job->jobid;
 	if (*job_cgroup_path == '\0') {
@@ -298,7 +298,7 @@ extern int task_cgroup_devices_create(stepd_step_rec_t *job)
 	}
 
 	/* TODO
-	 * check that user's devices cgroup is consistent and allow the
+	 * check that user's devices cgroup is consistant and allow the
 	 * appropriate devices
 	 */
 

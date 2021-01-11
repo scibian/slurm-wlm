@@ -123,7 +123,7 @@ char *slurm_sprint_reservation_info ( reserve_info_t * resv_ptr,
 	xstrcat(out, line_end);
 
 	/****** Line ******/
-	flag_str = reservation_flags_string(resv_ptr);
+	flag_str = reservation_flags_string(resv_ptr->flags);
 
 	xstrfmtcat(out, "Nodes=%s NodeCnt=%u CoreCnt=%u Features=%s "
 		   "PartitionName=%s Flags=%s",
@@ -157,14 +157,6 @@ char *slurm_sprint_reservation_info ( reserve_info_t * resv_ptr,
 		   "Watts=%s", resv_ptr->users, resv_ptr->accounts,
 		   resv_ptr->licenses, state, resv_ptr->burst_buffer, watts_str);
 	xfree(watts_str);
-	xstrcat(out, line_end);
-
-	/****** Line ******/
-	if (resv_ptr->max_start_delay)
-		secs2time_str(resv_ptr->max_start_delay, tmp3, sizeof(tmp3));
-
-	xstrfmtcat(out, "MaxStartDelay=%s",
-		   resv_ptr->max_start_delay ? tmp3 : NULL);
 
 	if (one_liner)
 		xstrcat(out, "\n");

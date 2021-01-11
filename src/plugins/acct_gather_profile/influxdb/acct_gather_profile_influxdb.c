@@ -168,6 +168,23 @@ static uint32_t _determine_profile(void)
 	return profile;
 }
 
+static bool _run_in_daemon(void)
+{
+	static bool set = false;
+	static bool run = false;
+
+	debug3("%s %s called", plugin_type, __func__);
+
+	if (!set) {
+		set = 1;
+		run = run_in_daemon("slurmstepd");
+	}
+
+	return run;
+}
+
+
+
 /* Callback to handle the HTTP response */
 static size_t _write_callback(void *contents, size_t size, size_t nmemb,
 			      void *userp)
@@ -321,7 +338,7 @@ extern int init(void)
 {
 	debug3("%s %s called", plugin_type, __func__);
 
-	if (!running_in_slurmstepd())
+	if (!_run_in_daemon())
 		return SLURM_SUCCESS;
 
 	datastr = xmalloc(BUF_SIZE);
@@ -437,7 +454,7 @@ extern int acct_gather_profile_p_node_step_start(stepd_step_rec_t* job)
 
 	debug3("%s %s called", plugin_type, __func__);
 
-	xassert(running_in_slurmstepd());
+	xassert(_run_in_daemon());
 
 	g_job = job;
 	profile_str = acct_gather_profile_to_string(g_job->profile);
@@ -458,7 +475,7 @@ extern int acct_gather_profile_p_node_step_end(void)
 	int rc = SLURM_SUCCESS;
 	debug3("%s %s called", plugin_type, __func__);
 
-	xassert(running_in_slurmstepd());
+	xassert(_run_in_daemon());
 
 	return rc;
 }
@@ -470,7 +487,7 @@ extern int acct_gather_profile_p_task_start(uint32_t taskid)
 	debug3("%s %s called with %d prof", plugin_type, __func__,
 	       g_profile_running);
 
-	xassert(running_in_slurmstepd());
+	xassert(_run_in_daemon());
 	xassert(g_job);
 
 	xassert(g_profile_running != ACCT_GATHER_PROFILE_NOT_SET);

@@ -125,7 +125,7 @@ typedef enum {
 extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
 extern slurm_ctl_conf_t slurmctld_conf __attribute__((weak_import));
 extern slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import));
-extern node_record_t *node_record_table_ptr __attribute__((weak_import));
+extern struct node_record *node_record_table_ptr __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
 extern time_t last_node_update __attribute__((weak_import));
 extern int slurmctld_primary __attribute__((weak_import));
@@ -135,7 +135,7 @@ extern bool ignore_state_errors __attribute__((weak_import));
 slurmctld_config_t slurmctld_config;
 slurm_ctl_conf_t slurmctld_conf;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
-node_record_t *node_record_table_ptr;
+struct node_record *node_record_table_ptr;
 int node_record_count;
 time_t last_node_update;
 int slurmctld_primary;
@@ -185,13 +185,15 @@ static void _handle_aeld_error(const char *funcname, char *errmsg, int rv,
 static void _clear_event_list(alpsc_ev_app_t *list, int32_t *size);
 static void _start_session(alpsc_ev_session_t **session, int *sessionfd);
 static void *_aeld_event_loop(void *args);
-static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
+static void _initialize_event(alpsc_ev_app_t *event,
+			      struct step_record *step_ptr,
 			      alpsc_ev_app_state_e state);
 static void _copy_event(alpsc_ev_app_t *dest, alpsc_ev_app_t *src);
 static void _free_event(alpsc_ev_app_t *event);
 static void _add_to_app_list(alpsc_ev_app_t **list, int32_t *size,
 			     size_t *capacity, alpsc_ev_app_t *app);
-static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state);
+static void _update_app(struct step_record *step_ptr,
+			alpsc_ev_app_state_e state);
 #endif
 
 static uint64_t debug_flags = 0;
@@ -426,10 +428,11 @@ static void *_aeld_event_loop(void *args)
 /*
  * Initialize an alpsc_ev_app_t
  */
-static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
+static void _initialize_event(alpsc_ev_app_t *event,
+			      struct step_record *step_ptr,
 			      alpsc_ev_app_state_e state)
 {
-	job_record_t *job_ptr = step_ptr->job_ptr;
+	struct job_record *job_ptr = step_ptr->job_ptr;
 	hostlist_t hl = NULL;
 	hostlist_iterator_t hlit;
 	char *node;
@@ -440,8 +443,8 @@ static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
 
 	START_TIMER;
 
-	if (job_ptr->het_job_id && (job_ptr->het_job_id != NO_VAL))
-		jobid = job_ptr->het_job_id;
+	if (job_ptr->pack_job_id && (job_ptr->pack_job_id != NO_VAL))
+		jobid = job_ptr->pack_job_id;
 	else
 		jobid = job_ptr->job_id;
 
@@ -556,9 +559,10 @@ static void _add_to_app_list(alpsc_ev_app_t **list, int32_t *size,
  * app list. For suspend/resume apps, edits the app list. Always adds to the
  * event list.
  */
-static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
+static void _update_app(struct step_record *step_ptr,
+			alpsc_ev_app_state_e state)
 {
-	job_record_t *job_ptr = step_ptr->job_ptr;
+	struct job_record *job_ptr = step_ptr->job_ptr;
 	uint64_t apid;
 	int32_t i;
 	alpsc_ev_app_t app;
@@ -606,8 +610,8 @@ static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
 		// Search for the app matching this apid
 		found = 0;
 
-		if (job_ptr->het_job_id && (job_ptr->het_job_id != NO_VAL))
-			jobid = job_ptr->het_job_id;
+		if (job_ptr->pack_job_id && (job_ptr->pack_job_id != NO_VAL))
+			jobid = job_ptr->pack_job_id;
 		else
 			jobid = job_ptr->job_id;
 
@@ -640,8 +644,8 @@ static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
 	case ALPSC_EV_SUSPEND:
 	case ALPSC_EV_RESUME:
 		// Search for the app matching this apid
-		if (job_ptr->het_job_id && (job_ptr->het_job_id != NO_VAL))
-			jobid = job_ptr->het_job_id;
+		if (job_ptr->pack_job_id && (job_ptr->pack_job_id != NO_VAL))
+			jobid = job_ptr->pack_job_id;
 		else
 			jobid = job_ptr->job_id;
 
@@ -685,7 +689,7 @@ static void _start_aeld_thread(void)
 	debug("cray: %s", __func__);
 
 	// Spawn the aeld thread, only in slurmctld.
-	if (!aeld_running && running_in_slurmctld()) {
+	if (!aeld_running && run_in_daemon("slurmctld")) {
 		aeld_running = 1;
 		slurm_thread_create(&aeld_thread, _aeld_event_loop, NULL);
 	}
@@ -739,7 +743,7 @@ unpack_error:
 }
 
 /* job_write and blade_mutex must be locked before calling */
-static void _set_job_running(job_record_t *job_ptr)
+static void _set_job_running(struct job_record *job_ptr)
 {
 	int i;
 	select_jobinfo_t *jobinfo = job_ptr->select_jobinfo->data;
@@ -868,12 +872,12 @@ extern int init ( void )
 
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	/* Read and store the CCM configured partition name(s). */
-	if (running_in_slurmctld()) {
+	if (run_in_daemon("slurmctld")) {
 		/* Get any CCM configuration information */
 		ccm_get_config();
 	}
 #endif
-	if (running_in_slurmctld() && !slurmctld_primary) {
+	if (run_in_daemon("slurmctld") && !slurmctld_primary) {
 		START_TIMER;
 		if (slurmctld_config.scheduling_disabled) {
 			info("Scheduling disabled on backup");
@@ -1040,7 +1044,7 @@ extern int select_p_state_restore(char *dir_name)
 
 	if (protocol_version == NO_VAL16) {
 		if (!ignore_state_errors)
-			fatal("Can not recover blade state, data version incompatible, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+			fatal("Can not recover blade state, data version incompatible, start with '-i' to ignore this");
 		error("***********************************************");
 		error("Can not recover blade state, "
 		      "data version incompatible");
@@ -1135,7 +1139,7 @@ unpack_error:
 	slurm_mutex_unlock(&blade_mutex);
 
 	if (!ignore_state_errors)
-		fatal("Incomplete blade data checkpoint file, you may get unexpected issues if jobs were running. Start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
+		fatal("Incomplete blade data checkpoint file, you may get unexpected issues if jobs were running. Start with '-i' to ignore this");
 	error("Incomplete blade data checkpoint file, you may get "
 	      "unexpected issues if jobs were running.");
 	free_buf(buffer);
@@ -1156,7 +1160,7 @@ extern int select_p_job_init(List job_list)
 	slurm_mutex_lock(&blade_mutex);
 	if (job_list && list_count(job_list)) {
 		ListIterator itr = list_iterator_create(job_list);
-		job_record_t *job_ptr;
+		struct job_record *job_ptr;
 		select_jobinfo_t *jobinfo;
 
 		if (debug_flags & DEBUG_FLAG_SELECT_TYPE)
@@ -1212,16 +1216,16 @@ extern int select_p_job_init(List job_list)
 /*
  * select_p_node_ranking - generate node ranking for Cray nodes
  */
-extern bool select_p_node_ranking(node_record_t *node_ptr, int node_cnt)
+extern bool select_p_node_ranking(struct node_record *node_ptr, int node_cnt)
 {
 	return false;
 }
 
-extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
+extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 {
 	select_nodeinfo_t *nodeinfo = NULL;
-	node_record_t *node_rec;
-	int i, j, rc;
+	struct node_record *node_rec;
+	int i, j;
 	uint64_t blade_id = 0;
 	DEF_TIMERS;
 
@@ -1355,14 +1359,17 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
-	rc = other_node_init(node_ptr, node_cnt);
+	return other_node_init(node_ptr, node_cnt);
+}
 
+extern int select_p_block_init(List part_list)
+{
 #ifdef HAVE_NATIVE_CRAY
 	if (!aeld_running)
 		_start_aeld_thread();
 #endif
 
-	return rc;
+	return other_block_init(part_list);
 }
 
 /*
@@ -1397,7 +1404,7 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
  * NOTE: bitmap must be a superset of the job's required at the time that
  *	select_p_job_test is called
  */
-extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
+extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 			     uint32_t min_nodes, uint32_t max_nodes,
 			     uint32_t req_nodes, uint16_t mode,
 			     List preemptee_candidates,
@@ -1445,7 +1452,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 			      preemptee_job_list, exc_core_bitmap);
 }
 
-extern int select_p_job_begin(job_record_t *job_ptr)
+extern int select_p_job_begin(struct job_record *job_ptr)
 {
 	select_jobinfo_t *jobinfo;
 
@@ -1506,7 +1513,7 @@ extern int select_p_job_begin(job_record_t *job_ptr)
 	return other_job_begin(job_ptr);
 }
 
-extern int select_p_job_ready(job_record_t *job_ptr)
+extern int select_p_job_ready(struct job_record *job_ptr)
 {
 	xassert(job_ptr);
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
@@ -1522,32 +1529,33 @@ extern int select_p_job_ready(job_record_t *job_ptr)
 	return other_job_ready(job_ptr);
 }
 
-extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
+extern int select_p_job_resized(struct job_record *job_ptr,
+				struct node_record *node_ptr)
 {
 	return other_job_resized(job_ptr, node_ptr);
 }
 
-extern int select_p_job_expand(job_record_t *from_job_ptr,
-			       job_record_t *to_job_ptr)
+extern int select_p_job_expand(struct job_record *from_job_ptr,
+			       struct job_record *to_job_ptr)
 {
 	return other_job_expand(from_job_ptr, to_job_ptr);
 }
 
-extern int select_p_job_signal(job_record_t *job_ptr, int signal)
+extern int select_p_job_signal(struct job_record *job_ptr, int signal)
 {
 	xassert(job_ptr);
 
 	return other_job_signal(job_ptr, signal);
 }
 
-extern int select_p_job_mem_confirm(job_record_t *job_ptr)
+extern int select_p_job_mem_confirm(struct job_record *job_ptr)
 {
 	xassert(job_ptr);
 
 	return other_job_mem_confirm(job_ptr);
 }
 
-extern int select_p_job_fini(job_record_t *job_ptr)
+extern int select_p_job_fini(struct job_record *job_ptr)
 {
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	/* Create a thread to run the CCM epilog for a CCM partition */
@@ -1562,18 +1570,18 @@ extern int select_p_job_fini(job_record_t *job_ptr)
 	return SLURM_SUCCESS;
 }
 
-extern int select_p_job_suspend(job_record_t *job_ptr, bool indf_susp)
+extern int select_p_job_suspend(struct job_record *job_ptr, bool indf_susp)
 {
 #ifdef HAVE_NATIVE_CRAY
 	ListIterator i;
-	step_record_t *step_ptr = NULL;
+	struct step_record *step_ptr = NULL;
 	DEF_TIMERS;
 
 	// Make an event for each job step
 	if (aeld_running) {
 		START_TIMER;
 		i = list_iterator_create(job_ptr->step_list);
-		while ((step_ptr = list_next(i))) {
+		while ((step_ptr = (struct step_record *)list_next(i))) {
 			_update_app(step_ptr, ALPSC_EV_SUSPEND);
 		}
 		list_iterator_destroy(i);
@@ -1586,18 +1594,18 @@ extern int select_p_job_suspend(job_record_t *job_ptr, bool indf_susp)
 	return other_job_suspend(job_ptr, indf_susp);
 }
 
-extern int select_p_job_resume(job_record_t *job_ptr, bool indf_susp)
+extern int select_p_job_resume(struct job_record *job_ptr, bool indf_susp)
 {
 #ifdef HAVE_NATIVE_CRAY
 	ListIterator i;
-	step_record_t *step_ptr = NULL;
+	struct step_record *step_ptr = NULL;
 	DEF_TIMERS;
 
 	// Make an event for each job step
 	if (aeld_running) {
 		START_TIMER;
 		i = list_iterator_create(job_ptr->step_list);
-		while ((step_ptr = list_next(i))) {
+		while ((step_ptr = (struct step_record *)list_next(i))) {
 			_update_app(step_ptr, ALPSC_EV_RESUME);
 		}
 		list_iterator_destroy(i);
@@ -1610,7 +1618,7 @@ extern int select_p_job_resume(job_record_t *job_ptr, bool indf_susp)
 	return other_job_resume(job_ptr, indf_susp);
 }
 
-extern bitstr_t *select_p_step_pick_nodes(job_record_t *job_ptr,
+extern bitstr_t *select_p_step_pick_nodes(struct job_record *job_ptr,
 					  select_jobinfo_t *step_jobinfo,
 					  uint32_t node_count,
 					  bitstr_t **avail_nodes)
@@ -1649,7 +1657,7 @@ extern bitstr_t *select_p_step_pick_nodes(job_record_t *job_ptr,
 	return other_step_pick_nodes(job_ptr, jobinfo, node_count, avail_nodes);
 }
 
-extern int select_p_step_start(step_record_t *step_ptr)
+extern int select_p_step_start(struct step_record *step_ptr)
 {
 	select_jobinfo_t *jobinfo;
 	DEF_TIMERS;
@@ -1696,7 +1704,7 @@ extern int select_p_step_start(step_record_t *step_ptr)
 	return other_step_start(step_ptr);
 }
 
-extern int select_p_step_finish(step_record_t *step_ptr, bool killing_step)
+extern int select_p_step_finish(struct step_record *step_ptr, bool killing_step)
 {
 #ifdef HAVE_NATIVE_CRAY
 	if (aeld_running) {
@@ -1809,7 +1817,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 	slurm_mutex_lock(&blade_mutex);
 	/* clear all marks */
 	for (i=0; i<node_record_count; i++) {
-		node_record_t *node_ptr = &(node_record_table_ptr[i]);
+		struct node_record *node_ptr = &(node_record_table_ptr[i]);
 		if (bit_test(blade_nodes_running_npc, i))
 			node_ptr->node_state |= NODE_STATE_NET;
 		else
@@ -1821,7 +1829,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 	return other_select_nodeinfo_set_all();
 }
 
-extern int select_p_select_nodeinfo_set(job_record_t *job_ptr)
+extern int select_p_select_nodeinfo_set(struct job_record *job_ptr)
 {
 	return other_select_nodeinfo_set(job_ptr);
 }
@@ -2090,7 +2098,7 @@ extern char *select_p_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
 }
 
 extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
-					 job_record_t *job_ptr,
+					 struct job_record *job_ptr,
 					 void *data)
 {
 	return other_get_info_from_plugin(dinfo, job_ptr, data);
@@ -2099,6 +2107,11 @@ extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
 extern int select_p_update_node_config(int index)
 {
 	return other_update_node_config(index);
+}
+
+extern int select_p_update_node_state(struct node_record *node_ptr)
+{
+	return other_update_node_state(node_ptr);
 }
 
 extern int select_p_reconfigure(void)

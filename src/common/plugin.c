@@ -135,7 +135,7 @@ plugin_peek( const char *fq_path,
 		plugin_minor = SLURM_VERSION_MINOR(*version);
 		plugin_micro = SLURM_VERSION_MICRO(*version);
 		dlclose(plug);
-		info("%s: Incompatible Slurm plugin version (%d.%02d.%d)",
+		info("%s: Incompatible Slurm plugin version (%d.%d.%d)",
 		     fq_path, plugin_major, plugin_minor, plugin_micro);
 		return SLURM_ERROR;
 	}
@@ -199,7 +199,7 @@ plugin_load_from_file(plugin_handle_t *p, const char *fq_path)
 		plugin_minor = SLURM_VERSION_MINOR(*version);
 		plugin_micro = SLURM_VERSION_MICRO(*version);
 		dlclose(plug);
-		info("%s: Incompatible Slurm plugin version (%d.%02d.%d)",
+		info("%s: Incompatible Slurm plugin version (%d.%d.%d)",
 		     fq_path, plugin_major, plugin_minor, plugin_micro);
 		return EPLUGIN_BAD_VERSION;
 	}
@@ -542,7 +542,7 @@ extern List plugin_get_plugins_of_type(char *plugin_type)
 				 type_slash, e->d_name + strlen(type_slash));
 
 			if (!plugin_names)
-				plugin_names = list_create(xfree_ptr);
+				plugin_names = list_create(slurm_destroy_char);
 			if (!list_find_first(plugin_names,
 					     slurm_find_char_in_list,
 					     full_name))

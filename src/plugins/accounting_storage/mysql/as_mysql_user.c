@@ -112,7 +112,7 @@ static List _get_other_user_names_to_mod(mysql_conn_t *mysql_conn, uint32_t uid,
 		itr = list_iterator_create(tmp_list);
 		while ((object = list_next(itr))) {
 			if (!ret_list)
-				ret_list = list_create(xfree_ptr);
+				ret_list = list_create(slurm_destroy_char);
 			slurm_addto_char_list(ret_list, object->user);
 		}
 		list_iterator_destroy(itr);
@@ -140,7 +140,7 @@ no_assocs:
 		itr = list_iterator_create(tmp_list);
 		while ((object = list_next(itr))) {
 			if (!ret_list)
-				ret_list = list_create(xfree_ptr);
+				ret_list = list_create(slurm_destroy_char);
 			slurm_addto_char_list(ret_list, object->user);
 		}
 		list_iterator_destroy(itr);
@@ -274,8 +274,8 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *user_name = NULL;
 	char *extra = NULL, *tmp_extra = NULL;
 	int affect_rows = 0;
-	List assoc_list;
-	List wckey_list;
+	List assoc_list = list_create(slurmdb_destroy_assoc_rec);
+	List wckey_list = list_create(slurmdb_destroy_wckey_rec);
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
@@ -297,9 +297,6 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 		 * parent they are trying to add to
 		 */
 	}
-
-	assoc_list = list_create(slurmdb_destroy_assoc_rec);
-	wckey_list = list_create(slurmdb_destroy_wckey_rec);
 
 	user_name = uid_to_string((uid_t) uid);
 	itr = list_iterator_create(user_list);
@@ -651,7 +648,7 @@ extern List as_mysql_modify_users(mysql_conn_t *mysql_conn, uint32_t uid,
 	}
 
 	if (!ret_list)
-		ret_list = list_create(xfree_ptr);
+		ret_list = list_create(slurm_destroy_char);
 	while ((row = mysql_fetch_row(result))) {
 		slurmdb_user_rec_t *user_rec = NULL;
 
@@ -932,7 +929,7 @@ extern List as_mysql_remove_users(mysql_conn_t *mysql_conn, uint32_t uid,
 	}
 
 	if (!ret_list)
-		ret_list = list_create(xfree_ptr);
+		ret_list = list_create(slurm_destroy_char);
 	while ((row = mysql_fetch_row(result)))
 		slurm_addto_char_list(ret_list, row[0]);
 	mysql_free_result(result);
@@ -1148,8 +1145,8 @@ extern List as_mysql_remove_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 		return NULL;
 	}
 	xfree(query);
-	ret_list = list_create(xfree_ptr);
-	user_list = list_create(xfree_ptr);
+	ret_list = list_create(slurm_destroy_char);
+	user_list = list_create(slurm_destroy_char);
 	while ((row = mysql_fetch_row(result))) {
 		if (!is_admin) {
 			slurmdb_coord_rec_t *coord = NULL;
