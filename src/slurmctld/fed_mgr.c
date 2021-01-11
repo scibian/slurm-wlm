@@ -2128,7 +2128,7 @@ extern int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 	char *sib_name = job_update_info->submit_cluster;
 
 	slurmctld_lock_t job_read_lock = {
-		NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, READ_LOCK };
+		READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, READ_LOCK };
 
 	lock_slurmctld(job_read_lock);
 
@@ -2783,7 +2783,7 @@ static void _add_missing_fed_job_info()
 extern int fed_mgr_init(void *db_conn)
 {
 	int rc = SLURM_SUCCESS;
-	uint64_t tmp;
+	uint64_t tmp = 0;
 	slurmdb_federation_cond_t fed_cond;
 	List fed_list;
 	slurmdb_federation_rec_t *fed = NULL, *state_fed = NULL;

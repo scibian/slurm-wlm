@@ -716,7 +716,7 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id)
 		if (job_id)
 			setenv("SLURM_JOB_ID", job_id_str, 1);
 		execv(prog, argv);
-		exit(1);
+		_exit(1);
 	} else if (child < 0) {
 		error("fork: %m");
 	} else {
@@ -1015,9 +1015,9 @@ static void *_init_power_save(void *arg)
         /* Locks: Read nodes */
         slurmctld_lock_t node_read_lock = {
                 NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
-        /* Locks: Write nodes */
+        /* Locks: Write jobs and nodes */
         slurmctld_lock_t node_write_lock = {
-                NO_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+                NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
 	time_t now, boot_time = 0, last_power_scan = 0;
 
 	if (power_save_config && !power_save_enabled) {

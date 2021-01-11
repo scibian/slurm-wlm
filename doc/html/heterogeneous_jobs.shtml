@@ -332,7 +332,7 @@ heterogeneous will return an error.</p>
 </ul>
 
 <p>The sbcast command supports heterogeneous job allocations. By default,
-sbcast will will copy files to all nodes in the job allocation. The -j/--jobid
+sbcast will copy files to all nodes in the job allocation. The -j/--jobid
 option can be used to copy files to individual components as shown below.</p>
 <pre>
 $ sbcast --jobid=123   data /tmp/data
@@ -552,23 +552,23 @@ SLURM_JOB_NODELIST=nid[00001,00011-00012]
 
 <p>Create a heterogeneous resource allocation containing one node with 256GB
 of memory and a feature of "haswell" plus 2176 cores on 32 nodes with a
-feature of "knl". Then launch a program called "master" on the "haswell" node
-and "slave" on the "knl" nodes. Each application will be in its own
+feature of "knl". Then launch a program called "server" on the "haswell" node
+and "client" on the "knl" nodes. Each application will be in its own
 MPI_COMM_WORLD.</p>
 <pre>
 salloc -N1 --mem=256GB -C haswell : \
        -n2176 -N32 --ntasks-per-core=1 -C knl bash
-srun master &
-srun --het-group=1 slave &
+srun server &
+srun --het-group=1 client &
 wait
 </pre>
 
-<p>This variation of the above example launches programs "master" and "slave"
+<p>This variation of the above example launches programs "server" and "client"
 in a single MPI_COMM_WORLD.</p>
 <pre>
 salloc -N1 --mem=256GB -C haswell : \
        -n2176 -N32 --ntasks-per-core=1 -C knl bash
-srun master : slave &
+srun server : client
 </pre>
 
 <p>The SLURM_PROCID and SLURM_TASKID environment variables will be set to
@@ -584,7 +584,7 @@ determined by examining Slurm environment variables.</p>
 
 <h2><a name="limitations">Limitations</a></h2>
 
-<p>The backfill scheduler has limiations in how it tracks usage of CPUs and
+<p>The backfill scheduler has limitations in how it tracks usage of CPUs and
 memory in the future.
 This typically requires the backfill scheduler be able to allocate each
 component of a heterogeneous job on a different node in order to begin its

@@ -14,6 +14,14 @@ config files will be pulled to the node. This slurmctld can be identified by
 either an explicit option, or &mdash; preferably &mdash; through DNS SRV
 records defined within the cluster itself.</p>
 
+<p>If you have a login node you will be running client commands
+from, those client commands will have to use the DNS record to get the
+configuration information from the controller when they run.
+If you expect to have a lot of traffic from a login node, this
+can generate a lot of requests for the configuration files. In cases like
+this, you may want to consider running slurmd on the machine so it can
+manage the configuration files, but not allowing it to run jobs.</p>
+
 <h2><a name="INSTALLATION">Installation</a></h2>
 
 <p>There are no extra steps required to install this feature. It is built in
@@ -34,15 +42,15 @@ is no local configuration file on the compute node.</p>
 
 <p>The command line option takes "$host[:$port]", so an example would look like:
 <pre>
-slurmd --conf-server slurm-master:6817
+slurmd --conf-server slurmctl-primary:6817
 </pre>
 Specifying the port is optional and will default to 6817 if it is not present.
 </p>
 
 <p>The same information can be provided in a DNS SRV record. For example:
 <pre>
-_slurmctld._tcp 3600 IN SRV 10 0 6817 slurm-backup
-_slurmctld._tcp 3600 IN SRV 0 0 6817 slurm-master
+_slurmctld._tcp 3600 IN SRV 10 0 6817 slurmctl-backup
+_slurmctld._tcp 3600 IN SRV 0 0 6817 slurmctl-primary
 </pre>
 Will provide the required information to the slurmd on startup. As shown above,
 multiple SRV records can be specified if you have deployed Slurm in an HA
@@ -72,6 +80,11 @@ option.</p>
 start. (The example slurmd.service file shipped in Slurm 20.02 and above does
 not include this entry.)</p>
 
+<p>If any of the supported config files "Include" additional config files,
+the Included configs will <b>NOT</b> be shipped to the slurmds. Any additional
+config files will need to be shared a different way or added to the parent
+config.</p>
+
 <h2><a name="NOTES">Notes</a></h2>
 
 <p>The order of precedence for determining what configuration source to use
@@ -100,6 +113,6 @@ is as follows:
 </ul>
 </p>
 
-<p style="text-align:center;">Last modified 6 February 2020</p>
+<p style="text-align:center;">Last modified 11 September 2020</p>
 
 <!--#include virtual="footer.txt"-->

@@ -181,11 +181,9 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 
 	update_object = xmalloc(sizeof(slurmdb_update_object_t));
 
-	list_append(update_list, update_object);
 
 	update_object->type = type;
 
-	list_sort(update_list, (ListCmpF)_sort_update_object_dec);
 
 	switch(type) {
 	case SLURMDB_MODIFY_USER:
@@ -275,15 +273,24 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 			slurmdb_destroy_res_rec);
 		break;
 	case SLURMDB_UPDATE_FEDS:
+		/*
+		 * object is already a list of slurmdb_federation_rec_t's. Just
+		 * assign update_job->objects to object. fed_mgr_update_feds()
+		 * knows to treat object as a list of federations.
+		 */
 		update_object->objects = object;
-		return SLURM_SUCCESS;
+		break;
 	case SLURMDB_UPDATE_NOTSET:
 	default:
+		slurmdb_destroy_update_object(update_object);
 		error("unknown type set in update_object: %d", type);
 		return SLURM_ERROR;
 	}
 	debug4("XXX: update object with type %d added", type);
-	list_append(update_object->objects, object);
+	if (type != SLURMDB_UPDATE_FEDS)
+		list_append(update_object->objects, object);
+	list_append(update_list, update_object);
+	list_sort(update_list, (ListCmpF)_sort_update_object_dec);
 	return SLURM_SUCCESS;
 }
 

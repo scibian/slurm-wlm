@@ -22,7 +22,7 @@ SRCS = \
 	xyaml.h xyaml.c
 
 if WITH_SLURMRESTD
-AM_CPPFLAGS = -I$(top_srcdir) $(JSON_CPPFLAGS)
+AM_CPPFLAGS = -I$(top_srcdir) $(JSON_CPPFLAGS) $(HTTP_PARSER_CPPFLAGS)
 BIN_REF = $(REF:.txt=.bino)
 BIN_REF2 = $(BIN_REF:.json=.bino)
 
@@ -52,6 +52,7 @@ libslurmrest_ref.lo: $(BIN_REF2)
 
 # making a .la
 noinst_LTLIBRARIES = libslurmrest_ref.la
+libslurmrest_ref_la_SOURCES =
 slurmrestd_SOURCES = $(SRCS)
 convenience_libs = $(LIB_SLURM) $(DL_LIBS)
 slurmrestd_DEPENDENCIES = $(LIB_SLURM_BUILD) libslurmrest_ref.la

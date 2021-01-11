@@ -228,7 +228,7 @@ mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
 inline static int
 _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 {
-	int rc, retry = 0, max_retry = 0;
+	int rc = SLURM_ERROR, retry = 0, max_retry = 0;
 	unsigned long delay = 100000;
 
 	/* NOTE: Wait until suspended job step is resumed or the RPC
@@ -1021,7 +1021,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			while (true) /* in case of interrupted sleep */
 				sleep(100000);
 
-			exit(1);
+			_exit(1);
 		} else {
 			/*
 			 * Need to exec() something for proctrack/linuxproc to
@@ -1031,7 +1031,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			execl(SLEEP_CMD, "sleep", "100000000", NULL);
 			error("execl: %m");
 			sleep(1);
-			exit(0);
+			_exit(0);
 		}
 	} else if (pid < 0) {
 		error("fork: %m");
@@ -1137,7 +1137,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	step_complete.rank = job->nodeid;
 	acct_gather_profile_endpoll();
 	acct_gather_profile_g_node_step_end();
-	acct_gather_profile_fini();
 
 	/* Call the other plugins to clean up
 	 * the cgroup hierarchy.
@@ -1146,7 +1145,18 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	step_terminate_monitor_start(job);
 	proctrack_g_signal(job->cont_id, SIGKILL);
 	proctrack_g_wait(job->cont_id);
+	/*
+	 * This function below calls jobacct_gather_fini(). For the case of
+	 * jobacct_gather/cgroup, it ends up doing the cgroup hierarchy cleanup
+	 * in here, and it should happen after the SIGKILL above so that all
+	 * children processes from the step are gone.
+	 */
+	acct_gather_profile_fini();
+
 	step_terminate_monitor_stop();
+	for (uint32_t i = 0; i < job->node_tasks; i++)
+		if (task_g_post_term(job, job->task[i]) == ENOMEM)
+			job->oom_error = true;
 
 	task_g_post_step(job);
 
@@ -1231,12 +1241,13 @@ job_manager(stepd_step_rec_t *job)
 
 	if (!job->batch && (job->accel_bind_type || job->tres_bind ||
 	    job->tres_freq)) {
+		uint32_t cpu_cnt = MAX(conf->conf_cpus, conf->block_map_size);
 		List gres_list = NULL;
 		(void) gres_plugin_init_node_config(conf->node_name,
 						    conf->gres,
 						    &gres_list);
 		debug2("Running gres_plugin_node_config_load()!");
-		(void) gres_plugin_node_config_load(conf->cpus, conf->node_name,
+		(void) gres_plugin_node_config_load(cpu_cnt, conf->node_name,
 						gres_list,
 						(void *)&xcpuinfo_abs_to_mac,
 						(void *)&xcpuinfo_mac_to_abs);
@@ -1338,8 +1349,6 @@ job_manager(stepd_step_rec_t *job)
 	_wait_for_all_tasks(job);
 	acct_gather_profile_endpoll();
 	acct_gather_profile_g_node_step_end();
-	acct_gather_profile_fini();
-
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
 
 fail3:
@@ -1368,9 +1377,18 @@ fail2:
 	}
 	step_terminate_monitor_stop();
 	if (!job->batch) {
+		/* This sends a SIGKILL to the pgid */
 		if (switch_g_job_postfini(job) < 0)
 			error("switch_g_job_postfini: %m");
 	}
+
+	/*
+	 * This function below calls jobacct_gather_fini(). For the case of
+	 * jobacct_gather/cgroup, it ends up doing the cgroup hierarchy cleanup
+	 * in here, and it should happen after the SIGKILL above so that all
+	 * children processes from the step are gone.
+	 */
+	acct_gather_profile_fini();
 
 	/*
 	 * Wait for io thread to complete (if there is one)
@@ -1793,12 +1811,12 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			 * and belong in the child.
 			 */
 			if (_pre_task_child_privileged(job, i, &sprivs) < 0)
-				exit(1);
+				_exit(1);
 
  			if (_become_user(job, &sprivs) < 0) {
  				error("_become_user failed: %m");
 				/* child process, should not return */
-				exit(1);
+				_exit(1);
  			}
 
 			/* log_fini(); */ /* note: moved into exec_task() */
@@ -1823,7 +1841,7 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			 *   before they make a call to exec(2).
 			 */
 			if (_exec_wait_child_wait_for_parent (ei) < 0)
-				exit (1);
+				_exit(1);
 
 			exec_task(job, i);
 		}
@@ -2635,29 +2653,18 @@ _slurmd_job_log_init(stepd_step_rec_t *job)
 	log_alter(conf->log_opts, 0, NULL);
 	log_set_argv0(argv0);
 
-	/*  Connect slurmd stderr to stderr of job, unless we are using
-	 *   user_managed_io or a pty.
-	 *
-	 *  user_managed_io directly connects the client (e.g. poe) to the tasks
-	 *   over a TCP connection, and we fully leave it up to the client
-	 *   to manage the stream with no buffering on slurm's part.
-	 *   We also promise that we will not insert any foreign data into
-	 *   the stream, so here we need to avoid connecting slurmstepd's
-	 *   STDERR_FILENO to the tasks's stderr.
-	 *
-	 *  When pty terminal emulation is used, the pts can potentially
-	 *   cause IO to block, so we need to avoid connecting slurmstepd's
-	 *   STDERR_FILENO to the task's pts on stderr to avoid hangs in
-	 *   the slurmstepd.
+	/*
+	 *  Connect slurmd stderr to stderr of job
 	 */
-	if (((job->flags & LAUNCH_USER_MANAGED_IO) == 0) &&
-	    ((job->flags & LAUNCH_PTY) == 0) &&
-	    (job->task != NULL)) {
+	if ((job->flags & LAUNCH_USER_MANAGED_IO) || (job->flags & LAUNCH_PTY))
+		fd_set_nonblocking(STDERR_FILENO);
+	if (job->task != NULL) {
 		if (dup2(job->task[0]->stderr_fd, STDERR_FILENO) < 0) {
 			error("job_log_init: dup2(stderr): %m");
 			return ESLURMD_IO_ERROR;
 		}
 	}
+
 	verbose("debug level = %d", conf->log_opts.stderr_level);
 	return SLURM_SUCCESS;
 }
@@ -2863,7 +2870,7 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 				break;
 			}
 		}
-		exit(127);
+		_exit(127);
 	}
 
 	if (exec_wait_signal_child (ei) < 0)

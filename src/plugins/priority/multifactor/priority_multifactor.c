@@ -478,7 +478,8 @@ static void _get_tres_factors(job_record_t *job_ptr, part_record_t *part_ptr,
 	 * uint64_t vs. double */
 	for (i = 0; i < slurmctld_tres_cnt; i++) {
 		uint64_t value = 0;
-		if (job_ptr->tres_alloc_cnt)
+		if (job_ptr->tres_alloc_cnt &&
+		    (job_ptr->tres_alloc_cnt[i] != NO_CONSUME_VAL64))
 			value = job_ptr->tres_alloc_cnt[i];
 		else if (job_ptr->tres_req_cnt)
 			value = job_ptr->tres_req_cnt[i];
@@ -961,6 +962,8 @@ static void _init_grp_used_tres_run_secs(time_t last_ran)
 		usage_factor *= (double)(last_ran - job_ptr->start_time);
 
 		for (i=0; i<slurmctld_tres_cnt; i++) {
+			if (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64)
+				continue;
 			tres_run_delta[i] =
 				job_ptr->tres_alloc_cnt[i] * usage_factor;
 		}
@@ -1064,7 +1067,9 @@ static int _apply_new_usage(job_record_t *job_ptr, time_t start_period,
 		     job_ptr->job_id, run_delta);
 		if (job_ptr->tres_alloc_cnt) {
 			for (i=0; i<slurmctld_tres_cnt; i++) {
-				if (!job_ptr->tres_alloc_cnt[i])
+				if (!job_ptr->tres_alloc_cnt[i] ||
+				    (job_ptr->tres_alloc_cnt[i] ==
+				     NO_CONSUME_VAL64))
 					continue;
 				info("TRES %s: %"PRIu64,
 				     assoc_mgr_tres_name_array[i],
@@ -1098,7 +1103,8 @@ static int _apply_new_usage(job_record_t *job_ptr, time_t start_period,
 	}
 	if (job_ptr->tres_alloc_cnt) {
 		for (i=0; i<slurmctld_tres_cnt; i++) {
-			if (!job_ptr->tres_alloc_cnt[i])
+			if (!job_ptr->tres_alloc_cnt[i] ||
+			    (job_ptr->tres_alloc_cnt[i] == NO_CONSUME_VAL64))
 				continue;
 			tres_run_delta[i] = tres_time_delta *
 				job_ptr->tres_alloc_cnt[i];
@@ -1756,15 +1762,12 @@ int init ( void )
 	if (xstrcasecmp(temp, "accounting_storage/slurmdbd")
 	    && xstrcasecmp(temp, "accounting_storage/mysql")) {
 		time_t start_time = time(NULL);
-		error("You are not running a supported "
-		      "accounting_storage plugin\n(%s).\n"
-		      "Fairshare can only be calculated with either "
-		      "'accounting_storage/slurmdbd' "
-		      "or 'accounting_storage/mysql' enabled.  "
-		      "If you want multifactor priority without fairshare "
-		      "ignore this message.",
-		      temp);
+		if (weight_age)
+			error("PriorityWeightAge can only be used with SlurmDBD, ignoring");
+		if (weight_fs)
+			error("PriorityWeightFairshare can only be used with SlurmDBD, ignoring");
 		calc_fairshare = 0;
+		weight_age = 0;
 		weight_fs = 0;
 
 		/* Initialize job priority factors for valid sprio output */

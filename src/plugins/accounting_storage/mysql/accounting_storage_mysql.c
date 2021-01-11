@@ -2531,6 +2531,38 @@ static int _get_database_variable(mysql_conn_t *mysql_conn,
 }
 
 /*
+ * MySQL version 5.6.48 and 5.7.30 introduced a regression in the
+ * implementation of CONCAT() that will lead to incorrect NULL values.
+ *
+ * We cannot safely work around this mistake without restructing our stored
+ * procedures, and thus fatal() here to avoid a segfault.
+ *
+ * Test that concat() is working as expected, rather than trying to blacklist
+ * specific versions.
+ */
+static void _check_mysql_concat_is_sane(mysql_conn_t *mysql_conn)
+{
+	MYSQL_ROW row = NULL;
+	MYSQL_RES *result = NULL;
+	char *query = "select @var := concat('');";
+	const char *version = mysql_get_server_info(mysql_conn->db_conn);
+
+	info("MySQL server version is: %s", version);
+
+	result = mysql_db_query_ret(mysql_conn, query, 0);
+	if (!result)
+		fatal("%s: null result from query `%s`", __func__, query);
+
+	if (mysql_num_rows(result) != 1)
+		fatal("%s: invalid results from query `%s`", __func__, query);
+
+	if (!(row = mysql_fetch_row(result)) || !row[0])
+		fatal("MySQL concat() function is defective. Please upgrade to a fixed version. See https://bugs.mysql.com/bug.php?id=99485.");
+
+	mysql_free_result(result);
+}
+
+/*
  * Check the values of innodb global database variables, and print
  * an error if the values are not at least half the recommendation.
  */
@@ -2620,6 +2652,7 @@ extern int init(void)
 		sleep(5);
 	}
 
+	_check_mysql_concat_is_sane(mysql_conn);
 	_check_database_variables(mysql_conn);
 
 	rc = _as_mysql_acct_check_tables(mysql_conn);
@@ -2747,6 +2780,7 @@ extern int acct_storage_p_close_connection(mysql_conn_t **mysql_conn)
 extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 {
 	int rc = check_connection(mysql_conn);
+	List update_list = NULL;
 
 	/* always reset this here */
 	if (mysql_conn)
@@ -2761,7 +2795,9 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 	 */
 	xassert(mysql_conn);
 
-	debug4("got %d commits", list_count(mysql_conn->update_list));
+	update_list = list_create(slurmdb_destroy_update_object);
+	list_transfer(update_list, mysql_conn->update_list);
+	debug4("got %d commits", list_count(update_list));
 
 	if (mysql_conn->rollback) {
 		if (!commit) {
@@ -2792,7 +2828,7 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		}
 	}
 
-	if (commit && list_count(mysql_conn->update_list)) {
+	if (commit && list_count(update_list)) {
 		char *query = NULL;
 		MYSQL_RES *result = NULL;
 		MYSQL_ROW row;
@@ -2813,17 +2849,17 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 			if (slurm_atoul(row[4]) & CLUSTER_FLAG_EXT)
 				continue;
 			(void) slurmdb_send_accounting_update(
-				mysql_conn->update_list,
+				update_list,
 				row[2], row[0],
 				slurm_atoul(row[1]),
 				slurm_atoul(row[3]));
 		}
 		mysql_free_result(result);
 	skip:
-		(void) assoc_mgr_update(mysql_conn->update_list, 0);
+		(void) assoc_mgr_update(update_list, 0);
 
 		slurm_mutex_lock(&as_mysql_cluster_list_lock);
-		itr = list_iterator_create(mysql_conn->update_list);
+		itr = list_iterator_create(update_list);
 		while ((object = list_next(itr))) {
 			if (!object->objects || !list_count(object->objects))
 				continue;
@@ -2850,7 +2886,7 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
 	}
 	xfree(mysql_conn->pre_commit_query);
-	list_flush(mysql_conn->update_list);
+	FREE_NULL_LIST(update_list);
 
 	return SLURM_SUCCESS;
 }

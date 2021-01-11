@@ -1933,6 +1933,8 @@ fail_this_part:	if (fail_by_part) {
 	if (bb_wait_cnt)
 		(void) bb_g_job_try_stage_in();
 
+	if (job_ptr)
+		job_resv_clear_promiscous_flag(job_ptr);
 	save_last_part_update = last_part_update;
 	FREE_NULL_BITMAP(avail_node_bitmap);
 	avail_node_bitmap = save_avail_node_bitmap;
@@ -3184,6 +3186,7 @@ static int _find_dependency(void *arg, void *key)
 	depend_spec_t *dep_ptr = (depend_spec_t *)arg;
 	depend_spec_t *new_dep = (depend_spec_t *)key;
 	return (dep_ptr->job_id == new_dep->job_id) &&
+		(dep_ptr->array_task_id == new_dep->array_task_id) &&
 		(dep_ptr->depend_type == new_dep->depend_type);
 }
 
@@ -3711,19 +3714,19 @@ extern int update_job_dependency(job_record_t *job_ptr, char *new_depend)
 		}
 
 		/* New format, <test>:job_ID */
-		if (xstrncasecmp(tok, "afternotok", 10) == 0)
+		if (!xstrncasecmp(tok, "afternotok:", 11))
 			depend_type = SLURM_DEPEND_AFTER_NOT_OK;
-		else if (xstrncasecmp(tok, "aftercorr", 9) == 0)
+		else if (!xstrncasecmp(tok, "aftercorr:", 10))
 			depend_type = SLURM_DEPEND_AFTER_CORRESPOND;
-		else if (xstrncasecmp(tok, "afterany", 8) == 0)
+		else if (!xstrncasecmp(tok, "afterany:", 9))
 			depend_type = SLURM_DEPEND_AFTER_ANY;
-		else if (xstrncasecmp(tok, "afterok", 7) == 0)
+		else if (!xstrncasecmp(tok, "afterok:", 8))
 			depend_type = SLURM_DEPEND_AFTER_OK;
-		else if (xstrncasecmp(tok, "afterburstbuffer", 10) == 0)
+		else if (!xstrncasecmp(tok, "afterburstbuffer:", 11))
 			depend_type = SLURM_DEPEND_BURST_BUFFER;
-		else if (xstrncasecmp(tok, "after", 5) == 0)
+		else if (!xstrncasecmp(tok, "after:", 6))
 			depend_type = SLURM_DEPEND_AFTER;
-		else if (xstrncasecmp(tok, "expand", 6) == 0) {
+		else if (!xstrncasecmp(tok, "expand:", 7)) {
 			if (!permit_job_expansion()) {
 				rc = ESLURM_NOT_SUPPORTED;
 				break;

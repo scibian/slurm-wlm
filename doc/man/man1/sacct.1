@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "April 2020" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "August 2020" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -188,15 +188,21 @@ Select jobs in any state before the specified time.  If states are
 given with the \-s option return jobs in this state before this period.
 See the \fBDEFAULT TIME WINDOW\fR for more details.
 
-Valid time formats are...
-.sp
-HH:MM[:SS] [AM|PM]
+Valid time formats are:
 .br
-MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
+HH:MM[:SS][AM|PM]
 .br
-MM/DD[/YY]\-HH:MM[:SS]
+MMDD[YY][\-HH:MM[:SS]]
+.br
+MM.DD[.YY][\-HH:MM[:SS]]
+.br
+MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+today, midnight, noon, fika (3 PM), teatime (4 PM)
+.br
+now
 .IP
 
 .TP
@@ -393,15 +399,21 @@ only jobs in this state at this time will be returned. If the '\-j' option is
 used, then the default time is Unix Epoch 0. See the \fBDEFAULT TIME WINDOW\fR
 for more details.
 
-Valid time formats are...
-.sp
-HH:MM[:SS] [AM|PM]
+Valid time formats are:
 .br
-MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
+HH:MM[:SS][AM|PM]
 .br
-MM/DD[/YY]\-HH:MM[:SS]
+MMDD[YY][\-HH:MM[:SS]]
+.br
+MM.DD[.YY][\-HH:MM[:SS]]
+.br
+MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+today, midnight, noon, fika (3 PM), teatime (4 PM)
+.br
+now
 
 .TP
 \f3\-T\fP\f3,\fP \f3\-\-truncate\fP
@@ -461,6 +473,9 @@ allowed in the \f2assoc_list\fP. Default is all associations\&.
 Only show statistics relevant to the job allocation itself, not taking steps
 into consideration.
 
+\fBNOTE\fR: Without including steps, utilization statistics for job
+allocation(s) will be reported as zero.
+
 .SS "Job Accounting Fields"
 The following describes each job accounting field:
 .RS
@@ -476,6 +491,9 @@ Count of allocated CPUs. Equivalent to \f3NCPUS\fP.
 \f3AllocGRES\fP
 Names and counts of generic resources allocated.
 
+NOTE: When a generic resource is configured with the no_consume flag,
+the allocation will be printed with a zero.
+
 .TP
 \f3AllocNodes\fP
 Number of nodes allocated to the job/step.  0 if the job is pending.
@@ -485,6 +503,9 @@ Number of nodes allocated to the job/step.  0 if the job is pending.
 Trackable resources. These are the resources allocated to the job/step
 after the job started running.  For pending jobs this should be blank.
 For more details see AccountingStorageTRES in slurm.conf.
+
+NOTE: When a generic resource is configured with the no_consume flag,
+the allocation will be printed with a zero.
 
 .TP
 \f3Account\fP
@@ -1194,10 +1215,6 @@ the time will be the job's start time. The end time will be the specified \-E
 option if the job ends after the specified time, otherwise it will be
 the jobs end time.
 
-NOTE: If no \-s (\-\-state) option is given sacct will
-display jobs that ran during the specified time, otherwise it returns
-jobs that were in the state requested during that period of time.
-
 Without \-T (normal operation) sacct output would be like this.
 .RS
 .PP
@@ -1231,7 +1248,43 @@ is useful when determining exact run times during any given period.
 4         2014\-07\-03T11:40:00   2014\-07\-03T11:45:21   COMPLETED
 5         2014\-07\-03T11:41:01   2014\-07\-03T12:00:00   RUNNING
 
+.ft 1
+.fi
+.RE
+.PP
+\fBNOTE\fR: If no \fB\-s\fR (\fB\-\-state\fR) option is given sacct will
+display eligible jobs during the specified period of time, otherwise it
+will return jobs that were in the state requested during that period of
+time.
 
+This example demonstrates the differences running sacct with and without
+the \fB\-\-state\fR flag for the same time period. Without the
+\fB\-\-state\fR option, all eligible jobs in that time period are shown.
+.RS
+.PP
+.nf
+.ft 3
+# sacct -S11:20:00 -E11:25:00 -X -ojobid,start,end,state
+       JobID               Start                 End      State
+------------ ------------------- ------------------- ----------
+2955                    11:15:12            11:20:12  COMPLETED
+2956                    11:20:13            11:25:13  COMPLETED
+.ft 1
+.fi
+.RE
+.PP
+With the \fB\-\-state=pending\fR option, only job 2956 will be shown because
+it had a dependency on 2955 and was still PENDING from 11:20:00 until it
+started at 11:21:13. Note that even though we requested PENDING jobs, the
+State shows as COMPLETED because that is the current State of the job.
+.RS
+.PP
+.nf
+.ft 3
+# sacct --state=pending -S11:20:00 -E11:25:00 -X -ojobid,start,end,state
+       JobID               Start                 End      State
+------------ ------------------- ------------------- ----------
+2956                    11:20:13            11:25:13  COMPLETED
 .ft 1
 .fi
 .RE

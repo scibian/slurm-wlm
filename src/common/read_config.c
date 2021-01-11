@@ -848,9 +848,6 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 				      "reset to 1", n->nodenames);
 				n->sockets = 1;
 			}
-			if (no_cpus) {		/* infer missing CPUs= */
-				n->cpus = n->sockets * n->cores * n->threads;
-			}
 		} else {
 			/* In this case Boards=# is used.
 			 * CPUs=# or Procs=# are ignored.
@@ -888,6 +885,11 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 				n->sockets = n->boards;
 			}
 		}
+
+		if (no_cpus) {		/* infer missing CPUs= */
+			n->cpus = n->sockets * n->cores * n->threads;
+		}
+
 		/* Node boards are factored into sockets */
 		if ((n->cpus != n->sockets) &&
 		    (n->cpus != n->sockets * n->cores) &&
@@ -3150,10 +3152,16 @@ static int _establish_config_source(char **config_file, int *memfd)
 	 * or the SLURM_CONF variable is set we will always respect those,
 	 * and leave s_p_parse_file() to see if it can actually load the file.
 	 */
-	if (*config_file)
+	if (*config_file) {
+		debug2("%s: using config_file=%s (provided)",
+		       __func__, *config_file);
 		return SLURM_SUCCESS;
-	if ((*config_file = xstrdup(getenv("SLURM_CONF"))))
+	}
+	if ((*config_file = xstrdup(getenv("SLURM_CONF")))) {
+		debug("%s: using config_file=%s (environment)",
+		      __func__, *config_file);
 		return SLURM_SUCCESS;
+	}
 
 	/*
 	 * Use default_slurm_config_file iff the file exists.
@@ -3164,6 +3172,8 @@ static int _establish_config_source(char **config_file, int *memfd)
 	 */
 	if (!stat(default_slurm_config_file, &stat_buf)) {
 		*config_file = xstrdup(default_slurm_config_file);
+		debug2("%s: using config_file=%s (default)",
+		       __func__, *config_file);
 		return SLURM_SUCCESS;
 	}
 
@@ -3173,6 +3183,8 @@ static int _establish_config_source(char **config_file, int *memfd)
 	 */
 	if (!stat("/run/slurm/conf/slurm.conf", &stat_buf)) {
 		*config_file = xstrdup("/run/slurm/conf/slurm.conf");
+		debug2("%s: using config_file=%s (cached)",
+		       __func__, *config_file);
 		return SLURM_SUCCESS;
 	}
 
@@ -3205,6 +3217,7 @@ static int _establish_config_source(char **config_file, int *memfd)
 					    config->topology_config,
 					    &topology_conf);
 	slurm_free_config_response_msg(config);
+	debug2("%s: using config_file=%s (fetched)", __func__, *config_file);
 
 	return SLURM_SUCCESS;
 }
@@ -3239,6 +3252,7 @@ slurm_conf_init(const char *file_name)
 		xfree(config_file);
 		return SLURM_ERROR;
 	}
+	debug("%s: using config_file=%s", __func__, config_file);
 
 	/*
 	 * Ensure this determination is propagated throughout. A number of
@@ -3270,9 +3284,11 @@ slurm_conf_init(const char *file_name)
 		local_test_config_rc = 1;
 	}
 
-	slurm_mutex_unlock(&conf_lock);
-	if (memfd != -1)
+	if (memfd != -1) {
+		unsetenv("SLURM_CONF");
 		close(memfd);
+	}
+	slurm_mutex_unlock(&conf_lock);
 	xfree(config_file);
 	return SLURM_SUCCESS;
 }
@@ -3535,6 +3551,7 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 			    "AcctGatherNodeFreq", hashtbl))
 		conf->acct_gather_node_freq = 0;
 
+	conf->conf_flags = 0;
 	if (s_p_get_boolean(&truth, "AllowSpecResourcesUsage", hashtbl)) {
 		if (truth)
 			conf->conf_flags |= CTL_CONF_ASRU;
@@ -3619,6 +3636,7 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 			 conf->cred_type = xstrdup(DEFAULT_CRED_TYPE);
 	}
 
+	conf->def_mem_per_cpu = 0;
 	if (s_p_get_uint64(&conf->def_mem_per_cpu, "DefMemPerCPU", hashtbl))
 		conf->def_mem_per_cpu |= MEM_PER_CPU;
 	else if (!s_p_get_uint64(&conf->def_mem_per_cpu, "DefMemPerNode",
@@ -3947,6 +3965,7 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 		}
 	}
 
+	conf->max_mem_per_cpu = 0;
 	if (s_p_get_uint64(&conf->max_mem_per_cpu,
 			   "MaxMemPerCPU", hashtbl)) {
 		conf->max_mem_per_cpu |= MEM_PER_CPU;
@@ -4850,6 +4869,7 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 	}
 #endif
 
+	conf->task_plugin_param = 0;
 	if (s_p_get_string(&temp_str, "TaskPluginParam", hashtbl)) {
 		char *last = NULL, *tok;
 		bool set_mode = false, set_unit = false, set_auto = false;

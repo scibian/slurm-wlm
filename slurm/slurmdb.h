@@ -694,7 +694,7 @@ struct slurmdb_cluster_rec {
 	uint32_t plugin_id_select; /* id of the select plugin */
 	slurmdb_assoc_rec_t *root_assoc; /* root assoc for
 						* cluster */
-	uint16_t rpc_version; /* version of rpc this cluter is running */
+	uint16_t rpc_version; /* rpc version this cluster is running */
 	List send_rpc;        /* For convenience only. DOESN'T GET PACKED */
 	char  	*tres_str;    /* comma separated list of TRES */
 };
@@ -888,7 +888,7 @@ typedef struct {
 				 * at one time */
 	uint32_t grp_submit_jobs; /* max number of jobs this qos can submit at
 				   * one time */
-	char *grp_tres;            /* max number of tres ths qos can
+	char *grp_tres;            /* max number of tres this qos can
 				    * allocate at one time */
 	uint64_t *grp_tres_ctld;   /* grp_tres broken out in an array
 				    * based off the ordering of the total

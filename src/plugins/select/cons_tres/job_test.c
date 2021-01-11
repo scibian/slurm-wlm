@@ -129,7 +129,11 @@ static int _node_weight_sort(void *x, void *y)
 {
 	node_weight_type *nwt1 = *(node_weight_type **) x;
 	node_weight_type *nwt2 = *(node_weight_type **) y;
-	return (int) (nwt1->weight - nwt2->weight);
+	if (nwt1->weight < nwt2->weight)
+		return -1;
+	if (nwt1->weight > nwt2->weight)
+		return 1;
+	return 0;
 }
 
 /*
@@ -323,6 +327,8 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 			      mc_ptr->cpus_per_task;
 		if (alloc_tasks < min_tasks_this_node)
 			max_tasks_this_node = 0;
+		else
+			max_tasks_this_node = alloc_tasks;
 	}
 
 	*avail_cpus = avail_res_array[node_inx]->avail_cpus;
@@ -1429,7 +1435,11 @@ static int _topo_weight_sort(void *x, void *y)
 {
 	topo_weight_info_t *nwt1 = *(topo_weight_info_t **) x;
 	topo_weight_info_t *nwt2 = *(topo_weight_info_t **) y;
-	return (int) (nwt1->weight - nwt2->weight);
+	if (nwt1->weight < nwt2->weight)
+		return -1;
+	if (nwt1->weight > nwt2->weight)
+		return 1;
+	return 0;
 }
 
 /*
@@ -2110,7 +2120,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	bool gres_per_job, sufficient = false;
 	uint16_t *avail_cpu_per_node = NULL;
 	time_t time_waiting = 0;
-	int leaf_switch_count = 0;
 	int top_switch_inx = -1;
 	int prev_rem_nodes;
 
@@ -2240,9 +2249,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 		if (req_nodes_bitmap &&
 		    bit_overlap_any(req_nodes_bitmap, switch_node_bitmap[i])) {
 			switch_required[i] = 1;
-			if (switch_record_table[i].level == 0) {
-				leaf_switch_count++;
-			}
 			if ((top_switch_inx == -1) ||
 			    (switch_record_table[i].level >
 			     switch_record_table[top_switch_inx].level)) {
@@ -2270,11 +2276,12 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	/*
 	 * Top switch is highest level switch containing all required nodes
 	 * OR all nodes of the lowest scheduling weight
-	 * OR -1 of can not identify top-level switch
+	 * OR -1 if can not identify top-level switch, which may be due to a
+	 * disjoint topology and available nodes living on different switches.
 	 */
 	if (top_switch_inx == -1) {
-		error("%s: %s: %pJ unable to identify top level switch",
-		       plugin_type, __func__, job_ptr);
+		log_flag(SELECT_TYPE, "%s: %s: %pJ unable to identify top level switch",
+			 plugin_type, __func__, job_ptr);
 		rc = SLURM_ERROR;
 		goto fini;
 	}
@@ -2438,9 +2445,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 			if (bit_overlap_any(req2_nodes_bitmap,
 					    switch_node_bitmap[i])) {
 				switch_required[i] = 1;
-				if (switch_record_table[i].level == 0) {
-					leaf_switch_count++;
-				}
 			}
 		}
 		bit_or(node_map, req2_nodes_bitmap);
@@ -2493,17 +2497,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 		}
 	}
 
-	/* Count up leaf switches. */
-	if (!req_nodes_bitmap) {
-		for (i = 0, switch_ptr = switch_record_table;
-		     i < switch_record_cnt; i++, switch_ptr++) {
-			if (switch_record_table[i].level != 0)
-				continue;
-			if (bit_overlap_any(switch_node_bitmap[i],
-					    best_nodes_bitmap))
-				leaf_switch_count++;
-		}
-	}
 
 	if (req_nodes_bitmap &&
 	    (!bit_super_set(req_nodes_bitmap, avail_nodes_bitmap))) {
@@ -2514,7 +2507,7 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	}
 
 	/* Add additional resources for already required leaf switches */
-	if (leaf_switch_count) {
+	if (req_nodes_bitmap || req2_nodes_bitmap) {
 		for (i = 0; i < switch_record_cnt; i++) {
 			if (!switch_required[i] || !switch_node_bitmap[i] ||
 			    (switch_record_table[i].level != 0))
@@ -2553,25 +2546,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 					goto fini;
 				}
 			}
-		}
-	}
-
-	if (job_ptr->req_switch > 0) {
-		if (time_waiting >= job_ptr->wait4switch) {
-			job_ptr->best_switch = true;
-			debug3("%pJ waited %ld sec for switches use=%d",
-				job_ptr, time_waiting, leaf_switch_count);
-		} else if (leaf_switch_count > job_ptr->req_switch) {
-			/*
-			 * Allocation is for more than requested number of
-			 * switches.
-			 */
-			job_ptr->best_switch = false;
-			debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
-				job_ptr, time_waiting, job_ptr->req_switch,
-				leaf_switch_count, job_ptr->wait4switch);
-		} else {
-			job_ptr->best_switch = true;
 		}
 	}
 
@@ -2642,7 +2616,37 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	}
 	rc = SLURM_ERROR;
 
-fini:	FREE_NULL_LIST(best_gres);
+fini:
+	if (job_ptr->req_switch > 0 && rc == SLURM_SUCCESS) {
+		int leaf_switch_count = 0;
+
+		/* Count up leaf switches. */
+		for (i = 0, switch_ptr = switch_record_table;
+		     i < switch_record_cnt; i++, switch_ptr++) {
+			if (switch_record_table[i].level != 0)
+				continue;
+			if (bit_overlap_any(switch_node_bitmap[i], node_map))
+				leaf_switch_count++;
+		}
+		if (time_waiting >= job_ptr->wait4switch) {
+			job_ptr->best_switch = true;
+			debug3("%pJ waited %ld sec for switches use=%d",
+				job_ptr, time_waiting, leaf_switch_count);
+		} else if (leaf_switch_count > job_ptr->req_switch) {
+			/*
+			 * Allocation is for more than requested number of
+			 * switches.
+			 */
+			job_ptr->best_switch = false;
+			debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
+				job_ptr, time_waiting, job_ptr->req_switch,
+				leaf_switch_count, job_ptr->wait4switch);
+		} else {
+			job_ptr->best_switch = true;
+		}
+	}
+
+	FREE_NULL_LIST(best_gres);
 	FREE_NULL_LIST(node_weight_list);
 	FREE_NULL_BITMAP(avail_nodes_bitmap);
 	FREE_NULL_BITMAP(req_nodes_bitmap);
@@ -3387,10 +3391,7 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 			(0xff - near_gpu_cnt);
 	}
 
-	for (i = 0; i < avail_res->sock_cnt; i++)
-		cpus += avail_res->avail_cores_per_sock[i];
-	cpus *= avail_res->vpus;
-	cpus -= avail_res->spec_threads;
+	cpus = avail_res->max_cpus;
 
 	if (cr_type & CR_MEMORY) {
 		/*

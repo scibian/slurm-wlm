@@ -2,11 +2,6 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validate scontrol update of MailType and MailUser
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "WARNING: ..." with an explanation of why the test can't be made, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2019, SchedMD, LLC.
 # Written by Gavin Howard <gavin@schedmd.com>
@@ -31,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set test_id          "2.27"
 set exit_code        0
 set job_id           0
 set node_cnt         1
@@ -39,31 +33,22 @@ set user             [get_my_user_name]
 
 set cwd "[$bin_pwd]"
 
-print_header $test_id
-
-if {[test_front_end]} {
-	log_warn "This test is incompatible with front-end systems"
-	exit $exit_code
+if {[get_config_param "FrontendName"] ne "MISSING"} {
+	skip "This test is incompatible with front-end systems"
 }
 
-set available [available_nodes $partition ""]
+set available [available_nodes]
 if {$available < $node_cnt} {
-	log_warn "not enough nodes currently available ($available avail, $node_cnt needed)"
-	exit $exit_code
+	skip "Not enough nodes currently available ($available avail, $node_cnt needed)"
 }
 
-proc end_it { exit_code } {
+proc cleanup { } {
 	global test_id job_id config_path cwd bin_cp
 	cancel_job $job_id
 
 	log_info "Changing slurm.conf back"
-	exec $bin_cp -v $cwd/slurm.conf.orig $config_path/slurm.conf
+	restore_conf $config_path/slurm.conf
 	reconfigure
-
-	if {$exit_code == 0} {
-		print_success $test_id
-	}
-	exit $exit_code
 }
 
 proc submit { args regex } {
@@ -78,8 +63,7 @@ proc submit { args regex } {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			end_it 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -87,8 +71,7 @@ proc submit { args regex } {
 	}
 
 	if {$jobid == 0} {
-		log_error "did not get sbatch jobid"
-		end_it 1
+		fail "Did not get sbatch jobid"
 	}
 
 	spawn $scontrol show job $jobid
@@ -98,8 +81,7 @@ proc submit { args regex } {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			end_it 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -107,8 +89,7 @@ proc submit { args regex } {
 	}
 
 	if {!$matches} {
-		log_error "scontrol show job $jobid failed to match '$regex'"
-		end_it 1
+		fail "scontrol show job $jobid failed to match '$regex'"
 	}
 
 	cancel_job $jobid
@@ -121,8 +102,7 @@ proc update { job_id args regex } {
 	spawn $scontrol update job $job_id {*}$args
 	expect {
 		timeout {
-			log_error "scontrol not responding"
-			end_it 1
+			fail "scontrol not responding"
 		}
 		eof {
 			wait
@@ -136,8 +116,7 @@ proc update { job_id args regex } {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding"
-			end_it 1
+			fail "scontrol not responding"
 		}
 		eof {
 			wait
@@ -145,20 +124,14 @@ proc update { job_id args regex } {
 	}
 
 	if {!$matches} {
-		log_error "scontrol update job $args failed to match '$regex'"
-		end_it 1
+		fail "scontrol update job $args failed to match '$regex'"
 	}
 }
 
 set config_path [get_conf_path]
-if { $exit_code != 0 } {
-	exit $exit_code
-}
+fail_on_error "Unable to determine configuration path"
 
-copy_conf $config_path $cwd
-if { $exit_code != 0 } {
-	exit $exit_code
-}
+save_conf $config_path/slurm.conf
 
 proc test_it {} {
 	global test_id sbatch job_id number user domain
@@ -168,9 +141,9 @@ proc test_it {} {
 		set domain_str "@$domain"
 	}
 
-	submit "-H" "MailUser=\\(null\\) MailType=NONE"
+	submit "-H" "MailUser=$user$domain_str MailType=NONE"
 	submit "-H --mail-type=begin,end" "MailUser=$user$domain_str MailType=BEGIN,END"
-	submit "-H --mail-user=blah" "MailUser=\\(null\\) MailType=NONE"
+	submit "-H --mail-user=blah" "MailUser=blah MailType=NONE"
 
 	spawn $sbatch -J "test$test_id" --wrap=hostname -H
 	expect {
@@ -179,8 +152,7 @@ proc test_it {} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			end_it 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -191,7 +163,15 @@ proc test_it {} {
 	update $job_id "mailuser= mailtype=begin,end" "MailUser=$user$domain_str MailType=BEGIN,END"
 	update $job_id "mailtype=begin" "MailUser=$user$domain_str MailType=BEGIN"
 	update $job_id "mailuser=blah mailtype=begin" "MailUser=blah MailType=BEGIN"
-	update $job_id "mailuser=blah mailtype=none" "MailUser=\\(null\\) MailType=NONE"
+	update $job_id "mailuser=blah mailtype=none" "MailUser=blah MailType=NONE"
+
+	update $job_id "mailtype=begin" "MailUser=blah MailType=BEGIN"
+	update $job_id "mailtype=none" "MailUser=blah MailType=NONE"
+	update $job_id "mailtype=END" "MailUser=blah MailType=END"
+
+	update $job_id "mailuser=" "MailUser=$user$domain_str MailType=END"
+	update $job_id "mailtype=BEGIN" "MailUser=$user$domain_str MailType=BEGIN"
+	update $job_id "mailuser=blah" "MailUser=blah MailType=BEGIN"
 
 	cancel_job $job_id
 }
@@ -211,6 +191,3 @@ MailDomain = $domain
 exec $bin_echo $mail_conf >> $config_path/slurm.conf
 reconfigure
 test_it
-
-end_it 0
-

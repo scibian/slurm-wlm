@@ -823,13 +823,15 @@ extern void gres_plugin_job_core_filter(List job_gres_list, List node_gres_list,
  * IN core_end_bit   - index into core_bitmap for this node's last core
  * IN job_id         - job's ID (for logging)
  * IN node_name      - name of the node (for logging)
+ * IN disable binding- --gres-flags=disable-binding
  * RET: NO_VAL    - All cores on node are available
  *      otherwise - Count of available cores
  */
 extern uint32_t gres_plugin_job_test(List job_gres_list, List node_gres_list,
 				     bool use_total_gres, bitstr_t *core_bitmap,
 				     int core_start_bit, int core_end_bit,
-				     uint32_t job_id, char *node_name);
+				     uint32_t job_id, char *node_name,
+				     bool disable_binding);
 
 /*
  * Determine how many cores on each socket of a node can be used by this job
@@ -1415,6 +1417,7 @@ extern char *gres_flags2str(uint8_t config_flags);
  */
 extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 			     int cpu_cnt, char *cpu_aff_abs_range,
-			     char *device_file, char *type, char *links);
+			     bitstr_t *cpu_aff_mac_bitstr, char *device_file,
+			     char *type, char *links);
 
 #endif /* !_GRES_H */

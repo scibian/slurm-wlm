@@ -1,4 +1,4 @@
-.TH squeue "1" "Slurm Commands" "March 2020" "Slurm Commands"
+.TH squeue "1" "Slurm Commands" "October 2020" "Slurm Commands"
 
 .SH "NAME"
 squeue \- view information about jobs located in the Slurm scheduling queue.
@@ -98,9 +98,9 @@ The license list consists of a comma separated list of license names.
 Equivalent to \fB\-\-user=<my username>\fR.
 
 .TP
-\fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
+\fB\-M\fR, \fB\-\-clusters=<cluster_name>\fR
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
-A value of of '\fIall\fR' will query to run on all clusters.
+A value of '\fIall\fR' will query to run on all clusters.
 This option implicitly sets the \fB\-\-local\fR option.
 
 .TP
@@ -120,12 +120,12 @@ Specify the information to be displayed, its size and position
 Also see the \fB\-O <output_format>\fR, \fB\-\-Format=<output_format>\fR
 option described below (which supports less flexibility in formatting, but
 supports access to all fields).
-If the command is executed in an federated cluster environment and information
+If the command is executed in a federated cluster environment and information
 about more than one cluster is to be displayed and the \fB\-h, \-\-noheader\fR
 option is used, then the cluster name will be displayed before the default
 output formats shown below.
-The default formats with various options are
 
+The default formats with various options are:
 .RS
 .TP 15
 \fIdefault\fR
@@ -139,16 +139,19 @@ The default formats with various options are
 .RE
 
 .IP
-The format of each field is "%[[.]size]type".
-.RS
-.TP 8
-\fIsize\fR
-is the minimum field size.
-If no size is specified, whatever is needed to print the information will be used.
+The format of each field is "%[[.]size]type[suffix]"
+.RS 10
 .TP
-\fI .\fR
-indicates the output should be right justified and size must be specified.
-By default, output is left justified.
+\fIsize\fR
+Minimum field size. If no size is specified, whatever is needed to print the
+information will be used.
+.TP
+\fI.\fR
+Indicates the output should be right justified and size must be specified.
+By default output is left justified.
+.TP
+\fIsuffix\fR
+Arbitrary string to append to the end of the field.
 .RE
 
 .IP
@@ -449,16 +452,19 @@ does not support access to all fields because we ran out of letters).
 Requests a comma separated list of job information to be displayed.
 
 .IP
-The format of each field is "type[:[.]size]"
-.RS
-.TP 8
-\fIsize\fR
-is the minimum field size.
-If no size is specified, 20 characters will be allocated to print the information.
+The format of each field is "type[:[.][size][sufix]]"
+.RS 10
 .TP
-\fI .\fR
-indicates the output should be right justified and size must be specified.
-By default, output is left justified.
+\fIsize\fR
+Minimum field size. If no size is specified, 20 characters will be allocated
+to print the information.
+.TP
+\fI.\fR
+Indicates the output should be right justified and size must be specified.
+By default output is left justified.
+.TP
+\fIsufix\fR
+Arbitrary string to append to the end of the field.
 .RE
 
 .IP
@@ -715,7 +721,7 @@ The number of tasks per core allocated to the job.
 (Valid for jobs only)
 .TP
 \fBNTPerNode\fR
-The number of task per node allocated to the job.
+The number of tasks per node allocated to the job.
 (Valid for jobs only)
 .TP
 \fBNTPerSocket\fR
@@ -1042,7 +1048,7 @@ Specify the qos(s) of the jobs or steps to view. Accepts a comma
 separated list of qos's.
 
 .TP
-\fB\-R\fR, \fB\-\-reservation\fR=\fIreservation_name\fR
+\fB\-R\fR, \fB\-\-reservation=<reservation_name>\fR
 Specify the reservation of the jobs to view.
 
 .TP

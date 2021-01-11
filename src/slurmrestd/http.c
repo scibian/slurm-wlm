@@ -122,6 +122,20 @@ static void _reinit_request_t(request_t *request, bool create)
 		request->headers = NULL;
 }
 
+static void _http_parser_url_init(struct http_parser_url *url)
+{
+#if (HTTP_PARSER_VERSION_MAJOR == 2 && HTTP_PARSER_VERSION_MINOR >= 6) || \
+	(HTTP_PARSER_VERSION_MAJOR > 2)
+	http_parser_url_init(url);
+#else
+	/*
+	 * Explicit init was only added with 2.6.0
+	 * https://github.com/nodejs/http-parser/pull/225
+	 */
+	memset(url, 0, sizeof(*url));
+#endif
+}
+
 static void _free_request_t(request_t *request)
 {
 	_reinit_request_t(request, false);
@@ -140,7 +154,7 @@ static int _on_url(http_parser *parser, const char *at, size_t length)
 	request_t *request = parser->data;
 	xassert(request->path == NULL);
 
-	http_parser_url_init(&url);
+	_http_parser_url_init(&url);
 
 	if (http_parser_parse_url(at, length, false, &url)) {
 		if (strnlen(at, length) == length)
@@ -242,10 +256,10 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 			return 1;
 		}
 	} else if (!xstrcasecmp(buffer->name, "Content-Type")) {
-		xassert(request->content_type == NULL);
+		xfree(request->content_type);
 		request->content_type = xstrdup(buffer->value);
 	} else if (!xstrcasecmp(buffer->name, "Accept")) {
-		xassert(request->accept == NULL);
+		xfree(request->accept);
 		request->accept = xstrdup(buffer->value);
 	}
 
@@ -408,7 +422,7 @@ extern int send_http_response(const send_http_response_args_t *args)
 			return rc;
 		if (args->body_encoding &&
 		    (rc = _write_fmt_header(
-			     args->con, "Content-Type:", args->body_encoding)))
+			     args->con, "Content-Type", args->body_encoding)))
 			return rc;
 
 		if ((rc = con_mgr_queue_write_fd(args->con, CRLF,
@@ -629,7 +643,9 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		xassert(request->context == context);
 	request->context = context;
 
-	rest_auth_context_apply(context->auth);
+	/* make sure there is no auth context inherited */
+	rest_auth_context_clear();
+
 	parser->data = request;
 
 	debug("%s: [%s] Accepted HTTP connection", __func__, con->name);
@@ -669,7 +685,7 @@ extern parsed_host_port_t *parse_host_port(const char *str)
 		return NULL;
 	}
 
-	http_parser_url_init(&url);
+	_http_parser_url_init(&url);
 
 	if (http_parser_parse_url(str, strlen(str), true, &url)) {
 		error("%s: invalid host string: %s", __func__, str);

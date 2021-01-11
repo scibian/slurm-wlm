@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "April 2020" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "October 2020" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -55,33 +55,37 @@ Only used with systems using SlurmDBD, ignored otherwise.
 \fBAccountingStorageEnforce\fR
 This controls what level of association\-based enforcement to impose
 on job submissions.  Valid options are any combination of
-\fIassociations\fR, \fIlimits\fR, \fInojobs\fR, \fInosteps\fR, \fIqos\fR, \fIsafe\fR, and \fIwckeys\fR, or
-\fIall\fR for all things (expect nojobs and nosteps, they must be requested as well).
+\fIassociations\fR, \fIlimits\fR, \fInojobs\fR, \fInosteps\fR, \fIqos\fR,
+\fIsafe\fR, and \fIwckeys\fR, or \fIall\fR for all things (except nojobs
+and nosteps, which must be requested as well).
 
-If limits, qos, or wckeys are set, associations will automatically be set.
+If \fIlimits\fR, \fIqos\fR, or \fIwckeys\fR are set, \fIassociations\fR
+will automatically be set.
 
-If wckeys is set, TrackWCKey will automatically be set.
+If \fIwckeys\fR is set, \fBTrackWCKey\fR will automatically be set.
 
-If safe is set, limits and associations will automatically be set.
+If \fIsafe\fR is set, \fIlimits\fR and \fIassociations\fR will
+automatically be set.
 
-If nojobs is set nosteps will automatically be set.
+If \fInojobs\fR is set, \fInosteps\fR will automatically be set.
 
-By enforcing Associations no new job is allowed to run unless a corresponding
-association exists in the system.  If limits are enforced users can be
-limited by association to whatever job size or run time limits are defined.
+By setting \fIassociations\fR, no new job is allowed to run unless a
+corresponding association exists in the system.  If \fIlimits\fR are
+enforced, users can be limited by association to whatever job size or run
+time limits are defined.
 
-If nojobs is set Slurm will not account for any jobs or steps on the system,
-like wise if nosteps is set Slurm will not account for any steps ran limits
-will still be enforced.
+If \fInojobs\fR is set, Slurm will not account for any jobs or steps on the
+system. Likewise, if \fInosteps\fR is set, Slurm will not account for any
+steps that have run.
 
-If safe is enforced, a job will only be launched against an association or qos
-that has a GrpTRESMins limit set if the job will be able to run to completion.
-Without this option set, jobs will be launched as long as their usage
-hasn't reached the cpu-minutes limit which can lead to jobs being
+If \fIsafe\fR is enforced, a job will only be launched against an association
+or qos that has a \fBGrpTRESMins\fR limit set, if the job will be able to
+run to completion. Without this option set, jobs will be launched as long as
+their usage hasn't reached the cpu-minutes limit. This can lead to jobs being
 launched but then killed when the limit is reached.
 
-With qos and/or wckeys enforced jobs will not be scheduled unless a valid qos
-and/or workload characterization key is specified.
+With \fIqos\fR and/or \fIwckeys\fR enforced jobs will not be scheduled unless
+a valid qos and/or workload characterization key is specified.
 
 When \fBAccountingStorageEnforce\fR is changed, a restart of the slurmctld
 daemon is required (not just a "scontrol reconfig").
@@ -373,11 +377,11 @@ the value of \fBAuthType\fR and later restarted.
 
 .TP
 \fBBackupAddr\fR
-Defunct option, see \fBSlurmctldHost\fR.
+Deprecated option, see \fBSlurmctldHost\fR.
 
 .TP
 \fBBackupController\fR
-Defunct option, see \fBSlurmctldHost\fR.
+Deprecated option, see \fBSlurmctldHost\fR.
 
 The backup controller recovers state information from the
 \fBStateSaveLocation\fR directory, which must be readable and writable from both
@@ -407,7 +411,7 @@ This configuration parameter is also applied to launch tasks and avoid aborting
 The plugin used to manage burst buffers. Acceptable values at present are:
 .RS
 .TP
-\fBburst_buffer/datawrap\fR
+\fBburst_buffer/datawarp\fR
 Use Cray DataWarp API to provide burst buffer functionality.
 .TP
 \fBburst_buffer/none\fR
@@ -459,8 +463,9 @@ This option is for all daemons/clients except for the slurmctld.
 
 .TP
 \fBCompleteWait\fR
-The time, in seconds, given for a job to remain in COMPLETING state
-before any additional jobs are scheduled.
+The time to wait, in seconds, when any job is in the COMPLETING state
+before any additional jobs are scheduled. This is to attempt to keep jobs on
+nodes that were recently in use, with the goal of preventing fragmentation.
 If set to zero, pending jobs will be started as soon as possible.
 Since a COMPLETING job's resources are released for use by other
 jobs as soon as the \fBEpilog\fR completes on each individual node,
@@ -473,13 +478,16 @@ In that case, setting \fBKillWait\fR to a small value may be beneficial.
 The default value of \fBCompleteWait\fR is zero seconds.
 The value may not exceed 65533.
 
+\fBNOTE\fR: Setting \fBreduce_completing_frag\fR affects the behavior
+of \fBCompleteWait\fR.
+
 .TP
 \fBControlAddr\fR
-Defunct option, see \fBSlurmctldHost\fR.
+Deprecated option, see \fBSlurmctldHost\fR.
 
 .TP
 \fBControlMachine\fR
-Defunct option, see \fBSlurmctldHost\fR.
+Deprecated option, see \fBSlurmctldHost\fR.
 
 .TP
 \fBCoreSpecPlugin\fR
@@ -626,7 +634,7 @@ Network details
 Node Features plugin debug info
 .TP
 \fBNO_CONF_HASH\fR
-Do not log when the slurm.conf files differs between Slurm daemons
+Do not log when the slurm.conf files differ between Slurm daemons
 .TP
 \fBPower\fR
 Power management plugin
@@ -1130,14 +1138,18 @@ Use PSS value instead of RSS to calculate real usage of memory.
 The PSS value will be saved as RSS.
 .TP
 \fBOverMemoryKill\fR
-Kill jobs or steps that are being detected to use more memory than requested
-every time accounting information is gathered by the JobAcctGather plugin.
+Kill processes that are being detected to use more memory than requested by
+steps every time accounting information is gathered by the JobAcctGather plugin.
 This parameter should be used with caution because a job exceeding its memory
 allocation may affect other processes and/or machine health.
-NOTE: If available, it is recommended to limit memory by enabling task/cgroup
-in TaskPlugin and making use of ConstrainRAMSpace=yes cgroup.conf instead
-of using this JobAcctGather mechanism for memory enforcement, since the former
-has a lower resolution (JobAcctGatherFreq) and OOMs could happen at some point.
+
+\fBNOTE\fR: If available, it is recommended to limit memory by enabling
+task/cgroup as a TaskPlugin and making use of ConstrainRAMSpace=yes in the
+cgroup.conf instead of using this JobAcctGather mechanism for memory
+enforcement. With OverMemoryKill, memory limit is applied against each process
+individually and is not applied to the step as a whole as it is with
+ConstrainRAMSpace=yes. Using JobAcctGather is polling based and there is a
+delay before a job is killed, which could lead to system Out of Memory events.
 .RE
 
 .TP
@@ -1155,7 +1167,9 @@ database, or an url with format http://yourelasticserver:port when
 \fBJobCompType\fR is "jobcomp/elasticsearch".
 NOTE: when you specify a URL for Elasticsearch, Slurm will remove any trailing
 slashes "/" from the configured URL and append "/slurm/jobcomp", which are the
-Elasticsearch index name (slurm) and mapping (jobcomp).
+Elasticsearch index name type respectively. Since Elasticsearch 8.0 the APIs
+that accept types are removed. Future versions of Slurm will allow this option
+to specify a fully configured URL endpoint.
 NOTE: More information is available at the Slurm web site
 ( https://slurm.schedmd.com/elasticsearch.html ).
 Also see \fBDefaultStorageLoc\fR.
@@ -1421,9 +1435,11 @@ The default value is 1001.
 
 .TP
 \fBMaxDBDMsgs\fR
-When communication to the SlurmDBD is not possible the slurmctld will queue messages meant to processed when the the SlurmDBD is available again.
-In order to avoid running out of memory the slurmctld will only queue so many messages.
-The default value is 10000, or \fBMaxJobCount\fR * 2 + Node Count * 4, whichever is greater.  The value can not be less than 10000.
+When communication to the SlurmDBD is not possible the slurmctld will queue
+messages meant to processed when the SlurmDBD is available again.
+In order to avoid running out of memory the slurmctld will only queue so many
+messages. The default value is 10000, or \fBMaxJobCount\fR * 2 + Node Count
+* 4, whichever is greater.  The value can not be less than 10000.
 
 .TP
 \fBMaxJobCount\fR
@@ -1568,67 +1584,6 @@ communication ports to be used.
 NOTE: This is not needed for modern versions of OpenMPI, taking it out can cause
 a small boost in scheduling performance.
 NOTE: This is require for Cray's PMI.
-.TP
-\fBMsgAggregationParams\fR
-Message aggregation parameters. Message aggregation
-is an optional feature that may improve system performance by reducing
-the number of separate messages passed between nodes. The feature
-works by routing messages through one or more message collector
-nodes between their source and destination nodes. At each
-collector node, messages with the same destination received
-during a defined message collection window are packaged into a single
-composite message. When the window expires, the composite message
-is sent to the next collector node on
-the route to its destination. The route between each source
-and destination node is provided by the Route plugin. When a
-composite message is received at its destination node, the
-original messages are extracted and processed as if they
-had been sent directly.
-.br
-.br
-Currently, the only message types supported by message
-aggregation are the node registration, batch script completion,
-step completion, and epilog complete messages.
-.br
-.br
-Since the aggregation node address is set resolving the hostname at slurmd
-start in each node, using this feature in non-flat networks is not possible.
-For example, if slurmctld is in a different subnetwork than compute
-nodes and node addresses are resolved differently the controller than in the
-compute nodes, you may face communication issues. In some cases it may be
-useful to set CommunicationParameters=NoInAddrAny to make all daemons
-communicate through the same network.
-.br
-.br
-The format for this parameter is as follows:
-.RE
-.RS
-.TP 12
-\fBMsgAggregationParams=\fR\fI<option>\fR\fB=\fR\fI<value>\fR
-where \fI<option>\fR=\fI<value>\fR specify a particular control
-variable. Multiple, comma-separated \fI<option>\fR=\fI<value>\fR
-pairs may be specified. Supported options are as follows:
-.br
-.RS
-.TP
-\fBWindowMsgs=\fI<number>\fR
-where \fI<number>\fR is the maximum number of messages
-in each message collection window.
-.TP
-\fBWindowTime=\fI<time>\fR
-where \fI<time>\fR is the maximum elapsed time in milliseconds of
-each message collection window.
-.br
-.br
-.TP
-.RE
-.RE
-A window expires when either \fBWindowMsgs\fR or \fBWindowTime\fR is
-reached. By default, message aggregation is disabled. To enable
-the feature, set \fBWindowMsgs\fR to a value greater than 1. The
-default value for \fBWindowTime\fR is 100 milliseconds.
-.RE
-.RE
 
 .TP
 \fBOverTimeLimit\fR
@@ -1643,7 +1598,7 @@ Adding the \fBOverTimeLimit\fR value to the \fIsoft\fR time limit provides a
 This is particularly useful for backfill scheduling, which bases upon
 each job's soft time limit.
 The default value is zero.
-May not exceed exceed 65533 minutes.
+May not exceed 65533 minutes.
 A value of "UNLIMITED" is also supported.
 
 .TP
@@ -1777,7 +1732,7 @@ By default, no power plugin is loaded.
 
 .TP
 \fBPreemptMode\fR
-Mechanism used to preempt jobs or enable gang scheudling. When the
+Mechanism used to preempt jobs or enable gang scheduling. When the
 \fBPreemptType\fR parameter is set to enable preemption, the
 \fBPreemptMode\fR selects the default mechanism used to preempt the eligible
 jobs for the cluster.
@@ -1816,7 +1771,9 @@ warning signal for each component of the heterogeneous job remain unique.
 .TP 12
 \fBOFF\fR
 Is the default value and disables job preemption and gang scheduling.
-It is only compatible with \fBPreemptType=preempt/none\fR.
+It is only compatible with \fBPreemptType=preempt/none\fR at a global level.
+A common use case for this parameter is to set it on a partition to disable
+preemption for that partition.
 .TP
 \fBCANCEL\fR
 The preempted job will be cancelled.
@@ -2069,6 +2026,7 @@ Cleared on the first day of each year at time 00:00.
 An integer value that sets the degree to which the queue wait time
 component contributes to the job's priority.
 Applicable only if PriorityType=priority/multifactor.
+Requires AccountingStorageType=accounting_storage/slurmdbd.
 The default value is 0.
 
 .TP
@@ -2083,6 +2041,7 @@ The default value is 0.
 An integer value that sets the degree to which the fair-share
 component contributes to the job's priority.
 Applicable only if PriorityType=priority/multifactor.
+Requires AccountingStorageType=accounting_storage/slurmdbd.
 The default value is 0.
 
 .TP
@@ -2184,19 +2143,23 @@ NOTE: The \fBJobContainerType\fR applies to a job allocation, while
 \fBProctrackType\fR applies to job steps.
 Acceptable values at present include:
 .RS
-.TP 20
+.TP
 \fBproctrack/cgroup\fR
-which uses linux cgroups to constrain and track processes, and is the default.
-NOTE: see "man cgroup.conf" for configuration details
+Uses linux cgroups to constrain and track processes, and is the default
+for systems with cgroup support.
+.br
+\fBNOTE\fR: see "man cgroup.conf" for configuration details.
 .TP
 \fBproctrack/cray_aries\fR
-which uses Cray proprietary process tracking
+Uses Cray proprietary process tracking.
 .TP
 \fBproctrack/linuxproc\fR
-which uses linux process tree using parent process IDs.
+Uses linux process tree using parent process IDs.
 .TP
 \fBproctrack/pgid\fR
-which uses process group IDs
+Uses Process Group IDs.
+.br
+\fBNOTE\fR: This is the default for the BSD family.
 .RE
 
 .TP
@@ -2393,7 +2356,7 @@ See \fBPropagateResourceLimits\fR above for a list of valid limit names.
 .TP
 \fBRebootProgram\fR
 Program to be executed on each compute node to reboot it. Invoked on each node
-once it becomes idle after the command "scontrol reboot_nodes" is executed by
+once it becomes idle after the command "scontrol reboot" is executed by
 an authorized user or a job is submitted with the "\-\-reboot" option.
 After rebooting, the node is returned to normal use.
 See \fBResumeTimeout\fR to configure the time you expect a reboot to finish in.
@@ -2604,10 +2567,17 @@ them with the job step's allocation information).
 For systems with generic resources (GRES) defined, the \fBSallocDefaultCommand\fR
 value should explicitly specify a zero count for the configured GRES.
 Failure to do so will result in the launched shell consuming those GRES and
-preventing subsequent srun commands from using them.
-For example, on Cray systems add "\-\-gres=craynetwork:0" as shown below:
+preventing subsequent srun commands from using them, you can achieve that by:
 .nf
-    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-gres=craynetwork:0 \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
+    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-gres=NONE \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
+.fi
+
+For systems configured with \fBSelectPlugin=cons_tres\fR GPU resources may be
+requested on a per job, socket, task or node basis. To make sure that none
+is used when the \fBSallocDefaultCommand\fR requests job resources, you
+need to use a command like:
+.nf
+    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-gres=NONE \-\-gpus=0 \-\-gpus-per-socket=0 \-\-gpus\-per\-task=0 \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
 .fi
 
 For systems with TaskPlugin set, adding an option of "\-\-cpu\-bind=no" is
@@ -2878,7 +2848,8 @@ each pair, but only starting the job in the reservation offering the earliest
 start time.
 Having a single job reserving resources for multiple partitions could impede
 other jobs (or hetjob components) from reserving resources already reserved for
-the reservations related to the paris that don't offer the earliest start time.
+the reservations related to the partitions that don't offer the earliest start
+time.
 This option makes it so that a job submitted to multiple partitions will stop
 reserving resources once the first (job, partition) pair has booked a backfill
 reservation. Subsequent pairs from the same job will only be tested to start
@@ -2982,11 +2953,6 @@ nodes which already have the specified features.
 The argument is in units of minutes.
 Individual jobs may override this default value with the \fB\-\-delay\-boot\fR
 option.
-.TP
-\fBdefault_gbytes\fR
-The default units in job submission memory and temporary disk size specification
-will be gigabytes rather than megabytes.
-Users can override the default by using a suffix of "M" for megabytes.
 .TP
 \fBdisable_job_shrink\fR
 Deny user requests to shrink the side of running jobs. (However, running jobs
@@ -3129,15 +3095,20 @@ preempt/partition_prio or preempt/qos plugins.)
 .TP
 \fBreduce_completing_frag\fR
 This option is used to control how scheduling of resources is performed when
-jobs are in completing state, which influences potential fragmentation.
-If the option is not set then no jobs will be started in any partition when
-any job is in completing state.
-If the option is set then no jobs will be started in any individual partition
-that has a job in completing state.
+jobs are in the COMPLETING state, which influences potential fragmentation.
+If this option is not set then no jobs will be started in any partition when
+any job is in the COMPLETING state for less than \fBCompleteWait\fR seconds.
+If this option is set then no jobs will be started in any individual partition
+that has a job in COMPLETING state for less than \fBCompleteWait\fR seconds.
 In addition, no jobs will be started in any partition with nodes that overlap
 with any nodes in the partition of the completing job.
 This option is to be used in conjunction with \fBCompleteWait\fR.
-NOTE: \fBCompleteWait\fR must be set for this to work.
+
+\fBNOTE\fR: \fBCompleteWait\fR must be set in order for this to work. If
+\fBCompleteWait=0\fR then this option does nothing.
+
+\fBNOTE\fR: \fBreduce_completing_frag\fR only affects the main scheduler, not
+the backfill scheduler.
 .TP
 \fBrequeue_setup_env_fail\fR
 By default if a job environment setup fails the job keeps running with
@@ -3335,7 +3306,7 @@ resource allocation.
 The node's \fBBoards\fR, \fBSockets\fR, \fBCoresPerSocket\fR and
 \fBThreadsPerCore\fR may optionally be configured and result in job
 allocations which have improved locality; however doing so will prevent
-more than one job being from being allocated on each core.
+more than one job from being allocated on each core.
 .TP
 \fBCR_CPU_Memory\fR
 CPUs and memory are consumable resources.
@@ -3345,7 +3316,7 @@ resource allocation.
 The node's \fBBoards\fR, \fBSockets\fR, \fBCoresPerSocket\fR and
 \fBThreadsPerCore\fR may optionally be configured and result in job
 allocations which have improved locality; however doing so will prevent
-more than one job being from being allocated on each core.
+more than one job from being allocated on each core.
 Setting a value for \fBDefMemPerCPU\fR is strongly recommended.
 .TP
 \fBCR_Core\fR
@@ -3519,9 +3490,9 @@ The short, or long, hostname of the machine where Slurm control daemon is
 executed (i.e. the name returned by the command "hostname \-s").
 This hostname is optionally followed by the address, either the IP address or
 a name by which the address can be identifed, enclosed in parentheses (e.g.
-SlurmctldHost=master1(12.34.56.78)). This value must be specified at least once.
-If specified more than once, the first hostname named will be where the daemon
-runs.
+SlurmctldHost=slurmctl-primary(12.34.56.78)). This value must be specified at
+least once. If specified more than once, the first hostname named will be
+where the daemon runs.
 If the first specified host fails, the daemon will execute on the second host.
 If both the first and second specified host fails, the daemon will execute on
 the third host.
@@ -3562,9 +3533,10 @@ be automatically pushed out and applied to nodes that are running in this
 "configless" mode.
 NOTE: a restart of the slurmctld is required for this to take effect.
 .TP
-\fBidle_on_node_suspend\fR Mark nodes as idle, regardless of current state,
-when suspending nodes with \fISuspendProgram\fB so that nodes will be eligible
-to be resumed at a later time.
+\fBidle_on_node_suspend\fR
+Mark nodes as idle, regardless of current state, when suspending nodes with
+\fISuspendProgram\fB so that nodes will be eligible to be resumed at a later
+time.
 .TP
 \fBmax_dbd_msg_action\fR
 Action used once MaxDBDMsgs is reached, options are 'discard' (default) and 'exit'.
@@ -3582,14 +3554,15 @@ slurmctld with this option where the slurmdbd is down and the slurmctld is
 tracking more than MaxDBDMsgs.
 
 .TP
-\fBpreempt_send_user_signal\fR Send the user signal (e.g. --signal=<sig_num>)
-at preemption time even if the signal time hasn't been reached. In the case of
-a gracetime preemption the user signal will be sent if the user signal has been
-specified and not sent, otherwise a SIGTERM will be sent to the tasks.
+\fBpreempt_send_user_signal\fR
+Send the user signal (e.g. --signal=<sig_num>) at preemption time even if the
+signal time hasn't been reached. In the case of a gracetime preemption the user
+signal will be sent if the user signal has been specified and not sent,
+otherwise a SIGTERM will be sent to the tasks.
 .TP
-\fBreboot_from_controller\fR Run the \fBRebootProgram\fR from the controller
-instead of on the slurmds. The RebootProgram will be passed a comma-separated
-list of nodes to reboot.
+\fBreboot_from_controller\fR
+Run the \fBRebootProgram\fR from the controller instead of on the slurmds. The
+RebootProgram will be passed a comma-separated list of nodes to reboot.
 .RE
 
 .TP
@@ -4024,11 +3997,8 @@ list. The prefix of "task/" is optional. Acceptable values include:
 .RS
 .TP 15
 \fBtask/affinity\fR
-enables resource containment using CPUSETs.
+enables resource containment using sched_setaffinity().
 This enables the \-\-cpu\-bind and/or \-\-mem\-bind srun options.
-If you use "task/affinity" and encounter problems, it may be due to
-the variety of system calls used to implement task affinity on
-different operating systems.
 .TP
 \fBtask/cgroup\fR
 enables resource containment using Linux control cgroups.
@@ -4066,10 +4036,6 @@ in the \fBsrun\fR command.
 \fBNone\fR, \fBBoards\fR, \fBSockets\fR, \fBCores\fR and \fBThreads\fR are mutually
 exclusive and since they decrease scheduling flexibility are not generally
 recommended (select no more than one of them).
-\fBCpusets\fR and \fBSched\fR
-are mutually exclusive (select only one of them).
-All TaskPluginParam options are supported on FreeBSD except \fBCpusets\fR.
-The \fBSched\fR option uses cpuset_setaffinity() on FreeBSD, not sched_setaffinity().
 
 .RS
 .TP 10
@@ -4081,17 +4047,9 @@ Overrides automatic binding.
 Bind tasks to cores by default.
 Overrides automatic binding.
 .TP
-\fBCpusets\fR
-Use cpusets to perform task affinity functions.
-By default, \fBSched\fR task binding is performed.
-.TP
 \fBNone\fR
 Perform no task binding by default.
 Overrides automatic binding.
-.TP
-\fBSched\fR
-Use \fIsched_setaffinity\fR (if available) to bind tasks to
-processors.
 .TP
 \fBSockets\fR
 Bind to sockets by default.
@@ -4196,7 +4154,7 @@ Only optimize allocation for network topology if the job includes a switch
 option. Since optimizing resource allocation for topology involves much higher
 system overhead, this option can be used to impose the extra overhead only on
 jobs which can take advantage of it. If most job allocations are not optimized
-for network topology, they make fragment resources to the point that topology
+for network topology, they may fragment resources to the point that topology
 optimization for other jobs will be difficult to achieve.
 \fBNOTE\fR: Jobs may span across nodes without common parent switches with
 this enabled.
@@ -4546,8 +4504,10 @@ The optional type field might be used to identify a model of that generic
 resource.
 It is forbidden to specify both an untyped GRES and a typed GRES with the same
 <name>.
-A generic resource can also be specified as non\-consumable (i.e. multiple
-jobs can use the same generic resource) with the optional field ":no_consume".
+The optional no_consume field allows you to specify that a
+generic resource does not have a finite number of that resource that gets
+consumed as it is requested. The no_consume field is a GRES specific setting
+and applies to the GRES, regardless of the type specified.
 The final field must specify a generic resources count.
 A suffix of "K", "M", "G", "T" or "P" may be used to multiply the number by
 1024, 1048576, 1073741824, etc. respectively.
@@ -5214,13 +5174,13 @@ The default value is "NO".
 For more information see the following web pages:
 .br
 .na
-\fIhttps://slurm.schedmd.com/cons_res.html\fR,
+\fIhttps://slurm.schedmd.com/cons_res.html\fR
 .br
-\fIhttps://slurm.schedmd.com/cons_res_share.html\fR,
+\fIhttps://slurm.schedmd.com/cons_res_share.html\fR
 .br
-\fIhttps://slurm.schedmd.com/gang_scheduling.html\fR, and
+\fIhttps://slurm.schedmd.com/gang_scheduling.html\fR
 .br
-\fIhttps://slurm.schedmd.com/preempt.html\fR.
+\fIhttps://slurm.schedmd.com/preempt.html\fR
 .ad
 
 .RS
@@ -5228,7 +5188,7 @@ For more information see the following web pages:
 \fBEXCLUSIVE\fR
 Allocates entire nodes to jobs even with \fBSelectType=select/cons_res\fR or
 \fBSelectType=select/cons_tres\fR configured.
-Jobs that run in partitions with "OverSubscribe=EXCLUSIVE" will have
+Jobs that run in partitions with \fBOverSubscribe=EXCLUSIVE\fR will have
 exclusive access to all allocated nodes.
 .TP
 \fBFORCE\fR
@@ -5236,18 +5196,20 @@ Makes all resources in the partition available for oversubscription without
 any means for users to disable it.
 May be followed with a colon and maximum number of jobs in
 running or suspended state.
-For example "OverSubscribe=FORCE:4" enables each node, socket or
+For example \fBOverSubscribe=FORCE:4\fR enables each node, socket or
 core to oversubscribe each resource four ways.
-Recommended only for systems running with gang scheduling
-(\fBPreemptMode=suspend,gang\fR).
+Recommended only for systems using \fBPreemptMode=suspend,gang\fR.
 
-NOTE: \fIPreemptType=preempt/qos\fR will permit one additional job to be run
-on the partition if started due to job preemption. For example, a configuration
-of \fIOverSubscribe=FORCE:1\fR will only permit one job per resources normally,
-but a second job can be started if done so through preemption based upon QOS.
-The use of \fIPreemptType=preempt/qos\fR and \fIPreemptMode=SUSPEND\fR only
-applies with \fBSelectType=select/cons_res\fR or
-\fBSelectType=select/cons_tres\fR.
+\fBNOTE\fR: \fBOverSubscribe=FORCE:1\fR is a special case that is not exactly
+equivalent to \fBOverSubscribe=NO\fR. \fBOverSubscribe=FORCE:1\fR disables
+the regular oversubscription of resources in the same partition but it will
+still allow oversubscription due to preemption. Setting \fBOverSubscribe=NO\fR
+will prevent oversubscription from happening due to preemption as well.
+
+\fBNOTE\fR: If using \fBPreemptType=preempt/qos\fR you can specify a value for
+\fBFORCE\fR that is greater than 1. For example, \fBOverSubscribe=FORCE:2\fR
+will permit two jobs per resource normally, but a third job can be started
+only if done so through preemption based upon QOS.
 .TP
 \fBYES\fR
 Makes all resources in the partition available for sharing upon request by
@@ -5264,6 +5226,11 @@ Recommended only for systems running with gang scheduling
 \fBNO\fR
 Selected resources are allocated to a single job. No resource will be
 allocated to more than one job.
+
+\fBNOTE\fR: Even if you are using \fBPreemptMode=suspend,gang\fR, setting
+\fBOverSubscribe=NO\fR will disable preemption on that partition. Use
+\fBOverSubscribe=FORCE:1\fR if you want to disable normal oversubscription
+but still allow suspension due to preemption.
 .RE
 
 .TP

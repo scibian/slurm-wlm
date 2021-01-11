@@ -228,7 +228,7 @@ _run_script_and_set_env(const char *name, const char *path,
 		setpgid(0, 0);
 		execve(path, argv, job->env);
 		error("execve(%s): %m", path);
-		exit(127);
+		_exit(127);
 	}
 
 	close(pfd[1]);
@@ -266,8 +266,8 @@ _run_script_and_set_env(const char *name, const char *path,
  * Returns xmalloc()'d string that must be xfree()'d */
 static char *_build_path(char *fname, char **prog_env)
 {
-	char *path_env = NULL, *dir;
-	char *file_name;
+	char *path_env = NULL, *dir = NULL;
+	char *file_name, *last = NULL;
 	struct stat stat_buf;
 	int len = PATH_MAX;
 
@@ -294,14 +294,14 @@ static char *_build_path(char *fname, char **prog_env)
 
 	/* search for the file using PATH environment variable */
 	path_env = xstrdup(getenvp(prog_env, "PATH"));
-
-	dir = strtok(path_env, ":");
+	if (path_env)
+		dir = strtok_r(path_env, ":", &last);
 	while (dir) {
 		snprintf(file_name, len, "%s/%s", dir, fname);
 		if ((stat(file_name, &stat_buf) == 0)
 		    && (! S_ISDIR(stat_buf.st_mode)))
 			break;
-		dir = strtok(NULL, ":");
+		dir = strtok_r(NULL, ":", &last);
 	}
 	if (dir == NULL)	/* not found */
 		strlcpy(file_name, fname, len);
@@ -420,13 +420,13 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 					task->gtid) < 0) {
 			error("Unable to attach to interconnect: %m");
 			log_fini();
-			exit(1);
+			_exit(1);
 		}
 
 		if (_setup_mpi(job, local_proc_id) != SLURM_SUCCESS) {
 			error("Unable to configure MPI plugin: %m");
 			log_fini();
-			exit(1);
+			_exit(1);
 		}
 	}
 
@@ -435,7 +435,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	/* task plugin hook */
 	if (task_g_pre_launch(job)) {
 		error("Failed to invoke task plugins: task_p_pre_launch error");
-		exit(1);
+		_exit(1);
 	}
 	if (!job->batch && (job->accel_bind_type || job->tres_bind)) {
 		/*
@@ -454,7 +454,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 
 	if (spank_user_task(job, local_proc_id) < 0) {
 		error("Failed to invoke spank plugin stack");
-		exit(1);
+		_exit(1);
 	}
 
 	if (conf->task_prolog) {
@@ -488,7 +488,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 
 	if (task->argv[0] == NULL) {
 		error("No executable program specified for this task");
-		exit(2);
+		_exit(2);
 	}
 
 	if (*task->argv[0] != '/') {
@@ -509,7 +509,7 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	if (set_user_limits(job) < 0) {
 		debug("Unable to set user limits");
 		log_fini();
-		exit(5);
+		_exit(5);
 	}
 
 	execve(task->argv[0], task->argv, job->env);
@@ -530,12 +530,12 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 				eol[0] = '\0';
 			slurm_seterrno(saved_errno);
 			error("execve(): bad interpreter(%s): %m", buf+2);
-			exit(errno);
+			_exit(errno);
 		}
 	}
 	slurm_seterrno(saved_errno);
 	error("execve(): %s: %m", task->argv[0]);
-	exit(errno);
+	_exit(errno);
 }
 
 static void

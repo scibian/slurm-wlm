@@ -1,4 +1,4 @@
-.TH "gres.conf" "5" "Slurm Configuration File" "September 2019" "Slurm Configuration File"
+.TH "gres.conf" "5" "Slurm Configuration File" "October 2020" "Slurm Configuration File"
 
 .SH "NAME"
 gres.conf \- Slurm configuration file for Generic RESource (GRES) management.
@@ -21,6 +21,12 @@ omitted from the gres.conf file and only the configuration information in the
 slurm.conf file will be used.
 The gres.conf file may be omitted completely if the configuration information
 in the slurm.conf file fully describes all GRES.
+
+.LP
+If using the \fBgres.conf\fR file to describe the resources available to nodes,
+the first parameter on the line should be \fBNodeName\fR. If configuring
+Generic Resources without specifying nodes, the first parameter on the line
+should be \fBName\fR.
 
 .LP
 Parameter names are case insensitive.
@@ -65,7 +71,7 @@ For example: "Count=10G".
 
 .TP
 \fBCores\fR
-Optionally specify the first thread CPU index numbers for the specific cores
+Optionally specify the core index numbers for the specific cores
 which can use this resource.
 For example, it may be strongly preferable to use specific cores with specific
 GRES devices (e.g. on a NUMA architecture).
@@ -84,7 +90,7 @@ identified cores can be allocated with each generic resource. This will tend to
 improve performance of jobs, but delay the allocation of resources to them.
 If specified and a job is \fInot\fR submitted with the
 \fB\-\-gres\-flags=enforce\-binding\fR option the identified cores will be
-preferred for scheduled with each generic resource.
+preferred for scheduling with each generic resource.
 
 If \fB\-\-gres\-flags=disable\-binding\fR is specified, then any core can be
 used with the resources, which also increases the speed of Slurm's
@@ -97,21 +103,13 @@ If any core can be effectively used with the resources, then do not specify the
 A restart of the slurmctld is needed for changes to the Cores option to take
 effect.
 
-\fBNOTE:\fR If your cores contain multiple threads only the first thread
-(processing unit) of each core needs to be listed.
-Also note that since Slurm must be able to perform resource management on
+\fBNOTE:\fR Since Slurm must be able to perform resource management on
 heterogeneous clusters having various processing unit numbering schemes,
-a logical processing unit index must be specified instead of the physical
-processing unit index.
-That processing unit logical index might not correspond to your physical index
-number.
-Processing unit 0 will be the first socket, first core and (if configured) first
-thread.
-If hyperthreading is enabled, processing unit 1 will always be the first socket,
-first core and second thread.
-If hyperthreading is not enabled, processing unit 1 will always be the first
-socket and second core.
-This numbering coincides with the processing unit logical number (PU L#) seen
+a logical core index must be specified instead of the physical core index.
+That logical core index might not correspond to your physical core index number.
+Core 0 will be the first core on the first socket, while core 1 will be the
+second core on the first socket.
+This numbering coincides with the logical core number (Core L#) seen
 in "lstopo \-l" command output.
 
 .TP

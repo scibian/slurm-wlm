@@ -2,10 +2,6 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Tests #PBS entry functionality in a batch script.
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -32,7 +28,7 @@
 ############################################################################
 source ./globals
 
-set test_id     "17.31"
+set exit_code   0
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set delay       1
@@ -44,24 +40,21 @@ global env
 set env_pbs_ignore "SBATCH_IGNORE_PBS"
 set env($env_pbs_ignore) 0
 
-print_header $test_id
-
 proc end_it { exit_code } {
         global job_id test_id
         if {$job_id != 0} {
                 cancel_job $job_id
         }
 
-	if {$exit_code == 0} {
-		print_success $test_id
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 	}
-        exit $exit_code
+	pass
 }
 
-set available [available_nodes $partition ""]
+set available [available_nodes]
 if {$available < $node_cnt} {
-	log_warn "not enough nodes currently available ($available avail, $node_cnt needed)"
-	end_it 0
+	skip "Not enough nodes currently available ($available avail, $node_cnt needed)"
 }
 
 log_user 0
@@ -93,7 +86,7 @@ expect {
         }
 }
 log_user 1
-log_info "Actual configuration: min_cpus=$ppn_cnt  min_mem=$min_mem"
+log_debug "Actual configuration: min_cpus=$ppn_cnt  min_mem=$min_mem"
 append min_mem_mb $min_mem "mb"
 
 proc pbs_ignore_expects {} {

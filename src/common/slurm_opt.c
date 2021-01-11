@@ -47,6 +47,8 @@
 #include "src/common/proc_args.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_resource_info.h"
+#include "src/common/tres_bind.h"
+#include "src/common/tres_frequency.h"
 #include "src/common/uid.h"
 #include "src/common/util-net.h"
 #include "src/common/x11_util.h"
@@ -328,7 +330,7 @@ COMMON_OPTION_RESET(field, NO_VAL64)
 static int arg_set_##field(slurm_opt_t *opt, const char *arg)	\
 {								\
 	if ((opt->field = str_to_mbytes2(arg)) == NO_VAL64) {	\
-		error("Invalid ##field specification");		\
+		error("Invalid " #option " specification");	\
 		exit(-1);					\
 	}							\
 								\
@@ -341,10 +343,10 @@ static int arg_set_data_##field(slurm_opt_t *opt, const data_t *arg,	\
 	char *str = NULL;						\
 	int rc;								\
 	if ((rc = data_get_string_converted(arg, &str)))		\
-		ADD_DATA_ERROR("Invalid ##field specification string",	\
+		ADD_DATA_ERROR("Invalid " #option " specification string", \
 			       rc);					\
 	else if ((opt->field = str_to_mbytes2(str)) == NO_VAL64)	\
-		ADD_DATA_ERROR("Invalid ##field specification",		\
+		ADD_DATA_ERROR("Invalid " #option " specification",	\
 			       (rc = SLURM_ERROR));			\
 	xfree(str);							\
 	return rc;							\
@@ -1344,7 +1346,7 @@ static int arg_set_data_distribution(slurm_opt_t *opt, const data_t *arg,
 	if ((rc = data_get_string_converted(arg, &str)))
 		ADD_DATA_ERROR("Unable to read string", rc);
 	else {
-		// FIXME: always ignore SLURM_DIST_PLANESIZE envvar
+		/* FIXME: ignore SLURM_DIST_PLANESIZE envvar for slurmrestd */
 		opt->distribution = verify_dist_type(str, &opt->plane_size);
 
 		if (opt->distribution == SLURM_DIST_UNKNOWN) {
@@ -1745,14 +1747,55 @@ static slurm_cli_opt_t slurm_opt_gid = {
 	.name = "gid",
 	.has_arg = required_argument,
 	.val = LONG_OPT_GID,
-	.sbatch_early_pass = true,
 	.set_func = arg_set_gid,
 	.set_func_data = arg_set_data_gid,
 	.get_func = arg_get_gid,
 	.reset_func = arg_reset_gid,
 };
 
-COMMON_STRING_OPTION(gpu_bind);
+static int arg_set_gpu_bind(slurm_opt_t *opt, const char *arg)
+{
+	xfree(opt->gpu_bind);
+	xfree(opt->tres_bind);
+	opt->gpu_bind = xstrdup(arg);
+	xstrfmtcat(opt->tres_bind, "gpu:%s", opt->gpu_bind);
+	if (tres_bind_verify_cmdline(opt->tres_bind)) {
+		error("Invalid --gpu-bind argument: %s", opt->tres_bind);
+		exit(1);
+	}
+
+	return SLURM_SUCCESS;
+}
+static int arg_set_data_gpu_bind(slurm_opt_t *opt, const data_t *arg,
+				 data_t *errors)
+{
+	int rc;
+	char *str = NULL;
+
+	if ((rc = data_get_string_converted(arg, &str)))
+		ADD_DATA_ERROR("Unable to read string", rc);
+	else {
+		xfree(opt->gpu_bind);
+		xfree(opt->tres_bind);
+		opt->gpu_bind = xstrdup(str);
+		xstrfmtcat(opt->tres_bind, "gpu:%s", opt->gpu_bind);
+		if (tres_bind_verify_cmdline(opt->tres_bind)) {
+			rc = SLURM_ERROR;
+			ADD_DATA_ERROR("Invalid --gpu-bind argument", rc);
+			xfree(opt->gpu_bind);
+			xfree(opt->tres_bind);
+		}
+	}
+
+	xfree(str);
+	return rc;
+}
+static void arg_reset_gpu_bind(slurm_opt_t *opt)
+{
+	xfree(opt->gpu_bind);
+	xfree(opt->tres_bind);
+}
+COMMON_STRING_OPTION_GET(gpu_bind);
 static slurm_cli_opt_t slurm_opt_gpu_bind = {
 	.name = "gpu-bind",
 	.has_arg = required_argument,
@@ -1764,7 +1807,49 @@ static slurm_cli_opt_t slurm_opt_gpu_bind = {
 	.reset_each_pass = true,
 };
 
-COMMON_STRING_OPTION(gpu_freq);
+static int arg_set_gpu_freq(slurm_opt_t *opt, const char *arg)
+{
+	xfree(opt->gpu_freq);
+	xfree(opt->tres_freq);
+	opt->gpu_freq = xstrdup(arg);
+	xstrfmtcat(opt->tres_freq, "gpu:%s", opt->gpu_freq);
+	if (tres_freq_verify_cmdline(opt->tres_freq)) {
+		error("Invalid --gpu-freq argument: %s", opt->tres_freq);
+		exit(1);
+	}
+
+	return SLURM_SUCCESS;
+}
+static int arg_set_data_gpu_freq(slurm_opt_t *opt, const data_t *arg,
+				 data_t *errors)
+{
+	int rc;
+	char *str = NULL;
+
+	if ((rc = data_get_string_converted(arg, &str)))
+		ADD_DATA_ERROR("Unable to read string", rc);
+	else {
+		xfree(opt->gpu_freq);
+		xfree(opt->tres_freq);
+		opt->gpu_freq = xstrdup(str);
+		xstrfmtcat(opt->tres_freq, "gpu:%s", opt->gpu_freq);
+		if (tres_freq_verify_cmdline(opt->tres_freq)) {
+			rc = SLURM_ERROR;
+			ADD_DATA_ERROR("Invalid --gpu-freq argument", rc);
+			xfree(opt->gpu_freq);
+			xfree(opt->tres_freq);
+		}
+	}
+
+	xfree(str);
+	return rc;
+}
+static void arg_reset_gpu_freq(slurm_opt_t *opt)
+{
+	xfree(opt->gpu_freq);
+	xfree(opt->tres_freq);
+}
+COMMON_STRING_OPTION_GET(gpu_freq);
 static slurm_cli_opt_t slurm_opt_gpu_freq = {
 	.name = "gpu-freq",
 	.has_arg = required_argument,
@@ -2479,7 +2564,7 @@ static slurm_cli_opt_t slurm_opt_mem_bind = {
 	.reset_each_pass = true,
 };
 
-COMMON_MBYTES_OPTION(mem_per_cpu, "--mem-per-cpu");
+COMMON_MBYTES_OPTION(mem_per_cpu, --mem-per-cpu);
 static slurm_cli_opt_t slurm_opt_mem_per_cpu = {
 	.name = "mem-per-cpu",
 	.has_arg = required_argument,
@@ -2491,7 +2576,7 @@ static slurm_cli_opt_t slurm_opt_mem_per_cpu = {
 	.reset_each_pass = true,
 };
 
-COMMON_MBYTES_OPTION(mem_per_gpu, "--mem-per-gpu");
+COMMON_MBYTES_OPTION(mem_per_gpu, --mem-per-gpu);
 static slurm_cli_opt_t slurm_opt_mem_per_gpu = {
 	.name = "mem-per-gpu",
 	.has_arg = required_argument,
@@ -4267,7 +4352,7 @@ static slurm_cli_opt_t slurm_opt_time_min = {
 	.reset_func = arg_reset_time_min,
 };
 
-COMMON_MBYTES_OPTION(pn_min_tmp_disk, "--tmp");
+COMMON_MBYTES_OPTION(pn_min_tmp_disk, --tmp);
 static slurm_cli_opt_t slurm_opt_tmp = {
 	.name = "tmp",
 	.has_arg = required_argument,
@@ -4315,7 +4400,6 @@ static slurm_cli_opt_t slurm_opt_uid = {
 	.name = "uid",
 	.has_arg = required_argument,
 	.val = LONG_OPT_UID,
-	.sbatch_early_pass = true,
 	.set_func = arg_set_uid,
 	.set_func_data = arg_set_data_uid,
 	.get_func = arg_get_uid,

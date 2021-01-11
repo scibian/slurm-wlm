@@ -1008,9 +1008,13 @@ static bitstr_t *_pick_step_nodes(job_record_t *job_ptr,
 	if (!nodes_avail)
 		nodes_avail = bit_copy (job_ptr->node_bitmap);
 	bit_and(nodes_avail, up_node_bitmap);
-	if (step_spec->features) {
+
+	if (step_spec->features &&
+	    (!job_ptr->details ||
+	     xstrcmp(step_spec->features, job_ptr->details->features))) {
 		/*
 		 * We only select for a single feature name here.
+		 * Ignore step features if equal to job features.
 		 * FIXME: Add support for AND, OR, etc. here if desired
 		 */
 		node_feature_t *feat_ptr;
@@ -1837,7 +1841,8 @@ static int _count_cpus(job_record_t *job_ptr, bitstr_t *bitmap,
  *	and step's allocation */
 static void _pick_step_cores(step_record_t *step_ptr,
 			     job_resources_t *job_resrcs_ptr,
-			     int job_node_inx, uint16_t task_cnt)
+			     int job_node_inx, uint16_t task_cnt,
+			     uint16_t cpus_per_core)
 {
 	int bit_offset, core_inx, i, sock_inx;
 	uint16_t sockets, cores;
@@ -1857,8 +1862,11 @@ static void _pick_step_cores(step_record_t *step_ptr,
 		use_all_cores = true;
 	else
 		use_all_cores = false;
-	if (step_ptr->cpus_per_task > 0)
-		cpu_cnt *= step_ptr->cpus_per_task;
+
+	if (step_ptr->cpus_per_task > 0) {
+		cpu_cnt *= step_ptr->cpus_per_task + cpus_per_core - 1;
+		cpu_cnt	/= cpus_per_core;
+	}
 
 	/* select idle cores first */
 	for (sock_inx=0; sock_inx<sockets; sock_inx++) {
@@ -1918,6 +1926,19 @@ static void _pick_step_cores(step_record_t *step_ptr,
 				return;
 		}
 	}
+}
+
+static bool _use_one_thread_per_core(job_record_t *job_ptr)
+{
+	job_resources_t *job_resrcs_ptr = job_ptr->job_resrcs;
+
+	if ((job_resrcs_ptr->whole_node != 1) &&
+	    (slurmctld_conf.select_type_param & (CR_CORE | CR_SOCKET)) &&
+	    (job_ptr->details &&
+	     (job_ptr->details->cpu_bind_type != NO_VAL16) &&
+	     (job_ptr->details->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)))
+		return true;
+	return false;
 }
 
 /* Update a job's record of allocated CPUs when a job step gets scheduled */
@@ -2004,10 +2025,24 @@ extern void step_alloc_lps(step_record_t *step_ptr)
 			}
 		}
 		if (pick_step_cores) {
+			uint16_t cpus_per_core = 1;
+			/*
+			 * Here we're setting number of CPUs per core
+			 * if we don't enforce 1 thread per core
+			 *
+			 * TODO: move cpus_per_core to slurm_step_layout_t
+			 */
+			if (!_use_one_thread_per_core(job_ptr) &&
+			    (!(node_record_table_ptr[i_node].cpus ==
+			      (node_record_table_ptr[i_node].sockets *
+			       node_record_table_ptr[i_node].cores))))
+				cpus_per_core =
+					node_record_table_ptr[i_node].threads;
 			_pick_step_cores(step_ptr, job_resrcs_ptr,
 					 job_node_inx,
 					 step_ptr->step_layout->
-					 tasks[step_node_inx]);
+					 tasks[step_node_inx],
+					 cpus_per_core);
 		}
 		if (slurmctld_conf.debug_flags & DEBUG_FLAG_CPU_BIND)
 			_dump_step_layout(step_ptr);
@@ -2368,6 +2403,9 @@ extern int step_create(job_step_create_request_msg_t *step_specs,
 	uint32_t jobid;
 	slurm_step_layout_t *step_layout = NULL;
 	bool tmp_step_layout_used = false;
+#ifdef HAVE_NATIVE_CRAY
+	slurm_step_layout_t tmp_step_layout;
+#endif
 
 	*new_step_record = NULL;
 	job_ptr = find_job_record (step_specs->job_id);
@@ -2748,7 +2786,6 @@ extern int step_create(job_step_create_request_msg_t *step_specs,
 
 		jobid = job_ptr->het_job_id;
 		if (!het_step_ptr || !het_step_ptr->switch_job) {
-			slurm_step_layout_t tmp_step_layout;
 			job_record_t *het_job_comp_ptr;
 			hostlist_t hl = hostlist_create(NULL);
 			ListIterator itr;
@@ -2927,13 +2964,7 @@ extern slurm_step_layout_t *step_layout_create(step_record_t *step_ptr,
 			 * of cpus available if we only want to run 1
 			 * thread per core.
 			 */
-			if ((job_resrcs_ptr->whole_node != 1)
-			    && (slurmctld_conf.select_type_param
-				& (CR_CORE | CR_SOCKET))
-			    && (job_ptr->details &&
-				(job_ptr->details->cpu_bind_type != NO_VAL16)
-				&& (job_ptr->details->cpu_bind_type
-				    & CPU_BIND_ONE_THREAD_PER_CORE))) {
+			if (_use_one_thread_per_core(job_ptr)) {
 				uint16_t threads;
 				threads = node_ptr->config_ptr->threads;
 

@@ -1,10 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test non-normalized factors
-#
-# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
-#          "FAILURE: ..." otherwise with an explanation of the failure, OR
-#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2019 SchedMD LLC.
 # Written by Brian Christiansen <brian@schedmd.com>
@@ -30,18 +26,14 @@
 source ./globals
 source ./globals_accounting
 
-set test_id     "24.6"
 set exit_code   0
 set timeout	60
-print_header	$test_id
 
 set ta1         "test$test_id-account.1"
 set tq1         "test$test_id-qos.1"
 
 set p1          "test$test_id-part.1"
 set p2          "test$test_id-part.2"
-
-set config_path  ""
 
 set jobid1 0
 set jobid2 0
@@ -55,13 +47,11 @@ set access_err 0
 #
 # Check accounting config and bail if not found.
 #
-if { [test_account_storage] == 0 } {
-	log_warn "This test can't be run without a usable AccountStorageType"
-	exit 0
+if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
+	skip "This test can't be run without a usable AccountStorageType"
 }
 if { [string compare [priority_type] multifactor] } {
-	log_warn "This test can't be run without a usable PriorityType"
-	exit 0
+	skip "This test can't be run without a usable PriorityType"
 }
 
 #
@@ -69,8 +59,7 @@ if { [string compare [priority_type] multifactor] } {
 #
 set select_type_params [get_select_type_params ""]
 if { [string first "CR_ONE_TASK_PER_CORE" $select_type_params] != -1 } {
-	log_warn "This test can't be run SelectTypeParameters=CR_ONE_TASK_PER_CORE"
-	exit 0
+	skip "This test can't be run SelectTypeParameters=CR_ONE_TASK_PER_CORE"
 }
 
 proc clean_assocs {} {
@@ -81,7 +70,7 @@ proc clean_assocs {} {
 }
 
 proc end_it { exit_code } {
-	global test_id jobid1 jobid2 jobid3 jobid4 bin_cp config_path cwd ta1 tq1
+	global test_id jobid1 jobid2 jobid3 jobid4 bin_cp config_file test_id ta1 tq1
 
 	if {$jobid1} {
 		cancel_job $jobid1
@@ -98,14 +87,13 @@ proc end_it { exit_code } {
 
 	clean_assocs
 
-	log_info "Changing slurm.conf back"
-	exec $bin_cp -v $cwd/slurm.conf.orig $config_path/slurm.conf
+	restore_conf $config_file
 	reconfigure
 
-	if {$exit_code == 0} {
-		print_success $test_id
+	if {$exit_code != 0} {
+		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 	}
-	exit $exit_code
+	pass
 }
 
 proc part_cpu_cnt { partition } {
@@ -271,16 +259,13 @@ if {[info exists env(SPRIO_FORMAT)]} {
 }
 
 set config_path [get_conf_path]
-if { $exit_code != 0 } {
-	exit $exit_code
-}
+fail_on_error "Unable to get config path"
+set config_file $config_path/slurm.conf
 
-copy_conf $config_path $cwd
-if { $exit_code != 0 } {
-	exit $exit_code
-}
-exec $bin_sed -i "s/^\\(PriorityWeight.*\\)/#\\1/Ig" $config_path/slurm.conf
-exec $bin_sed -i "s/^\\(PriorityFlags.*\\)/#\\1/Ig" $config_path/slurm.conf
+save_conf $config_file
+
+exec $bin_sed -i "s/^\\(PriorityWeight.*\\)/#\\1/Ig" $config_file
+exec $bin_sed -i "s/^\\(PriorityFlags.*\\)/#\\1/Ig" $config_file
 set prio_conf "
 PriorityWeightAssoc     = 1
 PriorityWeightJobSize   = 1
@@ -289,7 +274,7 @@ PriorityWeightQOS       = 1
 PriorityWeightTRES=cpu=1
 PriorityFlags=NO_NORMAL_ALL
 "
-exec $bin_echo $prio_conf >> $config_path/slurm.conf
+exec $bin_echo $prio_conf >> $config_file
 reconfigure
 
 
@@ -315,7 +300,7 @@ if {!$match} {
 	end_it 1
 }
 
-set idle_node [get_idle_node_in_part [default_partition]]
+set idle_node [get_idle_node_in_part]
 if {$idle_node == ""} {
 	log_error "no idle nodes"
 	end_it 1

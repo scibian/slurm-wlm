@@ -1246,7 +1246,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 				info("%s: Invalid ActiveFeatures (\'%s\' not subset of \'%s\' on node %s)",
 				     __func__, features_act, features_avail,
 				     node_ptr->name);
-				error_code = ESLURM_INVALID_FEATURE;
+				error_code = ESLURM_ACTIVE_FEATURE_NOT_SUBSET;
 				xfree(update_node_msg->features);
 				xfree(update_node_msg->features_act);
 			}
@@ -2636,7 +2636,8 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 			     (node_ptr->boot_time <
 			      node_ptr->last_response)))) {
 			node_flags &= (~NODE_STATE_REBOOT);
-			if (!xstrcmp(node_ptr->reason, "Reboot ASAP")) {
+			if (xstrstr(node_ptr->reason, "Reboot ASAP") &&
+			    (node_ptr->next_state == NO_VAL)) {
 				if (node_ptr->next_state != NODE_STATE_DOWN) {
 					xfree(node_ptr->reason);
 					node_ptr->reason_time = 0;
@@ -2838,7 +2839,7 @@ extern int validate_nodes_via_front_end(
 	char step_str[64];
 
 	xassert(verify_lock(CONF_LOCK, READ_LOCK));
-	xassert(verify_lock(JOB_LOCK, READ_LOCK));
+	xassert(verify_lock(JOB_LOCK, WRITE_LOCK));
 	xassert(verify_lock(FED_LOCK, READ_LOCK));
 
 	if (reg_msg->up_time > now) {

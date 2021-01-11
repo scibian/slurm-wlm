@@ -1,11 +1,11 @@
-.TH salloc "1" "Slurm Commands" "April 2020" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "October 2020" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
 and then release the allocation when the command is finished.
 
 .SH "SYNOPSIS"
-\fBsalloc\fR [\fIOPTIONS(0)\fR...] \fR[ : \fR[\fIOPTIONS(N)\fR...]\fR] \fIcommand(0) \fR[\fIargs(0)\fR...]
+\fBsalloc\fR [\fIOPTIONS(0)\fR...] [ : [\fIOPTIONS(N)\fR...]] [\fIcommand(0)\fR [\fIargs(0)\fR...]]
 
 Option(s) define multiple jobs in a co-scheduled heterogeneous job.
 For more details about heterogeneous jobs see the document
@@ -248,7 +248,7 @@ For example, \fB\-\-constraint="intel"\fR
 \fBNode Count\fR
 A request can specify the number of nodes needed with some feature
 by appending an asterisk and count after the feature name.
-For example "\fB\-\-nodes=16 \-\-constraint=graphics*4 ..."\fR
+For example, \fB\-\-nodes=16 \-\-constraint="graphics*4 ..."\fR
 indicates that the job requires 16 nodes and that at least four of those
 nodes must have the feature "graphics."
 .TP
@@ -265,27 +265,34 @@ For example, \fB\-\-constraint="intel|amd"\fR
 \fBMatching OR\fR
 If only one of a set of possible options should be used for all allocated
 nodes, then use the OR operator and enclose the options within square brackets.
-For example: "\fB\-\-constraint=[rack1|rack2|rack3|rack4]"\fR might
+For example, \fB\-\-constraint="[rack1|rack2|rack3|rack4]"\fR might
 be used to specify that all nodes must be allocated on a single rack of
 the cluster, but any of those four racks can be used.
 .TP
 \fBMultiple Counts\fR
 Specific counts of multiple resources may be specified by using the AND
 operator and enclosing the options within square brackets.
-For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
+For example, \fB\-\-constraint="[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
 
 \fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
-modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
-not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+modes. For example, while \fB\-\-constraint="[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, \fB\-\-constraint="[haswell*2&(knl&hemi)*4]"\fR is supported.
 Specification of multiple KNL modes requires the use of a heterogeneous job.
-
+.TP
+\fBBrackets\fR
+Brackets can be used to indicate that you are looking for a set of nodes with
+the different requirements contained within the brackets. For example,
+\fB--constraint="[(rack1|rack2)*1&(rack3)*2]"\fR will get you one node with
+either the "rack1" or "rack2" features and two nodes with the "rack3" feature.
+The same request without the brackets will try to find a single node that
+meets those requirements.
 .TP
 \fBParenthesis\fR
-Parenthesis can be used to group like node features together. For example
-"\fB\-\-constraint=[(knl&snc4&flat)*4&haswell*1]"\fR might be used to specify
+Parenthesis can be used to group like node features together. For example,
+\fB\-\-constraint="[(knl&snc4&flat)*4&haswell*1]"\fR might be used to specify
 that four nodes with the features "knl", "snc4" and "flat" plus one node with
 the feature "haswell" are required. All options within parenthesis should be
 grouped with AND (e.g. "&") operands.
@@ -294,7 +301,9 @@ grouped with AND (e.g. "&") operands.
 .TP
 \fB\-\-contiguous\fR
 If set, then the allocated nodes must form a contiguous set.
-Not honored with the \fBtopology/tree\fR or \fBtopology/3d_torus\fR
+
+\fBNOTE\fR: If SelectPlugin=cons_res this option won't be honored
+with the \fBtopology/tree\fR or \fBtopology/3d_torus\fR
 plugins, both of which can modify the node ordering.
 
 .TP
@@ -470,7 +479,7 @@ has a different termination state in a subsequent execution.
 \fBafter:job_id[[+time][:jobid[+time]...]]\fR
 After the specified jobs start or are cancelled and 'time' in minutes from job
 start or cancellation happens, this
-job can begin execution. If no 'time' is given then then there is no delay after
+job can begin execution. If no 'time' is given then there is no delay after
 start or cancellation.
 .TP
 \fBafterany:job_id[:jobid...]\fR
@@ -717,6 +726,8 @@ This option is currently required to use more CPUs than are bound to a GRES
 one socket are required to run the job).
 This option may permit a job to be allocated resources sooner than otherwise
 possible, but may result in lower job performance.
+.br
+\fBNOTE\fR: This option is specific to \fBSelectType=cons_res\fR.
 .TP
 .B enforce\-binding
 The only CPUs available to the job will be those bound to the selected
@@ -724,10 +735,12 @@ GRES (i.e. the CPUs identified in the gres.conf file will be strictly
 enforced). This option may result in delayed initiation of a job.
 For example a job requiring two GPUs and one CPU will be delayed until both
 GPUs on a single socket are available rather than using GPUs bound to separate
-sockets, however the application performance may be improved due to improved
+sockets, however, the application performance may be improved due to improved
 communication speed.
 Requires the node to be configured with more than one socket and resource
 filtering will be performed on a per\-socket basis.
+.br
+\fBNOTE\fR: This option is specific to \fBSelectType=cons_tres\fR.
 .RE
 
 .TP
@@ -876,13 +889,11 @@ Cyclic distribution is the default behavior if the number
 of tasks is no larger than the number of allocated nodes.
 .TP
 .B plane
-The tasks are distributed in blocks of a specified size.  The options
-include a number representing the size of the task block.  This is
-followed by an optional specification of the task distribution scheme
-within a block of tasks and between the blocks of tasks.  The number of tasks
+The tasks are distributed in blocks of a specified size. The number of tasks
 distributed to each node is the same as for cyclic distribution, but the
-taskids assigned to each node depend on the plane size. For more
-details (including examples and diagrams), please see
+taskids assigned to each node depend on the plane size. Additional distribution
+specifications cannot be combined with this option.
+For more details (including examples and diagrams), please see
 .br
 https://slurm.schedmd.com/mc_support.html
 .br
@@ -953,8 +964,7 @@ Default value is calculated by the Plugin mcs if it's enabled.
 .TP
 \fB\-\-mem\fR=<\fIsize[units]\fR>
 Specify the real memory required per node.
-Default units are megabytes unless the SchedulerParameters configuration
-parameter includes the "default_gbytes" option for gigabytes.
+Default units are megabytes.
 Different units can be specified using the suffix [K|M|G|T].
 Default value is \fBDefMemPerNode\fR and the maximum value is
 \fBMaxMemPerNode\fR. If configured, both of parameters can be
@@ -982,11 +992,10 @@ the next periodic accounting sample.
 .TP
 \fB\-\-mem\-per\-cpu\fR=<\fIsize[units]\fR>
 Minimum memory required per allocated CPU.
-Default units are megabytes unless the SchedulerParameters configuration
-parameter includes the "default_gbytes" option for gigabytes.
+Default units are megabytes.
 Different units can be specified using the suffix [K|M|G|T].
-Default value is \fBDefMemPerCPU\fR and the maximum value is \fBMaxMemPerCPU\fR
-(see exception below). If configured, both of parameters can be
+The default value is \fBDefMemPerCPU\fR and the maximum value is
+\fBMaxMemPerCPU\fR (see exception below). If configured, both parameters can be
 seen using the \fBscontrol show config\fR command.
 Note that if the job's \fB\-\-mem\-per\-cpu\fR value exceeds the configured
 \fBMaxMemPerCPU\fR, then the user's limit will be treated as a memory limit
@@ -997,23 +1006,25 @@ value will equal the original \fB\-\-mem\-per\-cpu\fR value specified by
 the user.
 This parameter would generally be used if individual processors
 are allocated to jobs (\fBSelectType=select/cons_res\fR).
-If resources are allocated by the core, socket or whole nodes; the number
+If resources are allocated by core, socket, or whole nodes, then the number
 of CPUs allocated to a job may be higher than the task count and the value
 of \fB\-\-mem\-per\-cpu\fR should be adjusted accordingly.
 Also see \fB\-\-mem\fR and \fB\-\-mem\-per\-gpu\fR.
 The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and \fB\-\-mem\-per\-gpu\fR
 options are mutually exclusive.
 
-NOTE:If the final amount of memory requested by job
-(eg.: when \-\-mem\-per\-cpu use with \-\-exclusive option)
-can't be satisfied by any of nodes configured in the
+NOTE: If the final amount of memory requested by a job
+can't be satisfied by any of the nodes configured in the
 partition, the job will be rejected.
+This could happen if \fB\-\-mem\-per\-cpu\fR is used with the
+\fB\-\-exclusive\fR option for a job allocation and \fB\-\-mem\-per\-cpu\fR
+times the number of CPUs on a node is greater than the total memory of that
+node.
 
 .TP
 \fB\-\-mem\-per\-gpu\fR=<\fIsize[units]\fR>
 Minimum memory required per allocated GPU.
-Default units are megabytes unless the SchedulerParameters configuration
-parameter includes the "default_gbytes" option for gigabytes.
+Default units are megabytes.
 Different units can be specified using the suffix [K|M|G|T].
 Default value is \fBDefMemPerGPU\fR and is available on both a global and
 per partition basis.
@@ -1576,8 +1587,7 @@ Acceptable time formats include "minutes", "minutes:seconds",
 .TP
 \fB\-\-tmp\fR=<\fIsize[units]\fR>
 Specify a minimum amount of temporary disk space per node.
-Default units are megabytes unless the SchedulerParameters configuration
-parameter includes the "default_gbytes" option for gigabytes.
+Default units are megabytes.
 Different units can be specified using the suffix [K|M|G|T].
 
 .TP
@@ -1723,11 +1733,12 @@ Same as \fB\-\-gpus\-per\-node\fR
 .TP
 \fBSALLOC_GPUS_PER_TASK\fR
 Same as \fB\-\-gpus\-per\-task\fR
+.TP
 \fBSALLOC_GRES\fR
-Same as \-\-gres\fR
+Same as \fB\-\-gres\fR
 .TP
 \fBSALLOC_GRES_FLAGS\fR
-Same as \-\-gres\-flags\fR
+Same as \fB\-\-gres\-flags\fR
 .TP
 \fBSALLOC_HINT\fR or \fBSLURM_HINT\fR
 Same as \fB\-\-hint\fR
@@ -1842,6 +1853,10 @@ Only set if the \fB\-\-cpus\-per\-gpu\fR option is specified.
 \fBSLURM_CPUS_PER_TASK\fR
 Number of CPUs requested per task.
 Only set if the \fB\-\-cpus\-per\-task\fR option is specified.
+.TP
+\fBSLURM_DIST_PLANESIZE\fR
+Plane distribution size. Only set for plane distributions.
+See \fB\-m, \-\-distribution\fR.
 .TP
 \fBSLURM_DISTRIBUTION\fR
 Only set if the \fB\-m, \-\-distribution\fR option is specified.
@@ -1999,7 +2014,8 @@ line (See the \fBsalloc\fR man page for more examples):
 .IP
 salloc \-N5 srun \-n10 myprogram
 .LP
-+To create a heterogeneous job with 3 components, each allocating a unique set of nodes:
+To create a heterogeneous job with 3 components, each allocating a unique set
+of nodes:
 .IP
 salloc -w node[2-3] : -w node4 : -w node[5-7] bash
 .br

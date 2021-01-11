@@ -644,8 +644,10 @@ slurm_cred_create(slurm_cred_ctx_t ctx, slurm_cred_arg_t *arg,
 	slurm_mutex_lock(&ctx->mutex);
 	xassert(ctx->magic == CRED_CTX_MAGIC);
 	xassert(ctx->type == SLURM_CRED_CREATOR);
-	if (_slurm_cred_sign(ctx, cred, protocol_version) < 0)
+	if (_slurm_cred_sign(ctx, cred, protocol_version) < 0) {
+		slurm_mutex_unlock(&ctx->mutex);
 		goto fail;
+	}
 
 	slurm_mutex_unlock(&ctx->mutex);
 	slurm_mutex_unlock(&cred->mutex);
@@ -653,7 +655,6 @@ slurm_cred_create(slurm_cred_ctx_t ctx, slurm_cred_arg_t *arg,
 	return cred;
 
 fail:
-	slurm_mutex_unlock(&ctx->mutex);
 	slurm_mutex_unlock(&cred->mutex);
 	slurm_cred_destroy(cred);
 	return NULL;
@@ -929,7 +930,7 @@ slurm_cred_verify(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
 		goto error;
 	}
 
-	slurm_cred_handle_reissue(ctx, cred);
+	slurm_cred_handle_reissue(ctx, cred, true);
 
 	if (_credential_revoked(ctx, cred)) {
 		slurm_seterrno(ESLURMD_CREDENTIAL_REVOKED);
@@ -1879,9 +1880,14 @@ _credential_replayed(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 }
 
 extern void
-slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
+slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred, bool locked)
 {
-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
+	job_state_t  *j;
+
+	if (!locked)
+		slurm_mutex_lock(&ctx->mutex);
+
+	j = _find_job_state(ctx, cred->jobid);
 
 	if (j != NULL && j->revoked && (cred->ctime > j->revoked)) {
 		/* The credential has been reissued.  Purge the
@@ -1895,20 +1901,26 @@ slurm_cred_handle_reissue(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 		j->expiration = 0;
 		_clear_expired_job_states(ctx);
 	}
+	if (!locked)
+		slurm_mutex_unlock(&ctx->mutex);
 }
 
 extern bool
 slurm_cred_revoked(slurm_cred_ctx_t ctx, slurm_cred_t *cred)
 {
-	job_state_t  *j = _find_job_state(ctx, cred->jobid);
+	job_state_t  *j;
+	bool rc = false;
 
-	if ((j == NULL) || (j->revoked == (time_t)0))
-		return false;
+	slurm_mutex_lock(&ctx->mutex);
 
-	if (cred->ctime <= j->revoked)
-		return true;
+	j = _find_job_state(ctx, cred->jobid);
 
-	return false;
+	if (j && (j->revoked != (time_t)0) && (cred->ctime <= j->revoked))
+		rc = true;
+
+	slurm_mutex_unlock(&ctx->mutex);
+
+	return rc;
 }
 
 static bool

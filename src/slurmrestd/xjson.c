@@ -36,14 +36,6 @@
 
 #include "config.h"
 
-#if HAVE_JSON
-
-#if HAVE_JSON_C_INC
-#include <json-c/json.h>
-#else
-#include <json/json.h>
-#endif
-
 #include "slurm/slurm.h"
 
 #include "src/common/log.h"
@@ -51,6 +43,14 @@
 #include "src/common/xstring.h"
 
 #include "src/slurmrestd/xjson.h"
+
+#if HAVE_JSON
+
+#if HAVE_JSON_C_INC
+#include <json-c/json.h>
+#else
+#include <json/json.h>
+#endif
 
 static json_object *_data_to_json(const data_t *d);
 
@@ -181,15 +181,17 @@ static json_object *_data_to_json(const data_t *d)
 	case DATA_TYPE_DICT:
 	{
 		json_object *jobj = json_object_new_object();
-		int rc = data_dict_for_each_const(d, _convert_dict_json, jobj);
-		xassert(rc >= 0);
+		if (data_dict_for_each_const(d, _convert_dict_json, jobj) < 0)
+			error("%s: unexpected error calling _convert_dict_json()",
+			      __func__);
 		return jobj;
 	}
 	case DATA_TYPE_LIST:
 	{
 		json_object *jobj = json_object_new_array();
-		int rc = data_list_for_each_const(d, _convert_list_json, jobj);
-		xassert(rc >= 0);
+		if (data_list_for_each_const(d, _convert_list_json, jobj) < 0)
+			error("%s: unexpected error calling _convert_list_json()",
+			      __func__);
 		return jobj;
 	}
 	case DATA_TYPE_STRING:

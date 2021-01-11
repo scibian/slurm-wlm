@@ -51,12 +51,10 @@ EXTRA_DIST = \
 	test1.38			\
 	test1.40			\
 	test1.41			\
-	test1.42			\
 	test1.43			\
 	test1.44			\
 	test1.45			\
 	test1.46			\
-	test1.47			\
 	test1.48			\
 	test1.49			\
 	test1.50			\
@@ -67,7 +65,6 @@ EXTRA_DIST = \
 	test1.54			\
 	test1.55			\
 	test1.56			\
-	test1.57			\
 	test1.58			\
 	test1.59			\
 	test1.60			\
@@ -108,8 +105,8 @@ EXTRA_DIST = \
 	test1.92			\
 	test1.93			\
 	test1.94			\
-	test1.94.master.c		\
-	test1.94.slave.c		\
+	test1.94.client.c		\
+	test1.94.server.c		\
 	test1.95			\
 	test1.95.prog.upc		\
 	test1.96			\
@@ -289,6 +286,7 @@ EXTRA_DIST = \
 	test7.21.prog.c			\
 	test7.23			\
 	test7.23.prog.c			\
+	test8.12			\
 	test9.1				\
 	test9.2				\
 	test9.3				\
@@ -486,18 +484,6 @@ EXTRA_DIST = \
 	test21.28			\
 	test21.29			\
 	test21.30                       \
-	test21.31			\
-	test21.32			\
-	test21.33			\
-	test21.34			\
-	test21.35			\
-	test21.36			\
-	test21.37			\
-	test21.38			\
-	test21.39			\
-	test21.40			\
-	test21.41			\
-	test21.42			\
 	inc21.30.1                      \
 	inc21.30.2                      \
 	inc21.30.3                      \
@@ -515,9 +501,22 @@ EXTRA_DIST = \
 	inc21.30.15			\
 	inc21.30.16			\
 	inc21.30.17			\
+	test21.31			\
+	test21.32			\
+	test21.33			\
+	test21.34			\
 	inc21.34.1			\
 	inc21.34.2			\
 	inc21.34_tests			\
+	test21.35			\
+	test21.36			\
+	test21.37			\
+	test21.38			\
+	test21.39			\
+	test21.40			\
+	test21.41			\
+	test21.42			\
+	test21.43			\
 	test22.1			\
 	inc22.1.1                       \
 	inc22.1.2                       \
@@ -567,6 +566,7 @@ EXTRA_DIST = \
 	test29.8			\
 	test31.1			\
 	test31.2			\
+	test31.3			\
 	test32.1			\
 	test32.2			\
 	test32.3			\
@@ -637,6 +637,7 @@ EXTRA_DIST = \
 	test38.15			\
 	test38.16			\
 	test38.17			\
+	test38.18			\
 	test39.1			\
 	test39.2			\
 	test39.3			\

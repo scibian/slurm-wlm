@@ -263,6 +263,8 @@ static pthread_cond_t  file_bcast_cond  = PTHREAD_COND_INITIALIZER;
 static int fb_read_lock = 0, fb_write_wait_lock = 0, fb_write_lock = 0;
 static List file_bcast_list = NULL;
 
+static pthread_mutex_t waiter_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void
 slurmd_req(slurm_msg_t *msg)
 {
@@ -271,7 +273,9 @@ slurmd_req(slurm_msg_t *msg)
 	if (msg == NULL) {
 		if (startup == 0)
 			startup = time(NULL);
+		slurm_mutex_lock(&waiter_mutex);
 		FREE_NULL_LIST(waiters);
+		slurm_mutex_unlock(&waiter_mutex);
 		slurm_mutex_lock(&job_limits_mutex);
 		if (job_limits_list) {
 			FREE_NULL_LIST(job_limits_list);
@@ -873,7 +877,7 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 			error("%s: Unable to fork grandchild: %m", __func__);
 			failed = 2;
 		} else if (pid > 0) { /* child */
-			exit(0);
+			_exit(0);
 		}
 
 		/*
@@ -907,19 +911,19 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 		(void) close(STDIN_FILENO); /* ignore return */
 		if (dup2(to_stepd[0], STDIN_FILENO) == -1) {
 			error("dup2 over STDIN_FILENO: %m");
-			exit(1);
+			_exit(1);
 		}
 		fd_set_close_on_exec(to_stepd[0]);
 		(void) close(STDOUT_FILENO); /* ignore return */
 		if (dup2(to_slurmd[1], STDOUT_FILENO) == -1) {
 			error("dup2 over STDOUT_FILENO: %m");
-			exit(1);
+			_exit(1);
 		}
 		fd_set_close_on_exec(to_slurmd[1]);
 		(void) close(STDERR_FILENO); /* ignore return */
 		if (dup2(devnull, STDERR_FILENO) == -1) {
 			error("dup2 /dev/null to STDERR_FILENO: %m");
-			exit(1);
+			_exit(1);
 		}
 		fd_set_noclose_on_exec(STDERR_FILENO);
 		log_fini();
@@ -927,7 +931,7 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 			execvp(argv[0], argv);
 			error("exec of slurmstepd failed: %m");
 		}
-		exit(2);
+		_exit(2);
 	}
 }
 
@@ -1679,7 +1683,7 @@ static int _open_as_other(char *path_name, int flags, int mode,
 	 * to the container in the parent of the fork. */
 	if (container_g_join(jobid, uid)) {
 		error("%s container_g_join(%u): %m", __func__, jobid);
-		exit(SLURM_ERROR);
+		_exit(SLURM_ERROR);
 	}
 
 	/* The child actually performs the I/O and exits with
@@ -1698,27 +1702,27 @@ static int _open_as_other(char *path_name, int flags, int mode,
 
 	if (setgroups(ngids, gids) < 0) {
 		error("%s: uid: %u setgroups failed: %m", __func__, uid);
-		exit(errno);
+		_exit(errno);
 	}
 
 	if (setgid(gid) < 0) {
 		error("%s: uid:%u setgid(%u): %m", __func__, uid, gid);
-		exit(errno);
+		_exit(errno);
 	}
 	if (setuid(uid) < 0) {
 		error("%s: getuid(%u): %m", __func__, uid);
-		exit(errno);
+		_exit(errno);
 	}
 
 	fd = open(path_name, flags, mode);
 	if (fd == -1) {
 		 error("%s: uid:%u can't open `%s`: %m",
 			__func__, uid, path_name);
-		 exit(errno);
+		_exit(errno);
 	}
 	send_fd_over_pipe(pipe[0], fd);
 	close(fd);
-	exit(SLURM_SUCCESS);
+	_exit(SLURM_SUCCESS);
 }
 
 
@@ -2337,7 +2341,7 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 		goto done;
 	}
 
-	slurm_cred_handle_reissue(conf->vctx, req->cred);
+	slurm_cred_handle_reissue(conf->vctx, req->cred, false);
 	if (slurm_cred_revoked(conf->vctx, req->cred)) {
 		error("Job %u already killed, do not launch batch job",
 		      req->job_id);
@@ -2392,14 +2396,17 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 			/*
 			 * This race should only happen for at most a second as
 			 * we are only waiting for the other rpc to get here.
-			 * If we are waiting for more that 50 trys something bad
-			 * happened.
+			 * We should wait here for msg_timeout * 2, in case of
+			 * REQUEST_LAUNCH_PROLOG lost in forwarding tree the
+			 * direct retry from slurmctld will happen after
+			 * MessageTimeout.
 			 */
-			if (retry_cnt > 50) {
+			if (retry_cnt > (slurmctld_conf.msg_timeout * 2)) {
 				rc = ESLURMD_PROLOG_FAILED;
 				slurm_mutex_unlock(&prolog_mutex);
-				error("Waiting for JobId=%u prolog has failed, giving up after 50 sec",
-				      req->job_id);
+				error("Waiting for JobId=%u REQUEST_LAUNCH_PROLOG notification failed, giving up after %u sec",
+				      req->job_id,
+				      slurmctld_conf.msg_timeout * 2);
 				goto done;
 			}
 
@@ -5585,6 +5592,9 @@ static int _find_waiter(void *x, void *y)
 
 static int _waiter_init (uint32_t jobid)
 {
+	int rc = SLURM_SUCCESS;
+
+	slurm_mutex_lock(&waiter_mutex);
 	if (!waiters)
 		waiters = list_create(xfree_ptr);
 
@@ -5592,16 +5602,25 @@ static int _waiter_init (uint32_t jobid)
 	 *  Exit this thread if another thread is waiting on job
 	 */
 	if (list_find_first(waiters, _find_waiter, &jobid))
-		return SLURM_ERROR;
+		rc = SLURM_ERROR;
 	else
 		list_append(waiters, _waiter_create(jobid));
 
-	return (SLURM_SUCCESS);
+	slurm_mutex_unlock(&waiter_mutex);
+
+	return rc;
 }
 
 static int _waiter_complete (uint32_t jobid)
 {
-	return (list_delete_all (waiters, _find_waiter, &jobid));
+	int rc = 0;
+
+	slurm_mutex_lock(&waiter_mutex);
+	if (waiters)
+		rc = list_delete_all(waiters, _find_waiter, &jobid);
+	slurm_mutex_unlock(&waiter_mutex);
+
+	return rc;
 }
 
 /*

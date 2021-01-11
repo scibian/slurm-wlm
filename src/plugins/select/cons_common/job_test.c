@@ -612,6 +612,7 @@ static int _verify_node_state(part_res_record_t *cr_part_ptr,
 	uint64_t free_mem, min_mem, avail_mem;
 	List gres_list;
 	int i, i_first, i_last;
+	bool disable_binding = false;
 
 	if (is_cons_tres && !(job_ptr->bit_flags & JOB_MEM_SET) &&
 	    (min_mem = gres_plugin_job_mem_max(job_ptr->gres_list))) {
@@ -632,6 +633,8 @@ static int _verify_node_state(part_res_record_t *cr_part_ptr,
 		min_mem = job_ptr->details->pn_min_memory;
 	}
 
+	if (!is_cons_tres && (job_ptr->bit_flags & GRES_DISABLE_BIND))
+		disable_binding = true;
 	i_first = bit_ffs(node_bitmap);
 	if (i_first == -1)
 		i_last = -2;
@@ -700,7 +703,8 @@ static int _verify_node_state(part_res_record_t *cr_part_ptr,
 		gres_cores = gres_plugin_job_test(job_ptr->gres_list,
 						  gres_list, true,
 						  NULL, 0, 0, job_ptr->job_id,
-						  node_ptr->name);
+						  node_ptr->name,
+						  disable_binding);
 		gres_cpus = gres_cores;
 		if (gres_cpus != NO_VAL)
 			gres_cpus *= select_node_record[i].vpus;
@@ -1042,6 +1046,7 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 		goto alloc_job;
 	}
 	_free_avail_res_array(avail_res_array);
+	avail_res_array = NULL;
 
 	if ((gang_mode == 0) && (job_node_req == NODE_CR_ONE_ROW)) {
 		/*
@@ -1772,12 +1777,6 @@ static int _wrapper_job_res_rm_job(void *x, void *arg)
 			     job_ptr, wargs->action, wargs->job_fini,
 			     wargs->node_map);
 
-	/*
-	 * We might not had overlapped the main hetjob component partition, but
-	 * we might need these nodes.
-	 */
-	bit_or(wargs->node_map, job_ptr->node_bitmap);
-
 	return 0;
 }
 
@@ -1821,7 +1820,7 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 {
 	part_res_record_t *future_part;
 	node_use_record_t *future_usage;
-	job_record_t *tmp_job_ptr;
+	job_record_t *tmp_job_ptr, *job_ptr_preempt = NULL;
 	List cr_job_list;
 	ListIterator job_iterator, preemptee_iterator;
 	bitstr_t *orig_map;
@@ -1890,10 +1889,29 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 			      plugin_type, __func__, tmp_job_ptr);
 			continue;
 		}
-		if (!_is_preemptable(tmp_job_ptr, preemptee_candidates)) {
+		/*
+		 * For hetjobs, only the leader component is potentially added
+		 * to the preemptee_candidates. If the leader is preemptable,
+		 * it will be removed in the else statement alongside all of the
+		 * rest of the components. For such case, we don't want to
+		 * append non-leaders to cr_job_list, otherwise we would be
+		 * double deallocating them (once in this else statement and
+		 * twice later in the simulation of jobs removal).
+		 */
+		job_ptr_preempt = tmp_job_ptr;
+		if (tmp_job_ptr->het_job_id) {
+			job_ptr_preempt =
+				find_job_record(tmp_job_ptr->het_job_id);
+			if (!job_ptr_preempt) {
+				error("%s: %pJ HetJob leader not found",
+				      __func__, tmp_job_ptr);
+				continue;
+			}
+		}
+		if (!_is_preemptable(job_ptr_preempt, preemptee_candidates)) {
 			/* Queue job for later removal from data structures */
 			list_append(cr_job_list, tmp_job_ptr);
-		} else {
+		} else if (tmp_job_ptr == job_ptr_preempt) {
 			uint16_t mode = slurm_job_preempt_mode(tmp_job_ptr);
 			if (mode == PREEMPT_MODE_OFF)
 				continue;
@@ -1936,13 +1954,13 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	if ((rc != SLURM_SUCCESS) &&
 	    ((job_ptr->bit_flags & TEST_NOW_ONLY) == 0)) {
 		int time_window = 30;
+		time_t end_time = 0;
 		bool more_jobs = true;
 		DEF_TIMERS;
 		list_sort(cr_job_list, _cr_job_list_sort);
 		START_TIMER;
 		job_iterator = list_iterator_create(cr_job_list);
 		while (more_jobs) {
-			job_record_t *first_job_ptr = NULL;
 			job_record_t *last_job_ptr = NULL;
 			job_record_t *next_job_ptr = NULL;
 			int overlap, rm_job_cnt = 0;
@@ -1961,30 +1979,46 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 				debug2("%s: %s, %pJ: overlap=%d",
 				       plugin_type, __func__,
 				       tmp_job_ptr, overlap);
-				if (!first_job_ptr)
-					first_job_ptr = tmp_job_ptr;
+				if (!end_time) {
+					time_t delta = 0;
+
+					/*
+					 * align all time windows on a
+					 * time_window barrier from the original
+					 * first job evaluated, this prevents
+					 * data in the running set from skewing
+					 * changing the results between
+					 * scheduling evaluations
+					 */
+					delta = tmp_job_ptr->end_time %
+								time_window;
+					end_time = tmp_job_ptr->end_time +
+							(time_window - delta);
+				}
 				last_job_ptr = tmp_job_ptr;
 				(void) job_res_rm_job(
 					future_part, future_usage,
 					tmp_job_ptr, 0, false, orig_map);
-				if (rm_job_cnt++ > 200)
-					break;
 				next_job_ptr = list_peek_next(job_iterator);
 				if (!next_job_ptr) {
 					more_jobs = false;
 					break;
 				} else if (next_job_ptr->end_time >
-					   (first_job_ptr->end_time +
-					    time_window)) {
+					   (end_time + time_window)) {
 					break;
 				}
+				if (rm_job_cnt++ > 200)
+					goto timer_check;
 			}
 			if (!last_job_ptr)	/* Should never happen */
 				break;
-			if (bf_window_scale)
-				time_window += bf_window_scale;
-			else
-				time_window *= 2;
+			do {
+				if (bf_window_scale)
+					time_window += bf_window_scale;
+				else
+					time_window *= 2;
+			} while (next_job_ptr && next_job_ptr->end_time >
+				 (end_time + time_window));
 			rc = _job_test(job_ptr, node_bitmap, min_nodes,
 				       max_nodes, req_nodes,
 				       SELECT_MODE_WILL_RUN, tmp_cr_type,
@@ -2002,6 +2036,7 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 				}
 				break;
 			}
+timer_check:
 			END_TIMER;
 			if (DELTA_TIMER >= 2000000)
 				break;	/* Quit after 2 seconds wall time */
