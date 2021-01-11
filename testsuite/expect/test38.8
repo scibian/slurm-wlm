@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of sacct functionality for heterogeneous jobs.
 #          sacct options j
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -27,41 +31,43 @@
 ############################################################################
 source ./globals
 
+set test_id	"38.8"
 set exit_code	0
+set prompt	"PROMPT: "
 set task_num	2
 set timeout	60
+
+print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit $exit_code
 }
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-        skip "This test is incompatible with front-end systems"
-}
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes < 3} {
-	skip "Need 3 or more nodes in default partition"
+	send_user "\nWARNING: Need 3 or more nodes in default partition\n"
+	exit $exit_code
 }
 
 proc end_it { exit_code } {
-	global pack_job_id scancel
-	if {$pack_job_id > 0} {
-		exec $scancel $pack_job_id
+	global het_job_id scancel
+	if {$het_job_id > 0} {
+		exec $scancel $het_job_id
 	}
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
+	exit $exit_code
 }
 
-set pack_job_id 0
+set het_job_id 0
 set matches 0
 set index 0
 set sid 0
@@ -69,33 +75,33 @@ set timeout $max_job_delay
 spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
-		set pack_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
+		set het_job_id $expect_out(1,string)
+		send "export PS1=\"$prompt\"\r"
 		exp_continue
 	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+	-re "\"$prompt" {
+		# skip this, just echo of setting prompt"
 		exp_continue
 	}
-	-re "$test_prompt" {
-		#log_debug "Job initiated"
+	-re "$prompt" {
+		#send_user "Job initiated\n"
 	}
 	timeout {
-		log_error "salloc: allocation not granted in $timeout seconds"
+		log_error "salloc : allocation not granted in $timeout seconds\n"
 		end_it 1
 	}
 	eof {
 		wait
 	}
 }
-if {$pack_job_id == 0} {
-	log_error "salloc failure"
+if {$het_job_id == 0} {
+	log_error "salloc failure\n"
 	end_it 1
 }
 
 expect *
 
-log_info "Test Sending Sacct To Various Components"
+send_user "\n\nTest Sending Sacct To Various Components\n\n"
 
 # Wait for accounting records to reach slurmdbd
 sleep 5
@@ -113,7 +119,7 @@ expect {
 		set has_prolog_flags 1
 	}
 	timeout {
-		log_error "scontrol show config not responding"
+		log_error "scontrol show config not responding\n"
 		end_it 1
 	}
 	eof {
@@ -122,14 +128,14 @@ expect {
 }
 
 # Now test sacct
-spawn $sacct -j $pack_job_id
+spawn $sacct -j $het_job_id
 expect {
-	-re "$pack_job_id\\+\[0-2\]" {
+	-re "$het_job_id\\+\[0-2\]" {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		log_error "sacct not responding"
+		log_error "sacct not responding\n"
 		end_it 1
 	}
 	eof {
@@ -137,7 +143,7 @@ expect {
 	}
 }
 if {$matches != $expected_matches} {
-	log_error "sacct failure ($matches != $expected_matches)"
+	log_error "sacct failure ($matches != $expected_matches)\n"
 	end_it 1
 }
 
@@ -147,11 +153,12 @@ if {$has_prolog_flags} {
 }
 
 for {set inx 0} {$inx < 3} {incr inx} {
+	send_user "\n\n"
 	set bad_matches 0
 	set matches 0
-	spawn $sacct -j $pack_job_id+$inx
+	spawn $sacct -j $het_job_id+$inx
 	expect {
-		-re "$pack_job_id\\+($number)" {
+		-re "$het_job_id\\+($number)" {
 			if {$expect_out(1,string) == $inx} {
 				incr matches
 			} else {
@@ -160,7 +167,7 @@ for {set inx 0} {$inx < 3} {incr inx} {
 			exp_continue
 		}
 		timeout {
-			log_error "sacct not responding"
+			log_error "sacct not responding\n"
 			end_it 1
 		}
 		eof {
@@ -168,9 +175,10 @@ for {set inx 0} {$inx < 3} {incr inx} {
 		}
 	}
 	if {$matches != $expected_matches || $bad_matches != 0} {
-		log_error "sacct failure ($matches != 1 || $bad_matches != 0)"
+		log_error "sacct failure ($matches != 1 || $bad_matches != 0)\n"
 		end_it 1
 	}
 }
 
+send_user "\nSUCCESS\n"
 end_it 0

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Check sinfo output without header (--noheader option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,8 +32,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "4.8"
 set exit_code   0
 set matches     0
+
+print_header $test_id
 
 #
 # Look for header or underline
@@ -42,10 +49,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "sinfo not responding"
+		send_user "\nFAILURE: sinfo not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -54,7 +62,7 @@ expect {
 }
 
 if {$matches != 0} {
-	log_error "sinfo printer header"
+	send_user "\nFAILURE: sinfo printer header\n"
 	set exit_code 1
 }
 
@@ -69,10 +77,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "sinfo not responding"
+		send_user "\nFAILURE: sinfo not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -81,7 +90,7 @@ expect {
 }
 
 if {$matches != 0} {
-	log_error "sinfo printer header"
+	send_user "\nFAILURE: sinfo printer header\n"
 	set exit_code 1
 }
 
@@ -96,10 +105,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "sinfo not responding"
+		send_user "\nFAILURE: sinfo not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -108,9 +118,11 @@ expect {
 }
 
 if {$matches != 0} {
-	fail "sinfo printer header"
+	send_user "\nFAILURE: sinfo printer header\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

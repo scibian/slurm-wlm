@@ -42,14 +42,16 @@ Number of agent threads. Each of these agent threads can create in turn a group
 of up to 2 + AGENT_THREAD_COUNT active threads at a time.
 
 .TP
+\fBAgent thread count\fR
+Total count of active threads created by all the agent threads.
+
+.TP
 \fBDBD Agent queue size\fR
 Slurm queues up the messages intended for the SlurmDBD and processes them in a
 separate thread. If the SlurmDBD, or database, is down then this number will
-increase. The max queue size is calculated as:
+increase.
 
-MAX(10000, ((max_job_cnt * 2) + (node_record_count * 4)))
-
-If this number begins to grow more than half of the max queue size, the slurmdbd
+The max queue size is configured in the slurm.conf with MaxDBDMsgs. If this number begins to grow more than half of the max queue size, the slurmdbd
 and the database should be investigated immediately.
 
 .TP
@@ -224,6 +226,18 @@ which have already been started/requeued or individually modified will already
 have individual job records and are each counted as a separate job).
 
 .TP
+\fBLast table size\fR
+Count of different time slots tested by the backfill scheduler in its last
+iteration.
+
+.TP
+\fBMean table size\fR
+Mean count of different time slots tested by the backfill scheduler.
+Larger counts increase the time required for the backfill operation.
+The table size is influenced by many schuling parameters, including:
+bf_min_age_reserve, bf_min_prio_reserve, bf_resolution, and bf_window.
+
+.TP
 \fBLatency for 1000 calls to gettimeofday()\fR
 Latency of 1000 calls to the gettimeofday() syscall in microseconds,
 as measured at controller startup.
@@ -268,6 +282,11 @@ Print description of options and exit.
 Sort Remote Procedure Call (RPC) data by message type ID and user ID.
 
 .TP
+\fB\-M\fR, \fB\-\-cluster\fR=<\fIstring\fR>
+The cluster to issue commands to. Only one cluster name may be specified.
+Note that the SlurmDBD must be up for this option to work properly.
+
+.TP
 \fB\-r\fR, \fB\-\-reset\fR
 Reset scheduler and RPC counters to 0. Only supported for Slurm operators and
 administrators.
@@ -306,6 +325,10 @@ information you are trying to gather.
 Some \fBsdiag\fR options may be set via environment variables. These
 environment variables, along with their corresponding options, are listed below.
 (Note: commandline options will always override these settings)
+.TP 20
+\fBSLURM_CLUSTERS\fR
+Same as \fB\-\-cluster\fR
+
 .TP 20
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.

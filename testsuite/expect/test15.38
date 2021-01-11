@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline and --begin option and --time_min OK
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,8 +30,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.38"
 set exit_code   0
 set job_id      0
+
+print_header $test_id
 
 #
 # Spawn a batch job with a deadline and no time
@@ -54,7 +61,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -62,11 +69,13 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Job not submitted with a deadline and a time-min OK"
+	send_user "\nFAILURE: job not submitted with a deadline and a time-min OK\n"
+	exit 1
 }
 
 if {[wait_for_job $job_id DONE] != 0} {
-	fail "Job failed to run to completion"
+	send_user "\nFAILURE: job failed to run to completion\n"
+	exit 1
 }
 
 #
@@ -78,12 +87,12 @@ expect {
 		exp_continue
 	}
 	-re "JobState=" {
-		log_error "Invalid job state"
+		send_user "\nFAILURE: invalid job state\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -99,12 +108,12 @@ expect {
 		exp_continue
 	}
 	-re "DEADLINE" {
-		log_error "Job not submitted with a deadline and a time-min OK"
+		send_user "\nFAILURE: job not submitted with a deadline and a time-min OK\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "sacct not responding"
+		send_user "\nFAILURE: sacct not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -113,9 +122,11 @@ expect {
 }
 
 if {$not_support != 0} {
-	skip "Can not test without accounting enabled"
+	send_user "\nWARNING: can not test without accounting enabled\n"
+	exit 0
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

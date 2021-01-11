@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr +=, -= modify QoS test
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2009-2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -27,6 +32,7 @@
 ############################################################################
 source ./globals_accounting
 
+set test_id     "21.26"
 set exit_code   0
 set tc1		"test$test_id\_cluster"
 set ta1		"test$test_id-account.1"
@@ -67,20 +73,24 @@ array set mod_acct_vals4 {}
 array set mod_assoc_vals4 {}
 set mod_assoc_vals4(qos) "-$qos1"
 
+print_header $test_id
+
 set timeout 60
 
 #
 # Check accounting config and bail if not found
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 #
 # Make sure we have permission to do this work
 #
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 proc end_test { } {
@@ -113,7 +123,8 @@ set match 0
 set my_pid [eval spawn $sacctmgr list cluster $tc1 format=cluster,qos -np]
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	-re "$tc1.(\[a-z,\]*)." {
 		set mod_assoc_vals1(qoslevel) $expect_out(1,string)
@@ -122,8 +133,9 @@ expect {
 	}
 
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -131,42 +143,46 @@ expect {
 }
 
 if { !$match } {
-	fail "Couldn't query qos"
+	send_user "\nFAILURE: couldn't query qos\n"
+	exit 1
 }
 
 #now set default for cluster to ""
 incr exit_code [mod_cluster $tc1 [array get clus_req]]
 if { $exit_code } {
 	remove_qos "$qos1"
-	fail "Unable to modify cluster ($tc1)"
+	exit $exit_code
 }
+
+# send_user "moded the cluster to qos = ''"
+# exit
 
 #add qos
 incr exit_code [add_qos "$qos1" ""]
 if { $exit_code } {
 	remove_qos "$qos1"
-	fail "Unable to add qos ($qos1)"
+	exit $exit_code
 }
 #====Done Add QoS===========Begin Add First Account========
 #add default account
 incr exit_code [add_acct $ta1 [array get acct_req1]]
 if { $exit_code } {
 	end_test
-	fail "Unable to add account ($ta1)"
+	exit $exit_code
 }
 #====Done Add First Account====Begin Add Second Account====
 #add account
 incr exit_code [add_acct $ta2 [array get acct_req2]]
 if { $exit_code } {
 	end_test
-	fail "Unable to add account ($ta2)"
+	exit $exit_code
 }
 #=====Done Add Second Account========Begin Add User=========
 #add user
 incr exit_code [add_user $tu1 [array get user_req]]
 if { $exit_code } {
 	end_test
-	fail "Unable to add user ($tu1)"
+	exit $exit_code
 }
 
 #====Done add user====Done building test associations===Begin test section=======
@@ -178,7 +194,8 @@ set matches 0
 set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p]
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n|root||" {
 		incr matches
@@ -205,16 +222,18 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: Initial sacctmgr add failed ($matches != 6)\n"
 	end_test
-	fail "Initial sacctmgr add failed ($matches != 6)"
+	exit 1
 }
 
 #======Begin Modification to Add $qos1 to $ta1=======
@@ -222,7 +241,7 @@ if {$matches != 6} {
 incr exit_code [mod_acct $ta1 [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account ($ta1)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next is Verify=======
@@ -230,7 +249,8 @@ set matches 0
 set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p]
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n|root||" {
 		incr matches
@@ -257,16 +277,18 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: failed on verify of +$qos1 to account $ta1 ($matches != 6)\n"
 	end_test
-	fail "Failed on verify of +$qos1 to account $ta1 ($matches != 6)"
+	exit 1
 }
 
 #======Begin Modification to Subtract $qos1 from $account2=======
@@ -274,7 +296,7 @@ if {$matches != 6} {
 incr exit_code [mod_acct $ta2 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account ($ta2)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next is Verify=======
@@ -282,7 +304,8 @@ set matches 0
 set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p]
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n|root||" {
 		incr matches
@@ -309,16 +332,18 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "Sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: verify of -$qos1 from account $ta2 ($matches != 6)\n"
 	end_test
-	fail "Verify of -$qos1 from account $ta2 ($matches != 6)"
+	exit 1
 }
 
 
@@ -327,7 +352,7 @@ if {$matches != 6} {
 incr exit_code [mod_acct $ta1 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account ($ta1)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next is Verify=======
@@ -335,7 +360,8 @@ set matches 0
 set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p]
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n|root||" {
 		incr matches
@@ -362,16 +388,18 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: verify of -$qos1 from account $ta1 ($matches != 6)\n"
 	end_test
-	fail "Verify of -$qos1 from account $ta1 ($matches != 6)"
+	exit 1
 }
 
 #=====Begin Modification to Add $qos1 from $ta2=======
@@ -379,7 +407,7 @@ if {$matches != 6} {
 incr exit_code [mod_acct $ta2 [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account ($ta2)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next is Verify=======
@@ -388,7 +416,8 @@ set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p
 
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n|root||" {
 		incr matches
@@ -415,16 +444,18 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: failed on verify of +$qos1 to account $ta2 ($matches != 6)\n"
 	end_test
-	fail "Failed on verify of +$qos1 to account $ta2 ($matches != 6)"
+	exit 1
 }
 
 #=======Begin Modification to Add $qos1 from $account2=======
@@ -432,7 +463,7 @@ if {$matches != 6} {
 incr exit_code [mod_acct "root" [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account (root)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next Is Verify=======
@@ -441,7 +472,8 @@ set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p
 
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n$qos1|root||" {
 		incr matches
@@ -468,23 +500,25 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: failed on verify of +$qos1 to account root ($matches != 6)\n"
 	end_test
-	fail "Failed on verify of +$qos1 to account root ($matches != 6)"
+	exit 1
 }
 
 #======Begin Modification to Add $qos1 from $account2=======
 incr exit_code [mod_acct $ta2 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
-	fail "Unable to modify account ($ta2)"
+	exit $exit_code
 }
 
 #=======Done Modifying Account=======Next is Verify=======
@@ -493,7 +527,8 @@ set my_pid [eval spawn $sacctmgr list assoc cluster=$tc1 format=qos,acct,user -p
 
 expect {
 	-re "There was a problem" {
-		fail "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
+		exit 1
 	}
 	"\n$qos1|root||" {
 		incr matches
@@ -520,22 +555,27 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
-		fail "sacctmgr list associations not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 6} {
+	send_user "\nFAILURE: failed on verify of -$qos1 to account $ta2 ($matches != 6)\n"
 	end_test
-	fail "Failed on verify of -$qos1 to account $ta2 ($matches != 6)"
+	exit 1
 }
 
 #======Done With List====== Ending=======
 # This is the end below here
 #
 incr exit_code [end_test]
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
+if {$exit_code == 0} {
+	print_success $test_id
+} else {
+	send_user "\nFAILURE: $test_id\n"
 }
+exit $exit_code

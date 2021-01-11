@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Confirm node selection from within a job step on existing allocation
 #          (--relative, --nodes and --nprocs options).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008 Lawrence Livermore National Security.
@@ -30,24 +35,31 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.87"
 set exit_code   0
 set file_in     "test$test_id.input"
+set prompt      "QA_PROMPT: "
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end] != 0} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit 0
 }
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 4 } {
-	skip "Insufficient nodes in default partition ($node_count < 4)"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 4)\n"
+	exit $exit_code
 }
 
 #
 # Build input script file
 #
 make_bash_script $file_in "
-  $reset_bash_prompt
+  export PS1=\"$prompt\"
   $bin_bash -norc
 "
 
@@ -58,35 +70,42 @@ set timeout $max_job_delay
 set srun_pid [spawn $salloc -N4 ./$file_in]
 expect {
 	-re "More processors requested than permitted" {
+		send_user "\nWARNING: can't test srun task distribution\n"
 		exec $bin_rm -f $file_in
-		skip "Can't test srun task distribution"
+		exit $exit_code
 	}
 	-re "Node count specification invalid" {
+		send_user "\nWARNING: can't test srun task distribution\n"
 		exec $bin_rm -f $file_in
-		skip "Can't test srun task distribution"
+		exit $exit_code
 	}
 	-re "configuration is not available" {
+		send_user "WARNING: partition too small for test\n"
 		slow_kill $srun_pid
 		exec $bin_rm -f $file_in
-		skip "Partition too small for test"
+		exit 0
 	}
 	-re "Required node not available" {
+		send_user "\nWARNING: can't test srun task distribution\n"
 		exec $bin_rm -f $file_in
-		skip "Can't test srun task distribution"
+		exit $exit_code
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
+	"$prompt" {
 #		Printing this message seems to damage expect's buffers
-#		log_debug "Job initiated"
+#		send_user "Job initiated\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun terminated"
+		send_user "\nFAILURE: srun terminated\n"
+		exit 1
 	}
 }
 exec $bin_rm -f $file_in
@@ -100,7 +119,7 @@ set host_2      ""
 set host_3      ""
 send "$srun -l $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		set host_num $expect_out(1,string)
 		if { $host_num == 0 } {
 			set host_0 $expect_out(2,string)
@@ -117,15 +136,17 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
+	"$prompt" {
 #		Printing this message seems to damage expect's buffers
-#		log_debug "Srun completed"
+#		send_user "srun completed\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -136,26 +157,26 @@ expect {
 # Verify node count
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	set exit_code   1
 }
 if {[string compare $host_1 ""] == 0} {
-    log_error "Did not get hostname of task 1"
+        send_user "\nFAILURE: Did not get hostname of task 1\n"
 	set exit_code   1
 }
 if {[string compare $host_2 ""] == 0} {
-    log_error "Did not get hostname of task 2"
+        send_user "\nFAILURE: Did not get hostname of task 2\n"
 	set exit_code   1
 }
 if {[string compare $host_3 ""] == 0} {
-    log_error "Did not get hostname of task 3"
+        send_user "\nFAILURE: Did not get hostname of task 3\n"
 	set exit_code   1
 }
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
 
-#log_debug "Host_0:$host_0:host_1:$host_1:host_2:$host_2:host_3:$host_3:"
+#send_user "\nhost_0:$host_0:host_1:$host_1:host_2:$host_2:host_3:$host_3:\n"
 #
 # Get two nodes relative (starting at) node 0
 #
@@ -163,13 +184,13 @@ set matches 0
 
 send "$srun -l -N2 -n2 --relative=0 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		set host_num $expect_out(1,string)
 		if { $host_num == 0 } {
 			if {[string compare $expect_out(2,string) $host_0] == 0} {
 				incr matches
 			} else {
-				log_error "Wrong node responded"
+				send_user "\nFAILURE: wrong node responded\n"
 				set exit_code   1
 			}
 		}
@@ -177,33 +198,35 @@ expect {
 			if {[string compare $expect_out(2,string) $host_1] == 0} {
 				incr matches
 			} else {
-				log_error "Wrong node responded"
+				send_user "\nFAILURE: wrong node responded\n"
 				set exit_code   1
 			}
 		}
 		if { $host_num > 1 } {
-			log_error "Too many tasks responded"
+			send_user "\nFAILURE: too many tasks responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
+	"$prompt" {
 #		Printing this message seems to damage expect's buffers
-#		log_debug "srun completed"
+#		send_user "srun completed\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches < 2} {
-	log_error "Required nodes failed to respond"
+	send_user "\nFAILURE: required nodes failed to respond\n"
 	set exit_code   1
 }
 
@@ -213,13 +236,13 @@ if {$matches < 2} {
 set matches 0
 send "$srun -l -N2 -n2 --relative=2 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		set host_num $expect_out(1,string)
 		if { $host_num == 0 } {
 			if {[string compare $expect_out(2,string) $host_2] == 0} {
 				incr matches
 			} else {
-				log_error "Wrong node responded"
+				send_user "\nFAILURE: wrong node responded\n"
 				set exit_code   1
 			}
 		}
@@ -227,33 +250,35 @@ expect {
 			if {[string compare $expect_out(2,string) $host_3] == 0} {
 				incr matches
 			} else {
-				log_error "Wrong node responded"
+				send_user "\nFAILURE: wrong node responded\n"
 				set exit_code   1
 			}
 		}
 		if { $host_num > 1 } {
-			log_error "Too many tasks responded"
+			send_user "\nFAILURE: too many tasks responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	 -re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
+	"$prompt" {
 #		Printing this message seems to damage expect's buffers
-#		log_debug "srun completed"
+#		send_user "srun completed\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches < 2} {
-	log_error "Required nodes failed to respond"
+	send_user "\nFAILURE: required nodes failed to respond\n"
 	set exit_code   1
 }
 
@@ -265,32 +290,34 @@ set error 0
 send "$srun -l -N2 -n2 -O --relative=3 $bin_printenv SLURMD_NODENAME\r"
 expect {
 	-re "error:" {
-		log_debug "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		incr error
 		exp_continue
 	}
-	-re "($number): *($re_word_str)" {
-		log_error "Running where we shouldn't be able to run"
+	-re "($number): *($alpha_numeric_under)" {
+		send_user "\nFAILURE: running where we shouldn't be able to run\n"
 		set exit_code   1
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
+	"$prompt" {
 #		Printing this message seems to damage expect's buffers
-#		log_debug "srun completed"
+#		send_user "srun completed\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$error == 0} {
-	log_error "No error for inconsistent node count"
+	send_user "\nFAILURE: No error for inconsistent node count\n"
 	set exit_code   1
 }
 
@@ -300,14 +327,16 @@ if {$error == 0} {
 send "exit\r"
 expect {
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

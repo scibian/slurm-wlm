@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "May 2019" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "April 2020" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -144,28 +144,29 @@ AllocNodes          AllocTRES           AssocID             AveCPU
 AveCPUFreq          AveDiskRead         AveDiskWrite        AvePages
 AveRSS              AveVMSize           BlockID             Cluster
 Comment             Constraints         ConsumedEnergy      ConsumedEnergyRaw
-CPUTime             CPUTimeRAW          DerivedExitCode     Elapsed
-ElapsedRaw          Eligible            End                 ExitCode
-Flags               GID                 Group               JobID
-JobIDRaw            JobName             Layout              MaxDiskRead
-MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite        MaxDiskWriteNode
-MaxDiskWriteTask    MaxPages            MaxPagesNode        MaxPagesTask
-MaxRSS              MaxRSSNode          MaxRSSTask          MaxVMSize
-MaxVMSizeNode       MaxVMSizeTask       McsLabel            MinCPU
-MinCPUNode          MinCPUTask          NCPUS               NNodes
-NodeList            NTasks              Priority            Partition
-QOS                 QOSRAW              Reason              ReqCPUFreq
-ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov       ReqCPUS
-ReqGRES             ReqMem              ReqNodes            ReqTRES
-Reservation         ReservationId       Reserved            ResvCPU
-ResvCPURAW          Start               State               Submit
-Suspended           SystemCPU           SystemComment       Timelimit
-TimelimitRaw        TotalCPU            TRESUsageInAve      TRESUsageInMax
-TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin      TRESUsageInMinNode
-TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve     TRESUsageOutMax
-TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin     TRESUsageOutMinNode
-TRESUsageOutMinTask TRESUsageOutTot     UID                 User
-UserCPU             WCKey               WCKeyID             WorkDir
+CPUTime             CPUTimeRAW          DBIndex             DerivedExitCode
+Elapsed             ElapsedRaw          Eligible            End
+ExitCode            Flags               GID                 Group
+JobID               JobIDRaw            JobName             Layout
+MaxDiskRead         MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite
+MaxDiskWriteNode    MaxDiskWriteTask    MaxPages            MaxPagesNode
+MaxPagesTask        MaxRSS              MaxRSSNode          MaxRSSTask
+MaxVMSize           MaxVMSizeNode       MaxVMSizeTask       McsLabel
+MinCPU              MinCPUNode          MinCPUTask          NCPUS
+NNodes              NodeList            NTasks              Priority
+Partition           QOS                 QOSRAW              Reason
+ReqCPUFreq          ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov
+ReqCPUS             ReqGRES             ReqMem              ReqNodes
+ReqTRES             Reservation         ReservationId       Reserved
+ResvCPU             ResvCPURAW          Start               State
+Submit              Suspended           SystemCPU           SystemComment
+Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
+TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
+TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
+TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin
+TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot     UID
+User                UserCPU             WCKey               WCKeyID
+WorkDir
 .ft 1
 .fi
 .RE
@@ -268,14 +269,16 @@ Show only jobs local to this cluster. Ignore other clusters in this federation
 Equivalent to specifying:
 .IP
 .na
-\-\-format=jobid,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,
-avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,
-maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,
-alloccpus,elapsed,state,exitcode,maxdiskread,maxdiskreadnode,maxdiskreadtask,
+\-\-format=jobid,jodidraw,jobname,partition,maxvmsize,maxvmsizenode,
+maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,
+maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,
+alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,
+reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,
 avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,
-allocgres,reqgres,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,
-tresusageinmax,tresusageinmaxn,tresusageinmaxt,tresusageoutmax,tresusageoutmaxn,
-tresusageoutmaxt,tresusageoutave,tresusageinave
+allocgres,reqgres,reqtres,alloctres,tresusageinave,tresusageinmax,
+tresusageinmaxn,tresusageinmaxt,tresusageinmin,tresusageinminn,tresusageinmint,
+tresusageintot,tresusageoutmax,tresusageoutmaxn,
+tresusageoutmaxt,tresusageoutave,tresusageouttot
 .ad
 
 .TP
@@ -431,9 +434,9 @@ Print version.
 .TP
 \f3\-\-whole\-hetjob=[yes|no]\fP
 When querying heterogeneous jobs, Slurm by default retrieves the information
-about all the components of the job if the pack_job_id (leader) is selected. If
-a non\-leader heterogeneous job component is selected only that component is
-retrieved by default. This behavior can be changed by using this option. If
+about all the components of the job if the het_job_id (leader id) is selected.
+If a non\-leader heterogeneous job component id is selected only that component
+is retrieved by default. This behavior can be changed by using this option. If
 set to 'yes' or no value is set, then information about all the components
 will be retrieved no matter which component is selected in the job filter.
 Otherwise, if set to 'no' then only the selected heterogeneous job components
@@ -617,7 +620,7 @@ Array jobs are in the form:
 .IP
 Heterogeneous jobs are in the form:
 .IP
-\f2PackJobID+PackJobOffset\fP\c
+\f2HetJobID+HetJobOffset\fP\c
 \&.
 
 .TP
@@ -751,6 +754,21 @@ Requested CPU frequency for the step, in kHz.
 Note: This value applies only to a job step. No value is reported for the job.
 
 .TP
+\f3ReqCPUFreqGov\fP
+Requested CPU frequency governor for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
+\f3ReqCPUFreqMax\fP
+Maximum requested CPU frequency for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
+\f3ReqCPUFreqMin\fP
+Minimum requested CPU frequency for the step, in kHz.
+Note: This value applies only to a job step. No value is reported for the job.
+
+.TP
 \f3ReqCPUS\fP
 Number of requested CPUs.
 
@@ -880,6 +898,24 @@ Node for which each maximum TRES usage out occurred.
 Task for which each maximum TRES usage out occurred.
 
 .TP
+\f3TresUsageInMin\fP
+Tres minimum usage in by all tasks in job.
+NOTE: If corresponding TresUsageInMinTask is -1 the metric is node centric
+instead of task.
+
+.TP
+\f3TresUsageInMinNode\fP
+Node for which each minimum TRES usage out occurred.
+
+.TP
+\f3TresUsageInMinTask\fP
+Task for which each minimum TRES usage out occurred.
+
+.TP
+\f3TresUsageInTot\fP
+Tres total usage in by all tasks in job.
+
+.TP
 \f3TresUsageOutAve\fP
 Tres average usage out by all tasks in job.
 NOTE: If corresponding TresUsageOutMaxTask is -1 the metric is node centric
@@ -898,6 +934,10 @@ Node for which each maximum TRES usage out occurred.
 .TP
 \f3TresUsageOutMaxTask\fP
 Task for which each maximum TRES usage out occurred.
+
+.TP
+\f3TresUsageOutTot\fP
+Tres total usage out by all tasks in job.
 
 .TP
 \f3UID\fP

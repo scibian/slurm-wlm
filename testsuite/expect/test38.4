@@ -1,9 +1,13 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Validate salloc pack job environment variables.
+# Purpose: Validate salloc hetjob environment variables.
 #
 # Reqs:    1. Using slurmdbd accounting storage type and is up
 #          2. controllers are up and running.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -31,17 +35,18 @@ source ./globals
 
 set timeout 60
 
+set test_id      "38.4"
 set exit_code    0
 set file_out     "test$test_id.out"
 
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
-}
+print_header $test_id
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 3 } {
-	skip "Insufficient nodes in default partition ($node_count < 3)"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 3)\n"
+	exit $exit_code
 }
 
 proc salloc {} {
@@ -101,7 +106,7 @@ proc test_env {value} {
 	}
 }
 
-proc cancel_job_id { } {
+proc cancel_all_jobs { } {
 	global scancel job_id
 	if {$job_id != 0} {
 		exec $scancel $job_id
@@ -118,40 +123,44 @@ proc cleanup { } {
 
 proc end_it { exit_code } {
 	global test_id job_id
-	cancel_job_id
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	cancel_all_jobs
+	if {$exit_code == 0} {
+		cleanup
+		print_success $test_id
 	}
-	pass
+	exit $exit_code
 }
 
 #start test
 
-log_info "################################################################"
-log_info "Salloc packjob and verify output from scontrol show job"
-log_info "################################################################"
+send_user "\n################################################################\n"
+send_user "Salloc hetjob and verify output from scontrol show job"
+send_user "\n################################################################\n"
 
 set job_id 0
 salloc
 if {$job_id == 0} {
-	fail "Error submitting job $job_id"
+	send_user "\nFAILURE: error submitting job $job_id\n"
+	exit 1
 }
 
 #
 # Check for desired output
 #
 if {[wait_for_job $job_id DONE] != 0} {
+	send_user "\nFAILURE: error completing job $job_id\n"
 	cancel_job $job_id
-	fail "Error completing job $job_id"
+	exit 1
 }
 if {[wait_for_file $file_out] != 0} {
-	fail "Output file $file_out is missing"
+	send_user "\nFAILURE: Output file $file_out is missing\n"
+	exit 1
 }
 
 set matches 0
-spawn $bin_grep "SLURM_PACK_SIZE" $file_out
+spawn $bin_grep "SLURM_HET_SIZE" $file_out
 expect {
-	-re "SLURM_PACK_SIZE=3" {
+	-re "SLURM_HET_SIZE=3" {
 		#once
 		incr matches
 		exp_continue
@@ -161,15 +170,15 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "output of env incorrect matches: SLURM_PACK_SIZE=3 ($matches != 1)"
+	log_error "output of env incorrect matches: SLURM_HET_SIZE=3 ($matches != 1)"
 	end_it 1
 }
 
 set matches 0
 log_user 0
-spawn $bin_grep "SLURM_JOB_PARTITION_PACK_GROUP" $file_out
+spawn $bin_grep "SLURM_JOB_PARTITION_HET_GROUP" $file_out
 expect {
-	-re "SLURM_JOB_PARTITION_PACK_GROUP" {
+	-re "SLURM_JOB_PARTITION_HET_GROUP" {
 		#three
 		incr matches
 		exp_continue
@@ -180,25 +189,25 @@ expect {
 }
 log_user 1
 if {$matches != 3} {
-	log_error "output of env incorrect matches: SLURM_JOB_PARTITION_PACK_GROUP ($matches != 3)"
+	log_error "output of env incorrect matches: SLURM_JOB_PARTITION_HET_GROUP ($matches != 3)"
 	end_it 1
 }
 
-test_env "SLURM_CPUS_PER_TASK_PACK_GROUP_0=4"
-test_env "SLURM_CPUS_PER_TASK_PACK_GROUP_1=2"
-test_env "SLURM_CPUS_PER_TASK_PACK_GROUP_2=1"
+test_env "SLURM_CPUS_PER_TASK_HET_GROUP_0=4"
+test_env "SLURM_CPUS_PER_TASK_HET_GROUP_1=2"
+test_env "SLURM_CPUS_PER_TASK_HET_GROUP_2=1"
 
-test_env "SLURM_JOB_ID_PACK_GROUP_0=$job_id"
-test_env "SLURM_JOB_ID_PACK_GROUP_1="
-test_env "SLURM_JOB_ID_PACK_GROUP_2="
+test_env "SLURM_JOB_ID_HET_GROUP_0=$job_id"
+test_env "SLURM_JOB_ID_HET_GROUP_1="
+test_env "SLURM_JOB_ID_HET_GROUP_2="
 
-test_env "SLURM_MEM_PER_CPU_PACK_GROUP_0=10"
-test_env "SLURM_MEM_PER_CPU_PACK_GROUP_1=2"
-test_env "SLURM_MEM_PER_CPU_PACK_GROUP_2=6"
+test_env "SLURM_MEM_PER_CPU_HET_GROUP_0=10"
+test_env "SLURM_MEM_PER_CPU_HET_GROUP_1=2"
+test_env "SLURM_MEM_PER_CPU_HET_GROUP_2=6"
 
-test_env "SLURM_NTASKS_PACK_GROUP_0=1"
-test_env "SLURM_NTASKS_PACK_GROUP_1=1"
-test_env "SLURM_NTASKS_PACK_GROUP_2=1"
+test_env "SLURM_NTASKS_HET_GROUP_0=1"
+test_env "SLURM_NTASKS_HET_GROUP_1=1"
+test_env "SLURM_NTASKS_HET_GROUP_2=1"
 
 # All Done
 end_it 0

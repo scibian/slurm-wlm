@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm sprio functionality.
 #
 #          sprio all options all arguments
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2009 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,18 +33,22 @@
 ############################################################################
 source ./globals
 
+set test_id     "25.1"
 set exit_code   0
 set file_in     "test$test_id.input"
 set timeout	60
+print_header	$test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 if { [string compare [priority_type] multifactor] } {
-	skip "This test can't be run without a usable PriorityType"
+	send_user "\nWARNING: This test can't be run without a usable PriorityType\n"
+	exit 0
 }
 
 #
@@ -48,13 +56,42 @@ if { [string compare [priority_type] multifactor] } {
 #
 set select_type_params [get_select_type_params ""]
 if { [string first "CR_ONE_TASK_PER_CORE" $select_type_params] != -1 } {
-	skip "This test can't be run SelectTypeParameters=CR_ONE_TASK_PER_CORE"
+	log_warn "This test can't be run SelectTypeParameters=CR_ONE_TASK_PER_CORE"
+	exit 0
 }
 
 #
 # Build input script file
 #
 make_bash_script $file_in "$bin_sleep 600"
+
+proc def_cpu_cnt { } {
+	global sinfo alpha_numeric_under number exit_code partition
+
+	if { [string length $partition] == 0 } {
+		set partition [default_partition]
+	}
+	set cpu_cnt 1
+	spawn $sinfo -h -o "%P %C" -p $partition --state=idle
+	expect {
+		-re "$partition\\* ($number)(K?)\/($number)(K?)" {
+			set cpu_cnt $expect_out(3,string)
+			if {[string compare $expect_out(4,string) ""]} {
+				set cpu_cnt [expr $cpu_cnt * 1024]
+			}
+
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: sbatch not responding\n"
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
+	return $cpu_cnt
+}
 
 ################################################################
 #
@@ -79,7 +116,7 @@ proc sub_job { cpu_cnt } {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
+			send_user "\nFAILURE: sbatch not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -88,7 +125,7 @@ proc sub_job { cpu_cnt } {
 	}
 
 	if {$job_id == 0} {
-		log_error "Did not get sbatch job_id"
+		send_user "\nFAILURE: did not get sbatch job_id\n"
 		set exit_code 1
 	}
 	return $job_id
@@ -107,11 +144,11 @@ proc sub_job { cpu_cnt } {
 ################################################################
 
 proc sprio_opt { soption } {
-	global number eol sprio exit_code
+	global number sprio exit_code
 	set debug       0
 	set matches     0
 	set not_support 0
-	log_debug "$sprio $soption"
+	send_user "$sprio $soption \n"
 
 ############# sprio help option
 	if { $soption == "--help" } {
@@ -123,27 +160,27 @@ proc sprio_opt { soption } {
 				exp_continue
 			}
 			-re "noheader.*jobs.*long.*norm.*format.*user.*verbose.*version.*weights" {
-				if {$debug} {log_debug "Match1"}
+				if {$debug} {send_user "\nmatch1\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Help options:" {
-				if {$debug} {log_debug "Match2"}
+				if {$debug} {send_user "\nmatch2\n"}
 				incr matches
 				exp_continue
 			}
 			-re "help *show this help message" {
-				if {$debug} {log_debug "Match3"}
+				if {$debug} {send_user "\nmatch3\n"}
 				incr matches
 				exp_continue
 			}
 			-re "usage *display a brief summary of sprio options" {
-				if {$debug} {log_debug "Match4"}
+				if {$debug} {send_user "\nmatch4\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -152,11 +189,12 @@ proc sprio_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 
 		if {$matches != 4} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 	return $matches
@@ -171,13 +209,13 @@ proc sprio_opt { soption } {
 				set not_support 1
 				exp_continue
 			}
-			-re "Usage: sprio .-j jid.s.. .-u user_name.s.. .-o format. .-p partitions.$eol   .--federation. .--local. .--sibling. .--usage. .-hlnvVw." {
-				if {$debug} {log_debug "Match5"}
+			-re "Usage: sprio .-j jid.s.. .-u user_name.s.. .-o format. .-p partitions.\r\n   .--federation. .--local. .--sibling. .--usage. .-hlnvVw." {
+				if {$debug} {send_user "\nmatch5\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -186,10 +224,11 @@ proc sprio_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 1} {
-			log_error "sprio -$soption failed ($matches)"
+			send_user "\nFAILURE: sprio -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -205,12 +244,12 @@ proc sprio_opt { soption } {
 				exp_continue
 			}
 			-re "slurm $number.$number.$number" {
-				if {$debug} {log_debug "Match6"}
+				if {$debug} {send_user "\nmatch6\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -219,11 +258,12 @@ proc sprio_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 
 		if {$matches != 1} {
-			log_error "sprio -$soption failed ($matches)"
+			send_user "\nFAILURE: sprio -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -239,17 +279,17 @@ proc sprio_opt { soption } {
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+PRIORITY" {
-				if {$debug} {log_debug "Match7"}
+				if {$debug} {send_user "\nmatch7\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Weights" {
-				if {$debug} {log_debug "Match8"}
+				if {$debug} {send_user "\nmatch8\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -258,11 +298,12 @@ proc sprio_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 
 		if {$matches != 2} {
-			log_error "sprio -$soption failed ($matches)"
+			send_user "\nFAILURE: sprio -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -286,7 +327,7 @@ proc sprio_args { soption sargs jobid} {
 	set debug       0
 	set matches     0
 	set not_support 0
-	log_debug "$sprio $soption $sargs $jobid"
+	send_user "$sprio $soption $sargs $jobid\n"
 
 ############# sprio noheader options
 	if { $soption == "--noheader" || $soption == "-h" } {
@@ -298,12 +339,12 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID|PARTITION|PRIORITY|ADMIN|AGE|ASSOC|FAIRSHARE|JOBSIZE|PARTITION|QOS" {
-				if {$debug} {log_debug "Match9"}
+				if {$debug} {send_user "\nmatch9\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -312,10 +353,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 0} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -331,17 +373,17 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+PRIORITY" {
-				if {$debug} {log_debug "Match10"}
+				if {$debug} {send_user "\nmatch10\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid\\s+\\S+\\s+$number" {
-				if {$debug} {log_debug "Match11"}
+				if {$debug} {send_user "\nmatch11\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -350,10 +392,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 2} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -369,17 +412,17 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID PARTITION     USER   PRIORITY       SITE        AGE      ASSOC  FAIRSHARE    JOBSIZE  PARTITION        QOS        NICE                 TRES" {
-				if {$debug} {log_debug "Match12"}
+				if {$debug} {send_user "\nmatch12\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid.*$number *$number *$number *$number *$number *$number *$number" {
-				if {$debug} {log_debug "Match13"}
+				if {$debug} {send_user "\nmatch13\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -388,10 +431,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 2} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -407,17 +451,17 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+PRIORITY" {
-				if {$debug} {log_debug "Match14"}
+				if {$debug} {send_user "\nmatch14\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid\\s+\\S+\\s+$float" {
-				if {$debug} {log_debug "Match15"}
+				if {$debug} {send_user "\nmatch15\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -426,10 +470,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 2} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -445,22 +490,22 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID     USER   PRIORITY   PRIORITY       SITE        AGE        AGE      ASSOC      ASSOC " {
-				if {$debug} {log_debug "Match16"}
+				if {$debug} {send_user "\nmatch16\n"}
 				incr matches
 				exp_continue
 			}
 			-re "FAIRSHARE  FAIRSHARE    JOBSIZE    JOBSIZE  PARTITION  PARTITION        QOS        QOS   NICE" {
-				if {$debug} {log_debug "Match17"}
+				if {$debug} {send_user "\nmatch17\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid *.* *$float *$number *$float *$number *$float *$number *$float *$number *$float *$number *$float *$number *$number" {
-				if {$debug} {log_debug "Match18"}
+				if {$debug} {send_user "\nmatch18\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -469,10 +514,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 3} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -488,17 +534,17 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+USER" {
-				if {$debug} {log_debug "Match19"}
+				if {$debug} {send_user "\nmatch19\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid\\s+\\S+\\s+[string range $sargs 0 7]" {
-				if {$debug} {log_debug "Match20"}
+				if {$debug} {send_user "\nmatch20\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -507,10 +553,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 2} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -526,17 +573,17 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+USER" {
-				if {$debug} {log_debug "Match21"}
+				if {$debug} {send_user "\nmatch21\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid\\s+\\S+\\s+[string range $sargs 0 7]" {
-				if {$debug} {log_debug "Match22"}
+				if {$debug} {send_user "\nmatch22\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -545,10 +592,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 2} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -564,22 +612,22 @@ proc sprio_args { soption sargs jobid} {
 				exp_continue
 			}
 			-re "format.*job_flag.*jobs.*$jobid.*verbose" {
-				if {$debug} {log_debug "Match23"}
+				if {$debug} {send_user "\nmatch23\n"}
 				incr matches
 				exp_continue
 			}
 			-re "JOBID\\s+PARTITION\\s+PRIORITY" {
-				if {$debug} {log_debug "Match24"}
+				if {$debug} {send_user "\nmatch24\n"}
 				incr matches
 				exp_continue
 			}
 			-re "$jobid\\s+\\S+\\s+$number" {
-				if {$debug} {log_debug "Match25"}
+				if {$debug} {send_user "\nmatch25\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sprio not responding"
+				send_user "\nFAILURE: sprio not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -588,10 +636,11 @@ proc sprio_args { soption sargs jobid} {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit 0
 		}
 		if {$matches != 3} {
-			log_error "sprio $soption failed ($matches)"
+			send_user "\nFAILURE: sprio $soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -602,15 +651,15 @@ proc sprio_args { soption sargs jobid} {
 ################################################################
 # Start a group of jobs
 
-set cpu_cnt [get_total_cpus]
+set cpu_cnt [def_cpu_cnt]
 set jobid1 [sub_job $cpu_cnt]
 set jobid2 [sub_job $cpu_cnt]
 if {$exit_code != 0} {
 	cancel_job $jobid1
 	cancel_job $jobid2
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
-log_debug "Submitted 2 jobs successfully"
+send_user "\nSubmitted 2 jobs successfully\n\n"
 
 #
 # Collect uid
@@ -697,6 +746,6 @@ cancel_job $jobid2
 #
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

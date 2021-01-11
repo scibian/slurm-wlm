@@ -104,7 +104,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/ltversion.m4 \
 	$(top_srcdir)/auxdir/lt~obsolete.m4 \
 	$(top_srcdir)/auxdir/slurm.m4 \
-	$(top_srcdir)/auxdir/x_ac__system_configuration.m4 \
+	$(top_srcdir)/auxdir/slurmrestd.m4 \
 	$(top_srcdir)/auxdir/x_ac_affinity.m4 \
 	$(top_srcdir)/auxdir/x_ac_c99.m4 \
 	$(top_srcdir)/auxdir/x_ac_cgroup.m4 \
@@ -116,14 +116,14 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
 	$(top_srcdir)/auxdir/x_ac_env.m4 \
 	$(top_srcdir)/auxdir/x_ac_freeipmi.m4 \
+	$(top_srcdir)/auxdir/x_ac_http_parser.m4 \
 	$(top_srcdir)/auxdir/x_ac_hwloc.m4 \
-	$(top_srcdir)/auxdir/x_ac_iso.m4 \
 	$(top_srcdir)/auxdir/x_ac_json.m4 \
+	$(top_srcdir)/auxdir/x_ac_jwt.m4 \
 	$(top_srcdir)/auxdir/x_ac_lua.m4 \
 	$(top_srcdir)/auxdir/x_ac_lz4.m4 \
 	$(top_srcdir)/auxdir/x_ac_man2html.m4 \
 	$(top_srcdir)/auxdir/x_ac_munge.m4 \
-	$(top_srcdir)/auxdir/x_ac_ncurses.m4 \
 	$(top_srcdir)/auxdir/x_ac_netloc.m4 \
 	$(top_srcdir)/auxdir/x_ac_nvml.m4 \
 	$(top_srcdir)/auxdir/x_ac_ofed.m4 \
@@ -133,11 +133,13 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
+	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
 	$(top_srcdir)/auxdir/x_ac_uid_gid_size.m4 \
-	$(top_srcdir)/auxdir/x_ac_x11.m4 $(top_srcdir)/configure.ac
+	$(top_srcdir)/auxdir/x_ac_x11.m4 \
+	$(top_srcdir)/auxdir/x_ac_yaml.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am $(am__DIST_COMMON)
@@ -176,7 +178,7 @@ am__installdirs = "$(DESTDIR)$(pkglibdir)"
 LTLIBRARIES = $(pkglib_LTLIBRARIES)
 accounting_storage_slurmdbd_la_LIBADD =
 am_accounting_storage_slurmdbd_la_OBJECTS =  \
-	accounting_storage_slurmdbd.lo slurmdbd_agent.lo
+	accounting_storage_slurmdbd.lo as_ext_dbd.lo slurmdbd_agent.lo
 accounting_storage_slurmdbd_la_OBJECTS =  \
 	$(am_accounting_storage_slurmdbd_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
@@ -203,7 +205,7 @@ DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir) -I$(top_builddir)/slurm
 depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/accounting_storage_slurmdbd.Plo \
-	./$(DEPDIR)/slurmdbd_agent.Plo
+	./$(DEPDIR)/as_ext_dbd.Plo ./$(DEPDIR)/slurmdbd_agent.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -310,7 +312,6 @@ H5CC = @H5CC@
 H5FC = @H5FC@
 HAVEMYSQLCONFIG = @HAVEMYSQLCONFIG@
 HAVE_MAN2HTML = @HAVE_MAN2HTML@
-HAVE_SOME_CURSES = @HAVE_SOME_CURSES@
 HDF5_CC = @HDF5_CC@
 HDF5_CFLAGS = @HDF5_CFLAGS@
 HDF5_CPPFLAGS = @HDF5_CPPFLAGS@
@@ -321,6 +322,8 @@ HDF5_LDFLAGS = @HDF5_LDFLAGS@
 HDF5_LIBS = @HDF5_LIBS@
 HDF5_TYPE = @HDF5_TYPE@
 HDF5_VERSION = @HDF5_VERSION@
+HTTP_PARSER_CPPFLAGS = @HTTP_PARSER_CPPFLAGS@
+HTTP_PARSER_LDFLAGS = @HTTP_PARSER_LDFLAGS@
 HWLOC_CPPFLAGS = @HWLOC_CPPFLAGS@
 HWLOC_LDFLAGS = @HWLOC_LDFLAGS@
 HWLOC_LIBS = @HWLOC_LIBS@
@@ -331,6 +334,8 @@ INSTALL_SCRIPT = @INSTALL_SCRIPT@
 INSTALL_STRIP_PROGRAM = @INSTALL_STRIP_PROGRAM@
 JSON_CPPFLAGS = @JSON_CPPFLAGS@
 JSON_LDFLAGS = @JSON_LDFLAGS@
+JWT_CPPFLAGS = @JWT_CPPFLAGS@
+JWT_LDFLAGS = @JWT_LDFLAGS@
 LD = @LD@
 LDFLAGS = @LDFLAGS@
 LIBCURL = @LIBCURL@
@@ -357,7 +362,6 @@ MUNGE_LDFLAGS = @MUNGE_LDFLAGS@
 MUNGE_LIBS = @MUNGE_LIBS@
 MYSQL_CFLAGS = @MYSQL_CFLAGS@
 MYSQL_LIBS = @MYSQL_LIBS@
-NCURSES = @NCURSES@
 NETLOC_CPPFLAGS = @NETLOC_CPPFLAGS@
 NETLOC_LDFLAGS = @NETLOC_LDFLAGS@
 NETLOC_LIBS = @NETLOC_LIBS@
@@ -366,6 +370,7 @@ NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
 NVML_CPPFLAGS = @NVML_CPPFLAGS@
 NVML_LIBS = @NVML_LIBS@
+OBJCOPY = @OBJCOPY@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
 OFED_CPPFLAGS = @OFED_CPPFLAGS@
@@ -392,6 +397,8 @@ PMIX_V2_CPPFLAGS = @PMIX_V2_CPPFLAGS@
 PMIX_V2_LDFLAGS = @PMIX_V2_LDFLAGS@
 PMIX_V3_CPPFLAGS = @PMIX_V3_CPPFLAGS@
 PMIX_V3_LDFLAGS = @PMIX_V3_LDFLAGS@
+PMIX_V4_CPPFLAGS = @PMIX_V4_CPPFLAGS@
+PMIX_V4_LDFLAGS = @PMIX_V4_LDFLAGS@
 PROJECT = @PROJECT@
 PTHREAD_CC = @PTHREAD_CC@
 PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
@@ -402,6 +409,9 @@ RELEASE = @RELEASE@
 RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
 RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
 RRDTOOL_LIBS = @RRDTOOL_LIBS@
+RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
+RSMI_LDFLAGS = @RSMI_LDFLAGS@
+RSMI_LIBS = @RSMI_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
@@ -410,6 +420,7 @@ SLURMCTLD_PORT = @SLURMCTLD_PORT@
 SLURMCTLD_PORT_COUNT = @SLURMCTLD_PORT_COUNT@
 SLURMDBD_PORT = @SLURMDBD_PORT@
 SLURMD_PORT = @SLURMD_PORT@
+SLURMRESTD_PORT = @SLURMRESTD_PORT@
 SLURM_API_AGE = @SLURM_API_AGE@
 SLURM_API_CURRENT = @SLURM_API_CURRENT@
 SLURM_API_MAJOR = @SLURM_API_MAJOR@
@@ -429,6 +440,8 @@ UCX_LDFLAGS = @UCX_LDFLAGS@
 UCX_LIBS = @UCX_LIBS@
 UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
+YAML_CPPFLAGS = @YAML_CPPFLAGS@
+YAML_LDFLAGS = @YAML_LDFLAGS@
 ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
 ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
 ZLIB_LIBS = @ZLIB_LIBS@
@@ -502,6 +515,7 @@ pkglib_LTLIBRARIES = accounting_storage_slurmdbd.la
 
 # Null job completion logging plugin.
 accounting_storage_slurmdbd_la_SOURCES = accounting_storage_slurmdbd.c \
+	as_ext_dbd.c as_ext_dbd.h \
 	slurmdbd_agent.c slurmdbd_agent.h
 
 accounting_storage_slurmdbd_la_LDFLAGS = $(PLUGIN_FLAGS)
@@ -584,6 +598,7 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/accounting_storage_slurmdbd.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/as_ext_dbd.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmdbd_agent.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
@@ -748,6 +763,7 @@ clean-am: clean-generic clean-libtool clean-pkglibLTLIBRARIES \
 
 distclean: distclean-am
 		-rm -f ./$(DEPDIR)/accounting_storage_slurmdbd.Plo
+	-rm -f ./$(DEPDIR)/as_ext_dbd.Plo
 	-rm -f ./$(DEPDIR)/slurmdbd_agent.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
@@ -795,6 +811,7 @@ installcheck-am:
 
 maintainer-clean: maintainer-clean-am
 		-rm -f ./$(DEPDIR)/accounting_storage_slurmdbd.Plo
+	-rm -f ./$(DEPDIR)/as_ext_dbd.Plo
 	-rm -f ./$(DEPDIR)/slurmdbd_agent.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic

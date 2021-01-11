@@ -1,7 +1,11 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of Slurm functionality
-#          Test of --pack-group option.
+#          Test of --het-group option.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -26,33 +30,38 @@
 ############################################################################
 source ./globals
 
+set test_id     "38.9"
 set exit_code	0
+set prompt	"PROMPT:"
 set task_num	2
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-        skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
+if {[test_hetjob_step] == 0} {
+	send_user "\nWARNING: heterogeneous steps not currently supported\n"
+	exit $exit_code
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes < 3} {
-	skip "Need 3 or more nodes in default partition"
+	send_user "\nWARNING: Need 3 or more nodes in default partition\n"
+	exit $exit_code
 }
 
 proc end_it { exit_code } {
-	global pack_job_id scancel
-	if {$pack_job_id > 0} {
-		exec $scancel $pack_job_id
+	global het_job_id scancel
+	if {$het_job_id > 0} {
+		exec $scancel $het_job_id
 	}
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
+	exit $exit_code
 }
 
-set pack_job_id 0
+set het_job_id 0
 set matches 0
 set index 0
 set component(0) 0
@@ -60,15 +69,16 @@ set timeout $max_job_delay
 set sid [spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash]
 expect {
 	-re "Granted job allocation ($number)" {
-		set pack_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
+		set het_job_id $expect_out(1,string)
+		send "export PS1=\"$prompt\"\r"
 		exp_continue
 	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+	-re "export PS1=\"$prompt\"\r" {
+		# skip this, just echo of setting prompt"
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
+		#send_user "Job initiated\n"
 	}
 	timeout {
 		log_error "salloc : allocation not granted in $timeout seconds"
@@ -76,7 +86,7 @@ expect {
 	}
 }
 
-if {$pack_job_id == 0} {
+if {$het_job_id == 0} {
 	log_error "salloc failure"
 	end_it 1
 }
@@ -86,7 +96,7 @@ if {$pack_job_id == 0} {
 #
 set timeout 1
 expect {
-	-re $test_prompt {
+	-re $prompt {
 		exp_continue
 	}
 	timeout {
@@ -94,19 +104,19 @@ expect {
 }
 set timeout 30
 
-log_debug "Collect Nodenames"
+send_user "\n\nCollect Nodenames\n\n"
 
-send "$squeue -j $pack_job_id -o\"NAME=%N\" --noheader \r"
+send "$squeue -j $het_job_id -o\"NAME=%N\" --noheader \r"
 expect {
 	-re "--noheader" {
 		exp_continue
 	}
-	-re "NAME=($re_word_str)" {
+	-re "NAME=($alpha_numeric_under)" {
 		set component($index) $expect_out(1,string)
 		incr index
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -119,18 +129,18 @@ if {$index != 3} {
 	end_it 1
 }
 
-log_info "Test Sending Jobs To Various Components"
+send_user "\n\nTest Sending Jobs To Various Components\n\n"
 
 set timeout 3
 set matches 0
 
-send "$srun --mpi=none --pack-group=0 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=0 printenv SLURMD_NODENAME\r"
 expect {
 	-re $component(0) {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -145,13 +155,13 @@ if { $matches != 1} {
 
 set matches 0
 
-send "$srun --mpi=none --pack-group=1 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=1 printenv SLURMD_NODENAME\r"
 expect {
 	-re $component(1) {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -166,13 +176,13 @@ if { $matches != 1} {
 
 set matches 0
 
-send "$srun --mpi=none --pack-group=2 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=2 printenv SLURMD_NODENAME\r"
 expect {
 	-re $component(2) {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -187,13 +197,13 @@ if { $matches != 1} {
 
 set matches 0
 
-send "$srun --mpi=none --pack-group=0-2 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=0-2 printenv SLURMD_NODENAME\r"
 expect {
 	-re $component(0)|$component(1)|$component(2) {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -208,13 +218,13 @@ if { $matches != 3} {
 
 set matches 0
 
-send "$srun --mpi=none --pack-group=0,2 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=0,2 printenv SLURMD_NODENAME\r"
 expect {
 	-re $component(2)|$component(0) {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -227,18 +237,19 @@ if { $matches != 2} {
 	end_it 1
 }
 
-log_info "Testing Error Messages"
+send_user "\n\nTesting Error Messages\n\n"
+
 
 set matches 0
 
-send "$srun --mpi=none --pack-group=0-3 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=0-3 printenv SLURMD_NODENAME\r"
 expect {
-	-re "srun: error: Attempt to run a job step with pack group value of 3, but the job allocation has maximum value of 2" {
-		log_debug "Error is expected, no worries"
+	-re "srun: error: Attempt to run a job step with het group value of 3, but the job allocation has maximum value of 2" {
+		send_user "Error is expected, no worries.\n\n"
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -252,14 +263,14 @@ if { $matches != 1} {
 }
 
 set matches 0
-send "$srun --mpi=none --pack-group=0,5 printenv SLURMD_NODENAME\r"
+send "$srun --mpi=none --het-group=0,5 printenv SLURMD_NODENAME\r"
 expect {
-	-re "srun: error: Attempt to run a job step with pack group value of 5, but the job allocation has maximum value of 2" {
-		log_debug "Error is expected, no worries"
+	-re "srun: error: Attempt to run a job step with het group value of 5, but the job allocation has maximum value of 2" {
+		send_user "Error is expected, no worries.\n\n"
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -273,14 +284,14 @@ if { $matches != 1} {
 }
 
 set matches 0
-send "$srun --mpi=none --pack-group=0 printenv SLURMD_NODENAME : --pack-group=0 env\r"
+send "$srun --mpi=none --het-group=0 printenv SLURMD_NODENAME : --het-group=0 env\r"
 expect {
-	-re "srun: fatal: Duplicate pack groups in single srun not supported" {
-		log_debug "Error is expected, no worries"
+	-re "srun: fatal: Duplicate het groups in single srun not supported" {
+		send_user "Error is expected, no worries.\n\n"
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -294,3 +305,6 @@ if { $matches != 1} {
 }
 
 send "exit\r"
+
+send_user "\nSUCCESS\n"
+exit 0

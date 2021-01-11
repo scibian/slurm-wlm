@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          test for #BSUB entry functionality
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -26,6 +31,7 @@
 ############################################################################
 source ./globals
 
+set test_id       17.62
 set exit_code     0
 set file_in       "test$test_id\.sh"
 set job_name      "test$test_id\_job"
@@ -34,9 +40,9 @@ set job_time      1
 set stdout        "/dev/null"
 set stderr        "/tmp/err"
 set job_id        0
-set node_list     [get_idle_node_in_part $partition]
+set node_list     [get_idle_node_in_part [default_partition]]
 
-if {[param_contains [get_config_param "SelectTypeParameters"] "CR_*MEMORY"]} {
+if {[test_select_type_params "MEMORY"]} {
 	set job_mem  100
 } else {
 	set job_mem  1
@@ -68,7 +74,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not responding"
+		send_user "\nFAILURE: sbatch is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -77,21 +83,22 @@ expect {
 }
 
 if {$job_id == 0} {
+	send_user "\nFailure: sbatch did not submit job\n"
 	exec $bin_rm -fr $file_in
-	fail "sbatch did not submit job"
+	exit 1
 }
 
 # Wait for the job to finish
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Error waiting for job $job_id to complete"
+	send_user "\nFAILURE: error waiting for job $job_id to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
 
 
 foreach option [array names check_list] {
-	#log_debug "$option=$check_list($option)"
-	if {[string compare $option "BatchHost"] == 0 && [get_config_param "FrontendName"] ne "MISSING"} {
+	#send_user "\n$option=$check_list($option)\n"
+	if {[string compare $option "BatchHost"] == 0 && [test_front_end] != 0} {
 		continue
 	}
 
@@ -104,7 +111,7 @@ foreach option [array names check_list] {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -115,7 +122,8 @@ foreach option [array names check_list] {
 
 	# Check that each value is found
 	if {$match != 1} {
-		log_error "$option was not found. Could be due to small configured MinJobAge value"
+		send_user "\nFAILURE: $option was not found\n"
+		send_user "\nFAILURE: Could be due to small configured MinJobAge value\n"
 		set exit_code 1
 	}
 }
@@ -123,6 +131,6 @@ foreach option [array names check_list] {
 cancel_job $job_id
 if {$exit_code == 0} {
 	exec $bin_rm -fr $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

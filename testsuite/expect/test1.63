@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of srun --disbale-status/-X option, SIGINT to be sent to tasks.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -29,8 +33,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.63"
 set exit_code   0
 set file_prog   "test$test_id.prog"
+
+print_header $test_id
 
 #
 # Delete left-over programs and rebuild them.
@@ -51,7 +58,7 @@ set match_abort 0
 set job_id  0
 set srun_pid [spawn $srun -v -N1 -t1 -X ./$file_prog]
 expect {
-	-re "launching ($number)\\.0" {
+	-re "launching ($number).0" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
@@ -72,7 +79,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -81,13 +88,16 @@ expect {
 	}
 }
 if {$match_run < 1} {
-	fail "srun failed to properly start"
+	send_user "\nFAILURE: srun failed to properly start\n"
+	set exit_code 1
 }
 if {$match_sig < 1} {
-	fail "srun failed to properly process SIGINT"
+	send_user "\nFAILURE: srun failed to properly process SIGINT\n"
+	set exit_code 1
 }
 if {$match_abort < 1} {
-	fail "srun failed to properly process multiple SIGINT to abort"
+	send_user "\nFAILURE: srun failed to properly process multiple SIGINT to abort\n"
+	set exit_code 1
 }
 
 #
@@ -95,6 +105,6 @@ if {$match_abort < 1} {
 #
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_prog
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

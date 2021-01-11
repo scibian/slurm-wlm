@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Confirm node selection from within a job step on existing allocation
 #          (--nodelist, --exclude, --nodes and --nprocs options).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -30,26 +35,34 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.86"
 set exit_code   0
 set file_in     "test$test_id.input"
+set prompt      "PROMPT: "
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front-end systems"
-} elseif {[get_config_param "MULTIPLE_SLURMD"] eq "Yes"} {
-	skip "This test is incompatible with multiple slurmd systems"
+print_header $test_id
+
+if {[test_front_end]} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit 0
+} elseif {[test_multiple_slurmd] != 0} {
+	send_user "\nWARNING: This test is incompatible with multiple slurmd systems\n"
+	exit 0
 }
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 2 } {
-	skip "Insufficient nodes in default partition ($node_count < 2)"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 2)\n"
+	exit $exit_code
 }
 
 #
 # Build input script file
 #
 make_bash_script $file_in "
-  $reset_bash_prompt
+  export PS1=\"$prompt\"
   $bin_bash --norc
 "
 
@@ -72,22 +85,26 @@ expect {
 		exp_continue
 	}
 	-re "salloc: error" {
+		send_user "\nWARNING: can't test srun task distribution\n"
 		exec $bin_rm -f $file_in
-		skip "Can't test srun task distribution"
+		exit $exit_code
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "Job initiated"
+	"$prompt" {
+		send_user "Job initiated\n"
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding\n"
 		slow_kill $salloc_pid
-		fail "salloc not responding"
+		exit 1
 	}
 	eof {
 		wait
-		fail "salloc terminated"
+		send_user "\nFAILURE: salloc terminated\n"
+		exit 1
 	}
 }
 exec $bin_rm -f $file_in
@@ -99,7 +116,7 @@ set host_0      ""
 set host_1      ""
 send "$srun -l $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		set host_inx $expect_out(1,string)
 		if {$host_inx == 0} {
 			set host_0 $expect_out(2,string)
@@ -110,17 +127,20 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 
@@ -128,15 +148,15 @@ expect {
 # Verify node count
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
-	set exit_code 1
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
+	set exit_code   1
 }
 if {[string compare $host_1 ""] == 0} {
-    log_error "Did not get hostname of task 1"
+        send_user "\nFAILURE: Did not get hostname of task 1\n"
 	set exit_code   1
 }
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
 
 #
@@ -145,31 +165,34 @@ if {$exit_code != 0} {
 set matches 0
 send "$srun -l -N1 -n1 --exclude=$host_0 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		if {[string compare $expect_out(1,string) $host_1] == 0} {
 			incr matches
 		} else {
-			log_error "Wrong node responded"
+			send_user "\nFAILURE: wrong node responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "Required node failed to respond"
+	send_user "\nFAILURE: required node failed to respond\n"
 	set exit_code   1
 }
 
@@ -179,31 +202,34 @@ if {$matches == 0} {
 set matches 0
 send "$srun -l -N1 -n1 --exclude=$host_1 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		if {[string compare $expect_out(1,string) $host_0] == 0} {
 			incr matches
 		} else {
-			log_error "Wrong node responded"
+			send_user "\nFAILURE: wrong node responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "Required node failed to respond"
+	send_user "\nFAILURE: required node failed to respond\n"
 	set exit_code   1
 }
 
@@ -214,34 +240,40 @@ set matches 0
 send "$srun -l -N1 -n1 --nodelist=$host_0 $bin_printenv SLURMD_NODENAME\r"
 expect {
 	-re "Requested node configuration is not available" {
+		send_user "\nWARNING: Appears you are using "
+		send_user "multiple slurmd testing.\n"
+		send_user "This test won't work in that fashion.\n"
 		send "exit\r"
-		skip "Appears you are using multiple slurmd testing. This test won't work in that fashion"
+		exit 0
 	}
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		if {[string compare $expect_out(1,string) $host_0] == 0} {
 			incr matches
 		} else {
-			log_error "Wrong node responded"
+			send_user "\nFAILURE: wrong node responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "Required node failed to respond"
+	send_user "\nFAILURE: required node failed to respond\n"
 	set exit_code   1
 }
 
@@ -251,31 +283,34 @@ if {$matches == 0} {
 set matches 0
 send "$srun -l -N1 -n1 --nodelist=$host_1 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		if {[string compare $expect_out(1,string) $host_1] == 0} {
 			incr matches
 		} else {
-			log_error "Wrong node responded"
+			send_user "\nFAILURE: wrong node responded\n"
 			set exit_code   1
 		}
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "Required node failed to respond"
+	send_user "\nFAILURE: required node failed to respond\n"
 	set exit_code   1
 }
 
@@ -288,29 +323,31 @@ set matches 0
 send "$srun -l -N1 -n1 --nodelist=$host_0 "
 send " --exclude=$host_0 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "0: *($re_word_str)" {
-		log_error "Wrong node responded"
+	-re "0: *($alpha_numeric_under)" {
+		send_user "\nFAILURE: wrong node responded\n"
 		set exit_code   1
 		exp_continue
 	}
 	"error:" {
-		log_debug "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		incr matches
 		exp_continue
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "No error for overlapping include/exclude node list"
+	send_user "\nFAILURE: No error for overlapping include/exclude node list\n"
 	set exit_code   1
 }
 
@@ -320,29 +357,31 @@ if {$matches == 0} {
 set matches 0
 send "$srun -l -N3 -n3 -O $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "0: *($re_word_str)" {
-		log_error "Wrong node responded"
+	-re "0: *($alpha_numeric_under)" {
+		send_user "\nFAILURE: wrong node responded\n"
 		set exit_code   1
 		exp_continue
 	}
 	"error:" {
-		log_debug "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		incr matches
 		exp_continue
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "No error for exceeding node count"
+	send_user "\nFAILURE: No error for exceeding node count\n"
 	set exit_code   1
 }
 
@@ -353,12 +392,12 @@ set test_0      ""
 set test_1      ""
 send "$srun -l -N1-1 -n2 -O $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number)\\.($number):($re_word_str)" {
+	-re "($number).($number):($alpha_numeric_under)" {
 		set test_0 $expect_out(3,string)
 		set test_1 $expect_out(3,string)
 		exp_continue
 	}
-	-re "($number): ($re_word_str)" {
+	-re "($number): ($alpha_numeric_under)" {
 		set host_inx $expect_out(1,string)
 		if {$host_inx == 0} {
 			set test_0 $expect_out(2,string)
@@ -369,21 +408,24 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {[string compare $test_0 $test_1] != 0} {
-	log_error "Multiple nodes responded, should be only one"
+	send_user "\nFAILURE: Multiple nodes responded, should be only one\n"
 	set exit_code   1
 }
 
@@ -393,26 +435,29 @@ if {[string compare $test_0 $test_1] != 0} {
 set processors 1
 send "$srun -l -c1 $bin_printenv SLURMD_NODENAME\r"
 expect {
-	-re "($number)-($number):($re_word_str)" {
+	-re "($number)-($number):($alpha_numeric_under)" {
 		set processors [expr $processors + $expect_out(2,string) - $expect_out(1,string) + 1]
 		exp_continue
 	}
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		incr processors
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 set matches 0
@@ -426,27 +471,29 @@ expect {
 #		Avoid confusiuon with task ID below
 		exp_continue
 	}
-	-re "($number): *($re_word_str)" {
-		log_error "wrong node responded"
+	-re "($number): *($alpha_numeric_under)" {
+		send_user "\nFAILURE: wrong node responded\n"
 		set exit_code   1
 		exp_continue
 	}
-	"$test_prompt" {
-		log_debug "srun completed"
+	"$prompt" {
+		send_user "srun completed\n\n"
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
-		fail "srun EOF"
+		send_user "\nFAILURE: srun EOF\n"
+		exit 1
 	}
 }
 if {$matches == 0} {
-	log_error "No error for exceeding processor count"
+	send_user "\nFAILURE: No error for exceeding processor count\n"
 	set exit_code   1
 } else {
-	log_info "This error is expected, no worries"
+	send_user "This error is expected, no worries\n"
 }
 
 #
@@ -455,18 +502,20 @@ if {$matches == 0} {
 send "exit\r"
 expect {
 	-re "error.*Exit 1" {
-		log_info "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $salloc_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

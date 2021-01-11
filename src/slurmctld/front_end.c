@@ -118,7 +118,7 @@ static Buf _open_front_end_state_file(char **state_file)
  * NOTE: if you make any changes here be sure to make the corresponding
  *	changes to load_front_end_config in api/node_info.c
  */
-static void _pack_front_end(struct front_end_record *dump_front_end_ptr,
+static void _pack_front_end(front_end_record_t *dump_front_end_ptr,
 			    Buf buffer, uint16_t protocol_version)
 {
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
@@ -146,7 +146,7 @@ static void _pack_front_end(struct front_end_record *dump_front_end_ptr,
 #ifdef HAVE_FRONT_END
 /* Validate job's access to a specific front-end node */
 static bool _front_end_access(front_end_record_t *front_end_ptr,
-			      struct job_record *job_ptr)
+			      job_record_t *job_ptr)
 {
 	int i;
 
@@ -191,7 +191,7 @@ static bool _front_end_access(front_end_record_t *front_end_ptr,
  * job_ptr IN - job to assign a front end node (tests access control lists)
  * RET pointer to the front end node to use or NULL if none found
  */
-extern front_end_record_t *assign_front_end(struct job_record *job_ptr)
+extern front_end_record_t *assign_front_end(job_record_t *job_ptr)
 {
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr, *best_front_end = NULL;
@@ -255,7 +255,7 @@ extern front_end_record_t *assign_front_end(struct job_record *job_ptr)
  * job_ptr IN - job to consider for starting (tests access control lists) or
  *              NULL to test if any job can start (no test of ACL)
  */
-extern bool avail_front_end(struct job_record *job_ptr)
+extern bool avail_front_end(job_record_t *job_ptr)
 {
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
@@ -503,8 +503,7 @@ extern void restore_front_end_state(int recover)
 		return;		/* No front ends in slurm.conf */
 
 	iter = list_iterator_create(front_end_list);
-	while ((slurm_conf_fe_ptr = (slurm_conf_frontend_t *)
-				    list_next(iter))) {
+	while ((slurm_conf_fe_ptr = list_next(iter))) {
 		if (slurm_conf_fe_ptr->frontends == NULL) {
 			fatal("FrontendName is NULL");
 			return;	/* Prevent CLANG false positive */
@@ -794,7 +793,7 @@ extern int load_all_front_end_state(bool state_only)
 
 	if (protocol_version == NO_VAL16) {
 		if (!ignore_state_errors)
-			fatal("Can not recover front_end state, version incompatible, start with '-i' to ignore this");
+			fatal("Can not recover front_end state, version incompatible, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 		error("*****************************************************");
 		error("Can not recover front_end state, version incompatible");
 		error("*****************************************************");
@@ -891,7 +890,7 @@ fini:	info("Recovered state of %d front_end nodes", node_cnt);
 
 unpack_error:
 	if (!ignore_state_errors)
-		fatal("Incomplete front_end node data checkpoint file, start with '-i' to ignore this");
+		fatal("Incomplete front_end node data checkpoint file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete front_end node data checkpoint file");
 	error_code = EFAULT;
 	xfree (node_name);
@@ -937,7 +936,7 @@ extern void sync_front_end_state(void)
 {
 #ifdef HAVE_FRONT_END
 	ListIterator job_iterator;
-	struct job_record *job_ptr;
+	job_record_t *job_ptr;
 	front_end_record_t *front_end_ptr;
 	uint32_t state_flags;
 	int i;
@@ -949,7 +948,7 @@ extern void sync_front_end_state(void)
 	}
 
 	job_iterator = list_iterator_create(job_list);
-	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
+	while ((job_ptr = list_next(job_iterator))) {
 		if (job_ptr->batch_host) {
 			job_ptr->front_end_ptr =
 				find_front_end_record(job_ptr->batch_host);

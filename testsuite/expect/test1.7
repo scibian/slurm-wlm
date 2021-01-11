@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Confirm that job time limit function works (-t option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008 Lawrence Livermore National Security.
@@ -29,11 +33,14 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.7"
 set exit_code   0
 set job_id      0
 
 # NOTE: If you increase sleep_time, change job time limits as well
 set sleep_time  180
+
+print_header $test_id
 
 #
 # Make sure sleep time is no larger than InactiveLimit
@@ -60,7 +67,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -72,17 +79,20 @@ if {$inactive_limit == 0} {
 	set inactive_limit $sleep_time
 }
 if {$inactive_limit < 120} {
-	skip "InactiveLimit ($inactive_limit) is too low for this test"
+	send_user "\nWARNING: InactiveLimit ($inactive_limit) is too low for this test\n"
+	exit 0
 }
 if {$kill_wait > 60} {
-	skip "KillWait ($kill_wait) is too high for this test"
+	send_user "\nWARNING: KillWait ($kill_wait) is too high for this test\n"
+	exit 0
 }
 if {$over_time_limit > 0} {
-	skip "OverTimeLimit too high for this test ($over_time_limit > 0)"
+	send_user "\nWARNING: OverTimeLimit too high for this test ($over_time_limit > 0)\n"
+	exit 0
 }
 if {$inactive_limit < $sleep_time} {
 	set sleep_time [expr $inactive_limit + $kill_wait]
-	log_debug "Reset job sleep time to $sleep_time seconds"
+	send_user "\nReset job sleep time to $sleep_time seconds\n"
 }
 
 #
@@ -113,10 +123,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -125,9 +136,9 @@ expect {
 	}
 }
 if {$timed_out == 1} {
-	log_debug "Early termination is expected, no worries"
+	send_user "Early termination is expected, no worries.\n"
 } else {
-	log_error "Time limit not enforced"
+	send_user "\nFAILURE: time limit not enforced\n"
 	set exit_code 1
 }
 
@@ -147,14 +158,15 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	-re "error" {
 		set completions -1
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -164,9 +176,11 @@ expect {
 	}
 }
 if {$completions != 1} {
-	fail "Job failed to complete properly"
+	send_user "\nFAILURE: job failed to complete properly\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test sstat h, e, usage and V options.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008 - 2009 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,9 +32,12 @@
 ############################################################################
 source ./globals
 
+set test_id     "23.1"
 set exit_code   0
 set matches     0
 set not_support 0
+
+print_header $test_id
 
 ################################################################
 #
@@ -50,29 +57,29 @@ proc sstat_job { soption } {
 	set exit_code   0
 	set matches     0
 	set not_support 0
-	log_debug "sstat -$soption "
+	send_user "sstat -$soption \n"
 
 	if { $soption == "h" || $soption == "-help" } {
 
 		spawn $sstat -$soption
 		expect {
 			-re "sstat...OPTION" {
-				if {$debug} {log_debug "Match6"}
+				if {$debug} {send_user "\nmatch6\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Valid..OPTION" {
-				if {$debug} {log_debug "Match7"}
+				if {$debug} {send_user "\nmatch7\n"}
 				incr matches
 				exp_continue
 			}
 			-re "-e, --helpformat" {
-				if {$debug} {log_debug "Match8"}
+				if {$debug} {send_user "\nmatch8\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sstat not responding"
+				send_user "\nFAILURE: sstat not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -81,7 +88,7 @@ proc sstat_job { soption } {
 		}
 
 		if {$matches != 3} {
-			log_error "sstat -$soption failed ($matches)"
+			send_user "\nFAILURE: sstat -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -92,17 +99,17 @@ proc sstat_job { soption } {
 		spawn $sstat -$soption
 		expect {
 			-re "Usage: sstat .options. -j .job..stepid." {
-				if {$debug} {log_debug "Match9"}
+				if {$debug} {send_user "\nmatch9\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Use --help for help" {
-				if {$debug} {log_debug "Match10"}
+				if {$debug} {send_user "\nmatch10\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sstat not responding"
+				send_user "\nFAILURE: sstat not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -111,7 +118,7 @@ proc sstat_job { soption } {
 		}
 
 		if {$matches != 2} {
-			log_error "sstat -$soption failed ($matches)"
+			send_user "\nFAILURE: sstat -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -121,13 +128,13 @@ proc sstat_job { soption } {
 
 		spawn $sstat -$soption
 		expect {
-			-re "slurm ($number)\\.($number)." {
-				if {$debug} {log_debug "Match11"}
+			-re "slurm ($number).($number)." {
+				if {$debug} {send_user "\nmatch11\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sstat not responding"
+				send_user "\nFAILURE: sstat not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -136,7 +143,7 @@ proc sstat_job { soption } {
 		}
 
 		if {$matches != 1} {
-			log_error "sstat -$soption failed ($matches)"
+			send_user "\nFAILURE: sstat -$soption failed ($matches)\n"
 			set exit_code 1
 		}
 		return $matches
@@ -146,42 +153,47 @@ proc sstat_job { soption } {
 
 set matches [sstat_job h ]
 if {$matches != 3} {
-	log_error "sstat -h failed ($matches)"
+	send_user "\nFAILURE: sstat -h failed ($matches)\n"
 	set exit_code 1
 } else {
-	log_debug "Sstat -h test GOOD!"
+	send_user "\nsstat -h test GOOD!\n"
 }
 
 set matches [sstat_job -help ]
 if {$matches != 3} {
-	log_error "sstat --help failed ($matches)"
+	send_user "\nFAILURE: sstat --help failed ($matches)\n"
 	set exit_code 1
 } else {
-	log_debug "Sstat --help test GOOD!"
+	send_user "\nsstat --help test GOOD!\n"
 }
 
 set matches [sstat_job -usage ]
 if {$matches != 2} {
-	log_error "sstat --usage failed ($matches)"
+	send_user "\nFAILURE: sstat --usage failed ($matches)\n"
 	set exit_code 1
 } else {
-	log_debug "Sstat --usage test GOOD!"
+	send_user "\nsstat --usage test GOOD!\n"
 }
 
 set matches [sstat_job V ]
 if {$matches != 1} {
-	fail "sstat -V failed ($matches)"
+	send_user "\nFAILURE: sstat -V failed ($matches)\n"
+	set exit_code 1
 } else {
-	log_debug "Sstat -V test GOOD!"
+	send_user "\nsstat -V test GOOD!\n"
 }
 
 set matches [sstat_job -version ]
 if {$matches != 1} {
-	fail "sstat --version failed ($matches)"
+	send_user "\nFAILURE: sstat --version failed ($matches)\n"
+	set exit_code 1
 } else {
-	log_debug "Sstat --version test GOOD!"
+	send_user "\nsstat --version test GOOD!\n"
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+
+
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

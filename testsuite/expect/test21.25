@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr show config
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,7 +32,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "21.25"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Use sacctmgr to create a cluster
@@ -64,7 +71,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr add not responding"
+		send_user "\nFAILURE: sacctmgr add not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -72,12 +79,16 @@ expect {
 	}
 }
 if {$slurm_conf_matches != 2} {
-	fail "sacctmgr failed to show slurm_conf values"
+	send_user "\nFAILURE:  sacctmgr failed to show slurm_conf values\n"
+	set exit_code 1
 }
 if {$slurmdbd_conf_matches != 2} {
-	fail "sacctmgr failed to show slurmdbd configuration"
+	send_user "\nFAILURE:  sacctmgr failed to show slurmdbd configuration\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	print_success $test_id
 }
+
+exit $exit_code

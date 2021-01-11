@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr verify wckey
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,6 +32,7 @@
 ############################################################################
 source ./globals
 
+set test_id     "21.23"
 set exit_code   0
 set cwd          "[$bin_pwd]"
 set file_in     "test.$test_id.input"
@@ -36,25 +41,27 @@ set wk          "test$test_id-wckey"
 set wk2         "test$test_id-wckey2"
 set wk3         "test$test_id-wckey3"
 set timeout 60
-
 set config_path [get_conf_path]
-fail_on_error "Error getting config path"
-set config_file $config_path/slurm.conf
+
+print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	log_warn "This test can't be run without a usable AccountStorageType"
+	exit 0
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin."
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	log_warn "This test can't be run without being an Accounting administrator."
+	log_warn "Use: sacctmgr mod user \$USER set admin=admin."
+	exit 0
 }
 
-set accounting_storage_type [get_config_param "AccountingStorageType"]
+set using_slurmdbd [test_using_slurmdbd]
 
-set cn [get_config_param "ClusterName"]
+set cn [get_cluster_name]
 
 #
 # Identify the user and his current default account
@@ -64,13 +71,14 @@ set user_name [get_my_user_name]
 
 set s_pid [spawn $sacctmgr show user $user_name]
 expect {
-	-re "$user_name *($re_word_str)" {
+	-re "$user_name *($alpha_numeric_under)" {
 		set acct_name $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		log_error "sacctmgr add not responding"
 		slow_kill $s_pid
-		fail "sacctmgr add not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -88,7 +96,7 @@ expect {
 		exp_continue
 	}
 	-re "Nothing new added" {
-		log_warn "Vestigial account $ta found"
+		log_warn "vestigial account $ta found"
 		incr aamatches
 		exp_continue
 	}
@@ -102,7 +110,8 @@ expect {
 	}
 }
 if {$aamatches != 1} {
-	fail "sacctmgr had a problem adding account."
+	log_error "sacctmgr had a problem adding account."
+	exit 1
 }
 
 #
@@ -124,13 +133,16 @@ expect {
 # Enable TrackWCKey
 #
 set reconfigured false
-if {[get_config_param "TrackWCKey"] ne "Yes"} {
+if {![test_track_wckey_slurmctld]} {
 	log_info "Enabling TrackWCKey..."
 
-	save_conf $config_file
+	copy_conf $config_path $cwd
+	if { $exit_code != 0 } {
+		exit $exit_code
+	}
 
-	exec $bin_sed -i /^\[\t\s\]*TrackWCKey\[\t\s\]*=/Id $config_file
-	exec $bin_echo TrackWCKey=Yes >> $config_file
+	exec $bin_sed -i /^\[\t\s\]*TrackWCKey\[\t\s\]*=/Id $config_path/slurm.conf
+	exec $bin_echo TrackWCKey=Yes >> $config_path/slurm.conf
 	reconfigure
 	set reconfigured true
 }
@@ -162,7 +174,7 @@ expect {
 	}
 }
 
-if {$accounting_storage_type eq "accounting_storage/slurmdbd"} {
+if {$using_slurmdbd} {
 	sleep 5
 }
 
@@ -226,7 +238,7 @@ if {$job_id == 0} {
 			wait
 		}
 	}
-	if {$accounting_storage_type eq "accounting_storage/slurmdbd"} {
+	if {$using_slurmdbd} {
 		sleep 5
 	}
 
@@ -288,7 +300,7 @@ if {$job_id == 0} {
 		}
 	}
 
-	if {$accounting_storage_type eq "accounting_storage/slurmdbd"} {
+	if {$using_slurmdbd} {
 		sleep 5
 	}
 
@@ -396,7 +408,7 @@ expect {
 }
 
 if {$swmatches!=3} {
-	log_error "We should have 3 test WCKeys configured we have $swmatches"
+	log_error "We should have 3 test WCKeys configured we have $swmatches\n"
 	set exit_code 1
 }
 
@@ -448,12 +460,13 @@ expect {
 }
 
 if {$reconfigured} {
-	restore_conf $config_file
+	log_info "Changing slurm.conf back"
+	exec $bin_cp -v $cwd/slurm.conf.orig $config_path/slurm.conf
 	reconfigure
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	print_success $test_id
 }
+exit $exit_code

@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Confirm that a job executes with the specified nodes
 #          (--nodelist and --exclude options).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008 Lawrence Livermore National Security.
@@ -30,7 +35,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.82"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Submit a 3+ node job
@@ -42,21 +50,25 @@ set host_3      ""
 set node_cnt 3
 set timeout $max_job_delay
 
-set available [available_nodes idle]
+set partition [default_partition]
+set available [available_nodes $partition idle]
 if {$available < $node_cnt} {
-    skip "Not enough nodes currently available ($available avail, $node_cnt needed)"
+    send_user "\nWARNING: not enough nodes currently available ($available avail, $node_cnt needed)\n"
+    exit $exit_code
 }
 
 set srun_pid [spawn $srun -N$node_cnt -l -t1 $bin_printenv SLURMD_NODENAME]
 expect {
 	-re "Node count specification invalid" {
-		skip "Can't test srun task distribution"
+		send_user "\nWARNING: can't test srun task distribution\n"
+		exit $exit_code
 	}
 	-re "configuration not available" {
+		send_user "WARNING: partition too small for test\n"
 		slow_kill $srun_pid
-		skip "Partition too small for test"
+		exit 0
 	}
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		if {$expect_out(1,string) == 0} {
 			set host_0 $expect_out(2,string)
 		}
@@ -72,8 +84,9 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -84,23 +97,23 @@ expect {
 # Verify node count
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	set exit_code   1
 }
 if {[string compare $host_1 ""] == 0} {
-	log_error "Did not get hostname of task 1"
+	send_user "\nFAILURE: Did not get hostname of task 1\n"
 	set exit_code   1
 }
 if {[string compare $host_2 ""] == 0} {
-	log_error "Did not get hostname of task 2"
+	send_user "\nFAILURE: Did not get hostname of task 2\n"
 	set exit_code   1
 }
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	log_warn "Additional testing is incompatible with front-end systems"
-	pass
+if {[test_front_end] != 0} {
+	send_user "\nWARNING: Additional testing is incompatible with front-end systems\n"
+	exit $exit_code
 }
 if {[string compare $host_3 ""] != 0} {
-	log_error "Started more than three tasks"
+	send_user "\nFAILURE: Started more than three tasks\n"
 	set exit_code   1
 }
 
@@ -112,7 +125,7 @@ if {[string compare $host_0 $host_2] == 0} {
 	incr dup_hostname 1
 }
 if {$dup_hostname == 1} {
-	log_error "Re-used a node in the allocation"
+	send_user "\nFAILURE: Re-used a node in the allocation\n"
 	set exit_code   1
 }
 set exclude_node $host_0
@@ -128,10 +141,13 @@ set timeout $max_job_delay
 set srun_pid [spawn $srun -N2 -l --exclude=$exclude_node -t1 $bin_printenv SLURMD_NODENAME]
 expect {
 	-re "Invalid node name specified" {
-		skip "Appears you are using multiple slurmd testing. This test won't work in that fashion"
+		send_user "\nWARNING: Appears you are using "
+		send_user "multiple slurmd testing.\n"
+		send_user "This test won't work in that fashion.\n"
+		exit 0
 	}
 
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		if {$expect_out(1,string) == 0} {
 			set host_0 $expect_out(2,string)
 		}
@@ -144,8 +160,9 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -156,15 +173,15 @@ expect {
 # Verify node count and names
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	set exit_code   1
 }
 if {[string compare $host_1 ""] == 0} {
-	log_error "Did not get hostname of task 1"
+	send_user "\nFAILURE: Did not get hostname of task 1\n"
 	set exit_code   1
 }
 if {[string compare $host_2 ""] != 0} {
-	log_error "Started more than two tasks"
+	send_user "\nFAILURE: Started more than two tasks\n"
 	set exit_code   1
 }
 set dup_hostname 0
@@ -175,7 +192,7 @@ if {[string compare $host_1 $exclude_node] == 0} {
 	set dup_hostname 1
 }
 if {$dup_hostname == 1} {
-	log_error "Allocated an excluded node"
+	send_user "\nFAILURE: Allocated an excluded node\n"
 	set exit_code   1
 }
 
@@ -187,7 +204,7 @@ set host_1      ""
 set timeout $max_job_delay
 set srun_pid [spawn $srun -N1 -l --nodelist=$include_node -t1 $bin_printenv SLURMD_NODENAME]
 expect {
-	-re "($number): *($re_word_str)" {
+	-re "($number): *($alpha_numeric_under)" {
 		if {$expect_out(1,string) == 0} {
 			set host_0 $expect_out(2,string)
 		}
@@ -197,7 +214,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -210,11 +227,11 @@ expect {
 # Verify node count and names
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	set exit_code   1
 }
 if {[string compare $host_1 ""] != 0} {
-	log_error "Started more than one task"
+	send_user "\nFAILURE: Started more than one task\n"
 	set exit_code   1
 }
 set dup_hostname 0
@@ -222,10 +239,11 @@ if {[string compare $host_0 $include_node] == 0} {
 	set dup_hostname 1
 }
 if {$dup_hostname == 0} {
-	log_error "Allocation lacked an included node"
+	send_user "\nFAILURE: Allocation lacked an included node\n"
 	set exit_code   1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

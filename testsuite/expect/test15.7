@@ -5,6 +5,10 @@
 #          constraints options (--mincpus, --mem, and --tmp options).
 #          Also test that priority zero job is not started (--hold
 #          option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -31,6 +35,7 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.7"
 set exit_code   0
 set job_id      0
 
@@ -38,6 +43,8 @@ set cpu_cnt     1
 set mem_size    13
 set tmp_size    2
 set matches     0
+
+print_header $test_id
 
 #
 # Spawn a salloc job with constraints
@@ -48,12 +55,12 @@ expect {
 		set job_id $expect_out(1,string)
 	}
 	-re "uid=" {
-		log_error "salloc --hold option ineffective"
+		send_user "\nFAILURE: salloc --hold option ineffective\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -65,7 +72,8 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "salloc submit failure"
+	send_user "\nFAILURE: salloc submit failure\n"
+	exit 1
 }
 
 #
@@ -77,20 +85,20 @@ expect {
 		set read_prio $expect_out(1,string)
 		if {$read_prio == 0} {
 			incr matches
-			log_debug "Match of Priority"
+			send_user "match of Priority\n"
 		}
 		exp_continue
 	}
 	-re "JobState=PENDING" {
 		incr matches
-		log_debug "Match of JobState"
+		send_user "match of JobState\n"
 		exp_continue
 	}
 	-re "MinCPUsNode=($number)" {
 		set read_cpus $expect_out(1,string)
 		if {$read_cpus == $cpu_cnt} {
 			incr matches
-			log_debug "Match of MinCPUsNode"
+			send_user "match of MinCPUsNode\n"
 		}
 		exp_continue
 	}
@@ -98,7 +106,7 @@ expect {
 		set read_mem $expect_out(1,string)
 		if {$read_mem == $mem_size} {
 			incr matches
-			log_debug "Match of MinMemory"
+			send_user "match of MinMemory\n"
 		}
 		exp_continue
 	}
@@ -106,12 +114,12 @@ expect {
 		set read_disk $expect_out(1,string)
 		if {$read_disk == $tmp_size} {
 			incr matches
-			log_debug "Match of MinTmpDiskNode"
+			send_user "match of MinTmpDiskNode\n"
 		}
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -119,11 +127,13 @@ expect {
 	}
 }
 if {$matches != 5} {
-	fail "Did not get constraints ($matches of 5)"
+	send_user "\nFAILURE: Did not get constraints ($matches of 5)\n"
+	set exit_code 1
 }
 if {[cancel_job $job_id] != 0} {
-	fail "Unable to cancel job ($job_id)"
+	set exit_code 1
 }
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          strigger --set (node options)
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2007 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,9 +32,12 @@
 ############################################################################
 source ./globals
 
+set test_id      "19.3"
 set exit_code    0
 set file_in      "test$test_id.input"
 set file_out     "test$test_id.output"
+
+print_header $test_id
 
 #
 # get my uid and clear any vestigial triggers
@@ -60,7 +67,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -69,11 +76,14 @@ expect {
 	}
 }
 if {$disabled == 1} {
+	send_user "\nWARNING: Current configuration prevents setting triggers\n"
+	send_user "         Need to run as SlurmUser or make SlurmUser=root\n"
 	exec $bin_rm -f $file_in
-	skip "Current configuration prevents setting triggers. Need to run as SlurmUser or make SlurmUser=root"
+	exit $exit_code
 }
 if {$matches == 0} {
-	fail "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
+	exit 1
 }
 
 set matches 0
@@ -84,7 +94,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -93,14 +103,14 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "Trigger set or get failure"
+	send_user "\nFAILURE: trigger set or get failure\n"
 	set exit_code 1
 }
 
 set strigger_pid [spawn $strigger --clear -v --user=$uid]
 expect {
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -111,7 +121,7 @@ expect {
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

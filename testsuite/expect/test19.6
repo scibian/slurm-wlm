@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          strigger --clear and --get (with filtering)
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2007 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,6 +32,7 @@
 ############################################################################
 source ./globals
 
+set test_id          "19.6"
 set exit_code        0
 set file_in          "test$test_id.input"
 set file_in_fini     "test$test_id.fini_input"
@@ -35,6 +40,8 @@ set file_in_time     "test$test_id.time_input"
 set file_in_up       "test$test_id.up_input"
 set file_in_down     "test$test_id.down_input"
 set file_in_reconfig "test$test_id.reconfig_input"
+
+print_header $test_id
 
 #
 # get my uid and clear any vestigial triggers
@@ -61,15 +68,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		kill_srun
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
@@ -88,7 +97,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -97,12 +106,14 @@ expect {
 	}
 }
 if {$disabled == 1} {
+	send_user "\nWARNING: Current configuration prevents setting triggers\n"
+	send_user "         Need to run as SlurmUser or make SlurmUser=root\n"
 	cancel_job $job_id
 	exec $bin_rm -f $file_in $file_in_fini $file_in_time $file_in_up $file_in_down $file_in_reconfig
-	skip "Current configuration prevents setting triggers. Need to run as SlurmUser or make SlurmUser=root"
+	exit $exit_code
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -114,7 +125,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -123,7 +134,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -135,7 +146,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -144,7 +155,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -159,7 +170,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -168,7 +179,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -180,7 +191,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -189,7 +200,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 set matches 0
@@ -200,7 +211,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -209,7 +220,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -224,7 +235,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -233,7 +244,7 @@ expect {
 	}
 }
 if {$job_matches != 3} {
-	log_error "Trigger get failure ($job_matches != 3)"
+	send_user "\nFAILURE: trigger get failure ($job_matches != 3)\n"
 	set exit_code 1
 }
 
@@ -248,7 +259,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -257,7 +268,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger clear failure"
+	send_user "\nFAILURE: trigger clear failure\n"
 	set exit_code 1
 }
 
@@ -273,13 +284,13 @@ expect {
 		incr job_matches
 		exp_continue
 	}
-	-re "($number) *node *. *($re_word_str)" {
+	-re "($number) *node *. *($alpha)" {
 		incr node_matches
 		set trigger_id $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -288,11 +299,11 @@ expect {
 	}
 }
 if {$job_matches != 0} {
-	log_error "Trigger get failure, job triggers not cleared"
+	send_user "\nFAILURE: trigger get failure, job triggers not cleared\n"
 	set exit_code 1
 }
 if {$node_matches != 3} {
-	log_error "Trigger get failure, node triggers cleared"
+	send_user "\nFAILURE: trigger get failure, node triggers cleared\n"
 	set exit_code 1
 }
 
@@ -307,7 +318,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -316,7 +327,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger clear failure"
+	send_user "\nFAILURE: trigger clear failure\n"
 	set exit_code 1
 }
 
@@ -326,16 +337,16 @@ if {$matches == 0} {
 set node_matches 0
 set strigger_pid [spawn $strigger --get -v --user=$uid]
 expect {
-	-re "($number) *node *. *($re_word_str)" {
+	-re "($number) *node *. *($alpha)" {
 		incr node_matches
 		if {$trigger_id == $expect_out(1,string)} {
-			log_error "Failed to clear specific trigger"
+			send_user "\nFAILURE: failed to clear specific trigger\n"
 			set exit_code 1
 		}
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -344,7 +355,7 @@ expect {
 	}
 }
 if {$node_matches != 2} {
-	log_error "Trigger get failure, node triggers cleared"
+	send_user "\nFAILURE: trigger get failure, node triggers cleared\n"
 	set exit_code 1
 }
 
@@ -358,7 +369,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -367,7 +378,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Trigger clear failure"
+	send_user "\nFAILURE: trigger clear failure\n"
 	set exit_code
 }
 
@@ -382,7 +393,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -391,14 +402,14 @@ expect {
 	}
 }
 if {$node_matches != 0} {
-	log_error "Trigger get failure, node triggers remain"
+	send_user "\nFAILURE: trigger get failure, node triggers remain\n"
 	set exit_code 1
 }
 
 cancel_job $job_id
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_in_fini $file_in_time $file_in_up $file_in_down $file_in_reconfig
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

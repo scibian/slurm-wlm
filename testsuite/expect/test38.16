@@ -1,6 +1,10 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test environment variables needed by MPI.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -25,21 +29,29 @@
 ############################################################################
 source ./globals
 
+set test_id	"38.16"
 set exit_code	0
+set prompt	"PROMPT: "
 set file_in	"test$test_id.bash"
 set file_out	"test$test_id.out"
 set timeout	60
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-    skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
+if {[test_hetjob_step] == 0} {
+	send_user "\nWARNING: heterogeneous steps not currently supported\n"
+	exit $exit_code
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes < 2} {
-	skip "Need 2 or more nodes in default partition"
+	send_user "\nWARNING: Need 2 or more nodes in default partition\n"
+	exit $exit_code
 }
 
 #
@@ -51,17 +63,14 @@ make_bash_script $file_in "
 exec $bin_rm -f $file_out
 
 proc end_it { exit_code } {
-	global pack_job_id scancel
-	if {$pack_job_id > 0} {
-		exec $scancel $pack_job_id
+	global het_job_id scancel
+	if {$het_job_id > 0} {
+		exec $scancel $het_job_id
 	}
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
+	exit $exit_code
 }
 
-set pack_job_id 0
+set het_job_id 0
 set component(0) 0
 set matches 0
 set index 0
@@ -69,43 +78,43 @@ set timeout $max_job_delay
 spawn $salloc -t2 -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
-		set pack_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
+		set het_job_id $expect_out(1,string)
+		send "export PS1=\"$prompt\"\r"
 		exp_continue
 	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+	-re "\"$prompt" {
+		# skip this, just echo of setting prompt"
 		exp_continue
 	}
-	-re "$test_prompt" {
-		#log_debug "Job initiated"
+	-re "$prompt" {
+		#send_user "Job initiated\n"
 	}
 	timeout {
-		log_error "salloc : allocation not granted in $timeout seconds"
+		log_error "salloc : allocation not granted in $timeout seconds\n"
 		end_it 1
 	}
 	eof {
 		wait
 	}
 }
-if {$pack_job_id == 0} {
-	log_error "salloc failure"
+if {$het_job_id == 0} {
+	log_error "salloc failure\n"
 	end_it 1
 }
 
-log_debug "Collect Nodename for each job component"
+send_user "\n\nCollect Nodename for each job component\n\n"
 
-send "$squeue -j $pack_job_id -o\"NAME=%N\" --noheader\r"
+send "$squeue -j $het_job_id -o\"NAME=%N\" --noheader\r"
 expect {
 	-re "--noheader" {
 		exp_continue
 	}
-	-re "NAME=($re_word_str)" {
+	-re "NAME=($alpha_numeric_under)" {
 		set component($index) $expect_out(1,string)
 		incr index
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
 		#break
 	}
 	timeout {
@@ -118,16 +127,17 @@ if {$index != 2} {
 	end_it 1
 }
 
-log_info "Test environment variables needed by MPI"
+send_user "\n\nTest environment variables needed by MPI\n\n"
 
 set matches 0
-send "$srun --label --mpi=none --pack-group=0,1 -l -o$file_out $file_in\r"
+send "$srun --label --mpi=none --het-group=0,1 -l -o$file_out $file_in\r"
 expect {
-	-re "$test_prompt" {
+	-re "$prompt" {
+		send_user "\n\n"
 		#break
 	}
 	timeout {
-		log_error "srun not responding"
+		log_error "srun not responding\n"
 		end_it 1
 	}
 	eof {
@@ -135,34 +145,35 @@ expect {
 	}
 }
 if {[wait_for_file $file_out] != 0} {
-	log_error "srun output file not found"
+	send_user "\nFAILURE: srun output file not found\n"
 	end_it 1
 }
 
-set pack_nodelist ""
+set het_nodelist ""
 send "$bin_sort -d $file_out\r"
 expect {
-	-re "0: SLURM_NODELIST_PACK_GROUP_0=$component(0)" {
+	-re "0: SLURM_NODELIST_HET_GROUP_0=$component(0)" {
 		incr matches
 		exp_continue
 	}
-	-re "0: SLURM_NODELIST_PACK_GROUP_1=$component(1)" {
+	-re "0: SLURM_NODELIST_HET_GROUP_1=$component(1)" {
 		incr matches
 		exp_continue
 	}
-	-re "1: SLURM_NODELIST_PACK_GROUP_0=$component(0)" {
+	-re "1: SLURM_NODELIST_HET_GROUP_0=$component(0)" {
 		incr matches
 		exp_continue
 	}
-	-re "1: SLURM_NODELIST_PACK_GROUP_1=$component(1)" {
+	-re "1: SLURM_NODELIST_HET_GROUP_1=$component(1)" {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
+		send_user "\n\n"
 		#break
 	}
 	timeout {
-		log_error "sort not responding"
+		log_error "sort not responding\n"
 		end_it 1
 	}
 	eof {
@@ -172,20 +183,21 @@ expect {
 log_user 0
 send "$bin_sort $file_out\r"
 expect {
-	-re "0: SLURM_NODELIST=($re_word_str)" {
-		set pack_nodelist $expect_out(1,string)
+	-re "0: SLURM_NODELIST=($alpha_numeric_nodelist)" {
+		set het_nodelist $expect_out(1,string)
 		incr matches
 		exp_continue
 	}
-	-re "1: SLURM_NODELIST=$pack_nodelist" {
+	-re "1: SLURM_NODELIST=$het_nodelist" {
 		incr matches
 		exp_continue
 	}
-	-re "$test_prompt" {
+	-re "$prompt" {
+		send_user "\n\n"
 		#break
 	}
 	timeout {
-		log_error "sort not responding"
+		log_error "sort not responding\n"
 		end_it 1
 	}
 	eof {
@@ -194,14 +206,14 @@ expect {
 }
 log_user 1
 if {$matches != 6} {
-	log_error "srun failure ($matches != 6)"
+	log_error "srun failure ($matches != 6)\n"
 	end_it 1
 }
 
 send "exit\r"
 expect {
 	timeout {
-		log_error "srun not responding"
+		log_error "srun not responding\n"
 		end_it 1
 	}
 	eof {
@@ -209,10 +221,10 @@ expect {
 	}
 }
 
-log_info "Validate combined hostlist"
+send_user "\n\nValidate combined hostlist\n\n"
 
 set matches 0
-spawn $scontrol show hostnames $pack_nodelist
+spawn $scontrol show hostnames $het_nodelist
 expect {
 	-re "$component(0)|$component(1)" {
 		incr matches
@@ -224,9 +236,10 @@ expect {
 	}
 }
 if {$matches != 2} {
-	log_error "srun combined hostlist is bad ($matches != 2)"
+	log_error "srun combined hostlist is bad ($matches != 2)\n"
 	end_it 1
 }
 
 exec $bin_rm -f $file_in $file_out
+send_user "\nSUCCESS\n"
 end_it 0

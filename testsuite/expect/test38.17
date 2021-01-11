@@ -1,6 +1,10 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test for multiple, out of order srun --pack-group options
+# Purpose: Test for multiple, out of order srun --het-group options
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -26,6 +30,7 @@
 
 source ./globals
 
+set test_id      "38.17"
 set exit_code    0
 set file_in1     "test$test_id.in1"
 set file_in2     "test$test_id.in2"
@@ -39,26 +44,32 @@ proc end_it { exit_code } {
 		exec $scancel $job_id
 	}
 	exec $bin_rm -f $file_in1 $file_in2 $file_in3
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	if {$exit_code == 0} {
+		print_success $test_id
 	}
-	pass
+	exit $exit_code
 }
+
+print_header $test_id
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 3 } {
-	skip "Insufficient nodes in default partition ($node_count < 3)"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 3)\n"
+	exit $exit_code
 }
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-        skip "This test is incompatible with front-end systems"
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
+if {[test_hetjob_step] == 0} {
+	send_user "\nWARNING: Heterogeneous steps not currently supported\n"
+	exit $exit_code
 }
 
-make_bash_script $file_in1 "$srun -l --mpi=none --pack-group=0,2 ./$file_in2 : --pack-group=1 ./$file_in3"
+make_bash_script $file_in1 "$srun -l --mpi=none --het-group=0,2 ./$file_in2 : --het-group=1 ./$file_in3"
 make_bash_script $file_in2 "$bin_echo FILE2"
 make_bash_script $file_in3 "$bin_echo FILE3"
 
@@ -85,7 +96,7 @@ expect {
 		} elseif {$expect_out(1,string) == 2 && $expect_out(2,string) == 2} {
 			incr matches
 		} else {
-			log_error "Invalid output ($expect_out(1,string): FILE$expect_out(2,string))"
+			send_user "\nFAILURE: Invalid output ($expect_out(1,string): FILE$expect_out(2,string))\n"
 			set exit_code 1
 		}
 		exp_continue
@@ -99,11 +110,11 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "Error submitting job"
+	send_user "\nFAILURE: error submitting job\n"
 	end_it 1
 }
 if {$matches != 4} {
-	log_error "Invalid output ($matches != 4)"
+	send_user "\nFAILURE: Invalid output ($matches != 4)\n"
 	end_it 1
 }
 end_it $exit_code

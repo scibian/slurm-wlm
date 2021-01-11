@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          sacctmgr add an account to this cluster and try using it with
 #          salloc, sbatch and srun.  We also test limits here as well.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -31,6 +35,7 @@ source ./globals
 source ./globals_accounting
 source ./inc21.21_tests
 
+set test_id     "21.21"
 set exit_code   0
 set test_qos    "test$test_id\_qos"
 set file_in     "test.$test_id.input"
@@ -44,8 +49,6 @@ set test_node   " "
 # cr_core = 1 / cr_cpu = 0
 set selectparam  0
 set one_task_pc  0
-set job_id       0
-set is_skip      0
 
 # test maxjob maxnode maxsubmit maxwall
 array set acct_mod_desc {}
@@ -79,108 +82,35 @@ array set acct_mod_assoc_test_vals {
 	maxsubmit    -1
 }
 
-#
-# Check test requirements
-#
+print_header    $test_id
+
 if { [string compare [priority_type] multifactor] } {
-	skip "This test is only compatible with priority/multifactor plugin"
+	send_user "\nWARNING: test only compatible with priority/multifactor plugin\n"
+	exit $exit_code
 }
 
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
-}
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin."
-}
-
-if {[check_config_select "linear"]} {
-	set nb_nodes [get_node_cnt_in_part]
-	if {$nb_nodes < 2} {
-		skip "This test is incompatible with select/linear and only one node"
-	}
-}
-
-if {[param_contains [get_config_param "SchedulerParameters"] "defer"]} {
-	skip "This test is not compatible with SchedulerParameters containing defer"
+# Determine what the selecttype param is
+if {[test_select_type_params "CR_CORE"]} {
+	set selectparam 1
 }
 
 # Determine what the selecttype param is
-set select_type_parameters [get_config_param "SelectTypeParameters"]
-if {[param_contains $select_type_parameters "CR_CORE*"]} {
-	set selectparam 1
-}
-if {[param_contains $select_type_parameters "CR_ONE_TASK_PER_CORE"]} {
+if {[test_select_type_params "CR_ONE_TASK_PER_CORE"]} {
 	set one_task_pc 1
-}
-
-# Define global cleanup routine so it can be called on exit
-proc cleanup { } {
-	global bin_rm file_in sacctmgr ta test_qos job_id exit_code
-
-	# First wait for the job to complete
-	if { $job_id } {
-		wait_for_job $job_id "DONE"
-	}
-
-	#
-	# Use sacctmgr to delete the test account
-	#
-	set damatches 0
-	set sadel_pid [spawn $sacctmgr -i delete account $ta]
-	expect {
-		-re "Deleting account" {
-			incr damatches
-			exp_continue
-		}
-		timeout {
-			slow_kill $sadel_pid
-			log_error "sacctmgr delete not responding"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-	if {$damatches != 1} {
-		log_warn "sacctmgr didn't delete any account"
-	}
-
-	#
-	# Remove test QoS
-	#
-	set match 0
-	spawn $sacctmgr -i delete qos $test_qos
-	expect {
-		-re "Deleting QOS" {
-			set match 1
-			exp_continue
-		}
-		timeout {
-			log_error "sacctmgr delete not responding"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-	if {$match != 1} {
-		log_warn "sacctmgr didn't delete any QOS"
-	}
-
-	exec $bin_rm -f $file_in
 }
 
 set got_node 0
 spawn $srun -N1 -t1 printenv SLURM_NODELIST
 expect {
-	-re "($re_word_str)" {
+	-re "($alpha_numeric_under)" {
 		set test_node $expect_out(1,string)
 		set got_node 1
 		exp_continue
 	}
 	timeout {
-		fail "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
@@ -188,13 +118,15 @@ expect {
 }
 
 if {$got_node != 1} {
-	fail "Did not get node for testing"
+	send_user "\nFAILURE: did not get node for testing\n"
+	exit 0
 }
 
 lassign [get_node_cpus $test_node] totcpus nthreads
 
 if {$totcpus == 0} {
-	fail "No cpus were found"
+	send_user "\nFAILURE: no cpus where found\n"
+	exit 1
 } else {
 	# Set assoc CPU values
 	set acct_mod_assoc_vals(grpcpus) "-n [expr $totcpus - $nthreads]"
@@ -204,57 +136,111 @@ if {$totcpus == 0} {
 	set acct_mod_assoc_vals(grpcpurunmins) "-n [expr $totcpus - $nthreads]"
 }
 
+
 proc assoc_setup { limit_type limit_val } {
 
-	global acct_mod_assoc_test_vals exit_code
+	global acct_mod_assoc_test_vals
 	global acct_mod_desc acct_mod_acct_vals acct_mod_assoc_vals ta
 
+	set exit_code 0
 	set new_limit [lindex $limit_val 1]
+
 	set acct_mod_assoc_test_vals($limit_type) $new_limit
 
-	set exit_code [mod_acct $ta [array get acct_mod_desc] [array get acct_mod_assoc_test_vals] [array get acct_mod_acct_vals]]
+	set exit_code  [mod_acct $ta [array get acct_mod_desc] [array get acct_mod_assoc_test_vals] [array get acct_mod_acct_vals]]
+	if { $exit_code } {
+		return $exit_code
+	}
+
 }
 
 proc _test_limits { } {
-	global file_in srun sbatch squeue scancel bin_id number bin_rm ta maxjob_lim maxsub_lim
+	global file_in srun sbatch squeue scancel bin_id number bin_sleep bin_rm ta maxjob_lim maxsub_lim
 	global acct_mod_desc acct_mod_acct_vals acct_mod_assoc_vals acct_mod_assoc_test_vals one_task_pc nthreads
+
+	set exit_code 0
 
 	# Test jobs within the association limits
 	foreach option [array names acct_mod_assoc_vals] {
-		log_info "Setting up association limit $option..."
+		send_user "\nSetting up association limit $option...\n"
 		if { [string compare $option "maxjobsub"] &&
 		     [string compare $option "grpjobsub"] } {
 			assoc_setup $option $acct_mod_assoc_vals($option)
-			fail_on_error "Unable to modify account $ta"
 
 			if { ![string compare $option "maxcpumins"] && $one_task_pc } {
 				set acct_mod_assoc_vals(maxcpumins) "-n [expr [lindex $acct_mod_assoc_vals(maxcpumins) 1] / $nthreads]"
 			}
 
 			if { ![string compare $option "grpwall"] } {
-				inc21_21_grpwall $option $acct_mod_assoc_vals($option)
+				if { [inc21_21_grpwall $option \
+					  $acct_mod_assoc_vals($option)] } {
+					set exit_code 1
+					return $exit_code
+				}
 			} elseif { ![string compare -length 3 $option "grp"] } {
-				inc21_21_grp_test $option $acct_mod_assoc_vals($option)
+				if { [inc21_21_grp_test $option \
+					  $acct_mod_assoc_vals($option)] } {
+					set exit_code 1
+					return $exit_code
+				}
+
 			} else {
 				#
 				# Test value within the association limit
 				#
-				inc21_21_good $option $acct_mod_assoc_vals($option)
+				if { [inc21_21_good $option \
+					  $acct_mod_assoc_vals($option)] } {
 
+					set exit_code 1
+					return $exit_code
+				}
 				#
 				# Test value over the association limit
 				#
-				inc21_21_bad $option $acct_mod_assoc_vals($option)
+				if { [inc21_21_bad $option \
+					  $acct_mod_assoc_vals($option)] } {
+
+					set exit_code 1
+					return $exit_code
+				}
 			}
 			# Reset the limit
 			set acct_mod_assoc_test_vals($option) "-1"
 
 		} else {
-			inc21_21_submit_test $option
+			if { [inc21_21_submit_test $option] } {
+				set exit_code 1
+				return $exit_code
+			}
 		}
 		# Reset usage
 		reset_account_usage "" $ta
 	}
+
+	return $exit_code
+
+}
+
+if {[test_linear]} {
+	set def_part_name [default_partition]
+	set nb_nodes [get_node_cnt_in_part $def_part_name]
+	if {$nb_nodes < 2} {
+		send_user "\nWARNING: This test is incompatible with select/linear and only one node\n"
+		exit $exit_code
+	}
+}
+
+#
+# Check accounting config and bail if not found.
+#
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
+}
+
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 #
@@ -265,13 +251,14 @@ set user_name [get_my_user_name]
 
 set s_pid [spawn $sacctmgr show user $user_name]
 expect {
-	-re "$user_name *($re_word_str)" {
+	-re "$user_name *($alpha_numeric_under)" {
 		set acct_name $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		send_user "FAILURE: sacctmgr add not responding\n"
 		slow_kill $s_pid
-		fail "sacctmgr add not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -279,10 +266,20 @@ expect {
 }
 
 #
-# Test Fixture
+# remove any vestigial account
 #
-cleanup
-fail_on_error "Initial test cleanup/fixture failed"
+set aamatches 0
+set sadd_pid [spawn $sacctmgr -i delete account $ta]
+expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $sadd_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
 
 #
 # Use sacctmgr to add an account
@@ -295,20 +292,22 @@ expect {
 		exp_continue
 	}
 	-re "Nothing new added" {
-		log_warn "vestigial account $ta found"
+		send_user "\nWARNING: vestigial account $ta found\n"
 		incr aamatches
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
 		slow_kill $sadd_pid
-		fail "sacctmgr add not responding"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 if {$aamatches != 1} {
-	fail "sacctmgr had a problem adding account"
+	send_user "\nFAILURE:  sacctmgr had a problem adding account.\n"
+	exit 1
 }
 
 #
@@ -316,9 +315,10 @@ if {$aamatches != 1} {
 #
 set sadd_pid [spawn $sacctmgr -i create user name=$user_name account=$ta]
 expect {
-	timeout {
+	 timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
 		slow_kill $sadd_pid
-		fail "sacctmgr add not responding"
+		set exit_code 1
 	}
 	eof {
 		wait
@@ -326,8 +326,24 @@ expect {
 }
 
 #
-# Add test QoS
+# Remove test QoS
 #
+set match 0
+spawn $sacctmgr -i delete qos $test_qos
+expect {
+	-re "Deleting QOS" {
+		set match 1
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr delete not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
 set match 0
 spawn $sacctmgr -i create qos $test_qos
 expect {
@@ -336,20 +352,23 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 if {$match != 1} {
-	fail "$test_qos was not created"
+	send_user "\nFAILURE: $test_qos was not created\n"
+	exit 1
 }
 
 spawn $sacctmgr -i mod account $ta set qos=$test_qos
 expect {
 	timeout {
-		fail "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
@@ -359,6 +378,7 @@ expect {
 #
 # Spawn a job via salloc using this account
 #
+set job_id    0
 set matches   0
 set timeout   $max_job_delay
 spawn $salloc -N1 --account=$ta
@@ -374,16 +394,19 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "salloc failed to initiate job"
+	send_user "\nFAILURE: salloc failed to initiate job\n"
+	set exit_code 1
 } elseif {$matches != 1} {
-	fail "salloc failed to use desired account"
+	send_user "\nFAILURE: salloc failed to use desired account\n"
+	set exit_code 1
 }
 
 #
@@ -398,14 +421,16 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "did not get sbatch job_id"
+	send_user "\nFAILURE: did not get sbatch job_id\n"
+	set exit_code 1
 } else {
 	set matches 0
 	spawn $scontrol show job $job_id
@@ -415,14 +440,16 @@ if {$job_id == 0} {
 			exp_continue
 		}
 		timeout {
-			fail "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
+			set exit_code 1
 		}
 		eof {
 			wait
 		}
 	}
 	if {$matches != 1} {
-		fail "sbatch failed to use specified account"
+		send_user "\nFAILURE: sbatch failed to use specified account\n"
+		set exit_code 1
 	}
 	cancel_job $job_id
 }
@@ -438,14 +465,16 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "did not get srun job_id"
+	send_user "\nFAILURE: did not get srun job_id\n"
+	set exit_code 1
 } else {
 	set matches 0
 	spawn $scontrol show job $job_id
@@ -455,28 +484,75 @@ if {$job_id == 0} {
 			exp_continue
 		}
 		timeout {
-			fail "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
+			set exit_code 1
 		}
 		eof {
 			wait
 		}
 	}
 	if {$matches != 1} {
-		fail "srun failed to use specified account"
+		send_user "\nFAILURE: srun failed to use specified account\n"
+		set exit_code 1
 	}
 }
 
 #
-# Run included tests if limits are enforced
+# Check to see if limits are enforced.
 #
-if [param_contains [get_config_param "AccountingStorageEnforce"] "limits"] {
-	_test_limits
-} else {
-	log_warn "Tests requiring limits enforcement were skipped"
-	set is_skip 1
+if { [test_limits_enforced] == 1 } {
+	set exit_code [_test_limits]
+	# wait around a bit to make sure jobs finish
+	sleep 3
 }
 
-# Check for partials skips
-if { $is_skip } {
-	skip "This test was partially skipped"
+#
+# Use sacctmgr to delete the test account
+#
+# First wait a few seconds for the job to complete
+sleep 2
+set damatches 0
+set sadel_pid [spawn $sacctmgr -i delete account $ta]
+expect {
+	-re "Deleting account" {
+		incr damatches
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr delete not responding\n"
+		slow_kill $sadel_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
+if {$damatches != 1} {
+	send_user "\nFAILURE: sacctmgr had a problem deleting account\n"
+	set exit_code 1
+}
+
+#
+# Remove test QoS
+#
+set match 0
+spawn $sacctmgr -i delete qos $test_qos
+expect {
+	-re "Deleting QOS" {
+		set match 1
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr delete not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+if {$exit_code == 0} {
+	exec $bin_rm -f $file_in
+	print_success $test_id
+}
+exit $exit_code

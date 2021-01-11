@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Tests #SBATCH entry functionality in a batch script
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005-2007 The Regents of the University of California.
 # Copyright (C) 2008 Lawrence Livermore National Security.
@@ -29,14 +33,19 @@
 ############################################################################
 source ./globals
 
+set test_id     "17.21"
 set exit_code   0
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set job_name    "TEST_NAME"
 set delay       10
 
-if {[get_config_param "EnforcePartLimits"] eq "NO"} {
-	skip "This test is incompatible with EnforcePartLimits = NO"
+print_header $test_id
+
+set enforce [test_enforce_part_limits]
+if {![string compare $enforce "NO"]} {
+	send_user "\nWARNING: This test is incompatible EnforcePartLimits = $enforce\n"
+	exit 0
 }
 
 make_bash_script $file_in "
@@ -57,7 +66,8 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 set matches 0
 spawn $scontrol show job $job_id
@@ -67,7 +77,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -77,7 +87,7 @@ expect {
 }
 cancel_job $job_id
 if {$matches != 1} {
-	log_error "Did not set job name from batch script"
+	send_user "\nFAILURE: did not set job name from batch script\n"
 	set exit_code 1
 }
 
@@ -91,17 +101,19 @@ set match 0
 set sbatch_pid [spawn $sbatch -o $file_out $file_in]
 expect {
 	-re "More processors requested than permitted" {
-		log_debug "This error was expected, no worries"
+		send_user "This error was expected, no worries\n\n"
 		set match 1
 		exp_continue
 	}
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
+		send_user "\nFAILURE: Test B was supposed to fail submission\n"
+		set exit_code 1
 		cancel_job $job_id
-		fail "Test B was supposed to fail submission"
+		exit 1
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 		exp_continue
@@ -112,7 +124,7 @@ expect {
 }
 
 if { $match != 1 } {
-	log_error "Did not get expected output from sbatch"
+	send_user "\nFAILURE: did not get expected output from sbatch\n"
 	set exit_code 1
 }
 
@@ -124,7 +136,8 @@ $bin_sleep $delay
 set sbatch_pid [spawn $sbatch -N1 -o $file_out $file_in]
 expect {
 	-re "More processors requested than permitted" {
-		log_error "sbatch read from the batch file options over writing the commandline options"
+		send_user "\nFAILURE: sbatch read from the batch file options"
+		send_user "over writing the commandline options\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -133,7 +146,7 @@ expect {
 		cancel_job $job_id
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 		exp_continue
@@ -148,6 +161,6 @@ expect {
 #
 if {$exit_code == 0} {
 	file delete $file_in $file_out
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

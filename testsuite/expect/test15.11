@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --nice and --job-name options.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,14 +32,18 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.11"
 set exit_code   0
 set job_id      0
 set job_name    "jobname$test_id"
 set name_read   ""
 
+print_header $test_id
+
 set prio_type [priority_type]
 if {[string compare $prio_type "multifactor"] == 0} {
-	skip "Not compatible with priority/multifactor"
+	send_user "\nWARNING: not compatible with priority/multifactor\n"
+	exit $exit_code
 }
 
 #
@@ -61,7 +69,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -73,11 +81,11 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "salloc failed to initiate job"
+	send_user "\nFAILURE: salloc failed to initiate job\n"
 	set exit_code 1
 }
 if {$matches == 0} {
-	log_error "Failed to set job name"
+	send_user "\nFAILURE: failed to set job name\n"
 	set exit_code 1
 }
 
@@ -99,7 +107,7 @@ expect {
 		exp_continue
         }
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -113,9 +121,12 @@ expect {
 }
 set delta_prio [expr $priority1 - $priority2]
 if {$delta_prio < 950} {
-	fail "Failed to process nice option"
+	send_user "\nFAILURE: failed to process nice option\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

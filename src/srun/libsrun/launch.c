@@ -238,7 +238,6 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	job->ctx_params.cpu_freq_max = opt_local->cpu_freq_max;
 	job->ctx_params.cpu_freq_gov = opt_local->cpu_freq_gov;
 	job->ctx_params.relative = (uint16_t)srun_opt->relative;
-	job->ctx_params.ckpt_interval = (uint16_t)srun_opt->ckpt_interval;
 	job->ctx_params.exclusive = (uint16_t)srun_opt->exclusive;
 	if (opt_local->immediate == 1)
 		job->ctx_params.immediate = (uint16_t)opt_local->immediate;
@@ -298,7 +297,7 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	job->ctx_params.node_list = opt_local->nodelist;
 	job->ctx_params.network = opt_local->network;
 	job->ctx_params.no_kill = opt_local->no_kill;
-	if (slurm_option_set_by_cli('J'))
+	if (slurm_option_set_by_cli(opt_local, 'J'))
 		job->ctx_params.name = opt_local->job_name;
 	else
 		job->ctx_params.name = srun_opt->cmd_name;
@@ -406,15 +405,16 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 					"being configured, please wait",
 					job->ctx_params.job_id);
 			} else {
-				info("Job %u step creation temporarily disabled, retrying",
-				     job->ctx_params.job_id);
+				info("Job %u step creation temporarily disabled, retrying (%s)",
+				     job->ctx_params.job_id,
+				     slurm_strerror(rc));
 			}
 			xsignal_unblock(sig_array);
 			for (j = 0; sig_array[j]; j++)
 				xsignal(sig_array[j], signal_function);
 		} else {
-			verbose("Job %u step creation still disabled, retrying",
-				job->ctx_params.job_id);
+			info("Job %u step creation still disabled, retrying (%s)",
+			     job->ctx_params.job_id, slurm_strerror(rc));
 		}
 
 		if (*destroy_job) {

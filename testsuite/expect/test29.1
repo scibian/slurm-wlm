@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          validate smd usage command.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2011-2014 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -9,10 +13,14 @@
 ############################################################################
 source ./globals
 
+set test_id    "29.1"
 set exit_code  0
 
+print_header $test_id
+
 if {![slurmctld_plug_stack_nonstop]} {
-	skip "This test is only compatible when SlurmctldPlugstack includes nonstop"
+	send_user "\nWARNING: This test is only compatible when SlurmctldPlugstack includes nonstop.\n"
+	exit $exit_code
 }
 
 #
@@ -30,7 +38,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "smd is not responding"
+		send_user "\nFAILURE: smd is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -39,9 +47,11 @@ expect {
 
 }
 if {$match != 2} {
-	fail "smd --usage failed $match"
+	send_user "\nFAILURE: smd --usage failed $match\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

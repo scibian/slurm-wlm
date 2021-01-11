@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test that switch windows in uses are not re-used.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,7 +32,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "13.1"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Report the slurm network and use it to establish window parameters
@@ -51,7 +58,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -60,7 +67,8 @@ expect {
 }
 log_user 1
 if {$step_delay == 0} {
-	skip "Not running compatible switch, this test is not applicable"
+	send_user "\nWARNING: not running compatible switch, this test is not applicable\n"
+	exit $exit_code
 }
 
 #
@@ -74,57 +82,60 @@ set matches 0
 set srun_pid [spawn $salloc -N1 --verbose -t2 $bin_bash]
 expect -re "Granted job allocation ($number)"
 set job_id $expect_out(1,string)
-send "$reset_bash_prompt\r"
-expect -re "\"$test_prompt\""
 
 # start initial job step to claim some switch windows
-expect -re $test_prompt
+expect -re $prompt
 send "$srun -N1 -O -n$windows_used $bin_sleep $step_delay &\r"
 
 # start more job steps to check see if any switch window conflicts occur
 for {set inx 0} {$inx < $windows_iterations} {incr inx} {
         expect {
                 -re "error" {
-                        log_error "Some error occurred"
+                        send_user "\nFAILURE: some error occurred\n"
                         set exit_code 1
                         exp_continue
                 }
-		-re $test_prompt {
-			log_debug "Spawning step $inx"
+		-re $prompt {
+			send_user "spawning step $inx\n"
 			send "$srun -N1 -O -n$windows_used true\r"
 		}
 		timeout {
+			send_user "\nFAILURE: salloc not responding\n"
 			slow_kill $srun_pid
-			fail "Salloc not responding"
+			exit 1
 		}
 		eof {
-			fail "srun aborted"
+			send_user "\nFAILURE: srun aborted\n"
+			exit 1
+			wait
 		}
 	}
 }
 
 # wait for initial job step to complete
-expect -re $test_prompt
-log_debug "(sleeping for $step_delay seconds, for job step zero to complete)"
+expect -re $prompt
+send_user "(sleeping for $step_delay seconds, for job step zero to complete)\n"
 exec $bin_sleep $step_delay
 send "exit\r"
 
 expect {
 	-re "error" {
-		log_error "some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding\n"
 		slow_kill $srun_pid
-		fail "salloc not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if { $exit_code == 0 } {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

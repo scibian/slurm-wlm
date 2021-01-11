@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline option and time_min and time too long
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,8 +30,12 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.107"
 set exit_code   0
 set job_id      0
+
+print_header $test_id
+
 
 #
 # Since we make changes to configuration, call this function restore
@@ -36,18 +44,21 @@ set job_id      0
 proc endit { } {
 	global exit_code
 	reconfigure
-	if {$exit_code != 0} {
-		fail "Exiting due to previous errors with exit code $exit_code"
+	if {$exit_code == 0} {
+		send_user "\nSUCCESS\n"
+	} else {
+		send_user "\nFAILURE: exiting with exit code $exit_code\n"
 	}
-	pass
+	exit $exit_code
 }
 
 #
 # We must be SlurmUser or root in order to change the partition MaxTime limit,
 # otherwise this test may fail.
 #
-if {![is_super_user]} {
-	skip "You must be SlurmUser or root to run this test."
+if {[test_super_user] == 0} {
+	log_warn "You must be SlurmUser or root to run this test."
+	exit 0
 }
 
 #
@@ -66,16 +77,16 @@ set timeout $max_job_delay
 set srun_pid [spawn $srun -v  -N1 --deadline now+1hour --time-min 20 -t120 $bin_sleep 1]
 expect {
 	-re "Requested time limit is invalid" {
-		log_error "Time limit error"
+		send_user "\nFAILURE: time limit error\n"
 		set exit_code 1
 		exp_continue
 	}
-	-re "launching ($number)\\.0 on host" {
+	-re "launching ($number).0 on host" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -83,7 +94,8 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "Job not submitted. This can be due to QOS or account time limit <120 minutes"
+	send_user "\nFAILURE: job not submitted\n"
+	send_user "FAILURE: This can be due to QOS or account time limit <120 minutes\n"
 	set exit_code 1
 	endit
 }
@@ -100,12 +112,12 @@ expect {
 		exp_continue
 	}
 	-re "TimeLimit=" {
-		log_error "Time limit is different from deadline"
+		send_user "\nFAILURE: time limit is different from deadline\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {

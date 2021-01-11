@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Tests #Slurm entry functionality in a batch script.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005-2007 The Regents of the University of California.
 # Copyright (C) 2008 Lawrence Livermore National Security.
@@ -29,14 +33,19 @@
 ############################################################################
 source ./globals
 
+set test_id     "17.28"
 set exit_code   0
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set job_name    "TEST_NAME"
 set delay       1
 
-if {[get_config_param "EnforcePartLimits"] eq "NO"} {
-	skip "This test is incompatible EnforcePartLimits = NO"
+print_header $test_id
+
+set enforce [test_enforce_part_limits]
+if {![string compare $enforce "NO"]} {
+	send_user "\nWARNING: This test is incompatible EnforcePartLimits = $enforce\n"
+	exit 0
 }
 
 make_bash_script $file_in "
@@ -53,7 +62,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -61,7 +70,8 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "sbatch submit failure"
+	send_user "\nFAILURE: sbatch submit failure\n"
+	exit 1
 }
 set matches 0
 spawn $scontrol show job $job_id
@@ -71,7 +81,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -80,7 +90,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "Did not set job name from batch script"
+	send_user "\nFAILURE: did not set job name from batch script\n"
 	set exit_code 1
 }
 cancel_job $job_id
@@ -99,12 +109,12 @@ set matches 0
 spawn $sbatch -o $file_out $file_in
 expect {
 	-re "More processors requested than permitted" {
-		log_debug "This error was expected, no worries"
+		send_user "This error was expected, no worries\n\n"
 		incr matches
 		exp_continue
 	}
 	-re "Node count specification invalid" {
-		log_debug "This error was expected, no worries"
+		send_user "This error was expected, no worries\n\n"
 		incr matches
 		exp_continue
 	}
@@ -113,7 +123,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -122,11 +132,11 @@ expect {
 	}
 }
 if {$matches != 1} {
-	log_error "sbatch didn't read the correct options from batch file"
+	send_user "\nFAILURE: sbatch didn't read the correct options from batch file\n"
 	set exit_code 1
 }
 if {$job_id != 0} {
-	log_error "sbatch didn't reject job with invalid size"
+	send_user "\nFAILURE: sbatch didn't reject job with invalid size\n"
 	cancel_job $job_id
 	set exit_code 1
 }
@@ -140,7 +150,8 @@ set job_id  0
 spawn $sbatch -N1 -o $file_out $file_in
 expect {
 	-re "Node count specification invalid" {
-		log_error "sbatch read from the batch file options over writing the commandline options"
+		send_user "\nFAILURE: sbatch read from the batch file options"
+		send_user "over writing the commandline options\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -149,7 +160,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -158,13 +169,15 @@ expect {
 	}
 }
 if {$job_id == 0} {
+	send_user "\nFAILURE: sbatch didn't reject job with invalid size\n"
 	cancel_job $job_id
-	fail "sbatch didn't reject job with invalid size"
+	set exit_code 1
 }
 
 if {[wait_for_job $job_id DONE] != 0} {
+	send_user "\nFAILURE: error completing job $job_id\n"
 	cancel_job $job_id
-	fail "Error completing job $job_id"
+	set exit_code 1
 }
 
 #
@@ -172,6 +185,6 @@ if {[wait_for_job $job_id DONE] != 0} {
 #
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

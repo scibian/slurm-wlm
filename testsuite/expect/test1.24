@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Verify node configuration specification (--constraint option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,7 +33,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.24"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Submit a job with invalid constraint requirement
@@ -39,16 +47,16 @@ set timeout $max_job_delay
 set srun_pid [spawn $srun -N1 -l --constraint=invalid,constraint -t1 $bin_printenv SLURMD_NODENAME]
 expect {
 	-re "error:.*Invalid feature specification" {
-		log_debug "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		set err_msg 1
 		exp_continue
 	}
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		set host_0 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -58,13 +66,16 @@ expect {
 }
 
 if {[string compare $host_0 ""] != 0} {
-	log_error "Job ran with invalid constraint option"
+	send_user "\nFAILURE: job ran with invalid constraint option\n"
 	set exit_code   1
 }
 if {$err_msg != 1} {
-	fail "Job failed to report required error"
+	send_user "\nFAILURE: job failed to report required error\n"
+	set exit_code   1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

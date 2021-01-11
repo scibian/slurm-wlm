@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline option and time_min too long
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,9 +30,12 @@
 ############################################################################
 source ./globals
 
+set test_id     "17.57"
 set file_in     "test$test_id.input"
 set exit_code   0
 set job_id      0
+
+print_header $test_id
 
 #
 # Build input script file
@@ -52,7 +59,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -61,12 +68,13 @@ expect {
 	}
 }
 if {$job_id != 0} {
+	send_user "\nFAILURE: batch submitted despite the deadline\n"
 	cancel_job $job_id
-	fail "Batch submitted despite the deadline"
+	exit 1
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

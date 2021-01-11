@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validate scontrol displays and updates Allow/Deny Qos.
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2013 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -26,18 +31,23 @@
 ############################################################################
 source ./globals
 
+set test_id        "2.17"
 set qos_name       "test$test_id\_qos"
 set part_name      "test$test_id\_part"
 set exit_code      0
 
+print_header $test_id
+
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 proc set_part_val {part_type part_val} {
@@ -47,11 +57,11 @@ proc set_part_val {part_type part_val} {
 	spawn $scontrol update partitionname=$part_name $part_type=$part_val
 	expect {
 		-re "Error" {
-			log_error "$part_type was not set"
+			send_user "\nFAILURE: $part_type was not set\n"
 			set exit_code 1
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -72,7 +82,7 @@ proc check_part {part_type part_val} {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -81,7 +91,7 @@ proc check_part {part_type part_val} {
 	}
 
 	if {$val_found != 1} {
-		log_error "$part_type was not set to $part_val"
+		send_user "\nFAILURE: $part_type was not set to $part_val\n"
 		set exit_code 1
 	}
 }
@@ -93,13 +103,13 @@ proc delete_part { } {
 	spawn $scontrol delete partition=$part_name
 	expect {
 		-re "error" {
-			log_error "scontrol did not remove "
+			send_user "\nFAILURE: scontrol did not remove "
 			"partition\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "FAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -115,7 +125,7 @@ proc delete_part { } {
 			exp_continue
 		}
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -124,7 +134,7 @@ proc delete_part { } {
 	}
 
 	if {$del_acct != 1} {
-		log_error "Qos was not deleted"
+		send_user "\nFAILURE: Qos was not deleted\n"
 		set exit_code 1
 	}
 
@@ -133,11 +143,11 @@ proc delete_part { } {
 spawn $scontrol create partition=$part_name
 expect {
 	-re "error" {
-		log_error "Partition was not created"
+		send_user "\nFAILURE: partition was not created\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "scontrol is not reponding"
+		send_user "\nFAILURE: scontrol is not reponding\n"
 		set exit_code 1
 	}
 	eof {
@@ -153,7 +163,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -162,7 +172,7 @@ expect {
 }
 
 if {$create_qos != 1} {
-	log_error "QOS was not created"
+	send_user "\nFAILURE: QOS was not created\n"
 	set exit_code 1
 }
 
@@ -211,6 +221,8 @@ check_part DenyQos none
 #
 delete_part
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

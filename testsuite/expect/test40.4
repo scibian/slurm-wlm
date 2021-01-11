@@ -7,6 +7,11 @@
 #           AccountingStorageTRES=gres/mps
 #           SelectType=select/cons_tres
 #           Administrator permissions
+#
+# Output:   "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#           "FAILURE: ..." otherwise with an explanation of the failure, OR
+#           anything else indicates a failure mode that must be investigated.
+#
 ############################################################################
 # Copyright (C) 2018 SchedMD LLC
 # Written by Morris Jette
@@ -32,8 +37,9 @@
 source ./globals
 source ./globals_accounting
 
+set test_id        "40.4"
 set acct           "test$test_id\_acct"
-set cluster        [get_config_param "ClusterName"]
+set cluster        [get_cluster_name]
 set exit_code      0
 set file_in        "test$test_id.input"
 set file_out1      "test$test_id.output1"
@@ -51,13 +57,13 @@ proc setup { mps_limit } {
 	set user_req(account) $acct
 
 	if { [add_acct $acct [array get acct_req]] } {
-		log_error "Child account was not added"
+		send_user "\nFAILURE: child account was not added\n"
 		incr exit_code
 		return 1
 	}
 
 	if { [add_user $user [array get user_req]] } {
-		log_error "User was not added to child account"
+		send_user "\nFAILURE: user was not added to child account\n"
 		incr exit_code
 		return 1
 	}
@@ -71,38 +77,55 @@ proc cleanup { } {
 	remove_acct "" $acct
 }
 
-set store_tres [string tolower [get_config_param "AccountingStorageTRES"]]
+print_header $test_id
+
+set store_tres [string tolower [get_acct_store_tres]]
 set store_mps [string first "gres/mps:" $store_tres]
 if {$store_mps != -1} {
-	skip "This test requires homogeneous MPS accounting (NO Type)"
+	send_user "\nWARNING: This test requires homogeneous MPS accounting (NO Type)\n"
+	exit $exit_code
 }
 set store_mps [string first "gres/mps" $store_tres]
 if {$store_mps == -1} {
-	skip "This test requires accounting for MPS"
-} elseif {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without AccountStorageType=slurmdbd"
-} elseif {![param_contains [get_config_param "AccountingStorageEnforce"] "limits"]} {
-	skip "This test can't be run without AccountingStorageEnforce=limits"
-} elseif {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front-end systems"
-} elseif {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator"
+	send_user "\nWARNING: This test requires accounting for MPS\n"
+	exit $exit_code
+} elseif { [test_using_slurmdbd] == 0 } {
+	send_user "\nWARNING: This test can't be run without AccountStorageType=slurmdbd\n"
+	exit $exit_code
+} elseif { [test_enforce_limits] == 0 } {
+	send_user "\nWARNING: This test can't be run without AccountingStorageEnforce=limits\n"
+	exit $exit_code
+} elseif {[test_front_end]} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit $exit_code
+} elseif {[string compare [check_accounting_admin_level] "Administrator"]} {
+	send_user "\nThis test can't be run without being an Accounting administrator.\n"
+	exit $exit_code
 }
 
-if {![check_config_select "cons_tres"]} {
-	skip "This test is only compatible with select/cons_tres"
+if {[test_cons_tres]} {
+	send_user "\nValid configuration, using select/cons_tres\n"
+} else {
+	send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
+	exit 0
 }
 
-set nb_nodes [get_node_cnt_in_part]
-log_debug "Default partition node count is $nb_nodes"
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
+send_user "\nDefault partition node count is $nb_nodes\n"
 if {$nb_nodes > 1} {
 	set nb_nodes 2
 }
-set mps_cnt [get_highest_mps_count $nb_nodes]
-if {$mps_cnt < 100} {
-	skip "This test requires 100 or more MPS per gpu on $nb_nodes nodes of the default partition"
+set mps_cnt [get_mps_count $nb_nodes]
+if {$mps_cnt < 0} {
+	send_user "\nFAILURE: Error getting MPS count\n"
+	exit 1
 }
-log_debug "MPS count is $mps_cnt"
+if {$mps_cnt < 100} {
+	send_user "\nWARNING: This test requires 100 or more MPS per node in the default partition\n"
+	exit 0
+}
+send_user "MPS count is $mps_cnt\n"
 
 # Remove any vestigial test account
 cleanup
@@ -115,7 +138,8 @@ if {$mps_limit > 8} {
 	incr mps_limit -1
 }
 if {[setup $mps_limit]} {
-	fail "Failure in setup ($mps_limit)"
+	cleanup
+	exit 1
 }
 
 make_bash_script $file_in "
@@ -125,7 +149,7 @@ make_bash_script $file_in "
 #
 # Test --gres=mps option by job (first job over limit, second job under limit)
 #
-log_info "TEST 1: --gres=mps option by job (first job over limit, second job under limit)"
+send_user "\n\nTEST 1: --gres=mps option by job (first job over limit, second job under limit)\n"
 
 set timeout $max_job_delay
 exec $bin_rm -f $file_out1  $file_out2
@@ -143,7 +167,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -151,7 +175,7 @@ expect {
 	}
 }
 if {$job_id1 == 0} {
-	log_error "Job not submitted"
+	send_user "\nFAILURE: job not submitted\n"
 	set exit_code 1
 }
 
@@ -163,7 +187,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -171,12 +195,12 @@ expect {
 	}
 }
 if {$job_id2 == 0} {
-	log_error "Job not submitted"
+	send_user "\nFAILURE: job not submitted\n"
 	set exit_code 1
 }
 
 if {[wait_for_job $job_id2 "DONE"] != 0} {
-	log_error "Job $job_id2 did not complete"
+	send_user "\nFAILURE: job $job_id2 did not complete\n"
 	cancel_job $job_id2
 	set exit_code 1
 }
@@ -193,7 +217,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -201,16 +225,22 @@ expect {
 	}
 }
 if {$match != 2} {
-	log_error "Job $job_id1 state is bad"
+	send_user "\nFAILURE: job $job_id1 state is bad\n"
 	set exit_code 1
 }
 cancel_job $job_id1
 if {$exit_code != 0} {
-	fail "Unable to cancel job ($job_id1)"
+	cleanup
+	exit $exit_code
 }
+
+#
+# Remove any vestigial test account
+#
+cleanup
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out1 $file_out2
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Verify the ability to modify the Derived Exit Code and Comment
 #          fields of a job record in the database.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,13 +32,17 @@
 ############################################################################
 source ./globals
 
+set test_id          "7.14"
 set exit_code        0
 set file_in          "test$test_id.input"
 set file_prog1       "test$test_id.prog1"
 set file_prog2       "test$test_id.prog2"
 
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+print_header $test_id
+
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 #
@@ -75,14 +83,16 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	fail "Waiting for job to complete"
+	send_user "\nFAILURE: waiting for job to complete\n"
+	exit 1
 }
 
 #
@@ -100,7 +110,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
+		exit 1
 	}
 	eof {
 		wait
@@ -108,7 +119,8 @@ expect {
 }
 
 if {$matches != 2} {
-	fail "Job ExitCode incorrect"
+	send_user "\nFAILURE: Job ExitCode incorrect\n"
+	exit 1
 }
 
 #
@@ -124,7 +136,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "sacctmgr modify job not responding"
+		send_user "\nFAILURE: sacctmgr modify job not responding\n"
+		exit 1
 	}
 	eof {
 		wait
@@ -132,7 +145,8 @@ expect {
 }
 
 if {$matches != 1} {
-	fail "sacctmgr failed to change DerivedExitCode/Comment"
+	send_user "\nFAILURE: sacctmgr failed to change DerivedExitCode/Comment\n"
+	exit 1
 }
 
 #
@@ -147,7 +161,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "sacct not responding"
+		send_user "\nFAILURE: sacct not responding\n"
+		exit 1
 	}
 	eof {
 		wait
@@ -155,11 +170,13 @@ expect {
 }
 
 if {$matches != 1} {
-	fail "sacct of $job_id failed ($matches)"
+	send_user "\nFAILURE: sacct of $job_id failed ($matches)\n"
+	exit 1
 }
 
 if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 	exec $bin_rm -f $file_in $file_prog1 $file_prog2
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
+
+exit $exit_code

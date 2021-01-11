@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Verify environment variables controlling sbatch are processed:
 #          SBATCH_ACCOUNT, SBATCH_DEBUG and SBATCH_TIMELIMIT
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,14 +33,17 @@
 ############################################################################
 source ./globals
 
+set test_id          "17.25"
 set exit_code        0
 set file_in          "test$test_id.input"
 set job_id           0
 set timeout          $max_job_delay
 set account	     "dummy_acct"
 
-if [param_contains [get_config_param "AccountingStorageEnforce"] "associations"] {
-	log_warn "Using users default account instead of $account since associations are enforced"
+print_header $test_id
+
+if {[test_assoc_enforced]} {
+	send_user "\nWARNING: Using users default account instead of $account since associations are enforced.\n"
 	set account [get_default_acct 0]
 }
 
@@ -78,7 +85,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -87,15 +94,17 @@ expect {
 }
 
 if {$job_id == 0} {
-	fail "Did not get job_id"
+	send_user "\nFAILURE: did not get job_id\n"
+	exit 1
 }
 if {$matches != 3} {
-	fail "Processed $matches of 3 environment variables"
+	send_user "\nFAILURE: processed $matches of 3 environment variables\n"
+	set exit_code 1
 }
 cancel_job $job_id
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

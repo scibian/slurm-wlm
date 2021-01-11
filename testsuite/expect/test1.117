@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Confirm that memory per cpu properly set on an srun job that
 #          does not have a preexisting allocation.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2019 SchedMD LLC
 # Written by Chad Vizino <chad@schedmd.com>
@@ -27,10 +31,13 @@
 ############################################################################
 source ./globals
 
+set test_id		"1.116"
 set timeout		$max_job_delay
 set job_id		0
 set mem_spec		"100M"
 set job_min_memory_cpu 	0
+
+print_header $test_id
 
 #
 # submit srun job with a specific mem-per-cpu request
@@ -41,8 +48,9 @@ expect {
 		set job_id $expect_out(1,string)
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -53,7 +61,8 @@ expect {
 # check to make sure a job id was set
 #
 if {$job_id == 0} {
-	fail "Did not get job id"
+	send_user "\nFAILURE: Did not get job id\n"
+	exit 1
 }
 
 #
@@ -65,7 +74,8 @@ expect {
 		set job_min_memory_cpu $expect_out(1,string)
 	}
 	timeout {
-		fail "Scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
+		exit 1
 	}
 	eof {
 		wait
@@ -76,5 +86,11 @@ expect {
 # check that the memory reported matches the requested value
 #
 if {[string compare $job_min_memory_cpu $mem_spec] != 0} {
-	fail "Job MinMemoryCPU $job_min_memory_cpu != $mem_spec"
+	send_user "\nFAILURE: job MinMemoryCPU $job_min_memory_cpu != $mem_spec\n"
+	exit 1
 }
+
+print_success $test_id
+exit 0
+
+

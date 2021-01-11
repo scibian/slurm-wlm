@@ -64,6 +64,7 @@
 #include "src/common/plugstack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
 #include "src/common/tres_bind.h"
@@ -97,12 +98,12 @@ pthread_mutex_t allocation_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool allocation_interrupted = false;
 static bool allocation_revoked = false;
 static bool exit_flag = false;
-static bool is_pack_job = false;
+static bool is_het_job = false;
 static bool suspend_flag = false;
 static uint32_t my_job_id = 0;
 static time_t last_timeout = 0;
 static struct termios saved_tty_attributes;
-static int pack_limit = 0;
+static int het_job_limit = 0;
 static bool _cli_filter_post_submit_run = false;
 
 static void _exit_on_signal(int signo);
@@ -173,9 +174,9 @@ int main(int argc, char **argv)
 	pid_t rc_pid = 0;
 	int i, j, rc = 0;
 	uint32_t num_tasks = 0;
-	bool pack_fini = false;
-	int pack_argc, pack_inx, pack_argc_off;
-	char **pack_argv;
+	bool het_job_fini = false;
+	int het_job_argc, het_job_inx, het_job_argc_off;
+	char **het_job_argv;
 	static char *msg = "Slurm job queue full, sleeping and retrying.";
 	slurm_allocation_callbacks_t callbacks;
 	ListIterator iter_req, iter_resp;
@@ -196,22 +197,24 @@ int main(int argc, char **argv)
 		error("Failed to register atexit handler for plugins: %m");
 
 
-	pack_argc = argc;
-	pack_argv = argv;
-	for (pack_inx = 0; !pack_fini; pack_inx++) {
-		pack_argc_off = -1;
-		if (initialize_and_process_args(pack_argc, pack_argv,
-						&pack_argc_off, pack_inx) < 0) {
+	het_job_argc = argc;
+	het_job_argv = argv;
+	for (het_job_inx = 0; !het_job_fini; het_job_inx++) {
+		het_job_argc_off = -1;
+		if (initialize_and_process_args(het_job_argc, het_job_argv,
+						&het_job_argc_off,
+						het_job_inx) < 0) {
 			error("salloc parameter parsing");
 			exit(error_exit);
 		}
-		if ((pack_argc_off >= 0) && (pack_argc_off < pack_argc) &&
-		    !xstrcmp(pack_argv[pack_argc_off], ":")) {
-			/* pack_argv[0] moves from "salloc" to ":" */
-			pack_argc -= pack_argc_off;
-			pack_argv += pack_argc_off;
+		if ((het_job_argc_off >= 0) &&
+		    (het_job_argc_off < het_job_argc) &&
+		    !xstrcmp(het_job_argv[het_job_argc_off], ":")) {
+			/* het_job_argv[0] moves from "salloc" to ":" */
+			het_job_argc -= het_job_argc_off;
+			het_job_argv += het_job_argc_off;
 		} else
-			pack_fini = true;
+			het_job_fini = true;
 
 		/* reinit log with new verbosity (if changed by command line) */
 		if (opt.verbose || opt.quiet) {
@@ -227,7 +230,7 @@ int main(int argc, char **argv)
 		}
 
 		_set_spank_env();
-		if (pack_inx == 0)
+		if (het_job_inx == 0)
 			_set_submit_dir_env();
 		if (opt.chdir && chdir(opt.chdir)) {
 			error("chdir(%s): %m", opt.chdir);
@@ -269,8 +272,8 @@ int main(int argc, char **argv)
 		slurm_init_job_desc_msg(desc);
 		if (_fill_job_desc_from_opts(desc) == -1)
 			exit(error_exit);
-		if (pack_inx || !pack_fini)
-			set_env_from_opts(&opt, &env, pack_inx);
+		if (het_job_inx || !het_job_fini)
+			set_env_from_opts(&opt, &env, het_job_inx);
 		else
 			set_env_from_opts(&opt, &env, -1);
 		if (job_req_list)
@@ -278,7 +281,7 @@ int main(int argc, char **argv)
 		if (!first_job)
 			first_job = desc;
 	}
-	pack_limit = pack_inx;
+	het_job_limit = het_job_inx;
 	if (!desc) {
 		fatal("%s: desc is NULL", __func__);
 		exit(error_exit);    /* error already logged */
@@ -342,7 +345,7 @@ int main(int argc, char **argv)
 	 * and run it there */
 	if (opt.clusters) {
 		if (job_req_list) {
-			rc = slurmdb_get_first_pack_cluster(job_req_list,
+			rc = slurmdb_get_first_het_job_cluster(job_req_list,
 					opt.clusters, &working_cluster_rec);
 		} else {
 			rc = slurmdb_get_first_avail_cluster(desc,
@@ -383,8 +386,8 @@ int main(int argc, char **argv)
 	before = time(NULL);
 	while (true) {
 		if (job_req_list) {
-			is_pack_job = true;
-			job_resp_list = slurm_allocate_pack_job_blocking(
+			is_het_job = true;
+			job_resp_list = slurm_allocate_het_job_blocking(
 					job_req_list, opt.immediate,
 					_pending_callback);
 			if (job_resp_list)
@@ -445,8 +448,8 @@ int main(int argc, char **argv)
 				my_job_id = alloc->job_id;
 				info("Granted job allocation %u", my_job_id);
 			}
-			if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
-				info("Pack job ID %u+%u (%u) on nodes %s",
+			if (debug_flags & DEBUG_FLAG_HETJOB) {
+				info("Hetjob ID %u+%u (%u) on nodes %s",
 				     my_job_id, i, alloc->job_id,
 				     alloc->node_list);
 			}
@@ -501,7 +504,9 @@ int main(int argc, char **argv)
 			      "count mismatch (%d != %d)", i, j);
 			goto relinquish;
 		}
+		/* Continue support for old hetjob terminology. */
 		env_array_append_fmt(&env, "SLURM_PACK_SIZE", "%d", i);
+		env_array_append_fmt(&env, "SLURM_HET_SIZE", "%d", i);
 
 		i = 0;
 		iter_req = list_iterator_create(job_req_list);
@@ -674,6 +679,14 @@ relinquish:
 		}
 	}
 
+#ifdef MEMORY_LEAK_DEBUG
+	slurm_select_fini();
+	slurm_reset_all_options(&opt, false);
+	slurm_auth_fini();
+	slurm_conf_destroy();
+	log_fini();
+#endif /* MEMORY_LEAK_DEBUG */
+
 	return rc;
 }
 
@@ -706,7 +719,7 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
 }
 
 
-/* Copy job name from last component to all pack job components unless
+/* Copy job name from last component to all hetjob components unless
  * explicitly set. The default value comes from _salloc_default_command()
  * and is "sh". */
 static void _match_job_name(job_desc_msg_t *desc_last, List job_req_list)
@@ -925,6 +938,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->shared = opt.shared;
 
 	desc->wait_all_nodes = saopt.wait_all_nodes;
+	if (opt.warn_flags)
+		desc->warn_flags = opt.warn_flags;
 	if (opt.warn_signal)
 		desc->warn_signal = opt.warn_signal;
 	if (opt.warn_time)
@@ -1056,7 +1071,7 @@ static void _salloc_cli_filter_post_submit(uint32_t jobid, uint32_t stepid)
 	int idx = 0;
 	if (_cli_filter_post_submit_run)
 		return;
-	for (idx = 0; idx < pack_limit; idx++)
+	for (idx = 0; idx < het_job_limit; idx++)
 		cli_filter_plugin_post_submit(idx, jobid, stepid);
 
 	_cli_filter_post_submit_run = true;

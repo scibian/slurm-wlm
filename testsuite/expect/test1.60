@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test srun stdout/err labelling combined with file template
 #          options with %t and %N.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2009-2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,6 +33,7 @@
 ############################################################################
 source ./globals
 
+set test_id          "1.60"
 set exit_code        0
 set file_out_n       "test$test_id.n.%n.output"
 set file_out_t       "test$test_id.t.%t.output"
@@ -41,8 +46,11 @@ set file_cnt         0
 set file_out_t_glob  ""
 set file_out_n_glob  ""
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-    skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
 
 #
@@ -61,15 +69,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Job initiation failed"
+	send_user "\nFAILURE: job initiation failed\n"
+	exit 1
 }
 
 set node_count 0
@@ -84,8 +94,9 @@ expect {
 	}
 }
 if {$node_count == 0} {
+	send_user "\nFAILURE: did not get node_count\n"
 	cancel_job $job_id
-	fail "Did not get node_count"
+	exit 1
 }
 
 set file_cnt 0
@@ -107,7 +118,7 @@ for {set task_id 0} {$task_id < $node_count} {incr task_id} {
 			}
 		}
 		if {$task_id != $test_task_id} {
-			log_error "File $file_out_t_glob was not labelled.  $task_id != $test_task_id"
+			send_user "\nFAILURE: file $file_out_t_glob was not labelled.  $task_id != $test_task_id\n"
 			set exit_code 1
 		} else {
 			exec $bin_rm -f $file_out_t_glob
@@ -116,17 +127,20 @@ for {set task_id 0} {$task_id < $node_count} {incr task_id} {
 	}
 }
 if {$file_cnt != $node_count} {
-	log_error "File format of %t in stdout failed"
+	send_user "\nFAILURE: file format of %t in stdout failed\n"
 	set exit_code 1
 }
-fail_on_error "Test failed due to previous errors"
+if {$exit_code != 0} {
+	exit $exit_code
+}
 for {set node_id 0} {$node_id < $node_count} {incr node_id} {
 	set file_out_n_glob  "test$test_id.n.$node_id.output"
 	exec $bin_rm -f $file_out_n_glob
 }
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "Additional tests are incompatible with front-end systems"
+if {[test_front_end] != 0} {
+	send_user "\nWARNING: Additional tests are incompatible with front-end systems\n"
+	exit $exit_code
 }
 
 #
@@ -142,15 +156,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "Srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Job initiation failed"
+	send_user "\nFAILURE: job initiation failed\n"
+	exit 1
 }
 
 # We only test that some task ran on every node, we can't check the task ID
@@ -160,7 +176,7 @@ for {set node_id 0} {$node_id < $node_count} {incr node_id} {
 	set file_out_n_glob  "test$test_id.n.$node_id.output"
 	if {[wait_for_file $file_out_n_glob] != 0} {
 		if {$node_id == 1} {
-			log_debug "This failure is expected on front-end configurations"
+			send_user "\nNOTE: This failure is expected on front-end configurations\n"
 		}
 		set exit_code 1
 		break
@@ -178,7 +194,7 @@ for {set node_id 0} {$node_id < $node_count} {incr node_id} {
 			}
 		}
 		if {!$task_found} {
-			log_error "File $file_out_n_glob was not labelled correctly"
+			send_user "\nFAILURE: file $file_out_n_glob was not labelled correctly\n"
 			set exit_code 1
 		} else {
 			exec $bin_rm -f $file_out_n_glob
@@ -187,6 +203,11 @@ for {set node_id 0} {$node_id < $node_count} {incr node_id} {
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+
+#
+# Post-processing
+#
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

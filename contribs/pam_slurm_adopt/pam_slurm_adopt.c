@@ -277,7 +277,7 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 				uidcg, stepd->jobid);
 			/* Return the newest job_id, according to cgroup
 			 * creation. Hopefully this is a good way to do this */
-			if (cgroup_time > most_recent) {
+			if (cgroup_time >= most_recent) {
 				most_recent = cgroup_time;
 				*out_stepd = stepd;
 				rc = PAM_SUCCESS;
@@ -667,6 +667,8 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	}
 
 	_log_init(opts.log_level);
+
+	slurm_conf_init(NULL);
 
 	switch (opts.action_generic_failure) {
 	case CALLERID_ACTION_DENY:

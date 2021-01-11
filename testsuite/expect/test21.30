@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #         Test that checks if the QOS limits are enforced.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2012 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -44,17 +48,13 @@ source ./inc21.30.15
 source ./inc21.30.16
 source ./inc21.30.17
 
-if {[param_contains [get_config_param "SchedulerParameters"] "defer"]} {
-	skip "This test is not compatible with SchedulerParameters containing defer"
-}
-
+set test_id	"21.30"
 set exit_code	0
-set skips       0
 set test_node   ""
 # Total cpus in test node
 set totcpus     0
 set nthreads    0
-set acct        "$test_id\_test_acct"
+set acct        test_acct
 set user_name   ""
 set qosname     name
 set qostest     "$test_id\_qostest"
@@ -128,11 +128,12 @@ array set mod_qos_vals {
 	MaxTRESPerUser=billing      -1
 }
 
+print_header $test_id
+
 # Check to see that there are enough resources in the default partition
 set tmpc 0
 set tmpn 0
-set partition [default_partition]
-spawn $scontrol show part $partition
+spawn $scontrol show part [default_partition]
 expect {
 	-re "TotalCPUs=($number)" {
 		set tmpc [expr $expect_out(1,string) - 1]
@@ -147,7 +148,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -155,7 +156,8 @@ expect {
 	}
 }
 if {$tmpc == 0 || $tmpn == 0} {
-	skip "Not enough Nodes and/or CPUs"
+	send_user "\nWARNING: not enough Nodes and/or CPUs\n"
+	exit 0
 }
 
 if { ![string compare [priority_type] "multifactor"] } {
@@ -165,27 +167,25 @@ if { ![string compare [priority_type] "multifactor"] } {
 }
 
 # Determine what the selecttype param is
-set select_type_parameters [get_config_param "SelectTypeParameters"]
-if {[param_contains $select_type_parameters "CR_SOCKET*"]} {
-	skip "This test is incompatible with CR_SOCKET allocations"
-}
-if {[param_contains $select_type_parameters "CR_CORE*"]} {
+if {[test_select_type_params "CR_CORE"]} {
 	set selectparam 1
 }
-if {[param_contains $select_type_parameters "CR_ONE_TASK_PER_CORE"]} {
+
+# Determine what the selecttype param is
+if {[test_select_type_params "CR_ONE_TASK_PER_CORE"]} {
 	set one_task_pc 1
 }
 
 set got_node 0
 spawn $srun -N1 printenv SLURM_NODELIST
 expect {
-	-re "($re_word_str)" {
+	-re "($alpha_numeric_under)" {
 		set test_node $expect_out(1,string)
 		set got_node 1
 		exp_continue
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -194,14 +194,16 @@ expect {
 }
 
 if {$got_node != 1} {
-	fail "Did not get node for testing"
+	send_user "\nFAILURE: did not get node for testing\n"
+	exit 0
 }
 
 # Get the number of cpus on a node
 lassign [get_node_cpus $test_node] totcpus nthreads
 
 if {$totcpus == 0} {
-	fail "No cpus were found"
+	send_user "\nFAILURE: no cpus where found\n"
+	exit 1
 } else {
 	# Set QoS CPU values
 	set grcpu_num [expr $totcpus - $nthreads]
@@ -212,13 +214,26 @@ if {$totcpus == 0} {
 
 
 
-# Get the number of nodes in the default partition, minus one.
-# $maxnode_num is used as MaxNodes in QOS and we will test requests of
-# $maxnode_num + 1. If not EnforcePartLimits could interfere.
-set num_nodes [expr [available_nodes "idle"] -1]
+# Get the number of nodes in the default partition
+set num_nodes 0
+spawn $scontrol show partition [default_partition]
+expect {
+	-re "TotalNodes=($number)" {
+		set num_nodes [expr $expect_out(1,string) - 1]
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
 
 if {$num_nodes == 0} {
-	fail "No cpus were found"
+	send_user "\nFAILURE: no cpus where found\n"
+	exit 1
 } else {
 	# Set QoS node values
 	set grn_num     $num_nodes
@@ -228,8 +243,8 @@ if {$num_nodes == 0} {
 
 
 proc endit { } {
-	global sacctmgr qostest acct test_id exit_code skips
-	global scontrol save_billing_weights partition
+	global sacctmgr qostest acct test_id exit_code
+	global scontrol save_billing_weights
 	# delete qos
 	spawn $sacctmgr -i delete qos $qostest
 	expect {
@@ -237,10 +252,10 @@ proc endit { } {
 			exp_continue
 		}
 		-re "Error" {
-			log_error "QOS was not deleted"
+			send_user "\nFAILURE: QOS was not deleted\n"
 		}
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 		}
 		eof {
 			wait
@@ -254,11 +269,11 @@ proc endit { } {
 			exp_continue
 		}
 		-re "Error" {
-			log_error "account was not deleted"
+			send_user "\nFAILURE: account was not deleted\n"
 			set exit_code 1
 		}
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -267,14 +282,14 @@ proc endit { } {
 	}
 
 	if {$save_billing_weights ne ""} {
-		spawn $scontrol update partitionname=$partition TRESBillingWeights=$save_billing_weights
+		spawn $scontrol update partitionname=[default_partition] TRESBillingWeights=$save_billing_weights
 		expect {
 			-re "error" {
-				log_error "Failed to reset TRESBillingWeights"
+				send_user "\nFAILURE: failed to reset TRESBillingWeights\n"
 				set exit_code 1
 			}
 			timeout {
-				log_error "scontrol is not responding"
+				send_user "\nFAILURE: scontrol is not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -283,33 +298,44 @@ proc endit { } {
 		}
 	}
 
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	if {$skips != 0} {
-		skip "Test was partially skipped (skips = $skips)"
+	if {$exit_code == 0} {
+		print_success $test_id
+	} else {
+		send_user "\nFAILURE: test $test_id\n"
 	}
 
-	pass
+	exit $exit_code
 }
 
 #
 # Check accounting configuration and terminate if limits not enforced.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
-} elseif {![param_contains [get_config_param "AccountingStorageEnforce"] "limits"]} {
-	skip "This test can't be run without enforcing limits"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
+} elseif { [test_enforce_limits] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountingStorageEnforce\n"
+	exit 0
 }
-if {![is_super_user]} {
-	skip "Test can only be ran as SlurmUser"
+if { [test_limits_enforced] == 0 } {
+	send_user "\nWARNING: This test can't be run without enforcing limits\n"
+	exit 0
+}
+if {[test_super_user] == 0} {
+	send_user "\nWARNING Test can only be ran as SlurmUser\n"
+	exit 0
 }
 
 #
 # Some tests will not work properly when allocating sockets or whole nodes to jobs
 #
-if {[check_config_select "linear"] || [default_part_exclusive]} {
-	skip "This test is incompatible with exclusive node allocations"
+if {[test_linear] || [default_part_exclusive]} {
+	send_user "\nWARNING: This test is incompatible with exclusive node allocations\n"
+	exit 0
+}
+if {[test_select_type_params "CR_SOCKET"]} {
+	send_user "\nWARNING: This test is incompatible with CR_SOCKET allocations\n"
+	exit 0
 }
 
 # Remove any vestigial accounts or qos
@@ -319,10 +345,10 @@ expect {
 		exp_continue
 	}
 	-re "Error" {
-		log_error "QOS was not deleted"
+		send_user "\nFAILURE: QOS was not deleted\n"
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 	}
 	eof {
 		wait
@@ -336,11 +362,11 @@ expect {
 		exp_continue
 	}
 	-re "Error" {
-		log_error "Account was not deleted"
+		send_user "\nFAILURE: account was not deleted\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -361,7 +387,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr did not add QOS"
+		send_user "\nFAILURE: sacctmgr did not add QOS\n"
 		set exit_code 1
 	}
 	eof {
@@ -378,7 +404,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -387,14 +413,15 @@ expect {
 	}
 }
 if {$acctmatch != 1} {
-	fail "sacctmgr had a problem adding the account"
+	send_user "\nFAILURE: sacctmgr had a problem adding the account\n"
+	exit 1
 }
 
 # Add user to account
 spawn $sacctmgr -i create user name=$user_name account=$acct
 expect {
 	timeout {
-		log_error "sacctmgr not responding"
+		send_user "\nFAILURE: sacctmgr not responding\n"
 	}
 	eof {
 		wait
@@ -645,14 +672,14 @@ set mod_qos_vals(MaxWall) "-1"
 
 # TRESBillingWeights
 
-spawn $scontrol update partitionname=$partition tresbillingweights=cpu=$tres_cpu_mult
+spawn $scontrol update partitionname=[default_partition] tresbillingweights=cpu=$tres_cpu_mult
 expect {
 	-re "error" {
-		log_error "Failed to set TRESBillingWeights"
+		send_user "\nFAILURE: failed to set TRESBillingWeights\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {

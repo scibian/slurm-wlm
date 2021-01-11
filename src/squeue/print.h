@@ -141,14 +141,14 @@ int job_format_add_function(List list, int width, bool right_justify,
 #define job_format_add_time_limit(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,	\
 	                        _print_job_time_limit)
-#define job_format_add_pack_job_offset(list,wid,right,suffix) \
+#define job_format_add_het_job_offset(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,\
-				_print_job_pack_job_offset)
-#define job_format_add_pack_job_id(list,wid,right,suffix) \
-	job_format_add_function(list,wid,right,suffix,_print_job_pack_job_id)
-#define job_format_add_pack_job_id_set(list,wid,right,suffix) \
+				_print_job_het_job_offset)
+#define job_format_add_het_job_id(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix,_print_job_het_job_id)
+#define job_format_add_het_job_id_set(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,\
-				_print_job_pack_job_id_set)
+				_print_job_het_job_id_set)
 #define job_format_add_time_used(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_time_used)
 #define job_format_add_time_submit(list,wid,right,suffix) \
@@ -566,12 +566,12 @@ int _print_job_tres_per_task(job_info_t * job, int width,
 			     bool right_justify, char *suffix);
 int _print_job_mcs_label(job_info_t * job, int width,
 			 bool right_justify, char* suffix);
-int _print_job_pack_job_id(job_info_t * job, int width,
-			 bool right_justify, char* suffix);
-int _print_job_pack_job_offset(job_info_t * job, int width,
-			 bool right_justify, char* suffix);
-int _print_job_pack_job_id_set(job_info_t * job, int width,
-			 bool right_justify, char* suffix);
+int _print_job_het_job_id(job_info_t * job, int width,
+			  bool right_justify, char* suffix);
+int _print_job_het_job_offset(job_info_t * job, int width,
+			      bool right_justify, char* suffix);
+int _print_job_het_job_id_set(job_info_t * job, int width,
+			      bool right_justify, char* suffix);
 
 
 /*****************************************************************************
@@ -613,11 +613,6 @@ int step_format_add_function(List list, int width, bool right_justify,
 #define step_format_add_array_task_id(list,wid,right,suffix) \
 	step_format_add_function(list,wid,right,suffix, \
 				 _print_step_array_task_id)
-#define step_format_add_chpt_dir(list,wid,right,suffix) \
-	step_format_add_function(list,wid,right,suffix,_print_step_chpt_dir)
-#define step_format_add_chpt_interval(list,wid,right,suffix) \
-	step_format_add_function(list,wid,right,suffix, \
-				 _print_step_chpt_interval)
 #define step_format_add_job_id(list,wid,right,suffix) \
 	step_format_add_function(list,wid,right,suffix,_print_step_job_id)
 #define step_format_add_network(list,wid,right,suffix) \
@@ -681,10 +676,6 @@ int _print_step_num_tasks(job_step_info_t * step, int width,
 int _print_step_array_job_id(job_step_info_t * step, int width, bool right,
 			     char* suffix);
 int _print_step_array_task_id(job_step_info_t * step, int width, bool right,
-			      char* suffix);
-int _print_step_chpt_dir(job_step_info_t * step, int width, bool right,
-			 char* suffix);
-int _print_step_chpt_interval(job_step_info_t * step, int width, bool right,
 			      char* suffix);
 int _print_step_job_id(job_step_info_t * step, int width, bool right,
 		       char* suffix);

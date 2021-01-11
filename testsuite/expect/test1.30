@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of increasing job sizes
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,11 +32,14 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.30"
 set exit_code   0
 set error 0
 set srun_opts "-c1"
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
+print_header $test_id
+
+if { [test_front_end] } {
 	set max_node_cnt 2
 } else {
 	set max_node_cnt 1024
@@ -46,24 +53,24 @@ for {set node_cnt 1} {$node_cnt < $max_node_cnt} {set node_cnt [expr $node_cnt *
 	set srun_pid [spawn $srun --immediate -N$node_cnt $srun_opts -t2 $bin_printenv SLURMD_NODENAME]
 	expect {
 		-re "Immediate execution impossible" {
-			log_debug "This error is expected, no worries"
+			send_user "This error is expected, no worries\n"
 			set node_cnt $max_node_cnt
 			set error 0
 			exp_continue
 		}
 		-re "Unable to contact" {
-			log_error "Slurm appears to be down"
+			send_user "\nFAILURE: slurm appears to be down\n"
 			set exit_code 1
 			exp_continue
 		}
 		-re "Unable to allocate resources" {
-			log_debug "This error is expected, no worries"
+			send_user "This error is expected, no worries\n"
 			set node_cnt $max_node_cnt
 			set error 0
 			exp_continue
 		}
 		-re "Too many open files" {
-			log_debug "This error is expected, no worries"
+			send_user "This error is expected, no worries\n"
 			set node_cnt $max_node_cnt
 			exp_continue
 		}
@@ -72,7 +79,7 @@ for {set node_cnt 1} {$node_cnt < $max_node_cnt} {set node_cnt [expr $node_cnt *
 			exp_continue
 		}
 		timeout {
-			log_error "srun not responding"
+			send_user "\nFAILURE: srun not responding\n"
 			slow_kill $srun_pid
 			set exit_code 1
 		}
@@ -83,9 +90,11 @@ for {set node_cnt 1} {$node_cnt < $max_node_cnt} {set node_cnt [expr $node_cnt *
 }
 
 if {$error == 1} {
-	fail "Some error happened"
+	send_user "\nFAILURE: some error happened\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

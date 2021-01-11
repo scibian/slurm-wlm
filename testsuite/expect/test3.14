@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of advanced reservation "replace" option.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 SchedMD LLC
 # Written by Morris Jette <jette@schedmd.com>
@@ -26,20 +30,25 @@
 ############################################################################
 source ./globals
 
+set test_id		"3.14"
 set exit_code		0
 set node_list_new       ""
 set node_list_orig      ""
 set resv_name           "resv$test_id"
 set user_name		""
 
-if {![is_super_user]} {
-	skip "This test can't be run except as SlurmUser"
+print_header $test_id
+
+if {[is_super_user] == 0} {
+	send_user "\nWARNING: This test can't be run except as SlurmUser\n"
+	exit 0
 }
 
 set def_part_name [default_partition]
 set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes < 3} {
-	skip "This test requires at least 3 nodes in the cluster"
+	send_user "\nWARNING: This test requires at least 3 nodes in the cluster.\n"
+	exit 0
 }
 
 set user_name [get_my_user_name]
@@ -47,8 +56,19 @@ set user_name [get_my_user_name]
 #
 # Create the advanced reservation
 #
-if { [create_res $resv_name "starttime=now duration=2 nodecnt=2 flags=replace partition=$def_part_name users=$user_name"] } {
-	fail "Error creating reservation"
+spawn $scontrol create reservation ReservationName=$resv_name starttime=now duration=2 nodecnt=2 flags=replace partition=$def_part_name users=$user_name
+expect {
+	-re "Error|error" {
+		send_user "\nFAILURE: error creating reservation\n"
+		exit 1
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
 
 #
@@ -57,7 +77,7 @@ if { [create_res $resv_name "starttime=now duration=2 nodecnt=2 flags=replace pa
 set match 0
 spawn $scontrol show ReservationName=$resv_name
 expect {
-	-re "Nodes=($re_word_str)" {
+	-re "Nodes=($alpha_numeric_nodelist)" {
 		set node_list_orig $expect_out(1,string)
 		exp_continue
 	}
@@ -66,7 +86,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -74,7 +94,7 @@ expect {
 	}
 }
 if {$match != 1} {
-	log_error "Reservation REPLACE flag not found"
+	send_user "\nFAILURE: reservation REPLACE flag not found\n"
 	set exit_code 1
 }
 
@@ -84,7 +104,7 @@ if {$match != 1} {
 spawn $srun -t1 -n1 --reservation=$resv_name $bin_hostname
 expect {
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -97,12 +117,12 @@ expect {
 #
 spawn $scontrol show ReservationName=$resv_name
 expect {
-	-re "Nodes=($re_word_str)" {
+	-re "Nodes=($alpha_numeric_nodelist)" {
 		set node_list_new $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -110,7 +130,7 @@ expect {
 	}
 }
 if {![string compare $node_list_orig $node_list_new]} {
-	log_error "Reservation failed to replace allocated node"
+	send_user "\nFAILURE: reservation failed to replace allocated node\n"
 	set exit_code 1
 }
 
@@ -120,11 +140,11 @@ if {![string compare $node_list_orig $node_list_new]} {
 spawn $scontrol update NodeName=$node_list_new State=DRAIN Reason=TESTING
 expect {
 	-re "Error|error" {
-		log_error "Error updating node"
+		send_user "\nFAILURE: error updating node\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -140,12 +160,12 @@ sleep 32
 #
 spawn $scontrol show ReservationName=$resv_name
 expect {
-	-re "Nodes=($re_word_str)" {
+	-re "Nodes=($alpha_numeric_nodelist)" {
 		set node_list_orig $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -153,25 +173,35 @@ expect {
 	}
 }
 if {![string compare $node_list_orig $node_list_new]} {
-	log_error "Reservation failed to replace drain node"
+	send_user "\nFAILURE: reservation failed to replace drain node\n"
 	set exit_code 1
 }
 
 #
 # Delete the advanced reservation
 #
-if { [delete_res $resv_name] } {
-	set exit_code 1
-}
-
-spawn $scontrol update NodeName=$node_list_new State=RESUME
+spawn $scontrol delete ReservationName=$resv_name
 expect {
 	-re "Error|error" {
-		log_error "Error updating node"
+		send_user "\nFAILURE: error deleting reservation\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+spawn $scontrol update NodeName=$node_list_new State=RESUME
+expect {
+	-re "Error|error" {
+		send_user "\nFAILURE: error updating node\n"
+		set exit_code 1
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -180,6 +210,9 @@ expect {
 }
 
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "\nFAILURE\n"
 }
+exit $exit_code

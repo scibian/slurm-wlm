@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Validate that DenyOnLimit is enforced on QoS and
 #          Association limits.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -28,6 +32,7 @@
 source ./globals
 source ./globals_accounting
 
+set test_id      21.35
 set test_acct    "test$test_id\_acct"
 set test_qos     "test$test_id\_qos"
 set file_in      "test$test_id.sc"
@@ -82,6 +87,8 @@ array set reset_assoc_val {
 	MaxTRESPerJob=billing     -1
 }
 
+print_header $test_id
+
 proc check_limit { type name } {
 
 	global sacctmgr sbatch lim_type_type i option max_tres_type
@@ -101,7 +108,7 @@ proc check_limit { type name } {
 			exp_continue
 		}
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -110,7 +117,7 @@ proc check_limit { type name } {
 	}
 
 	if {$modified != 1} {
-		log_error "sacctmgr did not modify tres=$option=$max_tres_type($option)"
+		send_user "\nFAILURE: sacctmgr did not modify tres=$option=$max_tres_type($option)\n"
 		set exit_code 1
 	}
 
@@ -129,7 +136,7 @@ proc check_limit { type name } {
 			exp_continue
 		}
 		-re "Node count specification invalid" {
-			log_warn "Test exceeds available node count"
+			send_user "\nWARNING: Test exceeds available node count\n"
 			set match 1
 			exp_continue
 		}
@@ -138,7 +145,7 @@ proc check_limit { type name } {
 			set exit_code 1
 		}
 		timeout {
-			log_error "srun is not responding"
+			send_user "\nFAILURE: srun is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -147,8 +154,10 @@ proc check_limit { type name } {
 	}
 
 	if {$match != 1 || $job_id} {
+		send_user "\nFAILURE: job should have been killed upon submission\n"
 		cancel_job $job_id
-		fail "Job should have been killed upon submission"
+		cleanup
+		exit 1
 	}
 
 	# Reset limits
@@ -161,13 +170,13 @@ proc check_limit { type name } {
 proc cleanup { } {
 
 	global sacctmgr file_in bin_rm test_acct test_qos exit_code
-	global partition save_billing_weights scontrol
+	global save_billing_weights scontrol
 
 	# Delete test account and qos
 	spawn $sacctmgr -i delete account $test_acct
 	expect {
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -178,7 +187,7 @@ proc cleanup { } {
 	spawn $sacctmgr -i delete qos $test_qos
 	expect {
 		timeout {
-			log_error "sacctmgr is not responding"
+			send_user "\nFAILURE: sacctmgr is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -187,14 +196,14 @@ proc cleanup { } {
 	}
 
 	if {$save_billing_weights ne ""} {
-		spawn $scontrol update partitionname=$partition TRESBillingWeights=$save_billing_weights
+		spawn $scontrol update partitionname=[default_partition] TRESBillingWeights=$save_billing_weights
 		expect {
 			-re "error" {
-				log_error "Failed to reset TRESBillingWeights"
+				send_user "\nFAILURE: failed to reset TRESBillingWeights\n"
 				set exit_code 1
 			}
 			timeout {
-				log_error "scontrol is not responding"
+				send_user "\nFAILURE: scontrol is not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -208,20 +217,24 @@ proc cleanup { } {
 
 }
 
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
+} elseif { [test_enforce_limits] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountingStorageEnforce\n"
+	exit 0
 }
-if {![param_contains [get_config_param "AccountingStorageEnforce"] "limits"]} {
-	skip "This test can't be run without enforcing limits"
+if { [test_limits_enforced] == 0 } {
+	send_user "\nWARNING: This test can't be run without enforcing limits\n"
+	exit 0
 }
-if {![is_super_user]} {
-	skip "Test can only be ran as SlurmUser"
+if {[test_super_user] == 0} {
+	send_user "\nWARNING Test can only be ran as SlurmUser\n"
+	exit 0
 }
 
 # Clean up any vestigial data
 cleanup
-
-set partition [default_partition]
 
 make_bash_script $file_in "
 sleep 2"
@@ -235,7 +248,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -244,7 +257,9 @@ expect {
 }
 
 if {$added != 1} {
-	fail "Test QoS $test_qos was not created"
+	send_user "\nFAILURE: test QoS $test_qos was not created\n"
+	cleanup
+	exit 1
 }
 
 set match 0
@@ -255,7 +270,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error"sacctmgr is not responding"
+		send_user"\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -264,13 +279,15 @@ expect {
 }
 
 if {$match != 1} {
-	fail "Test account $test_acct was not created"
+	send_user "\nFAILURE: test account $test_acct was not created\n"
+	cleanup
+	exit 1
 }
 
 spawn $sacctmgr -i create user name=[get_my_user_name] account=$test_acct
 expect {
 	timeout {
-		log_error"sacctmgr is not responding"
+		send_user"\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -287,7 +304,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -295,14 +312,14 @@ expect {
 	}
 }
 
-spawn $scontrol show part $partition
+spawn $scontrol show part [default_partition]
 expect {
 	-re "TRESBillingWeights=(\\S+)" {
 		set save_billing_weights $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -310,14 +327,14 @@ expect {
 	}
 }
 
-spawn $scontrol update partitionname=$partition tresbillingweights=cpu=$tres_cpu_mult
+spawn $scontrol update partitionname=[default_partition] tresbillingweights=cpu=$tres_cpu_mult
 expect {
 	-re "error" {
-		log_error "Failed to set TRESBillingWeights"
+		send_user "\nFAILURE: failed to set TRESBillingWeights\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -325,7 +342,8 @@ expect {
 	}
 }
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	cleanup
+	exit 1
 }
 
 
@@ -333,14 +351,15 @@ for {set i 0} {$i < 3} {incr i} {
 
 	foreach option [array names max_tres_type] {
 		# Check DenyOnLimit for QoS
-		log_info "==== Testing QoS ===="
+		send_user "\n==== Testing QoS ====\n"
 		check_limit "qos" $test_qos
 
 		if {$i == 0} {
 			# Check DenyOnLimit for Association
-			log_info "==== Testing Association ===="
+			send_user "\n==== Testing Association ====\n"
 			check_limit "account" $test_acct
 		}
+
 	}
 }
 
@@ -355,7 +374,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr is not responding"
+		send_user "\nFAILURE: sacctmgr is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -364,7 +383,7 @@ expect {
 }
 
 if {$modified != 1} {
-	log_error "sacctmgr did not modify tres=$option=$max_tres_qos($option)"
+	send_user "\nFAILURE: sacctmgr did not modify tres=$option=$max_tres_qos($option)\n"
 	set exit_code 1
 }
 
@@ -380,7 +399,7 @@ expect {
 		set exit_code 1
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -389,12 +408,17 @@ expect {
 }
 
 if {$match != 1 || $job_id} {
-	fail "Job should have been killed upon submission"
+	send_user "\nFAILURE: job should have been killed upon submittion\n"
+	set exit_code 1
 }
 
 # Cancel the submitted job
 cancel_job $job_id
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
+cleanup
+
+if {$exit_code == 0} {
+	print_success $test_id
+} else {
+	send_user "\nFAILURE: test $test_id\n"
 }

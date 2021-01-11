@@ -178,7 +178,7 @@ static List _get_cluster_names(mysql_conn_t *mysql_conn, bool with_deleted)
 	}
 	xfree(query);
 
-	ret_list = list_create(slurm_destroy_char);
+	ret_list = list_create(xfree_ptr);
 	while ((row = mysql_fetch_row(result))) {
 		if (row[0] && row[0][0])
 			list_append(ret_list, xstrdup(row[0]));
@@ -844,11 +844,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
-	/* This has to run on both backup as well as primary */
-	if ((rc = as_mysql_convert_get_bad_tres(mysql_conn)) != SLURM_SUCCESS) {
-		error("issue getting bad tres");
-		return rc;
-	} else if (!backup_dbd) {
+	if (!backup_dbd) {
 		/* We always want CPU to be the first one, so create
 		   it now.  We also add MEM here, the others tres
 		   are site specific and could vary.  None but CPU
@@ -997,7 +993,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	else {
 		int qos_id = 0;
 		if (slurmdbd_conf && slurmdbd_conf->default_qos) {
-			List char_list = list_create(slurm_destroy_char);
+			List char_list = list_create(xfree_ptr);
 			char *qos = NULL;
 			ListIterator itr = NULL;
 			slurm_addto_char_list(char_list,
@@ -1290,8 +1286,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "id_wckey", "int unsigned not null" },
 		{ "id_user", "int unsigned not null" },
 		{ "id_group", "int unsigned not null" },
-		{ "pack_job_id", "int unsigned not null" },
-		{ "pack_job_offset", "int unsigned not null" },
+		{ "het_job_id", "int unsigned not null" },
+		{ "het_job_offset", "int unsigned not null" },
 		{ "kill_requid", "int default -1 not null" },
 		{ "state_reason_prev", "int unsigned not null" },
 		{ "mcs_label", "tinytext default ''" },
@@ -1471,12 +1467,14 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  event_table_fields,
-				  ", primary key (node_name(42), time_start))")
-	    == SLURM_ERROR)
+				  ", primary key (node_name(42), time_start), "
+				  "key rollup (node_name(42), time_start, "
+				  "time_end, state))") == SLURM_ERROR)
 		return SLURM_ERROR;
 
 	snprintf(table_name, sizeof(table_name), "\"%s_%s\"",
 		 cluster_name, job_table);
+
 	/*
 	 * sacct_def is the index for query's with state as time_start is used
 	 * in these queries. sacct_def2 is for plain sacct queries.
@@ -1493,7 +1491,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  "key qos (id_qos), "
 				  "key association (id_assoc), "
 				  "key array_job (id_array_job), "
-				  "key pack_job (pack_job_id), "
+				  "key het_job (het_job_id), "
 				  "key reserv (id_resv), "
 				  "key sacct_def (id_user, time_start, "
 				  "time_end), "
@@ -1963,7 +1961,7 @@ extern int setup_assoc_limits(slurmdb_assoc_rec_t *assoc,
 		xstrfmtcat(*vals, ", '%s,'", default_qos_str);
 		xstrfmtcat(*extra, ", qos='%s,'", default_qos_str);
 		if (!assoc->qos_list)
-			assoc->qos_list = list_create(slurm_destroy_char);
+			assoc->qos_list = list_create(xfree_ptr);
 		slurm_addto_char_list(assoc->qos_list, default_qos_str);
 	} else if (qos_level != QOS_LEVEL_MODIFY) {
 		/* clear the qos */
@@ -2533,38 +2531,6 @@ static int _get_database_variable(mysql_conn_t *mysql_conn,
 }
 
 /*
- * MySQL version 5.6.48 and 5.7.30 introduced a regression in the
- * implementation of CONCAT() that will lead to incorrect NULL values.
- *
- * We cannot safely work around this mistake without restructing our stored
- * procedures, and thus fatal() here to avoid a segfault.
- *
- * Test that concat() is working as expected, rather than trying to blacklist
- * specific versions.
- */
-static void _check_mysql_concat_is_sane(mysql_conn_t *mysql_conn)
-{
-	MYSQL_ROW row = NULL;
-	MYSQL_RES *result = NULL;
-	char *query = "select @var := concat('');";
-	const char *version = mysql_get_server_info(mysql_conn->db_conn);
-
-	info("MySQL server version is: %s", version);
-
-	result = mysql_db_query_ret(mysql_conn, query, 0);
-	if (!result)
-		fatal("%s: null result from query `%s`", __func__, query);
-
-	if (mysql_num_rows(result) != 1)
-		fatal("%s: invalid results from query `%s`", __func__, query);
-
-	if (!(row = mysql_fetch_row(result)) || !row[0])
-		fatal("MySQL concat() function is defective. Please upgrade to a fixed version. See https://bugs.mysql.com/bug.php?id=99485.");
-
-	mysql_free_result(result);
-}
-
-/*
  * Check the values of innodb global database variables, and print
  * an error if the values are not at least half the recommendation.
  */
@@ -2654,7 +2620,6 @@ extern int init(void)
 		sleep(5);
 	}
 
-	_check_mysql_concat_is_sane(mysql_conn);
 	_check_database_variables(mysql_conn);
 
 	rc = _as_mysql_acct_check_tables(mysql_conn);
@@ -2669,37 +2634,8 @@ extern int init(void)
 		verbose("%s failed", plugin_name);
 		if (mysql_db_rollback(mysql_conn))
 			error("rollback failed");
-		/*
-		 * Turns out if you create a table after a change you can not
-		 * rollback.  This rolls back the potential changes we need to
-		 * deal with again on convert failure.
-		 */
-		if (bad_tres_list) {
-			char *query = NULL;
-			slurmdb_tres_rec_t *tres_rec;
-			ListIterator itr = list_iterator_create(bad_tres_list);
-
-			while ((tres_rec = list_next(itr))) {
-				xstrfmtcat(query,
-					   "update %s set id=%u where id=%u;",
-					   tres_table, tres_rec->id,
-					   tres_rec->rec_count);
-			}
-			list_iterator_destroy(itr);
-
-			/*
-			 * Ignore the return of these 2 mysql functions.  We
-			 * have already failed here so if these fail we can't do
-			 * much about it.  We will just go with whatever the
-			 * orignal rc was that got us here.
-			 */
-			(void)mysql_db_query(mysql_conn, query);
-			xfree(query);
-			(void)mysql_db_commit(mysql_conn);
-		}
 	}
 
-	FREE_NULL_LIST(bad_tres_list);
 	destroy_mysql_conn(mysql_conn);
 
 	return rc;
@@ -2717,6 +2653,55 @@ extern int fini ( void )
 	xfree(default_qos_str);
 
 	mysql_db_cleanup();
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Get the dimensions of this cluster so we know how to deal with the hostlists.
+ *
+ * IN mysql_conn - mysql connection
+ * IN cluster_name - name of cluster to get dimensions for
+ * OUT dims - dimenions of cluster
+ *
+ * RET return SLURM_SUCCESS on success, SLURM_FAILURE otherwise.
+ */
+extern int get_cluster_dims(mysql_conn_t *mysql_conn, char *cluster_name,
+			    int *dims)
+{
+	char *query;
+	MYSQL_ROW row;
+	MYSQL_RES *result = NULL;
+
+	query = xstrdup_printf("select dimensions, flags from %s where "
+			       "name='%s'",
+			       cluster_table, cluster_name);
+
+	debug4("%d(%s:%d) query\n%s",
+	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	if (!(row = mysql_fetch_row(result))) {
+		error("Couldn't get the dimensions of cluster '%s'.",
+		      cluster_name);
+		mysql_free_result(result);
+		return SLURM_ERROR;
+	}
+
+	/*
+	 * On a Cray System when dealing with hostlists as we are here this
+	 * always needs to be 1.
+	 */
+	if (slurm_atoul(row[1]) & CLUSTER_FLAG_CRAY_A)
+		*dims = 1;
+	else
+		*dims = atoi(row[0]);
+
+	mysql_free_result(result);
+
 	return SLURM_SUCCESS;
 }
 
@@ -2811,12 +2796,11 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		char *query = NULL;
 		MYSQL_RES *result = NULL;
 		MYSQL_ROW row;
-		ListIterator itr = NULL, itr2 = NULL, itr3 = NULL;
-		char *rem_cluster = NULL, *cluster_name = NULL;
+		ListIterator itr = NULL;
 		slurmdb_update_object_t *object = NULL;
 
 		xstrfmtcat(query, "select control_host, control_port, "
-			   "name, rpc_version "
+			   "name, rpc_version, flags "
 			   "from %s where deleted=0 && control_port != 0",
 			   cluster_table);
 		if (!(result = mysql_db_query_ret(
@@ -2826,6 +2810,8 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		}
 		xfree(query);
 		while ((row = mysql_fetch_row(result))) {
+			if (slurm_atoul(row[4]) & CLUSTER_FLAG_EXT)
+				continue;
 			(void) slurmdb_send_accounting_update(
 				mysql_conn->update_list,
 				row[2], row[0],
@@ -2837,7 +2823,6 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 		(void) assoc_mgr_update(mysql_conn->update_list, 0);
 
 		slurm_mutex_lock(&as_mysql_cluster_list_lock);
-		itr2 = list_iterator_create(as_mysql_cluster_list);
 		itr = list_iterator_create(mysql_conn->update_list);
 		while ((object = list_next(itr))) {
 			if (!object->objects || !list_count(object->objects))
@@ -2845,26 +2830,23 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 			/* We only care about clusters removed here. */
 			switch (object->type) {
 			case SLURMDB_REMOVE_CLUSTER:
-				itr3 = list_iterator_create(object->objects);
-				while ((rem_cluster = list_next(itr3))) {
-					while ((cluster_name =
-						list_next(itr2))) {
-						if (!xstrcmp(cluster_name,
-							     rem_cluster)) {
-							list_delete_item(itr2);
-							break;
-						}
-					}
-					list_iterator_reset(itr2);
+			{
+				ListIterator rem_itr = NULL;
+				char *rem_cluster = NULL;
+				rem_itr = list_iterator_create(object->objects);
+				while ((rem_cluster = list_next(rem_itr))) {
+					list_delete_all(as_mysql_cluster_list,
+							slurm_find_char_in_list,
+							rem_cluster);
 				}
-				list_iterator_destroy(itr3);
+				list_iterator_destroy(rem_itr);
 				break;
+			}
 			default:
 				break;
 			}
 		}
 		list_iterator_destroy(itr);
-		list_iterator_destroy(itr2);
 		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
 	}
 	xfree(mysql_conn->pre_commit_query);
@@ -2980,7 +2962,7 @@ extern List acct_storage_p_modify_federations(
 }
 
 extern List acct_storage_p_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
-				      slurmdb_job_modify_cond_t *job_cond,
+				      slurmdb_job_cond_t *job_cond,
 				      slurmdb_job_rec_t *job)
 {
 	return as_mysql_modify_job(mysql_conn, uid, job_cond, job);
@@ -3203,10 +3185,10 @@ extern int acct_storage_p_get_usage(mysql_conn_t *mysql_conn, uid_t uid,
 extern int acct_storage_p_roll_usage(mysql_conn_t *mysql_conn,
 				     time_t sent_start, time_t sent_end,
 				     uint16_t archive_data,
-				     rollup_stats_t *rollup_stats)
+				     List *rollup_stats_list_in)
 {
 	return as_mysql_roll_usage(mysql_conn, sent_start, sent_end,
-				   archive_data, rollup_stats);
+				   archive_data, rollup_stats_list_in);
 }
 
 extern int acct_storage_p_fix_runaway_jobs(void *db_conn, uint32_t uid,
@@ -3216,7 +3198,7 @@ extern int acct_storage_p_fix_runaway_jobs(void *db_conn, uint32_t uid,
 }
 
 extern int clusteracct_storage_p_node_down(mysql_conn_t *mysql_conn,
-					   struct node_record *node_ptr,
+					   node_record_t *node_ptr,
 					   time_t event_time, char *reason,
 					   uint32_t reason_uid)
 {
@@ -3225,7 +3207,7 @@ extern int clusteracct_storage_p_node_down(mysql_conn_t *mysql_conn,
 }
 
 extern int clusteracct_storage_p_node_up(mysql_conn_t *mysql_conn,
-					 struct node_record *node_ptr,
+					 node_record_t *node_ptr,
 					 time_t event_time)
 {
 	return as_mysql_node_up(mysql_conn, node_ptr, event_time);
@@ -3328,7 +3310,7 @@ extern int clusteracct_storage_p_cluster_tres(mysql_conn_t *mysql_conn,
  * load into the storage the start of a job
  */
 extern int jobacct_storage_p_job_start(mysql_conn_t *mysql_conn,
-				       struct job_record *job_ptr)
+				       job_record_t *job_ptr)
 {
 	return as_mysql_job_start(mysql_conn, job_ptr);
 }
@@ -3337,7 +3319,7 @@ extern int jobacct_storage_p_job_start(mysql_conn_t *mysql_conn,
  * load into the storage the end of a job
  */
 extern int jobacct_storage_p_job_complete(mysql_conn_t *mysql_conn,
-					  struct job_record *job_ptr)
+					  job_record_t *job_ptr)
 {
 	return as_mysql_job_complete(mysql_conn, job_ptr);
 }
@@ -3346,7 +3328,7 @@ extern int jobacct_storage_p_job_complete(mysql_conn_t *mysql_conn,
  * load into the storage the start of a job step
  */
 extern int jobacct_storage_p_step_start(mysql_conn_t *mysql_conn,
-					struct step_record *step_ptr)
+					step_record_t *step_ptr)
 {
 	return as_mysql_step_start(mysql_conn, step_ptr);
 }
@@ -3355,7 +3337,7 @@ extern int jobacct_storage_p_step_start(mysql_conn_t *mysql_conn,
  * load into the storage the end of a job step
  */
 extern int jobacct_storage_p_step_complete(mysql_conn_t *mysql_conn,
-					   struct step_record *step_ptr)
+					   step_record_t *step_ptr)
 {
 	return as_mysql_step_complete(mysql_conn, step_ptr);
 }
@@ -3364,7 +3346,7 @@ extern int jobacct_storage_p_step_complete(mysql_conn_t *mysql_conn,
  * load into the storage a suspension of a job
  */
 extern int jobacct_storage_p_suspend(mysql_conn_t *mysql_conn,
-				     struct job_record *job_ptr)
+				     job_record_t *job_ptr)
 {
 	return as_mysql_suspend(mysql_conn, 0, job_ptr);
 }

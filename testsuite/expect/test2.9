@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validate scontrol completing command.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,7 +32,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "2.9"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Unless a job is hung in completing state, there is typically no output
@@ -37,17 +44,19 @@ set exit_code   0
 spawn $scontrol completing
 expect {
 	-re "invalid keyword" {
-		log_error "scontrol did not recognize \'completing\' command"
+		send_user "\nFAILURE: scontrol did not recognize \'completing\' command\n"
 		set exit_code 1
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

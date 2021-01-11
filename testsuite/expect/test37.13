@@ -14,6 +14,10 @@
 #          fedr/fed2/...
 #          fedr/fed3/...
 #          3. controllers are up and running.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -41,6 +45,7 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
+set test_id      "37.13"
 set exit_code    0
 set fed_name     "feda"
 set user_name    ""
@@ -48,15 +53,22 @@ set srun_job_cnt 0
 set my_sbatch    "${fed_slurm_base}/$fedc1/bin/sbatch"
 set my_squeue    "${fed_slurm_base}/$fedc1/bin/squeue"
 
+set eol "\r\n"
+
+print_header $test_id
+
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	log_warn "This test can't be run without a usable AccountStorageType"
+	exit 0
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	log_warn "This test can't be run without being an Accounting administrator.\n \
+	 	  Use: sacctmgr mod user \$USER set admin=admin."
+	exit 0
 }
 
 proc sbatch { options regex } {
@@ -116,7 +128,7 @@ proc squeue { regex } {
 	}
 }
 
-proc cancel_federation_jobs { } {
+proc cancel_all_jobs { } {
 	global scancel user_name fedc1 fedc2 fedc3
 
 	spawn $scancel -M$fedc1,$fedc2,$fedc3 --user $user_name
@@ -132,7 +144,7 @@ proc cleanup { } {
 	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
 	global test_id bin_bash my_sacctmgr
 
-	cancel_federation_jobs
+	cancel_all_jobs
 	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
 
 	return [delete_federations $fed_name]
@@ -140,20 +152,23 @@ proc cleanup { } {
 
 proc end_it { exit_code } {
 	global test_id my_squeue
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	cleanup
+	if {$exit_code == 0} {
+		print_success $test_id
 	}
-	pass
+	exit $exit_code
 }
 
 #start test
 
-if {![check_federation_setup]} {
-	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
+if {[test_federation_setup]} {
+	log_warn "WARNING: This test can't be run without fed_slurm_base,\
+		fedc1, fedc2, fedc3 setup in globals.local."
+	exit 0
 }
 
-if {![check_federation_up]} {
-	skip "This test can't be run without all clusters up"
+if {[test_all_up]} {
+	exit 0
 }
 
 set user_name [get_my_user_name]
@@ -170,9 +185,9 @@ if {[setup_federation $fed_name]} {
 	end_it 1
 }
 
-log_info "################################################################"
-log_info "Setup cluster features"
-log_info "################################################################"
+send_user "\n################################################################\n"
+send_user "Setup cluster features"
+send_user "\n################################################################\n"
 
 set matches 0
 set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
@@ -194,7 +209,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "\nFAILURE: sacctmgr mod not responding\n"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -203,7 +218,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	log_error "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.\n"
 	end_it 1
 }
 
@@ -227,7 +242,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "\nFAILURE: sacctmgr mod not responding\n"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -236,7 +251,7 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	log_error "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.\n"
 	end_it 1
 }
 
@@ -260,7 +275,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "\nFAILURE: sacctmgr mod not responding\n"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -269,15 +284,15 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	log_error "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.\n"
 	end_it 1
 }
 
-log_info "################################################################"
-log_info "Test federated arrays"
-log_info "################################################################"
+send_user "\n################################################################\n"
+send_user "Test federated arrays"
+send_user "\n################################################################\n"
 
-cancel_federation_jobs
+cancel_all_jobs
 
 set jid(0) [sbatch "" ""]
 

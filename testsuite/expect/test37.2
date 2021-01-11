@@ -15,6 +15,10 @@
 #          fedr/fed2/...
 #          fedr/fed3/...
 #          3. controllers are up and running.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2016 SchedMD LLC.
 # Written by Brian Christiansen <brian@schedmd.com>
@@ -42,34 +46,41 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
+set test_id     "37.2"
 set exit_code   0
 set fed_name    "feda"
 
+set eol "\r\n"
+
 set timeout	5
+print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\n"
+	send_user "Use: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 proc cleanup { } {
 	global fed_name
-	return [delete_federations $fed_name]
+	return [delete_federations $fed_name];
 }
 
 proc end_it { exit_code } {
 	global test_id
 	cleanup
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	if {$exit_code == 0} {
+		print_success $test_id
 	}
-	pass
+	exit $exit_code
 }
 
 # submit jobs to each cluster and ensure that they return a unique job id
@@ -92,11 +103,11 @@ proc test_fed_job_id { cname cid} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Job was not submitted"
+			send_user "\nFAILURE: Job was not submitted\n"
 			incr rc
 		}
 		timeout {
-			log_error "sbatch is not responding"
+			send_user "\nFAILURE: sbatch is not responding\n"
 			incr rc
 		}
 		eof {
@@ -105,16 +116,17 @@ proc test_fed_job_id { cname cid} {
 	}
 
 	if {$job_id <= $max_local_id} {
-		log_error "$cname didn't give back a federation jobid ($job_id)"
+		send_user "\nFAILURE: $cname didn't give back a federation jobid ($job_id)\n"
 		incr rc
 	}
 
 	set local_id [expr $job_id & $max_local_id]
 	set clust_id [expr $job_id >> 26]
 
-	log_debug "Fed JobID:$job_id Local JobID:$local_id Cluster ID:$clust_id"
+	send_user "Fed JobID:$job_id Local JobID:$local_id Cluster ID:$clust_id\n"
 	if {!$rc && ($clust_id != $cid)} {
-		log_error "Jobid($job_id) from $cname didn't give correct partition id ($part_id != $cid)"
+		send_user "\nFAILURE: jobid($job_id) from $cname didn't give\
+			correct partition id ($part_id != $cid)\n"
 		incr rc
 	}
 
@@ -139,11 +151,11 @@ proc test_loc_job_id { cname } {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Job was not submitted"
+			send_user "\nFAILURE: Job was not submitted\n"
 			incr rc
 		}
 		timeout {
-			log_error "sbatch is not responding"
+			send_user "\nFAILURE: sbatch is not responding\n"
 			incr rc
 		}
 		eof {
@@ -152,38 +164,40 @@ proc test_loc_job_id { cname } {
 	}
 
 	if {$job_id > $max_local_id} {
-		log_error "$cname didn't give back a non-federation job id"
+		send_user "\nFAILURE: $cname didn't give back a non-federation job id\n"
 		incr rc
 	}
-	log_debug "JobID:$job_id"
+	send_user "JobID:$job_id\n"
 
 	return $rc
 }
 
-if {![check_federation_setup]} {
-	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
+if {[test_federation_setup]} {
+	send_user "\nWARNING: This test can't be run without fed_slurm_base,\
+		fedc1, fedc2, fedc3 setup in globals.local.\n"
+	exit 0
 }
 
-if {![check_federation_up]} {
-	skip "This test can't be run without all clusters up"
+if {[test_all_up]} {
+	exit 0
 }
 
 # Remove existing setup
 if {[cleanup] != 0} {
-	log_error "Failed to cleanup"
+	send_user "\nFAILURE: failed to cleanup\n"
 	end_it 1
 }
 
 # add clusters to federation
 if {[setup_federation $fed_name]} {
-	log_error "Failed to setup federation"
+	send_user "\nFAILURE: failed to setup federation\n"
 	end_it 1
 }
 
 # Get cluster/fed info from db
 array set clusters [get_clusterfed_info $fed_name]
 
-log_info "Verify federation ids are returned when cluster is part of federation"
+send_user "Verify federation ids are returned when cluster is part of federation\n"
 if {[test_fed_job_id $fedc1 [dict get $clusters($fedc1) id]] ||
     [test_fed_job_id $fedc2 [dict get $clusters($fedc2) id]] ||
     [test_fed_job_id $fedc3 [dict get $clusters($fedc3) id]]} {
@@ -194,13 +208,13 @@ if {[test_fed_job_id $fedc1 [dict get $clusters($fedc1) id]] ||
 # Verify that after clusters are removed from federation that they give normal
 # job ids again.
 if {[delete_federations $fed_name]} {
-	log_error "Failed delete federation $fed_name"
+	send_user "\nFAILURE: failed delete federation $fed_name\n"
 	end_it 1
 }
 
 sleep 2
 
-log_info "Verify local ids after being removed from federation"
+send_user "Verify local ids after being removed from federation\n"
 if {[test_loc_job_id $fedc1] ||
     [test_loc_job_id $fedc2] ||
     [test_loc_job_id $fedc3]} {

@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Confirm that a job executes with the proper task count (--ntasks
 #          option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,10 +33,13 @@
 ############################################################################
 source ./globals
 
+set test_id     "17.6"
 set exit_code   0
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set tasks       0
+
+print_header $test_id
 
 set task_cnt    2
 
@@ -50,12 +57,12 @@ expect {
 		exp_continue
 	}
 	-re "Batch job submission failed" {
-		log_debug "No worries, error not unexpected"
+		send_user "\nNo worries, error not unexpected\n"
 		set no_run 1
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -70,7 +77,7 @@ if {$job_id != 0} {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -78,11 +85,11 @@ if {$job_id != 0} {
 		}
 	}
 	if {$tasks < $task_cnt} {
-		log_error "sbatch --ntasks not satisfied"
+		send_user "\nFAILURE: sbatch --ntasks not satisfied\n"
 		set exit_code 1
 	}
 	if {[wait_for_job $job_id "DONE"] != 0} {
-		log_error "Waiting for job to complete"
+		send_user "\nFAILURE: waiting for job to complete\n"
 		cancel_job $job_id
 		set exit_code 1
 	}
@@ -93,12 +100,12 @@ if {$job_id != 0} {
 	}
 } else {
 	if {$no_run == 0} {
-		log_error "sbatch failed to create job"
+		send_user "\nFAILURE: sbatch failed to create job\n"
 		set exit_code 1
 	}
 }
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
 
 #
@@ -115,7 +122,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -123,14 +130,15 @@ expect {
 	}
 }
 if { $job_id == 0 } {
-	fail "Failed to submit job"
+	send_user "\nFAILURE: failed to submit job\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job to complete"
+	send_user "\nFAILURE: waiting for job to complete\n"
 	set exit_code 1
 }
 if {[wait_for_file $file_out] == 0} {
@@ -146,12 +154,13 @@ if {[wait_for_file $file_out] == 0} {
 	}
 }
 if {$task_cnt != $tasks} {
-	log_error "Did not get proper number of tasks: $task_cnt, $tasks"
+	send_user "\nFAILURE: Did not get proper number of tasks: "
+	send_user "$task_cnt, $tasks\n"
 	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	file delete $file_in $file_out
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

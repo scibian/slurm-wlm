@@ -32,25 +32,24 @@
 ############################################################################
 
 proc inc3_11_4 {} {
-	global user_name exit_code
+	global user_name exit_code res_name
 	global sbatch file_in number
-
-	set res_name "resv3.11.4"
 
 	# TEST 4
 	# If not running as root, make a reservation restricted to root, submit a job,
 	# and confirm that the job is rejected.
 	#
-	log_info "+++++ STARTING TEST 4 (Within: inc3.11.4) +++++"
+	send_user "\n+++++ STARTING TEST 4 (Within: inc3.11.4) +++++\n"
 
 	if {$user_name == "root"} {
-		return
+		return;
 	}
 
 	# Make the reservation
-	set ret_code [create_res $res_name "StartTime=now+60minutes Duration=60 NodeCnt=1 User=root"]
+	set ret_code [create_res "StartTime=now+60minutes Duration=60 NodeCnt=1 User=root" 0]
 	if {$ret_code != 0} {
-		fail "Unable to create a reservation (Within: inc3.11.4)"
+		send_user "\n\033\[31mFAILURE: Unable to create a reservation (Within: inc3.11.4)\033\[m\n"
+		exit $ret_code
 	}
 
 	# Submit the batch job
@@ -60,7 +59,7 @@ proc inc3_11_4 {} {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			cancel_job $job_id
-			log_error "Job submit should have been denied (Within: inc3.11.4)"
+			send_user "\n\033\[31mFAILURE: job submit should have been denied (Within: inc3.11.4)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
@@ -70,7 +69,7 @@ proc inc3_11_4 {} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.4)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.4)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -80,14 +79,16 @@ proc inc3_11_4 {} {
 	}
 
 	if {$denied == 0} {
-		log_error "Job $job_id should have been rejected from reservation restricted to root.  Expected rejection message not given. (Within: inc3.11.4)"
+		send_user "\n\033\[31mFAILURE: Job $job_id should have been rejected "
+		send_user "from reservation restricted to root.  Expected "
+		send_user "rejection message not given. (Within: inc3.11.4)\033\[m\n"
 		set exit_code 1
 	} else {
-		log_debug "Expected error, no worries mate. (Within: inc3.11.4)"
+		send_user "\033\[32mExpected error, no worries mate. (Within: inc3.11.4)\033\[m\n"
 	}
 	# Delete the reservation
 	set ret_code [delete_res $res_name]
 	if {$ret_code != 0} {
-		fail "Unable to detele reservation ($res_name)"
+		exit $ret_code
 	}
 }

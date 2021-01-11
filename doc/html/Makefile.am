@@ -13,9 +13,9 @@ generated_html = \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
-	checkpoint_plugins.html \
 	classic_fair_share.html \
 	cli_filter_plugins.html \
+	configless_slurm.html \
 	cons_res.html \
 	cons_res_share.html \
 	containers.html \
@@ -49,6 +49,7 @@ generated_html = \
 	job_launch.html \
 	job_submit_plugins.html \
 	jobcompplugins.html \
+	jwt.html \
 	launch_plugins.html \
 	licenses.html \
 	fair_tree.html \
@@ -72,6 +73,7 @@ generated_html = \
 	power_save.html \
 	power_plugins.html \
 	preempt.html \
+	prep_plugins.html \
 	preemption_plugins.html \
 	priority_multifactor.html \
 	priority_multifactor3.html \
@@ -86,9 +88,9 @@ generated_html = \
 	reservations.html \
 	resource_binding.html \
 	resource_limits.html \
+	rest.html \
 	rosetta.html \
 	route_plugin.html \
-	rpc.html \
 	sched_config.html \
 	schedplugins.html \
 	select_design.html \

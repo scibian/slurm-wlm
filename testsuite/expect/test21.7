@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr list clusters
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,6 +33,7 @@
 source ./globals
 source ./globals_accounting
 
+set test_id     "21.7"
 set exit_code   0
 set amatches    0
 set dmatches    0
@@ -51,15 +56,19 @@ set cluster(MaxNodes)      300
 set cluster(MaxWall)       01:00:00
 set access_err  0
 
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+print_header $test_id
+
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 #
 # Verify if Administrator privileges
 #
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
+ if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 #
@@ -74,7 +83,8 @@ remove_cluster "$tc1,$tc2,$tc3"
 add_cluster "$tc1,$tc2,$tc3" [array get cluster]
 
 if {$access_err != 0} {
-	skip "Not authorized to perform this test"
+	send_user "\nWARNING: not authorized to perform this test\n"
+	exit $exit_code
 }
 
 #
@@ -107,7 +117,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr delete not responding"
+		send_user "\nFAILURE: sacctmgr delete not responding\n"
 		slow_kill $sadel_pid
 		set exit_code 1
 	}
@@ -117,12 +127,16 @@ expect {
 }
 
 if {$dmatches != 4} {
-	fail "sacctmgr had a problem deleting cluster"
+	send_user "\nFAILURE: sacctmgr had a problem deleting cluster\n"
+	set exit_code 1
 }
-if {![check_acct_associations]} {
-	fail "Our associations don't line up"
+if { ![check_acct_associations] } {
+	send_user "\nFAILURE:  Our associations don't line up\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+print_success $test_id
 }
+
+exit $exit_code

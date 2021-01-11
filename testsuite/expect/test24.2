@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm sshare functionality
 #          sshare h, p, P, v and V options.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2009 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,14 +32,17 @@
 ############################################################################
 source ./globals
 
+set test_id	"24.2"
 set exit_code	0
 set timeout	60
+print_header	$test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 ################################################################
@@ -55,7 +62,7 @@ proc sshare_opt { soption } {
 	set debug       1
 	set matches     0
 	set not_support 0
-	log_info "$sshare -$soption "
+	send_user "$sshare -$soption \n"
 
 	if { $soption == "-help"|| $soption == "-usage" } {
 
@@ -70,22 +77,22 @@ proc sshare_opt { soption } {
 				exp_continue
 			}
 			-re "Usage: *sshare *.OPTION" {
-				if {$debug} {log_debug "Match1"}
+				if {$debug} {send_user "\nmatch1\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Valid OPTIONs are" {
-				if {$debug} {log_debug "Match2"}
+				if {$debug} {send_user "\nmatch2\n"}
 				incr matches
 				exp_continue
 			}
 			-re "verbose *display more information" {
-				if {$debug} {log_debug "Match3"}
+				if {$debug} {send_user "\nmatch3\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -94,11 +101,13 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		if {$not_support == 2} {
-			skip "Can not test without priority/multifactor plugin"
+			send_user "\nWARNING: can not test without priority/multifactor plugin\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -117,12 +126,12 @@ proc sshare_opt { soption } {
 				exp_continue
 			}
 			-re "Account|User|RawShares|NormShares|RawUsage|NormUsage|EffectvUsage" {
-				if {$debug} {log_debug "Match4"}
+				if {$debug} {send_user "\nmatch4\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -131,11 +140,13 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		if {$not_support == 2} {
-			skip "Can not test without priority/multifactor plugin"
+			send_user "\nWARNING: can not test without priority/multifactor plugin\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -154,17 +165,17 @@ proc sshare_opt { soption } {
 				exp_continue
 			}
 			-re "Account\\|User\\|RawShares\\|NormShares\\|" {
-				if {$debug} {log_debug "Match5"}
+				if {$debug} {send_user "\nmatch5\n"}
 				incr matches
 				exp_continue
 			}
 			-re "RawUsage\\|EffectvUsage\\|FairShare\\|" {
-				if {$debug} {log_debug "Match5"}
+				if {$debug} {send_user "\nmatch5\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -173,7 +184,8 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support != 0} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -192,17 +204,17 @@ proc sshare_opt { soption } {
 				exp_continue
 			}
 			-re "Account\\|User\\|RawShares\\|NormShares\\|" {
-				if {$debug} {log_debug "Match6"}
+				if {$debug} {send_user "\nmatch6\n"}
 				incr matches
 				exp_continue
 			}
 			-re "RawUsage\\|EffectvUsage\\|FairShare" {
-				if {$debug} {log_debug "Match7"}
+				if {$debug} {send_user "\nmatch7\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -211,11 +223,13 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		if {$not_support == 2} {
-			skip "Can not test without priority/multifactor plugin"
+			send_user "\nWARNING: can not test without priority/multifactor plugin\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -234,17 +248,17 @@ proc sshare_opt { soption } {
 				exp_continue
 			}
 			-re "Users requested" {
-				if {$debug} {log_debug "Match8"}
+				if {$debug} {send_user "\nmatch8\n"}
 				incr matches
 				exp_continue
 			}
 			-re "Accounts requested" {
-				if {$debug} {log_debug "Match9"}
+				if {$debug} {send_user "\nmatch9\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -253,11 +267,13 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		if {$not_support == 2} {
-			skip "Can not test without priority/multifactor plugin"
+			send_user "\nWARNING: can not test without priority/multifactor plugin\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -276,13 +292,13 @@ proc sshare_opt { soption } {
 				set not_support 2
 				exp_continue
 			}
-			-re "slurm $number\\.$number\\.$number" {
-				if {$debug} {log_debug "Match11"}
+			-re "slurm $number.$number.$number" {
+				if {$debug} {send_user "\nmatch11\n"}
 				incr matches
 				exp_continue
 			}
 			timeout {
-				log_error "sshare not responding"
+				send_user "\nFAILURE: sshare not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -291,11 +307,13 @@ proc sshare_opt { soption } {
 		}
 
 		if {$not_support == 1} {
-			skip "Can not test without accounting enabled"
+			send_user "\nWARNING: can not test without accounting enabled\n"
+			exit $exit_code
 		}
 
 		if {$not_support == 2} {
-			skip "Can not test without priority/multifactor plugin"
+			send_user "\nWARNING: can not test without priority/multifactor plugin\n"
+			exit $exit_code
 		}
 
 		return $matches
@@ -306,77 +324,82 @@ proc sshare_opt { soption } {
 
 set matches [sshare_opt -help ]
 if {$matches != 3} {
-	log_error "sshare --help failed ($matches != 3)"
+	send_user "\nFAILURE: sshare --help failed ($matches != 3)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -usage ]
 if {$matches != 3} {
-	log_error "sshare --usage failed ($matches != 3)"
+	send_user "\nFAILURE: sshare --usage failed ($matches != 3)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt n ]
 if {$matches != 0} {
-	log_error "sshare -n failed ($matches != 0)"
+	send_user "\nFAILURE: sshare -n failed ($matches != 0)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -noheader ]
 if {$matches != 0} {
-	log_error "sshare --noheader failed ($matches != 0)"
+	send_user "\nFAILURE: sshare --noheader failed ($matches != 0)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt p ]
 if {$matches != 2} {
-	log_error "sshare -p failed ($matches != 2)"
+	send_user "\nFAILURE: sshare -p failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -parsable ]
 if {$matches != 2} {
-	log_error "sshare --parsable failed ($matches != 2)"
+	send_user "\nFAILURE: sshare --parsable failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt P ]
 if {$matches != 2} {
-	log_error "sshare -P failed ($matches != 2)"
+	send_user "\nFAILURE: sshare -P failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -parsable2 ]
 if {$matches != 2} {
-	log_error "sshare --parsable2 failed ($matches != 2)"
+	send_user "\nFAILURE: sshare --parsable2 failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt v ]
 if {$matches != 2} {
-	log_error "sshare -v failed ($matches != 2)"
+	send_user "\nFAILURE: sshare -v failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -verbose ]
 if {$matches != 2} {
-	log_error "sshare --verbose failed ($matches != 2)"
+	send_user "\nFAILURE: sshare --verbose failed ($matches != 2)\n"
 	set exit_code 1
 }
 
 
 set matches [sshare_opt V ]
 if {$matches != 1} {
-	log_error "sshare -v failed ($matches != 1)"
+	send_user "\nFAILURE: sshare -v failed ($matches != 1)\n"
 	set exit_code 1
 }
 
 set matches [sshare_opt -version ]
 if {$matches != 1} {
-	log_error "sshare --verbose failed ($matches != 1)"
+	send_user "\nFAILURE: sshare --verbose failed ($matches != 1)\n"
 	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "\nFAILURE
+
+\n"
 }
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline option too short
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,8 +30,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.103"
 set job_id	0
 set exit_code   0
+
+print_header $test_id
 
 #
 # Since we make changes to configuration, call this function restore
@@ -36,18 +43,21 @@ set exit_code   0
 proc endit { } {
 	global exit_code
 	reconfigure
-	if {$exit_code != 0} {
-		fail "Exiting due to previous errors with exit code $exit_code"
+	if {$exit_code == 0} {
+		send_user "\nSUCCESS\n"
+	} else {
+		send_user "\nFAILURE: exiting with exit code $exit_code\n"
 	}
-	pass
+	exit $exit_code
 }
 
 #
 # We must be SlurmUser or root in order to change the partition MaxTime limit,
 # otherwise this test may fail.
 #
-if {![is_super_user]} {
-	skip "You must be SlurmUser or root to run this test."
+if {[test_super_user] == 0} {
+	log_warn "You must be SlurmUser or root to run this test."
+	exit 0
 }
 
 #
@@ -69,13 +79,13 @@ expect {
 		set exit_code 1
 		exp_continue
 	}
-	-re "launching ($number)\\.($number) on host" {
+	-re "launching ($number).($number) on host" {
 		set job_id $expect_out(1,string)
 		set exit_code 0
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -83,23 +93,23 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "Job launch failed"
+	send_user "\nFAILURE: Job launch failed\n"
 	set exit_code 1
 } else {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "TimeLimit=01:00:00" {
-			log_debug "Timelimit OK"
+			send_user "\nTimelimit OK\n"
 		}
 		-re "TimeLimit=00:59:" {
-			log_debug "Timelimit OK"
+			send_user "\nTimelimit OK\n"
 		}
 		-re "TimeLimit=" {
-			log_error "Timelimit not OK with deadline"
+			send_user "\nFAILURE: Timelimit not OK with deadline\n"
 			set exit_code 1
 		}
 		timeout {
-			log_error "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
 			set exit_code 1
 		}
 		eof {

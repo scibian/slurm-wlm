@@ -122,11 +122,6 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id);
 static void  _shutdown_power(void);
 static bool  _valid_prog(char *file_name);
 
-static void _proc_track_list_del(void *x)
-{
-	xfree(x);
-}
-
 static void _exc_node_part_free(void *x)
 {
 	exc_node_partital_t *ext_part_struct = (exc_node_partital_t *) x;
@@ -206,8 +201,7 @@ static int _pick_exc_nodes(void *x, void *arg)
 	bitstr_t *exc_node_cnt_bitmap;
 	int i, i_first, i_last;
 	int avail_node_cnt, exc_node_cnt;
-	struct node_record *node_ptr;
-
+	node_record_t *node_ptr;
 
 	avail_node_cnt = bit_set_count(ext_part_struct->exc_node_cnt_bitmap);
 	if (ext_part_struct->exc_node_cnt >= avail_node_cnt) {
@@ -265,7 +259,7 @@ static void _do_power_work(time_t now)
 	uint32_t susp_state;
 	bitstr_t *avoid_node_bitmap = NULL, *failed_node_bitmap = NULL;
 	bitstr_t *wake_node_bitmap = NULL, *sleep_node_bitmap = NULL;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 
 	if (last_work_scan == 0) {
 		if (exc_nodes && (_parse_exc_nodes() != SLURM_SUCCESS))
@@ -273,7 +267,7 @@ static void _do_power_work(time_t now)
 
 		if (exc_parts) {
 			char *tmp = NULL, *one_part = NULL, *part_list = NULL;
-			struct part_record *part_ptr = NULL;
+			part_record_t *part_ptr = NULL;
 
 			part_list = xstrdup(exc_parts);
 			one_part = strtok_r(part_list, ",", &tmp);
@@ -505,11 +499,11 @@ static void _do_power_work(time_t now)
  * IN job_ptr - pointer to job that will be initiated
  * RET SLURM_SUCCESS(0) or error code
  */
-extern int power_job_reboot(struct job_record *job_ptr)
+extern int power_job_reboot(job_record_t *job_ptr)
 {
 	int rc = SLURM_SUCCESS;
 	int i, i_first, i_last;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	bitstr_t *boot_node_bitmap = NULL, *feature_node_bitmap = NULL;
 	time_t now = time(NULL);
 	char *nodes, *reboot_features = NULL;
@@ -525,8 +519,9 @@ extern int power_job_reboot(struct job_record *job_ptr)
 		boot_node_bitmap = node_features_reboot(job_ptr);
 	if (boot_node_bitmap == NULL) {
 		/* At minimum, the powered down nodes require reboot */
-		if (bit_overlap(power_node_bitmap, job_ptr->node_bitmap) ||
-		    bit_overlap(booting_node_bitmap, job_ptr->node_bitmap)) {
+		if (bit_overlap_any(power_node_bitmap, job_ptr->node_bitmap) ||
+		    bit_overlap_any(booting_node_bitmap,
+				    job_ptr->node_bitmap)) {
 			job_ptr->job_state |= JOB_CONFIGURING;
 			job_ptr->bit_flags |= NODE_REBOOT;
 		}
@@ -629,7 +624,7 @@ extern int power_job_reboot(struct job_record *job_ptr)
  * job is not responding, they try running ResumeProgram again. */
 static void _re_wake(void)
 {
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	bitstr_t *wake_node_bitmap = NULL;
 	int i;
 
@@ -978,7 +973,7 @@ extern void start_power_mgr(pthread_t *thread_id)
 		return;
 	}
 	power_save_started = true;
-	proc_track_list = list_create(_proc_track_list_del);
+	proc_track_list = list_create(xfree_ptr);
 	slurm_mutex_unlock(&power_mutex);
 
 	slurm_thread_create(thread_id, _init_power_save, NULL);

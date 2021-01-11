@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Increase size of job with allocated GPUs
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,6 +33,7 @@
 ############################################################################
 source ./globals
 
+set test_id          "39.14"
 set exit_code        0
 set file_in1         "test$test_id.input1"
 set file_in2         "test$test_id.input2"
@@ -35,27 +41,37 @@ set file_in3         "test$test_id.input3"
 set file_out1        "test$test_id.output1"
 set file_out2        "test$test_id.output2"
 
-# Bug 9701: disabling test until bug 6252 is fixed
-skip "Test disabled until bug 6252 is fixed"
+print_header $test_id
 
-if {![param_contains [get_config_param "SchedulerParameters"] "permit_job_expansion"]} {
-    skip "This test is only compatible with SchedulerParameters=permit_job_expansion"
+if {![test_scheduler_params "permit_job_expansion"]} {
+        send_user "\nWARNING: This test is only compatible with SchedulerParameters=permit_job_expansion\n"
+        exit $exit_code
 }
 
-if {![check_config_select "cons_tres"]} {
-    skip "This test is only compatible with select/cons_tres"
+if {[test_cons_tres]} {
+        send_user "\nValid configuration, using select/cons_tres\n"
+} else {
+        send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
+        exit $exit_code
 }
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-    skip "This test is incompatible with front-end systems"
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
 
-set nb_nodes [available_nodes]
+set nb_nodes [available_nodes $partition ""]
 if {$nb_nodes < 2} {
-    skip "Not enough nodes currently available ($nb_nodes avail, 2 needed)"
+    send_user "\nWARNING: not enough nodes currently available ($nb_nodes avail, 2 needed)\n"
+    exit $exit_code
 }
-set gpu_cnt [get_highest_gres_count 2 "gpu"]
+set gpu_cnt [get_gpu_count 2]
+if {$gpu_cnt < 0} {
+	send_user "\nFAILURE: Error getting GPU count\n"
+	exit 1
+}
 if {$gpu_cnt < 1} {
-	skip "This test requires 1 or more GPUs on $nb_nodes nodes of the default partition"
+	send_user "\nWARNING: This test requires 1 or more GPUs per node in the default partition\n"
+	exit 0
 }
 
 #
@@ -108,7 +124,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -116,11 +132,13 @@ expect {
 	}
 }
 if {$job_id1 == 0} {
-	fail "Job 1 not submitted"
+	send_user "\nFAILURE: job 1 not submitted\n"
+	exit 1
 }
 if {[wait_for_job $job_id1 "RUNNING"] != 0} {
+	send_user "\nFAILURE: job 1 did not start\n"
 	cancel_job $job_id1
-	fail "Job 1 did not start"
+	exit 1
 }
 
 #
@@ -134,7 +152,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -142,25 +160,29 @@ expect {
 	}
 }
 if {$job_id2 == 0} {
+	send_user "\nFAILURE: job 2 not submitted\n"
 	cancel_job $job_id1
-	fail "Job 2 not submitted"
+	exit 1
 }
 if {[wait_for_job $job_id1 "DONE"] != 0} {
+	send_user "\nFAILURE: job 1 did not complete\n"
 	cancel_job $job_id1
 	cancel_job $job_id2
-	fail "Job 1 did not complete"
+	exit 1
 }
 if {[wait_for_job $job_id2 "DONE"] != 0} {
+	send_user "\nFAILURE: job 2 did not complete\n"
 	cancel_job $job_id2
-	fail "Job 2 did not complete"
+	exit 1
 }
 
 #
 # Parse the output files from job 1
 #
-log_debug "Parse job 1 output"
+send_user "\n\nParse job 1 output\n"
 if {[wait_for_file $file_out1] != 0} {
-	fail "No output file"
+	send_user "\nFAILURE: no output file\n"
+	exit 1
 }
 set match 0
 spawn $bin_cat $file_out1
@@ -174,7 +196,7 @@ expect {
 	}
 }
 if {$match != 3} {
-	log_error "Bad CUDA information about job 1 ($match != 3)"
+	send_user "\nFAILURE: bad CUDA information about job 1 ($match != 3)\n"
 	set exit_code 1
 }
 
@@ -182,9 +204,10 @@ if {$match != 3} {
 # Parse the output files from job 2
 # Not currently looking for anything, but do log it's contents before purge
 #
-log_debug "Parse job 2 output"
+send_user "\n\nParse job 2 output\n"
 if {[wait_for_file $file_out2] != 0} {
-	fail "No output file"
+	send_user "\nFAILURE: no output file\n"
+	exit 1
 }
 set match 0
 spawn $bin_cat $file_out2
@@ -198,6 +221,6 @@ if {$exit_code == 0} {
 	exec $bin_rm -f $file_in1 $file_in2 $file_in3 $file_out1 $file_out2
 	exec $bin_rm -f slurm_job_${job_id2}_resize.csh
 	exec $bin_rm -f slurm_job_${job_id2}_resize.sh
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

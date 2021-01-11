@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Verify node configuration specification (--constraint option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,8 +33,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.12"
 set exit_code   0
 set file_in     "test$test_id.input"
+
+print_header $test_id
 
 #
 # Submit a job with invalid constraint requirement
@@ -39,22 +47,22 @@ set timeout $max_job_delay
 spawn $salloc -N1 -t1 --constraint=invalid,constraint salloc -t1 $bin_bash
 expect {
 	-re "error:.*Invalid feature specification" {
-		log_debug "This error is expected, no worries"
+		send_user "This error is expected, no worries\n"
 		set err_msg 1
 		exp_continue
 	}
 	-re "Granted job allocation ($number)" {
-		log_error "salloc job submitted with invalid constraint"
+		send_user "\nFAILURE: salloc job submitted with invalid constraint\n"
 		set exit_code 1
 		send "exit\r"
 	}
 	-re "Pending job allocation ($number)" {
-		log_error "salloc job submitted with invalid constraint"
+		send_user "\nFAILURE: salloc job submitted with invalid constraint\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -62,9 +70,11 @@ expect {
 	}
 }
 if {$err_msg != 1} {
-	fail "Job failed to report required error"
+	send_user "\nFAILURE: job failed to report required error\n"
+	set exit_code   1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

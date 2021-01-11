@@ -449,6 +449,7 @@ static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr)
 	if ((agent_arg_ptr->msg_type != REQUEST_JOB_NOTIFY)	&&
 	    (agent_arg_ptr->msg_type != REQUEST_REBOOT_NODES)	&&
 	    (agent_arg_ptr->msg_type != REQUEST_RECONFIGURE)	&&
+	    (agent_arg_ptr->msg_type != REQUEST_RECONFIGURE_WITH_CONFIG) &&
 	    (agent_arg_ptr->msg_type != REQUEST_SHUTDOWN)	&&
 	    (agent_arg_ptr->msg_type != SRUN_EXEC)		&&
 	    (agent_arg_ptr->msg_type != SRUN_TIMEOUT)		&&
@@ -597,7 +598,7 @@ static void *_wdog(void *args)
 	     (agent_ptr->msg_type == SRUN_TIMEOUT)			||
 	     (agent_ptr->msg_type == SRUN_USER_MSG)			||
 	     (agent_ptr->msg_type == RESPONSE_RESOURCE_ALLOCATION)	||
-	     (agent_ptr->msg_type == RESPONSE_JOB_PACK_ALLOCATION) )
+	     (agent_ptr->msg_type == RESPONSE_HET_JOB_ALLOCATION) )
 		srun_agent = true;
 
 	thd_comp.max_delay = 0;
@@ -680,12 +681,12 @@ static void _notify_slurmctld_jobs(agent_info_t *agent_ptr)
 			*agent_ptr->msg_args_pptr;
 		job_id  = msg->job_id;
 		step_id = NO_VAL;
-	} else if (agent_ptr->msg_type == RESPONSE_JOB_PACK_ALLOCATION) {
-		List pack_alloc_list = *agent_ptr->msg_args_pptr;
+	} else if (agent_ptr->msg_type == RESPONSE_HET_JOB_ALLOCATION) {
+		List het_alloc_list = *agent_ptr->msg_args_pptr;
 		resource_allocation_response_msg_t *msg;
-		if (!pack_alloc_list || (list_count(pack_alloc_list) == 0))
+		if (!het_alloc_list || (list_count(het_alloc_list) == 0))
 			return;
-		msg = list_peek(pack_alloc_list);
+		msg = list_peek(het_alloc_list);
 		job_id  = msg->job_id;
 		step_id = NO_VAL;
 	} else if ((agent_ptr->msg_type == SRUN_JOB_COMPLETE)		||
@@ -946,8 +947,7 @@ static void *_thread_per_group_rpc(void *args)
 			}
 		} else {
 			if (!(ret_list = slurm_send_recv_msgs(
-				     thread_ptr->nodelist,
-				     &msg, 0, true))) {
+				     thread_ptr->nodelist, &msg, 0))) {
 				error("%s: no ret_list given", __func__);
 				goto cleanup;
 			}
@@ -959,7 +959,8 @@ static void *_thread_per_group_rpc(void *args)
 		} else {
 			//info("no address given");
 			if (slurm_conf_get_addr(thread_ptr->nodelist,
-					       &msg.address) == SLURM_ERROR) {
+					        &msg.address, msg.flags)
+			    == SLURM_ERROR) {
 				error("%s: can't find address for host %s, check slurm.conf",
 				      __func__, thread_ptr->nodelist);
 				goto cleanup;
@@ -1066,17 +1067,17 @@ static void *_thread_per_group_rpc(void *args)
 				     false, false, _wif_status());
 			unlock_slurmctld(job_write_lock);
 			continue;
-		} else if ((msg_type == RESPONSE_JOB_PACK_ALLOCATION) &&
+		} else if ((msg_type == RESPONSE_HET_JOB_ALLOCATION) &&
 			   (rc == SLURM_COMMUNICATIONS_CONNECTION_ERROR)) {
 			/* Communication issue to srun that launched the job
 			 * Cancel rather than leave a stray-but-empty job
 			 * behind on the allocated nodes. */
-			List pack_alloc_list = task_ptr->msg_args_ptr;
+			List het_alloc_list = task_ptr->msg_args_ptr;
 			resource_allocation_response_msg_t *msg_ptr;
-			if (!pack_alloc_list ||
-			    (list_count(pack_alloc_list) == 0))
+			if (!het_alloc_list ||
+			    (list_count(het_alloc_list) == 0))
 				continue;
-			msg_ptr = list_peek(pack_alloc_list);
+			msg_ptr = list_peek(het_alloc_list);
 			job_id = msg_ptr->job_id;
 			info("Killing interactive JobId=%u: %s",
 			     job_id, slurm_strerror(rc));
@@ -1089,7 +1090,7 @@ static void *_thread_per_group_rpc(void *args)
 		}
 
 		if (msg_type == REQUEST_SIGNAL_TASKS) {
-			struct job_record *job_ptr;
+			job_record_t *job_ptr;
 			signal_tasks_msg_t *msg_ptr =
 				task_ptr->msg_args_ptr;
 
@@ -1193,7 +1194,7 @@ static void *_thread_per_group_rpc(void *args)
 cleanup:
 	xfree(args);
 	if (!ret_list && (msg_type == REQUEST_SIGNAL_TASKS)) {
-		struct job_record *job_ptr;
+		job_record_t *job_ptr;
 		signal_tasks_msg_t *msg_ptr =
 			task_ptr->msg_args_ptr;
 		if ((msg_ptr->signal == SIGCONT) ||
@@ -1234,7 +1235,7 @@ static int _setup_requeue(agent_arg_t *agent_arg_ptr, thd_t *thread_ptr,
 #ifdef HAVE_FRONT_END
 	front_end_record_t *node_ptr;
 #else
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 #endif
 	ret_data_info_t *ret_data_info = NULL;
 	ListIterator itr;
@@ -1283,7 +1284,7 @@ static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count)
 #ifdef HAVE_FRONT_END
 	front_end_record_t *node_ptr;
 #else
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 #endif
 	agent_arg_t *agent_arg_ptr;
 	queued_request_t *queued_req_ptr = NULL;
@@ -1784,6 +1785,17 @@ extern int get_agent_count(void)
 	return cnt;
 }
 
+extern int get_agent_thread_count(void)
+{
+	int cnt;
+
+	slurm_mutex_lock(&agent_cnt_mutex);
+	cnt = agent_thread_cnt;
+	slurm_mutex_unlock(&agent_cnt_mutex);
+
+	return cnt;
+}
+
 static void _purge_agent_args(agent_arg_t *agent_arg_ptr)
 {
 	if (agent_arg_ptr == NULL)
@@ -1804,7 +1816,7 @@ static void _purge_agent_args(agent_arg_t *agent_arg_ptr)
 			slurm_free_resource_allocation_response_msg(
 					agent_arg_ptr->msg_args);
 		} else if (agent_arg_ptr->msg_type ==
-				RESPONSE_JOB_PACK_ALLOCATION) {
+				RESPONSE_HET_JOB_ALLOCATION) {
 			List alloc_list = agent_arg_ptr->msg_args;
 			FREE_NULL_LIST(alloc_list);
 		} else if ((agent_arg_ptr->msg_type == REQUEST_ABORT_JOB)    ||
@@ -1930,7 +1942,7 @@ static char *_mail_type_str(uint16_t mail_type)
 	return "unknown";
 }
 
-static void _set_job_time(struct job_record *job_ptr, uint16_t mail_type,
+static void _set_job_time(job_record_t *job_ptr, uint16_t mail_type,
 			  char *buf, int buf_len)
 {
 	time_t interval = NO_VAL;
@@ -1979,7 +1991,7 @@ static void _set_job_time(struct job_record *job_ptr, uint16_t mail_type,
 	}
 }
 
-static void _set_job_term_info(struct job_record *job_ptr, uint16_t mail_type,
+static void _set_job_term_info(job_record_t *job_ptr, uint16_t mail_type,
 			       char *buf, int buf_len)
 {
 	buf[0] = '\0';
@@ -2048,33 +2060,25 @@ static void _set_job_term_info(struct job_record *job_ptr, uint16_t mail_type,
  * IN job_ptr - job identification
  * IN state_type - job transition type, see MAIL_JOB in slurm.h
  */
-extern void mail_job_info (struct job_record *job_ptr, uint16_t mail_type)
+extern void mail_job_info(job_record_t *job_ptr, uint16_t mail_type)
 {
 	char job_time[128], term_msg[128];
 	mail_info_t *mi;
 
 	/*
-	 * Send mail only for first component of a pack job,
-	 * not the individual job records
+	 * Send mail only for first component (leader) of a hetjob,
+	 * not the individual job components.
 	 */
-	if (job_ptr->pack_job_id && (job_ptr->pack_job_offset != 0))
+	if (job_ptr->het_job_id && (job_ptr->het_job_offset != 0))
 		return;
 
 	mi = _mail_alloc();
-	if (!job_ptr->mail_user) {
-		mi->user_name = uid_to_string((uid_t)job_ptr->user_id);
-		/* unqualified sender, append MailDomain if set */
-		if (slurmctld_conf.mail_domain) {
-			xstrcat(mi->user_name, "@");
-			xstrcat(mi->user_name, slurmctld_conf.mail_domain);
-		}
-	} else
-		mi->user_name = xstrdup(job_ptr->mail_user);
+	mi->user_name = xstrdup(job_ptr->mail_user);
 
 	/* Use job array master record, if available */
 	if (!(job_ptr->mail_type & MAIL_ARRAY_TASKS) &&
 	    (job_ptr->array_task_id != NO_VAL) && !job_ptr->array_recs) {
-		struct job_record *master_job_ptr;
+		job_record_t *master_job_ptr;
 		master_job_ptr = find_job_record(job_ptr->array_job_id);
 		if (master_job_ptr && master_job_ptr->array_recs)
 			job_ptr = master_job_ptr;
@@ -2123,7 +2127,7 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 	agent_arg_t *agent_arg_ptr;
 	batch_job_launch_msg_t *launch_msg_ptr;
 	time_t now = time(NULL);
-	struct job_record *job_ptr;
+	job_record_t *job_ptr;
 	int nodes_ready = 0, tmp = 0;
 
 	agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
@@ -2141,8 +2145,12 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 		return -1;	/* job cancelled while waiting */
 	}
 
-	if (job_ptr->details && job_ptr->details->prolog_running)
+	if (job_ptr->details && job_ptr->details->prolog_running) {
+		debug2("%s: JobId=%u still waiting on %u prologs",
+		       __func__, job_ptr->job_id,
+		       job_ptr->details->prolog_running);
 		return 1;
+	}
 
 	if (job_ptr->wait_all_nodes) {
 		(void) job_node_ready(launch_msg_ptr->job_id, &tmp);
@@ -2161,7 +2169,7 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 #ifdef HAVE_FRONT_END
 		nodes_ready = 1;
 #else
-		struct node_record *node_ptr;
+		node_record_t *node_ptr;
 		char *hostname;
 
 		hostname = hostlist_deranged_string_xmalloc(
@@ -2213,7 +2221,7 @@ static int _signal_defer(queued_request_t *queued_req_ptr)
 	agent_arg_t *agent_arg_ptr;
 	signal_tasks_msg_t *signal_msg_ptr;
 	time_t now = time(NULL);
-	struct job_record *job_ptr;
+	job_record_t *job_ptr;
 
 	agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
 	signal_msg_ptr = (signal_tasks_msg_t *)agent_arg_ptr->msg_args;

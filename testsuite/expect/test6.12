@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test scancel signal to batch script (--batch option)
 #
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
+#
 # Note:    This script generates and then deletes files in the working directory
 #          named test6.12.input, test6.12.output, and test6.12.error
 ############################################################################
@@ -31,6 +35,7 @@
 ############################################################################
 source ./globals
 
+set test_id     "6.12"
 set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set file_err    "test$test_id.error"
@@ -38,6 +43,8 @@ set file_err    "test$test_id.error"
 set exit_code   0
 set job_id      0
 set step_id	0
+
+print_header $test_id
 
 #
 # Delete left-over input script plus stdout/err files
@@ -73,22 +80,25 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: sbatch not responding\n"
 		slow_kill $sbatch_pid
-		fail "sbatch not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to start running, then signal it
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	fail "Waiting for job to start running"
+	send_user "\nFAILURE: waiting for job to start running\n"
+	exit 1
 }
 exec $bin_sleep 5
 spawn $squeue --steps=$job_id.$step_id
@@ -123,7 +133,7 @@ exec $bin_sleep 5
 set found_step 0
 spawn $squeue --steps=$job_id.$step_id
 expect {
-	-re "($job_id)\\.$step_id" {
+	-re "($job_id).$step_id" {
 		set found_step 1
 		exp_continue
 	}
@@ -132,7 +142,7 @@ expect {
 	}
 }
 if {$found_step == 0} {
-	log_error "Job step not found, apparently killed"
+	send_user "\nFAILURE: job step not found, apparently killed\n"
 	set exit_code 1
 }
 cancel_job $job_id
@@ -151,15 +161,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
@@ -167,7 +179,8 @@ if {$job_id == 0} {
 # send SIGHUP and confirm that job gets cancelled
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	fail "Waiting for job to start running"
+	send_user "\nFAILURE: waiting for job to start running\n"
+	exit 1
 }
 exec $bin_sleep 5
 spawn $squeue --jobs=$job_id
@@ -201,12 +214,13 @@ expect {
 }
 if {$found_job == 0} {
 	if {$purged_job == 1} {
-		regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
+		set min_job_age [get_min_job_age]
 	}
 	if {$purged_job == 1 && $min_job_age < 60} {
-		log_warn "MinJobAge ($min_job_age) configured too low to capture job state after completion"
+		send_user "\nWARNING: MinJobAge ($min_job_age) configured too low "
+		send_user "to capture job state after completion\n"
 	} else {
-		log_error "Job not killed on SIGHUP"
+		send_user "\nFAILURE: job not killed on SIGHUP\n"
 		spawn $scontrol show job $job_id
 		expect {
 			eof {
@@ -219,7 +233,7 @@ if {$found_job == 0} {
 }
 
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
 
 #
@@ -236,8 +250,9 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
@@ -245,14 +260,16 @@ expect {
 }
 
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to start running
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	fail "Waiting for job to start running"
+	send_user "\nFAILURE: waiting for job to start running\n"
+	exit 1
 }
 exec $bin_sleep 5
 spawn $squeue --steps=$job_id.$step_id
@@ -275,7 +292,7 @@ exec $bin_sleep 5
 set found_step 0
 spawn $squeue --steps=$job_id.$step_id
 expect {
-	-re "($job_id)\\.$step_id" {
+	-re "($job_id).$step_id" {
 		set found_step 1
 		exp_continue
 	}
@@ -284,15 +301,16 @@ expect {
 	}
 }
 if {$found_step == 1} {
-	fail "Job step found, not killed"
+	send_user "\nFAILURE: job step found, not killed\n"
+	set exit_code 1
 }
 
 if {[cancel_job $job_id] != 0} {
-	fail "Unable to cancel job ($job_id)"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 	exec $bin_rm -f $file_in $file_out $file_err
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
+exit $exit_code

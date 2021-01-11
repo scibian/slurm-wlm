@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Cray dwstat command testing
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 SchedMD LLC.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -27,11 +32,15 @@
 ############################################################################
 source ./globals
 
+set test_id     "35.5"
 set exit_code   0
+
+print_header $test_id
 
 set bb_types [get_bb_types]
 if {[string first "datawarp" $bb_types] == -1} {
-	skip "This test can only be run with the burst_buffer/datawarp plugin"
+	send_user "\nWARNING: This test can only be run with the burst_buffer/datawarp plugin\n"
+	exit 0
 }
 
 set matches 0
@@ -47,7 +56,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -57,6 +66,7 @@ expect {
 if {$fail == 1} {
 	set default_state_loc 0
 	set default_status_loc 0
+	send_user "\n\n"
 	spawn $scontrol show burst
 	expect {
 		-re "GetSysState=/opt/cray/dws/default" {
@@ -68,7 +78,7 @@ if {$fail == 1} {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -76,14 +86,17 @@ if {$fail == 1} {
 		}
 	}
 	if {$default_state_loc == 0 && $default_status_loc == 1} {
-		skip "'dwstat' is not configured properly"
+		send_user "\nWARNING: 'dwstat' is not configured properly\n"
+		exit 0
 	}
-	fail "'dwstat' is not configured properly"
+	send_user "\nFAILURE: 'dwstat' is not configured properly\n"
+	exit 1
 }
 if {$matches == 0} {
-	log_error "'dwstat' output does not match expected form"
+	send_user "\nFAILURE: 'dwstat' output does not match expected form\n"
 	set exit_code 1
 }
+send_user "\n\n"
 
 set matches 0
 spawn $scontrol show dwstat configurations
@@ -97,7 +110,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -105,9 +118,10 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "'dwstat configurations' output does not match expected form"
+	send_user "\nFAILURE: 'dwstat configurations' output does not match expected form\n"
 	set exit_code 1
 }
+send_user "\n\n"
 
 set matches 0
 spawn $scontrol show dwstat sessions
@@ -121,7 +135,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -129,9 +143,11 @@ expect {
 	}
 }
 if {$matches == 0} {
-	fail "'dwstat sessions' output does not match expected form"
+	send_user "\nFAILURE: 'dwstat sessions' output does not match expected form\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

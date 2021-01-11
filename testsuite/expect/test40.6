@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Decrease size of job with allocated MPS
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2019 SchedMD LLC
 # Written by Morris Jette
@@ -26,27 +31,45 @@
 ############################################################################
 source ./globals
 
+set test_id          "40.6"
 set exit_code        0
 set file_in1         "test$test_id.input1"
 set file_in2         "test$test_id.input2"
 set file_out         "test$test_id.output"
 
-if {![check_config_select "cons_tres"]} {
-    skip "This test is only compatible with select/cons_tres"
-}
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-    skip "This test is incompatible with front-end systems"
-}
+print_header $test_id
 
-set constrain_devices [expr {[get_config_param "ConstrainDevices"] eq "yes"}]
-if {$constrain_devices} {
-	log_debug "Devices files are constrained by cgroups"
+if {[test_cons_tres]} {
+        send_user "\nValid configuration, using select/cons_tres\n"
 } else {
-	log_debug "Devices files are NOT constrained by cgroups"
+        send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
+        exit $exit_code
+}
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit $exit_code
 }
 
-if {[llength [get_nodes_by_request "--gres=mps:100 -N2 -t2"]] == 0} {
-	skip "This test requires being able to submit job with --gres=mps:100 -N2"
+set constrain_devices [test_constrain_devices]
+if {$constrain_devices} {
+	send_user "Devices files are constrained by cgroups\n"
+} else {
+	send_user "Devices files are NOT constrained by cgroups\n"
+}
+
+set nb_nodes [available_nodes $partition ""]
+if {$nb_nodes < 2} {
+    send_user "\nWARNING: not enough nodes currently available ($nb_nodes avail, 2 needed)\n"
+    exit $exit_code
+}
+set mps_cnt [get_mps_count $nb_nodes]
+if {$mps_cnt < 0} {
+	send_user "\nFAILURE: Error getting MPS count\n"
+	exit 1
+}
+if {$mps_cnt < 100} {
+	send_user "\nWARNING: This test requires 100 or more MPS per node in the default partition\n"
+	exit 0
 }
 
 #
@@ -82,7 +105,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -90,19 +113,22 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Job 1 not submitted"
+	send_user "\nFAILURE: job 1 not submitted\n"
+	exit 1
 }
 if {[wait_for_job $job_id "DONE"] != 0} {
+	send_user "\nFAILURE: job did not complete\n"
 	cancel_job $job_id
-	fail "Job did not complete"
+	exit 1
 }
 
 #
 # Parse the output files from job 1
 #
-log_info "Parse job 1 output"
+send_user "\n\nParse job 1 output\n"
 if {[wait_for_file $file_out] != 0} {
-	fail "No output file"
+	send_user "\nFAILURE: no output file\n"
+	exit 1
 }
 set match 0
 set percentage -1
@@ -118,7 +144,7 @@ expect {
 	}
 }
 if {$match != 3} {
-	log_error "Bad CUDA information about job 1 ($match != 3)"
+	send_user "\nFAILURE: bad CUDA information about job 1 ($match != 3)\n"
 	set exit_code 1
 }
 
@@ -147,16 +173,16 @@ if {$exit_code == 0 && $constrain_devices == 0} {
 	if {$count > 0} {
 		set count [expr 10 * 100 / $count]
 		if {$percentage != $count} {
-			log_error "Bad CUDA_MPS_ACTIVE_THREAD_PERCENTAGE value ($percentage != $count)"
+			send_user "\nFAILURE: Bad CUDA_MPS_ACTIVE_THREAD_PERCENTAGE value ($percentage != $count)\n"
 			set exit_code 1
 		} else {
-			log_debug "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE value is good"
+			send_user "\n CUDA_MPS_ACTIVE_THREAD_PERCENTAGE value is good\n"
 		}
 	}
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in1 $file_in2 $file_out
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

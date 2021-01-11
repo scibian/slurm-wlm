@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test squeue sorting (--sort option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,12 +32,15 @@
 ############################################################################
 source ./globals
 
+set test_id      "5.5"
 set exit_code    0
 set file_in      "test$test_id.input"
 set job_id1      0
 set job_id2      0
 set job_name1    "job_b"
 set job_name2    "job_a"
+
+print_header $test_id
 
 #
 # Build input script file
@@ -50,15 +57,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id1 == 0} {
-	fail "srun job submit failure"
+	send_user "\nFAILURE: srun job submit failure\n"
+	exit 1
 }
 
 set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null --job-name=$job_name2 --hold -t1 $file_in]
@@ -68,15 +77,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id2 == 0} {
-	fail "srun job submit failure"
+	send_user "\nFAILURE: srun job submit failure\n"
+	exit 1
 }
 
 exec $bin_rm -f $file_in
@@ -94,13 +105,13 @@ expect {
 	}
 	-re " $job_name2 " {
 		if {$found_job1 != 0} {
-			log_error "squeue sort error"
+			send_user "\nFAILURE: squeue sort error\n"
 			set exit_code 1
 		}
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
+		send_user "\nFAILURE: squeue not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -109,12 +120,13 @@ expect {
 }
 
 if {[cancel_job $job_id1] != 0} {
-	fail "Unable to cancel job ($job_id1)"
+	set exit_code 1
 }
 if {[cancel_job $job_id2] != 0} {
-	fail "Unable to cancel job ($job_id2)"
+	set exit_code 1
 }
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

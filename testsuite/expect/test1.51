@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test propagation of umask to spawned tasks.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,12 +33,16 @@
 ############################################################################
 source ./globals
 
+set test_id      "1.51"
 set exit_code    0
 set file_in      "test$test_id.input"
 set file_script  "test$test_id.script"
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end] != 0} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit $exit_code
 }
 
 #
@@ -58,19 +67,21 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill [expr 0 - $srun_pid]
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 1} {
-	fail "umask not propagated"
+	send_user "\nFAILURE: umask not propagated\n"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_script
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

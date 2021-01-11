@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validates that strigger will not submit duplicate triggers
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2014 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -26,11 +30,14 @@
 ############################################################################
 source ./globals
 
+set test_id           "19.9"
 set trigger_file_in   "test$test_id\_trig_in"
 set trigger_file_out  "test$test_id\_trig_out"
 set cwd               "[$bin_pwd]"
 set permission        0
 set exit_code         0
+
+print_header $test_id
 
 #
 # get my uid and clear any vestigial triggers
@@ -57,7 +64,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger is not responding\b"
+		send_user "\nFAILURE: strigger is not responding\b"
 		set exit_code 1
 	}
 	eof {
@@ -65,11 +72,13 @@ expect {
 	}
 }
 if {$permission == 1} {
+	send_user "\nWARNING: Current configuration prevents setting triggers\n"
+	send_user "         Need to run as SlurmUser or make SlurmUser=root\n"
 	exec $bin_rm -f $trigger_file_in
-	skip "Current configuration prevents setting triggers. Need to run as SlurmUser or make SlurmUser=root"
+	exit $exit_code
 }
 if {$match != 1} {
-	log_error "Trigger was not set"
+	send_user "\nFAILURE: trigger was not set\n"
 	set exit_code 1
 }
 
@@ -77,12 +86,12 @@ set match 0
 spawn $strigger --set -v --down --program=$cwd/$trigger_file_in
 expect {
 	-re "Duplicate event trigger" {
-		log_debug "This error is expected"
+		send_user "\nThis error is expected\n"
 		set match 1
 		exp_continue
 	}
 	timeout {
-		log_error "strigger is not responding"
+		send_user "\nFAILURE: strigger is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -90,7 +99,7 @@ expect {
 	}
 }
 if {$match != 1} {
-	log_error "Trigger should not have been set but was"
+	send_user "\nFAILURE: trigger should not have been set but was\n"
 	set exit_code 1
 }
 
@@ -98,7 +107,7 @@ set match 0
 spawn $strigger --clear -v --user=$uid
 expect {
 	timeout {
-		log_error "strigger is not responding"
+		send_user "\nFAILURE: strigger is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -108,6 +117,8 @@ expect {
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $trigger_file_out $trigger_file_in
+	send_user "\nSUCCESS\n"
 } else {
-	fail "Test failed due to previous errors"
+	send_user "\nFAILURE\n"
 }
+exit $exit_code

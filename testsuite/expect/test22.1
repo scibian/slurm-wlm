@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test sreport cluster utilization. Also test for
 #          sreport -M option
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -38,6 +42,8 @@ source ./inc22.1.4
 source ./inc22.1.5
 source ./inc22.1.fed
 
+set test_id     "22.1"
+set test_name   "test22.1"
 set test_nu     "test22-1"
 set exit_code   0
 set matches     0
@@ -89,6 +95,9 @@ array set user_req {}
 set user_req(cluster) "$cluster1,$cluster2"
 set user_req(account) $accounts
 set user_req(wckey) $wckey1
+
+
+print_header $test_id
 
 # Fri Thu Jan 31 00:00:00 2008 - Needed only for the 00:00:00 for timing purposes
 set midnight_time "Thu Jan 31 00:00:00 2008"
@@ -175,17 +184,20 @@ set node0_end_str [timestamp -format %Y-%m-%dT%X -seconds $node0_down_end]
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 set wc_key_track [check_wckey_tracking_slurmdbd]
 if { $wc_key_track == 0 } {
-	skip "Portions of this test will not work without TrackWCKey set in slurmdbd.conf"
+	send_user "\nWARNING: Portions of this test will not work without TrackWCKey set in slurmdbd.conf.\n"
+	exit 0
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+	exit 0
 }
 
 remove_user "" "" $users
@@ -198,7 +210,7 @@ incr exit_code [add_cluster $cluster2 [array get clus_req]]
 if { $exit_code } {
 	remove_cluster "$cluster1"
 	remove_cluster "$cluster2"
-	fail "Unable to add clusters"
+	exit $exit_code
 }
 
 #add accounts
@@ -207,7 +219,7 @@ if { $exit_code } {
 	remove_acct "" "$account1,$account2"
 	remove_cluster "$cluster1"
 	remove_cluster "$cluster2"
-	fail "Unable to add account ($account1,$account2)"
+	exit $exit_code
 }
 
 #add accounts
@@ -216,7 +228,7 @@ if { $exit_code } {
 	remove_acct "" $accounts
 	remove_cluster "$cluster1"
 	remove_cluster "$cluster2"
-	fail "Unable to add account ($account3)"
+	exit $exit_code
 }
 
 #add users
@@ -226,7 +238,7 @@ if { $exit_code } {
 	remove_acct "" $accounts
 	remove_cluster "$cluster1"
 	remove_cluster "$cluster2"
-	fail "Unable to add user ($users)"
+	exit $exit_code
 }
 
 #get the user association ids for the jobs we plan to add
@@ -239,7 +251,7 @@ set user2acct3 0
 set my_pid [eval spawn $sacctmgr -n -p list assoc users=$users account=$accounts cluster=$cluster2 format="User,account,id"]
 expect {
 	-re "There was a problem" {
-		log_error "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
 		incr exit_code 1
 	}
 	-re "$user1.$account1.($number)." {
@@ -267,7 +279,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr list associations not responding"
+		send_user "\nFAILURE: sacctmgr list associations not responding\n"
 		slow_kill $my_pid
 		incr exit_code 1
 	}
@@ -277,11 +289,12 @@ expect {
 }
 
 if {!$user1acct1 || !$user1acct2 || !$user1acct3 || !$user2acct1 || !$user2acct2|| !$user2acct3} {
+	send_user "\nFAILURE:  Didn't get one of the user associations $user1acct1 $user1acct2 $user1acct3 $user2acct1 $user2acct2 $user2acct3.\n"
 	incr exit_code 1
 	remove_user "" "" $users
 	remove_acct "" $accounts
 	remove_cluster "$cluster1"
-	fail "Didn't get one of the user associations $user1acct1 $user1acct2 $user1acct3 $user2acct1 $user2acct2 $user2acct3"
+	exit $exit_code
 }
 
 #get the wckey ids for the jobs we plan to add
@@ -290,7 +303,7 @@ set user2wckey1 0
 set my_pid [eval spawn $sacctmgr -n -p list wckeys users=$users wckeys=$wckey1 cluster=$cluster1 format="user,wckey,id"]
 expect {
 	-re "There was a problem" {
-		log_error "There was a problem with the sacctmgr command"
+		send_user "FAILURE: there was a problem with the sacctmgr command\n"
 		incr exit_code 1
 	}
 	-re "$user1.$wckey1.($number)." {
@@ -302,7 +315,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr list wckeys not responding"
+		send_user "\nFAILURE: sacctmgr list wckeys not responding\n"
 		slow_kill $my_pid
 		incr exit_code 1
 	}
@@ -312,10 +325,12 @@ expect {
 }
 
 if {!$user1wckey1 || !$user2wckey1} {
+	send_user "\nFAILURE:  Didn't get one of the user wckeys $user1wckey1 $user2wckey1.\n"
+	incr exit_code 1
 	remove_user "" "" $users
 	remove_acct "" $accounts
 	remove_cluster "$cluster1"
-	fail "Didn't get one of the user wckeys $user1wckey1 $user2wckey1"
+	exit $exit_code
 }
 
 proc end_it {} {
@@ -328,26 +343,23 @@ proc end_it {} {
 	remove_acct "" $accounts
 	remove_cluster "$cluster1"
 	remove_cluster "$cluster2"
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
+	exit $exit_code
 }
 
 proc test_fed {} {
-	global scontrol re_word_str sacctmgr env bin_rm cluster1 cluster2 fedname
+	global scontrol alpha sacctmgr env bin_rm cluster1 cluster2 fedname
 
 	set config_dir ""
 	set new_conf /tmp/slurm.conf.test22.1
 
 	spawn $scontrol show config
 	expect {
-		-re "SLURM_CONF *= (/.*)/($re_word_str).*SLURM_VERSION" {
+		-re "SLURM_CONF *= (/.*)/($alpha).*SLURM_VERSION" {
 			set config_dir $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -358,22 +370,22 @@ proc test_fed {} {
 	delete_federations $fedname
 
 	set cmd1 "$sacctmgr -i add federation $fedname"
-	log_debug "$cmd1"
-	log_debug "[eval exec $cmd1]"
+	send_user "$cmd1\n"
+	send_user "[eval exec $cmd1]\n"
 
 	set cmd2 "$sacctmgr -i mod fed $fedname set clusters=$cluster1,$cluster2"
-	log_debug "$cmd2"
-	log_debug "[eval exec $cmd2]"
+	send_user "$cmd2\n"
+	send_user "[eval exec $cmd2]\n"
 
-	log_debug "This is the config dir: $config_dir; new config: $new_conf "
+	send_user "This is the config dir: $config_dir; new config: $new_conf \n"
 
 	set old_conf "$config_dir/slurm.conf"
 
-	log_debug [exec sed "s/ClusterName\\s*=.*/ClusterName=$cluster1/Ig" $old_conf > $new_conf]
+	send_user [exec sed "s/ClusterName\\s*=.*/ClusterName=$cluster1/Ig" $old_conf > $new_conf]
 
 	set env(SLURM_CONF) $new_conf
 
-	log_debug "ENV VARIABLE: [exec printenv SLURM_CONF]  "
+	send_user "ENV VARIABLE: [exec printenv SLURM_CONF]  \n"
 
 	set exit_code [inc22_1_fed]
 	delete_federations $fedname
@@ -455,7 +467,7 @@ proc create_sql {cluster sql_in sql_rem} {
 		remove_user "" "" $users
 		remove_acct "" $accounts
 		remove_cluster "$cluster"
-		fail "Unable to load archive"
+		exit $exit_code
 	}
 
 	#
@@ -465,27 +477,27 @@ proc create_sql {cluster sql_in sql_rem} {
 	set my_pid [eval spawn $sacct -p -M $cluster --format=cluster,account,associd,wckey,wckeyid,start,end,elapsed --noheader --start=$start_str --end=$end_str]
 	expect {
 		-re "There was a problem" {
-			log_error "There was a problem with the sacct command"
+			send_user "FAILURE: there was a problem with the sacct command\n"
 			incr exit_code 1
 		}
 		-re "$cluster.$account1.$user1acct1.$wckey1.$user1wckey1.$job1_start_str.$job1_end_str.$job1_diff_str." {
-			log_debug "Got 1"
+			send_user "got 1\n"
 			incr matches
 			exp_continue
 		}
 		-re "$cluster.$account3.$user2acct3.$wckey1.$user2wckey1.$job2_start_str.$job2_end_str.$job2_diff_str." {
-			log_debug "Got 2"
+			send_user "got 2\n"
 			incr matches
 			exp_continue
 		}
 		-re "$cluster.$account2.$user1acct2.$wckey1.$user1wckey1.$job3_start_str.$job3_end_str.$job3_diff_str." {
-			log_debug "Got 3"
+			send_user "got 3\n"
 			incr matches
 			exp_continue
 		}
 
 		timeout {
-			log_error "sacctmgr archive load not responding"
+			send_user "\nFAILURE: sacctmgr archive load not responding\n"
 			slow_kill $my_pid
 			incr exit_code 1
 		}
@@ -495,7 +507,7 @@ proc create_sql {cluster sql_in sql_rem} {
 	}
 
 	if {$matches != 3} {
-		log_error "Job wasn't loaded correctly with only $matches"
+		send_user "\nFAILURE:  job wasn't loaded correctly with only $matches.\n"
 		incr exit_code 1
 	}
 
@@ -507,27 +519,27 @@ proc create_sql {cluster sql_in sql_rem} {
 	# Use sacctmgr to see if node event loaded
 	#
 
-	log_debug "$cluster..$start_str.$end_str.$cluster_cpus.$node_list"
+	send_user "$cluster..$start_str.$end_str.$cluster_cpus.$node_list.\n"
 
 	set matches 0
 	set my_pid [eval spawn $sacctmgr -p list events cluster=$cluster format=cluster,noden,start,end,cpu --noheader start=$start_str end=$end_str]
 	expect {
 		-re "There was a problem" {
-			log_error "There was a problem with the sacctmgr command"
+			send_user "FAILURE: there was a problem with the sacctmgr command\n"
 			incr exit_code 1
 		}
 		-re "($cluster..$start_str.$end_str.$cluster_cpus.)" {
-			log_debug "Got 1"
+			send_user "got 1\n"
 			incr matches
 			exp_continue
 		}
 		-re "($cluster.$node0.$node0_start_str.$node0_end_str.$node0_cpus.)" {
-			log_debug "Got 2"
+			send_user "got 2\n"
 			incr matches
 			exp_continue
 		}
 		timeout {
-			log_error "sacctmgr archive load not responding"
+			send_user "\nFAILURE: sacctmgr archive load not responding\n"
 			slow_kill $my_pid
 			incr exit_code 1
 		}
@@ -537,7 +549,7 @@ proc create_sql {cluster sql_in sql_rem} {
 	}
 
 	if {$matches != 2} {
-		log_error "Cluster env wasn't loaded correctly with only $matches"
+		send_user "\nFAILURE:  cluster env wasn't loaded correctly with only $matches.\n"
 		incr exit_code 1
 	}
 
@@ -552,7 +564,7 @@ proc create_sql {cluster sql_in sql_rem} {
 	set my_pid [eval spawn $sacctmgr -i roll $start_str $end_str]
 	expect {
 		-re "There was a problem" {
-			log_error "There was a problem with the sacctmgr command"
+			send_user "FAILURE: there was a problem with the sacctmgr command\n"
 			incr exit_code 1
 		}
 		-re "$cluster" {
@@ -564,7 +576,7 @@ proc create_sql {cluster sql_in sql_rem} {
 			exp_continue
 		}
 		timeout {
-			log_error "sacctmgr archive load not responding"
+			send_user "\nFAILURE: sacctmgr archive load not responding\n"
 			slow_kill $my_pid
 			incr exit_code 1
 		}
@@ -574,7 +586,7 @@ proc create_sql {cluster sql_in sql_rem} {
 	}
 
 	if {$matches != 1} {
-		log_error "sacctmgr wasn't able to roll data"
+		send_user "\nFAILURE:  sacctmgr wasn't able to roll data.\n"
 		incr exit_code 1
 	}
 
@@ -627,9 +639,13 @@ if {$exit_code == 0} {
 	exec $bin_rm -f $sql_rem_clus1
 	exec $bin_rm -f $sql_in_clus2
 	exec $bin_rm -f $sql_rem_clus2
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors"
+	if {$exit_code == 0} {
+		send_user "\nSUCCESS\n"
+	} else {
+		send_user "\nFAILURE\n"
 	}
 } else {
-	fail "Test failed due to previous errors"
+	send_user "\nFAILURE\n"
 }
+
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test full set of srun --gpu options and scontrol show step.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2018 SchedMD LLC
 # Written by Morris Jette
@@ -26,34 +30,39 @@
 ############################################################################
 source ./globals
 
+set test_id     "39.3"
 set exit_code   0
 set file_in     "test$test_id.input"
 
-if {![check_config_select "cons_tres"]} {
-    skip "This test is only compatible with select/cons_tres"
+print_header $test_id
+
+if {[test_cons_tres]} {
+        send_user "\nValid configuration, using select/cons_tres\n"
+} else {
+        send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
+        exit 0
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes > 1} {
 	set nb_nodes 2
 }
-set gpu_cnt [get_highest_gres_count $nb_nodes "gpu"]
+set gpu_cnt [get_gpu_count $nb_nodes]
+if {$gpu_cnt < 0} {
+	send_user "\nFAILURE: Error getting GPU count\n"
+	exit 1
+}
 if {$gpu_cnt < 1} {
-	skip "This test requires 1 or more GPUs on $nb_nodes nodes of the default partition"
+	send_user "\nWARNING: This test requires 1 or more GPUs per node in the default partition\n"
+	exit 0
 }
+get_node_config
+send_user "\nGPUs per node count is $gpu_cnt\n"
+send_user "Sockets per node is $sockets_per_node\n"
+send_user "CPUs per socket is $cpus_per_socket\n\n"
 
-set node_name [get_nodes_by_request "--gres=gpu:1 -n1 -t1"]
-if { [llength $node_name] != 1 } {
-	skip "This test need to be able to submit jobs with at least --gres=gpu:1"
-}
-set cpus_per_node     [get_node_param $node_name "CPUTot"]
-set sockets_per_node  [get_node_param $node_name "Sockets"]
-set cpus_per_socket   [expr $cpus_per_node / $sockets_per_node]
-
-log_debug "GPUs per node count is $gpu_cnt"
-log_debug "Sockets per node is $sockets_per_node"
-log_debug "CPUs per socket is $cpus_per_socket"
-
+set cpus_per_node [expr $sockets_per_node * $cpus_per_socket]
 if {$gpu_cnt > $cpus_per_node} {
 	set gpu_cnt $cpus_per_node
 }
@@ -66,8 +75,7 @@ if {$nb_nodes > 1} {
 	incr tot_gpus $gpu_cnt
 }
 set gpus_per_node $gpu_cnt
-if {$gpus_per_node > 1 && [expr $gpus_per_node % 2] == 0 && \
-    ($sockets_per_node > 1 || $cpus_per_socket > 1)} {
+if {$gpus_per_node > 1 && [expr $gpus_per_node % 2] == 0 && ($sockets_per_node > 1 || $cpus_per_socket > 1)} {
 	set ntasks [expr $nb_nodes * 2]
 } else {
 	set ntasks $nb_nodes
@@ -120,7 +128,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -128,7 +136,7 @@ expect {
 	}
 }
 if {$match != 7} {
-	log_error "srun gpu options not fully processed ($match != 7)"
+	send_user "\nFAILURE: srun gpu options not fully processed ($match != 7)\n"
 	set exit_code 1
 
 }
@@ -148,7 +156,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -156,11 +164,13 @@ expect {
 	}
 }
 if {$match != 1} {
-	fail "srun gpu options not fully processed ($match != 1)"
+	send_user "\nFAILURE: srun gpu options not fully processed ($match != 1)\n"
+	set exit_code 1
+
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

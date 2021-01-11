@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of "scontrol notify <jobid> <message>"
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2007 The Regents of the University of California.
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -29,12 +33,15 @@
 ############################################################################
 source ./globals
 
+set test_id        "3.10"
 set authorized     1
 set exit_code      0
 set file_err       "test$test_id.error"
 set file_in        "test$test_id.input"
 set file_out       "test$test_id.output"
 set job_id         0
+
+print_header $test_id
 
 #
 # Start a batch job
@@ -52,11 +59,13 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 if {[wait_for_job $job_id "RUNNING"] != 0} {
+	send_user "\nFAILURE: waiting for job to start\n"
 	cancel_job $job_id
-	fail "Waiting for job to start"
+	exit 1
 }
 # Add delay to make sure job step fully starts
 exec $bin_sleep 2
@@ -74,9 +83,10 @@ expect {
 	}
 }
 if {$authorized == 0} {
+	send_user "\nWARNING: You are not authorized to run this test\n"
 	cancel_job $job_id
 	exec rm -f $file_in $file_out $file_err
-	skip "You are not authorized to run this test"
+	exit 0
 }
 cancel_job $job_id
 
@@ -96,17 +106,17 @@ if {[wait_for_file $file_err] == 0} {
 		}
 	}
 	if {$got_message != 1} {
-		log_error "Message not received"
+		send_user "\nFAILURE: message not received\n"
 		set exit_code 1
 	}
 } else {
 	set exit_code 1
 }
 if {$exit_code == 0} {
-	log_debug "So far, so good"
+	send_user "\nSo far, so good\n\n"
 	exec rm -f $file_in $file_out $file_err
 } else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
 }
 
 #
@@ -121,12 +131,14 @@ expect {
 		set job_id $expect_out(1,string)
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 }
 if {$job_id == 0} {
-	fail "srun failed to create job"
+	send_user "\nFAILURE: srun failed to create job\n"
+	exit 1
 }
 
 #
@@ -143,8 +155,9 @@ expect {
 	}
 }
 if {$authorized == 0} {
+	send_user "\nWARNING: You are not authorized to run this test\n"
 	cancel_job $job_id
-	skip "You are not authorized to run this test"
+	exit 0
 }
 
 #
@@ -158,20 +171,23 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$matches == 0} {
-	fail "Notification not received by srun"
+	send_user "\nFAILURE: notification not received by srun\n"
+	set exit_code 1
 }
 
 if {[cancel_job $job_id] != 0} {
-	fail "Unable to cancel job ($job_id)"
+	set exit_code 1
 }
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

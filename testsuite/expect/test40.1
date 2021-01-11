@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test some invalid gres/mps job option
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2018 SchedMD LLC
 # Written by Morris Jette
@@ -26,33 +30,49 @@
 ############################################################################
 source ./globals
 
+set test_id     "40.1"
 set exit_code   0
 set job_id      0
 
-set nb_nodes [get_node_cnt_in_part]
+print_header $test_id
 
-if {[llength [get_nodes_by_request "--gres=mps:100 -t1"]] == 0} {
-	skip "This test requires being able to submit job with --gres=mps:100"
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
+
+set mps_cnt [get_mps_count 1]
+if {$mps_cnt < 0} {
+	send_user "\nFAILURE: Error getting MPS count\n"
+	exit 1
 }
+if {$mps_cnt < 1} {
+	send_user "\nWARNING: This test requires 1 or more MPS in the default partition\n"
+	exit 0
+}
+if {$mps_cnt < 100} {
+#	This could be a legitimate configuration for testing purposes, but not likley for production use
+	send_user "\nFAILURE: MPS count per node is unexpectedly low ($mps_cnt < 100). Check your configuration\n"
+	set exit_code 1
+}
+send_user "\nMPS count is $mps_cnt\n"
 
 #
 # Request both GPUs and MPS in single request
 #
-log_info "==== TEST 1 ===="
+send_user "\n\n==== TEST 1 ====\n"
 spawn $sbatch --gres=mps:1,gpu:1 -N1 --output=/dev/null -t1 --wrap $bin_hostname
 expect {
 	-re "Submitted batch job ($number)" {
 		cancel_job $expect_out(1,string)
-		log_error "batch request not rejected"
+		send_user "\nFAILURE: batch request not rejected\n"
 		set exit_code 1
 		exp_continue
 	}
 	-re "error: " {
-		log_debug "Error is expected, no worries"
+		send_user "\nError is expected, no worries.\n"
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -63,21 +83,21 @@ expect {
 #
 # Request MPS plus GPU frequency
 #
-log_info "==== TEST 2 ===="
+send_user "\n\n==== TEST 2 ====\n"
 spawn $sbatch --gres=mps:1 --gpu-freq=high -N1 --output=/dev/null -t1 --wrap $bin_hostname
 expect {
 	-re "Submitted batch job ($number)" {
 		cancel_job $expect_out(1,string)
-		log_error "batch request not rejected"
+		send_user "\nFAILURE: batch request not rejected\n"
 		set exit_code 1
 		exp_continue
 	}
 	-re "error: " {
-		log_debug "Error is expected, no worries"
+		send_user "\nError is expected, no worries.\n"
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -94,6 +114,7 @@ expect {
 #	 The tests already exist in src/common/gres.c to reject such jobs
 #
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

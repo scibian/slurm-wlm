@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test sdiag -V	(display version)
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2012 SchedMD LLC
 #
@@ -25,8 +29,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "27.3"
 set exit_code   0
 set matches     0
+
+print_header $test_id
 
 #
 # Report the sdiag version format
@@ -34,12 +41,12 @@ set matches     0
 
 spawn $sdiag -V
 expect {
-	-re "slurm \[0-9]*\\.\[0-9]*\\.\[0-9]*" {
+	-re "slurm \[0-9]*.\[0-9]*.\[0-9]*" {
 		incr matches
 		exp_continue
 	}
 	timeout {
-		log_error "sdiag not responding"
+		send_user "\nFAILURE: sdiag not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -48,9 +55,11 @@ expect {
 }
 
 if {$matches != 1} {
-	fail "sdiag -V failed ($matches)"
+	send_user "\nFAILURE: sdiag -V failed ($matches)\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

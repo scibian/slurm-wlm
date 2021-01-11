@@ -132,6 +132,8 @@ char *sensor_config_file = NULL;
  */
 static time_t last_update_time = 0;
 static time_t previous_update_time = 0;
+static stepd_step_rec_t *job = NULL;
+static int context_id = -1;
 
 /* array of struct to track the status of multiple sensors */
 typedef struct sensor_status {
@@ -166,32 +168,6 @@ static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 pthread_t thread_ipmi_id_launcher = 0;
 pthread_t thread_ipmi_id_run = 0;
-
-static bool _is_thread_launcher(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmd");
-	}
-
-	return run;
-}
-
-static bool _run_in_daemon(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmd,slurmstepd");
-	}
-
-	return run;
-}
 
 static int _running_profile(void)
 {
@@ -830,7 +806,10 @@ static int _get_joules_task(uint16_t delta)
 	acct_gather_energy_t *energies = NULL;
 	uint16_t sensor_cnt = 0;
 
-	if (slurm_get_node_energy(NULL, delta, &sensor_cnt, &energies)) {
+	xassert(context_id != -1);
+
+	if (slurm_get_node_energy(
+		    NULL, context_id, delta, &sensor_cnt, &energies)) {
 		error("_get_joules_task: can't get info from slurmd");
 		return SLURM_ERROR;
 	}
@@ -940,7 +919,7 @@ extern int fini(void)
 {
 	uint16_t i;
 
-	if (!_run_in_daemon())
+	if (!running_in_slurmdstepd())
 		return SLURM_SUCCESS;
 
 	flag_energy_accounting_shutdown = true;
@@ -981,7 +960,7 @@ extern int fini(void)
 extern int acct_gather_energy_p_update_node_energy(void)
 {
 	int rc = SLURM_SUCCESS;
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	return rc;
 }
@@ -995,12 +974,12 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	time_t *last_poll = (time_t *)data;
 	uint16_t *sensor_cnt = (uint16_t *)data;
 
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	switch (data_type) {
 	case ENERGY_DATA_NODE_ENERGY_UP:
 		slurm_mutex_lock(&ipmi_mutex);
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			if (_thread_init() == SLURM_SUCCESS)
 				_thread_update_node_energy();
 		} else {
@@ -1031,7 +1010,7 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 		break;
 	case ENERGY_DATA_JOULES_TASK:
 		slurm_mutex_lock(&ipmi_mutex);
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			if (_thread_init() == SLURM_SUCCESS)
 				_thread_update_node_energy();
 		} else {
@@ -1057,7 +1036,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 	int rc = SLURM_SUCCESS;
 	int *delta = (int *)data;
 
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	switch (data_type) {
 	case ENERGY_DATA_RECONFIG:
@@ -1068,6 +1047,10 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 		_get_joules_task(*delta);
 		_ipmi_send_profile();
 		slurm_mutex_unlock(&ipmi_mutex);
+		break;
+	case ENERGY_DATA_STEP_PTR:
+		/* set global job if needed later */
+		job = (stepd_step_rec_t *)data;
 		break;
 	default:
 		error("acct_gather_energy_p_set_data: unknown enum %d",
@@ -1226,7 +1209,8 @@ extern void acct_gather_energy_p_conf_options(s_p_options_t **full_options,
 	transfer_s_p_options(full_options, options, full_options_cnt);
 }
 
-extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
+extern void acct_gather_energy_p_conf_set(int context_id_in,
+					  s_p_hashtbl_t *tbl)
 {
 	char *tmp_char;
 
@@ -1334,7 +1318,8 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 		}
 	}
 
-	if (!_run_in_daemon())
+	context_id = context_id_in;
+	if (!running_in_slurmdstepd())
 		return;
 
 	if (!flag_init) {
@@ -1342,7 +1327,7 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 		_parse_sensor_descriptions();
 
 		flag_init = true;
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			slurm_thread_create(&thread_ipmi_id_launcher,
 					    _thread_launcher, NULL);
 			if (debug_flags & DEBUG_FLAG_ENERGY)

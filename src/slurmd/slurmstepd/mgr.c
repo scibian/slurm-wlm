@@ -236,7 +236,7 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 	 * it is resumed */
 	wait_for_resumed(resp_msg->msg_type);
 	while (1) {
-		if (resp_msg->protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		if (resp_msg->protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 			int msg_rc = 0;
 			msg_rc = slurm_send_recv_rc_msg_only_one(resp_msg,
 								 &rc, 0);
@@ -244,13 +244,8 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 			if (!msg_rc && !rc)
 				break;
 		} else {
-			/*
-			 * Old unreliable method. See slurm_send_only_node_msg()
-			 * for further details.
-			 */
-			rc = slurm_send_only_node_msg(resp_msg);
-			if (rc == SLURM_SUCCESS)
-				break;
+			rc = SLURM_ERROR;
+			break;
 		}
 
 		if (!max_retry)
@@ -329,8 +324,8 @@ static uint32_t _get_exit_code(stepd_step_rec_t *job)
 		 * tasks in case one of them called abort
 		 */
 		if (WIFSIGNALED(job->task[i]->estatus)) {
-			error("get_exit_code task %u died by signal: %d",
-			      i, WTERMSIG(job->task[i]->estatus));
+			info("get_exit_code task %u died by signal: %d",
+			     i, WTERMSIG(job->task[i]->estatus));
 			step_rc = job->task[i]->estatus;
 			break;
 		}
@@ -733,8 +728,6 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	int rc = -1;
 	int retcode;
 	int i;
-	uint16_t port = 0;
-	char ip_buf[16];
 	static bool acct_sent = false;
 
 	debug2("_one_step_complete_msg: first=%d, last=%d", first, last);
@@ -828,17 +821,14 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	while (slurm_send_recv_controller_rc_msg(&req, &rc,
 						 working_cluster_rec) < 0) {
 		if (i++ == 1) {
-			slurm_get_ip_str(&step_complete.parent_addr, &port,
-					 ip_buf, sizeof(ip_buf));
-			error("Rank %d failed sending step completion message "
-			      "directly to slurmctld (%s:%u), retrying",
-			      step_complete.rank, ip_buf, port);
+			error("Rank %d failed sending step completion message directly to slurmctld, retrying",
+			      step_complete.rank);
 		}
 		sleep(60);
 	}
 	if (i > 1) {
-		info("Rank %d sent step completion message directly to "
-		     "slurmctld (%s:%u)", step_complete.rank, ip_buf, port);
+		info("Rank %d sent step completion message directly to slurmctld",
+		     step_complete.rank);
 	}
 
 finished:
@@ -933,15 +923,6 @@ extern void stepd_send_step_complete_msgs(stepd_step_rec_t *job)
 	}
 
 	slurm_mutex_unlock(&step_complete.lock);
-}
-
-/* This dummy function is provided so that the checkpoint functions can
- * 	resolve this symbol name (as needed for some of the checkpoint
- *	functions used by slurmctld). */
-extern void agent_queue_request(void *dummy)
-{
-	fatal("Invalid agent_queue_request function call, likely from "
-	      "checkpoint plugin");
 }
 
 static void _set_job_state(stepd_step_rec_t *job, slurmstepd_state_t new_state)
@@ -1079,8 +1060,8 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	jobacct_gather_set_proctrack_container_id(job->cont_id);
 	jobacct_gather_add_task(pid, &jobacct_id, 1);
 #ifdef HAVE_NATIVE_CRAY
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 #else
@@ -1197,7 +1178,6 @@ job_manager(stepd_step_rec_t *job)
 {
 	int  rc = SLURM_SUCCESS;
 	bool io_initialized = false;
-	char *ckpt_type = slurm_get_checkpoint_type();
 	char *err_msg = NULL;
 
 	debug3("Entered job_manager for %u.%u pid=%d",
@@ -1219,7 +1199,6 @@ job_manager(stepd_step_rec_t *job)
 	    (switch_init(1) != SLURM_SUCCESS)			||
 	    (slurm_proctrack_init() != SLURM_SUCCESS)		||
 	    (slurmd_task_init() != SLURM_SUCCESS)		||
-	    (checkpoint_init(ckpt_type) != SLURM_SUCCESS)	||
 	    (jobacct_gather_init() != SLURM_SUCCESS)		||
 	    (acct_gather_profile_init() != SLURM_SUCCESS)	||
 	    (slurm_cred_init() != SLURM_SUCCESS)		||
@@ -1252,13 +1231,12 @@ job_manager(stepd_step_rec_t *job)
 
 	if (!job->batch && (job->accel_bind_type || job->tres_bind ||
 	    job->tres_freq)) {
-		uint32_t cpu_cnt = MAX(conf->conf_cpus, conf->block_map_size);
 		List gres_list = NULL;
 		(void) gres_plugin_init_node_config(conf->node_name,
 						    conf->gres,
 						    &gres_list);
 		debug2("Running gres_plugin_node_config_load()!");
-		(void) gres_plugin_node_config_load(cpu_cnt, conf->node_name,
+		(void) gres_plugin_node_config_load(conf->cpus, conf->node_name,
 						gres_list,
 						(void *)&xcpuinfo_abs_to_mac,
 						(void *)&xcpuinfo_mac_to_abs);
@@ -1278,19 +1256,6 @@ job_manager(stepd_step_rec_t *job)
 		/* error("switch_g_job_init: %m"); already logged */
 		rc = ESLURM_INTERCONNECT_FAILURE;
 		goto fail2;
-	}
-
-	/* fork necessary threads for checkpoint */
-	if (checkpoint_stepd_prefork(job) != SLURM_SUCCESS) {
-		error("Failed checkpoint_stepd_prefork");
-		rc = SLURM_ERROR;
-		xstrfmtcat(err_msg,
-			   "checkpoint_stepd_prefork failure for job %u.%u on %s",
-			   job->jobid, job->stepid, conf->hostname);
-		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
-		xfree(err_msg);
-		io_close_task_fds(job);
-		goto fail3;
 	}
 
 	/* fork necessary threads for MPI */
@@ -1480,7 +1445,6 @@ fail1:
 	if (!job->batch && core_spec_g_clear(job->cont_id))
 		error("core_spec_g_clear: %m");
 
-	xfree(ckpt_type);
 	return(rc);
 }
 
@@ -1949,8 +1913,8 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	}
 //	jobacct_gather_set_proctrack_container_id(job->cont_id);
 #ifdef HAVE_NATIVE_CRAY
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 #else
@@ -2096,8 +2060,8 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 	char **tmp_env;
 	uint32_t task_offset = 0;
 
-	if (job->pack_task_offset != NO_VAL)
-		task_offset = job->pack_task_offset;
+	if (job->het_job_task_offset != NO_VAL)
+		task_offset = job->het_job_task_offset;
 	do {
 		pid = wait3(&status, waitflag ? 0 : WNOHANG, &rusage);
 		if (pid == -1) {
@@ -2150,6 +2114,8 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 			job->envtp->localid = t->id;
 			job->envtp->distribution = -1;
 			job->envtp->batch_flag = job->batch;
+			job->envtp->uid = job->uid;
+			job->envtp->user_name = xstrdup(job->user_name);
 
 			/*
 			 * Modify copy of job's environment. Do not alter in
@@ -2344,21 +2310,9 @@ static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 		goto error;
 	}
 
-	/*
-	 * lseek() plus the following write() ensure the file is created
-	 * as the appropriate length.
-	 */
-	if (lseek(fd, length - 1, SEEK_SET) == -1) {
-		error("%s: lseek to %d failed on `%s`: %m",
+	if (ftruncate(fd, length) == -1) {
+		error("%s: ftruncate to %d failed on `%s`: %m",
 		      __func__, length, script);
-		close(fd);
-		goto error;
-	}
-
-	if (write(fd, "", 1) == -1) {
-		error("%s: write failed", __func__);
-		if (errno == ENOSPC)
-			stepd_drain_node("SlurmdSpoolDir is full");
 		close(fd);
 		goto error;
 	}
@@ -2856,8 +2810,8 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 		uint32_t jobid;
 
 #ifdef HAVE_NATIVE_CRAY
-		if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-			jobid = job->pack_jobid;
+		if (job->het_job_id && (job->het_job_id != NO_VAL))
+			jobid = job->het_job_id;
 		else
 			jobid = job->jobid;
 #else

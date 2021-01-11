@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validate scontrol update command for front end nodes.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2011 Lawrence Livermore National Security.
@@ -29,6 +33,7 @@
 ############################################################################
 source ./globals
 
+set test_id        "3.12"
 set authorized     1
 set exit_code      0
 set node_list      ""
@@ -37,22 +42,24 @@ set node_old_state ""
 set node_new_state ""
 set read_state     ""
 
+print_header $test_id
+
 set matches     0
 set node_name   ""
 spawn $scontrol show FrontendName
 expect {
-	-re "FrontendName=($re_word_str) State=ALLOCATED " {
+	-re "FrontendName=($alpha_numeric_under) State=ALLOCATED " {
 		set node_name $expect_out(1,string)
 		incr matches
 		exp_continue
 	}
-	-re "FrontendName=($re_word_str) State=IDLE " {
+	-re "FrontendName=($alpha_numeric_under) State=IDLE " {
 		set node_name $expect_out(1,string)
 		incr matches
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -60,7 +67,8 @@ expect {
 	}
 }
 if {$matches < 1} {
-	skip "No suitable front end nodes found"
+	send_user "\nWARNING: no suitable front end nodes found\n"
+	exit $exit_code
 }
 
 
@@ -69,7 +77,7 @@ if {$matches < 1} {
 #
 spawn $scontrol update FrontendName=$node_name State=DRAIN Reason=TESTING
 expect {
-	-re "slurm_update error: ($re_word_str) ($re_word_str)" {
+	-re "slurm_update error: ($alpha_numeric_under) ($alpha_numeric_under)" {
 		set access_err 0
 		set err_msg1 $expect_out(1,string)
 		set err_msg2 $expect_out(2,string)
@@ -80,14 +88,15 @@ expect {
 			set access_err 1
 		}
 		if {$access_err == 1} {
-			skip "User not authorized"
+			send_user "\nWARNING: user not authorized\n"
+			exit $exit_code
 		} else {
 			set authorized 0
 		}
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -102,16 +111,16 @@ set read_state  0
 set reason_code ""
 spawn $scontrol show FrontendName $node_name
 expect {
-	-re "State=($re_word_str).DRAIN" {
+	-re "State=($alpha_cap).DRAIN" {
 		set read_state 1
 		exp_continue
 	}
-	-re "Reason=($re_word_str)" {
+	-re "Reason=($alpha_cap)" {
 		set reason_code $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -120,7 +129,7 @@ expect {
 }
 if {$authorized == 1} {
 	if {$read_state != 1} {
-		log_error "scontrol state change error"
+		send_user "\nFAILURE: scontrol state change error\n"
 		set exit_code 1
 	}
 
@@ -130,7 +139,7 @@ if {$authorized == 1} {
 	}
 
 	if {$reason_set != 1} {
-		log_error "scontrol reason change error"
+		send_user "\nFAILURE: scontrol reason change error\n"
 		set exit_code 1
 	}
 }
@@ -144,12 +153,12 @@ expect {
 		exp_continue
 	}
 	-re "slurm_update error:" {
-		log_error "scontrol update error"
+		send_user "\nFAILURE: scontrol update error\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -163,12 +172,12 @@ expect {
 set read_state 0
 spawn  $scontrol show FrontendName $node_name
 expect {
-	-re "State=($re_word_str).DRAIN" {
+	-re "State=($alpha_cap).DRAIN" {
 		set read_state 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -176,9 +185,11 @@ expect {
 	}
 }
 if {$read_state != 0} {
-	fail "scontrol state change error"
+	send_user "\nFAILURE: scontrol state change error\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

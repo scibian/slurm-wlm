@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Verify srun behaves when its controlling terminal disappears.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,8 +32,11 @@
 ############################################################################
 source ./globals
 
+set test_id              "1.55"
 set test_script          "test$test_id.sh"
 set step_id              0
+
+print_header $test_id
 
 #
 # Create a test script to be launch by srun
@@ -54,7 +61,7 @@ set stepid 0
 set job_running 0
 set srun_pid [spawn $srun --unbuffered -v -n1 -t1 ./$test_script]
 expect {
-	-re "launching (($number)\\.$step_id)" {
+	-re "launching (($number)\.$step_id)" {
 		set stepid $expect_out(1,string)
 		set jobid $expect_out(2,string)
 		exp_continue
@@ -63,21 +70,23 @@ expect {
 		set job_running 1
 	}
 	timeout {
+		send_user "\nFAILURE: Failed to launch test program through srun\n"
 		slow_kill $srun_pid
-		fail "Failed to launch test program through srun"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$jobid == 0 || $job_running == 0} {
-	fail "Failed to launch test program through srun"
+	send_user "\nFAILURE: Failed to launch test program through srun\n"
+	exit 1
 }
 
 #
 # Kill srun's stdio streams
 #
-log_debug "Test saw stepid $stepid"
+send_user "Test saw stepid $stepid\n"
 set file [exp_open]
 close $file
 
@@ -90,35 +99,38 @@ while {[string compare $running ""]} {
 	set running [exec $squeue --noheader --states=running --steps=$stepid]
 	sleep 1
 	if {$i == 30} {
+		send_user "\nFAILURE: job step is not completing\n"
 		cancel_job $jobid
 		sleep 5
 		exec kill -9 $srun_pid
-		fail "Job step is not completing"
+		exit 1
 	}
 	incr i 1
 }
-log_debug "Test sees step is gone, srun should have exited as well"
+send_user "Test sees step is gone, srun should have exited as well.\n"
 
 #
 # And finally check to see if srun is still hanging around (it should
 # have exited by now) and job has completed
 #
 if [catch {exec kill -0 $srun_pid}] {
-	log_debug "Srun command is terminated, as desired"
+	send_user "\nsrun command is terminated, as desired\n"
 	set exit_code 0
 } else {
-	log_error "srun is still running after job exits!"
+	send_user "\nFAILURE: srun is still running after job exits!\n"
 	set exit_code 1
 }
 spawn $squeue --noheader --jobs=$jobid
 expect {
 	-re "R" {
-		log_error "Job not completed!"
+		send_user "\nFAILURE: job not completed!\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		fail "Squeue not responding"
+		send_user "\nFAILURE: squeue not responding\n"
+		set exit_code 1
+		exit 1
 	}
 	eof {
 		wait
@@ -126,8 +138,10 @@ expect {
 }
 
 if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 	exec $bin_rm -f $test_script
+	exit 0
 } else {
 	cancel_job $jobid
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit 1
 }

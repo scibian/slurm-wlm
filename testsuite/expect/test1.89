@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of CPU affinity/binding support.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2005 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,36 +33,38 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.89"
 set exit_code   0
 set file_prog   "test$test_id.prog"
+set prompt      "PROMPT:"
+
+print_header $test_id
 
 #
 # Test if CPU affinity support is supported.
 #
-if {![param_contains [get_affinity_types] "affinity"] && [get_config_param "TaskAffinity"] ne "yes"} {
-	skip "CPU affinity not supported on this system"
+if {![test_cpu_affinity_or_cgroup]} {
+	send_user "\nWARNING: CPU affinity not supported on this system\n"
+	exit 0
 }
-log_info "Task affinity plugin installed"
+send_user "\ntask affinity plugin installed\n"
 
-set show_partition_output [run_command_output -fail "$scontrol show partition [default_partition]"]
-if [regexp {OverSubscribe=FORCE} $show_partition_output] {
-	skip "This test is not compatible with OverSubscribe=FORCE"
+set force 0
+log_user 0
+spawn $scontrol show partition [default_partition]
+expect {
+	-re "OverSubscribe=FORCE" {
+		set force 1
+		exp_continue
+	}
+	eof {
+		wait
+	}
 }
-
-set node_name [get_nodes_by_request "-N1 --exclusive -t5"]
-if { [llength $node_name] != 1 } {
-	skip "This test need to be able to submit jobs with at least -N1 --exclusive -t5"
-}
-if {[get_node_param $node_name "CoreSpecCount"] != "MISSING"} {
-	skip "This test is incompatible with nodes that have a CoreSpecCount (e.g. $node_name)"
-}
-if {[get_node_param $node_name "CPUSpecList"] != "MISSING"} {
-	skip "This test is incompatible with nodes that have a CPUSpecList (e.g. $node_name)"
-}
-
-proc cleanup {} {
-	global bin_rm file_prog
-	exec $bin_rm -f $file_prog
+log_user 1
+if {$force == 1} {
+	send_user "\nWARNING: This test is not compatible with OverSubscribe=FORCE\n"
+	exit 0
 }
 
 #
@@ -71,22 +78,23 @@ exec $bin_chmod 700 $file_prog
 # Create an allocation
 #
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -N1 --exclusive -t5 -w $node_name $bin_bash]
+set salloc_pid [spawn $salloc -N1 --exclusive -t5 $bin_bash]
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
+		send "export PS1=\"$prompt\"\r"
 		exp_continue
 	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+	-re "export PS1=\"$prompt\"\r" {
 		exp_continue
-	}
-	-re $test_prompt {
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		slow_kill $salloc_pid
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
+	}
+	-re $prompt {
 	}
 }
 
@@ -95,7 +103,7 @@ expect {
 #
 set timeout 1
 expect {
-	-re $test_prompt {
+	-re $prompt {
 		exp_continue
 	}
 	timeout {
@@ -116,15 +124,17 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 
@@ -132,12 +142,14 @@ if {$task_cnt > 32} {
 	send "exit\r"
 	expect {
 		-re "error" {
-			log_error "Some error occurred"
+			send_user "\nFAILURE: some error occurred\n"
 			set exit_code 1
 		}
 		timeout {
+			send_user "\nFAILURE: salloc not responding "
+			send_user "or failure to recognize prompt\n"
 			cancel_job $job_id
-			log_error "salloc not responding or failure to recognize prompt"
+			exit 1
 		}
 		eof {
 			wait
@@ -146,11 +158,9 @@ if {$task_cnt > 32} {
 
 	if {$exit_code == 0} {
 		exec $bin_rm -f $file_prog
-		log_warn "Expect unable to work with more than 32-bit numbers"
-		pass
-	} else {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+		send_user "\nWARNING: Expect unable to work with more than 32-bit numbers\n"
 	}
+	exit $exit_code
 }
 
 #
@@ -165,19 +175,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $expected_mask} {
-	log_error "Affinity mask inconsistency ($task_mask != $expected_mask)"
+	send_user "\nFAILURE: affinity mask inconsistency ($task_mask != $expected_mask)\n"
 	set exit_code 1
 }
 
@@ -192,19 +204,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $task_cnt} {
-	log_error "Affinity mask inconsistent ($task_mask != $task_cnt)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $task_cnt)\n"
 	set exit_code 1
 }
 set verbose_cnt 0
@@ -215,21 +229,23 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 # Both task/affinity and task/cpu will generate verbose message,
 # so check for double messages in case both plugins are configured.
 if {$verbose_cnt != $task_cnt && $verbose_cnt != [expr $task_cnt * 2]} {
-	log_error "Verbose messages count inconsistent ($verbose_cnt != $task_cnt)"
+	send_user "\nFAILURE: verbose messages count inconsistent ($verbose_cnt != $task_cnt)\n"
 	set exit_code 1
 }
 
@@ -247,19 +263,21 @@ while {$cpu_cnt < $task_cnt} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
+			send_user "\nFAILURE: some error occurred\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
+			send_user "\nFAILURE: salloc not "
+			send_user "responding or failure to recognize prompt\n"
 			cancel_job $job_id
-			fail "salloc not responding or failure to recognize prompt"
+			exit 1
 		}
-		-re $test_prompt {
+		-re $prompt {
 		}
 	}
 	if {$mask_sum != $task_cnt * $mask} {
-		log_error "Affinity mask inconsistent ($mask_sum != $task_cnt * $mask)"
+		send_user "\nFAILURE: affinity mask inconsistent ($mask_sum != $task_cnt * $mask)\n"
 		set exit_code 1
 	}
 	incr cpu_cnt 1
@@ -280,19 +298,21 @@ while {$cpu_cnt < $task_cnt} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
+			send_user "\nFAILURE: some error occurred\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
+			send_user "\nFAILURE: salloc not "
+			send_user "responding or failure to recognize prompt\n"
 			cancel_job $job_id
-			fail "salloc not responding or failure to recognize prompt"
+			exit 1
 		}
-		-re $test_prompt {
+		-re $prompt {
 		}
 	}
 	if {$mask_sum != $task_cnt * $mask} {
-		log_error "Affinity mask inconsistent ($mask_sum != $task_cnt * $mask)"
+		send_user "\nFAILURE: affinity mask inconsistent ($mask_sum != $task_cnt * $mask)\n"
 		set exit_code 1
 	}
 	incr cpu_cnt 1
@@ -335,13 +355,14 @@ while {$cpu_cnt < $task_cnt} {
 	incr cpu_cnt 1
 }
 
-log_debug "full_mask: $full_mask"
-log_debug "fwd_map:  $fwd_map"
-log_debug "fwd_mask: $fwd_mask"
-log_debug "rev_map:  $rev_map"
-log_debug "rev_mask: $rev_mask"
-log_debug "alt_map:  $alt_map"
-log_debug "alt_mask: $alt_mask"
+send_user "\n"
+send_user "full_mask: $full_mask\n"
+send_user "fwd_map:  $fwd_map\n"
+send_user "fwd_mask: $fwd_mask\n"
+send_user "rev_map:  $rev_map\n"
+send_user "rev_mask: $rev_mask\n"
+send_user "alt_map:  $alt_map\n"
+send_user "alt_mask: $alt_mask\n"
 
 #
 # Run all tasks bound to a different CPU by specifying a forward map
@@ -354,23 +375,26 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
-# # Run all tasks bound to a different CPU by specifying a reverse map
+#
+# Run all tasks bound to a different CPU by specifying a reverse map
 #
 set task_mask 0
 send "$srun -c1 --cpu-bind=map_cpu:$rev_map ./$file_prog\r"
@@ -380,19 +404,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
@@ -407,19 +433,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
@@ -434,19 +462,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
@@ -461,19 +491,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
@@ -488,19 +520,21 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		exit 1
 	}
-	-re $test_prompt {
+	-re $prompt {
 	}
 }
 if {$task_mask != $full_mask} {
-	log_error "Affinity mask inconsistent ($task_mask != $full_mask)"
+	send_user "\nFAILURE: affinity mask inconsistent ($task_mask != $full_mask)\n"
 	set exit_code 1
 }
 
@@ -510,18 +544,26 @@ if {$task_mask != $full_mask} {
 send "exit\r"
 expect {
 	-re "error" {
-		log_error "Some error occurred"
+		send_user "\nFAILURE: some error occurred\n"
 		set exit_code 1
 	}
 	timeout {
+		send_user "\nFAILURE: salloc not responding "
+		send_user "or failure to recognize prompt\n"
 		cancel_job $job_id
-		fail "salloc not responding or failure to recognize prompt"
+		set exit_code 1
 	}
 	eof {
 		wait
 	}
 }
 
-if {$exit_code} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code). This test can fail if the node configuration in slurm.conf (sockets, cores, threads) differs from the actual configuration or if OverSubscribe=FORCE for the default partition"
+if {$exit_code == 0} {
+	exec $bin_rm -f $file_prog
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "\nNOTE: This test can fail if the node configuration in slurm.conf \n"
+	send_user "  (sockets, cores, threads) differs from the actual configuration \n"
+	send_user "  or if OverSubscribe=FORCE for the default partition.\n"
 }
+exit $exit_code

@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Validate scontrol top command to priority order jobs.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC
 # Written by Morris Jette <jette-at-schedmd.com>
@@ -26,6 +30,7 @@
 ############################################################################
 source ./globals
 
+set test_id		"2.26"
 set exit_code		0
 set file_in		"test$test_id.input"
 set job_name		"test$test_id"
@@ -42,7 +47,7 @@ proc top_enabled { } {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
 			set exit_code 1
 			exp_continue
 		}
@@ -65,7 +70,7 @@ proc submit_job { } {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
+			send_user "\nFAILURE: sbatch not responding\n"
 			set exit_code 1
 			exp_continue
 		}
@@ -96,7 +101,7 @@ proc load_job_prio { } {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
+			send_user "\nFAILURE: sbatch not responding\n"
 			set exit_code 1
 			exp_continue
 		}
@@ -117,20 +122,20 @@ proc end_it { } {
 	if {$job_id(2) > 0} {
 		exec $scancel $job_id(2)
 	}
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
+	exit $exit_code
 }
 
-if {![is_super_user] && [top_enabled] == 0} {
-	skip "Scontrol top operation disabled for this user"
+print_header $test_id
+
+if {[test_super_user] == 0 && [top_enabled] == 0} {
+	send_user "\nWARNING: scontrol top operation disabled for this user\n"
+	exit 0
 }
 
 #
 # Submit a slurm job to wait in pending state
 #
-log_debug "Submit jobs"
+send_user "\nSubmit jobs\n\n"
 make_bash_script $file_in "
   $bin_sleep 600
 "
@@ -138,23 +143,23 @@ set job_id(0) [submit_job]
 set job_id(1) [submit_job]
 set job_id(2) [submit_job]
 if {$job_id(0) == 0 || $job_id(1) == 0 || $job_id(2) == 0} {
-	log_error "Failed to submit jobs"
+	send_user "\nFAILURE: failed to submit jobs\n"
 	set exit_code 1
 	end_it
 }
 
-log_debug "Report initial job priorities"
+send_user "\nReport initial job priorities\n\n"
 load_job_prio
 if {$prio(0) < 3 || $prio(1) < 3 || $prio(2) < 3} {
 	log_warn "Priorities are too low to test. Increase the PriorityWeight values when using the priority/multifactor plugin."
 	end_it
 }
 
-log_debug "Reset and test job priorities"
+send_user "\Reset and test job priorities\n\n"
 spawn $scontrol top $job_id(2),$job_id(1)
 expect {
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -164,16 +169,16 @@ expect {
 }
 load_job_prio
 if {$prio(2) <= $prio(1) || $prio(1) <= $prio(0)} {
-	log_error "Job priorities not reset as expected ($prio(2) <= $prio(1) <= $prio(0))"
+	send_user "\nFAILURE: job priorities not reset as expected ($prio(2) <= $prio(1) <= $prio(0))\n"
 	set exit_code 1
 	end_it
 }
 
-log_debug "Reset and test job priorities"
+send_user "\Reset and test job priorities\n\n"
 spawn $scontrol top $job_id(0)
 expect {
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -183,12 +188,13 @@ expect {
 }
 load_job_prio
 if {$prio(0) <= $prio(1) || $prio(0) <= $prio(2)} {
-	log_error "job priorities not reset as expected ($prio(0) <= $prio(1) && $prio(0) <= $prio(2))"
+	send_user "\nFAILURE: job priorities not reset as expected ($prio(0) <= $prio(1) && $prio(0) <= $prio(2))\n"
 	set exit_code 1
 	end_it
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
+	send_user "\nSUCCESS\n"
 }
 end_it

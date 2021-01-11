@@ -64,6 +64,7 @@ enum {
 	SORTID_FEATURES,
 	SORTID_FLAGS,
 	SORTID_LICENSES,
+	SORTID_MSD,
 	SORTID_NAME,
 	SORTID_NODE_CNT,
 	SORTID_NODELIST,
@@ -134,6 +135,8 @@ static display_data_t display_data_resv[] = {
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_WATTS, "Watts", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
+	{G_TYPE_STRING, SORTID_MSD, "MaxStartDelay", false, EDIT_TEXTBOX,
+	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
 
@@ -169,6 +172,8 @@ static display_data_t create_data_resv[] = {
 	{G_TYPE_STRING, SORTID_TRES, "TRES", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_WATTS, "Watts", false, EDIT_TEXTBOX,
+	 refresh_resv, create_model_resv, admin_edit_resv},
+	{G_TYPE_STRING, SORTID_MSD, "MaxStartDelay", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
@@ -276,11 +281,11 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 		}
 		break;
 	case SORTID_DURATION:
+		type = "duration";
 		temp_int = time_str2mins((char *)new_text);
 		if (temp_int <= 0)
 			goto return_error;
 		resv_msg->duration = temp_int;
-		type = "duration";
 		break;
 	case SORTID_TIME_END:
 		resv_msg->end_time = parse_time((char *)new_text, 0);
@@ -291,15 +296,21 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 		type = "features";
 		break;
 	case SORTID_FLAGS:
-		f = parse_resv_flags(new_text, __func__);
+		f = parse_resv_flags(new_text, __func__, resv_msg);
 		type = "flags";
 		if (f == INFINITE64)
 			goto return_error;
-		resv_msg->flags = f;
 		break;
 	case SORTID_LICENSES:
 		resv_msg->licenses = xstrdup(new_text);
 		type = "licenses";
+		break;
+	case SORTID_MSD:
+		type = "MaxStartDelay";
+		temp_int = time_str2secs((char *)new_text);
+		if (temp_int < 0)
+			goto return_error;
+		resv_msg->max_start_delay = temp_int;
 		break;
 	case SORTID_NAME:
 		resv_msg->name = xstrdup(new_text);
@@ -334,6 +345,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 		type = "users";
 		break;
 	case SORTID_TRES:
+		type = "TRES";
 		if (state_control_parse_resv_tres((char *)new_text, resv_msg,
 						  &free_tres_license,
 						  &free_tres_bb,
@@ -529,7 +541,7 @@ static void _layout_resv_record(GtkTreeView *treeview,
 						 SORTID_FEATURES),
 				   resv_ptr->features);
 
-	temp_char = reservation_flags_string(resv_ptr->flags);
+	temp_char = reservation_flags_string(resv_ptr);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_resv,
 						 SORTID_FLAGS),
@@ -540,6 +552,16 @@ static void _layout_resv_record(GtkTreeView *treeview,
 				   find_col_name(display_data_resv,
 						 SORTID_LICENSES),
 				   resv_ptr->licenses);
+
+	if (resv_ptr->max_start_delay)
+		secs2time_str(resv_ptr->max_start_delay,
+			      time_buf, sizeof(time_buf));
+
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_resv,
+						 SORTID_MSD),
+				   resv_ptr->max_start_delay ?
+				   time_buf : NULL);
 
 	/* NOTE: node_cnt in reservation info from slurmctld ONE number */
 	convert_num_unit((float)resv_ptr->node_cnt,
@@ -595,7 +617,7 @@ static void _update_resv_record(sview_resv_info_t *sview_resv_info_ptr,
 				GtkTreeStore *treestore)
 {
 	char tmp_duration[40], tmp_end[40], tmp_nodes[40], tmp_start[40];
-	char tmp_cores[40];
+	char tmp_cores[40], tmp_msd[40];
 	char *tmp_flags;
 	char *tmp_watts = NULL;
 	reserve_info_t *resv_ptr = sview_resv_info_ptr->resv_ptr;
@@ -607,7 +629,7 @@ static void _update_resv_record(sview_resv_info_t *sview_resv_info_ptr,
 	slurm_make_time_str((time_t *)&resv_ptr->end_time, tmp_end,
 			    sizeof(tmp_end));
 
-	tmp_flags = reservation_flags_string(resv_ptr->flags);
+	tmp_flags = reservation_flags_string(resv_ptr);
 
 	convert_num_unit((float)resv_ptr->core_cnt,
 			 tmp_cores, sizeof(tmp_cores), UNIT_NONE, NO_VAL,
@@ -622,6 +644,10 @@ static void _update_resv_record(sview_resv_info_t *sview_resv_info_ptr,
 
 	tmp_watts = state_control_watts_to_str(resv_ptr->resv_watts);
 
+	if (resv_ptr->max_start_delay)
+		secs2time_str(resv_ptr->max_start_delay,
+			      tmp_msd, sizeof(tmp_msd));
+
 	/* Combining these records provides a slight performance improvement */
 	gtk_tree_store_set(treestore, &sview_resv_info_ptr->iter_ptr,
 			   SORTID_ACCOUNTS,   resv_ptr->accounts,
@@ -634,6 +660,8 @@ static void _update_resv_record(sview_resv_info_t *sview_resv_info_ptr,
 			   SORTID_FEATURES,   resv_ptr->features,
 			   SORTID_FLAGS,      tmp_flags,
 			   SORTID_LICENSES,   resv_ptr->licenses,
+			   SORTID_MSD,        resv_ptr->max_start_delay ?
+			   tmp_msd : NULL,
 			   SORTID_NAME,       resv_ptr->name,
 			   SORTID_NODE_CNT,   tmp_nodes,
 			   SORTID_NODE_INX,   resv_ptr->node_inx,

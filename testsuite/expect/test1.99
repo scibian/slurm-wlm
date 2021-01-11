@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Validate that the SrunPortRange is enforced when starting
 #          a job with srun.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2014 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -27,8 +31,9 @@
 ############################################################################
 source ./globals
 
+set test_id      1.99
 set exit_code    0
-set chk_ports    [get_config_param "SrunPortRange"]
+set chk_ports    [get_srun_ports]
 set cwd          "[$bin_pwd]"
 set port_dir     "test$test_id\_port_conf"
 set config_path  ""
@@ -36,11 +41,15 @@ set file_in      "test$test_id\_sc"
 set tmp_job      "test$test_id\_tmp_job"
 array set ports {}
 
-if {![is_super_user]} {
-    skip "This test can't be run without being a super user of the cluster"
+print_header $test_id
+
+if { ![test_super_user] } {
+        send_user "\nWARNING: This test can't be run without being a super user of the cluster.\n"
+	exit 0
 }
-if {$chk_ports eq "MISSING"} {
-	skip "This test requires SrunPortRange to be configured"
+if {$chk_ports == 0} {
+	send_user "\nWARNING: this test requires SrunPortRange to be configured\n"
+	exit 0
 }
 
 # split the port range into 2 numbers
@@ -52,30 +61,28 @@ foreach p $range {
 }
 
 if {[expr $ports(1) - $ports(0)] < 5} {
-	skip "This test requires SrunPortRange to be configured with at least 5 ports"
+	send_user "\nWARNING: this test requires SrunPortRange to be "
+	send_user "configured with at least 5 ports\n"
+	exit 0
 }
 
-#
-# Copy the slurm.conf file
-#
-set config_path [get_conf_path]
-fail_on_error "Test failed due to previous errors (\$exit_code = $exit_code)"
-set config_file $config_path/slurm.conf
-
-save_conf $config_file
-
 ### Check that SrunPortRange in scontrol show config and slurm.conf match ###
-log_info "---Checking SrunPortRange in slurm.conf and scontrol show conf---"
+send_user "\n---Checking SrunPortRange in slurm.conf and scontrol show conf---\n"
+
+set config_path [get_conf_path]
+if { $exit_code != 0 } {
+	exit $exit_code
+}
 
 set slurm_conf_range ""
-spawn  $bin_grep -i SrunPortRange $config_file
+spawn  $bin_grep -i SrunPortRange $config_path/slurm.conf
 expect {
-	-nocase -re "SrunPortRange=($re_word_str)" {
+	-nocase -re "SrunPortRange=($alpha_numeric_under)" {
 		set slurm_conf_range $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "cat is not responding"
+		send_user "\nFAILURE: cat is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -86,12 +93,12 @@ expect {
 set show_config_range ""
 spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep SrunPortRange"
 expect {
-	-re "SrunPortRange *=* ($re_word_str)" {
+	-re "SrunPortRange *=* ($alpha_numeric_under)" {
 		set show_config_range $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -100,7 +107,8 @@ expect {
 }
 
 if {[string compare $show_config_range $slurm_conf_range]} {
-	log_error "SrunPortRange from scontrol show config does not match what is in slurm.conf"
+	send_user "\nFAILURE: SrunPortRange from scontrol show config does "
+	send_user "match what is in slurm.conf\n"
 	set exit_code 1
 }
 
@@ -112,7 +120,7 @@ foreach p $range {
 }
 
 # Check to see that srun is using the correct ports specified in slurm.conf #
-log_info "---Checking that srun uses correct ports---"
+send_user "\n---Checking that srun uses correct ports---\n"
 
 make_bash_script $file_in "pid=\$(ps -ef|grep srun| egrep -v 'grep| gdb' | awk '{if (NR==1)print \$2}')
 echo \$pid
@@ -132,7 +140,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -141,20 +149,28 @@ expect {
 }
 
 if {$out_of_range != 0} {
-	log_error "srun has exceeded the allowed port range"
+	send_user "\nFAILURE: srun has exceeded the allowed port range\n"
 	set exit_code 1
+}
+
+#
+# Copy the slurm.conf file
+#
+copy_conf $config_path $cwd
+if { $exit_code != 0 } {
+	exit $exit_code
 }
 
 #
 # Change the slurm.conf port range to a smaller number so we can exhaust ports
 #
-exec $bin_sed -i "s/SrunPortRange=$slurm_conf_range/#SrunPortRange=$slurm_conf_range/Ig" $config_file
+exec $bin_sed -i "s/SrunPortRange=$slurm_conf_range/#SrunPortRange=$slurm_conf_range/Ig" $config_path/slurm.conf
 exec $bin_echo SrunPortRange=$ports(0)-[expr $ports(0) + 5] > $config_path/$port_dir
-exec $bin_echo include $config_path/$port_dir >> $config_file
+exec $bin_echo include $config_path/$port_dir >> $config_path/slurm.conf
 reconfigure
 
 ###### Check that srun produces an error when all ports are exhausted ######
-log_info "---Checking srun error when ports are exhausted---"
+send_user "\n---Checking srun error when ports are exhausted---\n"
 
 make_bash_script $tmp_job "$srun -t1 sleep 10"
 
@@ -166,7 +182,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -175,11 +191,12 @@ expect {
 }
 
 if {$tmp_id == 0} {
-	fail "Job was not submitted"
+	send_user "\nFAILURE: job was not submitted\n"
+	exit 1
 }
 
 if {[wait_for_job $tmp_id "RUNNING"] != 0} {
-	log_error "Error waiting for job $tmp_id to start"
+	send_user "\nFAILURE: error waiting for job $tmp_id to start\n"
 	set exit_code 1
 }
 set match 0
@@ -187,11 +204,11 @@ spawn $srun -t1 sleep 10
 expect {
 	-re "all ports in range" {
 		set match 1
-		log_debug "This error is expected, do not worry"
+		send_user "\nThis error is expected, do not worry\n"
 		exp_continue
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -200,18 +217,20 @@ expect {
 }
 
 if {$match != 1} {
-	log_error "srun should have failed due to exhausted ports but did not"
+	send_user "\nFAILURE: srun should have failed due to exhausted ports "
+	send_user "but did not\n"
 	set exit_code 1
 }
 
 cancel_job $tmp_id
 
 # Clean up vestigial files and restore original slurm.conf file
-restore_conf $config_file
+send_user "\nChanging slurm.conf back\n"
+exec $bin_cp -v $cwd/slurm.conf.orig $config_path/slurm.conf
 reconfigure
 
 if {$exit_code == 0} {
-	exec $bin_rm $file_in $tmp_job
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exec $bin_rm $file_in $tmp_job $cwd/slurm.conf.orig
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

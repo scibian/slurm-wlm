@@ -70,7 +70,6 @@ const char *node_select_syms[] = {
 	"select_p_job_init",
 	"select_p_node_ranking",
 	"select_p_node_init",
-	"select_p_block_init",
 	"select_p_job_test",
 	"select_p_job_begin",
 	"select_p_job_ready",
@@ -102,7 +101,6 @@ const char *node_select_syms[] = {
 	"select_p_select_jobinfo_xstrdup",
 	"select_p_get_info_from_plugin",
 	"select_p_update_node_config",
-	"select_p_update_node_state",
 	"select_p_reconfigure",
 	"select_p_resv_test",
 };
@@ -163,19 +161,6 @@ static int _load_plugins(void *x, void *arg)
 	return 0;
 }
 
-static bool _running_in_slurmctld(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmctld");
-	}
-
-	return run;
-}
-
 extern int select_char2coord(char coord)
 {
 	if ((coord >= '0') && (coord <= '9'))
@@ -231,7 +216,7 @@ extern int slurm_select_init(bool only_default)
 	plugin_args.default_plugin = select_type;
 
 	if (only_default) {
-		plugin_names = list_create(slurm_destroy_char);
+		plugin_names = list_create(xfree_ptr);
 		list_append(plugin_names, xstrdup(select_type));
 	} else {
 		plugin_names = plugin_get_plugins_of_type(plugin_type);
@@ -429,11 +414,18 @@ extern int select_running_linear_based(void)
  */
 extern int select_g_state_save(char *dir_name)
 {
+	DEF_TIMERS;
+	int rc;
+
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
 
-	return (*(ops[select_context_default].state_save))
+	START_TIMER;
+	rc = (*(ops[select_context_default].state_save))
 		(dir_name);
+	END_TIMER2(__func__);
+
+	return rc;
 }
 
 /*
@@ -469,7 +461,7 @@ extern int select_g_job_init(List job_list)
  * IN node_count - number of node entries
  * Return true if node ranking was performed, false if not.
  */
-extern bool select_g_node_ranking(struct node_record *node_ptr, int node_cnt)
+extern bool select_g_node_ranking(node_record_t *node_ptr, int node_cnt)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -483,27 +475,13 @@ extern bool select_g_node_ranking(struct node_record *node_ptr, int node_cnt)
  * IN node_ptr - current node data
  * IN node_count - number of node entries
  */
-extern int select_g_node_init(struct node_record *node_ptr, int node_cnt)
+extern int select_g_node_init(node_record_t *node_ptr, int node_cnt)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
 
 	return (*(ops[select_context_default].node_init))
 		(node_ptr, node_cnt);
-}
-
-
-/*
- * Note re/initialization of block record data structure
- * IN block_list - list of partition records
- */
-extern int select_g_block_init(List block_list)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].block_init))
-		(block_list);
 }
 
 /*
@@ -526,7 +504,7 @@ extern int select_g_block_init(List block_list)
  * IN exc_core_bitmap - cores used in reservations and not usable
  * RET zero on success, EINVAL otherwise
  */
-extern int select_g_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
+extern int select_g_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 			     uint32_t min_nodes, uint32_t max_nodes,
 			     uint32_t req_nodes, uint16_t mode,
 			     List preemptee_candidates,
@@ -549,7 +527,7 @@ extern int select_g_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
  * after select_g_job_test(). Executed from slurmctld.
  * IN job_ptr - pointer to job being initiated
  */
-extern int select_g_job_begin(struct job_record *job_ptr)
+extern int select_g_job_begin(job_record_t *job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -564,7 +542,7 @@ extern int select_g_job_begin(struct job_record *job_ptr)
  * RET: -2 fatal error, -1 try again, 1 if ready to execute,
  *	0 not ready to execute
  */
-extern int select_g_job_ready(struct job_record *job_ptr)
+extern int select_g_job_ready(job_record_t *job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return -1;
@@ -579,8 +557,8 @@ extern int select_g_job_ready(struct job_record *job_ptr)
  *	"to_job_ptr". Also see other_job_resized().
  * RET: 0 or an error code
  */
-extern int select_g_job_expand(struct job_record *from_job_ptr,
-			       struct job_record *to_job_ptr)
+extern int select_g_job_expand(job_record_t *from_job_ptr,
+			       job_record_t *to_job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return -1;
@@ -594,8 +572,7 @@ extern int select_g_job_expand(struct job_record *from_job_ptr,
  *	Only support jobs shrinking now.
  * RET: 0 or an error code
  */
-extern int select_g_job_resized(struct job_record *job_ptr,
-				struct node_record *node_ptr)
+extern int select_g_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return -1;
@@ -610,7 +587,7 @@ extern int select_g_job_resized(struct job_record *job_ptr,
  * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  */
-extern int select_g_job_signal(struct job_record *job_ptr, int signal)
+extern int select_g_job_signal(job_record_t *job_ptr, int signal)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -626,7 +603,7 @@ extern int select_g_job_signal(struct job_record *job_ptr, int signal)
  * it is allocated to the job. This would mostly be an issue on an Intel KNL
  * node where the memory size would vary with the MCDRAM cache mode.
  */
-extern int select_g_job_mem_confirm(struct job_record *job_ptr)
+extern int select_g_job_mem_confirm(job_record_t *job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -638,7 +615,7 @@ extern int select_g_job_mem_confirm(struct job_record *job_ptr)
  * Note termination of job is starting. Executed from slurmctld.
  * IN job_ptr - pointer to job being terminated
  */
-extern int select_g_job_fini(struct job_record *job_ptr)
+extern int select_g_job_fini(job_record_t *job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -654,7 +631,7 @@ extern int select_g_job_fini(struct job_record *job_ptr)
  *                or admin, otherwise suspended for gang scheduling
  * RET SLURM_SUCCESS or error code
  */
-extern int select_g_job_suspend(struct job_record *job_ptr, bool indf_susp)
+extern int select_g_job_suspend(job_record_t *job_ptr, bool indf_susp)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -670,7 +647,7 @@ extern int select_g_job_suspend(struct job_record *job_ptr, bool indf_susp)
  *                or admin, otherwise resume from gang scheduling
  * RET SLURM_SUCCESS or error code
  */
-extern int select_g_job_resume(struct job_record *job_ptr, bool indf_susp)
+extern int select_g_job_resume(job_record_t *job_ptr, bool indf_susp)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -693,7 +670,7 @@ extern int select_g_job_resume(struct job_record *job_ptr, bool indf_susp)
  *                  (not always set).
  * RET map of slurm nodes to be used for step, NULL on failure
  */
-extern bitstr_t *select_g_step_pick_nodes(struct job_record *job_ptr,
+extern bitstr_t *select_g_step_pick_nodes(job_record_t *job_ptr,
 					  dynamic_plugin_data_t *step_jobinfo,
 					  uint32_t node_count,
 					  bitstr_t **avail_nodes)
@@ -711,7 +688,7 @@ extern bitstr_t *select_g_step_pick_nodes(struct job_record *job_ptr,
  * Post pick_nodes operations for the step.
  * IN/OUT step_ptr - step pointer to operate on.
  */
-extern int select_g_step_start(struct step_record *step_ptr)
+extern int select_g_step_start(step_record_t *step_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -726,7 +703,7 @@ extern int select_g_step_start(struct step_record *step_ptr)
  * IN killing_step - if true then we are just starting to kill the step
  *                   if false, the step is completely terminated
  */
-extern int select_g_step_finish(struct step_record *step_ptr, bool killing_step)
+extern int select_g_step_finish(step_record_t *step_ptr, bool killing_step)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -803,7 +780,7 @@ extern int select_g_select_nodeinfo_unpack(dynamic_plugin_data_t **nodeinfo,
 	 * relevant to this cluster.
 	 */
 	if ((nodeinfo_ptr->plugin_id != select_context_default) &&
-	    _running_in_slurmctld()) {
+	    running_in_slurmctld()) {
 		select_g_select_nodeinfo_free(nodeinfo_ptr);
 		*nodeinfo = select_g_select_nodeinfo_alloc();
 	}
@@ -860,7 +837,7 @@ extern int select_g_select_nodeinfo_set_all(void)
 		();
 }
 
-extern int select_g_select_nodeinfo_set(struct job_record *job_ptr)
+extern int select_g_select_nodeinfo_set(job_record_t *job_ptr)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -1071,7 +1048,7 @@ extern int select_g_select_jobinfo_unpack(dynamic_plugin_data_t **jobinfo,
 	 * relevant to this cluster.
 	 */
 	if ((jobinfo_ptr->plugin_id != select_context_default) &&
-	    _running_in_slurmctld()) {
+	    running_in_slurmctld()) {
 		select_g_select_jobinfo_free(jobinfo_ptr);
 		*jobinfo = select_g_select_jobinfo_alloc();
 	}
@@ -1140,9 +1117,8 @@ extern char *select_g_select_jobinfo_xstrdup(
  *                (see enum select_plugindata_info)
  * IN/OUT data  - the data to get from node record
  */
-extern int select_g_get_info_from_plugin (enum select_plugindata_info dinfo,
-					  struct job_record *job_ptr,
-					  void *data)
+extern int select_g_get_info_from_plugin(enum select_plugindata_info dinfo,
+					 job_record_t *job_ptr, void *data)
 {
 	if (slurm_select_init(0) < 0)
 		return SLURM_ERROR;
@@ -1164,22 +1140,6 @@ extern int select_g_update_node_config (int index)
 
 	return (*(ops[select_context_default].
 		  update_node_config))(index);
-}
-
-/*
- * Updated a node state in the plugin, this should happen when a node is
- * drained or put into a down state then changed back.
- * IN index  - index into the node record list
- * IN state  - state to update to
- * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
- */
-extern int select_g_update_node_state (struct node_record *node_ptr)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].update_node_state))
-		(node_ptr);
 }
 
 /*

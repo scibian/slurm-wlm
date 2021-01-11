@@ -14,6 +14,10 @@
 #          fedr/fed2/...
 #          fedr/fed3/...
 #          3. controllers are up and running.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
@@ -41,25 +45,32 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
+set test_id     "37.11"
 set exit_code   0
 set fed_name    "feda"
 set user_name   ""
 set srun_job_cnt 0
 set my_sbatch "${fed_slurm_base}/$fedc1/bin/sbatch"
 set my_sacct "${fed_slurm_base}/$fedc1/bin/sacct"
-regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
-set min_job_age [expr {$min_job_age + 65}]
+set min_job_age [expr {[get_min_job_age] + 65}]
 set file_in          "test$test_id.in"
+
+set eol "\r\n"
+
+print_header $test_id
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	log_warn "This test can't be run without a usable AccountStorageType"
+	exit 0
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
-	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
+if { [string compare [check_accounting_admin_level] "Administrator"] } {
+	log_warn "This test can't be run without being an Accounting administrator.$eol \
+	 	  Use: sacctmgr mod user \$USER set admin=admin."
+
 }
 
 proc build_regex { jid cid state } {
@@ -86,14 +97,16 @@ proc sbatch { args } {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
-			fail "sbatch not responding"
+			log_error "sbatch not responding"
+			end_it 1
 		}
 		eof {
 			wait
 		}
 	}
 	if {$matches != 1} {
-		fail "batch submit failure"
+		log_error "batch submit failure"
+		end_it 1
 	}
 	return $job_id
 }
@@ -118,12 +131,13 @@ proc sacct { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue. Expected $regex"
+		log_error "unexpected error in squeue. expected $regex"
+		end_it 1
 	}
 }
 
 
-proc cancel_federation_jobs { } {
+proc cancel_all_jobs { } {
 	global scancel user_name fedc1 fedc2 fedc3
 
 	spawn $scancel -M$fedc1,$fedc2,$fedc3 --user $user_name
@@ -139,41 +153,54 @@ proc cleanup { } {
 	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
 	global test_id bin_bash my_sacctmgr
 
-	cancel_federation_jobs
+	cancel_all_jobs
 	exec $bin_rm -f $file_in
 	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
 
 	return [delete_federations $fed_name]
 }
 
-#start test
-
-if {![check_federation_setup]} {
-	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
+proc end_it { exit_code } {
+	global test_id my_squeue
+	cleanup
+	if {$exit_code == 0} {
+		print_success $test_id
+	}
+	exit $exit_code
 }
 
-if {![check_federation_up]} {
-	skip "This test can't be run without all clusters up"
+#start test
+
+if {[test_federation_setup]} {
+	log_warn "This test can't be run without fed_slurm_base,\
+		fedc1, fedc2, fedc3 setup in globals.local."
+	exit 0
+}
+
+if {[test_all_up]} {
+	exit 0
 }
 
 set user_name [get_my_user_name]
 
 # Remove existing setup
 if {[cleanup] != 0} {
-	fail "failed to cleanup"
+	log_error "failed to cleanup"
+	end_it 1
 }
 
 # add clusters to federation
 if {[setup_federation $fed_name]} {
-	fail "failed to setup federation"
+	log_error "failed to setup federation"
+	end_it 1
 }
 
 # get number of nodes per cluster
-set node_count [available_nodes]
+set node_count [available_nodes "" ""]
 
-log_info "################################################################"
-log_info "Setup cluster features"
-log_info "################################################################"
+send_user "$eol################################################################$eol"
+send_user "Setup cluster features"
+send_user "$eol################################################################$eol"
 
 set matches 0
 set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
@@ -195,7 +222,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "$eolFAILURE: sacctmgr mod not responding$eol"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -204,7 +231,8 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	fail "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.$eol"
+	end_it 1
 }
 
 set matches 0
@@ -227,7 +255,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "$eolFAILURE: sacctmgr mod not responding$eol"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -236,7 +264,8 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	fail "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.$eol"
+	end_it 1
 }
 
 set matches 0
@@ -260,7 +289,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
+		send_user "$eolFAILURE: sacctmgr mod not responding$eol"
 		slow_kill $my_pid
 		set exit_code 1
 	}
@@ -269,14 +298,15 @@ expect {
 	}
 }
 if {$exit_code || $matches != 4} {
-	fail "Unexpected error. Got $matches"
+	send_user "$matches FAILURE: unexpected error.$eol"
+	end_it 1
 }
 
 make_bash_script $file_in "sleep 15"
 
-log_info "################################################################"
-log_info "Test scancel within federated clusters"
-log_info "################################################################"
+send_user "$eol################################################################$eol"
+send_user "test scancel within federated clusters"
+send_user "$eol################################################################$eol"
 
 set ji0             [sbatch fa]
 set cid($ji0)       [wait_for_fed_job $ji0 RUNNING $fedc1,$fedc2,$fedc3]
@@ -322,3 +352,6 @@ set reg_D "$reg\\s*($runrv1|$runrv2){2}"
 
 sacct ""    "$reg"
 sacct "-D"  "$reg_D"
+
+# All Done
+end_it 0

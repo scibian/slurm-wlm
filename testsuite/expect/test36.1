@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          lsid wrapper test
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2011-2016 SchedMD LLC
 # Written by Alejandro Sanchez <alex@schedmd.com>
@@ -26,13 +30,17 @@
 ############################################################################
 source ./globals
 
+set test_id     "36.1"
 set exit_code   0
 
+print_header $test_id
+
 if {[file executable $lsid] == 0} {
-	skip "$lsid does not exist"
+	send_user "\nWARNING: $lsid does not exist\n"
+	exit 0
 }
 
-set cluster_name [get_config_param "ClusterName"]
+set cluster_name [get_cluster_name]
 set control_machine [get_control_machine]
 set lsid_cluster_name ""
 set lsid_control_machine ""
@@ -41,16 +49,16 @@ set control_machine_ok 0
 
 spawn $lsid
 expect {
-	-re "My cluster name is ($re_word_str)" {
+	-re "My cluster name is ($alpha_numeric_under)" {
 		set lsid_cluster_name $expect_out(1,string)
 		exp_continue
 	}
-	-re "My master name is ($re_word_str)" {
+	-re "My master name is ($controlmachine_regex)" {
 		set lsid_control_machine $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "lsid not responding"
+		send_user "\nFAILURE: lsid not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -59,15 +67,19 @@ expect {
 }
 
 if {[string compare $cluster_name $lsid_cluster_name]} {
-	log_error "lsid's cluster name does not match the configured parameter ($cluster_name != $lsid_cluster_name)"
+	send_user "\nFAILURE: lsid's cluster name does not match the configured parameter ($cluster_name != $lsid_cluster_name)\n"
 	set exit_code 1
 }
 
 if {[string compare $control_machine $lsid_control_machine]} {
-	log_error "lsid's master name does not match the configured parameter ($control_machine != $lsid_control_machine)"
+	send_user "\nFAILURE: lsid's master name does not match the configured parameter ($control_machine != $lsid_control_machine)\n"
 	set exit_code 1
 }
 
-if {$exit_code} {
-	fail "Test failed due to previous errors"
+if {!$exit_code} {
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "\nFAILURE\n"
 }
+
+exit $exit_code

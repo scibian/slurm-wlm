@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Validates that the scontrol show job option has the job
 #          array fields
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2011-2013 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -27,13 +32,17 @@
 ############################################################################
 source ./globals
 
+set test_id       "28.3"
 set exit_code     0
 set array_size    4
 set file_script   "test$test_id.sh"
 set job_id        0
 
-if {[get_config_param "MaxArraySize"] < [expr $array_size + 1]} {
-	skip "MaxArraySize is to small"
+print_header $test_id
+
+if {[get_array_config] < [expr $array_size + 1]} {
+	send_user "\nWARNING: MaxArraySize is to small\n"
+	exit 0
 }
 
 proc check_ids { job } {
@@ -49,7 +58,7 @@ proc check_ids { job } {
 				exp_continue
 			}
 			timeout {
-				log_error "scontrol is not responding"
+				send_user "\nFAILURE: scontrol is not responding\n"
 				set exit_code 1
 			}
 			eof {
@@ -57,7 +66,7 @@ proc check_ids { job } {
 			}
 		}
 		if {$match != 1} {
-			log_error "Array IDs for $job\_$index not found"
+			send_user "\nFAILURE: Array IDs for $job\_$index not found\n"
 			set exit_code 1
 		}
 	}
@@ -69,14 +78,14 @@ spawn $sbatch -N1 --array=0-[expr $array_size - 1] --begin=midnight --output=/de
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
-		log_debug "Job $job_id was submitted"
+		send_user "\njob $job_id was submitted\n"
 	}
 	-re "error" {
-		log_error "sbatch did not submit jobs"
+		send_user "\nFAILURE: sbatch did not submit jobs\n"
 		set exit_code 1
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -86,12 +95,12 @@ expect {
 if {$job_id != 0} {
 	check_ids $job_id
 	if {[cancel_job $job_id] != 0} {
-		fail "Unable to cancel job ($job_id)"
+		set exit_code 1
 	}
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_script
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

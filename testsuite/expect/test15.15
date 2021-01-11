@@ -4,6 +4,10 @@
 #          Test of user signal upon allocation (--bell and --no-bell options).
 #          We can't really confirm these are processed, but just make sure
 #          that salloc does not choke on the options
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -30,7 +34,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.15"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Run trivial test --bell option
@@ -44,10 +51,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -59,7 +67,7 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "salloc failed to respond"
+	send_user "\nFAILURE: salloc failed to respond\n"
 	set exit_code 1
 }
 
@@ -74,10 +82,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -89,9 +98,11 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "salloc failed to respond"
+	send_user "\nFAILURE: salloc failed to respond\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

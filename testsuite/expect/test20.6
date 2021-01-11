@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test the qalter -r option of altering a job's rerunnable flag
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2013 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -26,15 +30,20 @@
 ############################################################################
 source ./globals
 
+set test_id      "20.6"
 set file_in      "test$test_id\.input"
 set job_id       0
 set exit_code    0
 
+print_header $test_id
+
 if {[file executable $qalter] == 0} {
-	skip "$qalter does not exits"
+	send_user "\nWARNING: $qalter does not exits\n"
+	exit 0
 }
 if {[file executable $qsub] == 0} {
-	skip "$qsub does not exits"
+	send_user "\nWARNING: $qsub does not exits\n"
+	exit 0
 }
 
 # Clean up any vestigial files
@@ -53,7 +62,7 @@ proc check_rerun { arg job_id } {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -61,7 +70,8 @@ proc check_rerun { arg job_id } {
 		}
 	}
 	if {$check_val != 1} {
-		log_error "Requeue for job $job_id was not set correctly"
+		send_user "\nFAILURE: requeue for job $job_id was not"
+		send_user " set correctly\n"
 		set exit_code 1
 	}
 }
@@ -73,7 +83,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "qsub is not responding"
+		send_user "\nFAILURE: qsub is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -81,14 +91,14 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	log_error "Job was not submitted"
+	send_user "\nFAILURE: job was not submitted\n"
 	set exit_code 1
 }
 
 spawn $qalter -r y $job_id
 expect {
 	timeout {
-		log_error "qalter is not responding"
+		send_user "\nFAILURE: qalter is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -102,7 +112,7 @@ check_rerun 1 $job_id
 spawn $qalter -r n $job_id
 expect {
 	timeout {
-		log_error "qalter is not responding"
+		send_user "\nFAILURE: qalter is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -114,11 +124,11 @@ expect {
 check_rerun 0 $job_id
 
 if {[cancel_job $job_id] != 0} {
-	fail "Unable to cancel job ($job_id)"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

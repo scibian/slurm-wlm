@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test scancel of multiple job steps (job.step specification).
 #
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
+#
 # Note:    This script generates and then deletes files in the working directory
 #          named test6.16.input
 ############################################################################
@@ -29,9 +33,12 @@
 ############################################################################
 source ./globals
 
+set test_id     "6.16"
 set exit_code   0
 set file_in     "test$test_id.input"
 set job_id      0
+
+print_header $test_id
 
 #
 # Build input script file
@@ -52,20 +59,23 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 if {[wait_for_job $job_id RUNNING] != 0} {
+	send_user "\nFAILURE: error starting job $job_id\n"
 	cancel_job $job_id
-	fail "Error starting job $job_id"
+	exit 1
 }
 # Wait for job steps to begin
 exec $bin_sleep 3
@@ -76,23 +86,23 @@ exec $bin_sleep 3
 set matches 0
 spawn $scancel --interactive $job_id.0 $job_id.1 $job_id.2
 expect {
-	-re "Cancel step_id=$job_id\\.0*\? " {
+	-re "Cancel step_id=$job_id.0*\? " {
 		send "y\r"
 		incr matches
 		exp_continue
 	}
-	-re "Cancel step_id=$job_id\\.1*\? " {
+	-re "Cancel step_id=$job_id.1*\? " {
 		send "y\r"
 		incr matches
 		exp_continue
 	}
-	-re "Cancel step_id=$job_id\\.2*\? " {
+	-re "Cancel step_id=$job_id.2*\? " {
 		send "y\r"
 		incr matches
 		exp_continue
 	}
 	timeout {
-		log_error "scancel not responding"
+		send_user "\nFAILURE: scancel not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -100,11 +110,12 @@ expect {
 	}
 }
 if {$matches != 3} {
-	fail "scancel with multiple step_id failed"
+	send_user "\nFAILURE: scancel with multiple step_id failed\n"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	exec rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

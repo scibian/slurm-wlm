@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline option and no time
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,12 +30,17 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.105"
 set exit_code   0
 set job_id      0
 
-set default_time [get_partition_default_time_limit]
+print_header $test_id
+
+set part_name [default_partition]
+set default_time [get_partition_default_time_limit $part_name]
 if { $default_time != -1} {
-	skip "This test is not compatible with default partition having a default time limit ([default_partition]: $default_time)"
+	send_user "\nWARNING: This test is not compatible with default partition having a default time limit ($part_name $default_time)\n"
+	exit $exit_code
 }
 
 #
@@ -44,13 +53,13 @@ expect {
 		set exit_code 1
 		exp_continue
 	}
-	-re "launching ($number)\\.($number) on host" {
+	-re "launching ($number).($number) on host" {
 		set job_id $expect_out(1,string)
 		set exit_code 0
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -58,22 +67,23 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Job not submitted"
+	send_user "\nFAILURE: job not submitted\n"
+	exit 1
 } else {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "TimeLimit=00:10:" {
-			log_debug "Timelimit OK"
+			send_user "\nTimelimit OK\n"
 		}
 		-re "TimeLimit=00:09:" {
-			log_debug "Timelimit OK"
+			send_user "\nTimelimit OK\n"
 		}
 		-re "TimeLimit=" {
-			log_error "Timelimit not OK with deadline"
+			send_user "\nFAILURE : Timelimit not OK with deadline\n"
 			set exit_code 1
 		}
 		timeout {
-			log_error "scontrol not responding"
+			send_user "\nFAILURE: scontrol not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -82,6 +92,7 @@ if {$job_id == 0} {
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

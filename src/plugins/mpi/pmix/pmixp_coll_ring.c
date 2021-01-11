@@ -148,7 +148,6 @@ int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
 	uint32_t nprocs = 0;
 	uint32_t tmp;
 	int rc, i;
-	char *temp_ptr;
 
 	/* 1. extract the type of collective */
 	if (SLURM_SUCCESS != (rc = unpack32(&tmp, buf))) {
@@ -169,13 +168,13 @@ int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
 
 	/* 3. get namespace/rank of particular process */
 	for (i = 0; i < (int)nprocs; i++) {
-		if ((rc = unpackmem_ptr(&temp_ptr, &tmp, buf)) ||
-		    (strlcpy(procs[i].nspace, temp_ptr,
-			     PMIXP_MAX_NSLEN + 1) > PMIXP_MAX_NSLEN)) {
+		rc = unpackmem(procs[i].nspace, &tmp, buf);
+		if (SLURM_SUCCESS != rc) {
 			PMIXP_ERROR("Cannot unpack namespace for process #%d",
 				    i);
 			return rc;
 		}
+		procs[i].nspace[tmp] = '\0';
 
 		rc = unpack32(&tmp, buf);
 		procs[i].rank = tmp;
@@ -187,13 +186,10 @@ int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
 	}
 
 	/* 4. extract the ring info */
-	if ((rc = unpackmem_ptr(&temp_ptr, &tmp, buf)) ||
-	    (tmp != sizeof(pmixp_coll_ring_msg_hdr_t))) {
+	if (SLURM_SUCCESS != (rc = unpackmem((char *)ring_hdr, &tmp, buf))) {
 		PMIXP_ERROR("Cannot unpack ring info");
 		return rc;
 	}
-
-	memcpy(ring_hdr, temp_ptr, sizeof(pmixp_coll_ring_msg_hdr_t));
 
 	return SLURM_SUCCESS;
 }

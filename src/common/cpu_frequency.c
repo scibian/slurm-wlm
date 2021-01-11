@@ -61,7 +61,7 @@
 
 #define PATH_TO_CPU	"/sys/devices/system/cpu/"
 #define LINE_LEN	100
-#define FREQ_LIST_MAX	32
+#define FREQ_LIST_MAX	64
 #define GOV_NAME_LEN	24
 
 #define GOV_CONSERVATIVE	0x01
@@ -291,7 +291,7 @@ cpu_freq_init(slurmd_conf_t *conf)
 	xfree(slurmd_spooldir);
 	slurmd_spooldir = xstrdup(conf->spooldir);
 
-	if (run_in_daemon("slurmstepd"))
+	if (running_in_slurmstepd())
 		return;
 
 	/* check for cpufreq support */
@@ -1273,8 +1273,8 @@ cpu_freq_reset(stepd_step_rec_t *job)
 		return;
 
 #ifdef HAVE_NATIVE_CRAY
-	if (job->pack_jobid && (job->pack_jobid != NO_VAL))
-		jobid = job->pack_jobid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
 	else
 		jobid = job->jobid;
 #else

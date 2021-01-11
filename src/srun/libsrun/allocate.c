@@ -262,7 +262,7 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 				debug("Waited %f sec and still waiting: next sleep for %f sec",
 				      cur_delay, cur_sleep);
 			}
-			usleep(1000000 * cur_sleep);
+			usleep(USEC_IN_SEC * cur_sleep);
 			cur_delay += cur_sleep;
 		}
 
@@ -478,14 +478,14 @@ relinquish:
 }
 
 /*
- * Allocate nodes for heterogeneous/pack job from the slurm controller -- 
+ * Allocate nodes for heterogeneous job from the slurm controller --
  * retrying the attempt if the controller appears to be down, and optionally
  * waiting for resources if none are currently available (see opt.immediate)
  *
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-List allocate_pack_nodes(bool handle_signals)
+List allocate_het_job_nodes(bool handle_signals)
 {
 	resource_allocation_response_msg_t *resp = NULL;
 	job_desc_msg_t *j, *first_job = NULL;
@@ -506,8 +506,10 @@ List allocate_pack_nodes(bool handle_signals)
 		if (srun_opt->relative != NO_VAL)
 			fatal("--relative option invalid for job allocation request");
 
-		if ((j = _job_desc_msg_create_from_opts(opt_local)) == NULL)
+		if ((j = _job_desc_msg_create_from_opts(opt_local)) == NULL) {
+			FREE_NULL_LIST(job_req_list);
 			return NULL;
+		}
 		if (!first_job)
 			first_job = j;
 
@@ -519,14 +521,17 @@ List allocate_pack_nodes(bool handle_signals)
 
 	if (!first_job) {
 		error("%s: No job requests found", __func__);
+		FREE_NULL_LIST(job_req_list);
 		return NULL;
 	}
 
 	if (first_opt && first_opt->clusters &&
-	    (slurmdb_get_first_pack_cluster(job_req_list, first_opt->clusters,
-					    &working_cluster_rec)
+	    (slurmdb_get_first_het_job_cluster(job_req_list,
+					       first_opt->clusters,
+					       &working_cluster_rec)
 	     != SLURM_SUCCESS)) {
 		print_db_notok(first_opt->clusters, 0);
+		FREE_NULL_LIST(job_req_list);
 		return NULL;
 	}
 
@@ -550,7 +555,7 @@ List allocate_pack_nodes(bool handle_signals)
 	}
 
 	while (first_opt && !job_resp_list) {
-		job_resp_list = slurm_allocate_pack_job_blocking(job_req_list,
+		job_resp_list = slurm_allocate_het_job_blocking(job_req_list,
 				 first_opt->immediate, _set_pending_job_id);
 		if (destroy_job) {
 			/* cancelled by signal */
@@ -559,6 +564,7 @@ List allocate_pack_nodes(bool handle_signals)
 			break;
 		}
 	}
+	FREE_NULL_LIST(job_req_list);
 
 	if (job_resp_list && !destroy_job) {
 		/*
@@ -654,8 +660,21 @@ extern List existing_allocation(void)
 	if (sropt.jobid == NO_VAL)
 		return NULL;
 
+	if (opt.clusters) {
+		List clusters = NULL;
+		if (!(clusters = slurmdb_get_info_cluster(opt.clusters))) {
+			print_db_notok(opt.clusters, 0);
+			exit(1);
+		}
+		working_cluster_rec = list_peek(clusters);
+		debug2("Looking for job %d on cluster %s (addr: %s)",
+		       sropt.jobid,
+		       working_cluster_rec->name,
+		       working_cluster_rec->control_host);
+	}
+
 	old_job_id = (uint32_t) sropt.jobid;
-	if (slurm_pack_job_lookup(old_job_id, &job_resp_list) < 0) {
+	if (slurm_het_job_lookup(old_job_id, &job_resp_list) < 0) {
 		if (sropt.parallel_debug)
 			return NULL;    /* create new allocation as needed */
 		if (errno == ESLURM_ALREADY_DONE)
@@ -874,6 +893,8 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 	if (opt_local->shared != NO_VAL16)
 		j->shared = opt_local->shared;
 
+	if (opt_local->warn_flags)
+		j->warn_flags = opt_local->warn_flags;
 	if (opt_local->warn_signal)
 		j->warn_signal = opt_local->warn_signal;
 	if (opt_local->warn_time)

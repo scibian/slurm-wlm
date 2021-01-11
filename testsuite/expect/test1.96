@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Basic SHMEM test via srun.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2012 SchedMD LLC.
 # Written by Morris Jette <jette@schedmd.com>
@@ -26,6 +31,7 @@
 ############################################################################
 source ./globals
 
+set test_id            "1.96"
 set exit_code          0
 set file_in            "test$test_id.input"
 set file_out           "test$test_id.output"
@@ -34,10 +40,14 @@ set test_prog          "test$test_id.prog"
 set job_id             0
 set task_cnt           8
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front-end systems"
+print_header $test_id
+
+if {[test_front_end]} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit 0
 } elseif {![file exists $oshcc]} {
-	skip "$oshcc does not exists"
+	send_user "\nWARNING: $oshcc does not exists\n"
+	exit 0
 }
 
 #
@@ -51,7 +61,8 @@ expect {
 	}
 }
 if {![file exists $test_prog]} {
-	skip "Unable to build test program"
+	send_user "\nWARNING: Unable to build test program\n"
+	exit 0
 }
 
 # Delete left-over stdout/err files
@@ -80,10 +91,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -93,20 +105,22 @@ expect {
 }
 
 if {$no_start != 0} {
+	send_user "\nWARNING: partition too small for test\n"
 	if {$job_id != 0} {
 		cancel_job $job_id
 	}
-	skip "Partition too small for test"
+	exit 0
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job to complete"
+	send_user "\nFAILURE: waiting for job to complete\n"
 	set exit_code 1
 }
 
@@ -128,7 +142,7 @@ if {[wait_for_file $file_out] == 0} {
 	}
 	incr task_cnt -1
 	if {$matches != $task_cnt} {
-		log_error "Unexpected output ($matches of $task_cnt)"
+		send_user "\nFAILURE: unexpected output ($matches of $task_cnt)\n"
 		set exit_code 1
 	}
 } else {
@@ -137,10 +151,9 @@ if {[wait_for_file $file_out] == 0} {
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
+	send_user "\nSUCCESS\n"
 } else {
-	log_debug "Check contents of $file_err"
+	send_user "Check contents of $file_err\n"
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+exit $exit_code

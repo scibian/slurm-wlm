@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Verify head job isn't purged before other jobs in the array.
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2019 SchedMD LLC
 # Written by Morris Jette
@@ -26,13 +31,17 @@
 ############################################################################
 source ./globals
 
+set test_id     "28.12"
 set exit_code   0
 set file_script "test$test_id.bash"
 set job_id      0
 
-regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
+print_header $test_id
+
+set min_job_age [get_min_job_age]
 if {$min_job_age > 60} {
-	skip "MinJobAge too large for this test ($min_job_age > 60)"
+	send_user "\nWARNING: MinJobAge too large for this test\n"
+	exit 0
 }
 
 make_bash_script $file_script "
@@ -48,14 +57,15 @@ spawn $sbatch -n1 --array=1-4 --output=/dev/null $file_script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
-		log_debug "Job $job_id was submitted"
+		send_user "\njob $job_id was submitted\n"
 		exp_continue
 	}
 	-re "error" {
-		fail "sbatch did not submit jobs"
+		send_user "\nFAILURE: sbatch did not submit jobs\n"
+		exit 1
 	}
 	timeout {
-		log_error "sbatch not responding"
+		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -65,12 +75,13 @@ expect {
 
 # wait for head job to complete
 if {[wait_for_job $job_id "DONE"] != 0} {
+	send_user "\nFAILURE: error waiting for job $job_id to complete\n"
 	cancel_job $job_id
-	fail "Error waiting for job $job_id to complete"
+	exit 1
 }
 
 # wait a while for job purge to happen
-log_debug "Waiting for job record purge to happen.."
+send_user "\nWaiting for job record purge to happen...\n"
 sleep 65
 
 # check that head job still exists
@@ -82,12 +93,12 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Error running squeue"
+		send_user "\nFAILURE: error running squeue\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
+		send_user "\nFAILURE: squeue not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -95,12 +106,13 @@ expect {
 	}
 }
 if {$match != 1} {
-	fail "Head job not found"
+	send_user "\nFAILURE: head job not found\n"
+	set exit_code 1
 }
 
 cancel_job $job_id
 if {$exit_code == 0} {
 	file delete $file_script
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

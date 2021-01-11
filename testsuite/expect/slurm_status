@@ -24,7 +24,7 @@
 ############################################################################
 source ./globals
 
-puts "<<<<<<<<<<<<<<<<<<<< SLURM STATUS, START >>>>>>>>>>>>>>>>>>>>"
+send_user "<<<<<<<<<<<<<<<<<<<< SLURM STATUS, START >>>>>>>>>>>>>>>>>>>>\n"
 spawn $sinfo -l
 expect {
 	eof {
@@ -38,6 +38,6 @@ expect {
 		wait
 	}
 }
-puts "<<<<<<<<<<<<<<<<<<<< SLURM STATUS, END >>>>>>>>>>>>>>>>>>>>"
+send_user "<<<<<<<<<<<<<<<<<<<< SLURM STATUS, END >>>>>>>>>>>>>>>>>>>>\n"
 
 exit 0

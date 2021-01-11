@@ -32,42 +32,35 @@
 ############################################################################
 
 proc inc3_11_7 {} {
-	global re_word_str bin_rm bin_sleep cluster_cpus cores_per_node
+	global alpha_numeric_under bin_rm bin_sleep cluster_cpus cores_per_node
 	global def_partition exit_code file_in number part_cores part_node
-	global part_node_cnt part_node_cores
-	global sbatch scancel scontrol user_name wait_for_job
+	global part_node_cnt part_node_cores res_name res_name res_nodes
+	global res_thread_cnt sbatch scancel scontrol user_name wait_for_job
 
-	set res_name "resv3.11.7"
-
-	log_info "+++++ STARTING TEST 7 (Within: inc3.11.7) +++++"
+	send_user "\n+++++ STARTING TEST 7 (Within: inc3.11.7) +++++\n"
 
 	# Make a reservation, just to get node size information
-	set ret_code [create_res $res_name "StartTime=now Duration=1 Nodes=$part_node User=$user_name"]
+	set ret_code [create_res "StartTime=now Duration=1 Nodes=$part_node User=$user_name" 0]
 	if {$ret_code != 0} {
-		fail "Unable to create a valid reservation (Within inc3.11.7)"
+		send_user "\n\033\[31mFAILURE: Unable to create a valid reservation (Within inc3.11.7)\033\[m\n"
+		exit $ret_code
 	}
 	# Delete the reservation
 	set ret_code [delete_res $res_name]
 	if {$ret_code != 0} {
-		fail "Unable to delete reservation ($res_name)"
+		exit $ret_code
 	}
 
 	# Now make a reservation using half the cores on that node
 	# There is no way to specify a the Nodes in a reservation with CoreCnt,
 	# so hope that we get a node with the same size
 	set corecnt [ expr ($part_node_cores / 2) ]
-	set ret_code [create_res $res_name "StartTime=now Duration=60 Nodes=$part_node CoreCnt=$corecnt User=$user_name"]
+	set ret_code [create_res "StartTime=now Duration=60 Nodes=$part_node CoreCnt=$corecnt User=$user_name" 0]
 	if {$ret_code != 0} {
-		fail "Unable to create a valid reservation (Within: inc3.11.7)"
+		send_user "\n\033\[31mFAILURE: Unable to create a valid reservation (Within: inc3.11.7)\033\[m\n"
+		exit $ret_code
 	}
-
-	set res_info [get_reservations $res_name]
-	if { ![dict exists $res_info $res_name] } {
-		delete_res $res_name
-		fail "Unable to get info about reservation $res_name (Within: inc3.11.7)"
-	}
-	lassign [get_node_cpus [dict get $res_info $res_name "Nodes"]] cputot threadcnt
-	set thread_res_num [ expr $corecnt * $threadcnt ]
+	set thread_res_num [ expr $corecnt * $res_thread_cnt ]
 
 	# Make the job script
 	exec $bin_rm -f $file_in
@@ -84,7 +77,7 @@ proc inc3_11_7 {} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.7)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -93,15 +86,16 @@ proc inc3_11_7 {} {
 		}
 	}
 	if {$job_id == 0} {
+		send_user "\n\033\[31mFAILURE: batch submit failure (Within: inc3.11.7)\033\[m\n"
 		delete_res $res_name
-		fail "batch submit failure (Within: inc3.11.7)"
+		exit 1
 	}
 
 	if {[wait_for_job $job_id RUNNING] != 0} {
-		log_error "Job $job_id failed to start (Within: inc3.11.7)"
+		send_user "\n\033\[31mFAILURE: Job $job_id failed to start (Within: inc3.11.7)\033\[m\n"
 		set exit_code 1
 	} else {
-		log_debug "Job is running as expected (Within: inc3.11.7)"
+		send_user "\n\033\[32mJOB is running as expected (Within: inc3.11.7)\033\[m\n"
 	}
 	cancel_job $job_id
 
@@ -115,7 +109,7 @@ proc inc3_11_7 {} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.7)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -124,30 +118,31 @@ proc inc3_11_7 {} {
 		}
 	}
 	if {$job_id == 0} {
+		send_user "\n\033\[31mFAILURE: batch submit failure (Within: inc3.11.7)\033\[m\n"
 		delete_res $res_name
-		fail "batch submit failure (Within: inc3.11.7)"
+		exit 1
 	}
 
 	# Show the job, make sure reservation tag is right
 	if {[wait_for_job $job_id RUNNING] != 0} {
-		log_error "Job $job_id failed to start (Within: inc3.11.7)"
+		send_user "\n\033\[31mFAILURE: Job $job_id failed to start (Within: inc3.11.7)\033\[m\n"
 		set exit_code 1
 	} else {
-		log_debug "Job is running as expected (Within: inc3.11.7)"
+		send_user "\n\033\[32mJOB is running as expected (Within: inc3.11.7)\033\[m\n"
 	}
 	cancel_job $job_id
 
 	sleep 1
 
 	# (Third test) Submit the batch job: a job using all cores not allocated by the reservation
-	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --output=/dev/null $file_in]
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=$res_nodes --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.7)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -156,16 +151,17 @@ proc inc3_11_7 {} {
 		}
 	}
 	if {$job_id == 0} {
+		send_user "\n\033\[31mFAILURE: batch submit failure (Within: inc3.11.7)\033\[m\n"
 		delete_res $res_name
-		fail "batch submit failure (Within: inc3.11.7)"
+		exit 1
 	}
 
 	# Show the job, make sure reservation tag is right
 	if {[wait_for_job $job_id RUNNING] != 0} {
-		log_error "Job $job_id failed to start (Within: inc3.11.7)"
+		send_user "\n\033\[31mFAILURE: Job $job_id failed to start (Within: inc3.11.7)\033\[m\n"
 		set exit_code 1
 	} else {
-		log_debug "Job is running as expected (Within: inc3.11.7)"
+		send_user "\n\033\[32mJOB is running as expected (Within: inc3.11.7)\033\[m\n"
 	}
 	cancel_job $job_id
 
@@ -178,7 +174,7 @@ proc inc3_11_7 {} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.7)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -187,8 +183,9 @@ proc inc3_11_7 {} {
 		}
 	}
 	if {$job_id == 0} {
+		send_user "\n\033\[31mFAILURE: batch submit failure (Within: inc3.11.7)\033\[m\n"
 		delete_res $res_name
-		fail "batch submit failure (Within: inc3.11.7)"
+		exit 1
 	}
 
 	sleep 10
@@ -196,21 +193,21 @@ proc inc3_11_7 {} {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "Invalid job id specified" {
-			log_error "Job $job_id not found (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id not found (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		-re "JobState=PENDING" {
-			log_info "Job $job_id is PENDING as expected (Within: inc3.11.7)"
+			send_user "\n\033\[32mSUCCESS: Job $job_id is PENDING as expected (Within: inc3.11.7)\033\[m\n"
 			exp_continue
 		}
 		-re "JobState=RUNNING" {
-			log_error "Job $job_id is RUNNING but it should not (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id is RUNNING but it should not (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: scontrol not responding (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 		}
 		eof {
@@ -222,14 +219,14 @@ proc inc3_11_7 {} {
 
 	# (Fifth test) Submit a batch job: a job specifying node in reservation and
 	#              using more cores than allocated by the reservation
-	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --nodes=1 --output=/dev/null $file_in]
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=$res_nodes --nodes=1 --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: sbatch not responding (Within: inc3.11.7)\033\[m\n"
 			slow_kill $sbatch_pid
 			set exit_code 1
 		}
@@ -238,8 +235,9 @@ proc inc3_11_7 {} {
 		}
 	}
 	if {$job_id == 0} {
+		send_user "\n\033\[31mFAILURE: batch submit failure (Within: inc3.11.7)\033\[m\n"
 		delete_res $res_name
-		fail "batch submit failure (Within: inc3.11.7)"
+		exit 1
 	}
 
 	sleep 10
@@ -247,21 +245,21 @@ proc inc3_11_7 {} {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "Invalid job id specified" {
-			log_error "Job $job_id not found (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id not found (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		-re "JobState=PENDING" {
-			log_info "ob $job_id is PENDING as expected (Within: inc3.11.7)"
+			send_user "\n\033\[32mSUCCESS: Job $job_id is PENDING as expected (Within: inc3.11.7)\033\[m\n"
 			exp_continue
 		}
 		-re "JobState=RUNNING" {
-			log_error "Job $job_id is RUNNING but it should not (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id is RUNNING but it should not (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: scontrol not responding (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 		}
 		eof {
@@ -275,7 +273,7 @@ proc inc3_11_7 {} {
 	set ret_code [delete_res $res_name]
 	if {$ret_code != 0} {
 		cancel_job $job_id
-		fail "Unable to delete reservation ($res_name)"
+		exit $ret_code
 	}
 
 	sleep 10
@@ -283,21 +281,21 @@ proc inc3_11_7 {} {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "Invalid job id specified" {
-			log_error "Job $job_id not found (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id not found (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		-re "JobState=PENDING" {
-			log_error "Job $job_id is PENDING but it should not (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: Job $job_id is PENDING but it should not (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 			exp_continue
 		}
 		-re "JobState=RUNNING" {
-			log_info "Job $job_id is RUNNING as expected (Within: inc3.11.7)"
+			send_user "\n\033\[32mSUCCESS: Job $job_id is RUNNING as expected (Within: inc3.11.7)\033\[m\n"
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding (Within: inc3.11.7)"
+			send_user "\n\033\[31mFAILURE: scontrol not responding (Within: inc3.11.7)\033\[m\n"
 			set exit_code 1
 		}
 		eof {

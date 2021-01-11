@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Basic sattach functionality test (--layout, --verbose, --label
 #          and --output-filter options).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,13 +33,17 @@
 ############################################################################
 source ./globals
 
+set test_id     "16.4"
 set exit_code   0
 set file_prog   "test$test_id.prog"
 set job_id      0
 set matches     0
 
-if {[get_config_param "LaunchType"] ne "launch/slurm"} {
-	skip "This test is only compatible with systems using launch/slurm"
+print_header $test_id
+
+if { [string compare [test_launch_type] "slurm"] } {
+	send_user "\nWARNING: This test is only compatible with systems using launch/slurm\n"
+	exit $exit_code
 }
 
 set node_cnt 1-4
@@ -67,7 +75,7 @@ expect {
 		}
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		if {$job_id != 0} {
 			cancel_job $job_id
 		}
@@ -79,10 +87,12 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Job submit failure"
+	send_user "\nFAILURE: job submit failure\n"
+	exit 1
 }
 if {$matches != $task_cnt} {
-	fail "Job run time failure"
+	send_user "\nFAILURE: job run time failure\n"
+	exit 1
 }
 
 # Wait for startup to complete (including RESPONSE_LAUNCH_TASKS message to srun)
@@ -102,7 +112,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sattach not responding"
+		send_user "\nFAILURE: sattach not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -110,7 +120,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Layout information not printed"
+	send_user "\nFAILURE: layout information not printed\n"
 	set exit_code 1
 }
 
@@ -125,7 +135,7 @@ expect {
         -i $attach_id
 	-re "($number): WAITING" {
 		if {$expect_out(1,string) != [expr $task_cnt - 1]} {
-			log_error "Output filtering by task failed"
+			send_user "\nFAILURE: output filtering by task failed\n"
 			set exit_code 1
 		} else {
 			incr matches
@@ -134,7 +144,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sattach not responding"
+		send_user "\nFAILURE: sattach not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -142,7 +152,7 @@ expect {
 	}
 }
 if {$matches == 0} {
-	log_error "Failed to filter task output"
+	send_user "\nFAILURE: failed to filter task output\n"
 	set exit_code 1
 }
 
@@ -167,7 +177,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sattach not responding"
+		send_user "\nFAILURE: sattach not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -175,7 +185,7 @@ expect {
 	}
 }
 if {$matches != [expr $task_cnt + 1]} {
-	log_error "Job run time failure ($matches != [expr $task_cnt + 1])"
+	send_user "\nFAILURE: job run time failure ($matches != [expr $task_cnt + 1])\n"
 	set exit_code 1
 }
 
@@ -186,7 +196,7 @@ if {$matches != [expr $task_cnt + 1]} {
 set spawn_id $init_id
 expect {
 	timeout {
-		log_error "srun (terminate) not responding"
+		send_user "\nFAILURE: srun (terminate) not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -196,7 +206,8 @@ expect {
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_prog
+	send_user "\nSUCCESS\n"
 } else {
 	cancel_job $job_id
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
+exit $exit_code

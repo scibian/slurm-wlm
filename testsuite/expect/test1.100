@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of pack/nopack task distribution.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -29,16 +34,26 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.100"
 set exit_code   0
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-	skip "This test is incompatible with front end systems"
+print_header $test_id
+
+if { [test_front_end] } {
+	send_user "\nWARNING: This test is incompatible with front end systems\n"
+	exit 0
+}
+if {[test_front_end] != 0} {
+	send_user "\nWARNING: This test is incompatible with front-end systems\n"
+	exit $exit_code
 }
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 2 } {
-	skip "Insufficient nodes in default partition ($node_count < 2)"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 2)\n"
+	exit $exit_code
 }
 
 #
@@ -55,7 +70,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -64,7 +79,8 @@ expect {
 	}
 }
 if {$min_cpu_cnt < 3} {
-	skip "Too few CPUs per node to test srun task distribution"
+	send_user "\nWARNING: too few CPUs per node to test srun task distribution\n"
+	exit 0
 }
 
 #
@@ -75,7 +91,8 @@ set tested_layout [list -1 -1 -1 -1]
 set srun_pid [spawn $srun -O -N2 -n4 --exclusive -l --distribution=pack -t1 $bin_printenv SLURM_NODEID]
 expect {
 	-re "srun: error" {
-		skip "Can't test srun task distribution"
+		send_user "\nWARNING: can't test srun task distribution\n"
+		exit 0
 	}
 	-re "($number): ($number)" {
 		set index $expect_out(1,string)
@@ -83,7 +100,7 @@ expect {
 		lset tested_layout $index $value
 		exp_continue
 	}
-	-re "($number)\\.($number):($re_word_str)" {
+	-re "($number).($number):($alpha_numeric_under)" {
 		set index $expect_out(1,string)
 		set index2 $expect_out(2,string)
 		if { $index == 0 } {
@@ -96,7 +113,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -108,10 +125,10 @@ expect {
 #
 # Verify "pack" distribution of tasks
 #
-log_debug "Optimal task layout was: $expected_layout"
-log_debug "Actual task layout was : $tested_layout"
+send_user "Optimal task layout was: $expected_layout\n"
+send_user "Actual task layout was : $tested_layout\n"
 if {[string compare $tested_layout $expected_layout]} {
-	log_error "Failed to distribute tasks in nopack fashion"
+	send_user "\FAILURE: failed to distribute tasks in nopack fashion\n"
 	set exit_code 1
 }
 
@@ -124,10 +141,12 @@ set timeout $max_job_delay
 set srun_pid [spawn $srun -O -N2 -n4 --exclusive -l --distribution=nopack -t1 $bin_printenv SLURM_NODEID]
 expect {
 	-re "More processors requested than permitted" {
-		skip "Can't test srun task distribution"
+		send_user "\nWARNING: can't test srun task distribution\n"
+		exit 0
 	}
 	-re "Node count specification invalid" {
-		skip "Can't test srun task distribution"
+		send_user "\nWARNING: can't test srun task distribution\n"
+		exit 0
 	}
 	-re "($number): ($number)" {
 		set index $expect_out(1,string)
@@ -135,7 +154,7 @@ expect {
 		lset tested_layout $index $value
 		exp_continue
 	}
-	-re "($number)\\.($number):($re_word_str)" {
+	-re "($number).($number):($alpha_numeric_under)" {
 		set index $expect_out(1,string)
 		set index2 $expect_out(2,string)
 		if { $index == 0 } {
@@ -148,7 +167,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -160,12 +179,14 @@ expect {
 #
 # Verify "nopack" distribution of tasks
 #
-log_debug "Optimal task layout was: $expected_layout"
-log_debug "Actual task layout was : $tested_layout"
+send_user "Optimal task layout was: $expected_layout\n"
+send_user "Actual task layout was : $tested_layout\n"
 if {[string compare $tested_layout $expected_layout]} {
-	fail "Failed to distribute tasks in nopack fashion"
+	send_user "\FAILURE: failed to distribute tasks in nopack fashion\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

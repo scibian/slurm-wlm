@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          sacctmgr clear (modify) resource values
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Written by Bill Brophy <bill.brophy@bull.com>
 #  Copyright (C) 2012 Bull S. A. S.
@@ -19,11 +24,12 @@
 ############################################################################
 source ./globals_accounting
 
+set test_id     "test21.31"
 set exit_code   0
-set tc2		"${test_name}-cluster-2"
-set sr1		[format "%s%s" $test_name "res_1"]
-set sr2		[format "%s%s" $test_name "res_2"]
-set sr3		[format "%s%s" $test_name "res_3"]
+set tc2		"$test_id-cluster-2"
+set sr1		[format "%s%s" $test_id "res_1"]
+set sr2		[format "%s%s" $test_id "res_2"]
+set sr3		[format "%s%s" $test_id "res_3"]
 
 set res1_desc   sr1
 set res1_cnt    80
@@ -80,31 +86,37 @@ set resource2_chck(Server)           $res2_srv
 # Cluster
 array set clus_req {}
 
+print_header $test_id
+
 set timeout 60
 
 #
 # Check accounting config and bail if not found.
 #
-if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
-	skip "This test can't be run without a usable AccountStorageType"
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
 }
 
 #
 # Check that current user is root or SlurmUser
 #
-if {![is_super_user]} {
-	skip "Test can only be ran as SlurmUser"
+if {[test_super_user] == 0} {
+	send_user "\nWARNING: Test can only be ran as SlurmUser\n"
+	exit 0
 }
 
-#if {[string compare [get_admin_level] "Administrator"]} {
-#	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
+#if { [string compare [check_accounting_admin_level] "Administrator"] } {
+#	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
+#	exit 0
 #}
 
 # verify a clean system and permission to do this work
 remove_cluster "$tc2"
 remove_res "$sr1"
 if {$access_err != 0} {
-	skip "Not authorized to perform this test"
+	send_user "\nWARNING: not authorized to perform this test\n"
+	exit $exit_code
 }
 
 #
@@ -112,13 +124,13 @@ if {$access_err != 0} {
 #
 incr exit_code [add_cluster "$tc2" [array get clus_req]]
 if { $exit_code } {
-	fail "Unable to add cluster ($tc2)"
+	exit $exit_code
 }
 
 #
 # get name of this cluster
 #
-set cluster [get_config_param "ClusterName"]
+set cluster [get_cluster_name]
 set resource1(cluster) "$cluster,$tc2"
 
 #
@@ -130,7 +142,7 @@ add_resource $sr1 [array get resource1]
 # Use sacctmgr list to verify the test global resource fields
 #
 if {[check_resource_limits $sr1 [array get resource1_chck]] == 1} {
-	log_error "list resource output is incorrect"
+	send_user "\nFAILURE: list resource output is incorrect. \n"
 	incr exit_code 1
 }
 
@@ -149,7 +161,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -157,7 +169,9 @@ expect {
 	}
 }
 if {$matches != 2} {
-	log_error "License output is incorrect ($matches != 2). Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Remote=yes"
+	send_user "\nFAILURE: license output is incorrect ($matches != 2).\n"
+	send_user "  Expected: LicenseName=$sr1@$resource1(Server)\n"
+	send_user "  Expected: Total=$ect1 Used=0 Free=$ect1 Remote=yes\n\n\n"
 	incr exit_code 1
 }
 
@@ -165,7 +179,7 @@ if {$matches != 2} {
 # modify resources
 #
 if {[mod_resource $sr1 [array get resource1_chng]] == 1} {
-	log_error "Resource modify not working ($matches != 1)"
+	send_user "\nFAILURE: Resource modify not working ($matches != 1).\n"
 	incr exit_code 1
 }
 
@@ -176,7 +190,7 @@ if {[mod_resource $sr1 [array get resource1_chng]] == 1} {
 #
 set resource1_chck(count) $resource1_chng(count)
 if {[check_resource_limits $sr1 [array get resource1_chck]] == 1} {
-	log_error "List resource output is incorrect"
+	send_user "\nFAILURE: list resource output is incorrect.\n"
 	incr exit_code 1
 }
 
@@ -195,7 +209,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -203,7 +217,9 @@ expect {
 	}
 }
 if {$matches != 2} {
-	log_error "License output is incorrect ($matches != 2). Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Remote=yes"
+	send_user "\nFAILURE: license output is incorrect ($matches != 2).\n"
+	send_user "  Expected: LicenseName=$sr1@$resource1(Server)\n"
+	send_user "  Expected: Total=$ect1 Used=0 Free=$ect1 Remote=yes\n\n\n"
 	incr exit_code 1
 }
 
@@ -223,7 +239,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -231,7 +247,7 @@ expect {
 	}
 }
 if {$matches != 0} {
-	log_error "scontrol failed to remove license $sr1@$resource1(Server)"
+	send_user "\nFAILURE: scontrol failed to remove license $sr1@$resource1(Server).\n"
 	incr exit_code 1
 }
 
@@ -245,13 +261,13 @@ add_resource "$sr2,$sr3" [array get resource2]
 #
 # Check resource 2
 if {[check_resource_limits $sr2 [array get resource2_chck]] == 1} {
-	log_error "List resource output is incorrect"
+	send_user "\nFAILURE: list resource output is incorrect.\n"
 	incr exit_code 1
 }
 
 # Check resource 3
 if {[check_resource_limits $sr3 [array get resource2_chck]] == 1} {
-	log_error "List resource output is incorrect"
+	send_user "\nFAILURE: list resource output is incorrect.\n"
 	incr exit_code 1
 }
 
@@ -261,6 +277,9 @@ if {[check_resource_limits $sr3 [array get resource2_chck]] == 1} {
 incr exit_code [remove_res $sr2,$sr3]
 incr exit_code [remove_cluster $tc2]
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "\nFAILURE\n"
 }
+exit $exit_code

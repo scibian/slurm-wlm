@@ -412,6 +412,12 @@ uint32_t slurm_get_priority_weight_qos(void);
  */
 char *slurm_get_priority_weight_tres(void);
 
+/* slurm_get_prep_plugins
+ * returns the PrEpPlugins from slurmctld_conf object
+ * RET char *    - PrEpPlugins, MUST be xfreed by caller
+ */
+char *slurm_get_prep_plugins(void);
+
 /* slurm_get_tres_weight_array
  * IN weights_str - string of tres and weights to be parsed.
  * IN tres_cnt - count of how many tres' are on the system (e.g.
@@ -488,18 +494,6 @@ extern char *slurm_get_bb_params(void);
  */
 extern char *slurm_get_bb_type(void);
 
-/* slurm_get_checkpoint_type
- * returns the checkpoint_type from slurmctld_conf object
- * RET char *    - checkpoint type, MUST be xfreed by caller
- */
-extern char *slurm_get_checkpoint_type(void);
-
- /* slurm_get_checkpoint_dir
-  * returns the checkpoint_dir from slurmctld_conf object
-  * RET char *    - checkpoint dir, MUST be xfreed by caller
-  */
-extern char *slurm_get_checkpoint_dir(void);
-
 /* slurm_get_cluster_name
  * returns the cluster name from slurmctld_conf object
  * RET char *    - cluster name,  MUST be xfreed by caller
@@ -517,16 +511,6 @@ extern char *slurm_get_comm_parameters(void);
  * RET char *    - cred type, MUST be xfreed by caller
  */
 extern char *slurm_get_cred_type(void);
-
-/* slurm_get_fast_schedule
- * returns the value of fast_schedule in slurmctld_conf object
- */
-extern uint16_t slurm_get_fast_schedule(void);
-
-/* slurm_get_use_spec_resources
- * returns the value of use_spec_resources in slurmctld_conf object
- */
-extern uint16_t slurm_get_use_spec_resources(void);
 
 /* slurm_get_power_parameters
  * returns the PowerParameters from slurmctld_conf object
@@ -614,6 +598,12 @@ int slurm_set_accounting_storage_user(char *user);
  */
 char *slurm_get_accounting_storage_backup_host(void);
 
+/* slurm_get_accounting_storage_ext_host
+ * returns the external storage host from slurmctld_conf object
+ * RET char * - storage host str (host[:port][,...], MUST be xfreed by caller
+ */
+char *slurm_get_accounting_storage_ext_host(void);
+
 /* slurm_get_accounting_storage_host
  * returns the storage host from slurmctld_conf object
  * RET char *    - storage host,  MUST be xfreed by caller
@@ -692,6 +682,12 @@ char *slurm_get_mcs_plugin(void);
  * RET mcs_plugin_params name, must be xfreed by caller */
 char *slurm_get_mcs_plugin_params(void);
 
+/*
+ * slurm_get_dependency_params
+ * RET dependency_params must be xfreed by caller
+ */
+char *slurm_get_dependency_params(void);
+
 /* slurm_get_preempt_mode
  * returns the PreemptMode value from slurmctld_conf object
  * RET uint16_t   - PreemptMode value (See PREEMPT_MODE_* in slurm.h)
@@ -746,6 +742,12 @@ char *slurm_get_jobcomp_user(void);
  * RET char *    - storage host,  MUST be xfreed by caller
  */
 char *slurm_get_jobcomp_host(void);
+
+/*
+ * returns the jobcomp parameters from slurmctld_conf object
+ * RET char *    - arbitrary jobcomp parameters, MUST be xfreed by caller
+ */
+char *slurm_get_jobcomp_params(void);
 
 /* slurm_get_jobcomp_pass
  * returns the storage password from slurmctld_conf object
@@ -1019,16 +1021,6 @@ extern int slurm_init_msg_engine_ports(uint16_t *);
  * Try to bind() sock to any port in a given interval of ports
  */
 extern int sock_bind_range(int, uint16_t *, bool local);
-
-/* In the socket implementation it creates a socket, binds to it, and
- *	listens for connections.
- *
- * IN  addr_name        - address to bind the msg server to (NULL means any)
- * IN port		- port to bind the msg server to
- * RET slurm_fd		- file descriptor of the connection created
- */
-extern int slurm_init_msg_engine_addrname_port(char *addr_name,
-						    uint16_t port);
 
 /* In the socket implementation it creates a socket, binds to it, and
  *	listens for connections.
@@ -1306,13 +1298,11 @@ int slurm_send_recv_node_msg(slurm_msg_t * request_msg,
  * IN nodelist	    - list of nodes to send to.
  * IN msg           - a slurm_msg struct to be sent by the function
  * IN timeout	    - how long to wait in milliseconds
- * IN quiet         - if set, reduce logging details
  * RET List	    - List containing the responses of the children
  *                    (if any) we forwarded the message to. List
  *                    containing type (ret_types_t).
  */
-List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout,
-			  bool quiet);
+List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout);
 
 /*
  * Sends back reroute_msg_t which directs the client to make the request to

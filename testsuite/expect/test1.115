@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test of srun not hanging on ignored stdin.
 #          See bug 3166
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Morris Jette <jette@schedmd.com>
@@ -27,8 +31,11 @@
 ############################################################################
 source ./globals
 
+set test_id          "1.115"
 set exit_code        0
 set file_in          "test$test_id.input"
+
+print_header $test_id
 
 print_time
 
@@ -41,7 +48,7 @@ make_bash_script $file_in "dd if=/dev/zero bs=1k | $srun -v -N1 -t1 sleep 10"
 spawn ./$file_in
 expect {
 	-re "error" {
-		log_error "Unexpected error from srun"
+		send_user "\nFAILURE: Unexpected error from srun\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -50,7 +57,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -59,13 +66,13 @@ expect {
 }
 # Note if timing dependent message is not logged, not really a problem
 if {$match != 1} {
-	log_warn "Dropped I/O not logged"
+	send_user "\nWARNING: Dropped I/O not logged\n"
 }
 
 print_time
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS: No error reported\n"
 }
+exit $exit_code

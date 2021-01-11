@@ -190,7 +190,7 @@ _step_connect(const char *directory, const char *nodename,
 		/* Can indicate race condition at step termination */
 		debug("%s: connect() failed dir %s node %s step %u.%u %m",
 		      __func__, directory, nodename, jobid, stepid);
-		if (errno == ECONNREFUSED && run_in_daemon("slurmd")) {
+		if (errno == ECONNREFUSED && running_in_slurmd()) {
 			_handle_stray_socket(name);
 			if (stepid == SLURM_BATCH_SCRIPT)
 				_handle_stray_script(directory, jobid);
@@ -381,13 +381,11 @@ rwfail:
  *
  * Must be xfree'd by the caller.
  */
-slurmstepd_info_t *
-stepd_get_info(int fd)
+slurmstepd_info_t *stepd_get_info(int fd)
 {
 	int req = REQUEST_INFO;
-	slurmstepd_info_t *step_info;
+	slurmstepd_info_t *step_info = xmalloc(sizeof(*step_info));
 
-	step_info = xmalloc(sizeof(slurmstepd_info_t));
 	safe_write(fd, &req, sizeof(int));
 
 	safe_read(fd, &step_info->uid, sizeof(uid_t));
@@ -400,10 +398,11 @@ stepd_get_info(int fd)
 		safe_read(fd, &step_info->job_mem_limit, sizeof(uint64_t));
 		safe_read(fd, &step_info->step_mem_limit, sizeof(uint64_t));
 	} else {
-		error("stepd_get_info: protocol_version "
-		      "%hu not supported", step_info->protocol_version);
+		error("%s: protocol_version %hu not supported",
+		      __func__, step_info->protocol_version);
 		goto rwfail;
 	}
+
 	return step_info;
 
 rwfail:
@@ -438,34 +437,6 @@ stepd_notify_job(int fd, uint16_t protocol_version, char *message)
 }
 
 /*
- * Send a checkpoint request to all tasks of a job step.
- */
-int
-stepd_checkpoint(int fd, uint16_t protocol_version,
-		 time_t timestamp, char *image_dir)
-{
-	int req = REQUEST_CHECKPOINT_TASKS;
-	int rc;
-
-	safe_write(fd, &req, sizeof(int));
-	safe_write(fd, &timestamp, sizeof(time_t));
-	if (image_dir) {
-		rc = strlen(image_dir) + 1;
-		safe_write(fd, &rc, sizeof(int));
-		safe_write(fd, image_dir, rc);
-	} else {
-		rc = 0;
-		safe_write(fd, &rc, sizeof(int));
-	}
-
-	/* Receive the return code */
-	safe_read(fd, &rc, sizeof(int));
-	return rc;
- rwfail:
-	return -1;
-}
-
-/*
  * Send a signal to the proctrack container of a job step.
  */
 int
@@ -477,13 +448,10 @@ stepd_signal_container(int fd, uint16_t protocol_version, int signal, int flags,
 	int errnum = 0;
 
 	safe_write(fd, &req, sizeof(int));
-	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &signal, sizeof(int));
 		safe_write(fd, &flags, sizeof(int));
 		safe_write(fd, &req_uid, sizeof(uid_t));
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		safe_write(fd, &signal, sizeof(int));
-		safe_write(fd, &flags, sizeof(int));
 	} else {
 		error("%s: invalid protocol_version %u",
 		      __func__, protocol_version);
@@ -515,20 +483,15 @@ stepd_attach(int fd, uint16_t protocol_version,
 	int req = REQUEST_ATTACH;
 	int rc = SLURM_SUCCESS;
 
-	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &req, sizeof(int));
 		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
 		safe_write(fd, respaddr, sizeof(slurm_addr_t));
 		safe_write(fd, job_cred_sig, SLURM_IO_KEY_SIZE);
 		safe_write(fd, &protocol_version, sizeof(uint16_t));
-	} else {
-		int proto = protocol_version;
-		safe_write(fd, &req, sizeof(int));
-		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
-		safe_write(fd, respaddr, sizeof(slurm_addr_t));
-		safe_write(fd, job_cred_sig, SLURM_IO_KEY_SIZE);
-		safe_write(fd, &proto, sizeof(int));
-	}
+	} else
+		goto rwfail;
+
 	/* Receive the return code */
 	safe_read(fd, &rc, sizeof(int));
 
@@ -541,13 +504,13 @@ stepd_attach(int fd, uint16_t protocol_version,
 		resp->ntasks = ntasks;
 		len = ntasks * sizeof(uint32_t);
 
-		resp->local_pids = xmalloc(len);
+		resp->local_pids = xcalloc(ntasks, sizeof(uint32_t));
 		safe_read(fd, resp->local_pids, len);
 
-		resp->gtids = xmalloc(len);
+		resp->gtids = xcalloc(ntasks, sizeof(uint32_t));
 		safe_read(fd, resp->gtids, len);
 
-		resp->executable_names = xmalloc(sizeof(char *) * ntasks);
+		resp->executable_names = xcalloc(ntasks, sizeof(char *));
 		for (i = 0; i < ntasks; i++) {
 			safe_read(fd, &len, sizeof(int));
 			resp->executable_names[i] = xmalloc(len);
@@ -827,7 +790,7 @@ extern int stepd_get_x11_display(int fd, uint16_t protocol_version,
 	 */
 	safe_read(fd, &display, sizeof(int));
 
-	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_read(fd, &len, sizeof(int));
 		if (len) {
 			*xauthority = xmalloc(len);
@@ -1241,7 +1204,7 @@ stepd_task_info(int fd, uint16_t protocol_version,
 	safe_write(fd, &req, sizeof(int));
 
 	safe_read(fd, &ntasks, sizeof(uint32_t));
-	task = xmalloc(ntasks * sizeof(slurmstepd_task_info_t));
+	task = xcalloc(ntasks, sizeof(slurmstepd_task_info_t));
 	for (i = 0; i < ntasks; i++) {
 		safe_read(fd, &(task[i].id), sizeof(int));
 		safe_read(fd, &(task[i].gtid), sizeof(uint32_t));
@@ -1287,7 +1250,7 @@ stepd_list_pids(int fd, uint16_t protocol_version,
 
 	/* read the pid list */
 	safe_read(fd, &npids, sizeof(uint32_t));
-	pids = xmalloc(npids * sizeof(uint32_t));
+	pids = xcalloc(npids, sizeof(uint32_t));
 	for (i = 0; i < npids; i++) {
 		safe_read(fd, &pids[i], sizeof(uint32_t));
 	}

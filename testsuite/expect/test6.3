@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test scancel interactive mode (--interactive option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,10 +32,13 @@
 ############################################################################
 source ./globals
 
+set test_id      "6.3"
 set exit_code    0
 set file_in      "test$test_id.input"
 set job_id1      0
 set matches      0
+
+print_header $test_id
 
 #
 # Build input script file
@@ -48,7 +55,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -57,7 +64,8 @@ expect {
 	}
 }
 if {$job_id1 == 0} {
-	fail "Job submit failure"
+	send_user "\nFAILURE: job submit failure\n"
+	exit 1
 }
 #exec $bin_rm -f $file_in
 
@@ -68,7 +76,7 @@ if {$job_id1 == 0} {
 spawn $scancel --interactive $job_id1
 expect {
 	-re "Job $job_id1 not found" {
-		log_error "Job initiation failure"
+		send_user "\nFAILURE: Job initiation failure\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -78,7 +86,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scancel not responding"
+		send_user "\nFAILURE: scancel not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -87,7 +95,8 @@ expect {
 }
 # Quit now if job failed
 if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	exit $exit_code
+
 }
 
 spawn $scancel --interactive $job_id1
@@ -98,7 +107,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scancel not responding"
+		send_user "\nFAILURE: scancel not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -109,12 +118,12 @@ expect {
 spawn $scancel --interactive $job_id1
 expect {
 	-re "Kill job error.* $job_id1" {
-		log_debug "No worries, error is expected"
+		send_user "\nNo worries, error is expected\n"
 		incr matches
 		exp_continue
 	}
 	timeout {
-		log_error "scancel not responding"
+		send_user "\nFAILURE: scancel not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -123,11 +132,12 @@ expect {
 }
 
 if {$matches != 3} {
-	fail "scancel interactive option failed"
+	send_user "\nFAILURE: scancel interactive option failed\n"
+	set exit_code 1
 }
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

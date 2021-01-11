@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose:  Test gres.conf-specified and system-detected GPU device merging
 #           logic
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2018 SchedMD LLC
 # Written by Michael Hinton
@@ -26,6 +30,7 @@
 ############################################################################
 source ./globals
 
+set test_id		"39.18"
 set exit_code		0
 set test_prog		"test$test_id.prog"
 set cfgdir		"test${test_id}_configs"
@@ -44,17 +49,20 @@ set mismatch_err	"error: This GPU specified in \\\[slurm\\\|gres\\\].conf has mi
 set no_name_err		"error: Invalid GRES data, no type name"
 set parse_err		"error: Parse error in file"
 set links_err		"error: gres.conf: Ignoring invalid Link"
-set conf_mismatch_err	"WARNING: A line in gres.conf for GRES $re_word_str has $number more configured than expected in slurm.conf"
+set conf_mismatch_err	"WARNING: A line in gres.conf for GRES $alpha_numeric_colon has $number more configured than expected in slurm.conf"
 set slurm_conf_type_err	"GRES in slurm.conf have a type while others do not"
-set gres_conf_type_err	"fatal: gres.conf for $re_word_str, some records have \"Type=\" specification while others do not"
-set gres_conf_file_err	"fatal: gres.conf for $re_word_str, some records have \"File\" specification while others do not"
+set gres_conf_type_err	"fatal: gres.conf for $alpha_under_slash, some records have \"Type=\" specification while others do not"
+set gres_conf_file_err	"fatal: gres.conf for $alpha_under_slash, some records have \"File\" specification while others do not"
 
 set debug_mode 0
 # set debug_mode 1
 
-if {[get_config_param "SwitchType"] eq "switch/cray"} {
+print_header $test_id
+
+if {[test_cray]} {
 #	Many Cray-specific changes required in slurm.conf test files
-	skip "This test can not run on a Cray system"
+	send_user "\nWARNING: This test can not run on a Cray system\n"
+	exit $exit_code
 }
 
 # Run the test under valgrind if any arguments are given
@@ -65,12 +73,12 @@ set test_minor_in ""
 if {[lindex $argv 0] == "v" || [lindex $argv 0] == "valgrind"} {
 	set use_valgrind 1
 	set test_minor_offset 1
-	log_info "Running tests under valgrind!"
+	send_user "Running tests under valgrind!\n"
 }
 
 if {[lindex $argv $test_minor_offset] != ""} {
 	set test_minor_in [lindex $argv $test_minor_offset]
-	log_info "Running test $test_id.$test_minor_in "
+	send_user "Running test $test_id.$test_minor_in \n"
 }
 
 proc mkdir {dir} {
@@ -128,16 +136,11 @@ touch_file $dev8
 
 
 # Build test program
-if {$use_valgrind} {
-	compile_against_libslurm ${test_prog} 1 "-DUSING_VALGRIND"
-} else {
-	compile_against_libslurm ${test_prog} 1
-}
-fail_on_error "Cannot compile test program"
+compile_against_libslurm $test_prog 1 $use_valgrind
 
 # Build program to determine size of unsigned long in C
 set build_cmd "$bin_cc ${test_ulong_prog}.c -o ${test_ulong_prog}"
-log_debug "$build_cmd"
+send_user "$build_cmd\n"
 eval exec $build_cmd
 
 spawn ./$test_ulong_prog
@@ -147,14 +150,15 @@ expect {
 		exp_continue
 	}
 	timeout {
-		fail "No response from $test_ulong_prog"
+		send_user "FAILURE: No response from $test_ulong_prog\n"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 
-log_debug "Sizeof(unsigned long) = $ulong_bits"
+send_user "sizeof(unsigned long) = $ulong_bits\n"
 
 
 #
@@ -182,7 +186,7 @@ log_debug "Sizeof(unsigned long) = $ulong_bits"
 #
 set failed_tests [list]
 proc check_configuration {test_minor slurm_conf_gres gres_conf fake_gpus_conf output_expected {err_msgs ""} {errs_expected 0} } {
-	global cfgpath nodename test_prog re_word_str exit_code test_minor_in
+	global cfgpath nodename test_prog alpha_numeric_special exit_code test_minor_in
 	global test_id failed_tests use_valgrind bin_sort file_in file_out
 	global bin_cat debug_mode
 
@@ -192,7 +196,7 @@ proc check_configuration {test_minor slurm_conf_gres gres_conf fake_gpus_conf ou
 	}
 
 	set failed 0
-	log_info "====test$test_id.$test_minor===="
+	send_user "\n====test$test_id.$test_minor====\n\n"
 
 	generate_file $gres_conf $cfgpath/gres.conf
 	generate_file $fake_gpus_conf $cfgpath/fake_gpus.conf
@@ -226,7 +230,7 @@ rm -rf ./$file_out"
 	}
 	spawn ./$file_in
 	expect {
-		-re "(GRES_PARSABLE$re_word_str)" {
+		-re "(GRES_PARSABLE$alpha_numeric_special)" {
 			if {$sorted_actual == ""} {
 				set sorted_actual "\n"
 			}
@@ -235,7 +239,7 @@ rm -rf ./$file_out"
 			exp_continue
 		}
 		timeout {
-			log_error "No response from $test_prog"
+			send_user "FAILURE: No response from $test_prog\n"
 			set failed 1
 		}
 		eof {
@@ -261,14 +265,14 @@ rm -rf ./$file_out"
 		spawn ./$file_in
 		expect {
 			-re "($err_msgs)" {
-				log_debug "Found '$err_msgs'"
+				send_user "Found '$err_msgs'\n"
 				if {$ignore_err_msgs == 0} {
 					incr errs_actual
 				}
 				exp_continue
 			}
 			timeout {
-				log_error "No response from $test_prog"
+				send_user "FAILURE: No response from $test_prog\n"
 				set failed 1
 			}
 			eof {
@@ -281,7 +285,7 @@ rm -rf ./$file_out"
 	make_bash_script $file_in "/bin/echo \"$output_expected\" | $bin_sort"
 	spawn ./$file_in
 	expect {
-		-re "(GRES_PARSABLE$re_word_str)" {
+		-re "(GRES_PARSABLE$alpha_numeric_special)" {
 			if {$sorted_expected == ""} {
 				set sorted_expected "\n"
 			}
@@ -290,7 +294,7 @@ rm -rf ./$file_out"
 			exp_continue
 		}
 		timeout {
-			log_error "No response from $test_prog"
+			send_user "FAILURE: No response from $test_prog\n"
 			set failed 1
 		}
 		eof {
@@ -301,9 +305,9 @@ rm -rf ./$file_out"
 	log_user 1
 
 	# Check the output with what is expected
-	log_debug "Actual (sorted): $sorted_actual"
+	send_user "Actual (sorted): $sorted_actual\n"
 	if {$sorted_actual != $sorted_expected} {
-		log_debug "Expected (sorted): $sorted_expected"
+		send_user "Expected (sorted): $sorted_expected\n"
 		log_error "Expected output does not match actual output for sub-test $test_minor"
 		set failed 1
 	} else {
@@ -423,7 +427,7 @@ check_configuration 0.4 $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_ou
 # gpu/generic will be used and CPU ranges will be set to null, failing the tests
 # ##############################################################################
 
-if [have_nvml] {
+if {[have_nvml] == 1} {
 	if {$test_minor_in == ""} {
 		log_info "Running NVML-specific tests:"
 	}
@@ -577,7 +581,7 @@ check_configuration 0.20 $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_o
 # ##############################################################################
 
 } else {
-	log_warn "====Omitting NVML-specific tests===="
+	send_user "\n====Omitting NVML-specific tests====\n\n"
 }
 
 # ##############################################################################
@@ -1847,22 +1851,24 @@ check_configuration 2.56 $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_o
 # # Cleanup and finish
 # ##############################################################################
 
-if {$exit_code != 0} {
-	set message "Tests $test_id.\["
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
+} else {
+	send_user "FAILURE: Tests $test_id.\["
 	set length [llength $failed_tests]
 	set i 0
 	foreach test_minor $failed_tests {
 		set i [expr $i+1]
-		append message "$test_minor"
+		send_user "$test_minor"
 		if {$i < $length} {
-			append message ","
+			send_user ","
 		}
 	}
-	append message "\] failed"
+	send_user "\] failed\n"
 	if {$test_minor_in == ""} {
-		append message ". To run an individual sub-test, do `expect test$test_id <sub-test>`"
+		send_user "To run an individual sub-test, do `expect test$test_id <sub-test>`\n"
 	}
-	log_error $message
+
 }
 
 # Delete generated files
@@ -1884,6 +1890,4 @@ file delete $dev8
 # Delete generated folders
 file delete $cfgpath
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+exit $exit_code

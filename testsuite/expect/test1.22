@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Confirm that a job executes with various launch thread fanouts
 #          (--threads option).
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002-2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,7 +34,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.22"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Submit a job with one thread fanout
@@ -37,16 +45,16 @@ set exit_code   0
 set host_0      ""
 set timeout $max_job_delay
 set node_cnt 1-64
-set task_num [get_config_param "MaxTasksPerNode"]
+set task_num [get_max_tasks]
 
 set srun_pid [spawn $srun -N$node_cnt -l --threads=1 -t1 $bin_printenv SLURMD_NODENAME]
 expect {
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		set host_0 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -59,7 +67,7 @@ expect {
 # Verify node registration
 #
 if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	set exit_code   1
 }
 
@@ -75,15 +83,15 @@ if {$task_num <= 32} {
 set srun_pid [spawn $srun -N$node_cnt -n$task_num -O -l --threads=$thread_cnt -t1 $bin_printenv SLURMD_NODENAME]
 expect {
 	-re "Memory required by task is not available" {
-		log_warn "DefMemPerTask is configured too high for this test"
+		send_user "\nWARNING: DefMemPerTask is configured too high for this test\n"
 		set host_0 "warn"
 	}
-	-re "0: *($re_word_str)" {
+	-re "0: *($alpha_numeric_under)" {
 		set host_0 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
 		set exit_code 1
 	}
@@ -96,9 +104,11 @@ expect {
 # Verify node registration
 #
 if {[string compare $host_0 ""] == 0} {
-	fail "Did not get hostname of task 0"
+	send_user "\nFAILURE: Did not get hostname of task 0\n"
+	set exit_code   1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

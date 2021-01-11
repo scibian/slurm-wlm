@@ -3,6 +3,10 @@
 # Purpose: Test of Slurm functionality
 #          Test that an srun program can move from the background to the
 #          foreground.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2011-2013 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -27,11 +31,14 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.67"
 set file_in     "test$test_id.bash"
 set test_timer  "test$test_id.test_timer"
 set test_srun   "test$test_id.test_srun"
 set job_id      0
 set exit_code   0
+
+print_header $test_id
 
 # remove any remaining files
 exec $bin_rm -f $test_timer $test_srun $file_in
@@ -66,7 +73,7 @@ expect {
 	-re "sending job to foreground" {
 		set send_match 1
 		if {$time_match == 0} {
-			log_error "srun is not generating output"
+			send_user "\nFAILURE: srun is not generating output\n"
 			set exit_code 1
 		}
 		exp_continue
@@ -80,7 +87,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun is not responding"
+		send_user "\nFAILURE: srun is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -89,18 +96,21 @@ expect {
 }
 
 if {$send_match != 1} {
-	fail "srun was not sent to the foreground"
+	send_user "\nFAILURE: srun was not sent to the foreground\n"
+	set exit_code 1
 }
 if {$time_match != 10} {
-	fail "srun is not generating output ($time_match != 10)"
+	send_user "\nFAILURE: srun is not generating output ($time_match != 10)\n"
+	set exit_code 1
 }
 if {$fini_match != 1} {
-	fail "srun did not finish the program submitted"
+	send_user "\nFAILURE: srun did not finish the program submitted\n"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 	exec $bin_rm -f $test_timer $test_srun $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
+exit $exit_code
 

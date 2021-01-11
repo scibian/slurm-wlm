@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --licenses option
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2008-2009 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,7 +33,10 @@
 ############################################################################
 source ./globals
 
+set test_id     "1.18"
 set exit_code   0
+
+print_header $test_id
 
 #
 # Run a job attempting to get some dummy license name
@@ -39,19 +47,20 @@ set srun_pid [spawn $srun --licenses=DUMMY_FOR_TESTING $bin_printenv SLURMD_NODE
 expect {
 	-re "Invalid license" {
 		set match 1
-		log_debug "This error was expected, no worries"
+		send_user "This error was expected, no worries\n\n"
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $srun_pid
-		fail "Srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$match == 0} {
-	log_error "No error on with bad license name"
+	send_user "\nFAILURE: No error on with bad license name\n"
 	set exit_code 1
 }
 
@@ -62,7 +71,7 @@ log_user 0
 set licenses ""
 spawn $scontrol show config
 expect {
-	-re "Licenses *= ($re_word_str)" {
+	-re "Licenses *= ($alpha_numeric_under)" {
 		set licenses $expect_out(1,string)
 		exp_continue
 	}
@@ -76,12 +85,14 @@ if {[string compare $licenses ""] != 0} {
 	set srun_pid [spawn $srun --licenses=$licenses $bin_printenv SLURMD_NODENAME]
 	expect {
 		-re "invalid license" {
-			log_error "Error getting license"
+			send_user "\nFAILURE: Error getting license\n"
 			set exit_code 1
 			exp_continue
 		}
 		timeout {
-			log_error "srun not responding. This test can fail if the selected license is in use"
+			send_user "\nNOTE: srun not responding\n"
+			send_user "  This test can fail if the selected "
+			send_user "license is in use.\n"
 			set exit_code 1
 		}
 		eof {
@@ -94,7 +105,8 @@ if {[string compare $licenses ""] != 0} {
 # Run a job attempting to get a legitimate license name
 #
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code
 

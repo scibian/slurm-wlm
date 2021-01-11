@@ -2,6 +2,11 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of MPI with heterogeneous jobs.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "WARNING: ..." with an explanation of why the test can't be made, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2002 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,32 +33,37 @@
 ############################################################################
 source ./globals
 
+set test_id            "38.7"
 set exit_code          0
 set file_in            "test$test_id.input"
 set file_out           "test$test_id.output"
 set file_err           "test$test_id.error"
 set test_prog          "test$test_id.prog"
 
+print_header $test_id
+
 #
 # Test for existence of mpi compiler
 #
 if {[info exists mpicc] == 0} {
-	skip "Mpicc not defined, can't perform MPI testing"
+	send_user "\nWARNING: mpicc not defined, can't perform MPI testing\n"
+	exit 0
 }
 if {[file executable $mpicc] == 0} {
-	skip "$mpicc does not exists"
+	send_user "\nWARNING: $mpicc does not exists\n"
+	exit 0
 }
 
-if {[get_config_param "FrontendName"] ne "MISSING"} {
-    skip "This test is incompatible with front-end systems"
-}
-if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
-	skip "This test requires SchedulerType = sched/backfill"
+if {[test_front_end]} {
+        send_user "\nWARNING: This test is incompatible with front-end systems\n"
+        exit 0
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set def_part_name [default_partition]
+set nb_nodes [get_node_cnt_in_part $def_part_name]
 if {$nb_nodes < 2} {
-	skip "Need 2 or more nodes in default partition"
+	send_user "\nWARNING: Need 2 or more nodes in default partition\n"
+	exit $exit_code
 }
 
 #
@@ -76,14 +86,15 @@ if {$use_pmi} {
 	}
 }
 if {![file exists $test_prog]} {
-	skip "Unable to build test program"
+	send_user "\nWARNING: Unable to build test program\n"
+	exit 0
 }
 
 ########################################################################
-# TEST OF PACK GROUP 0
+# TEST OF HET GROUP 0
 ########################################################################
 
-log_info "TEST OF PACK GROUP 0"
+send_user "\n\nTEST OF HET GROUP 0\n\n"
 
 # Delete left-over stdout/err files
 file delete $file_out $file_err
@@ -93,8 +104,8 @@ file delete $file_out $file_err
 #
 make_bash_script $file_in "
   $bin_date
-  $bin_echo PACK GROUP 0
-  $srun --pack-group=0 ./$test_prog
+  $bin_echo HET GROUP 0
+  $srun --het-group=0 ./$test_prog
   $bin_date
   $bin_echo TEST_COMPLETE
 "
@@ -116,10 +127,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -129,20 +141,22 @@ expect {
 }
 
 if {$no_start != 0} {
+	send_user "\nWARNING: partition too small for test\n"
 	if {$job_id != 0} {
 		cancel_job $job_id
 	}
-	skip "Partition too small for test"
+	exit 0
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job $job_id to complete"
+	send_user "\nFAILURE: waiting for job $job_id to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
@@ -158,7 +172,7 @@ if {[wait_for_file $file_out] == 0} {
 	set rank_sum 0
 	spawn $bin_cat $file_out
 	expect {
-                -re "Rank.($number). on $re_word_str just received msg from Rank ($number)" {
+                -re "Rank.($number). on $alpha_numeric_under just received msg from Rank ($number)" {
 			incr rank_sum $expect_out(1,string)
 			incr rank_sum $expect_out(2,string)
 			incr matches
@@ -173,16 +187,19 @@ if {[wait_for_file $file_out] == 0} {
 		}
         }
 	if {$matches == 0} {
-		log_error "No MPI communications occurred. The version of MPI you are using may be incompatible with the configured switch. Core files may be present from failed MPI tasks"
+		send_user "\nFAILURE: No MPI communications occurred\n"
+		send_user "  The version of MPI you are using may be incompatible "
+		send_user "with the configured switch\n"
+		send_user "  Core files may be present from failed MPI tasks\n\n"
 		set exit_code 1
 	} elseif {$matches != $expected_msg} {
-		log_error "Unexpected output ($matches of $expected_msg)"
+		send_user "\nFAILURE: unexpected output ($matches of $expected_msg)\n"
 		set exit_code 1
 	} elseif {$complete == 0} {
-		log_error "Test failed to complete"
+		send_user "\nFAILURE: test failed to complete\n"
 		set exit_code 1
 	} elseif {$rank_sum != $expected_sum} {
-		log_error "Invalid rank values ($rank_sum != $expected_sum)"
+		send_user "\nFAILURE: Invalid rank values ($rank_sum != $expected_sum)\n"
 		set exit_code 1
 	}
 } else {
@@ -190,10 +207,10 @@ if {[wait_for_file $file_out] == 0} {
 }
 
 ########################################################################
-# TEST OF PACK GROUP 1
+# TEST OF HET GROUP 1
 ########################################################################
 
-log_info "TEST OF PACK GROUP 1"
+send_user "\n\nTEST OF HET GROUP 1\n\n"
 
 # Delete left-over stdout/err files
 file delete $file_out $file_err
@@ -203,8 +220,8 @@ file delete $file_out $file_err
 #
 make_bash_script $file_in "
   $bin_date
-  $bin_echo PACK GROUP 1
-  $srun --pack-group=1 ./$test_prog
+  $bin_echo HET GROUP 1
+  $srun --het-group=1 ./$test_prog
   $bin_date
   $bin_echo TEST_COMPLETE
 "
@@ -225,10 +242,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -238,20 +256,22 @@ expect {
 }
 
 if {$no_start != 0} {
+	send_user "\nWARNING: partition too small for test\n"
 	if {$job_id != 0} {
 		cancel_job $job_id
 	}
-	skip "Partition too small for test"
+	exit 0
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job $job_id to complete"
+	send_user "\nFAILURE: waiting for job $job_id to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
@@ -267,7 +287,7 @@ if {[wait_for_file $file_out] == 0} {
 	set rank_sum 0
 	spawn $bin_cat $file_out
 	expect {
-                -re "Rank.($number). on $re_word_str just received msg from Rank ($number)" {
+                -re "Rank.($number). on $alpha_numeric_under just received msg from Rank ($number)" {
 			incr rank_sum $expect_out(1,string)
 			incr rank_sum $expect_out(2,string)
 			incr matches
@@ -282,16 +302,19 @@ if {[wait_for_file $file_out] == 0} {
 		}
         }
 	if {$matches == 0} {
-		log_error "No MPI communications occurred. The version of MPI you are using may be incompatible with the configured switch. Core files may be present from failed MPI tasks"
+		send_user "\nFAILURE: No MPI communications occurred\n"
+		send_user "  The version of MPI you are using may be incompatible "
+		send_user "with the configured switch\n"
+		send_user "  Core files may be present from failed MPI tasks\n\n"
 		set exit_code 1
 	} elseif {$matches != $expected_msg} {
-		log_error "Unexpected output ($matches of $expected_msg)"
+		send_user "\nFAILURE: unexpected output ($matches of $expected_msg)\n"
 		set exit_code 1
 	} elseif {$complete == 0} {
-		log_error "Test failed to complete"
+		send_user "\nFAILURE: test failed to complete\n"
 		set exit_code 1
 	} elseif {$rank_sum != $expected_sum} {
-		log_error "Invalid rank values ($rank_sum != $expected_sum)"
+		send_user "\nFAILURE: Invalid rank values ($rank_sum != $expected_sum)\n"
 		set exit_code 1
 	}
 } else {
@@ -299,8 +322,16 @@ if {[wait_for_file $file_out] == 0} {
 }
 
 ########################################################################
-# TEST OF PACK GROUP 0,1
+# TEST OF HET GROUP 0,1
 ########################################################################
+
+if {[test_hetjob_step] == 0} {
+	if {$exit_code == 0} {
+		exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
+	}
+	send_user "\nWARNING: heterogeneous steps not currently supported\n"
+	exit $exit_code
+}
 
 #
 # OpenMPI can only run in multi-slurmd mode if no more than one node has
@@ -311,14 +342,15 @@ if {[wait_for_file $file_out] == 0} {
 # for a variation of this test that will work with OpenMPI and multi-slurmd
 # mode.
 #
-if {[get_config_param "MULTIPLE_SLURMD"] eq "Yes"} {
+if {[test_multiple_slurmd]} {
 	if {$exit_code == 0} {
 		exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
 	}
-	skip "This test is incompatible with multiple slurmd systems"
+	send_user "\nWARNING: This test is incompatible with multiple slurmd systems\n"
+	exit $exit_code
 }
 
-log_info "TEST OF PACK GROUP 0,1"
+send_user "\n\nTEST OF HET GROUP 0,1\n\n"
 
 # Delete left-over stdout/err files
 file delete $file_out $file_err
@@ -328,8 +360,8 @@ file delete $file_out $file_err
 #
 make_bash_script $file_in "
   $bin_date
-  $bin_echo PACK GROUP 0,1
-  $srun --pack-group=0,1 ./$test_prog
+  $bin_echo HET GROUP 0,1
+  $srun --het-group=0,1 ./$test_prog
   $bin_date
   $bin_echo TEST_COMPLETE
 "
@@ -350,10 +382,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -363,20 +396,22 @@ expect {
 }
 
 if {$no_start != 0} {
+	send_user "\nWARNING: partition too small for test\n"
 	if {$job_id != 0} {
 		cancel_job $job_id
 	}
-	skip "Partition too small for test"
+	exit 0
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job $job_id to complete"
+	send_user "\nFAILURE: waiting for job $job_id to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
@@ -392,7 +427,7 @@ if {[wait_for_file $file_out] == 0} {
 	set rank_sum 0
 	spawn $bin_cat $file_out
 	expect {
-                -re "Rank.($number). on $re_word_str just received msg from Rank ($number)" {
+                -re "Rank.($number). on $alpha_numeric_under just received msg from Rank ($number)" {
 			incr rank_sum $expect_out(1,string)
 			incr rank_sum $expect_out(2,string)
 			incr matches
@@ -407,16 +442,19 @@ if {[wait_for_file $file_out] == 0} {
 		}
         }
 	if {$matches == 0} {
-		log_error "No MPI communications occurred. The version of MPI you are using may be incompatible with the configured switch. Core files may be present from failed MPI tasks"
+		send_user "\nFAILURE: No MPI communications occurred\n"
+		send_user "  The version of MPI you are using may be incompatible "
+		send_user "with the configured switch\n"
+		send_user "  Core files may be present from failed MPI tasks\n\n"
 		set exit_code 1
 	} elseif {$matches != $expected_msg} {
-		log_error "Unexpected output ($matches of $expected_msg)"
+		send_user "\nFAILURE: unexpected output ($matches of $expected_msg)\n"
 		set exit_code 1
 	} elseif {$complete == 0} {
-		log_error "Test failed to complete"
+		send_user "\nFAILURE: test failed to complete\n"
 		set exit_code 1
 	} elseif {$rank_sum != $expected_sum} {
-		log_error "Invalid rank values ($rank_sum != $expected_sum)"
+		send_user "\nFAILURE: Invalid rank values ($rank_sum != $expected_sum)\n"
 		set exit_code 1
 	}
 } else {
@@ -424,10 +462,10 @@ if {[wait_for_file $file_out] == 0} {
 }
 
 ########################################################################
-# TEST OF PACK GROUP 1 THEN 0,1
+# TEST OF HET GROUP 1 THEN 0,1
 ########################################################################
 
-log_info "TEST OF PACK GROUP 1 THEN 0,1"
+send_user "\n\nTEST OF HET GROUP 1 THEN 0,1\n\n"
 
 # Delete left-over stdout/err files
 file delete $file_out $file_err
@@ -437,10 +475,10 @@ file delete $file_out $file_err
 #
 make_bash_script $file_in "
   $bin_date
-  $bin_echo PACK GROUP 1
-  $srun --pack-group=1 ./$test_prog
-  $bin_echo PACK GROUP 0,1
-  $srun --pack-group=0,1 ./$test_prog
+  $bin_echo HET GROUP 1
+  $srun --het-group=1 ./$test_prog
+  $bin_echo HET GROUP 0,1
+  $srun --het-group=0,1 ./$test_prog
   $bin_date
   $bin_echo TEST_COMPLETE
 "
@@ -461,10 +499,11 @@ expect {
 		exp_continue
 	}
 	-re "Unable to contact" {
-		fail "Slurm appears to be down"
+		send_user "\nFAILURE: slurm appears to be down\n"
+		exit 1
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -474,20 +513,22 @@ expect {
 }
 
 if {$no_start != 0} {
+	send_user "\nWARNING: partition too small for test\n"
 	if {$job_id != 0} {
 		cancel_job $job_id
 	}
-	skip "Partition too small for test"
+	exit 0
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to complete
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job $job_id to complete"
+	send_user "\nFAILURE: waiting for job $job_id to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
@@ -503,7 +544,7 @@ if {[wait_for_file $file_out] == 0} {
 	set rank_sum 0
 	spawn $bin_cat $file_out
 	expect {
-                -re "Rank.($number). on $re_word_str just received msg from Rank ($number)" {
+                -re "Rank.($number). on $alpha_numeric_under just received msg from Rank ($number)" {
 			incr rank_sum $expect_out(1,string)
 			incr rank_sum $expect_out(2,string)
 			incr matches
@@ -518,16 +559,19 @@ if {[wait_for_file $file_out] == 0} {
 		}
         }
 	if {$matches == 0} {
-		log_error "No MPI communications occurred. The version of MPI you are using may be incompatible with the configured switch. Core files may be present from failed MPI tasks"
+		send_user "\nFAILURE: No MPI communications occurred\n"
+		send_user "  The version of MPI you are using may be incompatible "
+		send_user "with the configured switch\n"
+		send_user "  Core files may be present from failed MPI tasks\n\n"
 		set exit_code 1
 	} elseif {$matches != $expected_msg} {
-		log_error "Unexpected output ($matches of $expected_msg)"
+		send_user "\nFAILURE: unexpected output ($matches of $expected_msg)\n"
 		set exit_code 1
 	} elseif {$complete == 0} {
-		log_error "Test failed to complete"
+		send_user "\nFAILURE: test failed to complete\n"
 		set exit_code 1
 	} elseif {$rank_sum != $expected_sum} {
-		log_error "Invalid rank values ($rank_sum != $expected_sum)"
+		send_user "\nFAILURE: Invalid rank values ($rank_sum != $expected_sum)\n"
 		set exit_code 1
 	}
 } else {
@@ -536,6 +580,7 @@ if {[wait_for_file $file_out] == 0} {
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
+	send_user "\nSUCCESS\n"
 } else {
 	set matches 0
 	spawn head $file_err
@@ -549,12 +594,12 @@ if {$exit_code == 0} {
 		}
 	}
 	if {$matches != 0} {
-		log_warn "If using MVAPICH then configure \"PropagateResourceLimitsExcept=MEMLOCK\". Also start slurmd with \"ulimit -l unlimited\""
+		send_user "WARNING: If using MVAPICH then\n"
+		send_user "         Configure \"PropagateResourceLimitsExcept=MEMLOCK\"\n"
+		send_user "         Also start slurmd with \"ulimit -l unlimited\"\n"
 	} else {
-		log_debug "Check contents of $file_err"
+		send_user "Check contents of $file_err\n"
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+exit $exit_code

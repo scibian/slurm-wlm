@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of --deadline and --begin option and --time_min too long
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2015 CEA/DAM/DIF
 # Written by Aline Roy <aline.roy@cea.fr>
@@ -26,8 +30,11 @@
 ############################################################################
 source ./globals
 
+set test_id     "15.37"
 set exit_code   0
 set job_id      0
+
+print_header $test_id
 
 #
 # Spawn a batch job with a deadline and no time
@@ -55,7 +62,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
+		send_user "\nFAILURE: salloc not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -63,11 +70,13 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch not submitted with a deadline too short"
+	send_user "\nFAILURE: batch not submitted with a deadline too short\n"
+	exit 1
 }
 
 if {[wait_for_job $job_id DONE] != 0} {
-	fail "Job failed to run to completion"
+	send_user "\nFAILURE: job failed to run to completion\n"
+	exit 1
 }
 
 #
@@ -78,14 +87,14 @@ expect {
 	-re "JobState=DEADLINE" {
 		exp_continue
 	}
-	-re "JobState=($re_word_str)" {
+	-re "JobState=($alpha)" {
 		set current_state $expect_out(1,string)
-		log_error "Invalid job state ($current_state != DEADLINE)"
+		send_user "\nFAILURE: invalid job state ($current_state != DEADLINE)\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -107,7 +116,7 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 			break
 		}
 		-re "COMPLETED" {
-			log_error "Batch submitted with a deadline too short"
+			send_user "\nFAILURE: batch submitted with a deadline too short\n"
 			set exit_code 1
 			break
 		}
@@ -116,12 +125,12 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 			exp_continue
 		}
 		-re "CANCELLED by ($number)" {
-			log_error "Batch killed by timeout before start"
+			send_user "\nFAILURE: batch killed by timeout before start\n"
 			set exit_code 1
 			break
 		}
 		timeout {
-			log_error "sacct not responding"
+			send_user "\nFAILURE: sacct not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -132,8 +141,15 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 }
 
 if {$not_support != 0} {
-	skip "Can not test without accounting enabled"
+	send_user "\nWARNING: can not test without accounting enabled\n"
+	exit $exit_code
 }
 if {$exit_code == 1} {
-	fail "Batch submitted with a deadline too short"
+	send_user "\nFAILURE: batch submitted with a deadline too short\n"
+	set exit_code 1
 }
+
+if {$exit_code == 0} {
+	send_user "\nSUCCESS\n"
+}
+exit $exit_code

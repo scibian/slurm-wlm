@@ -2,6 +2,10 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          strigger --set --idle
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2007 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,10 +32,13 @@
 ############################################################################
 source ./globals
 
+set test_id          "19.7"
 set exit_code        0
 set file_in          "test$test_id.input"
 set file_in_idle     "test$test_id.idle_input"
 set file_out         "test$test_id.output"
+
+print_header $test_id
 
 #
 # get my uid and clear any vestigial triggers
@@ -56,15 +63,17 @@ expect {
 		exp_continue
 	}
 	timeout {
+		send_user "\nFAILURE: srun not responding\n"
 		kill_srun
-		fail "srun not responding"
+		exit 1
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
@@ -83,7 +92,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -92,12 +101,14 @@ expect {
 	}
 }
 if {$disabled == 1} {
+	send_user "\nWARNING: Current configuration prevents setting triggers\n"
+	send_user "         Need to run as SlurmUser or make SlurmUser=root\n"
 	cancel_job $job_id
 	exec $bin_rm -f $file_in $file_in_idle
-	skip "Current configuration prevents setting triggers. Need to run as SlurmUser or make SlurmUser=root"
+	exit $exit_code
 }
 if {$matches == 0} {
-	log_error "Trigger creation failure"
+	send_user "\nFAILURE: trigger creation failure\n"
 	set exit_code 1
 }
 
@@ -112,7 +123,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -125,7 +136,7 @@ expect {
 # might be processed immediately and not found by "strigger --get"
 #
 #if {$idle_matches == 0} {
-#	log_error "Trigger get failure"
+#	send_user "\nFAILURE: trigger get failure\n"
 #	set exit_code 1
 #}
 
@@ -133,7 +144,7 @@ expect {
 # Wait for trigger event (hopefully, shortly after the job completes)
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job to complete"
+	send_user "\nFAILURE: waiting for job to complete\n"
 	set exit_code 1
 }
 if {[wait_for_file $file_out] == 0} {
@@ -144,7 +155,7 @@ if {[wait_for_file $file_out] == 0} {
 		}
 	}
 } else {
-	log_error "Idle trigger program's output file missing"
+	send_user "\nFAILURE: Idle trigger program's output file missing\n"
 	set exit_code 1
 }
 
@@ -159,7 +170,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "strigger not responding"
+		send_user "\nFAILURE: strigger not responding\n"
 		slow_kill $strigger_pid
 		set exit_code 1
 	}
@@ -168,16 +179,15 @@ expect {
 	}
 }
 if {$idle_matches != 0} {
-	log_error "Trigger get failure, still exists"
+	send_user "\nFAILURE: trigger get failure, still exists\n"
 	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_in_idle $file_out
+	send_user "\nSUCCESS\n"
 }
 # clear any vestigial triggers
 exec $strigger --clear --quiet --user=$uid
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+exit $exit_code
 

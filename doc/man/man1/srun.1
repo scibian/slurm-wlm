@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "February 2020" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "April 2020" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -31,15 +31,16 @@ The value 253 is reserved for out-of-memory errors.
 
 The executable is resolved in the following order:
 .br
-.IP 1. 3
-If executable starts with ".", then path is constructed as:
+
+1. If executable starts with ".", then path is constructed as:
 current working directory / executable
-.IP 2.
-If executable starts with a "/", then path is considered absolute.
-.IP 3.
-If executable can be resolved through PATH. See \fBpath_resolution\fR(7).
-.IP 4.
-If executable is in current working directory.
+.br
+2. If executable starts with a "/", then path is considered absolute.
+.br
+3. If executable can be resolved through PATH. See \fBpath_resolution\fR(7).
+.br
+4. If executable is in current working directory.
+.br
 .P
 Current working directory is the calling process working directory unless the
 \fB\-\-chdir\fR argument is passed, which will override the current working
@@ -222,14 +223,6 @@ already passed for that year, in which case the next year is used.
 .br
 This option applies to job allocations.
 .RE
-
-.TP
-\fB\-\-checkpoint\fR=<\fItime\fR>
-Specifies the interval between creating checkpoints of the job step.
-By default, the job step will have no checkpoints created.
-Acceptable time formats include "minutes", "minutes:seconds",
-"hours:minutes:seconds", "days\-hours", "days\-hours:minutes" and
-"days\-hours:minutes:seconds". This option applies to job and step allocations.
 
 .TP
 \fB\-\-cluster\-constraint\fR=<\fIlist\fR>
@@ -424,7 +417,7 @@ If the number of tasks (or ranks) exceeds the number of elements in this list,
 elements in the list will be reused as needed starting from the beginning of
 the list.
 To simplify support for large task counts, the lists may follow a map with an
-asterisk and repetition count
+asterisk and repetition count.
 For example "map_cpu:0x0f*4,0xf0*4".
 Not supported unless the entire node is allocated to the job.
 .TP
@@ -435,10 +428,12 @@ The mapping is specified for a node and identical mapping is applied to the
 tasks on every node (i.e. the lowest task ID on each node is mapped to the
 first mask specified in the list, etc.).
 CPU masks are \fBalways\fR interpreted as hexadecimal values but can be
-preceded with an optional '0x'. Not supported unless the entire node is
-allocated to the job.
+preceded with an optional '0x'.
+If the number of tasks (or ranks) exceeds the number of elements in this list,
+elements in the list will be reused as needed starting from the beginning of
+the list.
 To simplify support for large task counts, the lists may follow a map with an
-asterisk and repetition count
+asterisk and repetition count.
 For example "mask_cpu:0x0f*4,0xf0*4".
 Not supported unless the entire node is allocated to the job.
 .TP
@@ -670,9 +665,11 @@ srun within an existing salloc or sbatch allocation) only to job allocations.
 <\fItype:job_id[:job_id][?type:job_id[:job_id]]\fR>.
 All dependencies must be satisfied if the "," separator is used.
 Any dependency may be satisfied if the "?" separator is used.
+Only one separator may be used.
 Many jobs can share the same dependency and these jobs may even belong to
 different  users. The  value may be changed after job submission using the
 scontrol command.
+Dependencies on remote jobs are allowed in a federation.
 Once a job dependency fails due to the termination state of a preceding job,
 the dependent job will never be run, even if the preceding job is requeued and
 has a different termination state in a subsequent execution. This option applies
@@ -680,9 +677,11 @@ to job allocations.
 .PD
 .RS
 .TP
-\fBafter:job_id[:jobid...]\fR
-This job can begin execution after the specified jobs have begun
-execution.
+\fBafter:job_id[[+time][:jobid[+time]...]]\fR
+After the specified jobs start or are cancelled and 'time' in minutes from job
+start or cancellation happens, this
+job can begin execution. If no 'time' is given then then there is no delay after
+start or cancellation.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
@@ -708,12 +707,16 @@ executed (ran to completion with an exit code of zero).
 Resources allocated to this job should be used to expand the specified job.
 The job to expand must share the same QOS (Quality of Service) and partition.
 Gang scheduling of resources in the partition is also not supported.
+"expand" is not allowed for jobs that didn't originate on the same cluster
+as the submitted job.
 .TP
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
 In other words, only one job by that name and owned by that user can be running
 or suspended at any point in time.
+In a federation, a singleton dependency must be fulfilled on all clusters
+unless DependencyParameters=disable_remote_singleton is used in slurm.conf.
 .RE
 
 .TP
@@ -765,7 +768,7 @@ an existing resource allocation, where you want separate processors to
 be dedicated to each job step. If sufficient processors are not
 available to initiate the job step, it will be deferred. This can
 be thought of as providing a mechanism for resource management to the job
-within it's allocation.
+within its allocation.
 
 The exclusive allocation of CPUs only applies to job steps explicitly invoked
 with the \fB\-\-exclusive\fR option.
@@ -882,7 +885,11 @@ elements in this list, elements in the list will be reused as needed starting
 from the beginning of the list. To simplify support for large task counts,
 the lists may follow a map with an asterisk and repetition count.
 For example "map_gpu:0*4,1*4".
-Not supported unless the entire node is allocated to the job.
+If the task/cgroup plugin is used and ConstrainDevices is set in cgroup.conf,
+then the GPU IDs are zero-based indexes relative to the GPUs allocated to the
+job (e.g. the first GPU is 0, even if the global ID is 3). Otherwise, the GPU
+IDs are global IDs, and all GPUs on each node in the job should be allocated for
+predictable binding results.
 .TP
 \fBmask_gpu:<list>\fR
 Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
@@ -890,11 +897,14 @@ Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
 a node and identical mapping is applied to the tasks on every node (i.e. the
 lowest task ID on each node is mapped to the first mask specified in the list,
 etc.). GPU masks are always interpreted as hexadecimal values but can be
-preceded with an optional '0x'. Not supported unless the entire node is
-allocated to the job. To simplify support for large task counts, the lists
-may follow a map with an asterisk and repetition count.
+preceded with an optional '0x'. To simplify support for large task counts, the
+lists may follow a map with an asterisk and repetition count.
 For example "mask_gpu:0x0f*4,0xf0*4".
-Not supported unless the entire node is allocated to the job.
+If the task/cgroup plugin is used and ConstrainDevices is set in cgroup.conf,
+then the GPU IDs are zero-based indexes relative to the GPUs allocated to the
+job (e.g. the first GPU is 0, even if the global ID is 3). Otherwise, the GPU
+IDs are global IDs, and all GPUs on each node in the job should be allocated for
+predictable binding results.
 .RE
 
 .TP
@@ -961,11 +971,12 @@ This option applies to job allocations.
 Specify the number of GPUs required for the job on each task to be spawned
 in the job's resource allocation.
 An optional GPU type specification can be supplied.
-This option requires the specification of a task count (e.g. \-n or \-\-ntasks
-options). For example "\-\-gpus\-per\-task=volta:1". Multiple options can be
+For example "\-\-gpus\-per\-task=volta:1". Multiple options can be
 requested in a comma separated list, for example:
 "\-\-gpus\-per\-task=volta:3,kepler:1". See also the \fB\-\-gpus\fR,
 \fB\-\-gpus\-per\-socket\fR and \fB\-\-gpus\-per\-node\fR options.
+This option requires an explicit task count, e.g. -n, --ntasks or "--gpus=X
+--gpus-per-task=Y" rather than an ambiguous range of nodes with -N, --nodes.
 .br
 NOTE: This option will not have any impact on GPU binding, specifically
 it won't limit the number of devices set for CUDA_VISIBLE_DEVICES.
@@ -1296,8 +1307,9 @@ Optional control for task distribution over nodes:
 
 .TP
 .B Pack
-Rather than evenly distributing a job step's tasks evenly across it's allocated
+Rather than evenly distributing a job step's tasks evenly across its allocated
 nodes, pack them as tightly as possible on the nodes.
+This only applies when the "block" task distribution method is used.
 .TP
 .B NoPack
 Rather than packing a job step's tasks as tightly as possible on the nodes,
@@ -1431,7 +1443,7 @@ be performed at the level of nodes, where the definition of "nodes"
 may differ from system to system.
 By default no memory binding is performed; any task using any CPU can use
 any memory. This option is typically used to ensure that each task is bound to
-the memory closest to it's assigned CPU. \fBThe use of any type other than
+the memory closest to its assigned CPU. \fBThe use of any type other than
 "none" or "local" is not recommended.\fR
 If you want greater control, try running a simple test code with the
 options "\-\-cpu\-bind=verbose,none \-\-mem\-bind=verbose,none" to determine
@@ -1476,9 +1488,10 @@ If the number of tasks (or ranks) exceeds the number of elements in this list,
 elements in the list will be reused as needed starting from the beginning of
 the list.
 To simplify support for large task counts, the lists may follow a map with an
-asterisk and repetition count
+asterisk and repetition count.
 For example "map_mem:0x0f*4,0xf0*4".
-Not supported unless the entire node is allocated to the job.
+For predictable binding results, all CPUs for each node in the job should be
+allocated to the job.
 .TP
 .B mask_mem:<list>
 Bind by setting memory masks on tasks (or ranks) as specified where <list> is
@@ -1493,9 +1506,10 @@ If the number of tasks (or ranks) exceeds the number of elements in this list,
 elements in the list will be reused as needed starting from the beginning of
 the list.
 To simplify support for large task counts, the lists may follow a mask with an
-asterisk and repetition count
+asterisk and repetition count.
 For example "mask_mem:0*4,1*4".
-Not supported unless the entire node is allocated to the job.
+For predictable binding results, all CPUs for each node in the job should be
+allocated to the job.
 .TP
 .B no[ne]
 don't bind tasks to memory (default)
@@ -1543,9 +1557,6 @@ procedures.
 .TP
 .B list
 Lists available mpi types to choose from.
-.TP
-.B openmpi
-For use with OpenMPI.
 .TP
 .B pmi2
 To enable PMI2 support. The PMI2 support in Slurm works only if the MPI
@@ -1864,14 +1875,14 @@ Otherwise the default value is specified by the system configuration parameter
 \fIJobFileAppend\fR. This option applies to job and step allocations.
 
 .TP
-\fB\-\-pack\-group\fR=<\fIexpr\fR>
-Identify each job in a heterogeneous job allocation for which a step is
+\fB\-\-het\-group\fR=<\fIexpr\fR>
+Identify each component in a heterogeneous job allocation for which a step is
 to be created. Applies only to srun commands issued inside a salloc allocation
 or sbatch script.
 \fR<\fIexpr\fR> is a set of integers corresponding to one or more options
-indexes on the salloc or sbatch command line.
-Examples: "\-\-pack\-group=2", "\-\-pack\-group=0,4", "\-\-pack\-group=1,3\-5".
-The default value is \-\-pack\-group=0.
+offsets on the salloc or sbatch command line.
+Examples: "\-\-het\-group=2", "\-\-het\-group=0,4", "\-\-het\-group=1,3\-5".
+The default value is \-\-het\-group=0.
 
 .TP
 \fB\-p\fR, \fB\-\-partition\fR=<\fIpartition_names\fR>
@@ -2011,7 +2022,7 @@ Request a quality of service for the job.  QOS values can be defined
 for each user/cluster/account association in the Slurm database.
 Users will be limited to their association's defined set of qos's when
 the Slurm configuration parameter, AccountingStorageEnforce, includes
-"qos" in it's definition. This option applies to job allocations.
+"qos" in its definition. This option applies to job allocations.
 
 .TP
 \fB\-Q\fR, \fB\-\-quiet\fR
@@ -2044,7 +2055,8 @@ applies to step allocations.
 \fB\-\-reboot\fR
 Force the allocated nodes to reboot before starting the job.
 This is only supported with some system configurations and will otherwise be
-silently ignored. This option applies to job allocations.
+silently ignored. Only root, \fISlurmUser\fR or admins can reboot nodes. This
+option applies to job allocations.
 
 .TP
 \fB\-\-resv\-ports\fR[=\fIcount\fR]
@@ -2086,7 +2098,7 @@ This option can not be used with the \fB\-\-thread\-spec\fR option. This option
 applies to job allocations.
 
 .TP
-\fB\-\-signal\fR=<\fIsig_num\fR>[@<\fIsig_time\fR>]
+\fB\-\-signal\fR=[R:]<\fIsig_num\fR>[@<\fIsig_time\fR>]
 When a job is within \fIsig_time\fR seconds of its end time,
 send it the signal \fIsig_num\fR.
 Due to the resolution of event handling by Slurm, the signal may
@@ -2096,6 +2108,8 @@ be sent up to 60 seconds earlier than specified.
 By default, no signal is sent before the job's end time.
 If a \fIsig_num\fR is specified without any \fIsig_time\fR,
 the default time will be 60 seconds. This option applies to job allocations.
+Use the "R:" option to allow this job to overlap with a reservation with
+MaxStartDelay set.
 To have the signal sent at preemption time see
 the \fBpreempt_send_user_signal\fR \fBSlurmctldParameter\fR.
 
@@ -2236,7 +2250,7 @@ plugin is enabled. This option applies to job allocations.
 .TP
 \fB\-\-time\-min\fR=<\fItime\fR>
 Set a minimum time limit on the job allocation.
-If specified, the job may have it's \fB\-\-time\fR limit lowered to a value
+If specified, the job may have its \fB\-\-time\fR limit lowered to a value
 no lower than \fB\-\-time\-min\fR if doing so permits the job to begin
 execution earlier than otherwise possible.
 The job's time limit will not be changed after the job is allocated resources.
@@ -2584,9 +2598,6 @@ Same as \fB\-\-bcast\fR
 \fBSLURM_BURST_BUFFER\fR
 Same as \fB\-\-bb\fR
 .TP
-\fBSLURM_CHECKPOINT\fR
-Same as \fB\-\-checkpoint\fR
-.TP
 \fBSLURM_COMPRESS\fR
 Same as \fB\-\-compress\fR
 .TP
@@ -2853,7 +2864,7 @@ of the executing tasks on the remote compute nodes.
 These environment variables are:
 
 .TP 22
-\fBSLURM_*_PACK_GROUP_#\fR
+\fBSLURM_*_HET_GROUP_#\fR
 For a heterogeneous job allocation, the environment variables are set separately
 for each component.
 .TP
@@ -3004,7 +3015,7 @@ List of nodes allocated to the job.
 \fBSLURM_NTASKS\fR (and \fBSLURM_NPROCS\fR for backwards compatibility)
 Total number of processes in the current job or job step.
 .TP
-\fBSLURM_PACK_SIZE\fR
+\fBSLURM_HET_SIZE\fR
 Set to count of components in heterogeneous job.
 .TP
 \fBSLURM_PRIO_PROCESS\fR

@@ -2,6 +2,14 @@
 ############################################################################
 # Purpose: Test of Slurm functionality
 #          Test of batch job requeue.
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
+#
+# Note:    This script generates and then deletes files in the working directory
+#          named test3.8.input, test.3.8.output, test.3.8.error, and
+#          test3.8.run.*
 ############################################################################
 # Copyright (C) 2006 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -28,6 +36,7 @@
 ############################################################################
 source ./globals
 
+set test_id       "3.8"
 set exit_code     0
 set file_in       "test$test_id.input"
 set file_out      "test$test_id.output"
@@ -39,8 +48,11 @@ set file_flag_4   "test$test_id.run.4"
 set job_id        0
 set node_cnt 1-4
 
-if {![is_super_user]} {
-	skip "This test can't be run except as SlurmUser"
+print_header $test_id
+
+if {[is_super_user] == 0} {
+	send_user "\nWARNING: This test can't be run except as SlurmUser\n"
+	exit 0
 }
 
 #
@@ -76,7 +88,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -85,26 +97,27 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to begin, then requeue it
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	log_error "Waiting for job to begin"
+	send_user "\nFAILURE: waiting for job to begin\n"
 	set exit_code 1
 }
 exec $bin_sleep 15
 spawn $scontrol requeue $job_id
 expect {
 	-re "error" {
-		log_error "Some scontrol error happened"
+		send_user "\nFAILURE: some scontrol error happened\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -116,19 +129,19 @@ expect {
 # Wait for job to restart, then requeue it again
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	log_error "Waiting for job to restart"
+	send_user "\nFAILURE: waiting for job to restart\n"
 	set exit_code 1
 }
 exec $bin_sleep 15
 spawn $scontrol requeue $job_id
 expect {
 	-re "error" {
-		log_error "Some scontrol error happened"
+		send_user "\nFAILURE: some scontrol error happened\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -140,28 +153,28 @@ expect {
 # Wait for job to complete and check for files
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	log_error "Waiting for job to restart"
+	send_user "\nFAILURE: waiting for job to restart\n"
 	set exit_code 1
 }
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job to complete"
+	send_user "\nFAILURE: waiting for job to complete\n"
 	cancel_job $job_id
 	set exit_code 1
 }
 if {[wait_for_file $file_flag_1] != 0} {
-	log_error "File $file_flag_1 is missing"
+	send_user "\nFAILURE: file $file_flag_1 is missing\n"
 	set exit_code 1
 }
 if {[wait_for_file $file_flag_2] != 0} {
-	log_error "File $file_flag_2 is missing"
+	send_user "\nFAILURE: file $file_flag_2 is missing\n"
 	set exit_code 1
 }
 if {[wait_for_file $file_flag_3] != 0} {
-	log_error "File $file_flag_3 is missing"
+	send_user "\nFAILURE: file $file_flag_3 is missing\n"
 	set exit_code 1
 }
 if {[file exists $file_flag_4]} {
-	log_error "File $file_flag_4 is found"
+	send_user "\nFAILURE: file $file_flag_4 is found\n"
 	set exit_code 1
 }
 
@@ -180,7 +193,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
+		send_user "\nFAILURE: srun not responding\n"
 		slow_kill $sbatch_pid
 		set exit_code 1
 	}
@@ -189,14 +202,15 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Batch submit failure"
+	send_user "\nFAILURE: batch submit failure\n"
+	exit 1
 }
 
 #
 # Wait for job to begin, then requeue it
 #
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	log_error "Waiting for job to begin"
+	send_user "\nFAILURE: waiting for job to begin\n"
 	set exit_code 1
 }
 set disabled 0
@@ -205,16 +219,16 @@ spawn $scontrol requeue $job_id
 expect {
 	-re "Requested operation is presently disabled" {
 		set disabled 1
-		log_debug "This error was expected, no worries"
+		send_user "This error was expected, no worries\n"
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some scontrol error happened"
+		send_user "\nFAILURE: some scontrol error happened\n"
 		set exit_code 1
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
+		send_user "\nFAILURE: scontrol not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -222,7 +236,7 @@ expect {
 	}
 }
 if {$disabled == 0} {
-	log_error "srun's --no-requeue option ignored"
+	send_user "\nFAILURE: srun's --no-requeue option ignored\n"
 	set exit_code 1
 }
 
@@ -230,19 +244,22 @@ if {$disabled == 0} {
 # Wait for job to complete and check for files
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
+	send_user "\nFAILURE: waiting for job to complete\n"
 	cancel_job $job_id
-	fail "Waiting for job to complete"
+	set exit_code 1
 }
 if {[wait_for_file $file_flag_1] != 0} {
-	fail "File $file_flag_1 is missing"
+	send_user "\nFAILURE: file $file_flag_1 is missing\n"
+	set exit_code 1
 }
 if {[file exists $file_flag_2]} {
-	fail "File $file_flag_2 is found"
+	send_user "\nFAILURE: file $file_flag_2 is found\n"
+	set exit_code 1
 }
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in $file_out $file_err
 	exec $bin_rm -f $file_flag_1 $file_flag_2 $file_flag_3 $file_flag_4
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	send_user "\nSUCCESS\n"
 }
+exit $exit_code

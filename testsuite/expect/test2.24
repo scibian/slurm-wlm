@@ -3,6 +3,11 @@
 # Purpose: Test of Slurm functionality
 #          Checks that scontrol write config creates a slurm.conf
 #          with the correct values
+#
+#
+# Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
+#          "FAILURE: ..." otherwise with an explanation of the failure, OR
+#          anything else indicates a failure mode that must be investigated.
 ############################################################################
 # Copyright (C) 2014 SchedMD LLC
 # Written by Nathan Yee <nyee32@schedmd.com>
@@ -27,6 +32,7 @@
 ############################################################################
 source ./globals
 
+set test_id       2.24
 set option        ""
 set value         ""
 array set conf_val {}
@@ -34,16 +40,11 @@ set new_conf      ""
 set opt_cnt       0
 set exit_code     0
 
-if {![is_super_user]} {
-	skip "This test requires that the user be root or the SlurmUser"
-}
+print_header $test_id
 
-proc cleanup {} {
-	global bin_rm new_conf
-
-	if {$new_conf ne ""} {
-		run_command "$bin_rm -f $new_conf"
-	}
+if {[is_super_user] == 0} {
+	send_user "\nWARNING: this test requires that the user be root or "
+	send_user "the SlurmUser\n"
 }
 
 #
@@ -59,14 +60,14 @@ expect {
 		# break here since other config files are listed here
 		# scontrol write config only prints out the normal slurm.conf
 	}
-	-re "($re_word_str) *= ($format_time)" {
+	-re "($alpha_numeric_under) *= ($format_time)" {
 		set option $expect_out(1,string)
 		set val $expect_out(2,string)
 		set conf_val($option) $val
 		incr opt_cnt
 		exp_continue
 	}
-	-re "($re_word_str) *= ($re_word_str)" {
+	-re "($alpha_numeric_under) *= ($alpha_numeric_under)" {
 		set option $expect_out(1,string)
 		set val $expect_out(2,string)
 
@@ -84,7 +85,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
+		send_user "\nFAILURE: scontrol is not responding\n"
 		set exit_code 1
 	}
 	eof {
@@ -94,9 +95,23 @@ expect {
 log_user 1
 
 #
-# Execute scontrol write config and get the filename of the created file
+# Execute scontrol write config and get the path and filename of the
+# created file
 #
-regexp {Slurm config saved to (\S+)} [run_command_output -fail "$scontrol write config"] {} new_conf
+spawn $scontrol write config
+expect {
+	-re "(/.*)/*($alpha_numeric_under)*\r\n" {
+		set new_conf $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n";
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
 
 #
 # Loop through the hash and check that the parameters exist within
@@ -119,7 +134,7 @@ foreach opt [array names conf_val] {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol is not responding"
+			send_user "\nFAILURE: scontrol is not responding\n"
 			set exit_code 1
 		}
 		eof {
@@ -129,16 +144,22 @@ foreach opt [array names conf_val] {
 	log_user 1
 
 	if {$match != 1} {
-		log_error "$opt = $conf_val($opt) was not found in new config file"
+		send_user "\nFAILURE: $opt = $conf_val($opt)"
+		send_user " Was not found in new config file\n"
 		set exit_code 1
 	} else {
 		incr tot_match
 	}
 }
 if {$tot_match != $opt_cnt} {
-	fail "Not all the values in the new config file were found ($tot_match != $opt_cnt)"
+	send_user "FAILURE: not all the values in the new config "
+	send_user "file were found ($tot_match != $opt_cnt)\n"
+	set exit_code 1
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+if {$exit_code == 0} {
+	exec $bin_rm -f $new_conf
+	send_user "\nSUCCESS\n"
 }
+
+exit $exit_code

@@ -627,9 +627,9 @@ int _print_job_job_id(job_info_t * job, int width, bool right, char* suffix)
 		snprintf(id, FORMAT_STRING_SIZE, "%u_%u",
 			 job->array_job_id, job->array_task_id);
 		_print_str(id, width, right, true);
-	} else if (job->pack_job_id) {
+	} else if (job->het_job_id) {
 		snprintf(id, FORMAT_STRING_SIZE, "%u+%u",
-			 job->pack_job_id, job->pack_job_offset);
+			 job->het_job_id, job->het_job_offset);
 		_print_str(id, width, right, true);
 	} else {
 		snprintf(id, FORMAT_STRING_SIZE, "%u", job->job_id);
@@ -849,17 +849,17 @@ int _print_job_time_limit(job_info_t * job, int width, bool right,
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
-int _print_job_pack_job_offset(job_info_t * job, int width, bool right,
-			  char* suffix)
+int _print_job_het_job_offset(job_info_t * job, int width, bool right,
+			      char* suffix)
 {
 	char id[FORMAT_STRING_SIZE];
 
 	if (job == NULL)	/* Print the Header instead */
-		_print_str("PACK_JOB_OFFSET", width, right, true);
-	else if (job->pack_job_id == 0)
+		_print_str("HET_JOB_OFFSET", width, right, true);
+	else if (job->het_job_id == 0)
 		_print_str("N/A", width, right, true);
 	else {
-		snprintf(id, FORMAT_STRING_SIZE, "%u", job->pack_job_offset);
+		snprintf(id, FORMAT_STRING_SIZE, "%u", job->het_job_offset);
 		_print_str(id, width, right, true);
 	}
 	if (suffix)
@@ -867,17 +867,17 @@ int _print_job_pack_job_offset(job_info_t * job, int width, bool right,
 	return SLURM_SUCCESS;
 }
 
-int _print_job_pack_job_id(job_info_t * job, int width, bool right,
+int _print_job_het_job_id(job_info_t * job, int width, bool right,
 			  char* suffix)
 {
 	char id[FORMAT_STRING_SIZE];
 
 	if (job == NULL)	/* Print the Header instead */
-		_print_str("PACK_JOB_ID", width, right, true);
-	else if (job->pack_job_id == 0)
+		_print_str("HET_JOB_ID", width, right, true);
+	else if (job->het_job_id == 0)
 		_print_str("N/A", width, right, true);
 	else {
-		snprintf(id, FORMAT_STRING_SIZE, "%u", job->pack_job_id);
+		snprintf(id, FORMAT_STRING_SIZE, "%u", job->het_job_id);
 		_print_str(id, width, right, true);
 	}
 	if (suffix)
@@ -885,15 +885,15 @@ int _print_job_pack_job_id(job_info_t * job, int width, bool right,
 	return SLURM_SUCCESS;
 }
 
-int _print_job_pack_job_id_set(job_info_t * job, int width, bool right,
-			  char* suffix)
+int _print_job_het_job_id_set(job_info_t * job, int width, bool right,
+			      char* suffix)
 {
 	if (job == NULL)	/* Print the Header instead */
-		_print_str("PACK_JOB_ID_SET", width, right, true);
-	else if (job->pack_job_id == 0)
+		_print_str("HET_JOB_ID_SET", width, right, true);
+	else if (job->het_job_id == 0)
 		_print_str("N/A", width, right, true);
 	else
-		_print_str(job->pack_job_id_set, width, right, true);
+		_print_str(job->het_job_id_set, width, right, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -1461,10 +1461,8 @@ int _print_job_dependency(job_info_t * job, int width, bool right_justify,
 {
 	if (job == NULL)	/* Print the Header instead */
 		_print_str("DEPENDENCY", width, right_justify, true);
-	else if (job->dependency)
-		_print_str(job->dependency, width, right_justify, true);
 	else
-		_print_str("", width, right_justify, true);
+		_print_str(job->dependency, width, right_justify, true);
 	if (suffix)
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
@@ -2564,33 +2562,6 @@ int _print_step_array_task_id(job_step_info_t * step, int width, bool right,
 
 }
 
-int _print_step_chpt_dir(job_step_info_t * step, int width, bool right,
-			 char* suffix)
-{
-	if (step == NULL)
-		_print_str("CHECKPOINT_DIR", width, right, true);
-	else
-		_print_str(step->ckpt_dir, width, right, true);
-
-	if (suffix)
-		printf("%s", suffix);
-	return SLURM_SUCCESS;
-
-}
-
-int _print_step_chpt_interval(job_step_info_t * step, int width, bool right,
-			      char* suffix)
-{
-	if (step == NULL)
-		_print_str("CHECKPOINT_INTERVAL", width, right, true);
-	else
-		_print_secs((step->ckpt_interval*60), width, width, right);
-
-	if (suffix)
-		printf("%s", suffix);
-	return SLURM_SUCCESS;
-}
-
 int _print_step_job_id(job_step_info_t * step, int width, bool right,
 		       char* suffix)
 {
@@ -2844,7 +2815,7 @@ static int _filter_job(job_info_t * job)
 				partial_array = true;
 				break;
 			}
-			if (job_step_id->job_id == job->pack_job_id) {
+			if (job_step_id->job_id == job->het_job_id) {
 				filter = 0;
 				break;
 			}
