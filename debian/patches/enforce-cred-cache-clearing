@@ -1,0 +1,30 @@
+Description: Enforce expired cred cache clearing
+ Enforce expired credential clearing in slurmd cache by removing an
+ optimization that prevented the clearing to run for than once in 2
+ seconds.
+ This notably fixes cases where the prolog is not run for some requeued
+ jobs when slurm allocate them the same nodes.
+Author: Rémi Palancher <remi-externe.palancher@edf.fr>
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=10666
+Last-Update: 2021-02-22
+
+diff --git a/src/common/slurm_cred.c b/src/common/slurm_cred.c
+index 6dc2f39..97f4eab 100644
+--- a/src/common/slurm_cred.c
++++ b/src/common/slurm_cred.c
+@@ -2008,15 +2008,10 @@ _job_state_destroy(job_state_t *j)
+ static void
+ _clear_expired_job_states(slurm_cred_ctx_t ctx)
+ {
+-	static time_t last_scan = 0;
+ 	time_t        now = time(NULL);
+ 	ListIterator  i   = NULL;
+ 	job_state_t  *j   = NULL;
+ 
+-	if ((now - last_scan) < 2)	/* Reduces slurmd overhead */
+-		return;
+-	last_scan = now;
+-
+ 	i = list_iterator_create(ctx->job_list);
+ 	while ((j = list_next(i))) {
+ 		debug3("state for jobid %u: ctime:%ld revoked:%ld expires:%ld",
