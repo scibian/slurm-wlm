@@ -1,3 +1,10 @@
+slurm-wlm (20.02.6-2sci8u2) scibian8; urgency=medium
+
+  * Update Vcs URL following rename
+  * Add patch to enforce cred cache clearing
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 23 Feb 2021 12:10:07 +0100
+
 slurm-wlm (20.02.6-2sci8u1) scibian8; urgency=medium
 
   * Backport to scibian8
