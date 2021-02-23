@@ -10,3 +10,4 @@ fix-perl-doc
 miscellanea-manpages
 remove-acute-accent-in-manual
 rpc_prolog_handle_reissue
+enforce-cred-cache-clearing
