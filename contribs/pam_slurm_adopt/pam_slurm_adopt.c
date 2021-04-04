@@ -34,6 +34,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE
 #ifndef PAM_MODULE_NAME
 #  define PAM_MODULE_NAME "pam_slurm_adopt"
 #endif
@@ -94,6 +95,7 @@ static struct {
 	char *node_name;
 	bool disable_x11;
 	char *pam_service;
+	bool join_container;
 } opts;
 
 static void _init_opts(void)
@@ -108,6 +110,7 @@ static void _init_opts(void)
 	opts.node_name = NULL;
 	opts.disable_x11 = false;
 	opts.pam_service = NULL;
+	opts.join_container = true;
 }
 
 /* Adopts a process into the given step. Returns SLURM_SUCCESS if
@@ -122,14 +125,14 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	if (!stepd)
 		return -1;
-	debug("_adopt_process: trying to get %u.%u to adopt %d",
-	      stepd->jobid, stepd->stepid, pid);
+	debug("_adopt_process: trying to get %ps to adopt %d",
+	      &stepd->step_id, pid);
 	fd = stepd_connect(stepd->directory, stepd->nodename,
-			   stepd->jobid, stepd->stepid, &protocol_version);
+			   &stepd->step_id, &protocol_version);
 	if (fd < 0) {
 		/* It's normal for a step to exit */
-		debug3("unable to connect to step %u.%u on %s: %m",
-		       stepd->jobid, stepd->stepid, stepd->nodename);
+		debug3("unable to connect to %ps on %s: %m",
+		       &stepd->step_id, stepd->nodename);
 		return -1;
 	}
 
@@ -137,7 +140,7 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	if (rc == PAM_SUCCESS) {
 		char *env;
-		env = xstrdup_printf("SLURM_JOB_ID=%u", stepd->jobid);
+		env = xstrdup_printf("SLURM_JOB_ID=%u", stepd->step_id.job_id);
 		pam_putenv(pamh, env);
 		xfree(env);
 	}
@@ -164,13 +167,34 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 		}
 	}
 
+	if (opts.join_container) {
+		int ns_fd = stepd_get_namespace_fd(fd, protocol_version);
+		if (ns_fd == -1) {
+			error("stepd_get_ns_fd failed");
+			rc = SLURM_ERROR;
+		} else if (ns_fd == 0) {
+			debug2("No ns_fd given back, expected if not running with a job_container plugin that supports namespace mounting");
+		} else {
+			/*
+			 * No need to specify the type of namespace, rely on
+			 * slurm to give us the right one
+			 */
+			rc = setns(ns_fd, 0);
+			if (rc) {
+				error("setns() failed: %s", strerror(errno));
+				rc = SLURM_ERROR;
+			}
+		}
+	}
+
 	close(fd);
 
 	if (rc == PAM_SUCCESS)
-		info("Process %d adopted into job %u", pid, stepd->jobid);
+		info("Process %d adopted into job %u", pid,
+		     stepd->step_id.job_id);
 	else
 		info("Process %d adoption FAILED for job %u",
-		     pid, stepd->jobid);
+		     pid, stepd->step_id.job_id);
 
 	return rc;
 }
@@ -183,12 +207,11 @@ static uid_t _get_job_uid(step_loc_t *stepd)
 	int fd;
 
 	fd = stepd_connect(stepd->directory, stepd->nodename,
-			   stepd->jobid, stepd->stepid,
-			   &stepd->protocol_version);
+			   &stepd->step_id, &stepd->protocol_version);
 	if (fd < 0) {
 		/* It's normal for a step to exit */
-		debug3("unable to connect to step %u.%u on %s: %m",
-		       stepd->jobid, stepd->stepid, stepd->nodename);
+		debug3("unable to connect to %ps on %s: %m",
+		       &stepd->step_id, stepd->nodename);
 		return -1;
 	}
 
@@ -197,8 +220,8 @@ static uid_t _get_job_uid(step_loc_t *stepd)
 
 	/* The step may have exited. Not a big concern. */
 	if ((int32_t)uid == -1)
-		debug3("unable to determine uid of step %u.%u on %s",
-		       stepd->jobid, stepd->stepid, stepd->nodename);
+		debug3("unable to determine uid of %ps on %s",
+		       &stepd->step_id, stepd->nodename);
 
 	return uid;
 }
@@ -284,11 +307,15 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 
 	itr = list_iterator_create(steps);
 	while ((stepd = list_next(itr))) {
-		/* Only use container steps from this user */
-		if (stepd->stepid == SLURM_EXTERN_CONT &&
+		/*
+		 * Only use container steps from this user
+		 * NOTE: Checking against INFINITE can be removed after 21.08
+		 */
+		if ((stepd->step_id.step_id == SLURM_EXTERN_CONT ||
+		     stepd->step_id.step_id == INFINITE) &&
 		    (uid == _get_job_uid(stepd))) {
 			cgroup_time = _cgroup_creation_time(
-				uidcg, stepd->jobid);
+				uidcg, stepd->step_id.job_id);
 			/* Return the newest job_id, according to cgroup
 			 * creation. Hopefully this is a good way to do this */
 			if (cgroup_time >= most_recent) {
@@ -338,7 +365,7 @@ static int _action_unknown(pam_handle_t *pamh, struct passwd *pwd, List steps)
 	 * the correct job to adopt this into. Time for drastic measures */
 	rc = _indeterminate_multiple(pamh, steps, pwd->pw_uid, &stepd);
 	if (rc == PAM_SUCCESS) {
-		info("action_unknown: Picked job %u", stepd->jobid);
+		info("action_unknown: Picked job %u", stepd->step_id.job_id);
 		if (_adopt_process(pamh, getpid(), stepd) == SLURM_SUCCESS) {
 			return PAM_SUCCESS;
 		}
@@ -364,7 +391,12 @@ static int _user_job_count(List steps, uid_t uid, step_loc_t **out_stepd)
 
 	itr = list_iterator_create(steps);
 	while ((stepd = list_next(itr))) {
-		if ((stepd->stepid == SLURM_EXTERN_CONT) &&
+		/*
+		 * Only count container steps from this user
+		 * NOTE: Checking against INFINITE can be removed after 21.08
+		 */
+		if ((stepd->step_id.step_id == SLURM_EXTERN_CONT ||
+		     stepd->step_id.step_id == INFINITE) &&
 		    (uid == _get_job_uid(stepd))) {
 			user_job_cnt++;
 			*out_stepd = stepd;
@@ -452,11 +484,12 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
 	if (rc == SLURM_SUCCESS) {
 		step_loc_t stepd;
 		memset(&stepd, 0, sizeof(stepd));
-		/* We only need the jobid and stepid filled in here
+		/* We only need the step_id struct needed to be filled in here
 		   all the rest isn't needed for the adopt.
 		*/
-		stepd.jobid = job_id;
-		stepd.stepid = SLURM_EXTERN_CONT;
+		stepd.step_id.job_id = job_id;
+		stepd.step_id.step_id = SLURM_EXTERN_CONT;
+		stepd.step_id.step_het_comp = NO_VAL;
 
 		/* Adopt the process. If the adoption succeeds, return SUCCESS.
 		 * If not, maybe the adoption failed because the user hopped
@@ -606,6 +639,8 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 		} else if (!xstrncasecmp(*argv, "service=", 8)) {
 			v = (char *)(8 + *argv);
 			opts.pam_service = xstrdup(v);
+		} else if (!xstrncasecmp(*argv, "join_container=false", 19)) {
+			opts.join_container = false;
 		}
 	}
 
@@ -789,7 +824,7 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 		if (opts.single_job_skip_rpc) {
 			info("Connection by user %s: user has only one job %u",
 			     user_name,
-			     stepd->jobid);
+			     stepd->step_id.job_id);
 			slurmrc = _adopt_process(pamh, getpid(), stepd);
 			/* If adoption into the only job fails, it is time to
 			 * exit. Return code is based on the

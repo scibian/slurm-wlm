@@ -73,8 +73,6 @@ typedef struct slurm_select_ops {
 	int		(*state_save)		(char *dir_name);
 	int		(*state_restore)	(char *dir_name);
 	int		(*job_init)		(List job_list);
-	int		(*node_ranking)		(node_record_t *node_ptr,
-						 int node_cnt);
 	int		(*node_init)		(node_record_t *node_ptr,
 						 int node_cnt);
 	int		(*job_test)		(job_record_t *job_ptr,
@@ -166,6 +164,17 @@ extern const char *node_select_syms[];
 /* Convert a node coordinate character into its equivalent number:
  * '0' = 0; '9' = 9; 'A' = 10; etc. */
 extern int select_char2coord(char coord);
+
+/*
+ * Give string name for plugin_id
+ */
+extern char *select_plugin_id_to_string(int plugin_id);
+
+/*
+ * Convert string name to plugin_id
+ * RET plugin_id or 0 on failure
+ */
+extern int select_string_to_plugin_id(const char *plugin);
 
 /*******************************************\
  * GLOBAL SELECT STATE MANAGEMENT FUNCIONS *
@@ -291,14 +300,6 @@ extern int select_g_select_nodeinfo_get(dynamic_plugin_data_t *nodeinfo,
  * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
  */
 extern int select_g_update_node_config (int index);
-
-/*
- * Assign a 'node_rank' value to each of the node_ptr entries.
- * IN node_ptr - current node data
- * IN node_count - number of node entries
- * Return true if node ranking was performed, false if not.
- */
-extern bool select_g_node_ranking(node_record_t *node_ptr, int node_cnt);
 
 /******************************************************\
  * JOB SPECIFIC SELECT CREDENTIAL MANAGEMENT FUNCIONS *

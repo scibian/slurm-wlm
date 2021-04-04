@@ -145,7 +145,9 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 		} else if (!xstrcasecmp("ReservationName", jobcomp_info->name)) {
 			job->resv_name = xstrdup(jobcomp_info->val);
 		} else if (!xstrcasecmp("Gres", jobcomp_info->name)) {
-			job->req_gres = xstrdup(jobcomp_info->val);
+			job->tres_fmt_req_str = xstrdup(jobcomp_info->val);
+		} else if (!xstrcasecmp("Tres", jobcomp_info->name)) {
+			job->tres_fmt_req_str = xstrdup(jobcomp_info->val);
 		} else if (!xstrcasecmp("Account", jobcomp_info->name)) {
 			job->account = xstrdup(jobcomp_info->val);
 		} else if (!xstrcasecmp("QOS", jobcomp_info->name)) {
@@ -176,21 +178,20 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 {
 	char line[BUFFER_SIZE];
-	char *fptr = NULL, *filein = NULL;
+	char *fptr = NULL;
 	int jobid = 0;
 	char *partition = NULL;
 	FILE *fd = NULL;
 	int lc = 0;
 	jobcomp_job_rec_t *job = NULL;
-	slurmdb_selected_step_t *selected_step = NULL;
+	slurm_selected_step_t *selected_step = NULL;
 	char *selected_part = NULL;
 	ListIterator itr = NULL;
 	List job_info_list = NULL;
 	filetxt_jobcomp_info_t *jobcomp_info = NULL;
 	List job_list = list_create(jobcomp_destroy_job);
 
-	filein = slurm_get_jobcomp_loc();
-	fd = _open_log_file(filein);
+	fd = _open_log_file(slurm_conf.job_comp_loc);
 
 	while (fgets(line, BUFFER_SIZE, fd)) {
 		lc++;
@@ -236,7 +237,7 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 				continue;
 			itr = list_iterator_create(job_cond->step_list);
 			while ((selected_step = list_next(itr))) {
-				if (selected_step->jobid == jobid)
+				if (selected_step->step_id.job_id == jobid)
 					continue;
 				/* job matches */
 				list_iterator_destroy(itr);
@@ -271,12 +272,10 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	FREE_NULL_LIST(job_info_list);
 
 	if (ferror(fd)) {
-		perror(filein);
-		xfree(filein);
+		perror(slurm_conf.job_comp_loc);
 		exit(1);
 	}
 	fclose(fd);
-	xfree(filein);
 
 	return job_list;
 }

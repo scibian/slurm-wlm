@@ -22,7 +22,7 @@ dnl
 dnl If you ever change to use AM_INIT_AUTOMAKE(subdir-objects) edit
 dnl auxdir/slurm.m4 to not define VERSION
 dnl
-AM_INIT_AUTOMAKE(no-define)
+AM_INIT_AUTOMAKE(no-define no-dist)
 AM_MAINTAINER_MODE
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_HEADERS([slurm/slurm.h])
@@ -67,12 +67,18 @@ AC_PATH_PROG([SUCMD], [su], [/bin/su])
 AC_DEFINE_UNQUOTED([SUCMD], ["$SUCMD"], [Define path to su command])
 
 dnl Checks for libraries
-dnl
+dnl Includes workaround to disable -Werror=builtin-declaration-mismatch which
+dnl will cause errors on newer GCC, and can then lead to incorrect results.
+old_CFLAGS=$CFLAGS
+CFLAGS="$CFLAGS -Wno-builtin-declaration-mismatch"
 AC_SEARCH_LIBS([socket],        [socket])
 AC_SEARCH_LIBS([gethostbyname], [nsl])
 AC_SEARCH_LIBS([hstrerror],     [resolv])
 AC_SEARCH_LIBS([kstat_open],    [kstat])
 AC_SEARCH_LIBS([ns_initparse],  [resolv])
+AC_SEARCH_LIBS([log],		[m])
+AC_SEARCH_LIBS([lrint],		[m])
+CFLAGS=$old_CFLAGS
 
 dnl Checks for header files.
 dnl
@@ -133,6 +139,11 @@ X_AC_SLURM_BIGENDIAN
 dnl Check for C99 compatibility
 dnl
 X_AC_C99
+
+dnl Force -fno-omit-frame-pointer compiler flag if available
+dnl
+AX_CHECK_COMPILE_FLAG([-fno-omit-frame-pointer],
+		      [CFLAGS="$CFLAGS -fno-omit-frame-pointer"])
 
 dnl check for presumed size of uid_t and gid_t
 X_AC_UID_GID_SIZE_CHECK
@@ -415,9 +426,6 @@ AC_CONFIG_FILES([Makefile
 		 src/bcast/Makefile
 		 src/common/Makefile
 		 src/database/Makefile
-		 src/layouts/Makefile
-		 src/layouts/power/Makefile
-		 src/layouts/unit/Makefile
 		 src/lua/Makefile
 		 src/sacct/Makefile
 		 src/sacctmgr/Makefile
@@ -428,6 +436,7 @@ AC_CONFIG_FILES([Makefile
 		 src/sattach/Makefile
 		 src/scancel/Makefile
 		 src/scontrol/Makefile
+		 src/scrontab/Makefile
 		 src/sdiag/Makefile
 		 src/sinfo/Makefile
 		 src/slurmctld/Makefile
@@ -437,7 +446,14 @@ AC_CONFIG_FILES([Makefile
 		 src/slurmd/slurmstepd/Makefile
 		 src/slurmdbd/Makefile
 		 src/slurmrestd/Makefile
-		 src/slurmrestd/ops/Makefile
+		 src/slurmrestd/plugins/Makefile
+		 src/slurmrestd/plugins/auth/Makefile
+		 src/slurmrestd/plugins/auth/jwt/Makefile
+		 src/slurmrestd/plugins/auth/local/Makefile
+		 src/slurmrestd/plugins/openapi/Makefile
+		 src/slurmrestd/plugins/openapi/v0.0.35/Makefile
+		 src/slurmrestd/plugins/openapi/v0.0.36/Makefile
+		 src/slurmrestd/plugins/openapi/dbv0.0.36/Makefile
 		 src/sprio/Makefile
 		 src/squeue/Makefile
 		 src/srun/Makefile
@@ -449,15 +465,14 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/Makefile
 		 src/plugins/accounting_storage/Makefile
 		 src/plugins/accounting_storage/common/Makefile
-		 src/plugins/accounting_storage/filetxt/Makefile
 		 src/plugins/accounting_storage/mysql/Makefile
 		 src/plugins/accounting_storage/none/Makefile
 		 src/plugins/accounting_storage/slurmdbd/Makefile
 		 src/plugins/acct_gather_energy/Makefile
-		 src/plugins/acct_gather_energy/cray_aries/Makefile
 		 src/plugins/acct_gather_energy/ibmaem/Makefile
 		 src/plugins/acct_gather_energy/ipmi/Makefile
 		 src/plugins/acct_gather_energy/none/Makefile
+		 src/plugins/acct_gather_energy/pm_counters/Makefile
 		 src/plugins/acct_gather_energy/rapl/Makefile
 		 src/plugins/acct_gather_energy/rsmi/Makefile
 		 src/plugins/acct_gather_energy/xcc/Makefile
@@ -520,6 +535,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/job_container/Makefile
 		 src/plugins/job_container/cncu/Makefile
 		 src/plugins/job_container/none/Makefile
+		 src/plugins/job_container/tmpfs/Makefile
 		 src/plugins/job_submit/Makefile
 		 src/plugins/job_submit/all_partitions/Makefile
 		 src/plugins/job_submit/cray_aries/Makefile
@@ -578,7 +594,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/slurmctld/nonstop/Makefile
 		 src/plugins/switch/Makefile
 		 src/plugins/switch/cray_aries/Makefile
-		 src/plugins/switch/generic/Makefile
 		 src/plugins/switch/none/Makefile
 		 src/plugins/mpi/Makefile
 		 src/plugins/mpi/cray_shasta/Makefile
@@ -593,7 +608,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/topology/Makefile
 		 src/plugins/topology/3d_torus/Makefile
 		 src/plugins/topology/hypercube/Makefile
-		 src/plugins/topology/node_rank/Makefile
 		 src/plugins/topology/none/Makefile
 		 src/plugins/topology/tree/Makefile
 		 testsuite/Makefile
@@ -605,6 +619,8 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/slurm_unit/common/slurm_protocol_pack/Makefile
 		 testsuite/slurm_unit/common/slurmdb_pack/Makefile
 		 testsuite/slurm_unit/common/bitstring/Makefile
+		 testsuite/slurm_unit/slurmd/Makefile
+		 testsuite/slurm_unit/slurmd/common/Makefile
 		 ]
 )
 

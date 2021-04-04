@@ -60,6 +60,15 @@
 #include "src/slurmd/common/proctrack.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
+/* These are defined here so when we link with something other than
+ * the slurmctld we will have these symbols defined.  They will get
+ * overwritten when linking with the slurmctld.
+ */
+#if defined (__APPLE__)
+extern slurm_conf_t slurm_conf __attribute__((weak_import));
+#else
+slurm_conf_t slurm_conf;
+#endif
 
 const char plugin_name[]      = "Process tracking via Cray/Aries job module";
 const char plugin_type[]      = "proctrack/cray_aries";
@@ -73,7 +82,6 @@ static pthread_t threadid = 0;
 static pthread_cond_t notify = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t notify_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t debug_flags = 0;
 
 extern bool proctrack_p_has_pid (uint64_t cont_id, pid_t pid);
 
@@ -129,8 +137,6 @@ static void _end_container_thread(void)
  */
 extern int init(void)
 {
-	debug_flags = slurm_get_debug_flags();
-
 	debug("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }
@@ -203,7 +209,7 @@ extern int proctrack_p_create(stepd_step_rec_t *job)
 		error("proctrack_p_create: already have a cont_id");
 endit:
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return SLURM_SUCCESS;
@@ -266,8 +272,9 @@ try_again:
 	if (job->het_job_id && (job->het_job_id != NO_VAL))
 		jobid = job->het_job_id;
 	else
-		jobid = job->jobid;
-	if (job_setapid(pid, SLURM_ID_HASH(jobid, job->stepid)) == -1) {
+		jobid = job->step_id.job_id;
+	if (job_setapid(pid, SLURM_ID_HASH(jobid,
+					   job->step_id.step_id)) == -1) {
 		error("Failed to set pid %d apid: %m", pid);
 		return SLURM_ERROR;
 	}
@@ -287,7 +294,7 @@ try_again:
 	TEMP_FAILURE_RETRY(close(fd));
 #endif
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return SLURM_SUCCESS;
@@ -308,7 +315,7 @@ int proctrack_p_signal(uint64_t id, int sig)
 		error("Trying to send signal %d a container 0x%08lx "
 		      "that hasn't had anything added to it yet", sig, id);
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 	return (SLURM_SUCCESS);
 }
@@ -329,7 +336,7 @@ int proctrack_p_destroy(uint64_t id)
 	 * return SUCCESS to slurmd so it doesn't retry continuously
 	 */
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 	return SLURM_SUCCESS;
 }
@@ -343,7 +350,7 @@ uint64_t proctrack_p_find(pid_t pid)
 	if ((jid = job_getjid(pid)) == (jid_t) -1)
 		return ((uint64_t) 0);
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return ((uint64_t) jid);
@@ -414,7 +421,7 @@ int proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 		*npids = 0;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return SLURM_SUCCESS;

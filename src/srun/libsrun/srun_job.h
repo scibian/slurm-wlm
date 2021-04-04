@@ -79,8 +79,7 @@ typedef struct fname {
 
 typedef struct srun_job {
 	int fir_nodeid;
-	uint32_t jobid;		/* assigned job id 	                  */
-	uint32_t stepid;	/* assigned step id 	                  */
+	slurm_step_id_t step_id; /* assigned step id */
 	uint32_t het_job_node_offset;	/* Hetjob node offset or NO_VAL */
 	uint32_t het_job_id;	/* Hetjob leader or NO_VAL */
 	char    *het_job_node_list; /* node list for combined hetjob */
@@ -98,6 +97,7 @@ typedef struct srun_job {
 	uint32_t ntasks;	/* task count */
 	uint16_t ntasks_per_board;/* number of tasks to invoke on each board */
 	uint16_t ntasks_per_core; /* number of tasks to invoke on each core */
+	uint16_t ntasks_per_tres; /* number of tasks that can access each gpu */
 	uint16_t ntasks_per_socket;/* number of tasks to invoke on
 				    * each socket */
 

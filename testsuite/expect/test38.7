@@ -29,10 +29,36 @@
 source ./globals
 
 set exit_code          0
+set skips              0
 set file_in            "test$test_id.input"
 set file_out           "test$test_id.output"
 set file_err           "test$test_id.error"
 set test_prog          "test$test_id.prog"
+
+proc run_pmix_het_job {comp_count} {
+	global eol max_job_delay number srun
+
+	# since het jobs are started by the backfill scheduler, they
+	# may need a bit more time to start
+	set timeout [expr $max_job_delay * 2]
+	set het_comps ""
+	set sep ""
+	for {set i 1} {$i <= $comp_count} {incr i} {
+		set het_comps "${het_comps}${sep}echo J$i"
+		set sep " : "
+	}
+	set output [run_command_output -fail "$srun --mpi=pmix $het_comps"]
+	set comp_found [regexp -all "J$number$eol" $output]
+	if {$comp_found != $comp_count} {
+		fail "srun hetjob failed with $comp_count components"
+	}
+}
+
+proc cleanup {} {
+	global bin_rm file_in file_out file_err test_prog
+
+	exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
+}
 
 #
 # Test for existence of mpi compiler
@@ -51,7 +77,7 @@ if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set nb_nodes [get_partition_param [default_partition] "TotalNodes"]
 if {$nb_nodes < 2} {
 	skip "Need 2 or more nodes in default partition"
 }
@@ -119,9 +145,8 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $sbatch_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -129,9 +154,7 @@ expect {
 }
 
 if {$no_start != 0} {
-	if {$job_id != 0} {
-		cancel_job $job_id
-	}
+	cancel_job $job_id
 	skip "Partition too small for test"
 }
 if {$job_id == 0} {
@@ -228,9 +251,8 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $sbatch_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -238,9 +260,7 @@ expect {
 }
 
 if {$no_start != 0} {
-	if {$job_id != 0} {
-		cancel_job $job_id
-	}
+	cancel_job $job_id
 	skip "Partition too small for test"
 }
 if {$job_id == 0} {
@@ -302,6 +322,21 @@ if {[wait_for_file $file_out] == 0} {
 # TEST OF HET GROUP 0,1
 ########################################################################
 
+########################################################################
+# TEST OF HET JOB WITH PMIX (to reproduce bug 8990)
+########################################################################
+
+set output [run_command_output "$srun --mpi=list"]
+if {![regexp "pmix$eol" $output]} {
+	log_warn "SKIP: pmix not configured"
+	incr skips
+} else {
+	log_info "TEST OF SRUN HETJOB WITH PMIX"
+	foreach comp_count {2 3 4} {
+		run_pmix_het_job $comp_count
+	}
+}
+
 #
 # OpenMPI can only run in multi-slurmd mode if no more than one node has
 # more than one task. Individual nodes with more than one task use shared
@@ -312,9 +347,6 @@ if {[wait_for_file $file_out] == 0} {
 # mode.
 #
 if {[get_config_param "MULTIPLE_SLURMD"] eq "Yes"} {
-	if {$exit_code == 0} {
-		exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
-	}
 	skip "This test is incompatible with multiple slurmd systems"
 }
 
@@ -353,9 +385,8 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $sbatch_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -363,9 +394,7 @@ expect {
 }
 
 if {$no_start != 0} {
-	if {$job_id != 0} {
-		cancel_job $job_id
-	}
+	cancel_job $job_id
 	skip "Partition too small for test"
 }
 if {$job_id == 0} {
@@ -464,9 +493,8 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $sbatch_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -474,9 +502,7 @@ expect {
 }
 
 if {$no_start != 0} {
-	if {$job_id != 0} {
-		cancel_job $job_id
-	}
+	cancel_job $job_id
 	skip "Partition too small for test"
 }
 if {$job_id == 0} {
@@ -534,9 +560,7 @@ if {[wait_for_file $file_out] == 0} {
 	set exit_code 1
 }
 
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_in $file_out $file_err $test_prog ${test_prog}.o
-} else {
+if {$exit_code != 0} {
 	set matches 0
 	spawn head $file_err
 	expect {
@@ -553,8 +577,6 @@ if {$exit_code == 0} {
 	} else {
 		log_debug "Check contents of $file_err"
 	}
-}
 
-if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

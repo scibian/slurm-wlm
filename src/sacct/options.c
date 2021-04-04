@@ -54,6 +54,7 @@
 #define OPT_LONG_UNITS     0x104
 #define OPT_LONG_FEDR      0x105
 #define OPT_LONG_WHETJOB   0x106
+#define OPT_LONG_LOCAL_UID 0x107
 
 #define JOB_HASH_SIZE 1000
 
@@ -351,7 +352,7 @@ sacct [<OPTION>]                                                            \n \
      -f, --file=file:                                                       \n\
 	           Read data from the specified file, rather than Slurm's   \n\
                    current accounting log file. (Only appliciable when      \n\
-                   running the filetxt plugin.)                             \n\
+                   running the jobcomp/filetxt plugin.)                     \n\
      -g, --gid, --group:                                                    \n\
 	           Use this comma separated list of gids or group names     \n\
                    to select jobs to display.  By default, all groups are   \n\
@@ -389,7 +390,7 @@ sacct [<OPTION>]                                                            \n \
                              consumedenergy,maxdiskread,maxdiskreadnode,    \n\
                              maxdiskreadtask,avediskread,maxdiskwrite,      \n\
                              maxdiskwritenode,maxdiskwritetask,avediskwrite,\n\
-                             allocgres,reqgres,reqtres,alloctres,           \n\
+                             reqtres,alloctres,                             \n\
                              tresusageinave,tresusageinmax,tresusageinmaxn, \n\
                              tresusageinmaxt,tresusageinmin,tresusageinminn,\n\
                              tresusageinmint,tresusageintot,tresusageoutmax,\n\
@@ -466,6 +467,7 @@ sacct [<OPTION>]                                                            \n \
 	           MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]                     \n\
 	           MM/DD[/YY]-HH:MM[:SS]                                    \n\
 	           YYYY-MM-DD[THH:MM[:SS]]                                  \n\
+	           now[{+|-}count[seconds(default)|minutes|hours|days|weeks]]\n\
 \n");
 
 	return;
@@ -630,12 +632,6 @@ extern int get_data(void)
 	itr = list_iterator_create(jobs);
 	while ((job = list_next(itr))) {
 
-		if (job->user) {
-			struct passwd *pw = NULL;
-			if ((pw=getpwnam(job->user)))
-				job->uid = pw->pw_uid;
-		}
-
 		if (!job->steps || !(cnt = list_count(job->steps)))
 			continue;
 
@@ -681,8 +677,8 @@ extern void parse_command_line(int argc, char **argv)
 {
 	extern int optind;
 	int c, i, optionIndex = 0;
-	char *end = NULL, *start = NULL, *acct_type = NULL;
-	slurmdb_selected_step_t *selected_step = NULL;
+	char *end = NULL, *start = NULL;
+	slurm_selected_step_t *selected_step = NULL;
 	ListIterator itr = NULL;
 	struct stat stat_buf;
 	char *dot = NULL;
@@ -739,6 +735,7 @@ extern void parse_command_line(int argc, char **argv)
                 {"starttime",      required_argument, 0,    'S'},
                 {"truncate",       no_argument,       0,    'T'},
                 {"uid",            required_argument, 0,    'u'},
+		{"use-local-uid",  no_argument,       0,    OPT_LONG_LOCAL_UID},
                 {"usage",          no_argument,       0,    'U'},
                 {"user",           required_argument, 0,    'u'},
                 {"verbose",        no_argument,       0,    'v'},
@@ -755,8 +752,7 @@ extern void parse_command_line(int argc, char **argv)
 	log_init("sacct", opts, SYSLOG_FACILITY_DAEMON, NULL);
 	opterr = 1;		/* Let getopt report problems to the user */
 
-	if (slurmctld_conf.fed_params &&
-	    strstr(slurmctld_conf.fed_params, "fed_display"))
+	if (xstrstr(slurm_conf.fed_params, "fed_display"))
 		params.opt_federation = true;
 
 	if (getenv("SACCT_FEDERATION"))
@@ -868,7 +864,7 @@ extern void parse_command_line(int argc, char **argv)
 		case 'j':
 			if (!job_cond->step_list)
 				job_cond->step_list = list_create(
-					slurmdb_destroy_selected_step);
+					slurm_destroy_selected_step);
 			slurm_addto_step_list(job_cond->step_list, optarg);
 			if (!list_count(job_cond->step_list))
 				FREE_NULL_LIST(job_cond->step_list);
@@ -997,6 +993,9 @@ extern void parse_command_line(int argc, char **argv)
 			                              optarg, 0))
 				exit(1);
 			break;
+		case OPT_LONG_LOCAL_UID:
+			params.use_local_uid = true;
+			break;
 		case 'v':
 			/* Handle -vvv thusly...
 			 */
@@ -1116,28 +1115,23 @@ extern void parse_command_line(int argc, char **argv)
 	if (params.opt_completion) {
 		slurmdb_jobcomp_init(params.opt_filein);
 
-		acct_type = slurm_get_jobcomp_type();
-		if ((xstrcmp(acct_type, "jobcomp/none") == 0)
+		if (!xstrcmp(slurm_conf.job_comp_type, "jobcomp/none")
 		    &&  (stat(params.opt_filein, &stat_buf) != 0)) {
 			fprintf(stderr, "Slurm job completion is disabled\n");
 			exit(1);
 		}
-		xfree(acct_type);
 	} else {
-		if (slurm_acct_storage_init(params.opt_filein) !=
-		    SLURM_SUCCESS) {
+		if (slurm_acct_storage_init() != SLURM_SUCCESS) {
 			fprintf(stderr, "Slurm unable to initialize storage plugin\n");
 			exit(1);
 		}
-		acct_type = slurm_get_accounting_storage_type();
-		if ((xstrcmp(acct_type, "accounting_storage/none") == 0)
-		    &&  (stat(params.opt_filein, &stat_buf) != 0)) {
+		if (!xstrcmp(slurm_conf.accounting_storage_type,
+			     "accounting_storage/none")) {
 			fprintf(stderr,
 				"Slurm accounting storage is disabled\n");
 			exit(1);
 		}
-		xfree(acct_type);
-		acct_db_conn = slurmdb_connection_get();
+		acct_db_conn = slurmdb_connection_get(NULL);
 		if (errno != SLURM_SUCCESS) {
 			error("Problem talking to the database: %m");
 			exit(1);
@@ -1154,7 +1148,7 @@ extern void parse_command_line(int argc, char **argv)
 		List fed_list = NULL;
 		List cluster_list = list_create(NULL);
 
-		params.cluster_name = slurm_get_cluster_name();
+		params.cluster_name = xstrdup(slurm_conf.cluster_name);
 
 		list_append(cluster_list, params.cluster_name);
 		slurmdb_init_federation_cond(&fed_cond, 0);
@@ -1189,7 +1183,7 @@ extern void parse_command_line(int argc, char **argv)
 		  || !list_count(job_cond->cluster_list)) {
 		if (!job_cond->cluster_list)
 			job_cond->cluster_list = list_create(xfree_ptr);
-		if ((start = slurm_get_cluster_name())) {
+		if ((start = xstrdup(slurm_conf.cluster_name))) {
 			list_append(job_cond->cluster_list, start);
 			debug2("Clusters requested:\t%s", start);
 		}
@@ -1258,7 +1252,7 @@ extern void parse_command_line(int argc, char **argv)
 		while ((selected_step = list_next(itr))) {
 			char id[FORMAT_STRING_SIZE];
 
-			debug2("\t: %s", slurmdb_get_selected_step_id(
+			debug2("\t: %s", slurm_get_selected_step_id(
 				       id, sizeof(id), selected_step));
 		}
 		list_iterator_destroy(itr);
@@ -1371,6 +1365,13 @@ extern void parse_command_line(int argc, char **argv)
 		for (i = 0; fields[i].name; i++) {
 			if (!xstrncasecmp(fields[i].name, start, command_len))
 				goto foundfield;
+		}
+
+		if (!xstrcasecmp("AllocGRES", start)) {
+			fatal("AllocGRES is deprecated, please use AllocTRES");
+		}
+		if (!xstrcasecmp("ReqGRES", start)) {
+			fatal("ReqGRES is deprecated, please use ReqTRES");
 		}
 		error("Invalid field requested: \"%s\"", start);
 		exit(1);

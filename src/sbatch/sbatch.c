@@ -322,7 +322,7 @@ int main(int argc, char **argv)
 
 	/* run cli_filter post_submit */
 	for (i = 0; i < het_job_limit; i++)
-		cli_filter_plugin_post_submit(i, resp->job_id, NO_VAL);
+		cli_filter_g_post_submit(i, resp->job_id, NO_VAL);
 
 	if (!quiet) {
 		if (!sbopt.parsable) {
@@ -420,7 +420,7 @@ static int _job_wait(uint32_t job_id)
 		 * run, complete quickly, and be purged from slurmctld before
 		 * we've woken up and queried the job again.
 		 */
-		if ((sleep_time < (slurmctld_conf.min_job_age / 2)) &&
+		if ((sleep_time < (slurm_conf.min_job_age / 2)) &&
 		    (sleep_time < MAX_WAIT_SLEEP_TIME))
 			sleep_time *= 4;
 
@@ -464,7 +464,7 @@ static void _env_merge_filter(job_desc_msg_t *desc)
 	int i, len;
 	char *save_env[2] = { NULL, NULL }, *tmp, *tok, *last = NULL;
 
-	tmp = xstrdup(sbopt.export_env);
+	tmp = xstrdup(opt.export_env);
 	tok = find_quote_token(tmp, ",", &last);
 	while (tok) {
 
@@ -537,6 +537,10 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->min_nodes = 0;
 	if (opt.ntasks_per_node)
 		desc->ntasks_per_node = opt.ntasks_per_node;
+	if (opt.ntasks_per_tres != NO_VAL)
+		desc->ntasks_per_tres = opt.ntasks_per_tres;
+	else if (opt.ntasks_per_gpu != NO_VAL)
+		desc->ntasks_per_tres = opt.ntasks_per_gpu;
 	desc->user_id = opt.uid;
 	desc->group_id = opt.gid;
 	if (opt.dependency)
@@ -642,11 +646,11 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		if (desc->environment == NULL)
 			exit(1);
 	}
-	if (sbopt.export_env == NULL) {
+	if (opt.export_env == NULL) {
 		env_array_merge(&desc->environment, (const char **) environ);
-	} else if (!xstrcasecmp(sbopt.export_env, "ALL")) {
+	} else if (!xstrcasecmp(opt.export_env, "ALL")) {
 		env_array_merge(&desc->environment, (const char **) environ);
-	} else if (!xstrcasecmp(sbopt.export_env, "NONE")) {
+	} else if (!xstrcasecmp(opt.export_env, "NONE")) {
 		desc->environment = env_array_create();
 		env_array_merge_slurm(&desc->environment,
 				      (const char **)environ);
@@ -678,8 +682,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->work_dir = xstrdup(opt.chdir);
 	if (sbopt.requeue != NO_VAL)
 		desc->requeue = sbopt.requeue;
-	if (sbopt.open_mode)
-		desc->open_mode = sbopt.open_mode;
+	if (opt.open_mode)
+		desc->open_mode = opt.open_mode;
 	if (opt.acctg_freq)
 		desc->acctg_freq = xstrdup(opt.acctg_freq);
 
@@ -708,6 +712,16 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.cpus_per_gpu)
 		xstrfmtcat(desc->cpus_per_tres, "gpu:%d", opt.cpus_per_gpu);
+	if (!opt.tres_bind && ((opt.ntasks_per_tres != NO_VAL) ||
+			       (opt.ntasks_per_gpu != NO_VAL))) {
+		/* Implicit single GPU binding with ntasks-per-tres/gpu */
+		if (opt.ntasks_per_tres != NO_VAL)
+			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
+				   opt.ntasks_per_tres);
+		else
+			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
+				   opt.ntasks_per_gpu);
+	}
 	desc->tres_bind = xstrdup(opt.tres_bind);
 	desc->tres_freq = xstrdup(opt.tres_freq);
 	xfmt_tres(&desc->tres_per_job,    "gpu", opt.gpus);

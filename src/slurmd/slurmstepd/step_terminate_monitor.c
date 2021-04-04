@@ -57,7 +57,7 @@ static int _call_external_program(stepd_step_rec_t *job);
 
 void step_terminate_monitor_start(stepd_step_rec_t *job)
 {
-	slurm_ctl_conf_t *conf;
+	slurm_conf_t *conf;
 
 	slurm_mutex_lock(&lock);
 
@@ -74,8 +74,8 @@ void step_terminate_monitor_start(stepd_step_rec_t *job)
 	slurm_thread_create(&tid, _monitor, job);
 
 	running_flag = 1;
-	recorded_jobid = job->jobid;
-	recorded_stepid = job->stepid;
+	recorded_jobid = job->step_id.job_id;
+	recorded_stepid = job->step_id.step_id;
 
 	slurm_mutex_unlock(&lock);
 }
@@ -124,21 +124,28 @@ static void *_monitor(void *arg)
 
 	rc = pthread_cond_timedwait(&cond, &lock, &ts);
 	if (rc == ETIMEDOUT) {
-		char entity[24], time_str[24];
+		char entity[45], time_str[24];
 		time_t now = time(NULL);
 		int rc;
 
 		_call_external_program(job);
 
-		if (job->stepid == SLURM_BATCH_SCRIPT) {
+		if (job->step_id.step_id == SLURM_BATCH_SCRIPT) {
 			snprintf(entity, sizeof(entity),
-				 "JOB %u", job->jobid);
-		} else if (job->stepid == SLURM_EXTERN_CONT) {
+				 "JOB %u", job->step_id.job_id);
+		} else if (job->step_id.step_id == SLURM_EXTERN_CONT) {
 			snprintf(entity, sizeof(entity),
-				 "EXTERN STEP FOR %u", job->jobid);
+				 "EXTERN STEP FOR %u", job->step_id.job_id);
+		} else if (job->step_id.step_id == SLURM_INTERACTIVE_STEP) {
+			snprintf(entity, sizeof(entity),
+				 "INTERACTIVE STEP FOR %u",
+				 job->step_id.job_id);
 		} else {
-			snprintf(entity, sizeof(entity), "STEP %u.%u",
-				 job->jobid, job->stepid);
+			char tmp_char[33];
+			log_build_step_id_str(&job->step_id, tmp_char,
+					      sizeof(tmp_char),
+					      STEP_ID_FLAG_NO_PREFIX);
+			snprintf(entity, sizeof(entity), "STEP %s", tmp_char);
 		}
 		slurm_make_time_str(&now, time_str, sizeof(time_str));
 
@@ -156,7 +163,7 @@ static void *_monitor(void *arg)
 
 		if (!job->batch) {
 			/* Notify waiting sruns */
-			if (job->stepid != SLURM_EXTERN_CONT)
+			if (job->step_id.step_id != SLURM_EXTERN_CONT)
 				while (stepd_send_pending_exit_msgs(job)) {;}
 
 			if ((step_complete.rank > -1)) {
@@ -208,7 +215,7 @@ static int _call_external_program(stepd_step_rec_t *job)
 	if (cpid == 0) {
 		/* child */
 		char *argv[2];
-		char buf[16];
+		char **env = NULL;
 
 		/* container_g_join needs to be called in the
 		   forked process part of the fork to avoid a race
@@ -219,19 +226,17 @@ static int _call_external_program(stepd_step_rec_t *job)
 		if (container_g_join(recorded_jobid, getuid())
 		    != SLURM_SUCCESS)
 			error("container_g_join(%u): %m", recorded_jobid);
-
-		snprintf(buf, 16, "%u", recorded_jobid);
-		setenv("SLURM_JOBID", buf, 1);
-		setenv("SLURM_JOB_ID", buf, 1);
-		snprintf(buf, 16, "%u", recorded_stepid);
-		setenv("SLURM_STEPID", buf, 1);
-		setenv("SLURM_STEP_ID", buf, 1);
+		env = env_array_create();
+		env_array_append_fmt(&env, "SLURM_JOBID", "%u", recorded_jobid);
+		env_array_append_fmt(&env, "SLURM_JOB_ID", "%u", recorded_jobid);
+		env_array_append_fmt(&env, "SLURM_STEPID", "%u", recorded_stepid);
+		env_array_append_fmt(&env, "SLURM_STEP_ID", "%u", recorded_stepid);
 
 		argv[0] = program_name;
 		argv[1] = NULL;
 
 		setpgid(0, 0);
-		execv(program_name, argv);
+		execve(program_name, argv, env);
 		error("step_terminate_monitor execv(): %m");
 		_exit(127);
 	}

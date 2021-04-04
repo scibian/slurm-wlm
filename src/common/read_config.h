@@ -50,7 +50,7 @@
 #include "src/common/parse_config.h"
 #include "src/common/run_in_daemon.h"
 
-extern slurm_ctl_conf_t slurmctld_conf;
+extern slurm_conf_t slurm_conf;
 extern char *default_slurm_config_file;
 extern char *default_plugin_path;
 
@@ -86,6 +86,7 @@ extern uint16_t drop_priv_flag;
 					 * /etc/group file */
 /* NOTE: DEFAULT_INACTIVE_LIMIT must be 0 for Blue Gene/L systems */
 #define DEFAULT_INACTIVE_LIMIT      0
+#define DEFAULT_INTERACTIVE_STEP_OPTS "--interactive --preserve-env --pty $SHELL"
 #define DEFAULT_JOB_ACCT_GATHER_TYPE  "jobacct_gather/none"
 #define JOB_ACCT_GATHER_TYPE_NONE "jobacct_gather/none"
 #define DEFAULT_JOB_ACCT_GATHER_FREQ  "30"
@@ -212,7 +213,7 @@ typedef struct slurm_conf_node {
 	uint16_t cpus;		/* count of cpus running on the node */
 	char *cpu_spec_list;	/* arbitrary list of specialized cpus */
 	uint16_t boards; 	/* number of boards per node */
-	uint16_t sockets;       /* number of sockets per node */
+	uint16_t tot_sockets;   /* number of sockets per node */
 	uint16_t cores;         /* number of cores per CPU */
 	uint16_t core_spec_cnt;	/* number of specialized cores */
 	uint16_t threads;       /* number of threads per core */
@@ -393,7 +394,7 @@ void slurm_conf_install_fork_handlers(void);
  */
 extern int slurm_conf_destroy(void);
 
-extern slurm_ctl_conf_t *slurm_conf_lock(void);
+extern slurm_conf_t *slurm_conf_lock(void);
 
 extern void slurm_conf_unlock(void);
 
@@ -473,20 +474,14 @@ extern char *slurm_conf_get_nodename(const char *node_hostname);
 extern char *slurm_conf_get_aliases(const char *node_hostname);
 
 /*
- * slurm_conf_get_nodeaddr - Return the NodeAddr for given NodeHostname
+ * slurm_conf_get_nodeaddr - Return the NodeAddr for given
+ * NodeHostname or NodeName
  *
  * NOTE: Call xfree() to release returned value's memory.
  * NOTE: Caller must NOT be holding slurm_conf_lock().
  */
-extern char *slurm_conf_get_nodeaddr(const char *node_hostname);
-
-/*
- * slurm_conf_get_nodename_from_addr - Return the NodeName for given NodeAddr
- *
- * NOTE: Call xfree() to release returned value's memory.
- * NOTE: Caller must NOT be holding slurm_conf_lock().
- */
-extern char *slurm_conf_get_nodename_from_addr(const char *node_addr);
+extern char *slurm_conf_get_nodeaddr(const char *node_hostname,
+				     const char *node_name);
 
 /*
  * slurm_conf_get_aliased_nodename - Return the NodeName matching an alias
@@ -557,16 +552,15 @@ extern int slurm_conf_get_res_spec_info(const char *node_name,
  *	file pathname (slurm_conf) is not changed.
  * IN/OUT ctl_conf_ptr - pointer to data structure to be initialized
  */
-extern void init_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr);
+extern void init_slurm_conf(slurm_conf_t *ctl_conf_ptr);
 
 /*
- * free_slurm_conf - free all storage associated with a slurm_ctl_conf_t.
+ * free_slurm_conf - free all storage associated with a slurm_conf_t.
  * IN/OUT ctl_conf_ptr - pointer to data structure to be freed
  * IN purge_node_hash - purge system-wide node hash table if set,
  *			set to zero if clearing private copy of config data
  */
-extern void free_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr,
-			     bool purge_node_hash);
+extern void free_slurm_conf(slurm_conf_t *ctl_conf_ptr, bool purge_node_hash);
 
 /*
  * gethostname_short - equivalent to gethostname(), but return only the first

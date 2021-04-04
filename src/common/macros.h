@@ -99,10 +99,6 @@
 # define NTOH_uint64(x)   UINT64_SWAP_LE_BE (x)
 #endif	/* SLURM_BIGENDIAN */
 
-#ifndef __STRING
-#  define __STRING(arg)		#arg
-#endif
-
 #define slurm_cond_init(cond, cont_attr)				\
 	do {								\
 		int err = pthread_cond_init(cond, cont_attr);		\
@@ -396,5 +392,8 @@ do {									\
  * which could fail due to rounding errors. */
 #define FUZZY_EPSILON 0.00001
 #define fuzzy_equal(v1, v2) ((((v1)-(v2)) > -FUZZY_EPSILON) && (((v1)-(v2)) < FUZZY_EPSILON))
+
+/* Number of elements in an array */
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 #endif /* !_MACROS_H */

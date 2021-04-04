@@ -164,14 +164,16 @@ static void _set_pmi_time(void)
 }
 
 /* Transmit PMI Keyval space data */
-int slurm_send_kvs_comm_set(kvs_comm_set_t *kvs_set_ptr,
-		int pmi_rank, int pmi_size)
+extern int slurm_pmi_send_kvs_comm_set(kvs_comm_set_t *kvs_set_ptr,
+				       int pmi_rank, int pmi_size)
 {
 	slurm_msg_t msg_send;
 	int rc, retries = 0, timeout = 0;
 
 	if (kvs_set_ptr == NULL)
 		return EINVAL;
+
+	slurm_conf_init(NULL);
 
 	if ((rc = _get_addr()) != SLURM_SUCCESS)
 		return rc;
@@ -192,13 +194,13 @@ int slurm_send_kvs_comm_set(kvs_comm_set_t *kvs_set_ptr,
 	 * 10 secs). */
 	_delay_rpc(pmi_rank, pmi_size);
 	if      (pmi_size > 4000)	/* 240 secs */
-		timeout = slurm_get_msg_timeout() * 24000;
+		timeout = slurm_conf.msg_timeout * 24000;
 	else if (pmi_size > 1000)	/* 120 secs */
-		timeout = slurm_get_msg_timeout() * 12000;
+		timeout = slurm_conf.msg_timeout * 12000;
 	else if (pmi_size > 100)	/* 50 secs */
-		timeout = slurm_get_msg_timeout() * 5000;
+		timeout = slurm_conf.msg_timeout * 5000;
 	else if (pmi_size > 10)		/* 20 secs */
-		timeout = slurm_get_msg_timeout() * 2000;
+		timeout = slurm_conf.msg_timeout * 2000;
 
 	while (slurm_send_recv_rc_msg_only_one(&msg_send, &rc, timeout) < 0) {
 		if (retries++ > MAX_RETRIES) {
@@ -213,19 +215,21 @@ int slurm_send_kvs_comm_set(kvs_comm_set_t *kvs_set_ptr,
 }
 
 /* Wait for barrier and get full PMI Keyval space data */
-int  slurm_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
-			    int pmi_rank, int pmi_size)
+extern int slurm_pmi_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
+				      int pmi_rank, int pmi_size)
 {
 	int rc, srun_fd, retries = 0, timeout = 0;
 	slurm_msg_t msg_send, msg_rcv;
 	slurm_addr_t slurm_addr, srun_reply_addr;
 	char hostname[64];
-	uint16_t port;
 	kvs_get_msg_t data;
 	char *env_pmi_ifhn;
 
 	if (kvs_set_ptr == NULL)
 		return EINVAL;
+
+	slurm_conf_init(NULL);
+
 	*kvs_set_ptr = NULL;	/* initialization */
 
 	if ((rc = _get_addr()) != SLURM_SUCCESS) {
@@ -246,9 +250,6 @@ int  slurm_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
 		error("slurm_get_stream_addr: %m");
 		return SLURM_ERROR;
 	}
-	/* hostname is not set here, so slurm_get_addr fails
-	slurm_get_addr(&slurm_addr, &port, hostname, sizeof(hostname)); */
-	port = ntohs(slurm_addr.sin_port);
 	if ((env_pmi_ifhn = getenv("SLURM_PMI_RESP_IFHN")))
 		strlcpy(hostname, env_pmi_ifhn, sizeof(hostname));
 	else
@@ -257,7 +258,7 @@ int  slurm_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
 	memset(&data, 0, sizeof(data));
 	data.task_id = pmi_rank;
 	data.size = pmi_size;
-	data.port = port;
+	data.port = slurm_get_port(&slurm_addr);
 	data.hostname = hostname;
 	slurm_msg_t_init(&msg_send);
 	slurm_msg_t_init(&msg_rcv);
@@ -276,13 +277,13 @@ int  slurm_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
 	 */
 	_delay_rpc(pmi_rank, pmi_size);
 	if      (pmi_size > 4000)	/* 240 secs */
-		timeout = slurm_get_msg_timeout() * 24000;
+		timeout = slurm_conf.msg_timeout * 24000;
 	else if (pmi_size > 1000)	/* 120 secs */
-		timeout = slurm_get_msg_timeout() * 12000;
+		timeout = slurm_conf.msg_timeout * 12000;
 	else if (pmi_size > 100)	/* 60 secs */
-		timeout = slurm_get_msg_timeout() * 6000;
+		timeout = slurm_conf.msg_timeout * 6000;
 	else if (pmi_size > 10)		/* 20 secs */
-		timeout = slurm_get_msg_timeout() * 2000;
+		timeout = slurm_conf.msg_timeout * 2000;
 
 	while (slurm_send_recv_rc_msg_only_one(&msg_send, &rc, timeout) < 0) {
 		if (retries++ > MAX_RETRIES) {
@@ -362,6 +363,11 @@ static int _forward_comm_set(kvs_comm_set_t *kvs_set_ptr)
 	return rc;
 }
 
+extern void slurm_pmi_free_kvs_comm_set(kvs_comm_set_t *msg)
+{
+	slurm_free_kvs_comm_set(msg);
+}
+
 /* Finalization processing */
 void slurm_pmi_finalize(void)
 {
@@ -370,4 +376,14 @@ void slurm_pmi_finalize(void)
 		pmi_fd = -1;
 	}
 	srun_port = 0;
+}
+
+/*
+ * Wrapper for slurm_kill_job_step().
+ * We must keep this function signature intact even if we change that function.
+ */
+extern int slurm_pmi_kill_job_step(uint32_t job_id, uint32_t step_id,
+				   uint16_t signal)
+{
+	return slurm_kill_job_step(job_id, step_id, signal);
 }

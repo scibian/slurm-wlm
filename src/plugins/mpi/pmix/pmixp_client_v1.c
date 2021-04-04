@@ -85,13 +85,10 @@ static pmix_status_t _abort_fn(const pmix_proc_t *proc, void *server_object,
 			      pmix_proc_t procs[], size_t nprocs,
 			      pmix_op_cbfunc_t cbfunc, void *cbdata)
 {
-	/* Just kill this stepid for now. Think what we can do for FT here? */
 	PMIXP_DEBUG("called: status = %d, msg = %s", status, msg);
-	slurm_kill_job_step(pmixp_info_jobid(), pmixp_info_stepid(), SIGKILL);
+	if (pmixp_lib_abort(status, cbfunc, cbdata) != SLURM_SUCCESS)
+		return PMIX_ERROR;
 
-	if (NULL != cbfunc) {
-		cbfunc(PMIX_SUCCESS, cbdata);
-	}
 	return PMIX_SUCCESS;
 }
 
@@ -192,8 +189,8 @@ static void _errhandler(pmix_status_t status,
 {
 	/* TODO: do something more sophisticated here */
 	/* FIXME: use proper specificator for nranges */
-	PMIXP_ERROR_STD("Error handler invoked: status = %d, nranges = %d",
-			status, (int) nproc);
+	PMIXP_ERROR("Error handler invoked: status = %d, nprocs = %zu",
+		    (int) status, nproc);
 	slurm_kill_job_step(pmixp_info_jobid(), pmixp_info_stepid(), SIGKILL);
 }
 

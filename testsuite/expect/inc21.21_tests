@@ -35,7 +35,7 @@ proc test_info { test_type func_type } {
 #
 proc inc21_21_good { test_type limit } {
 
-	global number bin_id ta srun test_node selectparam nthreads is_skip
+	global number bin_id ta srun test_node selectparam nthreads is_skip re_word_str
 	set job_id 0
 	set val 0
 	set add ""
@@ -68,7 +68,7 @@ proc inc21_21_good { test_type limit } {
 	spawn $srun -v -t1 $add [lindex $limit 0][lindex $limit 1] \
 	    --account=$ta $bin_id
 	expect {
-		-re "launching ($number)" {
+		-re "launching StepId=($number)\\.$re_word_str" {
 			set job_id $expect_out(1,string)
 			incr matches
 			exp_continue
@@ -94,7 +94,7 @@ proc inc21_21_good { test_type limit } {
 #
 proc inc21_21_bad { test_type limit } {
 
-	global number bin_id ta srun test_node nthreads selectparam
+	global number bin_id ta srun test_node nthreads selectparam re_word_str
 	set job_id 0
 	set over_lim [expr [lindex $limit 1] + 1]
 	set add ""
@@ -115,7 +115,7 @@ proc inc21_21_bad { test_type limit } {
 			log_info "This error is expected, not a problem [test_info $test_type \"inc21_21_bad\"]"
 			exp_continue
 		}
-		-re "launching ($number)" {
+		-re "launching StepId=($number)\\.$re_word_str" {
 			set job_id $expect_out(1,string)
 			fail "Job ($job_id) should not have run [test_info $test_type \"inc21_21_bad\"]"
 		}
@@ -185,27 +185,15 @@ sleep 10"
 	# since it will be past the association limit
 	#
 	set matches 0
+	set time 1
 	for {set inx 0} {$inx <= $val} {incr inx} {
-		spawn $sbatch [lindex $limit 0]1 --account=$ta \
-		    --output=/dev/null --error=/dev/null \
-		    -t1 $file_in
-		expect {
-			-re "Submitted batch job ($number)" {
-				set job_id $expect_out(1,string)
-				incr matches
-				exp_continue
-			}
-			timeout {
-				fail "sbatch not responding [test_info $test_type \"inc21_21_grp_test\"]"
-			}
-			eof {
-				wait
-			}
+		if { $inx == $val } {
+			# the n+1'th job gets a longer time limit to avoid
+			# having it prematurely start after _decay_thread() runs
+			# and decays the values of the other running jobs
+			set time $val
 		}
-	}
-
-	if {$matches != [expr $val + 1]} {
-		fail "Only $matches out of [expr $val + 1] jobs were submitted"
+		set job_id [submit_job -fail "[lindex $limit 0]1 --account=$ta --output=/dev/null --error=/dev/null -t$time $file_in"]
 	}
 
 	#
@@ -282,10 +270,11 @@ proc inc21_21_submit_test { limit } {
 	    [lindex $acct_mod_assoc_vals($limit) 0]
 	set acct_mod_assoc_test_vals($limit_sub) \
 	    [lindex $acct_mod_assoc_vals($limit) 1]
-	set exit_code  [mod_acct $ta [array get acct_mod_desc] \
+	if [mod_acct $ta [array get acct_mod_desc] \
 				 [array get acct_mod_assoc_test_vals] \
-				 [array get acct_mod_acct_vals]]
-	fail_on_error "Unable to modify account $ta"
+				 [array get acct_mod_acct_vals]] {
+		fail "Unable to modify account $ta"
+	}
 
 	make_bash_script $file_in "
 	$bin_sleep 10
@@ -298,27 +287,7 @@ proc inc21_21_submit_test { limit } {
 	# Submit jobs to test the limit set in the association
 	for {set inx 0} {$inx < $acct_mod_assoc_test_vals($limit_sub)} \
 	    {incr inx} {
-		    set job_id($inx) 0
-		    set mypid [spawn $sbatch -N1 -n1 --account=$ta \
-				   --output=/dev/null \
-				   --error=/dev/null -t5 $file_in]
-		    expect {
-			    -re "Submitted batch job ($number)" {
-				    set job_id($inx) $expect_out(1,string)
-				    exp_continue
-			    }
-			    -re "Unable to contact" {
-				    fail "Slurm appears to be down [test_info $limit \"inc21_21_submit_test\"]"
-			    }
-			    timeout {
-				    slow_kill $mypid
-				    fail "sbatch not responding [test_info $limit \"inc21_21_submit_test\"]"
-			    }
-			    eof {
-				    wait
-			    }
-		    }
-
+		    set job_id($inx) [submit_job -fail "-N1 -n1 --account=$ta --output=/dev/null --error=/dev/null -t5 $file_in"]
 		    if { !$job_id($inx) } {
 			    fail "sbatch didn't return jobid [test_info $limit \"inc21_21_submit_test\"]"
 		    }
@@ -400,27 +369,7 @@ proc inc21_21_submit_test { limit } {
 	# Submit jobs to test the limit set in the association
 	for {set inx 0} {$inx < $acct_mod_assoc_test_vals($limit_sub)} \
 	    {incr inx} {
-		    set job_id($inx) 0
-		    set mypid [spawn $sbatch -N1 -a0 --account=$ta \
-				   --output=/dev/null \
-				   --error=/dev/null -t5 $file_in]
-		    expect {
-			    -re "Submitted batch job ($number)" {
-				    set job_id($inx) $expect_out(1,string)
-				    exp_continue
-			    }
-			    -re "Unable to contact" {
-				    fail "Slurm appears to be down [test_info $limit \"inc21_21_submit_test\"]"
-			    }
-			    timeout {
-				    slow_kill $mypid
-				    fail "sbatch not responding [test_info $limit \"inc21_21_submit_test\"]"
-			    }
-			    eof {
-				    wait
-			    }
-		    }
-
+		    set job_id($inx) [submit_job -fail "-N1 -a0 --account=$ta --output=/dev/null --error=/dev/null -t5 $file_in"]
 		    if { !$job_id($inx) } {
 			    fail "sbatch didn't return jobid [test_info $limit \"inc21_21_submit_test\"]"
 		    }
@@ -502,7 +451,7 @@ proc inc21_21_submit_test { limit } {
 #
 proc inc21_21_grpwall { test_type limit } {
 
-	global number bin_id ta srun bin_sleep bin_rm file_in test_qos
+	global number bin_id ta srun bin_sleep bin_rm file_in test_qos re_word_str
 	set job_id 0
 	set timeout 120
 
@@ -524,7 +473,7 @@ proc inc21_21_grpwall { test_type limit } {
 	spawn $srun -v [lindex $limit 0][lindex $limit 1] --account=$ta \
 	    -I $file_in
 	expect {
-		-re "launching ($number)" {
+		-re "launching StepId=($number)\\.$re_word_str" {
 			set job_id $expect_out(1,string)
 			incr matches
 			exp_continue
@@ -553,7 +502,7 @@ proc inc21_21_grpwall { test_type limit } {
 			log_info "This error is expected, not a problem [test_info $test_type \"inc21_21_grpwall\"]"
 			exp_continue
 		}
-		-re "launching ($number)" {
+		-re "launching StepId=($number)\\.$re_word_str" {
 			set job_id $expect_out(1,string)
 			fail "Job should not have run [test_info $test_type \"inc21_21_grpwall\"]"
 		}

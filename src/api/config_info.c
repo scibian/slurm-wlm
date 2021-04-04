@@ -387,11 +387,11 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 		force = p[i].max_share & SHARED_FORCE;
 		val = p[i].max_share & (~SHARED_FORCE);
 		if (val == 0)
-		        fprintf(fp, " Shared=EXCLUSIVE");
+		        fprintf(fp, " OverSubscribe=EXCLUSIVE");
 		else if (force) {
-		        fprintf(fp, " Shared=FORCE:%u", val);
+		        fprintf(fp, " OverSubscribe=FORCE:%u", val);
 		} else if (val != 1)
-		        fprintf(fp, " Shared=YES:%u", val);
+		        fprintf(fp, " OverSubscribe=YES:%u", val);
 
 		if (p[i].state_up == PARTITION_UP)
 	                fprintf(fp, " State=UP");
@@ -489,7 +489,7 @@ void slurm_print_ctl_conf ( FILE* out,
 			      select_title);
 
 }
-extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
+extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 {
 	List ret_list = NULL;
 	config_key_pair_t *key_pair;
@@ -522,8 +522,14 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AccountingStorageLoc");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->accounting_storage_loc);
+	key_pair->name = xstrdup("AccountingStorageExternalHost");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->accounting_storage_ext_host);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("AccountingStorageParameters");
+	key_pair->value =
+		xstrdup(slurm_ctl_conf_ptr->accounting_storage_params);
 	list_append(ret_list, key_pair);
 
 	snprintf(tmp_str, sizeof(tmp_str), "%u",
@@ -593,6 +599,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("AuthAltTypes");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->authalttypes);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("AuthAltParameters");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->authalt_params);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -803,12 +814,12 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	if (slurm_ctl_conf_ptr->hash_val != NO_VAL) {
-		if (slurm_ctl_conf_ptr->hash_val == slurm_get_hash_val())
+		if (slurm_ctl_conf_ptr->hash_val == slurm_conf.hash_val)
 			snprintf(tmp_str, sizeof(tmp_str), "Match");
 		else {
 			snprintf(tmp_str, sizeof(tmp_str),
 				 "Different Ours=0x%x Slurmctld=0x%x",
-				 slurm_get_hash_val(),
+				 slurm_conf.hash_val,
 				 slurm_ctl_conf_ptr->hash_val);
 		}
 		key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -840,6 +851,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("InactiveLimit");
 	key_pair->value = xstrdup(tmp_str);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("InteractiveStepOptions");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->interactive_step_opts);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -959,11 +975,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("LaunchType");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->launch_type);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("Layouts");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->layouts);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1094,11 +1105,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("MpiParams");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->mpi_params);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("MsgAggregationParams");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->msg_aggr_params);
 	list_append(ret_list, key_pair);
 
 	if (cluster_flags & CLUSTER_FLAG_MULTSD) {
@@ -1429,11 +1435,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("SallocDefaultCommand");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->salloc_default_command);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SbcastParameters");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->sbcast_parameters);
 	list_append(ret_list, key_pair);
@@ -1453,6 +1454,11 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SchedulerType");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->schedtype);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("ScronParameters");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->scron_params);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1828,8 +1834,7 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
  * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  * NOTE: free the response using slurm_free_ctl_conf
  */
-int
-slurm_load_ctl_conf (time_t update_time, slurm_ctl_conf_t **confp)
+int slurm_load_ctl_conf(time_t update_time, slurm_conf_t **confp)
 {
 	int rc;
 	slurm_msg_t req_msg;
@@ -1890,8 +1895,7 @@ slurm_load_slurmd_status(slurmd_status_t **slurmd_status_ptr)
 					    req_msg.flags);
 		} else {
 			this_addr = "localhost";
-			slurm_set_addr(&req_msg.address,
-				       (uint16_t)slurm_get_slurmd_port(),
+			slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 				       this_addr);
 		}
 	} else {
@@ -1901,11 +1905,10 @@ slurm_load_slurmd_status(slurmd_status_t **slurmd_status_ptr)
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host);
+		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
-		slurm_set_addr(&req_msg.address,
-			       (uint16_t)slurm_get_slurmd_port(),
+		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 			       this_addr);
 		xfree(this_addr);
 	}
@@ -2078,8 +2081,7 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 			      key_pair->name,
 			      key_pair->value);
 		} else {
-			if ((!xstrcasecmp(key_pair->name, "ChosLoc")) ||
-			    (!xstrcasecmp(key_pair->name, "Epilog")) ||
+			if ((!xstrcasecmp(key_pair->name, "Epilog")) ||
 			    (!xstrcasecmp(key_pair->name, "EpilogSlurmctld")) ||
 			    (!xstrcasecmp(key_pair->name,
 					  "HealthCheckProgram")) ||
@@ -2090,8 +2092,6 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 			    (!xstrcasecmp(key_pair->name, "ResumeProgram")) ||
 			    (!xstrcasecmp(key_pair->name, "ResvEpilog")) ||
 			    (!xstrcasecmp(key_pair->name, "ResvProlog")) ||
-			    (!xstrcasecmp(key_pair->name,
-					  "SallocDefaultCommand")) ||
 			    (!xstrcasecmp(key_pair->name, "SrunEpilog")) ||
 			    (!xstrcasecmp(key_pair->name, "SrunProlog")) ||
 			    (!xstrcasecmp(key_pair->name, "SuspendProgram")) ||
@@ -2146,7 +2146,6 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 		if (!xstrcasecmp(key_pair->name, "AccountingStorageBackupHost") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageEnforce") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageHost") ||
-		    !xstrcasecmp(key_pair->name, "AccountingStorageLoc") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStoragePort") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageType") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageUser") ||

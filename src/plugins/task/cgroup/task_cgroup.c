@@ -111,29 +111,24 @@ extern int init (void)
 
 	/* enable subsystems based on conf */
 	if (use_cpuset) {
-		use_cpuset = true;
 		if (task_cgroup_cpuset_init() != SLURM_SUCCESS) {
 			return SLURM_ERROR;
 		}
-		debug("%s: now constraining jobs allocated cores",
-		      plugin_type);
+		debug("core enforcement enabled");
 	}
 
 	if (use_memory) {
-		use_memory = true;
 		if (task_cgroup_memory_init() != SLURM_SUCCESS) {
 			return SLURM_ERROR;
 		}
-		debug("%s: now constraining jobs allocated memory",
-		      plugin_type);
+		debug("memory enforcement enabled");
 	}
 
 	if (use_devices) {
 		if (task_cgroup_devices_init() != SLURM_SUCCESS) {
 			return SLURM_ERROR;
 		}
-		debug("%s: now constraining jobs allocated devices",
-		      plugin_type);
+		debug("device enforcement enabled");
 	}
 
 	debug("%s: loaded", plugin_type);
@@ -178,15 +173,6 @@ extern int task_p_slurmd_launch_request (launch_tasks_request_msg_t *req,
 }
 
 /*
- * task_p_slurmd_reserve_resources()
- */
-extern int task_p_slurmd_reserve_resources (launch_tasks_request_msg_t *req,
-					    uint32_t node_id)
-{
-	return SLURM_SUCCESS;
-}
-
-/*
  * task_p_slurmd_suspend_job()
  */
 extern int task_p_slurmd_suspend_job (uint32_t job_id)
@@ -198,14 +184,6 @@ extern int task_p_slurmd_suspend_job (uint32_t job_id)
  * task_p_slurmd_resume_job()
  */
 extern int task_p_slurmd_resume_job (uint32_t job_id)
-{
-	return SLURM_SUCCESS;
-}
-
-/*
- * task_p_slurmd_release_resources()
- */
-extern int task_p_slurmd_release_resources (uint32_t job_id)
 {
 	return SLURM_SUCCESS;
 }

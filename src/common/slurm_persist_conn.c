@@ -73,7 +73,10 @@ static persist_service_conn_t *persist_service_conn[MAX_THREAD_COUNT];
 static int             thread_count = 0;
 static pthread_mutex_t thread_count_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  thread_count_cond = PTHREAD_COND_INITIALIZER;
-static int             shutdown_time = 0;
+static time_t          shutdown_time = 0;
+
+static Buf _slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn,
+                                   bool reopen);
 
 /* Return time in msec since "start time" */
 static int _tot_wait (struct timeval *start_time)
@@ -156,8 +159,8 @@ static bool _conn_readable(slurm_persist_conn_t *persist_conn)
 		}
 		if ((ufds.revents & POLLHUP) &&
 		    ((ufds.revents & POLLIN) == 0)) {
-			debug2("%s: persistent connection for fd %d closed",
-			       __func__, persist_conn->fd);
+			log_flag(NET, "%s: persistent connection for fd %d closed",
+				 __func__, persist_conn->fd);
 			return false;
 		}
 		if (ufds.revents & POLLNVAL) {
@@ -166,8 +169,15 @@ static bool _conn_readable(slurm_persist_conn_t *persist_conn)
 			return false;
 		}
 		if (ufds.revents & POLLERR) {
-			error("%s: persistent connection for fd %d experienced an error",
-			       __func__, persist_conn->fd);
+			int sockerr;
+			if (fd_get_socket_error(ufds.fd, &sockerr))
+				error("%s: persistent connection for fd %d experienced error[%d]: %s",
+				      __func__, ufds.fd, sockerr,
+				      slurm_strerror(sockerr));
+			else
+				error("%s: persistent connection for fd %d experienced an unknown error",
+				      __func__, ufds.fd);
+
 			return false;
 		}
 		if ((ufds.revents & POLLIN) == 0) {
@@ -223,8 +233,8 @@ static int _process_service_connection(
 	xassert(persist_conn->callback_proc);
 	xassert(persist_conn->shutdown);
 
-	debug2("Opened connection %d from %s", persist_conn->fd,
-	       persist_conn->rem_host);
+	log_flag(NET, "%s: Opened connection %d from %s",
+		 __func__, persist_conn->fd, persist_conn->rem_host);
 
 	if (persist_conn->flags & PERSIST_FLAG_ALREADY_INITED)
 		first = false;
@@ -304,17 +314,18 @@ static int _process_service_connection(
 				 * deal as the slurmctld will just send the
 				 * message again. */
 				if (persist_conn->rem_port)
-					debug("Problem sending response to "
-					      "connection %d(%s) uid(%d)",
-					      persist_conn->fd,
-					      persist_conn->rem_host, uid);
+					log_flag(NET, "%s: Problem sending response to connection host:%s fd:%d uid:%d",
+						 __func__,
+						 persist_conn->rem_host,
+						 persist_conn->fd, uid);
 				fini = true;
 			}
 			free_buf(buffer);
 		}
 	}
 
-	debug2("Closed connection %d uid(%d)", persist_conn->fd, uid);
+	log_flag(NET, "%s: Closed connection host:%s fd:%d uid:%d",
+		 __func__, persist_conn->rem_host, persist_conn->fd, uid);
 
 	return rc;
 }
@@ -342,8 +353,8 @@ static void *_service_connection(void *arg)
 	if (service_conn->conn->callback_fini)
 		(service_conn->conn->callback_fini)(service_conn->arg);
 	else
-		debug("Persist connection from cluster %s has disconnected",
-		      service_conn->conn->cluster_name);
+		log_flag(NET, "%s: Persist connection from cluster %s has disconnected",
+			 __func__, service_conn->conn->cluster_name);
 
 	/* service_conn is freed inside here */
 	slurm_persist_conn_free_thread_loc(service_conn->thread_loc);
@@ -550,21 +561,19 @@ extern int slurm_persist_conn_open_without_init(
 		persist_conn->version = SLURM_MIN_PROTOCOL_VERSION;
 	}
 	if (persist_conn->timeout < 0)
-		persist_conn->timeout = slurm_get_msg_timeout() * 1000;
+		persist_conn->timeout = slurm_conf.msg_timeout * 1000;
 
-	slurm_set_addr_char(&addr, persist_conn->rem_port,
-			    persist_conn->rem_host);
+	slurm_set_addr(&addr, persist_conn->rem_port, persist_conn->rem_host);
 	if ((persist_conn->fd = slurm_open_msg_conn(&addr)) < 0) {
 		if (_comm_fail_log(persist_conn)) {
-			char *s = xstrdup_printf("%s: failed to open persistent connection to %s:%d: %m",
-						 __func__,
-						 persist_conn->rem_host,
-						 persist_conn->rem_port);
 			if (persist_conn->flags & PERSIST_FLAG_SUPPRESS_ERR)
-				debug2("%s", s);
+				log_flag(NET, "%s: failed to open persistent connection (with error suppression active) to host:%s:%d: %m",
+					 __func__, persist_conn->rem_host,
+					 persist_conn->rem_port);
 			else
-				error("%s", s);
-			xfree(s);
+				error("%s: failed to open persistent connection to host:%s:%d: %m",
+				      __func__, persist_conn->rem_host,
+				      persist_conn->rem_port);
 		}
 		return SLURM_ERROR;
 	}
@@ -585,6 +594,9 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 	slurm_msg_t req_msg;
 	persist_init_req_msg_t req;
 	persist_rc_msg_t *resp = NULL;
+
+	if (!persist_conn->shutdown)
+		persist_conn->shutdown = &shutdown_time;
 
 	if (slurm_persist_conn_open_without_init(persist_conn) != SLURM_SUCCESS)
 		return rc;
@@ -614,7 +626,7 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 		      __func__, persist_conn->rem_host, persist_conn->rem_port);
 		_close_fd(&persist_conn->fd);
 	} else {
-		Buf buffer = slurm_persist_recv_msg(persist_conn);
+		Buf buffer = _slurm_persist_recv_msg(persist_conn, false);
 		persist_msg_t msg;
 		slurm_persist_conn_t persist_conn_tmp;
 
@@ -770,15 +782,28 @@ extern int slurm_persist_conn_writeable(slurm_persist_conn_t *persist_conn)
 	struct timeval tstart;
 	char temp[2];
 
-	xassert(persist_conn->shutdown);
-
-	if (persist_conn->fd < 0)
+	if (!persist_conn || !persist_conn->shutdown)
+		fatal("%s: unexpected NULL persist_conn", __func__);
+	else if (*persist_conn->shutdown) {
+		log_flag(NET, "%s: called on shutdown fd:%d to host %s:%hu",
+		         __func__, persist_conn->fd,
+		         (persist_conn->rem_host ? persist_conn->rem_host :
+                                                   "unknown"),
+		         persist_conn->rem_port);
 		return -1;
+	} else if (persist_conn->fd < 0) {
+		log_flag(NET, "%s: called on invalid fd:%d to host %s:%hu",
+		         __func__, persist_conn->fd,
+		         (persist_conn->rem_host ? persist_conn->rem_host :
+                                                   "unknown"),
+		         persist_conn->rem_port);
+		return -1;
+	}
 
 	ufds.fd     = persist_conn->fd;
 	ufds.events = POLLOUT;
 	gettimeofday(&tstart, NULL);
-	while ((*persist_conn->shutdown) == 0) {
+	while (!*persist_conn->shutdown) {
 		time_left = write_timeout - _tot_wait(&tstart);
 		rc = poll(&ufds, 1, time_left);
 		if (rc == -1) {
@@ -798,8 +823,8 @@ extern int slurm_persist_conn_writeable(slurm_persist_conn_t *persist_conn)
 		 */
 		if (ufds.revents & POLLHUP ||
 		    (recv(persist_conn->fd, &temp, 1, 0) == 0)) {
-			debug2("%s: persistent connection %d is closed for writes",
-			       __func__, persist_conn->fd);
+			log_flag(NET, "%s: persistent connection %d is closed for writes",
+				 __func__, persist_conn->fd);
 			if (persist_conn->trigger_callbacks.dbd_fail)
 				(persist_conn->trigger_callbacks.dbd_fail)();
 			return -1;
@@ -893,7 +918,8 @@ extern int slurm_persist_send_msg(
 	return SLURM_SUCCESS;
 }
 
-extern Buf slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn)
+static Buf _slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn,
+				   bool reopen)
 {
 	uint32_t msg_size, nw_size;
 	char *msg;
@@ -902,24 +928,42 @@ extern Buf slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn)
 
 	xassert(persist_conn);
 
-	if (persist_conn->fd < 0)
+	if (persist_conn->fd < 0) {
+		if (!persist_conn->shutdown || *persist_conn->shutdown)
+			log_flag(NET, "%s: Invalid file descriptor fd:%d host:%s port:%"PRIu16,
+				 __func__, persist_conn->fd,
+				 persist_conn->rem_host,
+				 persist_conn->rem_port);
 		return NULL;
+	}
 
-	if (!_conn_readable(persist_conn))
-		goto endit;
-
-	msg_read = read(persist_conn->fd, &nw_size, sizeof(nw_size));
-	if (msg_read != sizeof(nw_size))
-		goto endit;
-	msg_size = ntohl(nw_size);
-	/* We don't error check for an upper limit here
-	 * since size could possibly be massive */
-	if (msg_size < 2) {
-		error("Persistent Conn: Invalid msg_size (%u)", msg_size);
+	if (!_conn_readable(persist_conn)) {
+		log_flag(NET, "%s: Unable to read from file descriptor (%d)",
+			 __func__, persist_conn->fd);
 		goto endit;
 	}
 
-	msg = xmalloc(msg_size);
+	msg_read = read(persist_conn->fd, &nw_size, sizeof(nw_size));
+	if (msg_read != sizeof(nw_size)) {
+		log_flag(NET, "%s: Unable to read message size: only read %zd bytes of expected %zu.",
+			 __func__, msg_read, sizeof(nw_size));
+		goto endit;
+	}
+	msg_size = ntohl(nw_size);
+	/* Sanity check size is not too small or the max possible */
+	if ((msg_size == INFINITE) || (msg_size == NO_VAL) || (msg_size < 2)) {
+		error("%s: Invalid msg_size: %u bytes",
+		      __func__, msg_size);
+		goto endit;
+	}
+
+	msg = try_xmalloc(msg_size);
+	if (!msg) {
+		error("%s: Unable to allocate msg with %u bytes",
+		      __func__, msg_size);
+		goto endit;
+	}
+
 	offset = 0;
 	while (msg_size > offset) {
 		if (!_conn_readable(persist_conn))
@@ -927,15 +971,16 @@ extern Buf slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn)
 		msg_read = read(persist_conn->fd, (msg + offset),
 				(msg_size - offset));
 		if (msg_read <= 0) {
-			error("Persistent Conn: read: %m");
+			error("%s: read of fd %u failed: %m",
+			      __func__, persist_conn->fd);
 			break;
 		}
 		offset += msg_read;
 	}
 	if (msg_size != offset) {
 		if (!(*persist_conn->shutdown)) {
-			error("Persistent Conn: only read %zd of %d bytes",
-			      offset, msg_size);
+			error("%s: only read %zd of %d bytes",
+			      __func__, offset, msg_size);
 		}	/* else in shutdown mode */
 		xfree(msg);
 		goto endit;
@@ -949,11 +994,19 @@ endit:
 	 * on the other end we can't rely on it after this point since we didn't
 	 * listen long enough for this response.
 	 */
-	if (!(*persist_conn->shutdown) &&
-	    persist_conn->flags & PERSIST_FLAG_RECONNECT)
+	if (reopen && !(*persist_conn->shutdown) &&
+	    persist_conn->flags & PERSIST_FLAG_RECONNECT) {
+		log_flag(NET, "%s: reopening persistent connection after error",
+			 __func__);
 		slurm_persist_conn_reopen(persist_conn, true);
+	}
 
 	return NULL;
+}
+
+extern Buf slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn)
+{
+	return _slurm_persist_recv_msg(persist_conn, true);
 }
 
 extern Buf slurm_persist_msg_pack(slurm_persist_conn_t *persist_conn,

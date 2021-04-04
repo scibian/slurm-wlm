@@ -36,6 +36,7 @@
 
 #include "config.h"
 
+#include <ctype.h>
 #include <http_parser.h>
 #include <limits.h>
 #include <sys/socket.h>
@@ -46,6 +47,7 @@
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/net.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
@@ -60,8 +62,10 @@
 /* return magic number 2 to close the connection */
 #define HTTP_PARSER_RETURN_ERROR 1
 
+#define MAGIC_REQUEST_T 0xdbadaaaf
 /* Data to handed around by http_parser to call backs */
 typedef struct {
+	int magic;
 	/* URL path requested by client */
 	const char *path;
 	/* URL query parameters by client */
@@ -72,10 +76,15 @@ typedef struct {
 	char *last_header;
 	/* client requested to keep_alive header or -1 to disable */
 	int keep_alive;
+	/* RFC7230-6.1 "Connection: Close" */
+	bool connection_close;
+	int expect; /* RFC7231-5.1.1 expect requested */
 	/* Connection context */
 	http_context_t *context;
 	/* Body of request (may be NULL) */
-	const char *body;
+	char *body;
+	/* if provided: expected body length to process or 0 */
+	size_t expected_body_length;
 	size_t body_length;
 	const char *body_encoding; //TODO: implement detection of this
 	const char *content_type;
@@ -85,41 +94,38 @@ typedef struct {
 /* default keep_alive value which appears to be implementation specific */
 static int DEFAULT_KEEP_ALIVE = 5; //default to 5s to match apache2
 
-static void _destroy_headers_list(void *list)
+static int _send_reject(const http_parser *parser,
+			http_status_code_t status_code);
+
+extern void free_http_header(http_header_entry_t *header)
 {
-	http_header_entry_t *const buffer = (http_header_entry_t *)list;
-	xfree(buffer->name);
-	xfree(buffer->value);
-	xfree(buffer);
+	xfree(header->name);
+	xfree(header->value);
+	xfree(header);
 }
 
-/* only clears the values that should change between requests */
-static void _reinit_request_t(request_t *request, bool create)
+static void _free_http_header(void *header)
 {
-	if (request->headers) {
-		list_destroy(request->headers);
-		request->headers = NULL;
-	}
-	xfree(request->path);
-	request->path = NULL;
-	xfree(request->query);
-	request->query = NULL;
-	xfree(request->last_header);
-	request->last_header = NULL;
-	xfree(request->content_type);
-	request->content_type = NULL;
-	xfree(request->accept);
-	request->accept = NULL;
-	xfree(request->body);
-	request->body = NULL;
-	xfree(request->body_encoding);
-	request->body_encoding = NULL;
-	request->body_length = 0;
+	free_http_header(header);
+}
 
-	if (create)
-		request->headers = list_create(_destroy_headers_list);
-	else
-		request->headers = NULL;
+static void _free_request_t(request_t *request)
+{
+	if (!request)
+		return;
+
+	xassert(request->magic == MAGIC_REQUEST_T);
+	request->magic = ~MAGIC_REQUEST_T;
+	FREE_NULL_LIST(request->headers);
+	xfree(request->path);
+	xfree(request->query);
+	xfree(request->last_header);
+	xfree(request->content_type);
+	xfree(request->accept);
+	xfree(request->body);
+	xfree(request->body_encoding);
+	request->body_length = 0;
+	xfree(request);
 }
 
 static void _http_parser_url_init(struct http_parser_url *url)
@@ -136,12 +142,6 @@ static void _http_parser_url_init(struct http_parser_url *url)
 #endif
 }
 
-static void _free_request_t(request_t *request)
-{
-	_reinit_request_t(request, false);
-	xfree(request);
-}
-
 static int _on_message_begin(http_parser *parser)
 {
 	debug5("%s: stub called", __func__);
@@ -152,6 +152,7 @@ static int _on_url(http_parser *parser, const char *at, size_t length)
 {
 	struct http_parser_url url;
 	request_t *request = parser->data;
+	xassert(request->magic == MAGIC_REQUEST_T);
 	xassert(request->path == NULL);
 
 	_http_parser_url_init(&url);
@@ -209,6 +210,7 @@ static int _on_status(http_parser *parser, const char *at, size_t length)
 static int _on_header_field(http_parser *parser, const char *at, size_t length)
 {
 	request_t *request = parser->data;
+	xassert(request->magic == MAGIC_REQUEST_T);
 	xassert(request->last_header == NULL);
 	xfree(request->last_header);
 	request->last_header = xstrndup(at, length);
@@ -219,6 +221,8 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 {
 	request_t *request = parser->data;
 	http_header_entry_t *buffer;
+
+	xassert(request->magic == MAGIC_REQUEST_T);
 
 	if (!request->last_header) {
 		error("%s: [%s] received invalid empty header",
@@ -234,11 +238,18 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 	/* trim header field-name per rfc2616:4.2 */
 	xstrtrim(buffer->name);
 
+	list_append(request->headers, buffer);
+	debug2("%s: [%s] Header: %s Value: %s",
+	       __func__, request->context->con->name, buffer->name,
+	       buffer->value);
+
 	/* Watch for connection headers */
 	if (!xstrcasecmp(buffer->name, "Connection")) {
 		if (!xstrcasecmp(buffer->value, "Keep-Alive")) {
 			if (request->keep_alive == -1)
 				request->keep_alive = DEFAULT_KEEP_ALIVE;
+		} else if (!xstrcasecmp(buffer->value, "Close")) {
+			request->connection_close = true;
 		} else {
 			error("%s: [%s] ignoring unsupported header request: %s",
 			      __func__, request->context->con->name,
@@ -258,16 +269,36 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 	} else if (!xstrcasecmp(buffer->name, "Content-Type")) {
 		xfree(request->content_type);
 		request->content_type = xstrdup(buffer->value);
+	} else if (!xstrcasecmp(buffer->name, "Content-Type")) {
+		xfree(request->content_type);
+		request->content_type = xstrdup(buffer->value);
+	} else if (!xstrcasecmp(buffer->name, "Content-Length")) {
+		/* Use signed buffer to catch if negative length is provided */
+		ssize_t cl;
+
+		if ((sscanf(buffer->value, "%zd", &cl) != 1) || (cl < 0))
+			return _send_reject(
+				parser, HTTP_STATUS_CODE_ERROR_NOT_ACCEPTABLE);
+
+		request->expected_body_length = cl;
 	} else if (!xstrcasecmp(buffer->name, "Accept")) {
 		xfree(request->accept);
 		request->accept = xstrdup(buffer->value);
+	} else if (!xstrcasecmp(buffer->name, "Expect")) {
+		if (!xstrcasecmp(buffer->value, "100-continue"))
+			request->expect = 100;
+		else
+			return _send_reject(parser,
+				HTTP_STATUS_CODE_ERROR_EXPECTATION_FAILED);
+	} else if (!xstrcasecmp(buffer->name, "Transfer-Encoding")) {
+		/* Transfer encoding is not allowed */
+		return _send_reject(parser,
+				    HTTP_STATUS_CODE_ERROR_NOT_ACCEPTABLE);
+	} else if (!xstrcasecmp(buffer->name, "Content-Encoding")) {
+		/* Content encoding is not allowed */
+		return _send_reject(parser,
+				    HTTP_STATUS_CODE_ERROR_NOT_ACCEPTABLE);
 	}
-
-	list_append(request->headers, buffer);
-
-	debug2("%s: [%s] Header: %s Value: %s",
-	       __func__, request->context->con->name, buffer->name,
-	       buffer->value);
 	return 0;
 }
 
@@ -282,10 +313,15 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 static int _on_headers_complete(http_parser *parser)
 {
 	request_t *request = parser->data;
+	xassert(request->magic == MAGIC_REQUEST_T);
 
 	if (parser->http_major == 1 && parser->http_minor == 0) {
 		debug3("%s: [%s] HTTP/1.0 connection",
 		       __func__, request->context->con->name);
+
+		/* 1.0 defaults to close w/o keep_alive */
+		if (!request->keep_alive)
+			request->connection_close = true;
 	} else if (parser->http_major == 1 && parser->http_minor == 1) {
 		debug3("%s: [%s] HTTP/1.1 connection",
 		       __func__, request->context->con->name);
@@ -301,30 +337,78 @@ static int _on_headers_complete(http_parser *parser)
 		return 10;
 	}
 
+	if (((parser->http_major == 1) && (parser->http_minor >= 1)) ||
+	     (parser->http_major > 1)) {
+		if ((parser->method == HTTP_REQUEST_POST) &&
+		    (request->expected_body_length <= 0)) {
+			(void) _send_reject(parser,
+				HTTP_STATUS_CODE_ERROR_LENGTH_REQUIRED);
+			/* notify http_parser of failure */
+			return 10;
+		}
+
+		if (request->expect) {
+			send_http_response_args_t args = {
+				.con = request->context->con,
+				.http_major = parser->http_major,
+				.http_minor = parser->http_minor,
+				.status_code = request->expect,
+				.body_length = 0,
+			};
+
+			if (send_http_response(&args))
+				return 10;
+		}
+	}
+
 	return 0;
 }
 
+#define MAX_BODY_BYTES 52428800 /* 50MB */
 static int _on_body(http_parser *parser, const char *at, size_t length)
 {
-	char *buffer = NULL;
-
 	request_t *request = parser->data;
-	xassert(!request->body);
-	xfree(request->body);
+	xassert(request->magic == MAGIC_REQUEST_T);
 
-	/* Add NULL to the end to make sure strlen() never overruns */
-	buffer = xmalloc(length + 1);
-	request->body_length = length + 1;
-	request->body = buffer;
-	memcpy(buffer, at, length);
-	buffer[length] = '\0';
+	log_flag_hex(NET_RAW, at, length, "%s: [%s] received HTTP body",
+	       __func__, request->context->con->name);
 
-	debug2("%s: [%s] received HTTP body length: %zu",
-	       __func__, request->context->con->name, length);
-	debug5("%s: [%s] received HTTP body: %s",
-	       __func__, request->context->con->name, buffer);
+	if (request->body) {
+		size_t nlength = (length + request->body_length + 1);
+
+		xassert(request->body_length > 0);
+
+		if ((nlength > MAX_BODY_BYTES) ||
+		    (request->expected_body_length &&
+		     ((nlength - 1) > (request->expected_body_length + 1))) ||
+		    !try_xrealloc(request->body, nlength))
+			goto no_mem;
+
+		memmove((request->body + (request->body_length - 1)),
+		       at, length);
+		request->body_length += length;
+		request->body[nlength] = '\0';
+	} else {
+		if ((length > MAX_BODY_BYTES) ||
+		    (request->expected_body_length &&
+		     (length > request->expected_body_length)) ||
+		    !(request->body = try_xmalloc(length + 1)))
+			goto no_mem;
+
+		request->body_length = (length + 1);
+		memmove(request->body, at, length);
+		request->body[length] = '\0';
+	}
+
+	debug2("%s: [%s] received %zu bytes for HTTP body length %zu/%zu bytes",
+	       __func__, request->context->con->name, length,
+	       request->body_length, request->expected_body_length);
 
 	return 0;
+
+no_mem:
+	/* total body was way too large to store */
+	return _send_reject(parser, HTTP_STATUS_CODE_ERROR_ENTITY_TOO_LARGE);
 }
 
 /*
@@ -367,6 +451,11 @@ static char *_fmt_header_num(const char *name, size_t value)
 	return xstrdup_printf("%s: %zu" CRLF, name, value);
 }
 
+extern int send_http_connection_close(http_context_t *ctxt)
+{
+	return _write_fmt_header(ctxt->con, "Connection", "Close");
+}
+
 /*
  * Create and write formatted numerical header
  * IN request HTTP request
@@ -389,6 +478,11 @@ extern int send_http_response(const send_http_response_args_t *args)
 	int rc = SLURM_SUCCESS;
 	xassert(args->status_code != HTTP_STATUS_NONE);
 	xassert(args->body_length == 0 || (args->body_length && args->body));
+
+	log_flag(NET, "%s: [%s] sending response %u: %s",
+	       __func__, args->con->name,
+	       args->status_code,
+	       get_http_status_code_string(args->status_code));
 
 	/* send rfc2616 response */
 	xstrfmtcat(buffer, "HTTP/%d.%d %d %s"CRLF,
@@ -417,9 +511,16 @@ extern int send_http_response(const send_http_response_args_t *args)
 	}
 
 	if (args->body && args->body_length) {
-		if ((rc = _write_fmt_num_header(args->con, "Content-Length",
-						args->body_length)))
-			return rc;
+		/* RFC7230-3.3.2 limits response of Content-Length */
+		if ((args->status_code < 100) ||
+		    ((args->status_code >= 200) &&
+		     (args->status_code != 204))) {
+			if ((rc = _write_fmt_num_header(args->con,
+				"Content-Length", args->body_length))) {
+				return rc;
+			}
+		}
+
 		if (args->body_encoding &&
 		    (rc = _write_fmt_header(
 			     args->con, "Content-Type", args->body_encoding)))
@@ -446,14 +547,27 @@ static int _send_reject(const http_parser *parser,
 			http_status_code_t status_code)
 {
 	request_t *request = parser->data;
+	xassert(request->magic == MAGIC_REQUEST_T);
 
-	send_http_response_args_t args = { .con = request->context->con,
-					   .http_major = parser->http_major,
-					   .http_minor = parser->http_minor,
-					   .status_code = status_code,
-					   .body_length = 0 };
+	send_http_response_args_t args = {
+		.con = request->context->con,
+		.http_major = parser->http_major,
+		.http_minor = parser->http_minor,
+		.status_code = status_code,
+		.body_length = 0,
+		.headers = list_create(_free_http_header),
+	};
 
-	send_http_response(&args);
+	/* Ignore response since this connection is already dead */
+	(void) send_http_response(&args);
+
+	if (request->connection_close ||
+	    ((parser->http_major == 1) && (parser->http_minor >= 1)) ||
+	     (parser->http_major > 1))
+		send_http_connection_close(request->context);
+
+	/* ensure connection gets closed */
+	(void) con_mgr_queue_close_fd(request->context->con);
 
 	return HTTP_PARSER_RETURN_ERROR;
 }
@@ -526,6 +640,8 @@ static int _on_message_complete_request(http_parser *parser,
 		.body_encoding = request->body_encoding
 	};
 
+	xassert(request->magic == MAGIC_REQUEST_T);
+
 	if ((rc = request->context->on_http_request(&args))) {
 		debug2("%s: [%s] on_http_request rejected: %s",
 		       __func__, request->context->con->name,
@@ -540,6 +656,8 @@ static int _on_message_complete(http_parser *parser)
 	int rc;
 	request_t *request = parser->data;
 	http_request_method_t method = HTTP_REQUEST_INVALID;
+
+	xassert(request->magic == MAGIC_REQUEST_T);
 
 	/* skip if there is already an known error */
 	if (parser->http_errno)
@@ -588,6 +706,14 @@ static int _on_message_complete(http_parser *parser)
 				    HTTP_STATUS_CODE_ERROR_METHOD_NOT_ALLOWED);
 	}
 
+	if ((request->expected_body_length > 0) &&
+	    (request->expected_body_length != (request->body_length - 1))) {
+		error("%s: [%s] Content-Length %zu and received body length %zu mismatch",
+		      __func__, request->context->con->name,
+		      request->expected_body_length, request->body_length);
+		return _send_reject(parser, HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+	}
+
 	if ((rc = _on_message_complete_request(parser, method, request)))
 		return rc;
 
@@ -597,7 +723,29 @@ static int _on_message_complete(http_parser *parser)
 		       __func__, request->context->con->name);
 	}
 
-	_reinit_request_t(request, true);
+	if (!request->connection_close) {
+		/*
+		 * Create a new HTTP request to allow persistent connections to
+		 * continue but without inheirting previous requests.
+		 */
+		request_t *nrequest = xmalloc(sizeof(*request));
+		nrequest->magic = MAGIC_REQUEST_T;
+		nrequest->headers = list_create(_free_http_header);
+		nrequest->context = request->context;
+		request->context->request = nrequest;
+		parser->data = nrequest;
+		_free_request_t(request);
+	} else {
+		/* Notify client that this connection will be closed now */
+		if (request->connection_close)
+			send_http_connection_close(request->context);
+
+		con_mgr_queue_close_fd(request->context->con);
+
+		request->context->request = NULL;
+		_free_request_t(request);
+		parser->data = NULL;
+	}
 
 	return 0;
 }
@@ -637,14 +785,23 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 	xassert(con->name);
 	xassert(con->name[0] != '\0');
 	xassert(size_buf(buffer));
+	xassert(context->magic == MAGIC);
 
-	_reinit_request_t(request, true);
+	if (!request) {
+		/* Connection has already been closed */
+		rest_auth_g_clear();
+		debug("%s: [%s] Rejecting continued HTTP connection",
+		      __func__, con->name);
+		return SLURM_UNEXPECTED_MSG_ERROR;
+	}
+
+	xassert(request->magic == MAGIC_REQUEST_T);
 	if (request->context)
 		xassert(request->context == context);
 	request->context = context;
 
 	/* make sure there is no auth context inherited */
-	rest_auth_context_clear();
+	rest_auth_g_clear();
 
 	parser->data = request;
 
@@ -670,7 +827,7 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		rc = SLURM_UNEXPECTED_MSG_ERROR;
 	}
 
-	rest_auth_context_clear();
+	rest_auth_g_clear();
 
 	return rc;
 }
@@ -685,6 +842,26 @@ extern parsed_host_port_t *parse_host_port(const char *str)
 		return NULL;
 	}
 
+	/* Allow :::PORT and :PORT to default to in6addr_any */
+	if (str[0] == ':') {
+		char *pstr = xstrdup(str);
+		pstr[0] = ' ';
+
+		if (pstr[1] == ':' && pstr[2] == ':') {
+			pstr[1] = ' ';
+			pstr[2] = ' ';
+		}
+
+		/* remove any whitespace */
+		xstrtrim(pstr);
+
+		parsed = xmalloc(sizeof(*parsed));
+		parsed->host = xstrdup("::");
+		parsed->port = pstr;
+		return parsed;
+	}
+
+	/* Only useful for RFC3986 addresses */
 	_http_parser_url_init(&url);
 
 	if (http_parser_parse_url(str, strlen(str), true, &url)) {
@@ -723,11 +900,11 @@ extern http_context_t *_http_context_new(void)
 	http_context_t *context = xmalloc(sizeof(*context));
 	http_parser *parser = xmalloc(sizeof(*parser));
 
-	xassert((context->magic = MAGIC));
+	context->magic = MAGIC;
 	http_parser_init(parser, HTTP_REQUEST);
 	context->parser = parser;
 
-	context->auth = rest_auth_context_new();
+	context->auth = NULL;
 
 	return context;
 }
@@ -862,9 +1039,14 @@ extern http_context_t *setup_http_context(con_mgr_fd_t *con,
 	http_context_t *context = _http_context_new();
 	request_t *request = xmalloc(sizeof(*request));
 
+	xassert(context->magic == MAGIC);
+	xassert(!context->con);
+	xassert(!context->request);
+	request->magic = MAGIC_REQUEST_T;
 	context->con = con;
 	context->on_http_request = on_http_request;
 	context->request = request;
+	request->headers = list_create(_free_http_header);
 
 	return context;
 }
@@ -879,7 +1061,7 @@ extern void on_http_connection_finish(void *ctxt)
 
 	xfree(context->parser);
 	_free_request_t(context->request);
-	rest_auth_context_free(context->auth);
-	xassert((context->magic = ~MAGIC));
+	rest_auth_g_free(context->auth);
+	context->magic = ~MAGIC;
 	xfree(context);
 }

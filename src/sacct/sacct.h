@@ -66,7 +66,7 @@
 #define BRIEF_COMP_FIELDS "jobid,uid,state"
 #define DEFAULT_FIELDS "jobid,jobname,partition,account,alloccpus,state,exitcode"
 #define DEFAULT_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,end"
-#define LONG_FIELDS "jobid,jobidraw,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,allocgres,reqgres,reqtres,alloctres,tresusageinave,tresusageinmax,tresusageinmaxn,tresusageinmaxt,tresusageinmin,tresusageinminn,tresusageinmint,tresusageintot,tresusageoutmax,tresusageoutmaxn,tresusageoutmaxt,tresusageoutave,tresusageouttot"
+#define LONG_FIELDS "jobid,jobidraw,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,reqtres,alloctres,tresusageinave,tresusageinmax,tresusageinmaxn,tresusageinmaxt,tresusageinmin,tresusageinminn,tresusageinmint,tresusageintot,tresusageoutmax,tresusageoutmaxn,tresusageoutmaxt,tresusageoutave,tresusageouttot"
 
 #define LONG_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,start,end,timelimit"
 
@@ -90,7 +90,6 @@ typedef enum {
 		PRINT_ACCOUNT,
 		PRINT_ADMIN_COMMENT,
 		PRINT_ALLOC_CPUS,
-		PRINT_ALLOC_GRES,
 		PRINT_ALLOC_NODES,
 		PRINT_TRESA,
 		PRINT_TRESR,
@@ -155,7 +154,6 @@ typedef enum {
 		PRINT_REQ_CPUFREQ_MAX,
 		PRINT_REQ_CPUFREQ_GOV,
 		PRINT_REQ_CPUS,
-		PRINT_REQ_GRES,
 		PRINT_REQ_MEM,
 		PRINT_REQ_NODES,
 		PRINT_RESERVATION,
@@ -210,6 +208,7 @@ typedef struct {
 	int opt_noheader;	/* can only be cleared */
 	int opt_uid;		/* running persons uid */
 	int units;		/* --units*/
+	bool use_local_uid;	/* --use-local-uid */
 } sacct_parameters_t;
 
 extern print_field_t fields[];

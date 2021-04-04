@@ -76,25 +76,6 @@
  * for details.
  */
 strong_alias(net_stream_listen,		slurm_net_stream_listen);
-strong_alias(net_set_low_water,		slurm_net_set_low_water);
-
-/*
- * Returns the port number in host byte order.
- */
-static short _sock_bind_wild(int sockfd)
-{
-	socklen_t len;
-	struct sockaddr_in sin;
-
-	slurm_setup_sockaddr(&sin, 0); /* bind ephemeral port */
-
-	if (bind(sockfd, (struct sockaddr *) &sin, sizeof(sin)) < 0)
-		return (-1);
-	len = sizeof(sin);
-	if (getsockname(sockfd, (struct sockaddr *) &sin, &len) < 0)
-		return (-1);
-	return ntohs(sin.sin_port);
-}
 
 /* open a stream socket on an ephemereal port and put it into
  * the listen state. fd and port are filled in with the new
@@ -105,37 +86,32 @@ static short _sock_bind_wild(int sockfd)
  */
 int net_stream_listen(int *fd, uint16_t *port)
 {
-	int rc, val;
+	slurm_addr_t sin;
+	socklen_t len = sizeof(sin);
+	int val = 1;
 
-	if ((*fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+	/* bind ephemeral port */
+	slurm_setup_addr(&sin, 0);
+
+	if ((*fd = socket(sin.ss_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		return -1;
 
-	val = 1;
-	rc = setsockopt(*fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
-	if (rc < 0)
+	if (setsockopt(*fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) < 0)
+		goto cleanup;
+	if (bind(*fd, (struct sockaddr *) &sin, len) < 0)
+		goto cleanup;
+	if (getsockname(*fd, (struct sockaddr *) &sin, &len) < 0)
 		goto cleanup;
 
-	*port = _sock_bind_wild(*fd);
-	rc = listen(*fd, SLURM_DEFAULT_LISTEN_BACKLOG);
-	if (rc < 0)
+	*port = slurm_get_port(&sin);
+	if (listen(*fd, SLURM_DEFAULT_LISTEN_BACKLOG) < 0)
 		goto cleanup;
 
 	return 1;
 
-  cleanup:
+cleanup:
 	close(*fd);
 	return -1;
-}
-
-int net_set_low_water(int sock, socklen_t size)
-{
-	if (setsockopt(sock, SOL_SOCKET, SO_RCVLOWAT,
-		       (const void *) &size, sizeof(size)) < 0) {
-		error("Unable to set low water socket option: %m");
-		return -1;
-	}
-
-	return 0;
 }
 
 /* set keep alive time on socket */
@@ -204,10 +180,13 @@ extern int net_set_keep_alive(int sock)
  */
 int net_stream_listen_ports(int *fd, uint16_t *port, uint16_t *ports, bool local)
 {
+	slurm_addr_t sin;
 	int cc;
 	int val;
 
-	if ((*fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+	slurm_setup_addr(&sin, 0); /* Decide on IPv4 or IPv6 */
+
+	if ((*fd = socket(sin.ss_family, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		return -1;
 
 	val = 1;
@@ -233,14 +212,14 @@ int net_stream_listen_ports(int *fd, uint16_t *port, uint16_t *ports, bool local
 	return *fd;
 }
 
-extern char *sockaddr_to_string(const struct sockaddr *addr, socklen_t addrlen)
+extern char *sockaddr_to_string(const slurm_addr_t *addr, socklen_t addrlen)
 {
-	int rc;
+	int rc, prev_errno = errno;
 	char *resp = NULL;
 	char host[NI_MAXHOST] = { 0 };
 	char serv[NI_MAXSERV] = { 0 };
 
-	if (addr->sa_family == AF_UNIX) {
+	if (addr->ss_family == AF_UNIX) {
 		const struct sockaddr_un *addr_un =
 			(const struct sockaddr_un *) addr;
 
@@ -252,22 +231,30 @@ extern char *sockaddr_to_string(const struct sockaddr *addr, socklen_t addrlen)
 	}
 
 	resp = xmalloc(NI_MAXHOST + NI_MAXSERV);
-	rc = getnameinfo(addr, addrlen, host, NI_MAXHOST, serv, NI_MAXSERV, 0);
+	rc = getnameinfo((const struct sockaddr *) addr, addrlen, host,
+			 NI_MAXHOST, serv, NI_MAXSERV, NI_NUMERICSERV);
 	if (rc == EAI_SYSTEM) {
 		error("Unable to get address: %m");
 	} else if (rc) {
 		error("Unable to get address: %s", gai_strerror(rc));
 	} else {
+		/* construct RFC3986 host port pair */
 		if (host[0] != '\0' && serv[0] != '\0')
-			xstrfmtcat(resp, "%s:%s", host, serv);
+			xstrfmtcat(resp, "[%s]:%s", host, serv);
 		else if (serv[0] != '\0')
-			xstrfmtcat(resp, "*:%s", serv);
+			xstrfmtcat(resp, "[::]:%s", serv);
 	}
 
+	/*
+	 * Avoid clobbering errno as this function is likely to be used for
+	 * error logging, and stepping on errno prevents %m from working.
+	 */
+	errno = prev_errno;
 	return resp;
 }
 
 extern char *addrinfo_to_string(const struct addrinfo *addr)
 {
-	return sockaddr_to_string(addr->ai_addr, addr->ai_addrlen);
+	return sockaddr_to_string((const slurm_addr_t *) addr->ai_addr,
+				  addr->ai_addrlen);
 }

@@ -117,7 +117,7 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off,
 
 	/* cli_filter plugins can change the defaults */
 	if (first_pass) {
-		if (cli_filter_plugin_setup_defaults(&opt, false)) {
+		if (cli_filter_g_setup_defaults(&opt, false)) {
 			error("cli_filter plugin terminated with error");
 			exit(error_exit);
 		}
@@ -244,7 +244,8 @@ static void _opt_env(void)
 
 	while (e->var) {
 		if ((val = getenv(e->var)) != NULL)
-			slurm_process_option(&opt, e->type, val, true, false);
+			slurm_process_option_or_exit(&opt, e->type, val, true,
+						     false);
 		e++;
 	}
 
@@ -262,7 +263,8 @@ static void _set_options(int argc, char **argv)
 	optind = 0;
 	while ((opt_char = getopt_long(argc, argv, opt_string,
 				       optz, &option_index)) != -1) {
-		slurm_process_option(&opt, opt_char, optarg, false, false);
+		slurm_process_option_or_exit(&opt, opt_char, optarg, false,
+					     false);
 	}
 
 	slurm_option_table_destroy(optz);
@@ -298,7 +300,7 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 		command_argv[i] = NULL;	/* End of argv's (for possible execv) */
 	}
 
-	if (cli_filter_plugin_pre_submit(&opt, het_job_offset)) {
+	if (cli_filter_g_pre_submit(&opt, het_job_offset)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
@@ -321,19 +323,26 @@ static char *_get_shell(void)
 	return pw_ent_ptr->pw_shell;
 }
 
-static int _salloc_default_command(int *argcp, char **argvp[])
+static void _salloc_default_command(int *argcp, char **argvp[])
 {
-	slurm_ctl_conf_t *cf = slurm_conf_lock();
-
-	if (cf->salloc_default_command) {
+	if (xstrstr(slurm_conf.launch_params, "use_interactive_step")) {
 		/*
-		 *  Set argv to "/bin/sh -c 'salloc_default_command'"
+		 * Use srun out of the same directory as this process.
 		 */
+		char *command, *pos;
+		command = xstrdup(argvzero);
+		if ((pos = xstrrchr(command, '/')))
+			*(++pos) = '\0';
+		else
+			*command = '\0';
+		xstrcat(command, "srun ");
+		xstrcat(command, slurm_conf.interactive_step_opts);
+
 		*argcp = 3;
-		*argvp = xmalloc(sizeof (char *) * 4);
+		*argvp = xcalloc(4, sizeof (char *));
 		(*argvp)[0] = "/bin/sh";
 		(*argvp)[1] = "-c";
-		(*argvp)[2] = xstrdup (cf->salloc_default_command);
+		(*argvp)[2] = command;
 		(*argvp)[3] = NULL;
 	} else {
 		*argcp = 1;
@@ -341,9 +350,6 @@ static int _salloc_default_command(int *argcp, char **argvp[])
 		(*argvp)[0] = _get_shell();
 		(*argvp)[1] = NULL;
 	}
-
-	slurm_conf_unlock();
-	return (0);
 }
 
 /*
@@ -355,6 +361,8 @@ static bool _opt_verify(void)
 	bool verified = true;
 	hostlist_t hl = NULL;
 	int hl_cnt = 0;
+
+	validate_options_salloc_sbatch_srun(&opt);
 
 	if (opt.quiet && opt.verbose) {
 		error ("don't specify both --verbose (-v) and --quiet (-Q)");
@@ -376,8 +384,9 @@ static bool _opt_verify(void)
 	}
 
 	if (opt.hint &&
-	    (opt.ntasks_per_core == NO_VAL) &&
-	    (opt.threads_per_core == NO_VAL)) {
+	    !validate_hint_option(&opt)) {
+		xassert(opt.ntasks_per_core == NO_VAL);
+		xassert(opt.threads_per_core == NO_VAL);
 		if (verify_hint(opt.hint,
 				&opt.sockets_per_node,
 				&opt.cores_per_socket,
@@ -622,6 +631,12 @@ static bool _opt_verify(void)
 			opt.ntasks_per_core);
 	}
 
+	if ((opt.ntasks_per_gpu != NO_VAL) &&
+	    (getenv("SLURM_NTASKS_PER_GPU") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_GPU", "%d",
+			opt.ntasks_per_gpu);
+	}
+
 	if ((opt.ntasks_per_node > 0) &&
 	    (getenv("SLURM_NTASKS_PER_NODE") == NULL)) {
 		setenvf(NULL, "SLURM_NTASKS_PER_NODE", "%d",
@@ -632,6 +647,12 @@ static bool _opt_verify(void)
 	    (getenv("SLURM_NTASKS_PER_SOCKET") == NULL)) {
 		setenvf(NULL, "SLURM_NTASKS_PER_SOCKET", "%d",
 			opt.ntasks_per_socket);
+	}
+
+	if ((opt.ntasks_per_tres != NO_VAL) &&
+	    (getenv("SLURM_NTASKS_PER_TRES") == NULL)) {
+		setenvf(NULL, "SLURM_NTASKS_PER_TRES", "%d",
+			opt.ntasks_per_tres);
 	}
 
 	if (opt.profile)
@@ -655,6 +676,9 @@ static bool _opt_verify(void)
 
 	if (saopt.no_shell && !opt.job_name)
 		opt.job_name = xstrdup("no-shell");
+
+	if (!opt.job_name)
+		opt.job_name = xstrdup("interactive");
 
 	if (opt.gpus_per_socket && (opt.sockets_per_node == NO_VAL)) {
 		error("--gpus-per-socket option requires --sockets-per-node specification");
@@ -786,7 +810,7 @@ static void _usage(void)
 
 static void _help(void)
 {
-	slurm_ctl_conf_t *conf;
+	slurm_conf_t *conf;
 
         printf (
 "Usage: salloc [OPTIONS(0)...] [ : [OPTIONS(N)]] [command(0) [args(0)...]]\n"
@@ -879,12 +903,16 @@ static void _help(void)
 "                              --mem >= --mem-per-cpu if --mem is specified.\n"
 "\n"
 "Affinity/Multi-core options: (when the task/affinity plugin is enabled)\n"
-"  -B  --extra-node-info=S[:C[:T]]            Expands to:\n"
-"       --sockets-per-node=S   number of sockets per node to allocate\n"
-"       --cores-per-socket=C   number of cores per socket to allocate\n"
-"       --threads-per-core=T   number of threads per core to allocate\n"
-"                              each field can be 'min' or wildcard '*'\n"
-"                              total cpus requested = (N x S x C x T)\n"
+"                              For the following 4 options, you are\n"
+"                              specifying the minimum resources available for\n"
+"                              the node(s) allocated to the job.\n"
+"      --sockets-per-node=S    number of sockets per node to allocate\n"
+"      --cores-per-socket=C    number of cores per socket to allocate\n"
+"      --threads-per-core=T    number of threads per core to allocate\n"
+"  -B  --extra-node-info=S[:C[:T]]  combine request of sockets per node,\n"
+"                              cores per socket and threads per core.\n"
+"                              Specify an asterisk (*) as a placeholder,\n"
+"                              a minimum value, or a min-max range.\n"
 "\n"
 "      --ntasks-per-core=n     number of tasks to invoke on each core\n"
 "      --ntasks-per-socket=n   number of tasks to invoke on each socket\n");

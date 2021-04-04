@@ -120,8 +120,11 @@ static bool jobacct_shutdown = true;
 static pthread_mutex_t jobacct_shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool plugin_polling = true;
 
-static uint32_t jobacct_job_id     = 0;
-static uint32_t jobacct_step_id    = 0;
+static slurm_step_id_t jobacct_step_id = {
+	.job_id = 0,
+	.step_het_comp = NO_VAL,
+	.step_id = 0,
+};
 static uint64_t jobacct_mem_limit  = 0;
 static uint64_t jobacct_vmem_limit = 0;
 static acct_gather_profile_timer_t *profile_timer =
@@ -284,8 +287,8 @@ static void _acct_kill_step(void)
 	job_notify_msg_t notify_req;
 
 	slurm_msg_t_init(&msg);
-	notify_req.job_id      = jobacct_job_id;
-	notify_req.job_step_id = jobacct_step_id;
+	memcpy(&notify_req.step_id, &jobacct_step_id,
+	       sizeof(notify_req.step_id));
 	notify_req.message     = "Exceeded job memory limit";
 	msg.msg_type    = REQUEST_JOB_NOTIFY;
 	msg.data        = &notify_req;
@@ -295,8 +298,7 @@ static void _acct_kill_step(void)
 	 * Request message:
 	 */
 	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.job_id      = jobacct_job_id;
-	req.job_step_id = jobacct_step_id;
+	memcpy(&req.step_id, &jobacct_step_id, sizeof(req.step_id));
 	req.signal      = SIGKILL;
 	req.flags       = 0;
 	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
@@ -378,6 +380,8 @@ static void _jobacctinfo_aggregate_tres_usage(jobacctinfo_t *dest,
 					      jobacctinfo_t *from)
 {
 	uint32_t i = 0;
+
+	xassert(dest->tres_count == from->tres_count);
 
 	for (i = 0; i < dest->tres_count; i++) {
 		if (from->tres_usage_in_max[i] != INFINITE64) {
@@ -519,7 +523,6 @@ static void _jobacctinfo_2_stats_tres_usage(slurmdb_stats_t *stats,
 extern int jobacct_gather_init(void)
 {
 	char    *plugin_type = "jobacct_gather";
-	char	*type = NULL;
 	int	retval=SLURM_SUCCESS;
 
 	if (slurmdbd_conf || (_init_run_test() && g_context))
@@ -529,18 +532,19 @@ extern int jobacct_gather_init(void)
 	if (g_context)
 		goto done;
 
-	type = slurm_get_jobacct_gather_type();
-
-	g_context = plugin_context_create(
-		plugin_type, type, (void **)&ops, syms, sizeof(syms));
+	g_context = plugin_context_create(plugin_type,
+					  slurm_conf.job_acct_gather_type,
+					  (void **) &ops, syms, sizeof(syms));
 
 	if (!g_context) {
-		error("cannot create %s context for %s", plugin_type, type);
+		error("cannot create %s context for %s",
+		      plugin_type, slurm_conf.job_acct_gather_type);
 		retval = SLURM_ERROR;
 		goto done;
 	}
 
-	if (!xstrcasecmp(type, "jobacct_gather/none")) {
+	if (!xstrcasecmp(slurm_conf.job_acct_gather_type,
+			 "jobacct_gather/none")) {
 		plugin_polling = false;
 		goto done;
 	}
@@ -553,20 +557,14 @@ extern int jobacct_gather_init(void)
 	if (!running_in_slurmctld())
 		goto done;
 
-	plugin_type = type;
-	type = slurm_get_proctrack_type();
-	if (!xstrcasecmp(type, "proctrack/pgid")) {
-		info("WARNING: We will use a much slower algorithm with "
-		     "proctrack/pgid, use Proctracktype=proctrack/linuxproc "
-		     "or some other proctrack when using %s",
-		     plugin_type);
+	if (!xstrcasecmp(slurm_conf.proctrack_type, "proctrack/pgid")) {
+		info("WARNING: We will use a much slower algorithm with proctrack/pgid, use Proctracktype=proctrack/linuxproc or some other proctrack when using %s",
+		     slurm_conf.job_acct_gather_type);
 		pgid_plugin = true;
 	}
-	xfree(type);
-	xfree(plugin_type);
 
-	type = slurm_get_accounting_storage_type();
-	if (!xstrcasecmp(type, ACCOUNTING_STORAGE_TYPE_NONE)) {
+	if (!xstrcasecmp(slurm_conf.accounting_storage_type,
+	                 ACCOUNTING_STORAGE_TYPE_NONE)) {
 		error("WARNING: Even though we are collecting accounting "
 		      "information you have asked for it not to be stored "
 		      "(%s) if this is not what you have in mind you will "
@@ -575,7 +573,6 @@ extern int jobacct_gather_init(void)
 
 done:
 	slurm_mutex_unlock(&g_context_lock);
-	xfree(type);
 
 	return(retval);
 }
@@ -764,7 +761,7 @@ extern jobacctinfo_t *jobacct_gather_remove_task(pid_t pid)
 
 	itr = list_iterator_create(task_list);
 	while((jobacct = list_next(itr))) {
-		if (jobacct->pid == pid) {
+		if (!pid || (jobacct->pid == pid)) {
 			list_remove(itr);
 			break;
 		}
@@ -774,7 +771,8 @@ extern jobacctinfo_t *jobacct_gather_remove_task(pid_t pid)
 		debug2("removing task %u pid %d from jobacct",
 		       jobacct->id.taskid, jobacct->pid);
 	} else {
-		debug2("pid(%d) not being watched in jobacct!", pid);
+		if (pid)
+			debug2("pid(%d) not being watched in jobacct!", pid);
 	}
 error:
 	slurm_mutex_unlock(&task_list_lock);
@@ -801,24 +799,22 @@ extern int jobacct_gather_set_proctrack_container_id(uint64_t id)
 	return SLURM_SUCCESS;
 }
 
-extern int jobacct_gather_set_mem_limit(uint32_t job_id,
-					uint32_t step_id,
+extern int jobacct_gather_set_mem_limit(slurm_step_id_t *step_id,
 					uint64_t mem_limit)
 {
 	if (!plugin_polling)
 		return SLURM_SUCCESS;
 
-	if ((job_id == 0) || (mem_limit == 0)) {
+	if ((step_id->job_id == 0) || (mem_limit == 0)) {
 		error("jobacct_gather_set_mem_limit: jobid:%u "
-		      "mem_limit:%"PRIu64"", job_id, mem_limit);
+		      "mem_limit:%"PRIu64"", step_id->job_id, mem_limit);
 		return SLURM_ERROR;
 	}
 
-	jobacct_job_id      = job_id;
-	jobacct_step_id     = step_id;
+	memcpy(&jobacct_step_id, step_id, sizeof(jobacct_step_id));
 	jobacct_mem_limit   = mem_limit * 1048576; /* MB to B */
 	jobacct_vmem_limit  = jobacct_mem_limit;
-	jobacct_vmem_limit *= (slurm_get_vsize_factor() / 100.0);
+	jobacct_vmem_limit *= (slurm_conf.vsize_factor / 100.0);
 	return SLURM_SUCCESS;
 }
 
@@ -828,45 +824,19 @@ extern void jobacct_gather_handle_mem_limit(uint64_t total_job_mem,
 	if (!plugin_polling)
 		return;
 
-	if (jobacct_mem_limit) {
-		if (jobacct_step_id == NO_VAL) {
-			debug("Job %u memory used:%"PRIu64" limit:%"PRIu64" B",
-			      jobacct_job_id, total_job_mem, jobacct_mem_limit);
-		} else {
-			debug("Step %u.%u memory used:%"PRIu64" "
-			      "limit:%"PRIu64" B",
-			      jobacct_job_id, jobacct_step_id,
-			      total_job_mem, jobacct_mem_limit);
-		}
-	}
-	if (jobacct_job_id && jobacct_mem_limit &&
+	if (jobacct_mem_limit)
+		debug("%ps memory used:%"PRIu64" limit:%"PRIu64" B",
+		      &jobacct_step_id, total_job_mem, jobacct_mem_limit);
+
+	if (jobacct_step_id.job_id && jobacct_mem_limit &&
 	    (total_job_mem > jobacct_mem_limit)) {
-		if (jobacct_step_id == NO_VAL) {
-			error("Job %u exceeded memory limit "
-			      "(%"PRIu64" > %"PRIu64"), being "
-			      "killed", jobacct_job_id, total_job_mem,
-			      jobacct_mem_limit);
-		} else {
-			error("Step %u.%u exceeded memory limit "
-			      "(%"PRIu64" > %"PRIu64"), "
-			      "being killed", jobacct_job_id, jobacct_step_id,
-			      total_job_mem, jobacct_mem_limit);
-		}
+		error("%ps exceeded memory limit (%"PRIu64" > %"PRIu64"), being killed",
+		      &jobacct_step_id, total_job_mem, jobacct_mem_limit);
 		_acct_kill_step();
-	} else if (jobacct_job_id && jobacct_vmem_limit &&
+	} else if (jobacct_step_id.job_id && jobacct_vmem_limit &&
 		   (total_job_vsize > jobacct_vmem_limit)) {
-		if (jobacct_step_id == NO_VAL) {
-			error("Job %u exceeded virtual memory limit "
-			      "(%"PRIu64" > %"PRIu64"), being killed",
-			      jobacct_job_id,
-			      total_job_vsize, jobacct_vmem_limit);
-		} else {
-			error("Step %u.%u exceeded virtual memory limit "
-			      "(%"PRIu64" > %"PRIu64"), being killed",
-			      jobacct_job_id,
-			      jobacct_step_id, total_job_vsize,
-			      jobacct_vmem_limit);
-		}
+		error("%ps exceeded virtual memory limit (%"PRIu64" > %"PRIu64"), being killed",
+		      &jobacct_step_id, total_job_vsize, jobacct_vmem_limit);
 		_acct_kill_step();
 	}
 }
@@ -1147,10 +1117,11 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 
 		safe_unpack32_array(&(*jobacct)->tres_ids,
 				    &(*jobacct)->tres_count, buffer);
-		slurm_unpack_list(&(*jobacct)->tres_list,
-				  slurmdb_unpack_tres_rec,
-				  slurmdb_destroy_tres_rec,
-				  buffer, rpc_version);
+		if (slurm_unpack_list(&(*jobacct)->tres_list,
+				      slurmdb_unpack_tres_rec,
+				      slurmdb_destroy_tres_rec,
+				      buffer, rpc_version) != SLURM_SUCCESS)
+			goto unpack_error;
 		safe_unpack64_array(&(*jobacct)->tres_usage_in_max,
 				    &uint32_tmp, buffer);
 		safe_unpack64_array(&(*jobacct)->tres_usage_in_max_nodeid,

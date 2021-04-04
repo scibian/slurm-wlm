@@ -63,26 +63,12 @@ extern void pack_slurmd_conf_lite(slurmd_conf_t *conf, Buf buffer)
 	packstr(conf->spooldir, buffer);
 	packstr(conf->node_name, buffer);
 	packstr(conf->logfile, buffer);
-	packstr(conf->task_prolog, buffer);
-	packstr(conf->task_epilog, buffer);
-	packstr(conf->job_acct_gather_freq, buffer);
-	packstr(conf->job_acct_gather_type, buffer);
-	pack16(conf->propagate_prio, buffer);
-	pack64(conf->debug_flags, buffer);
 	pack32(conf->debug_level, buffer);
 	pack32(conf->syslog_debug, buffer);
 	pack32(conf->daemonize, buffer);
-	pack32(conf->slurm_user_id, buffer);
-	pack16(conf->use_pam, buffer);
-	pack32(conf->task_plugin_param, buffer);
 	packstr(conf->node_topo_addr, buffer);
 	packstr(conf->node_topo_pattern, buffer);
 	pack16(conf->port, buffer);
-	pack16(conf->log_fmt, buffer);
-	pack16(conf->job_acct_oom_kill, buffer);
-	pack64(conf->msg_aggr_window_msgs, buffer);
-	packstr(conf->tmpfs, buffer);
-	packstr(conf->x11_params, buffer);
 	packstr(conf->gres, buffer);
 }
 
@@ -114,29 +100,13 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer)
 		safe_unpackstr_xmalloc(&conf->spooldir,    &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&conf->node_name,   &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&conf->logfile,     &uint32_tmp, buffer);
-		safe_unpackstr_xmalloc(&conf->task_prolog, &uint32_tmp, buffer);
-		safe_unpackstr_xmalloc(&conf->task_epilog, &uint32_tmp, buffer);
-		safe_unpackstr_xmalloc(&conf->job_acct_gather_freq, &uint32_tmp,
-				       buffer);
-		safe_unpackstr_xmalloc(&conf->job_acct_gather_type, &uint32_tmp,
-				       buffer);
-		safe_unpack16(&conf->propagate_prio, buffer);
-		safe_unpack64(&conf->debug_flags, buffer);
 		safe_unpack32(&conf->debug_level, buffer);
 		safe_unpack32(&conf->syslog_debug, buffer);
 		safe_unpack32(&uint32_tmp, buffer);
 		conf->daemonize = uint32_tmp;
-		safe_unpack32(&conf->slurm_user_id, buffer);
-		safe_unpack16(&conf->use_pam, buffer);
-		safe_unpack32(&conf->task_plugin_param, buffer);
 		safe_unpackstr_xmalloc(&conf->node_topo_addr, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&conf->node_topo_pattern, &uint32_tmp, buffer);
 		safe_unpack16(&conf->port, buffer);
-		safe_unpack16(&conf->log_fmt, buffer);
-		safe_unpack16(&conf->job_acct_oom_kill, buffer);
-		safe_unpack64(&conf->msg_aggr_window_msgs, buffer);
-		safe_unpackstr_xmalloc(&conf->tmpfs, &uint32_tmp, buffer);
-		safe_unpackstr_xmalloc(&conf->x11_params, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&conf->gres, &uint32_tmp, buffer);
 	}
 
@@ -144,18 +114,12 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer)
 
 unpack_error:
 	error("unpack_error in unpack_slurmd_conf_lite_no_alloc: %m");
-	xfree(conf->job_acct_gather_freq);
-	xfree(conf->job_acct_gather_type);
 	xfree(conf->hostname);
 	xfree(conf->spooldir);
 	xfree(conf->node_name);
 	xfree(conf->logfile);
-	xfree(conf->task_prolog);
-	xfree(conf->task_epilog);
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
-	xfree(conf->tmpfs);
-	xfree(conf->x11_params);
 	xfree(conf->gres);
 	return SLURM_ERROR;
 }

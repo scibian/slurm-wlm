@@ -131,43 +131,21 @@ static int _file_state(struct bcast_parameters *params)
 static int _get_job_info(struct bcast_parameters *params)
 {
 	int rc;
+	char job_id_str[64];
 
-	xassert(params->job_id != NO_VAL);
+	xassert(params->selected_step);
 
-	rc = slurm_sbcast_lookup(params->job_id, params->het_job_offset,
-				 params->step_id, &sbcast_cred);
+	slurm_get_selected_step_id(job_id_str, sizeof(job_id_str),
+				   params->selected_step);
+
+	rc = slurm_sbcast_lookup(params->selected_step, &sbcast_cred);
 	if (rc != SLURM_SUCCESS) {
-		if (params->step_id == NO_VAL) {
-			if (params->het_job_offset == NO_VAL) {
-				error("Slurm job ID %u lookup error: %s",
-				      params->job_id,
-				      slurm_strerror(slurm_get_errno()));
-			} else {
-				error("Slurm job ID %u+%u lookup error: %s",
-				      params->job_id, params->het_job_offset,
-				      slurm_strerror(slurm_get_errno()));
-			}
-		} else {
-			if (params->het_job_offset == NO_VAL) {
-				error("Slurm step ID %u.%u lookup error: %s",
-				      params->job_id, params->step_id,
-				      slurm_strerror(slurm_get_errno()));
-			} else {
-				error("Slurm step ID %u+%u.%u lookup error: %s",
-				      params->job_id, params->het_job_offset,
-				      params->step_id,
-				      slurm_strerror(slurm_get_errno()));
-			}
-		}
+		error("Slurm job %s lookup error: %s",
+		      job_id_str, slurm_strerror(slurm_get_errno()));
 		return rc;
 	}
-	if (params->step_id == NO_VAL)
-		verbose("jobid      = %u", params->job_id);
-	else
-		verbose("stepid     = %u.%u", params->job_id, params->step_id);
-	verbose("node_cnt   = %u", sbcast_cred->node_cnt);
+	verbose("jobid      = %s", job_id_str);
 	verbose("node_list  = %s", sbcast_cred->node_list);
-	/* also see sbcast_cred->node_addr (array) */
 
 	if (params->verbose)
 		print_sbcast_cred(sbcast_cred->sbcast_cred);
@@ -414,7 +392,8 @@ static int _bcast_file(struct bcast_parameters *params)
 
 	if (!params->fanout)
 		params->fanout = MAX_THREADS;
-	slurm_set_tree_width(MIN(MAX_THREADS, params->fanout));
+	else
+		params->fanout = MIN(MAX_THREADS, params->fanout);
 
 	while (more) {
 		START_TIMER;

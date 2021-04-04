@@ -87,10 +87,9 @@
  * (major.minor.micro combined into a single number).
  */
 const char	*plugin_name		= "Gres MPS plugin";
-const char	*plugin_type		= "gres/mps";
+const char	plugin_type[]		= "gres/mps";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 
-static uint64_t	debug_flags		= 0;
 static char	*gres_name		= "mps";
 static List	gres_devices		= NULL;
 static List	mps_info		= NULL;
@@ -404,13 +403,13 @@ static int _merge_lists(List gres_conf_list, List gpu_conf_list,
 
 extern int init(void)
 {
-	debug("%s: %s loaded", __func__, plugin_name);
+	debug("loaded");
 
 	return SLURM_SUCCESS;
 }
 extern int fini(void)
 {
-	debug("%s: unloading %s", __func__, plugin_name);
+	debug("unloading");
 	FREE_NULL_LIST(gres_devices);
 	FREE_NULL_LIST(mps_info);
 
@@ -491,14 +490,13 @@ extern int node_config_load(List gres_conf_list, node_config_load_t *config)
 	bool have_fake_gpus = _test_gpu_list_fake();
 
 	/* Assume this state is caused by an scontrol reconfigure */
-	debug_flags = slurm_get_debug_flags();
 	if (gres_devices) {
 		debug("Resetting gres_devices");
 		FREE_NULL_LIST(gres_devices);
 	}
 	FREE_NULL_LIST(mps_info);
 
-	if (debug_flags & DEBUG_FLAG_GRES)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_GRES)
 		log_lvl = LOG_LEVEL_VERBOSE;
 	else
 		log_lvl = LOG_LEVEL_DEBUG;
@@ -558,7 +556,7 @@ static uint64_t _get_dev_count(int global_id)
 	uint64_t count = NO_VAL64;
 
 	if (!mps_info) {
-		error("%s: mps_info is NULL", __func__);
+		error("mps_info is NULL");
 		return 100;
 	}
 	itr = list_iterator_create(mps_info);
@@ -570,8 +568,8 @@ static uint64_t _get_dev_count(int global_id)
 	}
 	list_iterator_destroy(itr);
 	if (count == NO_VAL64) {
-		error("%s: Could not find gres/mps count for device ID %d",
-		      __func__,  global_id);
+		error("Could not find gres/mps count for device ID %d",
+		      global_id);
 		return 100;
 	}
 
@@ -581,7 +579,7 @@ static uint64_t _get_dev_count(int global_id)
 static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 		     bitstr_t *usable_gres,
 		     bool *already_seen, int *local_inx,
-		     bool reset, bool is_job)
+		     bool reset, bool is_job, gres_internal_flags_t flags)
 {
 	char *global_list = NULL, *local_list = NULL, *perc_env = NULL;
 	char perc_str[64], *slurm_env_var = NULL;
@@ -604,7 +602,7 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 	common_gres_set_env(gres_devices, env_ptr, gres_ptr, node_inx,
 			    usable_gres, "", local_inx,
 			    &gres_per_node, &local_list, &global_list,
-			    reset, is_job, &global_id);
+			    reset, is_job, &global_id, flags);
 
 	if (perc_env) {
 		env_array_overwrite(env_ptr,
@@ -623,7 +621,7 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 				    "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE",
 				    perc_str);
 	} else if (gres_per_node) {
-		error("%s: mps_info list is NULL", __func__);
+		error("mps_info list is NULL");
 		snprintf(perc_str, sizeof(perc_str), "%"PRIu64, gres_per_node);
 		env_array_overwrite(env_ptr,
 				    "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE",
@@ -652,7 +650,8 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job's GRES state.
  */
-extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx)
+extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
+			gres_internal_flags_t flags)
 {
 	/*
 	 * Variables are not static like in step_*_env since we could be calling
@@ -666,20 +665,21 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx)
 	bool already_seen = false;
 
 	_set_env(job_env_ptr, gres_ptr, node_inx, NULL,
-		 &already_seen, &local_inx, false, true);
+		 &already_seen, &local_inx, false, true, flags);
 }
 
 /*
  * Set environment variables as appropriate for a step (i.e. all tasks) based
  * upon the job step's GRES state.
  */
-extern void step_set_env(char ***step_env_ptr, void *gres_ptr)
+extern void step_set_env(char ***step_env_ptr, void *gres_ptr,
+			 gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
 	_set_env(step_env_ptr, gres_ptr, 0, NULL,
-		 &already_seen, &local_inx, false, false);
+		 &already_seen, &local_inx, false, false, flags);
 }
 
 /*
@@ -687,65 +687,68 @@ extern void step_set_env(char ***step_env_ptr, void *gres_ptr)
  * based upon the job step's GRES state and assigned CPUs.
  */
 extern void step_reset_env(char ***step_env_ptr, void *gres_ptr,
-			   bitstr_t *usable_gres)
+			   bitstr_t *usable_gres, gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
 	_set_env(step_env_ptr, gres_ptr, 0, usable_gres,
-		 &already_seen, &local_inx, true, false);
+		 &already_seen, &local_inx, true, false, flags);
 }
 
 /* Send GRES information to slurmstepd on the specified file descriptor */
-extern void send_stepd(int fd)
+extern void send_stepd(Buf buffer)
 {
 	int mps_cnt;
 	mps_dev_info_t *mps_ptr;
 	ListIterator itr;
 
-	common_send_stepd(fd, gres_devices);
+	common_send_stepd(buffer, gres_devices);
 
 	if (!mps_info) {
 		mps_cnt = 0;
-		safe_write(fd, &mps_cnt, sizeof(int));
+		pack32(mps_cnt, buffer);
 	} else {
 		mps_cnt = list_count(mps_info);
-		safe_write(fd, &mps_cnt, sizeof(int));
+		pack32(mps_cnt, buffer);
 		itr = list_iterator_create(mps_info);
 		while ((mps_ptr = (mps_dev_info_t *) list_next(itr))) {
-			safe_write(fd, &mps_ptr->count, sizeof(uint64_t));
-			safe_write(fd, &mps_ptr->id, sizeof(int));
+			pack64(mps_ptr->count, buffer);
+			pack64(mps_ptr->id, buffer);
 		}
 		list_iterator_destroy(itr);
 	}
 	return;
-
-rwfail:	error("%s: failed", __func__);
-	return;
 }
 
 /* Receive GRES information from slurmd on the specified file descriptor */
-extern void recv_stepd(int fd)
+extern void recv_stepd(Buf buffer)
 {
 	int i, mps_cnt;
 	mps_dev_info_t *mps_ptr = NULL;
+	uint64_t uint64_tmp;
+	uint32_t cnt;
 
-	common_recv_stepd(fd, &gres_devices);
+	common_recv_stepd(buffer, &gres_devices);
 
-	safe_read(fd, &mps_cnt, sizeof(int));
-	if (mps_cnt) {
-		mps_info = list_create(xfree_ptr);
-		for (i = 0; i < mps_cnt; i++) {
-			mps_ptr = xmalloc(sizeof(mps_dev_info_t));
-			safe_read(fd, &mps_ptr->count, sizeof(uint64_t));
-			safe_read(fd, &mps_ptr->id, sizeof(int));
-			list_append(mps_info, mps_ptr);
-			mps_ptr = NULL;
-		}
+	safe_unpack32(&cnt, buffer);
+	mps_cnt = cnt;
+	if (!mps_cnt)
+		return;
+
+	mps_info = list_create(xfree_ptr);
+	for (i = 0; i < mps_cnt; i++) {
+		mps_ptr = xmalloc(sizeof(mps_dev_info_t));
+		safe_unpack64(&uint64_tmp, buffer);
+		mps_ptr->count = uint64_tmp;
+		safe_unpack64(&uint64_tmp, buffer);
+		mps_ptr->id = uint64_tmp;
+		list_append(mps_info, mps_ptr);
 	}
 	return;
 
-rwfail:	error("%s: failed", __func__);
+unpack_error:
+	error("failed");
 	xfree(mps_ptr);
 	return;
 }
@@ -857,7 +860,7 @@ extern void epilog_set_env(char ***epilog_env_ptr,
 		return;
 
 	if (node_inx > epilog_info->node_cnt) {
-		error("%s: %s: bad node index (%d > %u)", plugin_type, __func__,
+		error("bad node index (%d > %u)",
 		      node_inx, epilog_info->node_cnt);
 		return;
 	}

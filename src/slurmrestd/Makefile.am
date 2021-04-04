@@ -1,11 +1,11 @@
-SUBDIRS = ops
+if WITH_SLURMRESTD
+SUBDIRS = plugins
+endif
 
 AUTOMAKE_OPTIONS = foreign
 CLEANFILES = core.* *.bino
 
-REF = usage.txt openapi.json
-
-EXTRA_DIST = LICENSE-openapi.json
+REF = usage.txt
 
 SRCS = \
 	conmgr.h conmgr.c \
@@ -15,9 +15,7 @@ SRCS = \
 	openapi.c openapi.h \
 	operations.c operations.h \
 	slurmrestd.c \
-	ref.h \
 	rest_auth.h rest_auth.c \
-	workq.h workq.c \
 	xjson.h xjson.c \
 	xyaml.h xyaml.c
 
@@ -56,15 +54,13 @@ libslurmrest_ref_la_SOURCES =
 slurmrestd_SOURCES = $(SRCS)
 convenience_libs = $(LIB_SLURM) $(DL_LIBS)
 slurmrestd_DEPENDENCIES = $(LIB_SLURM_BUILD) libslurmrest_ref.la
+slurmrestd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 
 libslurmrest_ref_la_LIBADD = libslurmrest_ref.lo
 slurmrestd_LDADD = \
 	$(convenience_libs) $(HTTP_PARSER_LDFLAGS) \
 	$(YAML_LDFLAGS) $(JSON_LDFLAGS) \
-	libslurmrest_ref.la \
-	ops/libslurmrest_ops.la
-else
-EXTRA_slurmrestd_SOURCES = $(SRCS)
+	libslurmrest_ref.la
 endif
 force:
 $(convenience_libs) : force

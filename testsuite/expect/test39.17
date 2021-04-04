@@ -32,6 +32,12 @@ set file_in2       "test$test_id.input2"
 set file_out       "test$test_id.output"
 set number_commas  "\[0-9_,\]+"
 
+proc cleanup {} {
+	global bin_rm file_in1 file_in2 file_out
+
+	exec $bin_rm -f $file_in1 $file_in2 $file_out
+}
+
 if {![check_config_select "cons_tres"]} {
 	skip "This test is only compatible with select/cons_tres"
 }
@@ -39,7 +45,7 @@ if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set nb_nodes [get_partition_param [default_partition] "TotalNodes"]
 log_debug "Default partition node count is $nb_nodes"
 if {$nb_nodes > 1} {
 	set nb_nodes 2
@@ -80,9 +86,9 @@ log_info "TEST 1: --gpus-per-node option"
 
 make_bash_script $file_in1 "
 	$scontrol -dd show job \${SLURM_JOBID}
-	$srun -n1 --gpus-per-node=1 -n1 --mem=0 ./$file_in2 &
-	$srun -n1 --gpus-per-node=1 -n1 --mem=0 ./$file_in2 &
-	$srun -n1 --gpus-per-node=1 -n1 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus-per-node=1 --exact -n1 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus-per-node=1 --exact -n1 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus-per-node=1 --exact -n1 --mem=0 ./$file_in2 &
 	wait
 	exit 0"
 
@@ -104,8 +110,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
-		set exit_code 1
+		fail "sbatch not responding"
 	}
 	eof {
 		wait
@@ -153,7 +158,7 @@ expect {
 }
 log_user 1
 if {$match != 1} {
-	log_error "Did not delay step for available GPU"
+	log_error "Did not delay step for available GPU $match"
 	set exit_code 1
 }
 
@@ -165,8 +170,8 @@ log_info "TEST 2: --gpus-per-node for job and multiple simultaneous steps using 
 
 make_bash_script $file_in1 "
 	$scontrol -dd show job \${SLURM_JOBID}
-	$srun -n1 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
-	$srun -n1 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
 	wait
 	exit 0"
 
@@ -188,8 +193,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
-		set exit_code 1
+		fail "sbatch not responding"
 	}
 	eof {
 		wait
@@ -253,8 +257,8 @@ log_info "TEST 3: --gpus-per-node for job and multiple simultaneous steps using 
 
 make_bash_script $file_in1 "
 	$scontrol -dd show job \${SLURM_JOBID}
-	$srun -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
-	$srun -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+	$srun --exact -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
 	wait
 	exit 0"
 
@@ -276,8 +280,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
-		set exit_code 1
+		fail "sbatch not responding"
 	}
 	eof {
 		wait
@@ -342,8 +345,8 @@ if {$gpu_cnt > 2} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -n1 --gpus=2 --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n1 --gpus=2 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n1 --gpus=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -365,8 +368,7 @@ if {$gpu_cnt > 2} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -450,9 +452,9 @@ if {$gpu_cnt > 2} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -474,8 +476,7 @@ if {$gpu_cnt > 2} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -563,9 +564,9 @@ if {$gpu_cnt >= 2 && $nb_nodes >= 2 && $cpus_per_node >= 3} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -587,8 +588,7 @@ if {$gpu_cnt >= 2 && $nb_nodes >= 2 && $cpus_per_node >= 3} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -682,9 +682,9 @@ if {$gpu_cnt >= 4 && $nb_nodes >= 2 && $cpus_per_node >= 3} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -n2 --gpus=6 --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n2 --gpus=7 --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n2 --gpus=8 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=6 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=7 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n2 --gpus=8 --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -706,8 +706,7 @@ if {$gpu_cnt >= 4 && $nb_nodes >= 2 && $cpus_per_node >= 3} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -773,8 +772,8 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -n3 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -n3 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n3 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -n3 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -796,8 +795,7 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -893,11 +891,11 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N1 -n1 --gpus-per-task=$step_gpus --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -919,8 +917,7 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -996,8 +993,8 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 
 	make_bash_script $file_in1 "
 		$scontrol -dd show job \${SLURM_JOBID}
-		$srun -N2 -n4 --ntasks-per-node=2 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
-		$srun -N2 -n4 --ntasks-per-node=2 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N2 -n4 --ntasks-per-node=2 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
+		$srun --exact -N2 -n4 --ntasks-per-node=2 --gpus-per-task=1 --gpus-per-node=0 --mem=0 ./$file_in2 &
 		wait
 		exit 0"
 
@@ -1019,8 +1016,7 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 			exp_continue
 		}
 		timeout {
-			log_error "sbatch not responding"
-			set exit_code 1
+			fail "sbatch not responding"
 		}
 		eof {
 			wait
@@ -1084,8 +1080,6 @@ if {$gpu_cnt > 3 && $nb_nodes >= 2} {
 	}
 }
 
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_in1 $file_in2 $file_out
-} else {
+if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
