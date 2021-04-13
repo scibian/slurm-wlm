@@ -163,6 +163,7 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	char tmp_line[128];
 	char *out = NULL;
 	char *line_end = (one_liner) ? " " : "\n   ";
+	uint16_t flags = STEP_ID_FLAG_NONE;
 
 	/****** Line 1 ******/
 	slurm_make_time_str ((time_t *)&job_step_ptr->start_time, time_str,
@@ -172,41 +173,19 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	else
 		secs2time_str ((time_t)job_step_ptr->time_limit * 60,
 				limit_str, sizeof(limit_str));
+
 	if (job_step_ptr->array_job_id) {
-		if (job_step_ptr->step_id == SLURM_PENDING_STEP) {
-			xstrfmtcat(out, "StepId=%u_%u.TBD ",
-				   job_step_ptr->array_job_id,
-				   job_step_ptr->array_task_id);
-		} else if (job_step_ptr->step_id == SLURM_BATCH_SCRIPT) {
-			xstrfmtcat(out, "StepId=%u_%u.batch ",
-				   job_step_ptr->array_job_id,
-				   job_step_ptr->array_task_id);
-		} else if (job_step_ptr->step_id == SLURM_EXTERN_CONT) {
-			xstrfmtcat(out, "StepId=%u_%u.extern ",
-				   job_step_ptr->array_job_id,
-				   job_step_ptr->array_task_id);
-		} else {
-			xstrfmtcat(out, "StepId=%u_%u.%u ",
-				   job_step_ptr->array_job_id,
-				   job_step_ptr->array_task_id,
-				   job_step_ptr->step_id);
-		}
-	} else {
-		if (job_step_ptr->step_id == SLURM_PENDING_STEP) {
-			xstrfmtcat(out, "StepId=%u.TBD ",
-				   job_step_ptr->job_id);
-		} else if (job_step_ptr->step_id == SLURM_BATCH_SCRIPT) {
-			xstrfmtcat(out, "StepId=%u.batch ",
-				   job_step_ptr->job_id);
-		} else if (job_step_ptr->step_id == SLURM_EXTERN_CONT) {
-			xstrfmtcat(out, "StepId=%u.extern ",
-				   job_step_ptr->job_id);
-		} else {
-			xstrfmtcat(out, "StepId=%u.%u ",
-				   job_step_ptr->job_id,
-				   job_step_ptr->step_id);
-		}
+		xstrfmtcat(out, "StepId=%u_%u.",
+			   job_step_ptr->array_job_id,
+			   job_step_ptr->array_task_id);
+		flags = STEP_ID_FLAG_NO_PREFIX | STEP_ID_FLAG_NO_JOB;
 	}
+
+	log_build_step_id_str(&job_step_ptr->step_id,
+			      tmp_line, sizeof(tmp_line),
+			      flags);
+	xstrfmtcat(out, "%s ", tmp_line);
+
 	xstrfmtcat(out, "UserId=%u StartTime=%s TimeLimit=%s",
 		   job_step_ptr->user_id, time_str, limit_str);
 
@@ -244,8 +223,13 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	} else {
 		xstrcat(out, "CPUFreqReq=Default");
 	}
-	xstrfmtcat(out, " Dist=%s",
-		   slurm_step_layout_type_name(job_step_ptr->task_dist));
+
+	if (job_step_ptr->task_dist) {
+		char *name =
+			slurm_step_layout_type_name(job_step_ptr->task_dist);
+		xstrfmtcat(out, " Dist=%s", name);
+		xfree(name);
+	}
 
 	/****** Line 7 ******/
 	xstrcat(out, line_end);
@@ -479,13 +463,15 @@ slurm_get_job_steps (time_t update_time, uint32_t job_id, uint32_t step_id,
 	slurm_msg_t req_msg;
 	job_step_info_request_msg_t req;
 	slurmdb_federation_rec_t *fed;
-	char *cluster_name = NULL;
 	void *ptr = NULL;
-
-	cluster_name = slurm_get_cluster_name();
+	slurm_step_id_t tmp_step_id = {
+		.job_id = job_id,
+		.step_het_comp = NO_VAL,
+		.step_id = step_id,
+	};
 	if ((show_flags & SHOW_LOCAL) == 0) {
 		if (slurm_load_federation(&ptr) ||
-		    !cluster_in_federation(ptr, cluster_name)) {
+		    !cluster_in_federation(ptr, slurm_conf.cluster_name)) {
 			/* Not in federation */
 			show_flags |= SHOW_LOCAL;
 		} else {
@@ -497,8 +483,7 @@ slurm_get_job_steps (time_t update_time, uint32_t job_id, uint32_t step_id,
 	slurm_msg_t_init(&req_msg);
 	memset(&req, 0, sizeof(req));
 	req.last_update  = update_time;
-	req.job_id       = job_id;
-	req.step_id      = step_id;
+	memcpy(&req.step_id, &tmp_step_id, sizeof(req.step_id));
 	req.show_flags   = show_flags;
 	req_msg.msg_type = REQUEST_JOB_STEP_INFO;
 	req_msg.data     = &req;
@@ -509,21 +494,19 @@ slurm_get_job_steps (time_t update_time, uint32_t job_id, uint32_t step_id,
 		rc = _load_cluster_steps(&req_msg, resp, working_cluster_rec);
 	} else {
 		fed = (slurmdb_federation_rec_t *) ptr;
-		rc = _load_fed_steps(&req_msg, resp, show_flags, cluster_name,
-				     fed);
+		rc = _load_fed_steps(&req_msg, resp, show_flags,
+				     slurm_conf.cluster_name, fed);
 	}
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }
 
-extern slurm_step_layout_t *
-slurm_job_step_layout_get(uint32_t job_id, uint32_t step_id)
+extern slurm_step_layout_t *slurm_job_step_layout_get(slurm_step_id_t *step_id)
 {
-	job_step_id_msg_t data;
+	slurm_step_id_t data;
 	slurm_msg_t req, resp;
 	int errnum;
 
@@ -532,9 +515,7 @@ slurm_job_step_layout_get(uint32_t job_id, uint32_t step_id)
 
 	req.msg_type = REQUEST_STEP_LAYOUT;
 	req.data = &data;
-	memset(&data, 0, sizeof(data));
-	data.job_id = job_id;
-	data.step_id = step_id;
+	memcpy(&data, step_id, sizeof(data));
 
 	if (slurm_send_recv_controller_msg(&req, &resp, working_cluster_rec) <0)
 		return NULL;
@@ -556,21 +537,20 @@ slurm_job_step_layout_get(uint32_t job_id, uint32_t step_id)
 /*
  * slurm_job_step_stat - status a current step
  *
- * IN job_id
  * IN step_id
  * IN node_list, optional, if NULL then all nodes in step are returned.
  * IN use_protocol_ver protocol version to use.
  * OUT resp
  * RET SLURM_SUCCESS on success SLURM_ERROR else
  */
-extern int slurm_job_step_stat(uint32_t job_id, uint32_t step_id,
+extern int slurm_job_step_stat(slurm_step_id_t *step_id,
 			       char *node_list,
 			       uint16_t use_protocol_ver,
 			       job_step_stat_response_msg_t **resp)
 {
 	slurm_msg_t req_msg;
 	ListIterator itr;
-	job_step_id_msg_t req;
+	slurm_step_id_t req;
 	List ret_list = NULL;
 	ret_data_info_t *ret_data_info = NULL;
 	int rc = SLURM_SUCCESS;
@@ -581,12 +561,11 @@ extern int slurm_job_step_stat(uint32_t job_id, uint32_t step_id,
 	xassert(resp);
 
 	if (!node_list) {
-		if (!(step_layout =
-		      slurm_job_step_layout_get(job_id, step_id))) {
+		if (!(step_layout = slurm_job_step_layout_get(step_id))) {
 			rc = errno;
 			error("slurm_job_step_stat: "
-			      "problem getting step_layout for %u.%u: %s",
-			      job_id, step_id, slurm_strerror(rc));
+			      "problem getting step_layout for %ps: %s",
+			      step_id, slurm_strerror(rc));
 			return rc;
 		}
 		node_list = step_layout->node_list;
@@ -601,14 +580,13 @@ extern int slurm_job_step_stat(uint32_t job_id, uint32_t step_id,
 	} else
 		resp_out = *resp;
 
-	debug("%s: getting pid information of job %u.%u on nodes %s",
-	      __func__, job_id, step_id, node_list);
+	debug("%s: getting pid information of job %ps on nodes %s",
+	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
 
-	memset(&req, 0, sizeof(req));
-	resp_out->job_id = req.job_id = job_id;
-	resp_out->step_id = req.step_id = step_id;
+	memcpy(&req, step_id, sizeof(req));
+	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));
 
 	req_msg.protocol_version = use_protocol_ver;
 	req_msg.msg_type = REQUEST_JOB_STEP_STAT;
@@ -639,9 +617,8 @@ extern int slurm_job_step_stat(uint32_t job_id, uint32_t step_id,
 			rc = slurm_get_return_code(ret_data_info->type,
 						   ret_data_info->data);
 			if (rc == ESLURM_INVALID_JOB_ID) {
-				debug("slurm_job_step_stat: job step %u.%u "
-				      "has already completed",
-				      job_id, step_id);
+				debug("slurm_job_step_stat: job step %ps has already completed",
+				      step_id);
 			} else {
 				error("slurm_job_step_stat: "
 				      "there was an error with the request to "
@@ -675,19 +652,18 @@ cleanup:
  * slurm_job_step_get_pids - get the complete list of pids for a given
  *      job step
  *
- * IN job_id
  * IN step_id
  * IN node_list, optional, if NULL then all nodes in step are returned.
  * OUT resp
  * RET SLURM_SUCCESS on success SLURM_ERROR else
  */
-extern int slurm_job_step_get_pids(uint32_t job_id, uint32_t step_id,
+extern int slurm_job_step_get_pids(slurm_step_id_t *step_id,
 				   char *node_list,
 				   job_step_pids_response_msg_t **resp)
 {
 	int rc = SLURM_SUCCESS;
 	slurm_msg_t req_msg;
-	job_step_id_msg_t req;
+	slurm_step_id_t req;
 	ListIterator itr;
 	List ret_list = NULL;
 	ret_data_info_t *ret_data_info = NULL;
@@ -698,12 +674,11 @@ extern int slurm_job_step_get_pids(uint32_t job_id, uint32_t step_id,
 	xassert(resp);
 
 	if (!node_list) {
-		if (!(step_layout =
-		     slurm_job_step_layout_get(job_id, step_id))) {
+		if (!(step_layout = slurm_job_step_layout_get(step_id))) {
 			rc = errno;
 			error("slurm_job_step_get_pids: "
-			      "problem getting step_layout for %u.%u: %s",
-			      job_id, step_id, slurm_strerror(rc));
+			      "problem getting step_layout for %ps: %s",
+			      step_id, slurm_strerror(rc));
 			return rc;
 		}
 		node_list = step_layout->node_list;
@@ -716,14 +691,13 @@ extern int slurm_job_step_get_pids(uint32_t job_id, uint32_t step_id,
 	} else
 		resp_out = *resp;
 
-	debug("%s: getting pid information of job %u.%u on nodes %s",
-	      __func__, job_id, step_id, node_list);
+	debug("%s: getting pid information of job %ps on nodes %s",
+	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
 
-	memset(&req, 0, sizeof(req));
-	resp_out->job_id = req.job_id = job_id;
-	resp_out->step_id = req.step_id = step_id;
+	memcpy(&req, step_id, sizeof(req));
+	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));
 
 	req_msg.msg_type = REQUEST_JOB_STEP_PIDS;
 	req_msg.data = &req;

@@ -140,6 +140,9 @@ scontrol_update_node (int argc, char **argv)
 			}
 			node_msg.weight = num;
 			update_cnt++;
+		} else if (!xstrncasecmp(tag, "Comment", MAX(tag_len, 2))) {
+			node_msg.comment = val;
+			update_cnt++;
 		} else if (xstrncasecmp(tag, "Reason", MAX(tag_len, 1)) == 0) {
 			int len;
 
@@ -161,12 +164,6 @@ scontrol_update_node (int argc, char **argv)
 			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {
-			if (cluster_flags & CLUSTER_FLAG_CRAY_A) {
-				fprintf (stderr, "%s can not be changed through Slurm. Use native Cray tools such as xtprocadmin(8)\n", argv[i]);
-				fprintf (stderr, "Request aborted\n");
-				exit_code = 1;
-				goto done;
-			}
 			if (xstrncasecmp(val, "NoResp",
 				        MAX(val_len, 3)) == 0) {
 				node_msg.node_state = NODE_STATE_NO_RESPOND;

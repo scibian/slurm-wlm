@@ -145,7 +145,7 @@ static void _job_complete_handler(srun_job_complete_msg_t *msg)
 	if (msg->step_id == NO_VAL)
 		info("Force Terminated job %u", msg->job_id);
 	else
-		info("Force Terminated job %u.%u", msg->job_id, msg->step_id);
+		info("Force Terminated %ps", msg);
 }
 
 /*
@@ -170,12 +170,6 @@ static void _timeout_handler(srun_timeout_msg_t *msg)
 static void _user_msg_handler(srun_user_msg_t *msg)
 {
 	info("%s", msg->msg);
-}
-
-static void _ping_handler(srun_ping_msg_t *msg)
-{
-	/* the api will respond so there really isn't anything to do
-	   here */
 }
 
 static void _node_fail_handler(srun_node_fail_msg_t *msg)
@@ -238,14 +232,12 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 	int is_ready = 0, i, rc;
 	double cur_delay = 0;
 	double cur_sleep = 0;
-	int suspend_time, resume_time, max_delay;
+	int max_delay;
 	bool job_killed = false;
 
-	suspend_time = slurm_get_suspend_timeout();
-	resume_time  = slurm_get_resume_timeout();
-	if ((suspend_time == 0) || (resume_time == 0))
+	if (!slurm_conf.suspend_timeout || !slurm_conf.resume_timeout)
 		return 1;	/* Power save mode disabled */
-	max_delay = suspend_time + resume_time;
+	max_delay = slurm_conf.suspend_timeout + slurm_conf.resume_timeout;
 	max_delay *= 5;		/* Allow for ResumeRate support */
 
 	pending_job_id = alloc->job_id;
@@ -273,7 +265,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			job_killed = true;
 			break;
 		}
-		if (rc & READY_NODE_STATE) {		/* job and node ready */
+		if ((rc & READY_NODE_STATE) &&
+		    (rc & READY_PROLOG_STATE)) {
 			is_ready = 1;
 			break;
 		}
@@ -384,9 +377,8 @@ extern resource_allocation_response_msg_t *
 		return NULL;
 	}
 
-	j->origin_cluster = xstrdup(slurmctld_conf.cluster_name);
+	j->origin_cluster = xstrdup(slurm_conf.cluster_name);
 
-	callbacks.ping = _ping_handler;
 	callbacks.timeout = _timeout_handler;
 	callbacks.job_complete = _job_complete_handler;
 	callbacks.job_suspend = NULL;
@@ -467,7 +459,7 @@ extern resource_allocation_response_msg_t *
 
 relinquish:
 	if (resp) {
-		if (!destroy_job)
+		if (destroy_job)
 			slurm_complete_job(resp->job_id, 1);
 		slurm_free_resource_allocation_response_msg(resp);
 	}
@@ -511,7 +503,7 @@ List allocate_het_job_nodes(bool handle_signals)
 		if (!first_job)
 			first_job = j;
 
-		j->origin_cluster = xstrdup(slurmctld_conf.cluster_name);
+		j->origin_cluster = xstrdup(slurm_conf.cluster_name);
 
 		list_append(job_req_list, j);
 	}
@@ -533,7 +525,6 @@ List allocate_het_job_nodes(bool handle_signals)
 		return NULL;
 	}
 
-	callbacks.ping = _ping_handler;
 	callbacks.timeout = _timeout_handler;
 	callbacks.job_complete = _job_complete_handler;
 	callbacks.job_suspend = NULL;
@@ -629,8 +620,15 @@ List allocate_het_job_nodes(bool handle_signals)
 
 relinquish:
 	if (job_resp_list) {
-		if (!destroy_job && my_job_id)
+		if (my_job_id == 0) {
+			resp = (resource_allocation_response_msg_t *)
+			       list_peek(job_resp_list);
+			my_job_id = resp->job_id;
+		}
+
+		if (destroy_job && my_job_id) {
 			slurm_complete_job(my_job_id, 1);
+		}
 		list_destroy(job_resp_list);
 	}
 	exit(error_exit);
@@ -713,9 +711,7 @@ int slurmctld_msg_init(void)
 		exit(error_exit);
 	}
 	fd_set_nonblocking(slurmctld_fd);
-	/* hostname is not set,  so slurm_get_addr fails
-	   slurm_get_addr(&slurm_address, &port, hostname, sizeof(hostname)); */
-	slurmctld_comm_port = ntohs(slurm_address.sin_port);
+	slurmctld_comm_port = slurm_get_port(&slurm_address);
 	debug2("srun PMI messages to port=%u", slurmctld_comm_port);
 
 	return slurmctld_fd;
@@ -789,12 +785,8 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 		j->sockets_per_node    = opt_local->sockets_per_node;
 	if (opt_local->cores_per_socket != NO_VAL)
 		j->cores_per_socket      = opt_local->cores_per_socket;
-	if (opt_local->threads_per_core != NO_VAL) {
+	if (opt_local->threads_per_core != NO_VAL)
 		j->threads_per_core    = opt_local->threads_per_core;
-		/* if 1 always make sure affinity knows about it */
-		if (j->threads_per_core == 1)
-			srun_opt->cpu_bind_type |= CPU_BIND_ONE_THREAD_PER_CORE;
-	}
 	j->user_id        = opt_local->uid;
 	j->dependency     = opt_local->dependency;
 	if (opt_local->nice != NO_VAL)
@@ -824,6 +816,10 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 		j->ntasks_per_socket = opt_local->ntasks_per_socket;
 	if (opt_local->ntasks_per_core != NO_VAL)
 		j->ntasks_per_core   = opt_local->ntasks_per_core;
+	if (opt_local->ntasks_per_tres != NO_VAL)
+		j->ntasks_per_tres = opt_local->ntasks_per_tres;
+	else if (opt_local->ntasks_per_gpu != NO_VAL)
+		j->ntasks_per_tres = opt_local->ntasks_per_gpu;
 
 	if (opt_local->mail_user)
 		j->mail_user = opt_local->mail_user;

@@ -168,7 +168,8 @@ static void _opt_early_env(void)
 
 	while (e->var) {
 		if ((val = getenv(e->var)))
-			slurm_process_option(&opt, e->type, val, true, false);
+			slurm_process_option_or_exit(&opt, e->type, val, true,
+						     false);
 		e++;
 	}
 }
@@ -244,7 +245,8 @@ static void _opt_env(void)
 
 	while (e->var) {
 		if ((val = getenv(e->var)) != NULL)
-			slurm_process_option(&opt, e->type, val, true, false);
+			slurm_process_option_or_exit(&opt, e->type, val, true,
+						     false);
 		e++;
 	}
 
@@ -282,7 +284,7 @@ extern char *process_options_first_pass(int argc, char **argv)
 	slurm_reset_all_options(&opt, true);
 
 	/* cli_filter plugins can change the defaults */
-	if (cli_filter_plugin_setup_defaults(&opt, true)) {
+	if (cli_filter_g_setup_defaults(&opt, true)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
@@ -300,7 +302,8 @@ extern char *process_options_first_pass(int argc, char **argv)
 	optind = 0;
 	while ((opt_char = getopt_long(local_argc, local_argv, opt_string,
 				       optz, &option_index)) != -1) {
-		slurm_process_option(&opt, opt_char, optarg, true, true);
+		slurm_process_option_or_exit(&opt, opt_char, optarg, true,
+					     true);
 	}
 	slurm_option_table_destroy(optz);
 	xfree(opt_string);
@@ -361,7 +364,7 @@ extern void process_options_second_pass(int argc, char **argv, int *argc_off,
 	slurm_reset_all_options(&opt, false);
 
 	/* cli_filter plugins can change the defaults */
-	if (cli_filter_plugin_setup_defaults(&opt, false)) {
+	if (cli_filter_g_setup_defaults(&opt, false)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
@@ -384,7 +387,7 @@ extern void process_options_second_pass(int argc, char **argv, int *argc_off,
 	/* set options from command line */
 	*argc_off = _set_options(argc, argv);
 
-	if (cli_filter_plugin_pre_submit(&opt, het_job_inx)) {
+	if (cli_filter_g_pre_submit(&opt, het_job_inx)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
@@ -469,6 +472,8 @@ extern char *get_argument(const char *file, int lineno, const char *line,
 	} else if ((argument = strcasestr(line, "hetjob"))) {
 		memcpy(argument, "      ", 6);
 	}
+
+	argument = NULL;
 
 	/* skip whitespace */
 	while (isspace(*ptr) && *ptr != '\0') {
@@ -629,7 +634,8 @@ static int _set_options(int argc, char **argv)
 	optind = 0;
 	while ((opt_char = getopt_long(argc, argv, opt_string,
 				       optz, &option_index)) != -1) {
-		slurm_process_option(&opt, opt_char, optarg, false, false);
+		slurm_process_option_or_exit(&opt, opt_char, optarg, false,
+					     false);
 	}
 
 	slurm_option_table_destroy(optz);
@@ -648,6 +654,8 @@ static bool _opt_verify(void)
 	hostlist_t hl = NULL;
 	int hl_cnt = 0;
 
+	validate_options_salloc_sbatch_srun(&opt);
+
 	if (opt.quiet && opt.verbose) {
 		error ("don't specify both --verbose (-v) and --quiet (-Q)");
 		verified = false;
@@ -663,8 +671,9 @@ static bool _opt_verify(void)
 	 */
 
 	if (opt.hint &&
-	    (opt.ntasks_per_core == NO_VAL) &&
-	    (opt.threads_per_core == NO_VAL)) {
+	    !validate_hint_option(&opt)) {
+		xassert(opt.ntasks_per_core == NO_VAL);
+		xassert(opt.threads_per_core == NO_VAL);
 		if (verify_hint(opt.hint,
 				&opt.sockets_per_node,
 				&opt.cores_per_socket,
@@ -893,11 +902,19 @@ static bool _opt_verify(void)
 	if (opt.ntasks_per_core != NO_VAL)
 		het_job_env.ntasks_per_core = opt.ntasks_per_core;
 
+	if (opt.ntasks_per_tres != NO_VAL)
+		het_job_env.ntasks_per_tres = opt.ntasks_per_tres;
+	else if (opt.ntasks_per_gpu != NO_VAL)
+		het_job_env.ntasks_per_gpu = opt.ntasks_per_gpu;
+
 	if (opt.ntasks_per_node != NO_VAL)
 		het_job_env.ntasks_per_node = opt.ntasks_per_node;
 
 	if (opt.ntasks_per_socket != NO_VAL)
 		het_job_env.ntasks_per_socket = opt.ntasks_per_socket;
+
+	if (opt.threads_per_core != NO_VAL)
+		het_job_env.threads_per_core = opt.threads_per_core;
 
 	if (hl)
 		hostlist_destroy(hl);
@@ -907,9 +924,9 @@ static bool _opt_verify(void)
 		exit(error_exit);
 	}
 
-	if (sbopt.open_mode) {
+	if (opt.open_mode) {
 		/* Propage mode to spawned job using environment variable */
-		if (sbopt.open_mode == OPEN_MODE_APPEND)
+		if (opt.open_mode == OPEN_MODE_APPEND)
 			setenvf(NULL, "SLURM_OPEN_MODE", "a");
 		else
 			setenvf(NULL, "SLURM_OPEN_MODE", "t");
@@ -917,9 +934,9 @@ static bool _opt_verify(void)
 	if (opt.dependency)
 		setenvfs("SLURM_JOB_DEPENDENCY=%s", opt.dependency);
 
-	if (sbopt.export_env && xstrcasecmp(sbopt.export_env, "ALL")) {
+	if (opt.export_env && xstrcasecmp(opt.export_env, "ALL")) {
 		/* srun ignores "ALL", it is the default */
-		setenv("SLURM_EXPORT_ENV", sbopt.export_env, 0);
+		setenv("SLURM_EXPORT_ENV", opt.export_env, 0);
 	}
 
 	if (opt.profile)
@@ -1115,7 +1132,7 @@ static void _usage(void)
 
 static void _help(void)
 {
-	slurm_ctl_conf_t *conf;
+	slurm_conf_t *conf = slurm_conf_lock();
 
 	printf (
 "Usage: sbatch [OPTIONS(0)...] [ : [OPTIONS(N)...]] script(0) [args(0)...]\n"
@@ -1221,16 +1238,19 @@ static void _help(void)
 "                              --mem >= --mem-per-cpu if --mem is specified.\n"
 "\n"
 "Affinity/Multi-core options: (when the task/affinity plugin is enabled)\n"
-"  -B  --extra-node-info=S[:C[:T]]            Expands to:\n"
-"       --sockets-per-node=S   number of sockets per node to allocate\n"
-"       --cores-per-socket=C   number of cores per socket to allocate\n"
-"       --threads-per-core=T   number of threads per core to allocate\n"
-"                              each field can be 'min' or wildcard '*'\n"
-"                              total cpus requested = (N x S x C x T)\n"
+"                              For the following 4 options, you are\n"
+"                              specifying the minimum resources available for\n"
+"                              the node(s) allocated to the job.\n"
+"      --sockets-per-node=S    number of sockets per node to allocate\n"
+"      --cores-per-socket=C    number of cores per socket to allocate\n"
+"      --threads-per-core=T    number of threads per core to allocate\n"
+"  -B  --extra-node-info=S[:C[:T]]  combine request of sockets per node,\n"
+"                              cores per socket and threads per core.\n"
+"                              Specify an asterisk (*) as a placeholder,\n"
+"                              a minimum value, or a min-max range.\n"
 "\n"
 "      --ntasks-per-core=n     number of tasks to invoke on each core\n"
 "      --ntasks-per-socket=n   number of tasks to invoke on each socket\n");
-	conf = slurm_conf_lock();
 	if (xstrstr(conf->task_plugin, "affinity")) {
 		printf(
 "      --hint=                 Bind tasks according to application hints\n"
@@ -1282,9 +1302,12 @@ extern void init_envs(sbatch_env_t *local_env)
 	local_env->mem_bind_verbose	= NULL;
 	local_env->ntasks		= NO_VAL;
 	local_env->ntasks_per_core	= NO_VAL;
+	local_env->ntasks_per_gpu	= NO_VAL;
 	local_env->ntasks_per_node	= NO_VAL;
 	local_env->ntasks_per_socket	= NO_VAL;
+	local_env->ntasks_per_tres	= NO_VAL;
 	local_env->plane_size		= NO_VAL;
+	local_env->threads_per_core	= NO_VAL16;
 }
 
 extern void set_envs(char ***array_ptr, sbatch_env_t *local_env,
@@ -1342,6 +1365,12 @@ extern void set_envs(char ***array_ptr, sbatch_env_t *local_env,
 					 local_env->ntasks_per_core)) {
 		error("Can't set SLURM_NTASKS_PER_CORE env variable");
 	}
+	if ((local_env->ntasks_per_gpu  != NO_VAL) &&
+	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_NTASKS_PER_GPU",
+					 het_job_offset, "%u",
+					 local_env->ntasks_per_gpu)) {
+		error("Can't set SLURM_NTASKS_PER_GPU env variable");
+	}
 	if ((local_env->ntasks_per_node != NO_VAL) &&
 	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_NTASKS_PER_NODE",
 					 het_job_offset, "%u",
@@ -1354,10 +1383,22 @@ extern void set_envs(char ***array_ptr, sbatch_env_t *local_env,
 					 local_env->ntasks_per_socket)) {
 		error("Can't set SLURM_NTASKS_PER_SOCKET env variable");
 	}
+	if ((local_env->ntasks_per_tres != NO_VAL) &&
+	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_NTASKS_PER_TRES",
+					 het_job_offset, "%u",
+					 local_env->ntasks_per_tres)) {
+		error("Can't set SLURM_NTASKS_PER_TRES env variable");
+	}
 	if ((local_env->plane_size != NO_VAL) &&
 	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_DIST_PLANESIZE",
 					 het_job_offset, "%u",
 					 local_env->plane_size)) {
 		error("Can't set SLURM_DIST_PLANESIZE env variable");
+	}
+	if ((local_env->threads_per_core != NO_VAL16) &&
+	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_THREADS_PER_CORE",
+					 het_job_offset, "%u",
+					 local_env->threads_per_core)) {
+		error("Can't set SLURM_THREADS_PER_CORE env variable");
 	}
 }

@@ -2,7 +2,7 @@
  *  switch_cray_aries.c - Library for managing a switch on a Cray/Aries system.
  *****************************************************************************
  *  Copyright (C) 2013 SchedMD LLC
- *  Copyright 2013 Cray Inc. All Rights Reserved.
+ *  Copyright 2013 Hewlett Packard Enterprise Development LP
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -66,8 +66,6 @@
 #define SWITCH_BUF_SIZE (PORT_CNT + 128)
 #define SWITCH_CRAY_STATE_VERSION "PROTOCOL_VERSION"
 
-uint64_t debug_flags = 0;
-
 #if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
 static bool lustre_no_flush = false;
 #endif
@@ -108,7 +106,6 @@ const uint32_t plugin_id      = SWITCH_PLUGIN_CRAY;
 int init(void)
 {
 	debug("%s loaded.", plugin_name);
-	debug_flags = slurm_get_debug_flags();
 
 #if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
 	start_lease_extender();
@@ -127,7 +124,6 @@ int fini(void)
 
 extern int switch_p_reconfig(void)
 {
-	debug_flags = slurm_get_debug_flags();
 	return SLURM_SUCCESS;
 }
 
@@ -217,7 +213,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 	rc = lease_cookies(job, nodes, step_layout->node_cnt);
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	xfree(nodes);
@@ -303,7 +299,7 @@ extern void switch_p_free_jobinfo(switch_jobinfo_t *switch_job)
 endit:
 	xfree(job);
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return;
@@ -327,7 +323,7 @@ extern int switch_p_pack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
 
 	xassert(job->magic == CRAY_JOBINFO_MAGIC);
 
-	if (debug_flags & DEBUG_FLAG_SWITCH) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH) {
 		CRAY_INFO("switch_jobinfo_t contents:");
 		print_jobinfo(job);
 	}
@@ -395,7 +391,7 @@ extern int switch_p_unpack_jobinfo(switch_jobinfo_t **switch_job, Buf buffer,
 	track_cookies(job);
 #endif
 
-	if (debug_flags & DEBUG_FLAG_SWITCH) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH) {
 		CRAY_INFO("Unpacked jobinfo");
 		print_jobinfo(job);
 	}
@@ -452,7 +448,6 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 	slurm_cray_jobinfo_t *sw_job = job->switch_job ?
 		(slurm_cray_jobinfo_t *)job->switch_job->data : NULL;
 	int rc, num_ptags;
-	char *launch_params;
 	int exclusive = 0, mem_scaling = 100, cpu_scaling = 100;
 	int *ptags = NULL;
 	char *err_msg = NULL;
@@ -493,7 +488,7 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 	if (job->het_job_id && (job->het_job_id != NO_VAL))
 		jobid = job->het_job_id;
 	else
-		jobid = job->jobid;
+		jobid = job->step_id.job_id;
 	rc = alpsc_attach_cncu_container(&err_msg, jobid, job->cont_id);
 	ALPSC_CN_DEBUG("alpsc_attach_cncu_container");
 	if (rc != 1) {
@@ -529,8 +524,7 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 	 * Cray shmem still uses the network, even when it's using only one
 	 * node, so we must always configure the network.
 	 */
-	launch_params = slurm_get_launch_params();
-	if (launch_params && strstr(launch_params, "cray_net_exclusive")) {
+	if (xstrstr(slurm_conf.launch_params, "cray_net_exclusive")) {
 		/*
 		 * Grant exclusive access and all aries resources to the job.
 		 * Not recommended if you may run multiple steps within
@@ -543,11 +537,10 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 		 */
 		exclusive = 1;
 	}
-	if (launch_params && strstr(launch_params, "lustre_no_flush")) {
+	if (xstrstr(slurm_conf.launch_params, "lustre_no_flush")) {
 		/* Lustre cache flush can cause job bus errors, see bug 4309 */
 		lustre_no_flush = true;
 	}
-	xfree(launch_params);
 
 	if (!exclusive) {
 		/*
@@ -564,7 +557,7 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 			return SLURM_ERROR;
 	}
 
-	if (debug_flags & DEBUG_FLAG_SWITCH) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH) {
 		CRAY_INFO("Network Scaling: Exclusive %d CPU %d Memory %d",
 			  exclusive, cpu_scaling, mem_scaling);
 	}
@@ -696,7 +689,7 @@ extern int switch_p_job_init(stepd_step_rec_t *job)
 #endif
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 
@@ -769,7 +762,7 @@ extern int switch_p_job_fini(switch_jobinfo_t *jobinfo)
 #endif
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -799,8 +792,8 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 		CRAY_DEBUG("Sending SIGKILL to pgid %lu", (unsigned long) pgid);
 		kill(-pgid, SIGKILL);
 	} else
-		CRAY_INFO("Job %u.%u: Bad pid value %lu",
-			  job->jobid, job->stepid, (unsigned long) pgid);
+		CRAY_INFO("%ps: Bad pid value %lu",
+			  &job->step_id, (unsigned long) pgid);
 	/*
 	 * Clean-up
 	 *
@@ -838,7 +831,7 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 	}
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -895,17 +888,6 @@ extern int switch_p_free_node_info(switch_node_info_t **switch_node)
 	return SLURM_SUCCESS;
 }
 
-extern char*switch_p_sprintf_node_info(switch_node_info_t *switch_node,
-				       char *buf, size_t size)
-{
-	if (buf && size) {
-		buf[0] = '\0';
-		return buf;
-	}
-
-	return NULL ;
-}
-
 extern int switch_p_job_step_complete(switch_jobinfo_t *jobinfo,
 				      char *nodelist)
 {
@@ -921,7 +903,7 @@ extern int switch_p_job_step_complete(switch_jobinfo_t *jobinfo,
 		return SLURM_SUCCESS;
 	}
 
-	if (debug_flags & DEBUG_FLAG_SWITCH) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH) {
 		CRAY_INFO("switch_p_job_step_complete");
 	}
 
@@ -931,7 +913,7 @@ extern int switch_p_job_step_complete(switch_jobinfo_t *jobinfo,
 		return rc;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -975,8 +957,7 @@ extern int switch_p_slurmd_step_init(void)
 extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
 {
 #if _DEBUG
-	info("switch_p_job_step_pre_suspend(job %u.%u)",
-		job->jobid, job->stepid);
+	info("switch_p_job_step_pre_suspend(%ps)", &job->step_id);
 #endif
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	slurm_cray_jobinfo_t *jobinfo = job->switch_job ?
@@ -994,7 +975,7 @@ extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
 		return SLURM_ERROR;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -1003,8 +984,7 @@ extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
 extern int switch_p_job_step_post_suspend(stepd_step_rec_t *job)
 {
 #if _DEBUG
-	info("switch_p_job_step_post_suspend(job %u.%u)",
-		job->jobid, job->stepid);
+	info("switch_p_job_step_post_suspend(%ps)", &job->step_id);
 #endif
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	char *err_msg = NULL;
@@ -1019,7 +999,7 @@ extern int switch_p_job_step_post_suspend(stepd_step_rec_t *job)
 		return SLURM_ERROR;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -1028,8 +1008,7 @@ extern int switch_p_job_step_post_suspend(stepd_step_rec_t *job)
 extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
 {
 #if _DEBUG
-	info("switch_p_job_step_pre_resume(job %u.%u)",
-		job->jobid, job->stepid);
+	info("switch_p_job_step_pre_resume(%ps)", &job->step_id);
 #endif
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	slurm_cray_jobinfo_t *jobinfo = job->switch_job ?
@@ -1047,7 +1026,7 @@ extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
 		return SLURM_ERROR;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;
@@ -1056,8 +1035,7 @@ extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
 extern int switch_p_job_step_post_resume(stepd_step_rec_t *job)
 {
 #if _DEBUG
-	info("switch_p_job_step_post_resume(job %u.%u)",
-		job->jobid, job->stepid);
+	info("switch_p_job_step_post_resume(%ps)", &job->step_id);
 #endif
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	char *err_msg = NULL;
@@ -1072,7 +1050,7 @@ extern int switch_p_job_step_post_resume(stepd_step_rec_t *job)
 		return SLURM_ERROR;
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 #endif
 	return SLURM_SUCCESS;

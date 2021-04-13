@@ -61,8 +61,8 @@ static json_object *_try_parse(const char *buffer, size_t stringlen,
 
 	if (jobj == NULL) {
 		enum json_tokener_error jerr = json_tokener_get_error(tok);
-		error("%s: JSON parsing error: %s",
-		      __func__, json_tokener_error_desc(jerr));
+		error("%s: JSON parsing error %zu bytes: %s",
+		      __func__, stringlen, json_tokener_error_desc(jerr));
 		return NULL;
 	}
 	if (tok->char_offset < stringlen)
@@ -114,7 +114,7 @@ static data_t *_json_to_data(json_object *jobj, data_t *d)
 	return d;
 }
 
-extern data_t *parse_json(const char *buffer)
+extern data_t *parse_json(const char *buffer, size_t len)
 {
 	json_object *jobj = NULL;
 	data_t *data = NULL;
@@ -124,12 +124,16 @@ extern data_t *parse_json(const char *buffer)
 		return NULL;
 
 	/* json-c has hard limit of 32 bits */
-	xassert(strlen(buffer) < INT32_MAX);
+	if (len >= INT32_MAX) {
+		error("%s: unable to parse JSON: too large",
+		      __func__);
+		return NULL;
+	}
 
 	if (!tok)
 		return NULL;
 
-	jobj = _try_parse(buffer, strlen(buffer), tok);
+	jobj = _try_parse(buffer, len, tok);
 	if (jobj) {
 		data = _json_to_data(jobj, NULL);
 		json_object_put(jobj);
@@ -196,7 +200,7 @@ static json_object *_data_to_json(const data_t *d)
 	}
 	case DATA_TYPE_STRING:
 	{
-		const char *str = data_get_string(d);
+		const char *str = data_get_string_const(d);
 		if (str)
 			return json_object_new_string(str);
 		else
@@ -238,7 +242,7 @@ extern char *dump_json(const data_t *data, dump_json_flags_t flags)
 
 #else /* HAVE_JSON */
 
-extern data_t *parse_json(const char *buf)
+extern data_t *parse_json(const char *buf, size_t len)
 {
 	error("%s: JSON support not compiled", __func__);
 	return NULL;

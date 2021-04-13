@@ -230,18 +230,13 @@ void *_forward_thread(void *arg)
 		}
 
 		if (fwd_msg->header.forward.cnt > 0) {
-			static int message_timeout = -1;
-			if (message_timeout < 0)
-				message_timeout =
-					slurm_get_msg_timeout() * 1000;
 			if (!fwd_msg->header.forward.tree_width)
 				fwd_msg->header.forward.tree_width =
-					slurm_get_tree_width();
+					slurm_conf.tree_width;
 			steps = (fwd_msg->header.forward.cnt+1) /
 					fwd_msg->header.forward.tree_width;
-			fwd_msg->timeout = (message_timeout*steps);
-			/* info("got %d * %d = %d", message_timeout, */
-			/*      steps, fwd_msg->timeout); */
+			fwd_msg->timeout =
+				slurm_conf.msg_timeout * 1000 * steps;
 			steps++;
 			fwd_msg->timeout += (start_timeout*steps);
 			/* info("now  + %d*%d = %d", start_timeout, */
@@ -493,7 +488,7 @@ static void _start_msg_tree_internal(hostlist_t hl, hostlist_t* sp_hl,
 
 	if (fwd_tree_in->timeout <= 0)
 		/* convert secs to msec */
-		fwd_tree_in->timeout  = slurm_get_msg_timeout() * 1000;
+		fwd_tree_in->timeout = slurm_conf.msg_timeout * 1000;
 
 	for (j = 0; j < hl_count; j++) {
 		fwd_tree = xmalloc(sizeof(fwd_tree_t));
@@ -534,7 +529,7 @@ static void _forward_msg_internal(hostlist_t hl, hostlist_t* sp_hl,
 
 	if (timeout <= 0)
 		/* convert secs to msec */
-		timeout  = slurm_get_msg_timeout() * 1000;
+		timeout = slurm_conf.msg_timeout * 1000;
 
 	for (j = 0; j < hl_count; j++) {
 		fwd_msg = xmalloc(sizeof(forward_msg_t));

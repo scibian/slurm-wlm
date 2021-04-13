@@ -52,6 +52,7 @@
 
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -182,15 +183,11 @@ static void _opt_default(void)
 #ifdef HAVE_FRONT_END
 	opt.ctld	= true;
 #else
-{
-	char *launch_type = slurm_get_launch_type();
 	/* do this for all but slurm (poe, aprun, etc...) */
-	if (xstrcmp(launch_type, "launch/slurm"))
+	if (xstrcmp(slurm_conf.launch_type, "launch/slurm"))
 		opt.ctld	= true;
 	else
 		opt.ctld	= false;
-	xfree(launch_type);
-}
 #endif
 	opt.full	= false;
 	opt.hurry	= false;
@@ -653,16 +650,26 @@ static void _opt_list(void)
 				     i, opt.job_id[i], opt.array_id[i]);
 			}
 		} else {
+			char tmp_char[23];
+			slurm_step_id_t tmp_step_id = {
+				.job_id = opt.job_id[i],
+				.step_het_comp = NO_VAL,
+				.step_id = opt.step_id[i],
+			};
+			log_build_step_id_str(&tmp_step_id, tmp_char,
+					      sizeof(tmp_char),
+					      (STEP_ID_FLAG_NO_PREFIX |
+					       STEP_ID_FLAG_NO_JOB));
 			if (opt.array_id[i] == NO_VAL) {
-				info("job_step_id[%d] : %u.%u",
-				     i, opt.job_id[i], opt.step_id[i]);
+				info("job_step_id[%d] : %u.%s",
+				     i, opt.job_id[i], tmp_char);
 			} else if (opt.array_id[i] == INFINITE) {
-				info("job_step_id[%d] : %u_*.%u",
-				     i, opt.job_id[i], opt.step_id[i]);
+				info("job_step_id[%d] : %u_*.%s",
+				     i, opt.job_id[i], tmp_char);
 			} else {
-				info("job_step_id[%d] : %u_%u.%u",
+				info("job_step_id[%d] : %u_%u.%s",
 				     i, opt.job_id[i], opt.array_id[i],
-				     opt.step_id[i]);
+				     tmp_char);
 			}
 		}
 	}
@@ -671,7 +678,7 @@ static void _opt_list(void)
 static void _usage(void)
 {
 	printf("Usage: scancel [-A account] [--batch] [--full] [--interactive] [-n job_name]\n");
-	printf("               [-p partition] [-Q] [-q qos] [-R reservation][-s signal | integer]\n");
+	printf("               [-p partition] [-Q] [-q qos] [-R reservation] [-s signal | integer]\n");
 	printf("               [-t PENDING | RUNNING | SUSPENDED] [--usage] [-u user_name]\n");
 	printf("               [--hurry] [-V] [-v] [-w hosts...] [--wckey=wckey]\n");
 	printf("               [job_id[_array_id][.step_id]]\n");

@@ -152,9 +152,8 @@ static int _set_wckey_cond(int *start, int argc, char **argv,
 
 	if (!local_cluster_flag && !list_count(wckey_cond->cluster_list)) {
 		/* Get the default Cluster since no cluster is specified */
-		char *temp = slurm_get_cluster_name();
-		if (temp)
-			list_append(wckey_cond->cluster_list, temp);
+		list_append(wckey_cond->cluster_list,
+			    xstrdup(slurm_conf.cluster_name));
 	}
 
 	/* This needs to be done on some systems to make sure
@@ -257,9 +256,8 @@ static int _set_assoc_cond(int *start, int argc, char **argv,
 
 	if (!local_cluster_flag && !list_count(assoc_cond->cluster_list)) {
 		/* Get the default Cluster since no cluster is specified */
-		char *temp = slurm_get_cluster_name();
-		if (temp)
-			list_append(assoc_cond->cluster_list, temp);
+		list_append(assoc_cond->cluster_list,
+			    xstrdup(slurm_conf.cluster_name));
 	}
 
 	/* This needs to be done on some systems to make sure
@@ -341,9 +339,8 @@ static int _set_cluster_cond(int *start, int argc, char **argv,
 
 	if (!local_cluster_flag && !list_count(cluster_cond->cluster_list)) {
 		/* Get the default Cluster since no cluster is specified */
-		char *temp = slurm_get_cluster_name();
-		if (temp)
-			list_append(cluster_cond->cluster_list, temp);
+		list_append(cluster_cond->cluster_list,
+			    xstrdup(slurm_conf.cluster_name));
 	}
 
 	/* This needs to be done on some systems to make sure
@@ -439,7 +436,7 @@ static int _setup_print_fields_list(List format_list)
 			field->name = xstrdup("Login");
 			field->len = 9;
 			field->print_routine = print_fields_str;
-		} else if (!xstrncasecmp("overcommited", object,
+		} else if (!xstrncasecmp("overcommitted", object,
 					 MAX(command_len, 1))) {
 			field->type = PRINT_CLUSTER_TRES_OVER;
 			field->name = xstrdup("Over Comm");

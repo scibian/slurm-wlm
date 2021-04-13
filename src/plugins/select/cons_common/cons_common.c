@@ -49,7 +49,7 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-extern slurm_ctl_conf_t slurmctld_conf __attribute__((weak_import));
+extern slurm_conf_t slurm_conf __attribute__((weak_import));
 extern node_record_t *node_record_table_ptr __attribute__((weak_import));
 extern List part_list __attribute__((weak_import));
 extern List job_list __attribute__((weak_import));
@@ -64,7 +64,7 @@ extern int slurmctld_tres_cnt __attribute__((weak_import));
 extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
 extern bitstr_t *idle_node_bitmap __attribute__((weak_import));
 #else
-slurm_ctl_conf_t slurmctld_conf;
+slurm_conf_t slurm_conf;
 node_record_t *node_record_table_ptr;
 List part_list;
 List job_list;
@@ -85,15 +85,12 @@ bool     backfill_busy_nodes  = false;
 int      bf_window_scale      = 0;
 cons_common_callbacks_t cons_common_callbacks = {0};
 int      core_array_size      = 1;
-uint16_t cr_type              = CR_CPU; /* cr_type is overwritten in init() */
 bool     gang_mode            = false;
 bool     have_dragonfly       = false;
 bool     is_cons_tres         = false;
 bool     pack_serial_at_end   = false;
 bool     preempt_by_part      = false;
 bool     preempt_by_qos       = false;
-uint16_t priority_flags       = 0;
-uint64_t select_debug_flags   = 0;
 int      select_node_cnt      = 0;
 bool     spec_cores_first     = false;
 bool     topo_optional        = false;
@@ -201,7 +198,7 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	uint16_t free_cores[sockets];
 	uint16_t used_cores[sockets];
 	uint32_t used_cpu_array[sockets];
-	avail_res_t *avail_res;
+	avail_res_t *avail_res = xmalloc(sizeof(avail_res_t));
 
 
 	if (is_cons_tres) {
@@ -337,6 +334,7 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 		if (used_cpu_array[i])
 			used_cpu_count += used_cores[i] * threads_per_core;
 	}
+	avail_res->max_cpus = free_cpu_count;
 
 	/* Enforce partition CPU limit, but do not pick specific cores yet */
 	if ((job_ptr->part_ptr->max_cpus_per_node != INFINITE) &&
@@ -446,6 +444,12 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	num_tasks = 0;
 	threads_per_core = common_cpus_per_core(details_ptr, node_i);
 
+	/* Are enough CPUs available compared with required ones? */
+	if ((free_core_count * threads_per_core) < details_ptr->pn_min_cpus) {
+		num_tasks = 0;
+		goto fini;
+	}
+
 	for (i = 0; i < sockets; i++) {
 		uint16_t tmp = free_cores[i] * threads_per_core;
 		if ((tmp == 0) && req_sock_map && bit_test(req_sock_map, i)) {
@@ -485,6 +489,14 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 		j = avail_cpus / cpus_per_task;
 		num_tasks = MIN(num_tasks, j);
 		avail_cpus = num_tasks * cpus_per_task;
+	}
+
+	/*
+	 * If there's an auto adjustment then use the max between the required
+	 * CPUs according to required task number, or to the autoadjustment.
+	 */
+	if (details_ptr->pn_min_cpus > details_ptr->orig_pn_min_cpus) {
+		avail_cpus = MAX(details_ptr->pn_min_cpus, avail_cpus);
 	}
 
 	if ((details_ptr->ntasks_per_node &&
@@ -544,7 +556,7 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 			if (avail_cpus >= threads_per_core) {
 				int used;
 				if (is_cons_tres &&
-				    (slurmctld_conf.select_type_param &
+				    (slurm_conf.select_type_param &
 				     CR_ONE_TASK_PER_CORE) &&
 				    (details_ptr->min_gres_cpu > 0)) {
 					used = threads_per_core;
@@ -598,8 +610,7 @@ fini:
 	}
 	cpu_count -= spec_threads;
 
-	avail_res = xmalloc(sizeof(avail_res_t));
-	avail_res->max_cpus = MIN(cpu_count, part_cpu_limit);
+	avail_res->avail_cpus = MIN(cpu_count, part_cpu_limit);
 
 	if (is_cons_tres) {
 		avail_res->min_cpus = *cpu_alloc_size;
@@ -616,6 +627,39 @@ fini:
 	}
 
 	return avail_res;
+}
+
+/*
+ * Check if there are no allocatable sockets with the given configuration due to
+ * core specialization.
+ * NOTE: this assumes the caller already checked CR_SOCKET is configured and
+ *	 AllowSpecResourceUsage=NO.
+ */
+static void _check_allocatable_sockets(node_res_record_t *node_res)
+{
+	if (node_res->node_ptr->cpu_spec_list != NULL) {
+		bool socket_without_spec_cores = false;
+		bitstr_t *cpu_spec_bitmap = bit_alloc(node_res->cpus);
+		bit_unfmt(cpu_spec_bitmap, node_res->node_ptr->cpu_spec_list);
+		for (int i = 0; i < node_res->tot_sockets; i++) {
+			int cpu_socket = node_res->cores * node_res->threads;
+			if (!bit_set_count_range(cpu_spec_bitmap,
+						 i * cpu_socket,
+						 (i + 1) * cpu_socket)) {
+				socket_without_spec_cores = true;
+				break;
+			}
+		}
+		FREE_NULL_BITMAP(cpu_spec_bitmap);
+		if (!socket_without_spec_cores)
+			fatal("NodeName=%s configuration doesn't allow to run jobs. SelectTypeParameteres=CR_Socket and CPUSpecList=%s uses cores from all sockets while AllowSpecResourcesUsage=NO, which makes the node non-usable. Please fix your slurm.conf",
+			      node_res->node_ptr->name,
+			      node_res->node_ptr->cpu_spec_list);
+	} else if (node_res->node_ptr->core_spec_cnt >
+		   ((node_res->tot_sockets - 1) * node_res->cores))
+		fatal("NodeName=%s configuration doesn't allow to run jobs. SelectTypeParameteres=CR_Socket and CoreSpecCount=%d uses cores from all sockets while AllowSpecResourcesUsage=NO, which makes the node non-usable. Please fix your slurm.conf",
+		      node_res->node_ptr->name,
+		      node_res->node_ptr->core_spec_cnt);
 }
 
 /*
@@ -690,7 +734,7 @@ extern int common_cpus_per_core(struct job_details *details, int node_inx)
 	uint16_t threads_per_core = select_node_record[node_inx].vpus;
 
 	if (is_cons_tres &&
-	    (slurmctld_conf.select_type_param & CR_ONE_TASK_PER_CORE) &&
+	    (slurm_conf.select_type_param & CR_ONE_TASK_PER_CORE) &&
 	    (details->min_gres_cpu > 0)) {
 		/* May override default of 1 CPU per core */
 		uint16_t pu_per_core = 0xffff;	/* Usable CPUs per core */
@@ -719,37 +763,26 @@ extern int common_cpus_per_core(struct job_details *details, int node_inx)
 
 extern void common_init(void)
 {
-	char *topo_param;
+	if (xstrcasestr(slurm_conf.topology_param, "dragonfly"))
+		have_dragonfly = true;
+	if (xstrcasestr(slurm_conf.topology_param, "TopoOptional"))
+		topo_optional = true;
 
-	cr_type = slurmctld_conf.select_type_param;
-	if (cr_type)
-		verbose("%s loaded with argument %u", plugin_type, cr_type);
-
-	select_debug_flags = slurm_get_debug_flags();
-
-	topo_param = slurm_get_topology_param();
-	if (topo_param) {
-		if (xstrcasestr(topo_param, "dragonfly"))
-			have_dragonfly = true;
-		if (xstrcasestr(topo_param, "TopoOptional"))
-			topo_optional = true;
-		xfree(topo_param);
-	}
-
-	priority_flags = slurm_get_priority_flags();
-
-	if (slurm_get_preempt_mode() & PREEMPT_MODE_GANG)
+	if (slurm_conf.preempt_mode & PREEMPT_MODE_GANG)
 		gang_mode = true;
 	else
 		gang_mode = false;
 
 	if (plugin_id == SELECT_PLUGIN_CONS_TRES)
 		is_cons_tres = true;
+
+	verbose("%s loaded", plugin_type);
+
 }
 
 extern void common_fini(void)
 {
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE)
 		info("%s shutting down ...", plugin_type);
 	else
 		verbose("%s shutting down ...", plugin_type);
@@ -779,7 +812,7 @@ extern bitstr_t **common_mark_avail_cores(
 	int rem_core_spec, node_core_spec, thread_spec = 0;
 	node_record_t *node_ptr;
 	bitstr_t *core_map = NULL;
-	uint16_t use_spec_cores = slurmctld_conf.conf_flags & CTL_CONF_ASRU;
+	uint16_t use_spec_cores = slurm_conf.conf_flags & CTL_CONF_ASRU;
 	node_res_record_t *node_res_ptr = NULL;
 	uint32_t coff;
 
@@ -898,56 +931,44 @@ extern bitstr_t **common_mark_avail_cores(
 }
 
 /*
- * common_allocate_cores - Given the job requirements, determine which cores
+ * common_allocate - Given the job requirements, determine which resources
  *                   from the given node can be allocated (if any) to this
  *                   job. Returns the number of cpus that can be used by
- *                   this node AND a bitmap of the selected cores.
+ *                   this node AND a bitmap of the selected cores|sockets.
  *
  * IN job_ptr       - pointer to job requirements
  * IN/OUT core_map  - core_bitmap of available cores on this node
  * IN part_core_map - bitmap of cores already allocated on this partition/node
  * IN node_i        - index of node to be evaluated
- * IN/OUT cpu_alloc_size - minimum allocation size, in CPUs
- * IN cpu_type      - if true, allocate CPUs rather than cores
+ * OUT cpu_alloc_size - minimum allocation size, in CPUs
  * IN req_sock_map - OPTIONAL bitmap of required sockets
- * RET resource availability structure, call common_free_avail_res() to free
+ * IN cr_type - Consumable Resource setting
+ * RET resource availability structure, call _free_avail_res() to free
  */
-extern avail_res_t *common_allocate_cores(job_record_t *job_ptr,
-					  bitstr_t *core_map,
-					  bitstr_t *part_core_map,
-					  const uint32_t node_i,
-					  int *cpu_alloc_size,
-					  bool cpu_type,
-					  bitstr_t *req_sock_map)
+extern avail_res_t *common_allocate(job_record_t *job_ptr,
+				    bitstr_t *core_map,
+				    bitstr_t *part_core_map,
+				    const uint32_t node_i,
+				    int *cpu_alloc_size,
+				    bitstr_t *req_sock_map,
+				    uint16_t cr_type)
 {
-	return _allocate_sc(job_ptr, core_map, part_core_map, node_i,
-			    cpu_alloc_size, false, req_sock_map);
-}
+	bool alloc_sockets;
 
-/*
- * common_allocate_sockets - Given the job requirements, determine which sockets
- *                     from the given node can be allocated (if any) to this
- *                     job. Returns the number of cpus that can be used by
- *                     this node AND a core-level bitmap of the selected
- *                     sockets.
- *
- * IN job_ptr       - pointer to job requirements
- * IN/OUT core_map  - core_bitmap of available cores on this node
- * IN part_core_map - bitmap of cores already allocated on this partition/node
- * IN node_i        - index of node to be evaluated
- * IN/OUT cpu_alloc_size - minimum allocation size, in CPUs
- * IN req_sock_map - OPTIONAL bitmap of required sockets
- * RET resource availability structure, call common_free_avail_res() to free
- */
-extern avail_res_t *common_allocate_sockets(job_record_t *job_ptr,
-					    bitstr_t *core_map,
-					    bitstr_t *part_core_map,
-					    const uint32_t node_i,
-					    int *cpu_alloc_size,
-					    bitstr_t *req_sock_map)
-{
+	if (cr_type & CR_SOCKET) {
+		/* cpu_alloc_size = CPUs per socket */
+		alloc_sockets = true;
+		*cpu_alloc_size = select_node_record[node_i].cores *
+			select_node_record[node_i].vpus;
+	} else {
+		/* cpu_alloc_size = # of CPUs per socket || 1 individual CPU */
+		alloc_sockets = false;
+		*cpu_alloc_size = (cr_type & CR_CORE) ?
+			select_node_record[node_i].vpus : 1;
+	}
+
 	return _allocate_sc(job_ptr, core_map, part_core_map, node_i,
-			    cpu_alloc_size, true, req_sock_map);
+			    cpu_alloc_size, alloc_sockets, req_sock_map);
 }
 
 extern int select_p_state_save(char *dir_name)
@@ -976,12 +997,6 @@ extern int select_p_job_init(List job_list)
 	return SLURM_SUCCESS;
 }
 
-/* This plugin does not generate a node ranking. */
-extern bool select_p_node_ranking(node_record_t *node_ptr, int node_cnt)
-{
-	return false;
-}
-
 /* This is Part 1 of a 4-part procedure which can be found in
  * src/slurmctld/read_config.c. The whole story goes like this:
  *
@@ -1000,11 +1015,11 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 	uint32_t cume_cores = 0;
 	int i;
 
-	info("%s: %s", plugin_type, __func__);
-	if ((cr_type & (CR_CPU | CR_CORE | CR_SOCKET)) == 0) {
+	if (!(slurm_conf.select_type_param & (CR_CPU | CR_CORE | CR_SOCKET))) {
 		fatal("Invalid SelectTypeParameters: %s (%u), "
 		      "You need at least CR_(CPU|CORE|SOCKET)*",
-		      select_type_param_string(cr_type), cr_type);
+		      select_type_param_string(slurm_conf.select_type_param),
+		      slurm_conf.select_type_param);
 	}
 	if (node_ptr == NULL) {
 		error("select_p_node_init: node_ptr == NULL");
@@ -1087,15 +1102,15 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 		config_ptr = node_ptr[i].config_ptr;
 		select_node_record[i].cpus    = config_ptr->cpus;
 		select_node_record[i].boards  = config_ptr->boards;
-		select_node_record[i].sockets = config_ptr->sockets;
+		select_node_record[i].tot_sockets = config_ptr->tot_sockets;
 		select_node_record[i].cores   = config_ptr->cores;
 		select_node_record[i].threads = config_ptr->threads;
 		select_node_record[i].vpus    = config_ptr->threads;
 		select_node_record[i].real_memory = config_ptr->real_memory;
 
-		select_node_record[i].tot_sockets =
-			select_node_record[i].boards *
-			select_node_record[i].sockets;
+		select_node_record[i].sockets =
+			select_node_record[i].tot_sockets /
+			select_node_record[i].boards;
 		select_node_record[i].tot_cores =
 			select_node_record[i].tot_sockets *
 			select_node_record[i].cores;
@@ -1121,6 +1136,10 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 			      select_node_record[i].threads,
 			      select_node_record[i].tot_cores *
 			      select_node_record[i].threads);
+
+		if ((slurm_conf.select_type_param & CR_SOCKET) &&
+		    (slurm_conf.conf_flags & CTL_CONF_ASRU) == 0)
+			_check_allocatable_sockets(&select_node_record[i]);
 
 		select_node_usage[i].node_state = NODE_CR_AVAILABLE;
 		gres_plugin_node_state_dealloc_all(
@@ -1179,8 +1198,8 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	xassert(to_job_ptr->details);
 
 	if (from_job_ptr->job_id == to_job_ptr->job_id) {
-		error("%s: %s: attempt to merge %pJ with self",
-		      plugin_type, __func__, from_job_ptr);
+		error("attempt to merge %pJ with self",
+		      from_job_ptr);
 		return SLURM_ERROR;
 	}
 
@@ -1189,8 +1208,8 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	    (from_job_resrcs_ptr->cpus == NULL) ||
 	    (from_job_resrcs_ptr->core_bitmap == NULL) ||
 	    (from_job_resrcs_ptr->node_bitmap == NULL)) {
-		error("%s: %s: %pJ lacks a job_resources struct",
-		      plugin_type, __func__, from_job_ptr);
+		error("%pJ lacks a job_resources struct",
+		      from_job_ptr);
 		return SLURM_ERROR;
 	}
 	to_job_resrcs_ptr = to_job_ptr->job_resrcs;
@@ -1198,30 +1217,30 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	    (to_job_resrcs_ptr->cpus == NULL) ||
 	    (to_job_resrcs_ptr->core_bitmap == NULL) ||
 	    (to_job_resrcs_ptr->node_bitmap == NULL)) {
-		error("%s: %s: %pJ lacks a job_resources struct",
-		      plugin_type, __func__, to_job_ptr);
+		error("%pJ lacks a job_resources struct",
+		      to_job_ptr);
 		return SLURM_ERROR;
 	}
 
 	if (is_cons_tres) {
 		if (to_job_ptr->gres_list) {
 			/* Can't reset gres/mps fields today */
-			error("%s: %s: %pJ has allocated GRES",
-			      plugin_type, __func__, to_job_ptr);
+			error("%pJ has allocated GRES",
+			      to_job_ptr);
 			return SLURM_ERROR;
 		}
 		if (from_job_ptr->gres_list) {
 			/* Can't reset gres/mps fields today */
-			error("%s: %s: %pJ has allocated GRES",
-			      plugin_type, __func__, from_job_ptr);
+			error("%pJ has allocated GRES",
+			      from_job_ptr);
 			return SLURM_ERROR;
 		}
 	}
 
 	(void) job_res_rm_job(select_part_record, select_node_usage,
-			      from_job_ptr, 0, true, NULL);
+			      from_job_ptr, JOB_RES_ACTION_NORMAL, true, NULL);
 	(void) job_res_rm_job(select_part_record, select_node_usage,
-			      to_job_ptr, 0, true, NULL);
+			      to_job_ptr, JOB_RES_ACTION_NORMAL, true, NULL);
 
 	if (to_job_resrcs_ptr->core_bitmap_used) {
 		i = bit_size(to_job_resrcs_ptr->core_bitmap_used);
@@ -1377,7 +1396,7 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	xfree(from_job_resrcs_ptr->nodes);
 	from_job_resrcs_ptr->nodes = xstrdup("");
 
-	(void) job_res_add_job(to_job_ptr, 0);
+	(void) job_res_add_job(to_job_ptr, JOB_RES_ACTION_NORMAL);
 
 	return SLURM_SUCCESS;
 }
@@ -1396,16 +1415,16 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 	xassert(job_ptr->magic == JOB_MAGIC);
 
 	if (!job || !job->core_bitmap) {
-		error("%s: %s: %pJ has no job_resrcs info",
-		      plugin_type, __func__, job_ptr);
+		error("%pJ has no job_resrcs info",
+		      job_ptr);
 		return SLURM_ERROR;
 	}
 
-	debug3("%s: %s: %pJ node %s",
-	       plugin_type, __func__, job_ptr, node_ptr->name);
+	debug3("%pJ node %s",
+	       job_ptr, node_ptr->name);
 	if (job_ptr->start_time < slurmctld_config.boot_time)
 		old_job = true;
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE)
 		_dump_job_res(job);
 
 	/* subtract memory */
@@ -1424,8 +1443,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 		}
 
 		if (job->cpus[n] == 0) {
-			info("%s: %s: attempt to remove node %s from %pJ again",
-			     plugin_type, __func__, node_ptr->name, job_ptr);
+			info("attempt to remove node %s from %pJ again",
+			     node_ptr->name, job_ptr);
 			return SLURM_SUCCESS;
 		}
 
@@ -1439,9 +1458,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 		gres_plugin_node_state_log(gres_list, node_ptr->name);
 
 		if (node_usage[i].alloc_memory < job->memory_allocated[n]) {
-			error("%s: %s: node %s memory is underallocated (%"PRIu64"-%"PRIu64") for %pJ",
-			      plugin_type,
-			      __func__, node_ptr->name,
+			error("node %s memory is underallocated (%"PRIu64"-%"PRIu64") for %pJ",
+			      node_ptr->name,
 			      node_usage[i].alloc_memory,
 			      job->memory_allocated[n], job_ptr);
 			node_usage[i].alloc_memory = 0;
@@ -1458,8 +1476,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 
 	/* subtract cores, reconstruct rows with remaining jobs */
 	if (!job_ptr->part_ptr) {
-		error("%s: %s: removed %pJ does not have a partition assigned",
-		      plugin_type, __func__, job_ptr);
+		error("removed %pJ does not have a partition assigned",
+		      job_ptr);
 		return SLURM_ERROR;
 	}
 
@@ -1468,8 +1486,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 			break;
 	}
 	if (!p_ptr) {
-		error("%s: %s: removed %pJ could not find part %s",
-		      plugin_type, __func__, job_ptr, job_ptr->part_ptr->name);
+		error("removed %pJ could not find part %s",
+		      job_ptr, job_ptr->part_ptr->name);
 		return SLURM_ERROR;
 	}
 
@@ -1483,8 +1501,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 		for (j = 0; j < p_ptr->row[i].num_jobs; j++) {
 			if (p_ptr->row[i].job_list[j] != job)
 				continue;
-			debug3("%s: %s: found %pJ in part %s row %u",
-			       plugin_type, __func__, job_ptr,
+			debug3("found %pJ in part %s row %u",
+			       job_ptr,
 			       p_ptr->part_ptr->name, i);
 			/* found job - we're done, don't actually remove */
 			n = 1;
@@ -1493,8 +1511,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 		}
 	}
 	if (n == 0) {
-		error("%s: %s: could not find %pJ in partition %s",
-		      plugin_type, __func__, job_ptr, p_ptr->part_ptr->name);
+		error("could not find %pJ in partition %s",
+		      job_ptr, p_ptr->part_ptr->name);
 		return SLURM_ERROR;
 	}
 
@@ -1509,7 +1527,7 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 	if (node_usage[node_inx].node_state >= job->node_req) {
 		node_usage[node_inx].node_state -= job->node_req;
 	} else {
-		error("%s: %s: node_state miscount", plugin_type, __func__);
+		error("node_state miscount");
 		node_usage[node_inx].node_state = NODE_CR_AVAILABLE;
 	}
 
@@ -1531,8 +1549,6 @@ extern int select_p_job_mem_confirm(job_record_t *job_ptr)
 
 	xassert(job_ptr);
 
-	if (!(job_ptr->bit_flags & NODE_MEM_CALC))
-		return SLURM_SUCCESS;
 	if ((job_ptr->details == NULL) ||
 	    (job_ptr->job_resrcs == NULL) ||
 	    (job_ptr->job_resrcs->node_bitmap == NULL) ||
@@ -1564,36 +1580,34 @@ extern int select_p_job_fini(job_record_t *job_ptr)
 	xassert(job_ptr);
 	xassert(job_ptr->magic == JOB_MAGIC);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE)
-		info("%s: %s: %pJ", plugin_type, __func__, job_ptr);
+	log_flag(SELECT_TYPE, "%pJ", job_ptr);
 
 	job_res_rm_job(select_part_record, select_node_usage,
-		       job_ptr, 0, true, NULL);
+		       job_ptr, JOB_RES_ACTION_NORMAL, true, NULL);
 
 	return SLURM_SUCCESS;
 }
 
 /* NOTE: This function is not called with gang scheduling because it
  * needs to track how many jobs are running or suspended on each node.
- * This sum is compared with the partition's Shared parameter */
+ * This sum is compared with the partition's OverSubscribe parameter */
 extern int select_p_job_suspend(job_record_t *job_ptr, bool indf_susp)
 {
 	xassert(job_ptr);
 	xassert(job_ptr->magic == JOB_MAGIC);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		if (indf_susp)
-			info("%s: %s: %pJ indf_susp", plugin_type, __func__,
-			     job_ptr);
-		else
-			info("%s: %s: %pJ", plugin_type, __func__, job_ptr);
-	}
+	if (indf_susp)
+		log_flag(SELECT_TYPE, "%pJ indf_susp",
+			 job_ptr);
+	else
+		log_flag(SELECT_TYPE, "%pJ",
+			 job_ptr);
 
 	if (!indf_susp)
 		return SLURM_SUCCESS;
 
 	return job_res_rm_job(select_part_record, select_node_usage,
-			      job_ptr, 2, false, NULL);
+			      job_ptr, JOB_RES_ACTION_RESUME, false, NULL);
 }
 
 /* See NOTE with select_p_job_suspend() above */
@@ -1602,17 +1616,17 @@ extern int select_p_job_resume(job_record_t *job_ptr, bool indf_susp)
 	xassert(job_ptr);
 	xassert(job_ptr->magic == JOB_MAGIC);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		if (indf_susp)
-			info("%s: %s: %pJ indf_susp", plugin_type, __func__,
-			     job_ptr);
-		else
-			info("%s: %s: %pJ", plugin_type, __func__, job_ptr);
-	}
+	if (indf_susp)
+		log_flag(SELECT_TYPE, "%pJ indf_susp",
+			 job_ptr);
+	else
+		log_flag(SELECT_TYPE, "%pJ",
+			 job_ptr);
+
 	if (!indf_susp)
 		return SLURM_SUCCESS;
 
-	return job_res_add_job(job_ptr, 2);
+	return job_res_add_job(job_ptr, JOB_RES_ACTION_RESUME);
 }
 
 extern bitstr_t *select_p_step_pick_nodes(job_record_t *job_ptr,
@@ -1646,7 +1660,7 @@ extern int select_p_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
 		 * We should never get here,
 		 * but avoid abort with bad data structures
 		 */
-		error("%s: nodeinfo is NULL", __func__);
+		error("nodeinfo is NULL");
 		nodeinfo_empty = xmalloc(sizeof(select_nodeinfo_t));
 		nodeinfo = nodeinfo_empty;
 	}
@@ -1675,7 +1689,7 @@ extern int select_p_select_nodeinfo_free(select_nodeinfo_t *nodeinfo)
 {
 	if (nodeinfo) {
 		if (nodeinfo->magic != nodeinfo_magic) {
-			error("%s: nodeinfo magic bad", __func__);
+			error("nodeinfo magic bad");
 			return EINVAL;
 		}
 		xfree(nodeinfo->tres_alloc_cnt);
@@ -1706,7 +1720,7 @@ extern int select_p_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo,
 	return SLURM_SUCCESS;
 
 unpack_error:
-	error("%s: error unpacking here", __func__);
+	error("error unpacking here");
 	select_p_select_nodeinfo_free(nodeinfo_ptr);
 	*nodeinfo = NULL;
 
@@ -1729,7 +1743,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 	 * the last time we set things up.
 	 */
 	if (last_set_all && (last_node_update < last_set_all)) {
-		debug2("%s: Node data hasn't changed since %ld", __func__,
+		debug2("Node data hasn't changed since %ld",
 		       (long)last_set_all);
 		return SLURM_NO_CHANGE_IN_DATA;
 	}
@@ -1768,13 +1782,12 @@ extern int select_p_select_nodeinfo_set_all(void)
 					     SELECT_NODEDATA_PTR, 0,
 					     (void *)&nodeinfo);
 		if (!nodeinfo) {
-			error("%s: no nodeinfo returned from structure",
-			      __func__);
+			error("no nodeinfo returned from structure");
 			continue;
 		}
 
 		node_boards  = node_ptr->config_ptr->boards;
-		node_sockets = node_ptr->config_ptr->sockets;
+		node_sockets = node_ptr->config_ptr->tot_sockets;
 		node_cores   = node_ptr->config_ptr->cores;
 		node_cpus    = node_ptr->config_ptr->cpus;
 		node_threads = node_ptr->config_ptr->threads;
@@ -1847,7 +1860,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 		nodeinfo->tres_alloc_weighted =
 			assoc_mgr_tres_weighted(nodeinfo->tres_alloc_cnt,
 						node_ptr->config_ptr->tres_weights,
-						priority_flags, false);
+						slurm_conf.priority_flags, false);
 	}
 	free_core_array(&alloc_core_bitmap);
 
@@ -1862,12 +1875,12 @@ extern int select_p_select_nodeinfo_set(job_record_t *job_ptr)
 	xassert(job_ptr->magic == JOB_MAGIC);
 
 	if (IS_JOB_RUNNING(job_ptr))
-		rc = job_res_add_job(job_ptr, 0);
+		rc = job_res_add_job(job_ptr, JOB_RES_ACTION_NORMAL);
 	else if (IS_JOB_SUSPENDED(job_ptr)) {
 		if (job_ptr->priority == 0)
-			rc = job_res_add_job(job_ptr, 1);
+			rc = job_res_add_job(job_ptr, JOB_RES_ACTION_SUSPEND);
 		else	/* Gang schedule suspend */
-			rc = job_res_add_job(job_ptr, 0);
+			rc = job_res_add_job(job_ptr, JOB_RES_ACTION_NORMAL);
 	} else
 		return SLURM_SUCCESS;
 
@@ -1889,12 +1902,12 @@ extern int select_p_select_nodeinfo_get(select_nodeinfo_t *nodeinfo,
 	select_nodeinfo_t **select_nodeinfo = (select_nodeinfo_t **) data;
 
 	if (nodeinfo == NULL) {
-		error("%s: nodeinfo not set", __func__);
+		error("nodeinfo not set");
 		return SLURM_ERROR;
 	}
 
 	if (nodeinfo->magic != nodeinfo_magic) {
-		error("%s: jobinfo magic bad", __func__);
+		error("jobinfo magic bad");
 		return SLURM_ERROR;
 	}
 
@@ -1918,7 +1931,7 @@ extern int select_p_select_nodeinfo_get(select_nodeinfo_t *nodeinfo,
 		*tmp_double = nodeinfo->tres_alloc_weighted;
 		break;
 	default:
-		error("%s: Unsupported option %d", __func__, dinfo);
+		error("Unsupported option %d", dinfo);
 		rc = SLURM_ERROR;
 		break;
 	}
@@ -2012,7 +2025,7 @@ extern int select_p_get_info_from_plugin(enum select_plugindata_info info,
 		*tmp_32 = is_cons_tres ? 1 : 0;
 		break;
 	default:
-		error("%s: info type %d invalid", __func__, info);
+		error("info type %d invalid", info);
 		rc = SLURM_ERROR;
 		break;
 	}
@@ -2022,7 +2035,7 @@ extern int select_p_get_info_from_plugin(enum select_plugindata_info info,
 extern int select_p_update_node_config(int index)
 {
 	if (index >= select_node_cnt) {
-		error("%s: index too large (%d > %d)", __func__, index,
+		error("index too large (%d > %d)", index,
 		      select_node_cnt);
 		return SLURM_ERROR;
 	}
@@ -2031,19 +2044,22 @@ extern int select_p_update_node_config(int index)
 	 * Socket and core count can be changed when KNL node reboots in a
 	 * different NUMA configuration
 	 */
-	if (!(slurmctld_conf.conf_flags & CTL_CONF_OR) &&
-	    (select_node_record[index].sockets !=
-	     select_node_record[index].node_ptr->config_ptr->sockets) &&
+	if (!(slurm_conf.conf_flags & CTL_CONF_OR) &&
+	    (select_node_record[index].tot_sockets !=
+	     select_node_record[index].node_ptr->config_ptr->tot_sockets) &&
 	    (select_node_record[index].cores !=
 	     select_node_record[index].node_ptr->config_ptr->cores) &&
-	    ((select_node_record[index].sockets *
+	    ((select_node_record[index].tot_sockets *
 	      select_node_record[index].cores) ==
-	     (select_node_record[index].node_ptr->sockets *
+	     (select_node_record[index].node_ptr->tot_sockets *
 	      select_node_record[index].node_ptr->cores))) {
 		select_node_record[index].cores =
 			select_node_record[index].node_ptr->config_ptr->cores;
 		select_node_record[index].sockets =
-			select_node_record[index].node_ptr->config_ptr->sockets;
+			select_node_record[index].node_ptr->config_ptr->
+				tot_sockets /
+			select_node_record[index].node_ptr->config_ptr->boards;
+
 		/* tot_sockets should be the same */
 		/* tot_cores should be the same */
 	}
@@ -2058,16 +2074,15 @@ extern int select_p_reconfigure(void)
 	int rc = SLURM_SUCCESS;
 
 	info("%s: reconfigure", plugin_type);
-	select_debug_flags = slurm_get_debug_flags();
 
 	if (is_cons_tres) {
 		def_cpu_per_gpu = 0;
 		def_mem_per_gpu = 0;
-		if (slurmctld_conf.job_defaults_list) {
+		if (slurm_conf.job_defaults_list) {
 			def_cpu_per_gpu = common_get_def_cpu_per_gpu(
-				slurmctld_conf.job_defaults_list);
+				slurm_conf.job_defaults_list);
 			def_mem_per_gpu = common_get_def_mem_per_gpu(
-				slurmctld_conf.job_defaults_list);
+				slurm_conf.job_defaults_list);
 		}
 	}
 
@@ -2080,13 +2095,15 @@ extern int select_p_reconfigure(void)
 	while ((job_ptr = list_next(job_iterator))) {
 		if (IS_JOB_RUNNING(job_ptr)) {
 			/* add the job */
-			job_res_add_job(job_ptr, 0);
+			job_res_add_job(job_ptr, JOB_RES_ACTION_NORMAL);
 		} else if (IS_JOB_SUSPENDED(job_ptr)) {
 			/* add the job in a suspended state */
 			if (job_ptr->priority == 0)
-				(void) job_res_add_job(job_ptr, 1);
+				(void) job_res_add_job(job_ptr,
+						       JOB_RES_ACTION_SUSPEND);
 			else	/* Gang schedule suspend */
-				(void) job_res_add_job(job_ptr, 0);
+				(void) job_res_add_job(job_ptr,
+						       JOB_RES_ACTION_NORMAL);
 		}
 	}
 	list_iterator_destroy(job_iterator);
@@ -2216,8 +2233,10 @@ extern bitstr_t *select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 		}
 		switches_core_cnt[i] =
 			count_core_array_set(switches_core_bitmap[i]);
-		debug2("switch:%d nodes:%d cores:%d",
-		       i, switches_node_cnt[i], switches_core_cnt[i]);
+		log_flag(RESERVATION, "switch:%d nodes:%d cores:%d",
+			 i,
+			 switches_node_cnt[i],
+			 switches_core_cnt[i]);
 	}
 
 	/* Remove nodes with fewer available cores than needed */
@@ -2292,7 +2311,7 @@ extern bitstr_t *select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 			best_fit_inx = j;
 	}
 	if (best_fit_inx == -1) {
-		debug("%s: could not find resources for reservation", __func__);
+		log_flag(RESERVATION, "could not find resources for reservation");
 		goto fini;
 	}
 
@@ -2363,8 +2382,8 @@ extern bitstr_t *select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 				                             exc_core_bitmap);
 				if (c < cores_per_node)
 					continue;
-				debug2("Using node %d with %d cores available",
-				       i, c);
+				log_flag(RESERVATION, "Using node %d with %d cores available",
+					 i, c);
 				rem_cores -= c;
 			}
 			bit_set(avail_nodes_bitmap, i);
@@ -2416,8 +2435,8 @@ fini:	for (i = 0; i < switch_record_cnt; i++) {
 			if (inx < 0)
 				break;
 
-			debug2("Using node inx:%d cores_per_node:%d rem_cores:%u",
-			       inx, cores_per_node, rem_cores);
+			log_flag(RESERVATION, "Using node inx:%d cores_per_node:%d rem_cores:%u",
+				 inx, cores_per_node, rem_cores);
 
 			/* Clear this node from the initial available bitmap */
 			bit_clear(avail_nodes_bitmap, inx);
@@ -2427,8 +2446,8 @@ fini:	for (i = 0; i < switch_record_cnt; i++) {
 			avail_cores_in_node =
 				_get_avail_cores_on_node(inx, exc_core_bitmap);
 
-			debug2("Node inx:%d has %d available cores", inx,
-			       avail_cores_in_node);
+			log_flag(RESERVATION, "Node inx:%d has %d available cores",
+				 inx, avail_cores_in_node);
 			if (avail_cores_in_node < cores_per_node)
 				continue;
 
@@ -2484,7 +2503,7 @@ fini:	for (i = 0; i < switch_record_cnt; i++) {
 		free_core_array(&exc_core_bitmap);
 
 		if (rem_cores) {
-			info("reservation request can not be satisfied");
+			log_flag(RESERVATION, "reservation request can not be satisfied");
 			FREE_NULL_BITMAP(picked_node_bitmap);
 			picked_node_bitmap = NULL;
 		} else {

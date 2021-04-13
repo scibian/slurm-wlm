@@ -291,7 +291,7 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 			line_used = true;
 		}
 
-		if (node_ptr->port != slurm_get_slurmd_port()) {
+		if (node_ptr->port != slurm_conf.slurmd_port) {
 			xstrfmtcat(out, "Port=%u ", node_ptr->port);
 			line_used = true;
 		}
@@ -475,7 +475,12 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 			tok = strtok_r(NULL, "\n", &save_ptr);
 		}
 		xfree(reason_str);
+		xstrcat(out, line_end);
 	}
+
+	/****** Line ******/
+	xstrfmtcat(out, "Comment=%s", node_ptr->comment);
+
 	if (one_liner)
 		xstrcat(out, "\n");
 	else
@@ -689,9 +694,10 @@ extern int slurm_load_node(time_t update_time, node_info_msg_t **resp,
 	int rc;
 
 	if (working_cluster_rec)
-		cluster_name = xstrdup(working_cluster_rec->name);
+		cluster_name = working_cluster_rec->name;
 	else
-		cluster_name = slurm_get_cluster_name();
+		cluster_name = slurm_conf.cluster_name;
+
 	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
 	    cluster_in_federation(ptr, cluster_name)) {
@@ -722,7 +728,6 @@ extern int slurm_load_node(time_t update_time, node_info_msg_t **resp,
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }
@@ -835,8 +840,7 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 					    req_msg.flags);
 		} else {
 			this_addr = "localhost";
-			slurm_set_addr(&req_msg.address,
-				       (uint16_t)slurm_get_slurmd_port(),
+			slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 				       this_addr);
 		}
 	} else {
@@ -845,11 +849,10 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host);
+		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
-		slurm_set_addr(&req_msg.address,
-			       (uint16_t)slurm_get_slurmd_port(),
+		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 			       this_addr);
 		xfree(this_addr);
 	}

@@ -80,18 +80,18 @@ void (*epilog_slurmctld_callback)(int rc, uint32_t job_id) = NULL;
 
 extern int init(void)
 {
-	if (slurmctld_conf.prolog_slurmctld) {
-		if (access(slurmctld_conf.prolog_slurmctld, X_OK) < 0)
+	if (slurm_conf.prolog_slurmctld) {
+		if (access(slurm_conf.prolog_slurmctld, X_OK) < 0)
 			error("Invalid PrologSlurmctld(`%s`): %m",
-			      slurmctld_conf.prolog_slurmctld);
+			      slurm_conf.prolog_slurmctld);
 		else
 			have_prolog_slurmctld = true;
 	}
 
-	if (slurmctld_conf.epilog_slurmctld) {
-		if (access(slurmctld_conf.epilog_slurmctld, X_OK) < 0)
+	if (slurm_conf.epilog_slurmctld) {
+		if (access(slurm_conf.epilog_slurmctld, X_OK) < 0)
 			error("Invalid EpilogSlurmctld(`%s`): %m",
-			      slurmctld_conf.epilog_slurmctld);
+			      slurm_conf.epilog_slurmctld);
 		else
 			have_epilog_slurmctld = true;
 	}
@@ -151,4 +151,28 @@ extern int prep_p_epilog_slurmctld(job_record_t *job_ptr, bool *async)
 
 	*async = true;
 	return SLURM_SUCCESS;
+}
+
+extern void prep_p_required(prep_call_type_t type, bool *required)
+{
+	*required = false;
+	switch (type) {
+	case PREP_PROLOG_SLURMCTLD:
+		if (running_in_slurmctld() && have_prolog_slurmctld)
+			*required = true;
+		break;
+	case PREP_EPILOG_SLURMCTLD:
+		if (running_in_slurmctld() && have_epilog_slurmctld)
+			*required = true;
+		break;
+	case PREP_PROLOG:
+	case PREP_EPILOG:
+		if (running_in_slurmd())
+			*required = true;
+		break;
+	default:
+		return;
+	}
+
+	return;
 }

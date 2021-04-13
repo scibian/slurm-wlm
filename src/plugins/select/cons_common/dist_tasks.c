@@ -131,10 +131,10 @@ static inline void _log_select_maps(char *loc, job_record_t *job_ptr)
 	char tmp[100];
 	int i;
 
-	if (!(select_debug_flags & DEBUG_FLAG_SELECT_TYPE))
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE))
 		return;
 
-	info("%s: %s %pJ", __func__, loc, job_ptr);
+	info("%s %pJ", loc, job_ptr);
 	if (job_res->node_bitmap) {
 		bit_fmt(tmp, sizeof(tmp), job_res->node_bitmap);
 		info("  node_bitmap:%s", tmp);
@@ -231,8 +231,8 @@ static int _set_task_dist(job_record_t *job_ptr)
 	else if (!job_res->nhosts)
 		err_msg = "job_res->nhosts is zero";
 	if (err_msg) {
-		error("%s: %s: Invalid allocation for %pJ: %s",
-		      plugin_type, __func__, job_ptr, err_msg);
+		error("Invalid allocation for %pJ: %s",
+		      job_ptr, err_msg);
 		return SLURM_ERROR;
 	}
 
@@ -241,7 +241,7 @@ static int _set_task_dist(job_record_t *job_ptr)
 		if (job_ptr->details->mc_ptr)
 			plane_size = job_ptr->details->mc_ptr->plane_size;
 		if (plane_size <= 0) {
-			error("%s: %s: invalid plane_size", plugin_type, __func__);
+			error("invalid plane_size");
 			return SLURM_ERROR;
 		}
 	}
@@ -268,8 +268,8 @@ static int _set_task_dist(job_record_t *job_ptr)
 	 * cpus than cpus_per_task or didn't specify the number.
 	 */
 	if (!maxtasks) {
-		error("%s: %s: changing task count from 0 to 1 for %pJ",
-		      plugin_type, __func__, job_ptr);
+		error("changing task count from 0 to 1 for %pJ",
+		      job_ptr);
 		maxtasks = 1;
 	}
 	if (job_ptr->details->cpus_per_task == 0)
@@ -281,8 +281,8 @@ static int _set_task_dist(job_record_t *job_ptr)
 		job_res->tasks_per_node[n] = 1;
 		if (job_ptr->details->cpus_per_task > avail_cpus[n]) {
 			if (!job_ptr->details->overcommit) {
-				error("%s: %s: avail_cpus underflow on node %d for %pJ",
-				      plugin_type, __func__, n, job_ptr);
+				error("avail_cpus underflow on node %d for %pJ",
+				      n, job_ptr);
 			}
 			avail_cpus[n] = 0;
 		} else {
@@ -319,8 +319,8 @@ static int _set_task_dist(job_record_t *job_ptr)
 			 * come into play because maxtasks should never be
 			 * greater than the total number of available CPUs
 			 */
-			error("%s: %s: oversubscribe for %pJ",
-			      plugin_type, __func__, job_ptr);
+			error("oversubscribe for %pJ",
+			      job_ptr);
 			log_over_subscribe = false;
 		}
 		for (n = 0; n < job_res->nhosts; n++) {
@@ -346,8 +346,8 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 	bool test_tres_tasks = true;
 
 	if (!job_res || !job_res->cpus || !job_res->nhosts) {
-		error("%s: %s: invalid allocation for %pJ",
-		      plugin_type, __func__, job_ptr);
+		error("invalid allocation for %pJ",
+		      job_ptr);
 		return SLURM_ERROR;
 	}
 
@@ -360,7 +360,7 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 	if (job_ptr->details->mc_ptr)
 		plane_size = job_ptr->details->mc_ptr->plane_size;
 	if (plane_size <= 0) {
-		error("%s: %s: invalid plane_size", plugin_type, __func__);
+		error("invalid plane_size");
 		return SLURM_ERROR;
 	}
 
@@ -380,8 +380,8 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 			 * come into play because maxtasks should never be
 			 * greater than the total number of available CPUs
 			 */
-			error("%s: %s: oversubscribe for %pJ",
-			      plugin_type, __func__, job_ptr);
+			error("oversubscribe for %pJ",
+			      job_ptr);
 			log_over_subscribe = false;	/* Log once per job */;
 		}
 		for (n = 0; ((n < job_res->nhosts) && (tid < maxtasks)); n++) {
@@ -435,7 +435,8 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 static void _block_sync_core_bitmap(job_record_t *job_ptr,
 				    const uint16_t cr_type)
 {
-	uint32_t c, s, i, j, n, b, z, size, csize, core_cnt;
+	uint32_t c, s, i, j, b, z, csize, core_cnt;
+	int n, n_first, n_last;
 	uint16_t cpus, num_bits, vpus = 1;
 	uint16_t cpus_per_task = job_ptr->details->cpus_per_task;
 	job_resources_t *job_res = job_ptr->job_resrcs;
@@ -466,15 +467,27 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 	if (!job_res)
 		return;
 	if (!job_res->core_bitmap) {
-		error("%s: %s: core_bitmap for %pJ is NULL",
-		      plugin_type, __func__, job_ptr);
+		error("core_bitmap for %pJ is NULL",
+		      job_ptr);
 		return;
 	}
 	if (bit_ffs(job_res->core_bitmap) == -1) {
-		error("%s: %s: core_bitmap for %pJ has no bits set",
-		      plugin_type, __func__, job_ptr);
+		error("core_bitmap for %pJ has no bits set",
+		      job_ptr);
 		return;
 	}
+
+	n_first = bit_ffs(job_res->node_bitmap);
+	if (n_first != -1) {
+		n_last = bit_fls(job_res->node_bitmap);
+		sockets_nb  = select_node_record[n_first].tot_sockets;
+		sockets_core_cnt = xcalloc(sockets_nb, sizeof(int));
+		sockets_used = xcalloc(sockets_nb, sizeof(bool));
+		boards_nb = select_node_record[n_first].boards;
+		boards_core_cnt = xcalloc(boards_nb, sizeof(int));
+		sort_brds_core_cnt = xcalloc(boards_nb, sizeof(int));
+	} else
+		return;
 
 	if (cr_type & CR_SOCKET)
 		alloc_sockets = true;
@@ -489,28 +502,21 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		}
 	}
 
-	size  = bit_size(job_res->node_bitmap);
 	csize = bit_size(job_res->core_bitmap);
 
-	sockets_nb  = select_node_record[0].sockets;
-	sockets_core_cnt = xcalloc(sockets_nb, sizeof(int));
-	sockets_used = xcalloc(sockets_nb, sizeof(bool));
-	boards_nb = select_node_record[0].boards;
-	boards_core_cnt = xcalloc(boards_nb, sizeof(int));
-	sort_brds_core_cnt = xcalloc(boards_nb, sizeof(int));
 
-	for (c = 0, i = 0, n = 0; n < size; n++) {
+	for (c = 0, i = 0, n = n_first; n <= n_last; n++) {
 		if (!bit_test(job_res->node_bitmap, n))
 			continue;
 
 		core_cnt = 0;
 		ncores_nb = select_node_record[n].cores;
-		nsockets_nb = select_node_record[n].sockets;
+		nsockets_nb = select_node_record[n].tot_sockets;
 		nboards_nb = select_node_record[n].boards;
 		num_bits =  nsockets_nb * ncores_nb;
 
 		if ((c + num_bits) > csize) {
-			error("%s: %s index error", plugin_type, __func__);
+			error("index error");
 			break;
 		}
 
@@ -535,9 +541,8 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		}
 
 		if (nboards_nb > MAX_BOARDS) {
-			debug3("%s: %s: node[%u]: exceeds max boards; "
-			       "doing best-fit across sockets only",
-			       plugin_type, __func__, n);
+			info("node[%u]: exceeds max boards(%d); doing best-fit across sockets only",
+			       n, MAX_BOARDS);
 			nboards_nb = 1;
 		}
 
@@ -554,14 +559,8 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		}
 
 		/* Count available cores on each socket and board */
-		if (nsockets_nb >= nboards_nb) {
-			sock_per_brd = nsockets_nb / nboards_nb;
-		} else {
-			error("%s: %s: Node socket count lower than board count (%u < %u), %pJ node %s",
-			      plugin_type, __func__, nsockets_nb, nboards_nb,
-			      job_ptr, node_record_table_ptr[n].name);
-			sock_per_brd = 1;
-		}
+		sock_per_brd = select_node_record[n].sockets;
+
 		for (b = 0; b < nboards_nb; b++) {
 			boards_core_cnt[b] = 0;
 			sort_brds_core_cnt[b] = 0;
@@ -597,8 +596,8 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		if (b_min > nboards_nb) {
 			char core_str[64];
 			bit_fmt(core_str, 64, job_res->core_bitmap);
-			error("%s: b_min > nboards_nb (%d > %u) node:%s core_bitmap:%s",
-			      __func__, b_min, nboards_nb,
+			error("b_min > nboards_nb (%d > %u) node:%s core_bitmap:%s",
+			      b_min, nboards_nb,
 			      node_record_table_ptr[n].name, core_str);
 			break;
 		}
@@ -694,12 +693,10 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 				core_min = elig_core_cnt[elig_idx];
 			}
 		}
-		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-			info("%s: %s: node[%u]: required CPUs:%u min req boards:%u,",
-			     plugin_type, __func__, n, cpus, b_min);
-			info("%s: %s: node[%u]: min req sockets:%u min avail cores:%u",
-			     plugin_type, __func__, n, s_min, core_min);
-		}
+		log_flag(SELECT_TYPE, "node[%u]: required CPUs:%u min req boards:%u,",
+		         n, cpus, b_min);
+		log_flag(SELECT_TYPE, "node[%u]: min req sockets:%u min avail cores:%u",
+		         n, s_min, core_min);
 		/*
 		 * Re-sort socket list for best-fit board combination in
 		 * ascending order of socket number
@@ -743,12 +740,10 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 			j = best_fit_location;
 			if (sock_per_brd)
 				j /= sock_per_brd;
-			if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-				info("%s: %s: using node[%u]: board[%u]: socket[%u]: %u cores available",
-				     plugin_type, __func__, n, j,
-				     best_fit_location,
-				     sockets_core_cnt[best_fit_location]);
-			}
+			log_flag(SELECT_TYPE, "using node[%u]: board[%u]: socket[%u]: %u cores available",
+			         n, j,
+			         best_fit_location,
+			         sockets_core_cnt[best_fit_location]);
 
 			sockets_used[best_fit_location] = true;
 			for (j = (c + (best_fit_location * ncores_nb));
@@ -823,8 +818,7 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 			 * CPUs count should NEVER be greater than the number
 			 * of set bits in the core bitmap for a given node
 			 */
-			error("%s: %s: CPUs computation error",
-			      plugin_type,  __func__);
+			error("CPUs computation error");
 			break;
 		}
 
@@ -855,8 +849,9 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 				    const uint16_t cr_type, bool preempt_mode)
 {
-	uint32_t c, i, j, k, s, n;
-	uint32_t *sock_start, *sock_end, size, csize, core_cnt;
+	uint32_t c, i, j, k, s;
+	int n, n_first, n_last;
+	uint32_t *sock_start, *sock_end, csize, core_cnt;
 	uint16_t cps = 0, cpus, vpus, sockets, sock_size, orig_cpu_cnt;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 	bitstr_t *core_map;
@@ -870,6 +865,18 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 	if ((job_res == NULL) || (job_res->core_bitmap == NULL) ||
 	    (job_ptr->details == NULL))
 		return error_code;
+
+	n_first = bit_ffs(job_res->node_bitmap);
+	if (n_first != -1) {
+		n_last = bit_fls(job_res->node_bitmap);
+		sock_size  = select_node_record[n_first].sockets;
+		sock_avoid = xcalloc(sock_size, sizeof(bool));
+		sock_start = xcalloc(sock_size, sizeof(uint32_t));
+		sock_end   = xcalloc(sock_size, sizeof(uint32_t));
+		sock_used  = xcalloc(sock_size, sizeof(bool));
+	} else
+		return error_code;
+
 
 	if (cr_type & CR_SOCKET)
 		alloc_sockets = true;
@@ -888,30 +895,21 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 			ntasks_per_socket = mc_ptr->ntasks_per_socket;
 	}
 
-	sock_size  = select_node_record[0].sockets;
-	sock_avoid = xcalloc(sock_size, sizeof(bool));
-	sock_start = xcalloc(sock_size, sizeof(uint32_t));
-	sock_end   = xcalloc(sock_size, sizeof(uint32_t));
-	sock_used  = xcalloc(sock_size, sizeof(bool));
-
-	size  = bit_size(job_res->node_bitmap);
 	csize = bit_size(core_map);
-	for (c = 0, i = 0, n = 0; n < size; n++) {
+	for (c = 0, i = 0, n = n_first; n <= n_last; n++) {
 		if (bit_test(job_res->node_bitmap, n) == 0)
 			continue;
 		sockets = select_node_record[n].sockets;
 		cps     = select_node_record[n].cores;
 		vpus    = common_cpus_per_core(job_ptr->details, n);
 
-		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-			info("%s: %s: %pJ node %s vpus %u cpus %u",
-			     plugin_type, __func__, job_ptr,
-			     select_node_record[n].node_ptr->name,
-			     vpus, job_res->cpus[i]);
-		}
+		log_flag(SELECT_TYPE, "%pJ node %s vpus %u cpus %u",
+		         job_ptr,
+		         select_node_record[n].node_ptr->name,
+		         vpus, job_res->cpus[i]);
 
 		if ((c + (sockets * cps)) > csize) {
-			error("%s: %s: index error", plugin_type, __func__);
+			error("index error");
 			break;
 		}
 
@@ -1069,9 +1067,9 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 					sock_str = xstrdup("NONE");
 				job_ptr->priority = 0;
 				job_ptr->state_reason = WAIT_HELD;
-				error("%s: %s: sync loop not progressing, holding %pJ, "
+				error("sync loop not progressing, holding %pJ, "
 				      "tried to use %u CPUs on node %s core_map:%s avoided_sockets:%s vpus:%u",
-				      plugin_type, __func__, job_ptr,
+				      job_ptr,
 				      orig_cpu_cnt,
 				      select_node_record[n].node_ptr->name,
 				      core_str, sock_str, vpus);
@@ -1200,7 +1198,7 @@ extern int dist_tasks(job_record_t *job_ptr, const uint16_t cr_type,
 		return SLURM_SUCCESS;
 	}
 
-	if (job_ptr->details->overcommit && (job_ptr->tres_per_task == 0))
+	if (job_ptr->details->overcommit && !job_ptr->tres_per_task)
 		one_task_per_node = true;
 	_log_select_maps("cr_dist/start", job_ptr);
 	if (((job_ptr->details->task_dist & SLURM_DIST_STATE_BASE) ==
@@ -1234,7 +1232,7 @@ extern int dist_tasks(job_record_t *job_ptr, const uint16_t cr_type,
 	 * Note : cyclic cores distribution, which is the default, is treated
 	 * by the next code block
 	 */
-	if (slurmctld_conf.select_type_param & CR_CORE_DEFAULT_DIST_BLOCK) {
+	if (slurm_conf.select_type_param & CR_CORE_DEFAULT_DIST_BLOCK) {
 		switch (job_ptr->details->task_dist & SLURM_DIST_NODEMASK) {
 		case SLURM_DIST_ARBITRARY:
 		case SLURM_DIST_BLOCK:
@@ -1268,8 +1266,7 @@ extern int dist_tasks(job_record_t *job_ptr, const uint16_t cr_type,
 						      preempt_mode);
 		break;
 	default:
-		error("%s: %s: invalid task_dist entry",
-		      plugin_type, __func__);
+		error("invalid task_dist entry");
 		return SLURM_ERROR;
 	}
 

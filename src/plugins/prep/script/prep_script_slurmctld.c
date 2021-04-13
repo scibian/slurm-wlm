@@ -70,9 +70,9 @@ extern void slurmctld_script(job_record_t *job_ptr, bool is_epilog)
 	script_arg->is_epilog = is_epilog;
 	script_arg->job_id = job_ptr->job_id;
 	if (!is_epilog)
-		script_arg->script = xstrdup(slurmctld_conf.prolog_slurmctld);
+		script_arg->script = xstrdup(slurm_conf.prolog_slurmctld);
 	else
-		script_arg->script = xstrdup(slurmctld_conf.epilog_slurmctld);
+		script_arg->script = xstrdup(slurm_conf.epilog_slurmctld);
 	script_arg->my_env = _build_env(job_ptr, is_epilog);
 
 	debug2("%s: creating a new thread for JobId=%u",
@@ -95,7 +95,6 @@ static void *_run_script(void *arg)
 	pid_t cpid;
 	int status, wait_rc;
 	char *argv[2];
-	uint16_t tm;
 
 	argv[0] = script_arg->script;
 	argv[1] = NULL;
@@ -116,9 +115,9 @@ static void *_run_script(void *arg)
 	/* Start tracking this new process */
 	track_script_rec_add(script_arg->job_id, cpid, pthread_self());
 
-	tm = slurm_get_prolog_timeout();
 	while (1) {
-		wait_rc = waitpid_timeout(__func__, cpid, &status, tm);
+		wait_rc = waitpid_timeout(__func__, cpid, &status,
+					  slurm_conf.prolog_epilog_timeout);
 		if (wait_rc < 0) {
 			if (errno == EINTR)
 				continue;
@@ -222,9 +221,9 @@ static char **_build_env(job_record_t *job_ptr, bool is_epilog)
 		}
 	}
 
-	if (slurmctld_conf.cluster_name) {
+	if (slurm_conf.cluster_name) {
 		setenvf(&my_env, "SLURM_CLUSTER_NAME", "%s",
-			slurmctld_conf.cluster_name);
+		        slurm_conf.cluster_name);
 	}
 
 	if (job_ptr->het_job_id) {

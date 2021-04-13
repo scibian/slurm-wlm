@@ -40,13 +40,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 #include "src/common/log.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_util.h"
 #include "src/common/slurmdbd_defs.h"
+#include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/slurmdbd/read_config.h"
 
@@ -163,8 +163,8 @@ void slurm_print_launch_task_msg(launch_tasks_request_msg_t *msg, char *name)
 	int i;
 	int node_id = nodelist_find(msg->complete_nodelist, name);
 
-	debug3("job_id: %u", msg->job_id);
-	debug3("job_step_id: %u", msg->job_step_id);
+	debug3("job_id: %u", msg->step_id.job_id);
+	debug3("job_step_id: %u", msg->step_id.step_id);
 	if (msg->het_job_step_cnt != NO_VAL)
 		debug3("het_job_step_cnt: %u", msg->het_job_step_cnt);
 	if (msg->het_job_id != NO_VAL)
@@ -191,4 +191,34 @@ void slurm_print_launch_task_msg(launch_tasks_request_msg_t *msg, char *name)
 		debug3("global_task_id[%d]: %u ", i,
 		       msg->global_task_ids[node_id][i]);
 	}
+}
+
+/* Get the port number from a slurm_addr_t */
+uint16_t slurm_get_port(slurm_addr_t *addr)
+{
+	if (addr->ss_family == AF_INET6)
+		return ntohs(((struct sockaddr_in6 *) addr)->sin6_port);
+	else if (addr->ss_family == AF_INET)
+		return ntohs(((struct sockaddr_in *) addr)->sin_port);
+
+	error("%s: Address family '%d' not supported",
+	      __func__, addr->ss_family);
+	return 0;
+}
+
+/* Set the port number in a slurm_addr_t */
+void slurm_set_port(slurm_addr_t *addr, uint16_t port)
+{
+	if (addr->ss_family == AF_INET6)
+		((struct sockaddr_in6 *) addr)->sin6_port = htons(port);
+	else if (addr->ss_family == AF_INET)
+		((struct sockaddr_in *) addr)->sin_port = htons(port);
+	else
+		error("%s: attempting to set port without address family",
+		      __func__);
+}
+
+bool slurm_addr_is_unspec(slurm_addr_t *addr)
+{
+	return (addr->ss_family == AF_UNSPEC);
 }

@@ -432,7 +432,7 @@ static int _eval_nodes(job_record_t *job_ptr, bitstr_t *node_map,
 	if (consec_nodes[consec_index] != 0)
 		consec_end[consec_index++] = i - 1;
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		for (i = 0; i < consec_index; i++) {
 			info("cons_res: eval_nodes:%d consec "
 			     "c=%d n=%d b=%d e=%d r=%d",
@@ -934,10 +934,10 @@ static int _eval_nodes_lln(job_record_t *job_ptr, bitstr_t *node_map,
 			if (bit_test(node_map, i))
 				continue;
 			if ((max_cpu_idx == -1) ||
-			    (avail_res_array[max_cpu_idx]->avail_cpus <
-			     avail_res_array[i]->avail_cpus)) {
+			    (avail_res_array[max_cpu_idx]->max_cpus <
+			     avail_res_array[i]->max_cpus)) {
 				max_cpu_idx = i;
-				if (avail_res_array[max_cpu_idx]->avail_cpus ==
+				if (avail_res_array[max_cpu_idx]->max_cpus ==
 				    last_max_cpu_cnt)
 					break;
 			}
@@ -945,7 +945,7 @@ static int _eval_nodes_lln(job_record_t *job_ptr, bitstr_t *node_map,
 		if ((max_cpu_idx == -1) ||
 		    (avail_res_array[max_cpu_idx]->avail_cpus == 0))
 			break;
-		last_max_cpu_cnt = avail_res_array[max_cpu_idx]->avail_cpus;
+		last_max_cpu_cnt = avail_res_array[max_cpu_idx]->max_cpus;
 		avail_cpus = avail_res_array[max_cpu_idx]->avail_cpus;
 		if (avail_cpus) {
 			rem_cpus -= avail_cpus;
@@ -1128,7 +1128,7 @@ static int _eval_nodes_topo(job_record_t *job_ptr, bitstr_t *bitmap,
 	}
 	bit_nclear(bitmap, 0, select_node_cnt - 1);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		for (i=0; i<switch_record_cnt; i++) {
 			char *node_names = NULL;
 			if (switches_node_cnt[i]) {
@@ -1585,7 +1585,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 	}
 	bit_nclear(bitmap, 0, select_node_cnt - 1);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		for (i = 0; i < switch_record_cnt; i++) {
 			char *node_names = NULL;
 			if (switches_node_cnt[i]) {
@@ -2122,28 +2122,11 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	if (gres_cores == 0)
 		return NULL;
 
-	if (cr_type & CR_CORE) {
-		/* cpu_alloc_size = CPUs per core */
-		cpu_alloc_size = select_node_record[node_i].vpus;
-		avail_res = common_allocate_cores(
-			job_ptr, core_map, part_core_map,
-			node_i, &cpu_alloc_size, false, NULL);
-	} else if (cr_type & CR_SOCKET) {
-		/* cpu_alloc_size = CPUs per socket */
-		cpu_alloc_size = select_node_record[node_i].cores *
-				 select_node_record[node_i].vpus;
-		avail_res = common_allocate_sockets(
-			job_ptr, core_map, part_core_map,
-			node_i, &cpu_alloc_size, NULL);
-	} else {
-		cpu_alloc_size = 1;
-		avail_res = common_allocate_cores(
-			job_ptr, core_map, part_core_map,
-			node_i, &cpu_alloc_size, true, NULL);
-	}
+	avail_res = common_allocate(job_ptr, core_map, part_core_map,
+				    node_i, &cpu_alloc_size, NULL, cr_type);
 
 	if (avail_res)
-		cpus = avail_res->max_cpus;
+		cpus = avail_res->avail_cpus;
 	else
 		cpus = 0;
 
@@ -2177,8 +2160,8 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 				 */
 				while ((cpus > 0) &&
 				       ((req_mem *
-					 ((int) cpus *
-					  (int) select_node_record[node_i].vpus))
+					 ((uint64_t) cpus *
+					  (uint64_t) select_node_record[node_i].vpus))
 					 > avail_mem))
 					cpus -= 1;
 			} else {
@@ -2228,14 +2211,10 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	if (cpus == 0)
 		bit_nclear(core_map, core_start_bit, core_end_bit);
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		info("cons_res: can_job_run_on_node: %u cpus on %s(%d), "
-		     "mem %"PRIu64"/%"PRIu64"",
-		     cpus, select_node_record[node_i].node_ptr->name,
-		     node_usage[node_i].node_state,
-		     node_usage[node_i].alloc_memory,
-		     select_node_record[node_i].real_memory);
-	}
+	log_flag(SELECT_TYPE, "cons_res: can_job_run_on_node: %u cpus on %s(%d), mem %"PRIu64"/%"PRIu64,
+	         cpus, select_node_record[node_i].node_ptr->name,
+	         node_usage[node_i].node_state, node_usage[node_i].alloc_memory,
+	         select_node_record[node_i].real_memory);
 	avail_res->avail_cpus = cpus;
 
 	return avail_res;

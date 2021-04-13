@@ -36,13 +36,19 @@ set task_count  0
 set job_id      0
 set hostfile    "test$test_id.hostfile"
 
+proc cleanup {} {
+	global bin_rm hostfile
+
+	exec $bin_rm -f $hostfile
+}
+
 exec $bin_rm -f $hostfile
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test incompatible with front-end systems"
 }
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set node_count [get_partition_param [default_partition] "TotalNodes"]
 if { $node_count < 3 } {
 	skip "Insufficient nodes in default partition ($node_count < 3)"
 }
@@ -72,9 +78,8 @@ expect {
 		#log_debug "Job initiated"
 	}
 	timeout {
-		log_error "salloc not responding"
 		slow_kill $salloc_pid
-		set exit_code 1
+		fail "salloc not responding"
 	}
 	eof {
 		wait
@@ -379,8 +384,6 @@ expect {
 	}
 }
 
-if {$exit_code == 0} {
-	exec $bin_rm -f $hostfile
-} else {
+if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

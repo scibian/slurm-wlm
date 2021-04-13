@@ -94,6 +94,7 @@ enum {
 	LONG_OPT_DELAY_BOOT,
 	LONG_OPT_ENVIRONMENT, /* only for data */
 	LONG_OPT_EPILOG,
+	LONG_OPT_EXACT,
 	LONG_OPT_EXCLUSIVE,
 	LONG_OPT_EXPORT,
 	LONG_OPT_EXPORT_FILE,
@@ -109,6 +110,7 @@ enum {
 	LONG_OPT_GRES_FLAGS,
 	LONG_OPT_HINT,
 	LONG_OPT_IGNORE_PBS,
+	LONG_OPT_INTERACTIVE,
 	LONG_OPT_JOBID,
 	LONG_OPT_KILL_INV_DEP,
 	LONG_OPT_LAUNCH_CMD,
@@ -135,9 +137,12 @@ enum {
 	LONG_OPT_NO_REQUEUE,
 	LONG_OPT_NO_SHELL,
 	LONG_OPT_NTASKSPERCORE,
+	LONG_OPT_NTASKSPERGPU,
 	LONG_OPT_NTASKSPERNODE,
 	LONG_OPT_NTASKSPERSOCKET,
+	LONG_OPT_NTASKSPERTRES,
 	LONG_OPT_OPEN_MODE,
+	LONG_OPT_OVERLAP,
 	LONG_OPT_HET_GROUP,
 	LONG_OPT_PARSABLE,
 	LONG_OPT_POWER,
@@ -173,6 +178,7 @@ enum {
 	LONG_OPT_USE_MIN_NODES,
 	LONG_OPT_WAIT_ALL_NODES,
 	LONG_OPT_WCKEY,
+	LONG_OPT_WHOLE,
 	LONG_OPT_WRAP,
 	LONG_OPT_X11,
 	LONG_OPT_ENUM_END
@@ -198,7 +204,6 @@ typedef struct {
 
 	char *array_inx;		/* --array			*/
 	char *batch_features;		/* --batch			*/
-	char *export_env;		/* --export			*/
 	char *export_file;		/* --export-file=file		*/
 	bool ignore_pbs;		/* --ignore-pbs			*/
 	int minsockets;			/* --minsockets=n		*/
@@ -206,7 +211,6 @@ typedef struct {
 	int minthreads;			/* --minthreads=n		*/
 	bool parsable;			/* --parsable			*/
 	char *propagate;		/* --propagate[=RLIMIT_CORE,...]*/
-	uint8_t open_mode;		/* --open-mode			*/
 	int requeue;			/* --requeue and --no-requeue	*/
 	bool test_only;			/* --test-only			*/
 	int umask;			/* job umask for PBS		*/
@@ -214,6 +218,10 @@ typedef struct {
 	uint16_t wait_all_nodes;	/* --wait-nodes-ready=val	*/
 	char *wrap;
 } sbatch_opt_t;
+
+typedef struct {
+	char *placeholder;
+} scron_opt_t;
 
 /*
  * options only processed by srun
@@ -234,8 +242,9 @@ typedef struct {
 	bool debugger_test;		/* --debugger-test		*/
 	bool disable_status;		/* --disable-status		*/
 	char *epilog;			/* --epilog			*/
+	bool exact;			/* --exact			*/
 	bool exclusive;			/* --exclusive			*/
-	char *export_env;		/* --export			*/
+	bool interactive;		/* --interactive		*/
 	uint32_t jobid;			/* --jobid			*/
 	int32_t kill_bad_exit;		/* --kill-on-bad-exit		*/
 	bool labelio;			/* --label-output		*/
@@ -246,7 +255,6 @@ typedef struct {
 	bool multi_prog;		/* multiple programs to execute */
 	int32_t multi_prog_cmds;	/* number of commands in multi prog file */
 	bool no_alloc;			/* --no-allocate		*/
-	uint8_t open_mode;		/* --open-mode=append|truncate	*/
 	char *het_group;		/* --het-group			*/
 	bitstr_t *het_grp_bits;		/* --het-group in bitmap form	*/
 	int het_step_cnt;		/* Total count of het groups to launch */
@@ -264,6 +272,7 @@ typedef struct {
 	bool test_exec;			/* test_exec set		*/
 	bool test_only;			/* --test-only			*/
 	bool unbuffered;		/* --unbuffered			*/
+	bool whole;			/* --whole			*/
 } srun_opt_t;
 
 typedef struct {
@@ -275,6 +284,7 @@ typedef struct {
 typedef struct {
 	salloc_opt_t *salloc_opt;
 	sbatch_opt_t *sbatch_opt;
+	scron_opt_t *scron_opt;
 	srun_opt_t *srun_opt;
 
 	slurm_opt_state_t *state;
@@ -300,8 +310,10 @@ typedef struct {
 	uint32_t job_flags;		/* --kill_invalid_dep, --gres-flags */
 	int threads_per_core;		/* --threads-per-core=n		*/
 	int ntasks_per_node;		/* --ntasks-per-node=n		*/
+	int ntasks_per_gpu;		/* --ntasks-per-gpu=n		*/
 	int ntasks_per_socket;		/* --ntasks-per-socket=n	*/
 	int ntasks_per_core;		/* --ntasks-per-core=n		*/
+	int ntasks_per_tres;		/* --ntasks-per-gpu=n	*/
 	char *hint;			/* --hint or SLURM_HINT envvar	*/
 	mem_bind_type_t mem_bind_type;	/* --mem-bind=		*/
 	char *mem_bind;			/* binding map for map/mask_mem	*/
@@ -383,6 +395,9 @@ typedef struct {
 	char *mcs_label;		/* mcs label			*/
 	time_t deadline;		/* ---deadline			*/
 	uint32_t delay_boot;		/* --delay-boot			*/
+	uint32_t step_het_comp_cnt;     /* How many components are in this het
+					 * step that is part of a non-hetjob. */
+	char *step_het_grps;		/* what het groups are used by step */
 	char *tres_bind;		/* derived from gpu_bind	*/
 	char *tres_freq;		/* derived from gpu_freq	*/
 	uint16_t x11;			/* --x11			*/
@@ -392,9 +407,12 @@ typedef struct {
 	uint16_t x11_target_port;	/* target display TCP port on localhost */
 
 	/* used in both sbatch and srun, here for convenience */
+	uint8_t open_mode;		/* --open-mode=append|truncate	*/
+	char *export_env;		/* --export			*/
 	char *efname;			/* error file name		*/
 	char *ifname;			/* input file name		*/
 	char *ofname;			/* output file name		*/
+
 } slurm_opt_t;
 
 extern struct option *slurm_option_table_create(slurm_opt_t *opt,
@@ -412,6 +430,13 @@ extern void slurm_option_table_destroy(struct option *optz);
  */
 extern int slurm_process_option(slurm_opt_t *opt, int optval, const char *arg,
 				bool set_by_env, bool early_pass);
+
+/*
+ * Use slurm_process_option and call exit(-1) in case of non-zero return code
+ */
+extern void slurm_process_option_or_exit(slurm_opt_t *opt, int optval,
+					 const char *arg, bool set_by_env,
+					 bool early_pass);
 
 /*
  * Process incoming single component of Job data entry
@@ -436,8 +461,8 @@ extern void slurm_reset_all_options(slurm_opt_t *opt, bool first_pass);
 
 /*
  * Free all memory associated with opt members
- * Note: assumes that opt, opt->salloc_opt, opt->sbatch_opt, and
- * opt->srun_opt should not be xfreed.
+ * Note: assumes that opt, opt->salloc_opt, opt->sbatch_opt, opt->scron_opt,
+ * and opt->srun_opt should not be xfreed.
  */
 extern void slurm_free_options_members(slurm_opt_t *opt);
 
@@ -502,5 +527,17 @@ extern bool slurm_option_get_next_set(slurm_opt_t *opt, char **name,
  * this will fatal().
  */
 extern void validate_memory_options(slurm_opt_t *opt);
+
+/*
+ * Validate that conflicting optons (--hint, --ntasks-per-core,
+ * --nthreads-per-core) are not used together.
+ *
+ */
+extern int validate_hint_option(slurm_opt_t *opt);
+
+/*
+ * Validate options that are common to salloc, sbatch, and srun.
+ */
+extern void validate_options_salloc_sbatch_srun(slurm_opt_t *opt);
 
 #endif	/* _SLURM_OPT_H_ */

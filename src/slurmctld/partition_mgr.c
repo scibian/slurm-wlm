@@ -49,7 +49,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "src/common/assoc_mgr.h"
@@ -86,15 +85,10 @@ uint16_t part_max_priority = DEF_PART_MAX_PRIORITY;
 
 static int    _delete_part_record(char *name);
 static int    _dump_part_state(void *x, void *arg);
-static uid_t *_get_groups_members(char *group_names);
-static time_t _get_group_tlm(void);
 static void   _list_delete_part(void *part_entry);
 static int    _match_part_ptr(void *part_ptr, void *key);
 static Buf    _open_part_state_file(char **state_file);
-static int    _uid_list_size(uid_t * uid_list_ptr);
 static void   _unlink_free_nodes(bitstr_t *old_bitmap, part_record_t *part_ptr);
-static uid_t *_remove_duplicate_uids(uid_t *);
-static int _uid_cmp(const void *, const void *);
 
 static int _calc_part_tres(void *x, void *arg)
 {
@@ -136,7 +130,7 @@ static int _calc_part_tres(void *x, void *arg)
 	 */
 	tres_cnt[TRES_ARRAY_BILLING] = assoc_mgr_tres_weighted(
 		tres_cnt, part_ptr->billing_weights,
-		slurmctld_conf.priority_flags, true);
+		slurm_conf.priority_flags, true);
 
 	part_ptr->tres_fmt_str =
 		assoc_mgr_make_tres_str_from_array(part_ptr->tres_cnt,
@@ -293,7 +287,7 @@ part_record_t *create_part_record(const char *name)
 
 	last_part_update = time(NULL);
 
-	xassert (part_ptr->magic = PART_MAGIC);  /* set value */
+	part_ptr->magic = PART_MAGIC;
 	part_ptr->name              = xstrdup(name);
 	part_ptr->alternate         = xstrdup(default_part.alternate);
 	part_ptr->cr_type	    = default_part.cr_type;
@@ -436,11 +430,11 @@ int dump_all_part_state(void)
 	lock_slurmctld(part_read_lock);
 	list_for_each(part_list, _dump_part_state, buffer);
 
-	old_file = xstrdup(slurmctld_conf.state_save_location);
+	old_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat(old_file, "/part_state.old");
-	reg_file = xstrdup(slurmctld_conf.state_save_location);
+	reg_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat(reg_file, "/part_state");
-	new_file = xstrdup(slurmctld_conf.state_save_location);
+	new_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat(new_file, "/part_state.new");
 	unlock_slurmctld(part_read_lock);
 
@@ -500,6 +494,8 @@ int dump_all_part_state(void)
  * IN part_ptr - pointer to partition for which information
  *	is requested
  * IN/OUT buffer - location to store data, pointers automatically advanced
+ *
+ * Note: read by load_all_part_state().
  */
 static int _dump_part_state(void *x, void *arg)
 {
@@ -554,7 +550,7 @@ static Buf _open_part_state_file(char **state_file)
 {
 	Buf buf;
 
-	*state_file = xstrdup(slurmctld_conf.state_save_location);
+	*state_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat(*state_file, "/part_state");
 	buf = create_mmap_buf(*state_file);
 	if (!buf) {
@@ -573,6 +569,8 @@ static Buf _open_part_state_file(char **state_file)
  * load_all_part_state - load the partition state from file, recover on
  *	slurmctld restart. execute this after loading the configuration
  *	file data.
+ *
+ * Note: reads dump from _dump_part_state().
  */
 int load_all_part_state(void)
 {
@@ -894,7 +892,7 @@ int init_part_conf(void)
 	xfree(default_part.name);	/* needed for reconfig */
 	default_part.name           = xstrdup("DEFAULT");
 	default_part.flags          = 0;
-	if (slurmctld_conf.conf_flags & CTL_CONF_DRJ)
+	if (slurm_conf.conf_flags & CTL_CONF_DRJ)
 		default_part.flags |= PART_FLAG_NO_ROOT;
 	default_part.max_time       = INFINITE;
 	default_part.default_time   = NO_VAL;
@@ -1052,7 +1050,7 @@ extern bool part_is_visible(part_record_t *part_ptr, uid_t uid)
 {
 	xassert(verify_lock(PART_LOCK, READ_LOCK));
 
-	if (validate_slurm_user(uid))
+	if (validate_operator(uid))
 		return true;
 	if (part_ptr->flags & PART_FLAG_HIDDEN)
 		return false;
@@ -1520,7 +1518,7 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 			info("%s: setting allow_groups to %s for partition %s",
 			     __func__, part_ptr->allow_groups, part_desc->name);
 			part_ptr->allow_uids =
-				_get_groups_members(part_ptr->allow_groups);
+				get_groups_members(part_ptr->allow_groups);
 			clear_group_cache();
 		}
 	}
@@ -1913,7 +1911,7 @@ static int _update_part_uid_access_list(void *x, void *arg)
 	uid_t *tmp_uids;
 
 	tmp_uids = part_ptr->allow_uids;
-	part_ptr->allow_uids = _get_groups_members(part_ptr->allow_groups);
+	part_ptr->allow_uids = get_groups_members(part_ptr->allow_groups);
 
 	if ((!part_ptr->allow_uids) && (!tmp_uids)) {
 		/* no changes, and no arrays to compare */
@@ -1948,7 +1946,7 @@ void load_part_uid_allow_list(int force)
 	DEF_TIMERS;
 
 	START_TIMER;
-	temp_time = _get_group_tlm();
+	temp_time = get_group_tlm();
 	if ((force == 0) && (temp_time == last_update_time))
 		return;
 	debug("Updating partition uid access list");
@@ -1966,135 +1964,6 @@ void load_part_uid_allow_list(int force)
 
 	clear_group_cache();
 	END_TIMER2("load_part_uid_allow_list");
-}
-
-
-/*
- * _get_groups_members - identify the users in a list of group names
- * IN group_names - a comma delimited list of group names
- * RET a zero terminated list of its UIDs or NULL on error
- * NOTE: User root has implicitly access to every group
- * NOTE: The caller must xfree non-NULL return values
- */
-uid_t *_get_groups_members(char *group_names)
-{
-	uid_t *group_uids = NULL;
-	uid_t *temp_uids  = NULL;
-	int i, j, k;
-	char *tmp_names = NULL, *name_ptr = NULL, *one_group_name = NULL;
-
-	if (group_names == NULL)
-		return NULL;
-
-	tmp_names = xstrdup(group_names);
-	one_group_name = strtok_r(tmp_names, ",", &name_ptr);
-	while (one_group_name) {
-		temp_uids = get_group_members(one_group_name);
-		if (temp_uids == NULL)
-			;
-		else if (group_uids == NULL) {
-			group_uids = temp_uids;
-		} else {
-			/* concatenate the uid_lists and free the new one */
-			i = _uid_list_size(group_uids);
-			j = _uid_list_size(temp_uids);
-			xrealloc(group_uids, sizeof(uid_t) * (i + j + 1));
-			for (k = 0; k <= j; k++)
-				group_uids[i + k] = temp_uids[k];
-			xfree(temp_uids);
-		}
-		one_group_name = strtok_r(NULL, ",", &name_ptr);
-	}
-	xfree(tmp_names);
-
-	group_uids = _remove_duplicate_uids(group_uids);
-
-	return group_uids;
-}
-
-/* remove_duplicate_uids()
- */
-static uid_t *
-_remove_duplicate_uids(uid_t *u)
-{
-	int i;
-	int j;
-	int num;
-	uid_t *v;
-	uid_t cur;
-
-	if (!u)
-		return NULL;
-
-	num = 1;
-	for (i = 0; u[i]; i++)
-		++num;
-
-	v = xcalloc(num, sizeof(uid_t));
-	qsort(u, num, sizeof(uid_t), _uid_cmp);
-
-	j = 0;
-	cur = u[0];
-	for (i = 0; u[i]; i++) {
-		if (u[i] == cur)
-			continue;
-		v[j] = cur;
-		cur = u[i];
-		++j;
-	}
-	v[j] = cur;
-
-	xfree(u);
-	return v;
-}
-
-/* uid_cmp
- */
-static int
-_uid_cmp(const void *x, const void *y)
-{
-	uid_t a;
-	uid_t b;
-
-	a = *(uid_t *)x;
-	b = *(uid_t *)y;
-
-	/* Sort in decreasing order so that the 0
-	 * as at the end.
-	 */
-	if (a > b)
-		return -1;
-	if (a < b)
-		return 1;
-	return 0;
-}
-
-/* _get_group_tlm - return the time of last modification for the GROUP_FILE */
-time_t _get_group_tlm(void)
-{
-	struct stat stat_buf;
-
-	if (stat(GROUP_FILE, &stat_buf)) {
-		error("Can't stat file %s %m", GROUP_FILE);
-		return (time_t) 0;
-	}
-	return stat_buf.st_mtime;
-}
-
-/* _uid_list_size - return the count of uid's in a zero terminated list */
-static int _uid_list_size(uid_t * uid_list_ptr)
-{
-	int i;
-
-	if (uid_list_ptr == NULL)
-		return 0;
-
-	for (i = 0;; i++) {
-		if (uid_list_ptr[i] == 0)
-			break;
-	}
-
-	return i;
 }
 
 /* part_fini - free all memory associated with partition records */

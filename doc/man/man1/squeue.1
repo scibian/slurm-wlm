@@ -1,4 +1,4 @@
-.TH squeue "1" "Slurm Commands" "October 2020" "Slurm Commands"
+.TH squeue "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 squeue \- view information about jobs located in the Slurm scheduling queue.
@@ -21,7 +21,8 @@ list of account names. This has no effect when listing job steps.
 \fB\-a\fR, \fB\-\-all\fR
 Display information about jobs and job steps in all partitions.
 This causes information to be displayed about partitions that are configured as
-hidden and partitions that are unavailable to user's group.
+hidden, partitions that are unavailable to a user's group, and federated jobs
+that are in a "revoked" state.
 
 .TP
 \fB\-r\fR, \fB\-\-array\fR
@@ -779,6 +780,12 @@ Partition of the job or job step.
 The preempt time for the job.
 (Valid for jobs only)
 .TP
+\fBPendingTime\fR
+The time (in seconds) between start time and submit time of the job.
+If the job has not started yet, then the time (in seconds) between
+now and the submit time of the job.
+(Valid for jobs only)
+.TP
 \fBPriority\fR
 Priority of the job (converted to a floating point number between 0.0 and 1.0).
 Also see \fBprioritylong\fR.
@@ -1425,59 +1432,49 @@ A valid strftime() format can also be specified. For example, a value of
 \fB\-u <user_list>, \-\-users=<user_list>\fR
 
 .SH "EXAMPLES"
-.eo
-Print the jobs scheduled in the debug partition and in the
-COMPLETED state in the format with six right justified digits for
+.TP
+Print the jobs scheduled in the debug partition and in the \
+COMPLETED state in the format with six right justified digits for \
 the job id followed by the priority with an arbitrary fields size:
-.br
-# squeue -p debug -t COMPLETED -o "%.6i %p"
-.br
+
+.nf
+$ squeue -p debug -t COMPLETED -o "%.6i %p"
  JOBID PRIORITY
-.br
  65543 99993
-.br
  65544 99992
-.br
  65545 99991
-.ec
+.fi
 
-.eo
+.TP
 Print the job steps in the debug partition sorted by user:
-.br
-# squeue -s -p debug -S u
-.br
+
+.nf
+$ squeue -s -p debug -S u
   STEPID        NAME PARTITION     USER      TIME NODELIST
-.br
  65552.1       test1     debug    alice      0:23 dev[1-4]
-.br
  65562.2     big_run     debug      bob      0:18 dev22
-.br
  65550.1      param1     debug  candice   1:43:21 dev[6-12]
-.ec
+.fi
 
-.eo
-Print information only about jobs 12345,12345, and 12348:
-.br
-# squeue --jobs 12345,12346,12348
-.br
+.TP
+Print information only about jobs 12345, 12346 and 12348:
+
+.nf
+$ squeue --jobs 12345,12346,12348
  JOBID PARTITION NAME USER ST  TIME  NODES NODELIST(REASON)
-.br
  12345     debug job1 dave  R   0:21     4 dev[9-12]
-.br
  12346     debug job2 dave PD   0:00     8 (Resources)
-.br
  12348     debug job3 ed   PD   0:00     4 (Priority)
-.ec
+.fi
 
-.eo
+.TP
 Print information only about job step 65552.1:
-.br
-# squeue --steps 65552.1
-.br
+
+.nf
+$ squeue --steps 65552.1
   STEPID     NAME PARTITION    USER    TIME  NODELIST
-.br
  65552.1    test2     debug   alice   12:49  dev[1-4]
-.ec
+.fi
 
 .SH "COPYING"
 Copyright (C) 2002\-2007 The Regents of the University of California.

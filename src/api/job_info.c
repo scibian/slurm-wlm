@@ -541,6 +541,15 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrcat(out, line_end);
 
 	/****** Line ******/
+
+	if (job_ptr->bitflags & CRON_JOB || job_ptr->cronspec) {
+		if (job_ptr->bitflags & CRON_JOB)
+			xstrcat(out, "CronJob=Yes ");
+		xstrfmtcat(out, "CrontabSpec=\"%s\"", job_ptr->cronspec);
+		xstrcat(out, line_end);
+	}
+
+	/****** Line ******/
 	/*
 	 * only print this line if preemption is enabled and job started
 	 * 	see src/slurmctld/job_mgr.c:pack_job, 'preemptable'
@@ -1010,11 +1019,21 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 		xstrfmtcat(out, "TresPerTask=%s", job_ptr->tres_per_task);
 	}
 
+	/****** Line (optional) ******/
+	if (job_ptr->mail_type && job_ptr->mail_user) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "MailUser=%s MailType=%s",
+			   job_ptr->mail_user,
+			   print_mail_type(job_ptr->mail_type));
+	}
+
 	/****** Line ******/
 	xstrcat(out, line_end);
-	xstrfmtcat(out, "MailUser=%s MailType=%s",
-		   job_ptr->mail_user,
-		   print_mail_type(job_ptr->mail_type));
+	if ((job_ptr->ntasks_per_tres == NO_VAL16) ||
+	    (job_ptr->ntasks_per_tres == INFINITE16))
+		xstrcat(out, "NtasksPerTRES:*");
+	else
+		xstrfmtcat(out, "NtasksPerTRES:%u", job_ptr->ntasks_per_tres);
 
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
@@ -1306,9 +1325,10 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 	int rc;
 
 	if (working_cluster_rec)
-		cluster_name = xstrdup(working_cluster_rec->name);
+		cluster_name = working_cluster_rec->name;
 	else
-		cluster_name = slurm_get_cluster_name();
+		cluster_name = slurm_conf.cluster_name;
+
 	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
 	    cluster_in_federation(ptr, cluster_name)) {
@@ -1339,7 +1359,6 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }
@@ -1359,15 +1378,13 @@ extern int slurm_load_job_user (job_info_msg_t **job_info_msg_pptr,
 {
 	slurm_msg_t req_msg;
 	job_user_id_msg_t req;
-	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
 	int rc;
 
-	cluster_name = slurm_get_cluster_name();
 	if ((show_flags & SHOW_LOCAL) == 0) {
 		if (slurm_load_federation(&ptr) ||
-		    !cluster_in_federation(ptr, cluster_name)) {
+		    !cluster_in_federation(ptr, slurm_conf.cluster_name)) {
 			/* Not in federation */
 			show_flags |= SHOW_LOCAL;
 		}
@@ -1388,12 +1405,11 @@ extern int slurm_load_job_user (job_info_msg_t **job_info_msg_pptr,
 	} else {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_jobs(&req_msg, job_info_msg_pptr, show_flags,
-				    cluster_name, fed);
+				    slurm_conf.cluster_name, fed);
 	}
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }
@@ -1412,15 +1428,13 @@ slurm_load_job (job_info_msg_t **job_info_msg_pptr, uint32_t job_id,
 {
 	slurm_msg_t req_msg;
 	job_id_msg_t req;
-	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
 	int rc;
 
-	cluster_name = slurm_get_cluster_name();
 	if ((show_flags & SHOW_LOCAL) == 0) {
 		if (slurm_load_federation(&ptr) ||
-		    !cluster_in_federation(ptr, cluster_name)) {
+		    !cluster_in_federation(ptr, slurm_conf.cluster_name)) {
 			/* Not in federation */
 			show_flags |= SHOW_LOCAL;
 		}
@@ -1441,12 +1455,11 @@ slurm_load_job (job_info_msg_t **job_info_msg_pptr, uint32_t job_id,
 	} else {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_jobs(&req_msg, job_info_msg_pptr, show_flags,
-				    cluster_name, fed);
+				    slurm_conf.cluster_name, fed);
 	}
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }
@@ -1477,8 +1490,7 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 					    req_msg.flags);
 		} else {
 			this_addr = "localhost";
-			slurm_set_addr(&req_msg.address,
-				       (uint16_t)slurm_get_slurmd_port(),
+			slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 				       this_addr);
 		}
 	} else {
@@ -1487,11 +1499,10 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host);
+		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
-		slurm_set_addr(&req_msg.address,
-			       (uint16_t)slurm_get_slurmd_port(),
+		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
 			       this_addr);
 		xfree(this_addr);
 	}
@@ -1504,7 +1515,6 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 	rc = slurm_send_recv_node_msg(&req_msg, &resp_msg, 0);
 
 	if ((rc != 0) || !resp_msg.auth_cred) {
-		error("slurm_pid2jobid: %m");
 		if (resp_msg.auth_cred)
 			g_slurm_auth_destroy(resp_msg.auth_cred);
 		return SLURM_ERROR;
@@ -1842,8 +1852,7 @@ slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
 	slurm_msg_t resp_msg;
 	slurm_msg_t req_msg;
 	network_callerid_resp_t *resp;
-	struct sockaddr_in addr;
-	uint32_t target_slurmd; /* change for IPv6 support */
+	slurm_addr_t addr;
 
 	debug("slurm_network_callerid RPC: start");
 
@@ -1853,24 +1862,18 @@ slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
 	/* ip_src is the IP we want to talk to. Hopefully there's a slurmd
 	 * listening there */
 	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = req.af;
+	addr.ss_family = req.af;
 
-	/* TODO: until IPv6 support is added to Slurm, we must hope that the
-	 * other end is IPv4 */
-	if (req.af == AF_INET6) {
-		error("IPv6 is not yet supported in Slurm");
-		/* For testing IPv6 callerid prior to Slurm IPv6 RPC support,
-		 * set a sane target, uncomment the following and comment out
-		 * the return code:
-		addr.sin_family = AF_INET;
-		target_slurmd = inet_addr("127.0.0.1"); //choose a test target
-		*/
-		return SLURM_ERROR;
-	} else
-		memcpy(&target_slurmd, req.ip_src, 4);
+	if (addr.ss_family == AF_INET6) {
+		struct sockaddr_in6 *in6 = (struct sockaddr_in6 *) &addr;
+		memcpy(&(in6->sin6_addr.s6_addr), req.ip_src, 16);
+	        in6->sin6_port = htons(slurm_conf.slurmd_port);
+	} else {
+		struct sockaddr_in *in = (struct sockaddr_in *) &addr;
+		memcpy(&(in->sin_addr.s_addr), req.ip_src, 4);
+		in->sin_port = htons(slurm_conf.slurmd_port);
+	}
 
-	addr.sin_addr.s_addr = target_slurmd;
-	addr.sin_port = htons(slurm_get_slurmd_port());
 	req_msg.address = addr;
 
 	req_msg.msg_type = REQUEST_NETWORK_CALLERID;
@@ -2172,15 +2175,13 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 {
 	slurm_msg_t req_msg;
 	priority_factors_request_msg_t factors_req;
-	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
 	int rc;
 
-	cluster_name = slurm_get_cluster_name();
 	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
-	    cluster_in_federation(ptr, cluster_name)) {
+	    cluster_in_federation(ptr, slurm_conf.cluster_name)) {
 		/* In federation. Need full info from all clusters */
 		show_flags &= (~SHOW_LOCAL);
 	} else {
@@ -2203,7 +2204,7 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 	if (show_flags & SHOW_FEDERATION) {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_job_prio(&req_msg, factors_resp, show_flags,
-					cluster_name, fed);
+					slurm_conf.cluster_name, fed);
 	} else {
 		rc = _load_cluster_job_prio(&req_msg, factors_resp,
 					    working_cluster_rec);
@@ -2211,7 +2212,6 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 
 	if (ptr)
 		slurm_destroy_federation_rec(ptr);
-	xfree(cluster_name);
 
 	return rc;
 }

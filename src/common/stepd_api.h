@@ -74,6 +74,7 @@ typedef enum {
 	REQUEST_X11_DISPLAY,
 	REQUEST_GETPW,
 	REQUEST_GETGR,
+	REQUEST_GET_NS_FD,
 } step_msg_t;
 
 typedef enum {
@@ -96,13 +97,12 @@ typedef enum {
 } stepd_getgr_mode_t;
 
 typedef struct {
-	uid_t uid;
-	uint32_t jobid;
-	uint32_t stepid;
+	uint64_t job_mem_limit;		/* job's memory limit, MB */
 	uint32_t nodeid;
 	uint16_t protocol_version;
-	uint64_t job_mem_limit;		/* job's memory limit, MB */
+	slurm_step_id_t step_id;
 	uint64_t step_mem_limit;	/* step's memory limit, MB */
+	uid_t uid;
 } slurmstepd_info_t;
 
 typedef struct {
@@ -112,19 +112,18 @@ typedef struct {
 } slurmstepd_mem_info_t;
 
 typedef struct {
-	int             id;	    /* local task id */
-	uint32_t        gtid;	    /* global task id */
-	pid_t           pid;	    /* task pid */
-	bool            exited;     /* true if task has exited */
 	int             estatus;    /* exit status if exited is true*/
+	bool            exited;     /* true if task has exited */
+	uint32_t        gtid;	    /* global task id */
+	int             id;	    /* local task id */
+	pid_t           pid;	    /* task pid */
 } slurmstepd_task_info_t;
 
 typedef struct step_location {
-	uint32_t jobid;
-	uint32_t stepid;
-	char *nodename;
 	char *directory;
+	char *nodename;
 	uint16_t protocol_version;
+	slurm_step_id_t step_id;
 } step_loc_t;
 
 
@@ -148,22 +147,8 @@ int stepd_terminate(int fd, uint16_t protocol_version);
  * of the running stepd.
  */
 extern int stepd_connect(const char *directory, const char *nodename,
-		  uint32_t jobid, uint32_t stepid, uint16_t *protocol_version);
-
-
-/*
- * Connect to a slurmstepd proccess by way of its unix domain socket.
- *
- * This is specifically intended to be used with nss_slurm to prevent possible
- * deadlocks. Neither "directory" or "nodename" may be null, and will result
- * in an error. Remove this function in 20.11.
- *
- * Returns a file descriptor for the opened socket on success alongside the
- * protocol_version for the stepd, or -1 on error.
- */
-extern int stepd_connect_nss(const char *directory, const char *nodename,
-			     uint32_t jobid, uint32_t stepid,
-			     uint16_t *protocol_version);
+			 slurm_step_id_t *step_id,
+			 uint16_t *protocol_version);
 
 /*
  * Retrieve a job step's current state.
@@ -306,7 +291,7 @@ int stepd_completion(int fd, uint16_t protocol_version,
  * resp receives a jobacctinfo_t which must be freed if SUCCESS.
  */
 int stepd_stat_jobacct(int fd, uint16_t protocol_version,
-		       job_step_id_msg_t *sent, job_step_stat_t *resp);
+		       slurm_step_id_t *sent, job_step_stat_t *resp);
 
 
 int stepd_task_info(int fd, uint16_t protocol_version,
@@ -337,4 +322,10 @@ extern uid_t stepd_get_uid(int fd, uint16_t protocol_version);
  */
 extern uint32_t stepd_get_nodeid(int fd, uint16_t protocol_version);
 
+/*
+ * Get the namespace fd of a running job via slurmstepd by entering
+ * its job container
+ * On error returns -1.
+ */
+extern int stepd_get_namespace_fd(int fd, uint16_t protocol_version);
 #endif /* _STEPD_API_H */

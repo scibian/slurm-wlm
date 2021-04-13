@@ -43,100 +43,7 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include <sys/param.h>		/* MAXPATHLEN */
 #include "src/common/proc_args.h"
-#include "src/common/uid.h"
 #include "src/common/util-net.h"
-
-static char *_string_to_uid( char *name )
-{
-	uid_t uid;
-	if ( uid_from_string( name, &uid ) != 0 ) {
-		fprintf(stderr, "Invalid user id: %s\n", name);
-		exit(1);
-	}
-	xfree(name);
-	return xstrdup_printf( "%d", (int) uid );
-}
-
-/* returns number of objects added to list */
-extern int _addto_uid_char_list(List char_list, char *names)
-{
-	int i=0, start=0;
-	char *name = NULL, *tmp_char = NULL;
-	ListIterator itr = NULL;
-	char quote_c = '\0';
-	int quote = 0;
-	int count = 0;
-
-	if (!char_list) {
-		error("No list was given to fill in");
-		return 0;
-	}
-
-	itr = list_iterator_create(char_list);
-	if (names) {
-		if (names[i] == '\"' || names[i] == '\'') {
-			quote_c = names[i];
-			quote = 1;
-			i++;
-		}
-		start = i;
-		while(names[i]) {
-			//info("got %d - %d = %d", i, start, i-start);
-			if (quote && names[i] == quote_c)
-				break;
-			else if (names[i] == '\"' || names[i] == '\'')
-				names[i] = '`';
-			else if (names[i] == ',') {
-				if ((i-start) > 0) {
-					name = xmalloc((i-start+1));
-					memcpy(name, names+start, (i-start));
-					//info("got %s %d", name, i-start);
-					name = _string_to_uid( name );
-
-					while((tmp_char = list_next(itr))) {
-						if (!xstrcasecmp(tmp_char,
-								 name))
-							break;
-					}
-
-					if (!tmp_char) {
-						list_append(char_list, name);
-						count++;
-					} else
-						xfree(name);
-					list_iterator_reset(itr);
-				}
-				i++;
-				start = i;
-				if (!names[i]) {
-					info("There is a problem with "
-					     "your request.  It appears you "
-					     "have spaces inside your list.");
-					break;
-				}
-			}
-			i++;
-		}
-		if ((i-start) > 0) {
-			name = xmalloc((i-start)+1);
-			memcpy(name, names+start, (i-start));
-			name = _string_to_uid( name );
-
-			while((tmp_char = list_next(itr))) {
-				if (!xstrcasecmp(tmp_char, name))
-					break;
-			}
-
-			if (!tmp_char) {
-				list_append(char_list, name);
-				count++;
-			} else
-				xfree(name);
-		}
-	}
-	list_iterator_destroy(itr);
-	return count;
-}
 
 static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_archive_cond_t *arch_cond)
@@ -237,7 +144,7 @@ static int _set_cond(int *start, int argc, char **argv,
 		} else if (!xstrncasecmp(argv[i], "Jobs",
 					 MAX(command_len, 1))) {
 			char *end_char = NULL, *start_char = argv[i] + end;
-			slurmdb_selected_step_t *selected_step = NULL;
+			slurm_selected_step_t *selected_step = NULL;
 			char *dot = NULL;
 			if (!job_cond->step_list)
 				job_cond->step_list = list_create(xfree_ptr);
@@ -249,7 +156,7 @@ static int _set_cond(int *start, int argc, char **argv,
 				if (start_char[0] == '\0')
 					continue;
 				selected_step = xmalloc(
-					sizeof(slurmdb_selected_step_t));
+					sizeof(slurm_selected_step_t));
 				selected_step->array_task_id = NO_VAL;
 				selected_step->het_job_offset = NO_VAL;
 				list_append(job_cond->step_list, selected_step);
@@ -257,12 +164,15 @@ static int _set_cond(int *start, int argc, char **argv,
 				dot = strstr(start_char, ".");
 				if (dot == NULL) {
 					debug2("No jobstep requested");
-					selected_step->stepid = NO_VAL;
+					selected_step->step_id.step_id = NO_VAL;
 				} else {
 					*dot++ = 0;
-					selected_step->stepid = atoi(dot);
+					selected_step->step_id.step_id =
+						atoi(dot);
 				}
-				selected_step->jobid = atoi(start_char);
+				selected_step->step_id.step_het_comp = NO_VAL;
+				selected_step->step_id.job_id =
+					atoi(start_char);
 				start_char = end_char + 1;
 			}
 
@@ -424,9 +334,11 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 1))) {
 			if (!job_cond->userid_list)
 				job_cond->userid_list = list_create(xfree_ptr);
-			_addto_uid_char_list(job_cond->userid_list,
-					     argv[i]+end);
-			set = 1;
+			if (slurm_addto_id_char_list(job_cond->userid_list,
+			                             argv[i]+end, false))
+				set = 1;
+			else
+				exit_code = 1;
 		} else {
 			exit_code=1;
 			fprintf(stderr, " Unknown condition: %s\n", argv[i]);

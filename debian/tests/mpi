@@ -43,6 +43,11 @@ EOF
 service slurmctld restart
 service slurmd restart
 
+sleep 10
+
+service slurmctld status
+service slurmd status
+
 sinfo
 sinfo --Node
 

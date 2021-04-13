@@ -54,6 +54,7 @@
 #include <unistd.h>
 
 #include "slurm/slurm_errno.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -117,13 +118,13 @@ static void _sock_bind_wild(int sockfd)
 		srand48((long int) (time(NULL) + getpid()));
 	}
 
-	slurm_setup_sockaddr(&sin, RANDOM_USER_PORT);
+	slurm_setup_addr(&sin, RANDOM_USER_PORT);
 
 	for (retry=0; retry < PORT_RETRIES ; retry++) {
 		rc = bind(sockfd, (struct sockaddr *) &sin, sizeof(sin));
 		if (rc >= 0)
 			break;
-		sin.sin_port  = htons(RANDOM_USER_PORT);
+		slurm_set_port(&sin, RANDOM_USER_PORT);
 	}
 	return;
 }
@@ -164,7 +165,7 @@ extern ssize_t slurm_msg_recvfrom_timeout(int fd, char **pbuf, size_t *lenp,
 extern ssize_t slurm_msg_sendto(int fd, char *buffer, size_t size)
 {
 	return slurm_msg_sendto_timeout(fd, buffer, size,
-					(slurm_get_msg_timeout() * 1000));
+	                                (slurm_conf.msg_timeout * 1000));
 }
 
 ssize_t slurm_msg_sendto_timeout(int fd, char *buffer,
@@ -410,7 +411,7 @@ extern int slurm_init_msg_engine(slurm_addr_t *addr)
 	const int one = 1;
 	const size_t sz1 = sizeof(one);
 
-	if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+	if ((fd = socket(addr->ss_family, SOCK_STREAM, IPPROTO_TCP)) < 0) {
 		error("Error creating slurm stream socket: %m");
 		return fd;
 	}
@@ -447,26 +448,22 @@ error:
  * new socket's descriptor, or -1 for errors.  */
 extern int slurm_accept_msg_conn(int fd, slurm_addr_t *addr)
 {
-	socklen_t len = sizeof(slurm_addr_t);
-	return accept(fd, (struct sockaddr *)addr, &len);
+	socklen_t len = sizeof(*addr);
+	return accept(fd, (struct sockaddr *) addr, &len);
 }
 
 extern int slurm_open_stream(slurm_addr_t *addr, bool retry)
 {
 	int retry_cnt;
 	int fd;
-	uint16_t port;
-	char ip[32];
 
 #ifdef HAVE_NATIVE_CRAY
 	static int check_quiesce = -1;
 	if (check_quiesce == -1) {
-		char *comm_params = slurm_get_comm_parameters();
-		if (xstrcasestr(comm_params, "CheckGhalQuiesce"))
+		if (xstrcasestr(slurm_conf.comm_params, "CheckGhalQuiesce"))
 			check_quiesce = 1;
 		else
 			check_quiesce = 0;
-		xfree(comm_params);
 	}
 
 	if (check_quiesce) {
@@ -494,15 +491,17 @@ extern int slurm_open_stream(slurm_addr_t *addr, bool retry)
 	}
 #endif
 
-	if ( (addr->sin_family == 0) || (addr->sin_port  == 0) ) {
+	if ((slurm_addr_is_unspec(addr)) || (slurm_get_port(addr) == 0)) {
 		error("Error connecting, bad data: family = %u, port = %u",
-			addr->sin_family, addr->sin_port);
+		      addr->ss_family, slurm_get_port(addr));
 		return SLURM_ERROR;
 	}
 
 	for (retry_cnt=0; ; retry_cnt++) {
 		int rc;
-		if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+
+		fd = socket(addr->ss_family, SOCK_STREAM, IPPROTO_TCP);
+		if (fd < 0) {
 			error("Error creating slurm stream socket: %m");
 			slurm_seterrno(errno);
 			return SLURM_ERROR;
@@ -532,9 +531,7 @@ extern int slurm_open_stream(slurm_addr_t *addr, bool retry)
 	return fd;
 
 error:
-	slurm_get_ip_str(addr, &port, ip, sizeof(ip));
-	debug2("Error connecting slurm stream socket at %s:%d: %m",
-	       ip, ntohs(port));
+	debug2("Error connecting slurm stream socket at %pA: %m", addr);
 	(void) close(fd);
 	return SLURM_ERROR;
 }
@@ -542,8 +539,8 @@ error:
 /* Put the local address of FD into *ADDR and its length in *LEN.  */
 extern int slurm_get_stream_addr(int fd, slurm_addr_t *addr )
 {
-	socklen_t size = sizeof(addr);
-	return getsockname(fd, (struct sockaddr *)addr, &size);
+	socklen_t size = sizeof(*addr);
+	return getsockname(fd, (struct sockaddr *) addr, &size);
 }
 
 /* Open a connection on socket FD to peer at ADDR (which LEN bytes long).
@@ -562,7 +559,6 @@ static int _slurm_connect (int __fd, struct sockaddr const * __addr,
 	 * Timeouts in excess of 3 minutes have been observed, resulting
 	 * in serious problems for slurmctld. Making the connect call
 	 * non-blocking and polling seems to fix the problem. */
-	static int timeout = 0;
 	int rc, flags, flags_save, err;
 	socklen_t len;
 	struct pollfd ufds;
@@ -587,10 +583,8 @@ static int _slurm_connect (int __fd, struct sockaddr const * __addr,
 	ufds.events = POLLIN | POLLOUT;
 	ufds.revents = 0;
 
-	if (timeout == 0)
-		timeout = slurm_get_tcp_timeout() * 1000;
-
-again:	rc = poll(&ufds, 1, timeout);
+again:
+	rc = poll(&ufds, 1, slurm_conf.tcp_timeout * 1000);
 	if (rc == -1) {
 		/* poll failed */
 		if (errno == EINTR) {
@@ -636,123 +630,120 @@ done:
 #endif
 }
 
-extern void slurm_set_addr_char (slurm_addr_t * addr, uint16_t port, char *host)
+extern void slurm_set_addr(slurm_addr_t *addr, uint16_t port, char *host)
 {
-#if 1
-/* NOTE: gethostbyname() is obsolete, but the alternative function (below)
- * does not work reliably. See bug 2186. */
-	struct hostent * he    = NULL;
-	int	   h_err = 0;
-	char *	   h_buf[4096];
+	struct addrinfo *ai_ptr, *ai_start;
+
+	log_flag(NET, "%s: called with port='%u' host='%s'",
+		__func__, port, host);
 
 	/*
-	 * If NULL hostname passed in, we only update the port of addr
+	 * get_addr_info uses hints from our config to determine what address
+	 * families to return
 	 */
-	addr->sin_family = AF_INET;
-	addr->sin_port   = htons(port);
-	if (host == NULL)
-		return;
+	ai_start = get_addr_info(host, port);
 
-	he = get_host_by_name(host, (void *)&h_buf, sizeof(h_buf), &h_err);
-
-	if (he != NULL)
-		memcpy (&addr->sin_addr.s_addr, he->h_addr, he->h_length);
-	else {
-		error("Unable to resolve \"%s\": %s", host, hstrerror(h_err));
-		addr->sin_family = 0;
-		addr->sin_port = 0;
-	}
-	return;
-#else
-/* NOTE: getaddrinfo() currently does not support aliases and is failing with
- * EAGAIN repeatedly in some cases. Comment out this logic until the function
- * works as designed. See bug 2186. */
-	struct addrinfo *addrs;
-	struct addrinfo *addr_ptr;
-
-	/*
-	 * If NULL hostname passed in, we only update the port of addr
-	 */
-	addr->sin_family = AF_INET;
-	addr->sin_port   = htons(port);
-	if (host == NULL)
-		return;
-
-	addrs = get_addr_info(host);
-	for (addr_ptr = addrs; addr_ptr != NULL; addr_ptr = addr_ptr->ai_next) {
-		if (addr_ptr->ai_family == AF_INET)
-			break;
-	}
-	if (addr_ptr) {
-		struct sockaddr_in *addr2;
-		addr2 = (struct sockaddr_in *)addr_ptr->ai_addr;
-		memcpy(&addr->sin_addr.s_addr,
-		       &addr2->sin_addr.s_addr, sizeof(addr2->sin_addr.s_addr));
-	} else {
+	if (!ai_start) {
 		error("%s: Unable to resolve \"%s\"", __func__, host);
-		addr->sin_family = 0;
-		addr->sin_port = 0;
-	}
-
-	if (addrs)
-		free_addr_info(addrs);
-#endif
-}
-
-extern void slurm_get_addr (slurm_addr_t *addr, uint16_t *port, char *host,
-			    unsigned int buflen )
-{
-	struct hostent *he;
-	char   h_buf[4096];
-	int    h_err  = 0;
-	char * tmp_s_addr = (char *) &addr->sin_addr.s_addr;
-	int    len    = sizeof(addr->sin_addr.s_addr);
-
-	he = get_host_by_addr( tmp_s_addr, len, AF_INET,
-			       (void *) &h_buf, sizeof(h_buf), &h_err );
-
-	if (he != NULL) {
-		*port = ntohs(addr->sin_port);
-		strlcpy(host, he->h_name, buflen);
-	} else {
-		error("Lookup failed: %s", host_strerror(h_err));
-		*port = 0;
-		host[0] = '\0';
-	}
-	return;
-}
-
-extern void slurm_print_slurm_addr ( slurm_addr_t * address, char *buf,
-				     size_t n )
-{
-	char addrbuf[INET_ADDRSTRLEN];
-
-	if (!address) {
-		snprintf(buf, n, "NULL");
+		addr->ss_family = AF_UNSPEC;
 		return;
 	}
 
-	inet_ntop(AF_INET, &address->sin_addr, addrbuf, INET_ADDRSTRLEN);
-	/* warning: silently truncates */
-	snprintf(buf, n, "%s:%d", addrbuf, ntohs(address->sin_port));
+	/*
+	 * When host is null, assume we are trying to bind here.
+	 * Make sure we return the v6 wildcard address first (when applicable)
+	 * since we want v6 to be the default.
+	 */
+	if (host || !(slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED)) {
+		ai_ptr = ai_start;
+	} else {
+		for (ai_ptr = ai_start; ai_ptr; ai_ptr = ai_ptr->ai_next) {
+			if (ai_ptr->ai_family == AF_INET6)
+				break;
+		}
+		/* fall back to whatever was available */
+		if (!ai_ptr)
+			ai_ptr = ai_start;
+	}
+
+	memcpy(addr, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
+	log_flag(NET, "%s: update addr. addr='%pA'", __func__, addr);
+	freeaddrinfo(ai_start);
 }
 
 extern void slurm_pack_slurm_addr(slurm_addr_t *addr, Buf buffer)
 {
-	pack32( ntohl( addr->sin_addr.s_addr ), buffer );
-	pack16( ntohs( addr->sin_port ), buffer );
+	if (addr->ss_family == AF_INET6) {
+		error("%s: cannot pack IPv6 addresses", __func__);
+	} else {
+		struct sockaddr_in *in = (struct sockaddr_in *) addr;
+		pack32(ntohl(in->sin_addr.s_addr), buffer);
+		pack16(ntohs(in->sin_port), buffer);
+	}
 }
 
 extern int slurm_unpack_slurm_addr_no_alloc(slurm_addr_t *addr, Buf buffer)
 {
-	addr->sin_family = AF_INET;
-	safe_unpack32(&addr->sin_addr.s_addr, buffer);
-	safe_unpack16(&addr->sin_port, buffer);
+	addr->ss_family = AF_INET;
+	struct sockaddr_in *in = (struct sockaddr_in *) addr;
+	safe_unpack32(&in->sin_addr.s_addr, buffer);
+	safe_unpack16(&in->sin_port, buffer);
 
-	addr->sin_addr.s_addr = htonl(addr->sin_addr.s_addr);
-	addr->sin_port = htons(addr->sin_port);
+	in->sin_addr.s_addr = htonl(in->sin_addr.s_addr);
+	in->sin_port = htons(in->sin_port);
+	/*
+	 * This is to accomodate updated logic that checks for a valid address
+	 * family instead of an address and port that are 0.
+	 */
+	if ((in->sin_addr.s_addr == 0) && (in->sin_port == 0))
+		addr->ss_family = AF_UNSPEC;
+
 	return SLURM_SUCCESS;
 
-    unpack_error:
+unpack_error:
+	return SLURM_ERROR;
+}
+
+extern void slurm_pack_addr(slurm_addr_t *addr, buf_t *buffer)
+{
+	pack16(addr->ss_family, buffer);
+
+	if (addr->ss_family == AF_INET6) {
+		struct sockaddr_in6 *in6 = (struct sockaddr_in6 *) addr;
+		packmem(in6->sin6_addr.s6_addr, 16, buffer);
+		pack16(in6->sin6_port, buffer);
+	} else if (addr->ss_family == AF_INET) {
+		struct sockaddr_in *in = (struct sockaddr_in *) addr;
+		pack32(in->sin_addr.s_addr, buffer);
+		pack16(in->sin_port, buffer);
+	}
+}
+
+extern int slurm_unpack_addr_no_alloc(slurm_addr_t *addr, Buf buffer)
+{
+	safe_unpack16(&addr->ss_family, buffer);
+
+	if (addr->ss_family == AF_INET6) {
+		uint32_t size;
+		char *buffer_addr;
+		struct sockaddr_in6 *in6 = (struct sockaddr_in6 *) addr;
+
+		safe_unpackmem_ptr(&buffer_addr, &size, buffer);
+		if (size != 16)
+			goto unpack_error;
+		memcpy(&in6->sin6_addr.s6_addr, buffer_addr, 16);
+
+		safe_unpack16(&in6->sin6_port, buffer);
+	} else if (addr->ss_family == AF_INET) {
+		struct sockaddr_in *in = (struct sockaddr_in *) addr;
+
+		safe_unpack32(&in->sin_addr.s_addr, buffer);
+		safe_unpack16(&in->sin_port, buffer);
+	} else {
+		memset(addr, 0, sizeof(*addr));
+	}
+	return SLURM_SUCCESS;
+
+unpack_error:
 	return SLURM_ERROR;
 }

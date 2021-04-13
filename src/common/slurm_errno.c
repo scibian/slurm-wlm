@@ -283,7 +283,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_INTERCONNECT_BUSY,
 	  "Switch resources currently not available"		},
 	{ ESLURM_RESERVATION_EMPTY,
-	  "Reservation request lacks users or accounts"		},
+	  "Reservation request lacks users, groups or accounts"		},
 	{ ESLURM_INVALID_ARRAY,
 	  "Invalid job array specification"			},
 	{ ESLURM_RESERVATION_NAME_DUP,
@@ -315,12 +315,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Burst Buffer request invalid"			},
 	{ ESLURM_PRIO_RESET_FAIL,
 	  "Changes to job priority are not persistent, change nice instead" },
-	{ ESLURM_POWER_NOT_AVAIL,
-	  "Required power not available now"			},
-	{ ESLURM_POWER_RESERVED,
-	  "Required power at least partially reserved"		},
-	{ ESLURM_INVALID_POWERCAP,
-	  "Required powercap is not valid, check min/max values"},
+	{ ESLURM_CANNOT_MODIFY_CRON_JOB,
+	  "Cannot modify scrontab jobs through scontrol"	},
 	{ ESLURM_INVALID_MCS_LABEL,
 	  "Invalid mcs_label specified"				},
 	{ ESLURM_BURST_BUFFER_WAIT,
@@ -378,6 +374,12 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "ConfigLess mode is disabled"				},
 	{ ESLURM_ENVIRONMENT_MISSING,
 	  "Environment is missing in job"			},
+	{ ESLURM_RESERVATION_NO_SKIP,
+	  "Reservation given is not skipable, try deleting instead"},
+	{ ESLURM_RESERVATION_USER_GROUP,
+	  "Reservations can't have users and groups specified, only one or the other"},
+	{ ESLURM_PARTITION_ASSOC,
+	  "Multiple partition job request not supported when a partition is set in the association" },
 
 	/* slurmd error codes */
 	{ ESLURMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -481,6 +483,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Authentication credential invalid"			},
 	{ ESLURM_AUTH_UNPACK,
 	  "Cannot unpack credential"				},
+	{ ESLURM_AUTH_SKIP,
+	  "Authentication does not apply to request"		},
 
 	/* accounting errors */
 	{ ESLURM_DB_CONNECTION,
@@ -499,6 +503,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Query result exceeds size limit"			},
 	{ ESLURM_DB_QUERY_TOO_WIDE,
 	  "Too wide of a date range in query"			},
+	{ ESLURM_DB_CONNECTION_INVALID,
+	  "Database connection reference is invalid"		},
 
 	/* Federation Errors */
 	{ ESLURM_FED_CLUSTER_MAX_CNT,
@@ -520,7 +526,28 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_MISSING_TIME_LIMIT,
 	  "Time limit specification required, but not provided"	},
 	{ ESLURM_INVALID_KNL,
-	  "Invalid KNL configuration (MCDRAM or NUMA option)"	}
+	  "Invalid KNL configuration (MCDRAM or NUMA option)"	},
+
+	/* REST errors */
+	{ ESLURM_REST_INVALID_QUERY,
+	  "Query empty or not RFC7320 compliant"},
+	{ ESLURM_REST_FAIL_PARSING,
+	  "Failure during parsing"},
+	{ ESLURM_REST_INVALID_JOBS_DESC,
+	  "Jobs description entry not found, empty or not dictionary or list"},
+	{ ESLURM_REST_EMPTY_RESULT,
+	  "Nothing found with query"},
+
+	/* data_t errors */
+	{ ESLURM_DATA_PATH_NOT_FOUND,
+	  "Unable to resolve path"},
+	{ ESLURM_DATA_PTR_NULL,
+	  "Data pointer is NULL"},
+	{ ESLURM_DATA_CONV_FAILED,
+	  "Unable to convert Data type"},
+	{ ESLURM_DATA_REGEX_COMPILE,
+	  "Unable to compile regex"},
+
 };
 
 /*

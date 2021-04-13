@@ -65,7 +65,6 @@ const char *node_select_syms[] = {
 	"select_p_state_save",
 	"select_p_state_restore",
 	"select_p_job_init",
-	"select_p_node_ranking",
 	"select_p_node_init",
 	"select_p_job_test",
 	"select_p_job_begin",
@@ -126,7 +125,7 @@ extern int other_select_init(void)
 		goto done;
 
 	if (!other_select_type_param)
-		other_select_type_param = slurm_get_select_type_param();
+		other_select_type_param = slurm_conf.select_type_param;
 
 	if (other_select_type_param & CR_OTHER_CONS_RES)
 		type = "select/cons_res";

@@ -44,6 +44,7 @@
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/pack.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurm_cred.h"
@@ -76,7 +77,7 @@ static struct io_buf *_alloc_io_buf(void);
 static void	_init_stdio_eio_objs(slurm_step_io_fds_t fds,
 				     client_io_t *cio);
 static void	_handle_io_init_msg(int fd, client_io_t *cio);
-static int      _read_io_init_msg(int fd, client_io_t *cio, char *host);
+static int _read_io_init_msg(int fd, client_io_t *cio, slurm_addr_t *host);
 static int      _wid(int n);
 static bool     _incoming_buf_free(client_io_t *cio);
 static bool     _outgoing_buf_free(client_io_t *cio);
@@ -830,8 +831,7 @@ _create_listensock_eio(int fd, client_io_t *cio)
 	return eio;
 }
 
-static int
-_read_io_init_msg(int fd, client_io_t *cio, char *host)
+static int _read_io_init_msg(int fd, client_io_t *cio, slurm_addr_t *host)
 {
 	struct slurm_io_init_msg msg;
 
@@ -843,13 +843,12 @@ _read_io_init_msg(int fd, client_io_t *cio, char *host)
 		goto fail;
 	}
 	if (msg.nodeid >= cio->num_nodes) {
-		error ("Invalid nodeid %d from %s", msg.nodeid, host);
+		error ("Invalid nodeid %d from %pA", msg.nodeid, host);
 		goto fail;
 	}
-	debug2("Validated IO connection from %s, node rank %u, sd=%d",
+	debug2("Validated IO connection from %pA, node rank %u, sd=%d",
 	       host, msg.nodeid, fd);
 
-	net_set_low_water(fd, 1);
 	debug3("msg.stdout_objs = %d", msg.stdout_objs);
 	debug3("msg.stderr_objs = %d", msg.stderr_objs);
 	/* sanity checks, just print warning */
@@ -908,10 +907,7 @@ _handle_io_init_msg(int fd, client_io_t *cio)
 
 	for (j = 0; j < 15; j++) {
 		int sd;
-		struct sockaddr addr;
-		struct sockaddr_in *sin;
-		socklen_t size = sizeof(addr);
-		char buf[INET_ADDRSTRLEN];
+		slurm_addr_t addr;
 
 		/*
 		 * Return early if fd is not now ready
@@ -919,7 +915,7 @@ _handle_io_init_msg(int fd, client_io_t *cio)
 		if (!_is_fd_ready(fd))
 			return;
 
-		while ((sd = accept(fd, &addr, &size)) < 0) {
+		while ((sd = slurm_accept_msg_conn(fd, &addr)) < 0) {
 			if (errno == EINTR)
 				continue;
 			if (errno == EAGAIN)	/* No more connections */
@@ -932,10 +928,7 @@ _handle_io_init_msg(int fd, client_io_t *cio)
 			return;
 		}
 
-		sin = (struct sockaddr_in *) &addr;
-		inet_ntop(AF_INET, &sin->sin_addr, buf, INET_ADDRSTRLEN);
-
-		debug3("Accepted IO connection: ip=%s sd=%d", buf, sd);
+		debug3("Accepted IO connection: ip=%pA sd=%d", &addr, sd);
 
 		/*
 		 * On AIX the new socket [sd] seems to inherit the O_NONBLOCK
@@ -949,7 +942,7 @@ _handle_io_init_msg(int fd, client_io_t *cio)
 		/*
 		 * Read IO header and update cio structure appropriately
 		 */
-		if (_read_io_init_msg(sd, cio, buf) < 0)
+		if (_read_io_init_msg(sd, cio, &addr) < 0)
 			continue;
 
 		fd_set_nonblocking(sd);
@@ -1079,16 +1072,11 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 				      bool label, uint32_t het_job_offset,
 				      uint32_t het_job_task_offset)
 {
-	client_io_t *cio;
 	int i;
 	uint32_t siglen;
 	char *sig;
 	uint16_t *ports;
-	uint16_t eio_timeout;
-
-	cio = (client_io_t *)xmalloc(sizeof(client_io_t));
-	if (cio == NULL)
-		return NULL;
+	client_io_t *cio = xmalloc(sizeof(*cio));
 
 	cio->num_tasks   = num_tasks;
 	cio->num_nodes   = num_nodes;
@@ -1109,8 +1097,7 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 	memcpy(cio->io_key, sig, siglen);
 	/* no need to free "sig", it is just a pointer into the credential */
 
-	eio_timeout = slurm_get_srun_eio_timeout();
-	cio->eio = eio_handle_create(eio_timeout);
+	cio->eio = eio_handle_create(slurm_conf.eio_timeout);
 
 	/* Compute number of listening sockets needed to allow
 	 * all of the slurmds to establish IO streams with srun, without
@@ -1144,7 +1131,6 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 		}
 		debug("initialized stdio listening socket, port %d",
 		      cio->listenport[i]);
-		/*net_set_low_water(cio->listensock[i], 140);*/
 		obj = _create_listensock_eio(cio->listensock[i], cio);
 		eio_new_initial_obj(cio->eio, obj);
 	}

@@ -2,8 +2,13 @@
  **  pmix_info.h - PMIx various environment information
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
- *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
+ *  Copyright (C) 2015-2020 Mellanox Technologies. All rights reserved.
+ *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>,
+ *             Boris Karasev <karasev.b@gmail.com, boriska@mellanox.com>.
+ *  Copyright (C) 2020      Siberian State University of Telecommunications
+ *                          and Information Sciences (SibSUTIS).
+ *                          All rights reserved.
+ *  Written by Boris Bochkarev <boris-bochkaryov@yandex.ru>.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -50,8 +55,7 @@ typedef struct {
 	int magic;
 #endif
 	char nspace[PMIXP_MAX_NSLEN];
-	uint32_t jobid; /* Current Slurm job id */
-	uint32_t stepid; /* Current step id (or NO_VAL) */
+	slurm_step_id_t step_id; /* Current step id (or NO_VAL) */
 	uint32_t nnodes; /* number of nodes in current step */
 	uint32_t nnodes_job; /* number of nodes in current job */
 	uint32_t ntasks; /* total number of tasks in current step */
@@ -73,6 +77,8 @@ typedef struct {
 	char *spool_dir;
 	uid_t uid;
 	gid_t gid;
+	char *srun_ip;
+	int abort_agent_port;
 } pmix_jobinfo_t;
 
 extern pmix_jobinfo_t _pmixp_job_info;
@@ -141,13 +147,25 @@ static inline uint32_t pmixp_info_jobgid(void)
 static inline uint32_t pmixp_info_jobid(void)
 {
 	xassert(_pmixp_job_info.magic == PMIXP_INFO_MAGIC);
-	return _pmixp_job_info.jobid;
+	return _pmixp_job_info.step_id.job_id;
+}
+
+static inline char *pmixp_info_srun_ip(void)
+{
+	xassert(_pmixp_job_info.magic == PMIXP_INFO_MAGIC);
+	return _pmixp_job_info.srun_ip;
+}
+
+static inline int pmixp_info_abort_agent_port(void)
+{
+	xassert(_pmixp_job_info.magic == PMIXP_INFO_MAGIC);
+	return _pmixp_job_info.abort_agent_port;
 }
 
 static inline uint32_t pmixp_info_stepid(void)
 {
 	xassert(_pmixp_job_info.magic == PMIXP_INFO_MAGIC);
-	return _pmixp_job_info.stepid;
+	return _pmixp_job_info.step_id.step_id;
 }
 
 static inline char *pmixp_info_namespace(void)
@@ -295,7 +313,7 @@ static inline int pmixp_info_job_hostid(char *hostname)
 static inline char *pmixp_info_nspace_usock(const char *nspace)
 {
 	char *spool;
-	debug("mpi/pmix: setup sockets");
+	debug("setup sockets");
 	spool = xstrdup_printf("%s/stepd.%s",
 			       _pmixp_job_info.spool_dir, nspace);
 	return spool;

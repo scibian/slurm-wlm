@@ -47,11 +47,12 @@
 #include "src/slurmctld/slurmctld.h"
 
 typedef struct avail_res {	/* Per-node resource availability */
-	uint16_t avail_cpus;	/* Count of available CPUs */
+	uint16_t avail_cpus;	/* Count of available CPUs for this job
+				   limited by options like --ntasks-per-node */
 	uint16_t avail_gpus;	/* Count of available GPUs */
 	uint16_t avail_res_cnt;	/* Count of available CPUs + GPUs */
 	uint16_t *avail_cores_per_sock;	/* Per-socket available core count */
-	uint16_t max_cpus;	/* Maximum available CPUs */
+	uint16_t max_cpus;	/* Maximum available CPUs on the node */
 	uint16_t min_cpus;	/* Minimum allocated CPUs */
 	uint16_t sock_cnt;	/* Number of sockets on this node */
 	List sock_gres_list;	/* Per-socket GRES availability, sock_gres_t */
@@ -103,18 +104,15 @@ extern bool     backfill_busy_nodes;
 extern int      bf_window_scale;
 extern cons_common_callbacks_t cons_common_callbacks;
 extern int      core_array_size;
-extern uint16_t cr_type;
 extern bool     gang_mode;
 extern bool     have_dragonfly;
 extern bool     is_cons_tres;
 extern const uint16_t nodeinfo_magic;
 extern bool     pack_serial_at_end;
 extern const uint32_t plugin_id;
-extern const char *plugin_type;
 extern bool     preempt_by_part;
 extern bool     preempt_by_qos;
 extern uint16_t priority_flags;
-extern uint64_t select_debug_flags;
 extern int      select_node_cnt;
 extern bool     spec_cores_first;
 extern bool     topo_optional;
@@ -153,48 +151,26 @@ extern bitstr_t **common_mark_avail_cores(
 	bitstr_t *node_bitmap, uint16_t core_spec);
 
 /*
- * common_allocate_cores - Given the job requirements, determine which cores
+ * common_allocate - Given the job requirements, determine which resources
  *                   from the given node can be allocated (if any) to this
  *                   job. Returns the number of cpus that can be used by
- *                   this node AND a bitmap of the selected cores.
+ *                   this node AND a bitmap of the selected cores|sockets.
  *
  * IN job_ptr       - pointer to job requirements
  * IN/OUT core_map  - core_bitmap of available cores on this node
  * IN part_core_map - bitmap of cores already allocated on this partition/node
  * IN node_i        - index of node to be evaluated
- * IN/OUT cpu_alloc_size - minimum allocation size, in CPUs
- * IN cpu_type      - if true, allocate CPUs rather than cores
+ * OUT cpu_alloc_size - minimum allocation size, in CPUs
  * IN req_sock_map - OPTIONAL bitmap of required sockets
+ * IN cr_type - Consumable Resource setting
  * RET resource availability structure, call _free_avail_res() to free
  */
-extern avail_res_t *common_allocate_cores(job_record_t *job_ptr,
-					  bitstr_t *core_map,
-					  bitstr_t *part_core_map,
-					  const uint32_t node_i,
-					  int *cpu_alloc_size,
-					  bool cpu_type,
-					  bitstr_t *req_sock_map);
-
-/*
- * common_allocate_sockets - Given the job requirements, determine which sockets
- *                     from the given node can be allocated (if any) to this
- *                     job. Returns the number of cpus that can be used by
- *                     this node AND a core-level bitmap of the selected
- *                     sockets.
- *
- * IN job_ptr       - pointer to job requirements
- * IN/OUT core_map  - core_bitmap of available cores on this node
- * IN part_core_map - bitmap of cores already allocated on this partition/node
- * IN node_i        - index of node to be evaluated
- * IN/OUT cpu_alloc_size - minimum allocation size, in CPUs
- * IN req_sock_map - OPTIONAL bitmap of required sockets
- * RET resource availability structure, call _free_avail_res() to free
- */
-extern avail_res_t *common_allocate_sockets(job_record_t *job_ptr,
-					    bitstr_t *core_map,
-					    bitstr_t *part_core_map,
-					    const uint32_t node_i,
-					    int *cpu_alloc_size,
-					    bitstr_t *req_sock_map);
+extern avail_res_t *common_allocate(job_record_t *job_ptr,
+				    bitstr_t *core_map,
+				    bitstr_t *part_core_map,
+				    const uint32_t node_i,
+				    int *cpu_alloc_size,
+				    bitstr_t *req_sock_map,
+				    uint16_t cr_type);
 
 #endif /* _CONS_COMMON_H */

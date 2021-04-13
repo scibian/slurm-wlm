@@ -38,7 +38,6 @@
 #include "cons_common.h"
 
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/powercapping.h"
 
 bool select_state_initializing = true;
 
@@ -76,12 +75,14 @@ static bitstr_t *_create_core_bitmap(int node_inx)
 /*
  * Handle job resource allocation to record of resources allocated to all nodes
  * IN job_resrcs_ptr - resources allocated to a job
- * IN/OUT sys_resrcs_ptr - bitmap of available CPUs, allocate as needed
+ * IN r_ptr - row we are trying to fit
+ *            IN/OUT r_ptr->row_bitmap - bitmap array (one per node) of
+ *                                       available cores, allocated as needed
  * IN type - add/rem/test
  * RET 1 on success, 0 otherwise
  */
 static int _handle_job_res(job_resources_t *job_resrcs_ptr,
-			   bitstr_t ***sys_resrcs_ptr,
+			   part_row_data_t *r_ptr,
 			   handle_job_res_t type)
 {
 	int i, i_first, i_last;
@@ -96,15 +97,16 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 		return 1;
 
 	/* create row_bitmap data structure as needed */
-	if (*sys_resrcs_ptr == NULL) {
+	if (!r_ptr->row_bitmap) {
 		if (type == HANDLE_JOB_RES_TEST)
 			return 1;
 		core_array = build_core_array();
-		*sys_resrcs_ptr = core_array;
+		r_ptr->row_bitmap = core_array;
+		r_ptr->row_set_count = 0;
 		for (int i = 0; i < core_array_size; i++)
 			core_array[i] = _create_core_bitmap(i);
 	} else
-		core_array = *sys_resrcs_ptr;
+		core_array = r_ptr->row_bitmap;
 
 	i_first = bit_ffs(job_resrcs_ptr->node_bitmap);
 	if (i_first != -1)
@@ -130,8 +132,8 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 		if (job_resrcs_ptr->whole_node == 1) {
 			if (!use_core_array) {
 				if (type != HANDLE_JOB_RES_TEST)
-					error("%s: %s: core_array for node %d is NULL %d",
-					      plugin_type, __func__, i, type);
+					error("core_array for node %d is NULL %d",
+					      i, type);
 				continue;	/* Move to next node */
 			}
 
@@ -139,10 +141,12 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 			case HANDLE_JOB_RES_ADD:
 				bit_nset(use_core_array,
 					 core_begin, core_end-1);
+				r_ptr->row_set_count += (core_end - core_begin);
 				break;
 			case HANDLE_JOB_RES_REM:
 				bit_nclear(use_core_array,
 					   core_begin, core_end-1);
+				r_ptr->row_set_count -= (core_end - core_begin);
 				break;
 			case HANDLE_JOB_RES_TEST:
 				if (is_cons_tres) {
@@ -164,16 +168,18 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 				continue;
 			if (!use_core_array) {
 				if (type != HANDLE_JOB_RES_TEST)
-					error("%s: %s: core_array for node %d is NULL %d",
-					      plugin_type, __func__, i, type);
+					error("core_array for node %d is NULL %d",
+					      i, type);
 				continue;	/* Move to next node */
 			}
 			switch (type) {
 			case HANDLE_JOB_RES_ADD:
 				bit_set(use_core_array, core_begin + c);
+			        r_ptr->row_set_count++;
 				break;
 			case HANDLE_JOB_RES_REM:
 				bit_clear(use_core_array, core_begin + c);
+				r_ptr->row_set_count--;
 				break;
 			case HANDLE_JOB_RES_TEST:
 				if (bit_test(use_core_array, core_begin + c))
@@ -218,17 +224,35 @@ static void _log_tres_state(node_use_record_t *node_usage,
 #endif
 }
 
+extern char *job_res_job_action_string(job_res_job_action_t action)
+{
+	switch (action) {
+	case JOB_RES_ACTION_NORMAL:
+		return "normal";
+		break;
+	case JOB_RES_ACTION_SUSPEND:
+		return "suspend";
+		break;
+	case JOB_RES_ACTION_RESUME:
+		return "resume";
+		break;
+	default:
+		return "unknown";
+	}
+}
+
 /*
  * Add job resource allocation to record of resources allocated to all nodes
  * IN job_resrcs_ptr - resources allocated to a job
- * IN/OUT sys_resrcs_ptr - bitmap array (one per node) of available cores,
- *			   allocated as needed
+ * IN r_ptr - row we are trying to fit
+ *            IN/OUT r_ptr->row_bitmap - bitmap array (one per node) of
+ *                                       available cores, allocated as needed
  * NOTE: Patterned after add_job_to_cores() in src/common/job_resources.c
  */
 extern void job_res_add_cores(job_resources_t *job_resrcs_ptr,
-			      bitstr_t ***sys_resrcs_ptr)
+			      part_row_data_t *r_ptr)
 {
-	(void)_handle_job_res(job_resrcs_ptr, sys_resrcs_ptr,
+	(void)_handle_job_res(job_resrcs_ptr, r_ptr,
 			      HANDLE_JOB_RES_ADD);
 }
 
@@ -236,12 +260,14 @@ extern void job_res_add_cores(job_resources_t *job_resrcs_ptr,
 /*
  * Remove job resource allocation to record of resources allocated to all nodes
  * IN job_resrcs_ptr - resources allocated to a job
- * IN/OUT full_bitmap - bitmap of available CPUs, allocate as needed
+ * IN r_ptr - row we are trying to fit
+ *            IN/OUT r_ptr->row_bitmap - bitmap array (one per node) of
+ *                                       available cores, allocated as needed
  */
 extern void job_res_rm_cores(job_resources_t *job_resrcs_ptr,
-			     bitstr_t ***sys_resrcs_ptr)
+			     part_row_data_t *r_ptr)
 {
-	(void)_handle_job_res(job_resrcs_ptr, sys_resrcs_ptr,
+	(void)_handle_job_res(job_resrcs_ptr, r_ptr,
 			      HANDLE_JOB_RES_REM);
 }
 
@@ -258,7 +284,7 @@ extern int job_res_fit_in_row(job_resources_t *job_resrcs_ptr,
 	if ((r_ptr->num_jobs == 0) || !r_ptr->row_bitmap)
 		return 1;
 
-	return _handle_job_res(job_resrcs_ptr, &r_ptr->row_bitmap,
+	return _handle_job_res(job_resrcs_ptr, r_ptr,
 			       HANDLE_JOB_RES_TEST);
 }
 
@@ -267,13 +293,16 @@ extern int job_res_fit_in_row(job_resources_t *job_resrcs_ptr,
  * - add 'struct job_resources' resources to 'part_res_record_t'
  * - add job's memory requirements to 'node_res_record_t'
  *
- * if action = 0 then add cores, memory + GRES (starting new job)
- * if action = 1 then add memory + GRES (adding suspended job at restart)
- * if action = 2 then only add cores (suspended job is resumed)
+ * if action = JOB_RES_ACTION_NORMAL then add cores, memory + GRES
+ *             (starting new job)
+ * if action = JOB_RES_ACTION_SUSPEND then add memory + GRES
+ *             (adding suspended job at restart)
+ * if action = JOB_RES_ACTION_RESUME then only add cores
+ *             (suspended job is resumed)
  *
  * See also: job_res_rm_job()
  */
-extern int job_res_add_job(job_record_t *job_ptr, int action)
+extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 {
 	struct job_resources *job = job_ptr->job_resrcs;
 	node_record_t *node_ptr;
@@ -283,15 +312,15 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 	bitstr_t *core_bitmap;
 
 	if (!job || !job->core_bitmap) {
-		error("%s: %s: %pJ has no job_resrcs info",
-		      plugin_type, __func__, job_ptr);
+		error("%pJ has no job_resrcs info",
+		      job_ptr);
 		return SLURM_ERROR;
 	}
 
-	debug3("%s: %s: %pJ action:%d ", plugin_type, __func__, job_ptr,
-	       action);
+	debug3("%pJ action:%s", job_ptr,
+	       job_res_job_action_string(action));
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE)
 		log_job_resources(job_ptr);
 
 	i_first = bit_ffs(job->node_bitmap);
@@ -308,7 +337,7 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 			continue;  /* node removed by job resize */
 
 		node_ptr = select_node_record[i].node_ptr;
-		if (action != 2) {
+		if (action != JOB_RES_ACTION_RESUME) {
 			if (select_node_usage[i].gres_list)
 				node_gres_list = select_node_usage[i].gres_list;
 			else
@@ -333,30 +362,23 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 			gres_plugin_node_state_log(node_gres_list,
 						   node_ptr->name);
 			FREE_NULL_BITMAP(core_bitmap);
-		}
 
-		if (action != 2) {
 			if (job->memory_allocated[n] == 0)
 				continue;	/* node lost by job resizing */
 			select_node_usage[i].alloc_memory +=
 				job->memory_allocated[n];
 			if ((select_node_usage[i].alloc_memory >
 			     select_node_record[i].real_memory)) {
-				error("%s: %s: node %s memory is "
+				error("node %s memory is "
 				      "overallocated (%"PRIu64") for %pJ",
-				      plugin_type, __func__, node_ptr->name,
+				      node_ptr->name,
 				      select_node_usage[i].alloc_memory,
 				      job_ptr);
 			}
 		}
-		if ((powercap_get_cluster_current_cap() != 0) &&
-		    (which_power_layout() == 2)) {
-			adapt_layouts(job, job_ptr->details->cpu_freq_max, n,
-				      node_ptr->name, true);
-		}
 	}
 
-	if (action != 2) {
+	if (action != JOB_RES_ACTION_RESUME) {
 		gres_build_job_details(job_ptr->gres_list,
 				       &job_ptr->gres_detail_cnt,
 				       &job_ptr->gres_detail_str,
@@ -364,7 +386,7 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 	}
 
 	/* add cores */
-	if (action != 1) {
+	if (action != JOB_RES_ACTION_SUSPEND) {
 		for (p_ptr = select_part_record; p_ptr; p_ptr = p_ptr->next) {
 			if (p_ptr->part_ptr == job_ptr->part_ptr)
 				break;
@@ -375,8 +397,8 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 				part_name = job_ptr->part_ptr->name;
 			else
 				part_name = job_ptr->partition;
-			error("%s: %s: could not find partition %s",
-			      plugin_type, __func__, part_name);
+			error("could not find partition %s",
+			      part_name);
 			return SLURM_ERROR;
 		}
 		if (!p_ptr->row) {
@@ -388,8 +410,8 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 		for (i = 0; i < p_ptr->num_rows; i++) {
 			if (!job_res_fit_in_row(job, &(p_ptr->row[i])))
 				continue;
-			debug3("%s: %s: adding %pJ to part %s row %u",
-			       plugin_type, __func__, job_ptr,
+			debug3("adding %pJ to part %s row %u",
+			       job_ptr,
 			       p_ptr->part_ptr->name, i);
 			part_data_add_job_to_row(job, &(p_ptr->row[i]));
 			break;
@@ -400,9 +422,9 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 			 * are already in use by some other job. Typically due
 			 * to manually resuming a job.
 			 */
-			error("%s: %s: job overflow: "
+			error("job overflow: "
 			      "could not find idle resources for %pJ",
-			      plugin_type, __func__, job_ptr);
+			      job_ptr);
 			/* No row available to record this job */
 		}
 		/* update the node state */
@@ -415,8 +437,8 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
 					job->node_req;
 			}
 		}
-		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-			info("DEBUG: %s (after):", __func__);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+			info("DEBUG: (after):");
 			part_data_dump_res(p_ptr);
 		}
 	}
@@ -428,9 +450,12 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
  * - subtract 'struct job_resources' resources from 'part_res_record_t'
  * - subtract job's memory requirements from 'node_res_record_t'
  *
- * if action = 0 then subtract cores, memory + GRES (running job was terminated)
- * if action = 1 then subtract memory + GRES (suspended job was terminated)
- * if action = 2 then only subtract cores (job is suspended)
+ * if action = JOB_RES_ACTION_NORMAL then subtract cores, memory + GRES
+ *             (running job was terminated)
+ * if action = JOB_RES_ACTION_SUSPEND then subtract memory + GRES
+ *             (suspended job was terminated)
+ * if action = JOB_RES_ACTION_RESUME then only subtract cores
+ *             (job is suspended)
  * IN: job_fini - job fully terminating on this node (not just a test)
  *
  * RET SLURM_SUCCESS or error code
@@ -439,7 +464,8 @@ extern int job_res_add_job(job_record_t *job_ptr, int action)
  */
 extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 			  node_use_record_t *node_usage,
-			  job_record_t *job_ptr, int action, bool job_fini,
+			  job_record_t *job_ptr, job_res_job_action_t action,
+			  bool job_fini,
 			  bitstr_t *node_map)
 {
 	struct job_resources *job = job_ptr->job_resrcs;
@@ -454,26 +480,25 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 		 * Ignore job removal until select/cons_tres data structures
 		 * values are set by select_p_reconfigure()
 		 */
-		info("%s: %s: plugin still initializing",
-		     plugin_type, __func__);
+		info("plugin still initializing");
 		return SLURM_SUCCESS;
 	}
 	if (!job || !job->core_bitmap) {
 		if (job_ptr->details && (job_ptr->details->min_nodes == 0))
 			return SLURM_SUCCESS;
-		error("%s: %s: %pJ has no job_resrcs info",
-		      plugin_type, __func__, job_ptr);
+		error("%pJ has no job_resrcs info",
+		      job_ptr);
 		return SLURM_ERROR;
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		info("%s: %s: %pJ action %d", plugin_type, __func__,
-		     job_ptr, action);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+		info("%pJ action:%s",
+		     job_ptr, job_res_job_action_string(action));
 		log_job_resources(job_ptr);
 		_log_tres_state(node_usage, part_record_ptr);
 	} else {
-		debug3("%s: %s: %pJ action %d", plugin_type, __func__,
-		       job_ptr, action);
+		debug3("%pJ action:%s",
+		       job_ptr, job_res_job_action_string(action));
 	}
 	if (job_ptr->start_time < slurmctld_config.boot_time)
 		old_job = true;
@@ -493,7 +518,7 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 			continue;  /* node lost by job resize */
 
 		node_ptr = node_record_table_ptr + i;
-		if (action != 2) {
+		if (action != JOB_RES_ACTION_RESUME) {
 			if (node_usage[i].gres_list)
 				gres_list = node_usage[i].gres_list;
 			else
@@ -503,15 +528,13 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 						node_ptr->name, old_job,
 						job_ptr->user_id, job_fini);
 			gres_plugin_node_state_log(gres_list, node_ptr->name);
-		}
 
-		if (action != 2) {
 			if (node_usage[i].alloc_memory <
 			    job->memory_allocated[n]) {
-				error("%s: %s: node %s memory is "
+				error("node %s memory is "
 				      "under-allocated (%"PRIu64"-%"PRIu64") "
 				      "for %pJ",
-				      plugin_type, __func__, node_ptr->name,
+				      node_ptr->name,
 				      node_usage[i].alloc_memory,
 				      job->memory_allocated[n],
 				      job_ptr);
@@ -521,21 +544,19 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 					job->memory_allocated[n];
 			}
 		}
-		if ((powercap_get_cluster_current_cap() != 0) &&
-		    (which_power_layout() == 2)) {
-			adapt_layouts(job, job_ptr->details->cpu_freq_max, n,
-				      node_ptr->name, false);
-		}
 	}
 
-	/* subtract cores */
-	if (action != 1) {
+	/*
+	 * Subtract cores JOB_RES_ACTION_SUSPEND isn't used at this moment, but
+	 * we will keep this check just to be clear what we are doing.
+	 */
+	if (action != JOB_RES_ACTION_SUSPEND) {
 		/* reconstruct rows with remaining jobs */
 		part_res_record_t *p_ptr;
 
 		if (!job_ptr->part_ptr) {
-			error("%s: %s: removed %pJ does not have a partition assigned",
-			      plugin_type, __func__, job_ptr);
+			error("removed %pJ does not have a partition assigned",
+			      job_ptr);
 			return SLURM_ERROR;
 		}
 
@@ -544,8 +565,8 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 				break;
 		}
 		if (!p_ptr) {
-			error("%s: %s: removed %pJ could not find part %s",
-			      plugin_type, __func__, job_ptr,
+			error("removed %pJ could not find part %s",
+			      job_ptr,
 			      job_ptr->part_ptr->name);
 			return SLURM_ERROR;
 		}
@@ -560,8 +581,8 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 			for (j = 0; j < p_ptr->row[i].num_jobs; j++) {
 				if (p_ptr->row[i].job_list[j] != job)
 					continue;
-				debug3("%s: %s: removed %pJ from part %s row %u",
-				       plugin_type, __func__, job_ptr,
+				debug3("removed %pJ from part %s row %u",
+				       job_ptr,
 				       p_ptr->part_ptr->name, i);
 				for ( ; j < p_ptr->row[i].num_jobs-1; j++) {
 					p_ptr->row[i].job_list[j] =
@@ -597,8 +618,8 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 						job->node_req;
 				} else {
 					node_ptr = node_record_table_ptr + i;
-					error("%s: %s: node_state mis-count (%pJ job_cnt:%u node:%s node_cnt:%u)",
-					      plugin_type, __func__, job_ptr,
+					error("node_state mis-count (%pJ job_cnt:%u node:%s node_cnt:%u)",
+					      job_ptr,
 					      job->node_req, node_ptr->name,
 					      node_usage[i].node_state);
 					node_usage[i].node_state =
@@ -607,8 +628,8 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 			}
 		}
 	}
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		info("%s: %s: %pJ finished", plugin_type, __func__, job_ptr);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+		info("%pJ finished", job_ptr);
 		_log_tres_state(node_usage, part_record_ptr);
 	}
 

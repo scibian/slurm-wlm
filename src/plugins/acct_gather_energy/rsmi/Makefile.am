@@ -4,7 +4,7 @@ AUTOMAKE_OPTIONS = foreign
 
 PLUGIN_FLAGS = -module -avoid-version --export-dynamic
 
-AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src/common $(RSMI_CPPFLAGS)
+AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir) -I$(top_srcdir)/src/common $(RSMI_CPPFLAGS)
 
 pkglib_LTLIBRARIES = acct_gather_energy_rsmi.la
 
@@ -12,4 +12,3 @@ pkglib_LTLIBRARIES = acct_gather_energy_rsmi.la
 acct_gather_energy_rsmi_la_SOURCES = acct_gather_energy_rsmi.c
 
 acct_gather_energy_rsmi_la_LDFLAGS = $(PLUGIN_FLAGS)
-acct_gather_energy_rsmi_la_LIBADD  = -lm

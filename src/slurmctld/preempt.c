@@ -162,15 +162,14 @@ static int _add_preemptable_job(void *x, void *arg)
 	if (candidate->het_job_id && !candidate->het_job_list)
 		return 0;
 
+	if (_is_job_preempt_exempt(candidate, preemptor))
+		return 0;
 	/*
 	 * We have to check the entire bitmap space here before we can check
 	 * each part of a hetjob in _is_job_preempt_exempt()
 	 */
 	if (!job_overlap_and_running(preemptor->part_ptr->node_bitmap,
 				     candidate))
-		return 0;
-
-	if (_is_job_preempt_exempt(candidate, preemptor))
 		return 0;
 
 	/* This job is a preemption candidate */
@@ -222,7 +221,6 @@ extern int slurm_preempt_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "preempt";
-	char *type = NULL;
 	char *sched_params;
 
 	/* This function is called frequently, so it should be as fast as
@@ -236,12 +234,13 @@ extern int slurm_preempt_init(void)
 	if (g_context)
 		goto done;
 
-	type = slurm_get_preempt_type();
 	g_context = plugin_context_create(
-		plugin_type, type, (void **)&ops, syms, sizeof(syms));
+		plugin_type, slurm_conf.preempt_type,
+		(void **)&ops, syms, sizeof(syms));
 
 	if (!g_context) {
-		error("cannot create %s context for %s", plugin_type, type);
+		error("cannot create %s context for %s", plugin_type,
+		      slurm_conf.preempt_type);
 		retval = SLURM_ERROR;
 		goto done;
 	}
@@ -254,7 +253,6 @@ extern int slurm_preempt_init(void)
 
 done:
 	slurm_mutex_unlock(&g_context_lock);
-	xfree(type);
 	return retval;
 }
 
@@ -295,7 +293,9 @@ extern List slurm_find_preemptable_jobs(job_record_t *job_ptr)
 	}
 
 	/* Build an array of pointers to preemption candidates */
-	list_for_each(job_list, _add_preemptable_job, &candidates);
+	if (slurm_preemption_enabled() ||
+	    job_uses_max_start_delay_resv(job_ptr))
+		list_for_each(job_list, _add_preemptable_job, &candidates);
 
 	if (candidates.preemptee_job_list && youngest_order)
 		list_sort(candidates.preemptee_job_list, _sort_by_youngest);
@@ -416,12 +416,14 @@ static int _job_check_grace_internal(void *x, void *arg)
 	if (grace_time) {
 		debug("setting %u sec preemption grace time for %pJ to reclaim resources for %pJ",
 		      grace_time, job_ptr, preemptor_ptr);
-		job_signal(job_ptr, SIGCONT, 0, 0, 0);
+		/* send job warn signal always sends SIGCONT first */
 		if (preempt_send_user_signal && job_ptr->warn_signal &&
 		    !(job_ptr->warn_flags & WARN_SENT))
 			send_job_warn_signal(job_ptr, true);
-		else
+		else {
+			job_signal(job_ptr, SIGCONT, 0, 0, 0);
 			job_signal(job_ptr, SIGTERM, 0, 0, 0);
+		}
 	} else
 		rc = 1;
 

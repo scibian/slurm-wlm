@@ -79,11 +79,9 @@ strong_alias(eio_signal_wakeup,		slurm_eio_signal_wakeup);
  * the eio thread will move them to the main obj_list the next time
  * it wakes up.
  */
+#define EIO_MAGIC 0xe1e10
 struct eio_handle_components {
-#ifndef NDEBUG
-#       define EIO_MAGIC 0xe1e10
 	int  magic;
-#endif
 	int  fds[2];
 	pthread_mutex_t shutdown_mutex;
 	time_t shutdown_time;
@@ -106,6 +104,8 @@ eio_handle_t *eio_handle_create(uint16_t shutdown_wait)
 {
 	eio_handle_t *eio = xmalloc(sizeof(*eio));
 
+	eio->magic = EIO_MAGIC;
+
 	if (pipe(eio->fds) < 0) {
 		error("%s: pipe: %m", __func__);
 		eio_handle_destroy(eio);
@@ -115,8 +115,6 @@ eio_handle_t *eio_handle_create(uint16_t shutdown_wait)
 	fd_set_nonblocking(eio->fds[0]);
 	fd_set_close_on_exec(eio->fds[0]);
 	fd_set_close_on_exec(eio->fds[1]);
-
-	xassert((eio->magic = EIO_MAGIC));
 
 	eio->obj_list = list_create(eio_obj_destroy);
 	eio->new_objs = list_create(eio_obj_destroy);
@@ -139,7 +137,7 @@ void eio_handle_destroy(eio_handle_t *eio)
 	FREE_NULL_LIST(eio->new_objs);
 	slurm_mutex_destroy(&eio->shutdown_mutex);
 
-	xassert((eio->magic = ~EIO_MAGIC));
+	eio->magic = ~EIO_MAGIC;
 	xfree(eio);
 }
 
@@ -164,20 +162,15 @@ bool eio_message_socket_readable(eio_obj_t *obj)
 int eio_message_socket_accept(eio_obj_t *obj, List objs)
 {
 	int fd;
-	unsigned char *uc;
-	unsigned short port;
-	struct sockaddr_in addr;
+	slurm_addr_t addr;
 	slurm_msg_t *msg = NULL;
-	int len = sizeof(addr);
 
 	debug3("%s: start", __func__);
 
 	xassert(obj);
 	xassert(obj->ops->handle_msg);
 
-	bzero(&addr, sizeof(struct sockaddr_in));      /* Prevent CLANG error */
-	while ((fd = accept(obj->fd, (struct sockaddr *)&addr,
-			    (socklen_t *)&len)) < 0) {
+	while ((fd = slurm_accept_msg_conn(obj->fd, &addr)) < 0) {
 		if (errno == EINTR)
 			continue;
 		if ((errno == EAGAIN) ||
@@ -200,14 +193,7 @@ int eio_message_socket_accept(eio_obj_t *obj, List objs)
 	fd_set_close_on_exec(fd);
 	fd_set_blocking(fd);
 
-	/*
-	 * Should not call slurm_get_addr() because the IP may not be
-	 * in /etc/hosts.
-	 */
-	uc = (unsigned char *)&addr.sin_addr.s_addr;
-	port = addr.sin_port;
-	debug2("%s: got message connection from %u.%u.%u.%u:%hu %d",
-	       __func__, uc[0], uc[1], uc[2], uc[3], ntohs(port), fd);
+	debug2("%s: got message connection from %pA %d", __func__, &addr, fd);
 	fflush(stdout);
 
 	msg = xmalloc(sizeof(slurm_msg_t));
@@ -216,8 +202,7 @@ again:
 	if (slurm_receive_msg(fd, msg, obj->ops->timeout) != 0) {
 		if (errno == EINTR)
 			goto again;
-		error("%s: slurm_receive_msg[%u.%u.%u.%u]: %m",
-		      __func__, uc[0], uc[1], uc[2], uc[3]);
+		error("%s: slurm_receive_msg[%pA]: %m", __func__, &addr);
 		goto cleanup;
 	}
 

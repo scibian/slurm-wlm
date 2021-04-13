@@ -44,6 +44,7 @@
 
 #include "slurm/slurm.h"
 #include "src/common/bitstring.h"
+#include "src/slurmctld/licenses.h"
 #include "src/slurmctld/slurmctld.h"
 
 /* Create a resource reservation */
@@ -103,6 +104,15 @@ extern void update_part_nodes_in_resv(part_record_t *part_ptr);
  * NOTE: READ lock_slurmctld config before entry
  */
 extern int load_all_resv_state(int recover);
+
+/*
+ * Request validation of all reservation records, reset bitmaps, etc.
+ * Will purge any invalid reservation.
+ *
+ * IN run_now - true: apply changes now if previously called
+ *              false: defer changes until called with run_now=true
+ */
+extern void validate_all_reservations(bool run_now);
 
 /*
  * Determine if a job request can use the specified reservations
@@ -188,9 +198,12 @@ extern void job_claim_resv(job_record_t *job_ptr);
  * Determine the time of the first reservation to end after some time.
  * return zero of no reservation ends after that time.
  * IN start_time - look for reservations ending after this time
+ * IN resolution - return end_time with the given resolution, this is important
+ * to avoid additional try_later attempts from backfill when we have multiple
+ * reservations with very close end time.
  * RET the reservation end time or zero of none found
  */
-extern time_t find_resv_end(time_t start_time);
+extern time_t find_resv_end(time_t start_time, int resolution);
 
 /*
  * Determine if a job can start now based only upon its reservations
@@ -221,9 +234,26 @@ extern void job_resv_check(void);
 extern bool job_borrow_from_resv_check(job_record_t *job_ptr,
 				       job_record_t *preemptor_ptr);
 
+extern bool job_uses_max_start_delay_resv(job_record_t *job_ptr);
 
-extern void job_resv_append_promiscuous(job_queue_req_t *job_queue_req);
+extern void job_resv_append_magnetic(job_queue_req_t *job_queue_req);
 
-extern void job_resv_clear_promiscous_flag(job_record_t *job_ptr);
+extern void job_resv_clear_magnetic_flag(job_record_t *job_ptr);
+
+extern bool validate_resv_uid(char *resv_name, uid_t uid);
+
+extern void reservation_update_groups(int force);
+
+/*
+ * get_resv_list - find record for named reservation(s)
+ * IN name - reservation name(s) in a comma separated char
+ * OUT err_part - The first invalid reservation name.
+ * RET List of pointers to the reservations or NULL if not found
+ * NOTE: Caller must free the returned list
+ * NOTE: Caller must free err_part
+ */
+extern List get_resv_list(char *name, char **err_resv);
+
+extern void set_reserved_license_count(licenses_t *license);
 
 #endif /* !_RESERVATION_H */

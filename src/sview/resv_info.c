@@ -63,6 +63,7 @@ enum {
 	SORTID_DURATION,
 	SORTID_FEATURES,
 	SORTID_FLAGS,
+	SORTID_GROUPS,
 	SORTID_LICENSES,
 	SORTID_MSD,
 	SORTID_NAME,
@@ -119,6 +120,8 @@ static display_data_t display_data_resv[] = {
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_USERS, "Users", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
+	{G_TYPE_STRING, SORTID_GROUPS, "Groups", false, EDIT_TEXTBOX,
+	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_PARTITION, "Partition", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_FEATURES, "Features", false, EDIT_TEXTBOX,
@@ -162,6 +165,8 @@ static display_data_t create_data_resv[] = {
 	{G_TYPE_STRING, SORTID_BURST_BUFFER, "BurstBuffer", false,
 	 EDIT_TEXTBOX, refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_USERS, "Users", false, EDIT_TEXTBOX,
+	 refresh_resv, create_model_resv, admin_edit_resv},
+	{G_TYPE_STRING, SORTID_GROUPS, "Groups", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
 	{G_TYPE_STRING, SORTID_PARTITION, "Partition", false, EDIT_TEXTBOX,
 	 refresh_resv, create_model_resv, admin_edit_resv},
@@ -233,10 +238,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 {
 	char *type = "";
 	char *err_msg = NULL;
-	int free_tres_license = 0;
-	int free_tres_bb = 0;
-	int free_tres_corecnt = 0;
-	int free_tres_nodecnt = 0;
+	uint32_t res_free_flags = 0;
 	int temp_int = 0;
 	uint64_t f;
 
@@ -271,7 +273,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 			goto return_error;
 		}
 		if (state_control_parse_resv_corecnt(resv_msg, (char *)new_text,
-						     &free_tres_corecnt, false,
+						     &res_free_flags, false,
 						     &err_msg) == SLURM_ERROR) {
 			if (global_edit_error_msg)
 				g_free(global_edit_error_msg);
@@ -301,6 +303,10 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 		if (f == INFINITE64)
 			goto return_error;
 		break;
+	case SORTID_GROUPS:
+		resv_msg->groups = xstrdup(new_text);
+		type = "groups";
+		break;
 	case SORTID_LICENSES:
 		resv_msg->licenses = xstrdup(new_text);
 		type = "licenses";
@@ -319,7 +325,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 	case SORTID_NODE_CNT:
 		type = "Node Count";
 		if (parse_resv_nodecnt(resv_msg, (char *)new_text,
-				       &free_tres_nodecnt, false,
+				       &res_free_flags, false,
 				       &err_msg) == SLURM_ERROR) {
 			if (global_edit_error_msg)
 				g_free(global_edit_error_msg);
@@ -347,10 +353,7 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 	case SORTID_TRES:
 		type = "TRES";
 		if (state_control_parse_resv_tres((char *)new_text, resv_msg,
-						  &free_tres_license,
-						  &free_tres_bb,
-						  &free_tres_corecnt,
-						  &free_tres_nodecnt, &err_msg)
+						  &res_free_flags, &err_msg)
 		    == SLURM_ERROR) {
 			if (global_edit_error_msg)
 				g_free(global_edit_error_msg);
@@ -378,9 +381,11 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 	if (xstrcmp(type, "unknown"))
 		global_send_update_msg = 1;
 
+	slurm_free_resv_desc_msg_part(resv_msg, res_free_flags);
 	return type;
 
 return_error:
+	slurm_free_resv_desc_msg_part(resv_msg, res_free_flags);
 	global_edit_error = 1;
 	return type;
 }
@@ -550,6 +555,11 @@ static void _layout_resv_record(GtkTreeView *treeview,
 
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_resv,
+						 SORTID_GROUPS),
+				   resv_ptr->groups);
+
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_resv,
 						 SORTID_LICENSES),
 				   resv_ptr->licenses);
 
@@ -659,6 +669,7 @@ static void _update_resv_record(sview_resv_info_t *sview_resv_info_ptr,
 			   SORTID_DURATION,   tmp_duration,
 			   SORTID_FEATURES,   resv_ptr->features,
 			   SORTID_FLAGS,      tmp_flags,
+			   SORTID_GROUPS,     resv_ptr->groups,
 			   SORTID_LICENSES,   resv_ptr->licenses,
 			   SORTID_MSD,        resv_ptr->max_start_delay ?
 			   tmp_msd : NULL,

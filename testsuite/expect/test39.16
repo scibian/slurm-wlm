@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set file_in     "test$test_id.input"
 set number_commas  "\[0-9_,\]+"
 
@@ -34,7 +33,7 @@ if {![check_config_select "cons_tres"]} {
     skip "This test is only compatible with select/cons_tres"
 }
 
-set nb_nodes [get_node_cnt_in_part]
+set nb_nodes [get_partition_param [default_partition] "TotalNodes"]
 if {$nb_nodes < 1} {
     skip "This test is 1 or more nodes in the default partition"
 }
@@ -95,9 +94,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -117,9 +115,6 @@ if {$gpu_cnt > $cpus_per_node} {
 	}
 }
 
-if {$exit_code} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
 if {$gpu_cnt > $cpus_per_node} {
 	skip "System has more GPUs than CPUs, test is only checking an expected error"
 }

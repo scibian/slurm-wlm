@@ -46,7 +46,7 @@ typedef struct {
 	struct job_resources *tmpjobs;
 } sort_support_t;
 
-/* Sort jobs by start time, then size (CPU count) */
+/* Sort jobs by first set core, then size (CPU count) */
 static int _compare_support(const void *v1, const void *v2)
 {
 	sort_support_t *s1, *s2;
@@ -84,6 +84,12 @@ static void _swap_rows(part_row_data_t *a, part_row_data_t *b)
 	memcpy(b, &tmprow, sizeof(part_row_data_t));
 }
 
+static void _reset_part_row_bitmap(part_row_data_t *r_ptr)
+{
+	clear_core_array(r_ptr->row_bitmap);
+	r_ptr->row_set_count = 0;
+}
+
 /*
  * Add job resource use to the partition data structure
  */
@@ -93,10 +99,10 @@ extern void part_data_add_job_to_row(struct job_resources *job,
 	/* add the job to the row_bitmap */
 	if (r_ptr->row_bitmap && (r_ptr->num_jobs == 0)) {
 		/* if no jobs, clear the existing row_bitmap first */
-		clear_core_array(r_ptr->row_bitmap);
+		_reset_part_row_bitmap(r_ptr);
 	}
 
-	job_res_add_cores(job, &r_ptr->row_bitmap);
+	job_res_add_cores(job, r_ptr);
 
 	/*  add the job to the job_list */
 	if (r_ptr->num_jobs >= r_ptr->job_list_size) {
@@ -130,18 +136,18 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 	if (p_ptr->num_rows == 1) {
 		this_row = p_ptr->row;
 		if (this_row->num_jobs == 0) {
-			clear_core_array(this_row->row_bitmap);
+			_reset_part_row_bitmap(this_row);
 		} else {
 			if (job_ptr) { /* just remove the job */
 				xassert(job_ptr->job_resrcs);
 				job_res_rm_cores(job_ptr->job_resrcs,
-						 &this_row->row_bitmap);
+						 this_row);
 			} else { /* totally rebuild the bitmap */
-				clear_core_array(this_row->row_bitmap);
+				_reset_part_row_bitmap(this_row);
 				for (j = 0; j < this_row->num_jobs; j++) {
 					job_res_add_cores(
 						this_row->job_list[j],
-						&this_row->row_bitmap);
+						this_row);
 				}
 			}
 		}
@@ -155,15 +161,15 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 	}
 	if (num_jobs == 0) {
 		for (i = 0; i < p_ptr->num_rows; i++)
-			clear_core_array(p_ptr->row[i].row_bitmap);
+			_reset_part_row_bitmap(&p_ptr->row[i]);
 		return;
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		info("DEBUG: %s (before):", __func__);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+		info("DEBUG: (before):");
 		part_data_dump_res(p_ptr);
 	}
-	debug3("%s: %s reshuffling %u jobs", plugin_type, __func__, num_jobs);
+	debug3("reshuffling %u jobs", num_jobs);
 
 	/* make a copy, in case we cannot do better than this */
 	orig_row = part_data_dup_row(p_ptr->row, p_ptr->num_rows);
@@ -183,7 +189,7 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 			x++;
 		}
 		p_ptr->row[i].num_jobs = 0;
-		clear_core_array(p_ptr->row[i].row_bitmap);
+		_reset_part_row_bitmap(&p_ptr->row[i]);
 	}
 
 	/*
@@ -196,7 +202,7 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 	 *     - may still get scenarios where jobs should switch rows
 	 */
 	qsort(ss, num_jobs, sizeof(sort_support_t), _compare_support);
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		for (i = 0; i < num_jobs; i++) {
 			char cstr[64], nstr[64];
 			if (ss[i].tmpjobs->core_bitmap) {
@@ -241,10 +247,10 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 		 * algorithm couldn't improve apon the existing layout.
 		 * Thus, we'll restore the original layout here
 		 */
-		debug3("%s: %s: dangling job found", plugin_type, __func__);
+		debug3("dangling job found");
 
-		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-			info("DEBUG: %s (post-algorithm):", __func__);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+			info("DEBUG: (post-algorithm):");
 			part_data_dump_res(p_ptr);
 		}
 
@@ -254,18 +260,18 @@ extern void part_data_build_row_bitmaps(part_res_record_t *p_ptr,
 
 		/* still need to rebuild row_bitmaps */
 		for (i = 0; i < p_ptr->num_rows; i++) {
-			clear_core_array(p_ptr->row[i].row_bitmap);
+			_reset_part_row_bitmap(&p_ptr->row[i]);
 			if (p_ptr->row[i].num_jobs == 0)
 				continue;
 			for (j = 0; j < p_ptr->row[i].num_jobs; j++) {
 				job_res_add_cores(p_ptr->row[i].job_list[j],
-						  &p_ptr->row[i].row_bitmap);
+						  &p_ptr->row[i]);
 			}
 		}
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
-		info("DEBUG: %s (after):", __func__);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+		info("DEBUG: (after):");
 		part_data_dump_res(p_ptr);
 	}
 
@@ -458,34 +464,19 @@ extern part_res_record_t *part_data_dup_res(
 /* sort the rows of a partition from "most allocated" to "least allocated" */
 extern void part_data_sort_res(part_res_record_t *p_ptr)
 {
-	uint32_t i, j, b, n, r;
-	uint32_t *a;
+	uint32_t i, j;
 
 	if (!p_ptr->row)
 		return;
 
-	a = xcalloc(p_ptr->num_rows, sizeof(uint32_t));
-	for (r = 0; r < p_ptr->num_rows; r++) {
-		if (!p_ptr->row[r].row_bitmap)
-			continue;
-
-		for (n = 0; n < core_array_size; n++) {
-			if (!p_ptr->row[r].row_bitmap[n])
-				continue;
-			a[r] += bit_set_count(p_ptr->row[r].row_bitmap[n]);
-		}
-	}
 	for (i = 0; i < p_ptr->num_rows; i++) {
 		for (j = i + 1; j < p_ptr->num_rows; j++) {
-			if (a[j] > a[i]) {
-				b = a[j];
-				a[j] = a[i];
-				a[i] = b;
+			if (p_ptr->row[j].row_set_count >
+			    p_ptr->row[i].row_set_count) {
 				_swap_rows(&(p_ptr->row[i]), &(p_ptr->row[j]));
 			}
 		}
 	}
-	xfree(a);
 
 	return;
 }
@@ -512,6 +503,7 @@ extern part_row_data_t *part_data_dup_row(part_row_data_t *orig_row,
 				new_row[i].row_bitmap[n] =
 					bit_copy(orig_row[i].row_bitmap[n]);
 			}
+			new_row[i].row_set_count = orig_row[i].row_set_count;
 		}
 		if (new_row[i].job_list_size == 0)
 			continue;

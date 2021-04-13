@@ -30,7 +30,6 @@ libcommon_la_SOURCES = 			\
 	xsignal.c xsignal.h		\
 	strnatcmp.c strnatcmp.h		\
 	forward.c forward.h     	\
-	msg_aggr.c msg_aggr.h     	\
 	strlcpy.c strlcpy.h		\
 	list.c list.h 			\
 	xtree.c xtree.h			\
@@ -82,6 +81,7 @@ libcommon_la_SOURCES = 			\
 	slurmdbd_defs.c slurmdbd_defs.h	\
 	slurmdbd_pack.c slurmdbd_pack.h	\
 	working_cluster.c working_cluster.h   \
+	workq.c workq.h			\
 	uid.c uid.h			\
 	util-net.c util-net.h		\
 	slurm_auth.c slurm_auth.h	\
@@ -99,6 +99,7 @@ libcommon_la_SOURCES = 			\
 	slurm_topology.c slurm_topology.h \
 	switch.c switch.h		\
 	macros.h			\
+	ref.h				\
 	slurm_selecttype_info.c 	\
 	slurm_selecttype_info.h		\
 	slurm_resource_info.c 		\
@@ -119,9 +120,6 @@ libcommon_la_SOURCES = 			\
 	node_conf.h node_conf.c		\
 	gpu.h gpu.c			\
 	gres.h gres.c			\
-	entity.h entity.c		\
-	layout.h layout.c		\
-	layouts_mgr.h layouts_mgr.c	\
 	mapping.c mapping.h		\
 	xcgroup_read_config.c xcgroup_read_config.h \
 	callerid.c callerid.h		\
@@ -134,6 +132,7 @@ libcommon_la_SOURCES = 			\
 	site_factor.c site_factor.h	\
 	cli_filter.c cli_filter.h	\
 	tres_bind.c tres_bind.h		\
+	cron.c cron.h			\
 	tres_frequency.c tres_frequency.h
 
 EXTRA_libcommon_la_SOURCES = 		\

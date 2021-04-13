@@ -376,16 +376,14 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 	pthread_mutex_t step_mutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_cond_t step_cond   = PTHREAD_COND_INITIALIZER;
 	srun_job_t *first_job = NULL;
-	char *launch_type, *het_job_node_list = NULL;
+	char *het_job_node_list = NULL;
 	bool need_mpir = false;
 	uint16_t *tmp_task_cnt = NULL, *het_job_task_cnts = NULL;
 	uint32_t **tmp_tids = NULL, **het_job_tids = NULL;
 	uint32_t *het_job_tid_offsets = NULL;
 
-	launch_type = slurm_get_launch_type();
-	if (launch_type && strstr(launch_type, "slurm"))
+	if (xstrstr(slurm_conf.launch_type, "slurm"))
 		need_mpir = true;
-	xfree(launch_type);
 
 	if (srun_job_list) {
 		int het_job_step_cnt = list_count(srun_job_list);
@@ -419,7 +417,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 
 			if (!tmp_task_cnt) {
 				fatal("%s: job %u has NULL task array",
-				      __func__, job->jobid);
+				      __func__, job->step_id.job_id);
 				break;	/* To eliminate CLANG error */
 			}
 			memcpy(het_job_task_cnts + node_offset, tmp_task_cnt,
@@ -432,7 +430,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 						  &tmp_tids);
 			if (!tmp_tids) {
 				fatal("%s: job %u has NULL task ID array",
-				      __func__, job->jobid);
+				      __func__, job->step_id.job_id);
 				break;	/* To eliminate CLANG error */
 			}
 			for (node_inx = 0; node_inx < job->nhosts; node_inx++) {
@@ -452,7 +450,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 						  &node_list);
 			if (!node_list) {
 				fatal("%s: job %u has NULL hostname",
-				      __func__, job->jobid);
+				      __func__, job->step_id.job_id);
 			}
 			if (het_job_node_list)
 				xstrfmtcat(het_job_node_list, ",%s", node_list);
@@ -565,7 +563,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 						  &job->het_job_node_list);
 			if (!job->het_job_node_list)
 				fatal("%s: job %u has NULL hostname",
-				      __func__, job->jobid);
+				      __func__, job->step_id.job_id);
 
 			job->het_job_tid_offsets = xcalloc(job->ntasks,
 							   sizeof(uint32_t));
@@ -615,6 +613,12 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 		env->ntasks_per_socket = opt_local->ntasks_per_socket;
 	if (opt_local->ntasks_per_core != NO_VAL)
 		env->ntasks_per_core = opt_local->ntasks_per_core;
+	if (opt_local->ntasks_per_tres != NO_VAL)
+		env->ntasks_per_tres = opt_local->ntasks_per_tres;
+	else if (opt_local->ntasks_per_gpu != NO_VAL)
+		env->ntasks_per_tres = opt_local->ntasks_per_gpu;
+	if (opt_local->threads_per_core != NO_VAL)
+		env->threads_per_core = opt_local->threads_per_core;
 	env->distribution = opt_local->distribution;
 	if (opt_local->plane_size != NO_VAL)
 		env->plane_size = opt_local->plane_size;
@@ -653,8 +657,8 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	if (job->het_job_id != NO_VAL)
 		env->jobid = job->het_job_id;
 	else
-		env->jobid = job->jobid;
-	env->stepid = job->stepid;
+		env->jobid = job->step_id.job_id;
+	env->stepid = job->step_id.step_id;
 	env->account = job->account;
 	env->qos = job->qos;
 	env->resv_name = job->resv_name;
@@ -745,22 +749,23 @@ static int _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	params = xmalloc(sizeof(struct bcast_parameters));
 	params->block_size = 8 * 1024 * 1024;
 	params->compress = srun_opt->compress;
-	if (srun_opt->bcast_file) {
+	if (srun_opt->bcast_file)
 		params->dst_fname = xstrdup(srun_opt->bcast_file);
-	} else {
-		xstrfmtcat(params->dst_fname, "%s/slurm_bcast_%u.%u",
-			   opt_local->chdir, job->jobid, job->stepid);
-	}
+	else
+		xstrfmtcat(params->dst_fname, "%s/", opt_local->chdir);
 	params->fanout = 0;
-	params->job_id = job->jobid;
+	params->selected_step = xmalloc(sizeof(*params->selected_step));
+	params->selected_step->array_task_id = NO_VAL;
+	memcpy(&params->selected_step->step_id, &job->step_id,
+	       sizeof(params->selected_step->step_id));
 	params->force = true;
 	if (srun_opt->het_grp_bits)
-		params->het_job_offset = bit_ffs(srun_opt->het_grp_bits);
+		params->selected_step->het_job_offset =
+			bit_ffs(srun_opt->het_grp_bits);
 	else
-		params->het_job_offset = NO_VAL;
+		params->selected_step->het_job_offset = NO_VAL;
 	params->preserve = true;
 	params->src_fname = srun_opt->argv[0];
-	params->step_id = job->stepid;
 	params->timeout = 0;
 	params->verbose = 0;
 
@@ -771,6 +776,7 @@ static int _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	} else {
 		xfree(params->dst_fname);
 	}
+	slurm_destroy_selected_step(params->selected_step);
 	xfree(params);
 
 	return rc;
@@ -909,7 +915,7 @@ static void _setup_env_working_cluster(void)
 	if ((select_ptr = strchr(rpc_ptr, ':')))
 		*select_ptr++ = '\0';
 
-	if (xstrcmp(slurmctld_conf.cluster_name, working_env)) {
+	if (xstrcmp(slurm_conf.cluster_name, working_env)) {
 		working_cluster_rec = xmalloc(sizeof(slurmdb_cluster_rec_t));
 		slurmdb_init_cluster_rec(working_cluster_rec, false);
 

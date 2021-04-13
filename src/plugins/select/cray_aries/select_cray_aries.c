@@ -2,7 +2,7 @@
  *  select_cray_aries.c - node selection plugin for cray systems with Aries.
  *****************************************************************************
  *  Copyright (C) 2013-2014 SchedMD LLC
- *  Copyright 2013 Cray Inc. All Rights Reserved.
+ *  Copyright 2013 Hewlett Packard Enterprise Development LP
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -123,7 +123,7 @@ typedef enum {
  */
 #if defined (__APPLE__)
 extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
-extern slurm_ctl_conf_t slurmctld_conf __attribute__((weak_import));
+extern slurm_conf_t slurm_conf __attribute__((weak_import));
 extern slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import));
 extern node_record_t *node_record_table_ptr __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
@@ -133,7 +133,7 @@ extern void *acct_db_conn  __attribute__((weak_import));
 extern bool ignore_state_errors __attribute__((weak_import));
 #else
 slurmctld_config_t slurmctld_config;
-slurm_ctl_conf_t slurmctld_conf;
+slurm_conf_t slurm_conf;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 node_record_t *node_record_table_ptr;
 int node_record_count;
@@ -193,8 +193,6 @@ static void _add_to_app_list(alpsc_ev_app_t **list, int32_t *size,
 			     size_t *capacity, alpsc_ev_app_t *app);
 static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state);
 #endif
-
-static uint64_t debug_flags = 0;
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -413,7 +411,7 @@ static void *_aeld_event_loop(void *args)
 		} else {
 			slurm_mutex_unlock(&aeld_mutex);
 		}
-		if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+		if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 			END_TIMER3("_aeld_event_loop: took", 20000);
 	}
 
@@ -445,7 +443,7 @@ static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
 	else
 		jobid = job_ptr->job_id;
 
-	event->apid = SLURM_ID_HASH(jobid, step_ptr->step_id);
+	event->apid = SLURM_ID_HASH(jobid, step_ptr->step_id.step_id);
 	event->uid = job_ptr->user_id;
 	event->app_name = xstrdup(step_ptr->name);
 	event->batch_id = xstrdup_printf("%u", job_ptr->job_id);
@@ -456,7 +454,7 @@ static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
 	// Fill in nodes and num_nodes if available
 	if (step_ptr->step_layout)
 		hl = hostlist_create(step_ptr->step_layout->node_list);
-	else if ((step_ptr->step_id == SLURM_EXTERN_CONT) &&
+	else if ((step_ptr->step_id.step_id == SLURM_EXTERN_CONT) &&
 		 job_ptr->job_resrcs)
 		hl = hostlist_create(job_ptr->job_resrcs->nodes);
 
@@ -487,7 +485,7 @@ static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
 	hostlist_destroy(hl);
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return;
@@ -611,7 +609,7 @@ static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
 		else
 			jobid = job_ptr->job_id;
 
-		apid = SLURM_ID_HASH(jobid, step_ptr->step_id);
+		apid = SLURM_ID_HASH(jobid, step_ptr->step_id.step_id);
 		for (i = 0; i < app_list_size; i++) {
 			if (app_list[i].apid == apid) {
 				found = 1;
@@ -645,7 +643,7 @@ static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
 		else
 			jobid = job_ptr->job_id;
 
-		apid = SLURM_ID_HASH(jobid, step_ptr->step_id);
+		apid = SLURM_ID_HASH(jobid, step_ptr->step_id.step_id);
 		for (i = 0; i < app_list_size; i++) {
 			if (app_list[i].apid == apid) {
 				// Found it, update the state
@@ -671,7 +669,7 @@ static void _update_app(step_record_t *step_ptr, alpsc_ev_app_state_e state)
 	_free_event(&app);
 
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return;
@@ -704,6 +702,49 @@ static void _stop_aeld_thread(void)
 	pthread_join(aeld_thread, NULL);
 }
 #endif
+
+static void _remove_job_from_blades(select_jobinfo_t *jobinfo)
+{
+	int i;
+
+	slurm_mutex_lock(&blade_mutex);
+	for (i=0; i<blade_cnt; i++) {
+		if (!bit_test(jobinfo->blade_map, i))
+			continue;
+		blade_array[i].job_cnt--;
+		if ((int32_t)blade_array[i].job_cnt < 0) {
+			error("blade %d job_cnt underflow", i);
+			blade_array[i].job_cnt = 0;
+		}
+
+		if (jobinfo->npc == NPC_SYS) {
+			bit_nclear(blade_nodes_running_npc, 0,
+				   node_record_count-1);
+		} else if (jobinfo->npc) {
+			bit_not(blade_nodes_running_npc);
+			bit_or(blade_nodes_running_npc,
+			       blade_array[i].node_bitmap);
+			bit_not(blade_nodes_running_npc);
+		}
+	}
+
+	if (jobinfo->npc)
+		last_npc_update = time(NULL);
+
+	slurm_mutex_unlock(&blade_mutex);
+}
+
+static void _remove_step_from_blades(step_record_t *step_ptr)
+{
+	select_jobinfo_t *jobinfo = step_ptr->job_ptr->select_jobinfo->data;
+	select_jobinfo_t *step_jobinfo = step_ptr->select_jobinfo->data;
+
+	if (jobinfo->used_blades) {
+		bit_not(jobinfo->used_blades);
+		bit_or(jobinfo->used_blades, step_jobinfo->blade_map);
+		bit_not(jobinfo->used_blades);
+	}
+}
 
 static void _free_blade(blade_info_t *blade_info)
 {
@@ -855,7 +896,7 @@ extern int init ( void )
 	 * We must call the API here since we call this from other
 	 * things other than the slurmctld.
 	 */
-	other_select_type_param = slurm_get_select_type_param();
+	other_select_type_param = slurm_conf.select_type_param;
 
 	if (other_select_type_param & CR_OTHER_CONS_RES)
 		plugin_id = SELECT_PLUGIN_CRAY_CONS_RES;
@@ -863,8 +904,6 @@ extern int init ( void )
 		plugin_id = SELECT_PLUGIN_CRAY_CONS_TRES;
 	else
 		plugin_id = SELECT_PLUGIN_CRAY_LINEAR;
-
-	debug_flags = slurm_get_debug_flags();
 
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
 	/* Read and store the CCM configured partition name(s). */
@@ -888,8 +927,8 @@ extern int init ( void )
 			      "SchedulerParameter.");
 #endif
 		END_TIMER;
-		if (debug_flags & DEBUG_FLAG_TIME_CRAY)
-			info("alpsc_get_topology call took: %s", TIME_STR);
+		log_flag(TIME_CRAY, "alpsc_get_topology call took: %s",
+			 TIME_STR);
 	}
 
 	verbose("%s loaded", plugin_name);
@@ -1159,8 +1198,7 @@ extern int select_p_job_init(List job_list)
 		job_record_t *job_ptr;
 		select_jobinfo_t *jobinfo;
 
-		if (debug_flags & DEBUG_FLAG_SELECT_TYPE)
-			info("select_p_job_init: syncing jobs");
+		log_flag(SELECT_TYPE, "select_p_job_init: syncing jobs");
 
 		while ((job_ptr = list_next(itr))) {
 			jobinfo = job_ptr->select_jobinfo->data;
@@ -1209,14 +1247,6 @@ extern int select_p_job_init(List job_list)
 	return other_job_init(job_list);
 }
 
-/*
- * select_p_node_ranking - generate node ranking for Cray nodes
- */
-extern bool select_p_node_ranking(node_record_t *node_ptr, int node_cnt)
-{
-	return false;
-}
-
 extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 {
 	select_nodeinfo_t *nodeinfo = NULL;
@@ -1239,7 +1269,7 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 		if (alpsc_get_topology(&err_msg, &topology,
 				       &topology_num_nodes)) {
 			END_TIMER;
-			if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+			if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 				INFO_LINE("call took: %s", TIME_STR);
 
 			if (err_msg) {
@@ -1352,7 +1382,7 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 
 	slurm_mutex_unlock(&blade_mutex);
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	rc = other_node_init(node_ptr, node_cnt);
@@ -1559,6 +1589,9 @@ extern int select_p_job_fini(job_record_t *job_ptr)
 #endif
 
 	other_job_fini(job_ptr);
+
+	_remove_job_from_blades(job_ptr->select_jobinfo->data);
+
 	return SLURM_SUCCESS;
 }
 
@@ -1578,7 +1611,7 @@ extern int select_p_job_suspend(job_record_t *job_ptr, bool indf_susp)
 		}
 		list_iterator_destroy(i);
 		END_TIMER;
-		if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+		if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 			INFO_LINE("call took: %s", TIME_STR);
 	}
 #endif
@@ -1602,7 +1635,7 @@ extern int select_p_job_resume(job_record_t *job_ptr, bool indf_susp)
 		}
 		list_iterator_destroy(i);
 		END_TIMER;
-		if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+		if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 			INFO_LINE("call took: %s", TIME_STR);
 	}
 #endif
@@ -1643,7 +1676,7 @@ extern bitstr_t *select_p_step_pick_nodes(job_record_t *job_ptr,
 		bit_not(*avail_nodes);
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return other_step_pick_nodes(job_ptr, jobinfo, node_count, avail_nodes);
@@ -1663,7 +1696,7 @@ extern int select_p_step_start(step_record_t *step_ptr)
 #endif
 
 	jobinfo = step_ptr->job_ptr->select_jobinfo->data;
-	if (jobinfo->npc && (step_ptr->step_id != SLURM_EXTERN_CONT)) {
+	if (jobinfo->npc && (step_ptr->step_id.step_id != SLURM_EXTERN_CONT)) {
 		int i;
 		select_jobinfo_t *step_jobinfo = step_ptr->select_jobinfo->data;
 		select_nodeinfo_t *nodeinfo;
@@ -1690,7 +1723,7 @@ extern int select_p_step_start(step_record_t *step_ptr)
 		bit_or(jobinfo->used_blades, step_jobinfo->blade_map);
 	}
 	END_TIMER;
-	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
 	return other_step_start(step_ptr);
@@ -1716,6 +1749,8 @@ extern int select_p_step_finish(step_record_t *step_ptr, bool killing_step)
 		jobacct_storage_g_step_complete(acct_db_conn, step_ptr);
 
 	other_step_finish(step_ptr, killing_step);
+
+	_remove_step_from_blades(step_ptr);
 
 	return SLURM_SUCCESS;
 }
@@ -2103,7 +2138,6 @@ extern int select_p_update_node_config(int index)
 
 extern int select_p_reconfigure(void)
 {
-	debug_flags = slurm_get_debug_flags();
 	return other_reconfigure();
 }
 

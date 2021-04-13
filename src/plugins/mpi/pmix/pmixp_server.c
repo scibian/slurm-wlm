@@ -2,8 +2,9 @@
  **  pmix_server.c - PMIx server side functionality
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015-2018 Mellanox Technologies. All rights reserved.
- *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
+ *  Copyright (C) 2015-2020 Mellanox Technologies. All rights reserved.
+ *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>,
+ *             Boris Karasev <karasev.b@gmail.com, boriska@mellanox.com>.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -497,11 +498,10 @@ void pmixp_server_cleanup(void)
 static int _auth_cred_create(Buf buf)
 {
 	void *auth_cred = NULL;
-	char *auth_info = slurm_get_auth_info();
 	int rc = SLURM_SUCCESS;
 
-	auth_cred = g_slurm_auth_create(AUTH_DEFAULT_INDEX, auth_info);
-	xfree(auth_info);
+	auth_cred = g_slurm_auth_create(AUTH_DEFAULT_INDEX,
+					slurm_conf.authinfo);
 	if (!auth_cred) {
 		PMIXP_ERROR("Creating authentication credential: %m");
 		return errno;
@@ -523,7 +523,6 @@ static int _auth_cred_create(Buf buf)
 static int _auth_cred_verify(Buf buf)
 {
 	void *auth_cred = NULL;
-	char *auth_info = NULL;
 	int rc = SLURM_SUCCESS;
 
 	/*
@@ -536,9 +535,7 @@ static int _auth_cred_verify(Buf buf)
 		return SLURM_ERROR;
 	}
 
-	auth_info = slurm_get_auth_info();
-	rc = g_slurm_auth_verify(auth_cred, auth_info);
-	xfree(auth_info);
+	rc = g_slurm_auth_verify(auth_cred, slurm_conf.authinfo);
 
 	if (rc)
 		PMIXP_ERROR("Verifying authentication credential: %m");
@@ -1024,6 +1021,94 @@ send_direct:
 	pmixp_dconn_unlock(dconn);
 	return SLURM_SUCCESS;
 }
+
+/*
+ * ------------------- Abort handling protocol -----------------------
+ */
+
+static int _abort_status = SLURM_SUCCESS;
+
+void pmixp_abort_handle(int fd)
+{
+	uint32_t status;
+	int len;
+
+	/* Receive the status from stepd */
+	len = slurm_read_stream(fd, (char*)&status, sizeof(status));
+	if (len != sizeof(status)) {
+		PMIXP_ERROR("slurm_read_stream() failed: fd=%d; %m", fd);
+		return;
+	}
+	/* Apply the received status */
+	if (!_abort_status) {
+		_abort_status = (int)ntohl(status);
+	}
+
+	/* Reply back to confirm that the status was processed */
+	len = slurm_write_stream(fd, (char*)&status, sizeof(status));
+	if (len != sizeof(status)) {
+		PMIXP_ERROR("slurm_write_stream() failed: fd=%d; %m", fd);
+		return;
+	}
+}
+
+void pmixp_abort_propagate(int status)
+{
+	uint32_t status_net = htonl((uint32_t)status);
+	int len;
+	int fd;
+	slurm_addr_t abort_server;
+
+	if (!(pmixp_info_srun_ip()) || (pmixp_info_abort_agent_port() <= 0)) {
+		PMIXP_ERROR("Invalid abort agent connection address: %s:%d",
+			    pmixp_info_srun_ip() ? pmixp_info_srun_ip(): "NULL",
+			    pmixp_info_abort_agent_port());
+		return;
+	}
+
+	PMIXP_DEBUG("Connecting to abort agent: %s:%d",
+		    pmixp_info_srun_ip(),
+		    pmixp_info_abort_agent_port());
+
+	slurm_set_addr(&abort_server, pmixp_info_abort_agent_port(),
+		       pmixp_info_srun_ip());
+
+	fd = slurm_open_msg_conn(&abort_server);
+	if (fd < 0) {
+		PMIXP_ERROR("slurm_open_msg_conn() failed: %m");
+		PMIXP_ERROR("Connecting to abort agent failed: %s:%d",
+			    pmixp_info_srun_ip(),
+			    pmixp_info_abort_agent_port());
+		return;
+	}
+
+	len = slurm_write_stream(fd, (char*)&status_net, sizeof(status_net));
+	if (len != sizeof(status_net)) {
+		PMIXP_ERROR("slurm_open_msg_conn() failed: %m");
+		PMIXP_ERROR("Communicating with abort agent failed: %s:%d",
+			    pmixp_info_srun_ip(),
+			    pmixp_info_abort_agent_port());
+		goto close_fd;
+	}
+
+	len = slurm_read_stream(fd, (char*)&status_net, sizeof(status_net));
+	if (len != sizeof(status_net)) {
+		PMIXP_ERROR("slurm_open_msg_conn() failed: %m");
+		PMIXP_ERROR("Communicating with abort agent failed: %s:%d",
+			    pmixp_info_srun_ip(),
+			    pmixp_info_abort_agent_port());
+		goto close_fd;
+	}
+	xassert(status_net == htonl((uint32_t)status));
+close_fd:
+	close(fd);
+}
+
+int pmixp_abort_code_get(void)
+{
+	return _abort_status;
+}
+
 
 /*
  * ------------------- DIRECT communication protocol -----------------------
@@ -1962,7 +2047,7 @@ void pmixp_server_run_cperf(void)
 
 		PMIXP_ERROR("coll perf %d", size);
 
-		bzero(times, (sizeof(double) * iters));
+		memset(times, 0, (sizeof(double) * iters));
 		for(j=0; j<iters && !rc; j++){
 			switch (mode) {
 			case PMIXP_COLL_CPERF_MIXED:

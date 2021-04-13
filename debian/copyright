@@ -6,7 +6,7 @@ Source: https://slurm.schedmd.com
 Files: *
 Copyright: 2001-2009 The Regents of the University of California
            2004,2008-2011 Lawrence Livermore National Security, LLC
-           2010-2018 SchedMD LLC
+           2010-2020 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: debian/*
@@ -78,7 +78,7 @@ Files: */Makefile.in
        auxdir/ltsugar.m4
        auxdir/ltversion.m4
        auxdir/lt~obsolete.m4
-Copyright: 1994-2015 Free Software Foundation, Inc
+Copyright: 1994-2020 Free Software Foundation, Inc
 License: FSF-unlimited
 
 Files: testsuite/expect/test1.102
@@ -116,8 +116,7 @@ Files: testsuite/expect/test1.102
 Copyright: 2015-2016 CEA/DAM/DIF
 License: GPL-2+
 
-Files: src/api/powercap_info.c
-       src/common/slurm_mcs.c
+Files: src/common/slurm_mcs.c
        src/common/slurm_mcs.h
        src/common/xcgroup_read_config.c
        src/common/xcgroup_read_config.h
@@ -136,8 +135,6 @@ Files: src/api/powercap_info.c
        src/plugins/task/cgroup/task_cgroup_devices.h
        src/plugins/task/cgroup/task_cgroup_memory.c
        src/plugins/task/cgroup/task_cgroup_memory.h
-       src/scontrol/update_powercap.c
-       src/slurmctld/powercapping.h
        src/slurmd/common/xcgroup.c
        src/slurmd/common/xcgroup.h
        src/slurmd/common/xcpuinfo.h
@@ -300,14 +297,11 @@ Files: src/plugins/acct_gather_energy/ipmi/acct_gather_energy_ipmi.c
        src/plugins/acct_gather_interconnect/none/acct_gather_interconnect_none.c
        src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.c
        src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.h
-       src/plugins/task/affinity/cpuset.c
 Copyright: 2007,2011-2013 Bull
            2002,2007 The Regents of the University of California
 License: GPL-2+ with OpenSSL exception
 
-Files: src/common/msg_aggr.c
-       src/common/msg_aggr.h
-       src/plugins/acct_gather_profile/hdf5/hdf5_api.h
+Files: src/plugins/acct_gather_profile/hdf5/hdf5_api.h
        src/plugins/acct_gather_profile/hdf5/sh5util/sh5util.c
 Copyright: 2013,2015 Bull
            2013-2016 SchedMD LLC
@@ -373,10 +367,8 @@ Copyright: 2012-2013 Bull - Yiannis Georgiou
            2002 The Regents of the University of California
 License: GPL-2+ with OpenSSL exception
 
-Files: src/api/layout_info.c
-       src/plugins/acct_gather_energy/ipmi/acct_gather_energy_ipmi_config.c
+Files: src/plugins/acct_gather_energy/ipmi/acct_gather_energy_ipmi_config.c
        src/plugins/acct_gather_energy/ipmi/acct_gather_energy_ipmi_config.h
-       src/scontrol/info_layout.c
 Copyright: 2012,2015 Bull - Thomas Cadeau
 License: GPL-2+ with OpenSSL exception
 
@@ -446,8 +438,7 @@ Files: testsuite/expect/test1.76
 Copyright: 2013-2014 Bull
 License: GPL-2+
 
-Files: src/slurmctld/powercapping.c
-       src/slurmd/common/xcpuinfo.c
+Files: src/slurmd/common/xcpuinfo.c
 Copyright: 2009,2013 CEA/DAM/DIF
            2012,2014 Bull
 License: GPL-2+ with OpenSSL exception
@@ -781,6 +772,10 @@ Files: auxdir/x_ac_ucx.m4
 Copyright: 2017 Mellanox Technologies
 License: None
 
+Files: src/slurmrestd/plugins/openapi/*/*
+Copyright: Copyright (C) 2019-2020 SchedMD LLC.
+License: GPL-2+ with OpenSSL exception or Apache-2.0
+
 License: GPL-2+ with OpenSSL exception
  This file is part of SLURM, a resource management program.
  For details, see <https://slurm.schedmd.com/>.
@@ -811,8 +806,8 @@ License: GPL-2+ with OpenSSL exception
  with SLURM; if not, write to the Free Software Foundation, Inc.,
  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 Comment:
- Content of the DISCLAMIER file follows 
- SLURM was produced at Lawrence Livermore National Laboratory in collaboration
+ Content of the DISCLAIMER file follows
+ Slurm was produced at Lawrence Livermore National Laboratory in collaboration
  with various organizations.
  .
  Copyright (C) 2012-2013 Los Alamos National Security, LLC.
@@ -924,22 +919,22 @@ Comment:
  .
  CODE-OCEC-09-009. All rights reserved.
  .
- This file is part of SLURM, a resource management program.
+ This file is part of Slurm, a resource management program.
  For details, see <https://slurm.schedmd.com/>.
  Please also read the supplied file: DISCLAIMER.
  .
- SLURM is free software; you can redistribute it and/or modify it under
+ Slurm is free software; you can redistribute it and/or modify it under
  the terms of the GNU General Public License as published by the Free
  Software Foundation; either version 2 of the License, or (at your option)
  any later version.
  .
- SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  details.
  .
  You should have received a copy of the GNU General Public License along
- with SLURM; if not, write to the Free Software Foundation, Inc.,
+ with Slurm; if not, write to the Free Software Foundation, Inc.,
  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  .
  OUR NOTICE AND TERMS OF AND CONDITIONS OF THE GNU GENERAL PUBLIC LICENSE
@@ -1314,3 +1309,19 @@ License: MIT/X11
 License: None
   No license explicitly mentioned, assuming that the main license
   GPL-2+ with OpenSSL exception applies
+
+License: Apache-2.0
+ Licensed under the terms of The Apache License, Version 2.0, and abbreviated as
+ "Apache 2.0" within the OpenAPI specification itself. A copy of this license is
+ available at https://www.apache.org/licenses/LICENSE-2.0.html.
+ .
+ As an additional requirement for changes to this specification: Contributors
+ wishing to submit changes to these files must sign SchedMD's Contributor
+ License Agreement ("CLA"). (https://slurm.schedmd.com/contributor.html).
+ By signing the CLA, contributors are specifically licensing any changes,
+ modifications, revisions, or edits to the OpenAPI specification for Slurm’s
+ RESTful interface back to SchedMD to the maximum extent permitted by the
+ relevant law and the CLA.
+ .
+ On Debian systems, the complete text of the Apache License,
+ Version 2.0 can be found in '/usr/share/common-licenses/Apache-2.0'.
