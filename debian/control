@@ -31,10 +31,6 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
- libhttp-parser-dev,
- libyaml-dev,
- libjson-c-dev,
- libjwt-dev,
  liblz4-dev
 Standards-Version: 4.4.1
 Homepage: http://slurm.schedmd.com
@@ -86,18 +82,6 @@ Description: debugging symbols for SLURM client side commands
  .
  This package contains the debugging symbols for all client side
  commands.
-
-Package: slurmrestd
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
-Description: SLURM REST API daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This package contains the REST API daemon slurmrestd.
 
 Package: slurmd
 Architecture: any
