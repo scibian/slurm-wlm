@@ -135,7 +135,6 @@ override_dh_strip:
 	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
 	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
-	dh_strip -pslurmrestd --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \
 		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
 
