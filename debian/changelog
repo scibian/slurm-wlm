@@ -1,3 +1,12 @@
+slurm-wlm (20.11.5-1sci8u1) scibian8; urgency=medium
+
+  * Import Upstream version 20.11.5
+  * Update Scibian patches to apply on new release
+  * Remove slurmrestd binary package
+  * Update health check patch after upstream cleanup
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Apr 2021 15:59:09 +0200
+
 slurm-wlm (20.11.5-1) unstable; urgency=medium
 
   * New upstream release
