@@ -157,11 +157,11 @@ int main(int argc, char **argv)
 	 */
 	if (slurm_auth_init(NULL) != SLURM_SUCCESS) {
 		fatal("Unable to initialize %s authentication plugin",
-		      slurmdbd_conf->auth_type);
+		      slurm_conf.authtype);
 	}
-	if (slurm_acct_storage_init(NULL) != SLURM_SUCCESS) {
+	if (slurm_acct_storage_init() != SLURM_SUCCESS) {
 		fatal("Unable to initialize %s accounting storage plugin",
-		      slurmdbd_conf->storage_type);
+		      slurm_conf.accounting_storage_type);
 	}
 
 	_become_slurm_user();
@@ -196,7 +196,7 @@ int main(int argc, char **argv)
 	if (slurmdbd_conf->track_wckey)
 		assoc_init_arg.cache_level |= ASSOC_MGR_CACHE_WCKEY;
 
-	db_conn = acct_storage_g_get_connection(NULL, 0, NULL, true, NULL);
+	db_conn = acct_storage_g_get_connection(0, NULL, true, NULL);
 	if (assoc_mgr_init(db_conn, &assoc_init_arg, errno) == SLURM_ERROR) {
 		error("Problem getting cache of data");
 		acct_storage_g_close_connection(&db_conn);
@@ -205,9 +205,10 @@ int main(int argc, char **argv)
 
 	if (reset_lft_rgt) {
 		int rc;
-		if ((rc = acct_storage_g_reset_lft_rgt(
-			     db_conn, slurmdbd_conf->slurm_user_id,
-			     lft_rgt_list)) != SLURM_SUCCESS)
+		if ((rc = acct_storage_g_reset_lft_rgt(db_conn,
+		                                       slurm_conf.slurm_user_id,
+		                                       lft_rgt_list))
+		    != SLURM_SUCCESS)
 			fatal("Error when trying to reset lft and rgt's");
 
 		if (acct_storage_g_commit(db_conn, 1))
@@ -551,18 +552,17 @@ static void _update_logging(bool startup)
 		log_opts.syslog_level = LOG_LEVEL_FATAL;
 
 	log_alter(log_opts, SYSLOG_FACILITY_DAEMON, slurmdbd_conf->log_file);
-	log_set_timefmt(slurmdbd_conf->log_fmt);
+	log_set_timefmt(slurm_conf.log_fmt);
 	if (startup && slurmdbd_conf->log_file) {
 		int rc;
 		gid_t slurm_user_gid;
-		slurm_user_gid = gid_from_uid(slurmdbd_conf->slurm_user_id);
-		rc = chown(slurmdbd_conf->log_file,
-			   slurmdbd_conf->slurm_user_id, slurm_user_gid);
+		slurm_user_gid = gid_from_uid(slurm_conf.slurm_user_id);
+		rc = chown(slurmdbd_conf->log_file, slurm_conf.slurm_user_id,
+		           slurm_user_gid);
 		if (rc) {
-			error("chown(%s, %d, %d): %m",
-			      slurmdbd_conf->log_file,
-			      (int) slurmdbd_conf->slurm_user_id,
-			      (int) slurm_user_gid);
+			error("chown(%s, %u, %u): %m",
+			      slurmdbd_conf->log_file, slurm_conf.slurm_user_id,
+			      slurm_user_gid);
 		}
 	}
 
@@ -622,7 +622,7 @@ static void _init_pidfile(void)
 	/* Don't close the fd returned here since we need to keep the
 	   fd open to maintain the write lock.
 	*/
-	create_pidfile(slurmdbd_conf->pid_file, slurmdbd_conf->slurm_user_id);
+	create_pidfile(slurmdbd_conf->pid_file, slurm_conf.slurm_user_id);
 }
 
 /* Become a daemon (child of init) and
@@ -841,8 +841,9 @@ static int _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec)
 	int fd;
 	int rc = SLURM_SUCCESS;
 
-	slurm_set_addr_char(&ctld_address, cluster_rec->control_port,
-			    cluster_rec->control_host);
+	memset(&ctld_address, 0, sizeof(ctld_address));
+	slurm_set_addr(&ctld_address, cluster_rec->control_port,
+		       cluster_rec->control_host);
 	fd = slurm_open_msg_conn(&ctld_address);
 	if (fd < 0) {
 		rc = SLURM_ERROR;
@@ -933,22 +934,22 @@ static void _become_slurm_user(void)
 	gid_t slurm_user_gid;
 
 	/* Determine SlurmUser gid */
-	slurm_user_gid = gid_from_uid(slurmdbd_conf->slurm_user_id);
+	slurm_user_gid = gid_from_uid(slurm_conf.slurm_user_id);
 	if (slurm_user_gid == (gid_t) -1) {
 		fatal("Failed to determine gid of SlurmUser(%u)",
-		      slurmdbd_conf->slurm_user_id);
+		      slurm_conf.slurm_user_id);
 	}
 
 	/* Initialize supplementary groups ID list for SlurmUser */
 	if (getuid() == 0) {
 		/* root does not need supplementary groups */
-		if ((slurmdbd_conf->slurm_user_id == 0) &&
+		if ((slurm_conf.slurm_user_id == 0) &&
 		    (setgroups(0, NULL) != 0)) {
 			fatal("Failed to drop supplementary groups, "
 			      "setgroups: %m");
-		} else if ((slurmdbd_conf->slurm_user_id != getuid()) &&
-			   initgroups(slurmdbd_conf->slurm_user_name,
-				      slurm_user_gid)) {
+		} else if ((slurm_conf.slurm_user_id != getuid()) &&
+		           initgroups(slurm_conf.slurm_user_name,
+		                      slurm_user_gid)) {
 			fatal("Failed to set supplementary groups, "
 			      "initgroups: %m");
 		}
@@ -963,10 +964,10 @@ static void _become_slurm_user(void)
 	}
 
 	/* Set UID to UID of SlurmUser */
-	if ((slurmdbd_conf->slurm_user_id != getuid()) &&
-	    (setuid(slurmdbd_conf->slurm_user_id))) {
+	if ((slurm_conf.slurm_user_id != getuid()) &&
+	    (setuid(slurm_conf.slurm_user_id))) {
 		fatal("Can not set uid to SlurmUser(%u): %m",
-		      slurmdbd_conf->slurm_user_id);
+		      slurm_conf.slurm_user_id);
 	}
 }
 

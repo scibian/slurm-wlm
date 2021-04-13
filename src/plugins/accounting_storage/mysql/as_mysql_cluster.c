@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  as_mysql_cluster.c - functions dealing with clusters.
  *****************************************************************************
- *
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2011 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -70,8 +69,7 @@ extern int as_mysql_get_fed_cluster_id(mysql_conn_t *mysql_conn,
 			  "FROM %s "
 			  "WHERE deleted=0 AND name='%s' AND federation='%s';",
 		   cluster_table, cluster, federation);
-	if (debug_flags & DEBUG_FLAG_FEDR)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(FEDR, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		error("no result given for %s", query);
@@ -80,10 +78,8 @@ extern int as_mysql_get_fed_cluster_id(mysql_conn_t *mysql_conn,
 	xfree(query);
 	while ((row = mysql_fetch_row(result))) {
 		int tmp_id = slurm_atoul(row[1]);
-		if (debug_flags & DEBUG_FLAG_FEDR)
-			info("cluster '%s' already part of federation '%s', "
-			     "using existing id %d", cluster, federation,
-			     tmp_id);
+		log_flag(FEDR, "cluster '%s' already part of federation '%s', using existing id %d",
+			 cluster, federation, tmp_id);
 		mysql_free_result(result);
 		*ret_id = tmp_id;
 		return SLURM_SUCCESS;
@@ -96,8 +92,7 @@ extern int as_mysql_get_fed_cluster_id(mysql_conn_t *mysql_conn,
 		   	  "WHERE name!='%s' AND federation='%s' "
 			  "AND fed_id > %d AND deleted=0 ORDER BY fed_id;",
 			  cluster_table, cluster, federation, last_id);
-	if (debug_flags & DEBUG_FLAG_FEDR)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(FEDR, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		error("no result given for %s", query);
@@ -337,8 +332,7 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			   now, object->classification,
 			   (object->fed.name) ? object->fed.name : "",
 			   fed_id, fed_state, (features) ? features : "");
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS) {
@@ -374,8 +368,7 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 				   extra);
 			xfree(cols);
 			xfree(vals);
-			if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-				DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+			DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 
 			rc = mysql_db_query(mysql_conn, query);
 			xfree(query);
@@ -604,8 +597,7 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 	xstrfmtcat(query, "select name, control_port, federation, features from %s%s;",
 		   cluster_table, extra);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -715,9 +707,8 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn,
-				 "didn't effect anything\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn,
+		         "didn't affect anything\n%s", query);
 		xfree(name_char);
 		xfree(vals);
 		xfree(query);
@@ -789,9 +780,8 @@ extern List as_mysql_remove_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (!mysql_num_rows(result)) {
 		mysql_free_result(result);
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn,
-				 "didn't effect anything\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn,
+		         "didn't affect anything\n%s", query);
 		xfree(query);
 		return ret_list;
 	}
@@ -845,8 +835,7 @@ extern List as_mysql_remove_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 		return NULL;
 	}
 	if (!jobs_running) {
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS) {
@@ -966,8 +955,7 @@ empty:
 	xfree(tmp);
 	xfree(extra);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -1021,8 +1009,7 @@ empty:
 			"select tres, cluster_nodes from "
 			"\"%s_%s\" where time_end=0 and node_name='' limit 1",
 			cluster->name, event_table);
-		if (debug_flags & DEBUG_FLAG_DB_TRES)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_TRES, mysql_conn->conn, "query\n%s", query);
 		if (!(result2 = mysql_db_query_ret(mysql_conn, query, 0))) {
 			xfree(query);
 			continue;
@@ -1106,7 +1093,6 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 	int i=0;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	uint16_t private_data = 0;
 	time_t now = time(NULL);
 	List use_cluster_list = as_mysql_cluster_list;
 	slurmdb_user_rec_t user;
@@ -1141,9 +1127,7 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 	memset(&user, 0, sizeof(slurmdb_user_rec_t));
 	user.uid = uid;
 
-	private_data = slurm_get_private_data();
-
-	if (private_data & PRIVATE_DATA_EVENTS) {
+	if (slurm_conf.private_data & PRIVATE_DATA_EVENTS) {
 		if (!is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
 			error("UID %u tried to access events, only administrators can look at events",
@@ -1325,8 +1309,7 @@ empty:
 		if (extra)
 			xstrfmtcat(query, " %s", extra);
 
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
 			xfree(query);
@@ -1433,12 +1416,10 @@ extern int as_mysql_node_down(mysql_conn_t *mysql_conn,
 	row = mysql_fetch_row(result);
 	if (row && (node_ptr->node_state == slurm_atoul(row[0])) &&
 	    !xstrcasecmp(my_reason, row[1])) {
-		if (debug_flags & DEBUG_FLAG_DB_EVENT)
-			DB_DEBUG(mysql_conn->conn,
-				 "no change to %s(%s) needed %u == %s and %s == %s",
-				 node_ptr->name, mysql_conn->cluster_name,
-				 node_ptr->node_state, row[0],
-				 my_reason, row[1]);
+		DB_DEBUG(DB_EVENT, mysql_conn->conn,
+		         "no change to %s(%s) needed %u == %s and %s == %s",
+		         node_ptr->name, mysql_conn->cluster_name,
+		         node_ptr->node_state, row[0], my_reason, row[1]);
 		mysql_free_result(result);
 		return SLURM_SUCCESS;
 	}
@@ -1459,8 +1440,7 @@ extern int as_mysql_node_down(mysql_conn_t *mysql_conn,
 			"time_start=%ld and node_name='%s';",
 			mysql_conn->cluster_name, event_table,
 			my_reason, event_time, node_ptr->name);
-		if (debug_flags & DEBUG_FLAG_DB_EVENT)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 
@@ -1470,27 +1450,33 @@ extern int as_mysql_node_down(mysql_conn_t *mysql_conn,
 
 	mysql_free_result(result);
 
-	if (debug_flags & DEBUG_FLAG_DB_EVENT)
-		DB_DEBUG(mysql_conn->conn,
-			 "inserting %s(%s) with tres of '%s'",
-			 node_ptr->name, mysql_conn->cluster_name,
-			 node_ptr->tres_str);
+	DB_DEBUG(DB_EVENT, mysql_conn->conn,
+	         "inserting %s(%s) with tres of '%s'",
+		 node_ptr->name, mysql_conn->cluster_name, node_ptr->tres_str);
 
 	query = xstrdup_printf(
 		"update \"%s_%s\" set time_end=%ld where "
 		"time_end=0 and node_name='%s';",
 		mysql_conn->cluster_name, event_table,
 		event_time, node_ptr->name);
+
+	/*
+	 * Reason for "on duplicate": slurmctld will send a time_start based on
+	 * the state of the "node_state" state file. If the the slurmctld is
+	 * "killed" before updating the state file, the slurmctld can send the
+	 * same time_start for the node and cause a "Duplicate entry" error.
+	 * This can particually happen when doing clean starts.
+	 */
 	xstrfmtcat(query,
 		   "insert into \"%s_%s\" "
 		   "(node_name, state, tres, time_start, "
 		   "reason, reason_uid) "
-		   "values ('%s', %u, '%s', %ld, '%s', %u);",
+		   "values ('%s', %u, '%s', %ld, '%s', %u) "
+		   "on duplicate key update time_end=0;",
 		   mysql_conn->cluster_name, event_table,
 		   node_ptr->name, node_ptr->node_state,
 		   node_ptr->tres_str, event_time, my_reason, reason_uid);
-	if (debug_flags & DEBUG_FLAG_DB_EVENT)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 
@@ -1517,8 +1503,7 @@ extern int as_mysql_node_up(mysql_conn_t *mysql_conn,
 		"time_end=0 and node_name='%s';",
 		mysql_conn->cluster_name, event_table,
 		event_time, node_ptr->name);
-	if (debug_flags & DEBUG_FLAG_DB_EVENT)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 	return rc;
@@ -1553,15 +1538,15 @@ extern int as_mysql_fini_ctld(mysql_conn_t *mysql_conn,
 		"control_host='%s' && control_port=%u;",
 		cluster_table, now, cluster_rec->name,
 		cluster_rec->control_host, cluster_rec->control_port);
-	if (debug_flags & DEBUG_FLAG_DB_EVENT)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 
 	if (rc != SLURM_SUCCESS)
 		return SLURM_ERROR;
 
-	if (!last_affected_rows(mysql_conn) || !slurmdbd_conf->track_ctld)
+	if (!last_affected_rows(mysql_conn) || !slurmdbd_conf->track_ctld ||
+	    (cluster_rec->flags & CLUSTER_FLAG_EXT))
 		return rc;
 
 	/* If tres is NULL we can get the current number of tres by
@@ -1599,8 +1584,7 @@ extern int as_mysql_fini_ctld(mysql_conn_t *mysql_conn,
 	if (free_it)
 		xfree(cluster_rec->tres_str);
 
-	if (debug_flags & DEBUG_FLAG_DB_EVENT)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 
@@ -1682,22 +1666,19 @@ extern int as_mysql_cluster_tres(mysql_conn_t *mysql_conn,
 		 */
 
 		if (xstrcmp(cluster_nodes, row[1])) {
-			if (debug_flags & DEBUG_FLAG_DB_EVENT)
-				DB_DEBUG(mysql_conn->conn,
-					 "Nodes on the cluster have changed.");
+			DB_DEBUG(DB_EVENT, mysql_conn->conn,
+			         "Nodes on the cluster have changed.");
 			response = ACCOUNTING_NODES_CHANGE_DB;
 		} else
 			response = ACCOUNTING_TRES_CHANGE_DB;
 	} else if (xstrcmp(cluster_nodes, row[1])) {
-		if (debug_flags & DEBUG_FLAG_DB_EVENT)
-			DB_DEBUG(mysql_conn->conn,
-				 "Node names on the cluster have changed.");
+		DB_DEBUG(DB_EVENT, mysql_conn->conn,
+		         "Node names on the cluster have changed.");
 		response = ACCOUNTING_NODES_CHANGE_DB;
 	} else {
-		if (debug_flags & DEBUG_FLAG_DB_EVENT)
-			DB_DEBUG(mysql_conn->conn,
-				 "We have the same TRES and node names as before for %s, no need to update the database.",
-				 mysql_conn->cluster_name);
+		DB_DEBUG(DB_EVENT, mysql_conn->conn,
+		         "We have the same TRES and node names as before for %s, no need to update the database.",
+		         mysql_conn->cluster_name);
 		goto remove_disconnect;
 	}
 

@@ -38,7 +38,18 @@ set job_name1    "test$test_id.job1"
 set job_name2    "test$test_id.job2"
 set node_cnt 1-1
 
-if {[job_submit_all_partitions] != 0} {
+proc cleanup {} {
+	global job_id1 job_id2 bin_rm file_in
+
+	#
+	# Cancel jobs and remove files
+	#
+	cancel_job $job_id1
+	cancel_job $job_id2
+	exec $bin_rm -f $file_in
+}
+
+if {[param_contains [get_config_param "JobSubmitPlugins"] "all_partitions"]} {
 	skip "This test is incompatible with JobSubmitPlugins=all_partitions"
 }
 
@@ -105,8 +116,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -130,8 +140,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -154,8 +163,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -177,8 +185,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -198,8 +205,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -220,8 +226,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -235,8 +240,7 @@ if {$node_name_set == 1} {
 			exp_continue
 		}
 		timeout {
-			log_error "squeue not responding"
-			set exit_code 1
+			fail "squeue not responding"
 		}
 		eof {
 			wait
@@ -267,8 +271,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -287,8 +290,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -319,8 +321,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -348,8 +349,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -374,8 +374,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue not responding"
-		set exit_code 1
+		fail "squeue not responding"
 	}
 	eof {
 		wait
@@ -386,18 +385,6 @@ if {$job_found == 0} {
 	set exit_code 1
 }
 
-#
-# Cancel jobs and remove files
-#
-if {[cancel_job $job_id1] != 0} {
-	fail "Unable to cancel job ($job_id1)"
-}
-if {[cancel_job $job_id2] != 0} {
-	fail "Unable to cancel job ($job_id2)"
-}
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_in
-} else {
+if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }
-

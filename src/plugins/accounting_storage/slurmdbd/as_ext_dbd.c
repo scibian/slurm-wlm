@@ -42,11 +42,14 @@
 #  include <sys/prctl.h>
 #endif
 
+#include "dbd_conn.h"
 #include "as_ext_dbd.h"
 
 static List ext_conns_list;
 static pthread_t ext_thread_tid = 0;
-static int ext_shutdown = 0;
+static time_t ext_shutdown = 0;
+
+extern int clusteracct_storage_p_register_ctld(void *db_conn, uint16_t port);
 
 static pthread_mutex_t ext_conns_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -56,29 +59,29 @@ static pthread_mutex_t ext_thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 extern void _destroy_external_host_conns(void *object)
 {
 	slurm_persist_conn_t *conn = (slurm_persist_conn_t *)object;
-	xfree(conn->shutdown);
+	/*
+	 * Don't call dbd_conn_close() to prevent DBD_FINI being sent to
+	 * external DBDs.
+	 */
 	slurm_persist_conn_destroy(conn);
 }
 
 /* don't connect now as it will block the ctld */
 extern slurm_persist_conn_t *_create_slurmdbd_conn(char *host, int port)
 {
-	static char *cluster_name = NULL;
-	slurm_persist_conn_t *dbd_conn = NULL;
+	uint16_t persist_conn_flags = PERSIST_FLAG_EXT_DBD;
+	slurm_persist_conn_t *dbd_conn =
+		dbd_conn_open(&persist_conn_flags, NULL, host, port);
 
-	if (!cluster_name)
-		cluster_name = slurm_get_cluster_name();
+	dbd_conn->shutdown = &ext_shutdown;
 
-	dbd_conn = xmalloc(sizeof(slurm_persist_conn_t));
-	dbd_conn->cluster_name = xstrdup(cluster_name);
-	dbd_conn->fd = -1;
-	dbd_conn->flags = PERSIST_FLAG_DBD;
-	dbd_conn->persist_type = PERSIST_TYPE_DBD;
-	dbd_conn->rem_host = xstrdup(host);
-	dbd_conn->rem_port = port;
-	dbd_conn->timeout = -1;
-	/* need to manually free as this isn't handled by the destroy function */
-	dbd_conn->shutdown = xmalloc(sizeof(time_t));
+	if ((clusteracct_storage_p_register_ctld(dbd_conn,
+						 slurm_conf.slurmctld_port) ==
+	     ESLURM_ACCESS_DENIED)) {
+		error("Not allowed to register to external cluster, not going to try again.");
+		dbd_conn_close(&dbd_conn);
+		dbd_conn = NULL;
+	}
 
 	return dbd_conn;
 }
@@ -97,23 +100,34 @@ extern int _find_ext_conn(void *x, void *key)
 
 static void _create_ext_conns(void)
 {
-	char *ext_hosts = slurm_get_accounting_storage_ext_host();
+	char *ext_hosts;
 	char *tok = NULL, *save_ptr = NULL;
 	List new_list = list_create(_destroy_external_host_conns);
-	slurm_persist_conn_t *old_conn;
 
-	if (ext_hosts)
+	if ((ext_hosts = xstrdup(slurm_conf.accounting_storage_ext_host)))
 		tok = strtok_r(ext_hosts, ",", &save_ptr);
 	while (ext_hosts && tok) {
-		slurm_persist_conn_t *dbd_conn;
+		slurm_persist_conn_t *dbd_conn, tmp_conn = { 0 };
 		char *colon = xstrstr(tok, ":");
-		int port = SLURMDBD_PORT;
+		int port = slurm_conf.accounting_storage_port;
 		if (colon) {
 			*(colon++) = '\0';
 			port = strtol(colon, NULL, 10);
 		}
 
-		dbd_conn = _create_slurmdbd_conn(tok, port);
+		tmp_conn.rem_host = tok;
+		tmp_conn.rem_port = port;
+
+		/*
+		 * Transfer existing connections to new list so that existing
+		 * connections are preserved and old can be removed.
+		 */
+		if (!ext_conns_list ||
+		    !(dbd_conn = list_remove_first(ext_conns_list,
+						   _find_ext_conn,
+						   &tmp_conn)))
+			dbd_conn = _create_slurmdbd_conn(tok, port);
+
 		if (dbd_conn)
 			list_append(new_list, dbd_conn);
 
@@ -121,23 +135,7 @@ static void _create_ext_conns(void)
 	}
 	xfree(ext_hosts);
 
-	/*
-	 * Transfer existing connections to new list so that existing
-	 * connections are preserved and old can be removed.
-	 */
-	if (ext_conns_list) {
-		while ((old_conn = list_pop(ext_conns_list))) {
-			slurm_persist_conn_t *new_conn;
-			if ((new_conn = list_remove_first(new_list,
-							  _find_ext_conn,
-							  old_conn))) {
-				_destroy_external_host_conns(new_conn);
-				list_append(new_list, old_conn);
-			} else
-				_destroy_external_host_conns(old_conn);
-		}
-	}
-
+	/* Remove old connections we don't service now by freeing the list */
 	FREE_NULL_LIST(ext_conns_list);
 	if (list_count(new_list))
 		ext_conns_list = new_list;
@@ -155,8 +153,8 @@ static int _for_each_check_ext_conn(void *x, void *arg)
 		slurm_persist_conn_reopen(dbd_conn, true);
 
 		/* slurm_persist_send_msg will reconnect */
-		rc = clusteracct_storage_g_register_ctld(
-			dbd_conn, slurmctld_conf.slurmctld_port);
+		rc = clusteracct_storage_p_register_ctld(
+			dbd_conn, slurm_conf.slurmctld_port);
 		if (rc == ESLURM_ACCESS_DENIED) {
 			error("Not allowed to register to external cluster, not going to try again.");
 			delete = true;
@@ -214,7 +212,7 @@ static void _create_ext_thread(void)
 
 static void _destroy_ext_thread(void)
 {
-	ext_shutdown = 1;
+	ext_shutdown = time(NULL);
 
 	slurm_mutex_lock(&ext_thread_mutex);
 	slurm_cond_broadcast(&ext_thread_cond);

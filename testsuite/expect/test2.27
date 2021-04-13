@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code        0
 set job_id           0
 set node_cnt         1
 set user             [get_my_user_name]
@@ -37,7 +36,7 @@ if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
 }
 
-set available [available_nodes]
+set available [llength [get_nodes_by_state idle,alloc,comp]]
 if {$available < $node_cnt} {
 	skip "Not enough nodes currently available ($available avail, $node_cnt needed)"
 }
@@ -51,7 +50,7 @@ proc cleanup { } {
 	reconfigure
 }
 
-proc submit { args regex } {
+proc submit { args regex {negate_match 0} } {
 	global sbatch scontrol number
 	set matches 0
 	set jobid 0
@@ -88,14 +87,18 @@ proc submit { args regex } {
 		}
 	}
 
-	if {!$matches} {
+	if {$negate_match} {
+		if {$matches} {
+			fail "scontrol show job $jobid matched '$regex' and it shouldn't have"
+		}
+	} elseif {!$matches} {
 		fail "scontrol show job $jobid failed to match '$regex'"
 	}
 
 	cancel_job $jobid
 }
 
-proc update { job_id args regex } {
+proc update { job_id args regex {negate_match 0}} {
 	global scontrol
 	set matches 0
 
@@ -123,14 +126,16 @@ proc update { job_id args regex } {
 		}
 	}
 
-	if {!$matches} {
-		fail "scontrol update job $args failed to match '$regex'"
+	if {$negate_match} {
+		if {$matches} {
+			fail "scontrol show job $jobid matched '$regex' and it shouldn't have"
+		}
+	} elseif {!$matches} {
+		fail "scontrol show job $jobid failed to match '$regex'"
 	}
 }
 
 set config_path [get_conf_path]
-fail_on_error "Unable to determine configuration path"
-
 save_conf $config_path/slurm.conf
 
 proc test_it {} {
@@ -141,9 +146,9 @@ proc test_it {} {
 		set domain_str "@$domain"
 	}
 
-	submit "-H" "MailUser=$user$domain_str MailType=NONE"
+	submit "-H" "MailUser=$user$domain_str MailType=NONE" 1
 	submit "-H --mail-type=begin,end" "MailUser=$user$domain_str MailType=BEGIN,END"
-	submit "-H --mail-user=blah" "MailUser=blah MailType=NONE"
+	submit "-H --mail-user=blah" "MailUser=blah MailType=NONE" 1
 
 	spawn $sbatch -J "test$test_id" --wrap=hostname -H
 	expect {
@@ -163,10 +168,10 @@ proc test_it {} {
 	update $job_id "mailuser= mailtype=begin,end" "MailUser=$user$domain_str MailType=BEGIN,END"
 	update $job_id "mailtype=begin" "MailUser=$user$domain_str MailType=BEGIN"
 	update $job_id "mailuser=blah mailtype=begin" "MailUser=blah MailType=BEGIN"
-	update $job_id "mailuser=blah mailtype=none" "MailUser=blah MailType=NONE"
+	update $job_id "mailuser=blah mailtype=none" "MailUser=blah MailType=NONE" 1
 
 	update $job_id "mailtype=begin" "MailUser=blah MailType=BEGIN"
-	update $job_id "mailtype=none" "MailUser=blah MailType=NONE"
+	update $job_id "mailtype=none" "MailUser=blah MailType=NONE" 1
 	update $job_id "mailtype=END" "MailUser=blah MailType=END"
 
 	update $job_id "mailuser=" "MailUser=$user$domain_str MailType=END"
@@ -179,7 +184,7 @@ proc test_it {} {
 # Test w/out MailDomain
 set domain ""
 exec $bin_sed -i "s/^\\(MailDomain.*\\)/#\\1/Ig" $config_path/slurm.conf
-reconfigure
+reconfigure -fail
 test_it
 
 
@@ -189,5 +194,5 @@ set mail_conf "
 MailDomain = $domain
 "
 exec $bin_echo $mail_conf >> $config_path/slurm.conf
-reconfigure
+reconfigure -fail
 test_it

@@ -1,3 +1,50 @@
+slurm-wlm (20.11.5-1) unstable; urgency=medium
+
+  * New upstream release
+  * Update libslurm36 symbols file
+  * Refresh mail-path patch
+  * Add more calls to sleep trying to fix #985725
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 05 Apr 2021 01:18:48 +0200
+
+slurm-wlm (20.11.4-1) unstable; urgency=medium
+
+  * New upstream release
+  * Refresh patches
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 19 Feb 2021 11:13:22 +0100
+
+slurm-wlm (20.11.3-3) unstable; urgency=medium
+
+  * Pass SUCMD and SLEEP_CMD to configure (Closes: #977319)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 17 Feb 2021 21:24:19 +0100
+
+slurm-wlm (20.11.3-2) unstable; urgency=medium
+
+  * Source only upload for migration to testing
+  * Modify slurmrestd EnvironmentFile location
+  * Add lintian overrides for slurmrestd
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 28 Jan 2021 03:05:28 +0100
+
+slurm-wlm (20.11.3-1) unstable; urgency=medium
+
+  * New upstream release
+  * Remove typos patches
+  * Refresh patches
+  * Bump libslurm to soname 36
+  * Remove unused overrides
+  * Update d/copyright
+  * Fix typos
+  * Add patch to compile against pmix v4
+  * Fix sacct test failure
+  * Add slurmrestd package
+  * Update configurators
+  * Fix packages descriptions
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 24 Jan 2021 18:29:47 +0100
+
 slurm-wlm (20.02.6-2sci10u2) scibian10; urgency=medium
 
   * Update Vcs URL following rename

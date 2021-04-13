@@ -39,16 +39,17 @@ set mismatches   0
 # We start the node position of the array to 3 because the first 2 nodes will be
 # used for allocated state since scontrol cannot change node state to allocated
 set node_pos     2
+set tmp_id       0
+set tmp_sc       "test$test_id\_tmp_sc"
 array set node_list {}
 
 proc change_state { state nodes } {
-	global scontrol exit_code
+	global scontrol
 
 	spawn $scontrol update nodename=$nodes state=$state reason=test
 	expect {
 		timeout {
-			log_error "scontrol is not responding"
-			set exit_code 1
+			fail "scontrol is not responding"
 		}
 		eof {
 			wait
@@ -57,21 +58,30 @@ proc change_state { state nodes } {
 }
 
 proc reset_state { } {
-
-	global scontrol node_list node_pos exit_code
+	global scontrol node_list node_pos
 
 	foreach num [array names node_list] {
 		spawn $scontrol update nodename=$node_list($num) state=idle
 		expect {
 			timeout {
-				log_error "scontrol is not responding"
-				set exit_code 1
+				fail "scontrol is not responding"
 			}
 			eof {
 				wait
 			}
 		}
 	}
+}
+
+proc cleanup {} {
+	global tmp_sc
+
+	#
+	# Reset node states back to idle
+	#
+	reset_state
+
+	file delete $tmp_sc
 }
 
 set partition [default_partition]
@@ -87,8 +97,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sinfo is not responding"
-		set exit_code 1
+		fail "sinfo is not responding"
 	}
 	eof  {
 		wait
@@ -117,8 +126,7 @@ expect {
 		}
 	}
 	timeout {
-		log_error "sinfo is not responding"
-		set exit_code 1
+		fail "sinfo is not responding"
 	}
 	eof {
 		wait
@@ -129,12 +137,12 @@ if {$i != 8} {
 	skip "Unable to get all the required nodes ($i != 8)"
 }
 
+set node_list_str [join [dict values [array get node_list]] ","]
+
 #
 # Submit a job to filter for allocated job state
 #
 log_info "Testing ALLOCATED state"
-set tmp_id 0
-set tmp_sc "test$test_id\_tmp_sc"
 make_bash_script $tmp_sc "sleep 20"
 spawn $sbatch -p$partition -w$node_list(0),$node_list(1) -o/dev/null -n[expr 2 * $num_cpus] --exclusive $tmp_sc
 expect {
@@ -143,8 +151,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not responding"
-		set exit_code 1
+		fail "sbatch is not responding"
 	}
 	eof {
 		wait
@@ -162,10 +169,18 @@ if {[wait_for_job $tmp_id "RUNNING"] != 0} {
 	set exit_code 1
 }
 
-spawn $sinfo --Node --node=$node_list(0),$node_list(1) --long --exact --state=allocated -p$partition
+set allocated_count 0
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=allocated -p$partition
 expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
-		if ([string compare $expect_out(5,string) "allocated"]) {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "allocated"]) &&
+		    ((![string compare $node $node_list(0)]) ||
+		     (![string compare $node $node_list(1)]))} {
+			incr allocated_cnt
+		} else {
+			log_debug "$node:$state"
 			incr mismatches
 		}
 		exp_continue
@@ -178,12 +193,17 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "sinfo not responding"
-		set exit_code 1
+		fail "sinfo not responding"
 	}
 	eof {
 		wait
 	}
+}
+if {$mismatches != 0} {
+	fail "sinfo node filtering error"
+}
+if {$allocated_cnt != 2} {
+	fail "allocated_cnt($allocated_cnt) != 2"
 }
 
 cancel_job $tmp_id
@@ -198,10 +218,26 @@ change_state drain $node_list(6),$node_list(7)
 # Change node state to idle and use state filter to filter node
 #
 log_info "Testing IDLE state"
-spawn $sinfo --Node --node=$node_list(2),$node_list(3) --long --exact --state=idle -p$partition
+set idle_cnt 0
+set idle_drain_cnt 0
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=idle -p$partition
 expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
-		if ([string compare $expect_out(5,string) "idle"]) {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "idle"]) &&
+		    ((![string compare $node $node_list(0)]) ||
+		     (![string compare $node $node_list(1)]) ||
+		     (![string compare $node $node_list(2)]) ||
+		     (![string compare $node $node_list(3)]))} {
+			incr idle_cnt
+		# NOTE: drained nodes can be idle as well.
+		} elseif {(![string compare $expect_out(5,string) "drained"]) &&
+			  ((![string compare $node $node_list(6)]) ||
+			   (![string compare $node $node_list(7)]))} {
+			incr idle_drain_cnt
+		} else {
+			log_debug "$node:$state"
 			incr mismatches
 		}
 		exp_continue
@@ -214,22 +250,38 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "sinfo not responding"
-		set exit_code 1
+		fail "sinfo not responding"
 	}
 	eof {
 		wait
 	}
+}
+if {$mismatches != 0} {
+	fail "sinfo node filtering error"
+}
+if {$idle_cnt != 4} {
+	fail "idle($idle_cnt) != 4"
+}
+if {$idle_drain_cnt != 2} {
+	fail "idle_drain_cnt($idle_drain_cnt) != 2"
 }
 
 #
 # Change node state to down and use state filter to filter node
 #
 log_info "Testing DOWN state"
-spawn $sinfo --Node --node=$node_list(4),$node_list(5) --long --exact --state=down -p$partition
+set down_cnt 0
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=down -p$partition
 expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
-		if ([string compare $expect_out(5,string) "down"]) {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "down"]) &&
+		    ((![string compare $node $node_list(4)]) ||
+		     (![string compare $node $node_list(5)]))} {
+			incr down_cnt
+		} else {
+			log_debug "$node:$state"
 			incr mismatches
 		}
 		exp_continue
@@ -242,22 +294,81 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "sinfo not responding"
-		set exit_code 1
+		fail "sinfo not responding"
 	}
 	eof {
 		wait
 	}
+}
+if {$mismatches != 0} {
+	fail "sinfo node filtering error"
+}
+if {$down_cnt != 2} {
+	fail "down_cnt($down_cnt) != 2"
 }
 
 #
 # Change node state to drain and use state filter to filter node
 #
 log_info "Testing DRAIN state"
-spawn $sinfo --Node --node=$node_list(6),$node_list(7) --long --exact --state=drain -p$partition
+set drain_cnt 0
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=drain -p$partition
 expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
-		if ([string compare $expect_out(5,string) "drained"]) {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "drained"]) &&
+		    ((![string compare $node $node_list(6)]) ||
+		     (![string compare $node $node_list(7)]))} {
+			incr drain_cnt
+		} else {
+			log_debug "$node:$state"
+			incr mismatches
+		}
+		exp_continue
+	}
+	-re "error:" {
+		log_error "Unexpected error from sinfo"
+		set exit_code 1
+	}
+	-re "Unable to contact" {
+		fail "Slurm appears to be down"
+	}
+	timeout {
+		fail "sinfo not responding"
+	}
+	eof {
+		wait
+	}
+}
+if {$mismatches != 0} {
+	fail "sinfo node filtering error"
+}
+if {$drain_cnt != 2} {
+	fail "drain_cnt($drain_cnt) != 2"
+}
+
+#
+# Test for finding drain AND down states.
+#
+log_info "Testing DOWN,DRAIN state"
+set drain_cnt 0
+set down_cnt 0
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=down,drain -p$partition
+expect {
+	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "down"]) &&
+		    ((![string compare $node $node_list(4)]) ||
+		     (![string compare $node $node_list(5)]))} {
+			incr down_cnt
+		} elseif {(![string compare $expect_out(5,string) "drained"]) &&
+			  ((![string compare $node $node_list(6)]) ||
+			   (![string compare $node $node_list(7)]))} {
+			incr drain_cnt
+		} else {
+			log_debug "$node:$state"
 			incr mismatches
 		}
 		exp_continue
@@ -277,17 +388,59 @@ expect {
 		wait
 	}
 }
-
-#
-# Reset node states back to idle
-#
-reset_state
-
 if {$mismatches != 0} {
-	fail "sinfo node filtering error"
+	fail "sinfo node filtering error ($mismatches)"
 }
-if {$exit_code == 0} {
-	file delete $tmp_sc
-} else {
+if {$down_cnt != 2} {
+	fail "down_cnt($down_cnt) != 2"
+}
+if {$drain_cnt != 2} {
+	fail "drain_cnt($drain_cnt) != 2"
+}
+
+#
+# Test for finding drain AND down states.
+#
+log_info "Testing \"DOWN&DRAIN\" state"
+set drain_cnt 0
+change_state drain $node_list(4),$node_list(5)
+spawn $sinfo --Node --node=$node_list_str --long --exact --state=down&drain -p$partition
+expect {
+	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
+		set node $expect_out(2,string)
+		set state $expect_out(5,string)
+		if {(![string compare $expect_out(5,string) "drained"]) &&
+		    ((![string compare $node $node_list(4)]) ||
+		     (![string compare $node $node_list(5)]))} {
+			incr drain_cnt
+		} else {
+			log_debug "$node:$state"
+			incr mismatches
+		}
+		exp_continue
+	}
+	-re "error:" {
+		log_error "Unexpected error from sinfo"
+		set exit_code 1
+	}
+	-re "Unable to contact" {
+		fail "Slurm appears to be down"
+	}
+	timeout {
+		log_error "sinfo not responding"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+if {$mismatches != 0} {
+	fail "sinfo node filtering error ($mismatches)"
+}
+if {$drain_cnt != 2} {
+	fail "drain_cnt($drain_cnt) != 2"
+}
+
+if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

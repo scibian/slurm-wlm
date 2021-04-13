@@ -2,8 +2,13 @@
  **  pmix_info.c - PMIx various environment information
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
- *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
+ *  Copyright (C) 2015-2020 Mellanox Technologies. All rights reserved.
+ *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>,
+ *             Boris Karasev <karasev.b@gmail.com, boriska@mellanox.com>.
+ *  Copyright (C) 2020      Siberian State University of Telecommunications
+ *                          and Information Sciences (SibSUTIS).
+ *                          All rights reserved.
+ *  Written by Boris Bochkarev <boris-bochkaryov@yandex.ru>.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -131,9 +136,13 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 	_pmixp_job_info.uid = job->uid;
 	_pmixp_job_info.gid = job->gid;
 
-	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL)) {
-		_pmixp_job_info.jobid = job->het_job_id;
-		_pmixp_job_info.stepid = job->stepid;
+	memcpy(&_pmixp_job_info.step_id, &job->step_id,
+	       sizeof(_pmixp_job_info.step_id));
+
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		_pmixp_job_info.step_id.job_id = job->het_job_id;
+
+	if (job->het_job_offset != NO_VAL) {
 		_pmixp_job_info.node_id = job->nodeid +
 					  job->het_job_node_offset;
 		_pmixp_job_info.node_tasks = job->node_tasks;
@@ -152,8 +161,6 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 						   job->het_job_task_offset;
 		}
 	} else {
-		_pmixp_job_info.jobid = job->jobid;
-		_pmixp_job_info.stepid = job->stepid;
 		_pmixp_job_info.node_id = job->nodeid;
 		_pmixp_job_info.node_tasks = job->node_tasks;
 		_pmixp_job_info.ntasks = job->ntasks;
@@ -170,10 +177,8 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 	}
 #if 0
 	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL))
-		info("HET_JOB_ID:%u", _pmixp_job_info.jobid);
-	else
-		info("JOBID:%u", _pmixp_job_info.jobid);
-	info("STEPID:%u", _pmixp_job_info.stepid);
+		info("HET_JOB_ID:%u", _pmixp_job_info.step_id.job_id);
+	info("%ps", &_pmixp_job_info.step_id);
 	info("NODEID:%u", _pmixp_job_info.node_id);
 	info("NODE_TASKS:%u", _pmixp_job_info.node_tasks);
 	info("NTASKS:%u", _pmixp_job_info.ntasks);
@@ -211,6 +216,8 @@ int pmixp_info_free(void)
 	if (_pmixp_job_info.task_map_packed) {
 		xfree(_pmixp_job_info.task_map_packed);
 	}
+
+	xfree(_pmixp_job_info.srun_ip);
 
 	hostlist_destroy(_pmixp_job_info.job_hl);
 	hostlist_destroy(_pmixp_job_info.step_hl);
@@ -296,6 +303,18 @@ static int _resources_set(char ***env)
 {
 	char *p = NULL;
 
+	/* Initialize abort thread info */
+	p = getenvp(*env, PMIXP_SLURM_ABORT_AGENT_IP);
+
+	xfree(_pmixp_job_info.srun_ip);
+	_pmixp_job_info.srun_ip = xstrdup(p);
+
+	p = getenvp(*env, PMIXP_SLURM_ABORT_AGENT_PORT);
+	if (p)
+		_pmixp_job_info.abort_agent_port = slurm_atoul(p);
+	else
+		_pmixp_job_info.abort_agent_port = -1;
+
 	/* Initialize all memory pointers that would be allocated to NULL
 	 * So in case of error exit we will know what to xfree
 	 */
@@ -365,6 +384,8 @@ err_exit:
 	if (_pmixp_job_info.hostname) {
 		xfree(_pmixp_job_info.hostname);
 	}
+
+	xfree(_pmixp_job_info.srun_ip);
 	return SLURM_ERROR;
 }
 
@@ -374,7 +395,8 @@ static int _env_set(char ***env)
 
 	xassert(_pmixp_job_info.hostname);
 
-	_pmixp_job_info.server_addr_unfmt = slurm_get_slurmd_spooldir(NULL);
+	_pmixp_job_info.server_addr_unfmt =
+		xstrdup(slurm_conf.slurmd_spooldir);
 
 	_pmixp_job_info.lib_tmpdir = slurm_conf_expand_slurmd_path(
 				_pmixp_job_info.server_addr_unfmt,

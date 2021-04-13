@@ -50,7 +50,7 @@ int exit_code = 0;
 sshare_time_format_t time_format = SSHARE_TIME_MINS;
 char *time_format_string = "Minutes";
 time_t last_job_update = (time_t) 0;
-uint16_t running_cache = 0;
+uint16_t running_cache = RUNNING_CACHE_STATE_NOTRUNNING;
 
 List   job_list = NULL;		/* job_record list */
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -82,7 +82,7 @@ int _setup_assoc_list(void)
 	 * we are running off cache */
 	memset(&assoc_init_arg, 0, sizeof(assoc_init_args_t));
 	assoc_init_arg.running_cache = &running_cache;
-	running_cache = 1;
+	running_cache = RUNNING_CACHE_STATE_RUNNING;
 	assoc_mgr_init(NULL, &assoc_init_arg, SLURM_SUCCESS);
 
 	/* Here we make the tres we want to add to the system.
@@ -117,6 +117,7 @@ int _setup_assoc_list(void)
 	/* First only add the accounts */
 	/* root association */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 1;
 	/* assoc->lft = 1; */
@@ -126,6 +127,7 @@ int _setup_assoc_list(void)
 
 	/* sub of root id 1 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 2;
 	assoc->parent_id = 1;
@@ -137,6 +139,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountA id 2 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 21;
 	/* assoc->lft = 3; */
@@ -148,6 +151,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountB id 21 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 211;
 	/* assoc->lft = 4; */
@@ -161,6 +165,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountA id 2 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 22;
 	/* assoc->lft = 7; */
@@ -172,6 +177,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountC id 22 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 221;
 	/* assoc->lft = 8; */
@@ -184,6 +190,7 @@ int _setup_assoc_list(void)
 	list_append(update.objects, assoc);
 
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 222;
 	/* assoc->lft = 10; */
@@ -197,6 +204,7 @@ int _setup_assoc_list(void)
 
 	/* sub of root id 1 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 3;
 	/* assoc->lft = 14; */
@@ -208,6 +216,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountD id 3 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 31;
 	/* assoc->lft = 19; */
@@ -219,6 +228,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountE id 31 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 311;
 	/* assoc->lft = 20; */
@@ -232,6 +242,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountD id 3 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 32;
 	/* assoc->lft = 15; */
@@ -243,6 +254,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountF id 32 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 321;
 	/* assoc->lft = 16; */
@@ -256,6 +268,7 @@ int _setup_assoc_list(void)
 
 	/* sub of root id 1 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 4;
 	/* assoc->lft = 24; */
@@ -267,6 +280,7 @@ int _setup_assoc_list(void)
 
 	/* sub of AccountG id 4 */
 	assoc = xmalloc(sizeof(slurmdb_assoc_rec_t));
+	assoc->cluster = xstrdup(slurm_conf.cluster_name);
 	assoc->usage = slurmdb_create_assoc_usage(g_tres_count);
 	assoc->id = 41;
 	/* assoc->lft = 25; */
@@ -288,11 +302,11 @@ int _setup_assoc_list(void)
 int main (int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
-	slurm_ctl_conf_t *conf = NULL;
+	slurm_conf_t *conf = NULL;
 	shares_response_msg_t resp;
 
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
-	xfree(slurmctld_conf.priority_type);
+	xfree(slurm_conf.priority_type);
 	//logopt.stderr_level += 5;
 	logopt.prefix_level = 1;
 	log_alter(logopt, 0, NULL);
@@ -326,8 +340,8 @@ int main (int argc, char **argv)
 
 	/* we don't want to do any decay here so make the save state
 	 * to /dev/null */
-	xfree(slurmctld_conf.state_save_location);
-	slurmctld_conf.state_save_location = "/dev/null";
+	xfree(slurm_conf.state_save_location);
+	slurm_conf.state_save_location = "/dev/null";
 	/* now set up the association tree */
 	_setup_assoc_list();
 	/* now set up the job list */

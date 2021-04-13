@@ -33,7 +33,7 @@ source ./globals
 set exit_code   0
 
 # find out if we have enough nodes to test functionality
-set node_count [get_node_cnt_in_part]
+set node_count [get_partition_param [default_partition] "TotalNodes"]
 if { $node_count < 2 } {
 	skip "Insufficient nodes in default partition ($node_count < 2)"
 }
@@ -61,9 +61,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -88,9 +87,8 @@ expect {
 		set alloc_fail 1
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -124,9 +122,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -174,9 +171,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -238,9 +234,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait

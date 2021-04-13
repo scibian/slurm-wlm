@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+service mariadb status
+
 echo "CREATE USER 'slurm'@'localhost' IDENTIFIED BY 'shazaam';" | mariadb
 echo "CREATE DATABASE slurm;" | mariadb
 echo "GRANT ALL PRIVILEGES ON slurm.* TO 'slurm'@'localhost';" | mariadb
@@ -20,7 +22,15 @@ PidFile=/run/slurmdbd.pid
 SlurmUser=slurm
 EOF
 
+chmod 600 /etc/slurm/slurmdbd.conf
+
+chown slurm /etc/slurm/slurmdbd.conf
+
 service slurmdbd restart
+
+sleep 20
+
+service slurmdbd status
 
 cat > /etc/slurm/slurm.conf <<EOF
 ControlMachine=localhost
@@ -74,6 +84,11 @@ sacctmgr -i add user slurmtest Account=slurmtest
 
 service slurmctld restart
 service slurmd restart
+
+sleep 10
+
+service slurmctld status
+service slurmd status
 
 sinfo
 sinfo --Node

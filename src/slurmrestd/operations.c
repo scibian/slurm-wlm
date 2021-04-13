@@ -78,15 +78,14 @@ static void _check_path_magic(const path_t *path)
 
 static void _free_path(void *x)
 {
-	if (!x)
+	path_t *path = (path_t *) x;
+
+	if (!path)
 		return;
 
-	path_t *path = (path_t *) x;
 	_check_path_magic(path);
 
-	xassert((path->tag = -1));
-	xassert((path->magic = ~MAGIC));
-	xassert(!(path->callback = NULL));
+	path->magic = ~MAGIC;
 	xfree(path);
 }
 
@@ -150,7 +149,7 @@ extern int bind_operation_handler(const char *str_path,
 	debug4("%s: new path %s with tag %d", __func__, str_path, path_tag);
 
 	path = xmalloc(sizeof(*path));
-	xassert((path->magic = MAGIC));
+	path->magic = MAGIC;
 	path->tag = path_tag;
 	list_append(paths, path);
 
@@ -193,20 +192,33 @@ extern int unbind_operation_handler(operation_handler_t callback)
 
 static int _operations_router_reject(const on_http_request_args_t *args,
 				     const char *err,
-				     http_status_code_t err_code)
+				     http_status_code_t err_code,
+				     const char *body_encoding)
 {
 	send_http_response_args_t send_args = {
 		.con = args->context->con,
+		.headers = list_create(NULL),
 		.http_major = args->http_major,
 		.http_minor = args->http_minor,
 		.status_code = err_code,
 		.body = err,
-		.body_encoding = "text/plain",
-		.body_length = err ? strlen(err) : 0
+		.body_encoding = (body_encoding ? body_encoding : "text/plain"),
+		.body_length = (err ? strlen(err) : 0),
+	};
+	http_header_entry_t close = {
+		.name = "Connection",
+		.value = "Close",
 	};
 
-	//TODO: should this be a return?
-	send_http_response(&send_args);
+	/* Always warn that connection will be closed after the body is sent */
+	list_append(send_args.headers, &close);
+
+	(void) send_http_response(&send_args);
+
+	/* close connection on error */
+	con_mgr_queue_close_fd(args->context->con);
+
+	FREE_NULL_LIST(send_args.headers);
 
 	return SLURM_ERROR;
 }
@@ -214,11 +226,11 @@ static int _operations_router_reject(const on_http_request_args_t *args,
 static int _resolve_path(on_http_request_args_t *args, int *path_tag,
 			 data_t *params)
 {
-	data_t *path = parse_url_path(args->path, true);
+	data_t *path = parse_url_path(args->path, true, false);
 	if (!path)
 		return _operations_router_reject(
 			args, "Unable to parse URL path.",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+			HTTP_STATUS_CODE_ERROR_BAD_REQUEST, NULL);
 
 	/* attempt to identify path leaf types */
 	(void) data_convert_tree(path, DATA_TYPE_NONE);
@@ -231,7 +243,7 @@ static int _resolve_path(on_http_request_args_t *args, int *path_tag,
 		return _operations_router_reject(
 			args,
 			"Unable find requested URL. Please view /openapi/v3 for API reference.",
-			HTTP_STATUS_CODE_ERROR_NOT_FOUND);
+			HTTP_STATUS_CODE_ERROR_NOT_FOUND, NULL);
 
 	return SLURM_SUCCESS;
 }
@@ -244,12 +256,12 @@ static int _get_query(on_http_request_args_t *args, data_t **query,
 	    args->body_length == 0)
 		return _operations_router_reject(
 			args, "Unable to parse empty HTML body.",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+			HTTP_STATUS_CODE_ERROR_BAD_REQUEST, NULL);
 
 	/* post will have query in the body otherwise it is in the URL */
 	switch (read_mime) {
 	case MIME_JSON:
-		*query = parse_json(args->body);
+		*query = parse_json(args->body, (args->body_length - 1));
 		break;
 	case MIME_URL_ENCODED:
 		/* everything but POST must be urlencoded */
@@ -259,16 +271,16 @@ static int _get_query(on_http_request_args_t *args, data_t **query,
 			*query = parse_url_query(args->query, true);
 		break;
 	case MIME_YAML:
-		*query = parse_yaml(args->body);
+		*query = parse_yaml(args->body, args->body_length);
 		break;
 	default:
-		fatal_abort("%s:  unknown read mime type", __func__);
+		fatal_abort("%s: unknown read mime type", __func__);
 	}
 
-	if (!query)
+	if (!*query)
 		return _operations_router_reject(
 			args, "Unable to parse query.",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+			HTTP_STATUS_CODE_ERROR_BAD_REQUEST, NULL);
 	else
 		return SLURM_SUCCESS;
 
@@ -313,19 +325,32 @@ static int _resolve_mime(on_http_request_args_t *args, mime_types_t *read_mime,
 	if (*write_mime == MIME_UNKNOWN)
 		return _operations_router_reject(
 			args, "Accept content type is unknown",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+			HTTP_STATUS_CODE_ERROR_BAD_REQUEST, NULL);
 
-	if (args->method != HTTP_REQUEST_POST && *read_mime != MIME_URL_ENCODED)
-		return _operations_router_reject(
-			args,
-			"only application/x-www-form-urlencoded is accepted as content-type non-POST methods.",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+	if ((*read_mime != MIME_URL_ENCODED) && (args->body_length == 0)) {
+		/*
+		 * RFC7273#3.1.1.5 only specifies a sender SHOULD send
+		 * the correct content-type header but allows for them to be
+		 * wrong and expects the server to handle that gracefully.
+		 *
+		 * We will instead override the mime type if there is empty body
+		 * content to avoid unneccesssily rejecting otherwise compliant
+		 * requests.
+		 */
+		debug("%s: [%s] Overriding content type from %s to %s for %s",
+		      __func__, args->context->con->name,
+		      get_mime_type_str(*read_mime),
+		      get_mime_type_str(MIME_URL_ENCODED),
+		      get_http_method_string(args->method));
+
+		*read_mime = MIME_URL_ENCODED;
+	}
 
 	if (args->method != HTTP_REQUEST_POST && args->body_length > 0)
 		return _operations_router_reject(
 			args,
 			"Unexpected http body provided for non-POST method",
-			HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+			HTTP_STATUS_CODE_ERROR_BAD_REQUEST, NULL);
 
 	debug3("%s: [%s] mime read: %s write: %s",
 	       __func__, args->context->con->name,
@@ -344,22 +369,30 @@ static int _call_handler(on_http_request_args_t *args, data_t *params,
 	const char *body = NULL;
 
 	rc = callback(args->context->con->name, args->method, params, query,
-		      callback_tag, resp);
+		      callback_tag, resp, args->context->auth);
 
-	if (data_get_type(resp) == DATA_TYPE_NULL) {
-		rc = _operations_router_reject(
-			args, body, HTTP_STATUS_CODE_SRVERR_NOT_IMPLEMENTED);
-		goto cleanup;
-	}
-
-	if (write_mime == MIME_YAML)
+	if (data_get_type(resp) == DATA_TYPE_NULL)
+		/* no op */;
+	else if (write_mime == MIME_YAML)
 		body = dump_yaml(resp);
 	else if (write_mime == MIME_JSON)
 		body = dump_json(resp, DUMP_JSON_FLAGS_PRETTY);
 	else
 		fatal_abort("%s: unexpected mime type", __func__);
 
-	if (!rc) {
+	if (rc) {
+		http_status_code_t e = HTTP_STATUS_CODE_SRVERR_INTERNAL;
+
+		if (rc == ESLURM_REST_INVALID_QUERY)
+			e = HTTP_STATUS_CODE_ERROR_BAD_REQUEST;
+		else if (rc == ESLURM_REST_FAIL_PARSING)
+			e = HTTP_STATUS_CODE_ERROR_BAD_REQUEST;
+		else if (rc == ESLURM_REST_INVALID_JOBS_DESC)
+			e = HTTP_STATUS_CODE_ERROR_BAD_REQUEST;
+
+		rc = _operations_router_reject(args, body, e,
+					       get_mime_type_str(write_mime));
+	} else {
 		send_http_response_args_t send_args = {
 			.con = args->context->con,
 			.http_major = args->http_major,
@@ -376,12 +409,8 @@ static int _call_handler(on_http_request_args_t *args, data_t *params,
 		}
 
 		rc = send_http_response(&send_args);
-	} else {
-		rc = _operations_router_reject(
-			args, body, HTTP_STATUS_CODE_SRVERR_INTERNAL);
 	}
 
-cleanup:
 	xfree(body);
 	FREE_NULL_DATA(resp);
 
@@ -406,7 +435,8 @@ extern int operations_router(on_http_request_args_t *args)
 
 	if ((rc = rest_authenticate_http_request(args))) {
 		_operations_router_reject(args, "Authentication failure",
-					  HTTP_STATUS_CODE_ERROR_UNAUTHORIZED);
+					  HTTP_STATUS_CODE_ERROR_UNAUTHORIZED,
+					  NULL);
 		return rc;
 	}
 
@@ -445,6 +475,10 @@ extern int operations_router(on_http_request_args_t *args)
 cleanup:
 	FREE_NULL_DATA(query);
 	FREE_NULL_DATA(params);
+
+	/* always clear the auth context */
+	rest_auth_g_free(args->context->auth);
+	args->context->auth = NULL;
 
 	return rc;
 }

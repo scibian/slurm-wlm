@@ -204,6 +204,27 @@ extern data_t *data_set_int(data_t *data, int64_t value);
 extern data_t *data_set_string(data_t *data, const char *value);
 
 /*
+ * Set data to string type with given value.
+ * IN data structure to modify
+ * IN value value to set (takes ownership of value and will xfree())
+ * RET data ptr or NULL on error
+ */
+extern data_t *data_set_string_own(data_t *data, char *value);
+
+/*
+ * Set data to string type with given formatted value.
+ * IN data structure to modify
+ * IN fmt - printf format field
+ */
+#define data_set_string_fmt(data, fmt, ...)          \
+	do {                                         \
+		char *str = NULL;                    \
+		xstrfmtcat(str, fmt, ##__VA_ARGS__); \
+		if (!data_set_string_own(data, str)) \
+			xfree(str);                  \
+	} while (0)
+
+/*
  * Detect data type and if possible, change to correct type.
  * WARNING: command is currently only useful for to/from DATA_TYPE_STRING.
  * WARNING: Does not work on dict or list types
@@ -272,11 +293,18 @@ extern int64_t data_get_int(const data_t *data);
 extern int data_get_int_converted(const data_t *d, int64_t *ptr_buffer);
 
 /*
- * Get data as string and force conversion if possible.
+ * Get data as string
  * IN data data to convert into a string
- * RET data converted to string or NULL on failure
+ * RET data string or NULL on failure
  */
-extern const char *data_get_string(const data_t *data);
+extern char *data_get_string(data_t *data);
+
+/*
+ * Get const data as string
+ * IN data data to convert into a string
+ * RET data string or NULL on failure
+ */
+extern const char *data_get_string_const(const data_t *data);
 
 /*
  * Get data as string and force conversion if possible.
@@ -365,6 +393,16 @@ extern data_t *data_list_append(data_t *data);
 extern data_t *data_list_prepend(data_t *data);
 
 /*
+ * Copy and join array of data into a single list.
+ * IN data - array of data objects (list type only) to copy/merge into a single
+ * data list. Last entry must be NULL.
+ * IN flatten_lists - if data is a list, add items in list as if there were
+ * separate data items in data. Will only flatten 1 level.
+ * RET new data object with merged lists.
+ */
+extern data_t *data_list_join(const data_t **data, bool flatten_lists);
+
+/*
  * Get number of entities in list
  * IN data data object to count list entities
  * RET cardinality of data (may return 0 for empty list)
@@ -432,8 +470,16 @@ extern bool data_check_match(const data_t *a, const data_t *b, bool mask);
  * IN path /key/path/to/value to search
  * RET ptr to data of value or NULL if not found
  */
-extern const data_t *
-	data_resolve_dict_path(const data_t *data, const char *path);
+extern data_t *data_resolve_dict_path(data_t *data, const char *path);
+
+/*
+ * resolve out path based on data object full of dictionary keys
+ * IN data dictionary of dictionaries to search
+ * IN path /key/path/to/value to search
+ * RET const ptr to data of value or NULL if not found
+ */
+extern const data_t *data_resolve_dict_path_const(const data_t *data,
+						   const char *path);
 
 /*
  * create (or resolve) out path based on data object full of dictionary keys

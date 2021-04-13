@@ -498,34 +498,11 @@ char *base_name(const char *command)
 	return xstrdup(char_ptr);
 }
 
-static uint64_t _str_to_mbytes(const char *arg, int use_gbytes)
-{
-	long long result;
-	char *endptr;
-
-	errno = 0;
-	result = strtoll(arg, &endptr, 10);
-	if ((errno != 0) && ((result == LLONG_MIN) || (result == LLONG_MAX)))
-		return NO_VAL64;
-	if (result < 0)
-		return NO_VAL64;
-
-	else if ((endptr[0] == '\0') && (use_gbytes == 1))  /* GB default */
-		result *= 1024;
-	else if (endptr[0] == '\0')	/* MB default */
-		;
-	else if ((endptr[0] == 'k') || (endptr[0] == 'K'))
-		result = (result + 1023) / 1024;	/* round up */
-	else if ((endptr[0] == 'm') || (endptr[0] == 'M'))
-		;
-	else if ((endptr[0] == 'g') || (endptr[0] == 'G'))
-		result *= 1024;
-	else if ((endptr[0] == 't') || (endptr[0] == 'T'))
-		result *= (1024 * 1024);
-	else
-		return NO_VAL64;
-
-	return (uint64_t) result;
+static bool _end_on_byte(const char * endptr) {
+	if ((endptr[1] == '\0') ||
+	    (((endptr[1] == 'B') || (endptr[1] == 'b')) && endptr[2] == '\0'))
+		return true;
+	return false;
 }
 
 /*
@@ -534,47 +511,45 @@ static uint64_t _str_to_mbytes(const char *arg, int use_gbytes)
  */
 uint64_t str_to_mbytes(const char *arg)
 {
-	return _str_to_mbytes(arg, 0);
+	long long result;
+	char *endptr;
+
+	errno = 0;
+	result = strtoll(arg, &endptr, 10);
+	if ((errno != 0) && ((result == LLONG_MIN) || (result == LLONG_MAX)))
+		return NO_VAL64;
+	if (arg == endptr)
+		return NO_VAL64;
+
+	if (result < 0)
+		return NO_VAL64;
+	else if (endptr[0] == '\0')	/* MB default */
+		;
+	else if (((endptr[0] == 'k') || (endptr[0] == 'K')) &&
+		 _end_on_byte(endptr))
+		result = (result + 1023) / 1024;	/* round up */
+	else if (((endptr[0] == 'm') || (endptr[0] == 'M')) &&
+	         _end_on_byte(endptr))
+		;
+	else if (((endptr[0] == 'g') || (endptr[0] == 'G')) &&
+	         _end_on_byte(endptr))
+		result *= 1024;
+	else if (((endptr[0] == 't') || (endptr[0] == 'T')) &&
+	         _end_on_byte(endptr))
+		result *= (1024 * 1024);
+	else
+		return NO_VAL64;
+
+	return (uint64_t) result;
 }
 
-/*
- * str_to_mbytes2(): verify that arg is numeric with optional "K", "M", "G"
- * or "T" at end and return the number in mega-bytes. Default units are GB
- * if "SchedulerParameters=default_gbytes" is configured, otherwise MB.
- */
-uint64_t str_to_mbytes2(const char *arg)
-{
-	static int use_gbytes = -1;
-
-	if (use_gbytes == -1) {
-		char *sched_params = slurm_get_sched_params();
-		if (xstrcasestr(sched_params, "default_gbytes"))
-			use_gbytes = 1;
-		else
-			use_gbytes = 0;
-		xfree(sched_params);
-	}
-
-	return _str_to_mbytes(arg, use_gbytes);
-}
-
-extern char *mbytes2_to_str(uint64_t mbytes)
+extern char *mbytes_to_str(uint64_t mbytes)
 {
 	int i = 0;
 	char *unit = "MGTP?";
-	static int use_gbytes = -1;
 
 	if (mbytes == NO_VAL64)
 		return NULL;
-
-	if (use_gbytes == -1) {
-		char *sched_params = slurm_get_sched_params();
-		if (xstrcasestr(sched_params, "default_gbytes"))
-			use_gbytes = 1;
-		else
-			use_gbytes = 0;
-		xfree(sched_params);
-	}
 
 	for (i = 0; unit[i] != '?'; i++) {
 		if (mbytes && (mbytes % 1024))
@@ -583,7 +558,7 @@ extern char *mbytes2_to_str(uint64_t mbytes)
 	}
 
 	/* no need to display the default unit */
-	if ((unit[i] == 'G' && use_gbytes) || (unit[i] == 'M' && !use_gbytes))
+	if (unit[i] == 'M')
 		return xstrdup_printf("%"PRIu64, mbytes);
 
 	return xstrdup_printf("%"PRIu64"%c", mbytes, unit[i]);
@@ -906,8 +881,7 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 				*cpu_bind_type &=
 					(~CPU_BIND_ONE_THREAD_PER_CORE);
 			}
-			if (*ntasks_per_core == NO_VAL)
-				*ntasks_per_core = INFINITE16;
+			*ntasks_per_core = INFINITE16;
 		} else if (xstrcasecmp(tok, "nomultithread") == 0) {
 			*min_threads = 1;
 			if (cpu_bind_type) {
@@ -954,11 +928,14 @@ uint16_t parse_mail_type(const char *arg)
 			rc |= MAIL_JOB_END;
 		else if (xstrcasecmp(tok, "FAIL") == 0)
 			rc |= MAIL_JOB_FAIL;
+		else if (xstrcasecmp(tok, "INVALID_DEPEND") == 0)
+			rc |= MAIL_INVALID_DEPEND;
 		else if (xstrcasecmp(tok, "REQUEUE") == 0)
 			rc |= MAIL_JOB_REQUEUE;
 		else if (xstrcasecmp(tok, "ALL") == 0)
-			rc |= MAIL_JOB_BEGIN |  MAIL_JOB_END |  MAIL_JOB_FAIL |
-			      MAIL_JOB_REQUEUE | MAIL_JOB_STAGE_OUT;
+			rc |= MAIL_INVALID_DEPEND | MAIL_JOB_BEGIN |
+			      MAIL_JOB_END | MAIL_JOB_FAIL | MAIL_JOB_REQUEUE |
+			      MAIL_JOB_STAGE_OUT;
 		else if (!xstrcasecmp(tok, "STAGE_OUT"))
 			rc |= MAIL_JOB_STAGE_OUT;
 		else if (xstrcasecmp(tok, "TIME_LIMIT") == 0)
@@ -990,6 +967,11 @@ char *print_mail_type(const uint16_t type)
 		if (buf[0])
 			strcat(buf, ",");
 		strcat(buf, "ARRAY_TASKS");
+	}
+	if (type & MAIL_INVALID_DEPEND) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "INVALID_DEPEND");
 	}
 	if (type & MAIL_JOB_BEGIN) {
 		if (buf[0])
@@ -1309,6 +1291,7 @@ static struct {
 	{ "TSTP",	SIGTSTP	},
 	{ "TTIN",	SIGTTIN	},
 	{ "TTOU",	SIGTTOU	},
+	{ "XCPU",	SIGXCPU	},
 	{ NULL,		0	}	/* terminate array */
 };
 
@@ -1613,10 +1596,11 @@ extern uint64_t parse_resv_flags(const char *flagstr, const char *msg,
 		} else if (!xstrncasecmp(curr, "magnetic", MAX(taglen, 3)) ||
 			   !xstrncasecmp(curr, "promiscuous", MAX(taglen, 2))) {
 			curr += taglen;
+
 			if (op == RESV_REM)
-				outflags |= RESERVE_FLAG_NO_PROM;
+				outflags |= RESERVE_FLAG_NO_MAGNETIC;
 			else
-				outflags |= RESERVE_FLAG_PROM;
+				outflags |= RESERVE_FLAG_MAGNETIC;
 		} else if (!xstrncasecmp(curr, "PURGE_COMP", MAX(taglen, 2))) {
 			if (curr[taglen] == '=') {
 				int num_end;

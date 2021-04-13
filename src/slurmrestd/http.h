@@ -174,6 +174,7 @@ typedef struct {
 	char *name;
 	char *value;
 } http_header_entry_t;
+extern void free_http_header(http_header_entry_t *);
 
 /* find http header from header list
  * IN headers List of http_header_entry_t
@@ -209,6 +210,14 @@ typedef struct {
 	size_t body_length; /* bytes in body to send or 0 */
 	const char *body_encoding; /* body encoding type or NULL */
 } send_http_response_args_t;
+
+/*
+ * Send HTTP close notification.
+ * 	Warns the client that we are about to close the connection.
+ * IN args arguments of response
+ * RET SLURM_SUCESS or error
+ */
+extern int send_http_connection_close(http_context_t *ctxt);
 
 /*
  * Send HTTP response

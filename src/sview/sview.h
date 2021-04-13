@@ -127,8 +127,7 @@ typedef struct popup_info popup_info_t;
 typedef struct popup_positioner popup_positioner_t;
 
 typedef enum {
-	       CREATE_BATCH_JOB = 1,
-	       CREATE_PARTITION,
+	       CREATE_PARTITION = 1,
 	       CREATE_RESERVATION,
 	       SEARCH_JOB_ID = 10,
 	       SEARCH_JOB_USER,
@@ -327,7 +326,6 @@ extern int sview_colors_cnt;
 extern int cluster_dims;
 extern uint32_t cluster_flags;
 extern List cluster_list;
-extern char *orig_cluster_name;
 extern front_end_info_msg_t *g_front_end_info_ptr;
 extern job_info_msg_t *g_job_info_ptr;
 extern node_info_msg_t *g_node_info_ptr;
@@ -444,8 +442,6 @@ extern void set_menus_front_end(void *arg, void *arg2, GtkTreePath *path,
 extern void specific_info_front_end(popup_info_t *popup_win);
 
 // job_info.c
-extern GtkWidget *create_job_entry(job_desc_msg_t *job_msg,
-				   GtkTreeModel *model, GtkTreeIter *iter);
 extern void refresh_job(GtkAction *action, gpointer user_data);
 extern GtkListStore *create_model_job(int type);
 extern void admin_edit_job(GtkCellRendererText *cell,

@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  apinfo.c - Cray Shasta PMI apinfo file creation
  *****************************************************************************
- *  Copyright 2019 Cray Inc. All Rights Reserved.
+ *  Copyright 2019 Hewlett Packard Enterprise Development LP
  *  Written by David Gloe <dgloe@cray.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -211,10 +211,10 @@ static void _multi_prog_parse(const stepd_step_rec_t *job, int *ncmds,
 				rank_id = strtol(one_rank, &end_ptr, 10);
 				if ((end_ptr[0] != '\0') || (rank_id < 0) ||
 				    (rank_id >= job->ntasks)) {
-					free(one_rank);
 					hostlist_destroy(hl);
 					error("%s: invalid rank id %s",
 					      plugin_type, one_rank);
+					free(one_rank);
 					goto fail;
 				}
 				free(one_rank);
@@ -447,7 +447,7 @@ extern int create_apinfo(const stepd_step_rec_t *job)
 	}
 
 	// Get relevant information from job
-	if (job->het_job_id != NO_VAL) {
+	if (job->het_job_offset != NO_VAL) {
 		ntasks = job->het_job_ntasks;
 		ncmds = job->het_job_step_cnt;
 		nnodes = job->het_job_nnodes;

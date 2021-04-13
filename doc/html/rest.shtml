@@ -13,9 +13,10 @@
 <h2>Prerequisites</h2>
 <p>slurmrestd requires additional libraries for compilation:</p>
 <ul>
-	<li><a href="https://github.com/nodejs/http-parser">HTTP Parser</a> (>= v2.6.0)</li>
-	<li><a href="https://github.com/yaml/libyaml">LibYAML</a></li>
-	<li><a href="https://github.com/json-c/json-c">JSON-C</a></li>
+	<li><a href="download.html#httpparser">HTTP Parser</a> (>= v2.6.0)</li>
+	<li><a href="download.html#yaml">LibYAML</a> (optional)</li>
+	<li><a href="download.html#json">JSON-C</a></li>
+	<li><a href="download.html#jwt">JWT Authentication</a> (optional)</li>
 </ul>
 
 <!-- <h2>Usage Models</h2>
@@ -28,6 +29,19 @@ use the inet service mode and pipe their input directly into Slurmrestd to avoid
 unnecessary security issues involved with hosting a listening daemon on a shared
 system.</p>
 -->
+
+<h2>Stateless</h2>
+<p>Slurmrestd is stateless as it does not cache or save any state between
+requests. Each request is handled in a thread and then all of that state is
+discarded. Any request to slurmrestd is completely synchronous with the
+Slurm controller (slurmctld or slurmdbd) and is only considered complete once
+the HTTP response code has been sent to the client. Slurmrestd will hold a
+client connection open while processing a request. Slurm database commands are
+commited at the end of every request, on the success of all API calls in the
+request.</p>
+<p>Sites are strongly encouraged to setup a caching proxy between slurmrestd
+and clients to avoid having clients repeatedly call queries, causing usage to
+be higher than needed (and causing lock contention) on the controller.</p>
 
 <h2>Run modes</h2>
 Slurmrestd currently supports two run modes: inet service mode and listening
@@ -74,6 +88,49 @@ IPv4.</p>
 There are several third party tools that automatically generate documentation
 against the OAS output listed by
 <a href="https://openapi.tools/">openapi.tools.</a></p>
+<p>
+	To view the currently generated API reference:
+	<a href="rest_api.html">Slurm REST API Reference</a>
+</p>
+
+<h2>Plugins</h2>
+<p>As of Slurm 20.11, the REST API uses plugins for authentication and
+generating content. These plugins can be optionality listed or selected via
+command line arguments as described in the <a href="slurmrestd.html">
+slurmrestd</a> documentation.</p>
+
+<h3>Plugin life cycle</h3>
+<p>Plugins provided with Slurm in any release are considered supported by that
+release. Due to the nature of the plugins, one plugin can be supported accross
+multiple Slurm releases to ensure (limited) forward client compatibility. As
+the slurmrestd plugins are relatively new, we are currently only explicitly
+deprecating plugins and expect any plugin not marked for deprecation to
+continue to exist in the next Slurm release. When a plugin is marked for
+removal in the next major Slurm release, the OpenAPI specification dictates
+that the given plugin will have all of the paths tagged with
+<pre>"deprecated": "true"</pre></p>
+
+<p>Sites are <b>always</b> encouraged to use the latest stable plugin version
+available for code development. There is <b>no</b> guarantee of compatibility
+between different versions of the same plugin with clients. Clients should
+always make sure to validate their code when migrating to newer versions of
+plugins. Plugin versions will always be included in the path for every method
+provided by a given plugin to ensure no two plugins will provide the same
+path.</p>
+
+<p>As the plugins utilize the Slurm API internally, plugins that existed in
+previous versions of Slurm should continue to be able to communicate with the
+two previous versions of Slurm, similar to other components of Slurm. Newer
+plugins may have required RPC changes which will exclude them from working with
+previous Slurm versions. For instance, the openapi/dbv0.0.36 plugin will not be
+able to communicate with any slurmdbd servers prior to the slurm-20.11
+release.</p>
+
+<p>As with all other plugins in Slurm, sites are more than welcome to write
+their own plugins and are suggested to submit them as code contributions via
+<a href="https://bugs.schedmd.com/">bugzilla</a>, tagged as a contribution.
+The plugin API provided may change between releases which could cause site
+specific plugins to break.</p>
 
 <h2>Security</h2>
 <p>The Slurm REST API is written to provide the necessary functionality for
@@ -91,21 +148,13 @@ JWT can be used to authenticate user over REST protocol.
 	<li>JWT Header: X-SLURM-USER-TOKEN</li>
 </ul>
 SlurmUser or root can provide alternative user names to act as a proxy for the
-given user. While using JWT authentication, slurmrestd should be run as unique
-<b>unprivileged</b> user and group. slurmrestd should <b>not</b> be provided a
-SLURM_JWT environment variable at startup, but rather users should provide their
-own JWT tokens while authenticating to the proxy.</p>
-<p>When using JWT, it is important that the "AuthType=auth/jwt" in slurm.conf
-for slurmrestd. It is suggested to use the following slurm.conf wrapper (adjust
-path as needed) to ensure slurmrestd is using JWT authentication.</p>
-<pre>
-include /etc/slurm/slurm.conf
-AuthType=auth/jwt
-</pre>
-<p>Then to start slurmrestd with the wrapper slurm.conf:</p>
-<pre>
-env SLURM_CONF=$PATH_TO_WRAPPER_SLURM.CONF slurmrestd $ARGS
-</pre>
+given user. While using JWT authentication, slurmrestd should be run as a
+unique, <b>unprivileged</b> user and group. Slurmrestd should be provided an
+empty SLURM_JWT environment variable at startup to activate JWT authentication.
+This will allow users to provide their own JWT tokens while authenticating to
+the proxy.</p>
+<p>When using JWT, it is important that <u>AuthAltTypes=auth/jwt</u> be
+configured in your slurm.conf for slurmrestd.</p>
 
 <h2>Local Authentication</h2>
 <p>slurmrestd supports using UNIX domain sockets to have the kernel
@@ -249,6 +298,6 @@ The example is <b>not</b> provided to be run in production.</p>
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 7 February 2020</p>
+<p style="text-align:center;">Last modified 17 December 2020</p>
 
 <!--#include virtual="footer.txt"-->

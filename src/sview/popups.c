@@ -297,19 +297,6 @@ static void _layout_conf_dbd(GtkTreeStore *treestore)
 	List dbd_config_list = NULL;
 
 	/* first load accounting parms from slurm.conf */
-	char *acct_storage_backup_host =
-		slurm_get_accounting_storage_backup_host();
-	char *acct_storage_host = slurm_get_accounting_storage_host();
-	char *acct_storage_loc  = slurm_get_accounting_storage_loc();
-	char *acct_storage_pass = slurm_get_accounting_storage_pass();
-	uint32_t acct_storage_port = slurm_get_accounting_storage_port();
-	char *acct_storage_type = slurm_get_accounting_storage_type();
-	char *acct_storage_user = slurm_get_accounting_storage_user();
-	char *auth_type = slurm_get_auth_type();
-	uint16_t msg_timeout = slurm_get_msg_timeout();
-	char *plugin_dir = slurm_get_plugin_dir();
-	uint16_t private_data = slurm_get_private_data();
-	uint32_t slurm_user_id = slurm_get_slurm_user_id();
 	uint16_t track_wckey = slurm_get_track_wckey();
 
 	slurm_make_time_str(&now, tmp_str, sizeof(tmp_str));
@@ -319,32 +306,37 @@ static void _layout_conf_dbd(GtkTreeStore *treestore)
 
 	add_display_treestore_line(update, treestore, &iter,
 				   "AccountingStorageBackupHost",
-				   acct_storage_backup_host);
+				   slurm_conf.accounting_storage_backup_host);
 	add_display_treestore_line(update, treestore, &iter,
-				   "AccountingStorageHost", acct_storage_host);
+				   "AccountingStorageHost",
+				   slurm_conf.accounting_storage_host);
 	add_display_treestore_line(update, treestore, &iter,
-				   "AccountingStorageLoc", acct_storage_loc);
+				   "AccountingStoragePass",
+				   slurm_conf.accounting_storage_pass);
+	sprintf(tmp_str, "%u", slurm_conf.accounting_storage_port);
 	add_display_treestore_line(update, treestore, &iter,
-				   "AccountingStoragePass", acct_storage_pass);
-	sprintf(tmp_str, "%u", acct_storage_port);
+				   "AccountingStorageParameters",
+				   slurm_conf.accounting_storage_params);
 	add_display_treestore_line(update, treestore, &iter,
 				   "AccountingStoragePort", tmp_str);
 	add_display_treestore_line(update, treestore, &iter,
-				   "AccountingStorageType", acct_storage_type);
+	                           "AccountingStorageType",
+	                           slurm_conf.accounting_storage_type);
 	add_display_treestore_line(update, treestore, &iter,
-				   "AccountingStorageUser", acct_storage_user);
-	add_display_treestore_line(update, treestore, &iter,
-				   "AuthType", auth_type);
-	sprintf(tmp_str, "%u sec", msg_timeout);
+				   "AccountingStorageUser",
+				   slurm_conf.accounting_storage_user);
+	add_display_treestore_line(update, treestore, &iter, "AuthType",
+				   slurm_conf.authtype);
+	snprintf(tmp_str, sizeof(tmp_str), "%u sec", slurm_conf.msg_timeout);
 	add_display_treestore_line(update, treestore, &iter,
 				   "MessageTimeout", tmp_str);
-	add_display_treestore_line(update, treestore, &iter,
-				   "PluginDir", plugin_dir);
-	private_data_string(private_data, tmp_str, sizeof(tmp_str));
+	add_display_treestore_line(update, treestore, &iter, "PluginDir",
+                                   slurm_conf.plugindir);
+	private_data_string(slurm_conf.private_data, tmp_str, sizeof(tmp_str));
 	add_display_treestore_line(update, treestore, &iter,
 				   "PrivateData", tmp_str);
-	user_name = uid_to_string_cached(slurm_user_id);
-	sprintf(tmp_str, "%s(%u)", user_name, slurm_user_id);
+	user_name = uid_to_string_cached(slurm_conf.slurm_user_id);
+	sprintf(tmp_str, "%s(%u)", user_name, slurm_conf.slurm_user_id);
 	add_display_treestore_line(update, treestore, &iter,
 				   "SlurmUserId", tmp_str);
 	add_display_treestore_line(update, treestore, &iter,
@@ -354,15 +346,6 @@ static void _layout_conf_dbd(GtkTreeStore *treestore)
 	sprintf(tmp_str, "%u", track_wckey);
 	add_display_treestore_line(update, treestore, &iter,
 				   "TrackWCKey", tmp_str);
-
-	xfree(acct_storage_backup_host);
-	xfree(acct_storage_host);
-	xfree(acct_storage_loc);
-	xfree(acct_storage_pass);
-	xfree(acct_storage_type);
-	xfree(acct_storage_user);
-	xfree(auth_type);
-	xfree(plugin_dir);
 
 	/* now load accounting parms from slurmdbd.conf */
 
@@ -521,15 +504,13 @@ extern void create_create_popup(GtkAction *action, gpointer user_data)
 		GTK_WINDOW(user_data),
 		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
 		NULL);
-	int i, response = 0;
+	int response = 0;
 	GtkWidget *label = NULL;
 	GtkWidget *entry = NULL;
 	GtkTreeModel *model = NULL;
 	GtkTreeIter iter;
 	const gchar *name = gtk_action_get_name(action);
 	sview_search_info_t sview_search_info;
-	job_desc_msg_t *job_msg = NULL;
-	submit_response_msg_t *slurm_alloc_msg = NULL;
 	update_part_msg_t *part_msg = NULL;
 	resv_desc_msg_t *resv_msg = NULL;
 	char *res_name, *temp;
@@ -547,22 +528,7 @@ extern void create_create_popup(GtkAction *action, gpointer user_data)
 			      GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
 	gtk_window_set_default_size(GTK_WINDOW(popup), 400, 600);
 
-	if (!xstrcmp(name, "batch_job")) {
-		sview_search_info.search_type = CREATE_BATCH_JOB;
-		label = gtk_label_new(
-			"Batch job submission specifications\n\n"
-			"Specify size (task and/or node count) plus the\n"
-			"script. All other fields are optional.\n\n"
-			"More fields will be made available later.");
-		job_msg = xmalloc(sizeof(job_desc_msg_t));
-		slurm_init_job_desc_msg(job_msg);
-		job_msg->group_id = getgid();
-		job_msg->user_id  = getuid();
-		job_msg->work_dir = xmalloc(1024);
-		if (!getcwd(job_msg->work_dir, 1024))
-			goto end_it;
-		entry = create_job_entry(job_msg, model, &iter);
-	} else if (!xstrcmp(name, "partition")) {
+	if (!xstrcmp(name, "partition")) {
 		sview_search_info.search_type = CREATE_PARTITION;
 		label = gtk_label_new(
 			"Partition creation specifications\n\n"
@@ -602,21 +568,6 @@ extern void create_create_popup(GtkAction *action, gpointer user_data)
 			goto end_it;
 
 		switch(sview_search_info.search_type) {
-		case CREATE_BATCH_JOB:
-			response = slurm_submit_batch_job(job_msg,
-							  &slurm_alloc_msg);
-			if (response == SLURM_SUCCESS) {
-				temp = g_strdup_printf(
-					"Job %u submitted",
-					slurm_alloc_msg->job_id);
-			} else {
-				temp = g_strdup_printf(
-					"Problem submitting job: %s",
-					slurm_strerror(slurm_get_errno()));
-			}
-			display_edit_note(temp);
-			g_free(temp);
-			break;
 		case CREATE_PARTITION:
 			response = slurm_create_partition(part_msg);
 			if (response == SLURM_SUCCESS) {
@@ -652,17 +603,6 @@ extern void create_create_popup(GtkAction *action, gpointer user_data)
 
 end_it:
 	gtk_widget_destroy(popup);
-	if (slurm_alloc_msg)
-		slurm_free_submit_response_response_msg(slurm_alloc_msg);
-	if (job_msg) {
-		for (i = 0; i < job_msg->argc; i++)
-			xfree(job_msg->argv[i]);
-		xfree(job_msg->argv);
-		xfree(job_msg->name);
-		xfree(job_msg->script);
-		xfree(job_msg->work_dir);
-		xfree(job_msg);
-	}
 	xfree(part_msg);
 	if (resv_msg)
 		slurm_free_resv_desc_msg(resv_msg);

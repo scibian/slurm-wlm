@@ -111,10 +111,11 @@ main (int argc, char **argv)
 	slurm_msg_t *msg;
 	stepd_step_rec_t *job;
 	int rc = 0;
-	char *launch_params;
 
 	if (_process_cmdline (argc, argv) < 0)
 		fatal ("Error in slurmstepd command line");
+
+	slurm_conf_init(NULL);
 
 	xsignal_block(slurmstepd_blocked_signals);
 	conf = xmalloc(sizeof(*conf));
@@ -151,18 +152,17 @@ main (int argc, char **argv)
 		goto ending;
 	}
 
-	if (job->stepid != SLURM_EXTERN_CONT)
+	if (job->step_id.step_id != SLURM_EXTERN_CONT)
 		close_slurmd_conn();
 
 	/* slurmstepd is the only daemon that should survive upgrade. If it
 	 * had been swapped out before upgrade happened it could easily lead
 	 * to SIGBUS at any time after upgrade. Avoid that by locking it
 	 * in-memory. */
-	launch_params = slurm_get_launch_params();
-	if (launch_params && strstr(launch_params, "slurmstepd_memlock")) {
+	if (xstrstr(slurm_conf.launch_params, "slurmstepd_memlock")) {
 #ifdef _POSIX_MEMLOCK
 		int flags = MCL_CURRENT;
-		if (strstr(launch_params, "slurmstepd_memlock_all"))
+		if (xstrstr(slurm_conf.launch_params, "slurmstepd_memlock_all"))
 			flags |= MCL_FUTURE;
 		if (mlockall(flags) < 0)
 			info("failed to mlock() slurmstepd pages: %m");
@@ -172,7 +172,6 @@ main (int argc, char **argv)
 		info("mlockall() system call does not appear to be available");
 #endif
 	}
-	xfree(launch_params);
 
 	acct_gather_energy_g_set_data(ENERGY_DATA_STEP_PTR, job);
 
@@ -218,15 +217,11 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
 	xfree(conf->block_map_inv);
 	xfree(conf->hostname);
 	xfree(conf->hwloc_xml);
-	xfree(conf->job_acct_gather_freq);
-	xfree(conf->job_acct_gather_type);
 	xfree(conf->logfile);
 	xfree(conf->node_name);
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
 	xfree(conf->spooldir);
-	xfree(conf->task_epilog);
-	xfree(conf->task_prolog);
 	xfree(conf);
 #endif
 	info("done with job");
@@ -278,10 +273,12 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	if (rc == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
 
-	slurm_unpack_list(&tmp_list,
-			  slurmdb_unpack_tres_rec,
-			  slurmdb_destroy_tres_rec,
-			  buffer, SLURM_PROTOCOL_VERSION);
+	if (slurm_unpack_list(&tmp_list,
+			      slurmdb_unpack_tres_rec,
+			      slurmdb_destroy_tres_rec,
+			      buffer, SLURM_PROTOCOL_VERSION)
+	    != SLURM_SUCCESS)
+		fatal("slurmstepd: problem with unpack of tres list");
 
 	free_buf(buffer);
 
@@ -308,12 +305,12 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	 * up in the log.
 	 */
 	log_alter(confl->log_opts, 0, confl->logfile);
-	log_set_timefmt(confl->log_fmt);
-	debug2("debug level is %d.", confl->debug_level);
+	log_set_timefmt(slurm_conf.log_fmt);
+	debug2("debug level is '%s'.", log_num2string(confl->debug_level));
 
 	confl->acct_freq_task = NO_VAL16;
 	tmp_int = acct_gather_parse_freq(PROFILE_TASK,
-				       confl->job_acct_gather_freq);
+					 slurm_conf.job_acct_gather_freq);
 	if (tmp_int != -1)
 		confl->acct_freq_task = tmp_int;
 
@@ -483,19 +480,16 @@ rwfail:
 #endif
 }
 
-static void _set_job_log_prefix(uint32_t jobid, uint32_t stepid)
+static void _set_job_log_prefix(slurm_step_id_t *step_id)
 {
 	char *buf;
+	char tmp_char[64];
 
-	if (stepid == SLURM_BATCH_SCRIPT)
-		buf = xstrdup_printf("[%u.batch]", jobid);
-	else if (stepid == SLURM_EXTERN_CONT)
-		buf = xstrdup_printf("[%u.extern]", jobid);
-	else
-		buf = xstrdup_printf("[%u.%u]", jobid, stepid);
+	log_build_step_id_str(step_id, tmp_char, sizeof(tmp_char),
+			      STEP_ID_FLAG_NO_PREFIX);
+	buf = xstrdup_printf("[%s]", tmp_char);
 
 	setproctitle("%s", buf);
-
 	/* note: will claim ownership of buf, do not free */
 	xstrcat(buf, " ");
 	log_set_fpfx(&buf);
@@ -517,9 +511,11 @@ _init_from_slurmd(int sock, char **argv,
 	slurm_addr_t *cli = NULL;
 	slurm_addr_t *self = NULL;
 	slurm_msg_t *msg = NULL;
-	uint16_t port;
-	char buf[16];
-	uint32_t jobid = 0, stepid = 0;
+	slurm_step_id_t step_id = {
+		.job_id = 0,
+		.step_id = NO_VAL,
+		.step_het_comp = NO_VAL,
+	};
 
 	/* receive conf from slurmd */
 	if (!(conf = read_slurmd_conf_lite(sock)))
@@ -552,9 +548,8 @@ _init_from_slurmd(int sock, char **argv,
 
 	switch_g_slurmd_step_init();
 
-	slurm_get_ip_str(&step_complete.parent_addr, &port, buf, 16);
-	debug3("slurmstepd rank %d, parent address = %s, port = %u",
-	       step_complete.rank, buf, port);
+	debug3("slurmstepd rank %d, parent = %pA",
+	       step_complete.rank, &step_complete.parent_addr);
 
 	/* receive cli from slurmd */
 	safe_read(sock, &len, sizeof(int));
@@ -562,7 +557,7 @@ _init_from_slurmd(int sock, char **argv,
 	safe_read(sock, incoming_buffer, len);
 	buffer = create_buf(incoming_buffer,len);
 	cli = xmalloc(sizeof(slurm_addr_t));
-	if (slurm_unpack_slurm_addr_no_alloc(cli, buffer) == SLURM_ERROR)
+	if (slurm_unpack_addr_no_alloc(cli, buffer) == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
 	free_buf(buffer);
 
@@ -574,16 +569,13 @@ _init_from_slurmd(int sock, char **argv,
 		safe_read(sock, incoming_buffer, len);
 		buffer = create_buf(incoming_buffer,len);
 		self = xmalloc(sizeof(slurm_addr_t));
-		if (slurm_unpack_slurm_addr_no_alloc(self, buffer)
+		if (slurm_unpack_addr_no_alloc(self, buffer)
 		    == SLURM_ERROR) {
 			fatal("slurmstepd: problem with unpack of "
 			      "slurmd_conf");
 		}
 		free_buf(buffer);
 	}
-
-	/* Receive GRES information from slurmd */
-	gres_plugin_recv_stepd(sock);
 
 	/* Grab the slurmd's spooldir. Has %n expanded. */
 	cpu_freq_init(conf);
@@ -622,25 +614,43 @@ _init_from_slurmd(int sock, char **argv,
 
 	switch (step_type) {
 	case LAUNCH_BATCH_JOB:
-		jobid = ((batch_job_launch_msg_t *)msg->data)->job_id;
-		stepid = ((batch_job_launch_msg_t *)msg->data)->step_id;
+		step_id.job_id = ((batch_job_launch_msg_t *)msg->data)->job_id;
+		step_id.step_id = SLURM_BATCH_SCRIPT;
+		step_id.step_het_comp = NO_VAL;
 		break;
 	case LAUNCH_TASKS:
-		jobid = ((launch_tasks_request_msg_t *)msg->data)->job_id;
-		stepid = ((launch_tasks_request_msg_t *)msg->data)->job_step_id;
+		memcpy(&step_id,
+		       &((launch_tasks_request_msg_t *)msg->data)->step_id,
+		       sizeof(step_id));
 		break;
 	default:
 		fatal("%s: Unrecognized launch RPC (%d)", __func__, step_type);
 		break;
 	}
 
-	_set_job_log_prefix(jobid, stepid);
+	/* Receive GRES information from slurmd */
+	gres_plugin_recv_stepd(sock, msg);
 
-	if (!conf->hwloc_xml)
-		conf->hwloc_xml = xstrdup_printf("%s/hwloc_topo_%u.%u.xml",
+	/*
+	 * Read slurmd node name - may be dictated by slurmctld due to
+	 * Dynamic Future node mapping.
+	 */
+	safe_read(sock, &len, sizeof(int));
+	conf->node_name = xmalloc(len);
+	safe_read(sock, conf->node_name, len);
+
+	_set_job_log_prefix(&step_id);
+
+	if (!conf->hwloc_xml) {
+		conf->hwloc_xml = xstrdup_printf("%s/hwloc_topo_%u.%u",
 						 conf->spooldir,
-						 jobid, stepid);
-
+						 step_id.job_id,
+						 step_id.step_id);
+		if (step_id.step_het_comp != NO_VAL)
+			xstrfmtcat(conf->hwloc_xml, ".%u",
+				   step_id.step_het_comp);
+		xstrcat(conf->hwloc_xml, ".xml");
+	}
 	/*
 	 * Swap the field to the srun client version, which will eventually
 	 * end up stored as protocol_version in srun_info_t. It's a hack to
@@ -689,10 +699,12 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 	job->jobacct = jobacctinfo_create(NULL);
 
 	/* Establish GRES environment variables */
-	if (conf->debug_flags & DEBUG_FLAG_GRES) {
-		gres_plugin_job_state_log(job->job_gres_list, job->jobid);
-		gres_plugin_step_state_log(job->step_gres_list, job->jobid,
-					   job->stepid);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_GRES) {
+		gres_plugin_job_state_log(job->job_gres_list,
+					  job->step_id.job_id);
+		gres_plugin_step_state_log(job->step_gres_list,
+					   job->step_id.job_id,
+					   job->step_id.step_id);
 	}
 	if (msg->msg_type == REQUEST_BATCH_JOB_LAUNCH) {
 		gres_plugin_job_set_env(&job->env, job->job_gres_list, 0);

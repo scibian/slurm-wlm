@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  as_mysql_tres.c - functions dealing with accounts.
  *****************************************************************************
- *
  *  Copyright (C) 2015 SchedMD LLC.
  *  Written by Danny Auble <da@schedmd.com>
  *
@@ -96,11 +95,11 @@ extern int as_mysql_add_tres(mysql_conn_t *mysql_conn,
 
 		xstrfmtcat(query,
 			   "insert into %s (%s) values (%s) "
-			   "on duplicate key update deleted=0;",
+			   "on duplicate key update deleted=0, "
+			   "id=LAST_INSERT_ID(id);",
 			   tres_table, cols, vals);
 
-		if (debug_flags & DEBUG_FLAG_DB_TRES)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_TRES, mysql_conn->conn, "query\n%s", query);
 		object->id = (uint32_t)mysql_db_insert_ret_id(
 			mysql_conn, query);
 		xfree(query);
@@ -274,8 +273,7 @@ empty:
 	xfree(tmp);
 	xfree(extra);
 
-	if (debug_flags & DEBUG_FLAG_DB_TRES)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_TRES, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return NULL;

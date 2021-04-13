@@ -143,12 +143,16 @@ extern int jobacct_gather_add_task(pid_t pid, jobacct_id_t *jobacct_id,
 				   int poll);
 /* must free jobacctinfo_t if not NULL */
 extern jobacctinfo_t *jobacct_gather_stat_task(pid_t pid);
-/* must free jobacctinfo_t if not NULL */
+/*
+ * Find task by pid and remove from tracked task list.
+ *
+ * IN pid - pid of task to find or 0 to find first task
+ * RET ptr (must free jobacctinfo_t if not NULL)
+ */
 extern jobacctinfo_t *jobacct_gather_remove_task(pid_t pid);
 
 extern int jobacct_gather_set_proctrack_container_id(uint64_t id);
-extern int jobacct_gather_set_mem_limit(uint32_t job_id,
-					uint32_t step_id,
+extern int jobacct_gather_set_mem_limit(slurm_step_id_t *step_id,
 					uint64_t mem_limit);
 extern void jobacct_gather_handle_mem_limit(uint64_t total_job_mem,
 					    uint64_t total_job_vsize);

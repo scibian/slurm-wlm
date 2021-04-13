@@ -106,6 +106,7 @@ is as follows:
 <li>cgroup_allowed_devices_file.conf</li>
 <li>ext_sensors.conf</li>
 <li>gres.conf</li>
+<li>job_container.conf</li>
 <li>knl_cray.conf</li>
 <li>knl_generic.conf</li>
 <li>plugstack.conf</li>
@@ -113,6 +114,6 @@ is as follows:
 </ul>
 </p>
 
-<p style="text-align:center;">Last modified 11 September 2020</p>
+<p style="text-align:center;">Last modified 11 March 2021</p>
 
 <!--#include virtual="footer.txt"-->

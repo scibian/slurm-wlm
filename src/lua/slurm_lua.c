@@ -46,10 +46,11 @@
 #include <unistd.h>
 
 #include "src/common/log.h"
+#include "src/common/parse_time.h"
 #include "src/common/xstring.h"
 #include "src/lua/slurm_lua.h"
 
-static const char *cluster_name = NULL;
+static void *lua_handle = NULL;
 
 #ifdef HAVE_LUA
 
@@ -148,9 +149,17 @@ static int _log_lua_error(lua_State *L)
 	return (0);
 }
 
+static int _time_str2mins(lua_State *L) {
+	const char *time = lua_tostring(L, -1);
+	int minutes = time_str2mins(time);
+	lua_pushnumber(L, minutes);
+	return 1;
+}
+
 static const struct luaL_Reg slurm_functions [] = {
 	{ "log", _log_lua_msg },
 	{ "error", _log_lua_error },
+	{ "time_str2mins", _time_str2mins},
 	{ NULL, NULL }
 };
 
@@ -247,6 +256,8 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "INFINITE");
 	lua_pushnumber(L, INFINITE64);
 	lua_setfield(L, -2, "INFINITE64");
+	lua_pushnumber(L, MAIL_INVALID_DEPEND);
+	lua_setfield(L, -2, "MAIL_INVALID_DEPEND");
 	lua_pushnumber(L, MAIL_JOB_BEGIN);
 	lua_setfield(L, -2, "MAIL_JOB_BEGIN");
 	lua_pushnumber(L, MAIL_JOB_END);
@@ -304,7 +315,7 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_pushnumber(L, USE_MIN_NODES);
 	lua_setfield(L, -2, "USE_MIN_NODES");
 
-	lua_pushstring(L, cluster_name);
+	lua_pushstring(L, slurm_conf.cluster_name);
 	lua_setfield(L, -2, "CLUSTER_NAME");
 }
 
@@ -338,6 +349,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->account);
 	} else if (!xstrcmp(name, "admin_comment")) {
 		lua_pushstring(L, job_ptr->admin_comment);
+	} else if (!xstrcmp(name, "alloc_node")) {
+               lua_pushstring(L, job_ptr->alloc_node);
 	} else if (!xstrcmp(name, "argv")) {
 		if (job_ptr->details)
 			_setup_stringarray(L, job_ptr->details->argc,
@@ -384,7 +397,7 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		/* "gres" replaced by "tres_per_node" in v18.08 */
 		lua_pushstring(L, job_ptr->tres_per_node);
 	} else if (!xstrcmp(name, "gres_req")) {
-		lua_pushstring(L, job_ptr->gres_req);
+		lua_pushstring(L, job_ptr->tres_fmt_req_str);
 	} else if (!xstrcmp(name, "gres_used")) {
 		lua_pushstring(L, job_ptr->gres_used);
 	} else if (!xstrcmp(name, "group_id")) {
@@ -557,6 +570,10 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->tres_alloc_str);
 	} else if (!xstrcmp(name, "tres_bind")) {
 		lua_pushstring(L, job_ptr->tres_bind);
+	} else if (!xstrcmp(name, "tres_fmt_alloc_str")) {
+		lua_pushstring(L, job_ptr->tres_fmt_alloc_str);
+	} else if (!xstrcmp(name, "tres_fmt_req_str")) {
+		lua_pushstring(L, job_ptr->tres_fmt_req_str);
 	} else if (!xstrcmp(name, "tres_freq")) {
 		lua_pushstring(L, job_ptr->tres_freq);
 	} else if (!xstrcmp(name, "tres_per_job")) {
@@ -567,6 +584,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->tres_per_socket);
 	} else if (!xstrcmp(name, "tres_per_task")) {
 		lua_pushstring(L, job_ptr->tres_per_task);
+	} else if (!xstrcmp(name, "tres_req_str")) {
+		lua_pushstring(L, job_ptr->tres_req_str);
 	} else if (!xstrcmp(name, "user_id")) {
 		lua_pushnumber(L, job_ptr->user_id);
 	} else if (!xstrcmp(name, "user_name")) {
@@ -630,14 +649,14 @@ extern void slurm_lua_stack_dump(const char *plugin, char *header, lua_State *L)
 #endif
 }
 
-extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
-				       const char *script_path,
-				       const char **req_fxns,
-				       time_t *load_time,
-				       void (*local_options)(lua_State *L))
+extern int slurm_lua_loadscript(lua_State **L, const char *plugin,
+				const char *script_path,
+				const char **req_fxns,
+				time_t *load_time,
+				void (*local_options)(lua_State *L))
 {
-
 	lua_State *new = NULL;
+	lua_State *curr = *L;
 	struct stat st;
 	int rc = 0;
 
@@ -645,17 +664,17 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 		if (curr) {
 			(void) error("%s: Unable to stat %s, using old script: %s",
 			             plugin, script_path, strerror(errno));
-			return curr;
+			return SLURM_SUCCESS;
 		}
 		(void) error("%s: Unable to stat %s: %s",
 		             plugin, script_path, strerror(errno));
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	if (st.st_mtime <= *load_time) {
 		debug3("%s: %s: skipping loading Lua script: %s", plugin,
 		       __func__, script_path);
-		return curr;
+		return SLURM_SUCCESS;
 	}
 	debug3("%s: %s: loading Lua script: %s", __func__, plugin, script_path);
 
@@ -665,7 +684,7 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 	if (!(new = luaL_newstate())) {
 		error("%s: %s: luaL_newstate() failed to allocate.",
 		      plugin, __func__);
-		return curr;
+		return SLURM_SUCCESS;
 	}
 
 	luaL_openlibs(new);
@@ -675,13 +694,13 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 			      plugin, script_path,
 			      lua_tostring(new, -1));
 			lua_close(new);
-			return curr;
+			return SLURM_SUCCESS;
 		}
 		error("%s: %s: %s", plugin, script_path,
 		      lua_tostring(new, -1));
 		lua_pop(new, 1);
 		lua_close(new);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	/*
@@ -704,13 +723,13 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 			      plugin, script_path,
 			      lua_tostring(new, -1));
 			lua_close(new);
-			return curr;
+			return SLURM_SUCCESS;
 		}
 		error("%s: %s: %s", plugin, script_path,
 		      lua_tostring(new, -1));
 		lua_pop(new, 1);
 		lua_close(new);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	/*
@@ -722,13 +741,13 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 			(void) error("%s: %s: returned %d on load, using previous script",
 			             plugin, script_path, rc);
 			lua_close(new);
-			return curr;
+			return SLURM_SUCCESS;
 		}
 		(void) error("%s: %s: returned %d on load", plugin,
 			     script_path, rc);
 		lua_pop(new, 1);
 		lua_close(new);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	/*
@@ -740,14 +759,17 @@ extern lua_State *slurm_lua_loadscript(lua_State *curr, const char *plugin,
 			(void) error("%s: %s: required function(s) not present, using previous script",
 			             plugin, script_path);
 			lua_close(new);
-			return curr;
+			return SLURM_SUCCESS;
 		}
 		lua_close(new);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	*load_time = st.st_mtime;
-	return new;
+	if (curr)
+		lua_close(curr);
+	*L = new;
+	return SLURM_SUCCESS;
 }
 #endif
 
@@ -760,6 +782,28 @@ extern int slurm_lua_init(void)
 {
 	slurm_lua_fini();
 
+	char *const lua_libs[] = {
+		"liblua.so",
+#if LUA_VERSION_NUM == 503
+		"liblua-5.3.so",
+		"liblua5.3.so",
+		"liblua5.3.so.0",
+		"liblua.so.5.3",
+#elif LUA_VERSION_NUM == 502
+		"liblua-5.2.so",
+		"liblua5.2.so",
+		"liblua5.2.so.0",
+		"liblua.so.5.2",
+#else
+		"liblua-5.1.so",
+		"liblua5.1.so",
+		"liblua5.1.so.0",
+		"liblua.so.5.1",
+#endif
+		NULL
+	};
+	int i = 0;
+
 	/*
 	 *  Need to dlopen() liblua.so with RTLD_GLOBAL in order to
 	 *   ensure symbols from liblua are available to libs opened
@@ -767,28 +811,16 @@ extern int slurm_lua_init(void)
 	 */
 	if (!LUA_VERSION_NUM) {
 		fatal("Slurm wasn't configured against any LUA lib but you are trying to use it like it was.  Please check config.log and reconfigure against liblua.  Make sure you have lua devel installed.");
-	} else if (!dlopen("liblua.so",       RTLD_NOW | RTLD_GLOBAL) &&
-#if LUA_VERSION_NUM == 503
-		   !dlopen("liblua-5.3.so",   RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.3.so",    RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.3.so.0",  RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua.so.5.3",   RTLD_NOW | RTLD_GLOBAL)
-#elif LUA_VERSION_NUM == 502
-		   !dlopen("liblua-5.2.so",   RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.2.so",    RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.2.so.0",  RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua.so.5.2",   RTLD_NOW | RTLD_GLOBAL)
-#else
-		   !dlopen("liblua-5.1.so",   RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.1.so",    RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua5.1.so.0",  RTLD_NOW | RTLD_GLOBAL) &&
-		   !dlopen("liblua.so.5.1",   RTLD_NOW | RTLD_GLOBAL)
-#endif
-		) {
-		return error("Failed to open liblua.so: %s", dlerror());
 	}
 
-	cluster_name = slurm_get_cluster_name();
+	while (lua_libs[i] &&
+	       !(lua_handle = dlopen(lua_libs[i], RTLD_NOW | RTLD_GLOBAL)))
+		i++;
+
+	if (!lua_handle) {
+		error("Failed to open liblua.so: %s", dlerror());
+		return SLURM_ERROR;
+	}
 
 	return SLURM_SUCCESS;
 }
@@ -798,5 +830,6 @@ extern int slurm_lua_init(void)
  */
 extern void slurm_lua_fini(void)
 {
-	xfree(cluster_name);
+	if (lua_handle)
+		dlclose(lua_handle);
 }

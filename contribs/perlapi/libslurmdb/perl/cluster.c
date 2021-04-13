@@ -126,7 +126,7 @@ hv_to_job_cond(HV* hv, slurmdb_job_cond_t* job_cond)
 	char *jobids = (char *) (SvPV_nolen(*svp));
 	if (!job_cond->step_list)
 	    job_cond->step_list =
-		    slurm_list_create(slurmdb_destroy_selected_step);
+		    slurm_list_create(slurm_destroy_selected_step);
 	slurm_addto_step_list(job_cond->step_list, jobids);
     }
     if ( (svp = hv_fetch (hv, "usage_start", strlen("usage_start"), FALSE)) ) {
@@ -666,9 +666,13 @@ int
 step_rec_to_hv(slurmdb_step_rec_t *rec, HV* hv)
 {
     HV* stats_hv = (HV*)sv_2mortal((SV*)newHV());
+    HV *step_id_hv = (HV*)sv_2mortal((SV*)newHV());
 
     stats_to_hv(&rec->stats, stats_hv);
     hv_store_sv(hv, "stats", newRV((SV*)stats_hv));
+
+    step_id_to_hv(&rec->step_id, step_id_hv);
+    hv_store_sv(hv, "step_id", newRV((SV*)step_id_hv));
 
     STORE_FIELD(hv, rec, elapsed,         uint32_t);
     STORE_FIELD(hv, rec, end,             time_t);
@@ -683,7 +687,6 @@ step_rec_to_hv(slurmdb_step_rec_t *rec, HV* hv)
     STORE_FIELD(hv, rec, requid,          uint32_t);
     STORE_FIELD(hv, rec, start,           time_t);
     STORE_FIELD(hv, rec, state,           uint32_t);
-    STORE_FIELD(hv, rec, stepid,          uint32_t);
     STORE_FIELD(hv, rec, stepname,        charp);
     STORE_FIELD(hv, rec, suspended,       uint32_t);
     STORE_FIELD(hv, rec, sys_cpu_sec,     uint32_t);
@@ -722,7 +725,6 @@ job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
     hv_store_sv(hv, "steps", newRV((SV*)steps_av));
 
     STORE_FIELD(hv, rec, account,         charp);
-    STORE_FIELD(hv, rec, alloc_gres,      charp);
     STORE_FIELD(hv, rec, alloc_nodes,     uint32_t);
     STORE_FIELD(hv, rec, array_job_id,    uint32_t);
     STORE_FIELD(hv, rec, array_max_tasks, uint32_t);
@@ -747,7 +749,6 @@ job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
     STORE_FIELD(hv, rec, priority,        uint32_t);
     STORE_FIELD(hv, rec, qosid,           uint32_t);
     STORE_FIELD(hv, rec, req_cpus,        uint32_t);
-    STORE_FIELD(hv, rec, req_gres,        charp);
     STORE_FIELD(hv, rec, req_mem,         uint64_t);
     STORE_FIELD(hv, rec, requid,          uint32_t);
     STORE_FIELD(hv, rec, resvid,          uint32_t);

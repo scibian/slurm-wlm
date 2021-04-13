@@ -55,8 +55,6 @@
 
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 
-static char *local_cluster_name; /* name of local_cluster      */
-
 static void _free_res_cond_members(slurmdb_res_cond_t *res_cond);
 static void _free_res_rec_members(slurmdb_res_rec_t *res);
 
@@ -314,7 +312,7 @@ extern int slurmdb_setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec)
 	slurm_set_addr(&cluster_rec->control_addr,
 		       cluster_rec->control_port,
 		       cluster_rec->control_host);
-	if (cluster_rec->control_addr.sin_port == 0) {
+	if (slurm_addr_is_unspec(&cluster_rec->control_addr)) {
 		error("Unable to establish control "
 		      "machine address for '%s'(%s:%u)",
 		      cluster_rec->name,
@@ -471,9 +469,9 @@ static int _sort_local_cluster(void *v1, void *v2)
 	else if (rec_a->preempt_cnt > rec_b->preempt_cnt)
 		return 1;
 
-	if (!xstrcmp(local_cluster_name, rec_a->cluster_rec->name))
+	if (!xstrcmp(slurm_conf.cluster_name, rec_a->cluster_rec->name))
 		return -1;
-	else if (!xstrcmp(local_cluster_name, rec_b->cluster_rec->name))
+	else if (!xstrcmp(slurm_conf.cluster_name, rec_b->cluster_rec->name))
 		return 1;
 
 	return 0;
@@ -650,7 +648,8 @@ extern slurmdb_step_rec_t *slurmdb_create_step_rec()
 {
 	slurmdb_step_rec_t *step = xmalloc(sizeof(slurmdb_step_rec_t));
 	memset(&step->stats, 0, sizeof(slurmdb_stats_t));
-	step->stepid = NO_VAL;
+	step->step_id.step_id = NO_VAL;
+	step->step_id.step_het_comp = NO_VAL;
 	step->state = NO_VAL;
 	step->exitcode = NO_VAL;
 	step->elapsed = NO_VAL;
@@ -919,7 +918,6 @@ extern void slurmdb_destroy_job_rec(void *object)
 	if (job) {
 		xfree(job->account);
 		xfree(job->admin_comment);
-		xfree(job->alloc_gres);
 		xfree(job->array_task_str);
 		xfree(job->blockid);
 		xfree(job->cluster);
@@ -929,7 +927,6 @@ extern void slurmdb_destroy_job_rec(void *object)
 		xfree(job->mcs_label);
 		xfree(job->partition);
 		xfree(job->nodes);
-		xfree(job->req_gres);
 		xfree(job->resv_name);
 		slurmdb_free_slurmdb_stats_members(&job->stats);
 		FREE_NULL_LIST(job->steps);
@@ -1365,12 +1362,6 @@ extern void slurmdb_destroy_hierarchical_rec(void *object)
 	}
 }
 
-extern void slurmdb_destroy_selected_step(void *object)
-{
-	slurmdb_selected_step_t *step = (slurmdb_selected_step_t *)object;
-	xfree(step);
-}
-
 extern void slurmdb_destroy_report_job_grouping(void *object)
 {
 	slurmdb_report_job_grouping_t *job_grouping =
@@ -1419,9 +1410,8 @@ extern List slurmdb_get_info_cluster(char *cluster_names)
 	if (cluster_names && !xstrcasecmp(cluster_names, "all"))
 		all_clusters = 1;
 
-	cluster_name = slurm_get_cluster_name();
-	db_conn = acct_storage_g_get_connection(NULL, 0, NULL, 1, cluster_name);
-	xfree(cluster_name);
+	db_conn = acct_storage_g_get_connection(0, NULL, 1,
+						slurm_conf.cluster_name);
 
 	slurmdb_init_cluster_cond(&cluster_cond, 0);
 	if (cluster_names && !all_clusters) {
@@ -2921,7 +2911,7 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 						count++;
 					} else
 						xfree(name);
-				} else if (!(i-start)) {
+				} else if (!(i-start) && !option) {
 					list_append(char_list, xstrdup(""));
 					count++;
 				}
@@ -2995,7 +2985,7 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 				count++;
 			} else
 				xfree(name);
-		} else if (!(i-start)) {
+		} else if (!(i-start) && !option) {
 			list_append(char_list, xstrdup(""));
 			count++;
 		}
@@ -3039,7 +3029,7 @@ extern int slurmdb_send_accounting_update(List update_list, char *cluster,
 	      cluster, host, port, rpc_version);
 
 	slurm_msg_t_init(&req);
-	slurm_set_addr_char(&req.address, port, host);
+	slurm_set_addr(&req.address, port, host);
 
 	req.protocol_version = rpc_version;
 
@@ -3111,39 +3101,6 @@ extern slurmdb_report_cluster_rec_t *slurmdb_cluster_rec_2_report(
 	return slurmdb_report_cluster;
 }
 
-extern char *slurmdb_get_selected_step_id(
-	char *job_id_str, int len,
-	slurmdb_selected_step_t *selected_step)
-{
-	char id[FORMAT_STRING_SIZE];
-
-	xassert(selected_step);
-
-	if (selected_step->array_task_id != NO_VAL) {
-		snprintf(id, FORMAT_STRING_SIZE,
-			 "%u_%u",
-			 selected_step->jobid,
-			 selected_step->array_task_id);
-	} else if (selected_step->het_job_offset != NO_VAL) {
-		snprintf(id, FORMAT_STRING_SIZE,
-			 "%u+%u",
-			 selected_step->jobid,
-			 selected_step->het_job_offset);
-	} else {
-		snprintf(id, FORMAT_STRING_SIZE,
-			 "%u",
-			 selected_step->jobid);
-	}
-
-	if (selected_step->stepid != NO_VAL)
-		snprintf(job_id_str, len, "%s.%u",
-			 id, selected_step->stepid);
-	else
-		snprintf(job_id_str, len, "%s", id);
-
-	return job_id_str;
-}
-
 /*
  * get the first cluster that will run a job
  * IN: req - description of resource allocation request
@@ -3167,7 +3124,7 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	ListIterator itr;
 	List cluster_list = NULL;
 	List ret_list = NULL;
-	List tried_feds = list_create(NULL);
+	List tried_feds = NULL;
 
 	*cluster_rec = NULL;
 	cluster_list = slurmdb_get_info_cluster(cluster_names);
@@ -3189,6 +3146,7 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	if (working_cluster_rec)
 		*cluster_rec = working_cluster_rec;
 
+	tried_feds = list_create(NULL);
 	ret_list = list_create(xfree_ptr);
 	itr = list_iterator_create(cluster_list);
 	while ((working_cluster_rec = list_next(itr))) {
@@ -3227,9 +3185,7 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	}
 
 	/* sort the list so the first spot is on top */
-	local_cluster_name = slurm_get_cluster_name();
 	list_sort(ret_list, (ListCmpF)_sort_local_cluster);
-	xfree(local_cluster_name);
 	local_cluster = list_peek(ret_list);
 
 	/* prevent cluster_rec from being freed when cluster_list is destroyed */
@@ -3299,7 +3255,7 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 	ListIterator itr;
 	List cluster_list = NULL;
 	List ret_list = NULL;
-	List tried_feds = list_create(NULL);
+	List tried_feds = NULL;
 
 	*cluster_rec = NULL;
 	cluster_list = slurmdb_get_info_cluster(cluster_names);
@@ -3324,6 +3280,7 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 	if (working_cluster_rec)
 		*cluster_rec = working_cluster_rec;
 
+	tried_feds = list_create(NULL);
 	ret_list = list_create(xfree_ptr);
 	itr = list_iterator_create(cluster_list);
 	while ((working_cluster_rec = list_next(itr))) {
@@ -3343,6 +3300,7 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 		}
 	}
 	list_iterator_destroy(itr);
+	FREE_NULL_LIST(tried_feds);
 
 	/* restore working_cluster_rec in case it was already set */
 	if (*cluster_rec) {
@@ -3364,9 +3322,7 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 	}
 
 	/* sort the list so the first spot is on top */
-	local_cluster_name = slurm_get_cluster_name();
 	list_sort(ret_list, (ListCmpF)_sort_local_cluster);
-	xfree(local_cluster_name);
 	local_cluster = list_peek(ret_list);
 
 	/* prevent cluster_rec from being freed when cluster_list is destroyed */
@@ -3381,7 +3337,6 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 end_it:
 	FREE_NULL_LIST(ret_list);
 	FREE_NULL_LIST(cluster_list);
-	FREE_NULL_LIST(tried_feds);
 
 	return rc;
 }
@@ -3918,9 +3873,9 @@ extern int slurmdb_sort_tres_by_id_asc(void *v1, void *v2)
 
 /* This only works on a simple id=count list, not on a formatted list */
 extern void slurmdb_tres_list_from_string(
-	List *tres_list, char *tres, uint32_t flags)
+	List *tres_list, const char *tres, uint32_t flags)
 {
-	char *tmp_str = tres;
+	const char *tmp_str = tres;
 	int id;
 	uint64_t count;
 	slurmdb_tres_rec_t *tres_rec;
@@ -4009,7 +3964,7 @@ extern void slurmdb_tres_list_from_string(
 			      remove_found, removed);
 	}
 
-	if (flags & TRES_STR_FLAG_SORT_ID)
+	if (*tres_list && (flags & TRES_STR_FLAG_SORT_ID))
 		list_sort(*tres_list, (ListCmpF)slurmdb_sort_tres_by_id_asc);
 
 	return;
@@ -4133,11 +4088,11 @@ extern int slurmdb_find_qos_in_list(void *x, void *key)
 
 extern int slurmdb_find_selected_step_in_list(void *x, void *key)
 {
-	slurmdb_selected_step_t *selected_step = (slurmdb_selected_step_t *)x;
-	slurmdb_selected_step_t *query_step = (slurmdb_selected_step_t *)key;
+	slurm_selected_step_t *selected_step = (slurm_selected_step_t *)x;
+	slurm_selected_step_t *query_step = (slurm_selected_step_t *)key;
 
-	if ((query_step->jobid == selected_step->jobid) &&
-	    (query_step->stepid == selected_step->stepid) &&
+	if (!memcmp(&query_step->step_id, &selected_step->step_id,
+		    sizeof(query_step->step_id)) &&
 	    (query_step->array_task_id == selected_step->array_task_id) &&
 	    (query_step->het_job_offset == selected_step->het_job_offset))
 		return 1;
@@ -4534,4 +4489,45 @@ extern int slurmdb_job_sort_by_submit_time(void *v1, void *v2)
 	else if (time1 > time2)
 		return 1;
 	return 0;
+}
+
+extern void slurmdb_merge_grp_node_usage(bitstr_t **grp_node_bitmap1,
+					 uint16_t **grp_node_job_cnt1,
+					 bitstr_t *grp_node_bitmap2,
+					 uint16_t *grp_node_job_cnt2)
+{
+	int i_first, i_last;
+
+	if (!grp_node_bitmap2)
+		return;
+
+	if (!grp_node_bitmap1) {
+		error("%s: grp_node_bitmap1 is NULL", __func__);
+		return;
+	}
+
+	if (!grp_node_job_cnt1) {
+		error("%s: grp_node_job_cnt1 is NULL", __func__);
+		return;
+	}
+
+	if (*grp_node_bitmap1)
+		bit_or(*grp_node_bitmap1, grp_node_bitmap2);
+	else
+		*grp_node_bitmap1 = bit_copy(grp_node_bitmap2);
+
+	if (!*grp_node_job_cnt1)
+		*grp_node_job_cnt1 =
+			xcalloc(bit_size(*grp_node_bitmap1), sizeof(uint16_t));
+
+	if ((i_first = bit_ffs(grp_node_bitmap2)) == -1)
+		return;
+
+	i_last = bit_fls(grp_node_bitmap2);
+	for (int i = i_first; i <= i_last; i++) {
+		if (!bit_test(grp_node_bitmap2, i))
+			continue;
+		(*grp_node_job_cnt1)[i] +=
+			grp_node_job_cnt2 ? grp_node_job_cnt2[i] : 1;
+	}
 }

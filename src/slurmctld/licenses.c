@@ -58,7 +58,8 @@
 List license_list = (List) NULL;
 time_t last_license_update = 0;
 static pthread_mutex_t license_mutex = PTHREAD_MUTEX_INITIALIZER;
-static void _pack_license(struct licenses *lic, Buf buffer, uint16_t protocol_version);
+static void _pack_license(struct licenses *lic, Buf buffer,
+			  uint16_t protocol_version);
 
 /* Print all licenses on a list */
 static void _licenses_print(char *header, List licenses, job_record_t *job_ptr)
@@ -68,7 +69,7 @@ static void _licenses_print(char *header, List licenses, job_record_t *job_ptr)
 
 	if (licenses == NULL)
 		return;
-	if ((slurmctld_conf.debug_flags & DEBUG_FLAG_LICENSE) == 0)
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_LICENSE))
 		return;
 
 	iter = list_iterator_create(licenses);
@@ -713,7 +714,7 @@ extern int license_job_return(job_record_t *job_ptr)
 		return rc;
 
 	last_license_update = time(NULL);
-	trace_job(job_ptr, __func__, "");
+	log_flag(TRACE_JOBS, "%s: %pJ", __func__, job_ptr);
 	slurm_mutex_lock(&license_mutex);
 	iter = list_iterator_create(job_ptr->license_list);
 	while ((license_entry = list_next(iter))) {
@@ -801,6 +802,7 @@ get_all_license_info(char **buffer_ptr,
 	if (license_list) {
 		iter = list_iterator_create(license_list);
 		while ((lic_entry = list_next(iter))) {
+			set_reserved_license_count(lic_entry);
 			/* Now encode the license data structure.
 			 */
 			_pack_license(lic_entry, buffer, protocol_version);
@@ -924,26 +926,22 @@ extern void license_set_job_tres_cnt(List license_list,
 	return;
 }
 
-/* pack_license()
- *
- * Encode the licenses data structure.
- *
- *	char *		name;
- *	uint32_t	total;
- *	uint32_t	used;
- *	uint8_t 	remote;
- *
- */
-static void
-_pack_license(struct licenses *lic, Buf buffer, uint16_t protocol_version)
+static void _pack_license(struct licenses *lic, Buf buffer,
+			  uint16_t protocol_version)
 {
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
+		packstr(lic->name, buffer);
+		pack32(lic->total, buffer);
+		pack32(lic->used, buffer);
+		pack32(lic->reserved, buffer);
+		pack8(lic->remote, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		packstr(lic->name, buffer);
 		pack32(lic->total, buffer);
 		pack32(lic->used, buffer);
 		pack8(lic->remote, buffer);
 	} else {
-		error("\
-%s: protocol_version %hu not supported", __func__, protocol_version);
+		error("%s: protocol_version %hu not supported",
+		      __func__, protocol_version);
 	}
 }

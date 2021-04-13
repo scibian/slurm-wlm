@@ -49,6 +49,7 @@ typedef struct {
 	int (*epilog)(job_env_t *job_env, slurm_cred_t *cred);
 	int (*prolog_slurmctld)(job_record_t *job_ptr, bool *async);
 	int (*epilog_slurmctld)(job_record_t *job_ptr, bool *async);
+	void (*required)(prep_call_type_t type, bool *required);
 } prep_ops_t;
 
 /*
@@ -60,6 +61,7 @@ static const char *syms[] = {
 	"prep_p_epilog",
 	"prep_p_prolog_slurmctld",
 	"prep_p_epilog_slurmctld",
+	"prep_p_required",
 };
 
 static int g_context_cnt = -1;
@@ -68,6 +70,7 @@ static plugin_context_t **g_context = NULL;
 static char *prep_plugin_list = NULL;
 static pthread_mutex_t g_context_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool init_run = false;
+static bool prep_is_required[PREP_CALL_CNT] = { false };
 
 /*
  * Initialize the PrEpPlugins.
@@ -77,7 +80,7 @@ static bool init_run = false;
 extern int prep_plugin_init(prep_callbacks_t *callbacks)
 {
 	int rc = SLURM_SUCCESS;
-	char *last = NULL, *tmp_plugin_list, *names;
+	char *last = NULL, *names, *tmp_plugin_list;
 	char *plugin_type = "prep";
 	char *type;
 
@@ -88,13 +91,12 @@ extern int prep_plugin_init(prep_callbacks_t *callbacks)
 	if (g_context_cnt >= 0)
 		goto fini;
 
-	prep_plugin_list = slurm_get_prep_plugins();
 	g_context_cnt = 0;
-	if ((prep_plugin_list == NULL) || (prep_plugin_list[0] == '\0'))
+	if (!slurm_conf.prep_plugins || !slurm_conf.prep_plugins[0])
 		goto fini;
 
-	tmp_plugin_list = xstrdup(prep_plugin_list);
-	names = tmp_plugin_list;
+	prep_plugin_list = xstrdup(slurm_conf.prep_plugins);
+	names = tmp_plugin_list = xstrdup(prep_plugin_list);
 	while ((type = strtok_r(names, ",", &last))) {
 		xrecalloc(ops, g_context_cnt + 1, sizeof(prep_ops_t));
 		xrecalloc(g_context, g_context_cnt + 1,
@@ -124,6 +126,14 @@ extern int prep_plugin_init(prep_callbacks_t *callbacks)
 	}
 	init_run = true;
 	xfree(tmp_plugin_list);
+
+	for (int j = 0; j < PREP_CALL_CNT; j++) {
+		for (int i = 0; i < g_context_cnt; i++) {
+			(*(ops[i].required))(j, &prep_is_required[j]);
+			if (prep_is_required[j])
+				break;
+		}
+	}
 
 fini:
 	slurm_mutex_unlock(&g_context_lock);
@@ -171,24 +181,23 @@ fini:
 extern int prep_plugin_reconfig(void)
 {
 	int rc = SLURM_SUCCESS;
-	char *plugin_names = slurm_get_prep_plugins();
 	bool plugin_change = false;
 
-	if (!plugin_names && !prep_plugin_list)
+	if (!slurm_conf.prep_plugins && !prep_plugin_list)
 		return rc;
 
 	slurm_mutex_lock(&g_context_lock);
-	if (xstrcmp(plugin_names, prep_plugin_list))
+	if (xstrcmp(slurm_conf.prep_plugins, prep_plugin_list))
 		plugin_change = true;
 	slurm_mutex_unlock(&g_context_lock);
 
 	if (plugin_change) {
-		info("%s: PrEpPlugins changed to %s", __func__, plugin_names);
+		info("%s: PrEpPlugins changed to %s",
+		     __func__, slurm_conf.prep_plugins);
 		rc = prep_plugin_fini();
 		if (rc == SLURM_SUCCESS)
 			rc = prep_plugin_init(NULL);
 	}
-	xfree(plugin_names);
 
 	return rc;
 }
@@ -277,4 +286,20 @@ extern void prep_epilog_slurmctld(job_record_t *job_ptr)
 
 	slurm_mutex_unlock(&g_context_lock);
 	END_TIMER2(__func__);
+}
+
+extern bool prep_required(prep_call_type_t type)
+{
+	int rc;
+	bool required = false;
+
+	rc = prep_plugin_init(NULL);
+	if (rc != SLURM_SUCCESS)
+		return required;
+
+	slurm_mutex_lock(&g_context_lock);
+	required = prep_is_required[type];
+	slurm_mutex_unlock(&g_context_lock);
+
+	return required;
 }

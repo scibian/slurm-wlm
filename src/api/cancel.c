@@ -44,6 +44,7 @@
 
 #include "src/common/macros.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 /*
@@ -65,9 +66,10 @@ slurm_kill_job (uint32_t job_id, uint16_t signal, uint16_t flags)
 	 * Request message:
 	 */
 	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.job_id      = job_id;
+	req.step_id.job_id = job_id;
 	req.sjob_id     = NULL;
-	req.job_step_id = NO_VAL;
+	req.step_id.step_id = NO_VAL;
+	req.step_id.step_het_comp = NO_VAL;
 	req.signal      = signal;
 	req.flags       = flags;
 	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
@@ -101,9 +103,10 @@ slurm_kill_job_step (uint32_t job_id, uint32_t step_id, uint16_t signal)
 	 * Request message:
 	 */
 	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.job_id      = job_id;
+	req.step_id.job_id = job_id;
 	req.sjob_id     = NULL;
-	req.job_step_id = step_id;
+	req.step_id.step_id = step_id;
+	req.step_id.step_het_comp = NO_VAL;
 	req.signal      = signal;
 	req.flags	= 0;
 	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
@@ -123,7 +126,7 @@ slurm_kill_job_step (uint32_t job_id, uint32_t step_id, uint16_t signal)
 int
 slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
 {
-	int cc;
+	int cc, rc = SLURM_SUCCESS;
 	slurm_msg_t msg;
 	job_step_kill_msg_t req;
 
@@ -135,21 +138,26 @@ slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
 	slurm_msg_t_init(&msg);
 
 	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.job_id      = NO_VAL;
+	req.step_id.job_id = NO_VAL;
 	req.sjob_id     = xstrdup(job_id);
-	req.job_step_id = NO_VAL;
+	req.step_id.step_id = NO_VAL;
+	req.step_id.step_het_comp = NO_VAL;
 	req.signal      = signal;
 	req.flags	= flags;
 	msg.msg_type    = REQUEST_KILL_JOB;
         msg.data        = &req;
 
-	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)<0)
-		return SLURM_ERROR;
+	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)) {
+		rc = SLURM_ERROR;
+		goto fini;
+	}
 
 	if (cc)
 		slurm_seterrno_ret(cc);
 
-	return SLURM_SUCCESS;
+fini:
+	xfree(req.sjob_id);
+	return rc;
 }
 
 /*

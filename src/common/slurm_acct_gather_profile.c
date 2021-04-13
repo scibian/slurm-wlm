@@ -214,7 +214,6 @@ extern int acct_gather_profile_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "acct_gather_profile";
-	char *type = NULL;
 
 	if (init_run && g_context)
 		return retval;
@@ -224,13 +223,13 @@ extern int acct_gather_profile_init(void)
 	if (g_context)
 		goto done;
 
-	type = slurm_get_acct_gather_profile_type();
-
-	g_context = plugin_context_create(
-		plugin_type, type, (void **)&ops, syms, sizeof(syms));
+	g_context = plugin_context_create(plugin_type,
+					  slurm_conf.acct_gather_profile_type,
+					  (void **) &ops, syms, sizeof(syms));
 
 	if (!g_context) {
-		error("cannot create %s context for %s", plugin_type, type);
+		error("cannot create %s context for %s",
+		      plugin_type, slurm_conf.acct_gather_profile_type);
 		retval = SLURM_ERROR;
 		goto done;
 	}
@@ -241,8 +240,8 @@ done:
 	if (retval == SLURM_SUCCESS)
 		retval = acct_gather_conf_init();
 	if (retval != SLURM_SUCCESS)
-		fatal("can not open the %s plugin", type);
-	xfree(type);
+		fatal("can not open the %s plugin",
+		      slurm_conf.acct_gather_profile_type);
 
 	return retval;
 }
@@ -297,11 +296,9 @@ done:
 	return rc;
 }
 
-extern char *acct_gather_profile_to_string(uint32_t profile)
+extern void acct_gather_profile_to_string_r(uint32_t profile,
+					    char *profile_str)
 {
-	static char profile_str[128];
-
-	profile_str[0] = '\0';
 	if (profile == ACCT_GATHER_PROFILE_NOT_SET)
 		strcat(profile_str, "NotSet");
 	else if (profile == ACCT_GATHER_PROFILE_NONE)
@@ -325,6 +322,15 @@ extern char *acct_gather_profile_to_string(uint32_t profile)
 			strcat(profile_str, "Task");
 		}
 	}
+}
+
+extern char *acct_gather_profile_to_string(uint32_t profile)
+{
+	static char profile_str[128];
+
+	profile_str[0] = '\0';
+	acct_gather_profile_to_string_r(profile, profile_str);
+
 	return profile_str;
 }
 

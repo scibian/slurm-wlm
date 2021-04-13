@@ -32,15 +32,25 @@ set config_path  ""
 set tmp_job      "test$test_id\_tmp_job"
 set file_in	 "test${test_id}.in"
 set file_out     "test${test_id}.out"
+set job_id       0
 
 if {![is_super_user]} {
 	skip "This test can't be run except as SlurmUser"
 }
 
 set config_path [get_conf_path]
-fail_on_error "Unable to get config path"
 set config_file $config_path/slurm.conf
 save_conf $config_file
+
+proc cleanup {} {
+	global job_id config_file bin_rm tmp_job
+
+	# Clean up vestigial files, jobs and restore original slurm.conf file
+	cancel_job $job_id
+	restore_conf $config_file
+	reconfigure
+	exec $bin_rm $tmp_job
+}
 
 log_info "---Checking sbatch uses mcs-label only for some jobs (ondemand mode)---"
 
@@ -65,7 +75,7 @@ exec $bin_sed -i /^\[\t\s\]*PrivateData\[\t\s\]*=/Id $config_file
 exec $bin_echo -e "\nMCSPlugin=mcs/group" >> $config_file
 exec $bin_echo MCSParameters=ondemand,select,privatedata:$groups_name >> $config_file
 exec $bin_echo PrivateData=jobs,nodes >> $config_file
-reconfigure
+reconfigure -fail
 
 
 #
@@ -80,8 +90,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
-		set exit_code 1
+		fail "scontrol is not responding"
 	}
 	eof {
 		wait
@@ -106,8 +115,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
-		set exit_code 1
+		fail "sbatch not responding"
 	}
 	eof {
 		wait
@@ -119,7 +127,6 @@ expect {
 log_info "---Checking sbatch uses mcs-label=group---"
 
 make_bash_script $tmp_job "sleep 10"
-set job_id 0
 spawn $sbatch -N1 -o/dev/null --exclusive=mcs -t1 $tmp_job
 expect {
 	-re "Submitted batch job ($number)" {
@@ -127,8 +134,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not responding"
-		set exit_code 1
+		fail "sbatch is not responding"
 	}
 	eof {
 		wait
@@ -169,8 +175,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue is not responding"
-		set exit_code 1
+		fail "squeue is not responding"
 	}
 	eof {
 		wait
@@ -193,8 +198,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not responding"
-		set exit_code 1
+		fail "sbatch is not responding"
 	}
 	eof {
 		wait
@@ -220,8 +224,7 @@ expect {
 		set found 1
 	}
 	timeout {
-		log_error "squeue is not responding"
-		set exit_code 1
+		fail "squeue is not responding"
 	}
 	eof {
 		wait
@@ -242,8 +245,7 @@ expect {
 		set found 1
 	}
 	timeout {
-		log_error "squeue is not responding"
-		set exit_code 1
+		fail "squeue is not responding"
 	}
 	eof {
 		wait
@@ -267,8 +269,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
-		set exit_code 1
+		fail "scontrol is not responding"
 	}
 	eof {
 		wait
@@ -292,7 +293,7 @@ exec $bin_sed -i /^\[\t\s\]*PrivateData\[\t\s\]*=/Id $config_file
 exec $bin_echo -e "\nMCSPlugin=mcs/group" >> $config_file
 exec $bin_echo MCSParameters=enforced,noselect,privatedata:$groups_name >> $config_file
 exec $bin_echo PrivateData=jobs,nodes >> $config_file
-reconfigure
+reconfigure -fail
 
 
 ###### Check that sbatch uses mcs-label=group ######
@@ -307,8 +308,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not responding"
-		set exit_code 1
+		fail "sbatch is not responding"
 	}
 	eof {
 		wait
@@ -335,8 +335,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue is not responding"
-		set exit_code 1
+		fail "squeue is not responding"
 	}
 	eof {
 		wait
@@ -358,8 +357,7 @@ expect {
 		set found 1
 	}
 	timeout {
-		log_error "squeue is not responding"
-		set exit_code 1
+		fail "squeue is not responding"
 	}
 	eof {
 		wait
@@ -384,22 +382,13 @@ expect {
 		log_debug "No mcs_label for this node. It was expected"
 	}
 	timeout {
-		log_error "scontrol is not responding"
-		set exit_code 1
+		fail "scontrol is not responding"
 	}
 	eof {
 		wait
 	}
 }
 
-cancel_job $job_id
-
-# Clean up vestigial files and restore original slurm.conf file
-restore_conf $config_file
-reconfigure
-
-if {$exit_code == 0} {
-	exec $bin_rm $tmp_job
-} else {
+if {$exit_code != 0} {
 	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

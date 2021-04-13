@@ -136,20 +136,15 @@ static int _job_fail_find(void *x, void *key)
 
 static void _job_fail_log(job_failures_t *job_fail_ptr)
 {
-	uint16_t port;
-	char ip[32];
 	int i;
 
 	if (nonstop_debug > 0) {
 		info("nonstop: =====================");
 		info("nonstop: job_id: %u", job_fail_ptr->job_id);
-		slurm_get_ip_str(&job_fail_ptr->callback_addr, &port,
-				 ip, sizeof(ip));
-		info("nonstop: callback_addr: %s", ip);
+		info("nonstop: callback_addr: %pA",
+		     &job_fail_ptr->callback_addr);
 		info("nonstop: callback_flags: %x",
 		     job_fail_ptr->callback_flags);
-		info("nonstop: callback_port: %u",
-		     job_fail_ptr->callback_port);
 		info("nonstop: fail_node_cnt: %u",
 		     job_fail_ptr->fail_node_cnt);
 		for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
@@ -205,7 +200,7 @@ static void _pack_job_state(job_failures_t *job_fail_ptr, Buf buffer)
 {
 	int i;
 
-	slurm_pack_slurm_addr(&job_fail_ptr->callback_addr, buffer);
+	slurm_pack_addr(&job_fail_ptr->callback_addr, buffer);
 	pack32(job_fail_ptr->callback_flags, buffer);
 	pack16(job_fail_ptr->callback_port, buffer);
 	pack32(job_fail_ptr->job_id, buffer);
@@ -222,39 +217,76 @@ static void _pack_job_state(job_failures_t *job_fail_ptr, Buf buffer)
 	pack32(job_fail_ptr->user_id, buffer);
 }
 
-static int _unpack_job_state(job_failures_t **job_pptr, Buf buffer)
+static int _unpack_job_state(job_failures_t **job_pptr, Buf buffer,
+			     uint16_t protocol_version)
 {
 	job_failures_t *job_fail_ptr;
 	uint32_t dummy32;
 	int i;
 
 	job_fail_ptr = xmalloc(sizeof(job_failures_t));
-	if (slurm_unpack_slurm_addr_no_alloc(&job_fail_ptr->callback_addr,
-					     buffer))
-		goto unpack_error;
-	safe_unpack32(&job_fail_ptr->callback_flags, buffer);
-	safe_unpack16(&job_fail_ptr->callback_port, buffer);
-	safe_unpack32(&job_fail_ptr->job_id, buffer);
-	safe_unpack32(&job_fail_ptr->fail_node_cnt, buffer);
-	safe_xcalloc(job_fail_ptr->fail_node_cpus,job_fail_ptr->fail_node_cnt,
-		     sizeof(uint32_t));
-	safe_xcalloc(job_fail_ptr->fail_node_names, job_fail_ptr->fail_node_cnt,
-		     sizeof(char *));
-	for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
-		safe_unpack32(&job_fail_ptr->fail_node_cpus[i], buffer);
-		safe_unpackstr_xmalloc(&job_fail_ptr->fail_node_names[i],
+
+	if (protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
+		if (slurm_unpack_addr_no_alloc(&job_fail_ptr->callback_addr,
+					       buffer))
+			goto unpack_error;
+		safe_unpack32(&job_fail_ptr->callback_flags, buffer);
+		safe_unpack16(&job_fail_ptr->callback_port, buffer);
+		safe_unpack32(&job_fail_ptr->job_id, buffer);
+		safe_unpack32(&job_fail_ptr->fail_node_cnt, buffer);
+		safe_xcalloc(job_fail_ptr->fail_node_cpus,
+			     job_fail_ptr->fail_node_cnt, sizeof(uint32_t));
+		safe_xcalloc(job_fail_ptr->fail_node_names,
+		             job_fail_ptr->fail_node_cnt, sizeof(char *));
+		for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
+			safe_unpack32(&job_fail_ptr->fail_node_cpus[i], buffer);
+			safe_unpackstr_xmalloc(
+				&job_fail_ptr->fail_node_names[i], &dummy32,
+				buffer);
+		}
+		job_fail_ptr->magic = FAILURE_MAGIC;
+		safe_unpack16(&job_fail_ptr->pending_job_delay, buffer);
+		safe_unpack32(&job_fail_ptr->pending_job_id, buffer);
+		safe_unpackstr_xmalloc(&job_fail_ptr->pending_node_name,
 				       &dummy32, buffer);
+		safe_unpack32(&job_fail_ptr->replace_node_cnt, buffer);
+		safe_unpack32(&job_fail_ptr->time_extend_avail, buffer);
+		safe_unpack32(&job_fail_ptr->user_id, buffer);
+		_job_fail_log(job_fail_ptr);
+		*job_pptr = job_fail_ptr;
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		if (slurm_unpack_slurm_addr_no_alloc(
+			&job_fail_ptr->callback_addr, buffer))
+			goto unpack_error;
+		safe_unpack32(&job_fail_ptr->callback_flags, buffer);
+		safe_unpack16(&job_fail_ptr->callback_port, buffer);
+		safe_unpack32(&job_fail_ptr->job_id, buffer);
+		safe_unpack32(&job_fail_ptr->fail_node_cnt, buffer);
+		safe_xcalloc(job_fail_ptr->fail_node_cpus,
+			     job_fail_ptr->fail_node_cnt, sizeof(uint32_t));
+		safe_xcalloc(job_fail_ptr->fail_node_names,
+		             job_fail_ptr->fail_node_cnt, sizeof(char *));
+		for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
+			safe_unpack32(&job_fail_ptr->fail_node_cpus[i], buffer);
+			safe_unpackstr_xmalloc(
+				&job_fail_ptr->fail_node_names[i], &dummy32,
+				buffer);
+		}
+		job_fail_ptr->magic = FAILURE_MAGIC;
+		safe_unpack16(&job_fail_ptr->pending_job_delay, buffer);
+		safe_unpack32(&job_fail_ptr->pending_job_id, buffer);
+		safe_unpackstr_xmalloc(&job_fail_ptr->pending_node_name,
+				       &dummy32, buffer);
+		safe_unpack32(&job_fail_ptr->replace_node_cnt, buffer);
+		safe_unpack32(&job_fail_ptr->time_extend_avail, buffer);
+		safe_unpack32(&job_fail_ptr->user_id, buffer);
+		_job_fail_log(job_fail_ptr);
+		*job_pptr = job_fail_ptr;
+	} else {
+		xfree(job_fail_ptr);
+		return SLURM_ERROR;
 	}
-	job_fail_ptr->magic = FAILURE_MAGIC;
-	safe_unpack16(&job_fail_ptr->pending_job_delay, buffer);
-	safe_unpack32(&job_fail_ptr->pending_job_id, buffer);
-	safe_unpackstr_xmalloc(&job_fail_ptr->pending_node_name,
-			       &dummy32, buffer);
-	safe_unpack32(&job_fail_ptr->replace_node_cnt, buffer);
-	safe_unpack32(&job_fail_ptr->time_extend_avail, buffer);
-	safe_unpack32(&job_fail_ptr->user_id, buffer);
-	_job_fail_log(job_fail_ptr);
-	*job_pptr = job_fail_ptr;
+
 	return SLURM_SUCCESS;
 
 unpack_error:
@@ -284,7 +316,7 @@ static int _update_job(job_desc_msg_t * job_specs, uid_t uid)
  */
 extern int save_nonstop_state(void)
 {
-	char *dir_path, *old_file, *new_file, *reg_file;
+	char *old_file = NULL, *new_file = NULL, *reg_file = NULL;
 	Buf buffer = init_buf(0);
 	time_t now = time(NULL);
 	job_failures_t *job_fail_ptr;
@@ -313,13 +345,12 @@ extern int save_nonstop_state(void)
 	slurm_mutex_unlock(&job_fail_mutex);
 
 	/* write the buffer to file */
-	dir_path = slurm_get_state_save_location();
-	old_file = xstrdup(dir_path);
-	xstrcat(old_file, "/nonstop_state.old");
-	reg_file = xstrdup(dir_path);
-	xstrcat(reg_file, "/nonstop_state");
-	new_file = xstrdup(dir_path);
-	xstrcat(new_file, "/nonstop_state.new");
+	xstrfmtcat(old_file, "%s/nonstop_state.old",
+		   slurm_conf.state_save_location);
+	xstrfmtcat(reg_file, "%s/nonstop_state",
+		   slurm_conf.state_save_location);
+	xstrfmtcat(new_file, "%s/nonstop_state.new",
+		   slurm_conf.state_save_location);
 
 	log_fd = creat(new_file, 0600);
 	if (log_fd < 0) {
@@ -357,7 +388,6 @@ extern int save_nonstop_state(void)
 			       new_file, reg_file);
 		(void) unlink(new_file);
 	}
-	xfree(dir_path);
 	xfree(old_file);
 	xfree(reg_file);
 	xfree(new_file);
@@ -371,7 +401,7 @@ extern int save_nonstop_state(void)
  */
 extern int restore_nonstop_state(void)
 {
-	char *dir_path, *state_file;
+	char *state_file = NULL;
 	uint32_t job_cnt = 0;
 	uint16_t protocol_version = NO_VAL16;
 	Buf buffer;
@@ -379,10 +409,8 @@ extern int restore_nonstop_state(void)
 	time_t buf_time;
 	job_failures_t *job_fail_ptr = NULL;
 
-	dir_path = slurm_get_state_save_location();
-	state_file = xstrdup(dir_path);
-	xstrcat(state_file, "/nonstop_state");
-	xfree(dir_path);
+	xstrfmtcat(state_file, "%s/nonstop_state",
+		   slurm_conf.state_save_location);
 
 	if (!(buffer = create_mmap_buf(state_file))) {
 		error("No nonstop state file (%s) to recover", state_file);
@@ -408,7 +436,8 @@ extern int restore_nonstop_state(void)
 	safe_unpack32(&job_cnt, buffer);
 	slurm_mutex_lock(&job_fail_mutex);
 	for (i = 0; i < job_cnt; i++) {
-		error_code = _unpack_job_state(&job_fail_ptr, buffer);
+		error_code = _unpack_job_state(&job_fail_ptr, buffer,
+					       protocol_version);
 		if (error_code)
 			break;
 		job_fail_ptr->job_ptr = find_job_record(job_fail_ptr->job_id);
@@ -900,6 +929,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 	sep1 = strstr(cmd_ptr + 15, "NODE:");
 	if (!sep1) {
 		xstrfmtcat(resp, "%s ECMD", SLURM_VERSION_STRING);
+		slurm_mutex_lock(&job_fail_mutex);
 		goto fini;
 	}
 	node_name = sep1 + 5;
@@ -1255,13 +1285,14 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 			  NULL,			/* will_run response */
 			  1,			/* allocate */
 			  cmd_uid,		/* submit UID */
+			  false,		/* cron */
 			  &new_job_ptr,		/* pointer to new job */
 			  NULL,                 /* error message */
 			  SLURM_PROTOCOL_VERSION);
 	if (rc != SLURM_SUCCESS) {
 		/* Determine expected start time */
 		i = job_allocate(&job_alloc_req, 1, 1, &will_run, 1,
-				 cmd_uid, &new_job_ptr, NULL,
+				 cmd_uid, false, &new_job_ptr, NULL,
 				 SLURM_PROTOCOL_VERSION);
 		if (i == SLURM_SUCCESS) {
 			will_run_idle = will_run->start_time;
@@ -1282,12 +1313,12 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 			(void) update_resv(&resv_desc);
 			xfree(resv_desc.users);
 			rc = job_allocate(&job_alloc_req, 1, 0,	NULL, 1,
-					  cmd_uid, &new_job_ptr, NULL,
+					  cmd_uid, false, &new_job_ptr, NULL,
 					  SLURM_PROTOCOL_VERSION);
 			if (rc != SLURM_SUCCESS) {
 				/* Determine expected start time */
 				i = job_allocate(&job_alloc_req, 1, 1,
-						 &will_run, 1, cmd_uid,
+						 &will_run, 1, cmd_uid, false,
 						 &new_job_ptr, NULL,
 						 SLURM_PROTOCOL_VERSION);
 				if (i == SLURM_SUCCESS) {
@@ -1299,7 +1330,8 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 					/* Submit job in resv for later use */
 					i = job_allocate(&job_alloc_req, 0, 0,
 							 NULL, 1, cmd_uid,
-							 &new_job_ptr, NULL,
+							 false, &new_job_ptr,
+							 NULL,
 							 SLURM_PROTOCOL_VERSION);
 					if (i == SLURM_SUCCESS)
 						will_run_time = will_run_resv;
@@ -1314,7 +1346,7 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 
 	if ((rc != SLURM_SUCCESS) && (will_run_time == 0) && will_run_idle) {
 		/* Submit job for later use without using reservation */
-		i = job_allocate(&job_alloc_req, 0, 0, NULL, 1, cmd_uid,
+		i = job_allocate(&job_alloc_req, 0, 0, NULL, 1, cmd_uid, false,
 				 &new_job_ptr, NULL, SLURM_PROTOCOL_VERSION);
 		if (i == SLURM_SUCCESS)
 			will_run_time = will_run_idle;
@@ -1708,8 +1740,8 @@ static void _send_event_callbacks(void)
 				     job_fail_ptr->callback_flags);
 			}
 			callback_addr = job_fail_ptr->callback_addr;
-			callback_addr.sin_port =
-				htons(job_fail_ptr->callback_port);
+			slurm_set_port(&callback_addr,
+				       job_fail_ptr->callback_port);
 			callback_flags = job_fail_ptr->callback_flags;
 			debug("%s: job_id %d flags 0x%x", __func__,
 			      job_fail_ptr->job_id,

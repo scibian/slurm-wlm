@@ -377,7 +377,8 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
 	info("First time to register cluster requesting "
 	     "running jobs and system information.");
 
-	slurm_set_addr_char(&ctld_address, port, host);
+	memset(&ctld_address, 0, sizeof(ctld_address));
+	slurm_set_addr(&ctld_address, port, host);
 	fd = slurm_open_msg_conn(&ctld_address);
 	if (fd < 0) {
 		error("can not open socket back to slurmctld "
@@ -568,16 +569,13 @@ extern bool is_user_min_admin_level(void *db_conn, uid_t uid,
 	if (drop_priv)
 		return false;
 #endif
-	if (slurmdbd_conf) {
-		/* We have to check the authentication here in the
-		 * plugin since we don't know what accounts are being
-		 * referenced until after the query.
-		 */
-		if ((uid != slurmdbd_conf->slurm_user_id && uid != 0)
-		   && assoc_mgr_get_admin_level(db_conn, uid) < min_level)
-			is_admin = 0;
-	} else if ((uid != 0) && (uid != slurmctld_conf.slurm_user_id))
-		is_admin = 0;
+	/* We have to check the authentication here in the
+	 * plugin since we don't know what accounts are being
+	 * referenced until after the query.
+	 */
+	if ((uid != slurm_conf.slurm_user_id && uid != 0) &&
+	    assoc_mgr_get_admin_level(db_conn, uid) < min_level)
+		is_admin = false;
 
 	return is_admin;
 }
@@ -621,7 +619,7 @@ extern bool is_user_any_coord(void *db_conn, slurmdb_user_rec_t *user)
 extern char *acct_get_db_name(void)
 {
 	char *db_name = NULL;
-	char *location = slurm_get_accounting_storage_loc();
+	char *location = slurmdbd_conf->storage_loc;
 
 	if (!location)
 		db_name = xstrdup(DEFAULT_ACCOUNTING_DB);
@@ -638,9 +636,8 @@ extern char *acct_get_db_name(void)
 		}
 		if (location[i]) {
 			db_name = xstrdup(DEFAULT_ACCOUNTING_DB);
-			xfree(location);
 		} else
-			db_name = location;
+			db_name = xstrdup(location);
 	}
 	return db_name;
 }

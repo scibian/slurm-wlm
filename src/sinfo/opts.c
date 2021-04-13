@@ -123,8 +123,7 @@ extern void parse_command_line(int argc, char **argv)
 
 	params.convert_flags = CONVERT_NUM_UNIT_EXACT;
 
-	if (slurmctld_conf.fed_params &&
-	    strstr(slurmctld_conf.fed_params, "fed_display"))
+	if (xstrstr(slurm_conf.fed_params, "fed_display"))
 		params.federation_flag = true;
 
 	if (getenv("SINFO_ALL")) {
@@ -307,16 +306,14 @@ extern void parse_command_line(int argc, char **argv)
 
 	if (params.federation_flag && !params.clusters && !params.local) {
 		void *ptr = NULL;
-		char *cluster_name = slurm_get_cluster_name();
 		if (slurm_load_federation(&ptr) ||
-		    !cluster_in_federation(ptr, cluster_name)) {
+		    !cluster_in_federation(ptr, slurm_conf.cluster_name)) {
 			/* Not in federation */
 			params.local = true;
 			slurm_destroy_federation_rec(ptr);
 		} else {
 			params.fed = (slurmdb_federation_rec_t *) ptr;
 		}
-		xfree(cluster_name);
 	}
 
 	if ( params.format == NULL ) {
@@ -324,20 +321,20 @@ extern void parse_command_line(int argc, char **argv)
 		if ( params.summarize ) {
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
-			params.format = "partition:9 ,available:.5 ,time:.10 ,nodeaiot:.16 ,nodelist:0";
+			params.format = xstrdup("partition:9 ,available:.5 ,time:.10 ,nodeaiot:.16 ,nodelist:0");
 		} else if ( params.node_flag ) {
 			long_form = true;
 			params.node_field_flag = true;	/* compute size later */
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "nodelist:0 ,nodes:.6 ,partition:.9 ,statelong:.11 ,cpus:4 ,socketcorethread:.8 ,memory:.6 ,disk:.8 ,weight:.6 ,features:.8 ,reason:20" :
-			  "nodelist:0 ,nodes:.6 ,partition:.9 ,statecompact:6";
+				xstrdup("nodelist:0 ,nodes:.6 ,partition:.9 ,statelong:.11 ,cpus:4 ,socketcorethread:.8 ,memory:.6 ,disk:.8 ,weight:.6 ,features:.8 ,reason:20") :
+				xstrdup("nodelist:0 ,nodes:.6 ,partition:.9 ,statecompact:6");
 
 		} else if (params.list_reasons) {
 			long_form = true;
 			params.format = params.long_output ?
-			  "reason:20 ,userlong:12 ,timestamp:19 ,statecompact:6 ,nodelist:0" :
-			  "reason:20 ,user:9 ,timestamp:19 ,nodelist:0";
+				xstrdup("reason:20 ,userlong:12 ,timestamp:19 ,statecompact:6 ,nodelist:0") :
+				xstrdup("reason:20 ,user:9 ,timestamp:19 ,nodelist:0");
 
 		} else if ((env_val = getenv ("SINFO_FORMAT"))) {
 			params.format = xstrdup(env_val);
@@ -346,14 +343,14 @@ extern void parse_command_line(int argc, char **argv)
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0" :
-			  "partition:9 ,cluster:8 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0";
+				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		} else {
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0" :
-			  "partition:9 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0";
+				xstrdup("partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		}
 	}
 
@@ -421,13 +418,18 @@ _build_state_list (char *state_str)
 	orig = str = xstrdup (state_str);
 	state_ids = list_create (NULL);
 
-	while ((state = _next_tok (",", &str))) {
+	if (xstrstr(state_str, "&"))
+	    params.state_list_and = true;
+
+	state = strtok_r(state_str, ",&", &str);
+	while (state) {
 		int *id = xmalloc (sizeof (*id));
 		if ((*id = _node_state_id (state)) < 0) {
 			error ("Bad state string: \"%s\"", state);
 			return (NULL);
 		}
 		list_append (state_ids, id);
+		state = strtok_r(NULL, ",&", &str);
 	}
 
 	xfree (orig);
@@ -503,6 +505,8 @@ _node_state_list (void)
 
 	xstrcat(all_states,
 		",DRAIN,DRAINED,DRAINING,NO_RESPOND,RESERVED,PERFCTRS");
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_CLOUD));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_COMPLETING));
 	xstrcat(all_states, ",");
@@ -582,6 +586,8 @@ _node_state_id (char *str)
 		return NODE_STATE_MAINT;
 	if (_node_state_equal (NODE_STATE_REBOOT, str))
 		return NODE_STATE_REBOOT;
+	if (_node_state_equal(NODE_STATE_CLOUD, str))
+		return NODE_STATE_CLOUD;
 
 	return (-1);
 }
@@ -604,7 +610,6 @@ _parse_format( char* format )
 		exit( 1 );
 	}
 
-	params.format_list = list_create( NULL );
 	if ((prefix = _get_prefix(format)))
 		format_add_prefix( params.format_list, 0, 0, prefix);
 
@@ -904,16 +909,15 @@ static int _parse_long_format (char* format_long)
 		exit( 1 );
 	}
 
-	params.format_list = list_create(NULL);
 	tmp_format = xstrdup(format_long);
 	token = strtok_r(tmp_format, ",",&str_tmp);
 
 	while (token) {
 		_parse_long_token( token, sep, &field_size, &right_justify,
 				   &suffix);
-
 		if (!xstrcasecmp(token, "all")) {
 			_parse_format ("%all");
+			xfree(suffix);
 		} else if (!xstrcasecmp(token, "allocmem")) {
 			params.match_flags.alloc_mem_flag = true;
 			format_add_alloc_mem( params.format_list,
@@ -936,6 +940,12 @@ static int _parse_long_format (char* format_long)
 						field_size,
 						right_justify,
 						suffix);
+		} else if (!xstrcasecmp(token, "comment")) {
+			params.match_flags.comment_flag = true;
+			format_add_comment(params.format_list,
+					   field_size,
+					   right_justify,
+					   suffix);
 		} else if (!xstrcasecmp(token, "cpus")) {
 			params.match_flags.cpus_flag = true;
 			format_add_cpus( params.format_list,
@@ -1181,6 +1191,7 @@ static int _parse_long_format (char* format_long)
 					   suffix );
 		} else if (format_all) {
 			/* ignore */
+			xfree(suffix);
 		} else {
 			format_add_invalid( params.format_list,
 					    field_size,
@@ -1233,7 +1244,7 @@ _parse_token( char *token, char *field, int *field_size, bool *right_justify,
 {
 	int i = 0;
 
-	assert (token != NULL);
+	xassert(token);
 
 	if (token[i] == '.') {
 		*right_justify = true;
@@ -1256,6 +1267,7 @@ _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 {
 	char *end_ptr = NULL, *ptr;
 
+	*suffix = NULL;
 	xassert(token);
 	ptr = strchr(token, ':');
 	if (ptr) {
@@ -1305,6 +1317,8 @@ void _print_options( void )
 	printf("alloc_mem_flag  = %s\n", params.match_flags.alloc_mem_flag ?
 			"true" : "false");
 	printf("avail_flag      = %s\n", params.match_flags.avail_flag ?
+			"true" : "false");
+	printf("comment_flag    = %s\n", params.match_flags.comment_flag ?
 			"true" : "false");
 	printf("cpus_flag       = %s\n", params.match_flags.cpus_flag ?
 			"true" : "false");

@@ -40,7 +40,6 @@
 #define _GNU_SOURCE
 
 #include <arpa/inet.h>
-#include <assert.h>
 #include <errno.h>
 #include <limits.h>	/* for PATH_MAX */
 #include <netdb.h>
@@ -51,16 +50,12 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 
+#include "src/common/read_config.h"
 #include "src/common/strlcpy.h"
 #include "src/common/util-net.h"
 #include "src/common/macros.h"
+#include "src/common/xassert.h"
 #include "src/common/xstring.h"
-
-
-#ifndef INET_ADDRSTRLEN
-#  define INET_ADDRSTRLEN 16
-#endif /* !INET_ADDRSTRLEN */
-
 
 static pthread_mutex_t hostentLock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -81,8 +76,7 @@ struct hostent * get_host_by_name(const char *name,
 	struct hostent *hptr;
 	int n = 0;
 
-	assert(name != NULL);
-	assert(buf != NULL);
+	xassert(name && buf);
 
 	slurm_mutex_lock(&hostentLock);
 	/* It appears gethostbyname leaks memory once.  Under the covers it
@@ -114,8 +108,7 @@ struct hostent * get_host_by_addr(const char *addr, int len, int type,
 	struct hostent *hptr;
 	int n = 0;
 
-	assert(addr != NULL);
-	assert(buf != NULL);
+	xassert(addr && buf);
 
 	slurm_mutex_lock(&hostentLock);
 	if ((hptr = gethostbyaddr(addr, len, type)))
@@ -161,8 +154,7 @@ static int copy_hostent(const struct hostent *src, char *buf, int len)
 	int n;
 	char **p, **q;
 
-	assert(src != NULL);
-	assert(buf != NULL);
+	xassert(src && buf);
 
 	dst = (struct hostent *) buf;
 	if ((len -= sizeof(struct hostent)) < 0)
@@ -217,8 +209,8 @@ static int copy_hostent(const struct hostent *src, char *buf, int len)
 	if ((len -= n) < 0)
 		return(-1);
 
-	assert(validate_hostent_copy(src, dst) >= 0);
-	assert(buf != NULL);	/* Used only to eliminate CLANG error */
+	xassert(validate_hostent_copy(src, dst) >= 0);
+	xassert(buf);	/* Used only to eliminate CLANG error */
 	return(0);
 }
 
@@ -232,8 +224,7 @@ static int validate_hostent_copy(
  */
 	char **p, **q;
 
-	assert(src != NULL);
-	assert(dst != NULL);
+	xassert(src && dst);
 
 	if (!dst->h_name)
 		return(-1);
@@ -290,21 +281,33 @@ extern char *make_full_path(const char *rpath)
 	return cwd2;
 }
 
-struct addrinfo *
-get_addr_info(const char *hostname)
+struct addrinfo *get_addr_info(const char *hostname, uint16_t port)
 {
 	struct addrinfo* result = NULL;
 	struct addrinfo hints;
 	int err;
+	bool v4_enabled = slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED;
+	bool v6_enabled = slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED;
+	char serv[6];
 
-	if (hostname == NULL)
-		return NULL;
+	memset(&hints, 0, sizeof(hints));
 
-	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_flags = AI_CANONNAME;
+	/* use configured IP support to hint at what address types to return */
+	if (v4_enabled && !v6_enabled)
+		hints.ai_family = AF_INET;
+	else if (!v4_enabled && v6_enabled)
+		hints.ai_family = AF_INET6;
+	else
+		hints.ai_family = AF_UNSPEC;
 
-	err = getaddrinfo(hostname, NULL, &hints, &result);
+	hints.ai_flags = AI_ADDRCONFIG | AI_NUMERICSERV | AI_PASSIVE;
+	if (hostname)
+		hints.ai_flags |= AI_CANONNAME;
+	hints.ai_socktype = SOCK_STREAM;
+
+	snprintf(serv, sizeof(serv), "%u", port);
+
+	err = getaddrinfo(hostname, serv, &hints, &result);
 	if (err == EAI_SYSTEM) {
 		error("%s: getaddrinfo() failed: %s: %m", __func__,
 		      gai_strerror(err));
@@ -318,26 +321,26 @@ get_addr_info(const char *hostname)
 	return result;
 }
 
-int
-get_name_info(struct sockaddr *sa, socklen_t len, char *host)
+/*
+ * Get the short hostname using "nameinfo" for an address.
+ * NOTE: caller is responsible for freeing the resulting address.
+ * Returns NULL on error.
+ */
+char *get_name_info(struct sockaddr *addr, socklen_t addrlen, int flags)
 {
-	int err;
+	char hbuf[NI_MAXHOST];
+	int err = getnameinfo(addr, addrlen, hbuf, sizeof(hbuf), NULL, 0,
+			      (NI_NAMEREQD | flags));
 
-        err = getnameinfo(sa, len, host, NI_MAXHOST, NULL, 0, 0);
-	if (err != 0) {
-		error("%s: getaddrinfo() failed: %s", __func__,
-		      gai_strerror(err));
-		return -1;
+	if (err == EAI_SYSTEM) {
+		error("%s: getnameinfo() failed: %s: %m",
+		      __func__, gai_strerror(err));
+		return NULL;
+	} else if (err) {
+		error("%s: getnameinfo() failed: %s",
+		      __func__, gai_strerror(err));
+		return NULL;
 	}
 
-	return 0;
-}
-
-void
-free_addr_info(struct addrinfo *info)
-{
-	if (info == NULL)
-		return;
-
-	freeaddrinfo(info);
+	return xstrdup(hbuf);
 }

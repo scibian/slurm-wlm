@@ -201,10 +201,6 @@ enum cluster_fed_states {
 #define JOBCOND_FLAG_NO_DEFAULT_USAGE 0x00000080 /* Use usage_time as the
 						  * submit_time of the job.
 						  */
-#define JOBCOND_FLAG_DBD_UID          0x00000100 /* give me the uid from the dbd
-						  * instead of filling it in
-						  * later.
-						  */
 
 /* Archive / Purge time flags */
 #define SLURMDB_PURGE_BASE    0x0000ffff   /* Apply to get the number
@@ -231,10 +227,8 @@ enum cluster_fed_states {
 #define CLUSTER_FLAG_A6     0x00000020 /* UNUSED */
 #define CLUSTER_FLAG_A7     0x00000040 /* UNUSED */
 #define CLUSTER_FLAG_MULTSD 0x00000080 /* This cluster is multiple slurmd */
-#define CLUSTER_FLAG_CRAYXT 0x00000100 /* This cluster is a ALPS cray
-					* Removed v19.05 */
-#define CLUSTER_FLAG_CRAY_A 0x00000100 /* This cluster is a ALPS cray
-					* Removed v19.05 */
+#define CLUSTER_FLAG_A9     0x00000100 /* UNUSED */
+#define CLUSTER_FLAG_A10    0x00000100 /* UNUSED */
 #define CLUSTER_FLAG_FE     0x00000200 /* This cluster is a front end system */
 #define CLUSTER_FLAG_CRAY_N 0x00000400 /* This cluster is a Native cray */
 #define CLUSTER_FLAG_FED    0x00000800 /* This cluster is in a federation. */
@@ -245,6 +239,9 @@ enum cluster_fed_states {
 #define CLUSTER_FLAG_CRAY   0x00000500 /* This cluster is a cray.
 					  Combo of CRAY_A | CRAY_N */
 
+
+/* Assoc flags */
+#define ASSOC_FLAG_DELETED  0x0001
 /********************************************/
 
 /* Association conditions used for queries of the database */
@@ -322,7 +319,7 @@ typedef struct {
 	List resv_list;		/* list of char * */
 	List resvid_list;	/* list of char * */
 	List state_list;        /* list of char * */
-	List step_list;         /* list of slurmdb_selected_step_t */
+	List step_list;         /* list of slurm_selected_step_t */
 	uint32_t timelimit_max; /* max timelimit */
 	uint32_t timelimit_min; /* min timelimit */
 	time_t usage_end;
@@ -368,10 +365,16 @@ typedef struct {
 	uint16_t with_deleted;
 } slurmdb_account_cond_t;
 
+enum {
+	SLURMDB_ACCT_FLAG_NONE          = 0,
+	SLURMDB_ACCT_FLAG_DELETED       = (1 << 0),
+};
+
 typedef struct {
 	List assoc_list; /* list of slurmdb_assoc_rec_t *'s */
 	List coordinators; /* list of slurmdb_coord_rec_t *'s */
 	char *description;
+	uint32_t flags; /* SLURMDB_ACCT_FLAG_* */
 	char *name;
 	char *organization;
 } slurmdb_account_rec_t;
@@ -463,7 +466,7 @@ typedef struct slurmdb_assoc_rec {
 
 	uint32_t def_qos_id;       /* Which QOS id is this
 				    * associations default */
-
+	uint16_t flags;            /* various flags see ASSOC_FLAG_* */
 	uint32_t grp_jobs;	   /* max number of jobs the
 				    * underlying group of associations can run
 				    * at one time */
@@ -518,7 +521,7 @@ typedef struct slurmdb_assoc_rec {
 				    */
 	uint32_t max_submit_jobs;  /* max number of jobs that can be
 				      submitted by association */
-	char *max_tres_mins_pj;    /* max number of cpu seconds this
+	char *max_tres_mins_pj;    /* max number of cpu minutes this
 				    * association can have per job */
 	uint64_t *max_tres_mins_ctld; /* max_tres_mins broken out in an array
 				       * based off the ordering of the
@@ -775,7 +778,6 @@ typedef struct {
 typedef struct {
 	char    *account;
 	char	*admin_comment;
-	char	*alloc_gres;
 	uint32_t alloc_nodes;
 	uint32_t array_job_id;	/* job_id of a job array or 0 if N/A */
 	uint32_t array_max_tasks; /* How many tasks of the array can be
@@ -811,7 +813,6 @@ typedef struct {
 	uint32_t priority;
 	uint32_t qosid;
 	uint32_t req_cpus;
-	char	*req_gres;
 	uint64_t req_mem;
 	uint32_t requid;
 	uint32_t resvid;
@@ -924,7 +925,7 @@ typedef struct {
 					submit with this qos at once */
 	uint32_t max_submit_jobs_pu; /* max number of jobs a user can
 					submit with this qos at once */
-	char *max_tres_mins_pj;    /* max number of tres seconds this
+	char *max_tres_mins_pj;    /* max number of tres minutes this
 				    * qos can have per job */
 	uint64_t *max_tres_mins_pj_ctld; /* max_tres_mins broken out in an array
 					  * based off the ordering of the
@@ -1051,13 +1052,6 @@ typedef struct {
 } slurmdb_reservation_rec_t;
 
 typedef struct {
-	uint32_t array_task_id;		/* task_id of a job array or NO_VAL */
-	uint32_t het_job_offset;	/* het_job_offset or NO_VAL */
-	uint32_t jobid;
-	uint32_t stepid;
-} slurmdb_selected_step_t;
-
-typedef struct {
 	uint32_t elapsed;
 	time_t end;
 	int32_t exitcode;
@@ -1073,7 +1067,7 @@ typedef struct {
 	time_t start;
 	uint32_t state;
 	slurmdb_stats_t stats;
-	uint32_t stepid;	/* job's step number */
+	slurm_step_id_t step_id;	/* job's step number */
 	char *stepname;
 	uint32_t suspended;
 	uint32_t sys_cpu_sec;
@@ -1181,15 +1175,21 @@ typedef struct {
 	uint16_t without_defaults;
 } slurmdb_user_cond_t;
 
+enum {
+	SLURMDB_USER_FLAG_NONE		= 0,
+	SLURMDB_USER_FLAG_DELETED	= (1 << 0),
+};
+
 struct slurmdb_user_rec {
 	uint16_t admin_level; /* really slurmdb_admin_level_t but for
 				 packing purposes needs to be uint16_t */
-	List assoc_list; /* list of slurmdb_association_rec_t *'s */
+	List assoc_list; /* list of slurmdb_assoc_rec_t *'s */
 	slurmdb_bf_usage_t *bf_usage; /* data for backfill scheduler,
 				       * (DON'T PACK) */
 	List coord_accts; /* list of slurmdb_coord_rec_t *'s */
 	char *default_acct;
 	char *default_wckey;
+	uint32_t flags;		/* SLURMDB_USER_FLAG_* */
 	char *name;
 	char *old_name;
 	uint32_t uid;
@@ -1221,10 +1221,15 @@ typedef struct {
 	uint16_t with_deleted;  /* return deleted associations */
 } slurmdb_wckey_cond_t;
 
+enum {
+	SLURMDB_WCKEY_FLAG_NONE          = 0,
+	SLURMDB_WCKEY_FLAG_DELETED       = (1 << 0),
+};
+
 typedef struct {
 	List accounting_list; /* list of slurmdb_accounting_rec_t *'s */
 	char *cluster;		/* cluster associated */
-
+	uint32_t flags;		/* SLURMDB_WCKEY_FLAG_* */
 	uint32_t id;		/* id identifing a combination of
 				 * user-wckey-cluster */
 	uint16_t is_def;        /* Is this the users default wckey */
@@ -1543,16 +1548,12 @@ extern List slurmdb_report_user_top_usage(void *db_conn,
 
 /*
  * get a new connection to the slurmdb
- * RET: pointer used to access db
- */
-extern void *slurmdb_connection_get();
-/*
- * get a new connection to the slurmdb
  * OUT: persist_conn_flags - Flags returned from connection if any see
  *                           slurm_persist_conn.h.
  * RET: pointer used to access db
  */
-extern void *slurmdb_connection_get2(uint16_t *persist_conn_flags);
+extern void *slurmdb_connection_get(uint16_t *persist_conn_flags);
+
 /*
  * release connection to the storage unit
  * IN/OUT: void ** pointer returned from
@@ -1830,7 +1831,6 @@ extern void slurmdb_destroy_update_object(void *object);
 extern void slurmdb_destroy_used_limits(void *object);
 extern void slurmdb_destroy_print_tree(void *object);
 extern void slurmdb_destroy_hierarchical_rec(void *object);
-extern void slurmdb_destroy_selected_step(void *object);
 
 extern void slurmdb_destroy_report_job_grouping(void *object);
 extern void slurmdb_destroy_report_acct_grouping(void *object);

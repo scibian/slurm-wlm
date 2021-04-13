@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "November 2020" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -156,6 +156,8 @@ CR_Core, CR_Core_Memory, CR_Socket, or CR_Socket_Memory for this option
 to be honored.
 If not specified, the scontrol show job will display 'ReqS:C:T=*:*:*'. This
 option applies to job allocations.
+\fBNOTE:\fR This option is mutually exclusive with \fB\-\-hint\fR,
+\fB\-\-threads\-per\-core\fR and \fB\-\-ntasks\-per\-core\fR.
 
 .TP
 \fB\-\-bb\fR=<\fIspec\fR>
@@ -172,8 +174,11 @@ Also see \fB\-\-bb\fR. This option applies to job allocations.
 \fB\-\-bcast\fR[=<\fIdest_path\fR>]
 Copy executable file to allocated compute nodes.
 If a file name is specified, copy the executable to the specified destination
-file path. If no path is specified, copy the file to a file named
-"slurm_bcast_<job_id>.<step_id>" in the current working.
+file path.
+If the path specified ends with '/' it is treated as a target directory, and
+the destination file name will be slurm_bcast_<job_id>.<step_id>_<nodename>.
+If no dest_path is specified, then the current working directory is used, and
+the filename follows the above pattern.
 For example, "srun \-\-bcast=/tmp/mine \-N3 a.out" will copy the file "a.out"
 from your current directory to the file "/tmp/mine" on each of the three
 allocated compute nodes and execute that file. This option applies to step
@@ -364,10 +369,6 @@ itself to avoid having all threads of the multithreaded task use the same
 mask/CPU as the parent.  Alternatively, fat masks (masks which specify more
 than one allowed CPU) could be used for the tasks in order to provide
 multiple CPUs for the multithreaded tasks.
-
-By default, a job step has access to every CPU allocated to the job.
-To ensure that distinct CPUs are allocated to each job step, use the
-\fB\-\-exclusive\fR option.
 
 Note that a job step can be allocated different numbers of CPUs on each node
 or be allocated CPUs not starting at location zero. Therefore one of the
@@ -620,9 +621,6 @@ per node, a job request for 4 nodes and 3 CPUs per task may be
 allocated 3 or 6 CPUs per node (1 or 2 tasks per node) depending
 upon resource consumption by other jobs. Such a job may be
 unable to execute more than a total of 4 tasks.
-This option may also be useful to spawn tasks without allocating
-resources to the job step from the job's allocation when running
-multiple job steps with the \fB\-\-exclusive\fR option.
 
 \fBWARNING\fR: There are configurations and options interpreted differently by
 job and job step requests which can result in inconsistencies for this option.
@@ -650,6 +648,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]]
+.br
+now[+\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 This option applies only to job allocations.
 
@@ -756,6 +756,13 @@ SLURM_NTASKS through to the \fIexecutable\fR, rather than computing them
 from commandline parameters. This option applies to job allocations.
 
 .TP
+\fB\-\-exact\fR
+Allow a step access to only the resources requested for the step.
+By default, all non-GRES resources on each node in the step allocation will be
+used. Note that no other parallel step will have access to those resources
+unless \-\-overlap is specified. This option applies to step allocations.
+
+.TP
 \fB\-\-epilog\fR=<\fIexecutable\fR>
 \fBsrun\fR will run \fIexecutable\fR just after the job step completes.
 The command line arguments for \fIexecutable\fR will be the command
@@ -775,28 +782,15 @@ The default shared/exclusive behavior depends on system configuration and the
 partition's \fBOverSubscribe\fR option takes precedence over the job's option.
 
 This option can also be used when initiating more than one job step within
-an existing resource allocation, where you want separate processors to
+an existing resource allocation (default), where you want separate processors to
 be dedicated to each job step. If sufficient processors are not
 available to initiate the job step, it will be deferred. This can
 be thought of as providing a mechanism for resource management to the job
-within its allocation.
+within its allocation (\fB\-\-exact\fR implied).
 
-The exclusive allocation of CPUs only applies to job steps explicitly invoked
-with the \fB\-\-exclusive\fR option.
-For example, a job might be allocated one node with four CPUs and a remote
-shell invoked on the allocated node. If that shell is not invoked with the
-\fB\-\-exclusive\fR option, then it may create a job step with four tasks
-using the \fB\-\-exclusive\fR option and not conflict with the remote shell's
-resource allocation.
-Use the \fB\-\-exclusive\fR option to invoke every job step to ensure distinct
-resources for each step.
+The exclusive allocation of CPUs applies to job steps by default. In order to
+share the resources use the \fB\-\-overlap\fR option.
 
-Note that all CPUs allocated to a job are available
-to each job step unless the \fB\-\-exclusive\fR option is used plus
-task affinity is configured. Since resource management is provided by
-processor, the \fB\-\-ntasks\fR option must be specified, but the
-following options should NOT be specified
-\fB\-\-relative\fR, \fB\-\-distribution\fR=\fIarbitrary\fR.
 See \fBEXAMPLE\fR below.
 
 .TP
@@ -875,9 +869,11 @@ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
 \fB\-\-gpus\-per\-task\fR options.
 
 .TP
-\fB\-\-gpu\-bind\fR=<\fItype\fR>
+\fB\-\-gpu\-bind\fR=[verbose,]<\fItype\fR>
 Bind tasks to specific GPUs.
 By default every spawned task can access every GPU allocated to the job.
+If "verbose," is specified before <\fItype\fR>, then print out GPU binding
+information.
 
 Supported \fItype\fR options:
 .RS
@@ -916,6 +912,16 @@ then the GPU IDs are zero-based indexes relative to the GPUs allocated to the
 job (e.g. the first GPU is 0, even if the global ID is 3). Otherwise, the GPU
 IDs are global IDs, and all GPUs on each node in the job should be allocated for
 predictable binding results.
+.TP
+\fBsingle:<tasks_per_gpu>\fR
+Like \fI--gpu-bind=closest\fR, except that each task can only be bound to a
+single GPU, even when it can be bound to multiple GPUs that are equally close.
+The GPU to bind to is determined by \fI<tasks_per_gpu>\fR, where the
+first \fI<tasks_per_gpu>\fR tasks are bound to the first GPU available, the
+second \fI<tasks_per_gpu>\fR tasks are bound to the second GPU available, etc.
+This is basically a block distribution of tasks onto available GPUs, where the
+available GPUs are determined by the socket affinity of the task and the socket
+affinity of the GPUs as specified in gres.conf's \fICores\fR parameter.
 .RE
 
 .TP
@@ -1062,6 +1068,12 @@ Display help information and exit.
 .TP
 \fB\-\-hint\fR=<\fItype\fR>
 Bind tasks according to application hints.
+.br
+\fBNOTE\fR: This option cannot be used in conjunction with any of
+\fB\-\-ntasks\-per\-core\fR, \fB\-\-threads\-per\-core\fR, \fB\-\-cpu\-bind\fR
+(other than \fB\-\-cpu\-bind=verbose\fR) or \fB\-B\fR. If \fB\-\-hint\fR is
+specified as a command line argument, it will take precedence over the
+environment.
 .RS
 .TP
 .B compute_bound
@@ -1337,10 +1349,11 @@ This option applies to job and step allocations.
 \fB\-\-mail\-type\fR=<\fItype\fR>
 Notify user by email when certain event types occur.
 Valid \fItype\fR values are NONE, BEGIN, END, FAIL, REQUEUE, ALL (equivalent to
-BEGIN, END, FAIL, REQUEUE, and STAGE_OUT), STAGE_OUT (burst buffer stage out
-and teardown completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
-TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
-(reached 50 percent of time limit).
+BEGIN, END, FAIL, INVALID_DEPEND, REQUEUE, and STAGE_OUT), INVALID_DEPEND
+(dependency never satisfied), STAGE_OUT (burst buffer stage out and teardown
+completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
+TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50 (reached 50
+percent of time limit).
 Multiple \fItype\fR values may be specified in a comma separated list.
 The user to be notified is indicated with \fB\-\-mail\-user\fR. This option
 applies to job allocations.
@@ -1677,8 +1690,9 @@ PerfCnts.  These nodes are still available for other jobs not using NPC.
 
 .br
 .br
-In all cases the job or step allocation request \fBmust specify the
-\-\-exclusive option\fR.  Otherwise the request will be denied.
+In all cases the job allocation request \fBmust specify the
+\-\-exclusive option\fR and the step cannot specify the \-\-overlap option.
+Otherwise the request will be denied.
 
 .br
 .br
@@ -1817,6 +1831,25 @@ configured (either directly or indirectly on Cray systems)
 along with the node's core count.
 
 .TP
+\fB\-\-ntasks\-per\-gpu\fR=<\fIntasks\fR>
+Request that there are \fIntasks\fR tasks invoked for every GPU.
+This option can work in two ways: 1) either specify \fB\-\-ntasks\fR in
+addition, in which case a type-less GPU specification will be automatically
+determined to satisfy \fB\-\-ntasks\-per\-gpu\fR, or 2) specify the GPUs wanted
+(e.g. via \fB\-\-gpus\fR or \fB\-\-gres\fR) without specifying \fB\-\-ntasks\fR,
+and the total task count will be automatically determined.
+The number of CPUs needed will be automatically increased if necessary to allow
+for any calculated task count.
+This option will implicitly set \fB\-\-gpu-bind=single:<ntasks>\fR, but that
+can be overridden with an explicit \fB\-\-gpu-bind\fR specification.
+This option is not compatible with a node range
+(i.e. \-N<\fIminnodes\fR\-\fImaxnodes\fR>).
+This option is not compatible with \fB\-\-gpus-per-task\fR,
+\fB\-\-gpus-per-socket\fR, or \fB\-\-ntasks-per-node\fR.
+This option is not supported unless \fISelectType=cons_tres\fR is
+configured (either directly or indirectly on Cray systems).
+
+.TP
 \fB\-\-ntasks\-per\-node\fR=<\fIntasks\fR>
 Request that \fIntasks\fR be invoked on each node.
 If used with the \fB\-\-ntasks\fR option, the \fB\-\-ntasks\fR option will take
@@ -1863,6 +1896,11 @@ process per CPU. However no more than \fBMAX_TASKS_PER_NODE\fR tasks are
 permitted to execute per node.  NOTE: \fBMAX_TASKS_PER_NODE\fR is
 defined in the file \fIslurm.h\fR and is not a variable, it is set at
 Slurm build time.
+
+.TP
+\fB\-\-overlap\fR
+Allow steps to overlap each other on the same resources. By default steps
+do not share resources with other parallel steps.
 
 .TP
 \fB\-o\fR, \fB\-\-output\fR=<\fIfilename pattern\fR>
@@ -2082,9 +2120,14 @@ If the number of reserved ports is zero then no ports is reserved.
 Used for OpenMPI. This option applies to job and step allocations.
 
 .TP
-\fB\-\-reservation\fR=<\fIname\fR>
-Allocate resources for the job from the named reservation. This option applies
-to job allocations.
+\fB\-\-reservation\fR=<\fIreservation_names\fR>
+Allocate resources for the job from the named reservation. If the job can use
+more than one reservation, specify their names in a comma separate list and the
+one offering earliest initiation. Each reservation will be considered in the
+order it was requested.
+All reservations will be listed in scontrol/squeue through the life of the job.
+In accounting the first reservation will be seen and after the job starts the
+reservation used will replace it.
 
 .TP
 \fB\-s\fR, \fB\-\-oversubscribe\fR
@@ -2096,7 +2139,7 @@ partition's \fBOverSubscribe\fR option takes precedence over the job's option.
 This option may result in the allocation being granted sooner than if the
 \-\-oversubscribe option was not set and allow higher system utilization, but
 application performance will likely suffer due to competition for resources.
-Also see the \-\-exclusive option. This option applies to step allocations.
+This option applies to step allocations.
 
 .TP
 \fB\-S\fR, \fB\-\-core\-spec\fR=<\fInum\fR>
@@ -2255,10 +2298,12 @@ applies to job allocations.
 .TP
 \fB\-\-threads\-per\-core\fR=<\fIthreads\fR>
 Restrict node selection to nodes with at least the specified number of
-threads per core.  NOTE: "Threads" refers to the number of processing units on
-each core rather than the number of application tasks to be launched per core.
-See additional information under \fB\-B\fR option above when task/affinity
-plugin is enabled. This option applies to job allocations.
+threads per core. In task layout, use the specified maximum number of threads
+per core. Implies \fB\-\-cpu\-bind=threads\fR. NOTE: "Threads" refers to the
+number of processing units on each core rather than the number of application
+tasks to be launched per core. See additional information under \fB\-B\fR
+option above when task/affinity plugin is enabled. This option applies to job
+and step allocations.
 
 .TP
 \fB\-\-time\-min\fR=<\fItime\fR>
@@ -2366,7 +2411,7 @@ job allocations.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fIhost1,host2,...\fR or \fIfilename\fR>
 Request that a specific list of hosts not be included in the resources
 allocated to this job. The host list will be assumed to be a filename
-if it contains a "/" character. This option applies to job allocations.
+if it contains a "/" character. This option applies to job and step allocations.
 
 .TP
 \fB\-\-x11\fR[=<\fIall\fR|\fIfirst\fR|\fIlast\fR>]
@@ -2659,6 +2704,9 @@ Same as \fB\-m, \-\-distribution\fR
 \fBSLURM_EPILOG\fR
 Same as \fB\-\-epilog\fR
 .TP
+\fBSLURM_EXACT\fR
+Same as \fB\-\-exact\fR
+.TP
 \fBSLURM_EXCLUSIVE\fR
 Same as \fB\-\-exclusive\fR
 .TP
@@ -2756,6 +2804,9 @@ Same as \fB\-n, \-\-ntasks\fR
 \fBSLURM_NTASKS_PER_CORE\fR
 Same as \fB\-\-ntasks\-per\-core\fR
 .TP
+\fBSLURM_NTASKS_PER_GPU\fR
+Same as \fB\-\-ntasks\-per\-gpu\fR
+.TP
 \fBSLURM_NTASKS_PER_NODE\fR
 Same as \fB\-\-ntasks\-per\-node\fR
 .TP
@@ -2767,6 +2818,9 @@ Same as \fB\-\-open\-mode\fR
 .TP
 \fBSLURM_OVERCOMMIT\fR
 Same as \fB\-O, \-\-overcommit\fR
+.TP
+\fBSLURM_OVERLAP\fR
+Same as \fB\-\-overlap\fR
 .TP
 \fBSLURM_PARTITION\fR
 Same as \fB\-p, \-\-partition\fR
@@ -2847,6 +2901,9 @@ Same as \fB\-\-thread\-spec\fR
 .TP
 \fBSLURM_THREADS\fR
 Same as \fB\-T, \-\-threads\fR
+.TP
+\fBSLURM_THREADS_PER_CORE\fR
+Same as \fB\-T, \-\-threads\-per\-core\fR
 .TP
 \fBSLURM_TIMELIMIT\fR
 Same as \fB\-t, \-\-time\fR
@@ -3153,6 +3210,7 @@ to the arguments specified in the configuration file.
 .PP
 For example:
 .nf
+$ cat silly.conf
 ###################################################################
 # srun multiple program configuration file
 #
@@ -3162,7 +3220,7 @@ For example:
 1,7       echo  task:%t
 0,2\-3     echo  offset:%o
 
-> srun \-n8 \-l \-\-multi\-prog silly.conf
+$ srun \-n8 \-l \-\-multi\-prog silly.conf
 0: offset:0
 1: task:1
 2: offset:1
@@ -3171,9 +3229,7 @@ For example:
 5: linux16.llnl.gov
 6: linux17.llnl.gov
 7: task:7
-
 .fi
-
 
 .SH "EXAMPLES"
 This simple example demonstrates the execution of the command \fBhostname\fR
@@ -3183,8 +3239,7 @@ the request. The output of each task will be proceeded with its task number.
 (The machine "dev" in the example below has a total of two CPUs per node)
 
 .nf
-
-> srun \-n8 \-l hostname
+$ srun \-n8 \-l hostname
 0: dev0
 1: dev0
 2: dev1
@@ -3193,8 +3248,8 @@ the request. The output of each task will be proceeded with its task number.
 5: dev2
 6: dev3
 7: dev3
-
 .fi
+
 .PP
 The srun \fB\-r\fR option is used within a job script
 to run two job steps on disjoint nodes in the following
@@ -3202,28 +3257,26 @@ example. The script is run using allocate mode instead
 of as a batch job in this case.
 
 .nf
-
-> cat test.sh
+$ cat test.sh
 #!/bin/sh
 echo $SLURM_JOB_NODELIST
 srun \-lN2 \-r2 hostname
 srun \-lN2 hostname
 
-> salloc \-N4 test.sh
+$ salloc \-N4 test.sh
 dev[7\-10]
 0: dev9
 1: dev10
 0: dev7
 1: dev8
-
 .fi
+
 .PP
 The following script runs two job steps in parallel
 within an allocated set of nodes.
 
 .nf
-
-> cat test.sh
+$ cat test.sh
 #!/bin/bash
 srun \-lN2 \-n4 \-r 2 sleep 60 &
 srun \-lN2 \-r 0 sleep 60 &
@@ -3232,15 +3285,15 @@ squeue
 squeue \-s
 wait
 
-> salloc \-N4 test.sh
+$ salloc \-N4 test.sh
   JOBID PARTITION     NAME     USER  ST      TIME  NODES NODELIST
   65641     batch  test.sh   grondo   R      0:01      4 dev[7\-10]
 
 STEPID     PARTITION     USER      TIME NODELIST
 65641.0        batch   grondo      0:01 dev[7\-8]
 65641.1        batch   grondo      0:01 dev[9\-10]
-
 .fi
+
 .PP
 This example demonstrates how one executes a simple MPI job.
 We use \fBsrun\fR to build a list of machines (nodes) to be used by
@@ -3248,8 +3301,7 @@ We use \fBsrun\fR to build a list of machines (nodes) to be used by
 the script to be executed follow.
 
 .nf
-
-> cat test.sh
+$ cat test.sh
 #!/bin/sh
 MACHINEFILE="nodes.$SLURM_JOB_ID"
 
@@ -3263,9 +3315,9 @@ mpirun \-np $SLURM_NTASKS \-machinefile $MACHINEFILE mpi\-app
 
 rm $MACHINEFILE
 
-> salloc \-N2 \-n4 test.sh
-
+$ salloc \-N2 \-n4 test.sh
 .fi
+
 .PP
 This simple example demonstrates the execution of different jobs on different
 nodes in the same srun.  You can do this for any number of nodes or any
@@ -3274,8 +3326,7 @@ SLURM_NODEID env var.  Starting at 0 and going to the number specified on
 the srun commandline.
 
 .nf
-
-> cat test.sh
+$ cat test.sh
 case $SLURM_NODEID in
     0) echo "I am running on "
        hostname ;;
@@ -3283,13 +3334,13 @@ case $SLURM_NODEID in
        echo "is where I am running" ;;
 esac
 
-> srun \-N2 test.sh
+$ srun \-N2 test.sh
 dev0
 is where I am running
 I am running on
 dev1
-
 .fi
+
 .PP
 This example demonstrates use of multi\-core options to control layout
 of tasks.
@@ -3297,22 +3348,21 @@ We request that four sockets per node and two cores per socket be
 dedicated to the job.
 
 .nf
-
-> srun \-N2 \-B 4\-4:2\-2 a.out
+$ srun \-N2 \-B 4\-4:2\-2 a.out
 .fi
+
 .PP
 This example shows a script in which Slurm is used to provide resource
 management for a job by executing the various job steps as processors
 become available for their dedicated use.
 
 .nf
-
-> cat my.script
+$ cat my.script
 #!/bin/bash
-srun \-\-exclusive \-n4 prog1 &
-srun \-\-exclusive \-n3 prog2 &
-srun \-\-exclusive \-n1 prog3 &
-srun \-\-exclusive \-n1 prog4 &
+srun \-n4 prog1 &
+srun \-n3 prog2 &
+srun \-n1 prog3 &
+srun \-n1 prog4 &
 wait
 .fi
 
@@ -3323,8 +3373,7 @@ This example shows how to launch an application called "server" with one task,
 task.
 
 .nf
-
-> srun \-n1 \-c16 \-\-mem\-per\-cpu=1gb server : \-n16 \-\-mem\-per\-cpu=1gb client
+$ srun \-n1 \-c16 \-\-mem\-per\-cpu=1gb server : \-n16 \-\-mem\-per\-cpu=1gb client
 .fi
 
 .SH "COPYING"

@@ -51,6 +51,7 @@
 #include "src/common/log.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+#include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "xcgroup.h"
@@ -245,8 +246,7 @@ int xcgroup_ns_is_available(xcgroup_ns_t* cgns)
 	if (xcgroup_create(cgns, &cg, "/", 0, 0) == XCGROUP_ERROR)
 		return 0;
 
-	if (xcgroup_get_param(&cg, "release_agent",
-			      &value, &s) != XCGROUP_SUCCESS)
+	if (xcgroup_get_param(&cg, "tasks", &value, &s) != XCGROUP_SUCCESS)
 		fstatus = 0;
 	else {
 		xfree(value);
@@ -446,8 +446,8 @@ int xcgroup_instantiate(xcgroup_t* cg)
 			umask(omask);
 			return fstatus;
 		} else {
-			debug("%s: cgroup '%s' already exists",
-			      __func__, file_path);
+			debug3("%s: cgroup '%s' already exists",
+			       __func__, file_path);
 		}
 	}
 	umask(omask);
@@ -755,6 +755,77 @@ int xcgroup_get_uint64_param(xcgroup_t* cg, char* param, uint64_t* value)
 	return fstatus;
 }
 
+extern int xcgroup_cpuset_init(char *cpuset_prefix, bool *set, xcgroup_t *cg)
+{
+	int fstatus = XCGROUP_ERROR;
+
+	char *cpuset_metafiles[] = {
+		"cpus",
+		"mems",
+	};
+	char cpuset_meta[PATH_MAX];
+	char *cpuset_conf;
+	size_t csize = 0;
+	xcgroup_t acg;
+	char *acg_name, *p;
+
+	/* load ancestor cg */
+	acg_name = xstrdup(cg->name);
+	p = xstrrchr(acg_name, '/');
+	if (!p) {
+		debug2("%s: unable to get ancestor path for cpuset cg '%s' : %m",
+		       __func__, cg->path);
+		xfree(acg_name);
+		return fstatus;
+	} else
+		*p = '\0';
+
+	if (xcgroup_load(cg->ns, &acg, acg_name) != XCGROUP_SUCCESS) {
+		debug2("%s: unable to load ancestor for cpuset cg '%s' : %m",
+		       __func__, cg->path);
+		xfree(acg_name);
+		return fstatus;
+	}
+	xfree(acg_name);
+
+	/* inherits ancestor params */
+	for (int i = 0; i < 2; i++) {
+	again:
+		snprintf(cpuset_meta, sizeof(cpuset_meta), "%s%s",
+			 cpuset_prefix, cpuset_metafiles[i]);
+		if (xcgroup_get_param(&acg, cpuset_meta, &cpuset_conf, &csize)
+		    != XCGROUP_SUCCESS) {
+			if (!(*set)) {
+				*set = 1;
+				cpuset_prefix = "cpuset.";
+				goto again;
+			}
+
+			debug("%s: assuming no cpuset cg support for '%s'",
+			      __func__, acg.path);
+			xcgroup_destroy(&acg);
+			return fstatus;
+		}
+
+		if (csize > 0)
+			cpuset_conf[csize-1] = '\0';
+
+		if (xcgroup_set_param(cg, cpuset_meta, cpuset_conf)
+		    != XCGROUP_SUCCESS) {
+			debug("%s: unable to write %s configuration (%s) for cpuset cg '%s'",
+			      __func__, cpuset_meta, cpuset_conf, cg->path);
+			xcgroup_destroy(&acg);
+			xfree(cpuset_conf);
+			return fstatus;
+		}
+		xfree(cpuset_conf);
+	}
+
+	xcgroup_destroy(&acg);
+
+	return XCGROUP_SUCCESS;
+}
+
 static int cgroup_move_process_by_task (xcgroup_t *cg, pid_t pid)
 {
 	DIR *dir;
@@ -792,6 +863,224 @@ int xcgroup_move_process (xcgroup_t *cg, pid_t pid)
 	return xcgroup_set_uint32_param (cg, "cgroup.procs", pid);
 }
 
+extern char *xcgroup_create_slurm_cg(xcgroup_ns_t *ns)
+{
+	xcgroup_t slurm_cg;
+	char *pre;
+	slurm_cgroup_conf_t *cg_conf;
+
+	/* read cgroup configuration */
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
+
+	pre = xstrdup(cg_conf->cgroup_prepend);
+
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
+
+#ifdef MULTIPLE_SLURMD
+	if (conf->node_name) {
+		xstrsubstitute(pre, "%n", conf->node_name);
+	} else {
+		xfree(pre);
+		pre = xstrdup("/slurm");
+	}
+#endif
+
+	/* create slurm cgroup in the ns (it could already exist) */
+	if (xcgroup_create(ns, &slurm_cg, pre,
+			   getuid(), getgid()) != XCGROUP_SUCCESS)
+		return pre;
+
+	if (xcgroup_instantiate(&slurm_cg) != XCGROUP_SUCCESS)
+		error("unable to build slurm cgroup for ns %s: %m",
+		      ns->subsystems);
+	else
+		debug3("slurm cgroup %s successfully created for ns %s: %m",
+		       pre, ns->subsystems);
+
+	xcgroup_destroy(&slurm_cg);
+	return pre;
+}
+
+extern int xcgroup_create_hierarchy(const char *calling_func,
+				    stepd_step_rec_t *job,
+				    xcgroup_ns_t *ns,
+				    xcgroup_t *job_cg,
+				    xcgroup_t *step_cg,
+				    xcgroup_t *user_cg,
+				    char job_cgroup_path[],
+				    char step_cgroup_path[],
+				    char user_cgroup_path[],
+				    int (*callback)(const char *calling_func,
+						    xcgroup_ns_t *ns,
+						    void *callback_arg),
+				    void *callback_arg)
+{
+	xcgroup_t root_cg;
+	int rc = SLURM_SUCCESS;
+	char *slurm_cgpath = xcgroup_create_slurm_cg(ns);
+
+	/* build user cgroup relative path if not set (should not be) */
+	if (*user_cgroup_path == '\0') {
+		if (snprintf(user_cgroup_path, PATH_MAX, "%s/uid_%u",
+			     slurm_cgpath, job->uid) >= PATH_MAX) {
+			error("%s: unable to build uid %u cgroup relative path : %m",
+			      calling_func, job->uid);
+			xfree(slurm_cgpath);
+			return SLURM_ERROR;
+		}
+	}
+	xfree(slurm_cgpath);
+
+	/* build job cgroup relative path if not set (may not be) */
+	if (*job_cgroup_path == '\0') {
+		if (snprintf(job_cgroup_path, PATH_MAX, "%s/job_%u",
+			     user_cgroup_path, job->step_id.job_id)
+		    >= PATH_MAX) {
+			error("%s: unable to build job %u cg relative path : %m",
+			      calling_func, job->step_id.job_id);
+			return SLURM_ERROR;
+		}
+	}
+
+	/* build job step cgroup relative path if not set (may not be) */
+	if (*step_cgroup_path == '\0') {
+		int len;
+		char tmp_char[64];
+
+		len = snprintf(step_cgroup_path, PATH_MAX,
+			       "%s/step_%s", job_cgroup_path,
+			       log_build_step_id_str(&job->step_id,
+				      tmp_char,
+				      sizeof(tmp_char),
+				      STEP_ID_FLAG_NO_PREFIX |
+				      STEP_ID_FLAG_NO_JOB));
+
+		if (len >= PATH_MAX) {
+			error("%s: unable to build %ps cg relative path : %m",
+			      calling_func, &job->step_id);
+			return SLURM_ERROR;
+		}
+	}
+
+	/*
+	 * create root cg and lock it
+	 *
+	 * we will keep the lock until the end to avoid the effect of a release
+	 * agent that would remove an existing cgroup hierarchy while we are
+	 * setting it up. As soon as the step cgroup is created, we can release
+	 * the lock.
+	 * Indeed, consecutive slurm steps could result in cg being removed
+	 * between the next EEXIST instantiation and the first addition of
+	 * a task. The release_agent will have to lock the root memory cgroup
+	 * to avoid this scenario.
+	 */
+
+	if (xcgroup_create(ns, &root_cg, "", 0, 0)
+	    != XCGROUP_SUCCESS) {
+		error("%s: unable to create root cgroup", calling_func);
+		return SLURM_ERROR;
+	}
+
+	if (xcgroup_lock(&root_cg) != XCGROUP_SUCCESS) {
+		xcgroup_destroy(&root_cg);
+		error("%s: unable to lock root cgroup", calling_func);
+		return SLURM_ERROR;
+	}
+
+	/*
+	 * Create user cgroup in the memory ns (it could already exist)
+	 * Ask for hierarchical memory accounting starting from the user
+	 * container in order to track the memory consumption up to the
+	 * user.
+	 */
+	if (xcgroup_create(ns, user_cg, user_cgroup_path, 0, 0) !=
+	    XCGROUP_SUCCESS) {
+		error("%s: unable to create user %u cgroup",
+		      calling_func, job->uid);
+		rc = SLURM_ERROR;
+		goto endit;
+	}
+
+	if (xcgroup_instantiate(user_cg) != XCGROUP_SUCCESS) {
+		xcgroup_destroy(user_cg);
+		error("%s: unable to instantiate user %u cgroup",
+		      calling_func, job->uid);
+		rc = SLURM_ERROR;
+		goto endit;
+	}
+
+	/*
+	 * Create job cgroup in the memory ns (it could already exist)
+	 */
+	if (xcgroup_create(ns, job_cg, job_cgroup_path, 0, 0) !=
+	    XCGROUP_SUCCESS) {
+		xcgroup_destroy(user_cg);
+		error("%s: unable to create job %u cgroup",
+		      calling_func, job->step_id.job_id);
+		rc = SLURM_ERROR;
+		goto endit;
+	}
+
+	if (xcgroup_instantiate(job_cg) != XCGROUP_SUCCESS) {
+		xcgroup_destroy(user_cg);
+		xcgroup_destroy(job_cg);
+		error("%s: unable to instantiate job %u cgroup",
+		      calling_func, job->step_id.job_id);
+		rc = SLURM_ERROR;
+		goto endit;
+	}
+
+	/*
+	 * Create step cgroup in the memory ns (it could already exist)
+	 */
+	if (xcgroup_create(ns, step_cg, step_cgroup_path, job->uid, job->gid) !=
+	    XCGROUP_SUCCESS) {
+		/* do not delete user/job cgroup as they can exist for other
+		 * steps, but release cgroup structures */
+		xcgroup_destroy(user_cg);
+		xcgroup_destroy(job_cg);
+		error("%s: unable to create %ps cgroup",
+		      calling_func, &job->step_id);
+		rc = SLURM_ERROR;
+		goto endit;
+	}
+
+	if (xcgroup_instantiate(step_cg) != XCGROUP_SUCCESS) {
+		xcgroup_destroy(user_cg);
+		xcgroup_destroy(job_cg);
+		xcgroup_destroy(step_cg);
+		error("%s: unable to instantiate %ps cgroup",
+		      calling_func, &job->step_id);
+		rc = SLURM_ERROR;
+		goto endit;
+	} else {
+		/*
+		 * inhibit release agent for the step cgroup thus letting
+		 * slurmstepd being able to add new pids to the container
+		 * when the job ends (TaskEpilog,...)
+		 */
+		xcgroup_set_param(step_cg, "notify_on_release", "0");
+	}
+
+	if (callback &&
+	    (rc = (callback)(calling_func, ns, callback_arg)) !=
+	    SLURM_SUCCESS) {
+		/*
+		 * do not delete user/job cgroup as they can exist for
+		 * other steps, but release cgroup structures
+		 */
+		xcgroup_destroy(user_cg);
+		xcgroup_destroy(job_cg);
+		xcgroup_destroy(step_cg);
+	}
+
+endit:
+	xcgroup_unlock(&root_cg);
+	xcgroup_destroy(&root_cg);
+
+	return rc;
+}
 
 /*
  * -----------------------------------------------------------------------------
@@ -957,52 +1246,39 @@ int _file_read_uint64s(char* file_path, uint64_t** pvalues, int* pnb)
 
 int _file_write_uint32s(char* file_path, uint32_t* values, int nb)
 {
-	int fstatus;
 	int rc;
 	int fd;
 	char tstr[256];
-	uint32_t value;
-	int i;
 
 	/* open file for writing */
-	fd = open(file_path, O_WRONLY, 0700);
-	if (fd < 0) {
-		debug2("%s: unable to open '%s' for writing : %m",
+	if ((fd = open(file_path, O_WRONLY, 0700)) < 0) {
+		error("%s: unable to open '%s' for writing: %m",
 			__func__, file_path);
 		return XCGROUP_ERROR;
 	}
 
 	/* add one value per line */
-	fstatus = XCGROUP_SUCCESS;
-	for (i=0 ; i < nb ; i++) {
+	for (int i = 0; i < nb; i++) {
+		uint32_t value = values[i];
 
-		value = values[i];
+		if (snprintf(tstr, sizeof(tstr), "%u", value) < 0)
+			fatal("%s: unable to build %u string value",
+			      __func__, value);
 
-		rc = snprintf(tstr, sizeof(tstr), "%u", value);
-		if (rc < 0) {
-			debug2("unable to build %u string value, skipping",
-			       value);
-			fstatus = XCGROUP_ERROR;
-			continue;
-		}
-
-		do {
-			rc = write(fd, tstr, strlen(tstr)+1);
-		}
-		while (rc < 0 && errno == EINTR);
-		if (rc < 1) {
-			debug2("%s: unable to add value '%s' to file '%s' : %m",
-				__func__, tstr, file_path);
-			if (errno != ESRCH)
-				fstatus = XCGROUP_ERROR;
-		}
-
+		/* write terminating NUL byte */
+		safe_write(fd, tstr, strlen(tstr) + 1);
 	}
 
 	/* close file */
 	close(fd);
+	return XCGROUP_SUCCESS;
 
-	return fstatus;
+rwfail:
+	rc = errno;
+	error("%s: write pid %s to %s failed: %m",
+	      __func__, tstr, file_path);
+	close(fd);
+	return rc;;
 }
 
 int _file_read_uint32s(char* file_path, uint32_t** pvalues, int* pnb)
@@ -1078,35 +1354,26 @@ int _file_read_uint32s(char* file_path, uint32_t** pvalues, int* pnb)
 
 int _file_write_content(char* file_path, char* content, size_t csize)
 {
-	int fstatus;
-	int rc;
 	int fd;
 
 	/* open file for writing */
-	fd = open(file_path, O_WRONLY, 0700);
-	if (fd < 0) {
-		debug2("%s: unable to open '%s' for writing : %m",
+	if ((fd = open(file_path, O_WRONLY, 0700)) < 0) {
+		error("%s: unable to open '%s' for writing: %m",
 			__func__, file_path);
 		return XCGROUP_ERROR;
 	}
 
-	/* write content */
-	do {
-		rc = write(fd, content, csize);
-	} while (rc < 0 && errno == EINTR);
-
-	/* check read size */
-	if (rc < csize) {
-		debug2("%s: unable to write %lu bytes to file '%s' : %m",
-			__func__, (long unsigned int) csize, file_path);
-		fstatus = XCGROUP_ERROR;
-	} else
-		fstatus = XCGROUP_SUCCESS;
+	safe_write(fd, content, csize);
 
 	/* close file */
 	close(fd);
+	return XCGROUP_SUCCESS;
 
-	return fstatus;
+rwfail:
+	error("%s: unable to write %zu bytes to cgroup %s: %m",
+	      __func__, csize, file_path);
+	close(fd);
+	return XCGROUP_ERROR;
 }
 
 int _file_read_content(char* file_path, char** content, size_t *csize)

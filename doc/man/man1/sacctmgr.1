@@ -1,4 +1,4 @@
-.TH sacctmgr "1" "Slurm Commands" "October 2020" "Slurm Commands"
+.TH sacctmgr "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 sacctmgr \- Used to view and modify Slurm account information.
@@ -25,8 +25,8 @@ add, delete, modify, and/or list \fIassociation\fR records then
 commit the changes and exit.
 
 .TP "7"
-\f3Note: \fP\c
-The content's of Slurm's database are maintained in lower case. This may
+\f3Note: \fP
+The contents of Slurm's database are maintained in lower case. This may
 result in some \f3sacctmgr\fP output differing from that of other Slurm
 commands.
 
@@ -102,6 +102,7 @@ Identical to the \fBadd\fR command.
 .TP
 \fBdelete\fR <\fIENTITY\fR> \fBwhere\fR <\fISPECS\fR>
 Delete the specified entities.
+Identical to the \fBremove\fR command.
 
 .TP
 \fBdump\fR <\fIENTITY\fR> [\fBFile\fR=\fIFILENAME\fR]
@@ -132,6 +133,11 @@ Modify an entity.
 .TP
 \fBreconfigure\fR
 Reconfigures the SlurmDBD if running with one.
+
+.TP
+\fBremove\fR <\fIENTITY\fR> \fBwhere\fR <\fISPECS\fR>
+Delete the specified entities.
+Identical to the \fBdelete\fR command.
 
 .TP
 \fBshow\fR <\fIENTITY\fR> [<\fISPECS\fR>]
@@ -445,7 +451,7 @@ pending job.
 
 .TP
 \fIPriority\fP
-What priority will be added to a job\'s priority when using this association.
+What priority will be added to a job's priority when using this association.
 This is overridden if set directly on a user.
 Default is the cluster's limit.
 To clear a previously set value use the modify command with a new value of \-1.
@@ -733,13 +739,13 @@ Maximum wall clock time each job is able to use.
 .TP
 \fIQos\fP
 .RS
-Valid QOS\' for this association.
+Valid QOS' for this association.
 .RE
 
 .TP
 \fIQosRaw\fP
 .RS
-QOS\' ID.
+QOS' ID.
 .RE
 
 .TP
@@ -756,7 +762,7 @@ The name of a partition in the association.
 
 .TP
 \fIPriority\fP
-What priority will be added to a job\'s priority when using this association.
+What priority will be added to a job's priority when using this association.
 
 .TP
 \fIWithRawQOSLevel\fP
@@ -969,6 +975,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 \fIEvent\fP=<OPT>
@@ -1007,6 +1015,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 \fIStates\fP=<comma separated list of states>
@@ -1202,6 +1212,19 @@ If set, and the QOS also has a UsageThreshold,
 any jobs submitted with this QOS that fall below the UsageThreshold
 will be held until their Fairshare Usage goes above the Threshold.
 .TP
+\fINoDecay\fP
+If set, this QOS will not have its GrpTRESMins,
+GrpWall and UsageRaw decayed by the slurm.conf PriorityDecayHalfLife or
+PriorityUsageResetPeriod settings.  This allows a QOS to provide aggregate
+limits that, once consumed, will not be replenished automatically.  Such a
+QOS will act as a time-limited quota of resources for an association
+that has access to it.  Account/user usage will still be decayed for
+associations using the QOS.  The QOS GrpTRESMins and
+GrpWall limits can be increased or the QOS RawUsage value reset to 0
+(zero) to again allow jobs submitted with this QOS to be queued (if
+DenyOnLimit is set) or run (pending with QOSGrp{TRES}MinutesLimit
+or QOSGrpWallLimit reasons, where {TRES} is some type of trackable resource).
+.TP
 \fINoReserve\fP
 If this flag is set and backfill scheduling is used, jobs using this QOS will
 not reserve resources in the backfill schedule's map of resources allocated
@@ -1226,24 +1249,11 @@ override any limits used by the requested partition's QOS limits.
 If set jobs using this QOS will be able to
 override the requested partition's TimeLimit.
 .TP
-\fIRequiresReservaton\fP
+\fIRequiresReservation\fP
 If set jobs using this QOS must designate a reservation when submitting a job.
 This option can be useful in restricting usage of a QOS that may have greater
 preemptive capability or additional resources to be allowed only within a
 reservation.
-.TP
-\fINoDecay\fP
-If set, this QOS will not have its GrpTRESMins,
-GrpWall and UsageRaw decayed by the slurm.conf PriorityDecayHalfLife or
-PriorityUsageResetPeriod settings.  This allows a QOS to provide aggregate
-limits that, once consumed, will not be replenished automatically.  Such a
-QOS will act as a time-limited quota of resources for an association
-that has access to it.  Account/user usage will still be decayed for
-associations using the QOS.  The QOS GrpTRESMins and
-GrpWall limits can be increased or the QOS RawUsage value reset to 0
-(zero) to again allow jobs submitted with this QOS to be queued (if
-DenyOnLimit is set) or run (pending with QOSGrp{TRES}MinutesLimit
-or QOSGrpWallLimit reasons, where {TRES} is some type of trackable resource).
 .TP
 \fIUsageFactorSafe\fP
 If set, and \fIAccountingStorageEnforce\fR includes \fISafe\fR, jobs will only
@@ -1299,6 +1309,32 @@ running jobs will be killed.
 The id of the QOS.
 
 .TP
+\fIMaxJobsAccruePerAccount\fP
+Maximum number of pending jobs an account (or subacct) can have accruing age
+priority at any given time.
+
+.TP
+\fIMaxJobsAccruePerUser\fP
+Maximum number of pending jobs a user can have accruing age priority at any
+given time.
+
+.TP
+\fIMaxJobsPerAccount\fP
+Maximum number of jobs each account is allowed to run at one time.
+
+.TP
+\fIMaxJobsPerUser\fP
+Maximum number of jobs each user is allowed to run at one time.
+
+.TP
+\fIMaxSubmitJobsPerAccount\fP
+Maximum number of jobs pending or running state at any time per account.
+
+.TP
+\fIMaxSubmitJobsPerUser\fP
+Maximum number of jobs pending or running state at any time per user.
+
+.TP
 \fIMaxTRESMinsPerJob\fP
 Maximum number of TRES minutes each job is able to use.
 
@@ -1323,22 +1359,10 @@ Maximum number of TRES each node in a job allocation can use.
 Maximum number of TRES each user is able to use.
 
 .TP
-\fIMaxJobsAccruePerAccount\fP
-Maximum number of pending jobs an account (or subacct) can have accruing age
-priority at any given time.
+\fIMaxWallDurationPerJob\fP
+Maximum wall clock time each job is able to use.
 
-.TP
-\fIMaxJobsAccruePerUser\fP
-Maximum number of pending jobs a user can have accruing age priority at any
-given time.
-
-.TP
-\fIMaxJobsPerAccount\fP
-Maximum number of jobs each account is allowed to run at one time.
-
-.TP
-\fIMaxJobsPerUser\fP
-Maximum number of jobs each user is allowed to run at one time.
+\fBNOTE\fR: This setting shows up in the sacctmgr output as \fBMaxWall\fR.
 
 .TP
 \fIMinPrioThreshold\fP
@@ -1352,29 +1376,24 @@ Otherwise the job will pend until modified.
 \fBNOTE\fR: This setting shows up in the sacctmgr output as \fBMinTRES\fR.
 
 .TP
-\fIMaxSubmitJobsPerAccount\fP
-Maximum number of jobs pending or running state at any time per account.
-
-.TP
-\fIMaxSubmitJobsPerUser\fP
-Maximum number of jobs pending or running state at any time per user.
-
-.TP
-\fIMaxWallDurationPerJob\fP
-Maximum wall clock time each job is able to use.
-
-\fBNOTE\fR: This setting shows up in the sacctmgr output as \fBMaxWall\fR.
-
-.TP
 \fIName\fP
 Name of the QOS.
 
 .TP
 \fIPreempt\fP
-Other QOS\' this QOS can preempt.
+Other QOS' this QOS can preempt.
 
 \fBNOTE\fP: The \fIPriority\fP of a QOS is NOT related to QOS preemption, only
 \fIPreempt\fP is used to define which QOS can preempt others.
+
+.TP
+\fIPreemptExemptTime\fP
+Specifies a minimum run time for jobs of this QOS before they are considered for
+preemption. This QOS option takes precedence over the global
+\fIPreemptExemptTime\fP. Setting to -1 disables the option, allowing another
+QOS or the global option to take effect. Setting to 0 indicates no minimum run
+time and supersedes the lower priority QOS (see \fIOverPartQOS\fP) and/or the
+global option in slurm.conf.
 
 .TP
 \fIPreemptMode\fP
@@ -1389,17 +1408,8 @@ See the description of the cluster\-wide \fBPreemptMode\fR parameter
 for further details of the available modes.
 
 .TP
-\fIPreemptExemptTime\fP
-Specifies a minimum run time for jobs of this QOS before they are considered for
-preemption. This QOS option takes precedence over the global
-\fIPreemptExemptTime\fP. Setting to -1 disables the option, allowing another
-QOS or the global option to take effect. Setting to 0 indicates no minimum run
-time and supersedes the lower priority QOS (see \fIOverPartQOS\fP) and/or the
-global option in slurm.conf.
-
-.TP
 \fIPriority\fP
-What priority will be added to a job\'s priority when using this QOS.
+What priority will be added to a job's priority when using this QOS.
 
 \fBNOTE\fP: The \fIPriority\fP of a QOS is NOT related to QOS preemption, see
 \fIPreempt\fP instead.
@@ -1574,7 +1584,7 @@ Name of the QOS.  Needed for creation.
 
 .TP
 \fIPreempt\fP
-Other QOS\' this QOS can preempt.
+Other QOS' this QOS can preempt.
 Setting a Preempt to '' (two single
 quotes with nothing between them) restores its default setting.  You
 can also use the operator += and \-= to add or remove certain QOS's
@@ -1591,7 +1601,7 @@ PreemptMode=SUSPEND (i.e. preempted jobs must be removed from the resources).
 
 .TP
 \fIPriority\fP
-What priority will be added to a job\'s priority when using this QOS.
+What priority will be added to a job's priority when using this QOS.
 To clear a previously set value use the modify command with a new value of \-1.
 
 .TP
@@ -1644,6 +1654,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 \fIID\fP=<OPT>
@@ -1670,6 +1682,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .SH "LIST/SHOW RESERVATION FORMAT OPTIONS"
 
@@ -1871,6 +1885,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 \fIUsers\fP=<comma separated list of user names>
@@ -1885,18 +1901,23 @@ Get information about which associations were affected by the transactions.
 
 .TP
 \fIAction\fP
+Displays the type of Action that took place.
 
 .TP
 \fIActor\fP
+Displays the Actor to generate a transaction.
 
 .TP
 \fIInfo\fP
+Displays details of the transaction.
 
 .TP
 \fITimeStamp\fP
+Displays when the transaction occurred.
 
 .TP
 \fIWhere\fP
+Displays details of the constraints for the transaction.
 .P
 NOTE: If using the WithAssoc option you can also view the information
 about the various associations the transaction affected.  The
@@ -2102,7 +2123,7 @@ To edit/create a file start with a cluster line for the new cluster:
 
 .nf
 \fBCluster\ \-\ cluster_name:MaxTRESPerJob=node=15\fP
-.ad
+.fi
 
 Anything included on this line will be the default for all
 associations on this cluster.  The options for the cluster are:
@@ -2174,7 +2195,7 @@ accounts on the system. The entries will look similar to this example:
 Account\ \-\ cs:MaxTRESPerJob=node=5:MaxJobs=4:FairShare=399:MaxWallDurationPerJob=40:Description='Computer Science':Organization='LC'
 Parent\ \-\ cs
 Account\ \-\ test:MaxTRESPerJob=node=1:MaxJobs=1:FairShare=1:MaxWallDurationPerJob=1:Description='Test Account':Organization='Test'\fP
-.ad
+.fi
 
 Any of the options after a ':' can be left out and they can be in any order.
 If you want to add any sub accounts just list the Parent THAT HAS ALREADY
@@ -2237,7 +2258,7 @@ Maximum number of nodes per job the children of this association can run.
 \fBMaxWallDurationPerJob=\fP
 Maximum time (not related to job size) children of this accounts jobs can run.
 .TP
-\fBOrganization=
+\fBOrganization=\fP
 Name of organization that owns this account.
 .TP
 \fBQOS(=,+=,\-=)\fP
@@ -2250,7 +2271,7 @@ To add users to an account add a line after the Parent line, similar to this:
 .nf
 \fBParent\ \-\ test
 User\ \-\ adam:MaxTRESPerJob=node:2:MaxJobs=3:FairShare=1:MaxWallDurationPerJob=1:AdminLevel=Operator:Coordinator='test'\fP
-.ad
+.fi
 
 
 User options are:
@@ -2395,231 +2416,151 @@ The location of the Slurm configuration file.
 You must define clusters before you add accounts and you must add accounts
 before you can add users.
 
-.eo
-.br
--> sacctmgr create cluster tux
-.br
--> sacctmgr create account name=science fairshare=50
-.br
--> sacctmgr create account name=chemistry parent=science fairshare=30
-.br
--> sacctmgr create account name=physics parent=science fairshare=20
-.br
--> sacctmgr create user name=adam cluster=tux account=physics fairshare=10
-.br
--> sacctmgr delete user name=adam cluster=tux account=physics
-.br
--> sacctmgr delete account name=physics cluster=tux
-.br
--> sacctmgr modify user where name=adam cluster=tux account=physics set
-  maxjobs=2 maxwall=30:00
-.br
--> sacctmgr add user brian account=chemistry
-.br
--> sacctmgr list associations cluster=tux format=Account,Cluster,User,Fairshare tree withd
-.br
--> sacctmgr list transactions Action="Add Users" Start=11/03-10:30:00 format=Where,Time
-.br
--> sacctmgr dump cluster=tux file=tux_data_file
-.br
--> sacctmgr load tux_data_file
-.br
+.nf
+$ sacctmgr create cluster tux
+$ sacctmgr create account name=science fairshare=50
+$ sacctmgr create account name=chemistry parent=science fairshare=30
+$ sacctmgr create account name=physics parent=science fairshare=20
+$ sacctmgr create user name=adam cluster=tux account=physics fairshare=10
+$ sacctmgr delete user name=adam cluster=tux account=physics
+$ sacctmgr delete account name=physics cluster=tux
+$ sacctmgr modify user where name=adam cluster=tux account=physics set maxjobs=2 maxwall=30:00
+$ sacctmgr add user brian account=chemistry
+$ sacctmgr list associations cluster=tux format=Account,Cluster,User,Fairshare tree withd
+$ sacctmgr list transactions Action="Add Users" Start=11/03-10:30:00 format=Where,Time
+$ sacctmgr dump cluster=tux file=tux_data_file
+$ sacctmgr load tux_data_file
+.fi
 
-.br
 A user's account can not be changed directly. A new association needs to be
 created for the user with the new account. Then the association with the old
 account can be deleted.
 
-.br
 When modifying an object placing the key words 'set' and the
 optional 'where' is critical to perform correctly below are examples to
 produce correct results.  As a rule of thumb anything you put in front
 of the set will be used as a quantifier.  If you want to put a
 quantifier after the key word 'set' you should use the key
-word 'where'.
-.br
+word 'where'. The following is wrong:
 
-.br
-wrong-> sacctmgr modify user name=adam set fairshare=10 cluster=tux
-.br
+.nf
+$ sacctmgr modify user name=adam set fairshare=10 cluster=tux
+.fi
 
-.br
 This will produce an error as the above line reads modify user adam
-set fairshare=10 and cluster=tux.
-.br
+set fairshare=10 and cluster=tux. Either of the following is correct:
 
-.br
-right-> sacctmgr modify user name=adam cluster=tux set fairshare=10
-.br
-right-> sacctmgr modify user name=adam set fairshare=10 where cluster=tux
-.br
+.nf
+$ sacctmgr modify user name=adam cluster=tux set fairshare=10
+$ sacctmgr modify user name=adam set fairshare=10 where cluster=tux
+.fi
 
-.br
 When changing qos for something only use the '=' operator when wanting
 to explicitly set the qos to something.  In most cases you will want
 to use the '+=' or '\-=' operator to either add to or remove from the
 existing qos already in place.
-.br
 
-.br
 If a user already has qos of normal,standby for a parent or it was
 explicitly set you should use qos+=expedite to add this to the list in
 this fashion.
-.br
 
 If you are looking to only add the qos expedite to only a certain
 account and or cluster you can do that by specifying them in the
 sacctmgr line.
 
-.br
--> sacctmgr modify user name=adam set qos+=expedite
-.br
+.nf
+$ sacctmgr modify user name=adam set qos+=expedite
+.fi
 
-.br
-> sacctmgr modify user name=adam acct=this cluster=tux set qos+=expedite
-.br
+or
 
-.br
+.nf
+$ sacctmgr modify user name=adam acct=this cluster=tux set qos+=expedite
+.fi
+
 Let's give an example how to add QOS to user accounts.
 List all available QOSs in the cluster.
-.br
 
-.br
-->sacctmgr show qos format=name
+.nf
+$ sacctmgr show qos format=name
       Name
-.br
   ---------
-.br
     normal
-.br
   expedite
-.br
+.fi
 
-.br
 List all the associations in the cluster.
-.br
 
-->sacctmgr show assoc format=cluster,account,qos
+.nf
+$ sacctmgr show assoc format=cluster,account,qos
    Cluster    Account    QOS
-.br
   --------  ---------- -----
-.br
   zebra       root         normal
-.br
   zebra       root         normal
-.br
   zebra          g         normal
-.br
   zebra         g1         normal
-.br
+.fi
 
-.br
 Add the QOS expedite to account G1 and display the result.
 Using the operator += the QOS will be added together
 with the  existing QOS to this account.
-.br
 
-.br
-->sacctmgr modify account name=g1 set qos+=expedite
-.br
-
-.br
-->sacctmgr show assoc format=cluster,account,qos
-.br
+.nf
+$ sacctmgr modify account name=g1 set qos+=expedite
+$ sacctmgr show assoc format=cluster,account,qos
    Cluster    Account   QOS
-.br
    --------  --------  -------
-.br
    zebra       root         normal
-.br
    zebra       root         normal
-.br
    zebra          g         normal
-.br
    zebra         g1  expedite,normal
-.br
+.fi
 
-.br
 Now set the QOS expedite as the only QOS for the account G and display
 the result. Using the operator = that expedite is the only usable
 QOS by account G
-.br
 
-.br
-->sacctmgr modify account name=G set qos=expedite
-.br
-
-.br
->sacctmgr show assoc format=cluster,account,user,qos
-.br
+.nf
+$ sacctmgr modify account name=G set qos=expedite
+$ sacctmgr show assoc format=cluster,account,user,qos
    Cluster    Account  QOS
-.br
   ---------   -------- -----
-.br
   zebra       root      normal
-.br
   zebra       root      normal
-.br
   zebra          g      expedite
-.br
   zebra         g1      expedite,normal
-.br
+.fi
 
-.br
 If a new account is added under the account G it will inherit the
 QOS expedite and it will not have access to QOS normal.
-.br
 
-.br
-->sacctmgr add account banana parent=G
-.br
-
-.br
-->sacctmgr show assoc format=cluster,account,qos
-.br
+.nf
+$ sacctmgr add account banana parent=G
+$ sacctmgr show assoc format=cluster,account,qos
    Cluster    Account   QOS
-.br
   ---------  --------  -----
-.br
   zebra       root       normal
-.br
   zebra       root       normal
-.br
   zebra          g       expedite
-.br
   zebra     banana       expedite
-.br
   zebra         g1       expedite,normal
-.br
+.fi
 
-An example of listing trackable resources
-.br
+An example of listing trackable resources:
 
-.br
-->sacctmgr show tres
-.br
+.nf
+$ sacctmgr show tres
       Type              Name      ID
-.br
 ---------- ----------------- --------
-.br
        cpu                          1
-.br
        mem                          2
-.br
     energy                          3
-.br
       node                          4
-.br
    billing                          5
-.br
       gres         gpu:tesla     1001
-.br
    license               vcs     1002
-.br
         bb              cray     1003
-.br
-
-.ec
+.fi
 
 .SH "COPYING"
 Copyright (C) 2008\-2010 Lawrence Livermore National Security.

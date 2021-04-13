@@ -38,6 +38,13 @@ testsuite_log_level:          logging threshold [$LOG_LEVEL_DEBUG]
 testsuite_log_format:         specifies the tracing fields used in logging
 testsuite_colorize:           boolean that turns colorization on or off
 testsuite_subtest_fatal:      first failing subtest aborts the test [false]
+testsuite_subtest_details:    add details of subtest in the summary [fail]
+                              possible values: all, fail, fail_skip or none
+testsuite_testproc_details:   add details of testprocs in the summary [fail]
+                              possible values: all, fail, fail_skip or none
+testsuite_user:               a system username that is NOT on the Slurm DB
+                              that may be used to sudo commands as him
+                              instead of current user (see check_run_as_user)
 
 The testsuite needs at least one cluster-wide shared file system.
 By default, we assume that it's the testsuite/expect directory (i.e. ".").
@@ -67,20 +74,23 @@ test_dir:   a temporary subdirectory created within the testsuite_shared_dir *
   and testsuite_cleanup_on_failure was set to false. The test_dir will be
   (removed and) recreated the next time the test is run.
 
-The script "regression" will execute all of the tests and summarize the
+A test can be run as normal executable (uses expect) and can read by default
+two main arguments:
+	-i : a comma-separated list of testproc ids to run
+	-e : a comma-separated list of testproc ids to skip
+These arguments will be removed and not available on argv on the tests.
+Test writers should use testproc to launch their testproc functions to
+take advantage of those arguments (see testproc function).
+
+The script "regression.py" will execute all of the tests and summarize the
 results. Standard output contains detailed logging of all events, which is
 quite verbose. Failure information is written to standard error. A good
-way to run "regression" is to write its standard output to one file and
+way to run "regression.py" is to write its standard output to one file and
 either write standard error to another file or print it to the terminal.
 Execution time of the full test suite is roughly 80 minutes, but can vary
 considerably with the architecture, configuration, and system load. Some
 tests send e-mail, so check for four e-mail messages sent to the user
-running the tests. Here is an example.
-    $ ./regression >slurm.test.tux.Aug3
-    Completions:357
-    Failures:   0
-    Time (sec): 4375
-    Remember to check for mail send by tests
+running the tests.
 
 When failures do occur, check the standard output for details. Searching
 for the keyword "FAILURE" will typically locate the failing test. Note
@@ -235,6 +245,8 @@ test1.114  Test of srun --spread-job option.
 test1.115  Test of srun not hanging on ignored stdin.
 test1.116  Extended MPI functionality tests via srun.
 test1.117  Test of standalone srun not ignoring --mem-per-cpu
+test1.118  Test --hint mutual exclusion properties.
+test1.119  Test of srun --ntasks-per-gpu option.
 
 test2.#    Testing of scontrol options (to be run as unprivileged user).
 ========================================================================
@@ -386,11 +398,13 @@ test7.18   Test of slurm_hostlist_find().
 test7.19   Test sbatch/srun/salloc path resolving
 test7.20   Test lua JobSubmitPlugin
 test7.21   Test SPANK plugins that link against libslurm
-test7.23   Test time_str2secs parsing of different formats
+test7.22   Test basic functionality of backfill scheduler
+test7.23   Test min_mem_per_{cpu,node} in lua JobSubmitPlugin
 
 test8.#    Testing of advanced reservation functionality.
 =========================================================
 test8.12   Test reservation with flags=FLEX
+test8.13   Test user_resv_delete parameter
 
 test9.#    System stress testing. Exercises all commands and daemons.
 =====================================================================
@@ -597,6 +611,8 @@ test20.10  Test for the qrerun --help option
 test20.11  Test for the qrerun --man option
 test20.12  Test for qsub -V/-v arguments and their interaction with sbatch scripts
 test20.13  Test to test Grid Engine specific options
+test20.14  Test PBS/qsub -l gpu options
+test20.15  Test for seff
 
 test21.#   Testing of sacctmgr commands and options.
 ====================================================
@@ -636,7 +652,7 @@ test21.33  Validate that a resource can be added to a cluster after creation
 test21.34  Validate that partition and job QoS limits are enforced
 test21.35  Validate DenyOnLimit QoS flag is enforced on QoS and Associations.
 test21.36  Validate that sacctmgr lost jobs fixes lost jobs.
-test21.37  sacctmgr show stats
+test21.37  sacctmgr show and clear stats
 test21.38  sacctmgr modify limits for nested accounts with multiple users
 test21.39  sacctmgr create qos/account job and then delete account/qos
 test21.40  Test association plus partition/job QoS unique node limits enforced
@@ -804,6 +820,7 @@ test38.15  Test for proper handling of different rank end times
 test38.16  Test environment variables needed by MPI
 test38.17  Test for multiple, out of order srun --het-group options
 test38.18  Validate heterogeneous gpu job options.
+test38.19  Test heterogeneous job steps.
 
 test39.#   Test of job select/cons_tres and --gpu options.
 ==========================================================
@@ -841,3 +858,7 @@ test40.5   Increase size of job with allocated MPS
 test40.6   Decrease size of job with allocated MPS
 test40.7   DEFUNCT
 test40.8   Simple CUDA MPS test
+
+test41.#   Testing of slurmrestd
+=============================================================
+test41.1   Test slurmrestd plugins

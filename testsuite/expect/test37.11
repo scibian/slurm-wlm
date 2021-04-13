@@ -41,7 +41,6 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
-set exit_code   0
 set fed_name    "feda"
 set user_name   ""
 set srun_job_cnt 0
@@ -169,7 +168,7 @@ if {[setup_federation $fed_name]} {
 }
 
 # get number of nodes per cluster
-set node_count [available_nodes]
+set node_count [llength [get_nodes_by_state idle,alloc,comp]]
 
 log_info "################################################################"
 log_info "Setup cluster features"
@@ -195,15 +194,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
-		set exit_code 1
+		fail "sacctmgr mod not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$exit_code || $matches != 4} {
+if {$matches != 4} {
 	fail "Unexpected error. Got $matches"
 }
 
@@ -227,15 +225,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
-		set exit_code 1
+		fail "sacctmgr mod not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$exit_code || $matches != 4} {
+if {$matches != 4} {
 	fail "Unexpected error. Got $matches"
 }
 
@@ -260,15 +257,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacctmgr mod not responding"
 		slow_kill $my_pid
-		set exit_code 1
+		fail "sacctmgr mod not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$exit_code || $matches != 4} {
+if {$matches != 4} {
 	fail "Unexpected error. Got $matches"
 }
 

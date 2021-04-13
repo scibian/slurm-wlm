@@ -50,17 +50,10 @@ char outbuf[FORMAT_STRING_SIZE];
 #define SACCT_TRES_MIN  0x0004
 #define SACCT_TRES_TOT  0x0008
 
-char *_elapsed_time(long secs, long usecs);
-
-char *_elapsed_time(long secs, long usecs)
+static char *_elapsed_time_helper(uint64_t secs, uint32_t usecs)
 {
-	long	days, hours, minutes, seconds;
-	long    subsec = 0;
+	uint64_t days, hours, minutes, seconds, subsec = 0;
 	char *str = NULL;
-
-	if (secs < 0 || secs == (long)NO_VAL)
-		return NULL;
-
 
 	while (usecs >= 1E6) {
 		secs++;
@@ -76,18 +69,32 @@ char *_elapsed_time(long secs, long usecs)
 	days    =  secs / 86400;
 
 	if (days)
-		str = xstrdup_printf("%ld-%2.2ld:%2.2ld:%2.2ld",
+		str = xstrdup_printf("%"PRIu64"-%2.2"PRIu64":%2.2"PRIu64":%2.2"PRIu64"",
 				     days, hours, minutes, seconds);
 	else if (hours)
-		str = xstrdup_printf("%2.2ld:%2.2ld:%2.2ld",
+		str = xstrdup_printf("%2.2"PRIu64":%2.2"PRIu64":%2.2"PRIu64"",
 				     hours, minutes, seconds);
 	else if (subsec)
-		str = xstrdup_printf("%2.2ld:%2.2ld.%3.3ld",
+		str = xstrdup_printf("%2.2"PRIu64":%2.2"PRIu64".%3.3"PRIu64"",
 				     minutes, seconds, subsec);
 	else
-		str = xstrdup_printf("00:%2.2ld:%2.2ld",
+		str = xstrdup_printf("00:%2.2"PRIu64":%2.2"PRIu64"",
 				     minutes, seconds);
 	return str;
+}
+
+static char *_elapsed_time(uint32_t secs, uint32_t usecs)
+{
+	if (secs == NO_VAL)
+		return NULL;
+	return _elapsed_time_helper(secs, usecs);
+}
+
+static char *_elapsed_time64(uint64_t secs, uint32_t usecs)
+{
+	if (secs == NO_VAL64)
+		return NULL;
+	return _elapsed_time_helper(secs, usecs);
 }
 
 static char *_find_qos_name_from_list(List qos_list, int qosid)
@@ -435,7 +442,7 @@ extern void print_fields(type_t type, void *object)
 						    confirm the values
 						    coming in are
 						    NO_VAL64 */
-		uint32_t tmp_uint32 = NO_VAL;
+		uint32_t tmp_uint32 = NO_VAL, tmp2_uint32 = NO_VAL;
 		uint64_t tmp_uint64 = NO_VAL64;
 
 		memset(&outbuf, 0, sizeof(outbuf));
@@ -458,23 +465,6 @@ extern void print_fields(type_t type, void *object)
 			}
 			field->print_routine(field,
 					     tmp_int,
-					     (curr_inx == field_count));
-			break;
-		case PRINT_ALLOC_GRES:
-			switch(type) {
-			case JOB:
-				tmp_char = job->alloc_gres;
-				break;
-			case JOBSTEP:
-				tmp_char = step->job_ptr->alloc_gres;
-				break;
-			case JOBCOMP:
-			default:
-				tmp_char = NULL;
-				break;
-			}
-			field->print_routine(field,
-					     tmp_char,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_ALLOC_NODES:
@@ -588,8 +578,7 @@ extern void print_fields(type_t type, void *object)
 				type, object, TRES_CPU, SACCT_TRES_AVE);
 			if (tmp_uint64 != NO_VAL64) {
 				tmp_uint64 /= CPU_TIME_ADJ;
-				tmp_char = _elapsed_time(
-					(long)tmp_uint64, 0);
+				tmp_char = _elapsed_time64(tmp_uint64, 0);
 			}
 
 			field->print_routine(field,
@@ -1066,17 +1055,16 @@ extern void print_fields(type_t type, void *object)
 				tmp_char = xstrdup(id);
 				break;
 			case JOBSTEP:
-				if (step->stepid == SLURM_BATCH_SCRIPT) {
-					tmp_char = xstrdup_printf(
-						"%s.batch", id);
-				} else if (step->stepid == SLURM_EXTERN_CONT) {
-					tmp_char = xstrdup_printf(
-						"%s.extern", id);
-				} else {
-					tmp_char = xstrdup_printf(
-						"%s.%u",
-						id, step->stepid);
-				}
+				tmp_int = 64;
+				tmp_char = xmalloc(tmp_int);
+				tmp_int2 =
+					snprintf(tmp_char, tmp_int, "%s.", id);
+				tmp_int -= tmp_int2;
+				log_build_step_id_str(&step->step_id,
+						      tmp_char + tmp_int2,
+						      tmp_int,
+						      STEP_ID_FLAG_NO_PREFIX |
+						      STEP_ID_FLAG_NO_JOB);
 				break;
 			case JOBCOMP:
 				tmp_char = xstrdup_printf("%u",
@@ -1096,20 +1084,13 @@ extern void print_fields(type_t type, void *object)
 				tmp_char = xstrdup_printf("%u", job->jobid);
 				break;
 			case JOBSTEP:
-				if (step->stepid == SLURM_BATCH_SCRIPT) {
-					tmp_char = xstrdup_printf(
-						"%u.batch",
-						step->job_ptr->jobid);
-				} else if (step->stepid == SLURM_EXTERN_CONT) {
-					tmp_char = xstrdup_printf(
-						"%u.extern",
-						step->job_ptr->jobid);
-				} else {
-					tmp_char = xstrdup_printf(
-						"%u.%u",
-						step->job_ptr->jobid,
-						step->stepid);
-				}
+				log_build_step_id_str(&step->step_id, id,
+						      sizeof(id),
+						      (STEP_ID_FLAG_NO_PREFIX |
+						       STEP_ID_FLAG_NO_JOB));
+				tmp_char = xstrdup_printf("%u.%s",
+							  step->job_ptr->jobid,
+							  id);
 				break;
 			case JOBCOMP:
 				tmp_char = xstrdup_printf("%u",
@@ -1143,28 +1124,32 @@ extern void print_fields(type_t type, void *object)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_LAYOUT:
+		{
+			char *name = NULL;
+
 			switch(type) {
 			case JOB:
 				/* below really should be step.  It is
 				   not a typo */
 				if (!job->track_steps)
-					tmp_char = slurm_step_layout_type_name(
+					name = slurm_step_layout_type_name(
 						step->task_dist);
 				break;
 			case JOBSTEP:
-				tmp_char = slurm_step_layout_type_name(
+				name = slurm_step_layout_type_name(
 					step->task_dist);
 				break;
 			case JOBCOMP:
 				break;
 			default:
-				tmp_char = NULL;
+				/* no-op */
 				break;
 			}
-			field->print_routine(field,
-					     tmp_char,
+			field->print_routine(field, name,
 					     (curr_inx == field_count));
+			xfree(name);
 			break;
+		}
 		case PRINT_MAXDISKREAD:
 			tmp_uint64 = _get_tres_cnt(
 				type, object, TRES_FS_DISK, 0);
@@ -1644,7 +1629,7 @@ extern void print_fields(type_t type, void *object)
 
 			if (tmp_uint64 != NO_VAL64) {
 				tmp_uint64 /= CPU_TIME_ADJ;
-				tmp_char = _elapsed_time((long)tmp_uint64, 0);
+				tmp_char = _elapsed_time64(tmp_uint64, 0);
 			}
 
 			field->print_routine(field,
@@ -1915,25 +1900,6 @@ extern void print_fields(type_t type, void *object)
 			}
 			field->print_routine(field,
 					     tmp_int,
-					     (curr_inx == field_count));
-			break;
-		case PRINT_REQ_GRES:
-			switch(type) {
-			case JOB:
-				tmp_char = job->req_gres;
-				break;
-			case JOBSTEP:
-				tmp_char = step->job_ptr->req_gres;
-				break;
-			case JOBCOMP:
-				tmp_char = job_comp->req_gres;
-				break;
-			default:
-				tmp_char = NULL;
-				break;
-			}
-			field->print_routine(field,
-					     tmp_char,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_REQ_MEM:
@@ -2234,18 +2200,18 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_SYSTEMCPU:
 			switch(type) {
 			case JOB:
-				tmp_int = job->sys_cpu_sec;
-				tmp_int2 = job->sys_cpu_usec;
+				tmp_uint32 = job->sys_cpu_sec;
+				tmp2_uint32 = job->sys_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_int = step->sys_cpu_sec;
-				tmp_int2 = step->sys_cpu_usec;
+				tmp_uint32 = step->sys_cpu_sec;
+				tmp2_uint32 = step->sys_cpu_usec;
 				break;
 			case JOBCOMP:
 			default:
 				break;
 			}
-			tmp_char = _elapsed_time(tmp_int, tmp_int2);
+			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
 
 			field->print_routine(field,
 					     tmp_char,
@@ -2322,12 +2288,12 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_TOTALCPU:
 			switch(type) {
 			case JOB:
-				tmp_int = job->tot_cpu_sec;
-				tmp_int2 = job->tot_cpu_usec;
+				tmp_uint32 = job->tot_cpu_sec;
+				tmp2_uint32 = job->tot_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_int = step->tot_cpu_sec;
-				tmp_int2 = step->tot_cpu_usec;
+				tmp_uint32 = step->tot_cpu_sec;
+				tmp2_uint32 = step->tot_cpu_usec;
 				break;
 			case JOBCOMP:
 
@@ -2336,7 +2302,7 @@ extern void print_fields(type_t type, void *object)
 
 				break;
 			}
-			tmp_char = _elapsed_time(tmp_int, tmp_int2);
+			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
 
 			field->print_routine(field,
 					     tmp_char,
@@ -2376,10 +2342,10 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_UID:
 			switch(type) {
 			case JOB:
-				if (job->user) {
-					if ((pw=getpwnam(job->user)))
-						tmp_int = pw->pw_uid;
-				} else
+				if (params.use_local_uid && job->user &&
+				    (pw = getpwnam(job->user)))
+					tmp_int = pw->pw_uid;
+				else
 					tmp_int = job->uid;
 				break;
 			case JOBSTEP:
@@ -2401,10 +2367,8 @@ extern void print_fields(type_t type, void *object)
 			case JOB:
 				if (job->user)
 					tmp_char = job->user;
-				else if (job->uid != -1) {
-					if ((pw=getpwuid(job->uid)))
+				else if ((pw=getpwuid(job->uid)))
 						tmp_char = pw->pw_name;
-				}
 				break;
 			case JOBSTEP:
 
@@ -2424,19 +2388,19 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_USERCPU:
 			switch(type) {
 			case JOB:
-				tmp_int = job->user_cpu_sec;
-				tmp_int2 = job->user_cpu_usec;
+				tmp_uint32 = job->user_cpu_sec;
+				tmp2_uint32 = job->user_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_int = step->user_cpu_sec;
-				tmp_int2 = step->user_cpu_usec;
+				tmp_uint32 = step->user_cpu_sec;
+				tmp2_uint32 = step->user_cpu_usec;
 				break;
 			case JOBCOMP:
 			default:
 				break;
 			}
 
-			tmp_char = _elapsed_time(tmp_int, tmp_int2);
+			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
 
 
 			field->print_routine(field,

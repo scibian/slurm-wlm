@@ -31,13 +31,51 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
 
 set cpu_cnt     1
 set mem_size    13
 set tmp_size    2
 set matches     0
+
+proc cleanup {} {
+	global job_id
+
+	if {$job_id} {
+		cancel_job $job_id
+	}
+}
+
+proc sbatch_mem_error {arg} {
+	global sbatch test_id number job_id
+
+	set matches 0
+	set job_id 0
+
+	set cmd "$sbatch -Jtest$test_id --wrap=hostname $arg"
+	set sbatch_pid [spawn {*}$cmd]
+	expect {
+		-re "Submitted batch job ($number)" {
+			set job_id $expect_out(1,string)
+		}
+		"sbatch: error: Invalid" {
+			incr matches
+		}
+		timeout {
+			slow_kill $sbatch_pid
+			fail "sbatch not responding"
+		}
+		eof {
+			wait
+		}
+	}
+	if {$job_id} {
+		fail "Job shouldn't have submitted (cmd:$cmd)"
+	}
+	if {$matches != 1} {
+		fail "Job should have errored with arg '$arg'"
+	}
+}
 
 #
 # Spawn a salloc job with constraints
@@ -48,17 +86,11 @@ expect {
 		set job_id $expect_out(1,string)
 	}
 	-re "uid=" {
-		log_error "salloc --hold option ineffective"
-		set exit_code 1
-		exp_continue
+		fail "salloc --hold option ineffective"
 	}
 	timeout {
-		log_error "salloc not responding"
-		if {$job_id != 0} {
-			cancel_job $job_id
-		}
 		slow_kill [expr 0 - $salloc_pid]
-		set exit_code 1
+		fail "salloc not responding"
 	}
 	eof {
 		wait
@@ -111,8 +143,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
-		set exit_code 1
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
@@ -124,6 +155,12 @@ if {$matches != 5} {
 if {[cancel_job $job_id] != 0} {
 	fail "Unable to cancel job ($job_id)"
 }
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+
+sbatch_mem_error "--mem="
+sbatch_mem_error "--mem=1gggggg"
+sbatch_mem_error "--mem=memory"
+sbatch_mem_error "--mem=-1"
+sbatch_mem_error "--mem-per-cpu="
+sbatch_mem_error "--mem-per-cpu=1gggggg"
+sbatch_mem_error "--mem-per-cpu=memory"
+sbatch_mem_error "--mem-per-cpu=-1"

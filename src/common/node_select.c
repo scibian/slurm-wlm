@@ -68,7 +68,6 @@ const char *node_select_syms[] = {
 	"select_p_state_save",
 	"select_p_state_restore",
 	"select_p_job_init",
-	"select_p_node_ranking",
 	"select_p_node_init",
 	"select_p_job_test",
 	"select_p_job_begin",
@@ -118,26 +117,41 @@ typedef struct _plugin_args {
 	char *default_plugin;
 } _plugin_args_t;
 
-static char *_plugin_id2name(int plugin_id)
-{
-	static char id_str[16];
+typedef struct {
+	int id;
+	char *name;
+} plugin_id_name;
 
-	if (plugin_id == SELECT_PLUGIN_CONS_RES)
-		return "cons_res";
-	if (plugin_id == SELECT_PLUGIN_LINEAR)
-		return "linear";
-	if (plugin_id == SELECT_PLUGIN_SERIAL)
-		return "serial";
-	if (plugin_id == SELECT_PLUGIN_CRAY_LINEAR)
-		return "cray_aries+linear";
-	if (plugin_id == SELECT_PLUGIN_CRAY_CONS_RES)
-		return "cray_aries+cons_res";
-	if (plugin_id == SELECT_PLUGIN_CONS_TRES)
-		return "cons_tres";
-	if (plugin_id == SELECT_PLUGIN_CRAY_CONS_TRES)
-		return "cray_aries+cons_tres";
-	snprintf(id_str, sizeof(id_str), "%d", plugin_id);
-	return id_str;
+const plugin_id_name plugin_ids[] = {
+	{ SELECT_PLUGIN_CONS_RES, "cons_res" },
+	{ SELECT_PLUGIN_LINEAR, "linear" },
+	{ SELECT_PLUGIN_SERIAL, "serial" },
+	{ SELECT_PLUGIN_CRAY_LINEAR, "cray_aries+linear" },
+	{ SELECT_PLUGIN_CRAY_CONS_RES, "cray_aries+cons_res" },
+	{ SELECT_PLUGIN_CONS_TRES, "cons_tres" },
+	{ SELECT_PLUGIN_CRAY_CONS_TRES, "cray_aries+cons_tres" },
+};
+
+extern char *select_plugin_id_to_string(int plugin_id)
+{
+	for (int i = 0; i < ARRAY_SIZE(plugin_ids); i++)
+		if (plugin_id == plugin_ids[i].id)
+			return plugin_ids[i].name;
+
+	error("%s: unknown select plugin id: %d",
+	      __func__, plugin_id);
+	return NULL;
+}
+
+extern int select_string_to_plugin_id(const char *plugin)
+{
+	for (int i = 0; i < ARRAY_SIZE(plugin_ids); i++)
+		if (xstrcasecmp(plugin, plugin_ids[i].name))
+			return plugin_ids[i].id;
+
+	error("%s: unknown select plugin: %s",
+	      __func__, plugin);
+	return 0;
 }
 
 static int _load_plugins(void *x, void *arg)
@@ -256,7 +270,7 @@ done:
 	slurm_mutex_unlock( &select_context_lock );
 	if (!working_cluster_rec) {
 		if (select_running_linear_based()) {
-			uint16_t cr_type = slurm_get_select_type_param();
+			uint16_t cr_type = slurm_conf.select_type_param;
 			if (cr_type & (CR_CPU | CR_CORE | CR_SOCKET)) {
 				fatal("Invalid SelectTypeParameters for "
 				      "%s: %s (%u), it can't contain "
@@ -319,7 +333,7 @@ again:
 		     (plugin_id == SELECT_PLUGIN_CRAY_CONS_TRES) ||
 		     (plugin_id == SELECT_PLUGIN_CRAY_LINEAR))) {
 			char *type = "select", *name = "select/cray_aries";
-			uint16_t save_params = slurm_get_select_type_param();
+			uint16_t save_params = slurm_conf.select_type_param;
 			uint16_t params[2];
 			int cray_plugin_id[2], cray_offset;
 
@@ -355,14 +369,14 @@ again:
 				goto end_it;	/* No match */
 
 			slurm_mutex_lock(&select_context_lock);
-			slurm_set_select_type_param(params[cray_offset]);
+			slurm_conf.select_type_param = params[cray_offset];
 			plugin_context_destroy(select_context[i]);
 			select_context[i] =
 				plugin_context_create(type, name,
 						      (void **)&ops[i],
 						      node_select_syms,
 						      sizeof(node_select_syms));
-			slurm_set_select_type_param(save_params);
+			slurm_conf.select_type_param = save_params;
 			slurm_mutex_unlock(&select_context_lock);
 			goto again;
 		}
@@ -453,21 +467,6 @@ extern int select_g_job_init(List job_list)
 
 	return (*(ops[select_context_default].job_init))
 		(job_list);
-}
-
-/*
- * Assign a 'node_rank' value to each of the node_ptr entries.
- * IN node_ptr - current node data
- * IN node_count - number of node entries
- * Return true if node ranking was performed, false if not.
- */
-extern bool select_g_node_ranking(node_record_t *node_ptr, int node_cnt)
-{
-	if (slurm_select_init(0) < 0)
-		return SLURM_ERROR;
-
-	return (*(ops[select_context_default].node_ranking))
-		(node_ptr, node_cnt);
 }
 
 /*
@@ -758,7 +757,7 @@ extern int select_g_select_nodeinfo_unpack(dynamic_plugin_data_t **nodeinfo,
 		safe_unpack32(&plugin_id, buffer);
 		if ((i = select_get_plugin_id_pos(plugin_id)) == SLURM_ERROR) {
 			error("%s: select plugin %s not found", __func__,
-			      _plugin_id2name(plugin_id));
+			      select_plugin_id_to_string(plugin_id));
 			goto unpack_error;
 		} else {
 			 nodeinfo_ptr->plugin_id = i;
@@ -1027,7 +1026,7 @@ extern int select_g_select_jobinfo_unpack(dynamic_plugin_data_t **jobinfo,
 		safe_unpack32(&plugin_id, buffer);
 		if ((i = select_get_plugin_id_pos(plugin_id)) == SLURM_ERROR) {
 			error("%s: select plugin %s not found", __func__,
-			      _plugin_id2name(plugin_id));
+			      select_plugin_id_to_string(plugin_id));
 			goto unpack_error;
 		} else
 			jobinfo_ptr->plugin_id = i;

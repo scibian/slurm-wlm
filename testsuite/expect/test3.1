@@ -28,8 +28,25 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set file_in     "test$test_id.input"
+set job_id      0
+
+# TODO: Temporary variables to debug bug 9647 (remove once fixed)
+set username    [get_my_user_name]
+set hostname    [string trimright [run_command_output "hostname -s"]]
+
+proc cleanup {} {
+	global job_id bin_rm file_in
+
+	# TODO: Temporary cleanup to debug bug 9647 (remove once fixed)
+	global hostname username
+	if {$hostname eq "knl2" && $username eq "jenkins"} {
+		run_command "sudo systemctl stop auditd"
+	}
+
+	cancel_job $job_id
+	exec $bin_rm -f $file_in
+}
 
 #
 # This test must be run as a Slurm administrator, root, or SlurmUser in order to
@@ -39,13 +56,17 @@ if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can be run only for Administrators"
 }
 
+# TODO: Temporarily start auditing to debug bug 9647 (remove once fixed)
+if {$hostname eq "knl2" && $username eq "jenkins"} {
+	run_command "sudo systemctl start auditd"
+}
+
 #
 # Have a job running when the reconfigure happens
 #
 make_bash_script $file_in "
   $srun $bin_sleep 60
 "
-set job_id 0
 set sbatch_pid [spawn $sbatch -N1 --output=/dev/null -t2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
@@ -53,9 +74,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch not responding"
 		catch {exec $bin_kill -KILL $sbatch_pid}
-		set exit_code 1
+		fail "sbatch not responding"
 	}
 	eof {
 		wait
@@ -69,18 +89,23 @@ if {[wait_for_job $job_id RUNNING] != 0} {
 	fail "Waiting for job $job_id to start"
 }
 
+# TODO: Temporary command to debug bug 9647 (remove once fixed)
+if {$hostname eq "knl2" && $username eq "jenkins"} {
+	run_command_output "$scontrol listpids $job_id node1"
+}
+
 #
 # Issue scontrol reconfigure
 #
-reconfigure
+reconfigure -fail
 
 if {[wait_for_job $job_id RUNNING] != 0} {
+	# TODO: Temporary audit logging to debug bug 9647 (remove once fixed)
+	if {$hostname eq "knl2" && $username eq "jenkins"} {
+		set jobs_dict [get_jobs $job_id]
+		if {[dict get $jobs_dict $job_id "JobState"] eq "FAILED" && [dict get $jobs_dict $job_id "ExitCode"] eq "137:0"} {
+			run_command "sudo ausearch -sc kill -k audit_kill -i -ts recent -te now"
+		}
+	}
 	fail "Job $job_id not running after reconfiguration"
-}
-cancel_job $job_id
-
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_in
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

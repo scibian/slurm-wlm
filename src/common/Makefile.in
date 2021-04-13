@@ -153,7 +153,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_yaml.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
-DIST_COMMON = $(srcdir)/Makefile.am $(am__DIST_COMMON)
+DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES =
@@ -164,32 +164,32 @@ am__DEPENDENCIES_1 =
 libcommon_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am_libcommon_la_OBJECTS = assoc_mgr.lo cpu_frequency.lo \
 	node_features.lo xmalloc.lo xassert.lo xstring.lo xsignal.lo \
-	strnatcmp.lo forward.lo msg_aggr.lo strlcpy.lo list.lo \
-	xtree.lo xhash.lo net.lo log.lo cbuf.lo data.lo bitstring.lo \
-	slurm_mpi.lo pack.lo parse_config.lo parse_value.lo plugin.lo \
-	plugrack.lo power.lo print_fields.lo slurm_resolv.lo \
-	fetch_config.lo prep.lo read_config.lo run_in_daemon.lo \
-	node_select.lo env.lo fd.lo slurm_cred.lo slurm_errno.lo \
-	slurm_ext_sensors.lo slurm_mcs.lo slurm_priority.lo \
-	slurm_protocol_api.lo slurm_protocol_pack.lo \
-	slurm_protocol_util.lo slurm_protocol_socket.lo \
-	slurm_protocol_defs.lo slurm_rlimits_info.lo slurmdb_defs.lo \
-	slurmdb_pack.lo slurmdbd_defs.lo slurmdbd_pack.lo \
-	working_cluster.lo uid.lo util-net.lo slurm_auth.lo \
-	slurm_acct_gather.lo slurm_accounting_storage.lo \
-	slurm_jobacct_gather.lo slurm_acct_gather_energy.lo \
-	slurm_acct_gather_profile.lo slurm_acct_gather_interconnect.lo \
+	strnatcmp.lo forward.lo strlcpy.lo list.lo xtree.lo xhash.lo \
+	net.lo log.lo cbuf.lo data.lo bitstring.lo slurm_mpi.lo \
+	pack.lo parse_config.lo parse_value.lo plugin.lo plugrack.lo \
+	power.lo print_fields.lo slurm_resolv.lo fetch_config.lo \
+	prep.lo read_config.lo run_in_daemon.lo node_select.lo env.lo \
+	fd.lo slurm_cred.lo slurm_errno.lo slurm_ext_sensors.lo \
+	slurm_mcs.lo slurm_priority.lo slurm_protocol_api.lo \
+	slurm_protocol_pack.lo slurm_protocol_util.lo \
+	slurm_protocol_socket.lo slurm_protocol_defs.lo \
+	slurm_rlimits_info.lo slurmdb_defs.lo slurmdb_pack.lo \
+	slurmdbd_defs.lo slurmdbd_pack.lo working_cluster.lo workq.lo \
+	uid.lo util-net.lo slurm_auth.lo slurm_acct_gather.lo \
+	slurm_accounting_storage.lo slurm_jobacct_gather.lo \
+	slurm_acct_gather_energy.lo slurm_acct_gather_profile.lo \
+	slurm_acct_gather_interconnect.lo \
 	slurm_acct_gather_filesystem.lo slurm_jobcomp.lo slurm_opt.lo \
 	slurm_route.lo slurm_time.lo slurm_topology.lo switch.lo \
 	slurm_selecttype_info.lo slurm_resource_info.lo hostlist.lo \
 	slurm_step_layout.lo job_resources.lo parse_time.lo \
 	job_options.lo global_defaults.lo timers.lo track_script.lo \
 	stepd_api.lo write_labelled_message.lo proc_args.lo \
-	node_conf.lo gpu.lo gres.lo entity.lo layout.lo layouts_mgr.lo \
-	mapping.lo xcgroup_read_config.lo callerid.lo group_cache.lo \
-	slurm_persist_conn.lo run_command.lo x11_util.lo \
-	half_duplex.lo state_control.lo site_factor.lo cli_filter.lo \
-	tres_bind.lo tres_frequency.lo
+	node_conf.lo gpu.lo gres.lo mapping.lo xcgroup_read_config.lo \
+	callerid.lo group_cache.lo slurm_persist_conn.lo \
+	run_command.lo x11_util.lo half_duplex.lo state_control.lo \
+	site_factor.lo cli_filter.lo tres_bind.lo cron.lo \
+	tres_frequency.lo
 libcommon_la_OBJECTS = $(am_libcommon_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -234,28 +234,26 @@ am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/assoc_mgr.Plo \
 	./$(DEPDIR)/bitstring.Plo ./$(DEPDIR)/callerid.Plo \
 	./$(DEPDIR)/cbuf.Plo ./$(DEPDIR)/cli_filter.Plo \
-	./$(DEPDIR)/cpu_frequency.Plo ./$(DEPDIR)/daemonize.Plo \
-	./$(DEPDIR)/data.Plo ./$(DEPDIR)/eio.Plo \
-	./$(DEPDIR)/entity.Plo ./$(DEPDIR)/env.Plo ./$(DEPDIR)/fd.Plo \
+	./$(DEPDIR)/cpu_frequency.Plo ./$(DEPDIR)/cron.Plo \
+	./$(DEPDIR)/daemonize.Plo ./$(DEPDIR)/data.Plo \
+	./$(DEPDIR)/eio.Plo ./$(DEPDIR)/env.Plo ./$(DEPDIR)/fd.Plo \
 	./$(DEPDIR)/fetch_config.Plo ./$(DEPDIR)/forward.Plo \
 	./$(DEPDIR)/global_defaults.Plo ./$(DEPDIR)/gpu.Plo \
 	./$(DEPDIR)/gres.Plo ./$(DEPDIR)/group_cache.Plo \
 	./$(DEPDIR)/half_duplex.Plo ./$(DEPDIR)/hostlist.Plo \
 	./$(DEPDIR)/io_hdr.Plo ./$(DEPDIR)/job_options.Plo \
-	./$(DEPDIR)/job_resources.Plo ./$(DEPDIR)/layout.Plo \
-	./$(DEPDIR)/layouts_mgr.Plo ./$(DEPDIR)/list.Plo \
+	./$(DEPDIR)/job_resources.Plo ./$(DEPDIR)/list.Plo \
 	./$(DEPDIR)/log.Plo ./$(DEPDIR)/mapping.Plo \
-	./$(DEPDIR)/msg_aggr.Plo ./$(DEPDIR)/net.Plo \
-	./$(DEPDIR)/node_conf.Plo ./$(DEPDIR)/node_features.Plo \
-	./$(DEPDIR)/node_select.Plo ./$(DEPDIR)/optz.Plo \
-	./$(DEPDIR)/pack.Plo ./$(DEPDIR)/parse_config.Plo \
-	./$(DEPDIR)/parse_time.Plo ./$(DEPDIR)/parse_value.Plo \
-	./$(DEPDIR)/plugin.Plo ./$(DEPDIR)/plugrack.Plo \
-	./$(DEPDIR)/plugstack.Plo ./$(DEPDIR)/power.Plo \
-	./$(DEPDIR)/prep.Plo ./$(DEPDIR)/print_fields.Plo \
-	./$(DEPDIR)/proc_args.Plo ./$(DEPDIR)/read_config.Plo \
-	./$(DEPDIR)/run_command.Plo ./$(DEPDIR)/run_in_daemon.Plo \
-	./$(DEPDIR)/site_factor.Plo \
+	./$(DEPDIR)/net.Plo ./$(DEPDIR)/node_conf.Plo \
+	./$(DEPDIR)/node_features.Plo ./$(DEPDIR)/node_select.Plo \
+	./$(DEPDIR)/optz.Plo ./$(DEPDIR)/pack.Plo \
+	./$(DEPDIR)/parse_config.Plo ./$(DEPDIR)/parse_time.Plo \
+	./$(DEPDIR)/parse_value.Plo ./$(DEPDIR)/plugin.Plo \
+	./$(DEPDIR)/plugrack.Plo ./$(DEPDIR)/plugstack.Plo \
+	./$(DEPDIR)/power.Plo ./$(DEPDIR)/prep.Plo \
+	./$(DEPDIR)/print_fields.Plo ./$(DEPDIR)/proc_args.Plo \
+	./$(DEPDIR)/read_config.Plo ./$(DEPDIR)/run_command.Plo \
+	./$(DEPDIR)/run_in_daemon.Plo ./$(DEPDIR)/site_factor.Plo \
 	./$(DEPDIR)/slurm_accounting_storage.Plo \
 	./$(DEPDIR)/slurm_acct_gather.Plo \
 	./$(DEPDIR)/slurm_acct_gather_energy.Plo \
@@ -287,7 +285,7 @@ am__depfiles_remade = ./$(DEPDIR)/assoc_mgr.Plo \
 	./$(DEPDIR)/timers.Plo ./$(DEPDIR)/track_script.Plo \
 	./$(DEPDIR)/tres_bind.Plo ./$(DEPDIR)/tres_frequency.Plo \
 	./$(DEPDIR)/uid.Plo ./$(DEPDIR)/util-net.Plo \
-	./$(DEPDIR)/working_cluster.Plo \
+	./$(DEPDIR)/working_cluster.Plo ./$(DEPDIR)/workq.Plo \
 	./$(DEPDIR)/write_labelled_message.Plo \
 	./$(DEPDIR)/x11_util.Plo ./$(DEPDIR)/xassert.Plo \
 	./$(DEPDIR)/xcgroup_read_config.Plo ./$(DEPDIR)/xhash.Plo \
@@ -316,10 +314,6 @@ SOURCES = $(libcommon_la_SOURCES) $(EXTRA_libcommon_la_SOURCES) \
 	$(libdaemonize_la_SOURCES) $(libeio_la_SOURCES) \
 	$(libspank_la_SOURCES) $(libcommon_o_SOURCES) \
 	$(libeio_o_SOURCES) $(libspank_o_SOURCES)
-DIST_SOURCES = $(libcommon_la_SOURCES) $(EXTRA_libcommon_la_SOURCES) \
-	$(libdaemonize_la_SOURCES) $(libeio_la_SOURCES) \
-	$(libspank_la_SOURCES) $(libcommon_o_SOURCES) \
-	$(libeio_o_SOURCES) $(libspank_o_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -344,8 +338,6 @@ am__define_uniq_tagged_files = \
   done | $(am__uniquify_input)`
 ETAGS = etags
 CTAGS = ctags
-am__DIST_COMMON = $(srcdir)/Makefile.in $(top_srcdir)/auxdir/depcomp
-DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 ACLOCAL = @ACLOCAL@
 AMTAR = @AMTAR@
 AM_DEFAULT_VERBOSITY = @AM_DEFAULT_VERBOSITY@
@@ -619,7 +611,6 @@ libcommon_la_SOURCES = \
 	xsignal.c xsignal.h		\
 	strnatcmp.c strnatcmp.h		\
 	forward.c forward.h     	\
-	msg_aggr.c msg_aggr.h     	\
 	strlcpy.c strlcpy.h		\
 	list.c list.h 			\
 	xtree.c xtree.h			\
@@ -671,6 +662,7 @@ libcommon_la_SOURCES = \
 	slurmdbd_defs.c slurmdbd_defs.h	\
 	slurmdbd_pack.c slurmdbd_pack.h	\
 	working_cluster.c working_cluster.h   \
+	workq.c workq.h			\
 	uid.c uid.h			\
 	util-net.c util-net.h		\
 	slurm_auth.c slurm_auth.h	\
@@ -688,6 +680,7 @@ libcommon_la_SOURCES = \
 	slurm_topology.c slurm_topology.h \
 	switch.c switch.h		\
 	macros.h			\
+	ref.h				\
 	slurm_selecttype_info.c 	\
 	slurm_selecttype_info.h		\
 	slurm_resource_info.c 		\
@@ -708,9 +701,6 @@ libcommon_la_SOURCES = \
 	node_conf.h node_conf.c		\
 	gpu.h gpu.c			\
 	gres.h gres.c			\
-	entity.h entity.c		\
-	layout.h layout.c		\
-	layouts_mgr.h layouts_mgr.c	\
 	mapping.c mapping.h		\
 	xcgroup_read_config.c xcgroup_read_config.h \
 	callerid.c callerid.h		\
@@ -723,6 +713,7 @@ libcommon_la_SOURCES = \
 	site_factor.c site_factor.h	\
 	cli_filter.c cli_filter.h	\
 	tres_bind.c tres_bind.h		\
+	cron.c cron.h			\
 	tres_frequency.c tres_frequency.h
 
 EXTRA_libcommon_la_SOURCES = \
@@ -834,10 +825,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cbuf.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cli_filter.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cpu_frequency.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cron.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/daemonize.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/data.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/eio.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/entity.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/env.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fd.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fetch_config.Plo@am__quote@ # am--include-marker
@@ -851,12 +842,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/io_hdr.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_options.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_resources.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/layout.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/layouts_mgr.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/list.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/log.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mapping.Plo@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/msg_aggr.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/net.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/node_conf.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/node_features.Plo@am__quote@ # am--include-marker
@@ -923,6 +911,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/uid.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/util-net.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/working_cluster.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/workq.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/write_labelled_message.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/x11_util.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/xassert.Plo@am__quote@ # am--include-marker
@@ -1017,40 +1006,6 @@ cscopelist-am: $(am__tagged_files)
 
 distclean-tags:
 	-rm -f TAGS ID GTAGS GRTAGS GSYMS GPATH tags
-
-distdir: $(BUILT_SOURCES)
-	$(MAKE) $(AM_MAKEFLAGS) distdir-am
-
-distdir-am: $(DISTFILES)
-	@srcdirstrip=`echo "$(srcdir)" | sed 's/[].[^$$\\*]/\\\\&/g'`; \
-	topsrcdirstrip=`echo "$(top_srcdir)" | sed 's/[].[^$$\\*]/\\\\&/g'`; \
-	list='$(DISTFILES)'; \
-	  dist_files=`for file in $$list; do echo $$file; done | \
-	  sed -e "s|^$$srcdirstrip/||;t" \
-	      -e "s|^$$topsrcdirstrip/|$(top_builddir)/|;t"`; \
-	case $$dist_files in \
-	  */*) $(MKDIR_P) `echo "$$dist_files" | \
-			   sed '/\//!d;s|^|$(distdir)/|;s,/[^/]*$$,,' | \
-			   sort -u` ;; \
-	esac; \
-	for file in $$dist_files; do \
-	  if test -f $$file || test -d $$file; then d=.; else d=$(srcdir); fi; \
-	  if test -d $$d/$$file; then \
-	    dir=`echo "/$$file" | sed -e 's,/[^/]*$$,,'`; \
-	    if test -d "$(distdir)/$$file"; then \
-	      find "$(distdir)/$$file" -type d ! -perm -700 -exec chmod u+rwx {} \;; \
-	    fi; \
-	    if test -d $(srcdir)/$$file && test $$d != $(srcdir); then \
-	      cp -fpR $(srcdir)/$$file "$(distdir)$$dir" || exit 1; \
-	      find "$(distdir)/$$file" -type d ! -perm -700 -exec chmod u+rwx {} \;; \
-	    fi; \
-	    cp -fpR $$d/$$file "$(distdir)$$dir" || exit 1; \
-	  else \
-	    test -f "$(distdir)/$$file" \
-	    || cp -p $$d/$$file "$(distdir)/$$file" \
-	    || exit 1; \
-	  fi; \
-	done
 check-am: all-am
 check: check-am
 all-am: Makefile $(PROGRAMS) $(LTLIBRARIES)
@@ -1097,10 +1052,10 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/cbuf.Plo
 	-rm -f ./$(DEPDIR)/cli_filter.Plo
 	-rm -f ./$(DEPDIR)/cpu_frequency.Plo
+	-rm -f ./$(DEPDIR)/cron.Plo
 	-rm -f ./$(DEPDIR)/daemonize.Plo
 	-rm -f ./$(DEPDIR)/data.Plo
 	-rm -f ./$(DEPDIR)/eio.Plo
-	-rm -f ./$(DEPDIR)/entity.Plo
 	-rm -f ./$(DEPDIR)/env.Plo
 	-rm -f ./$(DEPDIR)/fd.Plo
 	-rm -f ./$(DEPDIR)/fetch_config.Plo
@@ -1114,12 +1069,9 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/io_hdr.Plo
 	-rm -f ./$(DEPDIR)/job_options.Plo
 	-rm -f ./$(DEPDIR)/job_resources.Plo
-	-rm -f ./$(DEPDIR)/layout.Plo
-	-rm -f ./$(DEPDIR)/layouts_mgr.Plo
 	-rm -f ./$(DEPDIR)/list.Plo
 	-rm -f ./$(DEPDIR)/log.Plo
 	-rm -f ./$(DEPDIR)/mapping.Plo
-	-rm -f ./$(DEPDIR)/msg_aggr.Plo
 	-rm -f ./$(DEPDIR)/net.Plo
 	-rm -f ./$(DEPDIR)/node_conf.Plo
 	-rm -f ./$(DEPDIR)/node_features.Plo
@@ -1186,6 +1138,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/uid.Plo
 	-rm -f ./$(DEPDIR)/util-net.Plo
 	-rm -f ./$(DEPDIR)/working_cluster.Plo
+	-rm -f ./$(DEPDIR)/workq.Plo
 	-rm -f ./$(DEPDIR)/write_labelled_message.Plo
 	-rm -f ./$(DEPDIR)/x11_util.Plo
 	-rm -f ./$(DEPDIR)/xassert.Plo
@@ -1246,10 +1199,10 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/cbuf.Plo
 	-rm -f ./$(DEPDIR)/cli_filter.Plo
 	-rm -f ./$(DEPDIR)/cpu_frequency.Plo
+	-rm -f ./$(DEPDIR)/cron.Plo
 	-rm -f ./$(DEPDIR)/daemonize.Plo
 	-rm -f ./$(DEPDIR)/data.Plo
 	-rm -f ./$(DEPDIR)/eio.Plo
-	-rm -f ./$(DEPDIR)/entity.Plo
 	-rm -f ./$(DEPDIR)/env.Plo
 	-rm -f ./$(DEPDIR)/fd.Plo
 	-rm -f ./$(DEPDIR)/fetch_config.Plo
@@ -1263,12 +1216,9 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/io_hdr.Plo
 	-rm -f ./$(DEPDIR)/job_options.Plo
 	-rm -f ./$(DEPDIR)/job_resources.Plo
-	-rm -f ./$(DEPDIR)/layout.Plo
-	-rm -f ./$(DEPDIR)/layouts_mgr.Plo
 	-rm -f ./$(DEPDIR)/list.Plo
 	-rm -f ./$(DEPDIR)/log.Plo
 	-rm -f ./$(DEPDIR)/mapping.Plo
-	-rm -f ./$(DEPDIR)/msg_aggr.Plo
 	-rm -f ./$(DEPDIR)/net.Plo
 	-rm -f ./$(DEPDIR)/node_conf.Plo
 	-rm -f ./$(DEPDIR)/node_features.Plo
@@ -1335,6 +1285,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/uid.Plo
 	-rm -f ./$(DEPDIR)/util-net.Plo
 	-rm -f ./$(DEPDIR)/working_cluster.Plo
+	-rm -f ./$(DEPDIR)/workq.Plo
 	-rm -f ./$(DEPDIR)/write_labelled_message.Plo
 	-rm -f ./$(DEPDIR)/x11_util.Plo
 	-rm -f ./$(DEPDIR)/xassert.Plo
@@ -1368,8 +1319,8 @@ uninstall-am:
 	clean-generic clean-libtool clean-noinstLTLIBRARIES \
 	clean-noinstPROGRAMS cscopelist-am ctags ctags-am distclean \
 	distclean-compile distclean-generic distclean-libtool \
-	distclean-tags distdir dvi dvi-am html html-am info info-am \
-	install install-am install-data install-data-am install-dvi \
+	distclean-tags dvi dvi-am html html-am info info-am install \
+	install-am install-data install-data-am install-dvi \
 	install-dvi-am install-exec install-exec-am install-html \
 	install-html-am install-info install-info-am install-man \
 	install-pdf install-pdf-am install-ps install-ps-am \

@@ -49,6 +49,7 @@
 #include <syslog.h>
 #include <stdio.h>
 
+#include "slurm/slurm.h"
 #include "src/common/macros.h"
 #include "src/common/cbuf.h"
 
@@ -236,6 +237,20 @@ extern int get_log_level(void);
  */
 extern int get_sched_log_level(void);
 
+
+#define STEP_ID_FLAG_NONE      0x0000
+#define STEP_ID_FLAG_PS        0x0001
+#define STEP_ID_FLAG_NO_JOB    0x0002
+#define STEP_ID_FLAG_NO_PREFIX 0x0004
+#define STEP_ID_FLAG_SPACE     0x0008
+
+/*
+ * log_build_step_id_str() - print a slurm_step_id_t as " StepId=...", with
+ * Batch and Extern used as appropriate.
+ */
+extern char *log_build_step_id_str(
+	slurm_step_id_t *step_id, char *buf, int buf_size, uint16_t flags);
+
 /*
  * the following log a message to the log facility at the appropriate level:
  *
@@ -264,37 +279,64 @@ extern void fatal_abort(const char *, ...)
 extern void fatal(const char *, ...)
 	__attribute__((format (printf, 1, 2))) __attribute__((noreturn));
 int	error(const char *, ...) __attribute__ ((format (printf, 1, 2)));
-void	info(const char *, ...) __attribute__ ((format (printf, 1, 2)));
-void	verbose(const char *, ...) __attribute__ ((format (printf, 1, 2)));
-#define debug(fmt, ...)						\
-	do {								\
-		if (get_log_level() >= LOG_LEVEL_DEBUG)			\
-			log_var(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__);	\
-	} while (0)
-#define debug2(fmt, ...)						\
-	do {								\
-		if (get_log_level() >= LOG_LEVEL_DEBUG2)		\
-			log_var(LOG_LEVEL_DEBUG2, fmt, ##__VA_ARGS__);	\
-	} while (0)
+void	slurm_info(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	slurm_verbose(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+
+extern const char plugin_type[];
+
+#ifdef SLURM_PLUGIN_DEBUG
 /*
- * Debug levels higher than debug3 are not written to stderr in the
- * slurmstepd process after stderr is connected back to the client (srun).
+ * Print plugins with the plugin_type and func
  */
-#define debug3(fmt, ...)						\
-	do {								\
-		if (get_log_level() >= LOG_LEVEL_DEBUG3)		\
-			log_var(LOG_LEVEL_DEBUG3, fmt, ##__VA_ARGS__);	\
+#define format_print(l, fmt, ...)			\
+	if (get_log_level() >= l)			\
+		log_var(l, "%s: %s: "fmt, plugin_type,	\
+			__func__, ##__VA_ARGS__);
+#else
+/*
+ * Normal log messages
+ */
+#define format_print(l, fmt, ...)			\
+	if (get_log_level() >= l)			\
+		log_var(l, fmt, ##__VA_ARGS__);
+#endif //SLURM_PLUGIN_DEBUG
+
+#define info(fmt, ...)		\
+	do {			\
+	format_print(LOG_LEVEL_INFO, fmt, ##__VA_ARGS__);\
 	} while (0)
-#define debug4(fmt, ...)						\
-	do {								\
-		if (get_log_level() >= LOG_LEVEL_DEBUG4)		\
-			log_var(LOG_LEVEL_DEBUG4, fmt, ##__VA_ARGS__);	\
+
+#define verbose(fmt, ...)	\
+	do {			\
+	format_print(LOG_LEVEL_VERBOSE, fmt, ##__VA_ARGS__);\
 	} while (0)
-#define debug5(fmt, ...)						\
-	do {								\
-		if (get_log_level() >= LOG_LEVEL_DEBUG5)		\
-			log_var(LOG_LEVEL_DEBUG5, fmt, ##__VA_ARGS__);	\
+
+#define debug(fmt, ...)		\
+	do {			\
+	format_print(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__);\
 	} while (0)
+
+#define debug2(fmt, ...)	\
+	do {			\
+	format_print(LOG_LEVEL_DEBUG2, fmt, ##__VA_ARGS__);\
+	} while (0)
+
+#define debug3(fmt, ...)	\
+	do {			\
+	format_print(LOG_LEVEL_DEBUG3, fmt, ##__VA_ARGS__);\
+	} while (0)
+
+#define debug4(fmt, ...)	\
+	do {			\
+	format_print(LOG_LEVEL_DEBUG4, fmt, ##__VA_ARGS__);\
+	} while (0)
+
+#define debug5(fmt, ...)	\
+	do {			\
+	format_print(LOG_LEVEL_DEBUG5, fmt, ##__VA_ARGS__);\
+	} while (0)
+
+
 /*
  * Like above logging messages, but prepend "sched: " to the log entry
  * and route the message into the sched_log if enabled.
@@ -337,8 +379,26 @@ void spank_log(const char *, ...) __attribute__ ((format (printf, 1, 2)));
  */
 #define log_flag(flag, fmt, ...)					\
 	do {								\
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_##flag)	\
-			log_var(LOG_LEVEL_INFO, fmt, ##__VA_ARGS__);	\
+		if (slurm_conf.debug_flags & DEBUG_FLAG_##flag)		\
+			format_print(LOG_LEVEL_VERBOSE, #flag ": " fmt,	\
+				     ##__VA_ARGS__);			\
 	} while (0)
+
+#define log_flag_hex(flag, data, len, fmt, ...)                             \
+	for (size_t i = 0; (slurm_conf.debug_flags & DEBUG_FLAG_##flag) &&  \
+			   data && (len > 0) && (i < len) &&                \
+			   (i < (16 * 16)); ) {                             \
+		int remain = len - i;                                       \
+		int print = ((remain <= 16) ? remain : 16);                 \
+		char *phex = bytes_to_hex((data + i), print, " ");          \
+		char *pstr = bytes_to_printable((data + i), print, '.');    \
+									    \
+		format_print(LOG_LEVEL_VERBOSE,                             \
+			     #flag ": " fmt " [%04zu/%04zu] 0x%s \"%s\"",   \
+			     ##__VA_ARGS__, i, (size_t)len, phex, pstr);    \
+		i += print;                                                 \
+		xfree(phex);                                                \
+		xfree(pstr);                                                \
+	}
 
 #endif /* !_LOG_H */

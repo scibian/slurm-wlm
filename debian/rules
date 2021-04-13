@@ -26,8 +26,8 @@ override_dh_auto_clean:
 # hardening-no-fortify-functions
 # Notice that -g in CFLAGS is still provided by dpkg-buildflags
 override_dh_auto_configure:
-	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix $(ENABLEDEPRECATED)
-	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix $(ENABLEDEPRECATED)
+	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
+	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
 
 override_dh_auto_build:
 	dh_auto_build
@@ -115,7 +115,7 @@ override_dh_auto_install:
 	mv -v debian/tmp-emulator/usr/bin/sstat	debian/tmp-emulator/usr/bin/sstat-emulator
 
 override_dh_strip:
-	dh_strip -plibslurm35
+	dh_strip -plibslurm36
 	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
 	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
@@ -135,6 +135,7 @@ override_dh_strip:
 	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
 	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
+	dh_strip -pslurmrestd --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \
 		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
 

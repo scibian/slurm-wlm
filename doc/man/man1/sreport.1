@@ -1,4 +1,4 @@
-.TH sreport "1" "Slurm Commands" "November 2020" "Slurm Commands"
+.TH sreport "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 sreport \- Generate reports from the slurm accounting data.
@@ -189,6 +189,13 @@ UserUtilizationByWckey, Utilization, WCKeyUtilizationByUser
 .B user
 \- TopUsage
 
+.LP
+\fBNOTE\fR: If \fBOverSubscribe\fR is configured to \fBFORCE\fR or \fBYES\fR
+in your slurm.conf and the system is not configured to use preemption
+(\fBPreemptMode=OFF\fR) accounting can easily grow to values greater than
+the actual utilization. It may be common on such systems to get error messages
+in the slurmdbd log stating: "We have more allocated time than is possible."
+
 .SH "REPORT DESCRIPTION"
 
 .TP
@@ -229,16 +236,16 @@ responding (assuming TrackSlurmctldDown is set in slurmdbd.conf).
 .IP Idle
 Time where nodes had no active jobs or reservations.
 .IP Overcommited
-Time that the nodes were over allocated, either with the \fB-O,
---overcommit\fP flag at submission time or \fBOverSubscribe\fP set to
-FORCE in the slurm.conf. This time is not counted against the total
-reported time.
+Time of eligible jobs waiting in the queue over the Reserved time. Unlike
+Reserved, this has no limit. It is typically useful to determine whether your
+system is overloaded and by how much.
 .IP PlannedDown
 Time that nodes were in use by a reservation created with the MAINT flag
 but not the IGNORE_JOBS flag.
 .IP Reserved
 Time that a node spent idle with eligible jobs in the queue that were
-unable to start due to time or size constraints. If this value is
+unable to start due to time or size constraints. The maximum time is limited
+to the amount of time possible on the system. If this value is
 not of importance for you then the number can be grouped with idle time.
 .IP TresCount
 Configured number of TRES' on the reported nodes. See also the
@@ -286,12 +293,18 @@ specified by the 'grouping=' option.
 .TP
 .B reservation Utilization
 This report will display total usage for reservations on the systems.
+Note: Time requests on this report will not truncate the time the reservation
+used, only the reservations that ran at any time during the period requested.
 
 .TP
 .B user TopUsage
-Displays the top users on a cluster.  Use the group option to group
-accounts together.  The default is to have a different line for each
-user account combination.
+Displays the top users on a cluster, i.e. users with the highest CPUTime.
+Use the group option to group accounts together.
+The default is to have a different line for each user account combination.
+
+\fBNOTE\fR: TopUsage is always based on CPUTime. The \-T, \-\-tres option will
+show the TRES usage of the top users, but the users are always sorted by
+their CPUTime, not by the specified TRES.
 
 .TP
 Each report type has various options...
@@ -318,6 +331,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 .B Format=<OPT>
@@ -341,6 +356,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
+.br
+now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 .ad
 .TP
 .B OPTIONS SPECIFICALLY FOR CLUSTER REPORTS
@@ -461,7 +478,7 @@ Cluster, Login, Proper, TresCount, Used, Wckey
 .in 10
 Utilization:
 .in 14
-Allocated, Cluster, Down, Idle, Overcommited, PlannedDown, Reported, Reserved,
+Allocated, Cluster, Down, Idle, Overcommitted, PlannedDown, Reported, Reserved,
 TresCount, TresName
 
 .TP
@@ -529,26 +546,58 @@ The location of the Slurm configuration file.
 
 .in 0
 .SH "EXAMPLES"
+
 .TP
-\fBsreport job sizesbyaccount\fP
+Report number of jobs per account according to different job size bins:
+
+.nf
+$ sreport job sizesbyaccount
+.fi
+
 .TP
-\fBsreport cluster utilization\fP
+Report cluster utilization:
+
+.nf
+$ sreport cluster utilization
+.fi
+
 .TP
-\fBsreport user top\fP
+Report top usage:
+
+.nf
+$ sreport user top
+.fi
+
 .TP
-\fBsreport job sizesbyaccount All_Clusters users=gore1 account=environ PrintJobCount\fP
-Report number of jobs by user gore1 within the environ account
+Report number of jobs by user gore1 within the environ account:
+
+.nf
+$ sreport job sizesbyaccount All_Clusters users=gore1 account=environ PrintJobCount
+.fi
+
 .TP
-\fBsreport cluster AccountUtilizationByUser cluster=zeus user=gore1 start=2/23/08 end=2/24/09 format=Accounts,Cluster,TresCount,Login,Proper,Used\fP
-Report cluster account utilization with the specified fields during
-the specified 24 hour day of February 23, 2009, by user gore1
+Report cluster account utilization with the specified fields during the \
+specified 24 hour day of February 23, 2009, by user gore1:
+
+.nf
+$ sreport cluster AccountUtilizationByUser cluster=zeus user=gore1 \
+start=2/23/09 end=2/24/09 format=Accounts,Cluster,TresCount,Login,Proper,Used
+.fi
+
 .TP
-\fBsreport cluster AccountUtilizationByUser cluster=zeus accounts=lc start=2/23/08 end=2/24/09\fP
-Report cluster account utilization by user in the LC account on
-cluster zeus
+Report cluster account utilization by user in the LC account on cluster zeus:
+
+.nf
+$ sreport cluster AccountUtilizationByUser cluster=zeus accounts=lc \
+start=2/23/09 end=2/24/09
+.fi
+
 .TP
-\fBsreport user topusage start=2/16/09 end=2/23/09 \-t percent account=lc\fP
-Report top usage in percent of the lc account during the specified week
+Report top usage in percent of the lc account during the specified week:
+
+.nf
+$ sreport user topusage start=2/16/09 end=2/23/09 \-t percent account=lc
+.fi
 
 .SH "COPYING"
 Copyright (C) 2009\-2010 Lawrence Livermore National Security.

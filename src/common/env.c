@@ -287,7 +287,7 @@ int setup_env(env_t *env, bool preserve_env)
 {
 	int rc = SLURM_SUCCESS;
 	char *addr, *dist = NULL, *lllp_dist = NULL;
-	char addrbuf[INET_ADDRSTRLEN];
+	char addrbuf[INET6_ADDRSTRLEN];
 
 	if (env == NULL)
 		return SLURM_ERROR;
@@ -326,6 +326,13 @@ int setup_env(env_t *env, bool preserve_env)
 		rc = SLURM_ERROR;
 	}
 
+	if (env->ntasks_per_gpu &&
+	    setenvf(&env->env, "SLURM_NTASKS_PER_GPU", "%d",
+		    env->ntasks_per_gpu)) {
+		error("Unable to set SLURM_NTASKS_PER_GPU");
+		rc = SLURM_ERROR;
+	}
+
 	if (env->ntasks_per_node
 	   && setenvf(&env->env, "SLURM_NTASKS_PER_NODE", "%d",
 		      env->ntasks_per_node) ) {
@@ -344,6 +351,13 @@ int setup_env(env_t *env, bool preserve_env)
 	   && setenvf(&env->env, "SLURM_NTASKS_PER_CORE", "%d",
 		      env->ntasks_per_core) ) {
 		error("Unable to set SLURM_NTASKS_PER_CORE");
+		rc = SLURM_ERROR;
+	}
+
+	if (env->ntasks_per_tres
+	    && setenvf(&env->env, "SLURM_NTASKS_PER_TRES", "%d",
+		      env->ntasks_per_tres) ) {
+		error("Unable to set SLURM_NTASKS_PER_TRES");
 		rc = SLURM_ERROR;
 	}
 
@@ -375,16 +389,15 @@ int setup_env(env_t *env, bool preserve_env)
 		}
 
 
-	if (env->cpu_bind_type) {
+	if (env->cpu_bind_type && !env->batch_flag &&
+	    (env->stepid != SLURM_INTERACTIVE_STEP)) {
 		char *str_verbose, *str_bind1 = NULL, *str_bind2 = NULL;
 		char *str_bind_list, *str_bind_type = NULL, *str_bind = NULL;
 
-		if (!env->batch_flag) {
-			unsetenvp(env->env, "SLURM_CPU_BIND");
-			unsetenvp(env->env, "SLURM_CPU_BIND_LIST");
-			unsetenvp(env->env, "SLURM_CPU_BIND_TYPE");
-			unsetenvp(env->env, "SLURM_CPU_BIND_VERBOSE");
-		}
+		unsetenvp(env->env, "SLURM_CPU_BIND");
+		unsetenvp(env->env, "SLURM_CPU_BIND_LIST");
+		unsetenvp(env->env, "SLURM_CPU_BIND_TYPE");
+		unsetenvp(env->env, "SLURM_CPU_BIND_VERBOSE");
 
 		if (env->cpu_bind_type & CPU_BIND_VERBOSE)
 			str_verbose = "verbose";
@@ -440,33 +453,31 @@ int setup_env(env_t *env, bool preserve_env)
 		} else
 			str_bind_type = xstrdup("");
 
-		if (!env->batch_flag) {
-			if (setenvf(&env->env, "SLURM_CPU_BIND", "%s", str_bind)) {
-				error("Unable to set SLURM_CPU_BIND");
-				rc = SLURM_ERROR;
-			}
-			if (setenvf(&env->env, "SLURM_CPU_BIND_LIST", "%s",
-				    str_bind_list)) {
-				error("Unable to set SLURM_CPU_BIND_LIST");
-				rc = SLURM_ERROR;
-			}
-			if (setenvf(&env->env, "SLURM_CPU_BIND_TYPE", "%s",
-				    str_bind_type)) {
-				error("Unable to set SLURM_CPU_BIND_TYPE");
-				rc = SLURM_ERROR;
-			}
-			if (setenvf(&env->env, "SLURM_CPU_BIND_VERBOSE", "%s",
-				    str_verbose)) {
-				error("Unable to set SLURM_CPU_BIND_VERBOSE");
-				rc = SLURM_ERROR;
-			}
+		if (setenvf(&env->env, "SLURM_CPU_BIND", "%s", str_bind)) {
+			error("Unable to set SLURM_CPU_BIND");
+			rc = SLURM_ERROR;
+		}
+		if (setenvf(&env->env, "SLURM_CPU_BIND_LIST", "%s",
+			    str_bind_list)) {
+			error("Unable to set SLURM_CPU_BIND_LIST");
+			rc = SLURM_ERROR;
+		}
+		if (setenvf(&env->env, "SLURM_CPU_BIND_TYPE", "%s",
+			    str_bind_type)) {
+			error("Unable to set SLURM_CPU_BIND_TYPE");
+			rc = SLURM_ERROR;
+		}
+		if (setenvf(&env->env, "SLURM_CPU_BIND_VERBOSE", "%s",
+			    str_verbose)) {
+			error("Unable to set SLURM_CPU_BIND_VERBOSE");
+			rc = SLURM_ERROR;
 		}
 
 		xfree(str_bind);
 		xfree(str_bind_type);
 	}
 
-	if (env->mem_bind_type) {
+	if (env->mem_bind_type && (env->stepid != SLURM_INTERACTIVE_STEP)) {
 		char *str_verbose, *str_bind_type = NULL, *str_bind_list;
 		char *str_prefer = NULL, *str_bind = NULL;
 		char *str_bind_sort = NULL;
@@ -707,6 +718,13 @@ int setup_env(env_t *env, bool preserve_env)
 		rc = SLURM_ERROR;
 	}
 
+	if (!preserve_env && env->threads_per_core &&
+	    setenvf(&env->env, "SLURM_THREADS_PER_CORE", "%d",
+		    env->threads_per_core)) {
+		error("Can't set SLURM_THREADS_PER_CORE env variable");
+		rc = SLURM_ERROR;
+	}
+
 	if (env->comm_port
 	    && setenvf (&env->env, "SLURM_SRUN_COMM_PORT", "%u",
 			env->comm_port)) {
@@ -715,17 +733,8 @@ int setup_env(env_t *env, bool preserve_env)
 	}
 
 	if (env->cli) {
-
-		slurm_print_slurm_addr (env->cli, addrbuf, INET_ADDRSTRLEN);
-
-		/*
-		 *  XXX: Eventually, need a function for slurm_addrs that
-		 *   returns just the IP address (not addr:port)
-		 */
-
-		if ((dist = strchr (addrbuf, ':')) != NULL)
-			*dist = '\0';
-		setenvf (&env->env, "SLURM_LAUNCH_NODE_IPADDR", "%s", addrbuf);
+		slurm_get_ip_str(env->cli, addrbuf, INET6_ADDRSTRLEN);
+		setenvf(&env->env, "SLURM_LAUNCH_NODE_IPADDR", "%s", addrbuf);
 	}
 
 	if (env->sgtids &&
@@ -799,14 +808,13 @@ int setup_env(env_t *env, bool preserve_env)
 		}
 	}
 
-	if (slurmctld_conf.slurmctld_addr)
-		addr = slurmctld_conf.slurmctld_addr;
+	if (slurm_conf.slurmctld_addr)
+		addr = slurm_conf.slurmctld_addr;
 	else
-		addr = slurmctld_conf.control_addr[0];
+		addr = slurm_conf.control_addr[0];
 	setenvf(&env->env, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d:%d",
-		slurmctld_conf.cluster_name, addr,
-		slurmctld_conf.slurmctld_port, SLURM_PROTOCOL_VERSION,
-		select_get_plugin_id());
+	        slurm_conf.cluster_name, addr, slurm_conf.slurmctld_port,
+	        SLURM_PROTOCOL_VERSION, select_get_plugin_id());
 
 	return rc;
 }
@@ -983,6 +991,11 @@ extern int env_array_for_job(char ***dest,
 				    het_job_offset, "%s", tmp);
 	xfree(tmp);
 
+	if (desc->threads_per_core != NO_VAL16)
+		env_array_overwrite_het_fmt(dest, "SLURM_THREADS_PER_CORE",
+					    het_job_offset, "%d",
+					    desc->threads_per_core);
+
 	if (alloc->pn_min_memory & MEM_PER_CPU) {
 		uint64_t tmp_mem = alloc->pn_min_memory & (~MEM_PER_CPU);
 		env_array_overwrite_het_fmt(dest, "SLURM_MEM_PER_CPU",
@@ -1150,7 +1163,7 @@ extern int
 env_array_for_batch_job(char ***dest, const batch_job_launch_msg_t *batch,
 			const char *node_name)
 {
-	char *tmp = NULL, *cluster_name;
+	char *tmp = NULL;
 	uint32_t num_cpus = 0;
 	int i;
 	slurm_step_layout_t *step_layout = NULL;
@@ -1175,12 +1188,8 @@ env_array_for_batch_job(char ***dest, const batch_job_launch_msg_t *batch,
 		num_cpus += batch->cpu_count_reps[i] * batch->cpus_per_node[i];
 	}
 
-	cluster_name = slurm_get_cluster_name();
-	if (cluster_name) {
-		env_array_overwrite_fmt(dest, "SLURM_CLUSTER_NAME", "%s",
-					cluster_name);
-		xfree(cluster_name);
-	}
+	env_array_overwrite_fmt(dest, "SLURM_CLUSTER_NAME", "%s",
+	                        slurm_conf.cluster_name);
 
 	env_array_overwrite_fmt(dest, "SLURM_JOB_ID", "%u", batch->job_id);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NUM_NODES", "%u",
@@ -1890,16 +1899,14 @@ char **env_array_from_file(const char *fname)
  */
 static char **_load_env_cache(const char *username)
 {
-	char *state_save_loc, fname[MAXPATHLEN];
+	char fname[MAXPATHLEN];
 	char *line, name[256], *value;
 	char **env = NULL;
 	FILE *fp;
 	int i;
 
-	state_save_loc = slurm_get_state_save_location();
-	i = snprintf(fname, sizeof(fname), "%s/env_cache/%s", state_save_loc,
-		     username);
-	xfree(state_save_loc);
+	i = snprintf(fname, sizeof(fname), "%s/env_cache/%s",
+		     slurm_conf.state_save_location, username);
 	if (i < 0) {
 		error("Environment cache filename overflow");
 		return NULL;
@@ -1983,9 +1990,7 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 		return NULL;
 	}
 
-	config_timeout = slurm_get_env_timeout();
-
-	if (config_timeout == 0)	/* just read directly from cache */
+	if (!slurm_conf.get_env_timeout)	/* just read directly from cache */
 		return _load_env_cache(username);
 
 	if (stat(SUCMD, &buf))
@@ -2019,7 +2024,9 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 		return NULL;
 	}
 	if (child == 0) {
-		setenv("ENVIRONMENT", "BATCH", 1);
+		char **tmp_env = NULL;
+		tmp_env = env_array_create();
+		env_array_overwrite(&tmp_env, "ENVIRONMENT", "BATCH");
 		setpgid(0, 0);
 		close(0);
 		if ((fd1 = open("/dev/null", O_RDONLY)) == -1)
@@ -2029,14 +2036,14 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 		if ((fd2 = open("/dev/null", O_WRONLY)) == -1)
 			error("%s: open(/dev/null): %m", __func__);
 		if      (mode == 1)
-			execl(SUCMD, "su", username, "-c", cmdstr, NULL);
+			execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
 		else if (mode == 2)
-			execl(SUCMD, "su", "-", username, "-c", cmdstr, NULL);
+			execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
 		else {	/* Default system configuration */
 #ifdef LOAD_ENV_NO_LOGIN
-			execl(SUCMD, "su", username, "-c", cmdstr, NULL);
+			execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
 #else
-			execl(SUCMD, "su", "-", username, "-c", cmdstr, NULL);
+			execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
 #endif
 		}
 		if (fd1 >= 0)	/* Avoid Coverity resource leak notification */
@@ -2058,7 +2065,7 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 
 	/* Read all of the output from /bin/su into buffer */
 	if (timeout == 0)
-		timeout = config_timeout;	/* != 0 test above */
+		timeout = slurm_conf.get_env_timeout;	/* != 0 test above */
 	found = 0;
 	buf_read = 0;
 	buffer = xmalloc(ENV_BUFSIZE);

@@ -18,6 +18,7 @@ slurmctld_SOURCES =     \
 	burst_buffer.c	\
 	burst_buffer.h	\
 	controller.c 	\
+	crontab.c 	\
 	fed_mgr.c 	\
 	fed_mgr.h 	\
 	front_end.c	\
@@ -47,8 +48,6 @@ slurmctld_SOURCES =     \
 	port_mgr.h	\
 	power_save.c	\
 	power_save.h	\
-	powercapping.c	\
-	powercapping.h	\
 	preempt.c	\
 	preempt.h	\
 	prep_slurmctld.c \
@@ -58,6 +57,8 @@ slurmctld_SOURCES =     \
 	read_config.h	\
 	reservation.c	\
 	reservation.h	\
+	rpc_queue.c	\
+	rpc_queue.h	\
 	sched_plugin.c	\
 	sched_plugin.h	\
 	slurmctld.h	\

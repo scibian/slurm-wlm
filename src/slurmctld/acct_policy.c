@@ -107,9 +107,8 @@ static void _get_unique_job_node_cnt(job_record_t *job_ptr,
 			uint64_t init_cnt = bit_set_count(
 				job_ptr->job_resrcs->node_bitmap);
 			*node_cnt = init_cnt - overlap_cnt;
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_TRES_NODE)
-				info("%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
-				     __func__, job_ptr, init_cnt, *node_cnt);
+			log_flag(TRES_NODE, "%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
+				 __func__, job_ptr, init_cnt, *node_cnt);
 		}
 	} else if (job_ptr->details && job_ptr->details->req_node_bitmap &&
 		   grp_node_bitmap) {
@@ -117,9 +116,8 @@ static void _get_unique_job_node_cnt(job_record_t *job_ptr,
 			job_ptr->details->req_node_bitmap, grp_node_bitmap);
 		if (overlap_cnt <= *node_cnt) {
 			*node_cnt -=  overlap_cnt;
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_TRES_NODE)
-				info("%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
-				     __func__, job_ptr, *node_cnt + overlap_cnt, *node_cnt);
+			log_flag(TRES_NODE, "%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
+				 __func__, job_ptr, *node_cnt + overlap_cnt, *node_cnt);
 		}
 	}
 }
@@ -134,9 +132,6 @@ static void _add_usage_node_bitmap(job_record_t *job_ptr,
 				   uint16_t **grp_node_job_cnt,
 				   uint64_t *grp_used_tres)
 {
-	static int node_cnt = -1;
-	int i, i_first, i_last;
-
 	xassert(grp_node_bitmap);
 	xassert(grp_node_job_cnt);
 	xassert(grp_used_tres);
@@ -156,26 +151,12 @@ static void _add_usage_node_bitmap(job_record_t *job_ptr,
 		}
 		return;
 	}
-	if (*grp_node_bitmap)
-		bit_or(*grp_node_bitmap, job_ptr->job_resrcs->node_bitmap);
-	else
-		*grp_node_bitmap = bit_copy(job_ptr->job_resrcs->node_bitmap);
 
-	if (!*grp_node_job_cnt) {
-		if (node_cnt == -1)
-			node_cnt = bit_size(*grp_node_bitmap);
-		*grp_node_job_cnt = xcalloc(node_cnt, sizeof(uint16_t));
-	}
+	slurmdb_merge_grp_node_usage(grp_node_bitmap,
+				     grp_node_job_cnt,
+				     job_ptr->job_resrcs->node_bitmap,
+				     NULL);
 
-	i_first = bit_ffs(job_ptr->job_resrcs->node_bitmap);
-	if (i_first == -1)
-		i_last = -2;
-	else
-		i_last = bit_fls(job_ptr->job_resrcs->node_bitmap);
-	for (i = i_first; i <= i_last; i++) {
-		if (bit_test(job_ptr->job_resrcs->node_bitmap, i))
-			(*grp_node_job_cnt)[i]++;
-	}
 	*grp_used_tres = bit_set_count(*grp_node_bitmap);
 }
 
@@ -2758,12 +2739,9 @@ static void _add_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 				      slurmdb_used_limits_t *used_limits_u2,
 				      int cnt)
 {
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE) {
-		info("%s: Adding %d to assoc_ptr %p (%p %p %p %p %p %p)",
-		     __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
-		     used_limits_u1, qos_ptr_2, used_limits_a2,
-		     used_limits_u2);
-	}
+	log_flag(ACCRUE, "%s: Adding %d to assoc_ptr %p (%p %p %p %p %p %p)",
+		 __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
+		 used_limits_u1, qos_ptr_2, used_limits_a2, used_limits_u2);
 
 	if (qos_ptr_1)
 		qos_ptr_1->usage->accrue_cnt += cnt;
@@ -2780,13 +2758,11 @@ static void _add_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 		used_limits_u2->accrue_cnt += cnt;
 
 	while (assoc_ptr) {
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE) {
-			info("assoc_id %u(%s/%s/%s/%p) added %d count %d",
-			     assoc_ptr->id, assoc_ptr->acct,
-			     assoc_ptr->user, assoc_ptr->partition,
-			     assoc_ptr->usage, cnt,
-			     assoc_ptr->usage->accrue_cnt);
-		}
+		log_flag(ACCRUE, "assoc_id %u(%s/%s/%s/%p) added %d count %d",
+			 assoc_ptr->id, assoc_ptr->acct, assoc_ptr->user,
+			 assoc_ptr->partition, assoc_ptr->usage, cnt,
+			 assoc_ptr->usage->accrue_cnt);
+
 		assoc_ptr->usage->accrue_cnt += cnt;
 		/* now go up the hierarchy */
 		assoc_ptr = assoc_ptr->usage->parent_assoc_ptr;
@@ -2802,12 +2778,9 @@ static void _remove_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 					 slurmdb_used_limits_t *used_limits_u2,
 					 int cnt)
 {
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE) {
-		info("%s: Removing %d from assoc_ptr %p (%p %p %p %p %p %p)",
-		     __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
-		     used_limits_u1, qos_ptr_2, used_limits_a2,
-		     used_limits_u2);
-	}
+	log_flag(ACCRUE, "%s: Removing %d from assoc_ptr %p (%p %p %p %p %p %p)",
+		 __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
+		 used_limits_u1, qos_ptr_2, used_limits_a2, used_limits_u2);
 
 	if (qos_ptr_1) {
 		if (qos_ptr_1->usage->accrue_cnt >= cnt)
@@ -2883,13 +2856,11 @@ static void _remove_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 
 	while (assoc_ptr) {
 		if (assoc_ptr->usage->accrue_cnt >= cnt) {
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE) {
-				info("assoc_id %u(%s/%s/%s/%p) removed %d count %d",
-				     assoc_ptr->id, assoc_ptr->acct,
-				     assoc_ptr->user, assoc_ptr->partition,
-				     assoc_ptr->usage, cnt,
-				     assoc_ptr->usage->accrue_cnt);
-			}
+			log_flag(ACCRUE, "assoc_id %u(%s/%s/%s/%p) removed %d count %d",
+				 assoc_ptr->id, assoc_ptr->acct,
+				 assoc_ptr->user, assoc_ptr->partition,
+				 assoc_ptr->usage, cnt,
+				 assoc_ptr->usage->accrue_cnt);
 			assoc_ptr->usage->accrue_cnt -= cnt;
 		} else {
 			error("%s: assoc_id %u(%s/%s/%s) accrue_cnt underflow",
@@ -3904,11 +3875,11 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 			xfree(job_ptr->state_desc);
 			job_ptr->state_reason = _get_tres_state_reason(
 				tres_pos, WAIT_ASSOC_GRP_UNK_RUN_MIN);
-			debug2("%pJ is being held, assoc %u(%s/%s/%s) group max running tres(%s) minutes request limit %"PRIu64" exceeds limit %"PRIu64,
+			debug2("%pJ is being held, assoc %u(%s/%s/%s) group max running tres(%s) minutes request %"PRIu64" exceeds limit %"PRIu64,
 			       job_ptr, assoc_ptr->id, assoc_ptr->acct,
 			       assoc_ptr->user, assoc_ptr->partition,
 			       assoc_mgr_tres_name_array[tres_pos],
-			       tres_run_mins[tres_pos],
+			       job_tres_time_limit[tres_pos],
 			       assoc_ptr->grp_tres_run_mins_ctld[tres_pos]);
 			rc = false;
 			goto end_it;
@@ -4389,8 +4360,6 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 	int create_cnt = 0, i, rc = SLURM_SUCCESS;
 	time_t now = time(NULL);
 	bool parent = false;
-	static time_t sched_update = 0;
-	static uint16_t priority_flags = 0;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
 				   NO_LOCK, NO_LOCK, NO_LOCK };
 
@@ -4400,14 +4369,11 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 		return SLURM_ERROR;
 	}
 
-	if (sched_update != slurmctld_conf.last_update)
-		priority_flags = slurm_get_priority_flags();
-
 	/*
 	 * ACCRUE_ALWAYS flag will always force the accrue_time to be the
 	 * submit_time (Not begin).  Accrue limits don't work with this flag.
 	 */
-	if (priority_flags & PRIORITY_FLAGS_ACCRUE_ALWAYS) {
+	if (slurm_conf.priority_flags & PRIORITY_FLAGS_ACCRUE_ALWAYS) {
 		if (!details_ptr->accrue_time)
 			details_ptr->accrue_time = details_ptr->submit_time;
 		return SLURM_SUCCESS;
@@ -4588,9 +4554,8 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 
 	/* Looks like we are at the limit */
 	if (!create_cnt) {
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE)
-			info("%s: %pJ can't accrue, we are over a limit",
-			     __func__, job_ptr);
+		log_flag(ACCRUE, "%s: %pJ can't accrue, we are over a limit",
+			 __func__, job_ptr);
 		goto endit;
 	}
 
@@ -4612,20 +4577,11 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 		details_ptr = old_job_ptr->details;
 		if (!details_ptr) {
 			fatal_abort("%s: no details after split", __func__);
-			rc = SLURM_ERROR;
-			_add_accrue_time_internal(job_ptr->assoc_ptr,
-						  qos_ptr_1,
-						  used_limits_a1,
-						  used_limits_u1,
-						  qos_ptr_2,
-						  used_limits_a2,
-						  used_limits_u2,
-						  i - 1);
 			goto endit;
 		}
 		details_ptr->accrue_time = now;
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_ACCRUE)
-			info("%pJ is now accruing time %ld", old_job_ptr, now);
+		log_flag(ACCRUE, "%pJ is now accruing time %ld",
+			 old_job_ptr, now);
 	}
 
 	/*
@@ -4853,7 +4809,7 @@ extern time_t acct_policy_get_preemptable_time(job_record_t *job_ptr)
 	acct_policy_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
 	min1 = (qos_ptr_1) ? qos_ptr_1->preempt_exempt_time : INFINITE;
 	min2 = (qos_ptr_2) ? qos_ptr_2->preempt_exempt_time : INFINITE;
-	conf_min = slurmctld_conf.preempt_exempt_time;
+	conf_min = slurm_conf.preempt_exempt_time;
 
 	/* priority: min1 > min2 > conf_min. INFINITE means none. */
 	if (min1 != INFINITE)
