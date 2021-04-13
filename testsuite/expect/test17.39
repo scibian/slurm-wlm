@@ -32,7 +32,7 @@ set fast_id       0
 set dep_id        0
 set exit_code     0
 
-set nb_nodes [get_node_cnt_in_part]
+set nb_nodes [get_partition_param [default_partition] "TotalNodes"]
 if {[check_config_select "linear"]} {
 	if {$nb_nodes < 2} {
 		skip "This test is incompatible with select/linear and only one node"
@@ -51,8 +51,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not reponding"
-		set exit_code 1
+		fail "sbatch is not reponding"
 	}
 	eof {
 		wait
@@ -73,8 +72,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not reponding"
-		set exit_code 1
+		fail "sbatch is not reponding"
 	}
 	eof {
 		wait
@@ -92,8 +90,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sbatch is not reponding"
-		set exit_code 1
+		fail "sbatch is not reponding"
 	}
 	eof {
 		wait
@@ -112,8 +109,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "squeue is not reponding"
-		set exit_code 1
+		fail "squeue is not reponding"
 	}
 	eof {
 		wait

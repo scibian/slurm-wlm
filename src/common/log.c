@@ -54,6 +54,7 @@
 #  include <sys/prctl.h>
 #endif
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
@@ -113,8 +114,6 @@ strong_alias(fatal,		slurm_fatal) __attribute__((noreturn));
 strong_alias(fatal_abort,	slurm_fatal_abort) __attribute__((noreturn));
 strong_alias(error,		slurm_error);
 strong_alias(spank_log,		slurm_spank_log);
-strong_alias(info,		slurm_info);
-strong_alias(verbose,		slurm_verbose);
 strong_alias(sched_error,	slurm_sched_error);
 strong_alias(sched_info,	slurm_sched_info);
 strong_alias(sched_verbose,	slurm_sched_verbose);
@@ -132,7 +131,6 @@ typedef struct {
 	log_options_t opt;
 	unsigned initialized:1;
 	uint16_t fmt;            /* Flag for specifying timestamp format */
-	uint64_t debug_flags;
 }	log_t;
 
 char *slurm_prog_name = NULL;
@@ -582,21 +580,7 @@ int log_alter(log_options_t opt, log_facility_t fac, char *logfile)
 	slurm_mutex_lock(&log_lock);
 	rc = _log_init(NULL, opt, fac, logfile);
 	slurm_mutex_unlock(&log_lock);
-	log_set_debug_flags();
 	return rc;
-}
-
-/* log_set_debug_flags()
- * Set or reset the debug flags based on the configuration
- * file or the scontrol command.
- */
-void log_set_debug_flags(void)
-{
-	uint64_t debug_flags = slurm_get_debug_flags();
-
-	slurm_mutex_lock(&log_lock);
-	log->debug_flags = debug_flags;
-	slurm_mutex_unlock(&log_lock);
 }
 
 /* reinitialize log data structures. Like log_init, but do not init
@@ -708,6 +692,38 @@ static void _set_idbuf(char *idbuf, size_t size)
 }
 
 /*
+ * _addr2fmt() - print an IP address from slurm_addr_t
+ */
+static char *_addr2fmt(slurm_addr_t *addr_ptr, char *buf, int buf_size)
+{
+	struct sockaddr_in *in = (struct sockaddr_in *) addr_ptr;
+	char addrbuf[INET6_ADDRSTRLEN];
+	uint16_t port = 0;
+
+	/*
+	 * NOTE: You will notice we put a %.0s in front of the string.
+	 * This is to handle the fact that we can't remove the addr_ptr
+	 * argument from the va_list directly. So when we call vsnprintf()
+	 * to handle the va_list this will effectively skip this argument.
+	 */
+	if (addr_ptr == NULL)
+		return "%.0sNULL";
+
+	if (addr_ptr->ss_family == AF_INET6) {
+		struct sockaddr_in6 *in6 = (struct sockaddr_in6 *) addr_ptr;
+		inet_ntop(AF_INET6, &in6->sin6_addr, addrbuf, INET6_ADDRSTRLEN);
+		port = ntohs(in6->sin6_port);
+		snprintf(buf, buf_size, "[%%.0s%s]:%d", addrbuf, port);
+		return buf;
+	}
+
+	inet_ntop(AF_INET, &in->sin_addr, addrbuf, INET_ADDRSTRLEN);
+	port = ntohs(in->sin_port);
+	snprintf(buf, buf_size, "%%.0s%s:%d", addrbuf, port);
+
+	return buf;
+}
+/*
  * jobid2fmt() - print a job ID as "JobId=..." including, as applicable,
  * the job array or hetjob component information with the raw jobid in
  * parenthesis.
@@ -758,17 +774,8 @@ static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
 	if (step_ptr->magic != STEP_MAGIC)
 		return " StepId=CORRUPT";
 
-	if (step_ptr->step_id == SLURM_EXTERN_CONT) {
-		return " StepId=Extern";
-	} else if (step_ptr->step_id == SLURM_BATCH_SCRIPT) {
-		return " StepId=Batch";
-	} else if (step_ptr->step_id == SLURM_PENDING_STEP) {
-		return " StepId=TBD";
-	} else {
-		snprintf(buf, buf_size, " StepId=%u", step_ptr->step_id);
-	}
-
-	return buf;
+	return log_build_step_id_str(&step_ptr->step_id, buf, buf_size,
+				     STEP_ID_FLAG_SPACE | STEP_ID_FLAG_NO_JOB);
 }
 
 /*
@@ -778,6 +785,7 @@ static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
  * args are like printf, with the addition of the following format chars:
  * - %m expands to strerror(errno)
  * - %M expand to time stamp, format is configuration dependent
+ * - %pA expands to "AAA.BBB.CCC.DDD:XXXX" for the given slurm_addr_t.
  * - %pJ expands to "JobId=XXXX" for the given job_ptr, with the appropriate
  *       format for job arrays and hetjob components.
  * - %pS expands to "JobId=XXXX StepId=YYYY" for a given step_ptr.
@@ -822,7 +830,9 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 				break;
 			case 'p':
 				switch (*(p + 2)) {
+				case 'A':
 				case 'J':
+				case 's':
 				case 'S':
 					is_our_format = true;
 					/*
@@ -866,6 +876,24 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 			case 'p':
 				fmt++;
 				switch (*fmt) {
+				case 'A':	/* "%pA" -> "AAA.BBB.CCC.DDD:XXXX" */
+				{
+					void *ptr = NULL;
+					slurm_addr_t *addr_ptr;
+					va_list	ap_copy;
+
+					va_copy(ap_copy, ap);
+					for (int i = 0; i < cnt; i++ )
+						ptr = va_arg(ap_copy, void *);
+					addr_ptr = ptr;
+					xstrcat(intermediate_fmt,
+						_addr2fmt(
+							addr_ptr,
+							substitute_on_stack,
+							sizeof(substitute_on_stack)));
+					va_end(ap_copy);
+					break;
+				}
 				case 'J':	/* "%pJ" => "JobId=..." */
 				{
 					int i;
@@ -885,7 +913,34 @@ static char *vxstrfmt(const char *fmt, va_list ap)
 					va_end(ap_copy);
 					break;
 				}
-				/* "%pS" => "JobId=... StepId=..." */
+				/*
+				 * "%ps" => "StepId=... " on a
+				 * slurm_step_id_t
+				 */
+				case 's':
+				{
+					int i;
+					void *ptr = NULL;
+					slurm_step_id_t *step_id = NULL;
+					va_list	ap_copy;
+
+					va_copy(ap_copy, ap);
+					for (i = 0; i < cnt; i++ )
+						ptr = va_arg(ap_copy, void *);
+					step_id = ptr;
+					xstrcat(intermediate_fmt,
+						log_build_step_id_str(
+							step_id,
+							substitute_on_stack,
+							sizeof(substitute_on_stack),
+							STEP_ID_FLAG_PS));
+					va_end(ap_copy);
+					break;
+				}
+				/*
+				 * "%pS" => "JobId=... StepId=..." on a
+				 * step_record_t
+				 */
 				case 'S':
 				{
 					int i;
@@ -1362,12 +1417,12 @@ void spank_log(const char *fmt, ...)
 	va_end(ap);
 }
 
-void info(const char *fmt, ...)
+void slurm_info(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_INFO, false, fmt);
 }
 
-void verbose(const char *fmt, ...)
+void slurm_verbose(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_VERBOSE, false, fmt);
 }
@@ -1433,4 +1488,71 @@ extern int get_log_level(void)
 extern int get_sched_log_level(void)
 {
 	return MAX(highest_log_level, highest_sched_log_level);
+}
+
+/*
+ * log_build_step_id_str() - print a slurm_step_id_t as " StepId=...", with
+ * Batch and Extern used as appropriate.
+ */
+extern char *log_build_step_id_str(
+	slurm_step_id_t *step_id, char *buf, int buf_size, uint16_t flags)
+{
+	int pos = 0;
+
+	xassert(buf);
+	xassert(buf_size > 1);
+
+	buf[pos] = '\0';
+
+	if (flags & STEP_ID_FLAG_SPACE)
+		buf[pos++] = ' ';
+
+	/*
+	 * NOTE: You will notice we put a %.0s in front of the string if running
+	 * with %ps like interactions.
+	 * This is to handle the fact that we can't remove the step_id
+	 * argument from the va_list directly. So when we call vsnprintf()
+	 * to handle the va_list this will effectively skip this argument.
+	 */
+	if (flags & STEP_ID_FLAG_PS)
+		pos += snprintf(buf + pos, buf_size - pos, "%%.0s");
+
+	if (!(flags & STEP_ID_FLAG_NO_PREFIX))
+		pos += snprintf(buf + pos, buf_size - pos, "%s",
+				(!step_id || (step_id->step_id != NO_VAL)) ?
+				"StepId=" : "JobId=");
+
+	if (!step_id || !step_id->job_id) {
+		snprintf(buf + pos, buf_size - pos, "Invalid");
+		return buf;
+	}
+
+	if (step_id->job_id && !(flags & STEP_ID_FLAG_NO_JOB))
+		pos += snprintf(buf + pos, buf_size - pos,
+				"%u%s", step_id->job_id,
+				step_id->step_id == NO_VAL ? "" : ".");
+
+	if ((pos >= buf_size) || (step_id->step_id == NO_VAL))
+		return buf;
+
+	if (step_id->step_id == SLURM_BATCH_SCRIPT)
+		pos += snprintf(buf + pos, buf_size - pos, "batch");
+	else if (step_id->step_id == SLURM_EXTERN_CONT)
+		pos += snprintf(buf + pos, buf_size - pos, "extern");
+	else if (step_id->step_id == SLURM_INTERACTIVE_STEP)
+		pos += snprintf(buf + pos, buf_size - pos, "interactive");
+	else if (step_id->step_id == SLURM_PENDING_STEP)
+		pos += snprintf(buf + pos, buf_size - pos, "TDB");
+	else
+		pos += snprintf(buf + pos, buf_size - pos, "%u",
+				step_id->step_id);
+
+	if (pos >= buf_size)
+		return buf;
+
+	if (step_id->step_het_comp != NO_VAL)
+		snprintf(buf + pos, buf_size - pos, "+%u",
+			 step_id->step_het_comp);
+
+	return buf;
 }

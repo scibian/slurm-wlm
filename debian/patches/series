@@ -3,11 +3,11 @@ remove-google-javascript
 sacctmgr-increase-buffer
 pidfile-path
 rpath
-mpiexec-man-page
+miscellanea-manpages
+fix-typos
+pmixv4
 b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 fix-pmixv3-dlopen-path
-fix-perl-doc
-miscellanea-manpages
 remove-acute-accent-in-manual
 rpc_prolog_handle_reissue
 enforce-cred-cache-clearing

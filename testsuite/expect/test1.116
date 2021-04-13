@@ -91,6 +91,7 @@ make_bash_script $file_in "
 #
 set timeout $max_job_delay
 set no_start 0
+
 if {[get_config_param "MULTIPLE_SLURMD"] eq "Yes"} {
 	set sbatch_pid [spawn $sbatch -N1 -n6 -O --output=$file_out --error=$file_err -t1 $file_in]
 } else {
@@ -109,18 +110,15 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $sbatch_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
 if {$no_start != 0} {
-	if {$job_id != 0} {
-		cancel_job $job_id
-	}
+	cancel_job $job_id
 	skip "Partition too small for test"
 }
 if {$job_id == 0} {

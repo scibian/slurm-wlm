@@ -41,8 +41,7 @@
 
 #include "src/common/list.h"
 #include "src/common/pack.h"
-
-#include "src/slurmrestd/workq.h"
+#include "src/common/workq.h"
 
 /*
  * connection manager will do the follow:
@@ -186,6 +185,8 @@ struct con_mgr_s {
 	workq_t *workq;
 	/* will inspect connections (not listeners */
 	bool inspecting;
+	/* if an event signal has already been sent */
+	int event_signaled;
 	/* Event PIPE used to break out of poll */
 	int event_fd[2];
 	/* Signal PIPE to catch SIGINT */
@@ -217,7 +218,7 @@ extern void free_con_mgr(con_mgr_t *mgr);
  */
 extern int con_mgr_process_fd(con_mgr_t *mgr, int input_fd, int output_fd,
 			      const con_mgr_events_t events,
-			      const struct sockaddr *addr, socklen_t addrlen);
+			      const slurm_addr_t *addr, socklen_t addrlen);
 
 /*
  * instruct connection manager to listen to fd (async)
@@ -230,7 +231,7 @@ extern int con_mgr_process_fd(con_mgr_t *mgr, int input_fd, int output_fd,
  */
 extern int con_mgr_process_fd_listen(con_mgr_t *mgr, int fd,
 				     const con_mgr_events_t events,
-				     const struct sockaddr *addr,
+				     const slurm_addr_t *addr,
 				     socklen_t addrlen);
 
 /*
@@ -245,7 +246,7 @@ extern int con_mgr_process_fd_listen(con_mgr_t *mgr, int fd,
  */
 extern int con_mgr_process_fd_unix_listen(con_mgr_t *mgr, int fd,
 					  const con_mgr_events_t events,
-					  const struct sockaddr *addr,
+					  const slurm_addr_t *addr,
 					  socklen_t addrlen, const char *path);
 
 /*
@@ -258,6 +259,14 @@ extern int con_mgr_process_fd_unix_listen(con_mgr_t *mgr, int fd,
  */
 extern int con_mgr_queue_write_fd(con_mgr_fd_t *con, const void *buffer,
 				  const size_t bytes);
+
+/*
+ * Request soft close of connection
+ * NOTE: only call from within a callback
+ * IN con connection manager connection struct
+ * RET SLURM_SUCCESS or error
+ */
+extern void con_mgr_queue_close_fd(con_mgr_fd_t *con);
 
 /*
  * create sockets based on requested SOCKET_LISTEN

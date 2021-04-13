@@ -131,7 +131,6 @@ struct job_node {
 };
 
 char *save_state_file = "elasticsearch_state";
-char *index_type = "/slurm/jobcomp";
 char *log_url = NULL;
 
 static pthread_cond_t location_cond = PTHREAD_COND_INITIALIZER;
@@ -184,15 +183,13 @@ static uint32_t _read_file(const char *file, char **data)
 
 	fd = open(file, O_RDONLY);
 	if (fd < 0) {
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)
-			info("%s: Could not open state file %s", plugin_type,
-			     file);
+		log_flag(ESEARCH, "%s: Could not open state file %s",
+			 plugin_type, file);
 		return data_size;
 	}
 	if (fstat(fd, &f_stat)) {
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)
-			info("%s: Could not stat state file %s", plugin_type,
-			     file);
+		log_flag(ESEARCH, "%s: Could not stat state file %s",
+			 plugin_type, file);
 		close(fd);
 		return data_size;
 	}
@@ -233,16 +230,8 @@ static int _load_pending_jobs(void)
 	Buf buffer;
 	struct job_node *jnode;
 
-	state_file = slurm_get_state_save_location();
-	if (state_file == NULL) {
-		error("%s: Could not retrieve StateSaveLocation from conf",
-		      plugin_type);
-		return SLURM_ERROR;
-	}
-
-	if (state_file[strlen(state_file) - 1] != '/')
-		xstrcat(state_file, "/");
-	xstrcat(state_file, save_state_file);
+	xstrfmtcat(state_file, "%s/%s",
+		   slurm_conf.state_save_location, save_state_file);
 
 	slurm_mutex_lock(&save_lock);
 	data_size = _read_file(state_file, &saved_data);
@@ -263,9 +252,8 @@ static int _load_pending_jobs(void)
 		list_enqueue(jobslist, jnode);
 	}
 	if (job_cnt > 0) {
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)
-			info("%s: Loaded %u jobs from state file", plugin_type,
-			     job_cnt);
+		log_flag(ESEARCH, "%s: Loaded %u jobs from state file",
+			 plugin_type, job_cnt);
 	}
 	free_buf(buffer);
 	xfree(state_file);
@@ -341,9 +329,8 @@ static int _index_job(const char *jobcomp)
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *) &chunk);
 
 	if ((res = curl_easy_perform(curl_handle)) != CURLE_OK) {
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)
-			info("%s: Could not connect to: %s , reason: %s"
-			     ,plugin_type, log_url, curl_easy_strerror(res));
+		log_flag(ESEARCH, "%s: Could not connect to: %s , reason: %s",
+			 plugin_type, log_url, curl_easy_strerror(res));
 		rc = SLURM_ERROR;
 		goto cleanup;
 	}
@@ -368,20 +355,17 @@ static int _index_job(const char *jobcomp)
 	 * HTTP 201 (Created)	- request succeed and resource created.
 	 */
 	if ((xstrcmp(token, "200") != 0) && (xstrcmp(token, "201") != 0)) {
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH) {
-			info("%s: HTTP status code %s received from %s",
-			     plugin_type, token, log_url);
-			info("%s: HTTP response:\n%s", plugin_type,
-			     chunk.message);
-		}
+		log_flag(ESEARCH, "%s: HTTP status code %s received from %s",
+			 plugin_type, token, log_url);
+		log_flag(ESEARCH, "%s: HTTP response:\n%s",
+			 plugin_type, chunk.message);
 		rc = SLURM_ERROR;
 	} else {
 		token = strtok((char *)jobcomp, ",");
 		(void)  strtok(token, ":");
 		token = strtok(NULL, ":");
-		if (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)
-			info("%s: Job with jobid %s indexed into elasticsearch",
-			     plugin_type, token);
+		log_flag(ESEARCH, "%s: Job with jobid %s indexed into elasticsearch",
+			 plugin_type, token);
 	}
 
 cleanup:
@@ -475,7 +459,7 @@ static char *_json_escape(const char *str)
 static int _save_state(void)
 {
 	int fd, rc = SLURM_SUCCESS;
-	char *state_file, *new_file, *old_file;
+	char *state_file = NULL, *new_file, *old_file;
 	ListIterator iter;
 	static int high_buffer_size = (1024 * 1024);
 	Buf buffer = init_buf(high_buffer_size);
@@ -490,17 +474,9 @@ static int _save_state(void)
 	}
 	list_iterator_destroy(iter);
 
-	state_file = slurm_get_state_save_location();
-	if (state_file == NULL || state_file[0] == '\0') {
-		error("%s: Could not retrieve StateSaveLocation from conf",
-		      plugin_type);
-		return SLURM_ERROR;
-	}
+	xstrfmtcat(state_file, "%s/%s",
+		   slurm_conf.state_save_location, save_state_file);
 
-	if (state_file[strlen(state_file) - 1] != '/')
-		xstrcat(state_file, "/");
-
-	xstrcat(state_file, save_state_file);
 	old_file = xstrdup(state_file);
 	new_file = xstrdup(state_file);
 	xstrcat(new_file, ".new");
@@ -764,6 +740,12 @@ extern int slurm_jobcomp_log_record(job_record_t *job_ptr)
 	}
 
 	if (job_ptr->details
+	    && (job_ptr->details->ntasks_per_tres != NO_VAL16)) {
+		xstrfmtcat(json_str, ",\"ntasks_per_tres\":%hu",
+			   job_ptr->details->ntasks_per_tres);
+	}
+
+	if (job_ptr->details
 	    && (job_ptr->details->cpus_per_task != NO_VAL16)) {
 		xstrfmtcat(json_str, ",\"cpus_per_task\":%hu",
 			   job_ptr->details->cpus_per_task);
@@ -807,15 +789,15 @@ extern int slurm_jobcomp_log_record(job_record_t *job_ptr)
 		xfree(str);
 	}
 
-	if (job_ptr->gres_req && job_ptr->gres_req[0]) {
-		char *str = _json_escape(job_ptr->gres_req);
-		xstrfmtcat(json_str, ",\"gres_req\":\"%s\"", str);
+	if (job_ptr->tres_fmt_req_str && job_ptr->tres_fmt_req_str[0]) {
+		char *str = _json_escape(job_ptr->tres_fmt_req_str);
+		xstrfmtcat(json_str, ",\"tres_req\":\"%s\"", str);
 		xfree(str);
 	}
 
-	if (job_ptr->gres_alloc && job_ptr->gres_alloc[0]) {
-		char *str = _json_escape(job_ptr->gres_alloc);
-		xstrfmtcat(json_str, ",\"gres_alloc\":\"%s\"", str);
+	if (job_ptr->tres_fmt_alloc_str && job_ptr->tres_fmt_alloc_str[0]) {
+		char *str = _json_escape(job_ptr->tres_fmt_alloc_str);
+		xstrfmtcat(json_str, ",\"tres_alloc\":\"%s\"", str);
 		xfree(str);
 	}
 
@@ -919,12 +901,10 @@ extern void *_process_jobs(void *x)
 				wait_retry_cnt++;
 		}
 		list_iterator_destroy(iter);
-		if ((success_cnt || fail_cnt) &&
-		    (slurm_get_debug_flags() & DEBUG_FLAG_ESEARCH)) {
-			info("%s: index success:%d fail:%d wait_retry:%d",
-			     plugin_type, success_cnt, fail_cnt,
-			     wait_retry_cnt);
-		}
+		if ((success_cnt || fail_cnt))
+			log_flag(ESEARCH, "%s: index success:%d fail:%d wait_retry:%d",
+				 plugin_type, success_cnt, fail_cnt,
+				 wait_retry_cnt);
 	}
 	return NULL;
 }
@@ -944,17 +924,16 @@ extern int init(void)
 {
 	char *tmp_ptr = NULL;
 
-	/*			    12345678 */
-	if ((tmp_ptr = xstrcasestr(slurmctld_conf.job_comp_params,
-				   "timeout="))) {
+	/*                                                      12345678 */
+	if ((tmp_ptr = xstrcasestr(slurm_conf.job_comp_params, "timeout="))) {
 		curl_timeout = xstrntol(tmp_ptr + 8, NULL, 10, 10);
 
 		log_flag(ESEARCH, "%s: setting curl timeout: %lds",
 			 plugin_type, curl_timeout);
 	}
 	/*			    1234567890123456 */
-	if ((tmp_ptr = xstrcasestr(slurmctld_conf.job_comp_params,
-				   "connect_timeout="))) {
+	if ((tmp_ptr = xstrcasestr(slurm_conf.job_comp_params,
+	                           "connect_timeout="))) {
 		curl_timeout = xstrntol(tmp_ptr + 16, NULL, 10, 10);
 
 		log_flag(ESEARCH, "%s: setting curl connect timeout: %lds",
@@ -996,11 +975,7 @@ extern int slurm_jobcomp_set_location(char *location)
 		return SLURM_ERROR;
 	}
 
-	/* Strip any trailing slashes. */
-	while (location[strlen(location) - 1] == '/')
-		location[strlen(location) - 1] = '\0';
-
-	log_url = xstrdup_printf("%s%s", location, index_type);
+	log_url = xstrdup(location);
 
 	curl_global_init(CURL_GLOBAL_ALL);
 	curl_handle = curl_easy_init();

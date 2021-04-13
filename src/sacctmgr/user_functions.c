@@ -2029,7 +2029,6 @@ extern int sacctmgr_delete_user(int argc, char **argv)
 						break;
 					}
 					i++;
-					continue;
 				}
 
 				if (!del_user_list)

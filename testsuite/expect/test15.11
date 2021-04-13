@@ -33,8 +33,7 @@ set job_id      0
 set job_name    "jobname$test_id"
 set name_read   ""
 
-set prio_type [priority_type]
-if {[string compare $prio_type "multifactor"] == 0} {
+if {[get_config_param "PriorityType"] eq "priority/multifactor"} {
 	skip "Not compatible with priority/multifactor"
 }
 
@@ -62,9 +61,7 @@ expect {
 	}
 	timeout {
 		log_error "salloc not responding"
-		if {$job_id != 0} {
-			cancel_job $job_id
-		}
+		cancel_job $job_id
 		slow_kill [expr 0 - $salloc_pid]
 		set exit_code 1
 	}
@@ -100,9 +97,7 @@ expect {
         }
 	timeout {
 		log_error "salloc not responding"
-		if {$job_id != 0} {
-			cancel_job $job_id
-		}
+		cancel_job $job_id
 		slow_kill [expr 0 - $salloc_pid]
 		set exit_code 1
 		exp_continue

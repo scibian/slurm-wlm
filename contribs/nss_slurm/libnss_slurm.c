@@ -140,9 +140,8 @@ static struct passwd *_pw_internal(int mode, uid_t uid, const char *name)
 
 	itr = list_iterator_create(steps);
         while ((stepd = list_next(itr))) {
-		fd = stepd_connect_nss(stepd->directory, stepd->nodename,
-				       stepd->jobid, stepd->stepid,
-				       &stepd->protocol_version);
+		fd = stepd_connect(stepd->directory, stepd->nodename,
+				   &stepd->step_id, &stepd->protocol_version);
 
 		if (fd < 0)
 			continue;
@@ -272,9 +271,8 @@ static struct group **_gr_internal(int mode, gid_t gid, const char *name)
 
 	itr = list_iterator_create(steps);
         while ((stepd = list_next(itr))) {
-		fd = stepd_connect_nss(stepd->directory, stepd->nodename,
-				       stepd->jobid, stepd->stepid,
-				       &stepd->protocol_version);
+		fd = stepd_connect(stepd->directory, stepd->nodename,
+				   &stepd->step_id, &stepd->protocol_version);
 
 		if (fd < 0)
 			continue;

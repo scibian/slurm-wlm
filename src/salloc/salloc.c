@@ -82,10 +82,10 @@ extern pid_t getpgid(pid_t pid);
 #define MAX_RETRIES	10
 #define POLL_SLEEP	3	/* retry interval in seconds  */
 
+char *argvzero = NULL;
 char **command_argv;
 int command_argc;
 pid_t command_pid = -1;
-uint64_t debug_flags = 0;
 char *work_dir = NULL;
 static int is_interactive;
 
@@ -113,7 +113,6 @@ static void _job_suspend_handler(suspend_msg_t *msg);
 static void _match_job_name(job_desc_msg_t *desc_last, List job_req_list);
 static void _node_fail_handler(srun_node_fail_msg_t *msg);
 static void _pending_callback(uint32_t job_id);
-static void _ping_handler(srun_ping_msg_t *msg);
 static int  _proc_alloc(resource_allocation_response_msg_t *alloc);
 static void _ring_terminal_bell(void);
 static int  _set_cluster_name(void *x, void *arg);
@@ -151,7 +150,7 @@ static void _reset_input_mode (void)
 
 static int _set_cluster_name(void *x, void *arg)
 {	job_desc_msg_t *desc = (job_desc_msg_t *) x;
-	desc->origin_cluster = xstrdup(slurmctld_conf.cluster_name);
+	desc->origin_cluster = xstrdup(slurm_conf.cluster_name);
 	return 0;
 }
 
@@ -164,7 +163,7 @@ int main(int argc, char **argv)
 	resource_allocation_response_msg_t *alloc = NULL;
 	time_t before, after;
 	allocation_msg_thread_t *msg_thr = NULL;
-	char **env = NULL, *cluster_name;
+	char **env = NULL;
 	int status = 0;
 	int retries = 0;
 	pid_t pid  = getpid();
@@ -180,8 +179,8 @@ int main(int argc, char **argv)
 	ListIterator iter_req, iter_resp;
 
 	slurm_conf_init(NULL);
-	debug_flags = slurm_get_debug_flags();
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
+	argvzero = argv[0];
 	_set_exit_code();
 
 	if (spank_init_allocator() < 0) {
@@ -357,9 +356,8 @@ int main(int argc, char **argv)
 	if (job_req_list)
 		(void) list_for_each(job_req_list, _set_cluster_name, NULL);
 	else
-		desc->origin_cluster = xstrdup(slurmctld_conf.cluster_name);
+		desc->origin_cluster = xstrdup(slurm_conf.cluster_name);
 
-	callbacks.ping = _ping_handler;
 	callbacks.timeout = _timeout_handler;
 	callbacks.job_complete = _job_complete_handler;
 	callbacks.job_suspend = _job_suspend_handler;
@@ -446,11 +444,8 @@ int main(int argc, char **argv)
 				my_job_id = alloc->job_id;
 				info("Granted job allocation %u", my_job_id);
 			}
-			if (debug_flags & DEBUG_FLAG_HETJOB) {
-				info("Hetjob ID %u+%u (%u) on nodes %s",
-				     my_job_id, i, alloc->job_id,
-				     alloc->node_list);
-			}
+			log_flag(HETJOB, "Hetjob ID %u+%u (%u) on nodes %s",
+			         my_job_id, i, alloc->job_id, alloc->node_list);
 			i++;
 			if (_proc_alloc(alloc) != SLURM_SUCCESS) {
 				list_iterator_destroy(iter_resp);
@@ -481,6 +476,8 @@ int main(int argc, char **argv)
 	if (saopt.no_shell)
 		exit(0);
 	if (allocation_interrupted) {
+		if (alloc)
+			my_job_id = alloc->job_id;
 		/* salloc process received a signal after
 		 * slurm_allocate_resources_blocking returned with the
 		 * allocation, but before the new signal handlers were
@@ -555,11 +552,9 @@ int main(int argc, char **argv)
 	if (working_cluster_rec && working_cluster_rec->name) {
 		env_array_append_fmt(&env, "SLURM_CLUSTER_NAME", "%s",
 				     working_cluster_rec->name);
-	} else if ((cluster_name = slurm_get_cluster_name())) {
+	} else
 		env_array_append_fmt(&env, "SLURM_CLUSTER_NAME", "%s",
-				     cluster_name);
-		xfree(cluster_name);
-	}
+				     slurm_conf.cluster_name);
 
 	env_array_set_environment(env);
 	env_array_free(env);
@@ -916,6 +911,10 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->ntasks_per_socket = opt.ntasks_per_socket;
 	if (opt.ntasks_per_core > -1)
 		desc->ntasks_per_core = opt.ntasks_per_core;
+	if (opt.ntasks_per_tres != NO_VAL)
+		desc->ntasks_per_tres = opt.ntasks_per_tres;
+	else if (opt.ntasks_per_gpu != NO_VAL)
+		desc->ntasks_per_tres = opt.ntasks_per_gpu;
 
 	/* node constraints */
 	if (opt.sockets_per_node != NO_VAL)
@@ -963,6 +962,16 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.cpus_per_gpu)
 		xstrfmtcat(desc->cpus_per_tres, "gpu:%d", opt.cpus_per_gpu);
+	if (!opt.tres_bind && ((opt.ntasks_per_tres != NO_VAL) ||
+			       (opt.ntasks_per_gpu != NO_VAL))) {
+		/* Implicit single GPU binding with ntasks-per-tres/gpu */
+		if (opt.ntasks_per_tres != NO_VAL)
+			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
+				   opt.ntasks_per_tres);
+		else
+			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
+				   opt.ntasks_per_gpu);
+	}
 	desc->tres_bind = xstrdup(opt.tres_bind);
 	desc->tres_freq = xstrdup(opt.tres_freq);
 	xfmt_tres(&desc->tres_per_job,    "gpu", opt.gpus);
@@ -1057,7 +1066,7 @@ static void _salloc_cli_filter_post_submit(uint32_t jobid, uint32_t stepid)
 	if (_cli_filter_post_submit_run)
 		return;
 	for (idx = 0; idx < het_job_limit; idx++)
-		cli_filter_plugin_post_submit(idx, jobid, stepid);
+		cli_filter_g_post_submit(idx, jobid, stepid);
 
 	_cli_filter_post_submit_run = true;
 }
@@ -1150,8 +1159,7 @@ static void _job_complete_handler(srun_job_complete_msg_t *comp)
 			}
 		}
 	} else {
-		verbose("Job step %u.%u is finished.",
-			comp->job_id, comp->step_id);
+		verbose("%ps is finished.", &comp->step_id);
 	}
 }
 
@@ -1184,11 +1192,6 @@ static void _timeout_handler(srun_timeout_msg_t *msg)
 static void _user_msg_handler(srun_user_msg_t *msg)
 {
 	info("%s", msg->msg);
-}
-
-static void _ping_handler(srun_ping_msg_t *msg)
-{
-	/* the api will respond so there really is nothing to do here */
 }
 
 static void _node_fail_handler(srun_node_fail_msg_t *msg)
@@ -1242,13 +1245,12 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 {
 	int is_ready = 0, i, rc;
 	int cur_delay = 0;
-	int suspend_time, resume_time, max_delay;
+	int max_delay;
 	bool job_killed = false;
 
-	suspend_time = slurm_get_suspend_timeout();
-	resume_time  = slurm_get_resume_timeout();
-	if (suspend_time || resume_time) {
-		max_delay = suspend_time + resume_time;
+	if (slurm_conf.suspend_timeout || slurm_conf.resume_timeout) {
+		max_delay = slurm_conf.suspend_timeout +
+			    slurm_conf.resume_timeout;
 		max_delay *= 5;		/* Allow for ResumeRate support */
 	} else {
 		max_delay = 300;	/* Wait to 5 min for PrologSlurmctld */
@@ -1260,8 +1262,14 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		saopt.wait_all_nodes = 0;
 
 	for (i = 0; (cur_delay < max_delay); i++) {
-		if (i) {
-			if (i == 1)
+
+		if (i == 1) {
+			/*
+			 * Only sleep a short time on the first miss.
+			 */
+			usleep(500); /* Not adding sub-sec to cur_delay */
+		} else if (i) {
+			if (i == 2)
 				info("Waiting for resource configuration");
 			else
 				debug("still waiting");
@@ -1278,7 +1286,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			job_killed = true;
 			break;
 		}
-		if ((rc & READY_JOB_STATE) && 
+		if ((rc & READY_JOB_STATE) &&
+		    (rc & READY_PROLOG_STATE) &&
 		    ((rc & READY_NODE_STATE) || !saopt.wait_all_nodes)) {
 			is_ready = 1;
 			break;
@@ -1289,7 +1298,7 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 	if (is_ready) {
 		resource_allocation_response_msg_t *resp;
 		char *tmp_str;
-		if (i > 0)
+		if (i > 1)
      			info("Nodes %s are ready for job", alloc->node_list);
 		if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD") &&
 		    (slurm_allocation_lookup(alloc->job_id, &resp)

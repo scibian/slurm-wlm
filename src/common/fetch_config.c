@@ -177,7 +177,7 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 	}
 
 	_fetch_child(controllers, flags);
-	return NULL;
+	_exit(0);
 }
 
 extern config_response_msg_t *fetch_config_from_controller(uint32_t flags)
@@ -350,6 +350,8 @@ extern int write_configs_to_conf_cache(config_response_msg_t *msg,
 		return SLURM_ERROR;
 	if (_write_conf(dir, "gres.conf", msg->gres_config))
 		return SLURM_ERROR;
+	if (_write_conf(dir, "job_container.conf", msg->xtra_config))
+		return SLURM_ERROR;
 	if (_write_conf(dir, "knl_cray.conf", msg->knl_cray_config))
 		return SLURM_ERROR;
 	if (_write_conf(dir, "knl_generic.conf", msg->knl_generic_config))
@@ -399,12 +401,13 @@ extern void load_config_response_msg(config_response_msg_t *msg, int flags)
 		   &msg->cgroup_allowed_devices_file_config);
 	_load_conf(dir, "ext_sensors.conf", &msg->ext_sensors_config);
 	_load_conf(dir, "gres.conf", &msg->gres_config);
+	_load_conf(dir, "job_container.conf", &msg->xtra_config);
 	_load_conf(dir, "knl_cray.conf", &msg->knl_cray_config);
 	_load_conf(dir, "knl_generic.conf", &msg->knl_generic_config);
 	_load_conf(dir, "plugstack.conf", &msg->plugstack_config);
 	_load_conf(dir, "topology.conf", &msg->topology_config);
 
-	msg->slurmd_spooldir = xstrdup(slurmctld_conf.slurmd_spooldir);
+	msg->slurmd_spooldir = xstrdup(slurm_conf.slurmd_spooldir);
 
 	xfree(dir);
 }

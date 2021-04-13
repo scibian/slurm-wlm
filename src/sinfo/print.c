@@ -49,6 +49,7 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/parse_time.h"
+#include "src/common/read_config.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -445,6 +446,19 @@ int _print_avail(sinfo_data_t * sinfo_data, int width,
 			_print_str("unknown", width, right_justify, true);
 	} else
 		_print_str("AVAIL", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_comment(sinfo_data_t *sinfo_data, int width,
+		   bool right_justify, char *suffix)
+{
+	if (sinfo_data)
+		_print_str(sinfo_data->comment, width, right_justify, true);
+	else
+		_print_str("COMMENT", width, right_justify, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -891,7 +905,7 @@ int _print_preempt_mode(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data) {
 		uint16_t preempt_mode = sinfo_data->part_info->preempt_mode;
 		if (preempt_mode == NO_VAL16)
-			preempt_mode =  slurm_get_preempt_mode();
+			preempt_mode = slurm_conf.preempt_mode;
 		_print_str(preempt_mode_string(preempt_mode),
 			   width, right_justify, true);
 	} else

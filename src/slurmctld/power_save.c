@@ -95,6 +95,10 @@ time_t last_config = (time_t) 0;
 time_t last_log = (time_t) 0, last_work_scan = (time_t) 0;
 uint16_t slurmd_timeout;
 static bool idle_on_node_suspend = false;
+static uint16_t power_save_interval = 10;
+static uint16_t power_save_min_interval = 0;
+
+bool cloud_reg_addrs = false;
 
 typedef struct exc_node_partital {
 	int exc_node_cnt;
@@ -353,7 +357,6 @@ static void _do_power_work(time_t now)
 			node_ptr->node_state |=   NODE_STATE_NO_RESPOND;
 			bit_clear(power_node_bitmap, i);
 			node_ptr->boot_req_time = now;
-			node_ptr->last_response = now + resume_timeout;
 			bit_set(booting_node_bitmap, i);
 			bit_set(resume_node_bitmap,  i);
 			bit_set(wake_node_bitmap,    i);
@@ -384,7 +387,7 @@ static void _do_power_work(time_t now)
 
 			/* Don't allocate until after SuspendTimeout */
 			bit_clear(avail_node_bitmap, i);
-			node_ptr->last_response = now + suspend_timeout;
+			node_ptr->power_save_req_time = now;
 
 			if (idle_on_node_suspend) {
 				if (IS_NODE_DOWN(node_ptr)) {
@@ -407,9 +410,16 @@ static void _do_power_work(time_t now)
 		}
 
 		if (IS_NODE_POWERING_DOWN(node_ptr) &&
-		    (node_ptr->last_response < now)) {
+		    (node_ptr->power_save_req_time + suspend_timeout < now)) {
 
 			node_ptr->node_state &= (~NODE_STATE_POWERING_DOWN);
+
+			if (IS_NODE_CLOUD(node_ptr) && cloud_reg_addrs) {
+				/* Reset hostname and addr to node's name. */
+				set_node_comm_name(node_ptr,
+						   xstrdup(node_ptr->name),
+						   xstrdup(node_ptr->name));
+			}
 
 			if (!IS_NODE_DOWN(node_ptr) &&
 			    !IS_NODE_DRAIN(node_ptr) &&
@@ -417,13 +427,14 @@ static void _do_power_work(time_t now)
 				make_node_avail(i);
 
 			node_ptr->last_idle = 0;
+			node_ptr->power_save_req_time = 0;
 		}
 
 		/*
 		 * Down nodes as if not resumed by ResumeTimeout
 		 */
 		if (bit_test(booting_node_bitmap, i) &&
-		    (now > node_ptr->last_response)  &&
+		    (now > node_ptr->boot_req_time + resume_timeout)  &&
 		    IS_NODE_POWER_UP(node_ptr) &&
 		    IS_NODE_NO_RESPOND(node_ptr)) {
 			info("node %s not resumed by ResumeTimeout(%d) - marking down and power_save",
@@ -439,6 +450,7 @@ static void _do_power_work(time_t now)
 			bit_clear(booting_node_bitmap, i);
 			bit_clear(resume_node_bitmap, i);
 			node_ptr->last_idle = 0;
+			node_ptr->boot_req_time = 0;
 
 			if (resume_fail_prog) {
 				if (!failed_node_bitmap) {
@@ -546,7 +558,6 @@ extern int power_job_reboot(job_record_t *job_ptr)
 		bit_clear(power_node_bitmap, i);
 		bit_clear(avail_node_bitmap, i);
 		node_ptr->boot_req_time = now;
-		node_ptr->last_response = now + resume_timeout;
 		bit_set(booting_node_bitmap, i);
 		bit_set(resume_node_bitmap,  i);
 	}
@@ -687,17 +698,15 @@ static void _do_suspend(char *host)
  * arg2 IN	- second program argumentor NULL
  * job_id IN	- Passed as SLURM_JOB_ID environment variable
  */
-static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id)
+static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id) //use common
 {
 	int i;
-	char *argv[4], job_id_str[32], *pname;
+	char *argv[4], *pname;
 	pid_t child;
 
 	if (prog == NULL)	/* disabled, useful for testing */
 		return -1;
 
-	if (job_id)
-		snprintf(job_id_str, sizeof(job_id_str), "%u", job_id);
 	pname = strrchr(prog, '/');
 	if (pname == NULL)
 		argv[0] = prog;
@@ -709,13 +718,17 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id)
 
 	child = fork();
 	if (child == 0) {
+		char **env = NULL;
 		for (i = 0; i < 1024; i++)
 			(void) close(i);
 		setpgid(0, 0);
-		setenv("SLURM_CONF", slurmctld_conf.slurm_conf, 1);
+
+		env = env_array_create();
+		env_array_append(&env, "SLURM_CONF", slurm_conf.slurm_conf);
 		if (job_id)
-			setenv("SLURM_JOB_ID", job_id_str, 1);
-		execv(prog, argv);
+			env_array_append_fmt(&env, "SLURM_JOB_ID", "%u",
+					     job_id);
+		execve(prog, argv, env);
 		_exit(1);
 	} else if (child < 0) {
 		error("fork: %m");
@@ -846,29 +859,44 @@ static void _clear_power_config(void)
  */
 static int _init_power_config(void)
 {
-	last_config     = slurmctld_conf.last_update;
+	char *tmp_ptr;
+	last_config = slurm_conf.last_update;
 	last_work_scan  = 0;
 	last_log	= 0;
-	idle_time       = slurmctld_conf.suspend_time - 1;
-	suspend_rate    = slurmctld_conf.suspend_rate;
-	resume_timeout  = slurmctld_conf.resume_timeout;
-	resume_rate     = slurmctld_conf.resume_rate;
-	slurmd_timeout  = slurmctld_conf.slurmd_timeout;
-	suspend_timeout = slurmctld_conf.suspend_timeout;
+	idle_time = slurm_conf.suspend_time - 1;
+	suspend_rate = slurm_conf.suspend_rate;
+	resume_timeout = slurm_conf.resume_timeout;
+	resume_rate = slurm_conf.resume_rate;
+	slurmd_timeout = slurm_conf.slurmd_timeout;
+	suspend_timeout = slurm_conf.suspend_timeout;
 	_clear_power_config();
-	if (slurmctld_conf.suspend_program)
-		suspend_prog = xstrdup(slurmctld_conf.suspend_program);
-	if (slurmctld_conf.resume_fail_program)
-		resume_fail_prog = xstrdup(slurmctld_conf.resume_fail_program);
-	if (slurmctld_conf.resume_program)
-		resume_prog = xstrdup(slurmctld_conf.resume_program);
-	if (slurmctld_conf.suspend_exc_nodes)
-		exc_nodes = xstrdup(slurmctld_conf.suspend_exc_nodes);
-	if (slurmctld_conf.suspend_exc_parts)
-		exc_parts = xstrdup(slurmctld_conf.suspend_exc_parts);
+	if (slurm_conf.suspend_program)
+		suspend_prog = xstrdup(slurm_conf.suspend_program);
+	if (slurm_conf.resume_fail_program)
+		resume_fail_prog = xstrdup(slurm_conf.resume_fail_program);
+	if (slurm_conf.resume_program)
+		resume_prog = xstrdup(slurm_conf.resume_program);
+	if (slurm_conf.suspend_exc_nodes)
+		exc_nodes = xstrdup(slurm_conf.suspend_exc_nodes);
+	if (slurm_conf.suspend_exc_parts)
+		exc_parts = xstrdup(slurm_conf.suspend_exc_parts);
 
-	idle_on_node_suspend = xstrcasestr(slurmctld_conf.slurmctld_params,
+	cloud_reg_addrs = xstrcasestr(slurm_conf.slurmctld_params,
+				      "cloud_reg_addrs");
+	idle_on_node_suspend = xstrcasestr(slurm_conf.slurmctld_params,
 					   "idle_on_node_suspend");
+	if ((tmp_ptr = xstrcasestr(slurm_conf.slurmctld_params,
+				   "power_save_interval="))) {
+		power_save_interval =
+			strtol(tmp_ptr + strlen("power_save_interval="), NULL,
+			       10);
+	}
+	if ((tmp_ptr = xstrcasestr(slurm_conf.slurmctld_params,
+				   "power_save_min_interval="))) {
+		power_save_min_interval =
+			strtol(tmp_ptr + strlen("power_save_min_interval="),
+			       NULL, 10);
+	}
 
 	if (idle_time < 0) {	/* not an error */
 		debug("power_save module disabled, SuspendTime < 0");
@@ -905,7 +933,7 @@ static int _init_power_config(void)
 		return -1;
 	}
 
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_POWER_SAVE)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_POWER_SAVE)
 		power_save_debug = true;
 	else
 		power_save_debug = false;
@@ -1032,7 +1060,7 @@ static void *_init_power_save(void *arg)
 
 		_reap_procs();
 
-		if ((last_config != slurmctld_conf.last_update) &&
+		if ((last_config != slurm_conf.last_update) &&
 		    (_init_power_config())) {
 			info("power_save mode has been disabled due to "
 			     "configuration changes");
@@ -1043,12 +1071,9 @@ static void *_init_power_save(void *arg)
 		if (boot_time == 0)
 			boot_time = now;
 
-		/*
-		 * Only run every 10 seconds or after a node state change,
-		 * whichever happens first
-		 */
-		if ((last_node_update >= last_power_scan) ||
-		    (now >= (last_power_scan + 10))) {
+		if ((now >= (last_power_scan + power_save_min_interval)) &&
+		    ((last_node_update >= last_power_scan) ||
+		     (now >= (last_power_scan + power_save_interval)))) {
 			lock_slurmctld(node_write_lock);
 			_do_power_work(now);
 			unlock_slurmctld(node_write_lock);

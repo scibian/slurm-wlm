@@ -126,9 +126,18 @@ extern int fsync_and_close(int fd, const char *file_type);
 int fd_get_socket_error(int fd, int *err);
 
 /*
- * Attempt to resolve file descriptor path
- * IN fd - open file descriptor to resolve
- * RET ptr to string (must xfree()) or NULL on failure
+ * Expand symlink for the specified file descriptor from /proc/self/fd/
+ *
+ * References to /./, /../ and extra characters are resolved and a
+ * null-terminated string is produced pointing to an absolute pathname up to a
+ * maximum of PATH_MAX bytes.
+ *
+ * The caller should deallocate the returned string using xfree().
+ *
+ * IN fd - file descriptor to resolve symlink from
+ * RET ptr to a string to an absolute path, without any symbolic link, /./ or
+ * /../ components. NULL if path cannot be resolved.
+ *
  */
 extern char *fd_resolve_path(int fd);
 
@@ -145,7 +154,7 @@ extern void fd_set_oob(int fd, int value);
 extern char *poll_revents_to_str(const short revents);
 
 /*
- * Pass an open fd back over a pipe to the parent process.
+ * Pass an open fd back over a pipe.
  */
 extern void send_fd_over_pipe(int socket, int fd);
 extern int receive_fd_over_pipe(int socket);

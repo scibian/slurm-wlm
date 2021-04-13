@@ -2,7 +2,7 @@
  *  pe_info.c - Library for managing a switch on a Cray system.
  *****************************************************************************
  *  Copyright (C) 2014 SchedMD LLC
- *  Copyright 2014 Cray Inc. All Rights Reserved.
+ *  Copyright 2014 Hewlett Packard Enterprise Development LP
  *  Written by David Gloe <c16817@cray.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -135,7 +135,7 @@ int build_alpsc_pe_info(stepd_step_rec_t *job,
 	}
 
 	// Print pe info if debug flag is set
-	if (debug_flags & DEBUG_FLAG_SWITCH) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH) {
 		_print_alpsc_pe_info(alpsc_pe_info, *cmd_index);
 	}
 
@@ -159,7 +159,7 @@ static int _setup_local_step_rec(local_step_rec_t *step_rec,
 
 	step_rec->stepd_step_rec = job;
 
-	if (job->het_job_id != NO_VAL) {
+	if (job->het_job_offset != NO_VAL) {
 		step_rec->nnodes = job->het_job_nnodes;
 		step_rec->ntasks = job->het_job_ntasks;
 		step_rec->nodelist = job->het_job_node_list;
@@ -261,7 +261,7 @@ static int *_get_cmd_map(local_step_rec_t *step_rec)
 				return NULL;
 			}
 		}
-	} else if (step_rec->stepd_step_rec->het_job_id != NO_VAL) {
+	} else if (step_rec->stepd_step_rec->het_job_offset != NO_VAL) {
 		if (!step_rec->stepd_step_rec->het_job_tid_offsets) {
 			CRAY_ERR("Missing het_job_tid_offsets for HetJob");
 			xfree(cmd_map);
@@ -379,7 +379,7 @@ static int _get_cmd_index(stepd_step_rec_t *job)
 		// If we've made it here we didn't find any on this node
 		CRAY_ERR("No command found on this node");
 		return -1;
-	} else if (job->het_job_id != NO_VAL) {
+	} else if (job->het_job_offset != NO_VAL) {
 		return job->het_job_offset;
 	}
 

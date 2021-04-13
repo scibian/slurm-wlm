@@ -146,7 +146,6 @@ char *resv_ext_view = "resv_ext_view";
 char *step_view = "step_view";
 char *step_ext_view = "step_ext_view";
 
-uint64_t debug_flags = 0;
 bool backup_dbd = 0;
 
 static char *default_qos_str = NULL;
@@ -300,8 +299,7 @@ static bool _check_jobs_before_remove(mysql_conn_t *mysql_conn,
 			assoc_char);
 	}
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return rc;
@@ -369,8 +367,7 @@ static bool _check_jobs_before_remove_assoc(mysql_conn_t *mysql_conn,
 			assoc_char);
 	}
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
@@ -409,8 +406,7 @@ static bool _check_jobs_before_remove_without_assoctable(
 			       "where (%s) limit 1;",
 			       cluster_name, job_table, where_char);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
@@ -874,8 +870,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 			now, TRES_VMEM,
 			now, TRES_PAGES,
 			now, TRES_OFFSET);
-		if (debug_flags & DEBUG_FLAG_DB_TRES)
-			DB_DEBUG(mysql_conn->conn, "%s", query);
+		DB_DEBUG(DB_TRES, mysql_conn->conn, "%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS)
@@ -888,8 +883,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 			"on duplicate key update deleted=VALUES(deleted), type=VALUES(type), name=VALUES(name), id=VALUES(id);",
 			tres_table,
 			now, TRES_FS_DISK);
-		if (debug_flags & DEBUG_FLAG_DB_TRES)
-			DB_DEBUG(mysql_conn->conn, "%s", query);
+		DB_DEBUG(DB_TRES, mysql_conn->conn, "%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS)
@@ -995,17 +989,16 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		if (slurmdbd_conf && slurmdbd_conf->default_qos) {
 			List char_list = list_create(xfree_ptr);
 			char *qos = NULL;
-			ListIterator itr = NULL;
+
 			slurm_addto_char_list(char_list,
 					      slurmdbd_conf->default_qos);
-			/* NOTE: you can not use list_pop, or list_push
-			   anywhere either, since as_mysql is
-			   exporting something of the same type as a macro,
-			   which messes everything up
-			   (my_list.h is the bad boy).
-			*/
-			itr = list_iterator_create(char_list);
-			while ((qos = list_next(itr))) {
+			/*
+			 * NOTE: You have to use slurm_list_pop here, since
+			 * mysql is exporting something of the same type as a
+			 * macro, which messes everything up
+			 * (my_list.h is the bad boy).
+			 */
+			while ((qos = slurm_list_pop(char_list))) {
 				query = xstrdup_printf(
 					"insert into %s "
 					"(creation_time, mod_time, name, "
@@ -1015,16 +1008,15 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 					"on duplicate key update "
 					"id=LAST_INSERT_ID(id), deleted=0;",
 					qos_table, now, now, qos);
-				if (debug_flags & DEBUG_FLAG_DB_QOS)
-					DB_DEBUG(mysql_conn->conn, "%s", query);
+				DB_DEBUG(DB_QOS, mysql_conn->conn, "%s", query);
 				qos_id = (int)mysql_db_insert_ret_id(
 					mysql_conn, query);
 				if (!qos_id)
 					fatal("problem added qos '%s", qos);
 				xstrfmtcat(default_qos_str, ",%d", qos_id);
 				xfree(query);
+				xfree(qos);
 			}
-			list_iterator_destroy(itr);
 			FREE_NULL_LIST(char_list);
 		} else {
 			query = xstrdup_printf(
@@ -1035,8 +1027,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 				"on duplicate key update "
 				"id=LAST_INSERT_ID(id), deleted=0;",
 				qos_table, now, now);
-			if (debug_flags & DEBUG_FLAG_DB_QOS)
-				DB_DEBUG(mysql_conn->conn, "%s", query);
+			DB_DEBUG(DB_QOS, mysql_conn->conn, "%s", query);
 			qos_id = (int)mysql_db_insert_ret_id(mysql_conn, query);
 			if (!qos_id)
 				fatal("problem added qos 'normal");
@@ -1148,9 +1139,8 @@ extern int last_affected_rows(mysql_conn_t *mysql_conn)
 					rows = status;
 			}
 		if ((status = mysql_next_result(mysql_conn->db_conn)) > 0)
-			if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-				DB_DEBUG(mysql_conn->conn,
-					 "Could not execute statement\n");
+			DB_DEBUG(DB_ASSOC, mysql_conn->conn,
+			         "Could not execute statement\n");
 	} while (status == 0);
 
 	return rows;
@@ -1304,8 +1294,6 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "time_start", "bigint unsigned default 0 not null" },
 		{ "time_end", "bigint unsigned default 0 not null" },
 		{ "time_suspended", "bigint unsigned default 0 not null" },
-		{ "gres_req", "text not null default ''" },
-		{ "gres_alloc", "text not null default ''" },
 		{ "gres_used", "text not null default ''" },
 		{ "wckey", "tinytext not null default ''" },
 		{ "work_dir", "text not null default ''" },
@@ -1343,6 +1331,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "deleted", "tinyint default 0 not null" },
 		{ "exit_code", "int default 0 not null" },
 		{ "id_step", "int not null" },
+		{ "step_het_comp", "int unsigned default 0xfffffffe not null" },
 		{ "kill_requid", "int default -1 not null" },
 		{ "nodelist", "text not null" },
 		{ "nodes_alloc", "int unsigned not null" },
@@ -1521,7 +1510,10 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		 cluster_name, step_table);
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  step_table_fields,
-				  ", primary key (job_db_inx, id_step))")
+				  ", primary key (job_db_inx, id_step, "
+				  "step_het_comp), "
+				  "key no_step_comp (job_db_inx, id_step),"
+				  "key time_start_end (time_start, time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
@@ -2031,8 +2023,7 @@ extern int modify_common(mysql_conn_t *mysql_conn,
 	}
 	xfree(tmp_cond_char);
 	xfree(tmp_vals);
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 
@@ -2204,8 +2195,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 
 	xfree(tmp_name_char);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 	if (rc != SLURM_SUCCESS) {
@@ -2241,8 +2231,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 				       cluster_name, assoc_table,
 				       cluster_name, assoc_table, assoc_char);
 
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
 			xfree(query);
@@ -2294,9 +2283,8 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 		   cluster_name, assoc_month_table, now, loc_usage_id_char);
 	xfree(loc_usage_id_char);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s %zu",
-			 query, strlen(query));
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s %zu",
+	         query, strlen(query));
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 	if (rc != SLURM_SUCCESS) {
@@ -2320,8 +2308,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 			       cluster_name, assoc_table,
 			       day_old, loc_assoc_char);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -2343,8 +2330,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 			   "SELECT lft, rgt, (rgt - lft + 1) "
 			   "FROM \"%s_%s\" WHERE id_assoc = %s;",
 			   cluster_name, assoc_table, row[0]);
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		if (!(result2 = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
 			xfree(query);
@@ -2375,8 +2361,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 
 		mysql_free_result(result2);
 
-		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS) {
@@ -2429,8 +2414,7 @@ just_update:
 	if (table != assoc_table)
 		xfree(loc_assoc_char);
 
-	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 	if (rc != SLURM_SUCCESS) {
@@ -2624,8 +2608,6 @@ extern int init(void)
 	int rc = SLURM_SUCCESS;
 	mysql_conn_t *mysql_conn = NULL;
 
-	debug_flags = slurm_get_debug_flags();
-
 	if (slurmdbd_conf->dbd_backup) {
 		char node_name_short[128];
 		char node_name_long[128];
@@ -2705,8 +2687,7 @@ extern int get_cluster_dims(mysql_conn_t *mysql_conn, char *cluster_name,
 	MYSQL_ROW row;
 	MYSQL_RES *result = NULL;
 
-	query = xstrdup_printf("select dimensions, flags from %s where "
-			       "name='%s'",
+	query = xstrdup_printf("select dimensions from %s where name='%s'",
 			       cluster_table, cluster_name);
 
 	debug4("%d(%s:%d) query\n%s",
@@ -2724,14 +2705,7 @@ extern int get_cluster_dims(mysql_conn_t *mysql_conn, char *cluster_name,
 		return SLURM_ERROR;
 	}
 
-	/*
-	 * On a Cray System when dealing with hostlists as we are here this
-	 * always needs to be 1.
-	 */
-	if (slurm_atoul(row[1]) & CLUSTER_FLAG_CRAY_A)
-		*dims = 1;
-	else
-		*dims = atoi(row[0]);
+	*dims = atoi(row[0]);
 
 	mysql_free_result(result);
 
@@ -2739,7 +2713,6 @@ extern int get_cluster_dims(mysql_conn_t *mysql_conn, char *cluster_name,
 }
 
 extern void *acct_storage_p_get_connection(
-	const slurm_trigger_callbacks_t *cb,
 	int conn_num, uint16_t *persist_conn_flags,
 	bool rollback, char *cluster_name)
 {
@@ -2810,9 +2783,9 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 			 * because of rollback issues.
 			 */
 			if (mysql_conn->pre_commit_query) {
-				if (debug_flags & DEBUG_FLAG_DB_ASSOC)
-					DB_DEBUG(mysql_conn->conn, "query\n%s",
-						 mysql_conn->pre_commit_query);
+				DB_DEBUG(DB_ASSOC, mysql_conn->conn,
+				         "query\n%s",
+				         mysql_conn->pre_commit_query);
 				rc = mysql_db_query(
 					mysql_conn,
 					mysql_conn->pre_commit_query);
@@ -3303,8 +3276,7 @@ extern uint16_t clusteracct_storage_p_register_disconn_ctld(
 			"control_port=%u where name='%s';",
 			cluster_table, control_host, control_port,
 			mysql_conn->cluster_name);
-		if (debug_flags & DEBUG_FLAG_DB_EVENT)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_EVENT, mysql_conn->conn, "query\n%s", query);
 		if (mysql_db_query(mysql_conn, query) != SLURM_SUCCESS)
 			control_port = 0;
 		xfree(query);
@@ -3452,7 +3424,6 @@ extern int acct_storage_p_flush_jobs_on_cluster(
 
 extern int acct_storage_p_reconfig(mysql_conn_t *mysql_conn, bool dbd)
 {
-	debug_flags = slurm_get_debug_flags();
 	return SLURM_SUCCESS;
 }
 

@@ -42,9 +42,9 @@
 /*
  * Read JSON formatted buffer.
  * IN buf string buffer containing json formatted data
- * RET structued data or NULL on error
+ * RET structured data or NULL on error
  */
-extern data_t *parse_json(const char *buf);
+extern data_t *parse_json(const char *buf, size_t len);
 
 /*
  * Define flags for JSON options.

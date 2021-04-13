@@ -91,12 +91,10 @@ static int bad_cred_test = -1;
 /*
  * The Munge implementation of the slurm AUTH credential
  */
+#define MUNGE_MAGIC 0xfeed
 typedef struct _slurm_auth_credential {
 	int index; /* MUST ALWAYS BE FIRST. DO NOT PACK. */
-#ifndef NDEBUG
-#       define MUNGE_MAGIC 0xfeed
-	int  magic;        /* magical munge validity magic                   */
-#endif
+	int magic;         /* magical munge validity magic                   */
 	char   *m_str;     /* munged string                                  */
 	struct in_addr addr; /* IP addr where cred was encoded               */
 	bool    verified;  /* true if this cred has been verified            */
@@ -160,10 +158,9 @@ slurm_auth_credential_t *slurm_auth_create(char *opts)
 		(void) munge_ctx_set(ctx, MUNGE_OPT_TTL, auth_ttl);
 
 	cred = xmalloc(sizeof(*cred));
+	cred->magic = MUNGE_MAGIC;
 	cred->verified = false;
 	cred->m_str    = NULL;
-
-	xassert((cred->magic = MUNGE_MAGIC));
 
 	/*
 	 *  Temporarily block SIGALARM to avoid misleading
@@ -298,10 +295,9 @@ gid_t slurm_auth_get_gid(slurm_auth_credential_t *cred)
  */
 char *slurm_auth_get_host(slurm_auth_credential_t *cred)
 {
-	char *hostname = NULL;
-	struct hostent *he;
-	char h_buf[4096];
-	int h_err  = 0;
+	slurm_addr_t addr;
+	struct sockaddr_in *sin = (struct sockaddr_in *) &addr;
+	char *hostname = NULL, *dot_ptr = NULL;
 
 	if (!cred || !cred->verified) {
 		/*
@@ -315,22 +311,31 @@ char *slurm_auth_get_host(slurm_auth_credential_t *cred)
 
 	xassert(cred->magic == MUNGE_MAGIC);
 
-	he = get_host_by_addr((char *)&cred->addr.s_addr,
-			      sizeof(cred->addr.s_addr),
-			      AF_INET, (void *)&h_buf, sizeof(h_buf), &h_err);
-	if (he && he->h_name) {
-		/* Truncate the hostname to a short name */
-		char *sep = strchr(he->h_name, '.');
-		if (sep)
-			*sep = '\0';
-		hostname = xstrdup(he->h_name);
-	} else {
-		slurm_addr_t addr = { .sin_addr.s_addr = cred->addr.s_addr };
-		uint16_t port;
-		hostname = xmalloc(16);
-		slurm_get_ip_str(&addr, &port, hostname, 16);
-		error("%s: Lookup failed for %s: %s",
-		      __func__, hostname, host_strerror(h_err));
+	/* FIXME: this will need updates when MUNGE supports IPv6 addresses. */
+	addr.ss_family = AF_INET;
+	sin->sin_addr.s_addr = cred->addr.s_addr;
+
+	/*
+	 * For IPv6-native systems, MUNGE always reports the host as 0.0.0.0
+	 * which will never resolve successfully. So don't even bother trying.
+	 */
+	if (sin->sin_addr.s_addr != 0) {
+		hostname = get_name_info((struct sockaddr *) &addr,
+					 sizeof(addr), 0);
+		/*
+		 * The NI_NOFQDN flag was used here previously, but did not work
+		 * as desired if the primary domain did not match on both sides.
+		 */
+		if (hostname && (dot_ptr = strchr(hostname, '.')))
+			dot_ptr[0] = '\0';
+	}
+
+	if (!hostname) {
+		/* at this point, the name lookup failed */
+		hostname = xmalloc(INET_ADDRSTRLEN);
+		slurm_get_ip_str(&addr, hostname, INET_ADDRSTRLEN);
+		if (!(slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED))
+			error("%s: Lookup failed for %s", __func__, hostname);
 	}
 
 	return hostname;
@@ -378,10 +383,9 @@ slurm_auth_credential_t *slurm_auth_unpack(Buf buf, uint16_t protocol_version)
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		/* Allocate and initialize credential. */
 		cred = xmalloc(sizeof(*cred));
+		cred->magic = MUNGE_MAGIC;
 		cred->verified = false;
 		cred->m_str = NULL;
-
-		xassert((cred->magic = MUNGE_MAGIC));
 
 		safe_unpackstr_malloc(&cred->m_str, &size, buf);
 	} else {
@@ -441,9 +445,7 @@ again:
 #ifdef MULTIPLE_SLURMD
 		/*
 		 * In multiple slurmd mode this will happen all the time since
-		 * we are authenticating with the same munged. It can also
-		 * happen if slurmctld and slurmd are on the same node and
-		 * message aggregation is configured (error is recoverable).
+		 * we are authenticating with the same munged.
 		 */
 		if (err == EMUNGE_CRED_REPLAYED) {
 			debug2("We had a replayed cred, but this is expected in multiple slurmd mode.");

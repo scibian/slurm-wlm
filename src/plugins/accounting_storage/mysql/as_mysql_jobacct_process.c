@@ -3,7 +3,6 @@
  *                               information from the as_mysql jobacct
  *                               storage.
  *****************************************************************************
- *
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -97,8 +96,6 @@ char *job_req_inx[] = {
 	"t1.timelimit",
 	"t1.track_steps",
 	"t1.wckey",
-	"t1.gres_alloc",
-	"t1.gres_req",
 	"t1.gres_used",
 	"t1.tres_alloc",
 	"t1.tres_req",
@@ -153,8 +150,6 @@ enum {
 	JOB_REQ_TIMELIMIT,
 	JOB_REQ_TRACKSTEPS,
 	JOB_REQ_WCKEY,
-	JOB_REQ_GRES_ALLOC,
-	JOB_REQ_GRES_REQ,
 	JOB_REQ_GRES_USED,
 	JOB_REQ_TRESA,
 	JOB_REQ_TRESR,
@@ -170,6 +165,7 @@ enum {
  * enum below also t1 is step_table */
 char *step_req_inx[] = {
 	"t1.id_step",
+	"t1.step_het_comp",
 	"t1.time_start",
 	"t1.time_end",
 	"t1.time_suspended",
@@ -212,6 +208,7 @@ char *step_req_inx[] = {
 
 enum {
 	STEP_REQ_STEPID,
+	STEP_REQ_STEP_HET_COMP,
 	STEP_REQ_START,
 	STEP_REQ_END,
 	STEP_REQ_SUSPENDED,
@@ -257,7 +254,7 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 					   char *cluster_name, char **extra)
 {
 	ListIterator itr = NULL;
-	slurmdb_selected_step_t *selected_step = NULL;
+	slurm_selected_step_t *selected_step = NULL;
 
 	if (!job_cond || (job_cond->flags & JOBCOND_FLAG_RUNAWAY))
 		return;
@@ -278,7 +275,7 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 				if (array_task_ids)
 					xstrcat(array_task_ids, " ,");
 				xstrfmtcat(array_task_ids, "(%u, %u)",
-					   selected_step->jobid,
+					   selected_step->step_id.job_id,
 					   selected_step->array_task_id);
 			} else if (selected_step->het_job_offset != NO_VAL) {
 				if (het_job_ids)
@@ -286,7 +283,7 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 				if (het_job_offset)
 					xstrcat(het_job_offset, " ,");
 				xstrfmtcat(het_job_ids, "%u",
-					   selected_step->jobid);
+					   selected_step->step_id.job_id);
 				xstrfmtcat(het_job_offset, "%u",
 					   selected_step->het_job_offset);
 			} else {
@@ -295,9 +292,9 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 				if (array_job_ids)
 					xstrcat(array_job_ids, " ,");
 				xstrfmtcat(job_ids, "%u",
-					   selected_step->jobid);
+					   selected_step->step_id.job_id);
 				xstrfmtcat(array_job_ids, "%u",
-					   selected_step->jobid);
+					   selected_step->step_id.job_id);
 			}
 		}
 		list_iterator_destroy(itr);
@@ -465,8 +462,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 {
 	char *query = NULL;
 	char *extra = xstrdup(sent_extra);
-	uint16_t private_data = slurm_get_private_data();
-	slurmdb_selected_step_t *selected_step = NULL;
+	slurm_selected_step_t *selected_step = NULL;
 	MYSQL_RES *result = NULL, *step_result = NULL;
 	MYSQL_ROW row, step_row;
 	slurmdb_job_rec_t *job = NULL;
@@ -485,7 +481,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 	 * if this flag is set.  We also include any accounts they may be
 	 * coordinator of.
 	 */
-	if (!is_admin && (private_data & PRIVATE_DATA_JOBS)) {
+	if (!is_admin && (slurm_conf.private_data & PRIVATE_DATA_JOBS)) {
 		query = xstrdup_printf("select lft from \"%s_%s\" "
 				       "where user='%s'",
 				       cluster_name, assoc_table, user->name);
@@ -498,8 +494,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			}
 			list_iterator_destroy(itr);
 		}
-		if (debug_flags & DEBUG_FLAG_DB_JOB)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_JOB, mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
 			xfree(extra);
@@ -584,8 +579,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 	*/
 	xstrcat(query, " order by id_job, time_submit desc");
 
-	if (debug_flags & DEBUG_FLAG_DB_JOB)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_JOB, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		rc = SLURM_ERROR;
@@ -644,10 +638,6 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			list_append(job_list, job);
 		last_id = curr_id;
 
-		if (row[JOB_REQ_GRES_ALLOC])
-			job->alloc_gres = xstrdup(row[JOB_REQ_GRES_ALLOC]);
-		else
-			job->alloc_gres = xstrdup("");
 		job->alloc_nodes = slurm_atoul(row[JOB_REQ_ALLOC_NODES]);
 		job->associd = slurm_atoul(row[JOB_REQ_ASSOCID]);
 		job->array_job_id = slurm_atoul(row[JOB_REQ_ARRAYJOBID]);
@@ -680,7 +670,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		if (row[JOB_REQ_USER_NAME])
 			job->user = xstrdup(row[JOB_REQ_USER_NAME]);
 
-		if (!job->user || (job_cond->flags & JOBCOND_FLAG_DBD_UID))
+		if (row[JOB_REQ_UID])
 			job->uid = slurm_atoul(row[JOB_REQ_UID]);
 
 		if (row[JOB_REQ_LFT])
@@ -834,10 +824,6 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->track_steps = slurm_atoul(row[JOB_REQ_TRACKSTEPS]);
 		job->priority = slurm_atoul(row[JOB_REQ_PRIORITY]);
 		job->req_cpus = slurm_atoul(row[JOB_REQ_REQ_CPUS]);
-		if (row[JOB_REQ_GRES_REQ])
-			job->req_gres = xstrdup(row[JOB_REQ_GRES_REQ]);
-		else
-			job->req_gres = xstrdup("");
 		job->req_mem = slurm_atoull(row[JOB_REQ_REQ_MEM]);
 		job->requid = slurm_atoul(row[JOB_REQ_KILL_REQUID]);
 		job->qosid = slurm_atoul(row[JOB_REQ_QOS]);
@@ -859,9 +845,11 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			set = 0;
 			itr = list_iterator_create(job_cond->step_list);
 			while ((selected_step = list_next(itr))) {
-				if ((selected_step->jobid != job->jobid) &&
-				    (selected_step->jobid != job->het_job_id)&&
-				    (selected_step->jobid !=
+				if ((selected_step->step_id.job_id !=
+				     job->jobid) &&
+				    (selected_step->step_id.job_id !=
+				     job->het_job_id)&&
+				    (selected_step->step_id.job_id !=
 				     job->array_job_id)) {
 					continue;
 				} else if ((selected_step->array_task_id !=
@@ -874,28 +862,25 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 					   (selected_step->het_job_offset !=
 					    job->het_job_offset)) {
 					continue;
-				} else if (selected_step->stepid == NO_VAL) {
+				} else if (selected_step->step_id.step_id ==
+					   NO_VAL) {
 					job->show_full = 1;
 					break;
-				} else if (selected_step->stepid == INFINITE)
-					selected_step->stepid =
-						SLURM_BATCH_SCRIPT;
-
+				}
 				if (set)
 					xstrcat(extra, " || ");
 				else
 					xstrcat(extra, " && (");
 
-				/* The stepid could be -2 so use %d not %u */
+				/*
+				 * The stepid could be negative so use
+				 * %d not %u
+				 */
 				xstrfmtcat(extra, "t1.id_step=%d",
-					   selected_step->stepid);
+					   selected_step->step_id.step_id);
+
 				set = 1;
 				job->show_full = 0;
-				/* Set it back just in case we are
-				   looking at a job array.
-				*/
-				if (selected_step->stepid == SLURM_BATCH_SCRIPT)
-					selected_step->stepid = INFINITE;
 			}
 			list_iterator_destroy(itr);
 			if (set)
@@ -916,8 +901,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			xfree(extra);
 		}
 
-		if (debug_flags & DEBUG_FLAG_DB_STEP)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_STEP, mysql_conn->conn, "query\n%s", query);
 
 		if (!(step_result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
@@ -948,9 +932,12 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			if (!job->first_step_ptr)
 				job->first_step_ptr = step;
 			list_append(job->steps, step);
-			step->stepid = slurm_atoul(step_row[STEP_REQ_STEPID]);
-			/* info("got step %u.%u", */
-/* 			     job->header.jobnum, step->stepnum); */
+			step->step_id.job_id = job->jobid;
+			step->step_id.step_id = slurm_atoul(
+				step_row[STEP_REQ_STEPID]);
+			step->step_id.step_het_comp =
+				slurm_atoul(step_row[STEP_REQ_STEP_HET_COMP]);
+			/* info("got %ps", &step->step_id); */
 			step->state = slurm_atoul(step_row[STEP_REQ_STATE]);
 			step->exitcode =
 				slurm_atoul(step_row[STEP_REQ_EXIT_CODE]);
@@ -1185,8 +1172,7 @@ extern List setup_cluster_list_with_inx(mysql_conn_t *mysql_conn,
 			   job_cond->usage_end, job_cond->usage_start);
 	}
 
-	if (debug_flags & DEBUG_FLAG_DB_JOB)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_JOB, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		goto no_hosts;
@@ -1698,7 +1684,6 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 	int is_admin=1;
 	int i;
 	List job_list = NULL;
-	uint16_t private_data = 0;
 	slurmdb_user_rec_t user;
 	int only_pending = 0;
 	List use_cluster_list = as_mysql_cluster_list;
@@ -1709,8 +1694,7 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 	memset(&user, 0, sizeof(slurmdb_user_rec_t));
 	user.uid = uid;
 
-	private_data = slurm_get_private_data();
-	if (private_data & PRIVATE_DATA_JOBS) {
+	if (slurm_conf.private_data & PRIVATE_DATA_JOBS) {
 		if (!(is_admin = is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
 			/*

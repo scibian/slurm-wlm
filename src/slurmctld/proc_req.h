@@ -43,22 +43,38 @@
 
 #include "src/common/slurm_protocol_api.h"
 
-/* Each TCP/IP client connection has a socket
- * and address with port
- */
-typedef struct connection_arg {
-	int newsockfd;
-	slurm_addr_t cli_addr;
-} connection_arg_t;
+#include "src/slurmctld/locks.h"
 
-/* Free memory used to track RPC usage by type and user */
-extern void free_rpc_stats(void);
+typedef struct {
+	uint16_t msg_type;
+	void (*func)(slurm_msg_t *msg);
+	slurmctld_lock_t locks;
+
+	/* Queue structual elements */
+	char *msg_name; /* automatically derived from msg_type */
+
+	bool queue_enabled;
+	bool shutdown;
+
+	pthread_t thread;
+	pthread_cond_t cond;
+	pthread_mutex_t mutex;
+
+	List work;
+} slurmctld_rpc_t;
+
+extern slurmctld_rpc_t slurmctld_rpcs[];
 
 /*
  * slurmctld_req  - Process an individual RPC request
  * IN/OUT msg - the request message, data associated with the message is freed
  */
-void slurmctld_req(slurm_msg_t * msg, connection_arg_t *);
+void slurmctld_req(slurm_msg_t *msg);
+
+/*
+ * Update slurmctld stats structure with time spent processing an rpc.
+ */
+extern void record_rpc_stats(slurm_msg_t *msg, long delta);
 
 /*
  * Initialize a response slurm_msg_t to an inbound msg,

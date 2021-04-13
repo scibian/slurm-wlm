@@ -86,7 +86,7 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-extern slurm_ctl_conf_t slurmctld_conf __attribute__((weak_import));
+extern slurm_conf_t slurm_conf __attribute__((weak_import));
 extern node_record_t *node_record_table_ptr __attribute__((weak_import));
 extern List part_list __attribute__((weak_import));
 extern List job_list __attribute__((weak_import));
@@ -102,7 +102,7 @@ extern int hypercube_switch_cnt __attribute__((weak_import));
 extern struct hypercube_switch ***hypercube_switches __attribute__((weak_import));
 
 #else
-slurm_ctl_conf_t slurmctld_conf;
+slurm_conf_t slurm_conf;
 node_record_t *node_record_table_ptr;
 List part_list;
 List job_list;
@@ -125,8 +125,6 @@ struct select_nodeinfo {
 	char    *tres_alloc_fmt_str;	/* formatted str of allocated tres */
 	double   tres_alloc_weighted;	/* weighted number of tres allocated. */
 };
-
-static uint16_t priority_flags = 0;
 
 static int  _add_job_to_nodes(struct cr_record *cr_ptr, job_record_t *job_ptr,
 			      char *pre_err, int suspended);
@@ -396,7 +394,8 @@ static int _get_avail_cpus(job_record_t *job_ptr, int index)
 	node_ptr = select_node_ptr + index;
 	cpus_per_node     = node_ptr->config_ptr->cpus;
 	boards_per_node   = node_ptr->config_ptr->boards;
-	sockets_per_board = node_ptr->config_ptr->sockets;
+	sockets_per_board = node_ptr->config_ptr->tot_sockets /
+			    boards_per_node;
 	cores_per_socket  = node_ptr->config_ptr->cores;
 	thread_per_core   = node_ptr->config_ptr->threads;
 
@@ -469,7 +468,7 @@ static void _build_select_struct(job_record_t *job_ptr, bitstr_t *bitmap)
 	int i, j, k;
 	int first_bit, last_bit;
 	uint32_t node_cpus, total_cpus = 0, node_cnt;
-	uint64_t job_memory_cpu = 0, job_memory_node = 0;
+	uint64_t job_memory_cpu = 0, job_memory_node = 0, min_mem = 0;
 	job_resources_t *job_resrcs_ptr;
 
 	if (job_ptr->details->pn_min_memory  && (cr_type & CR_MEMORY)) {
@@ -514,6 +513,14 @@ static void _build_select_struct(job_record_t *job_ptr, bitstr_t *bitmap)
 		} else if (job_memory_cpu) {
 			job_resrcs_ptr->memory_allocated[j] =
 				job_memory_cpu * node_cpus;
+		} else if (cr_type & CR_MEMORY) {
+			job_resrcs_ptr->memory_allocated[j] =
+				node_record_table_ptr[i].config_ptr->
+				real_memory;
+			if (!min_mem ||
+			    (min_mem > job_resrcs_ptr->memory_allocated[j])) {
+				min_mem = job_resrcs_ptr->memory_allocated[j];
+			}
 		}
 
 		if (set_job_resources_node(job_resrcs_ptr, j)) {
@@ -522,6 +529,9 @@ static void _build_select_struct(job_record_t *job_ptr, bitstr_t *bitmap)
 		}
 		j++;
 	}
+	if (cr_type & CR_MEMORY && !job_ptr->details->pn_min_memory)
+		job_ptr->details->pn_min_memory = min_mem;
+
 	if (job_resrcs_ptr->ncpus != total_cpus) {
 		error("_build_select_struct: ncpus mismatch %u != %u",
 		      job_resrcs_ptr->ncpus, total_cpus);
@@ -606,6 +616,10 @@ static int _job_count_bitmap(struct cr_record *cr_ptr,
 			count++;
 			continue;	/* No need to test other resources */
 		}
+
+		if (!job_memory_cpu && !job_memory_node &&
+		    (cr_type & CR_MEMORY))
+			job_memory_node = node_ptr->config_ptr->real_memory;
 
 		if (job_memory_cpu || job_memory_node) {
 			alloc_mem = cr_ptr->nodes[i].alloc_memory;
@@ -2246,7 +2260,7 @@ static int _rm_job_from_nodes(struct cr_record *cr_ptr, job_record_t *job_ptr,
 	int i, i_first, i_last, node_offset, rc = SLURM_SUCCESS;
 	struct part_cr_record *part_cr_ptr;
 	job_resources_t *job_resrcs_ptr;
-	uint64_t job_memory, job_memory_cpu = 0, job_memory_node = 0;
+	uint64_t job_memory = 0, job_memory_cpu = 0, job_memory_node = 0;
 	bool exclusive, is_job_running;
 	uint16_t cpu_cnt;
 	node_record_t *node_ptr;
@@ -2299,8 +2313,11 @@ static int _rm_job_from_nodes(struct cr_record *cr_ptr, job_record_t *job_ptr,
 		cpu_cnt = node_ptr->config_ptr->cpus;
 		if (job_memory_cpu)
 			job_memory = job_memory_cpu * cpu_cnt;
-		else
+		else if (job_memory_node)
 			job_memory = job_memory_node;
+		else if (cr_type & CR_MEMORY)
+			job_memory = node_ptr->config_ptr->real_memory;
+
 		if (cr_ptr->nodes[i].alloc_memory >= job_memory)
 			cr_ptr->nodes[i].alloc_memory -= job_memory;
 		else {
@@ -2642,7 +2659,7 @@ static int _rm_job_from_one_node(job_record_t *job_ptr, node_record_t *node_ptr,
 {
 	int i, node_inx, node_offset;
 	job_resources_t *job_resrcs_ptr;
-	uint64_t job_memory, job_memory_cpu = 0, job_memory_node = 0;
+	uint64_t job_memory = 0, job_memory_cpu = 0, job_memory_node = 0;
 	int first_bit;
 	uint16_t cpu_cnt;
 	List gres_list;
@@ -2699,8 +2716,11 @@ static int _rm_job_from_one_node(job_record_t *job_ptr, node_record_t *node_ptr,
 	cpu_cnt = node_ptr->config_ptr->cpus;
 	if (job_memory_cpu)
 		job_memory = job_memory_cpu * cpu_cnt;
-	else
+	else if (job_memory_node)
 		job_memory = job_memory_node;
+	else if (cr_type & CR_MEMORY)
+		job_memory = node_ptr->config_ptr->real_memory;
+
 	if (cr_ptr->nodes[node_inx].alloc_memory >= job_memory)
 		cr_ptr->nodes[node_inx].alloc_memory -= job_memory;
 	else {
@@ -2782,8 +2802,12 @@ static int _add_job_to_nodes(struct cr_record *cr_ptr,
 		if (job_memory_cpu) {
 			cr_ptr->nodes[i].alloc_memory += job_memory_cpu *
 				cpu_cnt;
-		} else
+		} else if (job_memory_node) {
 			cr_ptr->nodes[i].alloc_memory += job_memory_node;
+		} else if (cr_type & CR_MEMORY) {
+			cr_ptr->nodes[i].alloc_memory +=
+				node_ptr->config_ptr->real_memory;
+		}
 
 		if (alloc_all) {
 			if (cr_ptr->nodes[i].gres_list)
@@ -3046,6 +3070,9 @@ static void _init_node_cr(void)
 			if (exclusive)
 				cr_ptr->nodes[i].exclusive_cnt++;
 			if (job_memory_cpu == 0) {
+				if (!job_memory_node && (cr_type & CR_MEMORY))
+					job_memory_node = node_ptr->config_ptr->
+						real_memory;
 				cr_ptr->nodes[i].alloc_memory +=
 					job_memory_node;
 			} else {
@@ -3452,23 +3479,16 @@ static int  _cr_job_list_sort(void *x, void *y)
  */
 extern int init ( void )
 {
-	char *topo_param;
 	int rc = SLURM_SUCCESS;
 
-	cr_type = slurmctld_conf.select_type_param;
+	cr_type = slurm_conf.select_type_param;
 	if (cr_type)
 		verbose("%s loaded with argument %u", plugin_name, cr_type);
 
-	topo_param = slurm_get_topology_param();
-	if (topo_param) {
-		if (xstrcasestr(topo_param, "dragonfly"))
-			have_dragonfly = true;
-		if (xstrcasestr(topo_param, "TopoOptional"))
-			topo_optional = true;
-		xfree(topo_param);
-	}
-
-	priority_flags = slurm_get_priority_flags();
+	if (xstrcasestr(slurm_conf.topology_param, "dragonfly"))
+		have_dragonfly = true;
+	if (xstrcasestr(slurm_conf.topology_param, "TopoOptional"))
+		topo_optional = true;
 
 	return rc;
 }
@@ -3507,11 +3527,6 @@ extern int select_p_state_restore(char *dir_name)
 extern int select_p_job_init(List job_list_arg)
 {
 	return SLURM_SUCCESS;
-}
-
-extern bool select_p_node_ranking(node_record_t *node_ptr, int node_cnt)
-{
-	return false;
 }
 
 extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
@@ -3928,7 +3943,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 				assoc_mgr_tres_weighted(
 					node_ptr->tres_cnt,
 					node_ptr->config_ptr->tres_weights,
-					priority_flags, false);
+					slurm_conf.priority_flags, false);
 		} else {
 			nodeinfo->alloc_cpus = 0;
 			nodeinfo->tres_alloc_weighted = 0.0;

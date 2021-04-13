@@ -84,7 +84,6 @@ GCond *grid_cond = NULL;
 int cluster_dims;
 uint32_t cluster_flags;
 List cluster_list = NULL;
-char *orig_cluster_name = NULL;
 switch_record_bitmaps_t *g_switch_nodes_maps = NULL;
 popup_pos_t popup_pos;
 char *federation_name = NULL;
@@ -627,7 +626,6 @@ static gboolean _delete(GtkWidget *widget,
 	FREE_NULL_LIST(multi_button_list);
 	FREE_NULL_LIST(signal_params_list);
 	FREE_NULL_LIST(cluster_list);
-	xfree(orig_cluster_name);
 	uid_cache_clear();
 	assoc_mgr_fini(0);
 #endif
@@ -650,7 +648,6 @@ static char *_get_ui_description()
 		"  <menubar name='main'>"
 		"    <menu action='actions'>"
 		"      <menu action='create'>"
-		"        <menuitem action='batch_job'/>"
 		"        <menuitem action='partition'/>"
 		"        <menuitem action='reservation'/>"
 		"      </menu>"
@@ -741,10 +738,10 @@ static bool _user_is_admin(void)
 	void *db_conn = NULL;
 	slurmdb_admin_level_t level;
 
-	if ((uid == 0) || uid == slurm_get_slurm_user_id())
+	if ((uid == 0) || uid == slurm_conf.slurm_user_id)
 		return true;
 
-	if (!(db_conn = slurmdb_connection_get()))
+	if (!(db_conn = slurmdb_connection_get(NULL)))
 		return false;
 
 	level = assoc_mgr_get_admin_level(db_conn, uid);
@@ -764,8 +761,6 @@ static GtkWidget *_get_menubar_menu(GtkWidget *window, GtkWidget *notebook)
 		{"actions", NULL, "_Actions", "<alt>a"},
 		{"options", NULL, "_Options", "<alt>o"},
 		{"displays", NULL, "_Query", "<alt>q"},
-		{"batch_job", NULL, "Batch Job", "", "Submit batch job",
-		 G_CALLBACK(create_create_popup)},
 		{"partition", NULL, "Partition", "", "Create partition",
 		 G_CALLBACK(create_create_popup)},
 		{"reservation", NULL, "Reservation", "", "Create reservation",
@@ -1128,9 +1123,7 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 	gtk_table_set_col_spacings(main_grid_table, 0);
 	gtk_table_set_row_spacings(main_grid_table, 0);
 
-	if (!orig_cluster_name)
-		orig_cluster_name = slurm_get_cluster_name();
-	if (!xstrcmp(cluster_rec->name, orig_cluster_name))
+	if (!xstrcmp(cluster_rec->name, slurm_conf.cluster_name))
 		working_cluster_rec = NULL;
 	else
 		working_cluster_rec = cluster_rec;
@@ -1271,7 +1264,7 @@ static GtkWidget *_create_cluster_combo(void)
 	ListIterator itr;
 	slurmdb_cluster_rec_t *cluster_rec;
 	GtkCellRenderer *renderer = NULL;
-	bool got_db = slurm_get_is_association_based_accounting();
+	bool got_db = slurm_with_slurmdbd();
 	int count = 0, spot = 0;
 	List fed_list = NULL;
 
@@ -1283,9 +1276,6 @@ static GtkWidget *_create_cluster_combo(void)
 		FREE_NULL_LIST(cluster_list);
 		return NULL;
 	}
-
-	if (!orig_cluster_name)
-		orig_cluster_name = slurm_get_cluster_name();
 
 	if (list_count(cluster_list) > 1)
 		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_POINTER);
@@ -1332,7 +1322,7 @@ static GtkWidget *_create_cluster_combo(void)
 		gtk_list_store_set(model, &iter, 0, cluster_rec->name, 1,
 				   cluster_rec, -1);
 
-		if (!xstrcmp(cluster_rec->name, orig_cluster_name)) {
+		if (!xstrcmp(cluster_rec->name, slurm_conf.cluster_name)) {
 			/* clear it since we found the current cluster */
 			working_cluster_rec = NULL;
 			spot = count;

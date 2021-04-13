@@ -269,12 +269,7 @@ extern int build_all_frontend_info (bool is_slurmd_context)
 #ifdef HAVE_FRONT_END
 	slurm_conf_frontend_t *fe_single, *fe_line;
 	int i, count, max_rc = SLURM_SUCCESS;
-	bool front_end_debug;
 
-	if (slurm_get_debug_flags() & DEBUG_FLAG_FRONT_END)
-		front_end_debug = true;
-	else
-		front_end_debug = false;
 	count = slurm_conf_frontend_array(&ptr_array);
 	if (count == 0)
 		fatal("No FrontendName information available!");
@@ -323,7 +318,8 @@ extern int build_all_frontend_info (bool is_slurmd_context)
 			if (fe_line->reason && fe_line->reason[0])
 				fe_single->reason = xstrdup(fe_line->reason);
 			fe_single->node_state = fe_line->node_state;
-			if (front_end_debug && !is_slurmd_context)
+			if ((slurm_conf.debug_flags & DEBUG_FLAG_FRONT_END) &&
+			    !is_slurmd_context)
 				_dump_front_end(fe_single);
 		}
 		hostlist_destroy(hl_addr);
@@ -394,7 +390,7 @@ extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt)
 		config_ptr->cpu_bind = node->cpu_bind;
 		config_ptr->cpus = node->cpus;
 		config_ptr->boards = node->boards;
-		config_ptr->sockets = node->sockets;
+		config_ptr->tot_sockets = node->tot_sockets;
 		config_ptr->cores = node->cores;
 		config_ptr->core_spec_cnt = node->core_spec_cnt;
 		config_ptr->cpu_spec_list = xstrdup(node->cpu_spec_list);
@@ -575,7 +571,8 @@ extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
 					node_ptr->port_str);
 			}
 			port = port_int;
-		}
+		} else
+			port = slurm_conf.slurmd_port;
 
 		(*_callback)(alias, hostname, address, bcast_address,
 			     port, state_val, node_ptr, config_ptr);
@@ -619,9 +616,9 @@ extern config_record_t *create_config_record(void)
 
 	last_node_update = time (NULL);
 
+	config_ptr->magic = CONFIG_MAGIC;
 	config_ptr->nodes = NULL;
 	config_ptr->node_bitmap = NULL;
-	xassert (config_ptr->magic = CONFIG_MAGIC);  /* set value */
 
 	list_append(config_list, config_ptr);
 
@@ -677,7 +674,7 @@ extern node_record_t *create_node_record(config_record_t *config_ptr,
 	node_ptr->free_mem = NO_VAL64;
 	node_ptr->cpu_spec_list = xstrdup(config_ptr->cpu_spec_list);
 	node_ptr->boards = config_ptr->boards;
-	node_ptr->sockets = config_ptr->sockets;
+	node_ptr->tot_sockets = config_ptr->tot_sockets;
 	node_ptr->cores = config_ptr->cores;
 	node_ptr->core_spec_cnt = config_ptr->core_spec_cnt;
 	node_ptr->threads = config_ptr->threads;
@@ -692,7 +689,8 @@ extern node_record_t *create_node_record(config_record_t *config_ptr,
 	node_ptr->mcs_label = NULL;
 	node_ptr->next_state = NO_VAL;
 	node_ptr->protocol_version = SLURM_MIN_PROTOCOL_VERSION;
-	xassert (node_ptr->magic = NODE_MAGIC)  /* set value */;
+	node_ptr->magic = NODE_MAGIC;
+
 	return node_ptr;
 }
 
@@ -930,6 +928,7 @@ extern int hostlist2bitmap (hostlist_t hl, bool best_effort, bitstr_t **bitmap)
 extern void purge_node_rec(node_record_t *node_ptr)
 {
 	xfree(node_ptr->arch);
+	xfree(node_ptr->comment);
 	xfree(node_ptr->comm_name);
 	xfree(node_ptr->cpu_spec_list);
 	xfree(node_ptr->features);
@@ -1018,7 +1017,7 @@ extern void cr_init_global_core_data(node_record_t *node_ptr, int node_cnt)
 
 	for (n = 0; n < node_cnt; n++) {
 		uint16_t cores = node_ptr[n].config_ptr->cores;
-		cores *= node_ptr[n].config_ptr->sockets;
+		cores *= node_ptr[n].config_ptr->tot_sockets;
 
 		cr_node_num_cores[n] = cores;
 		if (n > 0) {

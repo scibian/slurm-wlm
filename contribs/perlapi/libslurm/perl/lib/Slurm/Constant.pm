@@ -140,6 +140,8 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * MAIL_JOB_REQUEUE  0x0008
 
+=item * MAIL_INVALID_DEPEND 0x0400
+
 =back
 
 =head3 Offset for job's nice value
@@ -802,8 +804,6 @@ This package export constants for use with Slurm. This includes enumerations and
 =item * CPU_BIND_LDMAP              0x400
 
 =item * CPU_BIND_LDMASK             0x800
-
-=item * CPU_BIND_CPUSETS            0x8000
 
 =back
 

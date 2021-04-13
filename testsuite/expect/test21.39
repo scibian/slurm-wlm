@@ -34,7 +34,6 @@ set ta2		"test$test_id-account.2"
 set tu1     [get_my_user_name]
 set tq1     "test$test_id-qos.1"
 set tq2     "test$test_id-qos.2"
-set exit_code	0
 
 # account options
 array set acct_1 {}
@@ -249,7 +248,6 @@ create_accounts
 
 # Get the location of the slurm.conf file
 set config_dir [get_conf_path]
-fail_on_error "Unable to determine configuration path"
 set config_file $config_dir/slurm.conf
 
 #
@@ -260,7 +258,7 @@ save_conf $config_file
 # Comment out PrologFlags in the slurm.conf
 exec $bin_sed -i {s/^\(PrologFlags=\)/#\1/gI} $config_file
 
-reconfigure
+reconfigure -fail
 
 delete_part $part_name
 

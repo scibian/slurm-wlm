@@ -36,10 +36,10 @@
 
 #include "src/common/log.h"
 #include "src/common/node_select.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_step_layout.h"
 #include "src/common/slurmdb_defs.h"
-#include "src/common/read_config.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -227,6 +227,57 @@ extern slurm_step_layout_t *slurm_step_layout_copy(
 	}
 
 	return layout;
+}
+
+extern void slurm_step_layout_merge(slurm_step_layout_t *step_layout1,
+				    slurm_step_layout_t *step_layout2)
+{
+	hostlist_t hl, hl2;
+	hostlist_iterator_t host_itr;
+	int new_pos = 0, node_task_cnt;
+	char *host;
+
+	xassert(step_layout1);
+	xassert(step_layout2);
+
+	hl = hostlist_create(step_layout1->node_list);
+	hl2 = hostlist_create(step_layout2->node_list);
+
+	host_itr = hostlist_iterator_create(hl2);
+	while ((host = hostlist_next(host_itr))) {
+		int pos = hostlist_find(hl, host);
+
+		if (pos == -1) {
+			/* If the host doesn't exist push it on the end */
+			hostlist_push_host(hl, host);
+			pos = step_layout1->node_cnt++;
+			xrecalloc(step_layout1->tasks,
+				  step_layout1->node_cnt,
+				  sizeof(uint16_t));
+			xrecalloc(step_layout1->tids,
+				  step_layout1->node_cnt,
+				  sizeof(uint32_t *));
+		}
+		free(host);
+
+		/* set the end position of the array */
+		node_task_cnt = step_layout1->tasks[pos];
+		step_layout1->tasks[pos] +=
+			step_layout2->tasks[new_pos];
+		xrecalloc(step_layout1->tids[pos],
+			  step_layout1->tasks[pos],
+			  sizeof(uint32_t));
+		for (int i = 0; i < step_layout2->tasks[new_pos]; i++) {
+			step_layout1->tids[pos][node_task_cnt++] =
+				step_layout2->tids[new_pos][i];
+		}
+		new_pos++;
+	}
+	hostlist_iterator_destroy(host_itr);
+
+	step_layout1->task_cnt += step_layout2->task_cnt;
+	step_layout1->node_list = hostlist_ranged_string_xmalloc(hl);
+	hostlist_destroy(hl);
 }
 
 extern void pack_slurm_step_layout(slurm_step_layout_t *step_layout,
@@ -574,7 +625,7 @@ static int _task_layout_block(slurm_step_layout_t *step_layout, uint16_t *cpus)
 	bool pack_nodes;
 
 	if (select_params == NO_VAL16)
-		select_params = slurm_get_select_type_param();
+		select_params = slurm_conf.select_type_param;
 	if (step_layout->task_dist & SLURM_DIST_PACK_NODES)
 		pack_nodes = true;
 	else if (step_layout->task_dist & SLURM_DIST_NO_PACK_NODES)
@@ -815,121 +866,85 @@ static int _task_layout_plane(slurm_step_layout_t *step_layout,
 	return SLURM_SUCCESS;
 }
 
+typedef struct {
+	task_dist_states_t task_dist;
+	const char *string;
+} layout_type_name_t;
+
+static const layout_type_name_t layout_type_names[] = {
+	{ SLURM_DIST_CYCLIC, "Cyclic" },
+	 /* distribute tasks filling node by node */
+	{ SLURM_DIST_BLOCK, "Block" },
+	/* arbitrary task distribution  */
+	{ SLURM_DIST_ARBITRARY, "arbitrary task distribution" },
+	/*
+	 * distribute tasks by filling up planes of lllp first and then by
+	 * going across the nodes See documentation for more information
+	 */
+	{ SLURM_DIST_PLANE, "Plane" },
+	/*
+	 * distribute tasks 1 per node: round robin: same for lowest
+	 * level of logical processor (lllp)
+	 */
+	{ SLURM_DIST_CYCLIC_CYCLIC, "CCyclic" },
+	/* cyclic for node and block for lllp  */
+	{ SLURM_DIST_CYCLIC_BLOCK, "CBlock" },
+	/* block for node and cyclic for lllp  */
+	{ SLURM_DIST_BLOCK_CYCLIC, "BCyclic" },
+	/* block for node and block for lllp  */
+	{ SLURM_DIST_BLOCK_BLOCK, "BBlock" },
+	/* cyclic for node and full cyclic for lllp  */
+	{ SLURM_DIST_CYCLIC_CFULL, "CFCyclic" },
+	/* block for node and full cyclic for lllp  */
+	{ SLURM_DIST_BLOCK_CFULL, "BFCyclic" },
+	{ SLURM_DIST_CYCLIC_CYCLIC_CYCLIC, "CCyclicCyclic" },
+	{ SLURM_DIST_CYCLIC_CYCLIC_BLOCK, "CCyclicBlock" },
+	{ SLURM_DIST_CYCLIC_CYCLIC_CFULL, "CCyclicFCyclic" },
+	{ SLURM_DIST_CYCLIC_BLOCK_CYCLIC, "CBlockCyclic" },
+	{ SLURM_DIST_CYCLIC_BLOCK_BLOCK, "CBlockBlock" },
+	{ SLURM_DIST_CYCLIC_BLOCK_CFULL, "CCyclicFCyclic" },
+	{ SLURM_DIST_CYCLIC_CFULL_CYCLIC, "CFCyclicCyclic" },
+	{ SLURM_DIST_CYCLIC_CFULL_BLOCK, "CFCyclicBlock" },
+	{ SLURM_DIST_CYCLIC_CFULL_CFULL, "CFCyclicFCyclic" },
+	{ SLURM_DIST_BLOCK_CYCLIC_CYCLIC, "BCyclicCyclic" },
+	{ SLURM_DIST_BLOCK_CYCLIC_BLOCK, "BCyclicBlock" },
+	{ SLURM_DIST_BLOCK_CYCLIC_CFULL, "BCyclicFCyclic" },
+	{ SLURM_DIST_BLOCK_BLOCK_CYCLIC, "BBlockCyclic" },
+	{ SLURM_DIST_BLOCK_BLOCK_BLOCK, "BBlockBlock" },
+	{ SLURM_DIST_BLOCK_BLOCK_CFULL, "BBlockFCyclic" },
+	{ SLURM_DIST_BLOCK_CFULL_CYCLIC, "BFCyclicCyclic" },
+	{ SLURM_DIST_BLOCK_CFULL_BLOCK, "BFCyclicBlock" },
+	{ SLURM_DIST_BLOCK_CFULL_CFULL, "BFCyclicFCyclic" },
+	{ 0 }
+};
+
 extern char *slurm_step_layout_type_name(task_dist_states_t task_dist)
 {
-	static char name[64] = "";
+	char *name = NULL, *pos = NULL;
 
-	name[0] = '\0';
-	switch (task_dist & SLURM_DIST_STATE_BASE) {
-	case SLURM_DIST_CYCLIC:
-		strcat(name, "Cyclic");
-		break;
-	case SLURM_DIST_BLOCK:	/* distribute tasks filling node by node */
-		strcat(name, "Block");
-		break;
-	case SLURM_DIST_ARBITRARY:	/* arbitrary task distribution  */
-		strcat(name, "Arbitrary");
-		break;
-	case SLURM_DIST_PLANE:	/* distribute tasks by filling up
-				   planes of lllp first and then by
-				   going across the nodes See
-				   documentation for more
-				   information */
-		strcat(name, "Plane");
-		break;
-	case SLURM_DIST_CYCLIC_CYCLIC:/* distribute tasks 1 per node:
-					 round robin: same for lowest
-					 level of logical processor (lllp) */
-		strcat(name, "CCyclic");
-		break;
-	case SLURM_DIST_CYCLIC_BLOCK: /* cyclic for node and block for lllp  */
-		strcat(name, "CBlock");
-		break;
-	case SLURM_DIST_BLOCK_CYCLIC: /* block for node and cyclic for lllp  */
-		strcat(name, "BCyclic");
-		break;
-	case SLURM_DIST_BLOCK_BLOCK:	/* block for node and block for lllp  */
-		strcat(name, "BBlock");
-		break;
-	case SLURM_DIST_CYCLIC_CFULL:	/* cyclic for node and full
-					 * cyclic for lllp  */
-		strcat(name, "CFCyclic");
-		break;
-	case SLURM_DIST_BLOCK_CFULL:	/* block for node and full
-					 * cyclic for lllp  */
-		strcat(name, "BFCyclic");
-		break;
-	case SLURM_DIST_CYCLIC_CYCLIC_CYCLIC:
-		return "CCyclicCyclic";
-		break;
-	case SLURM_DIST_CYCLIC_CYCLIC_BLOCK:
-		return "CCyclicBlock";
-		break;
-	case SLURM_DIST_CYCLIC_CYCLIC_CFULL:
-		return "CCyclicFCyclic";
-		break;
-	case SLURM_DIST_CYCLIC_BLOCK_CYCLIC:
-		return "CBlockCyclic";
-		break;
-	case SLURM_DIST_CYCLIC_BLOCK_BLOCK:
-		return "CBlockBlock";
-		break;
-	case SLURM_DIST_CYCLIC_BLOCK_CFULL:
-		return "CCyclicFCyclic";
-		break;
-	case SLURM_DIST_CYCLIC_CFULL_CYCLIC:
-		return "CFCyclicCyclic";
-		break;
-	case SLURM_DIST_CYCLIC_CFULL_BLOCK:
-		return "CFCyclicBlock";
-		break;
-	case SLURM_DIST_CYCLIC_CFULL_CFULL:
-		return "CFCyclicFCyclic";
-		break;
-	case SLURM_DIST_BLOCK_CYCLIC_CYCLIC:
-		return "BCyclicCyclic";
-		break;
-	case SLURM_DIST_BLOCK_CYCLIC_BLOCK:
-		return "BCyclicBlock";
-		break;
-	case SLURM_DIST_BLOCK_CYCLIC_CFULL:
-		return "BCyclicFCyclic";
-		break;
-	case SLURM_DIST_BLOCK_BLOCK_CYCLIC:
-		return "BBlockCyclic";
-		break;
-	case SLURM_DIST_BLOCK_BLOCK_BLOCK:
-		return "BBlockBlock";
-		break;
-	case SLURM_DIST_BLOCK_BLOCK_CFULL:
-		return "BBlockFCyclic";
-		break;
-	case SLURM_DIST_BLOCK_CFULL_CYCLIC:
-		return "BFCyclicCyclic";
-		break;
-	case SLURM_DIST_BLOCK_CFULL_BLOCK:
-		return "BFCyclicBlock";
-		break;
-	case SLURM_DIST_BLOCK_CFULL_CFULL:
-		return "BFCyclicFCyclic";
-		break;
-	case SLURM_DIST_NO_LLLP:	/* No distribution specified for lllp */
-	case SLURM_DIST_UNKNOWN:
-	default:
-		strcat(name, "Unknown");
+	for (int i = 0; layout_type_names[i].task_dist; i++) {
+		if (layout_type_names[i].task_dist ==
+		    (task_dist & SLURM_DIST_STATE_BASE)) {
+			xstrfmtcatat(name, &pos, "%s",
+				     layout_type_names[i].string);
+			break;
+		}
 	}
 
-	if (task_dist & SLURM_DIST_PACK_NODES) {
-		if (name[0])
-			strcat(name, ",");
-		strcat(name, "Pack");
+	if (!name) {
+		/*
+		 * SLURM_DIST_NO_LLLP or SLURM_DIST_UNKNOWN
+		 * No distribution specified for lllp
+		 */
+		xstrfmtcatat(name, &pos, "%s", "Unknown");
 	}
 
-	if (task_dist & SLURM_DIST_NO_PACK_NODES) {
-		if (name[0])
-			strcat(name, ",");
-		strcat(name, "NoPack");
-	}
+	if (task_dist & SLURM_DIST_PACK_NODES)
+		xstrfmtcatat(name, &pos, ",%s", "Pack");
 
+	if (task_dist & SLURM_DIST_NO_PACK_NODES)
+		xstrfmtcatat(name, &pos, ",%s", "NoPack");
+
+	xassert(pos);
 	return name;
 }

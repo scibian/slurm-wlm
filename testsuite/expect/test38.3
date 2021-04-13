@@ -32,7 +32,6 @@ source ./globals_het_jobs
 
 set timeout 60
 
-set exit_code    0
 set file_in      "test$test_id.in"
 set job_id       0
 
@@ -55,8 +54,7 @@ proc salloc {} {
 	spawn {*}$command
 	expect {
 		-re "Job submit/allocate failed" {
-			log_warn "Unable to execute test due to system configuration"
-			end_it 0
+			skip "Unable to execute test due to system configuration"
 		}
 		-re "Pending job allocation ($number)" {
 			set job_id $expect_out(1,string)
@@ -69,44 +67,25 @@ proc salloc {} {
 #			exp_continue
 		}
 		timeout {
-			log_error "salloc not responding"
-			end_it 1
+			fail "salloc not responding"
 		}
 		eof {
 			wait
 		}
 	}
 	if {$job_id == 0} {
-		log_error "salloc failure"
-		end_it 1
+		fail "salloc failure"
 	}
 
 	return $job_id
 }
 
-proc cancel_job_id { } {
-	global scancel job_id
-
-	if {$job_id != 0} {
-		exec $scancel $job_id
-	}
-}
-
 proc cleanup { } {
-	global bin_rm file_in
-	global test_id
+	global job_id bin_rm file_in test_id
+
+	cancel_job $job_id
 
 	exec $bin_rm -f $file_in test$test_id*.out
-	return 0
-}
-
-proc end_it { exit_code } {
-	global test_id
-	cancel_job_id
-	if {$exit_code != 0} {
-		fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-	}
-	pass
 }
 
 #start test
@@ -115,7 +94,6 @@ log_info "\n################################################################\n"
 log_info "Salloc hetjob and verify output from scontrol show job"
 log_info "\n################################################################\n"
 
-set job_id 0
 set matches 0
 
 set job_id [salloc]
@@ -128,7 +106,7 @@ set id_regex "\[0-9,-\]+"
 # first set (hetjob leader).
 spawn $scontrol show job $job_id
 expect {
-	-re "JobId=$job_id\\s+HetJobId=$job_id\\s+HetJobOffset=0\\s+JobName=sleep\\s+HetJobIdSet=($id_regex)" {
+	-re "JobId=$job_id\\s+HetJobId=$job_id\\s+HetJobOffset=0\\s+JobName=interactive\\s+HetJobIdSet=($id_regex)" {
 		incr matches
 		set id_set $expect_out(1,string)
 		exp_continue
@@ -142,16 +120,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
-		end_it 1
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 3} {
-	log_error "Problem with scontrol ($matches != 3)"
-	end_it 1
+	fail "Problem with scontrol ($matches != 3)"
 }
 
 set js [parse_id_set $id_set $job_id]
@@ -184,13 +160,11 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
-		end_it 1
+		fail "scontrol not responding"
 	}
 }
 if {$matches != 5} {
-	log_error "Problem with scontrol ($matches != 5)"
-	end_it 1
+	fail "Problem with scontrol ($matches != 5)"
 }
 
 set matches 0
@@ -218,17 +192,12 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
-		end_it 1
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
 	}
 }
 if {$matches != 5} {
-	log_error "Problem with scontrol ($matches != 5)"
-	end_it 1
+	fail "Problem with scontrol ($matches != 5)"
 }
-
-# All Done
-end_it 0

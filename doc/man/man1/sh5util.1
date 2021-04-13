@@ -1,4 +1,4 @@
-.TH sh5util "1" "Slurm Commands" "April 2015" "Slurm Commands"
+.TH sh5util "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 .LP
@@ -22,15 +22,31 @@ analysis tools such as spreadsheets.
 .LP
 The second, (Item-Extract) extracts one data time from one time series for all
 the samples on all the nodes from a jobs HDF5 profile.
-.TP
+.LP
 \- Finds sample with maximum value of the item.
-.TP
+.LP
 \- Write CSV file with min, ave, max, and item totals for each node for each
 sample
 
 
 .SH "OPTIONS"
 .LP
+
+.TP
+\fB\-L\fR, \fB\-\-list\fR
+
+Print the items of a series contained in a job file.
+.RS
+.TP 10
+List mode options
+
+.TP
+\fB\-i\fR, \fB\-\-input\fR=\fIpath\fR
+Merged file to extract from (default ./job_$jobid.h5)
+
+.TP
+\fB\-s\fR, \fB\-\-series\fR=[Energy | Filesystem | Network | Task]
+.RE
 
 .TP
 \fB\-E\fR, \fB\-\-extract\fR
@@ -50,12 +66,12 @@ merged file to extract from (default ./job_$jobid.h5)
 Node name to extract (default is all)
 
 .TP
-\fB\-l\fR, \fB\-\-level\fR=\fI[Node:Totals|Node:TimeSeries]\fR
+\fB\-l\fR, \fB\-\-level\fR=[Node:Totals | Node:TimeSeries]
 Level to which series is attached. (default Node:Totals)
 
 .TP
-\fB\-s\fR, \fB\-\-series\fR=\fI[Energy | Lustre | Network | Tasks | Task_#]\fR
-\fBTasks\fR is all tasks, \fBTask_#\fR (# is a task id) (default is everything)
+\fB\-s\fR, \fB\-\-series\fR=[Energy | Filesystem | Network | Task | Task_#]
+\fBTask\fR is all tasks, \fBTask_#\fR (# is a task id) (default is everything)
 
 .RE
 
@@ -69,7 +85,7 @@ Extract one data item from all samples of one data series from all nodes in a me
 Item-Extract mode options
 
 .TP
-\fB\-s\fR, \fB\-\-series\fR=[Energy | Lustre | Network | Task]\fR
+\fB\-s\fR, \fB\-\-series\fR=[Energy | Filesystem | Network | Task]\fR
 
 .TP
 \fB\-d\fR, \fB\-\-data\fR
@@ -124,7 +140,7 @@ CPU_Frequency
 .fi
 
 .TP
-\fBLustre\fR
+\fBFilesystem\fR
 .nf
 Reads
 Megabytes_Read
@@ -167,21 +183,28 @@ procedure calls to \fBslurmctld\fR from loops in shell scripts or other
 programs. Ensure that programs limit calls to \fBsh5util\fR to the minimum
 necessary for the information you are trying to gather.
 
-.SH "Examples"
+.SH "EXAMPLES"
 
 .TP
-Merge node-step files (as part of a sbatch script)
-.LP
-sbatch \-n1 \-d$SLURM_JOB_ID \-\-wrap="sh5util \-\-savefiles \-j $SLURM_JOB_ID"
+Merge node-step files (as part of a sbatch script):
+
+.nf
+$ sbatch \-n1 \-d$SLURM_JOB_ID \-\-wrap="sh5util \-\-savefiles \-j $SLURM_JOB_ID"
+.fi
 
 .TP
-Extract all task data from a node
-.LP
-sh5util \-j 42 \-N snowflake01 \-\-level=Node:TimeSeries \-\-series=Tasks
+Extract all task data from a node:
+
+.nf
+$ sh5util \-j 42 \-N snowflake01 \-\-level=Node:TimeSeries \-\-series=Tasks
+.fi
 
 .TP
-Extract all energy data
-sh5util \-j 42 \-\-series=Energy \-\-data=power
+Extract all energy data:
+
+.nf
+$ sh5util \-j 42 \-\-series=Energy \-\-data=power
+.fi
 
 .SH "COPYING"
 Copyright (C) 2013 Bull.
