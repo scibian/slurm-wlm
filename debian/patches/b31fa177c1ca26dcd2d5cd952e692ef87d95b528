@@ -68,7 +68,7 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
 +static void _wait_health_check(void)
 +{
 +	int last_check_time = 0;
-+	while (!_shutdown && (conf->health_check_interval != 0) ) {
++	while (!_shutdown && (slurm_conf.health_check_interval != 0) ) {
 +		if (time(NULL) - last_check_time > HEALTH_RETRY_DELAY) {
 +			if (run_script_health_check() == SLURM_SUCCESS) {
 +				break;
