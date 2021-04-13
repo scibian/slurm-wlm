@@ -56,13 +56,14 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_common.h"
 #include "src/common/strlcpy.h"
+#include "src/common/timers.h"
+#include "src/common/workq.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 #include "src/slurmrestd/conmgr.h"
 #include "src/slurmrestd/http.h"
-#include "src/slurmrestd/workq.h"
 
 #define MAGIC_CON_MGR_FD 0xD23444EF
 #define MAGIC_CON_MGR 0xD232444A
@@ -180,9 +181,6 @@ static void _connection_fd_delete(void *x)
 	else
 		xassert(!list_remove_first(mgr->connections, _find_by_ptr,
 					   con));
-	xassert((con->magic = ~MAGIC_CON_MGR_FD));
-	xassert((con->input_fd = -1));
-	xassert((con->output_fd = -1));
 	FREE_NULL_BUFFER(con->in);
 	FREE_NULL_BUFFER(con->out);
 	FREE_NULL_LIST(con->work);
@@ -190,6 +188,7 @@ static void _connection_fd_delete(void *x)
 	xfree(con->unix_socket);
 
 	xassert(!con->arg);
+	con->magic = ~MAGIC_CON_MGR_FD;
 	xfree(con);
 }
 
@@ -216,9 +215,9 @@ extern con_mgr_t *init_con_mgr(int thread_count)
 {
 	con_mgr_t *mgr = xmalloc(sizeof(*mgr));
 
+	mgr->magic = MAGIC_CON_MGR;
 	mgr->connections = list_create(NULL);
 	mgr->listen = list_create(NULL);
-	xassert((mgr->magic = MAGIC_CON_MGR));
 
 	slurm_mutex_init(&mgr->mutex);
 	slurm_cond_init(&mgr->cond, NULL);
@@ -247,15 +246,34 @@ extern con_mgr_t *init_con_mgr(int thread_count)
  */
 static void _signal_change(con_mgr_t *mgr, bool locked)
 {
+	DEF_TIMERS;
 	char buf[] = "1";
+	int rc;
 
 	_check_magic_mgr(mgr);
 
-	log_flag(NET, "%s: sending", __func__);
+	if (!locked)
+		slurm_mutex_lock(&mgr->mutex);
+
+	if (mgr->event_signaled) {
+		mgr->event_signaled++;
+		log_flag(NET, "%s: sent %d times",
+			 __func__, mgr->event_signaled);
+		goto done;
+	} else {
+		log_flag(NET, "%s: sending", __func__);
+		mgr->event_signaled = 1;
+	}
+
+	if (!locked)
+		slurm_mutex_unlock(&mgr->mutex);
 
 try_again:
+	START_TIMER;
 	/* send 1 byte of trash */
-	if (write(mgr->event_fd[1], buf, 1) != 1) {
+	rc = write(mgr->event_fd[1], buf, 1);
+	END_TIMER2("write to event_fd");
+	if (rc != 1) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 			log_flag(NET, "%s: trying again: %m", __func__);
 			goto try_again;
@@ -264,9 +282,13 @@ try_again:
 		fatal("%s: unable to signal connection manager: %m", __func__);
 	}
 
+	log_flag(NET, "%s: sent in %s", __func__, TIME_STR);
+
 	if (!locked)
 		slurm_mutex_lock(&mgr->mutex);
 
+done:
+	/* wake up _watch() */
 	slurm_cond_broadcast(&mgr->cond);
 
 	if (!locked)
@@ -315,8 +337,6 @@ extern void free_con_mgr(con_mgr_t *mgr)
 	xassert(!mgr->listen_active);
 	xassert(!mgr->inspecting);
 
-	xassert((mgr->magic = ~MAGIC_CON_MGR));
-
 	xassert(list_is_empty(mgr->connections));
 	xassert(list_is_empty(mgr->listen));
 	FREE_NULL_LIST(mgr->connections);
@@ -331,6 +351,7 @@ extern void free_con_mgr(con_mgr_t *mgr)
 	if (close(mgr->sigint_fd[0]) || close(mgr->sigint_fd[1]))
 		error("%s: unable to close sigint_fd: %m", __func__);
 
+	mgr->magic = ~MAGIC_CON_MGR;
 	xfree(mgr);
 }
 
@@ -357,8 +378,9 @@ static void _close_con(bool locked, con_mgr_fd_t *con)
 		_check_magic_mgr(con->mgr);
 	}
 
-	/* unlink socket to avoid leaving ghost socket */
-	if (con->unix_socket && (unlink(con->unix_socket) == -1))
+	/* unlink listener sockets to avoid leaving ghost socket */
+	if (con->is_listen && con->unix_socket &&
+	    (unlink(con->unix_socket) == -1))
 		error("%s: unable to unlink %s: %m",
 		      __func__, con->unix_socket);
 
@@ -388,11 +410,12 @@ cleanup:
 		slurm_mutex_unlock(&con->mgr->mutex);
 }
 
-static inline con_mgr_fd_t *
-	_add_connection(con_mgr_t *mgr, con_mgr_fd_t *source, int input_fd,
-			int output_fd, const con_mgr_events_t events,
-			const struct sockaddr *addr, socklen_t addrlen,
-			bool is_listen, const char *unix_socket_path)
+static con_mgr_fd_t *_add_connection(con_mgr_t *mgr, con_mgr_fd_t *source,
+				     int input_fd, int output_fd,
+				     const con_mgr_events_t events,
+				     const slurm_addr_t *addr,
+				     socklen_t addrlen, bool is_listen,
+				     const char *unix_socket_path)
 {
 	struct stat fbuf = { 0 };
 	con_mgr_fd_t *con = NULL;
@@ -441,7 +464,7 @@ static inline con_mgr_fd_t *
 	/* listen on unix socket */
 	if (unix_socket_path) {
 		xassert(con->is_socket);
-		xassert(addr->sa_family == AF_LOCAL);
+		xassert(addr->ss_family == AF_LOCAL);
 		con->unix_socket = xstrdup(unix_socket_path);
 
 		/* try to resolve client directly if possible */
@@ -577,11 +600,7 @@ static void _wrap_work(void *x)
 	_signal_change(mgr, true);
 	slurm_mutex_unlock(&mgr->mutex);
 
-	xassert(!(args->arg = NULL));
-	xassert(!(args->tag = NULL));
-	xassert(!(args->func = NULL));
-	xassert(!(args->con = NULL));
-	xassert((args->magic = ~MAGIC_WRAP_WORK));
+	args->magic = ~MAGIC_WRAP_WORK;
 	xfree(args);
 }
 
@@ -635,17 +654,31 @@ static void _handle_read(void *x)
 {
 	con_mgr_fd_t *con = x;
 	ssize_t read_c;
-	/* default to at least 512 available in buffer */
-	int readable = 512;
+	int readable;
 
+	con->can_read = false;
 	_check_magic_fd(con);
 	_check_magic_mgr(con->mgr);
+
+	if (con->input_fd < 0) {
+		xassert(con->read_eof);
+		log_flag(NET, "%s: [%s] called on closed connection",
+			 __func__, con->name);
+		return;
+	}
 
 #ifdef FIONREAD
 	/* request kernel tell us the size of the incoming buffer */
 	if (ioctl(con->input_fd, FIONREAD, &readable))
 		log_flag(NET, "%s: [%s] unable to call FIONREAD: %m",
 			 __func__, con->name);
+	else if (readable == 0) {
+		/* Didn't fail but buffer is empty so this may be EOF */
+		readable = 1;
+	}
+#else
+	/* default to at least 512 available in buffer */
+	readable = 512;
 #endif /* FIONREAD */
 
 	/* Grow buffer as needed to handle the incoming data */
@@ -663,7 +696,7 @@ static void _handle_read(void *x)
 		grow_buf(con->in, need);
 	}
 
-	xassert(con->input_fd != -1);
+	xassert(fcntl(con->input_fd, F_GETFL) & O_NONBLOCK);
 	/* check for errors with a NULL read */
 	read_c = read(con->input_fd,
 		      (get_buf_data(con->in) + get_buf_offset(con->in)),
@@ -678,9 +711,7 @@ static void _handle_read(void *x)
 		error("%s: [%s] error while reading: %m", __func__, con->name);
 		_close_con(false, con);
 		return;
-	}
-
-	if (read_c == 0) {
+	} else if (read_c == 0) {
 		log_flag(NET, "%s: [%s] read %zd bytes and EOF with %u bytes to process already in buffer",
 			 __func__, con->name, read_c, get_buf_offset(con->in));
 
@@ -691,6 +722,9 @@ static void _handle_read(void *x)
 	} else {
 		log_flag(NET, "%s: [%s] read %zd bytes with %u bytes to process already in buffer",
 			 __func__, con->name, read_c, get_buf_offset(con->in));
+		log_flag_hex(NET_RAW,
+			     (get_buf_data(con->in) + get_buf_offset(con->in)),
+			     read_c, "%s: [%s] read", __func__, con->name);
 
 		get_buf_offset(con->in) += read_c;
 	}
@@ -713,6 +747,7 @@ static void _handle_write(void *x)
 	log_flag(NET, "%s: [%s] attempting to write %u bytes to fd %u",
 		 __func__, con->name, get_buf_offset(con->out), con->output_fd);
 
+	xassert(fcntl(con->output_fd, F_GETFL) & O_NONBLOCK);
 	xassert(con->output_fd != -1);
 	/* write in non-blocking fashion as we can always continue later */
 	if (con->is_socket)
@@ -743,6 +778,8 @@ static void _handle_write(void *x)
 
 	log_flag(NET, "%s: [%s] wrote %zu/%u bytes",
 		 __func__, con->name, wrote, get_buf_offset(con->out));
+	log_flag_hex(NET_RAW, get_buf_data(con->out), wrote,
+		     "%s: [%s] wrote", __func__, con->name);
 
 	if (wrote != get_buf_offset(con->out)) {
 		/*
@@ -858,7 +895,7 @@ static void _wrap_on_connection(void *x)
 extern int _con_mgr_process_fd_internal(con_mgr_t *mgr, con_mgr_fd_t *source,
 					int input_fd, int output_fd,
 					const con_mgr_events_t events,
-					const struct sockaddr *addr,
+					const slurm_addr_t *addr,
 					socklen_t addrlen)
 {
 	con_mgr_fd_t *con;
@@ -880,7 +917,7 @@ extern int _con_mgr_process_fd_internal(con_mgr_t *mgr, con_mgr_fd_t *source,
 
 extern int con_mgr_process_fd(con_mgr_t *mgr, int input_fd, int output_fd,
 			      const con_mgr_events_t events,
-			      const struct sockaddr *addr, socklen_t addrlen)
+			      const slurm_addr_t *addr, socklen_t addrlen)
 {
 	con_mgr_fd_t *con;
 	_check_magic_mgr(mgr);
@@ -901,7 +938,7 @@ extern int con_mgr_process_fd(con_mgr_t *mgr, int input_fd, int output_fd,
 
 extern int con_mgr_process_fd_listen(con_mgr_t *mgr, int fd,
 				     const con_mgr_events_t events,
-				     const struct sockaddr *addr,
+				     const slurm_addr_t *addr,
 				     socklen_t addrlen)
 {
 	con_mgr_fd_t *con;
@@ -921,7 +958,7 @@ extern int con_mgr_process_fd_listen(con_mgr_t *mgr, int fd,
 
 extern int con_mgr_process_fd_unix_listen(con_mgr_t *mgr, int fd,
 					  const con_mgr_events_t events,
-					  const struct sockaddr *addr,
+					  const slurm_addr_t *addr,
 					  socklen_t addrlen, const char *path)
 {
 	con_mgr_fd_t *con;
@@ -946,14 +983,13 @@ extern int con_mgr_process_fd_unix_listen(con_mgr_t *mgr, int fd,
 static inline void _handle_poll_event(con_mgr_t *mgr, int fd, con_mgr_fd_t *con,
 				      short revents)
 {
-	if (fd == con->input_fd)
-		con->can_read = revents & POLLIN || revents & POLLHUP;
-	if (fd == con->output_fd)
-		con->can_write = revents & POLLOUT;
+	con->can_read = false;
+	con->can_write = false;
 
 	if (revents & POLLNVAL) {
 		error("%s: [%s] connection invalid", __func__, con->name);
-		goto close;
+		_close_con(true, con);
+		return;
 	}
 	if (revents & POLLERR) {
 		int err = SLURM_ERROR;
@@ -965,17 +1001,18 @@ static inline void _handle_poll_event(con_mgr_t *mgr, int fd, con_mgr_fd_t *con,
 		error("%s: [%s] poll error: %s",
 		      __func__, con->name, slurm_strerror(err));
 
-		goto close;
+		_close_con(true, con);
+		return;
 	}
+
+	if (fd == con->input_fd)
+		con->can_read = revents & POLLIN || revents & POLLHUP;
+	if (fd == con->output_fd)
+		con->can_write = revents & POLLOUT;
 
 	log_flag(NET, "%s: [%s] fd=%u can_read=%s can_write=%s",
 		 __func__, con->name, fd, (con->can_read ? "T" : "F"),
 		 (con->can_write ? "T" : "F"));
-	return;
-close:
-	con->can_read = false;
-	con->can_write = false;
-	_close_con(true, con);
 }
 
 /*
@@ -1036,7 +1073,7 @@ static int _handle_connection(void *x, void *arg)
 			log_flag(NET, "%s: [%s] waiting to write %u bytes",
 				 __func__, con->name, get_buf_offset(con->out));
 		}
-		return SLURM_SUCCESS;
+		return 0;
 	}
 
 	/* read as much data as possible before processing */
@@ -1061,7 +1098,14 @@ static int _handle_connection(void *x, void *arg)
 	if (!con->read_eof) {
 		xassert(con->input_fd != -1);
 		/* must wait until poll allows read from this socket */
-		log_flag(NET, "%s: [%s] waiting to read", __func__, con->name);
+		if (con->is_listen)
+			log_flag(NET, "%s: [%s] waiting for new connection",
+				 __func__, con->name);
+		else
+			log_flag(NET, "%s: [%s] waiting to read pending_read=%u pending_write=%u has_work=%c",
+				 __func__, con->name, get_buf_offset(con->in),
+				 get_buf_offset(con->out),
+				 (con->has_work ? 'T' : 'F'));
 		return 0;
 	}
 
@@ -1143,9 +1187,11 @@ static void _inspect_connections(void *x)
 	_check_magic_mgr(mgr);
 
 	slurm_mutex_lock(&mgr->mutex);
-	list_delete_all(mgr->connections, _handle_connection, NULL);
+
+	if (list_delete_all(mgr->connections, _handle_connection, NULL))
+		slurm_cond_broadcast(&mgr->cond);
 	mgr->inspecting = false;
-	slurm_cond_broadcast(&mgr->cond);
+
 	slurm_mutex_unlock(&mgr->mutex);
 }
 
@@ -1182,7 +1228,7 @@ static inline void _handle_listen_event(con_mgr_t *mgr, int fd,
 static void _handle_event_pipe(con_mgr_t *mgr, const struct pollfd *fds_ptr,
 			       const char *tag, const char *name)
 {
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_NET) {
+	if (slurm_conf.debug_flags & DEBUG_FLAG_NET) {
 		char *flags = poll_revents_to_str(fds_ptr->revents);
 
 		log_flag(NET, "%s: [%s] signal pipe %s flags:%s",
@@ -1236,7 +1282,7 @@ static inline void _poll(con_mgr_t *mgr, poll_args_t *args, List fds,
 			_handle_event_pipe(mgr, fds_ptr, tag, "CHANGE_EVENT");
 		else if ((con = list_find_first(fds, _find_by_fd,
 						&fds_ptr->fd))) {
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_NET) {
+			if (slurm_conf.debug_flags & DEBUG_FLAG_NET) {
 				char *flags = poll_revents_to_str(
 					fds_ptr->revents);
 				log_flag(NET, "%s: [%s->%s] poll event detect flags:%s",
@@ -1313,19 +1359,21 @@ static void _poll_connections(void *x)
 	while ((con = list_next(itr))) {
 		_check_magic_fd(con);
 
-		if (con->has_work || con->output_fd == -1 ||
-		    con->input_fd == -1)
+		if (con->has_work)
 			continue;
 
-		log_flag(NET, "%s: [%s] poll read_eof=%s input=%u output=%u",
+		log_flag(NET, "%s: [%s] poll read_eof=%s input=%u output=%u has_work=%c",
 			 __func__, con->name, (con->read_eof ? "T" : "F"),
-			 get_buf_offset(con->in), get_buf_offset(con->out));
+			 get_buf_offset(con->in), get_buf_offset(con->out),
+			 (con->has_work ? 'T' : 'F'));
 
 		if (con->input_fd == con->output_fd) {
 			/* if fd is same, only poll it */
 			fds_ptr->fd = con->input_fd;
+			fds_ptr->events = 0;
 
-			fds_ptr->events = POLLIN;
+			if (con->input_fd != -1)
+				fds_ptr->events |= POLLIN;
 			if (get_buf_offset(con->out))
 				fds_ptr->events |= POLLOUT;
 
@@ -1464,10 +1512,9 @@ static inline int _watch(con_mgr_t *mgr)
 	char buf[100]; /* buffer for event_read */
 	bool work; /* is there any work to do? */
 
-watch:
 	_check_magic_mgr(mgr);
 	slurm_mutex_lock(&mgr->mutex);
-
+watch:
 	if (mgr->shutdown) {
 		slurm_mutex_unlock(&mgr->mutex);
 		_close_all_connections(mgr);
@@ -1486,6 +1533,7 @@ watch:
 		if (event_read > 0) {
 			log_flag(NET, "%s: detected %u events from event fd",
 				 __func__, event_read);
+			mgr->event_signaled = 0;
 		} else if (event_read == 0)
 			log_flag(NET, "%s: nothing to read from event fd", __func__);
 		else if (errno == EAGAIN || errno == EWOULDBLOCK ||
@@ -1550,17 +1598,13 @@ watch:
 		work = true;
 	}
 
-	if (!work)
-		/* nothing to do! */
-		goto cleanup;
+	if (work) {
+		/* wait until something happens */
+		slurm_cond_wait(&mgr->cond, &mgr->mutex);
+		_check_magic_mgr(mgr);
+		goto watch;
+	}
 
-	/* wait until something happens */
-	slurm_cond_wait(&mgr->cond, &mgr->mutex);
-	slurm_mutex_unlock(&mgr->mutex);
-
-	goto watch;
-
-cleanup:
 	_signal_change(mgr, true);
 	slurm_mutex_unlock(&mgr->mutex);
 
@@ -1628,8 +1672,8 @@ static void _listen_accept(void *x)
 	con_mgr_fd_t *con = x;
 	con_mgr_t *mgr = con->mgr;
 	int rc;
-	socklen_t addrlen = sizeof(struct sockaddr_storage);
-	struct sockaddr *addr = xmalloc(addrlen);
+	slurm_addr_t addr = {0};
+	socklen_t addrlen = sizeof(addr);
 	int fd;
 
 	_check_magic_fd(con);
@@ -1638,23 +1682,24 @@ static void _listen_accept(void *x)
 	if (con->input_fd == -1) {
 		log_flag(NET, "%s: [%s] skipping accept on closed connection",
 			 __func__, con->name);
-		goto cleanup;
+		return;
 	} else
 		log_flag(NET, "%s: [%s] attempting to accept new connection",
 			 __func__, con->name);
 
 	/* try to get the new file descriptor and retry on errors */
-	if ((fd = accept(con->input_fd, addr, &addrlen)) < 0) {
+	if ((fd = accept(con->input_fd, (struct sockaddr *) &addr,
+			 &addrlen)) < 0) {
 		if (errno == EINTR) {
 			log_flag(NET, "%s: [%s] interrupt on accept()",
 				 __func__, con->name);
 			_close_con(false, con);
-			goto cleanup;
+			return;
 		}
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
 			log_flag(NET, "%s: [%s] retry: %m", __func__, con->name);
 			rc = SLURM_SUCCESS;
-			goto cleanup;
+			return;
 		}
 
 		error("%s: [%s] Error on accept socket: %m",
@@ -1664,29 +1709,28 @@ static void _listen_accept(void *x)
 		    (errno == ENOBUFS) || (errno == ENOMEM)) {
 			error("%s: [%s] retry on error: %m",
 			      __func__, con->name);
-			rc = SLURM_SUCCESS;
-			goto cleanup;
+			return;
 		}
 
-		rc = errno;
 		/* socket is likely dead: fail out */
 		_close_con(false, con);
-		goto cleanup;
+		return;
 	}
 
-	xassert(addrlen > 0);
-	xassert(addrlen <= sizeof(struct sockaddr_storage));
+	if (addrlen <= 0)
+		fatal("%s: empty address returned from accept()",
+		      __func__);
+	if (addrlen > sizeof(addr))
+		fatal("%s: unexpected large address returned from accept(): %u bytes",
+		      __func__, addrlen);
 
 	/* hand over FD for normal processing */
 	if ((rc = _con_mgr_process_fd_internal(mgr, con, fd, fd, con->events,
-					       addr, addrlen))) {
+					       &addr, addrlen))) {
 		log_flag(NET, "%s: [fd:%d] _con_mgr_process_fd_internal rejected: %s",
 			 __func__, fd, slurm_strerror(rc));
 		_close_con(false, con);
 	}
-
-cleanup:
-	xfree(addr);
 }
 
 extern int con_mgr_queue_write_fd(con_mgr_fd_t *con, const void *buffer,
@@ -1713,7 +1757,15 @@ extern int con_mgr_queue_write_fd(con_mgr_fd_t *con, const void *buffer,
 	log_flag(NET, "%s: [%s] queued %zu/%u bytes in outgoing buffer",
 		 __func__, con->name, bytes, get_buf_offset(con->out));
 
+	_signal_change(con->mgr, false);
+
 	return SLURM_SUCCESS;
+}
+
+extern void con_mgr_queue_close_fd(con_mgr_fd_t *con)
+{
+	_check_magic_fd(con);
+	_close_con(false, con);
 }
 
 typedef struct {
@@ -1763,7 +1815,7 @@ static int _create_socket(void *x, void *arg)
 
 		return con_mgr_process_fd_unix_listen(
 			init->mgr, fd, init->events,
-			(const struct sockaddr *) &addr, sizeof(addr),
+			(const slurm_addr_t *) &addr, sizeof(addr),
 			unixsock);
 	} else {
 		/* split up host and port */
@@ -1793,6 +1845,7 @@ static int _create_socket(void *x, void *arg)
 		 * end of this loop
 		 */
 		int fd;
+		int one = 1;
 		fd = socket(addr->ai_family, addr->ai_socktype,
 			    addr->ai_protocol);
 		if (fd < 0)
@@ -1803,8 +1856,8 @@ static int _create_socket(void *x, void *arg)
 		 * activate socket reuse to avoid annoying timing issues
 		 * with daemon restarts
 		 */
-		if (setsockopt(fd, addr->ai_socktype, SO_REUSEADDR, &(int){ 1 },
-			       sizeof(int)))
+		if (setsockopt(fd, addr->ai_socktype, SO_REUSEADDR,
+			       &one, sizeof(one)))
 			fatal("%s: [%s] setsockopt(SO_REUSEADDR) failed: %m",
 			      __func__, addrinfo_to_string(addr));
 
@@ -1820,7 +1873,8 @@ static int _create_socket(void *x, void *arg)
 			      __func__, addrinfo_to_string(addr));
 
 		rc = con_mgr_process_fd_listen(init->mgr, fd, init->events,
-					       addr->ai_addr, addr->ai_addrlen);
+			(const slurm_addr_t *) addr->ai_addr,
+			addr->ai_addrlen);
 	}
 
 	freeaddrinfo(addrlist);

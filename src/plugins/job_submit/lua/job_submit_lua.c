@@ -98,10 +98,13 @@ static const char lua_script_path[] = DEFAULT_SCRIPT_DIR "/job_submit.lua";
 static time_t lua_script_last_loaded = (time_t) 0;
 static lua_State *L = NULL;
 static char *user_msg = NULL;
-
 time_t last_lua_jobs_update = (time_t) 0;
 time_t last_lua_resv_update = (time_t) 0;
-
+static const char *req_fxns[] = {
+	"slurm_job_submit",
+	"slurm_job_modify",
+	NULL
+};
 /*
  *  Mutex for protecting multi-threaded access to this plugin.
  *   (Only 1 thread at a time should be in here)
@@ -249,9 +252,13 @@ static int _resv_field(const slurmctld_resv_t *resv_ptr,
 	} else if (!xstrcmp(name, "flags")) {
 		lua_pushnumber(L, resv_ptr->flags);
 	} else if (!xstrcmp(name, "full_nodes")) {
-		lua_pushboolean(L, resv_ptr->full_nodes);
+		lua_pushboolean(L,
+				(resv_ptr->ctld_flags & RESV_CTLD_FULL_NODE) ?
+				true : false);
 	} else if (!xstrcmp(name, "flags_set_node")) {
-		lua_pushboolean(L, resv_ptr->flags_set_node);
+		lua_pushboolean(L,
+				(resv_ptr->ctld_flags &
+				 RESV_CTLD_NODE_FLAGS_SET) ? true : false);
 	} else if (!xstrcmp(name, "licenses")) {
 		lua_pushstring(L, resv_ptr->licenses);
 	} else if (!xstrcmp(name, "node_cnt")) {
@@ -500,6 +507,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushnumber(L, job_desc->cpus_per_task);
 	} else if (!xstrcmp(name, "cpus_per_tres")) {
 		lua_pushstring(L, job_desc->cpus_per_tres);
+	} else if (!xstrcmp(name, "cron_job")) {
+		lua_pushboolean(L, job_desc->bitflags & CRON_JOB);
 	} else if (!xstrcmp(name, "default_account")) {
 		lua_pushstring(L, _get_default_account(job_desc->user_id));
 	} else if (!xstrcmp(name, "default_qos")) {
@@ -553,16 +562,22 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushnumber(L, job_desc->min_nodes);
 	} else if (!xstrcmp(name, "name")) {
 		lua_pushstring(L, job_desc->name);
+	} else if (!xstrcmp(name, "network")) {
+		lua_pushstring(L, job_desc->network);
 	} else if (!xstrcmp(name, "nice")) {
 		lua_pushnumber(L, job_desc->nice);
 	} else if (!xstrcmp(name, "ntasks_per_board")) {
 		lua_pushnumber(L, job_desc->ntasks_per_board);
 	} else if (!xstrcmp(name, "ntasks_per_core")) {
 		lua_pushnumber(L, job_desc->ntasks_per_core);
+	} else if (!xstrcmp(name, "ntasks_per_gpu")) {
+		lua_pushnumber(L, job_desc->ntasks_per_tres);
 	} else if (!xstrcmp(name, "ntasks_per_node")) {
 		lua_pushnumber(L, job_desc->ntasks_per_node);
 	} else if (!xstrcmp(name, "ntasks_per_socket")) {
 		lua_pushnumber(L, job_desc->ntasks_per_socket);
+	} else if (!xstrcmp(name, "ntasks_per_tres")) {
+		lua_pushnumber(L, job_desc->ntasks_per_tres);
 	} else if (!xstrcmp(name, "num_tasks")) {
 		lua_pushnumber(L, job_desc->num_tasks);
 		/* Continue support for old hetjob terminology. */
@@ -599,7 +614,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushstring(L, job_desc->reservation);
 	} else if (!xstrcmp(name, "script")) {
 		lua_pushstring(L, job_desc->script);
-	} else if (!xstrcmp(name, "shared")) {
+	} else if (!xstrcmp(name, "shared") ||
+		   !xstrcmp(name, "oversubscribe")) {
 		lua_pushnumber(L, job_desc->shared);
 	} else if (!xstrcmp(name, "site_factor")) {
 		if (job_desc->site_factor == NO_VAL)
@@ -830,10 +846,14 @@ static int _set_job_req_field(lua_State *L)
 			job_desc->name = xstrdup(value_str);
 	} else if (!xstrcmp(name, "nice")) {
 		job_desc->nice = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "ntasks_per_gpu")) {
+		job_desc->ntasks_per_tres = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "ntasks_per_node")) {
 		job_desc->ntasks_per_node = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "ntasks_per_socket")) {
 		job_desc->ntasks_per_socket = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "ntasks_per_tres")) {
+		job_desc->ntasks_per_tres = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "num_tasks")) {
 		job_desc->num_tasks = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "partition")) {
@@ -881,7 +901,8 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->script);
 		if (strlen(value_str))
 			job_desc->script = xstrdup(value_str);
-	} else if (!xstrcmp(name, "shared")) {
+	} else if (!xstrcmp(name, "shared") ||
+		   !xstrcmp(name, "oversubscribe")) {
 		job_desc->shared = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "site_factor")) {
 		job_desc->site_factor = luaL_checknumber(L, 3);
@@ -1049,7 +1070,8 @@ static int _part_rec_field(const part_record_t *part_ptr, const char *name)
 		lua_pushnumber(L, part_ptr->max_nodes);
 	} else if (!xstrcmp(name, "max_nodes_orig")) {
 		lua_pushnumber(L, part_ptr->max_nodes_orig);
-	} else if (!xstrcmp(name, "max_share")) {
+	} else if (!xstrcmp(name, "max_share") ||
+		   !xstrcmp(name, "max_oversubscribe")) {
 		lua_pushnumber(L, part_ptr->max_share);
 	} else if (!xstrcmp(name, "max_time")) {
 		lua_pushnumber(L, part_ptr->max_time);
@@ -1223,32 +1245,6 @@ static void _loadscript_extra(lua_State *st)
 	_register_lua_slurm_struct_functions(st);
 }
 
-static int _load_script(void)
-{
-	lua_State *load = NULL;
-	time_t load_time = lua_script_last_loaded;
-	const char *req_fxns[] = {
-		"slurm_job_submit",
-		"slurm_job_modify",
-		NULL
-	};
-
-	load = slurm_lua_loadscript(L, "job_submit/lua",
-				    lua_script_path, req_fxns, &load_time,
-				    _loadscript_extra);
-	if (!load)
-		return SLURM_ERROR;
-	if (load == L)
-		return SLURM_SUCCESS;
-
-	/* since complete finished error free, swap the states */
-	if (L)
-		lua_close(L);
-	L = load;
-	lua_script_last_loaded = load_time;
-	return SLURM_SUCCESS;
-}
-
 /*
  *  NOTE: The init callback should never be called multiple times,
  *   let alone called from multiple threads. Therefore, locking
@@ -1261,7 +1257,10 @@ int init(void)
 	if ((rc = slurm_lua_init()) != SLURM_SUCCESS)
 		return rc;
 
-	return _load_script();
+	return slurm_lua_loadscript(&L, "job_submit/lua",
+				    lua_script_path, req_fxns,
+				    &lua_script_last_loaded,
+				    _loadscript_extra);
 }
 
 int fini(void)
@@ -1283,10 +1282,14 @@ int fini(void)
 extern int job_submit(job_desc_msg_t *job_desc, uint32_t submit_uid,
 		      char **err_msg)
 {
-	int rc = SLURM_ERROR;
+	int rc;
 	slurm_mutex_lock (&lua_lock);
 
-	if ((rc = _load_script()))
+	rc = slurm_lua_loadscript(&L, "job_submit/lua",
+				  lua_script_path, req_fxns,
+				  &lua_script_last_loaded, _loadscript_extra);
+
+	if (rc != SLURM_SUCCESS)
 		goto out;
 
 	/*
@@ -1333,10 +1336,14 @@ out:	slurm_mutex_unlock (&lua_lock);
 extern int job_modify(job_desc_msg_t *job_desc, job_record_t *job_ptr,
 		      uint32_t submit_uid)
 {
-	int rc = SLURM_ERROR;
+	int rc;
 	slurm_mutex_lock (&lua_lock);
 
-	if ((rc = _load_script()))
+	rc = slurm_lua_loadscript(&L, "job_submit/lua",
+				  lua_script_path, req_fxns,
+				  &lua_script_last_loaded, _loadscript_extra);
+
+	if (rc == SLURM_ERROR)
 		goto out;
 
 	/*

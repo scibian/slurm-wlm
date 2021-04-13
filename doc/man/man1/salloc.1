@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "October 2020" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "February 2021" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -21,10 +21,8 @@ complete, salloc relinquishes the job allocation.
 
 The command may be any program the user wishes.  Some typical commands are
 xterm, a shell script containing srun commands, and srun (see the EXAMPLES
-section). If no command is specified, then the value of
-\fBSallocDefaultCommand\fR in slurm.conf is used. If
-\fBSallocDefaultCommand\fR is not set, then \fBsalloc\fR runs the
-user's default shell.
+section). If no command is specified, then \fBsalloc\fR runs the user's default
+shell.
 
 The following document describes the influence of various options on the
 allocation of cpus to jobs and tasks.
@@ -148,14 +146,14 @@ CR_Core, CR_Core_Memory, CR_Socket, or CR_Socket_Memory for this option
 to be honored.
 If not specified, the scontrol show job will display 'ReqS:C:T=*:*:*'. This
 option applies to job allocations.
+\fBNOTE:\fR This option is mutually exclusive with \fB\-\-hint\fR,
+\fB\-\-threads\-per\-core\fR and \fB\-\-ntasks\-per\-core\fR.
 
 .TP
 \fB\-\-bb\fR=<\fIspec\fR>
 Burst buffer specification. The form of the specification is system dependent.
 Note the burst buffer may not be accessible from a login node, but require
-that salloc spawn a shell on one of its allocated compute nodes. See the
-description of SallocDefaultCommand in the slurm.conf man page for more
-information about how to spawn a remote shell.
+that salloc spawn a shell on one of its allocated compute nodes.
 
 .TP
 \fB\-\-bbf\fR=<\fIfile_name\fR>
@@ -163,9 +161,7 @@ Path of file containing burst buffer specification.
 The form of the specification is system dependent.
 Also see \fB\-\-bb\fR.
 Note the burst buffer may not be accessible from a login node, but require
-that salloc spawn a shell on one of its allocated compute nodes. See the
-description of SallocDefaultCommand in the slurm.conf man page for more
-information about how to spawn a remote shell.
+that salloc spawn a shell on one of its allocated compute nodes.
 
 .TP
 \fB\-\-begin\fR=<\fItime\fR>
@@ -444,6 +440,8 @@ MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
 MM/DD[/YY]\-HH:MM[:SS]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]]
+.br
+now[+\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 
 .TP
 \fB\-\-delay\-boot\fR=<\fIminutes\fR>
@@ -578,9 +576,11 @@ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
 \fB\-\-gpus\-per\-task\fR options.
 
 .TP
-\fB\-\-gpu\-bind\fR=<\fItype\fR>
+\fB\-\-gpu\-bind\fR=[verbose,]<\fItype\fR>
 Bind tasks to specific GPUs.
 By default every spawned task can access every GPU allocated to the job.
+If "verbose," is specified before <\fItype\fR>, then print out GPU binding
+information.
 
 Supported \fItype\fR options:
 .RS
@@ -619,6 +619,16 @@ then the GPU IDs are zero-based indexes relative to the GPUs allocated to the
 job (e.g. the first GPU is 0, even if the global ID is 3). Otherwise, the GPU
 IDs are global IDs, and all GPUs on each node in the job should be allocated for
 predictable binding results.
+.TP
+\fBsingle:<tasks_per_gpu>\fR
+Like \fI--gpu-bind=closest\fR, except that each task can only be bound to a
+single GPU, even when it can be bound to multiple GPUs that are equally close.
+The GPU to bind to is determined by \fI<tasks_per_gpu>\fR, where the
+first \fI<tasks_per_gpu>\fR tasks are bound to the first GPU available, the
+second \fI<tasks_per_gpu>\fR tasks are bound to the second GPU available, etc.
+This is basically a block distribution of tasks onto available GPUs, where the
+available GPUs are determined by the socket affinity of the task and the socket
+affinity of the GPUs as specified in gres.conf's \fICores\fR parameter.
 .RE
 
 .TP
@@ -756,6 +766,11 @@ Display help information and exit.
 .TP
 \fB\-\-hint\fR=<\fItype\fR>
 Bind tasks according to application hints.
+.br
+\fBNOTE\fR: This option cannot be used in conjunction with
+\fB\-\-ntasks\-per\-core\fR, \fB\-\-threads\-per\-core\fR or \fB\-B\fR. If
+\fB\-\-hint\fR is specified as a command line argument, it will take
+precedence over the environment.
 .RS
 .TP
 .B compute_bound
@@ -942,10 +957,11 @@ fashion across sockets.
 \fB\-\-mail\-type\fR=<\fItype\fR>
 Notify user by email when certain event types occur.
 Valid \fItype\fR values are NONE, BEGIN, END, FAIL, REQUEUE, ALL (equivalent to
-BEGIN, END, FAIL, REQUEUE, and STAGE_OUT), STAGE_OUT (burst buffer stage out
-and teardown completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
-TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50
-(reached 50 percent of time limit).
+BEGIN, END, FAIL, INVALID_DEPEND, REQUEUE, and STAGE_OUT), INVALID_DEPEND
+(dependency never satisfied), STAGE_OUT (burst buffer stage out and teardown
+completed), TIME_LIMIT, TIME_LIMIT_90 (reached 90 percent of time limit),
+TIME_LIMIT_80 (reached 80 percent of time limit), and TIME_LIMIT_50 (reached 50
+percent of time limit).
 Multiple \fItype\fR values may be specified in a comma separated list.
 The user to be notified is indicated with \fB\-\-mail\-user\fR.
 
@@ -1328,6 +1344,25 @@ configured (either directly or indirectly on Cray systems)
 along with the node's core count.
 
 .TP
+\fB\-\-ntasks\-per\-gpu\fR=<\fIntasks\fR>
+Request that there are \fIntasks\fR tasks invoked for every GPU.
+This option can work in two ways: 1) either specify \fB\-\-ntasks\fR in
+addition, in which case a type-less GPU specification will be automatically
+determined to satisfy \fB\-\-ntasks\-per\-gpu\fR, or 2) specify the GPUs wanted
+(e.g. via \fB\-\-gpus\fR or \fB\-\-gres\fR) without specifying \fB\-\-ntasks\fR,
+and the total task count will be automatically determined.
+The number of CPUs needed will be automatically increased if necessary to allow
+for any calculated task count.
+This option will implicitly set \fB\-\-gpu-bind=single:<ntasks>\fR, but that
+can be overridden with an explicit \fB\-\-gpu-bind\fR specification.
+This option is not compatible with a node range
+(i.e. \-N<\fIminnodes\fR\-\fImaxnodes\fR>).
+This option is not compatible with \fB\-\-gpus-per-task\fR,
+\fB\-\-gpus-per-socket\fR, or \fB\-\-ntasks-per-node\fR.
+This option is not supported unless \fISelectType=cons_tres\fR is
+configured (either directly or indirectly on Cray systems).
+
+.TP
 \fB\-\-ntasks\-per\-node\fR=<\fIntasks\fR>
 Request that \fIntasks\fR be invoked on each node.
 If used with the \fB\-\-ntasks\fR option, the \fB\-\-ntasks\fR option will take
@@ -1467,8 +1502,14 @@ This is only supported with some system configurations and will otherwise be
 silently ignored. Only root, \fISlurmUser\fR or admins can reboot nodes.
 
 .TP
-\fB\-\-reservation\fR=<\fIname\fR>
-Allocate resources for the job from the named reservation.
+\fB\-\-reservation\fR=<\fIreservation_names\fR>
+Allocate resources for the job from the named reservation. If the job can use
+more than one reservation, specify their names in a comma separate list and the
+one offering earliest initiation. Each reservation will be considered in the
+order it was requested.
+All reservations will be listed in scontrol/squeue through the life of the job.
+In accounting the first reservation will be seen and after the job starts the
+reservation used will replace it.
 
 .TP
 \fB\-s\fR, \fB\-\-oversubscribe\fR
@@ -1566,7 +1607,8 @@ This option can not be used with the \fB\-\-core\-spec\fR option.
 .TP
 \fB\-\-threads\-per\-core\fR=<\fIthreads\fR>
 Restrict node selection to nodes with at least the specified number of
-threads per core.  NOTE: "Threads" refers to the number of processing units on
+threads per core. In task layout, use the specified maximum number of threads
+per core. NOTE: "Threads" refers to the number of processing units on
 each core rather than the number of application tasks to be launched per core.
 See additional information under \fB\-B\fR option above when task/affinity
 plugin is enabled.
@@ -1966,6 +2008,9 @@ Same as \fB\-n, \-\-ntasks\fR
 \fBSLURM_NTASKS_PER_CORE\fR
 Set to value of the \-\-ntasks\-per\-core\fR option, if specified.
 .TP
+\fBSLURM_NTASKS_PER_GPU\fR
+Set to value of the \-\-ntasks\-per\-gpu\fR option, if specified.
+.TP
 \fBSLURM_NTASKS_PER_NODE\fR
 Set to value of the \-\-ntasks\-per\-node\fR option, if specified.
 .TP
@@ -1997,33 +2042,35 @@ release the allocation and exit without waiting for the command to finish.
 Another exception is SIGTERM, which will be forwarded to the spawned process.
 
 .SH "EXAMPLES"
-.LP
-To get an allocation, and open a new xterm in which srun commands may be typed
+.TP
+To get an allocation, and open a new xterm in which srun commands may be typed \
 interactively:
-.IP
+
+.nf
 $ salloc \-N16 xterm
-.br
 salloc: Granted job allocation 65537
-.br
-(at this point the xterm appears, and salloc waits for xterm to exit)
-.br
+# (at this point the xterm appears, and salloc waits for xterm to exit)
 salloc: Relinquishing job allocation 65537
-.LP
-To grab an allocation of nodes and launch a parallel application on one command
-line (See the \fBsalloc\fR man page for more examples):
-.IP
-salloc \-N5 srun \-n10 myprogram
-.LP
-To create a heterogeneous job with 3 components, each allocating a unique set
+.fi
+
+.TP
+To grab an allocation of nodes and launch a parallel application on one \
+command line:
+
+.nf
+$ salloc \-N5 srun \-n10 myprogram
+.fi
+
+.TP
+To create a heterogeneous job with 3 components, each allocating a unique set \
 of nodes:
-.IP
-salloc -w node[2-3] : -w node4 : -w node[5-7] bash
-.br
+
+.nf
+$ salloc -w node[2-3] : -w node4 : -w node[5-7] bash
 salloc: job 32294 queued and waiting for resources
-.br
 salloc: job 32294 has been allocated resources
-.br
 salloc: Granted job allocation 32294
+.fi
 
 .SH "COPYING"
 Copyright (C) 2006\-2007 The Regents of the University of California.

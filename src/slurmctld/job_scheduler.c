@@ -58,7 +58,6 @@
 #include "src/common/env.h"
 #include "src/common/gres.h"
 #include "src/common/group_cache.h"
-#include "src/common/layouts_mgr.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_features.h"
@@ -93,7 +92,6 @@
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/srun_comm.h"
 #include "src/slurmctld/state_save.h"
-#include "src/slurmctld/powercapping.h"
 
 #ifndef CORRESPOND_ARRAY_TASK_CNT
 #  define CORRESPOND_ARRAY_TASK_CNT 10
@@ -114,7 +112,7 @@ static bool	_job_runnable_test1(job_record_t *job_ptr, bool clear_start);
 static bool	_job_runnable_test2(job_record_t *job_ptr, bool check_min_time);
 static bool	_scan_depend(List dependency_list, uint32_t job_id);
 static void *	_sched_agent(void *args);
-static int	_schedule(uint32_t job_limit);
+static int	_schedule(bool full_queue);
 static int	_valid_batch_features(job_record_t *job_ptr, bool can_reboot);
 static int	_valid_feature_list(job_record_t *job_ptr, bool can_reboot);
 static int	_valid_node_feature(char *feature, bool can_reboot);
@@ -122,6 +120,7 @@ static int	_valid_node_feature(char *feature, bool can_reboot);
 static void *	_wait_boot(void *arg);
 #endif
 static int	build_queue_timeout = BUILD_TIMEOUT;
+static int	correspond_after_task_cnt = CORRESPOND_ARRAY_TASK_CNT;
 static int	save_last_part_update = 0;
 
 static pthread_mutex_t sched_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -171,13 +170,6 @@ static double _get_system_usage(void)
 {
 	static double sys_usage_per = 0.0;
 	static time_t last_idle_update = 0;
-	static uint16_t priority_flags = 0;
-	static bool statics_inited = false;
-
-	if (!statics_inited) {
-		priority_flags = slurm_get_priority_flags();
-		statics_inited = true;
-	}
 
 	if (last_idle_update < last_node_update) {
 		int    i;
@@ -201,7 +193,7 @@ static double _get_system_usage(void)
 				assoc_mgr_tres_weighted(
 					node_ptr->tres_cnt,
 					node_ptr->config_ptr->tres_weights,
-					priority_flags, false);
+					slurm_conf.priority_flags, false);
 
 			alloc_tres += node_alloc_tres;
 			tot_tres   += node_tot_tres;
@@ -215,6 +207,21 @@ static double _get_system_usage(void)
 	return sys_usage_per;
 }
 
+static int _queue_resv_list(void *x, void *key)
+{
+	job_queue_req_t *job_queue_req = (job_queue_req_t *) key;
+
+	job_queue_req->resv_ptr = (slurmctld_resv_t *) x;
+
+	if ((job_queue_req->job_ptr->bit_flags & JOB_PART_ASSIGNED) &&
+	    job_queue_req->resv_ptr->part_ptr)
+		job_queue_req->part_ptr = job_queue_req->resv_ptr->part_ptr;
+
+	job_queue_append_internal(job_queue_req);
+
+	return 0;
+}
+
 static void _job_queue_append(List job_queue, job_record_t *job_ptr,
 			      part_record_t *part_ptr, uint32_t prio)
 {
@@ -223,12 +230,23 @@ static void _job_queue_append(List job_queue, job_record_t *job_ptr,
 					  .part_ptr = part_ptr,
 					  .prio = prio };
 
+	/* We have multiple reservations, process and end here */
+	if (job_ptr->resv_list) {
+		list_for_each(job_ptr->resv_list, _queue_resv_list,
+			      &job_queue_req);
+		return;
+	}
+
 	job_queue_append_internal(&job_queue_req);
 
+	/*
+	 * This means we requested a specific reservation, don't do any magnetic
+	 * ones
+	 */
 	if (job_ptr->resv_name)
 		return;
 
-	job_resv_append_promiscuous(&job_queue_req);
+	job_resv_append_magnetic(&job_queue_req);
 }
 
 /* Return true if the job has some step still in a cleaning state, which
@@ -243,7 +261,7 @@ static uint16_t _is_step_cleaning(job_record_t *job_ptr)
 	step_iterator = list_iterator_create(job_ptr->step_list);
 	while ((step_ptr = list_next(step_iterator))) {
 		/* Only check if not a pending step */
-		if (step_ptr->step_id != SLURM_PENDING_STEP) {
+		if (step_ptr->step_id.step_id != SLURM_PENDING_STEP) {
 			select_g_select_jobinfo_get(step_ptr->select_jobinfo,
 						    SELECT_JOBDATA_CLEANING,
 						    &cleaning);
@@ -371,7 +389,7 @@ static bool _job_runnable_test3(job_record_t *job_ptr, part_record_t *part_ptr)
 	return true;
 }
 
-extern void job_queue_rec_prom_resv(job_queue_rec_t *job_queue_rec)
+extern void job_queue_rec_magnetic_resv(job_queue_rec_t *job_queue_rec)
 {
 	job_record_t *job_ptr;
 
@@ -385,7 +403,25 @@ extern void job_queue_rec_prom_resv(job_queue_rec_t *job_queue_rec)
 	job_ptr->resv_ptr = job_queue_rec->resv_ptr;
 	job_ptr->resv_name = xstrdup(job_ptr->resv_ptr->name);
 	job_ptr->resv_id = job_ptr->resv_ptr->resv_id;
-	job_queue_rec->job_ptr->bit_flags |= JOB_PROM;
+	job_queue_rec->job_ptr->bit_flags |= JOB_MAGNETIC;
+}
+
+extern void job_queue_rec_resv_list(job_queue_rec_t *job_queue_rec)
+{
+	job_record_t *job_ptr;
+
+	if (!job_queue_rec->resv_ptr)
+		return;
+
+	xassert(job_queue_rec->job_ptr);
+
+	job_ptr = job_queue_rec->job_ptr;
+	job_ptr->resv_ptr = job_queue_rec->resv_ptr;
+	/*
+	 * Do not set the name since we have multiple and we don't want to
+	 * overwrite it.
+	 */
+	job_ptr->resv_id = job_ptr->resv_ptr->resv_id;
 }
 
 /*
@@ -414,8 +450,17 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	(void) slurm_delta_tv(&start_tv);
 	job_queue = list_create(xfree_ptr);
 
-	/* Create individual job records for job arrays that need burst buffer
-	 * staging */
+	/*
+	 * Create individual job records for job arrays that need burst buffer
+	 * staging
+	 *
+	 * NOTE: You can not use list_for_each for these loops here because
+	 * job_array_post_sched and job_array_split could eventually call
+	 * _create_job_record which appends to job_list causing deadlock.  The
+	 * last one calls job_independent from _job_runnable_test1 which
+	 * eventually calls list_find_first on job_list so it is not able
+	 * either.
+	 */
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = list_next(job_iterator))) {
 		if (!IS_JOB_PENDING(job_ptr) ||
@@ -456,11 +501,10 @@ extern List build_job_queue(bool clear_start, bool backfill)
 			      __func__, job_ptr);
 		}
 	}
-	list_iterator_destroy(job_iterator);
 
 	/* Create individual job records for job arrays with
 	 * depend_type == SLURM_DEPEND_AFTER_CORRESPOND */
-	job_iterator = list_iterator_create(job_list);
+	list_iterator_reset(job_iterator);
 	while ((job_ptr = list_next(job_iterator))) {
 		if (!IS_JOB_PENDING(job_ptr) ||
 		    !job_ptr->array_recs ||
@@ -486,7 +530,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 		if (!dep_corr)
 			continue;
 		pend_cnt = num_pending_job_array_tasks(job_ptr->array_job_id);
-		if (pend_cnt >= CORRESPOND_ARRAY_TASK_CNT)
+		if (pend_cnt >= correspond_after_task_cnt)
 			continue;
 		if (job_ptr->array_recs->task_cnt < 1)
 			continue;
@@ -514,9 +558,8 @@ extern List build_job_queue(bool clear_start, bool backfill)
 			      __func__, job_ptr);
 		}
 	}
-	list_iterator_destroy(job_iterator);
 
-	job_iterator = list_iterator_create(job_list);
+	list_iterator_reset(job_iterator);
 	while ((job_ptr = list_next(job_iterator))) {
 		if (IS_JOB_PENDING(job_ptr)) {
 			set_job_failed_assoc_qos_ptr(job_ptr);
@@ -541,16 +584,6 @@ extern List build_job_queue(bool clear_start, bool backfill)
 		if (job_ptr->array_recs)
 			job_ptr->array_recs->pend_run_tasks = 0;
 		if (job_ptr->state_reason != WAIT_NO_REASON) {
-			job_ptr->state_reason_prev = job_ptr->state_reason;
-			if ((job_ptr->state_reason != WAIT_PRIORITY) &&
-			    (job_ptr->state_reason != WAIT_RESOURCES))
-				job_ptr->state_reason_prev_db =
-					job_ptr->state_reason;
-			last_job_update = now;
-		} else if ((job_ptr->state_reason_prev == WAIT_TIME) &&
-			   job_ptr->details &&
-			   (job_ptr->details->begin_time <= now)) {
-			job_ptr->state_reason_prev = job_ptr->state_reason;
 			if ((job_ptr->state_reason != WAIT_PRIORITY) &&
 			    (job_ptr->state_reason != WAIT_RESOURCES))
 				job_ptr->state_reason_prev_db =
@@ -602,6 +635,8 @@ extern List build_job_queue(bool clear_start, bool backfill)
 				job_ptr->part_ptr = part_ptr;
 				error("partition pointer reset for %pJ, part %s",
 				      job_ptr, job_ptr->partition);
+				job_ptr->bit_flags |= JOB_PART_ASSIGNED;
+
 			}
 			if (!_job_runnable_test2(job_ptr, backfill))
 				continue;
@@ -631,13 +666,12 @@ extern bool job_is_completing(bitstr_t *eff_cg_bitmap)
 	bool completing = false;
 	ListIterator job_iterator;
 	job_record_t *job_ptr = NULL;
-	uint16_t complete_wait = slurm_get_complete_wait();
 	time_t recent;
 
-	if ((job_list == NULL) || (complete_wait == 0))
+	if ((job_list == NULL) || (slurm_conf.complete_wait == 0))
 		return completing;
 
-	recent = time(NULL) - complete_wait;
+	recent = time(NULL) - slurm_conf.complete_wait;
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = list_next(job_iterator))) {
 		if (IS_JOB_COMPLETING(job_ptr) &&
@@ -766,9 +800,9 @@ static bool _all_partition_priorities_same(void)
  *	order (by submit time), so the sorting should be pretty fast.
  * Note: job_write_lock must be unlocked before calling this.
  */
-extern int schedule(uint32_t job_limit)
+extern int schedule(bool full_queue)
 {
-	static uint32_t sched_job_limit = NO_VAL;
+	static bool sched_full_queue = false;
 	int job_count = 0;
 	struct timeval now;
 	long delta_t;
@@ -786,17 +820,13 @@ extern int schedule(uint32_t job_limit)
 		delta_t +=  now.tv_usec - sched_last.tv_usec;
 	}
 
-	if (job_limit == NO_VAL)
-		job_limit = 0;			/* use system default */
 	slurm_mutex_lock(&sched_mutex);
-	if (sched_job_limit == INFINITE)
-		;				/* leave unlimited */
-	else if (job_limit == INFINITE)
-		sched_job_limit = INFINITE;	/* set unlimited */
-	else if (sched_job_limit == NO_VAL)
-		sched_job_limit = job_limit;	/* set initial value */
-	else
-		sched_job_limit += job_limit;	/* test more jobs */
+	/*
+	 * A thread may not get its scheduling request immediately satisfied.
+	 * If any of those requests were for full_queue, the next thread that
+	 * launches _schedule() will ensure that is honored eventually.
+	 */
+	sched_full_queue |= full_queue;
 
 	if (delta_t >= sched_min_interval) {
 		/* Temporarily set time in the future until we get the real
@@ -804,16 +834,15 @@ extern int schedule(uint32_t job_limit)
 		sched_last.tv_sec  = now.tv_sec;
 		sched_last.tv_usec = now.tv_usec;
 		sched_running = true;
-		job_limit = sched_job_limit;
-		sched_job_limit = NO_VAL;
 		slurm_mutex_unlock(&sched_mutex);
 
-		job_count = _schedule(job_limit);
+		job_count = _schedule(sched_full_queue);
 
 		slurm_mutex_lock(&sched_mutex);
 		gettimeofday(&now, NULL);
 		sched_last.tv_sec  = now.tv_sec;
 		sched_last.tv_usec = now.tv_usec;
+		sched_full_queue = false;
 		sched_running = false;
 		slurm_mutex_unlock(&sched_mutex);
 	} else if (sched_pend_thread == 0) {
@@ -975,7 +1004,7 @@ extern void job_queue_append_internal(job_queue_req_t *job_queue_req)
 	list_append(job_queue_req->job_queue, job_queue_rec);
 }
 
-static int _schedule(uint32_t job_limit)
+static int _schedule(bool full_queue)
 {
 	ListIterator job_iterator = NULL, part_iterator = NULL;
 	List job_queue = NULL;
@@ -1028,26 +1057,21 @@ static int _schedule(uint32_t job_limit)
 	}
 #endif
 
-	if (sched_update != slurmctld_conf.last_update) {
+	if (sched_update != slurm_conf.last_update) {
 		char *tmp_ptr;
-		char *sched_params = slurm_get_sched_params();
-		char *sched_type = slurm_get_sched_type();
-		char *prio_type = slurm_get_priority_type();
-		if ((xstrcmp(sched_type, "sched/builtin") == 0) &&
-		    (xstrcmp(prio_type, "priority/basic") == 0) &&
+		if (!xstrcmp(slurm_conf.schedtype, "sched/builtin") &&
+		    !xstrcmp(slurm_conf.priority_type, "priority/basic") &&
 		    _all_partition_priorities_same())
 			fifo_sched = true;
 		else
 			fifo_sched = false;
-		xfree(sched_type);
-		xfree(prio_type);
 
-		if (xstrcasestr(sched_params, "assoc_limit_stop"))
+		if (xstrcasestr(slurm_conf.sched_params, "assoc_limit_stop"))
 			assoc_limit_stop = true;
 		else
 			assoc_limit_stop = false;
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "batch_sched_delay="))) {
 			batch_sched_delay = atoi(tmp_ptr + 18);
 			if (batch_sched_delay < 0) {
@@ -1060,7 +1084,7 @@ static int _schedule(uint32_t job_limit)
 		}
 
 		bb_array_stage_cnt = 10;
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "bb_array_stage_cnt="))) {
 			int task_cnt = atoi(tmp_ptr + 19);
 			if (task_cnt > 0)
@@ -1068,7 +1092,7 @@ static int _schedule(uint32_t job_limit)
 		}
 
 		bf_min_age_reserve = 0;
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "bf_min_age_reserve="))) {
 			int min_age = atoi(tmp_ptr + 19);
 			if (min_age > 0)
@@ -1076,14 +1100,14 @@ static int _schedule(uint32_t job_limit)
 		}
 
 		bf_min_prio_reserve = 0;
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "bf_min_prio_reserve="))) {
 			int64_t min_prio = (int64_t) atoll(tmp_ptr + 20);
 			if (min_prio > 0)
 				bf_min_prio_reserve = (uint32_t) min_prio;
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "build_queue_timeout="))) {
 			build_queue_timeout = atoi(tmp_ptr + 20);
 			if (build_queue_timeout < 100) {
@@ -1095,7 +1119,23 @@ static int _schedule(uint32_t job_limit)
 			build_queue_timeout = BUILD_TIMEOUT;
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+					   "correspond_after_task_cnt="))) {
+			correspond_after_task_cnt = atoi(tmp_ptr + 26);
+			if (correspond_after_task_cnt <
+			    CORRESPOND_ARRAY_TASK_CNT) {
+				error("Invalid correspond_after_task_cnt: %d, the value can't be lower than %d",
+				      correspond_after_task_cnt,
+				      CORRESPOND_ARRAY_TASK_CNT);
+				correspond_after_task_cnt =
+					CORRESPOND_ARRAY_TASK_CNT;
+			}
+		} else {
+			correspond_after_task_cnt = CORRESPOND_ARRAY_TASK_CNT;
+		}
+
+
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "default_queue_depth="))) {
 			def_job_limit = atoi(tmp_ptr + 20);
 			if (def_job_limit < 0) {
@@ -1109,14 +1149,14 @@ static int _schedule(uint32_t job_limit)
 		}
 
 		bf_hetjob_prio = 0;
-		if (sched_params &&
-		    (tmp_ptr = strstr(sched_params, "bf_hetjob_prio="))) {
-			tmp_ptr = strtok(tmp_ptr + 15, ",");
-			if (!xstrcasecmp(tmp_ptr, "min"))
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+		                           "bf_hetjob_prio="))) {
+			tmp_ptr += 15;
+			if (!xstrncasecmp(tmp_ptr, "min", 3))
 				bf_hetjob_prio |= HETJOB_PRIO_MIN;
-			else if (!xstrcasecmp(tmp_ptr, "max"))
+			else if (!xstrncasecmp(tmp_ptr, "max", 3))
 				bf_hetjob_prio |= HETJOB_PRIO_MAX;
-			else if (!xstrcasecmp(tmp_ptr, "avg"))
+			else if (!xstrncasecmp(tmp_ptr, "avg", 3))
 				bf_hetjob_prio |= HETJOB_PRIO_AVG;
 			else
 				error("Invalid SchedulerParameters bf_hetjob_prio: %s",
@@ -1124,7 +1164,7 @@ static int _schedule(uint32_t job_limit)
 		}
 
 		bf_hetjob_immediate = false;
-		if (xstrcasestr(sched_params, "bf_hetjob_immediate"))
+		if (xstrcasestr(slurm_conf.sched_params, "bf_hetjob_immediate"))
 			bf_hetjob_immediate = true;
 
 		if (bf_hetjob_immediate && !bf_hetjob_prio) {
@@ -1132,7 +1172,7 @@ static int _schedule(uint32_t job_limit)
 			info("bf_hetjob_immediate automatically sets bf_hetjob_prio=min");
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "partition_job_depth="))) {
 			max_jobs_per_part = atoi(tmp_ptr + 20);
 			if (max_jobs_per_part < 0) {
@@ -1145,14 +1185,16 @@ static int _schedule(uint32_t job_limit)
 			max_jobs_per_part = 0;
 		}
 
-		if (xstrcasestr(sched_params, "reduce_completing_frag"))
+		if (xstrcasestr(slurm_conf.sched_params,
+		                "reduce_completing_frag"))
 			reduce_completing_frag = true;
 		else
 			reduce_completing_frag = false;
 
-		if ((tmp_ptr = xstrcasestr(sched_params, "max_rpc_cnt=")))
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+		                           "max_rpc_cnt=")))
 			defer_rpc_cnt = atoi(tmp_ptr + 12);
-		else if ((tmp_ptr = xstrcasestr(sched_params,
+		else if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 						"max_rpc_count=")))
 			defer_rpc_cnt = atoi(tmp_ptr + 14);
 		else
@@ -1162,8 +1204,9 @@ static int _schedule(uint32_t job_limit)
 			defer_rpc_cnt = 0;
 		}
 
-		time_limit = slurm_get_msg_timeout() / 2;
-		if ((tmp_ptr = xstrcasestr(sched_params, "max_sched_time="))) {
+		time_limit = slurm_conf.msg_timeout / 2;
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+		                           "max_sched_time="))) {
 			sched_timeout = atoi(tmp_ptr + 15);
 			if ((sched_timeout <= 0) ||
 			    (sched_timeout > time_limit)) {
@@ -1179,7 +1222,8 @@ static int _schedule(uint32_t job_limit)
 			sched_timeout = MIN(sched_timeout, 2);
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params, "sched_interval="))) {
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+		                           "sched_interval="))) {
 			sched_interval = atoi(tmp_ptr + 15);
 			if (sched_interval < 0) {
 				error("Invalid sched_interval: %d",
@@ -1190,7 +1234,7 @@ static int _schedule(uint32_t job_limit)
 			sched_interval = 60;
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "sched_min_interval="))) {
 			i = atoi(tmp_ptr + 19);
 			if (i < 0)
@@ -1201,7 +1245,7 @@ static int _schedule(uint32_t job_limit)
 			sched_min_interval = 2;
 		}
 
-		if ((tmp_ptr = xstrcasestr(sched_params,
+		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 					   "sched_max_job_start="))) {
 			sched_max_job_start = atoi(tmp_ptr + 20);
 			if (sched_max_job_start < 0) {
@@ -1213,8 +1257,7 @@ static int _schedule(uint32_t job_limit)
 			sched_max_job_start = 0;
 		}
 
-		xfree(sched_params);
-		sched_update = slurmctld_conf.last_update;
+		sched_update = slurm_conf.last_update;
 		info("SchedulerParameters=default_queue_depth=%d,"
 		     "max_rpc_cnt=%d,max_sched_time=%d,partition_job_depth=%d,"
 		     "sched_max_job_start=%d,sched_min_interval=%d",
@@ -1237,9 +1280,6 @@ static int _schedule(uint32_t job_limit)
 		goto out;
 	}
 
-	if (job_limit == 0)
-		job_limit = def_job_limit;
-
 	lock_slurmctld(job_write_lock);
 	now = time(NULL);
 	sched_start = now;
@@ -1252,8 +1292,6 @@ static int _schedule(uint32_t job_limit)
 				continue;
 			if ((job_ptr->state_reason != WAIT_NO_REASON) &&
 			    (job_ptr->state_reason != WAIT_RESOURCES) &&
-			    (job_ptr->state_reason != WAIT_POWER_NOT_AVAIL) &&
-			    (job_ptr->state_reason != WAIT_POWER_RESERVED) &&
 			    (job_ptr->state_reason != WAIT_NODE_NOT_AVAIL))
 				continue;
 			job_ptr->state_reason = WAIT_FRONT_END;
@@ -1295,7 +1333,7 @@ static int _schedule(uint32_t job_limit)
 						part_ptr;
 					bit_and_not(avail_node_bitmap,
 						    part_ptr->node_bitmap);
-					if (slurmctld_conf.slurmctld_debug >=
+					if (slurm_conf.slurmctld_debug >=
 					    LOG_LEVEL_DEBUG) {
 						if (cg_part_str)
 							xstrcat(cg_part_str,
@@ -1351,7 +1389,7 @@ static int _schedule(uint32_t job_limit)
 	while (1) {
 		/* Run some final guaranteed logic after each job iteration */
 		if (job_ptr) {
-			job_resv_clear_promiscous_flag(job_ptr);
+			job_resv_clear_magnetic_flag(job_ptr);
 			fill_array_reasons(job_ptr, reject_array_job);
 		}
 
@@ -1409,7 +1447,10 @@ next_part:
 			part_ptr = job_queue_rec->part_ptr;
 			job_ptr->priority = job_queue_rec->priority;
 
-			job_queue_rec_prom_resv(job_queue_rec);
+			if (job_ptr->resv_list)
+				job_queue_rec_resv_list(job_queue_rec);
+			else
+				job_queue_rec_magnetic_resv(job_queue_rec);
 			xfree(job_queue_rec);
 
 			if (!avail_front_end(job_ptr)) {
@@ -1495,7 +1536,7 @@ next_task:
 				continue;
 			}
 		}
-		if (job_depth++ > job_limit) {
+		if (!full_queue && (job_depth++ > def_job_limit)) {
 			sched_debug("already tested %u jobs, breaking out",
 				    job_depth);
 			break;
@@ -1580,32 +1621,7 @@ next_task:
 
 		}
 
-		/* Test for valid account, QOS and required nodes on each pass */
-		if (job_ptr->state_reason == FAIL_ACCOUNT) {
-			slurmdb_assoc_rec_t assoc_rec;
-			memset(&assoc_rec, 0, sizeof(slurmdb_assoc_rec_t));
-			assoc_rec.acct      = job_ptr->account;
-			if (job_ptr->part_ptr)
-				assoc_rec.partition = job_ptr->part_ptr->name;
-			assoc_rec.uid       = job_ptr->user_id;
-
-			if (!assoc_mgr_fill_in_assoc(acct_db_conn, &assoc_rec,
-						     accounting_enforce,
-						     &job_ptr->assoc_ptr,
-						     false)) {
-				job_ptr->state_reason = WAIT_NO_REASON;
-				xfree(job_ptr->state_desc);
-				job_ptr->assoc_id = assoc_rec.id;
-				last_job_update = now;
-			} else {
-				sched_debug("%pJ has invalid association",
-					    job_ptr);
-				xfree(job_ptr->state_desc);
-				job_ptr->state_reason =
-					WAIT_ASSOC_RESOURCE_LIMIT;
-				continue;
-			}
-		}
+		/* Test for valid QOS and required nodes on each pass */
 		if (job_ptr->qos_id) {
 			assoc_mgr_lock_t locks =
 				{ .assoc = READ_LOCK, .qos = READ_LOCK };
@@ -1753,9 +1769,7 @@ skip_start:
 		fail_by_part = false;
 		if ((error_code != SLURM_SUCCESS) && deadline_time_limit)
 			job_ptr->time_limit = save_time_limit;
-		if ((error_code == ESLURM_NODES_BUSY) ||
-		    (error_code == ESLURM_POWER_NOT_AVAIL) ||
-		    (error_code == ESLURM_POWER_RESERVED)) {
+		if (error_code == ESLURM_NODES_BUSY) {
 			sched_debug3("%pJ. State=%s. Reason=%s. Priority=%u. Partition=%s.",
 				     job_ptr,
 				     job_state_string(job_ptr->job_state),
@@ -1815,13 +1829,6 @@ skip_start:
 			reject_array_job = NULL;
 			reject_array_part = NULL;
 
-			/* synchronize power layouts key/values */
-			if ((powercap_get_cluster_current_cap() != 0) &&
-			    (which_power_layout() == 2)) {
-				layouts_entity_pull_kv("power",
-						       "Cluster",
-						       "CurrentSumPower");
-			}
 			sched_info("Allocate %pJ NodeList=%s #CPUs=%u Partition=%s",
 				   job_ptr, job_ptr->nodes,
 				   job_ptr->total_cpus,
@@ -1934,7 +1941,7 @@ fail_this_part:	if (fail_by_part) {
 		(void) bb_g_job_try_stage_in();
 
 	if (job_ptr)
-		job_resv_clear_promiscous_flag(job_ptr);
+		job_resv_clear_magnetic_flag(job_ptr);
 	save_last_part_update = last_part_update;
 	FREE_NULL_BITMAP(avail_node_bitmap);
 	avail_node_bitmap = save_avail_node_bitmap;
@@ -1997,9 +2004,9 @@ extern int sort_job_queue2(void *x, void *y)
 
 	/* The following block of code is designed to minimize run time in
 	 * typical configurations for this frequently executed function. */
-	if (config_update != slurmctld_conf.last_update) {
+	if (config_update != slurm_conf.last_update) {
 		preemption_enabled = slurm_preemption_enabled();
-		config_update = slurmctld_conf.last_update;
+		config_update = slurm_conf.last_update;
 	}
 	if (preemption_enabled) {
 		if (preempt_g_job_preempt_check(job_rec1, job_rec2))
@@ -2165,7 +2172,6 @@ static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 		xmalloc(sizeof(batch_job_launch_msg_t));
 	launch_msg_ptr->job_id = job_ptr->job_id;
 	launch_msg_ptr->het_job_id = job_ptr->het_job_id;
-	launch_msg_ptr->step_id = NO_VAL;
 	launch_msg_ptr->array_job_id = job_ptr->array_job_id;
 	launch_msg_ptr->array_task_id = job_ptr->array_task_id;
 	launch_msg_ptr->uid = job_ptr->user_id;
@@ -2196,8 +2202,8 @@ static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 		slurm_free_job_launch_msg(launch_msg_ptr);
 		job_ptr->batch_flag = 1;	/* Allow repeated requeue */
 		job_ptr->details->begin_time = time(NULL) + 120;
-		job_complete(job_ptr->job_id, slurmctld_conf.slurm_user_id,
-			     true, false, 0);
+		job_complete(job_ptr->job_id, slurm_conf.slurm_user_id,
+		             true, false, 0);
 		return NULL;
 	}
 
@@ -2250,7 +2256,13 @@ static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 				job_ptr->qos_ptr->description);
 	}
 	launch_msg_ptr->account = xstrdup(job_ptr->account);
-	launch_msg_ptr->resv_name = xstrdup(job_ptr->resv_name);
+
+	/*
+	 * Use resv_ptr->name instead of job_ptr->resv_name as the job
+	 * could contain multiple reservation names.
+	 */
+	if (job_ptr->resv_ptr)
+		launch_msg_ptr->resv_name = xstrdup(job_ptr->resv_ptr->name);
 
 	xassert(!fail_why);
 	return launch_msg_ptr;
@@ -2265,12 +2277,11 @@ job_failed:
 	      __func__, fail_why, job_ptr, job_ptr);
 	xfree(job_ptr->state_desc);
 	job_ptr->state_desc = xstrdup(fail_why);
-	job_ptr->state_reason_prev = job_ptr->state_reason;
 	job_ptr->state_reason = FAIL_SYSTEM;
 	slurm_free_job_launch_msg(launch_msg_ptr);
 	/* ignore the return as job is in an unknown state anyway */
-	job_complete(job_ptr->job_id, slurmctld_conf.slurm_user_id, false,
-		     false, 1);
+	job_complete(job_ptr->job_id, slurm_conf.slurm_user_id, false, false,
+	             1);
 	return NULL;
 }
 
@@ -2317,14 +2328,12 @@ static job_record_t *_het_job_ready(job_record_t *job_ptr)
 	}
 	list_iterator_destroy(iter);
 
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_HETJOB) {
-		if (het_job_leader) {
-			info("Batch hetjob %pJ being launched", het_job_leader);
-		} else if (het_job) {
-			info("Batch hetjob %pJ waiting for job to be ready",
-			     het_job);
-		}
-	}
+	if (het_job_leader)
+		log_flag(HETJOB, "Batch hetjob %pJ being launched",
+			 het_job_leader);
+	else if (het_job)
+		log_flag(HETJOB, "Batch hetjob %pJ waiting for job to be ready",
+			 het_job);
 
 	return het_job_leader;
 }
@@ -2426,11 +2435,11 @@ static void _set_het_job_env(job_record_t *het_job_leader,
 				"SLURM_JOB_QOS",
 				het_job_offset, "%s", qos_name);
 		}
-		if (het_job->resv_name) {
+		if (het_job->resv_ptr) {
 			(void) env_array_overwrite_het_fmt(
 				&launch_msg_ptr->environment,
 				"SLURM_JOB_RESERVATION",
-				het_job_offset, "%s", het_job->resv_name);
+				het_job_offset, "%s", het_job->resv_ptr->name);
 		}
 		if (het_job->details)
 			tmp_mem = het_job->details->pn_min_memory;
@@ -2505,6 +2514,13 @@ static void _set_het_job_env(job_record_t *het_job_leader,
 					het_job_offset,"%s", tmp_str);
 				xfree(tmp_str);
 			}
+		} else if (IS_JOB_RUNNING(het_job)) {
+			if (!het_job->details)
+				error("%s: %pJ has null details member",
+				      __func__, het_job);
+			if (!het_job->job_resrcs)
+				error("%s: %pJ has null job_resrcs member",
+				      __func__, het_job);
 		}
 		het_job_offset++;
 	}
@@ -2605,8 +2621,9 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 
 	memset(&cred_arg, 0, sizeof(slurm_cred_arg_t));
 
-	cred_arg.jobid     = launch_msg_ptr->job_id;
-	cred_arg.stepid    = launch_msg_ptr->step_id;
+	cred_arg.step_id.job_id = launch_msg_ptr->job_id;
+	cred_arg.step_id.step_id = SLURM_BATCH_SCRIPT;
+	cred_arg.step_id.step_het_comp = NO_VAL;
 	cred_arg.uid       = launch_msg_ptr->uid;
 	cred_arg.gid       = launch_msg_ptr->gid;
 	cred_arg.pw_name   = launch_msg_ptr->user_name;
@@ -2638,7 +2655,8 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 
 	if (launch_msg_ptr->cred)
 		return SLURM_SUCCESS;
-	error("slurm_cred_create failure for batch job %u", cred_arg.jobid);
+	error("slurm_cred_create failure for batch job %u",
+	      cred_arg.step_id.job_id);
 	return SLURM_ERROR;
 }
 
@@ -2791,7 +2809,7 @@ extern void print_job_dependency(job_record_t *job_ptr, const char *func)
 
 static int _test_job_dependency_common(
 	bool is_complete, bool is_completed, bool is_pending,
-	bool *clear_dep, bool *depends, bool *failure,
+	bool *clear_dep, bool *failure,
 	job_record_t *job_ptr, struct depend_spec *dep_ptr)
 {
 	int rc = 0;
@@ -2799,7 +2817,6 @@ static int _test_job_dependency_common(
 	time_t now = time(NULL);
 
 	xassert(clear_dep);
-	xassert(depends);
 	xassert(failure);
 
 	if (dep_ptr->depend_type == SLURM_DEPEND_AFTER) {
@@ -2810,31 +2827,26 @@ static int _test_job_dependency_common(
 			      dep_ptr->depend_time)) ||
 			    fed_mgr_job_started_on_sib(djob_ptr)) {
 				*clear_dep = true;
-			} else
-				*depends = true;
-		} else
-			*depends = true;
+			} /* else still depends */
+		} /* else still depends */
 		rc = 1;
 	} else if (dep_ptr->depend_type == SLURM_DEPEND_AFTER_ANY) {
 		if (is_completed)
 			*clear_dep = true;
-		else
-			*depends = true;
+		/* else still depends */
 		rc = 1;
 	} else if (dep_ptr->depend_type == SLURM_DEPEND_AFTER_NOT_OK) {
 		if (djob_ptr->job_state & JOB_SPECIAL_EXIT)
 			*clear_dep = true;
-		else if (!is_completed)
-			*depends = true;
-		else if (!is_complete)
+		else if (!is_completed) { /* Still depends */
+		} else if (!is_complete)
 			*clear_dep = true;
 		else
 			*failure = true;
 		rc = 1;
 	} else if (dep_ptr->depend_type == SLURM_DEPEND_AFTER_OK) {
-		if (!is_completed)
-			*depends = true;
-		else if (is_complete)
+		if (!is_completed) { /* Still depends */
+		} else if (is_complete)
 			*clear_dep = true;
 		else
 			*failure = true;
@@ -2849,21 +2861,19 @@ static int _test_job_dependency_common(
 						       job_ptr->array_task_id);
 
 		if (dcjob_ptr) {
-			if (!IS_JOB_COMPLETED(dcjob_ptr))
-				*depends = true;
-			else if (IS_JOB_COMPLETE(dcjob_ptr))
+			if (!IS_JOB_COMPLETED(dcjob_ptr)) { /* Still depends */
+			} else if (IS_JOB_COMPLETE(dcjob_ptr))
 				*clear_dep = true;
 			else
 				*failure = true;
 		} else {
-			if (!is_completed)
-				*depends = true;
-			else if (is_complete)
+			if (!is_completed) { /* Still depends */
+			} else if (is_complete)
 				*clear_dep = true;
 			else if (job_ptr->array_recs &&
-				 (job_ptr->array_task_id == NO_VAL))
-				*depends = true;
-			else
+				 (job_ptr->array_task_id == NO_VAL)) {
+				/* Still depends */
+			} else
 				*failure = true;
 		}
 		rc = 1;
@@ -2871,13 +2881,11 @@ static int _test_job_dependency_common(
 		if (is_completed &&
 		    (bb_g_job_test_stage_out(djob_ptr) == 1))
 			*clear_dep = true;
-		else
-			*depends = true;
+		/* else still depends */
 		rc = 1;
 	} else if (dep_ptr->depend_type == SLURM_DEPEND_EXPAND) {
 		time_t now = time(NULL);
-		if (is_pending) {
-			*depends = true;
+		if (is_pending) { /* Still depends */
 		} else if (is_completed)
 			*failure = true;
 		else if ((djob_ptr->end_time != 0) &&
@@ -2956,7 +2964,7 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 
 	depend_iter = list_iterator_create(job_ptr->details->depend_list);
 	while ((dep_ptr = list_next(depend_iter))) {
-		bool clear_dep = false, depends = false, failure = false;
+		bool clear_dep = false, failure = false;
 		bool remote;
 
 		remote = (dep_ptr->depend_flags & SLURM_FLAGS_REMOTE) ?
@@ -2971,12 +2979,10 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 			    (dep_ptr->depend_state == DEPEND_NOT_FULFILLED) &&
 			    (dep_ptr->depend_type != SLURM_DEPEND_SINGLETON) &&
 			    (!fed_mgr_is_job_id_in_fed(dep_ptr->job_id))) {
-				if (slurmctld_conf.debug_flags &
-				    DEBUG_FLAG_DEPENDENCY)
-					info("%s: %pJ dependency %s:%u failed due to job_id not in federation.",
-					     __func__, job_ptr,
-					     _depend_type2str(dep_ptr),
-					     dep_ptr->job_id);
+				log_flag(DEPENDENCY, "%s: %pJ dependency %s:%u failed due to job_id not in federation.",
+					 __func__, job_ptr,
+					 _depend_type2str(dep_ptr),
+					 dep_ptr->job_id);
 				changed = true;
 				dep_ptr->depend_state = DEPEND_FAILED;
 			}
@@ -2998,9 +3004,9 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 			if (list_find_first(job_list, _find_singleton_job,
 					    job_ptr) ||
 			    !fed_mgr_is_singleton_satisfied(job_ptr,
-							    dep_ptr, true))
-				depends = true;
-			else
+							    dep_ptr, true)) {
+				/* Still depends */
+			} else
 				clear_dep = true;
 		} else if ((djob_ptr == NULL) ||
 			   (djob_ptr->magic != JOB_MAGIC) ||
@@ -3026,7 +3032,7 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 
 			if (!_test_job_dependency_common(
 				    is_complete, is_completed, is_pending,
-				    &clear_dep, &depends, &failure,
+				    &clear_dep, &failure,
 				    job_ptr, dep_ptr))
 				failure = true;
 		}
@@ -3034,19 +3040,15 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 		if (failure) {
 			dep_ptr->depend_state = DEPEND_FAILED;
 			changed = true;
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
-				info("%s: %pJ dependency %s:%u failed.",
-				     __func__, job_ptr,
-				     _depend_type2str(dep_ptr),
-				     dep_ptr->job_id);
+			log_flag(DEPENDENCY, "%s: %pJ dependency %s:%u failed.",
+				 __func__, job_ptr, _depend_type2str(dep_ptr),
+				 dep_ptr->job_id);
 		} else if (clear_dep) {
 			dep_ptr->depend_state = DEPEND_FULFILLED;
 			changed = true;
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
-				info("%s: %pJ dependency %s:%u fulfilled.",
-				     __func__, job_ptr,
-				     _depend_type2str(dep_ptr),
-				     dep_ptr->job_id);
+			log_flag(DEPENDENCY, "%s: %pJ dependency %s:%u fulfilled.",
+				 __func__, job_ptr, _depend_type2str(dep_ptr),
+				 dep_ptr->job_id);
 		}
 
 		_test_dependency_state(dep_ptr, &or_satisfied, &and_failed,
@@ -3073,12 +3075,12 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 			list_flush(job_ptr->details->depend_list);
 		_depend_list2str(job_ptr, false);
 		results = NO_DEPEND;
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
-			info("%s: %pJ dependency fulfilled", __func__, job_ptr);
+		log_flag(DEPENDENCY, "%s: %pJ dependency fulfilled",
+			 __func__, job_ptr);
 	} else {
 		if (changed) {
 			_depend_list2str(job_ptr, false);
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
+			if (slurm_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
 				print_job_dependency(job_ptr, __func__);
 		}
 		job_ptr->bit_flags |= JOB_DEPENDENT;
@@ -3114,7 +3116,7 @@ static char *_xlate_array_dep(char *new_depend)
 		return NULL;	/* No job array expressions */
 
 	if (max_array_size == NO_VAL) {
-		max_array_size = slurmctld_conf.max_array_sz;
+		max_array_size = slurm_conf.max_array_sz;
 	}
 
 	for (i = 0; new_depend[i]; i++) {
@@ -3366,6 +3368,7 @@ static void _parse_dependency_jobid_new(job_record_t *job_ptr,
 				&sockets_per_node,
 				&job_ptr->details->
 				cpus_per_task,
+				&job_ptr->details->ntasks_per_tres,
 				&job_ptr->gres_list);
 			if (mc_ptr && (sockets_per_node != NO_VAL16)) {
 				mc_ptr->sockets_per_node =
@@ -3510,10 +3513,9 @@ extern bool update_job_dependency_list(job_record_t *job_ptr,
 			 * and the update doesn't get to the sibling before
 			 * the sibling sends back an update to the origin (us).
 			 */
-			if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
-				info("%s: Cannot find dependency %s:%u for %pJ, it may have been cleared before we got here.",
-				     __func__, _depend_type2str(dep_ptr),
-				     dep_ptr->job_id, job_ptr);
+			log_flag(DEPENDENCY, "%s: Cannot find dependency %s:%u for %pJ, it may have been cleared before we got here.",
+				 __func__, _depend_type2str(dep_ptr),
+				 dep_ptr->job_id, job_ptr);
 			continue;
 		}
 
@@ -3600,7 +3602,7 @@ extern int handle_job_dependency_updates(void *object, void *arg)
 			xfree(job_ptr->state_desc);
 		}
 	}
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
 		print_job_dependency(job_ptr, __func__);
 
 	return SLURM_SUCCESS;
@@ -3632,15 +3634,12 @@ extern int update_job_dependency(job_record_t *job_ptr, char *new_depend)
 		 * Determine if the select plugin supports heterogeneous
 		 * GRES allocations (count differ by node): 1=yes, 0=no
 		 */
-		char *select_type = slurm_get_select_type();
-		if (select_type &&
-		    (strstr(select_type, "cons_tres") ||
-		     (strstr(select_type, "cray_aries") &&
-		      (slurm_get_select_type_param() & CR_OTHER_CONS_TRES)))) {
+		if ((xstrstr(slurm_conf.select_type, "cons_tres") ||
+		     (xstrstr(slurm_conf.select_type, "cray_aries") &&
+		      (slurm_conf.select_type_param & CR_OTHER_CONS_TRES)))) {
 			select_hetero = 1;
 		} else
 			select_hetero = 0;
-		xfree(select_type);
 	}
 
 	/* Clear dependencies on NULL, "0", or empty dependency input */
@@ -3762,7 +3761,7 @@ extern int update_job_dependency(job_record_t *job_ptr, char *new_depend)
 		FREE_NULL_LIST(job_ptr->details->depend_list);
 		job_ptr->details->depend_list = new_depend_list;
 		_depend_list2str(job_ptr, or_flag);
-		if (slurmctld_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
+		if (slurm_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
 			print_job_dependency(job_ptr, __func__);
 	} else {
 		FREE_NULL_LIST(new_depend_list);
@@ -4227,8 +4226,8 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 		return SLURM_SUCCESS;
 	if (power_save_test())
 		return power_job_reboot(job_ptr);
-	if ((slurmctld_conf.reboot_program == NULL) ||
-	    (slurmctld_conf.reboot_program[0] == '\0'))
+	if ((slurm_conf.reboot_program == NULL) ||
+	    (slurm_conf.reboot_program[0] == '\0'))
 		return SLURM_SUCCESS;
 
 /*
@@ -4265,7 +4264,7 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 		bit_set(booting_node_bitmap, i);
 		bit_set(wait_boot_arg->node_bitmap, i);
 		node_ptr->boot_req_time = now;
-		node_ptr->last_response = now + slurmctld_conf.resume_timeout;
+		node_ptr->last_response = now + slurm_conf.resume_timeout;
 	}
 
 	if (job_ptr->details->features &&
@@ -4371,7 +4370,6 @@ static void *_wait_boot(void *arg)
 	/* Locks: Write jobs; write nodes */
 	slurmctld_lock_t node_write_lock = {
 		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
-	uint16_t resume_timeout = slurm_get_resume_timeout();
 	node_record_t *node_ptr;
 	time_t start_time = time(NULL);
 	int i, total_node_cnt, wait_node_cnt;
@@ -4418,7 +4416,7 @@ static void *_wait_boot(void *arg)
 			     job_ptr, total_node_cnt);
 		}
 		i = (int) difftime(time(NULL), start_time);
-		if (i >= resume_timeout) {
+		if (i >= slurm_conf.resume_timeout) {
 			error("%pJ timeout waiting for node %d of %d boots",
 			      job_ptr, wait_node_cnt, total_node_cnt);
 			wait_node_cnt = 0;
@@ -4453,9 +4451,6 @@ static void *_wait_boot(void *arg)
  * until that has completed.
  * For HetJobs in particular, this is critical to ensure that all components
  * have been setup properly before prolog_slurmctld actually runs.
- *
- * FIXME: explore other ways to refactor slurmctld to avoid this extraneous
- * thread
  */
 static void *_start_prolog_slurmctld_thread(void *x)
 {
@@ -4495,13 +4490,15 @@ static void *_start_prolog_slurmctld_thread(void *x)
  */
 extern void prolog_slurmctld(job_record_t *job_ptr)
 {
-	uint32_t *job_id = xmalloc(sizeof(*job_id));
+	uint32_t *job_id;
 	xassert(verify_lock(JOB_LOCK, WRITE_LOCK));
-	xassert(verify_lock(NODE_LOCK, WRITE_LOCK));
 
+	if (!prep_required(PREP_PROLOG_SLURMCTLD))
+		return;
 	job_ptr->details->prolog_running++;
 	job_ptr->job_state |= JOB_CONFIGURING;
 
+	job_id = xmalloc(sizeof(*job_id));
 	*job_id = job_ptr->job_id;
 	slurm_thread_create_detached(NULL, _start_prolog_slurmctld_thread, job_id);
 }
@@ -4947,7 +4944,7 @@ void cleanup_completing(job_record_t *job_ptr)
 {
 	time_t delay;
 
-	trace_job(job_ptr, __func__, "");
+	log_flag(TRACE_JOBS, "%s: %pJ", __func__, job_ptr);
 
 	delay = last_job_update - job_ptr->end_time;
 	if (delay > 60) {

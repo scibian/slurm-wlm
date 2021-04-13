@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	20.02.6
+Version:	20.11.5
 %define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager
@@ -131,12 +131,12 @@ BuildRequires: numactl-devel
 %endif
 %endif
 
-%if %{with pmix}
+%if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
 BuildRequires: pmix
 %global pmix_version %(rpm -q pmix --qf "%{VERSION}")
 %endif
 
-%if %{with ucx}
+%if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 BuildRequires: ucx-devel
 %global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
 %endif
@@ -226,10 +226,10 @@ to launch jobs.
 Summary: Slurm compute node daemon
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
-%if %{with pmix}
+%if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
 Requires: pmix = %{pmix_version}
 %endif
-%if %{with ucx}
+%if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 Requires: ucx = %{ucx_version}
 %endif
 %description slurmd
@@ -374,6 +374,10 @@ install -D -m644 etc/slurmctld.service %{buildroot}/%{_unitdir}/slurmctld.servic
 install -D -m644 etc/slurmd.service    %{buildroot}/%{_unitdir}/slurmd.service
 install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
 
+%if %{with slurmrestd}
+install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.service
+%endif
+
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
 # Cray's version of libpmi should be used. Move it elsewhere if the site still
 # wants to use it with other MPI stacks.
@@ -406,11 +410,11 @@ install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
 %endif
 
 install -D -m644 etc/cgroup.conf.example %{buildroot}/%{_sysconfdir}/cgroup.conf.example
-install -D -m644 etc/layouts.d.power.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/power.conf.example
-install -D -m644 etc/layouts.d.power_cpufreq.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/power_cpufreq.conf.example
-install -D -m644 etc/layouts.d.unit.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/unit.conf.example
+install -D -m644 etc/prolog.example %{buildroot}/%{_sysconfdir}/prolog.example
+install -D -m644 etc/job_submit.lua.example %{buildroot}/%{_sysconfdir}/job_submit.lua.example
 install -D -m644 etc/slurm.conf.example %{buildroot}/%{_sysconfdir}/slurm.conf.example
 install -D -m600 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
+install -D -m644 etc/cli_filter.lua.example %{buildroot}/%{_sysconfdir}/cli_filter.lua.example
 install -D -m755 contribs/sjstat %{buildroot}/%{_bindir}/sjstat
 
 # Delete unpackaged files:
@@ -537,11 +541,11 @@ rm -rf %{buildroot}
 %config %{_sysconfdir}/slurm.conf.template
 %endif
 %config %{_sysconfdir}/cgroup.conf.example
-%config %{_sysconfdir}/layouts.d/power.conf.example
-%config %{_sysconfdir}/layouts.d/power_cpufreq.conf.example
-%config %{_sysconfdir}/layouts.d/unit.conf.example
+%config %{_sysconfdir}/job_submit.lua.example
+%config %{_sysconfdir}/prolog.example
 %config %{_sysconfdir}/slurm.conf.example
 %config %{_sysconfdir}/slurmdbd.conf.example
+%config %{_sysconfdir}/cli_filter.lua.example
 #############################################################################
 
 %files devel
@@ -640,6 +644,7 @@ rm -rf %{buildroot}
 %if %{with slurmrestd}
 %files slurmrestd
 %{_sbindir}/slurmrestd
+%{_unitdir}/slurmrestd.service
 %endif
 #############################################################################
 

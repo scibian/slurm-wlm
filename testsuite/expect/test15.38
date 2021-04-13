@@ -30,6 +30,16 @@ set exit_code   0
 set job_id      0
 
 #
+# Ensure that default partition has a DefaultTime big enough
+#
+run_command -fail "$scontrol update partitionname=[default_partition] DefaultTime=10"
+
+proc cleanup {} {
+	# Restore DefaultTime
+	reconfigure
+}
+
+#
 # Spawn a batch job with a deadline and no time
 #
 set timeout $max_job_delay
@@ -54,8 +64,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
-		set exit_code 1
+		fail "salloc not responding"
 	}
 	eof {
 		wait
@@ -83,8 +92,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol not responding"
-		set exit_code 1
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
@@ -104,8 +112,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "sacct not responding"
-		set exit_code 1
+		fail "sacct not responding"
 	}
 	eof {
 		wait

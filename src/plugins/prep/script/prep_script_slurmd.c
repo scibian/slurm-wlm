@@ -64,20 +64,17 @@ slurmd_conf_t *conf = NULL;
 
 static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog);
-static void _destroy_env(char **env);
 static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id);
 
 extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog)
 {
 	char *name = is_epilog ? "epilog" : "prolog";
-	char *path = is_epilog ? slurmctld_conf.epilog :
-				 slurmctld_conf.prolog;
+	char *path = is_epilog ? slurm_conf.epilog : slurm_conf.prolog;
 	char **env = _build_env(job_env, cred, is_epilog);
-	struct stat stat_buf;
 	int status = 0, rc;
 	uint32_t jobid = job_env->jobid;
-	int timeout = slurmctld_conf.prolog_epilog_timeout;
+	int timeout = slurm_conf.prolog_epilog_timeout;
 
 	if (timeout == NO_VAL16)
 		timeout = -1;
@@ -93,21 +90,22 @@ extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 	 *   If both "script" mechanisms fail, prefer to return the "real"
 	 *   prolog/epilog status.
 	 */
-	if (conf->plugstack && (stat(conf->plugstack, &stat_buf) == 0))
+	if ((is_epilog && spank_has_epilog()) ||
+	    (!is_epilog && spank_has_prolog()))
 		status = _run_spank_job_script(name, env, jobid);
 	if ((rc = run_script(name, path, jobid, timeout, env, job_env->uid)))
 		status = rc;
 
-	_destroy_env(env);
+	env_array_free(env);
 
 	return status;
 }
 
-/* NOTE: call _destroy_env() to free returned value */
+/* NOTE: call env_array_free() to free returned value */
 static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog)
 {
-	char **env = xmalloc(sizeof(char *));
+	char **env = env_array_create();
 	bool user_name_set = 0;
 
 	env[0] = NULL;
@@ -131,7 +129,7 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 
 	setenvf(&env, "SLURMD_NODENAME", "%s", conf->node_name);
 	setenvf(&env, "SLURM_CONF", "%s", conf->conffile);
-	setenvf(&env, "SLURM_CLUSTER_NAME", "%s", conf->cluster_name);
+	setenvf(&env, "SLURM_CLUSTER_NAME", "%s", slurm_conf.cluster_name);
 	setenvf(&env, "SLURM_JOB_ID", "%u", job_env->jobid);
 	setenvf(&env, "SLURM_JOB_UID", "%u", job_env->uid);
 	setenvf(&env, "SLURM_JOB_GID", "%u", job_env->gid);
@@ -178,16 +176,6 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	}
 
 	return env;
-}
-
-static void _destroy_env(char **env)
-{
-	if (!env)
-		return;
-
-	for (int i = 0; env[i]; i++)
-		xfree(env[i]);
-	xfree(env);
 }
 
 static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
@@ -247,7 +235,7 @@ static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
 	 * leading to this timeout being huge. I suspect a 120-second cap is
 	 * meant here, but I'm leaving this behavior in place for the moment.
 	 */
-	timeout = MAX(slurmctld_conf.prolog_epilog_timeout, 120);
+	timeout = MAX(slurm_conf.prolog_epilog_timeout, 120);
 	if (waitpid_timeout(mode, cpid, &status, timeout) < 0) {
 		error("spank/%s timed out after %u secs", mode, timeout);
 		return SLURM_ERROR;

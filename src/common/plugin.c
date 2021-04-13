@@ -53,6 +53,7 @@
 #include "src/common/xmalloc.h"
 #include "src/common/log.h"
 #include "src/common/plugrack.h"
+#include "src/common/read_config.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xstring.h"
 #include "src/common/slurm_protocol_api.h"
@@ -90,9 +91,6 @@ const char * plugin_strerror(plugin_err_t e)
 			return ("Plugin init() callback failed");
 		case EPLUGIN_MISSING_NAME:
 			return ("Plugin name/type/version symbol missing");
-		case EPLUGIN_MISSING_SYMBOL:
-			return ("Plugin missing a required symbol use "
-				"debug3 to see");
 		case EPLUGIN_BAD_VERSION:
 			return ("Incompatible plugin version");
 	}
@@ -129,7 +127,6 @@ plugin_peek( const char *fq_path,
 	if (!version) {
 		verbose("%s: plugin_version symbol not defined", fq_path);
 	} else if ((*version != SLURM_VERSION_NUMBER) && xstrcmp(type,"spank")){
-		/* NOTE: We could alternatly test just the MAJOR.MINOR values */
 		int plugin_major, plugin_minor, plugin_micro;
 		plugin_major = SLURM_VERSION_MAJOR(*version);
 		plugin_minor = SLURM_VERSION_MINOR(*version);
@@ -193,7 +190,6 @@ plugin_load_from_file(plugin_handle_t *p, const char *fq_path)
 	if (!version) {
 		verbose("%s: plugin_version symbol not defined", fq_path);
 	} else if ((*version != SLURM_VERSION_NUMBER) && xstrcmp(type,"spank")){
-		/* NOTE: We could alternatly test just the MAJOR.MINOR values */
 		int plugin_major, plugin_minor, plugin_micro;
 		plugin_major = SLURM_VERSION_MAJOR(*version);
 		plugin_minor = SLURM_VERSION_MINOR(*version);
@@ -246,7 +242,7 @@ plugin_load_and_link(const char *type_name, int n_syms,
 			so_name[i] = '_';
 		i++;
 	}
-	if (!(dir_array = slurm_get_plugin_dir())) {
+	if (!(dir_array = xstrdup(slurm_conf.plugindir))) {
 		error("plugin_load_and_link: No plugin dir given");
 		xfree(so_name);
 		return plug;
@@ -443,11 +439,8 @@ extern plugin_context_t *plugin_context_create(
 
 	/* Get plugin list. */
 	if (!c->plugin_list) {
-		char *plugin_dir;
 		c->plugin_list = plugrack_create(plugin_type);
-		plugin_dir = slurm_get_plugin_dir();
-		plugrack_read_dir(c->plugin_list, plugin_dir);
-		xfree(plugin_dir);
+		plugrack_read_dir(c->plugin_list, slurm_conf.plugindir);
 	}
 
 	c->cur_plugin = plugrack_use_by_type(c->plugin_list, c->type);
@@ -505,7 +498,7 @@ extern List plugin_get_plugins_of_type(char *plugin_type)
 	struct dirent *e;
 	int len;
 
-	if (!(plugin_dir = slurm_get_plugin_dir())) {
+	if (!(plugin_dir = xstrdup(slurm_conf.plugindir))) {
 		error("%s: No plugin dir given", __func__);
 		goto done;
 	}

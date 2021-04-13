@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  as_mysql_archive.c - functions dealing with the archiving.
  *****************************************************************************
- *
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -47,6 +46,7 @@
 #include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 
+#define SLURM_18_08_PROTOCOL_VERSION ((33 << 8) | 0)
 #define SLURM_17_11_PROTOCOL_VERSION ((32 << 8) | 0)
 #define SLURM_17_02_PROTOCOL_VERSION ((31 << 8) | 0) /* slurm version 17.02. */
 #define SLURM_16_05_PROTOCOL_VERSION ((30 << 8) | 0) /* slurm version 16.05. */
@@ -117,8 +117,6 @@ typedef struct {
 	char *end;
 	char *flags;
 	char *gid;
-	char *gres_alloc;
-	char *gres_req;
 	char *gres_used;
 	char *het_job_id;
 	char *het_job_offset;
@@ -152,6 +150,20 @@ typedef struct {
 	char *work_dir;
 } local_job_t;
 
+static void _convert_old_step_id(char **step_id)
+{
+	if (!step_id || !*step_id)
+		return;
+
+	if (!xstrcmp(*step_id, "-2")) {
+		xfree(*step_id);
+		*step_id = xstrdup_printf("%d", SLURM_BATCH_SCRIPT);
+	} else if (!xstrcmp(*step_id, "-1")) {
+		xfree(*step_id);
+		*step_id = xstrdup_printf("%d", SLURM_EXTERN_CONT);
+	}
+}
+
 static void _free_local_job_members(local_job_t *object)
 {
 	if (object) {
@@ -174,8 +186,6 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->end);
 		xfree(object->flags);
 		xfree(object->gid);
-		xfree(object->gres_alloc);
-		xfree(object->gres_req);
 		xfree(object->gres_used);
 		xfree(object->het_job_id);
 		xfree(object->het_job_offset);
@@ -260,6 +270,7 @@ typedef struct {
 	char *req_cpufreq_gov;
 	char *state;
 	char *stepid;
+	char *step_het_comp;
 	char *sys_sec;
 	char *sys_usec;
 	char *tasks;
@@ -306,6 +317,7 @@ static void _free_local_step_members(local_step_t *object)
 		xfree(object->req_cpufreq_gov);
 		xfree(object->state);
 		xfree(object->stepid);
+		xfree(object->step_het_comp);
 		xfree(object->sys_sec);
 		xfree(object->sys_usec);
 		xfree(object->tasks);
@@ -474,8 +486,6 @@ static char *job_req_inx[] = {
 	"time_eligible",
 	"time_end",
 	"id_group",
-	"gres_alloc",
-	"gres_req",
 	"gres_used",
 	"het_job_id",
 	"het_job_offset",
@@ -529,8 +539,6 @@ enum {
 	JOB_REQ_ELIGIBLE,
 	JOB_REQ_END,
 	JOB_REQ_GID,
-	JOB_REQ_GRES_ALLOC,
-	JOB_REQ_GRES_REQ,
 	JOB_REQ_GRES_USED,
 	JOB_REQ_HET_JOB_ID,
 	JOB_REQ_HET_JOB_OFFSET,
@@ -598,6 +606,7 @@ enum {
 static char *step_req_inx[] = {
 	"job_db_inx",
 	"id_step",
+	"step_het_comp",
 	"deleted",
 	"time_start",
 	"time_end",
@@ -643,6 +652,7 @@ static char *step_req_inx[] = {
 enum {
 	STEP_REQ_DB_INX,
 	STEP_REQ_STEPID,
+	STEP_REQ_STEP_HET_COMP,
 	STEP_REQ_DELETED,
 	STEP_REQ_START,
 	STEP_REQ_END,
@@ -868,8 +878,6 @@ static void _pack_local_job(local_job_t *object,
 	packstr(object->eligible, buffer);
 	packstr(object->end, buffer);
 	packstr(object->gid, buffer);
-	packstr(object->gres_alloc, buffer);
-	packstr(object->gres_req, buffer);
 	packstr(object->gres_used, buffer);
 	packstr(object->job_db_inx, buffer);
 	packstr(object->jobid, buffer);
@@ -952,8 +960,6 @@ static int _unpack_local_job(local_job_t *object,
 		safe_unpackstr_xmalloc(&object->eligible, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->end, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->gid, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->gres_alloc, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->gres_req, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->gres_used, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
@@ -1503,6 +1509,7 @@ static void _pack_local_step(local_step_t *object,
 	packstr(object->req_cpufreq_gov, buffer);
 	packstr(object->state, buffer);
 	packstr(object->stepid, buffer);
+	packstr(object->step_het_comp, buffer);
 	packstr(object->sys_sec, buffer);
 	packstr(object->sys_usec, buffer);
 	packstr(object->tasks, buffer);
@@ -1536,7 +1543,71 @@ static int _unpack_local_step(local_step_t *object,
 	uint32_t tmp32;
 	char *tmp_char;
 
-	if (rpc_version >= SLURM_20_02_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_20_11_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object->act_cpufreq, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->consumed_energy,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_end, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_start, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_suspended,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_gov,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->step_het_comp, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->task_dist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_ave,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_tot,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_ave,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_tot,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->user_sec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->user_usec, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_20_02_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&object->act_cpufreq, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
@@ -1555,6 +1626,7 @@ static int _unpack_local_step(local_step_t *object,
 		safe_unpackstr_xmalloc(&object->req_cpufreq_gov, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		_convert_old_step_id(&object->stepid);
 		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
@@ -1604,6 +1676,7 @@ static int _unpack_local_step(local_step_t *object,
 		safe_unpackstr_xmalloc(&object->req_cpufreq_gov, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		_convert_old_step_id(&object->stepid);
 		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
@@ -1757,6 +1830,7 @@ static int _unpack_local_step(local_step_t *object,
 		safe_unpackstr_xmalloc(&object->req_cpufreq_gov, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		_convert_old_step_id(&object->stepid);
 		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
@@ -1913,6 +1987,7 @@ static int _unpack_local_step(local_step_t *object,
 		safe_unpackstr_xmalloc(&object->req_cpufreq_max, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		_convert_old_step_id(&object->stepid);
 		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
@@ -2862,8 +2937,6 @@ static Buf _pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.eligible = row[JOB_REQ_ELIGIBLE];
 		job.end = row[JOB_REQ_END];
 		job.gid = row[JOB_REQ_GID];
-		job.gres_alloc = row[JOB_REQ_GRES_ALLOC];
-		job.gres_req = row[JOB_REQ_GRES_REQ];
 		job.gres_used = row[JOB_REQ_GRES_USED];
 		job.het_job_id = row[JOB_REQ_HET_JOB_ID];
 		job.het_job_offset = row[JOB_REQ_HET_JOB_OFFSET];
@@ -2921,8 +2994,6 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 		JOB_REQ_ELIGIBLE,
 		JOB_REQ_END,
 		JOB_REQ_GID,
-		JOB_REQ_GRES_ALLOC,
-		JOB_REQ_GRES_REQ,
 		JOB_REQ_GRES_USED,
 		JOB_REQ_HET_JOB_ID,
 		JOB_REQ_HET_JOB_OFFSET,
@@ -3053,8 +3124,6 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 			   object.eligible,
 			   object.end,
 			   object.gid,
-			   object.gres_alloc,
-			   object.gres_req,
 			   object.gres_used,
 			   object.het_job_id,
 			   object.het_job_offset,
@@ -3241,6 +3310,7 @@ static Buf _pack_archive_steps(MYSQL_RES *result, char *cluster_name,
 		step.req_cpufreq_gov = row[STEP_REQ_REQ_CPUFREQ_GOV];
 		step.state = row[STEP_REQ_STATE];
 		step.stepid = row[STEP_REQ_STEPID];
+		step.step_het_comp = row[STEP_REQ_STEP_HET_COMP];
 		step.sys_sec = row[STEP_REQ_SYS_SEC];
 		step.sys_usec = row[STEP_REQ_SYS_USEC];
 		step.tasks = row[STEP_REQ_TASKS];
@@ -3309,9 +3379,13 @@ static char *_load_steps(uint16_t rpc_version, Buf buffer,
 		if (i)
 			xstrcat(insert, ", ");
 
+		if (!object.step_het_comp)
+			object.step_het_comp = xstrdup_printf("%u", NO_VAL);
+
 		xstrfmtcat(insert, format,
 			   object.job_db_inx,
 			   object.stepid,
+			   object.step_het_comp,
 			   object.deleted,
 			   object.period_start,
 			   object.period_end,
@@ -3847,8 +3921,7 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 
 	xfree(cols);
 
-	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return SLURM_ERROR;
@@ -3937,8 +4010,7 @@ static int _get_oldest_record(mysql_conn_t *mysql_conn, char *cluster,
 		break;
 	}
 
-	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return SLURM_ERROR;
@@ -4104,9 +4176,8 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 		} else
 			tmp_end = curr_end;
 
-		if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-			debug("Purging %s_%s before %ld",
-			      cluster_name, sql_table, tmp_end);
+		log_flag(DB_ARCHIVE, "Purging %s_%s before %ld",
+			 cluster_name, sql_table, tmp_end);
 
 		/* Do archive */
 		if (SLURMDB_PURGE_ARCHIVE_SET(purge_attr)) {
@@ -4154,8 +4225,7 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 				tmp_end, col_name, MAX_PURGE_LIMIT);
 			break;
 		}
-		if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_ARCHIVE, mysql_conn->conn, "query\n%s", query);
 
 		/*
 		 * Don't loop this query, just do it once, since we are only
@@ -4398,9 +4468,8 @@ extern int as_mysql_jobacct_process_archive_load(
 	data = NULL;	/* Moved to "buffer" */
 
 	safe_unpack16(&ver, buffer);
-	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(mysql_conn->conn,
-			 "Version in archive header is %u", ver);
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
+	         "Version in archive header is %u", ver);
 	/*
 	 * Don't verify the lower limit as we should be keeping all
 	 * older versions around here just to support super old
@@ -4431,10 +4500,10 @@ extern int as_mysql_jobacct_process_archive_load(
 pass:
 	rec_cnt = MIN(rec_cnt_left, RECORDS_PER_PASS);
 
-	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(mysql_conn->conn, "%s: Pass %u: loaded %u/%u records. Attempting partial load %u.",
-			 __func__, pass_cnt, rec_cnt_total - rec_cnt_left,
-			 rec_cnt_total, rec_cnt);
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
+	         "%s: Pass %u: loaded %u/%u records. Attempting partial load %u.",
+	         __func__, pass_cnt, rec_cnt_total - rec_cnt_left,
+	         rec_cnt_total, rec_cnt);
 
 	rec_cnt_left -= rec_cnt;
 
@@ -4481,9 +4550,8 @@ got_sql:
 		error_code = SLURM_ERROR;
 		goto cleanup;
 	}
-	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE &&
-	    debug_flags & DEBUG_FLAG_DB_QUERY)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", data);
+	if (slurm_conf.debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", data);
 	error_code = mysql_db_query_check_after(mysql_conn, data);
 	xfree(data);
 	if (error_code != SLURM_SUCCESS) {
@@ -4504,9 +4572,9 @@ cleanup:
 	if (error_code)
 		error("%s: failure loading archive: %s", __func__,
 		      slurm_strerror(error_code));
-	else if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(mysql_conn->conn, "%s: archive loaded successfully.",
-			 __func__);
+	else
+		DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
+		         "%s: archive loaded successfully.", __func__);
 
 	return error_code;
 }

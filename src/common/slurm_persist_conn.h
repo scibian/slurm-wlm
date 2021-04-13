@@ -38,6 +38,7 @@
 #define _SLURM_PERSIST_CONN_H
 
 #include "slurm/slurm.h"
+#include "pack.h"
 
 #define PERSIST_FLAG_NONE           0x0000
 #define PERSIST_FLAG_DBD            0x0001
@@ -45,6 +46,7 @@
 #define PERSIST_FLAG_ALREADY_INITED 0x0004
 #define PERSIST_FLAG_P_USER_CASE    0x0008
 #define PERSIST_FLAG_SUPPRESS_ERR   0x0010
+#define PERSIST_FLAG_EXT_DBD        0x0020
 
 typedef enum {
 	PERSIST_TYPE_NONE = 0,

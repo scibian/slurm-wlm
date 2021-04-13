@@ -72,18 +72,18 @@ char **assoc_mgr_tres_name_array;
 
 static int cpunfo_frequency = 0;
 static long hertz = 0;
+List prec_list = NULL;
 
 static int my_pagesize = 0;
 static DIR  *slash_proc = NULL;
 static int energy_profile = ENERGY_DATA_NODE_ENERGY_UP;
-static uint64_t debug_flags = 0;
 
 static int _find_prec(void *x, void *key)
 {
 	jag_prec_t *prec = (jag_prec_t *) x;
-	struct jobacctinfo *jobacct = (struct jobacctinfo *) key;
+	pid_t pid = *(pid_t *) key;
 
-	if (prec->pid == jobacct->pid)
+	if (prec->pid == pid)
 		return 1;
 
 	return 0;
@@ -484,30 +484,40 @@ static int _get_process_io_data_line(int in, jag_prec_t *prec) {
 	return 1;
 }
 
-static void _handle_stats(List prec_list, char *proc_stat_file,
-			  char *proc_io_file, char *proc_smaps_file,
-			  jag_callbacks_t *callbacks,
+static int _init_tres(jag_prec_t *prec, void *empty)
+{
+	/* Initialize read/writes */
+	for (int i = 0; i < prec->tres_count; i++) {
+		prec->tres_data[i].num_reads = INFINITE64;
+		prec->tres_data[i].num_writes = INFINITE64;
+		prec->tres_data[i].size_read = INFINITE64;
+		prec->tres_data[i].size_write = INFINITE64;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+static void _handle_stats(char *proc_stat_file, char *proc_io_file,
+			  char *proc_smaps_file, jag_callbacks_t *callbacks,
 			  int tres_count)
 {
 	static int no_share_data = -1;
 	static int use_pss = -1;
 	FILE *stat_fp = NULL;
 	FILE *io_fp = NULL;
-	int fd, fd2, i;
+	int fd, fd2;
 	jag_prec_t *prec = NULL;
 
 	if (no_share_data == -1) {
-		char *acct_params = slurm_get_jobacct_gather_params();
-		if (acct_params && xstrcasestr(acct_params, "NoShare"))
+		if (xstrcasestr(slurm_conf.job_acct_gather_params, "NoShare"))
 			no_share_data = 1;
 		else
 			no_share_data = 0;
 
-		if (acct_params && xstrcasestr(acct_params, "UsePss"))
+		if (xstrcasestr(slurm_conf.job_acct_gather_params, "UsePss"))
 			use_pss = 1;
 		else
 			use_pss = 0;
-		xfree(acct_params);
 	}
 
 	if (!(stat_fp = fopen(proc_stat_file, "r")))
@@ -541,13 +551,7 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 	prec->tres_data = xmalloc(prec->tres_count *
 				  sizeof(acct_gather_data_t));
 
-	/* Initialize read/writes */
-	for (i = 0; i < prec->tres_count; i++) {
-		prec->tres_data[i].num_reads = INFINITE64;
-		prec->tres_data[i].num_writes = INFINITE64;
-		prec->tres_data[i].size_read = INFINITE64;
-		prec->tres_data[i].size_write = INFINITE64;
-	}
+	(void)_init_tres(prec, NULL);
 
 	if (!_get_process_data_line(fd, prec)) {
 		fclose(stat_fp);
@@ -583,6 +587,7 @@ static void _handle_stats(List prec_list, char *proc_stat_file,
 		fclose(io_fp);
 	}
 
+	destroy_jag_prec(list_remove_first(prec_list, _find_prec, &prec->pid));
 	list_append(prec_list, prec);
 	return;
 
@@ -595,7 +600,6 @@ bail_out:
 static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
 		       jag_callbacks_t *callbacks)
 {
-	List prec_list = list_create(destroy_jag_prec);
 	char	proc_stat_file[256];	/* Allow ~20x extra length */
 	char	proc_io_file[256];	/* Allow ~20x extra length */
 	char	proc_smaps_file[256];	/* Allow ~20x extra length */
@@ -637,7 +641,7 @@ static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
 			snprintf(proc_stat_file, 256, "/proc/%d/stat", pids[i]);
 			snprintf(proc_io_file, 256, "/proc/%d/io", pids[i]);
 			snprintf(proc_smaps_file, 256, "/proc/%d/smaps", pids[i]);
-			_handle_stats(prec_list, proc_stat_file, proc_io_file,
+			_handle_stats(proc_stat_file, proc_io_file,
 				      proc_smaps_file, callbacks,
 				      jobacct ? jobacct->tres_count : 0);
 		}
@@ -727,8 +731,8 @@ static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
 			} while (*iptr);
 			*optr2 = 0;
 
-			_handle_stats(prec_list, proc_stat_file, proc_io_file,
-				      proc_smaps_file,callbacks,
+			_handle_stats(proc_stat_file, proc_io_file,
+				      proc_smaps_file, callbacks,
 				      jobacct ? jobacct->tres_count : 0);
 		}
 	}
@@ -770,6 +774,7 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		double d;
 		uint64_t u64;
 	} data[FIELD_CNT];
+	char str[256];
 
 	if (profile_gid == -1)
 		profile_gid = acct_gather_profile_g_create_group("Tasks");
@@ -845,11 +850,9 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		data[FIELD_WRITE].d /= 1048576.0;
 	}
 
-	if (debug_flags & DEBUG_FLAG_PROFILE) {
-		char str[256];
-		info("PROFILE-Task: %s", acct_gather_profile_dataset_str(
-			     dataset, data, str, sizeof(str)));
-	}
+	log_flag(PROFILE, "PROFILE-Task: %s",
+		 acct_gather_profile_dataset_str(dataset, data, str,
+						 sizeof(str)));
 	acct_gather_profile_g_add_sample_data(jobacct->dataset_id,
 	                                      (void *)data, jobacct->cur_time);
 }
@@ -858,7 +861,7 @@ extern void jag_common_init(long in_hertz)
 {
 	uint32_t profile_opt;
 
-	debug_flags = slurm_get_debug_flags();
+	prec_list = list_create(destroy_jag_prec);
 
 	acct_gather_profile_g_get(ACCT_GATHER_PROFILE_RUNNING,
 				  &profile_opt);
@@ -885,6 +888,8 @@ extern void jag_common_init(long in_hertz)
 
 extern void jag_common_fini(void)
 {
+	FREE_NULL_LIST(prec_list);
+
 	if (slash_proc)
 		(void) closedir(slash_proc);
 }
@@ -892,6 +897,10 @@ extern void jag_common_fini(void)
 extern void destroy_jag_prec(void *object)
 {
 	jag_prec_t *prec = (jag_prec_t *)object;
+
+	if (!prec)
+		return;
+
 	xfree(prec->tres_data);
 	xfree(prec);
 	return;
@@ -927,16 +936,15 @@ extern void jag_common_poll_data(
 	jag_callbacks_t *callbacks, bool profile)
 {
 	/* Update the data */
-	List prec_list = NULL;
 	uint64_t total_job_mem = 0, total_job_vsize = 0;
+	uint32_t last_taskid = NO_VAL;
 	ListIterator itr;
-	jag_prec_t *prec = NULL;
+	jag_prec_t *prec = NULL, tmp_prec;
 	struct jobacctinfo *jobacct = NULL;
 	static int processing = 0;
 	char sbuf[72];
 	int energy_counted = 0;
 	time_t ct;
-	static int over_memory_kill = -1;
 	int i = 0;
 
 	xassert(callbacks);
@@ -956,8 +964,9 @@ extern void jag_common_poll_data(
 		callbacks->get_precs = _get_precs;
 
 	ct = time(NULL);
-	prec_list = (*(callbacks->get_precs))(task_list, pgid_plugin, cont_id,
-					      callbacks);
+
+	(void)list_for_each(prec_list, (ListForF)_init_tres, NULL);
+	(*(callbacks->get_precs))(task_list, pgid_plugin, cont_id, callbacks);
 
 	if (!list_count(prec_list) || !task_list || !list_count(task_list))
 		goto finished;	/* We have no business being here! */
@@ -966,17 +975,29 @@ extern void jag_common_poll_data(
 	while ((jobacct = list_next(itr))) {
 		double cpu_calc;
 		double last_total_cputime;
-		if (!(prec = list_find_first(prec_list, _find_prec, jobacct)))
+		if (!(prec = list_find_first(prec_list, _find_prec,
+					     &jobacct->pid)))
 			continue;
+		/*
+		 * We can't use the prec from the list as we need to keep it in
+		 * the original state without offspring since we reuse this list
+		 * keeping around precs after they end.
+		 */
+		memcpy(&tmp_prec, prec, sizeof(*prec));
+		prec = &tmp_prec;
 
 		/*
 		 * Only jobacct_gather/cgroup uses prec_extra, and we want to
 		 * make sure we call it once per task, so call it here as we
 		 * iterate through the tasks instead of in get_precs.
 		 */
-		if (callbacks->prec_extra)
-			(*(callbacks->prec_extra))(prec, jobacct->id.taskid);
+		if (callbacks->prec_extra) {
+			if (last_taskid == jobacct->id.taskid)
+				continue;
 
+			last_taskid = jobacct->id.taskid;
+			(*(callbacks->prec_extra))(prec, jobacct->id.taskid);
+		}
 #if _DEBUG
 		info("pid:%u ppid:%u rss:%"PRIu64" B",
 		     prec->pid, prec->ppid,
@@ -1117,14 +1138,10 @@ extern void jag_common_poll_data(
 	}
 	list_iterator_destroy(itr);
 
-	if (over_memory_kill == -1)
-		over_memory_kill = slurm_get_job_acct_oom_kill();
-
-	if (over_memory_kill)
+	if (slurm_conf.job_acct_oom_kill)
 		jobacct_gather_handle_mem_limit(total_job_mem,
 						total_job_vsize);
 
 finished:
-	FREE_NULL_LIST(prec_list);
 	processing = 0;
 }

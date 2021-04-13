@@ -60,7 +60,6 @@ int future_flag = 0;	/* display future nodes */
 int exit_code = 0;	/* scontrol's exit code, =1 on any error at any time */
 int exit_flag = 0;	/* program to terminate if =1 */
 int federation_flag = 0;/* show federated jobs */
-int input_words = 128;	/* number of words of input permitted */
 int local_flag = 0;     /* show only local jobs -- not remote remote sib jobs */
 int one_liner = 0;	/* one record per line if =1 */
 int quiet_flag = 0;	/* quiet=1, verbose=-1, normal=0 */
@@ -97,8 +96,8 @@ static void	_write_config(char *file_name);
 
 int main(int argc, char **argv)
 {
-	int error_code = SLURM_SUCCESS, i, opt_char, input_field_count = 0;
-	char **input_fields, *env_val;
+	int error_code = SLURM_SUCCESS, opt_char;
+	char *env_val;
 	log_options_t opts = LOG_OPTS_STDERR_ONLY ;
 
 	int option_index;
@@ -126,8 +125,7 @@ int main(int argc, char **argv)
 	slurm_conf_init(NULL);
 	log_init("scontrol", opts, SYSLOG_FACILITY_DAEMON, NULL);
 
-	if (slurmctld_conf.fed_params &&
-	    strstr(slurmctld_conf.fed_params, "fed_display"))
+	if (xstrstr(slurm_conf.fed_params, "fed_display"))
 		federation_flag = true;
 
 	if (getenv ("SCONTROL_ALL"))
@@ -237,32 +235,27 @@ int main(int argc, char **argv)
 		log_alter(opts, SYSLOG_FACILITY_USER, NULL);
 	}
 
-	if (argc > MAX_INPUT_FIELDS)	/* bogus input, but continue anyway */
-		input_words = argc;
-	else
-		input_words = 128;
-	input_fields = (char **) xmalloc (sizeof (char *) * input_words);
-	if (optind < argc) {
-		for (i = optind; i < argc; i++) {
-			input_fields[input_field_count++] = argv[i];
-		}
-	}
+	/* We are only running a single command and exiting */
+	if (optind < argc)
+		error_code = _process_command(argc - optind, argv + optind);
+	else {
+		/* We are running interactively multiple commands */
+		int input_field_count = 0;
+		char **input_fields = xcalloc(MAX_INPUT_FIELDS, sizeof(char *));
+		while (error_code == SLURM_SUCCESS) {
+			error_code = _get_command(
+				&input_field_count, input_fields);
+			if (error_code || exit_flag) {	/* EOF */
+				putchar('\n');
+				break;
+			}
 
-	if (input_field_count)
-		exit_flag = 1;
-	else
-		error_code = _get_command (&input_field_count, input_fields);
-
-	while (error_code == SLURM_SUCCESS) {
-		error_code = _process_command (input_field_count,
-					       input_fields);
-		if (error_code || exit_flag)
-			break;
-		error_code = _get_command (&input_field_count, input_fields);
-		if (exit_flag) {	/* EOF */
-			putchar('\n');
-			break;
+			error_code = _process_command(
+				input_field_count, input_fields);
+			if (exit_flag)
+				break;
 		}
+		xfree(input_fields);
 	}
 	FREE_NULL_LIST(clusters);
 	slurm_conf_destroy();
@@ -361,7 +354,7 @@ static int _get_command (int *argc, char **argv)
 			exit_code = 1;
 			fprintf (stderr,
 				 "%s: can not process over %d words\n",
-				 command_name, input_words);
+				 command_name, MAX_INPUT_FIELDS - 1);
 			return E2BIG;
 		}
 		argv[(*argc)++] = &in_line[i];
@@ -533,8 +526,6 @@ _print_ping (void)
 	uint32_t control_cnt, i;
 	char **control_machine;
 
-	slurm_conf_init(NULL);
-
 	conf = slurm_conf_lock();
 	control_cnt = conf->control_cnt;
 	control_machine = xmalloc(sizeof(char *) * control_cnt);
@@ -594,7 +585,6 @@ _print_daemons (void)
 	int actld = 0, ctld = 0, d = 0, i;
 	char *daemon_list = NULL;
 
-	slurm_conf_init(NULL);
 	conf = slurm_conf_lock();
 
 	gethostname_short(node_name_short, MAX_SLURM_NAME);
@@ -648,7 +638,6 @@ _print_aliases (char* node_hostname)
 	char me[MAX_SLURM_NAME], *n = NULL, *a = NULL;
 	char *s;
 
-	slurm_conf_init(NULL);
 	if (!node_hostname) {
 		gethostname_short(me, MAX_SLURM_NAME);
 		s = me;
@@ -1116,10 +1105,7 @@ static int _process_command (int argc, char **argv)
 		_fetch_token(argc, argv);
 	}
 	else if (xstrncasecmp(tag, "wait_job", MAX(tag_len, 2)) == 0) {
-		if (cluster_flags & CLUSTER_FLAG_CRAY_A) {
-			fprintf(stderr,
-				"wait_job is handled automatically on Cray.\n");
-		} else if (argc > 2) {
+		if (argc > 2) {
 			exit_code = 1;
 			if (quiet_flag != 1)
 				fprintf(stderr,
@@ -1637,8 +1623,7 @@ static void _show_it(int argc, char **argv)
 
 	if (!xstrncasecmp(argv[1], "assoc_mgr", MAX(tag_len, 2)) ||
 	    !xstrncasecmp(argv[1], "bbstat",    MAX(tag_len, 2)) ||
-	    !xstrncasecmp(argv[1], "dwstat",    MAX(tag_len, 2)) ||
-	    !xstrncasecmp(argv[1], "layouts",   MAX(tag_len, 2)))
+	    !xstrncasecmp(argv[1], "dwstat",    MAX(tag_len, 2)))
 		allow_opt = true;
 
 	if ((argc > 3) && !allow_opt) {
@@ -1712,8 +1697,6 @@ static void _show_it(int argc, char **argv)
 	} else if (xstrncasecmp(tag, "jobs", MAX(tag_len, 1)) == 0 ||
 		   xstrncasecmp(tag, "jobid", MAX(tag_len, 1)) == 0 ) {
 		scontrol_print_job (val);
-	} else if (xstrncasecmp(tag, "layouts", MAX(tag_len, 2)) == 0) {
-		scontrol_print_layout(argc-1, argv + 1);
 	} else if (xstrncasecmp(tag, "licenses", MAX(tag_len, 2)) == 0) {
 		scontrol_print_licenses(val);
 	} else if (xstrncasecmp(tag, "nodes", MAX(tag_len, 1)) == 0) {
@@ -1721,8 +1704,6 @@ static void _show_it(int argc, char **argv)
 	} else if (xstrncasecmp(tag, "partitions", MAX(tag_len, 2)) == 0 ||
 		   xstrncasecmp(tag, "partitionname", MAX(tag_len, 2)) == 0) {
 		scontrol_print_part (val);
-	} else if (xstrncasecmp(tag, "powercapping", MAX(tag_len, 2)) == 0) {
-		scontrol_print_powercap (val);
 	} else if (xstrncasecmp(tag, "reservations", MAX(tag_len, 1)) == 0 ||
 		   xstrncasecmp(tag, "reservationname", MAX(tag_len, 1)) == 0) {
 		scontrol_print_res (val);
@@ -1756,8 +1737,6 @@ static void _update_it(int argc, char **argv)
 	int node_tag = 0, part_tag = 0, job_tag = 0;
 	int res_tag = 0;
 	int debug_tag = 0, step_tag = 0, front_end_tag = 0;
-	int layout_tag = 0;
-	int powercap_tag = 0;
 	int jerror_code = SLURM_SUCCESS;
 
 	/* First identify the entity to update */
@@ -1792,11 +1771,6 @@ static void _update_it(int argc, char **argv)
 		} else if (!xstrncasecmp(tag, "SlurmctldDebug",
 					 MAX(tag_len, 2))) {
 			debug_tag = 1;
-		} else if (!xstrncasecmp(tag, "Layouts",
-					 MAX(tag_len, 5))) {
-			layout_tag = 1;
-		} else if (!xstrncasecmp(tag, "PowerCap", MAX(tag_len, 3))) {
-			powercap_tag = 1;
 		}
 	}
 	/* The order of tests matters here.  An update job request can include
@@ -1820,17 +1794,12 @@ static void _update_it(int argc, char **argv)
 		error_code = scontrol_update_part (argc, argv);
 	else if (debug_tag)
 		error_code = _update_slurmctld_debug(val);
-	else if (layout_tag)
-		error_code = scontrol_update_layout(argc, argv);
-	else if (powercap_tag)
-		error_code = scontrol_update_powercap (argc, argv);
 	else {
 		exit_code = 1;
 		fprintf(stderr, "No valid entity in update command\n");
 		fprintf(stderr, "Input line must include \"NodeName\", ");
 		fprintf(stderr, "\"PartitionName\", \"Reservation\", "
-			"\"JobId\", \"SlurmctldDebug\" , \"PowerCap\"" 
-			"or \"Layouts\"\n");
+			"\"JobId\", or \"SlurmctldDebug\"\n");
 	}
 
 	if (error_code) {
@@ -1979,9 +1948,8 @@ scontrol [<OPTION>] [<COMMAND>]                                            \n\
 									   \n\
   <ENTITY> may be \"aliases\", \"assoc_mgr\", \"bbstat\", \"burstBuffer\", \n\
        \"config\", \"daemons\", \"dwstat\", \"federation\", \"frontend\",  \n\
-       \"hostlist\", \"hostlistsorted\", \"hostnames\",                    \n\
-       \"job\", \"layouts\", \"node\", \"partition\", \"reservation\",     \n\
-       \"slurmd\", \"step\", or \"topology\"                               \n\
+       \"hostlist\", \"hostlistsorted\", \"hostnames\", \"job\", \"node\", \n\
+       \"partition\", \"reservation\", \"slurmd\", \"step\", or \"topology\"\n\
 									   \n\
   <ID> may be a configuration parameter name, job id, node name, partition \n\
        name, reservation name, job step id, or hostlist or pathname to a   \n\

@@ -201,6 +201,15 @@ void *list_remove_first(List l, ListFindF f, void *key);
 int list_delete_all(List l, ListFindF f, void *key);
 
 /*
+ *  Traverses list [l] and deletes 'key' from it.
+ *  Removes this ptr from the list; if a deletion function was specified when
+ *  the list was created, it will be called to deallocate each item being
+ *  removed.
+ *  Returns 1 if found and 0 if not.
+ */
+int list_delete_ptr(List l, void *key);
+
+/*
  *  For each item in list [l], invokes the function [f] with [arg].
  *  Returns a count of the number of items on which [f] was invoked.
  *  If [f] returns <0 for a given item, the iteration is aborted and the
@@ -264,6 +273,13 @@ void *list_pop(List l);
  *  Note: The item is not removed from the list.
  */
 void *list_peek(List l);
+
+/*
+ *  Peeks at the data item at the end of the stack (or tail of the queue) [l].
+ *  Returns the data's ptr, or NULL if the stack (or queue) is empty.
+ *  Note: The item is not removed from the list.
+ */
+void *list_peek_last(List l);
 
 /****************************
  *  Queue Access Functions  *

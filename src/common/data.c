@@ -36,6 +36,8 @@
 
 #include "config.h"
 
+#define _ISOC99_SOURCE	/* needed for lrint */
+
 #include <math.h>
 #include <regex.h>
 
@@ -94,14 +96,14 @@ static void _check_magic(const data_t *data);
 static void _release(data_t *data);
 static void _release_data_list_node(data_list_t *dl, data_list_node_t *dn);
 
-static int _dump_regex_error(int rc, const regex_t *preg)
+static void _dump_regex_error(int rc, const regex_t *preg)
 {
 	char *buffer = NULL;
 	size_t len = regerror(rc, preg, NULL, 0);
 
 	if (len == 0) {
 		error("%s: unknown regex error code: %d", __func__, rc);
-		return SLURM_ERROR;
+		return;
 	}
 
 	buffer = xmalloc(len);
@@ -113,7 +115,6 @@ static int _dump_regex_error(int rc, const regex_t *preg)
 		error("%s: unexpected failure to get regex error", __func__);
 
 	xfree(buffer);
-	return SLURM_ERROR;
 }
 
 static bool _regex_quick_match(const char *str, const regex_t *preg)
@@ -167,27 +168,32 @@ extern int data_init_static(void)
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_null_re, bool_pattern_null,
 			      REG_EXTENDED)) != 0) {
-		rc = _dump_regex_error(reg_rc, &bool_pattern_null_re);
+		_dump_regex_error(reg_rc, &bool_pattern_null_re);
+		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_true_re, bool_pattern_true,
 			      REG_EXTENDED)) != 0) {
-		rc = _dump_regex_error(reg_rc, &bool_pattern_true_re);
+		_dump_regex_error(reg_rc, &bool_pattern_true_re);
+		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_false_re, bool_pattern_false,
 			      REG_EXTENDED)) != 0) {
-		rc = _dump_regex_error(reg_rc, &bool_pattern_false_re);
+		_dump_regex_error(reg_rc, &bool_pattern_false_re);
+		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_int_re, bool_pattern_int,
 			      REG_EXTENDED)) != 0) {
-		rc = _dump_regex_error(reg_rc, &bool_pattern_int_re);
+		_dump_regex_error(reg_rc, &bool_pattern_int_re);
+		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_float_re, bool_pattern_float,
 			      REG_EXTENDED)) != 0) {
-		rc = _dump_regex_error(reg_rc, &bool_pattern_float_re);
+		_dump_regex_error(reg_rc, &bool_pattern_float_re);
+		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 cleanup:
@@ -199,7 +205,7 @@ cleanup:
 static data_list_t *_data_list_new(void)
 {
 	data_list_t *dl = xmalloc(sizeof(*dl));
-	xassert((dl->magic = DATA_LIST_MAGIC));
+	dl->magic = DATA_LIST_MAGIC;
 
 	log_flag(DATA, "%s: new data list (0x%"PRIXPTR")",
 		 __func__, (uintptr_t) dl);
@@ -278,6 +284,7 @@ static void _release_data_list_node(data_list_t *dl, data_list_node_t *dn)
 
 	if (dn == dl->begin) {
 		/* at the beginning */
+		xassert(!prev);
 		dl->begin = dn->next;
 
 		if (dl->end == dn) {
@@ -287,10 +294,12 @@ static void _release_data_list_node(data_list_t *dl, data_list_node_t *dn)
 	} else if (dn == dl->end) {
 		/* at the end */
 		xassert(!dn->next);
+		xassert(prev);
 		dl->end = prev;
 		prev->next = NULL;
 	} else {
 		/* somewhere in middle */
+		xassert(prev);
 		xassert(prev != dn);
 		xassert(prev->next == dn);
 		xassert(dl->begin != dn);
@@ -302,7 +311,7 @@ static void _release_data_list_node(data_list_t *dl, data_list_node_t *dn)
 	FREE_NULL_DATA(dn->data);
 	xfree(dn->key);
 
-	xassert((dn->magic = ~DATA_LIST_NODE_MAGIC));
+	dn->magic = ~DATA_LIST_NODE_MAGIC;
 	xfree(dn);
 }
 
@@ -335,9 +344,8 @@ static void _release_data_list(data_list_t *dl)
 
 #ifndef NDEBUG
 	xassert(count == init_count);
-	xassert(!(dl->count = 0));
-	xassert((dl->magic = ~DATA_LIST_MAGIC));
 #endif
+	dl->magic = ~DATA_LIST_MAGIC;
 	xfree(dl);
 }
 
@@ -349,7 +357,7 @@ static void _release_data_list(data_list_t *dl)
 static data_list_node_t *_new_data_list_node(data_t *d, const char *key)
 {
 	data_list_node_t *dn = xmalloc(sizeof(*dn));
-	xassert((dn->magic = DATA_LIST_NODE_MAGIC));
+	dn->magic = DATA_LIST_NODE_MAGIC;
 	_check_magic(d);
 
 	dn->data = d;
@@ -406,7 +414,7 @@ static void _data_list_prepend(data_list_t *dl, data_t *d, const char *key)
 data_t *data_new(void)
 {
 	data_t *data = xmalloc(sizeof(*data));
-	xassert((data->magic = DATA_MAGIC));
+	data->magic = DATA_MAGIC;
 	data->type = DATA_TYPE_NULL;
 
 	log_flag(DATA, "%s: new data (0x%"PRIXPTR")",
@@ -438,18 +446,15 @@ static void _release(data_t *data)
 	switch (data->type) {
 	case DATA_TYPE_LIST:
 		_release_data_list(data->data.list_u);
-		xassert(!(data->data.list_u = 0));
 		break;
 	case DATA_TYPE_DICT:
 		_release_data_list(data->data.dict_u);
-		xassert(!(data->data.dict_u = 0));
 		break;
 	case DATA_TYPE_STRING:
 		xfree(data->data.string_u);
 		break;
 	default:
 		/* other types don't need to be freed */
-		xassert(!(data->data.int_u = 0));
 		break;
 	}
 
@@ -467,18 +472,18 @@ extern void data_free(data_t *data)
 	_check_magic(data);
 	_release(data);
 
-	xassert((data->magic = 0) == 0);
+	data->magic = ~DATA_MAGIC;
 	xfree(data);
 }
 
 extern data_type_t data_get_type(const data_t *data)
 {
+	if (!data)
+		return DATA_TYPE_NONE;
+
 	_check_magic(data);
 
-	if (data)
-		return data->type;
-	else
-		return DATA_TYPE_NONE;
+	return data->type;
 }
 
 extern data_t *data_set_float(data_t *data, double value)
@@ -561,6 +566,23 @@ extern data_t *data_set_string(data_t *data, const char *value)
 	return data;
 }
 
+extern data_t *data_set_string_own(data_t *data, char *value)
+{
+	_check_magic(data);
+
+	if (!data || !value)
+		return NULL;
+
+	log_flag(DATA, "%s: set data (0x%"PRIXPTR") to string: %s",
+		 __func__, (uintptr_t) data, value);
+
+	data->type = DATA_TYPE_STRING;
+	/* take ownership of string */
+	data->data.string_u = value;
+
+	return data;
+}
+
 extern data_t *data_set_dict(data_t *data)
 {
 	_check_magic(data);
@@ -600,7 +622,6 @@ extern data_t *data_list_append(data_t *data)
 	data_t *ndata = NULL;
 	_check_magic(data);
 
-	xassert(data->type == DATA_TYPE_LIST);
 	if (!data || data->type != DATA_TYPE_LIST)
 		return NULL;
 
@@ -618,7 +639,6 @@ extern data_t *data_list_prepend(data_t *data)
 	data_t *ndata = NULL;
 	_check_magic(data);
 
-	xassert(data->type == DATA_TYPE_LIST);
 	if (!data || data->type != DATA_TYPE_LIST)
 		return NULL;
 
@@ -629,6 +649,36 @@ extern data_t *data_list_prepend(data_t *data)
 		 __func__, (uintptr_t) ndata, (uintptr_t) data);
 
 	return ndata;
+}
+
+static data_for_each_cmd_t _data_list_join(const data_t *src, void *arg)
+{
+	data_t *dst = (data_t *) arg;
+	_check_magic(src);
+	_check_magic(dst);
+	xassert(data_get_type(dst) == DATA_TYPE_LIST);
+
+	log_flag(DATA, "%s: list join data (0x%"PRIXPTR") to (0x%"PRIXPTR")",
+		 __func__, (uintptr_t) src, (uintptr_t) dst);
+
+	 data_copy(data_list_append(dst), src);
+
+	 return DATA_FOR_EACH_CONT;
+}
+
+extern data_t *data_list_join(const data_t **data, bool flatten_lists)
+{
+	data_t *dst = data_set_list(data_new());
+
+	for (size_t i = 0; data[i]; i++) {
+		if (flatten_lists && (data_get_type(data[i]) == DATA_TYPE_LIST))
+			(void) data_list_for_each_const(data[i],
+							_data_list_join, dst);
+		else /* simple join */
+			_data_list_join(data[i], dst);
+	}
+
+	return dst;
 }
 
 const data_t *data_key_get_const(const data_t *data, const char *key)
@@ -793,7 +843,18 @@ int64_t data_get_int(const data_t *data)
 	return data->data.int_u;
 }
 
-const char *data_get_string(const data_t *data)
+extern char *data_get_string(data_t *data)
+{
+	_check_magic(data);
+
+	if (!data)
+		return NULL;
+
+	xassert(data->type == DATA_TYPE_STRING);
+	return data->data.string_u;
+}
+
+extern const char *data_get_string_const(const data_t *data)
 {
 	_check_magic(data);
 
@@ -810,7 +871,7 @@ int data_get_string_converted(const data_t *d, char **buffer)
 	char *_buffer = NULL;
 
 	if (!d || !buffer)
-		return SLURM_ERROR;
+		return ESLURM_DATA_PTR_NULL;
 
 	if (data_get_type(d) != DATA_TYPE_STRING) {
 		/* copy the data and then convert it to a string type */
@@ -820,24 +881,27 @@ int data_get_string_converted(const data_t *d, char **buffer)
 		    DATA_TYPE_STRING)
 			_buffer = xstrdup(data_get_string(dclone));
 		FREE_NULL_DATA(dclone);
-	} else
-		_buffer = xstrdup(data_get_string(d));
+	} else {
+		_buffer = xstrdup(data_get_string_const(d));
+		if (!_buffer)
+			_buffer = xstrdup("");
+	}
 
 	if (_buffer) {
 		*buffer = _buffer;
 		return SLURM_SUCCESS;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 extern int data_copy_bool_converted(const data_t *d, bool *buffer)
 {
 	_check_magic(d);
-	int rc = SLURM_ERROR;
+	int rc = ESLURM_DATA_CONV_FAILED;
 
 	if (!d || !buffer)
-		return rc;
+		return ESLURM_DATA_PTR_NULL;
 
 	if (data_get_type(d) != DATA_TYPE_BOOL) {
 		data_t *dclone = data_new();
@@ -862,7 +926,7 @@ extern int data_get_bool_converted(data_t *d, bool *buffer)
 	_check_magic(d);
 
 	if (!d || !buffer)
-		return SLURM_ERROR;
+		return ESLURM_DATA_PTR_NULL;
 
 	/* assign value if converted successfully */
 	rc = data_copy_bool_converted(d, buffer);
@@ -878,7 +942,7 @@ extern int data_get_int_converted(const data_t *d, int64_t *buffer)
 	int rc = SLURM_SUCCESS;
 
 	if (!d || !buffer)
-		return SLURM_ERROR;
+		return ESLURM_DATA_PTR_NULL;
 
 	if (data_get_type(d) != DATA_TYPE_INT_64) {
 		data_t *dclone = data_new();
@@ -887,7 +951,7 @@ extern int data_get_int_converted(const data_t *d, int64_t *buffer)
 		    DATA_TYPE_INT_64)
 			*buffer = data_get_int(dclone);
 		else
-			rc = SLURM_ERROR;
+			rc = ESLURM_DATA_CONV_FAILED;
 		FREE_NULL_DATA(dclone);
 	} else {
 		*buffer = data_get_int(d);
@@ -1140,10 +1204,10 @@ static int _convert_data_string(data_t *data)
 		return SLURM_SUCCESS;
 	}
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 
@@ -1184,10 +1248,10 @@ static int _convert_data_force_bool(data_t *data)
 		data_set_bool(data, data->data.int_u != 0);
 		return SLURM_SUCCESS;
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 static int _convert_data_null(data_t *data)
@@ -1204,15 +1268,15 @@ static int _convert_data_null(data_t *data)
 			data_set_null(data);
 			return SLURM_SUCCESS;
 		} else {
-			return SLURM_ERROR;
+			return ESLURM_DATA_CONV_FAILED;
 		}
 	case DATA_TYPE_NULL:
 		return SLURM_SUCCESS;
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 static int _convert_data_bool(data_t *data)
@@ -1236,15 +1300,15 @@ static int _convert_data_bool(data_t *data)
 			data_set_bool(data, false);
 			return SLURM_SUCCESS;
 		} else {
-			return SLURM_ERROR;
+			return ESLURM_DATA_CONV_FAILED;
 		}
 	case DATA_TYPE_BOOL:
 		return SLURM_SUCCESS;
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 static int _convert_data_int(data_t *data)
@@ -1265,18 +1329,21 @@ static int _convert_data_int(data_t *data)
 			} else { /* failed */
 				debug2("%s: sscanf of int failed: %s", __func__,
 				       data->data.string_u);
-				return SLURM_ERROR;
+				return ESLURM_DATA_CONV_FAILED;
 			}
 		} else {
-			return SLURM_ERROR;
+			return ESLURM_DATA_CONV_FAILED;
 		}
+	case DATA_TYPE_FLOAT:
+		data_set_int(data, lrint(data_get_float(data)));
+		return SLURM_SUCCESS;
 	case DATA_TYPE_INT_64:
 		return SLURM_SUCCESS;
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 static int _convert_data_float(data_t *data)
@@ -1297,23 +1364,35 @@ static int _convert_data_float(data_t *data)
 			} else { /* failed */
 				error("%s: sscanf of double failed: %s",
 				      __func__, data->data.string_u);
-				return SLURM_ERROR;
+				return ESLURM_DATA_CONV_FAILED;
 			}
 		} else {
-			return SLURM_ERROR;
+			return ESLURM_DATA_CONV_FAILED;
 		}
+	case DATA_TYPE_INT_64:
+		if (data_get_int(data) == INFINITE64)
+			data_set_float(data, HUGE_VAL);
+		else if (data_get_int(data) == NO_VAL64)
+			data_set_float(data, NAN);
+		else /* attempt normal fp conversion */
+			data_set_float(data, data_get_int(data));
+		return SLURM_SUCCESS;
 	case DATA_TYPE_FLOAT:
 		return SLURM_SUCCESS;
 	default:
-		return SLURM_ERROR;
+		return ESLURM_DATA_CONV_FAILED;
 	}
 
-	return SLURM_ERROR;
+	return ESLURM_DATA_CONV_FAILED;
 }
 
 extern data_type_t data_convert_type(data_t *data, data_type_t match)
 {
 	_check_magic(data);
+
+	if (!data)
+		return DATA_TYPE_NONE;
+
 	/*
 	 * This currently only works on primitive types and doesn't
 	 * apply to dictionaries or lists.
@@ -1391,10 +1470,10 @@ extern size_t data_convert_tree(data_t *data, const data_type_t match)
 
 	switch (data_get_type(data)) {
 	case DATA_TYPE_DICT:
-		data_dict_for_each(data, _convert_dict_entry, &args);
+		(void)data_dict_for_each(data, _convert_dict_entry, &args);
 		break;
 	case DATA_TYPE_LIST:
-		data_list_for_each(data, _convert_list_entry, &args);
+		(void)data_list_for_each(data, _convert_list_entry, &args);
 		break;
 	default:
 		if (match == data_convert_type(data, match))
@@ -1502,7 +1581,8 @@ extern bool data_check_match(const data_t *a, const data_t *b, bool mask)
 		return (data_get_type(b) == DATA_TYPE_NULL);
 	case DATA_TYPE_STRING:
 		// TODO: should we have a case insensitive compare?
-		return !xstrcmp(data_get_string(a), data_get_string(b));
+		return !xstrcmp(data_get_string_const(a),
+				data_get_string_const(b));
 	case DATA_TYPE_BOOL:
 		return (data_get_bool(a) == data_get_bool(b));
 	case DATA_TYPE_INT_64:
@@ -1518,7 +1598,41 @@ extern bool data_check_match(const data_t *a, const data_t *b, bool mask)
 	}
 }
 
-extern const data_t *data_resolve_dict_path(const data_t *data, const char *path)
+extern data_t *data_resolve_dict_path(data_t *data, const char *path)
+{
+	data_t *found = data;
+	char *save_ptr = NULL;
+	char *token = NULL;
+	char *str = xstrdup(path);
+
+	_check_magic(data);
+
+	token = strtok_r(str, "/", &save_ptr);
+	while (token && found) {
+		xstrtrim(token);
+
+		if (data_get_type(found) != DATA_TYPE_DICT)
+			found = NULL;
+
+		if (found) {
+			found = data_key_get(found, token);
+			token = strtok_r(NULL, "/", &save_ptr);
+		}
+	}
+	xfree(str);
+
+	if (found)
+		log_flag(DATA, "%s: data (0x%"PRIXPTR") resolved dictionary path \"%s\" to (0x%"PRIXPTR")",
+			 __func__, (uintptr_t) data, path, (uintptr_t) found);
+	else
+		log_flag(DATA, "%s: data (0x%"PRIXPTR") failed to resolve dictionary path \"%s\"",
+			 __func__, (uintptr_t) data, path);
+
+	return found;
+}
+
+extern const data_t *data_resolve_dict_path_const(const data_t *data,
+						  const char *path)
 {
 	const data_t *found = data;
 	char *save_ptr = NULL;
@@ -1596,7 +1710,7 @@ data_t *data_copy(data_t *dest, const data_t *src)
 
 	switch (data_get_type(src)) {
 	case DATA_TYPE_STRING:
-		return data_set_string(dest, data_get_string(src));
+		return data_set_string(dest, data_get_string_const(src));
 	case DATA_TYPE_BOOL:
 		return data_set_bool(dest, data_get_bool(src));
 	case DATA_TYPE_INT_64:
@@ -1647,8 +1761,8 @@ extern int data_retrieve_dict_path_string(const data_t *data, const char *path,
 	int rc;
 
 	_check_magic(data);
-	if (!(d = data_resolve_dict_path(data, path)))
-		return SLURM_ERROR;
+	if (!(d = data_resolve_dict_path_const(data, path)))
+		return ESLURM_DATA_PATH_NOT_FOUND;
 
 	rc = data_get_string_converted(d, ptr_buffer);
 
@@ -1665,8 +1779,8 @@ extern int data_retrieve_dict_path_bool(const data_t *data, const char *path,
 	int rc;
 
 	_check_magic(data);
-	if (!(d = data_resolve_dict_path(data, path)))
-		return SLURM_ERROR;
+	if (!(d = data_resolve_dict_path_const(data, path)))
+		return ESLURM_DATA_PATH_NOT_FOUND;
 
 	rc = data_copy_bool_converted(d, ptr_buffer);
 
@@ -1684,8 +1798,8 @@ extern int data_retrieve_dict_path_int(const data_t *data, const char *path,
 	int rc;
 
 	_check_magic(data);
-	if (!(d = data_resolve_dict_path(data, path)))
-		return SLURM_ERROR;
+	if (!(d = data_resolve_dict_path_const(data, path)))
+		return ESLURM_DATA_PATH_NOT_FOUND;
 
 	rc = data_get_int_converted(d, ptr_buffer);
 

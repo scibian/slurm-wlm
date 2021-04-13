@@ -44,6 +44,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "src/common/cron.h"
 #include "src/common/forward.h"
 #include "src/common/job_options.h"
 #include "src/common/log.h"
@@ -52,6 +53,7 @@
 #include "src/common/power.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_acct_gather_energy.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_ext_sensors.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -124,6 +126,7 @@ extern void slurm_msg_t_init(slurm_msg_t *msg)
 {
 	memset(msg, 0, sizeof(slurm_msg_t));
 
+	msg->auth_uid = SLURM_AUTH_NOBODY;
 	msg->conn_fd = -1;
 	msg->msg_type = NO_VAL16;
 	msg->protocol_version = NO_VAL16;
@@ -150,8 +153,21 @@ extern void slurm_msg_t_copy(slurm_msg_t *dest, slurm_msg_t *src)
 	dest->forward = src->forward;
 	dest->ret_list = src->ret_list;
 	dest->forward_struct = src->forward_struct;
-	dest->orig_addr.sin_addr.s_addr = 0;
-	return;
+
+#if 0
+	/* explicitly blow away the address. probably redundant */
+	if (dest->orig_addr.ss_family == AF_INET6) {
+		struct sockaddr_in6 *sin =
+			(struct sockaddr_in6 *) &dest->orig_addr;
+		memset(&sin->sin6_addr, 0, 16);
+	} else {
+		struct sockaddr_in *sin =
+			(struct sockaddr_in *) &dest->orig_addr;
+		sin->sin_addr.s_addr = 0;
+	}
+#endif
+
+	dest->orig_addr.ss_family = AF_UNSPEC;
 }
 
 /* here to add \\ to all \" in a string this needs to be xfreed later */
@@ -289,7 +305,7 @@ extern int slurm_addto_char_list_with_case(List char_list, char *names,
 			else if (names[i] == '[')
 			       /*
 				* Make sure there is a open bracket. This
-				* check is to allow comma sperated notation
+				* check is to allow comma-separated notation
 				* within the bracket (e.g. "linux[0-1,2]").
 				*/
 				first_brack = true;
@@ -304,31 +320,41 @@ extern int slurm_addto_char_list_with_case(List char_list, char *names,
 					if (!names[i+1])
 						break;
 
-					name = xstrndup(names+start,
-							(i-start));
-					//info("got %s %d", name, i-start);
+					/*
+					 * Only add the non-blank names to the
+					 * list
+					 */
+					if (i != start) {
+						name = xstrndup(names+start,
+								(i-start));
+						/*
+						* If we get a duplicate remove
+						* the first one and tack this on
+						* the end. This is needed for
+						* get associations with QOS.
+						*/
+						if (list_find(
+							itr,
+							slurm_find_char_in_list,
+							name)) {
+							list_delete_item(itr);
+						} else
+							count++;
+						if (lower_case_normalization)
+							xstrtolower(name);
+						list_append(char_list, name);
+
+						list_iterator_reset(itr);
+					}
 
 					/*
-					 * If we get a duplicate remove the
-					 * first one and tack this on the end.
-					 * This is needed for get associations
-					 * with QOS.
+					 * This line used to be "start = ++i".
+					 * If we increment i too early, we will
+					 * get issues with a list such as
+					 * ",,this".
 					 */
-					if (list_find(itr,
-						      slurm_find_char_in_list,
-						      name)) {
-						list_delete_item(itr);
-					} else
-						count++;
-					if (lower_case_normalization)
-						xstrtolower(name);
-					list_append(char_list, name);
-
-					list_iterator_reset(itr);
-
-					i++;
-					start = i;
-					if (!names[i]) {
+					start = i + 1;
+					if (!names[i + 1]) {
 						info("There is a problem "
 						     "with your request. "
 						     "It appears you have "
@@ -634,8 +660,8 @@ static int _addto_step_list_internal(List step_list, char *names,
 				     int start, int end)
 {
 	int count = 0;
-	char *dot, *name, *plus, *under;
-	slurmdb_selected_step_t *selected_step = NULL;
+	char *name;
+	slurm_selected_step_t *selected_step = NULL;
 
 	if ((end-start) <= 0)
 		return 0;
@@ -649,43 +675,7 @@ static int _addto_step_list_internal(List step_list, char *names,
 		return 0;
 	}
 
-	selected_step = xmalloc(sizeof(slurmdb_selected_step_t));
-
-	if ((dot = strstr(name, "."))) {
-		*dot++ = 0;
-		/* can't use NO_VAL since that means all */
-		if (!xstrcmp(dot, "batch"))
-			selected_step->stepid = INFINITE;
-		else if (isdigit(*dot))
-			selected_step->stepid = atoi(dot);
-		else
-			fatal("Bad step specified: %s", name);
-	} else {
-		debug2("No jobstep requested");
-		selected_step->stepid = NO_VAL;
-	}
-
-	if ((under = strstr(name, "_"))) {
-		*under++ = 0;
-		if (isdigit(*under))
-			selected_step->array_task_id = atoi(under);
-		else
-			fatal("Bad job array element specified: %s", name);
-		selected_step->het_job_offset = NO_VAL;
-	} else if ((plus = strstr(name, "+"))) {
-		selected_step->array_task_id = NO_VAL;
-		*plus++ = 0;
-		if (isdigit(*plus))
-			selected_step->het_job_offset = atoi(plus);
-		else
-			fatal("Bad hetjob offset specified: %s", name);
-	} else {
-		debug2("No jobarray or hetjob requested");
-		selected_step->array_task_id = NO_VAL;
-		selected_step->het_job_offset = NO_VAL;
-	}
-
-	selected_step->jobid = atoi(name);
+	selected_step = slurm_parse_step_str(name);
 	xfree(name);
 
 	if (!list_find_first(step_list,
@@ -694,7 +684,7 @@ static int _addto_step_list_internal(List step_list, char *names,
 		list_append(step_list, selected_step);
 		count++;
 	} else
-		slurmdb_destroy_selected_step(selected_step);
+		slurm_destroy_selected_step(selected_step);
 
 	return count;
 }
@@ -766,6 +756,110 @@ extern int slurm_sort_char_list_desc(void *v1, void *v2)
 	return 0;
 }
 
+extern slurm_selected_step_t *slurm_parse_step_str(char *name)
+{
+	slurm_selected_step_t *selected_step;
+	char *dot, *plus = NULL, *under;
+
+	xassert(name);
+
+	selected_step = xmalloc(sizeof(*selected_step));
+	selected_step->step_id.step_het_comp = NO_VAL;
+
+	if ((dot = xstrstr(name, "."))) {
+		*dot++ = 0;
+		/* can't use NO_VAL since that means all */
+		if (!xstrcmp(dot, "batch"))
+			selected_step->step_id.step_id = SLURM_BATCH_SCRIPT;
+		else if (!xstrcmp(dot, "extern"))
+			selected_step->step_id.step_id = SLURM_EXTERN_CONT;
+		else if (!xstrcmp(dot, "interactive"))
+			selected_step->step_id.step_id = SLURM_INTERACTIVE_STEP;
+		else if (isdigit(*dot))
+			selected_step->step_id.step_id = atoi(dot);
+		else
+			fatal("Bad step specified: %s", name);
+		plus = xstrchr(dot, '+');
+		if (plus) {
+			/* het step */
+			plus++;
+			selected_step->step_id.step_het_comp =
+				slurm_atoul(plus);
+		}
+	} else {
+		debug2("No jobstep requested");
+		selected_step->step_id.step_id = NO_VAL;
+	}
+
+	if ((under = xstrstr(name, "_"))) {
+		*under++ = 0;
+		if (isdigit(*under))
+			selected_step->array_task_id = atoi(under);
+		else
+			fatal("Bad job array element specified: %s", name);
+		selected_step->het_job_offset = NO_VAL;
+	} else if (!plus && (plus = xstrstr(name, "+"))) {
+		selected_step->array_task_id = NO_VAL;
+		*plus++ = 0;
+		if (isdigit(*plus))
+			selected_step->het_job_offset = atoi(plus);
+		else
+			fatal("Bad hetjob offset specified: %s", name);
+	} else {
+		debug2("No jobarray or hetjob requested");
+		selected_step->array_task_id = NO_VAL;
+		selected_step->het_job_offset = NO_VAL;
+	}
+
+	selected_step->step_id.job_id = atoi(name);
+
+	return selected_step;
+}
+
+extern resource_allocation_response_msg_t *
+slurm_copy_resource_allocation_response_msg(
+	resource_allocation_response_msg_t *msg)
+{
+	resource_allocation_response_msg_t *new;
+
+	if (!msg)
+		return NULL;
+
+	new = xmalloc(sizeof(*msg));
+
+	memcpy(new, msg, sizeof(*msg));
+	new->account = xstrdup(msg->account);
+	new->alias_list = xstrdup(msg->alias_list);
+
+	if (msg->cpus_per_node) {
+		new->cpus_per_node = xcalloc(new->num_cpu_groups,
+					     sizeof(*new->cpus_per_node));
+		memcpy(new->cpus_per_node, msg->cpus_per_node,
+		       new->num_cpu_groups * sizeof(*new->cpus_per_node));
+	}
+
+	if (msg->cpu_count_reps) {
+		new->cpu_count_reps = xcalloc(new->num_cpu_groups,
+					      sizeof(*new->cpu_count_reps));
+		memcpy(new->cpu_count_reps, msg->cpu_count_reps,
+		       new->num_cpu_groups * sizeof(*new->cpu_count_reps));
+	}
+
+	new->environment = env_array_copy((const char **)msg->environment);
+	new->job_submit_user_msg = xstrdup(msg->job_submit_user_msg);
+	if (msg->node_addr) {
+		new->node_addr = xmalloc(sizeof(*new->node_addr));
+		memcpy(new->node_addr, msg->node_addr, sizeof(*new->node_addr));
+	}
+	new->node_list = xstrdup(msg->node_list);
+	new->partition = xstrdup(msg->partition);
+	new->qos = xstrdup(msg->qos);
+	new->resv_name = xstrdup(msg->resv_name);
+	new->working_cluster_rec = NULL;
+	return new;
+}
+
+
 extern void slurm_free_last_update_msg(last_update_msg_t * msg)
 {
 	xfree(msg);
@@ -804,11 +898,6 @@ extern void slurm_free_job_alloc_info_msg(job_alloc_info_msg_t * msg)
 	}
 }
 
-extern void slurm_free_step_alloc_info_msg(step_alloc_info_msg_t * msg)
-{
-	xfree(msg);
-}
-
 extern void slurm_free_return_code_msg(return_code_msg_t * msg)
 {
 	xfree(msg);
@@ -837,7 +926,7 @@ extern void slurm_free_job_user_id_msg(job_user_id_msg_t * msg)
 	xfree(msg);
 }
 
-extern void slurm_free_job_step_id_msg(job_step_id_msg_t * msg)
+extern void slurm_free_step_id(slurm_step_id_t *msg)
 {
 	xfree(msg);
 }
@@ -880,6 +969,12 @@ extern void slurm_free_update_step_msg(step_update_request_msg_t * msg)
 		xfree(msg->name);
 		xfree(msg);
 	}
+}
+
+extern void slurm_destroy_selected_step(void *object)
+{
+	slurm_selected_step_t *step = (slurm_selected_step_t *)object;
+	xfree(step);
 }
 
 extern void slurm_free_job_id_response_msg(job_id_response_msg_t * msg)
@@ -955,6 +1050,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t *msg)
 		xfree(msg->comment);
 		xfree(msg->cpu_bind);
 		xfree(msg->cpus_per_tres);
+		free_cron_entry(msg->crontab_entry);
 		xfree(msg->dependency);
 		env_array_free(msg->environment);
 		msg->environment = NULL;
@@ -1216,6 +1312,7 @@ extern void slurm_free_node_registration_status_msg(
 {
 	if (msg) {
 		xfree(msg->arch);
+		xfree(msg->dynamic_feature);
 		xfree(msg->cpu_spec_list);
 		if (msg->energy)
 			acct_gather_energy_destroy(msg->energy);
@@ -1223,7 +1320,6 @@ extern void slurm_free_node_registration_status_msg(
 		xfree(msg->features_avail);
 		if (msg->gres_info)
 			free_buf(msg->gres_info);
-		xfree(msg->job_id);
 		xfree(msg->node_name);
 		xfree(msg->os);
 		xfree(msg->step_id);
@@ -1256,6 +1352,7 @@ extern void slurm_free_update_front_end_msg(update_front_end_msg_t * msg)
 extern void slurm_free_update_node_msg(update_node_msg_t * msg)
 {
 	if (msg) {
+		xfree(msg->comment);
 		xfree(msg->features);
 		xfree(msg->features_act);
 		xfree(msg->gres);
@@ -1263,15 +1360,6 @@ extern void slurm_free_update_node_msg(update_node_msg_t * msg)
 		xfree(msg->node_hostname);
 		xfree(msg->node_names);
 		xfree(msg->reason);
-		xfree(msg);
-	}
-}
-
-extern void slurm_free_update_layout_msg(update_layout_msg_t * msg)
-{
-	if (msg) {
-		xfree(msg->layout);
-		xfree(msg->arg);
 		xfree(msg);
 	}
 }
@@ -1292,19 +1380,38 @@ extern void slurm_free_delete_part_msg(delete_part_msg_t * msg)
 	}
 }
 
+extern void slurm_free_resv_desc_msg_part(resv_desc_msg_t *msg,
+					  uint32_t res_free_flags)
+{
+	if (!msg)
+		return;
+
+	if (res_free_flags & RESV_FREE_STR_USER)
+		xfree(msg->users);
+	if (res_free_flags & RESV_FREE_STR_ACCT)
+		xfree(msg->accounts);
+	if (res_free_flags & RESV_FREE_STR_TRES_BB)
+		xfree(msg->burst_buffer);
+	if (res_free_flags & RESV_FREE_STR_TRES_CORE)
+		xfree(msg->core_cnt);
+	if (res_free_flags & RESV_FREE_STR_TRES_LIC)
+		xfree(msg->licenses);
+	if (res_free_flags & RESV_FREE_STR_TRES_NODE)
+		xfree(msg->node_cnt);
+	if (res_free_flags & RESV_FREE_STR_GROUP)
+		xfree(msg->groups);
+}
+
 extern void slurm_free_resv_desc_msg(resv_desc_msg_t * msg)
 {
 	if (msg) {
-		xfree(msg->accounts);
-		xfree(msg->burst_buffer);
-		xfree(msg->core_cnt);
 		xfree(msg->features);
-		xfree(msg->licenses);
 		xfree(msg->name);
-		xfree(msg->node_cnt);
 		xfree(msg->node_list);
 		xfree(msg->partition);
-		xfree(msg->users);
+
+		slurm_free_resv_desc_msg_part(msg, 0xffffffff);
+
 		xfree(msg);
 	}
 }
@@ -1322,40 +1429,19 @@ extern void slurm_free_resv_info_request_msg(resv_info_request_msg_t * msg)
 	xfree(msg);
 }
 
-extern void slurm_free_layout_info_request_msg(layout_info_request_msg_t * msg)
-{
-	if (msg) {
-		xfree(msg->layout_type);
-		xfree(msg->entities);
-		xfree(msg);
-	}
-}
-
-extern void slurm_free_layout_info_msg(layout_info_msg_t * msg)
-{
-	int i;
-
-	if (msg) {
-		if (msg->records) {
-			for (i = 0; i < msg->record_count; i++)
-				xfree(msg->records[i]);
-			xfree(msg->records);
-		}
-		xfree(msg);
-	}
-}
-
 extern void slurm_free_job_step_create_request_msg(
 		job_step_create_request_msg_t *msg)
 {
 	if (msg) {
 		xfree(msg->cpus_per_tres);
+		xfree(msg->exc_nodes);
 		xfree(msg->features);
 		xfree(msg->host);
 		xfree(msg->mem_per_tres);
 		xfree(msg->name);
 		xfree(msg->network);
 		xfree(msg->node_list);
+		xfree(msg->step_het_grps);
 		xfree(msg->tres_bind);
 		xfree(msg->tres_freq);
 		xfree(msg->tres_per_step);
@@ -1412,11 +1498,6 @@ extern void slurm_free_kill_job_msg(kill_job_msg_t * msg)
 	}
 }
 
-extern void slurm_free_update_job_time_msg(job_time_msg_t * msg)
-{
-	xfree(msg);
-}
-
 extern void slurm_free_task_exit_msg(task_exit_msg_t * msg)
 {
 	if (msg) {
@@ -1467,8 +1548,7 @@ extern void slurm_free_launch_tasks_request_msg(launch_tasks_request_msg_t * msg
 	xfree(msg->gids);
 	xfree(msg->het_job_node_list);
 	xfree(msg->het_job_task_cnts);
-	if ((msg->het_job_nnodes != NO_VAL) && msg->het_job_tids) {
-		/* het_job_tids == NULL if request from pre-v19.05 srun */
+	if (msg->het_job_nnodes != NO_VAL) {
 		for (i = 0; i < msg->het_job_nnodes; i++)
 			xfree(msg->het_job_tids[i]);
 		xfree(msg->het_job_tids);
@@ -1685,23 +1765,6 @@ extern void slurm_free_stats_response_msg(stats_info_response_msg_t *msg)
 		xfree(msg->rpc_dump_hostlist);
 		xfree(msg);
 	}
-}
-
-extern void slurm_free_spank_env_request_msg(spank_env_request_msg_t *msg)
-{
-	xfree(msg);
-}
-
-extern void slurm_free_spank_env_responce_msg(spank_env_responce_msg_t *msg)
-{
-	uint32_t i;
-
-	if (msg->spank_job_env) {
-		for (i = 0; i < msg->spank_job_env_size; i++)
-			xfree(msg->spank_job_env[i]);
-		xfree(msg->spank_job_env);
-	}
-	xfree(msg);
 }
 
 /* Free job array oriented response with individual return codes by task ID */
@@ -2784,6 +2847,8 @@ extern char *job_state_string(uint32_t inx)
 		return "CONFIGURING";
 	if (inx & JOB_RESIZING)
 		return "RESIZING";
+	if (inx & JOB_REQUEUE_CRON)
+		return "REQUEUED_CRON";
 	if (inx & JOB_REQUEUE)
 		return "REQUEUED";
 	if (inx & JOB_REQUEUE_FED)
@@ -2843,6 +2908,8 @@ extern char *job_state_string_compact(uint32_t inx)
 		return "CF";
 	if (inx & JOB_RESIZING)
 		return "RS";
+	if (inx & JOB_REQUEUE_CRON)
+		return "RC";
 	if (inx & JOB_REQUEUE)
 		return "RQ";
 	if (inx & JOB_REQUEUE_FED)
@@ -2961,6 +3028,8 @@ extern char *job_state_string_complete(uint32_t state)
 		xstrcat(state_str, ",RECONFIG_FAIL");
 	if (state & JOB_RESIZING)
 		xstrcat(state_str, ",RESIZING");
+	if (state & JOB_REQUEUE_CRON)
+		xstrcat(state_str, ",REQUEUED_CRON");
 	if (state & JOB_REQUEUE)
 		xstrcat(state_str, ",REQUEUED");
 	if (state & JOB_REQUEUE_FED)
@@ -3009,6 +3078,8 @@ extern uint32_t job_state_num(const char *state_name)
 		return JOB_CONFIGURING;
 	if (_job_name_test(JOB_RESIZING, state_name))
 		return JOB_RESIZING;
+	if (_job_name_test(JOB_REQUEUE_CRON, state_name))
+		return JOB_REQUEUE_CRON;
 	if (_job_name_test(JOB_REQUEUE, state_name))
 		return JOB_REQUEUE;
 	if (_job_name_test(JOB_REQUEUE_FED, state_name))
@@ -3263,12 +3334,12 @@ extern char *reservation_flags_string(reserve_info_t * resv_ptr)
 			xstrcat(flag_str, ",");
 		xstrcat(flag_str, "NO_HOLD_JOBS_AFTER_END");
 	}
-	if (flags & RESERVE_FLAG_PROM) {
+	if (flags & RESERVE_FLAG_MAGNETIC) {
 		if (flag_str[0])
 			xstrcat(flag_str, ",");
 		xstrcat(flag_str, "MAGNETIC");
 	}
-	if (flags & RESERVE_FLAG_NO_PROM) {
+	if (flags & RESERVE_FLAG_NO_MAGNETIC) {
 		if (flag_str[0])
 			xstrcat(flag_str, ",");
 		xstrcat(flag_str, "NO_MAGNETIC");
@@ -3494,6 +3565,8 @@ extern char *node_state_string(uint32_t inx)
 
 	if (inx == NODE_STATE_CANCEL_REBOOT)
 		return "CANCEL_REBOOT";
+	if (inx == NODE_STATE_CLOUD)
+		return "CLOUD";
 	if (inx == NODE_STATE_POWERING_DOWN)
 		return "POWERING_DOWN";
 	if (inx == NODE_STATE_POWER_SAVE)
@@ -3690,6 +3763,8 @@ extern char *node_state_string_compact(uint32_t inx)
 
 	if (inx == NODE_STATE_CANCEL_REBOOT)
 		return "CANC_R";
+	if (inx == NODE_STATE_CLOUD)
+		return "CLOUD";
 	if (inx == NODE_STATE_POWERING_DOWN)
 		return "POWRNG_DN";
 	if (inx == NODE_STATE_POWER_SAVE)
@@ -4045,7 +4120,6 @@ extern void slurm_free_resource_allocation_response_msg (
 extern void slurm_free_sbcast_cred_msg(job_sbcast_cred_msg_t * msg)
 {
 	if (msg) {
-		xfree(msg->node_addr);
 		xfree(msg->node_list);
 		delete_sbcast_cred(msg->sbcast_cred);
 		xfree(msg);
@@ -4486,18 +4560,6 @@ extern void slurm_free_burst_buffer_info_msg(burst_buffer_info_msg_t *msg)
 	}
 }
 
-/*
- * slurm_free_powercap_info_msg - free the powercapping information
- *	response message
- * IN msg - pointer to powercapping information response message
- * NOTE: buffer is loaded by slurm_load_powercap.
- */
-extern void slurm_free_powercap_info_msg(powercap_info_msg_t *msg)
-{
-	xfree(msg);
-}
-
-
 extern void slurm_free_file_bcast_msg(file_bcast_msg_t *msg)
 {
 	if (msg) {
@@ -4749,6 +4811,47 @@ extern void slurm_free_bb_status_resp_msg(bb_status_resp_msg_t *msg)
 	}
 }
 
+extern void slurm_free_crontab_request_msg(crontab_request_msg_t *msg)
+{
+	if (!msg)
+		return;
+
+	xfree(msg);
+}
+
+extern void slurm_free_crontab_response_msg(crontab_response_msg_t *msg)
+{
+	if (!msg)
+		return;
+
+	xfree(msg->crontab);
+	xfree(msg->disabled_lines);
+	xfree(msg);
+}
+
+extern void slurm_free_crontab_update_request_msg(
+	crontab_update_request_msg_t *msg)
+{
+	if (!msg)
+		return;
+
+	xfree(msg->crontab);
+	FREE_NULL_LIST(msg->jobs);
+	xfree(msg);
+}
+
+extern void slurm_free_crontab_update_response_msg(
+	crontab_update_response_msg_t *msg)
+{
+	if (!msg)
+		return;
+
+	xfree(msg->err_msg);
+	xfree(msg->failed_lines);
+	xfree(msg->jobids);
+	xfree(msg);
+}
+
 extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 {
 	if (!data)
@@ -4848,7 +4951,7 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		slurm_free_job_alloc_info_msg(data);
 		break;
 	case REQUEST_JOB_SBCAST_CRED:
-		slurm_free_step_alloc_info_msg(data);
+		slurm_destroy_selected_step(data);
 		break;
 	case REQUEST_SHUTDOWN:
 		slurm_free_shutdown_msg(data);
@@ -4859,15 +4962,9 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_UPDATE_NODE:
 		slurm_free_update_node_msg(data);
 		break;
-	case REQUEST_UPDATE_LAYOUT:
-		slurm_free_update_layout_msg(data);
-		break;
 	case REQUEST_CREATE_PARTITION:
 	case REQUEST_UPDATE_PARTITION:
 		slurm_free_update_part_msg(data);
-		break;
-	case REQUEST_UPDATE_POWERCAP:
-		slurm_free_powercap_info_msg(data);
 		break;
 	case REQUEST_DELETE_PARTITION:
 		slurm_free_delete_part_msg(data);
@@ -4882,9 +4979,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		break;
 	case REQUEST_RESERVATION_INFO:
 		slurm_free_resv_info_request_msg(data);
-		break;
-	case REQUEST_LAYOUT_INFO:
-		slurm_free_layout_info_request_msg(data);
 		break;
 	case REQUEST_FRONT_END_INFO:
 		slurm_free_front_end_info_request_msg(data);
@@ -4932,13 +5026,12 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		slurm_free_priority_factors_response_msg(data);
 		break;
 	case REQUEST_STEP_COMPLETE:
-	case REQUEST_STEP_COMPLETE_AGGR:
 		slurm_free_step_complete_msg(data);
 		break;
 	case REQUEST_JOB_STEP_STAT:
 	case REQUEST_JOB_STEP_PIDS:
 	case REQUEST_STEP_LAYOUT:
-		slurm_free_job_step_id_msg(data);
+		slurm_free_step_id(data);
 		break;
 	case RESPONSE_JOB_STEP_STAT:
 		slurm_free_job_step_stat(data);
@@ -4970,9 +5063,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_TERMINATE_JOB:
 		slurm_free_kill_job_msg(data);
 		break;
-	case REQUEST_UPDATE_JOB_TIME:
-		slurm_free_update_job_time_msg(data);
-		break;
 	case REQUEST_JOB_ID:
 		slurm_free_job_id_request_msg(data);
 		break;
@@ -5001,7 +5091,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_CONTROL:
 	case REQUEST_CONTROL_STATUS:
 	case REQUEST_TAKEOVER:
-	case REQUEST_SHUTDOWN_IMMEDIATE:
 	case RESPONSE_FORWARD_FAILED:
 	case REQUEST_DAEMON_STATUS:
 	case REQUEST_HEALTH_CHECK:
@@ -5011,7 +5100,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case ACCOUNTING_NODES_CHANGE_DB:
 	case REQUEST_TOPO_INFO:
 	case REQUEST_BURST_BUFFER_INFO:
-	case REQUEST_POWERCAP_INFO:
 	case ACCOUNTING_REGISTER_CTLD:
 	case REQUEST_FED_INFO:
 		/* No body to free */
@@ -5052,10 +5140,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_TRIGGER_CLEAR:
 	case REQUEST_TRIGGER_PULL:
 		slurm_free_trigger_msg(data);
-		break;
-	case MESSAGE_COMPOSITE:
-	case RESPONSE_MESSAGE_COMPOSITE:
-		slurm_free_composite_msg(data);
 		break;
 	case REQUEST_JOB_NOTIFY:
 		slurm_free_job_notify_msg(data);
@@ -5138,6 +5222,18 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		break;
 	case RESPONSE_BURST_BUFFER_STATUS:
 		slurm_free_bb_status_resp_msg(data);
+		break;
+	case REQUEST_CRONTAB:
+		slurm_free_crontab_request_msg(data);
+		break;
+	case RESPONSE_CRONTAB:
+		slurm_free_crontab_response_msg(data);
+		break;
+	case REQUEST_UPDATE_CRONTAB:
+		slurm_free_crontab_update_request_msg(data);
+		break;
+	case RESPONSE_UPDATE_CRONTAB:
+		slurm_free_crontab_update_response_msg(data);
 		break;
 	default:
 		error("invalid type trying to be freed %u", type);
@@ -5271,8 +5367,6 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_RECONFIGURE_WITH_CONFIG";
 	case REQUEST_SHUTDOWN:					/* 1005 */
 		return "REQUEST_SHUTDOWN";
-	case REQUEST_SHUTDOWN_IMMEDIATE:
-		return "REQUEST_SHUTDOWN_IMMEDIATE";
 
 	case REQUEST_PING:					/* 1008 */
 		return "REQUEST_PING";
@@ -5381,21 +5475,15 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_JOB_USER_INFO";
 	case REQUEST_NODE_INFO_SINGLE:				/* 2040 */
 		return "REQUEST_NODE_INFO_SINGLE";
-	case REQUEST_POWERCAP_INFO:
-		return "REQUEST_POWERCAP_INFO";
-	case RESPONSE_POWERCAP_INFO:
-		return "RESPONSE_POWERCAP_INFO";
-	case REQUEST_ASSOC_MGR_INFO:
+
+	case REQUEST_ASSOC_MGR_INFO:				/* 2043 */
 		return "REQUEST_ASSOC_MGR_INFO";
 	case RESPONSE_ASSOC_MGR_INFO:
 		return "RESPONSE_ASSOC_MGR_INFO";
 	case REQUEST_EVENT_LOG:
 		return "REQUEST_EVENT_LOG";
-	case REQUEST_LAYOUT_INFO:
-		return "REQUEST_LAYOUT_INFO";
-	case RESPONSE_LAYOUT_INFO:
-		return "RESPONSE_LAYOUT_INFO";
-	case REQUEST_FED_INFO:
+
+	case REQUEST_FED_INFO:					/* 2048 */
 		return "REQUEST_FED_INFO";
 	case RESPONSE_FED_INFO:
 		return "RESPONSE_FED_INFO";
@@ -5411,6 +5499,15 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_BURST_BUFFER_STATUS";
 	case RESPONSE_BURST_BUFFER_STATUS:
 		return "RESPONSE_BURST_BUFFER_STATUS";
+
+	case REQUEST_CRONTAB:					/* 2200 */
+		return "REQUEST_CRONTAB";
+	case RESPONSE_CRONTAB:
+		return "RESPONSE_CRONTAB";
+	case REQUEST_UPDATE_CRONTAB:
+		return "REQUEST_UPDATE_CRONTAB";
+	case RESPONSE_UPDATE_CRONTAB:
+		return "RESPONSE_UPDATE_CRONTAB";
 
 	case REQUEST_UPDATE_JOB:				/* 3001 */
 		return "REQUEST_UPDATE_JOB";
@@ -5432,10 +5529,6 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_UPDATE_RESERVATION";
 	case REQUEST_UPDATE_FRONT_END:				/* 3011 */
 		return "REQUEST_UPDATE_FRONT_END";
-	case REQUEST_UPDATE_LAYOUT:
-		return "REQUEST_UPDATE_LAYOUT";
-	case REQUEST_UPDATE_POWERCAP:
-		return "REQUEST_UPDATE_POWERCAP";
 
 	case REQUEST_RESOURCE_ALLOCATION:			/* 4001 */
 		return "REQUEST_RESOURCE_ALLOCATION";
@@ -5462,8 +5555,7 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_HET_JOB_ALLOCATION";
 	case RESPONSE_HET_JOB_ALLOCATION:
 		return "RESPONSE_HET_JOB_ALLOCATION";
-	case REQUEST_UPDATE_JOB_TIME:
-		return "REQUEST_UPDATE_JOB_TIME";
+
 	case REQUEST_JOB_READY:
 		return "REQUEST_JOB_READY";
 	case RESPONSE_JOB_READY:				/* 4020 */
@@ -5548,9 +5640,8 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_NETWORK_CALLERID";
 	case RESPONSE_NETWORK_CALLERID:
 		return "RESPONSE_NETWORK_CALLERID";
-	case REQUEST_STEP_COMPLETE_AGGR:
-		return "REQUEST_STEP_COMPLETE_AGGR";
-	case REQUEST_TOP_JOB:
+
+	case REQUEST_TOP_JOB:					/* 5038 */
 		return "REQUEST_TOP_JOB";
 	case REQUEST_AUTH_TOKEN:
 		return "REQUEST_AUTH_TOKEN";
@@ -5643,11 +5734,6 @@ rpc_num2string(uint16_t opcode)
 		return "ACCOUNTING_TRES_CHANGE_DB";
 	case ACCOUNTING_NODES_CHANGE_DB:
 		return "ACCOUNTING_NODES_CHANGE_DB";
-
-	case MESSAGE_COMPOSITE:					/* 110001 */
-		return "MESSAGE_COMPOSITE";
-	case RESPONSE_MESSAGE_COMPOSITE:
-		return "RESPONSE_MESSAGE_COMPOSITE";
 
 	case REQUEST_PERSIST_INIT:
 		return "REQUEST_PERSIST_INIT";
@@ -5908,4 +5994,64 @@ extern uint64_t suffix_mult(char *suffix)
 	}
 
 	return multiplier;
+}
+
+extern bool verify_step_id(slurm_step_id_t *object, slurm_step_id_t *key)
+{
+	if (key->job_id != object->job_id)
+		return 0;
+
+	/* Any step will do */
+	if (key->step_id == NO_VAL)
+		return 1;
+
+	/*
+	 * See if we have the same step id.  If we do check to see if we
+	 * have the same step_het_comp or if the key's is NO_VAL,
+	 * meaning we are not looking directly for a het step.
+	 */
+	if ((key->step_id == object->step_id) &&
+	    ((key->step_het_comp == object->step_het_comp) ||
+	     (key->step_het_comp == NO_VAL)))
+		return 1;
+	else
+		return 0;
+}
+
+extern char *slurm_get_selected_step_id(
+	char *job_id_str, int len,
+	slurm_selected_step_t *selected_step)
+{
+	int pos = 0;
+
+	pos = snprintf(job_id_str, len, "%u",
+		       selected_step->step_id.job_id);
+	if (pos > len)
+		goto endit;
+
+	if (selected_step->array_task_id != NO_VAL)
+		pos += snprintf(job_id_str + pos, len - pos, "_%u",
+				selected_step->array_task_id);
+	if (pos > len)
+		goto endit;
+
+	if (selected_step->het_job_offset != NO_VAL)
+		pos += snprintf(job_id_str + pos, len - pos, "+%u",
+				selected_step->het_job_offset);
+	if (pos > len)
+		goto endit;
+
+	if (selected_step->step_id.step_id != NO_VAL) {
+		job_id_str[pos++] = '.';
+
+		if (pos > len)
+			goto endit;
+
+		log_build_step_id_str(&selected_step->step_id,
+				      job_id_str + pos, len - pos,
+				      STEP_ID_FLAG_NO_PREFIX |
+				      STEP_ID_FLAG_NO_JOB);
+	}
+endit:
+	return job_id_str;
 }

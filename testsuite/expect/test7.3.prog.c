@@ -57,6 +57,8 @@ int main (int argc, char *argv[])
 	int *fd_array = NULL;
 	int num_fd;
 
+	slurm_init(NULL);
+
 	if (argc > 1) {
 		i = atoi(argv[1]);
 		if (i > 0)
@@ -122,7 +124,7 @@ int main (int argc, char *argv[])
 	 * Create a job step context.
 	 */
 	slurm_step_ctx_params_t_init(step_params);
-	step_params->job_id = job_resp->job_id;
+	step_params->step_id.job_id = job_resp->job_id;
 	step_params->min_nodes = nodes;
 	step_params->task_count = tasks;
 

@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  as_mysql_wckey.c - functions dealing with the wckey.
  *****************************************************************************
- *
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -46,6 +45,7 @@ char *wckey_req_inx[] = {
 	"is_def",
 	"wckey_name",
 	"user",
+	"deleted",
 };
 
 enum {
@@ -53,6 +53,7 @@ enum {
 	WCKEY_REQ_DEFAULT,
 	WCKEY_REQ_NAME,
 	WCKEY_REQ_USER,
+	WCKEY_REQ_DELETED,
 	WCKEY_REQ_COUNT
 };
 
@@ -77,8 +78,7 @@ static int _reset_default_wckey(mysql_conn_t *mysql_conn,
 		   wckey->user, wckey->name,
 		   wckey->cluster, wckey_table,
 		   wckey->user, wckey->name);
-	if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_WCKEY, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 1))) {
 		xfree(query);
 		rc = SLURM_ERROR;
@@ -114,7 +114,7 @@ end_it:
  * adding a new wckey for a user that has never been on the cluster before.
  */
 static int _make_sure_users_have_default(
-	mysql_conn_t *mysql_conn, List user_list)
+	mysql_conn_t *mysql_conn, List user_list, List cluster_list)
 {
 	char *query = NULL, *cluster = NULL, *user = NULL;
 	ListIterator itr = NULL, clus_itr = NULL;
@@ -123,21 +123,20 @@ static int _make_sure_users_have_default(
 	if (!user_list)
 		return SLURM_SUCCESS;
 
-	slurm_mutex_lock(&as_mysql_cluster_list_lock);
-
-	clus_itr = list_iterator_create(as_mysql_cluster_list);
+	clus_itr = list_iterator_create(cluster_list);
 	itr = list_iterator_create(user_list);
 
 	while ((user = list_next(itr))) {
 		while ((cluster = list_next(clus_itr))) {
 			MYSQL_RES *result = NULL;
 			MYSQL_ROW row;
-			char *wckey = NULL;
+
 			/* only look at non * and non deleted ones */
 			query = xstrdup_printf(
 				"select distinct is_def, wckey_name from "
 				"\"%s_%s\" where user='%s' and wckey_name "
-				"not like '*%%' and deleted=0 FOR UPDATE;",
+				"not like '*%%' and deleted=0 ORDER BY "
+				"is_def desc, creation_time desc LIMIT 1;",
 				cluster, wckey_table, user);
 			debug4("%d(%s:%d) query\n%s",
 			       mysql_conn->conn, THIS_FILE, __LINE__, query);
@@ -156,26 +155,24 @@ static int _make_sure_users_have_default(
 				mysql_free_result(result);
 				continue;
 			}
-			while ((row = mysql_fetch_row(result))) {
-				if (row[0][0] == '1')
-					break;
-				if (!wckey)
-					wckey = xstrdup(row[1]);
-			}
-			mysql_free_result(result);
 
-			/* we found one so just continue */
-			if (row || !wckey) {
-				xfree(wckey);
+			/* check if row is default */
+			row = mysql_fetch_row(result);
+			if (row[0][0] == '1') {
+				/* default found, continue */
+				mysql_free_result(result);
 				continue;
 			}
+
+			/* if we made it here, there is no default */
 			query = xstrdup_printf(
 				"update \"%s_%s\" set is_def=1 where "
 				"user='%s' and wckey_name='%s';",
-				cluster, wckey_table, user, wckey);
-			xfree(wckey);
-			if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-				DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+				cluster, wckey_table, user, row[1]);
+			mysql_free_result(result);
+
+			DB_DEBUG(DB_WCKEY, mysql_conn->conn, "query\n%s",
+			         query);
 			rc = mysql_db_query(mysql_conn, query);
 			xfree(query);
 			if (rc != SLURM_SUCCESS) {
@@ -190,7 +187,6 @@ static int _make_sure_users_have_default(
 	}
 	list_iterator_destroy(itr);
 	list_iterator_destroy(clus_itr);
-	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
 
 	return rc;
 }
@@ -314,9 +310,8 @@ static int _cluster_remove_wckeys(mysql_conn_t *mysql_conn,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-			DB_DEBUG(mysql_conn->conn,
-				 "didn't effect anything\n%s", query);
+		DB_DEBUG(DB_WCKEY, mysql_conn->conn,
+		         "didn't affect anything\n%s", query);
 		xfree(query);
 		xfree(assoc_char);
 		return SLURM_SUCCESS;
@@ -402,9 +397,8 @@ static int _cluster_modify_wckeys(mysql_conn_t *mysql_conn,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-			DB_DEBUG(mysql_conn->conn,
-				 "didn't effect anything\n%s", query);
+		DB_DEBUG(DB_WCKEY, mysql_conn->conn,
+		         "didn't affect anything\n%s", query);
 		xfree(query);
 		xfree(wckey_char);
 		return SLURM_SUCCESS;
@@ -439,8 +433,7 @@ static int _cluster_get_wckeys(mysql_conn_t *mysql_conn,
 		   "order by wckey_name, user;",
 		   fields, cluster_name, wckey_table, extra);
 
-	if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	DB_DEBUG(DB_WCKEY, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -466,6 +459,9 @@ static int _cluster_get_wckeys(mysql_conn_t *mysql_conn,
 		wckey->id = slurm_atoul(row[WCKEY_REQ_ID]);
 		wckey->is_def = slurm_atoul(row[WCKEY_REQ_DEFAULT]);
 		wckey->user = xstrdup(row[WCKEY_REQ_USER]);
+
+		if (slurm_atoul(row[WCKEY_REQ_DELETED]))
+			wckey->flags |= SLURMDB_WCKEY_FLAG_DELETED;
 
 		/* we want a blank wckey if the name is null */
 		if (row[WCKEY_REQ_NAME])
@@ -501,6 +497,7 @@ extern int as_mysql_add_wckeys(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *user_name = NULL;
 	int affect_rows = 0;
 	int added = 0;
+	List local_cluster_list = NULL;
 	List added_user_list = NULL;
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
@@ -508,6 +505,8 @@ extern int as_mysql_add_wckeys(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))
 		return ESLURM_ACCESS_DENIED;
+
+	local_cluster_list = list_create(NULL);
 
 	user_name = uid_to_string((uid_t) uid);
 	itr = list_iterator_create(wckey_list);
@@ -558,8 +557,7 @@ extern int as_mysql_add_wckeys(mysql_conn_t *mysql_conn, uint32_t uid,
 			   "id_wckey=LAST_INSERT_ID(id_wckey)%s;",
 			   object->cluster, wckey_table, cols, vals, extra);
 
-		if (debug_flags & DEBUG_FLAG_DB_WCKEY)
-			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+		DB_DEBUG(DB_WCKEY, mysql_conn->conn, "query\n%s", query);
 		object->id = (uint32_t)mysql_db_insert_ret_id(
 			mysql_conn, query);
 		xfree(query);
@@ -581,6 +579,8 @@ extern int as_mysql_add_wckeys(mysql_conn_t *mysql_conn, uint32_t uid,
 			xfree(vals);
 			continue;
 		}
+
+		list_append(local_cluster_list, object->cluster);
 
 		/* we always have a ', ' as the first 2 chars */
 		tmp_extra = slurm_add_slash_to_quotes(extra+2);
@@ -632,8 +632,10 @@ extern int as_mysql_add_wckeys(mysql_conn_t *mysql_conn, uint32_t uid,
 	list_iterator_destroy(itr);
 end_it:
 	if (rc == SLURM_SUCCESS)
-		_make_sure_users_have_default(mysql_conn, added_user_list);
+		_make_sure_users_have_default(mysql_conn, added_user_list,
+					      local_cluster_list);
 	FREE_NULL_LIST(added_user_list);
+	FREE_NULL_LIST(local_cluster_list);
 
 	return rc;
 }
@@ -794,7 +796,6 @@ extern List as_mysql_get_wckeys(mysql_conn_t *mysql_conn, uid_t uid,
 	char *cluster_name = NULL;
 	List wckey_list = NULL;
 	int i=0, is_admin=1;
-	uint16_t private_data = 0;
 	slurmdb_user_rec_t user;
 	List use_cluster_list = as_mysql_cluster_list;
 	ListIterator itr;
@@ -810,8 +811,7 @@ extern List as_mysql_get_wckeys(mysql_conn_t *mysql_conn, uid_t uid,
 	memset(&user, 0, sizeof(slurmdb_user_rec_t));
 	user.uid = uid;
 
-	private_data = slurm_get_private_data();
-	if (private_data & PRIVATE_DATA_USERS) {
+	if (slurm_conf.private_data & PRIVATE_DATA_USERS) {
 		if (!(is_admin = is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
 			assoc_mgr_fill_in_user(
@@ -839,7 +839,7 @@ empty:
 	 * if this flag is set.  We also include any accounts they may be
 	 * coordinator of.
 	 */
-	if (!is_admin && (private_data & PRIVATE_DATA_USERS))
+	if (!is_admin && (slurm_conf.private_data & PRIVATE_DATA_USERS))
 		xstrfmtcat(extra, " && t1.user='%s'", user.name);
 
 	wckey_list = list_create(slurmdb_destroy_wckey_rec);

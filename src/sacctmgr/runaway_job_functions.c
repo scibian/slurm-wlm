@@ -94,16 +94,7 @@ static void _print_runaway_jobs(List format_list, List jobs)
 	       "controller but have a start time and no end time "
 	       "in the database\n");
 
-	if (!format_list || !list_count(format_list)) {
-		if (!format_list)
-			format_list = list_create(xfree_ptr);
-		slurm_addto_char_list(
-			format_list,
-			"ID%-12,Name,Part,Cluster,State%10,Submit,Start,End");
-	}
-
 	print_fields_list = sacctmgr_process_format_list(format_list);
-	FREE_NULL_LIST(format_list);
 
 	print_fields_header(print_fields_list);
 	field_count = list_count(print_fields_list);
@@ -222,11 +213,10 @@ static List _get_runaway_jobs(slurmdb_job_cond_t *job_cond)
 	job_cond->flags |= JOBCOND_FLAG_RUNAWAY | JOBCOND_FLAG_NO_TRUNC;
 
 	if (!job_cond->cluster_list || !list_count(job_cond->cluster_list)) {
-		char *cluster = slurm_get_cluster_name();
 		if (!job_cond->cluster_list)
 			job_cond->cluster_list = list_create(xfree_ptr);
-		slurm_addto_char_list(job_cond->cluster_list, cluster);
-		xfree(cluster);
+		slurm_addto_char_list(job_cond->cluster_list,
+				      slurm_conf.cluster_name);
 	}
 
 	if (list_count(job_cond->cluster_list) != 1) {
@@ -271,7 +261,7 @@ static List _get_runaway_jobs(slurmdb_job_cond_t *job_cond)
 		      working_cluster_rec->name);
 		goto cleanup;
 	}
-	if (slurm_load_jobs((time_t)NULL, &clus_jobs, 0)) {
+	if (slurm_load_jobs((time_t)NULL, &clus_jobs, SHOW_ALL)) {
 		error("Failed to get jobs from requested clusters: %m");
 		goto cleanup;
 	}
@@ -333,6 +323,11 @@ extern int sacctmgr_list_runaway_jobs(int argc, char **argv)
 		goto end_it;
 	}
 
+	if (!list_count(format_list))
+		slurm_addto_char_list(
+			format_list,
+			"ID%-12,Name,Part,Cluster,State%10,Submit,Start,End");
+
 	_print_runaway_jobs(format_list, runaway_jobs);
 
 	while (!rc && list_transfer_max(process_jobs, runaway_jobs,
@@ -355,6 +350,7 @@ end_it:
 	xfree(cluster_str);
 	FREE_NULL_LIST(runaway_jobs);
 	FREE_NULL_LIST(process_jobs);
+	FREE_NULL_LIST(format_list);
 
 	return rc;
 }

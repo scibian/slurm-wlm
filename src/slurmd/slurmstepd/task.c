@@ -41,7 +41,6 @@
 
 #define _GNU_SOURCE
 
-#include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -88,7 +87,6 @@ static void  _make_tmpdir(stepd_step_rec_t *job);
 static int   _run_script_and_set_env(const char *name, const char *path,
 				     stepd_step_rec_t *job);
 static void  _proc_stdout(char *buf, stepd_step_rec_t *job);
-static char *_uint32_array_to_str(int array_len, const uint32_t *array);
 
 /*
  * Process TaskProlog output
@@ -198,7 +196,8 @@ _run_script_and_set_env(const char *name, const char *path,
 	if (path == NULL || path[0] == '\0')
 		return 0;
 
-	debug("[job %u] attempting to run %s [%s]", job->jobid, name, path);
+	debug("[job %u] attempting to run %s [%s]",
+	      job->step_id.job_id, name, path);
 
 	if (access(path, R_OK | X_OK) < 0) {
 		error("Could not run %s [%s]: %m", name, path);
@@ -315,9 +314,14 @@ _setup_mpi(stepd_step_rec_t *job, int ltaskid)
 {
 	mpi_plugin_task_info_t info[1];
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL)) {
-		info->jobid   = job->het_job_id;
-		info->stepid  = job->stepid;
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		info->step_id.job_id   = job->het_job_id;
+	else
+		info->step_id.job_id   = job->step_id.job_id;
+
+	if (job->het_job_offset != NO_VAL) {
+		info->step_id.step_id  = job->step_id.step_id;
+		info->step_id.step_het_comp  = job->step_id.step_het_comp;
 		info->nnodes  = job->het_job_nnodes;
 		info->nodeid  = job->het_job_node_offset + job->nodeid;
 		info->ntasks  = job->het_job_ntasks;
@@ -328,8 +332,8 @@ _setup_mpi(stepd_step_rec_t *job, int ltaskid)
 		info->self    = job->envtp->self;
 		info->client  = job->envtp->cli;
 	} else {
-		info->jobid   = job->jobid;
-		info->stepid  = job->stepid;
+		info->step_id.step_id  = job->step_id.step_id;
+		info->step_id.step_het_comp  = job->step_id.step_het_comp;
 		info->nnodes  = job->nnodes;
 		info->nodeid  = job->nodeid;
 		info->ntasks  = job->ntasks;
@@ -348,7 +352,6 @@ _setup_mpi(stepd_step_rec_t *job, int ltaskid)
  */
 extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 {
-	uint32_t *gtids;		/* pointer to array of ranks */
 	int fd, j;
 	stepd_step_task_info_t *task = job->task[local_proc_id];
 	char **tmp_env;
@@ -360,17 +363,15 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 	if (job->het_job_task_offset != NO_VAL)
 		task_offset = job->het_job_task_offset;
 
-	gtids = xmalloc(job->node_tasks * sizeof(uint32_t));
 	for (j = 0; j < job->node_tasks; j++)
-		gtids[j] = job->task[j]->gtid + task_offset;
-	job->envtp->sgtids = _uint32_array_to_str(job->node_tasks, gtids);
-	xfree(gtids);
+		xstrfmtcat(job->envtp->sgtids, "%s%u", j ? "," : "",
+			   job->task[j]->gtid + task_offset);
 
 	if (job->het_job_id != NO_VAL)
 		job->envtp->jobid = job->het_job_id;
 	else
-		job->envtp->jobid = job->jobid;
-	job->envtp->stepid = job->stepid;
+		job->envtp->jobid = job->step_id.job_id;
+	job->envtp->stepid = job->step_id.step_id;
 	job->envtp->nodeid = job->nodeid + node_offset;
 	job->envtp->cpus_on_node = job->cpus;
 	job->envtp->procid = task->gtid + task_offset;
@@ -413,11 +414,12 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 
 	xfree(job->envtp->task_count);
 
-	if (!job->batch && (job->stepid != SLURM_EXTERN_CONT)) {
+	if (!job->batch && (job->step_id.step_id != SLURM_EXTERN_CONT) &&
+	    (job->step_id.step_id != SLURM_INTERACTIVE_STEP)) {
 		if (switch_g_job_attach(job->switch_job, &job->env,
 					job->nodeid, (uint32_t) local_proc_id,
 					job->nnodes, job->ntasks,
-					task->gtid) < 0) {
+					task->gtid + task_offset) < 0) {
 			error("Unable to attach to interconnect: %m");
 			log_fini();
 			_exit(1);
@@ -457,15 +459,9 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 		_exit(1);
 	}
 
-	if (conf->task_prolog) {
-		char *my_prolog;
-		slurm_mutex_lock(&conf->config_mutex);
-		my_prolog = xstrdup(conf->task_prolog);
-		slurm_mutex_unlock(&conf->config_mutex);
+	if (slurm_conf.task_prolog)
 		_run_script_and_set_env("slurm task_prolog",
-					my_prolog, job);
-		xfree(my_prolog);
-	}
+					slurm_conf.task_prolog, job);
 	if (job->task_prolog) {
 		_run_script_and_set_env("user task_prolog",
 					job->task_prolog, job);
@@ -510,6 +506,18 @@ extern void exec_task(stepd_step_rec_t *job, int local_proc_id)
 		debug("Unable to set user limits");
 		log_fini();
 		_exit(5);
+	}
+
+	/*
+	 * If argv[0] ends with '/' it indicates that srun was called with
+	 * --bcast with destination dir instead of file name in this case
+	 *  default file name was created by _rpc_file_bcast, we have to follow
+	 *  the convention here.
+	 */
+	if (task->argv[0][strlen(task->argv[0]) - 1] == '/') {
+		xstrfmtcat(task->argv[0], "slurm_bcast_%"PRIu32".%"PRIu32"_%s",
+			   job->step_id.job_id, job->step_id.step_id,
+			   job->node_name);
 	}
 
 	execve(task->argv[0], task->argv, job->env);
@@ -578,30 +586,4 @@ _make_tmpdir(stepd_step_rec_t *job)
 	}
 
 	return;
-}
-
-/*
- * Return a string representation of an array of uint32_t elements.
- * Each value in the array is printed in decimal notation and elements
- * are separated by a comma.
- *
- * Returns an xmalloc'ed string.  Free with xfree().
- */
-static char *_uint32_array_to_str(int array_len, const uint32_t *array)
-{
-	int i;
-	char *sep = ",";  /* seperator */
-	char *str = xstrdup("");
-
-	if (array == NULL)
-		return str;
-
-	for (i = 0; i < array_len; i++) {
-
-		if (i == array_len-1) /* last time through loop */
-			sep = "";
-		xstrfmtcat(str, "%u%s", array[i], sep);
-	}
-
-	return str;
 }

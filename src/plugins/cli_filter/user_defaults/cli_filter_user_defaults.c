@@ -112,7 +112,6 @@ static int _set_default(slurm_opt_t *opt, bool early,
 	int n_tokens = 0, used_tokens = 0;
 	char *ptr, *search, *sv = NULL;
 	char *command = NULL, *cluster = NULL, *component = NULL;
-	char *my_cluster = slurm_get_cluster_name();
 
 	search = key;
 	/* sbatch:edison:constraint = ivybridge
@@ -149,18 +148,17 @@ static int _set_default(slurm_opt_t *opt, bool early,
 	}
 
 	if (cluster != NULL && cluster[0] != '*' &&
-	    xstrcmp(cluster, my_cluster)) {
+	    xstrcmp(cluster, slurm_conf.cluster_name)) {
 		/* if not for this cluster, exit */
 		goto cleanup;
 	}
 
 	slurm_option_set(opt, component, value, early);
 cleanup:
-	xfree(my_cluster);
 	return rc;
 }
 
-extern int setup_defaults(slurm_opt_t *opt, bool early)
+extern int cli_filter_p_setup_defaults(slurm_opt_t *opt, bool early)
 {
 	struct passwd pwd, *result;
 	char buffer[PW_BUF_SIZE];
@@ -220,12 +218,12 @@ extern int setup_defaults(slurm_opt_t *opt, bool early)
 	return SLURM_SUCCESS;
 }
 
-extern int pre_submit(slurm_opt_t *opt, int offset)
+extern int cli_filter_p_pre_submit(slurm_opt_t *opt, int offset)
 {
 	return SLURM_SUCCESS;
 }
 
-extern int post_submit(int offset, uint32_t jobid, uint32_t stepid)
+extern int cli_filter_p_post_submit(int offset, uint32_t jobid, uint32_t stepid)
 {
 	return SLURM_SUCCESS;
 }

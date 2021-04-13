@@ -37,27 +37,38 @@
 #include "select_cons_tres.h"
 #include "../cons_common/dist_tasks.h"
 
-/* At tasks_per_node limit for given node */
-static bool _at_tpn_limit(const uint32_t n, const job_record_t *job_ptr,
+/*
+ * Check if we're at job tasks_per_node limit for a given node when allocating
+ * tasks to a node.
+ *
+ * RETURNS rc
+ *  rc > 0 if tpn limit exceeded
+ *  rc == 0 if exactly at tpn limit
+ *  rc < 0 if not at limit yet
+ */
+static int _at_tpn_limit(const uint32_t n, const job_record_t *job_ptr,
 			  const char *tag, bool log_error)
 {
 	const job_resources_t *job_res = job_ptr->job_resrcs;
 	const log_level_t log_lvl = log_error ? LOG_LEVEL_ERROR :
 						LOG_LEVEL_INFO;
+	int rc = -1;
 
+	/* Special case where no limit is imposed - no overcommit */
 	if (job_ptr->details->ntasks_per_node == 0)
-		return false;
+		return rc;
 
-	if (job_res->tasks_per_node[n] < job_ptr->details->ntasks_per_node)
-		return false;
+	rc = job_res->tasks_per_node[n] - job_ptr->details->ntasks_per_node;
 
-	if (log_error || (select_debug_flags & DEBUG_FLAG_SELECT_TYPE))
+	/* Limit exceeded */
+	if ((rc > 0) && (log_error || (slurm_conf.debug_flags &
+				       DEBUG_FLAG_SELECT_TYPE)))
 		log_var(log_lvl,
-			"%s: %s over tasks_per_node for %pJ node:%u task_per_node:%d max:%" PRIu16,
-			__func__, tag, job_ptr, n, job_res->tasks_per_node[n],
+			"%s over tasks_per_node for %pJ node:%u task_per_node:%d max:%" PRIu16,
+			tag, job_ptr, n, job_res->tasks_per_node[n],
 			job_ptr->details->ntasks_per_node);
 
-	return true;
+	return rc;
 }
 
 /*
@@ -88,8 +99,8 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	bool log_over_subscribe = true;
 	char *err_msg = NULL;
 	uint16_t *vpus;
-	bool space_remaining = false;
-	bool test_tres_tasks = true;
+	bool space_remaining;
+	bool test_tres_tasks;
 	int i, i_first, i_last, rem_cpus, rem_tasks;
 
 	if (!job_res)
@@ -99,8 +110,8 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	else if (!job_res->nhosts)
 		err_msg = "job_res->nhosts is zero";
 	if (err_msg) {
-		error("%s: %s: Invalid allocation for %pJ: %s",
-		      plugin_type, __func__, job_ptr, err_msg);
+		error("Invalid allocation for %pJ: %s",
+		      job_ptr, err_msg);
 		return SLURM_ERROR;
 	}
 
@@ -137,8 +148,8 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	 * CPUs than cpus_per_task or didn't specify the number.
 	 */
 	if (!maxtasks) {
-		error("%s: %s: changing task count from 0 to 1 for %pJ",
-		      plugin_type, __func__, job_ptr);
+		error("changing task count from 0 to 1 for %pJ",
+		      job_ptr);
 		maxtasks = 1;
 	}
 	if (job_ptr->details->cpus_per_task == 0)
@@ -149,7 +160,7 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	space_remaining = false;
 	tid = 0;
 	for (n = 0; ((n < job_res->nhosts) && (tid < maxtasks)); n++) {
-		if (avail_cpus[n] || over_subscribe) {
+		if (avail_cpus[n]) {
 			/* Ignore gres_task_limit for first task per node */
 			tid++;
 			job_res->tasks_per_node[n]++;
@@ -171,16 +182,14 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 		if (rem_tasks == 0)
 			continue;
 		for (t = 0; ((t < rem_tasks) && (tid < maxtasks)); t++) {
-			if (!over_subscribe &&
-			    ((avail_cpus[n] - job_res->cpus[n]) <
+			if (((avail_cpus[n] - job_res->cpus[n]) <
 			     job_ptr->details->cpus_per_task))
 				break;
-			if (!over_subscribe &&
-			    !dist_tasks_tres_tasks_avail(
+			if (!dist_tasks_tres_tasks_avail(
 				    gres_task_limit, job_res, n))
 				break;
-			if (!over_subscribe &&
-			    _at_tpn_limit(n, job_ptr, "fill allocated", false))
+			if (_at_tpn_limit(n, job_ptr, "fill allocated",
+					  false) >= 0)
 				break;
 			tid++;
 			job_res->tasks_per_node[n]++;
@@ -200,19 +209,20 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	 * tasks on node 0, 7 tasks on node 1, and 6 tasks on node 2.  It should
 	 * launch 8 tasks on node, 8 tasks on node 1, and 4 tasks on node 2.
 	 */
-	if (job_ptr->details->overcommit && (job_ptr->tres_per_task == 0))
+	if (job_ptr->details->overcommit && !job_ptr->tres_per_task)
 		maxtasks = 0;	/* Allocate have one_task_per_node */
-	for (i = 0; tid < maxtasks; i++) {
+	while (tid < maxtasks) {
 		bool space_remaining = false;
-		if (over_subscribe && log_over_subscribe) {
+		int over_limit = -1;
+		if (over_subscribe && log_over_subscribe && (over_limit > 0)) {
 			/*
 			 * 'over_subscribe' is a relief valve that guards
 			 * against an infinite loop, and it *should* never
 			 * come into play because maxtasks should never be
 			 * greater than the total number of available CPUs
 			 */
-			error("%s: %s: oversubscribe for %pJ",
-			      plugin_type, __func__, job_ptr);
+			error("oversubscribe for %pJ",
+			      job_ptr);
 			log_over_subscribe = false;	/* Log once per job */;
 		}
 		for (n = 0; ((n < job_res->nhosts) && (tid < maxtasks)); n++) {
@@ -227,9 +237,11 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 						    gres_task_limit,
 						    job_res, n))
 						break;
-					if (_at_tpn_limit(n, job_ptr,
-							  "fill additional",
-							  false))
+					over_limit = _at_tpn_limit(
+						n, job_ptr,
+						"fill additional",
+						false);
+					if (over_limit >= 0)
 						break;
 				}
 
@@ -257,6 +269,7 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 	 * Distribute any remaining tasks (without dedicated CPUs) evenly
 	 * across nodes
 	 */
+	test_tres_tasks = true;
 	while (tid < maxtasks) {
 		bool more_tres_tasks = false;
 		for (n = 0; ((n < job_res->nhosts) && (tid < maxtasks)); n++) {
@@ -266,7 +279,7 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 					continue;
 				if (_at_tpn_limit(n, job_ptr,
 						  "fill non-dedicated CPUs",
-						  true))
+						  true) >= 0)
 					continue;
 			}
 
@@ -276,8 +289,8 @@ extern int dist_tasks_compute_c_b(job_record_t *job_ptr,
 		}
 		if (!more_tres_tasks) {
 			if (!test_tres_tasks) {
-				error("%s: failed to find additional placement for task %u for %pJ",
-				      __func__, tid, job_ptr);
+				error("failed to find additional placement for task %u for %pJ",
+				      tid, job_ptr);
 				return SLURM_ERROR;
 			} else
 				test_tres_tasks = false;

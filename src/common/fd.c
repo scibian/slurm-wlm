@@ -35,7 +35,6 @@
  *  Refer to "fd.h" for documentation on public functions.
 \*****************************************************************************/
 
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -180,7 +179,6 @@ static pid_t fd_test_lock(int fd, int type)
 	return(lock.l_pid);
 }
 
-
 /* Wait for a file descriptor to be readable (up to time_limit seconds).
  * Return 0 when readable or -1 on error */
 extern int wait_fd_readable(int fd, int time_limit)
@@ -254,25 +252,27 @@ extern int fsync_and_close(int fd, const char *file_type)
 	return rc;
 }
 
+/*
+ * Attempt to expand symlink for the specified file descriptor.
+ *
+ * The caller should deallocate the returned string using xfree().
+ *
+ * IN fd - file descriptor to resolve symlink from
+ * RET ptr to a string containing the resolved symlink or NULL if failure.
+ */
 extern char *fd_resolve_path(int fd)
 {
-	char *resolved = NULL;
+	char *resolved = NULL, *ret = NULL;
 	char *path = NULL;
 
 #if defined(__linux__)
-	struct stat sb = {0};
-
 	path = xstrdup_printf("/proc/self/fd/%u", fd);
-	if (lstat(path, &sb) == -1) {
-		debug("%s: unable to lstat(%s): %m", __func__, path);
+	ret = realpath(path, NULL);
+	if (!ret) {
+		debug("%s: realpath(%s) failed: %m", __func__,  path);
 	} else {
-		size_t name_len = sb.st_size + 1;
-		resolved = xmalloc(name_len);
-		if (readlink(path, resolved, name_len) <= 0) {
-			debug("%s: unable to readlink(%s): %m",
-			      __func__, path);
-			xfree(resolved);
-		}
+		resolved = xstrdup(ret);
+		free(ret);
 	}
 #endif
 
@@ -313,16 +313,21 @@ extern char *poll_revents_to_str(const short revents)
 	return txt;
 }
 
-/* pass an open file descriptor back to the parent process */
+/* pass an open file descriptor back to the requesting process */
 extern void send_fd_over_pipe(int socket, int fd)
 {
 	struct msghdr msg = { 0 };
 	struct cmsghdr *cmsg;
 	char buf[CMSG_SPACE(sizeof(fd))];
+	char c;
+	struct iovec iov[1];
+
 	memset(buf, '\0', sizeof(buf));
 
-	msg.msg_iov = NULL;
-	msg.msg_iovlen = 0;
+	iov[0].iov_base = &c;
+	iov[0].iov_len = sizeof(c);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = sizeof(c);
 	msg.msg_control = buf;
 	msg.msg_controllen = sizeof(buf);
 
@@ -338,15 +343,20 @@ extern void send_fd_over_pipe(int socket, int fd)
 		error("%s: failed to send fd: %m", __func__);
 }
 
-/* receive an open file descriptor from fork()'d child over unix socket */
+/* receive an open file descriptor over unix socket */
 extern int receive_fd_over_pipe(int socket)
 {
 	struct msghdr msg = {0};
 	struct cmsghdr *cmsg;
 	int fd;
-	msg.msg_iov = NULL;
-	msg.msg_iovlen = 0;
 	char c_buffer[256];
+	char c;
+	struct iovec iov[1];
+
+	iov[0].iov_base = &c;
+	iov[0].iov_len = sizeof(c);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = sizeof(c);
 	msg.msg_control = c_buffer;
 	msg.msg_controllen = sizeof(c_buffer);
 

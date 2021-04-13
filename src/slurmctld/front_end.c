@@ -93,7 +93,7 @@ static Buf _open_front_end_state_file(char **state_file)
 {
 	Buf buf;
 
-	*state_file = xstrdup(slurmctld_conf.state_save_location);
+	*state_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat(*state_file, "/front_end_state");
 
 	if (!(buf = create_mmap_buf(*state_file)))
@@ -493,7 +493,7 @@ extern void restore_front_end_state(int recover)
 #ifdef HAVE_FRONT_END
 	slurm_conf_frontend_t *slurm_conf_fe_ptr;
 	ListIterator iter;
-	uint32_t state_base, state_flags, tree_width;
+	uint32_t state_base, state_flags;
 	int i;
 
 	last_front_end_update = time(NULL);
@@ -582,7 +582,7 @@ extern void restore_front_end_state(int recover)
 		if (slurm_conf_fe_ptr->port)
 			front_end_nodes[i].port = slurm_conf_fe_ptr->port;
 		else
-			front_end_nodes[i].port = slurmctld_conf.slurmd_port;
+			front_end_nodes[i].port = slurm_conf.slurmd_port;
 		slurm_set_addr(&front_end_nodes[i].slurm_addr,
 			       front_end_nodes[i].port,
 			       front_end_nodes[i].comm_name);
@@ -590,12 +590,11 @@ extern void restore_front_end_state(int recover)
 	list_iterator_destroy(iter);
 	if (front_end_node_cnt == 0)
 		fatal("No front end nodes defined");
-	tree_width = slurm_get_tree_width();
-	if (front_end_node_cnt > tree_width) {
+	if (front_end_node_cnt > slurm_conf.tree_width) {
 		fatal("front_end_node_cnt > tree_width (%u > %u)",
-		      front_end_node_cnt, tree_width);
+		      front_end_node_cnt, slurm_conf.tree_width);
 	}
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_FRONT_END)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_FRONT_END)
 		log_front_end_state();
 #endif
 }
@@ -692,11 +691,11 @@ extern int dump_all_front_end_state(void)
 		_dump_front_end_state(front_end_ptr, buffer);
 	}
 
-	old_file = xstrdup (slurmctld_conf.state_save_location);
+	old_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat (old_file, "/front_end_state.old");
-	reg_file = xstrdup (slurmctld_conf.state_save_location);
+	reg_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat (reg_file, "/front_end_state");
-	new_file = xstrdup (slurmctld_conf.state_save_location);
+	new_file = xstrdup(slurm_conf.state_save_location);
 	xstrcat (new_file, "/front_end_state.new");
 	unlock_slurmctld (node_read_lock);
 
@@ -923,7 +922,7 @@ extern void set_front_end_down (front_end_record_t *front_end_ptr,
 		xfree(front_end_ptr->reason);
 		front_end_ptr->reason = xstrdup(reason);
 		front_end_ptr->reason_time = now;
-		front_end_ptr->reason_uid = slurmctld_conf.slurm_user_id;
+		front_end_ptr->reason_uid = slurm_conf.slurm_user_id;
 	}
 	last_front_end_update = now;
 #endif
@@ -1000,7 +999,7 @@ extern void sync_front_end_state(void)
 		}
 	}
 
-	if (slurmctld_conf.debug_flags & DEBUG_FLAG_FRONT_END)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_FRONT_END)
 		log_front_end_state();
 #endif
 }

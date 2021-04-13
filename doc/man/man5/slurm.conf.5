@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "October 2020" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "March 2021" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -92,7 +92,7 @@ daemon is required (not just a "scontrol reconfig").
 
 .TP
 \fBAccountingStorageExternalHost\fR
-A comma separated list of external slurmdbds (<host/ip>[:port][,...]) to
+A comma-separated list of external slurmdbds (<host/ip>[:port][,...]) to
 register with. If no port is given, the \fBAccountingStoragePort\fR will be
 used.
 
@@ -110,10 +110,27 @@ Only used with systems using SlurmDBD, ignored otherwise.
 Also see \fBDefaultStorageHost\fR.
 
 .TP
-\fBAccountingStorageLoc\fR
-The fully qualified file name where accounting records are written
-when the \fBAccountingStorageType\fR is "accounting_storage/filetxt".
-Also see \fBDefaultStorageLoc\fR.
+\fBAccountingStorageParameters\fR
+Comma-separated list of key-value pair parameters. Currently
+supported values include options to establish a secure connection to the
+database:
+.RS
+.TP 2
+\fBSSL_CERT\fR
+The path name of the client public key certificate file.
+.TP
+\fBSSL_CA\fR
+The path name of the Certificate Authority (CA) certificate file.
+.TP
+\fBSSL_CAPATH\fR
+The path name of the directory that contains trusted SSL CA certificate files.
+.TP
+\fBSSL_KEY\fR
+The path name of the client private key file.
+.TP
+\fBSSL_CIPHER\fR
+The list of permissible ciphers for SSL encryption.
+.RE
 
 .TP
 \fBAccountingStoragePass\fR
@@ -140,7 +157,7 @@ Also see \fBDefaultStoragePort\fR.
 
 .TP
 \fBAccountingStorageTRES\fR
-Comma separated list of resources you wish to track on the cluster.
+Comma-separated list of resources you wish to track on the cluster.
 These are the resources requested by the sbatch/srun job when it
 is submitted. Currently this consists of any GRES, BB (burst buffer) or
 license along with CPU, Memory, Node, Energy, FS/[Disk|Lustre], IC/OFED, Pages,
@@ -174,18 +191,13 @@ may be desired in order to force jobs to explicitly specify some GPU type.
 .TP
 \fBAccountingStorageType\fR
 The accounting storage mechanism type.  Acceptable values at
-present include "accounting_storage/filetxt", "accounting_storage/none"
-and "accounting_storage/slurmdbd".  The
-"accounting_storage/filetxt" value indicates that accounting records
-will be written to the file specified by the
-\fBAccountingStorageLoc\fR parameter.
+present include "accounting_storage/none"
+and "accounting_storage/slurmdbd".
 The "accounting_storage/slurmdbd" value indicates that accounting records
 will be written to the Slurm DBD, which manages an underlying MySQL
 database. See "man slurmdbd" for more information.  The
 default value is "accounting_storage/none" and indicates that account
 records are not maintained.
-Note: The filetxt plugin records only a limited subset of accounting
-information and will prevent some sacct options from proper operation.
 Also see \fBDefaultStorageType\fR.
 
 .TP
@@ -234,14 +246,18 @@ No energy consumption data is collected.
 Energy consumption data is collected from the Baseboard Management Controller
 (BMC) using the Intelligent Platform Management Interface (IPMI).
 .TP
-\fBacct_gather_energy/xcc\fR
-Energy consumption data is collected from the Lenovo SD650 XClarity Controller
-(XCC) using IPMI OEM raw commands.
+\fBacct_gather_energy/pm_counters\fR
+Energy consumption data is collected from the Baseboard Management
+Controller (BMC) for HPE Cray systems.
 .TP
 \fBacct_gather_energy/rapl\fR
 Energy consumption data is collected from hardware sensors using the Running
 Average Power Limit (RAPL) mechanism. Note that enabling RAPL may require the
 execution of the command "sudo modprobe msr".
+.TP
+\fBacct_gather_energy/xcc\fR
+Energy consumption data is collected from the Lenovo SD650 XClarity Controller
+(XCC) using IPMI OEM raw commands.
 .RE
 
 .TP
@@ -329,8 +345,32 @@ value for this option is "YES" for Cray systems and "NO" for other system types.
 
 .TP
 \fBAuthAltTypes\fR
-Comma separated list of alternative authentication plugins that the slurmctld
-will permit for communication. Acceptable values at present include "auth/jwt".
+Comma-separated list of alternative authentication plugins that the slurmctld
+will permit for communication. Acceptable values at present include
+\fIauth/jwt\fR.
+
+\fBNOTE\fR: \fIauth/jwt\fR requires a jwt_hs256.key to be populated in the
+\fBStateSaveLocation\fR directory for \fBslurmctld\fR only. The jwt_hs256.key
+should only be visible to the SlurmUser and root. It is not suggested to place
+the jwt_hs256.key on any nodes but the controller running \fBslurmctld\fR.
+\fIauth/jwt\fR can be activated by the presence of the \fISLURM_JWT\fR
+environment variable.  When activated, it will override the default
+\fBAuthType\fR.
+
+.TP
+\fBAuthAltParameters\fR
+Used to define alternative authentication plugins options. Multiple options may
+be comma separated.
+.RS
+.TP 15
+\fBdisable_token_creation\fR
+Disable "scontrol token" use by non-SlurmUser accounts.
+.TP
+\fBjwt_key=\fR
+Absolute path to JWT key file. Key must be HS256, and should only be accessible
+by SlurmUser. If not set, the default key file is jwt_hs256.key in
+\fIStateSaveLocation\fR.
+.RE
 
 .TP
 \fBAuthInfo\fR
@@ -436,7 +476,7 @@ be lower case.
 
 .TP
 \fBCommunicationParameters\fR
-Comma separated options identifying communication options.
+Comma-separated options identifying communication options.
 .RS
 .TP 15
 \fBCheckGhalQuiesce\fR
@@ -444,11 +484,21 @@ Used specifically on a Cray using an Aries Ghal interconnect.  This will check
 to see if the system is quiescing when sending a message, and if so, we wait
 until it is done before sending.
 .TP
-\fBNoAddrCache\fR By default, Slurm will cache a node's network address after
-successfully establishing the node's network address. This option disables the
-cache and Slurm will look up the node's network address each time a connection
-is made. This is useful, for example, in a cloud environment where the node
-addresses come and go out of DNS.
+\fBDisableIPv4\fR
+Disable IPv4 only operation for all slurm daemons (except slurmdbd). This
+should also be set in your \fBslurmdbd.conf\fR file.
+.TP
+\fBEnableIPv6\fR
+Enable using IPv6 addresses for all slurm daemons (except slurmdbd). When
+using both IPv4 and IPv6, address family preferences will be based on your
+/etc/gai.conf file. This should also be set in your \fBslurmdbd.conf\fR file.
+.TP
+\fBNoAddrCache\fR
+By default, Slurm will cache a node's network address after successfully
+establishing the node's network address. This option disables the cache and
+Slurm will look up the node's network address each time a connection is made.
+This is useful, for example, in a cloud environment where the node addresses
+come and go out of DNS.
 .TP
 \fBNoCtldInAddrAny\fR
 Used to directly bind to the address of what the node resolves to running
@@ -460,6 +510,7 @@ Used to directly bind to the address of what the node resolves to instead
 of binding messages to any address on the node which is the default.
 This option is for all daemons/clients except for the slurmctld.
 .RE
+
 
 .TP
 \fBCompleteWait\fR
@@ -556,16 +607,16 @@ The cryptographic signature tool to be used in the creation of
 job step credentials.
 The slurmctld daemon must be restarted for a change in \fBCredType\fR
 to take effect.
-Acceptable values at present include "cred/munge".
+Acceptable values at present include "cred/munge" and "cred/none".
 The default value is "cred/munge" and is the recommended.
 
 .TP
 \fBDebugFlags\fR
 Defines specific subsystems which should provide more detailed event logging.
 Multiple subsystems can be specified with comma separators.
-Most DebugFlags will result in verbose logging for the identified subsystems
-and could impact performance.
-Valid subsystems available today (with more to come) include:
+Most DebugFlags will result in verbose-level logging for the identified
+subsystems, and could impact performance.
+Valid subsystems available include:
 .RS
 .TP 17
 \fBAccrue\fR
@@ -630,6 +681,9 @@ License management details
 \fBNetwork\fR
 Network details
 .TP
+\fBNetworkRaw\fR
+Dump raw hex values of key Network communications. Warning: very verbose.
+.TP
 \fBNodeFeatures\fR
 Node Features plugin debug info
 .TP
@@ -655,7 +709,7 @@ Communication protocol details
 Advanced reservations
 .TP
 \fBRoute\fR
-Message forwarding and message aggregation debug info
+Message forwarding debug info
 .TP
 \fBSelectType\fR
 Resource selection plugin
@@ -730,10 +784,9 @@ defined.
 
 .TP
 \fBDefaultStorageLoc\fR
-The fully qualified file name where accounting records and/or job
-completion records are written when the \fBDefaultStorageType\fR is
-"filetxt".
-Also see \fBAccountingStorageLoc\fR and \fBJobCompLoc\fR.
+The fully qualified file name where job completion records are written
+when the \fBDefaultStorageType\fR is "filetxt".
+Also see \fBJobCompLoc\fR.
 
 .TP
 \fBDefaultStoragePass\fR
@@ -768,7 +821,7 @@ Also see \fBAccountingStorageUser\fR and \fBJobCompUser\fR.
 
 .TP
 \fBDependencyParameters\fR
-Multiple options may be comma-separated.
+Multiple options may be comma separated.
 
 .RS
 .TP
@@ -1050,6 +1103,13 @@ responsible for the job).
 The default value is unlimited (zero) and may not exceed 65533 seconds.
 
 .TP
+\fBInteractiveStepOptions\fR
+When LaunchParameters=use_interactive_step is enabled, launching salloc will
+automatically start an srun process with InteractiveStepOptions to launch
+a terminal on a node in the job allocation.
+The default value is "--interactive --preserve-env --pty $SHELL".
+
+.TP
 \fBJobAcctGatherType\fR
 The job accounting mechanism type.
 Acceptable values at present include "jobacct_gather/linux" (for Linux
@@ -1163,15 +1223,11 @@ Also see \fBDefaultStorageHost\fR.
 The fully qualified file name where job completion records are written
 when the \fBJobCompType\fR is "jobcomp/filetxt" or the database where
 job completion records are stored when the \fBJobCompType\fR is a
-database, or an url with format http://yourelasticserver:port when
-\fBJobCompType\fR is "jobcomp/elasticsearch".
-NOTE: when you specify a URL for Elasticsearch, Slurm will remove any trailing
-slashes "/" from the configured URL and append "/slurm/jobcomp", which are the
-Elasticsearch index name type respectively. Since Elasticsearch 8.0 the APIs
-that accept types are removed. Future versions of Slurm will allow this option
-to specify a fully configured URL endpoint.
+database, or a complete URL endpoint with format <host>:<port>/<target>/_doc
+when \fBJobCompType\fR is "jobcomp/elasticsearch" like i.e.
+"localhost:9200/slurm/_doc".
 NOTE: More information is available at the Slurm web site
-( https://slurm.schedmd.com/elasticsearch.html ).
+<https://slurm.schedmd.com/elasticsearch.html>.
 Also see \fBDefaultStorageLoc\fR.
 
 .TP
@@ -1356,10 +1412,19 @@ only take effect for newly launched jobs.
 Sort NUMA memory at step start. User can override this default with
 SLURM_MEM_BIND environment variable or \-\-mem\-bind=nosort command line option.
 .TP
+\fBmpir_use_nodeaddr\fR
+When launching tasks Slurm creates entries in MPIR_proctable that are used by
+parallel debuggers, profilers, and related tools to attach to running process.
+By default the MPIR_proctable entries contain MPIR_procdesc structures where
+the host_name is set to NodeName by default. If this option is specified,
+NodeAddr will be used in this context instead.
+.TP
 \fBdisable_send_gids\fR
-By default the slurmctld will lookup and send the user_name and extended gids
-for a job, rather than individual on each node as part of each task launch. Which avoids issues around name service scalability when launching jobs involving
-many nodes.  Using this option will reverse this functionality.
+By default, the slurmctld will look up and send the user_name and extended gids
+for a job, rather than independently on each node as part of each task launch.
+This helps mitigate issues around name service scalability when launching jobs
+involving many nodes. Using this option will disable this functionality. This
+option is ignored if enable_nss_slurm is specified.
 .TP 24
 \fBslurmstepd_memlock\fR
 Lock the slurmstepd process's current memory in RAM.
@@ -1371,6 +1436,14 @@ Lock the slurmstepd process's current and future memory in RAM.
 Have srun verify existence of the executable program along with user
 execute permission on the node where srun was called before attempting to
 launch it on nodes in the step.
+.TP
+\fBuse_interactive_step\fR
+Have salloc use the Interactive Step to launch a shell on an allocated compute
+node rather than locally to wherever salloc was invoked. This is accomplished
+by launching the srun command with InteractiveStepOptions as options.
+
+This does not affect salloc called with a command as an argument. These jobs
+will continue to be executed as the calling user on the calling host.
 .RE
 
 .TP
@@ -1606,7 +1679,7 @@ A value of "UNLIMITED" is also supported.
 Identifies the places in which to look for Slurm plugins.
 This is a colon\-separated list of directories, like the PATH
 environment variable.
-The default value is "/usr/local/lib/slurm".
+The default value is the prefix given at configure time + "/lib/slurm".
 
 .TP
 \fBPlugStackConfig\fR
@@ -1767,6 +1840,7 @@ the first identified component of the job with the highest order PreemptMode
 (\fBSUSPEND\fR (highest), \fBREQUEUE\fR, \fBCANCEL\fR (lowest)) will be
 used to set the PreemptMode for all components. The \fBGraceTime\fR and user
 warning signal for each component of the heterogeneous job remain unique.
+Heterogeneous jobs are excluded from GANG scheduling operations.
 .RS
 .TP 12
 \fBOFF\fR
@@ -1792,6 +1866,9 @@ PriorityTier partitions you will need overlapping partitions, and
 \fBPreemptMode=SUSPEND,GANG\fR to use the Gang scheduler to resume the suspended
 jobs(s).
 In any case, time-slicing won't happen between jobs on different partitions.
+
+\fBNOTE:\fR
+Heterogeneous jobs are excluded from GANG scheduling operations.
 .TP
 \fBREQUEUE\fR
 Preempts jobs by requeuing them (if possible) or canceling them.
@@ -1851,6 +1928,18 @@ option.
 A time of -1 disables the option, equivalent to 0. Acceptable time formats
 include "minutes", "minutes:seconds", "hours:minutes:seconds", "days\-hours",
 "days\-hours:minutes", and "days\-hours:minutes:seconds".
+
+.TP
+\fBPrEpParameters\fR
+Parameters to be passed to the \fBPrEpPlugins\fR.
+
+.TP
+\fBPrEpPlugins\fR
+A resource for programmers wishing to write their own plugins for the Prolog and
+Epilog (PrEp) scripts. The default, and currently the only implemented plugin is
+\fIprep/script\fR. Additional plugins can be specified in a comma-separated
+list. For more information please see the PrEp Plugin API documentation page:
+<https://slurm.schedmd.com/prep_plugins.html>
 
 .TP
 \fBPriorityCalcPeriod\fR
@@ -1922,7 +2011,7 @@ priority.
 .TP
 \fBNO_NORMAL_PART\fR
 If set, the partition factor is not normalized against the highest partition
-\fBPriorityTier\fR.
+\fBPriorityJobFactor\fR.
 .TP
 \fBNO_NORMAL_QOS\fR
 If set, the QOS factor is not normalized against the highest qos priority.
@@ -2066,7 +2155,7 @@ The default value is 0.
 
 .TP
 \fBPriorityWeightTRES\fR
-A comma separated list of TRES Types and weights that sets the degree that each
+A comma-separated list of TRES Types and weights that sets the degree that each
 TRES Type contributes to the job's priority.
 
 .nf
@@ -2283,7 +2372,7 @@ the tasks scheduling priority will be lower than the slurm daemon).
 
 .TP
 \fBPropagateResourceLimits\fR
-A list of comma separated resource limit names.
+A comma-separated list of resource limit names.
 The slurmd daemon uses these names to obtain the associated (soft) limit
 values from the user's process environment on the submit node.
 These limits are then propagated and applied to the jobs that
@@ -2346,7 +2435,7 @@ The maximum stack size
 
 .TP
 \fBPropagateResourceLimitsExcept\fR
-A list of comma separated resource limit names.
+A comma-separated list of resource limit names.
 By default, all resource limits will be propagated, (as described by
 the \fBPropagateResourceLimits\fR parameter), except for the limits
 appearing in this list.   The user can override this by specifying which
@@ -2528,7 +2617,7 @@ etc. are equal to or greater than the values configured in slurm.conf.
 .TP
 \fBRoutePlugin\fR
 Identifies the plugin to be used for defining which nodes will be used
-for message forwarding and message aggregation.
+for message forwarding.
 .RS
 .TP
 \fBroute/default\fR
@@ -2538,52 +2627,6 @@ default, use TreeWidth.
 use the switch hierarchy defined in a \fItopology.conf\fR file.
 TopologyPlugin=topology/tree is required.
 .RE
-
-.TP
-\fBSallocDefaultCommand\fR
-Normally, \fBsalloc\fR(1) will run the user's default shell when
-a command to execute is not specified on the \fBsalloc\fR command line.
-If \fBSallocDefaultCommand\fR is specified, \fBsalloc\fR will instead
-run the configured command. The command is passed to '/bin/sh \-c', so
-shell metacharacters are allowed, and commands with multiple arguments
-should be quoted. For instance:
-
-.nf
-    SallocDefaultCommand = "$SHELL"
-.fi
-
-would run the shell in the user's $SHELL environment variable.
-and
-
-.nf
-    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
-.fi
-
-would run spawn the user's default shell on the allocated resources, but not
-consume any of the CPU or memory resources, configure it as a pseudo\-terminal,
-and preserve all of the job's environment variables (i.e. and not over\-write
-them with the job step's allocation information).
-
-For systems with generic resources (GRES) defined, the \fBSallocDefaultCommand\fR
-value should explicitly specify a zero count for the configured GRES.
-Failure to do so will result in the launched shell consuming those GRES and
-preventing subsequent srun commands from using them, you can achieve that by:
-.nf
-    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-gres=NONE \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
-.fi
-
-For systems configured with \fBSelectPlugin=cons_tres\fR GPU resources may be
-requested on a per job, socket, task or node basis. To make sure that none
-is used when the \fBSallocDefaultCommand\fR requests job resources, you
-need to use a command like:
-.nf
-    SallocDefaultCommand = "srun \-n1 \-N1 \-\-mem\-per\-cpu=0 \-\-gres=NONE \-\-gpus=0 \-\-gpus-per-socket=0 \-\-gpus\-per\-task=0 \-\-pty \-\-preserve\-env \-\-mpi=none $SHELL"
-.fi
-
-For systems with TaskPlugin set, adding an option of "\-\-cpu\-bind=no" is
-recommended if the default shell should have access to all of the CPUs
-allocated to the job on that node, otherwise the shell may be limited to a
-single cpu or core.
 
 .TP
 \fBSbcastParameters\fR
@@ -2861,8 +2904,10 @@ This option is disabled by default.
 .TP
 \fBbf_resolution=#\fR
 The number of seconds in the resolution of data maintained about when jobs
-begin and end.
-Higher values result in less overhead and better responsiveness.
+begin and end. Higher values result in better responsiveness and quicker
+backfill cycles by using larger blocks of time to determine node eligibility.
+However, higher values lead to less efficient system planning, and may miss
+opportunities to improve system utilization.
 This option applies only to \fBSchedulerType=sched/backfill\fR.
 Default: 60, Min: 1, Max: 3600 (1 hour).
 .TP
@@ -2927,6 +2972,12 @@ If the system has a huge number of jobs with dependencies, just building the
 job queue can take so much time as to adversely impact overall system
 performance and this parameter can be adjusted as needed.
 The default value is 2,000,000 microseconds (2 seconds).
+.TP
+\fBcorrespond_after_task_cnt=#\fR
+Defines the number of array tasks that get split for potential aftercorr
+dependency check. Low number may result in dependent task check failures when
+the job one depends on gets purged before the split.
+Default: 10.
 .TP
 \fBdefault_queue_depth=#\fR
 The default number of jobs to attempt scheduling (i.e. the queue depth) when a
@@ -3221,6 +3272,15 @@ exists otherwise use the built\-in FIFO scheduler
 .RE
 
 .TP
+\fBScronParameters\fR
+Multiple options may be comma separated.
+.RS
+.TP
+\fBenable\fR
+Enable the use of scrontab to submit and manage periodic repeating jobs.
+.RE
+
+.TP
 \fBSelectType\fR
 Identifies the type of resource selection algorithm to be used.
 Changing this value can only be done by restarting the slurmctld daemon.
@@ -3241,6 +3301,13 @@ Note that whole nodes can be allocated to jobs for selected
 partitions by using the \fIOverSubscribe=Exclusive\fR option.
 See the partition \fBOverSubscribe\fR parameter for more information.
 .TP
+\fBselect/cons_tres\fR
+The resources (cores, memory, GPUs and all other trackable resources) within
+a node are individually allocated as consumable resources.
+Note that whole nodes can be allocated to jobs for selected
+partitions by using the \fIOverSubscribe=Exclusive\fR option.
+See the partition \fBOverSubscribe\fR parameter for more information.
+.TP
 \fBselect/cray_aries\fR
 for a Cray system.
 The default value is "select/cray_aries" for all Cray systems.
@@ -3255,13 +3322,6 @@ configured. Use of other topology plugins with select/linear and heterogeneous
 nodes is not recommended and may result in valid job allocation requests being
 rejected.
 This is the default value.
-.TP
-\fBselect/cons_tres\fR
-The resources (cores, memory, GPUs and all other trackable resources) within
-a node are individually allocated as consumable resources.
-Note that whole nodes can be allocated to jobs for selected
-partitions by using the \fIOverSubscribe=Exclusive\fR option.
-See the partition \fBOverSubscribe\fR parameter for more information.
 .RE
 
 .TP
@@ -3324,8 +3384,9 @@ Cores are consumable resources.
 On nodes with hyper\-threads, each thread is counted as a CPU to
 satisfy a job's resource requirement, but multiple jobs are not
 allocated threads on the same core.
-The count of CPUs allocated to a job may be rounded up to account for every
-CPU on an allocated core.
+The count of CPUs allocated to a job is rounded up to account for every
+CPU on an allocated core. This will also impact total allocated memory when
+--mem-per-cpu is used to be multiply of total number of CPUs on allocated cores.
 .TP
 \fBCR_Core_Memory\fR
 Cores and memory are consumable resources.
@@ -3395,38 +3456,6 @@ all partitions.
 Setting a value for \fBDefMemPerCPU\fR is strongly recommended.
 .RE
 .RE
-
-.TP
-\fBSlurmUser\fR
-The name of the user that the \fBslurmctld\fR daemon executes as.
-For security purposes, a user other than "root" is recommended.
-This user must exist on all nodes of the cluster for authentication
-of communications between Slurm components.
-The default value is "root".
-
-.TP
-\fBSlurmdParameters\fR
-Parameters specific to the Slurmd.
-Multiple options may be comma separated.
-.RS
-.TP
-\fBconfig_overrides\fR
-If set, consider the configuration of each node to be that specified in the
-slurm.conf configuration file and any node with less than the
-configured resources will \fBnot\fR be set DRAIN.
-This option is generally only useful for testing purposes.
-Equivalent to the now deprecated FastSchedule=2 option.
-.TP
-\fBshutdown_on_reboot\fR
-If set, the Slurmd will shut itself down when a reboot request is received.
-.RE
-
-.TP
-\fBSlurmdUser\fR
-The name of the user that the \fBslurmd\fR daemon executes as.
-This user must exist on all nodes of the cluster for authentication
-of communications between Slurm components.
-The default value is "root".
 
 .TP
 \fBSlurmctldAddr\fR
@@ -3507,7 +3536,7 @@ See the section \fBLOGGING\fR if a pathname is specified.
 
 .TP
 \fBSlurmctldParameters\fR
-Multiple options may be comma-separated.
+Multiple options may be comma separated.
 
 .RS
 .TP
@@ -3525,6 +3554,11 @@ slurm.conf, Slurm will tell the client command, after waiting for all nodes to
 boot, each node's ip address. However, in environments where the nodes are in
 DNS, this step can be avoided by configuring this option.
 .TP
+\fBcloud_reg_addrs\fR
+When a cloud node registers, the node's NodeAddr and NodeHostName will
+automatically be set. They will be reset back to the nodename after powering
+off.
+.TP
 \fBenable_configless\fR
 Permit "configless" operation by the slurmd, slurmstepd, and user commands.
 When enabled the slurmd will be permitted to retrieve config files from the
@@ -3535,8 +3569,17 @@ NOTE: a restart of the slurmctld is required for this to take effect.
 .TP
 \fBidle_on_node_suspend\fR
 Mark nodes as idle, regardless of current state, when suspending nodes with
-\fISuspendProgram\fB so that nodes will be eligible to be resumed at a later
+\fBSuspendProgram\fR so that nodes will be eligible to be resumed at a later
 time.
+.TP
+\fBpower_save_interval\fR
+How often the power_save thread looks to resume and suspend nodes. The
+power_save thread will do work sooner if there are node state changes. Default
+is 10 seconds.
+.TP
+\fBpower_save_min_interval\fR
+How often the power_save thread, at a minimun, looks to resume and suspend
+nodes. Default is 0.
 .TP
 \fBmax_dbd_msg_action\fR
 Action used once MaxDBDMsgs is reached, options are 'discard' (default) and 'exit'.
@@ -3563,6 +3606,9 @@ otherwise a SIGTERM will be sent to the tasks.
 \fBreboot_from_controller\fR
 Run the \fBRebootProgram\fR from the controller instead of on the slurmds. The
 RebootProgram will be passed a comma-separated list of nodes to reboot.
+.TP
+\fBuser_resv_delete\fR
+Allow any user able to run in a reservation to delete it.
 .RE
 
 .TP
@@ -3710,6 +3756,23 @@ Any "%n" within the name is replaced with the Slurm node name on which the
 See the section \fBLOGGING\fR if a pathname is specified.
 
 .TP
+\fBSlurmdParameters\fR
+Parameters specific to the Slurmd.
+Multiple options may be comma separated.
+.RS
+.TP
+\fBconfig_overrides\fR
+If set, consider the configuration of each node to be that specified in the
+slurm.conf configuration file and any node with less than the
+configured resources will \fBnot\fR be set DRAIN.
+This option is generally only useful for testing purposes.
+Equivalent to the now deprecated FastSchedule=2 option.
+.TP
+\fBshutdown_on_reboot\fR
+If set, the Slurmd will shut itself down when a reboot request is received.
+.RE
+
+.TP
 \fBSlurmdPidFile\fR
 Fully qualified pathname of a file into which the  \fBslurmd\fR daemon may write
 its process id. This may be used for automated signal processing.
@@ -3803,6 +3866,13 @@ The default value is 300 seconds.
 The value may not exceed 65533 seconds.
 
 .TP
+\fBSlurmdUser\fR
+The name of the user that the \fBslurmd\fR daemon executes as.
+This user must exist on all nodes of the cluster for authentication
+of communications between Slurm components.
+The default value is "root".
+
+.TP
 \fBSlurmSchedLogFile\fR
 Fully qualified pathname of the scheduling event logging file.
 The syntax of this parameter is the same as for \fBSlurmctldLogFile\fR.
@@ -3820,6 +3890,14 @@ If this parameter is omitted, the value defaults to "0" (disabled).
 In order to configure scheduler logging, set both the \fBSlurmSchedLogFile\fR
 and \fBSlurmSchedLogLevel\fR parameters.
 The scheduler logging level can be changed dynamically using \fBscontrol\fR.
+
+.TP
+\fBSlurmUser\fR
+The name of the user that the \fBslurmctld\fR daemon executes as.
+For security purposes, a user other than "root" is recommended.
+This user must exist on all nodes of the cluster for authentication
+of communications between Slurm components.
+The default value is "root".
 
 .TP
 \fBSrunEpilog\fR
@@ -3992,7 +4070,7 @@ See \fBTaskProlog\fR for execution order details.
 \fBTaskPlugin\fR
 Identifies the type of task launch plugin, typically used to provide
 resource management within a node (e.g. pinning tasks to specific
-processors). More than one task plugin can be specified in a comma separated
+processors). More than one task plugin can be specified in a comma-separated
 list. The prefix of "task/" is optional. Acceptable values include:
 .RS
 .TP 15
@@ -4011,6 +4089,7 @@ Lacks support for the \-\-cpu\-bind and/or \-\-mem\-bind srun options.
 The default value is "task/none".
 .RE
 
+.RS
 \fBNOTE:\fR It is recommended to stack \fBtask/affinity,task/cgroup\fR together
 when configuring TaskPlugin, and setting \fBTaskAffinity=no\fR and
 \fBConstrainCores=yes\fR in \fBcgroup.conf\fR. This setup uses the task/affinity
@@ -4020,10 +4099,12 @@ resources, thus combining the best of both pieces.
 
 \fBNOTE:\fR For CRAY systems only: task/cgroup must be used with, and listed
 \fBafter\fR task/cray_aries in TaskPlugin. The task/affinity plugin can be listed
-everywhere, but the previous constraint must be satisfied. So for CRAY systems,
+anywhere, but the previous constraint must be satisfied. For CRAY systems,
 a configuration like this is recommended:
-
+.nf
 TaskPlugin=task/affinity,task/cray_aries,task/cgroup
+.fi
+.RE
 
 .TP
 \fBTaskPluginParam\fR
@@ -4110,15 +4191,16 @@ Function in TaskPlugin
 \fB2. TaskProlog\fR
 System\-wide per task program defined in slurm.conf
 .TP
-\fB3. user prolog\fR
-Job step specific task program defined using
+\fB3. User prolog\fR
+Job-step-specific task program defined using
 \fBsrun\fR's \fB\-\-task\-prolog\fR option or \fBSLURM_TASK_PROLOG\fR
 environment variable
 .TP
-\fB4.\fR Execute the job step's task
+\fB4. Task\fR
+Execute the job step's task
 .TP
-\fB5. user epilog\fR
-Job step specific task program defined using
+\fB5. User epilog\fR
+Job-step-specific task program defined using
 \fBsrun\fR's \fB\-\-task\-epilog\fR option or \fBSLURM_TASK_EPILOG\fR
 environment variable
 .TP
@@ -4142,7 +4224,7 @@ The default value is "/tmp".
 
 .TP
 \fBTopologyParam\fR
-Comma separated options identifying network topology options.
+Comma-separated options identifying network topology options.
 .RS
 .TP 15
 \fBDragonfly\fR
@@ -4172,11 +4254,6 @@ Acceptable values include:
 .TP 21
 \fBtopology/3d_torus\fR
 best\-fit logic over three\-dimensional topology
-.TP
-\fBtopology/node_rank\fR
-orders nodes based upon information a node_rank field in the node record
-as generated by a select plugin. Slurm performs a best\-fit algorithm over
-those ordered nodes
 .TP
 \fBtopology/none\fR
 default for other systems, best\-fit logic over one\-dimensional topology
@@ -4272,6 +4349,12 @@ real memory limit).
 The default value is 0, which disables enforcement of virtual memory limits.
 The value may not exceed 65533 percent.
 
+\fBNOTE\fR: This parameter is dependent on \fBOverMemoryKill\fR being
+configured in \fBJobAcctGatherParams\fR. It is also possible
+to configure the \fBTaskPlugin\fR to use \fBtask/cgroup\fR for memory
+enforcement. \fBVSizeFactor\fR will not have an effect on memory enforcement
+done through cgroups.
+
 .TP
 \fBWaitTime\fR
 Specifies how many seconds the srun command should by default wait after
@@ -4290,7 +4373,7 @@ If set, xauth data on the compute node will be placed in \fB~/.Xauthority\fR
 rather than in a temporary file under \fBTmpFS\fR.
 .RE
 
-.LP
+.SH "NODE CONFIGURATION"
 The configuration of nodes (or machines) to be managed by Slurm is
 also specified in \fB/etc/slurm.conf\fR.
 Changes in node configuration (e.g. adding nodes, changing their
@@ -4345,7 +4428,7 @@ and/or a simple node range expression may optionally be used to
 specify numeric ranges of nodes to avoid building a configuration
 file with large numbers of entries.
 The node range expression can contain one  pair of square brackets
-with a sequence of comma separated numbers and/or ranges of numbers
+with a sequence of comma-separated numbers and/or ranges of numbers
 separated by a "\-" (e.g. "linux[0\-64,128]", or "lx[15,18,32\-33]").
 Note that the numeric ranges can include one or more leading
 zeros to indicate the numeric portion has a fixed number of digits
@@ -4354,7 +4437,7 @@ Multiple numeric ranges can be included in the expression
 (e.g. "rack[0\-63]_blade[0\-41]").
 If one or more numeric expressions are included, one of them
 must be at the end of the name (e.g. "unit[0\-31]rack" is invalid),
-but arbitrary names can always be used in a comma separated list.
+but arbitrary names can always be used in a comma-separated list.
 .LP
 The node configuration specified the following information:
 
@@ -4402,7 +4485,7 @@ By default, the \fBNodeHostname\fR will be identical in value to
 Name that a node should be referred to in establishing
 a communications path.
 This name will be used as an
-argument to the gethostbyname() function for identification.
+argument to the getaddrinfo() function for identification.
 If a node range expression is used to designate multiple nodes,
 they must exactly match the entries in the \fBNodeName\fR
 (e.g. "NodeName=lx[0\-7] NodeAddr=elx[0\-7]").
@@ -4413,7 +4496,7 @@ By default, the \fBNodeAddr\fR will be identical in value to
 .TP
 \fBBcastAddr\fR
 Alternate network path to be used for sbcast network traffic to a given node.
-This name will be used as an argument to the gethostbyname() function.
+This name will be used as an argument to the getaddrinfo() function.
 If a node range expression is used to designate multiple nodes,
 they must exactly match the entries in the \fBNodeName\fR
 (e.g. "NodeName=lx[0\-7] BcastAddr=elx[0\-7]").
@@ -4484,15 +4567,19 @@ This option has no effect unless cgroup job confinement is also configured
 (\fBTaskPlugin=task/cgroup\fR with \fBConstrainCores=yes\fR in cgroup.conf).
 
 .TP
-\fBFeature\fR
+\fBFeatures\fR
 A comma delimited list of arbitrary strings indicative of some
 characteristic associated with the node.
-There is no value associated with a feature at this time, a node
+There is no value or count associated with a feature at this time, a node
 either has a feature or it does not.
-If desired a feature may contain a numeric component indicating,
-for example, processor speed.
+A desired feature may contain a numeric component indicating,
+for example, processor speed but this numeric component will be considered to
+be part of the feature string. Features are intended to be used to filter nodes
+eligible to run jobs via the \fB--constraint\fR argument.
 By default a node has no features.
-Also see \fBGres\fR.
+Also see \fBGres\fR for being able to have more control such as types and
+count. Using features is faster than scheduling against GRES but is limited to
+Boolean operations.
 
 .TP
 \fBGres\fR
@@ -4514,7 +4601,7 @@ A suffix of "K", "M", "G", "T" or "P" may be used to multiply the number by
 (e.g."Gres=gpu:tesla:1,gpu:kepler:1,bandwidth:lustre:no_consume:4G").
 By default a node has no generic resources and its maximum count is
 that of an unsigned 64bit integer.
-Also see \fBFeature\fR.
+Also see \fBFeatures\fR for Boolean flags to filter nodes using job constraints.
 
 .TP
 \fBMemSpecLimit\fR
@@ -4586,14 +4673,14 @@ The default value is 1.
 .TP
 \fBState\fR
 State of the node with respect to the initiation of user jobs.
-Acceptable values are "CLOUD", "DOWN", "DRAIN", "FAIL", "FAILING", "FUTURE"
-and "UNKNOWN".
-Node states of "BUSY" and "IDLE" should not be specified in the node
-configuration, but set the node state to "UNKNOWN" instead.
-Setting the node state to "UNKNOWN" will result in the node state being set to
-"BUSY", "IDLE" or other appropriate state based upon recovered system state
-information.
-The default value is "UNKNOWN".
+Acceptable values are \fICLOUD\fR, \fIDOWN\fR, \fIDRAIN\fR, \fIFAIL\fR,
+\fIFAILING\fR, \fIFUTURE\fR and \fIUNKNOWN\fR.
+Node states of \fIBUSY\fR and \fIIDLE\fR should not be specified in the node
+configuration, but set the node state to \fIUNKNOWN\fR instead.
+Setting the node state to \fIUNKNOWN\fR will result in the node state being
+set to \fIBUSY\fR, \fIIDLE\fR or other appropriate state based upon recovered
+system state information.
+The default value is \fIUNKNOWN\fR.
 Also see the \fBDownNodes\fR parameter below.
 .RS
 .TP 10
@@ -4607,7 +4694,7 @@ state save file or the slurmd daemon starts on the compute node.
 Indicates the node failed and is unavailable to be allocated work.
 .TP
 \fBDRAIN\fP
-Indicates the node is unavailable to be allocated work.on.
+Indicates the node is unavailable to be allocated work.
 .TP
 \fBFAIL\fP
 Indicates the node is expected to fail soon, has
@@ -4627,12 +4714,30 @@ than restarting the slurmctld daemon. After these nodes are made available,
 change their \fRState\fR in the slurm.conf file. Until these nodes are made
 available, they will not be seen using any Slurm commands or nor will
 any attempt be made to contact them.
+
+.RS
+.TP
+\fBDynamic Future Nodes\fR
+A \fBslurmd\fR started with \-F[<feature>] will be associated with a FUTURE
+node that matches the same configuration (sockets, cores, threads) as reported
+by \fBslurmd\fR -C. The node's NodeAddr and NodeHostname will automatically be
+retrieved from the \fBslurmd\fR and will be cleared when set back to the FUTURE
+state. Dynamic FUTURE nodes retain non-FUTURE state on restart. Use scontrol to
+put node back into FUTURE state.
+
+If the mapping of the NodeName to the \fBslurmd\fR HostName is not updated in
+DNS, Dynamic Future nodes won't know how to communicate with each other --
+because NodeAddr and NodeHostName are not defined in the slurm.conf -- and the
+fanout communications need to be disabled by setting TreeWidth to a high number
+(e.g. 65533). If the DNS mapping is made, then the \fBcloud_dns\fR
+\fBSlurmctldParameter\fR can be used.
+.RE
+
 .TP
 \fBUNKNOWN\fP
-Indicates the node's state is undefined (BUSY or IDLE),
-but will be established when the \fBslurmd\fR daemon on that node
-registers.
-The default value is "UNKNOWN".
+Indicates the node's state is undefined but will be established
+(set to \fIBUSY\fR or \fIIDLE\fR) when the \fBslurmd\fR daemon on that
+node registers. \fIUNKNOWN\fR is the default state.
 .RE
 
 .TP
@@ -4667,7 +4772,8 @@ might be used to ensure the file system is kept clean.
 The default value is 0.
 
 .TP
-\fBTRESWeights\fR TRESWeights are used to calculate a value that represents how
+\fBTRESWeights\fR
+TRESWeights are used to calculate a value that represents how
 busy a node is. Currently only used in federation configurations. TRESWeights
 are different from TRESBillingWeights \-\- which is used for fairshare
 calculations.
@@ -4709,57 +4815,32 @@ value and they will be added to the pool of nodes being
 considered for scheduling individually.
 The default value is 1.
 
-.LP
-The "DownNodes=" configuration permits you to mark certain nodes as in a
-DOWN, DRAIN, FAIL, or FAILING state without altering the permanent
-configuration information listed under a "NodeName=" specification.
+.SH "DOWN NODE CONFIGURATION"
+The \fBDownNodes=\fR parameter permits you to mark certain nodes as in a
+\fIDOWN\fR, \fIDRAIN\fR, \fIFAIL\fR, \fIFAILING\fR or \fIFUTURE\fR state
+without altering the permanent configuration information listed under a
+\fBNodeName=\fR specification.
 
 .TP
 \fBDownNodes\fR
-Any node name, or list of node names, from the "NodeName=" specifications.
+Any node name, or list of node names, from the \fBNodeName=\fR specifications.
 
 .TP
 \fBReason\fR
-Identifies the reason for a node being in state "DOWN", "DRAIN",
-"FAIL" or "FAILING.
+Identifies the reason for a node being in state \fIDOWN\fR, \fIDRAIN\fR,
+\fIFAIL\fR, \fIFAILING\fR or \fIFUTURE\fR.
 \Use quotes to enclose a reason having more than one word.
 
 .TP
 \fBState\fR
 State of the node with respect to the initiation of user jobs.
-Acceptable values are "DOWN", "DRAIN", "FAIL", "FAILING" and "UNKNOWN".
-Node states of "BUSY" and "IDLE" should not be specified in the node
-configuration, but set the node state to "UNKNOWN" instead.
-Setting the node state to "UNKNOWN" will result in the node state being set to
-"BUSY", "IDLE" or other appropriate state based upon recovered system state
-information.
-The default value is "UNKNOWN".
-.RS
-.TP 10
-\fBDOWN\fP
-Indicates the node failed and is unavailable to be allocated work.
-.TP
-\fBDRAIN\fP
-Indicates the node is unavailable to be allocated work.on.
-.TP
-\fBFAIL\fP
-Indicates the node is expected to fail soon, has
-no jobs allocated to it, and will not be allocated
-to any new jobs.
-.TP
-\fBFAILING\fP
-Indicates the node is expected to fail soon, has
-one or more jobs allocated to it, but will not be allocated
-to any new jobs.
-.TP
-\fBUNKNOWN\fP
-Indicates the node's state is undefined (BUSY or IDLE),
-but will be established when the \fBslurmd\fR daemon on that node
-registers.
-The default value is "UNKNOWN".
-.RE
+Acceptable values are \fIDOWN\fR, \fIDRAIN\fR, \fIFAIL\fR, \fIFAILING\fR
+and \fIFUTURE\fR.
+For more information about these states see the descriptions under \fBState\fR
+in the \fBNodeName=\fR section above.
+The default value is \fIDOWN\fR.
 
-.LP
+.SH "FRONTEND NODE CONFIGURATION"
 On computers where frontend nodes are used to execute batch scripts
 rather than compute nodes (Cray ALPS systems), one may configure one or more
 frontend nodes using the configuration parameters defined below. These options
@@ -4771,27 +4852,27 @@ The front end configuration specifies the following information:
 
 .TP
 \fBAllowGroups\fR
-Comma separated list of group names which may execute jobs on this front end
+Comma-separated list of group names which may execute jobs on this front end
 node. By default, all groups may use this front end node.
-If \fBat least\fR one group associated with the user attempting to execute the
-job is in AllowGroups, he will be permitted to use this front end node.
+A user will be permitted to use this front end node if AllowGroups has
+\fBat least one\fR group associated with the user.
 May not be used with the \fBDenyGroups\fR option.
 
 .TP
 \fBAllowUsers\fR
-Comma separated list of user names which may execute jobs on this front end
+Comma-separated list of user names which may execute jobs on this front end
 node. By default, all users may use this front end node.
 May not be used with the \fBDenyUsers\fR option.
 
 .TP
 \fBDenyGroups\fR
-Comma separated list of group names which are prevented from executing jobs on
+Comma-separated list of group names which are prevented from executing jobs on
 this front end node.
 May not be used with the \fBAllowGroups\fR option.
 
 .TP
 \fBDenyUsers\fR
-Comma separated list of user names which are prevented from executing jobs on
+Comma-separated list of user names which are prevented from executing jobs on
 this front end node.
 May not be used with the \fBAllowUsers\fR option.
 
@@ -4811,17 +4892,12 @@ unless explicitly set to other values in that frontend node record or
 replaced with a different set of default values.
 Each line where \fBFrontendName\fR is "DEFAULT" will replace or add to previous
 default values and not a reinitialize the default values.
-Note that since the naming of front end nodes would typically not follow that
-of the compute nodes (e.g. lacking X, Y and Z coordinates found in the compute
-node naming scheme), each front end node name should be listed separately and
-without a hostlist expression (i.e. frontend00,frontend01" rather than
-"frontend[00-01]").</p>
 
 .TP
 \fBFrontendAddr\fR
 Name that a frontend node should be referred to in establishing
 a communications path. This name will be used as an
-argument to the gethostbyname() function for identification.
+argument to the getaddrinfo() function for identification.
 As with \fBFrontendName\fR, list the individual node addresses rather than
 using a hostlist expression.
 The number of \fBFrontendAddr\fR records per line must equal the number of
@@ -4846,31 +4922,32 @@ RSIP's port range.
 
 .TP
 \fBReason\fR
-Identifies the reason for a frontend node being in state "DOWN", "DRAINED"
-"DRAINING", "FAIL" or "FAILING".
+Identifies the reason for a frontend node being in state \fIDOWN\fR,
+\fIDRAINED\fR, \fIDRAINING\fR, \fIFAIL\fR or \fIFAILING\fR.
 Use quotes to enclose a reason having more than one word.
 
 .TP
 \fBState\fR
 State of the frontend node with respect to the initiation of user jobs.
-Acceptable values are "DOWN", "DRAIN", "FAIL", "FAILING" and "UNKNOWN".
-"DOWN" indicates the frontend node has failed and is unavailable to be
-allocated work.
-"DRAIN" indicates the frontend node is unavailable to be allocated work.
-"FAIL" indicates the frontend node is expected to fail soon, has
-no jobs allocated to it, and will not be allocated to any new jobs.
-"FAILING" indicates the frontend node is expected to fail soon, has
-one or more jobs allocated to it, but will not be allocated to any new jobs.
-"UNKNOWN" indicates the frontend node's state is undefined (BUSY or IDLE),
-but will be established when the \fBslurmd\fR daemon on that node registers.
-The default value is "UNKNOWN".
-Also see the \fBDownNodes\fR parameter above.
-
-For example: "FrontendName=frontend[00\-03] FrontendAddr=efrontend[00\-03]
-State=UNKNOWN" is used to define four front end nodes for running slurmd
-daemons.
+Acceptable values are \fIDOWN\fR, \fIDRAIN\fR, \fIFAIL\fR, \fIFAILING\fR
+and \fIUNKNOWN\fR.
+Node states of \fIBUSY\fR and \fIIDLE\fR should not be specified in the node
+configuration, but set the node state to \fIUNKNOWN\fR instead.
+Setting the node state to \fIUNKNOWN\fR will result in the node state being
+set to \fIBUSY\fR, \fIIDLE\fR or other appropriate state based upon recovered
+system state information.
+For more information about these states see the descriptions under \fBState\fR
+in the \fBNodeName=\fR section above.
+The default value is \fIUNKNOWN\fR.
 
 .LP
+As an example, you can do something similar to the following to define four
+front end nodes for running slurmd daemons.
+.nf
+FrontendName=frontend[00\-03] FrontendAddr=efrontend[00\-03] State=UNKNOWN
+.fi
+
+.SH "NODESET CONFIGURATION"
 The nodeset configuration allows you to define a name for a specific set of
 nodes which can be used to simplify the partition configuration section,
 especially for heterogenous or condo-style systems. Each nodeset may be defined
@@ -4889,7 +4966,7 @@ List of nodes in this set.
 \fBNodeSet\fR
 Unique name for a set of nodes. Must not overlap with any NodeName definitions.
 
-.LP
+.SH "PARTITION CONFIGURATION"
 The partition configuration permits you to establish different job
 limits or access controls for various groups (or partitions) of nodes.
 Nodes may be in more than one partition, making partitions serve
@@ -4919,7 +4996,7 @@ The partition configuration file contains the following information:
 
 .TP
 \fBAllocNodes\fR
-Comma separated list of nodes from which users can submit jobs in the
+Comma-separated list of nodes from which users can submit jobs in the
 partition.
 Node names may be specified using the node range expression syntax
 described above.
@@ -4927,24 +5004,28 @@ The default value is "ALL".
 
 .TP
 \fBAllowAccounts\fR
-Comma separated list of accounts which may execute jobs in the partition.
+Comma-separated list of accounts which may execute jobs in the partition.
 The default value is "ALL".
 \fBNOTE:\fR If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to DenyAccounts.
 
 .TP
 \fBAllowGroups\fR
-Comma separated list of group names which may execute jobs in the partition.
-If \fBat least\fR one group associated with the user attempting to execute the
-job is in AllowGroups, he will be permitted to use this partition.
-Jobs executed as user root can use any partition without regard to
-the value of AllowGroups.
+Comma-separated list of group names which may view and execute jobs in this
+partition.
+A user will be permitted to view and submit a job to this partition if
+AllowGroups has \fBat least one\fR group associated with the user.
+Jobs executed as user root or as user SlurmUser will be allowed to view and
+use any partition, regardless of the value of AllowGroups. In addition, a Slurm
+Admin or Operator will be able to view any partition, regardless of the value
+of AllowGroups.
 If user root attempts to execute a job as another user (e.g. using
-srun's \-\-uid option), this other user must be in one of groups
-identified by AllowGroups for the job to successfully execute.
-The default value is "ALL".
-When set, all partitions that a user does not have access will be hidden from
-display regardless of the settings used for PrivateData.
+srun's \-\-uid option), then the job will be subject to AllowGroups as if it
+were submitted by that user.
+By default, AllowGroups is unset, meaning all groups are allowed to use this
+partition. The special value 'ALL' is equivalent to this.
+Even when PrivateData does not hide partition information, AllowGroups will
+still hide partition information accordingly.
 \fBNOTE:\fR For performance reasons, Slurm maintains a list of user IDs
 allowed to use each partition and this is checked at job submission time.
 This list of user IDs is updated when the \fBslurmctld\fR daemon is restarted,
@@ -4957,7 +5038,7 @@ described above.
 
 .TP
 \fBAllowQos\fR
-Comma separated list of Qos which may execute jobs in the partition.
+Comma-separated list of Qos which may execute jobs in the partition.
 Jobs executed as user root can use any partition without regard to
 the value of AllowQos.
 The default value is "ALL".
@@ -5023,14 +5104,14 @@ exclusive.
 
 .TP
 \fBDenyAccounts\fR
-Comma separated list of accounts which may not execute jobs in the partition.
+Comma-separated list of accounts which may not execute jobs in the partition.
 By default, no accounts are denied access
 \fBNOTE:\fR If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to AllowAccounts.
 
 .TP
 \fBDenyQos\fR
-Comma separated list of Qos which may not execute jobs in the partition.
+Comma-separated list of Qos which may not execute jobs in the partition.
 By default, no QOS are denied access
 \fBNOTE:\fR If AllowQos is used then DenyQos will not be enforced.
 Also refer AllowQos.
@@ -5147,7 +5228,7 @@ This limit does not apply to jobs executed by SlurmUser or user root.
 
 .TP
 \fBNodes\fR
-Comma separated list of nodes or nodesets which are associated with this
+Comma-separated list of nodes or nodesets which are associated with this
 partition.
 Node names may be specified using the node range expression syntax
 described above. A blank list of nodes
@@ -5210,6 +5291,13 @@ will prevent oversubscription from happening due to preemption as well.
 \fBFORCE\fR that is greater than 1. For example, \fBOverSubscribe=FORCE:2\fR
 will permit two jobs per resource normally, but a third job can be started
 only if done so through preemption based upon QOS.
+
+\fBNOTE\fR: If \fBOverSubscribe\fR is configured to \fBFORCE\fR or \fBYES\fR
+in your slurm.conf and the system is not configured to use preemption
+(\fBPreemptMode=OFF\fR) accounting can easily grow to values greater than
+the actual utilization. It may be common on such systems to get error messages
+in the slurmdbd log stating: "We have more allocated time than is possible."
+
 .TP
 \fBYES\fR
 Makes all resources in the partition available for sharing upon request by
@@ -5385,7 +5473,7 @@ the job's priority then refer to the PriorityWeightTRES option.
 
 .RE
 
-.SH "Prolog and Epilog Scripts"
+.SH "PROLOG AND EPILOG SCRIPTS"
 There are a variety of prolog and epilog program options that
 execute with various permissions and at various times.
 The four options most likely to be used are:
@@ -5393,12 +5481,12 @@ The four options most likely to be used are:
 for each job) plus \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR
 (executed once on the \fBControlMachine\fR for each job).
 
-NOTE:  Standard output and error messages are normally not preserved.
+\fBNOTE\fR: Standard output and error messages are normally not preserved.
 Explicitly write output and error messages to an appropriate location
 if you wish to preserve that information.
 
-NOTE:  By default the Prolog script is ONLY run on any individual
-node when it first sees a job step from a new allocation; it does not
+\fBNOTE\fR:  By default the Prolog script is ONLY run on any individual
+node when it first sees a job step from a new allocation. It does not
 run the Prolog immediately when an allocation is granted.  If no job steps
 from an allocation are run on a node, it will never run the Prolog for that
 allocation.  This Prolog behaviour can be changed by the
@@ -5414,16 +5502,20 @@ node being set to a DRAIN state and the job being requeued in a held state
 unless \fBnohold_on_prolog_fail\fR is configured in
 \fBSchedulerParameters\fR.
 If the PrologSlurmctld fails (returns a non\-zero exit code), this will result
-in the job requeued to executed on another node if possible. Only batch jobs
-can be requeued.
- Interactive jobs (salloc and srun) will be cancelled if the
+in the job being requeued to be executed on another node if possible. Only
+batch jobs can be requeued.
+Interactive jobs (salloc and srun) will be cancelled if the
 PrologSlurmctld fails.
 
 
 Information about the job is passed to the script using environment
 variables.
 Unless otherwise specified, these environment variables are available
-to all of the programs.
+in each of the scripts mentioned above (\fBProlog\fR, \fBEpilog\fR,
+\fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR). For a full list of
+environment variables that includes those available in the \fBSrunProlog\fR,
+\fBSrunEpilog\fR, \fBTaskProlog\fR and \fBTaskEpilog\fR please see the Prolog
+and Epilog Guide <https://slurm.schedmd.com/prolog_epilog.html>.
 .TP
 \fBSLURM_ARRAY_JOB_ID\fR
 If this job is part of a job array, this will be set to the job ID.
@@ -5431,7 +5523,7 @@ Otherwise it will not be set.
 To reference this specific task of a job array, combine
 SLURM_ARRAY_JOB_ID with SLURM_ARRAY_TASK_ID
 (e.g. "scontrol update ${SLURM_ARRAY_JOB_ID}_{$SLURM_ARRAY_TASK_ID} ...");
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_ARRAY_TASK_ID\fR
 If this job is part of a job array, this will be set to the task ID.
@@ -5439,90 +5531,101 @@ Otherwise it will not be set.
 To reference this specific task of a job array, combine
 SLURM_ARRAY_JOB_ID with SLURM_ARRAY_TASK_ID
 (e.g. "scontrol update ${SLURM_ARRAY_JOB_ID}_{$SLURM_ARRAY_TASK_ID} ...");
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_ARRAY_TASK_MAX\fR
 If this job is part of a job array, this will be set to the maximum
 task ID.
 Otherwise it will not be set.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_ARRAY_TASK_MIN\fR
 If this job is part of a job array, this will be set to the minimum
 task ID.
 Otherwise it will not be set.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_ARRAY_TASK_STEP\fR
 If this job is part of a job array, this will be set to the step
 size of task IDs.
 Otherwise it will not be set.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_CLUSTER_NAME\fR
 Name of the cluster executing the job.
 .TP
+\fBSLURM_CONF\fR
+Location of the slurm.conf file. Available in \fBProlog\fR and \fBEpilog\fR.
+.TP
+\fBSLURMD_NODENAME\fR
+Name of the node running the task. In the case of a parallel job executing
+on multiple compute nodes, the various tasks will have this environment
+variable set to different values on each compute node. Availble in
+\fBProlog\fR and \fBEpilog\fR.
+.TP
 \fBSLURM_JOB_ACCOUNT\fR
 Account name used for the job.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_CONSTRAINTS\fR
 Features required to run the job.
-Available in \fBProlog\fR, \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBProlog\fR, \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_DERIVED_EC\fR
 The highest exit code of all of the job steps.
-Available in \fBEpilogSlurmctld\fR only.
+Available in \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_EXIT_CODE\fR
 The exit code of the job script (or salloc). The value is the status
 as returned by the wait() system call (See wait(2))
-Available in \fBEpilogSlurmctld\fR only.
+Available in \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_EXIT_CODE2\fR
 The exit code of the job script (or salloc). The value has the format
 <exit>:<sig>. The first number is the exit code, typically as set by the
 exit() function. The second number of the signal that caused the process to
 terminate if it was terminated by a signal.
-Available in \fBEpilogSlurmctld\fR only.
+Available in \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_GID\fR
 Group ID of the job's owner.
-Available in \fBPrologSlurmctld\fR, \fBEpilogSlurmctld\fR and \fBTaskProlog\fR only.
 .TP
 \fBSLURM_JOB_GPUS\fR
 GPU IDs allocated to the job (if any).
-Available in the \fBProlog\fR only.
+Available in the \fBProlog\fR.
 .TP
 \fBSLURM_JOB_GROUP\fR
 Group name of the job's owner.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_ID\fR
 Job ID.
-CAUTION: If this job is the first task of a job array, then Slurm commands using
-this job ID will refer to the entire job array rather than this specific task
-of the job array.
+.TP
+\fBSLURM_JOBID\fR
+Job ID.
 .TP
 \fBSLURM_JOB_NAME\fR
 Name of the job.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_NODELIST\fR
 Nodes assigned to job. A Slurm hostlist expression.
 "scontrol show hostnames" can be used to convert this to a
 list of individual host names.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_PARTITION\fR
 Partition that job runs in.
-Available in \fBProlog\fR, \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBProlog\fR, \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR.
 .TP
 \fBSLURM_JOB_UID\fR
 User ID of the job's owner.
 .TP
 \fBSLURM_JOB_USER\fR
 User name of the job's owner.
+.TP
+\fBSLURM_SCRIPT_CONTEXT\fR
+Identifies which epilog or prolog program is currently running.
 
 .SH "NETWORK TOPOLOGY"
 Slurm is able to optimize job allocations to minimize network contention.
@@ -5708,12 +5811,6 @@ compute nodes.
 While many files and directories are listed below, most of them will
 not be used with most configurations.
 .TP
-\fBAccountingStorageLoc\fR
-If this specifies a file, it must be writable by user \fBSlurmUser\fR.
-The file must be accessible by the primary and backup control machines.
-It is recommended that the file be readable by all users from login and
-compute nodes.
-.TP
 \fBEpilog\fR
 Must be executable by user root.
 It is recommended that the file be readable by all users.
@@ -5759,10 +5856,6 @@ The file must be accessible by the primary and backup control machines.
 \fBResumeProgram\fR
 Must be executable by user \fBSlurmUser\fR.
 The file must be accessible by the primary and backup control machines.
-.TP
-\fBSallocDefaultCommand\fR
-Must be executable by all users.
-The file must exist on every login and compute node.
 .TP
 \fBslurm.conf\fR
 Readable to all users on all nodes.
@@ -5891,8 +5984,8 @@ details.
 
 .SH "SEE ALSO"
 .LP
-\fBcgroup.conf\fR(5), \fBgethostbyname\fR (3),
-\fBgetrlimit\fR (2), \fBgres.conf\fR(5), \fBgroup\fR (5), \fBhostname\fR (1),
+\fBcgroup.conf\fR(5), \fBgetaddrinfo\fR(3),
+\fBgetrlimit\fR(2), \fBgres.conf\fR(5), \fBgroup\fR(5), \fBhostname\fR(1),
 \fBscontrol\fR(1), \fBslurmctld\fR(8), \fBslurmd\fR(8),
-\fBslurmdbd\fR(8), \fBslurmdbd.conf\fR(5), \fBsrun(1)\fR,
-\fBspank(8)\fR, \fBsyslog\fR (2), \fBtopology.conf\fR(5)
+\fBslurmdbd\fR(8), \fBslurmdbd.conf\fR(5), \fBsrun\fR(1),
+\fBspank\fR(8), \fBsyslog\fR(3), \fBtopology.conf\fR(5)

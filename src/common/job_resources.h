@@ -128,10 +128,11 @@ struct job_resources {
 /*
  * node_res_record.node_state assists with the unique state of each node.
  * When a job is allocated, these flags provide protection for nodes in a
- * Shared=NO or Shared=EXCLUSIVE partition from other jobs.
+ * OverSubscribe=NO or OverSubscribe=EXCLUSIVE partition from other jobs.
  *
  * NOTES:
- * - If node is in use by Shared=NO part, some CPUs/memory may be available
+ * - If node is in use by OverSubscribe=NO part, some CPUs/memory may be
+ *   available.
  * - Caution with NODE_CR_AVAILABLE: a Sharing partition could be full.
  *
  * - these values are staggered so that they can be incremented as multiple
@@ -140,8 +141,8 @@ struct job_resources {
  */
 enum node_cr_state {
 	NODE_CR_AVAILABLE = 0,    /* The node may be IDLE or IN USE (shared) */
-	NODE_CR_ONE_ROW = 1,      /* node is in use by Shared=NO part */
-	NODE_CR_RESERVED = 64000  /* node is in use by Shared=EXCLUSIVE part */
+	NODE_CR_ONE_ROW = 1,      /* in use by OverSubscribe=NO part */
+	NODE_CR_RESERVED = 64000  /* in use by OverSubscribe=EXCLUSIVE part */
 };
 
 /* Create an empty job_resources data structure, just a call to xmalloc() */
@@ -317,13 +318,5 @@ extern void remove_job_from_cores(job_resources_t *job_resrcs_ptr,
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */
 extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr, 
 					     int node_inx);
-/*
- * adapt the power_cpufreq layout and set the CurrentCoreWatts value of the cores
- * based on the selection of the resources and the choice of CPU Frequency 
- * CurrentCoreWatts are set to IdleWatts when one or more jobs occupy other 
- * resources of the node and set to 0 when the node is liberated
- */
-extern int adapt_layouts(job_resources_t *job_resrcs_ptr, uint32_t cpu_freq_max,
-                         uint32_t node_id, char* node_name, bool new_value);
 
 #endif /* !_JOB_RESOURCES_H */

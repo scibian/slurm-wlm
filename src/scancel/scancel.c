@@ -659,7 +659,7 @@ static void _add_delay(void)
 
 	slurm_mutex_lock(&max_delay_lock);
 	if (target_resp_time < 0) {
-		target_resp_time = slurm_get_msg_timeout() / 4;
+		target_resp_time = slurm_conf.msg_timeout / 4;
 		target_resp_time = MAX(target_resp_time, 3);
 		target_resp_time = MIN(target_resp_time, 5);
 		target_resp_time *= USEC_IN_SEC;
@@ -741,8 +741,9 @@ _cancel_job_id (void *ci)
 
 		memset(&kill_msg, 0, sizeof(job_step_kill_msg_t));
 		kill_msg.flags	= flags;
-		kill_msg.job_id      = NO_VAL;
-		kill_msg.job_step_id = NO_VAL;
+		kill_msg.step_id.job_id = NO_VAL;
+		kill_msg.step_id.step_id = NO_VAL;
+		kill_msg.step_id.step_het_comp = NO_VAL;
 		kill_msg.sibling     = opt.sibling;
 		kill_msg.signal      = cancel_info->sig;
 		kill_msg.sjob_id     = cancel_info->job_id_str;

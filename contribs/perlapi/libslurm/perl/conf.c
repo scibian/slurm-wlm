@@ -11,10 +11,9 @@
 
 
 /*
- * convert slurm_ctl_conf_t into perl HV
+ * convert slurm_conf_t into perl HV
  */
-int
-slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
+int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 {
 	AV *av;
 	int i;
@@ -38,11 +37,11 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	STORE_FIELD(hv, conf, accounting_storage_enforce, uint16_t);
 	if (conf->accounting_storage_host)
 		STORE_FIELD(hv, conf, accounting_storage_host, charp);
-	if (conf->accounting_storage_loc)
-		STORE_FIELD(hv, conf, accounting_storage_loc, charp);
+	if (conf->accounting_storage_params)
+		STORE_FIELD(hv, conf, accounting_storage_params, charp);
 	if (conf->accounting_storage_pass)
 		STORE_FIELD(hv, conf, accounting_storage_pass, charp);
-	STORE_FIELD(hv, conf, accounting_storage_port, uint32_t);
+	STORE_FIELD(hv, conf, accounting_storage_port, uint16_t);
 	if (conf->accounting_storage_type)
 		STORE_FIELD(hv, conf, accounting_storage_type, charp);
 	if (conf->accounting_storage_user)
@@ -173,9 +172,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	if (conf->launch_type)
 		STORE_FIELD(hv, conf, launch_type, charp);
 
-	if (conf->layouts)
-		STORE_FIELD(hv, conf, layouts, charp);
-
 	if (conf->licenses)
 		STORE_FIELD(hv, conf, licenses, charp);
 
@@ -290,9 +286,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	if (conf->route_plugin)
 		STORE_FIELD(hv, conf, route_plugin, charp);
 
-	if (conf->salloc_default_command)
-		STORE_FIELD(hv, conf, salloc_default_command, charp);
-
 	if (conf->sched_logfile)
 		STORE_FIELD(hv, conf, sched_logfile, charp);
 	STORE_FIELD(hv, conf, sched_log_level, uint16_t);
@@ -390,17 +383,16 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 }
 
 /*
- * convert perl HV to slurm_ctl_conf_t
+ * convert perl HV to slurm_conf_t
  */
-int
-hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
+int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 {
 	SV **svp;
 	AV *av;
 	STRLEN len;
 	int i, n;
 
-	memset(conf, 0, sizeof(slurm_ctl_conf_t));
+	memset(conf, 0, sizeof(*conf));
 
 	FETCH_FIELD(hv, conf, last_update, time_t, FALSE);
 	FETCH_FIELD(hv, conf, acct_gather_conf, charp, FALSE);
@@ -412,9 +404,9 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, accounting_storage_enforce, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, accounting_storage_backup_host, charp, FALSE);
 	FETCH_FIELD(hv, conf, accounting_storage_host, charp, FALSE);
-	FETCH_FIELD(hv, conf, accounting_storage_loc, charp, FALSE);
+	FETCH_FIELD(hv, conf, accounting_storage_params, charp, FALSE);
 	FETCH_FIELD(hv, conf, accounting_storage_pass, charp, FALSE);
-	FETCH_FIELD(hv, conf, accounting_storage_port, uint32_t, TRUE);
+	FETCH_FIELD(hv, conf, accounting_storage_port, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, accounting_storage_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, accounting_storage_user, charp, FALSE);
 
@@ -505,7 +497,6 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, kill_on_bad_exit, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, kill_wait, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, launch_type, charp, FALSE);
-	FETCH_FIELD(hv, conf, layouts, charp, FALSE);
 	FETCH_FIELD(hv, conf, licenses, charp, FALSE);
 	FETCH_FIELD(hv, conf, log_fmt, uint16_t, FALSE);
 	FETCH_FIELD(hv, conf, mail_prog, charp, FALSE);
@@ -566,7 +557,6 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, resv_prolog, charp, FALSE);
 	FETCH_FIELD(hv, conf, ret2service, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, route_plugin, charp, FALSE);
-	FETCH_FIELD(hv, conf, salloc_default_command, charp, FALSE);
 
 	FETCH_FIELD(hv, conf, sched_logfile, charp, FALSE);
 	FETCH_FIELD(hv, conf, sched_log_level, uint16_t, TRUE);

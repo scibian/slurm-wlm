@@ -62,7 +62,7 @@ typedef struct {
 	uint16_t cpus;		/* count of processors running on the node */
 	char *cpu_spec_list;	/* arbitrary list of specialized cpus */
 	uint16_t boards;	/* count of boards configured */
-	uint16_t sockets;	/* number of sockets per node */
+	uint16_t tot_sockets;	/* number of sockets per node */
 	uint16_t cores;		/* number of cores per socket */
 	uint16_t core_spec_cnt;	/* number of specialized cores */
 	uint32_t cpu_bind;	/* default CPU binding type */
@@ -95,6 +95,7 @@ struct node_record {
 	bool not_responding;		/* set if fails to respond,
 					 * clear after logging this */
 	time_t boot_req_time;		/* Time of node boot request */
+	time_t power_save_req_time;	/* Time of power_save request */
 	time_t boot_time;		/* Time of node boot,
 					 * computed from up_time */
 	uint32_t cpu_bind;		/* default CPU binding type */
@@ -103,7 +104,7 @@ struct node_record {
 	time_t last_idle;		/* time node last become idle */
 	uint16_t cpus;			/* count of processors on the node */
 	uint16_t boards; 		/* count of boards configured */
-	uint16_t sockets;		/* number of sockets per node */
+	uint16_t tot_sockets;		/* number of sockets per node */
 	uint16_t cores;			/* number of cores per socket */
 	char *cpu_spec_list;		/* node's specialized cpus */
 	uint16_t core_spec_cnt;		/* number of specialized cores on node*/
@@ -125,6 +126,7 @@ struct node_record {
 	uint16_t sus_job_cnt;		/* count of jobs suspended on node */
 	uint16_t no_share_job_cnt;	/* count of jobs running that will
 					 * not share nodes */
+	char *comment;			/* arbitrary comment */
 	char *reason; 			/* why a node is DOWN or DRAINING */
 	time_t reason_time;		/* Time stamp when reason was
 					 * set, ignore if no reason is set. */

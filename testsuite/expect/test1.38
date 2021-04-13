@@ -62,7 +62,7 @@ set match_wait 0
 set job_id  0
 set srun_pid [spawn $srun -v -N1 -t1 --unbuffered ./$file_in]
 expect {
-	-re "launching ($number)\\.$step_id" {
+	-re "launching StepId=($number)\\.$step_id" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
@@ -83,9 +83,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -112,7 +111,7 @@ set match_wait 0
 set job_id  0
 set srun_pid [spawn $srun -v -N1 -t1 --unbuffered --quit-on-interrupt ./$file_in]
 expect {
-	-re "launching ($number)\\.$step_id" {
+	-re "launching StepId=($number)\\.$step_id" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
@@ -134,9 +133,8 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
 		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait

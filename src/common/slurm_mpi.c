@@ -45,6 +45,7 @@
 #include "src/common/macros.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_mpi.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -98,7 +99,7 @@ static void _log_step_rec(const stepd_step_rec_t *job)
 	int i;
 
 	info("STEPD_STEP_REC");
-	info("job_id:%u step_id:%u", job->jobid, job->stepid);
+	info("%ps", &job->step_id);
 	info("ntasks:%u nnodes:%u node_id:%u", job->ntasks, job->nnodes,
 	     job->nodeid);
 	info("node_tasks:%u", job->node_tasks);
@@ -107,8 +108,10 @@ static void _log_step_rec(const stepd_step_rec_t *job)
 	for (i = 0; i < job->nnodes; i++)
 		info("task_cnts[%d]:%u", i, job->task_cnts[i]);
 
-	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL)) {
-		info("het_job_id:%u step_id:%u", job->het_jobid, job->stepid);
+	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL))
+		info("het_job_id:%u", job->het_jobid);
+
+	if (job->het_job_offset != NO_VAL);
 		info("het_job_ntasks:%u het_job_nnodes:%u", job->het_job_ntasks,
 		     job->het_job_nnodes);
 		info("het_job_node_offset:%u het_job_task_offset:%u",
@@ -126,9 +129,9 @@ static void _log_mpi_rec(const mpi_plugin_client_info_t *job)
 	int i, j;
 
 	info("MPI_PLUGIN_CLIENT_INFO");
-	info("job_id:%u step_id:%u", job->jobid, job->stepid);
+	info("%ps", &job->step_id);
 	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL)) {
-		info("het_job_id:%u step_id:%u", job->het_job_id, job->stepid);
+		info("het_job_id:%u", job->het_job_id);
 	}
 	if (layout) {
 		info("node_cnt:%u task_cnt:%u", layout->node_cnt,
@@ -149,7 +152,7 @@ static void _log_mpi_rec(const mpi_plugin_client_info_t *job)
 static void _log_task_rec(const mpi_plugin_task_info_t *job)
 {
 	info("MPI_PLUGIN_TASK_INFO");
-	info("job_id:%u step_id:%u", job->jobid, job->stepid);
+	info("%ps", &job->step_id);
 	info("nnodes:%u node_id:%u", job->nnodes, job->nodeid);
 	info("ntasks:%u local_tasks:%u", job->ntasks, job->ltasks);
 	info("global_task_id:%u local_task_id:%u", job->gtaskid, job->ltaskid);
@@ -161,7 +164,6 @@ int _mpi_init (char *mpi_type)
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "mpi";
 	char *type = NULL;
-	int got_default = 0;
 
 	if (init_run && g_context)
 		return retval;
@@ -172,8 +174,7 @@ int _mpi_init (char *mpi_type)
 		goto done;
 
 	if (mpi_type == NULL) {
-		mpi_type = slurm_get_mpi_default();
-		got_default = 1;
+		mpi_type = slurm_conf.mpi_default;
 	} else if (!xstrcmp(mpi_type, "openmpi")) {
 		/*
 		 * The openmpi plugin has been equivalent to none for a while.
@@ -188,11 +189,9 @@ int _mpi_init (char *mpi_type)
 	}
 
 	if (!xstrcmp(mpi_type, "list")) {
-		char *plugin_dir;
 		plugrack_t *mpi_rack = plugrack_create("mpi");
-		plugin_dir = slurm_get_plugin_dir();
-		plugrack_read_dir(mpi_rack, plugin_dir);
-		plugrack_print_all_plugin(mpi_rack);
+		plugrack_read_dir(mpi_rack, slurm_conf.plugindir);
+		plugrack_print_mpi_plugins(mpi_rack);
 		exit(0);
 	}
 
@@ -212,8 +211,6 @@ int _mpi_init (char *mpi_type)
 
 done:
 	xfree(type);
-	if (got_default)
-		xfree(mpi_type);
 	slurm_mutex_unlock( &context_lock );
 	return retval;
 }

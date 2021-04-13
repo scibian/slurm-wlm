@@ -40,50 +40,32 @@
 #include <sys/types.h>
 
 #include "src/common/data.h"
+#include "src/common/plugin.h"
 #include "src/slurmrestd/http.h"
 
-/*
- * Bitmap of auth types that will be currently accepted
- */
-typedef enum {
-	AUTH_TYPE_INVALID = 0,
-	/*
-	 * No auth required (only for inetd mode).
-	 * Auth via owner of pipe or socket.
-	 */
-	AUTH_TYPE_LOCAL = 1 << 0,
-	/* preshared key per UID */
-	AUTH_TYPE_USER_PSK = 1 << 1,
-} rest_auth_type_t;
+#define HTTP_HEADER_USER_TOKEN "X-SLURM-USER-TOKEN"
+#define HTTP_HEADER_USER_NAME "X-SLURM-USER-NAME"
 
 typedef struct {
 	int magic;
-
-	/*
-	 * auth type of this connection.
-	 * only a single bit should ever be set
-	 * or none if auth failed.
-	 */
-	rest_auth_type_t type;
-
+	uint32_t plugin_id;
 	/* user supplied user name */
 	char *user_name;
-	/* user supplied token (may be null) */
-	char *token;
+	void *plugin_data;
 } rest_auth_context_t;
 
 /*
  * Create new auth context.
- * Must free with rest_auth_context_free().
+ * Must free with rest_auth_g_free().
  * RET ptr to auth context
  */
-extern rest_auth_context_t *rest_auth_context_new(void);
+extern rest_auth_context_t *rest_auth_g_new(void);
 
 /*
  * Release auth context
  * IN context - ptr to context
  */
-extern void rest_auth_context_free(rest_auth_context_t *context);
+extern void rest_auth_g_free(rest_auth_context_t *context);
 
 /*
  * Attempt to authenticate HTTP request
@@ -98,20 +80,28 @@ extern int rest_authenticate_http_request(on_http_request_args_t *args);
  * IN context - security context to apply
  * RET SLURM_SUCCESS or error
  */
-extern int rest_auth_context_apply(rest_auth_context_t *context);
+extern int rest_auth_g_apply(rest_auth_context_t *context);
+
+/*
+ * Retrieve db_conn for slurmdbd calls.
+ * WARNING: pointer will be invalidated by next rest_auth_g_free()
+ * RET NULL on error or db_conn pointer
+ */
+extern void *rest_auth_g_get_db_conn(rest_auth_context_t *context);
 
 /*
  * Clear current auth context
  * will fatal on error
  */
-extern void rest_auth_context_clear(void);
+extern void rest_auth_g_clear(void);
 
 /*
- * Setup locks and register openapi.
+ * Setup locks and register REST authentication plugins.
  * 	Only call once!
  * IN type auth type to enforce
  */
-extern int init_rest_auth(rest_auth_type_t type);
+extern int init_rest_auth(const plugin_handle_t *plugin_handles,
+			  const size_t plugin_count);
 
 /*
  * Cleanup rest auth
