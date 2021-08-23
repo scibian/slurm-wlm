@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "February 2021" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "June 2021" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -578,9 +578,10 @@ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
 .TP
 \fB\-\-gpu\-bind\fR=[verbose,]<\fItype\fR>
 Bind tasks to specific GPUs.
-By default every spawned task can access every GPU allocated to the job.
+By default every spawned task can access every GPU allocated to the step.
 If "verbose," is specified before <\fItype\fR>, then print out GPU binding
-information.
+debug information to the stderr of the tasks. GPU binding is ignored if there is
+only one task.
 
 Supported \fItype\fR options:
 .RS
@@ -1164,7 +1165,7 @@ limit is changed.
 If a job node limit exceeds the number of nodes configured in the
 partition, the job will be rejected.
 Note that the environment
-variable \fBSLURM_JOB_NODES\fR will be set to the count of nodes actually
+variable \fBSLURM_JOB_NUM_NODES\fR will be set to the count of nodes actually
 allocated to the job. See the \fBENVIRONMENT VARIABLES \fR section
 for more information.  If \fB\-N\fR is not specified, the default
 behavior is to allocate enough nodes to satisfy the requirements of
@@ -1339,9 +1340,8 @@ Request the maximum \fIntasks\fR be invoked on each core.
 Meant to be used with the \fB\-\-ntasks\fR option.
 Related to \fB\-\-ntasks\-per\-node\fR except at the core level
 instead of the node level.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's core count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-\-ntasks\-per\-gpu\fR=<\fIntasks\fR>
@@ -1386,9 +1386,8 @@ Request the maximum \fIntasks\fR be invoked on each socket.
 Meant to be used with the \fB\-\-ntasks\fR option.
 Related to \fB\-\-ntasks\-per\-node\fR except at the socket level
 instead of the node level.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's socket count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-\-no\-bell\fR
@@ -1761,14 +1760,14 @@ Same as \fB\-\-delay\-boot\fR
 \fBSALLOC_EXCLUSIVE\fR
 Same as \fB\-\-exclusive\fR
 .TP
-\fBSALLOC_GPUS\fR
-Same as \fB\-G, \-\-gpus\fR
-.TP
 \fBSALLOC_GPU_BIND\fR
 Same as \fB\-\-gpu\-bind\fR
 .TP
 \fBSALLOC_GPU_FREQ\fR
 Same as \fB\-\-gpu\-freq\fR
+.TP
+\fBSALLOC_GPUS\fR
+Same as \fB\-G, \-\-gpus\fR
 .TP
 \fBSALLOC_GPUS_PER_NODE\fR
 Same as \fB\-\-gpus\-per\-node\fR
@@ -1853,11 +1852,11 @@ Same as \fB\-\-use\-min\-nodes\fR
 \fBSALLOC_WAIT_ALL_NODES\fR
 Same as \fB\-\-wait\-all\-nodes\fR
 .TP
-\fBSALLOC_WCKEY\fR
-Same as \fB\-\-wckey\fR
-.TP
 \fBSALLOC_WAIT4SWITCH\fR
 Max time waiting for requested switches. See \fB\-\-switches\fR
+.TP
+\fBSALLOC_WCKEY\fR
+Same as \fB\-\-wckey\fR
 .TP
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.
@@ -1903,10 +1902,6 @@ See \fB\-m, \-\-distribution\fR.
 \fBSLURM_DISTRIBUTION\fR
 Only set if the \fB\-m, \-\-distribution\fR option is specified.
 .TP
-\fBSLURM_GPUS\fR
-Number of GPUs requested.
-Only set if the \fB\-G, \-\-gpus\fR option is specified.
-.TP
 \fBSLURM_GPU_BIND\fR
 Requested binding of tasks to GPU.
 Only set if the \fB\-\-gpu\-bind\fR option is specified.
@@ -1914,6 +1909,10 @@ Only set if the \fB\-\-gpu\-bind\fR option is specified.
 \fBSLURM_GPU_FREQ\fR
 Requested GPU frequency.
 Only set if the \fB\-\-gpu\-freq\fR option is specified.
+.TP
+\fBSLURM_GPUS\fR
+Number of GPUs requested.
+Only set if the \fB\-G, \-\-gpus\fR option is specified.
 .TP
 \fBSLURM_GPUS_PER_NODE\fR
 Requested GPU count per allocated node.
@@ -1927,24 +1926,31 @@ Only set if the \fB\-\-gpus\-per\-socket\fR option is specified.
 Requested GPU count per allocated task.
 Only set if the \fB\-\-gpus\-per\-task\fR option is specified.
 .TP
+\fBSLURM_HET_SIZE\fR
+Set to count of components in heterogeneous job.
+.TP
 \fBSLURM_JOB_ACCOUNT\fR
 Account name associated of the job allocation.
 .TP
-\fBSLURM_JOB_ID\fR (and \fBSLURM_JOBID\fR for backwards compatibility)
+\fBSLURM_JOB_ID\fR
 The ID of the job allocation.
 .TP
 \fBSLURM_JOB_CPUS_PER_NODE\fR
-Count of processors available to the job on this node.
-Note the select/linear plugin allocates entire nodes to
-jobs, so the value indicates the total count of CPUs on each node.
-The select/cons_res plugin allocates individual processors
-to jobs, so this number indicates the number of processors
-on each node allocated to the job allocation.
+Count of CPUs available to the job on the nodes in the allocation, using the
+format \fICPU_count\fR[(x\fInumber_of_nodes\fR)][,\fICPU_count\fR
+[(x\fInumber_of_nodes\fR)] ...].
+For example: SLURM_JOB_CPUS_PER_NODE='72(x2),36' indicates that on the
+first and second nodes (as listed by SLURM_JOB_NODELIST) the allocation
+has 72 CPUs, while the third node has 36 CPUs.
+\fBNOTE\fR: The \fBselect/linear\fR plugin allocates entire nodes to jobs, so
+the value indicates the total count of CPUs on allocated nodes. The
+\fBselect/cons_res\fR and \fBselect/cons_tres\fR plugins allocate individual
+CPUs to jobs, so this number indicates the number of CPUs allocated to the job.
 .TP
-\fBSLURM_JOB_NODELIST\fR (and \fBSLURM_NODELIST\fR for backwards compatibility)
+\fBSLURM_JOB_NODELIST\fR
 List of nodes allocated to the job.
 .TP
-\fBSLURM_JOB_NUM_NODES\fR (and \fBSLURM_NNODES\fR for backwards compatibility)
+\fBSLURM_JOB_NUM_NODES\fR
 Total number of nodes in the job allocation.
 .TP
 \fBSLURM_JOB_PARTITION\fR
@@ -1955,6 +1961,10 @@ Quality Of Service (QOS) of the job allocation.
 .TP
 \fBSLURM_JOB_RESERVATION\fR
 Advanced reservation containing the job allocation, if any.
+.TP
+\fBSLURM_JOBID\fR
+The ID of the job allocation. See \fBSLURM_JOB_ID\fR. Included for backwards
+compatibility.
 .TP
 \fBSLURM_MEM_BIND\fR
 Set to value of the \-\-mem\-bind\fR option.
@@ -1986,15 +1996,13 @@ Only set if the \fB\-\-mem\-per\-gpu\fR option is specified.
 \fBSLURM_MEM_PER_NODE\fR
 Same as \fB\-\-mem\fR
 .TP
-\fBSLURM_HET_SIZE\fR
-Set to count of components in heterogeneous job.
+\fBSLURM_NNODES\fR
+Total number of nodes in the job allocation. See \fBSLURM_JOB_NUM_NODES\fR.
+Included for backwards compatibility.
 .TP
-\fBSLURM_SUBMIT_DIR\fR
-The directory from which \fBsalloc\fR was invoked or, if applicable, the
-directory specified by the \fB\-D, \-\-chdir\fR option.
-.TP
-\fBSLURM_SUBMIT_HOST\fR
-The hostname of the computer from which \fBsalloc\fR was invoked.
+\fBSLURM_NODELIST\fR
+List of nodes allocated to the job. See \fBSLURM_JOB_NODELIST\fR. Included
+for backwards compabitility.
 .TP
 \fBSLURM_NODE_ALIASES\fR
 Sets of node name, communication address and hostname for nodes allocated to
@@ -2017,8 +2025,18 @@ Set to value of the \-\-ntasks\-per\-node\fR option, if specified.
 \fBSLURM_NTASKS_PER_SOCKET\fR
 Set to value of the \-\-ntasks\-per\-socket\fR option, if specified.
 .TP
+\fBSLURM_OVERCOMMIT\fR
+Set to \fB1\fR if \fB\-\-overcommit\fR was specified.
+.TP
 \fBSLURM_PROFILE\fR
 Same as \fB\-\-profile\fR
+.TP
+\fBSLURM_SUBMIT_DIR\fR
+The directory from which \fBsalloc\fR was invoked or, if applicable, the
+directory specified by the \fB\-D, \-\-chdir\fR option.
+.TP
+\fBSLURM_SUBMIT_HOST\fR
+The hostname of the computer from which \fBsalloc\fR was invoked.
 .TP
 \fBSLURM_TASKS_PER_NODE\fR
 Number of tasks to be initiated on each node. Values are

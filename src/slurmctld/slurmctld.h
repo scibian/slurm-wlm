@@ -1490,7 +1490,7 @@ extern void job_completion_logger(job_record_t *job_ptr, bool requeue);
  */
 extern uint64_t job_get_tres_mem(struct job_resources *job_res,
 				 uint64_t pn_min_memory, uint32_t cpu_cnt,
-				 uint32_t node_cnt);
+				 uint32_t node_cnt, part_record_t *part_ptr);
 
 /*
  * job_epilog_complete - Note the completion of the epilog script for a
@@ -2022,11 +2022,13 @@ extern void pack_all_part(char **buffer_ptr, int *buffer_size,
  * IN/OUT buffer - buffer in which data is placed, pointers automatically
  *	updated
  * IN uid - user requesting the data
+ * IN has_qos_lock - true if assoc_lock .qos=READ_LOCK already acquired
  * NOTE: change _unpack_job_desc_msg() in common/slurm_protocol_pack.c
  *	  whenever the data format changes
  */
 extern void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags,
-		     Buf buffer, uint16_t protocol_version, uid_t uid);
+		     Buf buffer, uint16_t protocol_version, uid_t uid,
+		     bool has_qos_lock);
 
 /*
  * pack_part - dump all configuration information about a specific partition
@@ -2078,6 +2080,10 @@ extern void pack_one_node (char **buffer_ptr, int *buffer_size,
 
 /* part_is_visible - should user be able to see this partition */
 extern bool part_is_visible(part_record_t *part_ptr, uid_t uid);
+
+/* part_is_visible_user_rec - should user be able to see this partition */
+extern bool part_is_visible_user_rec(part_record_t *part_ptr,
+				     slurmdb_user_rec_t *user);
 
 /* part_fini - free all memory associated with partition records */
 extern void part_fini (void);
@@ -2606,6 +2612,14 @@ extern bool validate_super_user(uid_t uid);
  * RET true if permitted to run, false otherwise
  */
 extern bool validate_operator(uid_t uid);
+
+/*
+ * validate_operator_user_rec - validate that the user is authorized at the
+ *      root, SlurmUser, or SLURMDB_ADMIN_OPERATOR level
+ * IN user - slurmdb_user_rec_t of user to check
+ * RET true if permitted to run, false otherwise
+ */
+extern bool validate_operator_user_rec(slurmdb_user_rec_t *user);
 
 /* cleanup_completing()
  *

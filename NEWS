@@ -1,6 +1,115 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 20.11.8
+==========================
+ -- slurmctld - fix erroneous "StepId=CORRUPT" messages in error logs.
+ -- Correct the error given when auth plugin fails to pack a credential.
+ -- Fix unused-variable compiler warning on FreeBSD in fd_resolve_path().
+ -- acct_gather_filesystem/lustre - only emit collection error once per step.
+ -- srun - leave SLURM_DIST_UNKNOWN as default for --interactive.
+ -- Add GRES environment variables (e.g., CUDA_VISIBLE_DEVICES) into the
+    interactive step, the same as is done for the batch step.
+ -- Fix various potential deadlocks when altering objects in the database
+    dealing with every cluster in the database.
+ -- slurmrestd - handle slurmdbd connection failures without segfaulting.
+ -- slurmrestd - fix segfault for searches in slurmdb/v0.0.36/jobs.
+ -- slurmrestd - remove (non-functioning) users query parameter for
+    slurmdb/v0.0.36/jobs from openapi.json
+ -- slurmrestd - fix segfault in slurmrestd db/jobs with numeric queries
+ -- slurmrestd - add argv handling for job/submit endpoint.
+ -- srun - fix broken node step allocation in a heterogeneous allocation.
+ -- Fail step creation if -n is not multiple of --ntasks-per-gpu.
+ -- job_container/tmpfs - Fix slowdown on teardown.
+ -- Fix problem with SlurmctldProlog where requeued jobs would never launch.
+ -- job_container/tmpfs - Fix issue when restarting slurmd where the namespace
+    mount points could disappear.
+ -- sacct - avoid truncating JobId at 34 characters.
+ -- scancel - fix segfault when --wckey filtering option is used.
+ -- select/cons_tres - Fix memory leak.
+ -- Prevent file descriptor leak in job_container/tmpfs on slurmd restart.
+ -- slurmrestd/dbv0.0.36 - Fix values dumped in job state/current and
+    job step state.
+ -- slurmrestd/dbv0.0.36 - Correct description for previous state property.
+ -- perlapi/libslurmdb - expose tres_req_str to job hash.
+ -- scrontab - close and reopen temporary crontab file to deal with editors
+    that do not change the original file, but instead write out then rename
+    a new file.
+ -- sstat - fix linking so that it will work when --without-shared-libslurm
+    was used to build Slurm.
+ -- Clear allocated cpus for running steps in a job before handling requested
+    nodes on new step.
+ -- Don't reject a step if not enough nodes are available. Instead, defer the
+    step until enough nodes are available to satisfy the request.
+ -- Don't reject a step if it requests at least one specific node that is
+    already allocated to another step. Instead, defer the step until the
+    requested node(s) become available.
+ -- slurmrestd - add description for slurmdb/job endpoint.
+ -- Better handling of --mem=0.
+ -- Ignore DefCpuPerGpu when --cpus-per-task given.
+ -- sacct - fix segfault when printing StepId (or when using --long).
+
+* Changes in Slurm 20.11.7
+==========================
+ -- slurmd - handle configless failures gracefully instead of hanging
+    indefinitely.
+ -- select/cons_tres - fix Dragonfly topology not selecting nodes in the same
+    leaf switch when it should as well as requests with --switches option.
+ -- Fix issue where certain step requests wouldn't run if the first node in the
+    job allocation was full and there were idle resources on other nodes in
+    the job allocation.
+ -- Fix deadlock issue with <Prolog|Epilog>Slurmctld.
+ -- torque/qstat - fix printf error message in output.
+ -- When adding associations or wckeys avoid checking multiple times a user or
+    cluster name.
+ -- Fix wrong jobacctgather information on a step on multiple nodes
+    due to timeouts sending its the information gathered on its node.
+ -- Fix missing xstrdup which could result in slurmctld segfault on array jobs.
+ -- Fix security issue in PrologSlurmctld and EpilogSlurmctld by always
+    prepending SPANK_ to all user-set environment variables. CVE-2021-31215.
+
+* Changes in Slurm 20.11.6
+==========================
+ -- Fix sacct assert with the --qos option.
+ -- Use pkg-config --atleast-version instead of --modversion for systemd.
+ -- common/fd - fix getsockopt() call in fd_get_socket_error().
+ -- Properly handle the return from fd_get_socket_error() in _conn_readable().
+ -- cons_res - Fix issue where running jobs were not taken into consideration
+    when creating a reservation.
+ -- Avoid a deadlock between job_list for_each and assoc QOS_LOCK.
+ -- Fix TRESRunMins usage for partition qos on restart/reconfig.
+ -- Fix printing of number of tasks on a completed job that didn't request
+    tasks.
+ -- Fix updating GrpTRESRunMins when decrementing job time is bigger than it.
+ -- Make it so we handle multithreaded allocations correctly when doing
+    --exclusive or --core-spec allocations.
+ -- Fix incorrect round-up division in _pick_step_cores
+ -- Use appropriate math to adjust cpu counts when --ntasks-per-core=1.
+ -- cons_tres - Fix consideration of power downed nodes.
+ -- cons_tres - Fix DefCpuPerGPU, increase cpus-per-task to match with
+    gpus-per-task * cpus-per-gpu.
+ -- Fix under-cpu memory auto-adjustment when MaxMemPerCPU is set.
+ -- Make it possible to override CR_CORE_DEFAULT_DIST_BLOCK.
+ -- Perl API - fix retrieving/storing of slurm_step_id_t in job_step_info_t.
+ -- Recover state of burst buffers when slurmctld is restarted to avoid skipping
+    burst buffer stages.
+ -- Fix race condition in burst buffer plugin which caused a burst buffer
+    in stage-in to not get state saved if slurmctld stopped.
+ -- auth/jwt - print an error if jwt_file= has not been set in slurmdbd.
+ -- Fix RESV_DEL_HOLD not being a valid state when using squeue --states.
+ -- Add missing squeue selectable states in valid states error message.
+ -- Fix scheduling last array task multiple times on error, causing segfault.
+ -- Fix issue where a step could be allocated more memory than the job when
+    dealing with --mem-per-cpu and --threads-per-core.
+ -- Fix removing qos from assoc with -= can lead to assoc with no qos
+ -- auth/jwt - fix segfault on invalid credential in slurmdbd due to
+    missing validate_slurm_user() function in context.
+ -- Fix single Port= not being applied to range of nodes in slurm.conf
+ -- Fix Jobs not requesting a tres are not starting because of that tres limit.
+ -- acct_gather_energy/rapl - fix AveWatts calculation.
+ -- job_container/tmpfs - Fix issues with cleanup and slurmd restarting on
+    running jobs.
+
 * Changes in Slurm 20.11.5
 ==========================
  -- Fix main scheduler bug where bf_hetjob_prio truncates SchedulerParameters.
@@ -58,6 +167,7 @@ documents those changes that are of interest to users and administrators.
  -- Avoid data conversion error on NULL strings in data_get_string_converted().
  -- Handle situation where slurmctld is too slow processing
     REQUEST_COMPLETE_BATCH_SCRIPT and it gets resent from the slurmstepd.
+ -- Fix sacct crashing with the --qos option
 
 * Changes in Slurm 20.11.4
 ==========================
@@ -127,6 +237,13 @@ documents those changes that are of interest to users and administrators.
     the associated environment variables which lead to unexpected behavior
     from srun commands launched within the interactive step.
  -- Handle exit code from pipe when using UCX with PMIx.
+ -- Partially revert changes made in 20.11.0 to srun step behavior. This change
+    required steps to explicitly request resources, otherwise the minimal set
+    of resources required would be assigned. This broke OpenMPI's 'mpiexec'
+    alongside other use cases. This reverts the behavior such that all resources
+    on a node are assigned to the job step by default.
+ -- srun - add a new --exact option, and deprecate the --whole option (which has
+    been restored as the default behavior).
 
 * Changes in Slurm 20.11.2
 ==========================
@@ -378,6 +495,9 @@ documents those changes that are of interest to users and administrators.
  -- Add --ntasks-per-gpu option.
  -- Add --gpu-bind=single option.
 
+* Changes in Slurm 20.02.8
+==========================
+
 * Changes in Slurm 20.02.7
 ==========================
  -- cons_tres - Fix DefCpuPerGPU
@@ -385,6 +505,9 @@ documents those changes that are of interest to users and administrators.
  -- Fix false positive oom-kill events on extern step termination when
     jobacct_gather/cgroup configured.
  -- Ensure SPANK prolog and epilog run without an explicit PlugStackConfig.
+ -- Fix missing xstrdup which could result in slurmctld segfault on array jobs.
+ -- Fix security issue in PrologSlurmctld and EpilogSlurmctld by always
+    prepending SPANK_ to all user-set environment variables. CVE-2021-31215.
 
 * Changes in Slurm 20.02.6
 ==========================
