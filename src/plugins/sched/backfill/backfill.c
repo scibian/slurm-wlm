@@ -2502,9 +2502,10 @@ skip_start:
 				if (is_job_array_head &&
 				    (job_ptr->array_task_id != NO_VAL)) {
 					/* Try starting next task of job array */
+					job_record_t *tmp = job_ptr;
 					job_ptr = find_job_record(job_ptr->
 								  array_job_id);
-					if (job_ptr &&
+					if (job_ptr && (job_ptr != tmp) &&
 					    IS_JOB_PENDING(job_ptr) &&
 					    (bb_g_job_test_stage_in(
 						    job_ptr, false) == 1))
@@ -2645,7 +2646,8 @@ skip_start:
 						job_ptr->job_resrcs,
 						job_ptr->details->pn_min_memory,
 						tres_req_cnt[TRES_ARRAY_CPU],
-						selected_node_cnt);
+						selected_node_cnt,
+						job_ptr->part_ptr);
 
 			tres_req_cnt[TRES_ARRAY_NODE] =
 				(uint64_t)selected_node_cnt;
@@ -3324,7 +3326,8 @@ static bool _het_job_limit_check(het_job_map_t *map, time_t now)
 					       job_ptr->job_resrcs,
 					       job_ptr->details->pn_min_memory,
 					       tres_req_cnt[TRES_ARRAY_CPU],
-					       selected_node_cnt);
+					       selected_node_cnt,
+					       job_ptr->part_ptr);
 		tres_req_cnt[TRES_ARRAY_NODE] = (uint64_t)selected_node_cnt;
 
 		assoc_mgr_lock(&locks);

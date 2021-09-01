@@ -204,9 +204,12 @@ static void _edit_crontab(char **crontab)
 	/* protect against weak file permissions in old glibc */
 	umask(0077);
 	fd = mkstemp(filename);
-	if (fd < 0 )
+	if (fd < 0) {
+		xfree(filename);
 		fatal("could not create temp file");
+	}
 	safe_write(fd, *crontab, strlen(*crontab));
+	close(fd);
 
 	xfree(*crontab);
 
@@ -214,8 +217,11 @@ static void _edit_crontab(char **crontab)
 		if (!(editor = getenv("EDITOR")) || (editor[0] == '\0'))
 			editor = "vi";
 
-	if ((pid = fork()) == -1)
+	if ((pid = fork()) == -1) {
+		unlink(filename);
+		xfree(filename);
 		fatal("cannot fork");
+	}
 
 	if (!pid) {
 		/* child */
@@ -231,10 +237,16 @@ static void _edit_crontab(char **crontab)
 	waitpid(pid, &wstatus, 0);
 
 	if (wstatus) {
-		close(fd);
 		unlink(filename);
 		xfree(filename);
 		fatal("editor returned non-zero exit code");
+	}
+
+	fd = open(filename, O_RDONLY);
+	if (fd < 0) {
+		unlink(filename);
+		xfree(filename);
+		fatal("could not reopen temp file");
 	}
 
 	*crontab = _load_script_from_fd(fd);

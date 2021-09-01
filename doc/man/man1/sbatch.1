@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "February 2021" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "June 2021" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -583,18 +583,15 @@ always propagated.
 .RS
 .TP 10
 \fB\-\-export\fR=\fIALL\fR
-.br
 Default mode if \fB\-\-export\fR is not specified. All of the users environment
 will be loaded (either from callers environment or clean environment if
 \fI\-\-get\-user\-env\fR is specified).
 .TP
 \fB\-\-export\fR=\fINONE\fR
-.br
 Only SLURM_* variables from the user environment will be defined. User must use
 absolute path to the binary to be executed that will define the environment.
 User can not specify explicit environment variables with \fINONE\fR.
 \fI\-\-get\-user\-env\fR will be ignored.
-.br
 This option is particularly important for jobs that are submitted on one cluster
 and execute on a different cluster (e.g. with different paths).
 To avoid steps inheriting environment export settings (e.g. \fINONE\fR) from
@@ -602,7 +599,6 @@ sbatch command, the environment variable SLURM_EXPORT_ENV should be set to
 \fIALL\fR in the job script.
 .TP
 \fB\-\-export\fR=<\fI[ALL,]environment variables>\fR
-.br
 Exports all SLURM_* environment variables along with explicitly defined
 variables. Multiple environment variable names should be comma separated.
 Environment variable names may be specified to propagate the current
@@ -613,13 +609,11 @@ explicitly given environment variables.
 .RS 5
 .TP 5
 Example: \fB\-\-export\fR=EDITOR,ARG1=test
-.br
 In this example, the propagated environment will only contain the
 variable \fIEDITOR\fR from the user's environment, \fISLURM_*\fR environment
 variables, and \fIARG1\fR=test.
 .TP
 Example: \fB\-\-export\fR=ALL,EDITOR=/bin/emacs
-.br
 There are two possible outcomes for this example. If the caller has the
 \fIEDITOR\fR environment variable defined, then the job's environment will
 inherit the variable from the caller's environment.  If the caller doesn't
@@ -686,9 +680,10 @@ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
 .TP
 \fB\-\-gpu\-bind\fR=[verbose,]<\fItype\fR>
 Bind tasks to specific GPUs.
-By default every spawned task can access every GPU allocated to the job.
+By default every spawned task can access every GPU allocated to the step.
 If "verbose," is specified before <\fItype\fR>, then print out GPU binding
-information.
+debug information to the stderr of the tasks. GPU binding is ignored if there is
+only one task.
 
 Supported \fItype\fR options:
 .RS
@@ -1272,7 +1267,7 @@ limit is changed.
 If a job node limit exceeds the number of nodes configured in the
 partition, the job will be rejected.
 Note that the environment
-variable \fBSLURM_JOB_NODES\fR will be set to the count of nodes actually
+variable \fBSLURM_JOB_NUM_NODES\fR will be set to the count of nodes actually
 allocated to the job. See the \fBENVIRONMENT VARIABLES \fR section
 for more information.  If \fB\-N\fR is not specified, the default
 behavior is to allocate enough nodes to satisfy the requirements of
@@ -1458,9 +1453,8 @@ Request the maximum \fIntasks\fR be invoked on each core.
 Meant to be used with the \fB\-\-ntasks\fR option.
 Related to \fB\-\-ntasks\-per\-node\fR except at the core level
 instead of the node level.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's core count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-\-ntasks\-per\-gpu\fR=<\fIntasks\fR>
@@ -1505,9 +1499,8 @@ Request the maximum \fIntasks\fR be invoked on each socket.
 Meant to be used with the \fB\-\-ntasks\fR option.
 Related to \fB\-\-ntasks\-per\-node\fR except at the socket level
 instead of the node level.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's socket count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-O\fR, \fB\-\-overcommit\fR
@@ -2029,14 +2022,14 @@ Same as \fB\-\-export\fR
 \fBSBATCH_GET_USER_ENV\fR
 Same as \fB\-\-get\-user\-env\fR
 .TP
-\fBSBATCH_GPUS\fR
-Same as \fB\-G, \-\-gpus\fR
-.TP
 \fBSBATCH_GPU_BIND\fR
 Same as \fB\-\-gpu\-bind\fR
 .TP
 \fBSBATCH_GPU_FREQ\fR
 Same as \fB\-\-gpu\-freq\fR
+.TP
+\fBSBATCH_GPUS\fR
+Same as \fB\-G, \-\-gpus\fR
 .TP
 \fBSBATCH_GPUS_PER_NODE\fR
 Same as \fB\-\-gpus\-per\-node\fR
@@ -2098,9 +2091,6 @@ Same as \fB\-\-profile\fR
 \fBSBATCH_QOS\fR
 Same as \fB\-\-qos\fR
 .TP
-\fBSBATCH_RESERVATION\fR
-Same as \fB\-\-reservation\fR
-.TP
 \fBSBATCH_REQ_SWITCH\fR
 When a tree topology is used, this defines the maximum count of switches
 desired for the job allocation and optionally the maximum time to wait
@@ -2108,6 +2098,9 @@ for that number of switches. See \fB\-\-switches\fR
 .TP
 \fBSBATCH_REQUEUE\fR
 Same as \fB\-\-requeue\fR
+.TP
+\fBSBATCH_RESERVATION\fR
+Same as \fB\-\-reservation\fR
 .TP
 \fBSBATCH_SIGNAL\fR
 Same as \fB\-\-signal\fR
@@ -2175,6 +2168,9 @@ Set to "quiet" otherwise.
 For a heterogeneous job allocation, the environment variables are set separately
 for each component.
 .TP
+\fBSLURM_ARRAY_JOB_ID\fR
+Job array's master job ID number.
+.TP
 \fBSLURM_ARRAY_TASK_COUNT\fR
 Total number of tasks in a job array.
 .TP
@@ -2190,14 +2186,15 @@ Job array's minimum ID (index) number.
 \fBSLURM_ARRAY_TASK_STEP\fR
 Job array's index step size.
 .TP
-\fBSLURM_ARRAY_JOB_ID\fR
-Job array's master job ID number.
-.TP
 \fBSLURM_CLUSTER_NAME\fR
 Name of the cluster on which the job is executing.
 .TP
 \fBSLURM_CPUS_ON_NODE\fR
-Number of CPUS on the allocated node.
+Number of CPUs allocated to the batch step.
+\fBNOTE\fR: The \fBselect/linear\fR plugin allocates entire nodes to
+jobs, so the value indicates the total count of CPUs on the node.
+For the \fBselect/cons_res\fR and \fBcons/tres\fR plugins, this number
+indicates the number of CPUs on this node allocated to the step.
 .TP
 \fBSLURM_CPUS_PER_GPU\fR
 Number of CPUs requested per allocated GPU.
@@ -2215,11 +2212,7 @@ See \fB\-m, \-\-distribution\fR.
 Same as \fB\-m, \-\-distribution\fR
 .TP
 \fBSLURM_EXPORT_ENV\fR
-Same as \fB\-e, \-\-export\fR.
-.TP
-\fBSLURM_GPUS\fR
-Number of GPUs requested.
-Only set if the \fB\-G, \-\-gpus\fR option is specified.
+Same as \fB\-\-export\fR.
 .TP
 \fBSLURM_GPU_BIND\fR
 Requested binding of tasks to GPU.
@@ -2228,6 +2221,10 @@ Only set if the \fB\-\-gpu\-bind\fR option is specified.
 \fBSLURM_GPU_FREQ\fR
 Requested GPU frequency.
 Only set if the \fB\-\-gpu\-freq\fR option is specified.
+.TP
+\fBSLURM_GPUS\fR
+Number of GPUs requested.
+Only set if the \fB\-G, \-\-gpus\fR option is specified.
 .TP
 \fBSLURM_GPUS_PER_NODE\fR
 Requested GPU count per allocated node.
@@ -2243,20 +2240,31 @@ Only set if the \fB\-\-gpus\-per\-task\fR option is specified.
 .TP
 \fBSLURM_GTIDS\fR
 Global task IDs running on this node.  Zero  origin and comma separated.
+It is read internally by pmi if Slurm was built with pmi support. Leaving
+the variable set may cause problems when using external packages from
+within the job (Abaqus and Ansys have been known to have problems when
+it is set - consult the appropriate documentation for 3rd party software).
+.TP
+\fBSLURM_HET_SIZE\fR
+Set to count of components in heterogeneous job.
 .TP
 \fBSLURM_JOB_ACCOUNT\fR
 Account name associated of the job allocation.
 .TP
-\fBSLURM_JOB_ID\fR (and \fBSLURM_JOBID\fR for backwards compatibility)
+\fBSLURM_JOB_ID\fR
 The ID of the job allocation.
 .TP
 \fBSLURM_JOB_CPUS_PER_NODE\fR
-Count of processors available to the job on this node.
-Note the select/linear plugin allocates entire nodes to
-jobs, so the value indicates the total count of CPUs on the node.
-The select/cons_res plugin allocates individual processors
-to jobs, so this number indicates the number of processors
-on this node allocated to the job.
+Count of CPUs available to the job on the nodes in the allocation, using the
+format \fICPU_count\fR[(x\fInumber_of_nodes\fR)][,\fICPU_count\fR
+[(x\fInumber_of_nodes\fR)] ...].
+For example: SLURM_JOB_CPUS_PER_NODE='72(x2),36' indicates that on the
+first and second nodes (as listed by SLURM_JOB_NODELIST) the allocation
+has 72 CPUs, while the third node has 36 CPUs.
+\fBNOTE\fR: The \fBselect/linear\fR plugin allocates entire nodes to jobs, so
+the value indicates the total count of CPUs on allocated nodes. The
+\fBselect/cons_res\fR and \fBselect/cons_tres\fR plugins allocate individual
+CPUs to jobs, so this number indicates the number of CPUs allocated to the job.
 .TP
 \fBSLURM_JOB_DEPENDENCY\fR
 Set to value of the \-\-dependency option.
@@ -2264,10 +2272,10 @@ Set to value of the \-\-dependency option.
 \fBSLURM_JOB_NAME\fR
 Name of the job.
 .TP
-\fBSLURM_JOB_NODELIST\fR (and \fBSLURM_NODELIST\fR for backwards compatibility)
+\fBSLURM_JOB_NODELIST\fR
 List of nodes allocated to the job.
 .TP
-\fBSLURM_JOB_NUM_NODES\fR (and \fBSLURM_NNODES\fR for backwards compatibility)
+\fBSLURM_JOB_NUM_NODES\fR
 Total number of nodes in the job's resource allocation.
 .TP
 \fBSLURM_JOB_PARTITION\fR
@@ -2278,6 +2286,10 @@ Quality Of Service (QOS) of the job allocation.
 .TP
 \fBSLURM_JOB_RESERVATION\fR
 Advanced reservation containing the job allocation, if any.
+.TP
+\fBSLURM_JOBID\fR
+The ID of the job allocation. See \fBSLURM_JOB_ID\fR. Included for backwards
+compatibility.
 .TP
 \fBSLURM_LOCALID\fR
 Node local task ID for the process within a job.
@@ -2292,6 +2304,10 @@ Only set if the \fB\-\-mem\-per\-gpu\fR option is specified.
 \fBSLURM_MEM_PER_NODE\fR
 Same as \fB\-\-mem\fR
 .TP
+\fBSLURM_NNODES\fR
+Total number of nodes in the job's resource allocation. See
+\fBSLURM_JOB_NUM_NODES\fR. Included for backwards compatibility.
+.TP
 \fBSLURM_NODE_ALIASES\fR
 Sets of node name, communication address and hostname for nodes allocated to
 the job from the cloud. Each element in the set if colon separated and each
@@ -2301,7 +2317,15 @@ SLURM_NODE_ALIASES=ec0:1.2.3.4:foo,ec1:1.2.3.5:bar
 \fBSLURM_NODEID\fR
 ID of the nodes allocated.
 .TP
-\fBSLURM_NTASKS\fR (and \fBSLURM_NPROCS\fR for backwards compatibility)
+\fBSLURM_NODELIST\fR
+List of nodes allocated to the job. See \fBSLURM_JOB_NODELIST\fR. Included
+for backwards compatibility.
+.TP
+\fBSLURM_NPROCS\fR
+Same as \fB\-n, \-\-ntasks\fR. See \fBSLURM_NTASKS\fR. Included for backwards
+compatibility.
+.TP
+\fBSLURM_NTASKS\fR
 Same as \fB\-n, \-\-ntasks\fR
 .TP
 \fBSLURM_NTASKS_PER_CORE\fR
@@ -2321,8 +2345,8 @@ Only set if the \fB\-\-ntasks\-per\-node\fR option is specified.
 Number of tasks requested per socket.
 Only set if the \fB\-\-ntasks\-per\-socket\fR option is specified.
 .TP
-\fBSLURM_HET_SIZE\fR
-Set to count of components in heterogeneous job.
+\fBSLURM_OVERCOMMIT\fR
+Set to \fB1\fR if \fB\-\-overcommit\fR was specified.
 .TP
 \fBSLURM_PRIO_PROCESS\fR
 The  scheduling priority (nice value) at the time of job submission.
@@ -2340,11 +2364,13 @@ explicitly requeued, this will be sent to the number of times
 the job has been restarted.
 .TP
 \fBSLURM_SUBMIT_DIR\fR
-The directory from which \fBsbatch\fR was invoked or, if applicable, the
-directory specified by the \fB\-D, \-\-chdir\fR option.
+The directory from which \fBsbatch\fR was invoked.
 .TP
 \fBSLURM_SUBMIT_HOST\fR
 The hostname of the computer from which \fBsbatch\fR was invoked.
+.TP
+\fBSLURM_TASK_PID\fR
+The process ID of the task being started.
 .TP
 \fBSLURM_TASKS_PER_NODE\fR
 Number of tasks to be initiated on each node. Values are
@@ -2354,9 +2380,6 @@ count, that count is followed by "(x#)" where "#" is the
 repetition count. For example, "SLURM_TASKS_PER_NODE=2(x3),1"
 indicates that the first three nodes will each execute two
 tasks and the fourth node will execute one task.
-.TP
-\fBSLURM_TASK_PID\fR
-The process ID of the task being started.
 .TP
 \fBSLURM_TOPOLOGY_ADDR\fR
 This is set only if the  system  has  the  topology/tree  plugin

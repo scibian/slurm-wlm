@@ -3413,12 +3413,7 @@ program_transform_name=`$as_echo "$program_transform_name" | sed "$ac_script"`
 am_aux_dir=`cd "$ac_aux_dir" && pwd`
 
 if test x"${MISSING+set}" != xset; then
-  case $am_aux_dir in
-  *\ * | *\	*)
-    MISSING="\${SHELL} \"$am_aux_dir/missing\"" ;;
-  *)
-    MISSING="\${SHELL} $am_aux_dir/missing" ;;
-  esac
+  MISSING="\${SHELL} '$am_aux_dir/missing'"
 fi
 # Use eval to expand $SHELL
 if eval "$MISSING --is-lightweight"; then
@@ -24570,10 +24565,9 @@ $as_echo "$_cv_systemd_presence" >&6; }
 $as_echo "#define HAVE_SYSTEMD 1" >>confdefs.h
 
 
-	    _cv_systemd_version=`$PKG_CONFIG --modversion systemd 2>/dev/null`
-
 	    SYSTEMD_TASKSMAX_OPTION=""
-	    if test "$_cv_systemd_version" -ge 227; then
+	    $PKG_CONFIG --atleast-version 227 systemd
+	    if test "$?" -eq 0; then
 		    SYSTEMD_TASKSMAX_OPTION="TasksMax=infinity"
 	    fi
 

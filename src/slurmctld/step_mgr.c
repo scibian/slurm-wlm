@@ -431,7 +431,6 @@ extern void free_step_record(void *x)
 	step_record_t *step_ptr = (step_record_t *) x;
 	xassert(step_ptr);
 	xassert(step_ptr->magic == STEP_MAGIC);
-	step_ptr->magic = 0;
 /*
  * FIXME: If job step record is preserved after completion,
  * the switch_g_job_step_complete() must be called upon completion
@@ -469,6 +468,7 @@ extern void free_step_record(void *x)
 	xfree(step_ptr->tres_per_node);
 	xfree(step_ptr->tres_per_socket);
 	xfree(step_ptr->tres_per_task);
+	step_ptr->magic = ~STEP_MAGIC;
 	xfree(step_ptr);
 }
 
@@ -1070,72 +1070,77 @@ static bitstr_t *_pick_step_nodes(job_record_t *job_ptr,
 		}
 	}
 
-	if ((step_spec->pn_min_memory && _is_mem_resv()) || step_gres_list) {
-		int fail_mode = ESLURM_INVALID_TASK_MEMORY;
-		uint64_t tmp_mem;
-		uint32_t tmp_cpus, avail_cpus, total_cpus;
-		uint32_t avail_tasks, total_tasks;
+	if (_is_mem_resv() && step_spec->pn_min_memory &&
+	    ((step_spec->pn_min_memory & MEM_PER_CPU) == 0) &&
+	    job_ptr->details && job_ptr->details->pn_min_memory &&
+	    ((job_ptr->details->pn_min_memory & MEM_PER_CPU) == 0) &&
+	    (step_spec->pn_min_memory >
+	     job_ptr->details->pn_min_memory)) {
+		FREE_NULL_BITMAP(nodes_avail);
+		FREE_NULL_BITMAP(select_nodes_avail);
+		*return_code = ESLURM_INVALID_TASK_MEMORY;
+		return NULL;
+	}
 
-		if (_is_mem_resv() && step_spec->pn_min_memory &&
-		    ((step_spec->pn_min_memory & MEM_PER_CPU) == 0) &&
-		    job_ptr->details && job_ptr->details->pn_min_memory &&
-		    ((job_ptr->details->pn_min_memory & MEM_PER_CPU) == 0) &&
-		    (step_spec->pn_min_memory >
-		     job_ptr->details->pn_min_memory)) {
-			FREE_NULL_BITMAP(nodes_avail);
-			FREE_NULL_BITMAP(select_nodes_avail);
-			*return_code = ESLURM_INVALID_TASK_MEMORY;
-			return NULL;
+	usable_cpu_cnt = xcalloc(node_record_count, sizeof(uint32_t));
+	first_bit = bit_ffs(job_resrcs_ptr->node_bitmap);
+	if (first_bit >= 0)
+		last_bit  = bit_fls(job_resrcs_ptr->node_bitmap);
+	else
+		last_bit = -2;
+	for (i = first_bit, node_inx = -1; i <= last_bit; i++) {
+		if (!bit_test(job_resrcs_ptr->node_bitmap, i))
+			continue;
+		node_inx++;
+		if (!bit_test(nodes_avail, i))
+			continue;	/* node now DOWN */
+
+		usable_cpu_cnt[i] = job_resrcs_ptr->cpus[node_inx];
+
+		log_flag(STEPS, "%s: %pJ Currently running steps use %d of allocated %d CPUs on node %s",
+			 __func__, job_ptr,
+			 job_resrcs_ptr->cpus_used[node_inx],
+			 usable_cpu_cnt[i], node_record_table_ptr[i].name);
+
+		if (step_spec->flags & SSF_EXCLUSIVE) {
+			/*
+			 * If whole is given and
+			 * job_resrcs_ptr->cpus_used[node_inx]
+			 * we can't use this node.
+			 */
+			if ((step_spec->flags & SSF_WHOLE) &&
+			    job_resrcs_ptr->cpus_used[node_inx]) {
+				log_flag(STEPS, "%s: %pJ Node requested --whole node while other step running here.",
+					 __func__, job_ptr);
+				job_blocked_cpus +=
+					job_resrcs_ptr->cpus_used[node_inx];
+				job_blocked_nodes++;
+				usable_cpu_cnt[i] = 0;
+			} else {
+				usable_cpu_cnt[i] -=
+					job_resrcs_ptr->cpus_used[node_inx];
+				job_blocked_cpus +=
+					job_resrcs_ptr->cpus_used[node_inx];
+				if (!usable_cpu_cnt[i])
+					job_blocked_nodes++;
+			}
 		}
 
-		usable_cpu_cnt = xcalloc(node_record_count, sizeof(uint32_t));
-		first_bit = bit_ffs(job_resrcs_ptr->node_bitmap);
-		if (first_bit >= 0)
-			last_bit  = bit_fls(job_resrcs_ptr->node_bitmap);
-		else
-			last_bit = -2;
-		for (i = first_bit, node_inx = -1; i <= last_bit; i++) {
-			if (!bit_test(job_resrcs_ptr->node_bitmap, i))
-				continue;
-			node_inx++;
-			if (!bit_test(nodes_avail, i))
-				continue;	/* node now DOWN */
+		if (!usable_cpu_cnt[i]) {
+			log_flag(STEPS, "%s: %pJ Skipping node. Not enough CPUs to run step here.",
+				 __func__, job_ptr);
+			bit_clear(nodes_avail, i);
+			continue;
+		}
 
-			total_cpus = job_resrcs_ptr->cpus[node_inx];
+		if ((step_spec->pn_min_memory && _is_mem_resv()) ||
+		    step_gres_list) {
+			int fail_mode = ESLURM_INVALID_TASK_MEMORY;
+			uint64_t tmp_mem;
+			uint32_t tmp_cpus, avail_cpus, total_cpus;
+			uint32_t avail_tasks, total_tasks;
 
-			log_flag(STEPS, "%s: %pJ Currently running steps use %d of allocated %d CPUs on node %s",
-				 __func__, job_ptr,
-				 job_resrcs_ptr->cpus_used[node_inx],
-				 total_cpus, node_record_table_ptr[i].name);
-
-			if (step_spec->flags & SSF_EXCLUSIVE) {
-				/*
-				 * If whole is given and
-				 * job_resrcs_ptr->cpus_used[node_inx]
-				 * we can't use this node.
-				 */
-				if ((step_spec->flags & SSF_WHOLE) &&
-				    job_resrcs_ptr->cpus_used[node_inx]) {
-					log_flag(STEPS, "%s: %pJ Node requested --whole node while other step running here.",
-						 __func__, job_ptr);
-					job_blocked_cpus += total_cpus;
-					job_blocked_nodes++;
-					total_cpus = 0;
-				} else {
-					total_cpus -= job_resrcs_ptr->
-						cpus_used[node_inx];
-					job_blocked_cpus += job_resrcs_ptr->
-						cpus_used[node_inx];
-				}
-			}
-
-			if (!total_cpus) {
-				log_flag(STEPS, "%s: %pJ Skipping node. Not enough CPUs to run step here.",
-					 __func__, job_ptr);
-				continue;
-			}
-
-			usable_cpu_cnt[i] = avail_cpus = total_cpus;
+			avail_cpus = total_cpus = usable_cpu_cnt[i];;
 			if (_is_mem_resv() &&
 			    step_spec->pn_min_memory & MEM_PER_CPU) {
 				uint64_t mem_use = step_spec->pn_min_memory;
@@ -1262,11 +1267,15 @@ static bitstr_t *_pick_step_nodes(job_record_t *job_ptr,
 		}
 		if (!bit_super_set(selected_nodes, nodes_avail)) {
 			/*
-			 * If some nodes still have some memory allocated
-			 * to other steps, just defer the execution of the
-			 * step
+			 * If some nodes still have some memory or CPUs
+			 * allocated to other steps, just defer the execution
+			 * of the step
 			 */
-			if (mem_blocked_nodes == 0) {
+			if (job_blocked_nodes) {
+				*return_code = ESLURM_NODES_BUSY;
+				log_flag(STEPS, "%s: some requested nodes %s still have CPUs used by other steps",
+					 __func__, step_spec->node_list);
+			} else if (mem_blocked_nodes == 0) {
 				*return_code = ESLURM_INVALID_TASK_MEMORY;
 				info("%s: requested nodes %s have inadequate memory",
 				     __func__, step_spec->node_list);
@@ -1417,50 +1426,30 @@ static bitstr_t *_pick_step_nodes(job_record_t *job_ptr,
 	if (step_spec->min_nodes) {
 		int cpus_needed, node_avail_cnt, nodes_needed;
 
-		if (usable_cpu_cnt == NULL) {
-			usable_cpu_cnt = xcalloc(node_record_count,
-						 sizeof(uint32_t));
-			first_bit = bit_ffs(job_resrcs_ptr->node_bitmap);
-			if (first_bit >= 0)
-				last_bit  = bit_fls(job_resrcs_ptr->node_bitmap);
-			else
-				last_bit = -2;
-			for (i = first_bit, node_inx = -1; i <= last_bit; i++) {
-				if (!bit_test(job_resrcs_ptr->node_bitmap, i))
-					continue;
-				node_inx++;
-				usable_cpu_cnt[i] =
-					job_resrcs_ptr->cpus[node_inx];
-
-				if (step_spec->flags & SSF_EXCLUSIVE) {
-					/*
-					 * If whole is given and
-					 * job_resrcs_ptr->cpus_used[node_inx]
-					 * we can't use this node.
-					 */
-					if ((step_spec->flags & SSF_WHOLE) &&
-					    job_resrcs_ptr->
-					    cpus_used[node_inx]) {
-						job_blocked_cpus +=
-							job_resrcs_ptr->
-							cpus[node_inx];
-						usable_cpu_cnt[i] = 0;
-						job_blocked_nodes++;
-					} else {
-						job_blocked_cpus +=
-							job_resrcs_ptr->
-							cpus_used[node_inx];
-						usable_cpu_cnt[i] -=
-							job_resrcs_ptr->
-							cpus_used[node_inx];
-					}
-				}
-			}
-
-		}
 		nodes_picked_cnt = bit_set_count(nodes_picked);
 		log_flag(STEPS, "%s: step picked %d of %u nodes",
 			 __func__, nodes_picked_cnt, step_spec->min_nodes);
+
+		/*
+		 * First do a basic test - if there aren't enough nodes for
+		 * this step to run on then we need to defer execution of this
+		 * step. As long as there aren't enough nodes for this
+		 * step we can never test if the step requested too
+		 * many CPUs, too much memory, etc. so we just bail right here.
+		 */
+		if (nodes_avail)
+			node_avail_cnt = bit_set_count(nodes_avail);
+		else
+			node_avail_cnt = 0;
+		if ((node_avail_cnt + nodes_picked_cnt) <
+		    step_spec->min_nodes) {
+			log_flag(STEPS, "%s: Step requested more nodes (%u) than are available (%d), deferring step until enough nodes are available.",
+				 __func__, step_spec->min_nodes,
+				 node_avail_cnt);
+			*return_code = ESLURM_NODES_BUSY;
+			goto cleanup;
+		}
+
 		if (nodes_idle)
 			node_avail_cnt = bit_set_count(nodes_idle);
 		else
@@ -1723,8 +1712,9 @@ static void _pick_step_cores(step_record_t *step_ptr,
 		use_all_cores = false;
 
 		if (step_ptr->cpus_per_task > 0) {
-			cpu_cnt *= step_ptr->cpus_per_task + cpus_per_core - 1;
-			cpu_cnt	/= cpus_per_core;
+			cpu_cnt *= step_ptr->cpus_per_task;
+			cpu_cnt += (cpus_per_core - 1);
+			cpu_cnt /= cpus_per_core;
 		}
 	}
 
@@ -1992,6 +1982,12 @@ static void _step_dealloc_lps(step_record_t *step_ptr)
 	int job_node_inx = -1, step_node_inx = -1;
 
 	xassert(job_resrcs_ptr);
+	if (!job_resrcs_ptr) {
+		error("%s: job_resrcs is NULL for %pS; this should never happen",
+		      __func__, step_ptr);
+		return;
+	}
+
 	xassert(job_resrcs_ptr->cpus);
 	xassert(job_resrcs_ptr->cpus_used);
 
@@ -3425,6 +3421,9 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid, bool finish,
 	job_record_t *job_ptr;
 	step_record_t *step_ptr;
 	int nodes, rem_nodes;
+#ifndef HAVE_FRONT_END
+	int range_bits, set_bits;
+#endif
 
 	xassert(rem);
 
@@ -3469,9 +3468,6 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid, bool finish,
 		return EINVAL;
 	}
 
-	ext_sensors_g_get_stependdata(step_ptr);
-	jobacctinfo_aggregate(step_ptr->jobacct, req->jobacct);
-
 	/* we have been adding task average frequencies for
 	 * jobacct->act_cpufreq so we need to divide with the
 	 * total number of tasks/cpus for the step average frequency */
@@ -3502,10 +3498,45 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid, bool finish,
 	bit_set_all(step_ptr->exit_node_bitmap);
 	rem_nodes = 0;
 #else
+	range_bits = req->range_last + 1 - req->range_first;
+	set_bits = bit_set_count_range(step_ptr->exit_node_bitmap,
+				       req->range_first,
+				       req->range_last + 1);
+
+	/* Check if any stepd of the range was already received */
+	if (set_bits) {
+		/* If all are already received skip jobacctinfo_aggregate */
+		if (set_bits == range_bits) {
+			debug("Step complete from %d to %d was already processed. Probably a RPC was resent from a child.",
+			      req->range_first, req->range_last);
+			goto no_aggregate;
+		}
+
+		/*
+		 * If partially received, we cannot recover the right gathered
+		 * information. If we don't gather the new one we'll miss some
+		 * information, and if we gather it some of the info will be
+		 * duplicated. We log that error and chose to partially
+		 * duplicate because it's probably a smaller error.
+		 */
+		error("Step complete from %d to %d was already processed (%d of %d). Probably a RPC was resent from a child and gathered information is partially duplicated.",
+		      req->range_first, req->range_last,
+		      set_bits, range_bits);
+	}
+
 	bit_nset(step_ptr->exit_node_bitmap,
 		 req->range_first, req->range_last);
+
+#endif
+
+	ext_sensors_g_get_stependdata(step_ptr);
+	jobacctinfo_aggregate(step_ptr->jobacct, req->jobacct);
+
+#ifndef HAVE_FRONT_END
+no_aggregate:
 	rem_nodes = bit_clear_count(step_ptr->exit_node_bitmap);
 #endif
+
 	*rem = rem_nodes;
 	if (rem_nodes == 0) {
 		/* release all switch windows */

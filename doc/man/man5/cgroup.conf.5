@@ -1,4 +1,4 @@
-.TH "cgroup.conf" "5" "Slurm Configuration File" "February 2021" "Slurm Configuration File"
+.TH "cgroup.conf" "5" "Slurm Configuration File" "June 2021" "Slurm Configuration File"
 
 .SH "NAME"
 cgroup.conf \- Slurm configuration file for the cgroup support
@@ -20,7 +20,7 @@ Slurm daemons, daemon receipt of the SIGHUP signal, or execution
 of the command "scontrol reconfigure" unless otherwise noted.
 
 .LP
-For general Slurm Cgroups information, see the Cgroups Guide at
+For general Slurm cgroups information, see the Cgroups Guide at
 <https://slurm.schedmd.com/cgroups.html>.
 
 .LP
@@ -62,7 +62,7 @@ The percentage supplied may be expressed as floating point number, e.g. 101.5.
 Sets the cgroup soft memory limit at the allocated memory size and then sets the
 job/step hard memory limit at the (AllowedRAMSpace/100) * allocated memory. If
 the job/step exceeds the hard limit, then it might trigger Out Of Memory (OOM)
-events (including oom-kill) which will be logged to kernel log ringbuffer
+events (including oom-kill) which will be logged to kernel log ring buffer
 (dmesg in Linux). Setting AllowedRAMSpace above 100 may cause system Out of
 Memory (OOM) events as it allows job/step to allocate more memory than
 configured to the nodes.  Reducing configured node available memory to avoid
@@ -116,7 +116,13 @@ which case the job's RAM limit will be set to its swap space limit if
 \fBConstrainSwapSpace\fR is set to "yes".
 Also see \fBAllowedSwapSpace\fR, \fBAllowedRAMSpace\fR and
 \fBConstrainSwapSpace\fR.
-NOTE: When enabled, ConstrainRAMSpace can lead to a noticeable decline in
+
+\fBNOTE\fR: When using \fBConstrainRAMSpace\fR, if a process tries to consume
+more memory than is available, the step that process is running in will be
+killed. This differs from the behavior when using \fBOverMemoryKill\fR,
+where just the offending process will be killed.
+
+\fBNOTE\fR: When enabled, ConstrainRAMSpace can lead to a noticeable decline in
 per-node job throughout. Sites with high-throughput requirements should
 carefully weigh the tradeoff between per-node throughput, versus potential
 problems that can arise from unconstrained memory usage on the node. See
@@ -130,7 +136,7 @@ ConstrainRAMSpace is set to "no", \fBAllowedRAMSpace\fR is automatically set
 to 100% in order to limit the RAM+Swap amount to 100% of job's requirement
 plus the percent of allowed swap space. This amount is thus set to both
 RAM and RAM+Swap limits. This means that in that particular case,
-ConstrainRAMSpace is automatically enabled with the same limit than the one
+ConstrainRAMSpace is automatically enabled with the same limit as the one
 used to constrain swap space.
 Also see \fBAllowedSwapSpace\fR.
 
@@ -163,9 +169,9 @@ used. The default value is 100.
 Configure the kernel's priority for swapping out anonymous pages (such as
 program data) verses file cache pages for the job cgroup. Valid values are
 between 0 and 100, inclusive. A value of 0 prevents the kernel from swapping
-out program data. A value of 100 gives equal priorioty to swapping out file
+out program data. A value of 100 gives equal priority to swapping out file
 cache or anonymous pages. If not set, then the kernel's default swappiness
-value will be used. Either \fBConstrainRAMSpace\fR or \fBConstrainSwapSpace\fR
+value will be used. \fBConstrainSwapSpace\fR
 must be set to \fByes\fR in order for this parameter to be applied.
 
 .TP
@@ -185,7 +191,15 @@ is immediately killed due to lack of RAM. The default limit is 30M.
 If configured to "yes" then set a default task affinity to bind each step
 task to a subset of the allocated cores using \fBsched_setaffinity\fP.
 The default value is "no".
-Note: This feature requires the Portable Hardware Locality (hwloc) library
+
+\fBNOTE\fR: The recommended configuration to bind steps to tasks is to set
+\fBTaskPlugin=task/affinity,task/cgroup\fR in the slurm.conf and set
+\fBTaskAffinity=no\fR with \fBConstrainCores=yes\fR in the cgroup.conf.
+This setup uses the \fBtask/affinity\fR plugin for setting the affinity of the
+tasks and uses the \fBtask/cgroup\fR plugin to fence tasks into the specified
+resources, combining the best of both pieces.
+
+\fBNOTE\fR: This feature requires the Portable Hardware Locality (hwloc) library
 to be installed.
 
 .SH "DISTRIBUTION\-SPECIFIC NOTES"
@@ -203,7 +217,7 @@ after updating the file.
 .TP
 \fB/etc/slurm/cgroup.conf\fR:
 This example cgroup.conf file shows a configuration that enables the more
-commonly used cgroup enforcment mechanisms.
+commonly used cgroup enforcement mechanisms.
 
 .nf
 ###

@@ -68,12 +68,13 @@ extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id)
 	if (job_ptr->prep_prolog_cnt) {
 		debug2("%s: still %u async prologs left to complete",
 		       __func__, job_ptr->prep_prolog_cnt);
-		lock_slurmctld(job_write_lock);
+		unlock_slurmctld(job_write_lock);
 		return;
 	}
 
 	/* all async prologs have completed, continue on now */
 	if (job_ptr->prep_prolog_failed) {
+		job_ptr->prep_prolog_failed = false;
 		if ((rc = job_requeue(0, job_id, NULL, false, 0))) {
 			info("unable to requeue JobId=%u: %s", job_id,
 			     slurm_strerror(rc));
@@ -128,7 +129,7 @@ extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id)
 	if (job_ptr->prep_epilog_cnt) {
 		debug2("%s: still %u async epilogs left to complete",
 		       __func__, job_ptr->prep_epilog_cnt);
-		lock_slurmctld(job_write_lock);
+		unlock_slurmctld(job_write_lock);
 		return;
 	}
 
