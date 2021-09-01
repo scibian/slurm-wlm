@@ -240,9 +240,11 @@ static void _set_gpu_defaults(job_record_t *job_ptr)
 		last_mem_per_gpu = common_get_def_mem_per_gpu(
 			last_part_ptr->job_defaults_list);
 	}
-	if (last_cpu_per_gpu != NO_VAL64)
+	if ((last_cpu_per_gpu != NO_VAL64) &&
+	    (job_ptr->details->orig_cpus_per_task == NO_VAL16))
 		cpu_per_gpu = last_cpu_per_gpu;
-	else if (def_cpu_per_gpu != NO_VAL64)
+	else if ((def_cpu_per_gpu != NO_VAL64) &&
+		 (job_ptr->details->orig_cpus_per_task == NO_VAL16))
 		cpu_per_gpu = def_cpu_per_gpu;
 	else
 		cpu_per_gpu = 0;
@@ -255,7 +257,8 @@ static void _set_gpu_defaults(job_record_t *job_ptr)
 
 	gres_plugin_job_set_defs(job_ptr->gres_list, "gpu", cpu_per_gpu,
 				 mem_per_gpu, &job_ptr->cpus_per_tres,
-				 &job_ptr->mem_per_tres);
+				 &job_ptr->mem_per_tres,
+				 &job_ptr->details->cpus_per_task);
 }
 
 /* Determine how many sockets per node this job requires for GRES */

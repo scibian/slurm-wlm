@@ -1,31 +1,11 @@
 Description: Fix typos
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=10665
-Last-Update: 2021-01-21
+Last-Update: 2021-08-21
 
---- a/doc/man/man5/slurm.conf.5
-+++ b/doc/man/man5/slurm.conf.5
-@@ -3578,7 +3578,7 @@
- is 10 seconds.
- .TP
- \fBpower_save_min_interval\fR
--How often the power_save thread, at a minimun, looks to resume and suspend
-+How often the power_save thread, at a minimum, looks to resume and suspend
- nodes. Default is 0.
- .TP
- \fBmax_dbd_msg_action\fR
-@@ -5554,7 +5554,7 @@
- \fBSLURMD_NODENAME\fR
- Name of the node running the task. In the case of a parallel job executing
- on multiple compute nodes, the various tasks will have this environment
--variable set to different values on each compute node. Availble in
-+variable set to different values on each compute node. Available in
- \fBProlog\fR and \fBEpilog\fR.
- .TP
- \fBSLURM_JOB_ACCOUNT\fR
 --- a/src/common/slurm_protocol_api.c
 +++ b/src/common/slurm_protocol_api.c
-@@ -2960,7 +2960,7 @@
+@@ -2961,7 +2961,7 @@
  		struct sockaddr_in6 *sin = (struct sockaddr_in6 *) &addr;
  		sin->sin6_addr = in6addr_loopback;
  	} else {

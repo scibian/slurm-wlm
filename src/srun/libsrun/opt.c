@@ -393,9 +393,8 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off)
 
 		if (!check_het_step) {
 			/*
-			 * SLURM_JOB_NUM_NODES is only ever set on a normal
-			 * allocation, on a het job it is
-			 * SLURM_JOB_NUM_NODES_$PACKID.
+			 * SLURM_HET_SIZE not defined for a normal allocation.
+			 * SLURM_JOB_ID defined if allocation already exists.
 			 *
 			 * Here we are seeing if we are trying to run a het step
 			 * in the normal allocation.  If so and we didn't
@@ -403,7 +402,8 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off)
 			 * env variable and figure it out later instead of
 			 * trying to use the whole allocation.
 			 */
-			if (getenv("SLURM_JOB_NUM_NODES") &&
+			if (!getenv("SLURM_HET_SIZE") &&
+			    getenv("SLURM_JOB_ID") &&
 			    (optind >= 0) && (optind < argc)) {
 				for (int i2 = optind; i2 < argc; i2++) {
 					if (!xstrcmp(argv[i2], ":")) {
@@ -1431,7 +1431,7 @@ static void _usage(void)
 "            [--prolog=fname] [--epilog=fname]\n"
 "            [--task-prolog=fname] [--task-epilog=fname]\n"
 "            [--ctrl-comm-ifhn=addr] [--multi-prog] [--mcs-label=mcs]\n"
-"            [--cpu-freq=min[-max[:gov]] [--power=flags] [--spread-job]\n"
+"            [--cpu-freq=min[-max[:gov]]] [--power=flags] [--spread-job]\n"
 "            [--switches=max-switches{@max-time-to-wait}] [--reboot]\n"
 "            [--core-spec=cores] [--thread-spec=threads]\n"
 "            [--bb=burst_buffer_spec] [--bbf=burst_buffer_file]\n"
@@ -1440,7 +1440,7 @@ static void _usage(void)
 "            [-w hosts...] [-x hosts...] [--use-min-nodes]\n"
 "            [--mpi-combine=yes|no] [--het-group=value]\n"
 "            [--cpus-per-gpu=n] [--gpus=n] [--gpu-bind=...] [--gpu-freq=...]\n"
-"            [--gpus-per-node=n] [--gpus-per-socket=n]  [--gpus-per-task=n]\n"
+"            [--gpus-per-node=n] [--gpus-per-socket=n] [--gpus-per-task=n]\n"
 "            [--mem-per-gpu=MB]\n"
 "            executable [args...]\n");
 
