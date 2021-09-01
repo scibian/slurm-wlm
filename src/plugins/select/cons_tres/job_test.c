@@ -43,7 +43,7 @@
 
 typedef struct node_weight_struct {
 	bitstr_t *node_bitmap;	/* bitmap of nodes with this weight */
-	uint32_t weight;	/* priority of node for scheduling work on */
+	uint64_t weight;	/* priority of node for scheduling work on */
 } node_weight_type;
 
 typedef struct topo_weight_info {
@@ -110,8 +110,8 @@ static int _node_weight_sort(void *x, void *y);
 static int _node_weight_find(void *x, void *key)
 {
 	node_weight_type *nwt = (node_weight_type *) x;
-	config_record_t *config_ptr = (config_record_t *) key;
-	if (nwt->weight == config_ptr->weight)
+	node_record_t *node_ptr = (node_record_t *) key;
+	if (nwt->weight == node_ptr->sched_weight)
 		return 1;
 	return 0;
 }
@@ -158,12 +158,11 @@ static List _build_node_weight_list(bitstr_t *node_bitmap)
 		if (!bit_test(node_bitmap, i))
 			continue;
 		node_ptr = node_record_table_ptr + i;
-		nwt = list_find_first(node_list, _node_weight_find,
-				      node_ptr->config_ptr);
+		nwt = list_find_first(node_list, _node_weight_find, node_ptr);
 		if (!nwt) {
 			nwt = xmalloc(sizeof(node_weight_type));
 			nwt->node_bitmap = bit_alloc(select_node_cnt);
-			nwt->weight = node_ptr->config_ptr->weight;
+			nwt->weight = node_ptr->sched_weight;
 			list_append(node_list, nwt);
 		}
 		bit_set(nwt->node_bitmap, i);
@@ -1873,18 +1872,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 		}
 	}
 
-	/* count up leaf switches */
-	if (!req_nodes_bitmap) {
-		for (i = 0, switch_ptr = switch_record_table;
-		     i < switch_record_cnt; i++, switch_ptr++) {
-			if (switch_record_table[i].level != 0)
-				continue;
-			if (bit_overlap_any(switch_node_bitmap[i],
-					    best_nodes_bitmap))
-				leaf_switch_count++;
-		}
-	}
-
 	if (req_nodes_bitmap &&
 	    (!bit_super_set(req_nodes_bitmap, avail_nodes_bitmap))) {
 		info("%pJ requires nodes not available on any switch",
@@ -1993,25 +1980,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 		}
 	}
 
-	if (job_ptr->req_switch > 0) {
-		if (time_waiting >= job_ptr->wait4switch) {
-			job_ptr->best_switch = true;
-			debug3("%pJ waited %ld sec for switches use=%d",
-				job_ptr, time_waiting, leaf_switch_count);
-		} else if (leaf_switch_count > job_ptr->req_switch) {
-			/*
-			 * Allocation is for more than requested number of
-			 * switches.
-			 */
-			job_ptr->best_switch = false;
-			debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
-				job_ptr, time_waiting, job_ptr->req_switch,
-				leaf_switch_count, job_ptr->wait4switch);
-		} else {
-			job_ptr->best_switch = true;
-		}
-	}
-
 	/*
 	 * Add additional resources as required from additional leaf switches
 	 * on a round-robin basis
@@ -2076,7 +2044,39 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 	}
 	rc = SLURM_ERROR;
 
-fini:	FREE_NULL_LIST(best_gres);
+fini:
+	if ((job_ptr->req_switch > 0) && (rc == SLURM_SUCCESS) &&
+	    switch_node_bitmap) {
+		/* req_switch == 1 here; enforced at the top of the function. */
+		leaf_switch_count = 0;
+
+		/* count up leaf switches */
+		for (i = 0, switch_ptr = switch_record_table;
+		     i < switch_record_cnt; i++, switch_ptr++) {
+			if (switch_record_table[i].level != 0)
+				continue;
+			if (bit_overlap_any(switch_node_bitmap[i], node_map))
+				leaf_switch_count++;
+		}
+		if (time_waiting >= job_ptr->wait4switch) {
+			job_ptr->best_switch = true;
+			debug3("%pJ waited %ld sec for switches use=%d",
+				job_ptr, time_waiting, leaf_switch_count);
+		} else if (leaf_switch_count > job_ptr->req_switch) {
+			/*
+			 * Allocation is for more than requested number of
+			 * switches.
+			 */
+			job_ptr->best_switch = false;
+			debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
+				job_ptr, time_waiting, job_ptr->req_switch,
+				leaf_switch_count, job_ptr->wait4switch);
+		} else {
+			job_ptr->best_switch = true;
+		}
+	}
+
+	FREE_NULL_LIST(best_gres);
 	FREE_NULL_LIST(node_weight_list);
 	FREE_NULL_BITMAP(avail_nodes_bitmap);
 	FREE_NULL_BITMAP(req_nodes_bitmap);

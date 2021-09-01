@@ -8470,6 +8470,7 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 		req_cores = *max_tasks_this_node;
 		if (mc_ptr->cpus_per_task) {
 			int threads_per_core, removed_tasks = 0;
+			int efctv_cpt = mc_ptr->cpus_per_task;
 
 			if (mc_ptr->threads_per_core)
 				threads_per_core =
@@ -8478,7 +8479,14 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 			else
 				threads_per_core = cpus_per_core;
 
-			req_cores *= mc_ptr->cpus_per_task;
+			if ((mc_ptr->ntasks_per_core == 1) &&
+			    (efctv_cpt % threads_per_core)) {
+				efctv_cpt /= threads_per_core;
+				efctv_cpt++;
+				efctv_cpt *= threads_per_core;
+			}
+
+			req_cores *= efctv_cpt;
 
 			while (*max_tasks_this_node >= *min_tasks_this_node) {
 				/* round up by full threads per core */
@@ -8500,7 +8508,7 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 				removed_tasks++;
 				(*max_tasks_this_node)--;
 				req_cores = *max_tasks_this_node;
-				req_cores *= mc_ptr->cpus_per_task;
+				req_cores *= efctv_cpt;
 			}
 		}
 		if (cpus_per_gres) {
@@ -10363,6 +10371,7 @@ extern int gres_plugin_job_min_cpu_node(uint32_t sockets_per_node,
 		tmp = cpus_per_gres * total_gres;
 		min_cpus = MAX(min_cpus, tmp);
 	}
+	list_iterator_destroy(job_gres_iter);
 	return min_cpus;
 }
 
@@ -11830,7 +11839,8 @@ extern void gres_plugin_job_set_env(char ***job_env_ptr, List job_gres_list,
  */
 extern void gres_plugin_job_set_defs(List job_gres_list, char *gres_name,
 				     uint64_t cpu_per_gpu, uint64_t mem_per_gpu,
-				     char **cpus_per_tres, char **mem_per_tres)
+				     char **cpus_per_tres, char **mem_per_tres,
+				     uint16_t *cpus_per_task)
 {
 	uint32_t plugin_id;
 	ListIterator gres_iter;
@@ -11868,6 +11878,11 @@ extern void gres_plugin_job_set_defs(List job_gres_list, char *gres_name,
 			if (mem_per_gpu)
 				xstrfmtcat(*mem_per_tres, "gpu:%"PRIu64,
 					   mem_per_gpu);
+		}
+		if (cpu_per_gpu && job_gres_data->gres_per_task) {
+			*cpus_per_task = MAX(*cpus_per_task,
+					     (job_gres_data->gres_per_task *
+					      cpu_per_gpu));
 		}
 	}
 	list_iterator_destroy(gres_iter);
@@ -12538,14 +12553,14 @@ static void _validate_step_counts(List step_gres_list, List job_gres_list,
 }
 
 
-static void _handle_ntasks_per_tres_step(List new_step_list,
+static int _handle_ntasks_per_tres_step(List new_step_list,
 					 uint16_t ntasks_per_tres,
 					 uint32_t *num_tasks,
 					 uint32_t *cpu_count)
 {
 	gres_step_state_t *step_gres_data;
 	uint64_t cnt = 0;
-	int rc;
+	int rc = SLURM_SUCCESS;
 
 	uint64_t tmp = _get_step_gres_list_cnt(new_step_list, "gpu", NULL);
 	if ((tmp == NO_VAL64) && (*num_tasks != NO_VAL)) {
@@ -12558,6 +12573,11 @@ static void _handle_ntasks_per_tres_step(List new_step_list,
 		char *save_ptr = NULL, *gres = NULL, *in_val;
 		xstrfmtcat(gres, "gpu:%u", gpus);
 		in_val = gres;
+		if (*num_tasks != ntasks_per_tres * gpus) {
+			log_flag(GRES, "%s: -n/--ntasks %u is not a multiply of --ntasks-per-gpu=%u",
+				 __func__, *num_tasks, ntasks_per_tres);
+			return ESLURM_INVALID_GRES;
+		}
 		while ((step_gres_data =
 				_get_next_step_gres(in_val, &cnt,
 						    new_step_list,
@@ -12581,7 +12601,10 @@ static void _handle_ntasks_per_tres_step(List new_step_list,
 	} else {
 		error("%s: ntasks_per_tres was specified, but there was either no task count or no GPU specification to go along with it, or both were already specified.",
 		      __func__);
+		rc = SLURM_ERROR;
 	}
+
+	return rc;
 }
 
 /*
@@ -12691,8 +12714,10 @@ extern int gres_plugin_step_state_validate(char *cpus_per_tres,
 	}
 
 	if ((ntasks_per_tres != NO_VAL16) && num_tasks && cpu_count) {
-		_handle_ntasks_per_tres_step(new_step_list, ntasks_per_tres,
-					     num_tasks, cpu_count);
+		rc = _handle_ntasks_per_tres_step(new_step_list,
+						  ntasks_per_tres,
+						  num_tasks,
+						  cpu_count);
 	}
 
 	if (list_count(new_step_list) == 0) {

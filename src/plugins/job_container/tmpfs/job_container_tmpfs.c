@@ -58,6 +58,9 @@
 
 #include "read_jcconf.h"
 
+static int _create_ns(uint32_t job_id, bool remount);
+static int _delete_ns(uint32_t job_id);
+
 #if defined (__APPLE__)
 extern slurmd_conf_t *conf __attribute__((weak_import));
 #else
@@ -70,6 +73,8 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static slurm_jc_conf_t *jc_conf = NULL;
 static int step_ns_fd = -1;
+static bool force_rm = true;
+static List running_job_ids = NULL;
 
 static int _create_paths(uint32_t job_id,
 			 char *job_mount,
@@ -124,6 +129,57 @@ static int _create_paths(uint32_t job_id,
 	return SLURM_SUCCESS;
 }
 
+static int _find_job_id_in_list(uint32_t *list_job_id, uint32_t *job_id)
+{
+	return (*list_job_id == *job_id);
+}
+
+static int _append_job_in_list(void *element, void *arg)
+{
+	step_loc_t *stepd = (step_loc_t *) element;
+	List job_id_list = (List) arg;
+
+	xassert(job_id_list);
+
+	if (!list_find_first(job_id_list, (ListFindF)_find_job_id_in_list,
+			     &stepd->step_id.job_id)) {
+		int fd = stepd_connect(stepd->directory,
+				       stepd->nodename,
+				       &stepd->step_id,
+				       &stepd->protocol_version);
+		if (fd != -1) {
+			list_append(job_id_list, &stepd->step_id.job_id);
+			close(fd);
+		}
+	}
+
+	return SLURM_SUCCESS;
+}
+
+static int _restore_ns(const char *d_name)
+{
+	int rc = SLURM_SUCCESS;
+	uint32_t job_id;
+
+	if (!(job_id = slurm_atoul(d_name))) {
+		debug3("ignoring %s, could not convert to jobid.", d_name);
+		return SLURM_SUCCESS;
+	}
+
+	/* here we think this is a job container */
+	debug3("attempting to restore namespace for job %u", job_id);
+	if (_create_ns(job_id, true)) {
+		error("%s: failed to restore namespace for %u",
+		      __func__, job_id);
+		rc = SLURM_ERROR;
+	} else if (!list_find_first(running_job_ids,
+				    (ListFindF)_find_job_id_in_list,
+				    &job_id))
+		rc = _delete_ns(job_id);
+
+	return rc;
+}
+
 extern void container_p_reconfig(void)
 {
 	return;
@@ -151,7 +207,7 @@ extern int init(void)
  */
 extern int fini(void)
 {
-	int rc = 0;
+	int rc = SLURM_SUCCESS;
 
 	debug("%s unloaded", plugin_name);
 
@@ -164,24 +220,27 @@ extern int fini(void)
 		error("%s: Configuration not loaded", __func__);
 		return SLURM_ERROR;
 	}
-	rc = umount2(jc_conf->basepath, MNT_DETACH);
-	if (rc) {
-		error("%s: umount2: %s failed: %s",
-		      __func__, jc_conf->basepath, strerror(errno));
-		return SLURM_ERROR;
-	}
-	free_jc_conf();
-
 	if (step_ns_fd != -1) {
 		close(step_ns_fd);
 		step_ns_fd = -1;
 	}
+	if (umount2(jc_conf->basepath, MNT_DETACH)) {
+		error("%s: umount2: %s failed: %s",
+		      __func__, jc_conf->basepath, strerror(errno));
+		rc = SLURM_ERROR;
+	}
+	free_jc_conf();
 
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 extern int container_p_restore(char *dir_name, bool recover)
 {
+	DIR *dp;
+	struct dirent *ep;
+	List steps;
+	int rc = SLURM_SUCCESS;
+
 #ifdef HAVE_NATIVE_CRAY
 	return SLURM_SUCCESS;
 #endif
@@ -192,7 +251,7 @@ extern int container_p_restore(char *dir_name, bool recover)
 		return SLURM_ERROR;
 	}
 
-	debug("namepsace.conf read successfully");
+	debug("job_container.conf read successfully");
 
 	if (jc_conf->auto_basepath) {
 		int fstatus;
@@ -237,6 +296,10 @@ extern int container_p_restore(char *dir_name, bool recover)
 
 	}
 
+	/* It could fail if no leaks, it can clean as much leaks as possible. */
+	if (umount2(jc_conf->basepath, MNT_DETACH))
+		debug2("umount2: %s failed: %s", jc_conf->basepath, strerror(errno));
+
 #if !defined(__APPLE__) && !defined(__FreeBSD__)
 	/*
 	 * MS_BIND mountflag would make mount() ignore all other mountflags
@@ -259,7 +322,35 @@ extern int container_p_restore(char *dir_name, bool recover)
 #endif
 	debug3("tmpfs: Base namespace created");
 
-	return SLURM_SUCCESS;
+	steps = stepd_available(conf->spooldir, conf->node_name);
+	running_job_ids = list_create(NULL);
+
+	/* Iterate over steps, and check once per job if it's still running. */
+	(void)list_for_each(steps, _append_job_in_list, running_job_ids);
+	FREE_NULL_LIST(steps);
+
+	/*
+	 * Iterate over basepath, restore only the folders that seem bounded to
+	 * real jobs (have .ns file). NOTE: Restoring the state could be either
+	 * deleting the folder if the job is died and resources are free, or
+	 * mount it otherwise.
+	 */
+	if (!(dp = opendir(jc_conf->basepath))) {
+		error("%s: Unable to open %s", __func__, jc_conf->basepath);
+		return SLURM_ERROR;
+	}
+
+	while ((ep = readdir(dp))) {
+		if (_restore_ns(ep->d_name))
+			rc = SLURM_ERROR;
+	}
+	closedir(dp);
+	FREE_NULL_LIST(running_job_ids);
+
+	if (rc)
+		error("Encountered an error while restoring job containers.");
+
+	return rc;
 }
 
 static int _mount_private_tmp(char *path)
@@ -307,20 +398,34 @@ static int _mount_private_shm(void)
 static int _rm_data(const char *path, const struct stat *st_buf,
 		    int type, struct FTW *ftwbuf)
 {
+	int rc = SLURM_SUCCESS;
+
 	if (remove(path) < 0) {
+		log_level_t log_lvl;
+		if (force_rm) {
+			rc = SLURM_ERROR;
+			log_lvl = LOG_LEVEL_ERROR;
+		} else
+			log_lvl = LOG_LEVEL_DEBUG2;
+
 		if (type == FTW_NS)
-			error("%s: Unreachable file of FTW_NS type: %s",
-			      __func__, path);
-		if (type == FTW_DNR)
-			error("%s: Unreadable directory: %s", __func__, path);
-		error("%s: could not remove path: %s: %s",
-		      __func__, path, strerror(errno));
-		return errno;
+			log_var(log_lvl,
+					"%s: Unreachable file of FTW_NS type: %s",
+					__func__, path);
+		else if (type == FTW_DNR)
+			log_var(log_lvl,
+					"%s: Unreadable directory: %s",
+					__func__, path);
+
+		log_var(log_lvl,
+				"%s: could not remove path: %s: %s",
+				__func__, path, strerror(errno));
 	}
-	return 0;
+
+	return rc;
 }
 
-extern int container_p_create(uint32_t job_id)
+static int _create_ns(uint32_t job_id, bool remount)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
@@ -347,7 +452,7 @@ extern int container_p_create(uint32_t job_id)
 		error("%s: mkdir %s failed: %s",
 		      __func__, job_mount, strerror(errno));
 		return -1;
-	} else if (rc && errno == EEXIST) {
+	} else if (!remount && rc && errno == EEXIST) {
 		/* stat to see if .active exists */
 		struct stat st;
 		rc = stat(active, &st);
@@ -371,9 +476,13 @@ extern int container_p_create(uint32_t job_id)
 
 	fd = open(ns_holder, O_CREAT|O_RDWR, S_IRWXU);
 	if (fd == -1) {
-		error("%s: open failed %s: %s",
-		      __func__, ns_holder, strerror(errno));
-		rc = -1;
+		if (!remount) {
+			error("%s: open failed %s: %s",
+			      __func__, ns_holder, strerror(errno));
+			rc = -1;
+		} else
+			debug3("ignoring wrong ns_holder path %s: %m",
+			       ns_holder);
 		goto exit2;
 	}
 	close(fd);
@@ -392,7 +501,7 @@ extern int container_p_create(uint32_t job_id)
 	}
 
 	rc = mkdir(src_bind, 0700);
-	if (rc) {
+	if (rc && (!remount || errno != EEXIST)) {
 		error("%s: mkdir failed %s, %s",
 		      __func__, src_bind, strerror(errno));
 		goto exit2;
@@ -527,14 +636,10 @@ extern int container_p_create(uint32_t job_id)
 			goto exit1;
 		}
 
-		rc = waitpid(cpid, &wstatus, 0);
-		if (rc == -1) {
+		if ((waitpid(cpid, &wstatus, 0) != cpid) || WEXITSTATUS(wstatus)) {
 			error("%s: waitpid failed", __func__);
+			rc = SLURM_ERROR;
 			goto exit1;
-		} else {
-			if (rc == cpid)
-				debug3("child exited: %d",
-				       WEXITSTATUS(wstatus));
 		}
 
 		rc = 0;
@@ -549,6 +654,7 @@ exit1:
 exit2:
 	if (rc) {
 		/* cleanup the job mount */
+		force_rm = true;
 		if (nftw(job_mount, _rm_data, 64, FTW_DEPTH|FTW_PHYS) < 0) {
 			error("%s: Directory traversal failed: %s: %s",
 			      __func__, job_mount, strerror(errno));
@@ -558,6 +664,11 @@ exit2:
 	}
 
 	return rc;
+}
+
+extern int container_p_create(uint32_t job_id)
+{
+	return _create_ns(job_id, false);
 }
 
 /* Add a process to a job container, create the proctrack container to add */
@@ -667,7 +778,7 @@ extern int container_p_join(uint32_t job_id, uid_t uid)
 	return SLURM_SUCCESS;
 }
 
-extern int container_p_delete(uint32_t job_id)
+static int _delete_ns(uint32_t job_id)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
@@ -698,7 +809,9 @@ extern int container_p_delete(uint32_t job_id)
 	 * Does -
 	 *	a post order traversal and delete directory after processing
 	 *      contents
+	 * NOTE: Can happen EBUSY here so we need to ignore this.
 	 */
+	force_rm = false;
 	if (nftw(job_mount, _rm_data, 64, FTW_DEPTH|FTW_PHYS) < 0) {
 		error("%s: Directory traversal failed: %s: %s",
 		      __func__, job_mount, strerror(errno));
@@ -706,4 +819,9 @@ extern int container_p_delete(uint32_t job_id)
 	}
 
 	return SLURM_SUCCESS;
+}
+
+extern int container_p_delete(uint32_t job_id)
+{
+	return _delete_ns(job_id);
 }

@@ -1,3 +1,17 @@
+slurm-wlm (20.11.8-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 23 Aug 2021 15:53:23 +0200
+
+slurm-wlm (20.11.7-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2021-31215 (Closes: #988439)
+  * Add typo patch for acct_gather.conf man page
+  * Update miscellanea manpage patch
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 15 Jun 2021 17:49:41 +0200
+
 slurm-wlm (20.11.5-1sci9u1) scibian9; urgency=medium
 
   * Import Upstream version 20.11.5

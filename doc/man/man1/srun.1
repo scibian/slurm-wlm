@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "February 2021" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "June 2021" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -751,16 +751,21 @@ applies to job and step allocations.
 
 .TP
 \fB\-E\fR, \fB\-\-preserve-env\fR
-Pass the current values of environment variables SLURM_JOB_NODES and
+Pass the current values of environment variables SLURM_JOB_NUM_NODES and
 SLURM_NTASKS through to the \fIexecutable\fR, rather than computing them
-from commandline parameters. This option applies to job allocations.
+from command line parameters. This option applies to job allocations.
 
 .TP
 \fB\-\-exact\fR
 Allow a step access to only the resources requested for the step.
 By default, all non-GRES resources on each node in the step allocation will be
-used. Note that no other parallel step will have access to those resources
-unless \-\-overlap is specified. This option applies to step allocations.
+used. This option only applies to step allocations.
+.br
+\fBNOTE\fR: Parallel steps will either be blocked or rejected until requested
+step resources are available unless \-\-overlap is specified. Job resources
+can be held after the completion of an srun command while Slurm does job
+cleanup. Step epilogs and/or SPANK plugins can further delay the release of
+step resources.
 
 .TP
 \fB\-\-epilog\fR=<\fIexecutable\fR>
@@ -871,9 +876,10 @@ See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
 .TP
 \fB\-\-gpu\-bind\fR=[verbose,]<\fItype\fR>
 Bind tasks to specific GPUs.
-By default every spawned task can access every GPU allocated to the job.
+By default every spawned task can access every GPU allocated to the step.
 If "verbose," is specified before <\fItype\fR>, then print out GPU binding
-information.
+debug information to the stderr of the tasks. GPU binding is ignored if there is
+only one task.
 
 Supported \fItype\fR options:
 .RS
@@ -1826,9 +1832,8 @@ Related to \fB\-\-ntasks\-per\-node\fR except at the core level
 instead of the node level.  Masks will automatically be generated
 to bind the tasks to specific cores unless \fB\-\-cpu\-bind=none\fR
 is specified.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's core count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-\-ntasks\-per\-gpu\fR=<\fIntasks\fR>
@@ -1877,9 +1882,8 @@ Related to \fB\-\-ntasks\-per\-node\fR except at the socket level
 instead of the node level.  Masks will automatically be generated
 to bind the tasks to specific sockets unless \fB\-\-cpu\-bind=none\fR
 is specified.
-NOTE: This option is not supported unless \fISelectType=cons_res\fR is
-configured (either directly or indirectly on Cray systems)
-along with the node's socket count.
+\fBNOTE\fR: This option is not supported when using
+\fISelectType=select/linear\fR.
 
 .TP
 \fB\-O\fR, \fB\-\-overcommit\fR
@@ -1899,8 +1903,8 @@ Slurm build time.
 
 .TP
 \fB\-\-overlap\fR
-Allow steps to overlap each other on the same resources. By default steps
-do not share resources with other parallel steps.
+Allow steps to overlap each other on the CPUs.
+By default steps do not share CPUs with other parallel steps.
 
 .TP
 \fB\-o\fR, \fB\-\-output\fR=<\fIfilename pattern\fR>
@@ -2640,9 +2644,6 @@ per task. On relatively slow processors or systems with very
 large processor counts (and large PMI data sets), higher values
 may be required.
 .TP
-\fBSLURM_CONF\fR
-The location of the Slurm configuration file.
-.TP
 \fBSLURM_ACCOUNT\fR
 Same as \fB\-A, \-\-account\fR
 .TP
@@ -2660,6 +2661,9 @@ Same as \fB-M\fR, \fB\-\-clusters\fR
 .TP
 \fBSLURM_COMPRESS\fR
 Same as \fB\-\-compress\fR
+.TP
+\fBSLURM_CONF\fR
+The location of the Slurm configuration file.
 .TP
 \fBSLURM_CONSTRAINT\fR
 Same as \fB\-C\fR, \fB\-\-constraint\fR
@@ -2684,9 +2688,6 @@ Same as \fB\-v, \-\-verbose\fR
 .TP
 \fBSLURM_DELAY_BOOT\fR
 Same as \fB\-\-delay\-boot\fR
-.TP
-\fBSLURMD_DEBUG\fR
-Same as \fB\-d, \-\-slurmd\-debug\fR
 .TP
 \fBSLURM_DEPENDENCY\fR
 Same as \fB\-P, \-\-dependency\fR=<\fIjobid\fR>
@@ -2727,14 +2728,14 @@ Also see \fBSLURM_EXIT_ERROR\fR.
 \fBSLURM_EXPORT_ENV\fR
 Same as \fB\-\-export\fR
 .TP
-\fBSLURM_GPUS\fR
-Same as \fB\-G, \-\-gpus\fR
-.TP
 \fBSLURM_GPU_BIND\fR
 Same as \fB\-\-gpu\-bind\fR
 .TP
 \fBSLURM_GPU_FREQ\fR
 Same as \fB\-\-gpu\-freq\fR
+.TP
+\fBSLURM_GPUS\fR
+Same as \fB\-G, \-\-gpus\fR
 .TP
 \fBSLURM_GPUS_PER_NODE\fR
 Same as \fB\-\-gpus\-per\-node\fR
@@ -2742,14 +2743,14 @@ Same as \fB\-\-gpus\-per\-node\fR
 \fBSLURM_GPUS_PER_TASK\fR
 Same as \fB\-\-gpus\-per\-task\fR
 .TP
+\fBSLURM_GRES\fR
+Same as \fB\-\-gres\fR. Also see \fBSLURM_STEP_GRES\fR
+.TP
 \fBSLURM_GRES_FLAGS\fR
 Same as \fB\-\-gres\-flags\fR
 .TP
 \fBSLURM_HINT\fR
 Same as \fB\-\-hint\fR
-.TP
-\fBSLURM_GRES\fR
-Same as \fB\-\-gres\fR. Also see \fBSLURM_STEP_GRES\fR
 .TP
 \fBSLURM_IMMEDIATE\fR
 Same as \fB\-I, \-\-immediate\fR
@@ -2767,8 +2768,8 @@ Same as \fB\-w\fR, \fB\-\-nodelist\fR=<\fIhost1,host2,...\fR or
 \fIfilename\fR>. If job has been resized, ensure that this nodelist is adjusted
 (or undefined) to avoid jobs steps being rejected due to down nodes.
 .TP
-\fBSLURM_JOB_NUM_NODES\fR (and \fBSLURM_NNODES\fR for backwards compatibility)
-Same as \fB\-N, \-\-nodes\fR
+\fBSLURM_JOB_NUM_NODES\fR
+Same as \fB\-N, \-\-nodes\fR.
 Total number of nodes in the job’s resource allocation.
 .TP
 \fBSLURM_KILL_BAD_EXIT\fR
@@ -2795,10 +2796,19 @@ Same as \fB\-\-mpi\fR
 \fBSLURM_NETWORK\fR
 Same as \fB\-\-network\fR
 .TP
+\fBSLURM_NNODES\fR
+Same as \fB\-N, \-\-nodes\fR. Total number of nodes in the job’s resource
+allocation. See \fBSLURM_JOB_NUM_NODES\fR. Included for backwards
+compatibility.
+.TP
 \fBSLURM_NO_KILL\fR
 Same as \fB\-k\fR, \fB\-\-no\-kill\fR
 .TP
-\fBSLURM_NTASKS\fR (and \fBSLURM_NPROCS\fR for backwards compatibility)
+\fBSLURM_NPROCS\fR
+Same as \fB\-n, \-\-ntasks\fR. See \fBSLURM_NTASKS\fR. Included for
+backwards compatibility.
+.TP
+\fBSLURM_NTASKS\fR
 Same as \fB\-n, \-\-ntasks\fR
 .TP
 \fBSLURM_NTASKS_PER_CORE\fR
@@ -2861,18 +2871,21 @@ Same as \fB\-\-resv\-ports\fR
 \fBSLURM_SIGNAL\fR
 Same as \fB\-\-signal\fR
 .TP
-\fBSLURM_STDERRMODE\fR
-Same as \fB\-e, \-\-error\fR
-.TP
-\fBSLURM_STDINMODE\fR
-Same as \fB\-i, \-\-input\fR
-.TP
 \fBSLURM_SPREAD_JOB\fR
 Same as \fB\-\-spread\-job\fR
 .TP
 \fBSLURM_SRUN_REDUCE_TASK_EXIT_MSG\fR
 if set and non-zero, successive task exit messages with the same exit code will
 be printed only once.
+.TP
+\fBSLURM_STDERRMODE\fR
+Same as \fB\-e, \-\-error\fR
+.TP
+\fBSLURM_STDINMODE\fR
+Same as \fB\-i, \-\-input\fR
+.TP
+\fBSLURM_STDOUTMODE\fR
+Same as \fB\-o, \-\-output\fR
 .TP
 \fBSLURM_STEP_GRES\fR
 Same as \fB\-\-gres\fR (only applies to job steps, not to job allocations).
@@ -2881,9 +2894,6 @@ Also see \fBSLURM_GRES\fR
 \fBSLURM_STEP_KILLED_MSG_NODE_ID\fR=ID
 If set, only the specified node will log when the job or step are killed
 by a signal.
-.TP
-\fBSLURM_STDOUTMODE\fR
-Same as \fB\-o, \-\-output\fR
 .TP
 \fBSLURM_TASK_EPILOG\fR
 Same as \fB\-\-task\-epilog\fR
@@ -2926,6 +2936,9 @@ Same as \fB\-W, \-\-wckey\fR
 \fBSLURM_WORKING_DIR\fR
 \fB\-D, \-\-chdir\fR
 .TP
+\fBSLURMD_DEBUG\fR
+Same as \fB\-d, \-\-slurmd\-debug\fR
+.TP
 \fBSRUN_EXPORT_ENV\fR
 Same as \-\-export\fR, and will override any setting for \fBSLURM_EXPORT_ENV\fR.
 
@@ -2944,18 +2957,17 @@ for each component.
 \fBSLURM_CLUSTER_NAME\fR
 Name of the cluster on which the job is executing.
 .TP
-\fBSLURM_CPU_BIND_VERBOSE\fR
-\-\-cpu\-bind verbosity (quiet,verbose).
-.TP
-\fBSLURM_CPU_BIND_TYPE\fR
-\-\-cpu\-bind type (none,rank,map_cpu:,mask_cpu:).
-.TP
 \fBSLURM_CPU_BIND_LIST\fR
 \-\-cpu\-bind map or mask list (list of Slurm CPU IDs or masks for this node,
 CPU_ID = Board_ID x threads_per_board +
 Socket_ID x threads_per_socket +
 Core_ID x threads_per_core + Thread_ID).
-
+.TP
+\fBSLURM_CPU_BIND_TYPE\fR
+\-\-cpu\-bind type (none,rank,map_cpu:,mask_cpu:).
+.TP
+\fBSLURM_CPU_BIND_VERBOSE\fR
+\-\-cpu\-bind verbosity (quiet,verbose).
 .TP
 \fBSLURM_CPU_FREQ_REQ\fR
 Contains the value requested for cpu frequency on the srun command as
@@ -2965,11 +2977,11 @@ See the description of the \fB\-\-cpu\-freq\fR option or the
 \fBSLURM_CPU_FREQ_REQ\fR input environment variable.
 .TP
 \fBSLURM_CPUS_ON_NODE\fR
-Count of processors available to the job on this node.
-Note the select/linear plugin allocates entire nodes to
+Number of CPUs available to the step on this node.
+\fBNOTE\fR: The \fBselect/linear\fR plugin allocates entire nodes to
 jobs, so the value indicates the total count of CPUs on the node.
-For the select/cons_res plugin, this number indicates the number of cores
-on this node allocated to the job.
+For the \fBselect/cons_res\fR and \fBcons/tres\fR plugins, this number
+indicates the number of CPUs on this node allocated to the step.
 .TP
 \fBSLURM_CPUS_PER_TASK\fR
 Number of cpus requested per task.
@@ -2982,36 +2994,58 @@ with \-m, \-\-distribution.
 \fBSLURM_GTIDS\fR
 Global task IDs running on this node.
 Zero origin and comma separated.
+It is read internally by pmi if Slurm was built with pmi support. Leaving
+the variable set may cause problems when using external packages from
+within the job (Abaqus and Ansys have been known to have problems when
+it is set - consult the appropriate documentation for 3rd party software).
+.TP
+\fBSLURM_HET_SIZE\fR
+Set to count of components in heterogeneous job.
 .TP
 \fBSLURM_JOB_ACCOUNT\fR
 Account name associated of the job allocation.
 .TP
 \fBSLURM_JOB_CPUS_PER_NODE\fR
-Number of CPUS per node.
+Count of CPUs available to the job on the nodes in the allocation, using the
+format \fICPU_count\fR[(x\fInumber_of_nodes\fR)][,\fICPU_count\fR
+[(x\fInumber_of_nodes\fR)] ...].
+For example: SLURM_JOB_CPUS_PER_NODE='72(x2),36' indicates that on the
+first and second nodes (as listed by SLURM_JOB_NODELIST) the allocation
+has 72 CPUs, while the third node has 36 CPUs.
+\fBNOTE\fR: The \fBselect/linear\fR plugin allocates entire nodes to jobs, so
+the value indicates the total count of CPUs on allocated nodes. The
+\fBselect/cons_res\fR and \fBselect/cons_tres\fR plugins allocate individual
+CPUs to jobs, so this number indicates the number of CPUs allocated to the job.
 .TP
 \fBSLURM_JOB_DEPENDENCY\fR
 Set to value of the \-\-dependency option.
 .TP
-\fBSLURM_JOB_ID\fR (and \fBSLURM_JOBID\fR for backwards compatibility)
+\fBSLURM_JOB_ID\fR
 Job id of the executing job.
-
 .TP
 \fBSLURM_JOB_NAME\fR
 Set to the value of the \-\-job\-name option or the command name when srun
 is used to create a new job allocation. Not set when srun is used only to
 create a job step (i.e. within an existing job allocation).
-
+.TP
+\fBSLURM_JOB_NODELIST\fR
+List of nodes allocated to the job.
+.TP
+\fBSLURM_JOB_NODES\fR
+Total number of nodes in the job's resource allocation.
 .TP
 \fBSLURM_JOB_PARTITION\fR
 Name of the partition in which the job is running.
-
 .TP
 \fBSLURM_JOB_QOS\fR
 Quality Of Service (QOS) of the job allocation.
 .TP
 \fBSLURM_JOB_RESERVATION\fR
 Advanced reservation containing the job allocation, if any.
-
+.TP
+\fBSLURM_JOBID\fR
+Job id of the executing job. See \fBSLURM_JOB_ID\fR. Included for backwards
+compatibility.
 .TP
 \fBSLURM_LAUNCH_NODE_IPADDR\fR
 IP address of the node from which the task launch was
@@ -3019,7 +3053,6 @@ initiated (where the srun command ran from).
 .TP
 \fBSLURM_LOCALID\fR
 Node local task ID for the process within a job.
-
 .TP
 \fBSLURM_MEM_BIND_LIST\fR
 \-\-mem\-bind map or mask list (<list of IDs or masks for this node>).
@@ -3036,9 +3069,6 @@ Sort free cache pages (run zonesort on Intel KNL nodes).
 \fBSLURM_MEM_BIND_VERBOSE\fR
 \-\-mem\-bind verbosity (quiet,verbose).
 .TP
-\fBSLURM_JOB_NODES\fR
-Total number of nodes in the job's resource allocation.
-.TP
 \fBSLURM_NODE_ALIASES\fR
 Sets of node name, communication address and hostname for nodes allocated to
 the job from the cloud. Each element in the set if colon separated and each
@@ -3050,14 +3080,15 @@ SLURM_NODE_ALIASES\:=\:ec0:1.2.3.4:foo,ec1:1.2.3.5:bar
 \fBSLURM_NODEID\fR
 The relative node ID of the current node.
 .TP
-\fBSLURM_JOB_NODELIST\fR
-List of nodes allocated to the job.
+\fBSLURM_NPROCS\fR
+Total number of processes in the current job or job step. See
+\fBSLURM_NTASKS\fR. Included for backwards compatibility.
 .TP
-\fBSLURM_NTASKS\fR (and \fBSLURM_NPROCS\fR for backwards compatibility)
+\fBSLURM_NTASKS\fR
 Total number of processes in the current job or job step.
 .TP
-\fBSLURM_HET_SIZE\fR
-Set to count of components in heterogeneous job.
+\fBSLURM_OVERCOMMIT\fR
+Set to \fB1\fR if \fB\-\-overcommit\fR was specified.
 .TP
 \fBSLURM_PRIO_PROCESS\fR
 The scheduling priority (nice value) at the time of job submission.
@@ -3071,6 +3102,9 @@ IP address of srun communication host.
 .TP
 \fBSLURM_SRUN_COMM_PORT\fR
 srun communication port.
+.TP
+\fBSLURM_STEP_ID\fR
+The step ID of the current job.
 .TP
 \fBSLURM_STEP_LAUNCHER_PORT\fR
 Step launcher port.
@@ -3087,12 +3121,12 @@ Number of processes in the job step or whole heterogeneous job step.
 \fBSLURM_STEP_TASKS_PER_NODE\fR
 Number of processes per node within the step.
 .TP
-\fBSLURM_STEP_ID\fR (and \fBSLURM_STEPID\fR for backwards compatibility)
-The step ID of the current job.
+\fBSLURM_STEPID\fR
+The step ID of the current job. See \fBSLURM_STEP_ID\fR. Included for
+backwards compatibility.
 .TP
 \fBSLURM_SUBMIT_DIR\fR
-The directory from which \fBsrun\fR was invoked or, if applicable, the
-directory specified by the \fB\-D, \-\-chdir\fR option.
+The directory from which \fBsrun\fR was invoked.
 .TP
 \fBSLURM_SUBMIT_HOST\fR
 The hostname of the computer from which \fBsalloc\fR was invoked.
@@ -3149,9 +3183,7 @@ If a third \fB<control\-c>\fR is received, the srun program will be
 terminated without waiting for remote tasks to exit or their I/O to
 complete.
 
-The escape sequence \fB<control\-z>\fR is presently ignored. Our intent
-is for this put the \fBsrun\fR command into a mode where various special
-actions may be invoked.
+The escape sequence \fB<control\-z>\fR is presently ignored.
 
 .SH "MPI SUPPORT"
 MPI use depends upon the type of MPI being used.
@@ -3323,7 +3355,7 @@ This simple example demonstrates the execution of different jobs on different
 nodes in the same srun.  You can do this for any number of nodes or any
 number of jobs.  The executables are placed on the nodes sited by the
 SLURM_NODEID env var.  Starting at 0 and going to the number specified on
-the srun commandline.
+the srun command line.
 
 .nf
 $ cat test.sh
