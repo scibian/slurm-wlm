@@ -92,6 +92,7 @@
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 
+#include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
@@ -469,7 +470,7 @@ static int _redirect_stdio (void)
 		return error ("jobcomp/script: Failed to redirect stdout: %m");
 	if (dup2 (devnull, STDERR_FILENO) < 0)
 		return error ("jobcomp/script: Failed to redirect stderr: %m");
-	close (devnull);
+	closeall(3);
 	return (0);
 }
 
@@ -602,7 +603,7 @@ extern int init(void)
 }
 
 /* Set the location of the script to run*/
-extern int slurm_jobcomp_set_location (char * location)
+extern int jobcomp_p_set_location(char *location)
 {
 	if (location == NULL) {
 		return error("jobcomp/script JobCompLoc needs to be set");
@@ -617,7 +618,7 @@ extern int slurm_jobcomp_set_location (char * location)
 	return SLURM_SUCCESS;
 }
 
-int slurm_jobcomp_log_record(job_record_t *record)
+extern int jobcomp_p_log_record(job_record_t *record)
 {
 	struct jobcomp_info * job;
 
@@ -662,7 +663,7 @@ extern int fini ( void )
  * in/out job_list List of job_rec_t *
  * note List needs to be freed when called
  */
-extern List slurm_jobcomp_get_jobs(slurmdb_job_cond_t *job_cond)
+extern List jobcomp_p_get_jobs(slurmdb_job_cond_t *job_cond)
 {
 
 	info("This function is not implemented.");
@@ -672,7 +673,7 @@ extern List slurm_jobcomp_get_jobs(slurmdb_job_cond_t *job_cond)
 /*
  * expire old info from the storage
  */
-extern int slurm_jobcomp_archive(slurmdb_archive_cond_t *archive_cond)
+extern int jobcomp_p_archive(slurmdb_archive_cond_t *archive_cond)
 {
 	info("This function is not implemented.");
 	return SLURM_SUCCESS;

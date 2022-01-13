@@ -57,7 +57,6 @@
 #include "src/common/gpu.h"
 #include "src/common/gres.h"
 #include "src/common/list.h"
-#include "src/common/xcgroup_read_config.h"
 #include "src/common/xstring.h"
 
 #include "../common/gres_common.h"
@@ -92,21 +91,22 @@ const char	plugin_type[]		= "gres/gpu";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 static char	*gres_name		= "gpu";
 static List	gres_devices		= NULL;
+static uint32_t	node_flags		= 0;
 
-extern void step_hardware_init(bitstr_t *usable_gpus, char *tres_freq)
+extern void gres_p_step_hardware_init(bitstr_t *usable_gpus, char *tres_freq)
 {
 	gpu_g_step_hardware_init(usable_gpus, tres_freq);
 }
 
-extern void step_hardware_fini(void)
+extern void gres_p_step_hardware_fini(void)
 {
 	gpu_g_step_hardware_fini();
 }
 
-static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
-		     bitstr_t *usable_gres,
+static void _set_env(char ***env_ptr, bitstr_t *gres_bit_alloc,
+		     bitstr_t *usable_gres, uint64_t gres_cnt,
 		     bool *already_seen, int *local_inx,
-		     bool reset, bool is_job, gres_internal_flags_t flags)
+		     bool is_task, bool is_job, gres_internal_flags_t flags)
 {
 	char *global_list = NULL, *local_list = NULL, *slurm_env_var = NULL;
 
@@ -117,14 +117,34 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 
 	if (*already_seen) {
 		global_list = xstrdup(getenvp(*env_ptr, slurm_env_var));
-		local_list = xstrdup(getenvp(*env_ptr,
-					     "CUDA_VISIBLE_DEVICES"));
+
+		/*
+		 * Determine which existing env to check for local list.  We
+		 * only need one since they are all the same and this is only
+		 * for printing an error later.
+		 */
+		if (node_flags & GRES_CONF_ENV_NVML)
+			local_list = xstrdup(getenvp(*env_ptr,
+						     "CUDA_VISIBLE_DEVICES"));
+		else if (node_flags & GRES_CONF_ENV_RSMI)
+			local_list = xstrdup(getenvp(*env_ptr,
+						     "ROCR_VISIBLE_DEVICES"));
+		else if (node_flags & GRES_CONF_ENV_OPENCL)
+			local_list = xstrdup(getenvp(*env_ptr,
+						     "GPU_DEVICE_ORDINAL"));
 	}
 
-	common_gres_set_env(gres_devices, env_ptr, gres_ptr, node_inx,
-			    usable_gres, "", local_inx,  NULL,
-			    &local_list, &global_list, reset, is_job, NULL,
-			    flags);
+	common_gres_set_env(gres_devices, env_ptr,
+			    usable_gres, "", local_inx,  gres_bit_alloc,
+			    &local_list, &global_list, is_task, is_job, NULL,
+			    flags, false);
+
+	if (gres_cnt) {
+		char *gpus_on_node = xstrdup_printf("%"PRIu64, gres_cnt);
+		env_array_overwrite(env_ptr, "SLURM_GPUS_ON_NODE",
+				    gpus_on_node);
+		xfree(gpus_on_node);
+	}
 
 	if (global_list) {
 		env_array_overwrite(env_ptr, slurm_env_var, global_list);
@@ -132,12 +152,15 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 	}
 
 	if (local_list) {
-		env_array_overwrite(
-			env_ptr, "CUDA_VISIBLE_DEVICES", local_list);
-		env_array_overwrite(
-			env_ptr, "GPU_DEVICE_ORDINAL", local_list);
-		env_array_overwrite(
-			env_ptr, "ROCR_VISIBLE_DEVICES", local_list);
+		if (node_flags & GRES_CONF_ENV_NVML)
+			env_array_overwrite(env_ptr, "CUDA_VISIBLE_DEVICES",
+					    local_list);
+		if (node_flags & GRES_CONF_ENV_RSMI)
+			env_array_overwrite(env_ptr, "ROCR_VISIBLE_DEVICES",
+					    local_list);
+		if (node_flags & GRES_CONF_ENV_OPENCL)
+			env_array_overwrite(env_ptr, "GPU_DEVICE_ORDINAL",
+					    local_list);
 		xfree(local_list);
 		*already_seen = true;
 	}
@@ -213,7 +236,8 @@ static int _find_type_in_gres_list(void *x, void *key)
  * NOTE: Both lists will be sorted in descending order by type_name
  * length. gres_list_conf_single is assumed to only have records of count == 1.
  */
-static void _normalize_sys_gres_types(List gres_list_system, List gres_list_conf_single)
+static void _normalize_sys_gres_types(List gres_list_system,
+				      List gres_list_conf_single)
 {
 	gres_slurmd_conf_t *sys_gres, *conf_gres;
 	ListIterator itr;
@@ -239,6 +263,7 @@ static void _normalize_sys_gres_types(List gres_list_system, List gres_list_conf
 			info("Could not find an unused configuration record with a GRES type that is a substring of system device `%s`. Setting system GRES type to NULL",
 			     sys_gres->type_name);
 			xfree(sys_gres->type_name);
+			sys_gres->config_flags &= ~GRES_CONF_HAS_TYPE;
 			continue;
 		}
 
@@ -306,7 +331,7 @@ static int _validate_cpus_links(gres_slurmd_conf_t *conf_gres,
 	 * If the config gres has cpus defined check it with what is found on
 	 * the system.
 	 */
-	if (conf_gres->cpus && conf_gres->cpus_bitmap &&
+	if (conf_gres->cpus_bitmap && sys_gres->cpus_bitmap &&
 	    !bit_equal(conf_gres->cpus_bitmap, sys_gres->cpus_bitmap))
 		return 0;
 
@@ -359,22 +384,62 @@ static int _sort_gpu_by_file(void *x, void *y, bool asc)
 		return -(val1 - val2);
 }
 
-/* Sort gres/gpu records by "File" value in ascending order (nulls first) */
+/* Sort gres/gpu records by "File" value in descending order (nulls first) */
 static int _sort_gpu_by_file_desc(void *x, void *y)
 {
 	return _sort_gpu_by_file(x, y, false);
 }
 
-/* Sort gres/gpu records by "File" value in descending order */
+/* Sort gres/gpu records by "File" value in ascending order */
 static int _sort_gpu_by_file_asc(void *x, void *y)
 {
 	return _sort_gpu_by_file(x, y, true);
 }
 
 /*
- * Takes the merged [slurm|gres].conf records in gres_list_conf and the GPU
- * devices detected on the node in gres_list_system and returns a final merged
- * list in gres_list_conf.
+ * Sort GPUs by the order they are specified in links.
+ *
+ * It is assumed that each links string has a -1 to indicate the position of the
+ * current GPU at the position it was enumerated in. The GPUs will be sorted so
+ * the links matrix looks like this:
+ *
+ * -1, 0, ...  0, 0
+ *  0,-1, ...  0, 0
+ *  0, 0, ... -1, 0
+ *  0, 0, ...  0,-1
+ *
+ * This should preserve the original enumeration order of NVML (which is in
+ * order of PCI bus ID).
+ */
+static int _sort_gpu_by_links_order(void *x, void *y)
+{
+	gres_slurmd_conf_t *gres_record_x = *(gres_slurmd_conf_t **)x;
+	gres_slurmd_conf_t *gres_record_y = *(gres_slurmd_conf_t **)y;
+	int index_x, index_y;
+
+	/* Make null links appear last in sort */
+	if (!gres_record_x->links && gres_record_y->links)
+		return 1;
+	if (gres_record_x->links && !gres_record_y->links)
+		return -1;
+
+	index_x = gres_links_validate(gres_record_x->links);
+	index_y = gres_links_validate(gres_record_y->links);
+
+	if (index_x < -1 || index_y < -1)
+		error("%s: invalid links value found", __func__);
+
+	return (index_x - index_y);
+}
+
+/*
+ * Splits the merged [slurm|gres].conf records in gres_list_conf into
+ * gres_list_non_gpu and gres_list_conf_single. All GPU records are split into
+ * records of count 1 before going into gres_list_conf_single. Then,
+ * gres_list_conf_single and gres_list_system are compared, and if there are any
+ * matches, those records are added to gres_list_gpu. Finally, the old
+ * gres_list_conf is cleared, gres_list_gpu and gres_list_non_gpu are combined,
+ * and this final merged list is returned in gres_list_conf.
  *
  * If a conf GPU corresponds to a system GPU, CPUs and Links are checked to see
  * if they are the same. If not, an error is emitted and that device is excluded
@@ -388,11 +453,11 @@ static int _sort_gpu_by_file_asc(void *x, void *y)
  * gres_list_conf_single: Same as gres_list_conf, except broken down so each
  * 			  GRES record has only one device file.
  *
- * A conf GPU and system GPU will correspond if the following fields are equal:
+ * A conf GPU and system GPU will be matched if the following fields are equal:
  * 	*type
  * 	*file
  */
-static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
+static void _merge_system_gres_conf(List gres_list_conf, List gres_list_system)
 {
 	ListIterator itr, itr2;
 	gres_slurmd_conf_t *gres_record, *sys_record;
@@ -420,34 +485,25 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 		if (!gres_record->count)
 			continue;
 
-		// Just move this GRES record if it's not a GPU GRES
 		if (xstrcasecmp(gres_record->name, "gpu")) {
+			/* Move record into non-GPU GRES list */
+			gres_record = list_remove(itr);
 			debug2("preserving original `%s` GRES record",
 			       gres_record->name);
-			add_gres_to_list(gres_list_non_gpu,
-					 gres_record->name,
-					 gres_record->count,
-					 gres_record->cpu_cnt,
-					 gres_record->cpus,
-					 gres_record->cpus_bitmap,
-					 gres_record->file,
-					 gres_record->type_name,
-					 gres_record->links);
+			list_append(gres_list_non_gpu, gres_record);
 			continue;
 		}
 
 		if (gres_record->count == 1) {
-			// Add device from single record
-			add_gres_to_list(gres_list_conf_single,
-					 gres_record->name, 1,
-					 gres_record->cpu_cnt,
-					 gres_record->cpus,
-					 gres_record->cpus_bitmap,
-					 gres_record->file,
-					 gres_record->type_name,
-					 gres_record->links);
+			/* Already count of 1; move into single-GPU GRES list */
+			gres_record = list_remove(itr);
+			list_append(gres_list_conf_single, gres_record);
 			continue;
 		} else if (!gres_record->file) {
+			/*
+			 * Split this record into multiple single-GPU records
+			 * and add them to the single-GPU GRES list
+			 */
 			for (i = 0; i < gres_record->count; i++)
 				add_gres_to_list(gres_list_conf_single,
 						 gres_record->name, 1,
@@ -456,7 +512,9 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 						 gres_record->cpus_bitmap,
 						 gres_record->file,
 						 gres_record->type_name,
-						 gres_record->links);
+						 gres_record->links,
+						 gres_record->unique_id,
+						 gres_record->config_flags);
 			continue;
 		}
 
@@ -466,13 +524,19 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 		 */
 		hl = hostlist_create(gres_record->file);
 		while ((hl_name = hostlist_shift(hl))) {
+			/*
+			 * Split this record into multiple single-GPU,
+			 * single-file records and add to single-GPU GRES list
+			 */
 			add_gres_to_list(gres_list_conf_single,
 					 gres_record->name, 1,
 					 gres_record->cpu_cnt,
 					 gres_record->cpus,
 					 gres_record->cpus_bitmap, hl_name,
 					 gres_record->type_name,
-					 gres_record->links);
+					 gres_record->links,
+					 gres_record->unique_id,
+					 gres_record->config_flags);
 			free(hl_name);
 		}
 		hostlist_destroy(hl);
@@ -540,6 +604,20 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 			 */
 			debug("Including the following GPU matched between system and configuration:");
 			print_gres_conf(sys_record, LOG_LEVEL_DEBUG);
+
+			/*
+			 * If the conf record did not fall back to default env
+			 * flags (i.e. it explicitly set env flags), then use
+			 * the conf's env flags. Otherwise, use the AutoDetected
+			 * env flags.
+			 */
+			if (!(gres_record->config_flags & GRES_CONF_ENV_DEF)) {
+				sys_record->config_flags &= ~GRES_CONF_ENV_SET;
+				sys_record->config_flags |=
+					gres_record->config_flags &
+					GRES_CONF_ENV_SET;
+			}
+
 			list_remove(itr2);
 			list_append(gres_list_gpu, sys_record);
 			continue;
@@ -584,7 +662,10 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 	/* Add GPUs + non-GPUs to gres_list_conf */
 	list_flush(gres_list_conf);
 	if (gres_list_gpu && list_count(gres_list_gpu)) {
+		/* Sort by device file first, in case no links */
 		list_sort(gres_list_gpu, _sort_gpu_by_file_asc);
+		/* Sort by links, which is a stand-in for PCI bus ID order */
+		list_sort(gres_list_gpu, _sort_gpu_by_links_order);
 		debug2("gres_list_gpu");
 		print_gres_list(gres_list_gpu, LOG_LEVEL_DEBUG2);
 		list_transfer(gres_list_conf, gres_list_gpu);
@@ -634,6 +715,9 @@ static void _add_fake_gpus_from_file(List gres_list_system,
 		char *device_file = NULL;
 		char *type = NULL;
 		char *links = NULL;
+		char *unique_id = NULL;
+		char *flags_str = NULL;
+		uint32_t flags = 0;
 		bitstr_t *cpu_aff_mac_bitstr = NULL;
 		line_number++;
 
@@ -679,6 +763,12 @@ static void _add_fake_gpus_from_file(List gres_list_system,
 			case 4:
 				device_file = xstrdup(tok);
 				break;
+			case 5:
+				unique_id = xstrdup(tok);
+				break;
+			case 6:
+				flags_str = xstrdup(tok);
+				break;
 			default:
 				error("Malformed line: too many data fields");
 				break;
@@ -687,26 +777,28 @@ static void _add_fake_gpus_from_file(List gres_list_system,
 			tok = strtok_r(NULL, "|", &save_ptr);
 		}
 
-		if (i != 5)
-			error("Line #%d in fake_gpus.conf failed to parse!"
-			      " Make sure that the line has no empty tokens and"
-			      " that the format is <type>|<sys_cpu_count>|"
-			      "<cpu_range>|<links>|<device_file>", line_number);
+		if ((i < 5) || (i > 7))
+			error("Line #%d in fake_gpus.conf failed to parse! Make sure that the line has no empty tokens and that the format is <type>|<sys_cpu_count>|<cpu_range>|<links>|<device_file>[|<unique_id>[|<flags>]]",
+			      line_number);
 
 		cpu_aff_mac_bitstr = bit_alloc(cpu_count);
 		if (bit_unfmt(cpu_aff_mac_bitstr, cpu_range))
 			fatal("bit_unfmt() failed for CPU range: %s",
 			      cpu_range);
 
+		flags = gres_flags_parse(flags_str, NULL);
+
 		// Add the GPU specified by the parsed line
 		add_gres_to_list(gres_list_system, "gpu", 1, cpu_count,
 				 cpu_range, cpu_aff_mac_bitstr, device_file,
-				 type, links);
+				 type, links, unique_id, flags);
 		FREE_NULL_BITMAP(cpu_aff_mac_bitstr);
 		xfree(cpu_range);
 		xfree(device_file);
 		xfree(type);
 		xfree(links);
+		xfree(unique_id);
+		xfree(flags_str);
 	}
 	fclose(f);
 }
@@ -752,14 +844,32 @@ extern int fini(void)
 	return SLURM_SUCCESS;
 }
 
+static int _set_env_types_on_node_flags(void *x, void *arg)
+{
+	gres_slurmd_conf_t *gres_slurmd_conf = (gres_slurmd_conf_t *)x;
+
+	if (gres_slurmd_conf->config_flags & GRES_CONF_ENV_NVML)
+		node_flags |= GRES_CONF_ENV_NVML;
+	if (gres_slurmd_conf->config_flags & GRES_CONF_ENV_RSMI)
+		node_flags |= GRES_CONF_ENV_RSMI;
+	if (gres_slurmd_conf->config_flags & GRES_CONF_ENV_OPENCL)
+		node_flags |= GRES_CONF_ENV_OPENCL;
+
+	/* No need to continue if all are set */
+	if ((node_flags & GRES_CONF_ENV_SET) == GRES_CONF_ENV_SET)
+		return -1;
+
+	return 0;
+}
+
 /*
  * We could load gres state or validate it using various mechanisms here.
  * This only validates that the configuration was specified in gres.conf or
  * slurm.conf.
  * In the general case, no code would need to be changed.
  */
-extern int node_config_load(List gres_conf_list,
-			    node_config_load_t *node_config)
+extern int gres_p_node_config_load(List gres_conf_list,
+				   node_config_load_t *node_config)
 {
 	int rc = SLURM_SUCCESS;
 	List gres_list_system = NULL;
@@ -785,22 +895,32 @@ extern int node_config_load(List gres_conf_list,
 			log_var(log_lvl,
 				"There were 0 GPUs detected on the system");
 		log_var(log_lvl,
-			"%s: Normalizing gres.conf with system GPUs",
+			"%s: Merging gres.conf with system GPUs",
 			plugin_name);
-		_normalize_gres_conf(gres_conf_list, gres_list_system);
+		_merge_system_gres_conf(gres_conf_list, gres_list_system);
 		FREE_NULL_LIST(gres_list_system);
 
 		if (!gres_conf_list || list_is_empty(gres_conf_list))
-			log_var(log_lvl, "%s: Final normalized gres.conf list is empty",
+			log_var(log_lvl, "%s: Final merged gres.conf list is empty",
 				plugin_name);
 		else {
-			log_var(log_lvl, "%s: Final normalized gres.conf list:",
+			log_var(log_lvl, "%s: Final merged gres.conf list:",
 				plugin_name);
 			print_gres_list(gres_conf_list, log_lvl);
 		}
 	}
 
 	rc = common_node_config_load(gres_conf_list, gres_name, &gres_devices);
+
+	/*
+	 * See what envs the gres_slurmd_conf records want to set (if one
+	 * record wants an env, assume every record on this node wants that
+	 * env). Check node_flags when setting envs later in stepd.
+	 */
+	node_flags = 0;
+	(void) list_for_each(gres_conf_list,
+			     _set_env_types_on_node_flags,
+			     NULL);
 
 	if (rc != SLURM_SUCCESS)
 		fatal("%s failed to load configuration", plugin_name);
@@ -812,8 +932,10 @@ extern int node_config_load(List gres_conf_list,
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job's GRES state.
  */
-extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
-			gres_internal_flags_t flags)
+extern void gres_p_job_set_env(char ***job_env_ptr,
+			       bitstr_t *gres_bit_alloc,
+			       uint64_t gres_cnt,
+			       gres_internal_flags_t flags)
 {
 	/*
 	 * Variables are not static like in step_*_env since we could be calling
@@ -826,7 +948,7 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
 	int local_inx = 0;
 	bool already_seen = false;
 
-	_set_env(job_env_ptr, gres_ptr, node_inx, NULL,
+	_set_env(job_env_ptr, gres_bit_alloc, NULL, gres_cnt,
 		 &already_seen, &local_inx, false, true, flags);
 }
 
@@ -834,13 +956,15 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job step's GRES state.
  */
-extern void step_set_env(char ***step_env_ptr, void *gres_ptr,
-			 gres_internal_flags_t flags)
+extern void gres_p_step_set_env(char ***step_env_ptr,
+				bitstr_t *gres_bit_alloc,
+				uint64_t gres_cnt,
+				gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
-	_set_env(step_env_ptr, gres_ptr, 0, NULL,
+	_set_env(step_env_ptr, gres_bit_alloc, NULL, gres_cnt,
 		 &already_seen, &local_inx, false, false, flags);
 }
 
@@ -848,26 +972,38 @@ extern void step_set_env(char ***step_env_ptr, void *gres_ptr,
  * Reset environment variables as appropriate for a job (i.e. this one task)
  * based upon the job step's GRES state and assigned CPUs.
  */
-extern void step_reset_env(char ***step_env_ptr, void *gres_ptr,
-			   bitstr_t *usable_gres, gres_internal_flags_t flags)
+extern void gres_p_task_set_env(char ***step_env_ptr,
+				bitstr_t *gres_bit_alloc,
+				uint64_t gres_cnt,
+				bitstr_t *usable_gres,
+				gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
-	_set_env(step_env_ptr, gres_ptr, 0, usable_gres,
+	_set_env(step_env_ptr, gres_bit_alloc, usable_gres, gres_cnt,
 		 &already_seen, &local_inx, true, false, flags);
 }
 
-/* Send GRES information to slurmstepd on the specified file descriptor */
-extern void send_stepd(Buf buffer)
+/* Send GPU-specific GRES information to slurmstepd via a buffer */
+extern void gres_p_send_stepd(buf_t *buffer)
 {
 	common_send_stepd(buffer, gres_devices);
+
+	pack32(node_flags, buffer);
 }
 
-/* Receive GRES information from slurmd on the specified file descriptor */
-extern void recv_stepd(Buf buffer)
+/* Receive GPU-specific GRES information from slurmd via a buffer */
+extern void gres_p_recv_stepd(buf_t *buffer)
 {
 	common_recv_stepd(buffer, &gres_devices);
+
+	safe_unpack32(&node_flags, buffer);
+
+	return;
+
+unpack_error:
+	error("%s: failed", __func__);
 }
 
 /*
@@ -880,8 +1016,9 @@ extern void recv_stepd(Buf buffer)
  *            DO NOT FREE: This is a pointer into the job's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int job_info(gres_job_state_t *job_gres_data, uint32_t node_inx,
-		     enum gres_job_data_type data_type, void *data)
+extern int gres_p_get_job_info(gres_job_state_t *job_gres_data,
+			       uint32_t node_inx,
+			       enum gres_job_data_type data_type, void *data)
 {
 	return EINVAL;
 }
@@ -897,8 +1034,9 @@ extern int job_info(gres_job_state_t *job_gres_data, uint32_t node_inx,
  *            DO NOT FREE: This is a pointer into the step's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int step_info(gres_step_state_t *step_gres_data, uint32_t node_inx,
-		     enum gres_step_data_type data_type, void *data)
+extern int gres_p_get_step_info(gres_step_state_t *step_gres_data,
+				uint32_t node_inx,
+				enum gres_step_data_type data_type, void *data)
 {
 	return EINVAL;
 }
@@ -907,7 +1045,7 @@ extern int step_info(gres_step_state_t *step_gres_data, uint32_t node_inx,
  * Return a list of devices of this type. The list elements are of type
  * "gres_device_t" and the list should be freed using FREE_NULL_LIST().
  */
-extern List get_devices(void)
+extern List gres_p_get_devices(void)
 {
 	return gres_devices;
 }
@@ -916,7 +1054,8 @@ extern List get_devices(void)
  * Build record used to set environment variables as appropriate for a job's
  * prolog or epilog based GRES allocated to the job.
  */
-extern gres_epilog_info_t *epilog_build_env(gres_job_state_t *gres_job_ptr)
+extern gres_epilog_info_t *gres_p_epilog_build_env(
+	gres_job_state_t *gres_job_ptr)
 {
 	int i;
 	gres_epilog_info_t *epilog_info;
@@ -940,13 +1079,15 @@ extern gres_epilog_info_t *epilog_build_env(gres_job_state_t *gres_job_ptr)
  * Set environment variables as appropriate for a job's prolog or epilog based
  * GRES allocated to the job.
  */
-extern void epilog_set_env(char ***epilog_env_ptr,
-			   gres_epilog_info_t *epilog_info, int node_inx)
+extern void gres_p_epilog_set_env(char ***epilog_env_ptr,
+				  gres_epilog_info_t *epilog_info, int node_inx)
 {
 	int dev_inx_first = -1, dev_inx_last, dev_inx;
-	int env_inx = 0, i;
+	int env_inx = 0;
 	gres_device_t *gres_device;
-	char *dev_num_str = NULL, *sep = "";
+	char *vendor_gpu_str = NULL;
+	char *slurm_gpu_str = NULL;
+	char *sep = "";
 	ListIterator iter;
 
 	xassert(epilog_env_ptr);
@@ -969,9 +1110,9 @@ extern void epilog_set_env(char ***epilog_env_ptr,
 	if (*epilog_env_ptr) {
 		for (env_inx = 0; (*epilog_env_ptr)[env_inx]; env_inx++)
 			;
-		xrealloc(*epilog_env_ptr, sizeof(char *) * (env_inx + 3));
+		xrealloc(*epilog_env_ptr, sizeof(char *) * (env_inx + 5));
 	} else {
-		*epilog_env_ptr = xcalloc(3, sizeof(char *));
+		*epilog_env_ptr = xcalloc(5, sizeof(char *));
 	}
 
 	if (epilog_info->gres_bit_alloc &&
@@ -985,26 +1126,40 @@ extern void epilog_set_env(char ***epilog_env_ptr,
 	for (dev_inx = dev_inx_first; dev_inx <= dev_inx_last; dev_inx++) {
 		if (!bit_test(epilog_info->gres_bit_alloc[node_inx], dev_inx))
 			continue;
-		/* Translate bits to device number, may differ */
-		i = -1;
 		iter = list_iterator_create(gres_devices);
 		while ((gres_device = list_next(iter))) {
-			i++;
-			if (i == dev_inx) {
-				xstrfmtcat(dev_num_str, "%s%d",
-					   sep,gres_device->dev_num);
-				sep = ",";
-				break;
-			}
+			if (gres_device->index != dev_inx)
+				continue;
+
+			if (gres_device->unique_id)
+				xstrfmtcat(vendor_gpu_str, "%s%s", sep,
+					   gres_device->unique_id);
+			else
+				xstrfmtcat(vendor_gpu_str, "%s%d", sep,
+					   gres_device->index);
+			xstrfmtcat(slurm_gpu_str, "%s%d", sep,
+				   gres_device->index);
+			sep = ",";
+			break;
 		}
 		list_iterator_destroy(iter);
 	}
-	if (dev_num_str) {
-		xstrfmtcat((*epilog_env_ptr)[env_inx++],
-			   "CUDA_VISIBLE_DEVICES=%s", dev_num_str);
-		xstrfmtcat((*epilog_env_ptr)[env_inx++],
-			   "GPU_DEVICE_ORDINAL=%s", dev_num_str);
-		xfree(dev_num_str);
+	if (vendor_gpu_str) {
+		if (node_flags & GRES_CONF_ENV_NVML)
+			xstrfmtcat((*epilog_env_ptr)[env_inx++],
+				   "CUDA_VISIBLE_DEVICES=%s", vendor_gpu_str);
+		if (node_flags & GRES_CONF_ENV_RSMI)
+			xstrfmtcat((*epilog_env_ptr)[env_inx++],
+				   "ROCR_VISIBLE_DEVICES=%s", vendor_gpu_str);
+		if (node_flags & GRES_CONF_ENV_OPENCL)
+			xstrfmtcat((*epilog_env_ptr)[env_inx++],
+				   "GPU_DEVICE_ORDINAL=%s", vendor_gpu_str);
+		xfree(vendor_gpu_str);
+	}
+	if (slurm_gpu_str) {
+		xstrfmtcat((*epilog_env_ptr)[env_inx++], "SLURM_JOB_GPUS=%s",
+			   slurm_gpu_str);
+		xfree(slurm_gpu_str);
 	}
 
 	return;

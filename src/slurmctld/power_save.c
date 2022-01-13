@@ -46,6 +46,10 @@
 
 #define _GNU_SOURCE
 
+#if HAVE_SYS_PRCTL_H
+#  include <sys/prctl.h>
+#endif
+
 #include <limits.h>	/* For LONG_MIN, LONG_MAX */
 #include <signal.h>
 #include <stdlib.h>
@@ -57,6 +61,10 @@
 #include <unistd.h>
 
 #include "src/common/bitstring.h"
+#include "src/common/data.h"
+#include "src/common/env.h"
+#include "src/common/fetch_config.h"
+#include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_features.h"
@@ -78,6 +86,7 @@
 typedef struct proc_track_struct {
 	pid_t  child_pid;	/* pid of process		*/
 	time_t child_time;	/* start time of process	*/
+	int tmp_fd;
 } proc_track_struct_t;
 static List proc_track_list = NULL;
 
@@ -88,7 +97,7 @@ bool power_save_enabled = false;
 bool power_save_started = false;
 bool power_save_debug = false;
 
-int idle_time, suspend_rate, resume_timeout, resume_rate, suspend_timeout;
+int suspend_rate, resume_rate, max_timeout;
 char *suspend_prog = NULL, *resume_prog = NULL, *resume_fail_prog = NULL;
 char *exc_nodes = NULL, *exc_parts = NULL;
 time_t last_config = (time_t) 0;
@@ -99,6 +108,7 @@ static uint16_t power_save_interval = 10;
 static uint16_t power_save_min_interval = 0;
 
 bool cloud_reg_addrs = false;
+List resume_job_list = NULL;
 
 typedef struct exc_node_partital {
 	int exc_node_cnt;
@@ -108,21 +118,20 @@ List partial_node_list;
 
 bitstr_t *exc_node_bitmap = NULL;
 
-bitstr_t *resume_node_bitmap = NULL;
 int   suspend_cnt,   resume_cnt;
 float suspend_cnt_f, resume_cnt_f;
 
 static void  _clear_power_config(void);
 static void  _do_failed_nodes(char *hosts);
 static void  _do_power_work(time_t now);
-static void  _do_resume(char *host);
+static void  _do_resume(char *host, char *json);
 static void  _do_suspend(char *host);
 static int   _init_power_config(void);
 static void *_init_power_save(void *arg);
 static int   _kill_procs(void);
 static void  _reap_procs(void);
-static void  _re_wake(void);
-static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id);
+static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id,
+		       char *json);
 static void  _shutdown_power(void);
 static bool  _valid_prog(char *file_name);
 
@@ -165,7 +174,7 @@ static int _parse_exc_nodes(void)
 			}
 		} else {
 			ext_node_cnt = bit_set_count(exc_node_cnt_bitmap);
-		}	
+		}
 		ext_part_struct = xmalloc(sizeof(exc_node_partital_t));
 		ext_part_struct->exc_node_cnt = (int) ext_node_cnt;
 		ext_part_struct->exc_node_cnt_bitmap = exc_node_cnt_bitmap;
@@ -229,8 +238,9 @@ static int _pick_exc_nodes(void *x, void *arg)
 			    IS_NODE_COMPLETING(node_ptr)		||
 			    IS_NODE_DOWN(node_ptr)			||
 			    IS_NODE_DRAIN(node_ptr)			||
-			    IS_NODE_POWER_UP(node_ptr)			||
-			    IS_NODE_POWER_SAVE(node_ptr)		||
+			    IS_NODE_POWERING_UP(node_ptr)			||
+			    IS_NODE_POWERED_DOWN(node_ptr)		||
+			    IS_NODE_POWERING_DOWN(node_ptr)		||
 			    (node_ptr->sus_job_cnt > 0))
 				continue;
 			bit_set(exc_node_cnt_bitmap, i);
@@ -258,12 +268,17 @@ static int _pick_exc_nodes(void *x, void *arg)
 /* Perform any power change work to nodes */
 static void _do_power_work(time_t now)
 {
-	int i, wake_cnt = 0, susp_total = 0;
+	int i, susp_total = 0;
 	time_t delta_t;
 	uint32_t susp_state;
 	bitstr_t *avoid_node_bitmap = NULL, *failed_node_bitmap = NULL;
 	bitstr_t *wake_node_bitmap = NULL, *sleep_node_bitmap = NULL;
 	node_record_t *node_ptr;
+	data_t *resume_json_data = NULL;
+	data_t *jobs_data = NULL;
+	ListIterator iter;
+	bitstr_t *job_power_node_bitmap;
+	uint32_t *job_id_ptr;
 
 	if (last_work_scan == 0) {
 		if (exc_nodes && (_parse_exc_nodes() != SLURM_SUCCESS))
@@ -331,35 +346,123 @@ static void _do_power_work(time_t now)
 			avoid_node_bitmap = bit_copy(exc_node_bitmap);
 	}
 
+
+	/*
+	 * Buid job to node mapping for json output
+	 * all_nodes = all nodes that need to be resumed this iteration
+	 * jobs[] - list of job to node mapping of nodes that the job needs to
+	 * be resumed for job. Multiple jobs can request the same nodes. Report
+	 * all jobs to node mapping for this iteration.
+	 * e.g.
+	 * {
+	 * all_nodes: n[1-3]
+	 * jobs: [{job_id:123, nodes:n[1-3]}, {job_id:124, nodes:n[1-3]}]
+	 * }
+	 */
+	resume_json_data = data_set_dict(data_new());
+	jobs_data = data_set_list(data_key_set(resume_json_data, "jobs"));
+
+	job_power_node_bitmap = bit_alloc(node_record_count);
+
+	iter = list_iterator_create(resume_job_list);
+	while ((job_id_ptr = list_next(iter))) {
+		int i, i_first, i_last;
+		char *nodes;
+		job_record_t *job_ptr;
+		data_t *job_node_data;
+		bitstr_t *need_resume_bitmap, *to_resume_bitmap;
+
+		if ((resume_rate > 0) && (resume_cnt >= resume_rate)) {
+			log_flag(POWER, "resume rate reached");
+			break;
+		}
+
+		if (!(job_ptr = find_job_record(*job_id_ptr))) {
+			log_flag(POWER, "%pJ needed resuming but is gone now",
+				 job_ptr);
+			list_delete_item(iter);
+			continue;
+		}
+		if (!IS_JOB_CONFIGURING(job_ptr)) {
+			log_flag(POWER, "%pJ needed resuming but isn't configuring anymore",
+				 job_ptr);
+			list_delete_item(iter);
+			continue;
+		}
+		if (!bit_overlap_any(job_ptr->node_bitmap, power_node_bitmap)) {
+			log_flag(POWER, "%pJ needed resuming but nodes aren't power_save anymore",
+				 job_ptr);
+			list_delete_item(iter);
+			continue;
+		}
+
+		to_resume_bitmap = bit_alloc(node_record_count);
+
+		need_resume_bitmap = bit_copy(job_ptr->node_bitmap);
+		bit_and(need_resume_bitmap, power_node_bitmap);
+
+		i_first = bit_ffs(need_resume_bitmap);
+		if (i_first >= 0)
+			i_last = bit_fls(need_resume_bitmap);
+		else
+			i_last = i_first - 1;
+		for (i = i_first; i <= i_last; i++) {
+			if ((resume_rate == 0) || (resume_cnt < resume_rate)) {
+				resume_cnt++;
+				resume_cnt_f++;
+
+				bit_set(job_power_node_bitmap, i);
+				bit_set(to_resume_bitmap, i);
+			}
+		}
+
+		job_node_data = data_set_dict(data_list_append(jobs_data));
+		data_set_int(data_key_set(job_node_data, "job_id"),
+			     job_ptr->job_id);
+		nodes = bitmap2node_name(to_resume_bitmap);
+		data_set_string_own(data_key_set(job_node_data, "nodes"),
+				    nodes);
+
+		/* No more jobs to power up, remove job from list */
+		if (!bit_overlap_any(need_resume_bitmap, job_ptr->node_bitmap))
+			list_delete_item(iter);
+
+		FREE_NULL_BITMAP(need_resume_bitmap);
+		FREE_NULL_BITMAP(to_resume_bitmap);
+	}
+
 	/* Build bitmaps identifying each node which should change state */
 	for (i = 0, node_ptr = node_record_table_ptr;
 	     i < node_record_count; i++, node_ptr++) {
-		susp_state = IS_NODE_POWER_SAVE(node_ptr);
+		susp_state = IS_NODE_POWERED_DOWN(node_ptr);
 
 		if (susp_state)
 			susp_total++;
 
 		/* Resume nodes as appropriate */
-		if (susp_state &&
+		if ((bit_test(job_power_node_bitmap, i)) ||
+		    (susp_state &&
 		    ((resume_rate == 0) || (resume_cnt < resume_rate))	&&
 		    !IS_NODE_POWERING_DOWN(node_ptr) &&
-		    (IS_NODE_ALLOCATED(node_ptr) ||
-		     (node_ptr->last_idle > (now - idle_time)))) {
+		    IS_NODE_POWER_UP(node_ptr))) {
 			if (wake_node_bitmap == NULL) {
 				wake_node_bitmap =
 					bit_alloc(node_record_count);
 			}
-			wake_cnt++;
-			resume_cnt++;
-			resume_cnt_f++;
-			node_ptr->node_state &= (~NODE_STATE_POWER_SAVE);
-			node_ptr->node_state |=   NODE_STATE_POWER_UP;
+			if (!(bit_test(job_power_node_bitmap, i))) {
+				resume_cnt++;
+				resume_cnt_f++;
+			}
+			node_ptr->node_state &= (~NODE_STATE_POWER_UP);
+			node_ptr->node_state &= (~NODE_STATE_POWERED_DOWN);
+			node_ptr->node_state |=   NODE_STATE_POWERING_UP;
 			node_ptr->node_state |=   NODE_STATE_NO_RESPOND;
 			bit_clear(power_node_bitmap, i);
 			node_ptr->boot_req_time = now;
 			bit_set(booting_node_bitmap, i);
-			bit_set(resume_node_bitmap,  i);
 			bit_set(wake_node_bitmap,    i);
+
+			bit_clear(job_power_node_bitmap, i);
 		}
 
 		/* Suspend nodes as appropriate */
@@ -368,19 +471,31 @@ static void _do_power_work(time_t now)
 		    (IS_NODE_IDLE(node_ptr) || IS_NODE_DOWN(node_ptr))	&&
 		    (node_ptr->sus_job_cnt == 0)			&&
 		    (!IS_NODE_COMPLETING(node_ptr))			&&
-		    (!IS_NODE_POWER_UP(node_ptr))			&&
-		    (node_ptr->last_idle != 0)				&&
-		    (node_ptr->last_idle < (now - idle_time))		&&
-		    ((avoid_node_bitmap == NULL) ||
-		     (bit_test(avoid_node_bitmap, i) == 0))) {
+		    (!IS_NODE_POWERING_UP(node_ptr))			&&
+		    (!IS_NODE_POWERING_UP(node_ptr))			&&
+		    (!IS_NODE_POWERING_DOWN(node_ptr))			&&
+		    (IS_NODE_POWER_DOWN(node_ptr) ||
+		     ((node_ptr->last_busy != 0) &&
+		      (node_ptr->last_busy < (now - node_ptr->suspend_time)) &&
+		      ((avoid_node_bitmap == NULL) ||
+		       (bit_test(avoid_node_bitmap, i) == 0))))) {
 			if (sleep_node_bitmap == NULL) {
 				sleep_node_bitmap =
 					bit_alloc(node_record_count);
 			}
+
+			/* Clear power_down_asap */
+			if (IS_NODE_POWER_DOWN(node_ptr) &&
+			    IS_NODE_DRAIN(node_ptr)) {
+				clusteracct_storage_g_node_up(acct_db_conn,
+							      node_ptr, now);
+				node_ptr->node_state &= (~NODE_STATE_DRAIN);
+			}
+
 			suspend_cnt++;
 			suspend_cnt_f++;
-			node_ptr->node_state |= NODE_STATE_POWER_SAVE;
 			node_ptr->node_state |= NODE_STATE_POWERING_DOWN;
+			node_ptr->node_state &= (~NODE_STATE_POWER_DOWN);
 			node_ptr->node_state &= (~NODE_STATE_NO_RESPOND);
 			bit_set(power_node_bitmap,   i);
 			bit_set(sleep_node_bitmap,   i);
@@ -410,9 +525,10 @@ static void _do_power_work(time_t now)
 		}
 
 		if (IS_NODE_POWERING_DOWN(node_ptr) &&
-		    (node_ptr->power_save_req_time + suspend_timeout < now)) {
-
+		    ((node_ptr->power_save_req_time + node_ptr->suspend_timeout)
+		     < now)) {
 			node_ptr->node_state &= (~NODE_STATE_POWERING_DOWN);
+			node_ptr->node_state |= NODE_STATE_POWERED_DOWN;
 
 			if (IS_NODE_CLOUD(node_ptr) && cloud_reg_addrs) {
 				/* Reset hostname and addr to node's name. */
@@ -426,7 +542,7 @@ static void _do_power_work(time_t now)
 			    !IS_NODE_FAIL(node_ptr))
 				make_node_avail(i);
 
-			node_ptr->last_idle = 0;
+			node_ptr->last_busy = 0;
 			node_ptr->power_save_req_time = 0;
 		}
 
@@ -434,22 +550,22 @@ static void _do_power_work(time_t now)
 		 * Down nodes as if not resumed by ResumeTimeout
 		 */
 		if (bit_test(booting_node_bitmap, i) &&
-		    (now > node_ptr->boot_req_time + resume_timeout)  &&
-		    IS_NODE_POWER_UP(node_ptr) &&
+		    (now >
+		     (node_ptr->boot_req_time + node_ptr->resume_timeout)) &&
+		    IS_NODE_POWERING_UP(node_ptr) &&
 		    IS_NODE_NO_RESPOND(node_ptr)) {
 			info("node %s not resumed by ResumeTimeout(%d) - marking down and power_save",
-			     node_ptr->name, resume_timeout);
+			     node_ptr->name, node_ptr->resume_timeout);
 			/*
 			 * set_node_down_ptr() will remove the node from the
 			 * avail_node_bitmap.
 			 */
 			set_node_down_ptr(node_ptr, "ResumeTimeout reached");
-			node_ptr->node_state &= (~NODE_STATE_POWER_UP);
-			node_ptr->node_state |= NODE_STATE_POWER_SAVE;
+			node_ptr->node_state &= (~NODE_STATE_POWERING_UP);
+			node_ptr->node_state |= NODE_STATE_POWERED_DOWN;
 			bit_set(power_node_bitmap, i);
 			bit_clear(booting_node_bitmap, i);
-			bit_clear(resume_node_bitmap, i);
-			node_ptr->last_idle = 0;
+			node_ptr->last_busy = 0;
 			node_ptr->boot_req_time = 0;
 
 			if (resume_fail_prog) {
@@ -481,13 +597,21 @@ static void _do_power_work(time_t now)
 	}
 
 	if (wake_node_bitmap) {
-		char *nodes;
+		char *nodes, *json = NULL;
 		nodes = bitmap2node_name(wake_node_bitmap);
+
+		data_set_string(data_key_set(resume_json_data, "all_nodes"),
+				nodes);
+		if (data_g_serialize(&json, resume_json_data, MIME_TYPE_JSON,
+				     DATA_SER_FLAGS_COMPACT))
+			error("failed to generate json for resume job/node list");
+
 		if (nodes)
-			_do_resume(nodes);
+			_do_resume(nodes, json);
 		else
 			error("power_save: bitmap2nodename");
 		xfree(nodes);
+		xfree(json);
 		FREE_NULL_BITMAP(wake_node_bitmap);
 		/* last_node_update could be changed already by another thread!
 		last_node_update = now; */
@@ -503,6 +627,9 @@ static void _do_power_work(time_t now)
 		xfree(nodes);
 		FREE_NULL_BITMAP(failed_node_bitmap);
 	}
+
+	FREE_NULL_DATA(resume_json_data);
+	FREE_NULL_BITMAP(job_power_node_bitmap);
 }
 
 /*
@@ -535,6 +662,7 @@ extern int power_job_reboot(job_record_t *job_ptr)
 		    bit_overlap_any(booting_node_bitmap,
 				    job_ptr->node_bitmap)) {
 			job_ptr->job_state |= JOB_CONFIGURING;
+			job_ptr->job_state |= JOB_POWER_UP_NODE;
 			job_ptr->bit_flags |= NODE_REBOOT;
 		}
 		return SLURM_SUCCESS;
@@ -552,14 +680,13 @@ extern int power_job_reboot(job_record_t *job_ptr)
 		node_ptr = node_record_table_ptr + i;
 		resume_cnt++;
 		resume_cnt_f++;
-		node_ptr->node_state &= (~NODE_STATE_POWER_SAVE);
-		node_ptr->node_state |=   NODE_STATE_POWER_UP;
+		node_ptr->node_state &= (~NODE_STATE_POWERED_DOWN);
+		node_ptr->node_state |=   NODE_STATE_POWERING_UP;
 		node_ptr->node_state |=   NODE_STATE_NO_RESPOND;
 		bit_clear(power_node_bitmap, i);
 		bit_clear(avail_node_bitmap, i);
 		node_ptr->boot_req_time = now;
 		bit_set(booting_node_bitmap, i);
-		bit_set(resume_node_bitmap,  i);
 	}
 
 	if (job_ptr->details && job_ptr->details->features &&
@@ -591,7 +718,7 @@ extern int power_job_reboot(job_record_t *job_ptr)
 			job_ptr->wait_all_nodes = 1;
 			job_ptr->bit_flags |= NODE_REBOOT;
 			pid = _run_prog(resume_prog, nodes, reboot_features,
-					job_ptr->job_id);
+					job_ptr->job_id, NULL);
 			if (power_save_debug)
 				info("%s: pid %d reboot nodes %s features %s",
 				     __func__, (int) pid, nodes,
@@ -611,7 +738,7 @@ extern int power_job_reboot(job_record_t *job_ptr)
 			job_ptr->wait_all_nodes = 1;
 			job_ptr->bit_flags |= NODE_REBOOT;
 			pid = _run_prog(resume_prog, nodes, NULL,
-					job_ptr->job_id);
+					job_ptr->job_id, NULL);
 			if (power_save_debug)
 				info("%s: pid %d reboot nodes %s",
 				     __func__, (int) pid, nodes);
@@ -629,56 +756,17 @@ extern int power_job_reboot(job_record_t *job_ptr)
 	return rc;
 }
 
-/* If slurmctld crashes, the node state that it recovers could differ
- * from the actual hardware state (e.g. ResumeProgram failed to complete).
- * To address that, when a node that should be powered up for a running
- * job is not responding, they try running ResumeProgram again. */
-static void _re_wake(void)
-{
-	node_record_t *node_ptr;
-	bitstr_t *wake_node_bitmap = NULL;
-	int i;
-
-	node_ptr = node_record_table_ptr;
-	for (i=0; i<node_record_count; i++, node_ptr++) {
-		if (IS_NODE_ALLOCATED(node_ptr)   &&
-		    IS_NODE_NO_RESPOND(node_ptr)  &&
-		    !IS_NODE_POWER_SAVE(node_ptr) &&
-		    (bit_test(resume_node_bitmap,  i) == 0)) {
-			if (wake_node_bitmap == NULL) {
-				wake_node_bitmap =
-					bit_alloc(node_record_count);
-			}
-			bit_set(wake_node_bitmap, i);
-		}
-	}
-
-	if (wake_node_bitmap) {
-		char *nodes;
-		nodes = bitmap2node_name(wake_node_bitmap);
-		if (nodes) {
-			pid_t pid = _run_prog(resume_prog, nodes, NULL, 0);
-			if (power_save_debug)
-				info("power_save: pid %d rewaking nodes %s",
-				     (int) pid, nodes);
-		} else
-			error("power_save: bitmap2nodename");
-		xfree(nodes);
-		FREE_NULL_BITMAP(wake_node_bitmap);
-	}
-}
-
 static void _do_failed_nodes(char *hosts)
 {
-	pid_t pid = _run_prog(resume_fail_prog, hosts, NULL, 0);
+	pid_t pid = _run_prog(resume_fail_prog, hosts, NULL, 0, NULL);
 	if (power_save_debug)
 		info("power_save: pid %d handle failed nodes %s",
 		     (int)pid, hosts);
 }
 
-static void _do_resume(char *host)
+static void _do_resume(char *host, char *json)
 {
-	pid_t pid = _run_prog(resume_prog, host, NULL, 0);
+	pid_t pid = _run_prog(resume_prog, host, NULL, 0, json);
 	if (power_save_debug)
 		info("power_save: pid %d waking nodes %s",
 		     (int) pid, host);
@@ -686,7 +774,7 @@ static void _do_resume(char *host)
 
 static void _do_suspend(char *host)
 {
-	pid_t pid = _run_prog(suspend_prog, host, NULL, 0);
+	pid_t pid = _run_prog(suspend_prog, host, NULL, 0, NULL);
 	if (power_save_debug)
 		info("power_save: pid %d suspending nodes %s",
 		     (int) pid, host);
@@ -697,12 +785,14 @@ static void _do_suspend(char *host)
  * arg1 IN	- first program argument, the hostlist expression
  * arg2 IN	- second program argumentor NULL
  * job_id IN	- Passed as SLURM_JOB_ID environment variable
+ * json IN	- Passed as tmp file in SLURM_RESUME_FILE environment variable
  */
-static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id) //use common
+static pid_t _run_prog(char *prog, char *arg1, char *arg2,
+		       uint32_t job_id, char *json)
 {
-	int i;
-	char *argv[4], *pname;
+	char *argv[4], *pname, *tmp_file = NULL;
 	pid_t child;
+	int tmp_fd = -1;
 
 	if (prog == NULL)	/* disabled, useful for testing */
 		return -1;
@@ -716,11 +806,14 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id) //us
 	argv[2] = arg2;
 	argv[3] = NULL;
 
+	if (json &&
+	    ((tmp_fd = dump_to_memfd("resumeprog", json, &tmp_file)) == -1))
+		error("failed to create tmp file for ResumeProgram");
+
 	child = fork();
 	if (child == 0) {
 		char **env = NULL;
-		for (i = 0; i < 1024; i++)
-			(void) close(i);
+		closeall(0);
 		setpgid(0, 0);
 
 		env = env_array_create();
@@ -728,6 +821,9 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id) //us
 		if (job_id)
 			env_array_append_fmt(&env, "SLURM_JOB_ID", "%u",
 					     job_id);
+		if (tmp_file)
+			env_array_append(&env, "SLURM_RESUME_FILE", tmp_file);
+
 		execve(prog, argv, env);
 		_exit(1);
 	} else if (child < 0) {
@@ -738,19 +834,21 @@ static pid_t _run_prog(char *prog, char *arg1, char *arg2, uint32_t job_id) //us
 		proc_track = xmalloc(sizeof(proc_track_struct_t));
 		proc_track->child_pid = child;
 		proc_track->child_time = time(NULL);
+		proc_track->tmp_fd = tmp_fd;
 		list_append(proc_track_list, proc_track);
 	}
+
+	xfree(tmp_file);
 	return child;
 }
 
 /* reap child processes previously forked to modify node state. */
 static void _reap_procs(void)
 {
-	int delay, max_timeout, rc, status;
+	int delay, rc, status;
 	ListIterator iter;
 	proc_track_struct_t *proc_track;
 
-	max_timeout = MAX(suspend_timeout, resume_timeout);
 	iter = list_iterator_create(proc_track_list);
 	while ((proc_track = list_next(iter))) {
 		rc = waitpid(proc_track->child_pid, &status, WNOHANG);
@@ -774,6 +872,9 @@ static void _reap_procs(void)
 			error("power_save: program signaled: %s",
 			      strsignal(WTERMSIG(status)));
 		}
+
+		if (proc_track->tmp_fd != -1)
+			close(proc_track->tmp_fd);
 
 		list_delete_item(iter);
 	}
@@ -814,17 +915,16 @@ static int  _kill_procs(void)
 /* shutdown power save daemons */
 static void _shutdown_power(void)
 {
-	int i, proc_cnt, max_timeout;
+	int i, proc_cnt, shutdown_timeout;
 
-	max_timeout = MAX(suspend_timeout, resume_timeout);
-	max_timeout = MIN(max_timeout, MAX_SHUTDOWN_DELAY);
+	shutdown_timeout = MIN(max_timeout, MAX_SHUTDOWN_DELAY);
 	/* Try to avoid orphan processes */
 	for (i = 0; ; i++) {
 		_reap_procs();
 		proc_cnt = list_count(proc_track_list);
 		if (proc_cnt == 0)	/* all procs completed */
 			break;
-		if (i >= max_timeout) {
+		if (i >= shutdown_timeout) {
 			error("power_save: orphaning %d processes which are "
 			      "not terminating so slurmctld can exit",
 			      proc_cnt);
@@ -852,6 +952,52 @@ static void _clear_power_config(void)
 	FREE_NULL_LIST(partial_node_list);
 }
 
+static int _set_partition_options(void *x, void *arg)
+{
+	part_record_t *part_ptr = (part_record_t *)x;
+	node_record_t *node_ptr;
+	bool *suspend_time_set = (bool *)arg;
+	int i;
+
+	if ((part_ptr->suspend_time != INFINITE) &&
+	    (part_ptr->suspend_time != NO_VAL))
+		*suspend_time_set = true;
+
+	if (part_ptr->resume_timeout != NO_VAL16)
+		max_timeout = MAX(max_timeout, part_ptr->resume_timeout);
+
+	if (part_ptr->suspend_timeout != NO_VAL16)
+		max_timeout = MAX(max_timeout, part_ptr->resume_timeout);
+
+	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
+	     i++, node_ptr++) {
+		if (!bit_test(part_ptr->node_bitmap, i))
+			continue;
+
+		if (node_ptr->suspend_time == NO_VAL)
+			node_ptr->suspend_time = part_ptr->suspend_time;
+		else if (part_ptr->suspend_time != NO_VAL)
+			node_ptr->suspend_time = MAX(node_ptr->suspend_time,
+						     part_ptr->suspend_time);
+
+		if (node_ptr->resume_timeout == NO_VAL16)
+			node_ptr->resume_timeout = part_ptr->resume_timeout;
+		else if (part_ptr->resume_timeout != NO_VAL16)
+			node_ptr->resume_timeout = MAX(
+				node_ptr->resume_timeout,
+				part_ptr->resume_timeout);
+
+		if (node_ptr->suspend_timeout == NO_VAL16)
+			node_ptr->suspend_timeout = part_ptr->suspend_timeout;
+		else if (part_ptr->suspend_timeout != NO_VAL16)
+			node_ptr->suspend_timeout = MAX(
+				node_ptr->suspend_timeout,
+				part_ptr->suspend_timeout);
+	}
+
+	return 0;
+}
+
 /*
  * Initialize power_save module parameters.
  * Return 0 on valid configuration to run power saving,
@@ -859,16 +1005,22 @@ static void _clear_power_config(void)
  */
 static int _init_power_config(void)
 {
+	int rc;
 	char *tmp_ptr;
+	node_record_t *node_ptr;
+	int i;
+	bool partition_suspend_time_set = false;
+	slurmctld_lock_t init_config_locks = {
+		.conf = READ_LOCK, .node = WRITE_LOCK, .part = WRITE_LOCK };
+
 	last_config = slurm_conf.last_update;
 	last_work_scan  = 0;
 	last_log	= 0;
-	idle_time = slurm_conf.suspend_time - 1;
 	suspend_rate = slurm_conf.suspend_rate;
-	resume_timeout = slurm_conf.resume_timeout;
 	resume_rate = slurm_conf.resume_rate;
 	slurmd_timeout = slurm_conf.slurmd_timeout;
-	suspend_timeout = slurm_conf.suspend_timeout;
+	max_timeout = MAX(slurm_conf.suspend_timeout,
+			  slurm_conf.resume_timeout);
 	_clear_power_config();
 	if (slurm_conf.suspend_program)
 		suspend_prog = xstrdup(slurm_conf.suspend_program);
@@ -898,7 +1050,31 @@ static int _init_power_config(void)
 			       NULL, 10);
 	}
 
-	if (idle_time < 0) {	/* not an error */
+	lock_slurmctld(init_config_locks);
+	/* Figure out per-partition options and push to node level. */
+	list_for_each(part_list, _set_partition_options,
+		      &partition_suspend_time_set);
+
+	/* Apply global options to node level if not set at partition level. */
+	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
+	     i++, node_ptr++) {
+		node_ptr->suspend_time =
+			((node_ptr->suspend_time == NO_VAL) ?
+				slurm_conf.suspend_time :
+				node_ptr->suspend_time);
+		node_ptr->suspend_timeout =
+			((node_ptr->suspend_timeout == NO_VAL16) ?
+				slurm_conf.suspend_timeout :
+				node_ptr->suspend_timeout);
+		node_ptr->resume_timeout =
+			((node_ptr->resume_timeout == NO_VAL16) ?
+				slurm_conf.resume_timeout :
+				node_ptr->resume_timeout);
+	}
+	unlock_slurmctld(init_config_locks);
+
+	if ((slurm_conf.suspend_time == INFINITE) &&
+	    !partition_suspend_time_set) { /* not an error */
 		debug("power_save module disabled, SuspendTime < 0");
 		return -1;
 	}
@@ -933,7 +1109,7 @@ static int _init_power_config(void)
 		return -1;
 	}
 
-	if (slurm_conf.debug_flags & DEBUG_FLAG_POWER_SAVE)
+	if (slurm_conf.debug_flags & DEBUG_FLAG_POWER)
 		power_save_debug = true;
 	else
 		power_save_debug = false;
@@ -941,6 +1117,12 @@ static int _init_power_config(void)
 	if (resume_fail_prog && !_valid_prog(resume_fail_prog)) {
 		/* error's already reported in _valid_prog() */
 		xfree(resume_fail_prog);
+	}
+
+	if ((rc = data_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
+		error("%s: unable to load JSON serializer: %s",
+		      __func__, slurm_strerror(rc));
+		return -1;
 	}
 
 	return 0;
@@ -973,15 +1155,16 @@ static bool _valid_prog(char *file_name)
 	return true;
 }
 
-/*
- * config_power_mgr - Read power management configuration
- */
 extern void config_power_mgr(void)
 {
 	slurm_mutex_lock(&power_mutex);
 	if (!power_save_config) {
-		if (_init_power_config() == 0)
+		if (!_init_power_config())
 			power_save_enabled = true;
+		if (!power_save_enabled && node_features_g_node_power()) {
+			fatal("PowerSave required with NodeFeatures plugin, but not fully configured (SuspendProgram, ResumeProgram and SuspendTime all required)");
+		}
+
 		power_save_config = true;
 	}
 	slurm_cond_signal(&power_cond);
@@ -1029,8 +1212,24 @@ extern void power_save_fini(void)
 	if (power_save_started) {     /* Already running */
 		power_save_started = false;
 		FREE_NULL_LIST(proc_track_list);
+		FREE_NULL_LIST(resume_job_list);
 	}
 	slurm_mutex_unlock(&power_mutex);
+}
+
+static int _build_resume_job_list(void *object, void *arg)
+{
+	job_record_t *job_ptr = (job_record_t *)object;
+
+	if (IS_JOB_CONFIGURING(job_ptr) &&
+	    bit_overlap_any(job_ptr->node_bitmap,
+			    power_node_bitmap)) {
+		uint32_t *tmp = xmalloc(sizeof(uint32_t));
+		*tmp = job_ptr->job_id;
+		list_append(resume_job_list, tmp);
+	}
+
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -1040,31 +1239,43 @@ extern void power_save_fini(void)
  */
 static void *_init_power_save(void *arg)
 {
-        /* Locks: Read nodes */
-        slurmctld_lock_t node_read_lock = {
-                NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
         /* Locks: Write jobs and nodes */
         slurmctld_lock_t node_write_lock = {
                 NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
 	time_t now, boot_time = 0, last_power_scan = 0;
 
-	if (power_save_config && !power_save_enabled) {
+#if HAVE_SYS_PRCTL_H
+	if (prctl(PR_SET_NAME, "powersave", NULL, NULL, NULL) < 0) {
+		error("%s: cannot set my name to %s %m", __func__, "powersave");
+	}
+#endif
+	if (!power_save_enabled) {
 		debug("power_save mode not enabled");
 		goto fini;
 	}
 
-	resume_node_bitmap  = bit_alloc(node_record_count);
+	/*
+	 * Build up resume_job_list list in case shut down before resuming
+	 * jobs/nodes without having to state save the list.
+	 */
+	if (!resume_job_list) {
+		resume_job_list = list_create(xfree_ptr);
+
+		lock_slurmctld(node_write_lock);
+		list_for_each(job_list, _build_resume_job_list, NULL);
+		unlock_slurmctld(node_write_lock);
+	}
 
 	while (slurmctld_config.shutdown_time == 0) {
 		sleep(1);
 
 		_reap_procs();
 
-		if ((last_config != slurm_conf.last_update) &&
-		    (_init_power_config())) {
-			info("power_save mode has been disabled due to "
-			     "configuration changes");
-			goto fini;
+		if (last_config != slurm_conf.last_update) {
+			if (_init_power_config()) {
+				info("power_save mode has been disabled due to configuration changes");
+				goto fini;
+			}
 		}
 
 		now = time(NULL);
@@ -1079,20 +1290,9 @@ static void *_init_power_save(void *arg)
 			unlock_slurmctld(node_write_lock);
 			last_power_scan = now;
 		}
-
-		if (slurmd_timeout &&
-		    (now > (boot_time + (slurmd_timeout / 2)))) {
-			lock_slurmctld(node_read_lock);
-			_re_wake();
-			unlock_slurmctld(node_read_lock);
-			/* prevent additional executions */
-			boot_time += (365 * 24 * 60 * 60);
-			slurmd_timeout = 0;
-		}
 	}
 
 fini:	_clear_power_config();
-	FREE_NULL_BITMAP(resume_node_bitmap);
 	_shutdown_power();
 	slurm_mutex_lock(&power_mutex);
 	list_destroy(proc_track_list);

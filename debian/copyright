@@ -20,7 +20,6 @@ License: GPL-2+
 
 Files: src/api/pmi_server.c
        src/api/pmi_server.h
-       src/api/step_ctx.h
        src/api/step_io.c
        src/api/step_io.h
        src/common/eio.h
@@ -29,6 +28,7 @@ Files: src/api/pmi_server.c
        src/sattach/opt.h
        src/slurmd/slurmstepd/step_terminate_monitor.c
        src/slurmd/slurmstepd/step_terminate_monitor.h
+       src/srun/libsrun/step_ctx.h
        src/sview/submit_info.c
        src/sview/sview.h
        testsuite/expect/regression.py
@@ -40,22 +40,34 @@ Files: src/api/pmi_server.c
        testsuite/slurm_unit/api/manual/reconfigure-tst.c
        testsuite/slurm_unit/api/manual/submit-tst.c
        testsuite/slurm_unit/api/manual/update_config-tst.c
-       src/sview/bb_info.c
+Copyright: 2002-2007 The Regents of the University of California
+License: GPL-2+
+
+Files: src/sview/bb_info.c
        src/sview/gthread_helper.c
        src/sview/gthread_helper.h
        testsuite/expect/globals_federation
-       testsuite/expect/slurm_status
-       contribs/perlapi/libslurmdb/perl/Slurmdb.pm
+Copyright: 2012,2014-2016 SchedMD LLC
+License: GPL-2+
+
+Files: contribs/perlapi/libslurmdb/perl/Slurmdb.pm
        contribs/spank_direct_io.c
-       contribs/pam/pam_slurm.c
+Copyright: 2010 Lawrence Livermore National Security, LLC
+License: GPL-2+
+
+Files: contribs/pam/pam_slurm.c
        contribs/pam_slurm_adopt/helper.c
        contribs/spank_core.c
        src/sattach/sattach.c
        src/sview/admin_info.c
        src/sview/common.c
        src/sview/front_end_info.c
-       testsuite/expect/globals
        testsuite/expect/globals_accounting
+Copyright: 2002-2007 The Regents of the University of California
+           2008-2010 Lawrence Livermore National Security, LLC
+License: GPL-2+
+
+Files: testsuite/expect/globals
        testsuite/expect/test*
        testsuite/expect/inc*
        src/sview/resv_info.c
@@ -118,12 +130,8 @@ License: GPL-2+
 
 Files: src/common/slurm_mcs.c
        src/common/slurm_mcs.h
-       src/common/xcgroup_read_config.c
-       src/common/xcgroup_read_config.h
        src/common/xhash.c
        src/common/xhash.h
-       src/common/xtree.c
-       src/common/xtree.h
        src/plugins/mcs/account/mcs_account.c
        src/plugins/mcs/group/mcs_group.c
        src/plugins/mcs/none/mcs_none.c
@@ -135,11 +143,10 @@ Files: src/common/slurm_mcs.c
        src/plugins/task/cgroup/task_cgroup_devices.h
        src/plugins/task/cgroup/task_cgroup_memory.c
        src/plugins/task/cgroup/task_cgroup_memory.h
-       src/slurmd/common/xcgroup.c
-       src/slurmd/common/xcgroup.h
+       src/plugins/cgroup/v1/xcgroup.h
+       src/plugins/cgroup/v1/xcgroup.c
        src/slurmd/common/xcpuinfo.h
        testsuite/slurm_unit/common/xhash-test.c
-       testsuite/slurm_unit/common/xtree-test.c
 Copyright: 2009,2012,2013,2015-2016 CEA/DAM/DIF
 License: GPL-2+ with OpenSSL exception
 
@@ -158,9 +165,6 @@ Files: src/api/resource_functions.c
        src/plugins/accounting_storage/mysql/as_mysql_resource.h
        src/plugins/acct_gather_profile/hdf5/hdf5_api.c
        src/plugins/acct_gather_profile/none/acct_gather_profile_none.c
-       src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup_blkio.c
-       src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup_cpuacct.c
-       src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup_memory.c
        src/plugins/route/default/route_default.c
        src/plugins/route/topology/route_topology.c
        src/plugins/task/cgroup/task_cgroup_devices.c
@@ -443,10 +447,10 @@ Copyright: 2009,2013 CEA/DAM/DIF
            2012,2014 Bull
 License: GPL-2+ with OpenSSL exception
 
-Files: src/slurmd/common/reverse_tree_math.c
-       src/slurmd/common/reverse_tree_math.h
+Files: src/common/reverse_tree.c
+       src/common/reverse_tree.h
 Copyright: 2006 The Regents of the University of California
-           2014 Institute of Semiconductor Physics
+           2014 Institute of Semiconductor Physics Siberian Branch of Russian Academy of Science
 License: GPL-2+ with OpenSSL exception
 
 Files: src/common/slurm_protocol_api.c
@@ -484,9 +488,9 @@ Copyright: 2005 Hewlett-Packard Development Company, L.P
            2002 The Regents of the University of California
 License: GPL-2+
 
-Files: src/common/mapping.c
-       src/common/mapping.h
-Copyright: 2014 Institute of Semiconductor Physics
+Files: src/plugins/mpi/pmix/mapping.c
+       src/plugins/mpi/pmix/mapping.h
+Copyright: 2014 Institute of Semiconductor Physics Siberian Branch of Russian Academy of Science
 License: GPL-2+ with OpenSSL exception
 
 Files: src/common/log.?
@@ -557,7 +561,7 @@ Copyright: 2002-2007 The Regents of the University of California
            2015 Mellanox Technologies, Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: src/slurmd/common/setproctitle.c
+Files: src/common/setproctitle.c
 Copyright: 1994,2002-2007 The Regents of the University of California
            2008-2009 Lawrence Livermore National Security, LLC
            1996-2001 The PostgreSQL Global Development Group
@@ -594,7 +598,7 @@ License: None
 
 Files: src/plugins/mpi/pmi2/tree.c
 Copyright: 2011-2012 National University of Defense Technology, China
-           2014 Institute of Semiconductor Physics
+           2014 Institute of Semiconductor Physics Siberian Branch of Russian Academy of Science
            2015 Mellanox Technologies, Inc
 License: GPL-2+ with OpenSSL exception
 
@@ -617,11 +621,6 @@ Files: src/plugins/acct_gather_profile/hdf5/acct_gather_profile_hdf5.c
 Copyright: 2013 Bull
            2013 SchedMD LLC
            2002 The Regents of the University of California
-License: GPL-2+ with OpenSSL exception
-
-Files: src/plugins/gres/mic/gres_mic.c
-Copyright: 2012 CSC-IT Center for Science Ltd
-           2010 Lawrence Livermore National Security, LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: src/plugins/acct_gather_energy/ibmaem/acct_gather_energy_ibmaem.c
@@ -670,20 +669,20 @@ Copyright: 2002-2007 The Regents of the University of California
            2013 Intel Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: src/common/uthash/uthash.h
-Copyright: 2003-2012 Troy D. Hanson
+Files: src/common/uthash.h
+Copyright: 2003-2018 Troy D. Hanson
 License: BSD-like
 
 Files: slurm/pmi.h
 Copyright: 2002 University of Chicago
 License: ANL
 
-Files: slurm/slurm.h.in
+Files: slurm/slurm.h
 Copyright: 2002-2007 The Regents of the University of California
            2008-2010 Lawrence Livermore National Security, LLC
            2010-2016 SchedMD LLC
            2012-2013 Los Alamos National Security, LLC
-           2013 Cray Inc
+           2013 Hewlett Packard Enterprise Development LP
 License: GPL-2+ with OpenSSL exception
 
 Files: contribs/sjstat
@@ -696,10 +695,6 @@ Files: contribs/cray/pam_job.c
 Copyright: 2000-2006 Silicon Graphics, Inc
            2011 Centro Svizzero di Calcolo Scientifico (CSCS)
 License: LGPL-2.1+
-
-Files: contribs/mic/mpirun-mic
-Copyright:  Olli-Pekka Lehto - CSC IT Center for Science Ltd
-License: None
 
 Files: contribs/torque/qrerun.pl
 Copyright: 2006-2007 Cluster Resources, Inc
@@ -731,11 +726,6 @@ Files: testsuite/expect/test1.53.prog.c
 Copyright: 2002-2007 The Regents of the University of California
            2008-2009 Lawrence Livermore National Security, LLC
 License: None
-
-Files: auxdir/ax_check_zlib.m4
-Copyright: 2008 Loic Dachary
-           2010 Bastien Chevreux
-License: GPL-2+ with Autoconf exception
 
 Files: auxdir/ax_lib_hdf5.m4
 Copyright: 2009 Timothy Brown
@@ -772,8 +762,8 @@ Files: auxdir/x_ac_ucx.m4
 Copyright: 2017 Mellanox Technologies
 License: None
 
-Files: src/slurmrestd/plugins/openapi/*/*
-Copyright: Copyright (C) 2019-2020 SchedMD LLC.
+Files: src/plugins/openapi/*
+Copyright: Copyright (C) 2019-2020 SchedMD LLC
 License: GPL-2+ with OpenSSL exception or Apache-2.0
 
 License: GPL-2+ with OpenSSL exception
@@ -1208,33 +1198,6 @@ License: GPL-3+
 Comment:
  On Debian systems, the full text of the GNU General Public License
  version 3, can be found at `/usr/share/common-licenses/GPL-3'.
-
-License: GPL-2+ with Autoconf exception
- This program is free software; you can redistribute it and/or modify it
- under the terms of the GNU General Public License as published by the
- Free Software Foundation; either version 2 of the License, or (at your
- option) any later version.
- .
- This program is distributed in the hope that it will be useful, but
- WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
- Public License for more details.
- .
- You should have received a copy of the GNU General Public License along
- with this program. If not, see <http://www.gnu.org/licenses/>.
- .
- As a special exception, the respective Autoconf Macro's copyright owner
- gives unlimited permission to copy, distribute and modify the configure
- scripts that are the output of Autoconf when processing the Macro. You
- need not follow the terms of the GNU General Public License when using
- or distributing such scripts, even though portions of the text of the
- Macro appear in them. The GNU General Public License (GPL) does govern
- all other use of the material that constitutes the Autoconf Macro.
- .
- This special exception to the GPL applies to versions of the Autoconf
- Macro released by the Autoconf Archive. When you make and distribute a
- modified version of the Autoconf Macro, you may extend this special
- exception to the GPL to apply to your modified version as well.
 
 License: FSF-all-permissive
  Copying and distribution of this file, with or without modification, are

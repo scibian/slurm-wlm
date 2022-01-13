@@ -81,18 +81,21 @@ extern void print_fields_header(List print_fields_list)
 
 		} else {
 			int abs_len = abs(field->len);
-			printf("%*.*s ", abs_len, abs_len, field->name);
+			printf("%*.*s ", field->len, abs_len, field->name);
 		}
 		curr_inx++;
 	}
 	list_iterator_reset(itr);
 	printf("\n");
-	if (print_fields_parsable_print)
+	if (print_fields_parsable_print) {
+		list_iterator_destroy(itr);
 		return;
+	}
 	while ((field = list_next(itr))) {
 		int abs_len = abs(field->len);
-		printf("%*.*s ", abs_len, abs_len,
-		       "-----------------------------------------------------");
+		for (int i = 0; i < abs_len; i++)
+			putchar('-');
+		putchar(' ');
 	}
 	list_iterator_destroy(itr);
 	printf("\n");

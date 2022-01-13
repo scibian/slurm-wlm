@@ -50,7 +50,6 @@
 
 #include "src/slurmrestd/http.h"
 #include "src/slurmrestd/rest_auth.h"
-#include "src/slurmrestd/xjson.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -117,8 +116,8 @@ extern int slurm_rest_auth_p_authenticate(on_http_request_args_t *args,
 		return ESLURM_AUTH_CRED_INVALID;
 	}
 
-	debug3("%s: [%s] attempting user_name %s token authentication",
-	       __func__, args->context->con->name, user_name);
+	info("[%s] attempting user_name %s token authentication pass through",
+	     args->context->con->name, user_name);
 
 	xassert(!ctxt->user_name);
 	xassert(!ctxt->plugin_data);
@@ -139,7 +138,7 @@ extern int slurm_rest_auth_p_apply(rest_auth_context_t *context)
 	xassert(data->magic == MAGIC);
 	xassert(context->plugin_id == plugin_id);
 
-	return g_slurm_auth_thread_config(data->token, context->user_name);
+	return auth_g_thread_config(data->token, context->user_name);
 }
 
 extern void slurm_rest_auth_p_free(rest_auth_context_t *context)

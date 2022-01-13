@@ -6,7 +6,7 @@
  *  Written by Douglas Jacobsen <dmjacobsen@lbl.gov>
  *  All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
@@ -51,6 +51,7 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/cli_filter.h"
+#include "src/common/data.h"
 #include "src/common/plugstack.h"
 #include "src/common/slurm_opt.h"
 #include "src/lua/slurm_lua.h"
@@ -84,7 +85,7 @@
 const char plugin_name[]       	= "cli filter defaults plugin";
 const char plugin_type[]       	= "cli_filter/lua";
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
-static const char lua_script_path[] = DEFAULT_SCRIPT_DIR "/cli_filter.lua";
+static char *lua_script_path;
 static lua_State *L = NULL;
 static char **stored_data = NULL;
 static size_t stored_n = 0;
@@ -124,8 +125,15 @@ int init(void)
         if ((rc = slurm_lua_init()) != SLURM_SUCCESS)
                 return rc;
 
+	if ((rc = data_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
+		error("%s: unable to load JSON serializer: %s", __func__,
+		      slurm_strerror(rc));
+		return rc;
+	}
+
 	stored_data = xmalloc(sizeof(char *) * 24);
 	stored_sz = 24;
+	lua_script_path = get_extra_conf_path("cli_filter.lua");
 
 	return slurm_lua_loadscript(&L, "cli_filter/lua",
 				    lua_script_path, req_fxns,
@@ -137,6 +145,7 @@ int fini(void)
 	for (int i = 0; i < stored_n; i++)
 		xfree(stored_data[i]);
 	xfree(stored_data);
+	xfree(lua_script_path);
 
         lua_close(L);
 
@@ -310,7 +319,12 @@ static int _lua_cli_json(lua_State *st)
 {
 	char *json = NULL;
 	slurm_opt_t *options = NULL;
-	lua_getmetatable(st, -1);
+
+	if (!lua_getmetatable(st, -1)) {
+		error("json_cli_options requires one argument - options structure");
+		return 0;
+	}
+
 	lua_getfield(st, -1, "_opt");
 	options = (slurm_opt_t *) lua_touserdata(st, -1);
 	lua_settop(st, -3);

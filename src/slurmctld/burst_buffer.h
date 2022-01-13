@@ -86,7 +86,7 @@ extern char *bb_g_get_status(uint32_t argc, char **argv);
  *
  * Returns a Slurm errno.
  */
-extern int bb_g_state_pack(uid_t uid, Buf buffer, uint16_t protocol_version);
+extern int bb_g_state_pack(uid_t uid, buf_t *buffer, uint16_t protocol_version);
 
 /*
  * Note configuration may have changed. Handle changes in BurstBufferParameters.
@@ -211,6 +211,20 @@ extern int bb_g_job_test_stage_out(job_record_t *job_ptr);
  * Returns a Slurm errno.
  */
 extern int bb_g_job_cancel(job_record_t *job_ptr);
+
+/*
+ * Run a script in the burst buffer plugin
+ *
+ * func IN - script function to run
+ * jobid IN - job id for which we are running the script (0 if not for a job)
+ * argc IN - number of arguments to pass to script
+ * argv IN - argument list to pass to script
+ * resp_msg OUT - string returned by script
+ *
+ * Returns the status of the script.
+ */
+extern int bb_g_run_script(char *func, uint32_t job_id, uint32_t argc,
+			   char **argv, char **resp_msg);
 
 /*
  * Translate a burst buffer string to it's equivalent TRES string

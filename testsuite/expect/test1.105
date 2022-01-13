@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
 
 set default_time [get_partition_default_time_limit]
@@ -38,15 +37,13 @@ if { $default_time != -1} {
 # Spawn a job with a deadline and no time
 #
 set timeout $max_job_delay
-set srun_pid [spawn $srun --verbose -N1 --deadline now+600 $bin_sleep 1]
+spawn $srun --verbose -N1 --deadline now+600 $bin_sleep 1
 expect {
 	-re "Requested time limit is invalid (missing or exceeds some limit)" {
-		set exit_code 1
-		exp_continue
+		fail "Requested time limit is invalid (missing or exceeds some limit)"
 	}
 	-re "launching StepId=($number)\\.($re_word_str) on host" {
 		set job_id $expect_out(1,string)
-		set exit_code 0
 		exp_continue
 	}
 	timeout {
@@ -58,28 +55,22 @@ expect {
 }
 if {$job_id == 0} {
 	fail "Job not submitted"
-} else {
-	spawn $scontrol show job $job_id
-	expect {
-		-re "TimeLimit=00:10:" {
-			log_debug "Timelimit OK"
-		}
-		-re "TimeLimit=00:09:" {
-			log_debug "Timelimit OK"
-		}
-		-re "TimeLimit=" {
-			log_error "Timelimit not OK with deadline"
-			set exit_code 1
-		}
-		timeout {
-			fail "scontrol not responding"
-		}
-		eof {
-			wait
-		}
-	}
 }
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+spawn $scontrol show job $job_id
+expect {
+	-re "TimeLimit=00:10:" {
+		log_debug "Timelimit OK"
+	}
+	-re "TimeLimit=00:09:" {
+		log_debug "Timelimit OK"
+	}
+	-re "TimeLimit=" {
+		fail "Timelimit not OK with deadline"
+	}
+	timeout {
+		fail "scontrol not responding"
+	}
+	eof {
+		wait
+	}
 }

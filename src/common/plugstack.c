@@ -460,7 +460,7 @@ spank_stack_plugin_valid_for_context (struct spank_stack *stack,
 		if (p->ops.job_epilog)
 			has_epilog = true;
 
-		if (p->ops.slurmd_exit)
+		if (p->ops.init || p->ops.slurmd_exit)
 			return (1);
 		break;
 	case S_TYPE_LOCAL:
@@ -636,9 +636,9 @@ static int _spank_conf_include (struct spank_stack *stack,
 	return (rc);
 }
 
-static int
-_spank_handle_init(struct spank_handle *spank, struct spank_stack *stack,
-		void * arg, int taskid, step_fn_t fn)
+static void _spank_handle_init(struct spank_handle *spank,
+			       struct spank_stack *stack, void *arg, int taskid,
+			       step_fn_t fn)
 {
 	memset(spank, 0, sizeof(*spank));
 	spank->magic = SPANK_MAGIC;
@@ -653,7 +653,6 @@ _spank_handle_init(struct spank_handle *spank, struct spank_stack *stack,
 			spank->task = ((stepd_step_rec_t *) arg)->task[taskid];
 		}
 	}
-	return (0);
 }
 
 static const char *_step_fn_name(step_fn_t type)
@@ -726,20 +725,16 @@ static spank_f *spank_plugin_get_fn (struct spank_plugin *sp, step_fn_t type)
 static int _do_call_stack(struct spank_stack *stack,
 	step_fn_t type, void * job, int taskid)
 {
-	int rc = 0;
+	int rc = SLURM_SUCCESS;
 	ListIterator i;
 	struct spank_plugin *sp;
 	struct spank_handle spank[1];
 	const char *fn_name;
 
 	if (!stack)
-		return (-1);
+		return ESPANK_BAD_ARG;
 
-	if (_spank_handle_init(spank, stack, job, taskid, type) < 0) {
-		error("spank: Failed to initialize handle for plugins");
-		return (-1);
-	}
-
+	_spank_handle_init(spank, stack, job, taskid, type);
 	fn_name = _step_fn_name(type);
 
 	i = list_iterator_create(stack->plugin_list);
@@ -756,17 +751,17 @@ static int _do_call_stack(struct spank_stack *stack,
 		rc = (*spank_fn) (spank, sp->ac, sp->argv);
 		debug2("spank: %s: %s = %d", name, fn_name, rc);
 
-		if ((rc < 0) && sp->required) {
+		if (rc && sp->required) {
 			error("spank: required plugin %s: "
 			      "%s() failed with rc=%d", name, fn_name, rc);
 			break;
 		} else
-			rc = 0;
+			rc = SLURM_SUCCESS;
 	}
 
 	list_iterator_destroy(i);
 
-	return (rc);
+	return rc;
 }
 
 struct spank_stack *spank_stack_init(enum spank_context_type context)
@@ -1666,12 +1661,6 @@ spank_option_getopt (spank_t sp, struct spank_option *opt, char **argp)
 }
 
 
-int spank_get_remote_options_env (char **env)
-{
-	return spank_stack_get_remote_options_env (global_spank_stack, env);
-}
-
-
 static int
 spank_stack_get_remote_options_env (struct spank_stack *stack, char **env)
 {
@@ -1704,11 +1693,6 @@ spank_stack_get_remote_options_env (struct spank_stack *stack, char **env)
 	list_iterator_destroy (i);
 
 	return (0);
-}
-
-int spank_get_remote_options(job_options_t opts)
-{
-	return spank_stack_get_remote_options (global_spank_stack, opts);
 }
 
 static int
@@ -1876,34 +1860,7 @@ static spank_err_t _check_spank_item_validity (spank_t spank, spank_item_t item)
 
 const char * spank_strerror (spank_err_t err)
 {
-	switch (err) {
-	case ESPANK_SUCCESS:
-		return "Success";
-	case ESPANK_ERROR:
-		return "Generic error";
-	case ESPANK_BAD_ARG:
-		return "Bad argument";
-	case ESPANK_NOT_TASK:
-		return "Not in task context";
-	case ESPANK_ENV_EXISTS:
-		return "Environment variable exists";
-	case ESPANK_ENV_NOEXIST:
-		return "No such environment variable";
-	case ESPANK_NOSPACE:
-		return "Buffer too small";
-	case ESPANK_NOT_REMOTE:
-		return "Valid only in remote context";
-	case ESPANK_NOEXIST:
-		return "Id/PID does not exist on this node";
-	case ESPANK_NOT_EXECD:
-		return "Lookup by PID requested, but no tasks running";
-	case ESPANK_NOT_AVAIL:
-		return "Item not available from this callback";
-	case ESPANK_NOT_LOCAL:
-		return "Valid only in local or allocator context";
-	}
-
-	return "Unknown";
+	return slurm_strerror(err);
 }
 
 int spank_symbol_supported (const char *name)

@@ -29,22 +29,15 @@
 ############################################################################
 source ./globals
 
-set exit_code      0
-set file_out1      "test$test_id.output.1"
-set file_out2      "test$test_id.output.2"
-set file_prog      "test$test_id.prog"
-set file_prog_sh1  "test$test_id.prog.sh1"
-set file_prog_sh2  "test$test_id.prog.sh2"
+set file_out1      "$test_dir/output1"
+set file_out2      "$test_dir/output2"
+set file_prog      "$test_name.prog"
+set file_prog_sh1  "$test_dir/script1"
+set file_prog_sh2  "$test_dir/script2"
 set job_id1        0
 set job_id2        0
 set host_name      ""
 set not_supported  0
-
-proc cleanup {} {
-	global bin_rm file_out1 file_out2 file_prog file_prog_sh1 file_prog_sh2
-
-	exec $bin_rm -f $file_out1 $file_out2 $file_prog $file_prog_sh1 $file_prog_sh2
-}
 
 if [param_contains [get_config_param "PreemptMode"] "GANG"] {
 	skip "This test can't be run with gang scheduling"
@@ -53,8 +46,15 @@ if {![is_super_user]} {
 	skip "This test can't be run except as SlurmUser"
 }
 
+proc cleanup {} {
+	global job_id1 job_id2 file_prog
+
+	cancel_job [list $job_id1 $job_id2]
+	file delete $file_prog
+}
+
 proc suspend_job { job_id operation } {
-	global exit_code scontrol not_supported
+	global scontrol not_supported
 
 	spawn $scontrol $operation $job_id
 	expect {
@@ -64,9 +64,7 @@ proc suspend_job { job_id operation } {
 			exp_continue
 		}
 		-re "error" {
-			log_error "scontrol error"
-			set exit_code 1
-			exp_continue
+			fail "scontrol error"
 		}
 		timeout {
 			fail "scontrol not responding"
@@ -78,7 +76,8 @@ proc suspend_job { job_id operation } {
 }
 
 proc check_output { file_name } {
-	global exit_code bin_cat
+	global bin_cat
+
 	set match1 0
 	set match2 0
 
@@ -100,26 +99,22 @@ proc check_output { file_name } {
 		}
 	}
 
-	if { $match1 == 0 } {
-		log_error "Job never suspended"
-		set exit_code 1
-	}
-	if { $match2 == 0 } {
-		log_error "Job failed to run to completion"
-		set exit_code 1
-	}
+	set failure_notice "Failure may be due to use of gang scheduler, a race conditions, or the ProcTrack plugin not identifying the application as part of the job"
+
+	subtest { $match1 != 0 } "Verify job is suspended" $failure_notice
+	subtest { $match2 != 0 } "Verify job runs to completion" $failure_notice
 }
 
 #
 # Delete left-over program and rebuild it
 #
-file delete $file_prog $file_out1 $file_out2
+file delete $file_prog
 make_bash_script $file_prog_sh1 "$srun ./$file_prog"
 make_bash_script $file_prog_sh2 "./$file_prog"
 exec $bin_cc -o $file_prog ${file_prog}.c
 exec $bin_chmod 700 $file_prog
 
-if { ![string compare [get_affinity_types] "none"] } {
+if {[get_affinity_types] eq "none"} {
 	set affinity_mem 0
 } else {
 	set affinity_mem 1
@@ -134,27 +129,10 @@ if {[param_contains [get_config_param "SelectTypeParameters"] "*Memory"] || $aff
 # Submit two jobs to the same node,.
 # The first job includes srun, second only the application
 #
-set sbatch_pid [spawn $sbatch -N1 -t2 --output=$file_out1 --mem=${job_mem} $file_prog_sh1]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id1 $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $sbatch_pid
-		fail "sbatch not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id1 == 0} {
-	fail "sbatch failed to report jobid"
-}
+set job_id1 [submit_job -fail "-N1 -t2 --output=$file_out1 --mem=${job_mem} $file_prog_sh1"]
+
 # Get the job's allocate host name
-if {[wait_for_job $job_id1 RUNNING] != 0} {
-	fail "Waiting for job $job_id1 to run"
-}
+wait_for_job -fail $job_id1 RUNNING
 spawn $scontrol show job $job_id1
 expect {
 	-re " NodeList=($re_word_str)" {
@@ -166,36 +144,17 @@ expect {
 		exp_continue
 	}
 	timeout {
-		cancel_job $job_id1
 		fail "scontrol not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {[string compare $host_name ""] == 0} {
-	cancel_job $job_id1
-	fail "Did not get hostname for job $job_id1"
+if {$host_name eq ""} {
+	fail "Did not get hostname for job ($job_id1)"
 }
 # Submit another job to that same node
-set sbatch_pid [spawn $sbatch -N1 -t2 --output=$file_out2 --mem=${job_mem} $file_prog_sh2]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id2 $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $srun_pid
-		fail "sbatch not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id2 == 0} {
-	cancel_job $job_id1
-	fail "sbatch failed to report jobid"
-}
+set job_id2 [submit_job -fail "-N1 -t2 --output=$file_out2 --mem=${job_mem} $file_prog_sh2"]
 
 #
 # Stop job 1 and let job 2 begin,
@@ -208,39 +167,21 @@ if {$job_id2 == 0} {
 sleep 10
 suspend_job $job_id1 suspend
 if {$not_supported == 1} {
-	exec $bin_rm -f $file_out1 $file_out2 $file_prog $file_prog_sh1 $file_prog_sh2
-	cancel_job $job_id1
 	fail "Job suspension is not supported"
 }
 if {$not_supported == 0} {
-	if {[wait_for_job $job_id2 RUNNING] != 0} {
-		cancel_job $job_id1
-		cancel_job $job_id2
-		fail "Waiting for job $job_id2 to run"
-	}
+	wait_for_job -fail $job_id2 RUNNING
 	sleep 5
 	suspend_job $job_id2 suspend
 	suspend_job $job_id1 resume
-	if {[wait_for_job $job_id1 DONE] != 0} {
-		cancel_job $job_id1
-		cancel_job $job_id2
-		fail "Waiting for job $job_id1 to complete"
-	}
+	wait_for_job -fail $job_id1 DONE
 	suspend_job $job_id2 resume
 }
-if {[wait_for_job $job_id2 DONE] != 0} {
-	cancel_job $job_id1
-	cancel_job $job_id2
-	fail "Waiting for job $job_id1 to complete"
-}
+wait_for_job -fail $job_id2 DONE
 if {$not_supported == 0} {
-	wait_for_file $file_out1
-	wait_for_file $file_out2
+	wait_for_file -fail $file_out1
+	wait_for_file -fail $file_out2
 
 	check_output $file_out1
 	check_output $file_out2
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code). Failure may be due to use of gang scheduler, a race conditions, or the ProcTrack plugin not identifying the application as part of the job"
 }

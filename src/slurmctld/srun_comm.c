@@ -200,6 +200,39 @@ extern void srun_allocate_abort(job_record_t *job_ptr)
 	}
 }
 
+typedef struct {
+	int bit_position;
+	char *node_name;
+} srun_node_fail_args_t;
+
+static int _srun_node_fail(void *x, void *arg)
+{
+	step_record_t *step_ptr = (step_record_t *) x;
+	srun_node_fail_args_t *args = (srun_node_fail_args_t *) arg;
+	slurm_addr_t *addr;
+	srun_node_fail_msg_t *msg_arg;
+
+	if (!step_ptr->step_node_bitmap)   /* pending step */
+		return 0;
+	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
+		return 0;
+	if ((args->bit_position >= 0) &&
+	    (!bit_test(step_ptr->step_node_bitmap, args->bit_position)))
+		return 0;	/* job step not on this node */
+	if (!step_ptr->port || !step_ptr->host || (step_ptr->host[0] == '\0'))
+		return 0;
+
+	addr = xmalloc(sizeof(*addr));
+	slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+	msg_arg = xmalloc(sizeof(*msg_arg));
+	memcpy(&msg_arg->step_id, &step_ptr->step_id, sizeof(msg_arg->step_id));
+	msg_arg->nodelist = xstrdup(args->node_name);
+	_srun_agent_launch(addr, step_ptr->host, SRUN_NODE_FAIL,
+			   msg_arg, step_ptr->start_protocol_ver);
+
+	return 0;
+}
+
 /*
  * srun_node_fail - notify srun of a node's failure
  * IN job_ptr - job to notify
@@ -210,11 +243,12 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 #ifndef HAVE_FRONT_END
 	node_record_t *node_ptr;
 #endif
-	int bit_position = -1;
+	srun_node_fail_args_t args = {
+		.bit_position = -1,
+		.node_name = node_name,
+	};
 	slurm_addr_t * addr;
 	srun_node_fail_msg_t *msg_arg;
-	ListIterator step_iterator;
-	step_record_t *step_ptr;
 
 	xassert(job_ptr);
 	xassert(node_name);
@@ -226,31 +260,10 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 #else
 	if (!node_name || (node_ptr = find_node_record(node_name)) == NULL)
 		return;
-	bit_position = node_ptr - node_record_table_ptr;
+	args.bit_position = node_ptr - node_record_table_ptr;
 #endif
 
-	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator))) {
-		if (step_ptr->step_node_bitmap == NULL)   /* pending step */
-			continue;
-		if ((bit_position >= 0) &&
-		    (!bit_test(step_ptr->step_node_bitmap, bit_position)))
-			continue;	/* job step not on this node */
-		if ( (step_ptr->port    == 0)    ||
-		     (step_ptr->host    == NULL) ||
-		     (step_ptr->batch_step)      ||
-		     (step_ptr->host[0] == '\0') )
-			continue;
-		addr = xmalloc(sizeof(slurm_addr_t));
-		slurm_set_addr(addr, step_ptr->port, step_ptr->host);
-		msg_arg = xmalloc(sizeof(srun_node_fail_msg_t));
-		memcpy(&msg_arg->step_id, &step_ptr->step_id,
-		       sizeof(msg_arg->step_id));
-		msg_arg->nodelist = xstrdup(node_name);
-		_srun_agent_launch(addr, step_ptr->host, SRUN_NODE_FAIL,
-				   msg_arg, step_ptr->start_protocol_ver);
-	}
-	list_iterator_destroy(step_iterator);
+	list_for_each(job_ptr->step_list, _srun_node_fail, &args);
 
 	if (job_ptr->other_port && job_ptr->alloc_node && job_ptr->resp_host) {
 		addr = xmalloc(sizeof(slurm_addr_t));
@@ -265,69 +278,73 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 	}
 }
 
+static int _srun_ping(void *x, void *arg)
+{
+	job_record_t *job_ptr = (job_record_t *) x;
+	time_t *old = (time_t *) arg;
+	slurm_addr_t *addr;
+	srun_ping_msg_t *msg_arg;
+
+	xassert(job_ptr->magic == JOB_MAGIC);
+
+	if (!IS_JOB_RUNNING(job_ptr) || (job_ptr->time_last_active > *old))
+		return 0;
+
+	if (!job_ptr->other_port || !job_ptr->alloc_node || !job_ptr->resp_host)
+		return 0;
+
+	addr = xmalloc(sizeof(*addr));
+	msg_arg = xmalloc(sizeof(*msg_arg));
+
+	slurm_set_addr(addr, job_ptr->other_port, job_ptr->resp_host);
+	msg_arg->job_id = job_ptr->job_id;
+
+	_srun_agent_launch(addr, job_ptr->alloc_node, SRUN_PING, msg_arg,
+			   job_ptr->start_protocol_ver);
+
+	return 0;
+}
+
 /*
  * srun_ping - Ping all allocations srun/salloc that have not been heard from
  * recently. This does not ping sruns inside a allocation from sbatch or salloc.
  */
 extern void srun_ping (void)
 {
-	ListIterator job_iterator;
-	job_record_t *job_ptr;
-	slurm_addr_t * addr;
-	time_t now = time(NULL);
-	time_t old = now - (slurm_conf.inactive_limit / 3) +
-	             slurm_conf.msg_timeout + 1;
-	srun_ping_msg_t *msg_arg;
+	time_t old = time(NULL) - (slurm_conf.inactive_limit / 3) +
+		     slurm_conf.msg_timeout + 1;
 
 	if (slurm_conf.inactive_limit == 0)
 		return;		/* No limit, don't bother pinging */
 
-	job_iterator = list_iterator_create(job_list);
-	while ((job_ptr = list_next(job_iterator))) {
-		xassert (job_ptr->magic == JOB_MAGIC);
-
-		if (!IS_JOB_RUNNING(job_ptr))
-			continue;
-
-		if ((job_ptr->time_last_active <= old) && job_ptr->other_port
-		    &&  job_ptr->alloc_node && job_ptr->resp_host) {
-			addr = xmalloc(sizeof(slurm_addr_t));
-			slurm_set_addr(addr, job_ptr->other_port,
-				job_ptr->resp_host);
-			msg_arg = xmalloc(sizeof(srun_ping_msg_t));
-			msg_arg->job_id  = job_ptr->job_id;
-			_srun_agent_launch(addr, job_ptr->alloc_node,
-					   SRUN_PING, msg_arg,
-					   job_ptr->start_protocol_ver);
-		}
-	}
-
-	list_iterator_destroy(job_iterator);
+	list_for_each(job_list, _srun_ping, &old);
 }
 
-/*
- * srun_step_timeout - notify srun of a job step's imminent timeout
- * IN step_ptr - pointer to the slurmctld step record
- * IN timeout_val - when it is going to time out
- */
-extern void srun_step_timeout(step_record_t *step_ptr, time_t timeout_val)
+static int _srun_step_timeout(void *x, void *arg)
 {
+	step_record_t *step_ptr = (step_record_t *) x;
 	slurm_addr_t *addr;
 	srun_timeout_msg_t *msg_arg;
 
 	xassert(step_ptr);
 
-	if (step_ptr->batch_step || !step_ptr->port
-	    || !step_ptr->host || (step_ptr->host[0] == '\0'))
-		return;
+	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
+		return 0;
 
-	addr = xmalloc(sizeof(slurm_addr_t));
+	if (!step_ptr->port || !step_ptr->host || (step_ptr->host[0] == '\0'))
+		return 0;
+
+	addr = xmalloc(sizeof(*addr));
+	msg_arg = xmalloc(sizeof(*msg_arg));
+
 	slurm_set_addr(addr, step_ptr->port, step_ptr->host);
-	msg_arg = xmalloc(sizeof(srun_timeout_msg_t));
 	memcpy(&msg_arg->step_id, &step_ptr->step_id, sizeof(msg_arg->step_id));
-	msg_arg->timeout  = timeout_val;
+	msg_arg->timeout = step_ptr->job_ptr->end_time;
+
 	_srun_agent_launch(addr, step_ptr->host, SRUN_TIMEOUT, msg_arg,
 			   step_ptr->start_protocol_ver);
+
+	return 0;
 }
 
 /*
@@ -338,8 +355,6 @@ extern void srun_timeout(job_record_t *job_ptr)
 {
 	slurm_addr_t * addr;
 	srun_timeout_msg_t *msg_arg;
-	ListIterator step_iterator;
-	step_record_t *step_ptr;
 
 	xassert(job_ptr);
 	if (!IS_JOB_RUNNING(job_ptr))
@@ -357,11 +372,7 @@ extern void srun_timeout(job_record_t *job_ptr)
 				   msg_arg, job_ptr->start_protocol_ver);
 	}
 
-
-	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator)))
-		srun_step_timeout(step_ptr, job_ptr->end_time);
-	list_iterator_destroy(step_iterator);
+	list_for_each(job_ptr->step_list, _srun_step_timeout, NULL);
 }
 
 /*
@@ -431,6 +442,16 @@ extern int srun_user_message(job_record_t *job_ptr, char *msg)
 	return ESLURM_DISABLED;
 }
 
+static int _srun_job_complete(void *x, void *arg)
+{
+	step_record_t *step_ptr = (step_record_t *) x;
+
+	if (step_ptr->step_id.step_id != SLURM_BATCH_SCRIPT)
+		srun_step_complete(step_ptr);
+
+	return 0;
+}
+
 /*
  * srun_job_complete - notify srun of a job's termination
  * IN job_ptr - pointer to the slurmctld job record
@@ -439,8 +460,6 @@ extern void srun_job_complete(job_record_t *job_ptr)
 {
 	slurm_addr_t * addr;
 	srun_job_complete_msg_t *msg_arg;
-	ListIterator step_iterator;
-	step_record_t *step_ptr;
 
 	xassert(job_ptr);
 
@@ -456,13 +475,7 @@ extern void srun_job_complete(job_record_t *job_ptr)
 				   job_ptr->start_protocol_ver);
 	}
 
-	step_iterator = list_iterator_create(job_ptr->step_list);
-	while ((step_ptr = list_next(step_iterator))) {
-		if (step_ptr->batch_step)	/* batch script itself */
-			continue;
-		srun_step_complete(step_ptr);
-	}
-	list_iterator_destroy(step_iterator);
+	list_for_each(job_ptr->step_list, _srun_job_complete, NULL);
 }
 
 /*

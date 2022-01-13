@@ -12,8 +12,3 @@ Tests: sacct
 Features: no-build-needed,isolation-container
 Restrictions: needs-root, allow-stderr
 Depends: slurmctld, slurmd, slurm-client, slurmdbd, mariadb-client, mariadb-server
-
-Tests: mpi
-Features: no-build-needed,isolation-container
-Restrictions: needs-root, allow-stderr
-Depends: slurmctld, slurmd, slurm-client, mpi-default-dev, gcc, mpich-doc

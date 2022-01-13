@@ -100,7 +100,7 @@
  *   | Bit_0  | Bit_1  | Bit_2  | Bit_3  | Bit_4  | Bit_5  | Bit_6  | Bit_7  |
  *
  * If a job changes size (relinquishes nodes), the node_bitmap will remain
- * unchanged, but cpus, cpus_used, cpus_array_*, and memory_used will be 
+ * unchanged, but cpus, cpus_used, cpus_array_*, and memory_used will be
  * updated (e.g. cpus and mem_used on that node cleared).
  */
 struct job_resources {
@@ -112,6 +112,7 @@ struct job_resources {
 	uint16_t *cpus;
 	uint16_t *cpus_used;
 	uint16_t *cores_per_socket;
+	uint16_t  cr_type;
 	uint64_t *memory_allocated;
 	uint64_t *memory_used;
 	uint32_t  nhosts;
@@ -122,6 +123,7 @@ struct job_resources {
 	uint32_t *sock_core_rep_count;
 	uint16_t *sockets_per_node;
 	uint16_t *tasks_per_node;
+	uint16_t  threads_per_core;
 	uint8_t   whole_node;
 };
 
@@ -197,10 +199,10 @@ extern void free_job_resources(job_resources_t **job_resrcs_pptr);
 extern void log_job_resources(void *job_ptr);
 
 /* Un/pack full job_resources data structure */
-extern void pack_job_resources(job_resources_t *job_resrcs_ptr, Buf buffer,
+extern void pack_job_resources(job_resources_t *job_resrcs_ptr, buf_t *buffer,
 			       uint16_t protocol_version);
 extern int unpack_job_resources(job_resources_t **job_resrcs_pptr,
-				Buf buffer, uint16_t protocol_version);
+				buf_t *buffer, uint16_t protocol_version);
 
 /* Reset the node_bitmap in a job_resources data structure
  * This is needed after a restart/reconfiguration since nodes can
@@ -316,7 +318,11 @@ extern void remove_job_from_cores(job_resources_t *job_resrcs_ptr,
 
 /* Given a job pointer and a global node index, return the index of that
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */
-extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr, 
+extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr,
 					     int node_inx);
+
+extern uint16_t job_resources_get_node_cpu_cnt(job_resources_t *job_resrcs_ptr,
+					       int job_node_inx,
+					       int sys_node_inx);
 
 #endif /* !_JOB_RESOURCES_H */

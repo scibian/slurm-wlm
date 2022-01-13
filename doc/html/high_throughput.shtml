@@ -9,14 +9,18 @@ some tuning and this document should help you off to a good start.
 A working knowledge of Slurm should be considered a prerequisite
 for this material.</p>
 
-<h2>Performance Results</h2>
+<h2 id="performance">Performance Results
+<a class="slurm_link" href="#performance"></a>
+</h2>
 
 <p>Slurm has also been validated to execute 500 simple batch jobs per second
 on a sustained basis with short bursts of activity at a much higher level.
 Actual performance depends upon the jobs to be executed plus the hardware and
 configuration used.</p>
 
-<h2>System configuration</h2>
+<h2 id="sys_config">System configuration
+<a class="slurm_link" href="#sys_config"></a>
+</h2>
 
 <p>Several system configuration parameters may require modification to support a large number
 of open files and TCP connections with large bursts of messages. Changes can
@@ -65,18 +69,24 @@ using the ifconfig command. A value of 4096 has been found to work well for one
 site with a very large cluster
 (e.g. <i>"ifconfig <interface> txqueuelen 4096"</i>).</p>
 
-<h2>Munge configuration</h2>
+<h2 id="munge_config">Munge configuration
+<a class="slurm_link" href="#munge_config"></a>
+</h2>
 
 <p>By default the Munge daemon runs with two threads, but a higher thread count
 can improve its throughput. We suggest starting the Munge daemon with ten
 threads for high throughput support (e.g. <i>"munged --num-threads 10"</i>).</p>
 
-<h2>User limits</h2>
+<h2 id="user_limits">User limits
+<a class="slurm_link" href="#user_limits"></a>
+</h2>
 
 <p>The <b>ulimit</b> values in effect for the <b>slurmctld</b> daemon should
 be set quite high for memory size, open file count and stack size.</p>
 
-<h2>Slurm Configuration</h2>
+<h2 id="slurm_config">Slurm Configuration
+<a class="slurm_link" href="#slurm_config"></a>
+</h2>
 
 <p>Several Slurm configuration parameters should be adjusted to
 reflect the needs of high throughput computing. The changes described below
@@ -155,7 +165,6 @@ per second on a sustained basis on one cluster follows. Note that every
 environment is different and this set of parameters will not work well
 in every case, but it may serve as a good starting point.</li>
 <ul>
-<li>assoc_limit_continue</li>
 <li>batch_sched_delay=20</li>
 <li>bf_continue</li>
 <li>bf_interval=300</li>
@@ -184,13 +193,11 @@ are enabled a separate slurmctld thread has to be created for every job start
 Current architecture requires acquisition of a job write lock in every thread,
 which is a costly operation that severely limits scheduler throughput.
 <li><b>SlurmctldDebug</b>:
-More detailed logging will decrease system throughput. Set to 2 (log errors
-only) or 3 (general information logging). Each increment in the logging level
-will increase the number of message by a factor of about 3.</li>
+More detailed logging will decrease system throughput. Set to <i>error</i> or
+<i>info</i> for regular operations with high throughput workload.</li>
 <li><b>SlurmdDebug</b>:
-More detailed logging will decrease system throughput. Set to 2 (log errors
-only) or 3 (general information logging). Each increment in the logging level
-will increase the number of message by a factor of about 3.</li>
+More detailed logging will decrease system throughput. Set to <i>error</i> or
+<i>info</i> for regular operations with high throughput workload.</li>
 <li><b>SlurmdLogFile</b>:
 Writing to local storage is recommended.</li>
 <li><b>TaskPlugin</b>:
@@ -202,7 +209,9 @@ affinity is advised in any case.</li>
 appropriate for your environment.</li>
 </ul>
 
-<h2>SlurmDBD Configuration</h2>
+<h2 id="slurmdbd_config">SlurmDBD Configuration
+<a class="slurm_link" href="#slurmdbd_config"></a>
+</h2>
 
 <p>Turning accounting off provides a minimal improvement in performance.
   If using SlurmDBD increased speedup can be achieved by setting the CommitDelay
@@ -222,6 +231,6 @@ appropriate for your environment.</li>
 
 </ul>
 
-<p style="text-align:center;">Last modified 5 December 2018</p>
+<p style="text-align:center;">Last modified 14 July 2021</p>
 
 <!--#include virtual="footer.txt"-->

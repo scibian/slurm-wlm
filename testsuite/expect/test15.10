@@ -28,14 +28,19 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
+
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
 
 for {set inx 1} {$inx < 4} {set inx [expr $inx * 2]} {
 	set tasks_set $inx
 	set tasks_get 0
 	set timeout $max_job_delay
-	set salloc_pid [spawn $salloc -n$tasks_set -t1 $bin_bash]
+	spawn $salloc -n$tasks_set -t1 $bin_bash
 	expect {
 		-re "Granted job allocation ($number)" {
 			set job_id $expect_out(1,string)
@@ -52,23 +57,11 @@ for {set inx 1} {$inx < 4} {set inx [expr $inx * 2]} {
 			set tasks_get $tasks_set
 		}
 		timeout {
-			log_error "salloc not responding"
-			cancel_job $job_id
-			slow_kill [expr 0 - $salloc_pid]
-			set exit_code 1
+			fail "salloc not responding"
 		}
 		eof {
-			if {$tasks_get < $tasks_set} {
-				log_error "Did not get proper number of tasks: $tasks_get < $tasks_set"
-				set exit_code 1
-			} else {
-				log_debug "Test of $tasks_get processors good"
-			}
+			subtest {$tasks_get >= $tasks_set} "Confirm that a job allocates the proper processor count" "$tasks_get < $tasks_set"
 			wait
 		}
 	}
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

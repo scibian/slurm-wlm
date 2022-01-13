@@ -268,6 +268,9 @@ static void _slurm_cred_to_step_rec(slurm_cred_t *cred, stepd_step_rec_t *job)
 	job->gr_names = cred_arg.gr_names;
 	cred_arg.gr_names = NULL;
 
+	job->selinux_context = cred_arg.selinux_context;
+	cred_arg.selinux_context = NULL;
+
 	slurm_cred_free_args(&cred_arg);
 }
 
@@ -280,7 +283,6 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 	slurm_addr_t     resp_addr;
 	slurm_addr_t     io_addr;
 	int            i, nodeid = NO_VAL;
-	uint16_t cpus = conf->cpus;
 
 	xassert(msg != NULL);
 	xassert(msg->complete_nodelist != NULL);
@@ -333,6 +335,7 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 		job->gids = copy_gids(msg->ngids, msg->gids);
 	}
 
+	job->container = xstrdup(msg->container);
 	job->cwd	= xstrdup(msg->cwd);
 	job->task_dist	= msg->task_dist;
 
@@ -475,15 +478,7 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 	job->open_mode   = msg->open_mode;
 	job->options     = msg->options;
 
-	/*
-	 * FIXME: This is band-aid for --threads-per-core < ThreadsPerCore
-	 * used with --mem-per-cpu.
-	 */
-	if (msg->threads_per_core && (msg->threads_per_core != NO_VAL16) &&
-	    (msg->threads_per_core < conf->threads))
-		cpus = msg->threads_per_core * conf->cores;
-
-	format_core_allocs(msg->cred, conf->node_name, cpus,
+	format_core_allocs(msg->cred, conf->node_name, conf->cpus,
 			   &job->job_alloc_cores, &job->step_alloc_cores,
 			   &job->job_mem, &job->step_mem);
 
@@ -520,8 +515,6 @@ batch_stepd_step_rec_create(batch_job_launch_msg_t *msg)
 	stepd_step_rec_t *job;
 	srun_info_t  *srun = NULL;
 	char *in_name;
-	uint16_t cpus = conf->cpus;
-	char *threads_per_core_str;
 
 	xassert(msg != NULL);
 
@@ -589,6 +582,7 @@ batch_stepd_step_rec_create(batch_job_launch_msg_t *msg)
 	job->overcommit = (bool) msg->overcommit;
 
 	job->cwd     = xstrdup(msg->work_dir);
+	job->container = xstrdup(msg->container);
 
 	job->env     = _array_copy(msg->envc, msg->environment);
 	job->eio     = eio_handle_create(0);
@@ -610,19 +604,7 @@ batch_stepd_step_rec_create(batch_job_launch_msg_t *msg)
 	if (msg->cpus_per_node)
 		job->cpus    = msg->cpus_per_node[0];
 
-	/*
-	 * FIXME: This is band-aid for --threads-per-core < ThreadsPerCore
-	 * used with --mem-per-cpu.
-	 */
-	threads_per_core_str = getenvp(job->env, "SLURM_THREADS_PER_CORE");
-	if (threads_per_core_str) {
-		uint32_t threads_per_core =
-			strtol(threads_per_core_str, NULL, 10);
-		if (threads_per_core && (threads_per_core < conf->threads))
-			cpus = threads_per_core * conf->cores;
-	}
-
-	format_core_allocs(msg->cred, conf->node_name, cpus,
+	format_core_allocs(msg->cred, conf->node_name, conf->cpus,
 			   &job->job_alloc_cores, &job->step_alloc_cores,
 			   &job->job_mem, &job->step_mem);
 	if (job->step_mem && slurm_conf.job_acct_oom_kill)
@@ -688,6 +670,7 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 	FREE_NULL_LIST(job->outgoing_cache);
 	FREE_NULL_LIST(job->job_gres_list);
 	FREE_NULL_LIST(job->step_gres_list);
+	xfree(job->container);
 	xfree(job->cpu_bind);
 	xfree(job->cwd);
 	xfree(job->envtp);
@@ -741,14 +724,10 @@ srun_info_create(slurm_cred_t *cred, slurm_addr_t *resp_addr,
 
 	slurm_cred_get_signature(cred, &data, &len);
 
-	len = len > SLURM_IO_KEY_SIZE ? SLURM_IO_KEY_SIZE : len;
-
 	if (data != NULL) {
+		key->len = len;
+		key->data = xmalloc(len);
 		memcpy((void *) key->data, data, len);
-
-		if (len < SLURM_IO_KEY_SIZE)
-			memset( (void *) (key->data + len), 0,
-				SLURM_IO_KEY_SIZE - len);
 	}
 
 	if (ioaddr != NULL)
@@ -761,8 +740,14 @@ srun_info_create(slurm_cred_t *cred, slurm_addr_t *resp_addr,
 extern void
 srun_info_destroy(srun_info_t *srun)
 {
-	xfree(srun->key);
+	srun_key_destroy(srun->key);
 	xfree(srun);
+}
+
+extern void srun_key_destroy(srun_key_t *key)
+{
+	xfree(key->data);
+	xfree(key);
 }
 
 static stepd_step_task_info_t *_task_info_create(int taskid, int gtaskid,

@@ -33,9 +33,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_in     "test$test_id.bash"
-
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with FRONT_END systems"
 }
@@ -108,7 +105,7 @@ while {[gets $fd line] != -1} {
 	}
 }
 exp_internal 0
-if {[string compare $units ""]} {
+if {$units ne ""} {
 	set cpu_cnt [expr $cpu_cnt * 1024]
 }
 catch {close $fd}
@@ -122,13 +119,13 @@ if {!$cpu_cnt} {
 #
 # Check CPU count
 #
-if {[string compare $host ""] == 0} {
+if {$host eq ""} {
 	fail "Did not get hostname from idle node"
 }
 
 log_debug "Found idle node $host with $cpu_cnt processors"
 
-set srun_pid [spawn $srun -N1 -w$host --cpus-per-task=1 --exclusive -l -t1 $bin_printenv SLURM_PROCID]
+spawn $srun -N1 -w$host --cpus-per-task=1 --exclusive -l -t1 $bin_printenv SLURM_PROCID
 expect {
 	-re "($number):" {
 		incr task_cnt
@@ -138,7 +135,6 @@ expect {
 		skip "Nodes have too many CPUs for test"
  	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -160,8 +156,7 @@ if {$cpu_cnt != $task_cnt} {
 	}
 }
 if {$cpu_cnt != $task_cnt} {
-	log_error "Should have run $cpu_cnt tasks (one per core) instead of $task_cnt tasks. This could be due to memory limit per allocated CPU, MaxCPUsPerNode, CR_ONE_TASK_PER_CORE, or OverSubscribe=FORCE"
-	set exit_code 1
+	fail "Should have run $cpu_cnt tasks (one per core) instead of $task_cnt tasks. This could be due to memory limit per allocated CPU, MaxCPUsPerNode, CR_ONE_TASK_PER_CORE, or OverSubscribe=FORCE"
 }
 if {$cpu_cnt < 2} {
 	skip "The node only has one core"
@@ -171,7 +166,7 @@ if {$cpu_cnt < 2} {
 # Now verify the --cpus-per-task option
 #
 set task_cnt  0
-set srun_pid [spawn $srun -N1 --cpus-per-task=2 --exclusive -l -t1 --nodelist=$host $bin_printenv SLURM_PROCID]
+spawn $srun -N1 --cpus-per-task=2 --exclusive -l -t1 --nodelist=$host $bin_printenv SLURM_PROCID
 expect {
 	-re "Invalid node name specified" {
 		skip "Appears you are using multiple slurmd testing. This test won't work in that fashion"
@@ -181,7 +176,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -193,10 +187,5 @@ expect {
 # Verify that half the number of tasks were spawned
 #
 if {$task_cnt != [expr $cpu_cnt / 2]} {
-	log_error "Improper task count for given cpus-per-task. This could be due to memory limit per allocated CPU or OverSubscribe=FORCE"
-	set exit_code   1
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	fail "Improper task count for given cpus-per-task. This could be due to memory limit per allocated CPU or OverSubscribe=FORCE"
 }

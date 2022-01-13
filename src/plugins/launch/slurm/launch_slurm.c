@@ -254,7 +254,7 @@ static void
 _handle_openmpi_port_error(const char *tasks, const char *hosts,
 			   slurm_step_ctx_t *step_ctx)
 {
-	slurm_step_id_t step_id;
+	slurm_step_id_t step_id = step_ctx->step_req->step_id;
 	char *msg = "retrying";
 
 	if (!retry_step_begin) {
@@ -267,7 +267,6 @@ _handle_openmpi_port_error(const char *tasks, const char *hosts,
 	error("%s: tasks %s unable to claim reserved port, %s.",
 	      hosts, tasks, msg);
 
-	slurm_step_ctx_get(step_ctx, SLURM_STEP_CTX_STEP_ID, &step_id);
 	info("Terminating job step %ps", &step_id);
 	slurm_kill_job_step(step_id.job_id, step_id.step_id, SIGKILL);
 }
@@ -701,7 +700,6 @@ extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 	int rc = SLURM_SUCCESS;
 	task_state_t *task_state;
 	bool first_launch = false;
-	uint32_t def_cpu_bind_type = 0;
 	char tmp_str[128];
 	xassert(srun_opt);
 
@@ -734,6 +732,7 @@ extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 	launch_params.argc = srun_opt->argc;
 	launch_params.argv = srun_opt->argv;
 	launch_params.multi_prog = srun_opt->multi_prog ? true : false;
+	launch_params.container = xstrdup(opt_local->container);
 	launch_params.cwd = opt_local->chdir;
 	launch_params.slurmd_debug = srun_opt->slurmd_debug;
 	launch_params.buffered_stdio = !srun_opt->unbuffered;
@@ -757,15 +756,14 @@ extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 	launch_params.task_prolog = srun_opt->task_prolog;
 	launch_params.task_epilog = srun_opt->task_epilog;
 
-	slurm_step_ctx_get(job->step_ctx, SLURM_STEP_CTX_DEF_CPU_BIND_TYPE,
-			   &def_cpu_bind_type);
-	if (slurm_verify_cpu_bind(NULL, &srun_opt->cpu_bind,
-				  &srun_opt->cpu_bind_type,
-				  def_cpu_bind_type)) {
-		return SLURM_ERROR;
+	if (!srun_opt->cpu_bind_type &&
+	    job->step_ctx->step_resp->def_cpu_bind_type)
+		srun_opt->cpu_bind_type =
+			job->step_ctx->step_resp->def_cpu_bind_type;
+	if (get_log_level() >= LOG_LEVEL_VERBOSE) {
+		slurm_sprint_cpu_bind_type(tmp_str, srun_opt->cpu_bind_type);
+		verbose("CpuBindType=%s", tmp_str);
 	}
-	slurm_sprint_cpu_bind_type(tmp_str, srun_opt->cpu_bind_type);
-	verbose("CpuBindType=%s", tmp_str);
 	launch_params.cpu_bind = srun_opt->cpu_bind;
 	launch_params.cpu_bind_type = srun_opt->cpu_bind_type;
 
@@ -849,8 +847,8 @@ extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 		}
 	} else {
 		if (slurm_step_launch_add(job->step_ctx, job->step_ctx,
-					  &launch_params, job->nodelist,
-					  job->fir_nodeid) != SLURM_SUCCESS) {
+					  &launch_params, job->nodelist)
+			!= SLURM_SUCCESS) {
 			rc = errno;
 			*local_global_rc = errno;
 			error("Application launch add failed: %m");
@@ -900,8 +898,8 @@ extern int launch_p_step_wait(srun_job_t *job, bool got_alloc,
 	    (retry_step_cnt < MAX_STEP_RETRIES) &&
 	     (job->het_job_id == NO_VAL)) {	/* Not hetjob step */
 		retry_step_begin = false;
-		slurm_step_ctx_destroy(job->step_ctx);
-		if (got_alloc) 
+		step_ctx_destroy(job->step_ctx);
+		if (got_alloc)
 			rc = create_job_step(job, true, opt_local);
 		else
 			rc = create_job_step(job, false, opt_local);

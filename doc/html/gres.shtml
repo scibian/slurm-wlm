@@ -8,19 +8,19 @@
 <a href="#Running_Jobs">Running Jobs</a><br>
 <a href="#GPU_Management">GPU Management</a><br>
 <a href="#MPS_Management">MPS Management</a><br>
-<a href="#MIC_Management">MIC Management</a><br>
+<a href="#MIG_Management">MIG Management</a><br>
 
 <!-------------------------------------------------------------------------->
-<a id="Overview"></a>
-<h2>Overview</h2>
+<h2 id="Overview">Overview<a class="slurm_link" href="#Overview"></a></h2>
 <p>Slurm supports the ability to define and schedule arbitrary Generic RESources
 (GRES). Additional built-in features are enabled for specific GRES types,
 including Graphics Processing Units (GPUs) and CUDA Multi-Process Service (MPS)
 devices, through an extensible plugin mechanism.</p>
 
 <!-------------------------------------------------------------------------->
-<a id="Configuration"></a>
-<h2>Configuration</h2>
+<h2 id="Configuration">Configuration
+<a class="slurm_link" href="#Configuration"></a>
+</h2>
 
 <P>By default, no GRES are enabled in the cluster's configuration.
 You must explicitly specify which GRES are to be managed in the
@@ -134,8 +134,9 @@ substring, and <b>slurmd</b> should be able to match it to the system-detected
 device <code class="commandline">geforce_rtx_2060</code>.
 
 <!-------------------------------------------------------------------------->
-<a id="Running_Jobs"></a>
-<h2>Running Jobs</h2>
+<h2 id="Running_Jobs">Running Jobs
+<a class="slurm_link" href="#Running_Jobs"></a>
+</h2>
 
 <P>Jobs will not be allocated any generic resources unless specifically
 requested at job submit time using the options:</P>
@@ -217,8 +218,9 @@ wait
 </PRE>
 
 <!-------------------------------------------------------------------------->
-<a id="GPU_Management"></a>
-<h2>GPU Management</h2>
+<h2 id="GPU_Management">GPU Management
+<a class="slurm_link" href="#GPU_Management"></a>
+</h2>
 
 <P>In the case of Slurm's GRES plugin for GPUs, the environment variable
 <code class="commandline">CUDA_VISIBLE_DEVICES</code>
@@ -283,8 +285,9 @@ NVIDIA CUDA documentation</a> for more information about the
 <code class="commandline">CUDA_DEVICE_ORDER</code> environmental variables.</p>
 
 <!-------------------------------------------------------------------------->
-<a id="MPS_Management"></a>
-<h2>MPS Management</h2>
+<h2 id="MPS_Management">MPS Management
+<a class="slurm_link" href="#MPS_Management"></a>
+</h2>
 
 <p><a href="https://docs.nvidia.com/deploy/pdf/CUDA_Multi_Process_Service_Overview.pdf">
 CUDA Multi-Process Service (MPS)</a> provides a mechanism where GPUs can be
@@ -435,34 +438,37 @@ CVE-2018-6260</a> and in the
 <a href="https://nvidia.custhelp.com/app/answers/detail/a_id/4772">
 Security Bulletin: NVIDIA GPU Display Driver - February 2019</a>.</p>
 
-<!-------------------------------------------------------------------------->
-<a id="MIC_Management"></a>
-<h2>MIC Management</h2>
+<h2 id="MIG_Management">MIG Management
+<a class="slurm_link" href="#MIG_Management"></a>
+</h2>
 
-<P>Slurm can be used to provide resource management for systems with the
-Intel&reg; Many Integrated Core (MIC) processor.
-Slurm sets an <code class="commandline">OFFLOAD_DEVICES</code>
-environment variable, which controls the
-selection of MICs available to a job step.
-The <code class="commandline">OFFLOAD_DEVICES</code>
-environment variable is used by both Intel
-LEO (Language Extensions for Offload) and the MKL (Math Kernel Library)
-automatic offload.
-(This is very similar to how the
-<code class="commandline">CUDA_VISIBLE_DEVICES</code> environment variable is
-used to control which GPUs can be used by CUDA&trade; software.)
-If no MICs are reserved via GRES, the
-<code class="commandline">OFFLOAD_DEVICES</code> variable is set to
--1. This causes the code to ignore the offload directives and run MKL
-routines on the CPU. The code will still run but only on the CPU. This
-also gives a somewhat cryptic warning:</P>
-<pre>offload warning: OFFLOAD_DEVICES device number -1 does not correspond
-to a physical device</pre>
-<P>The offloading is automatically scaled to all the devices, (e.g. if
---gres=mic:2 is defined) then all offloads use two MICs unless
-explicitly defined in the offload pragmas.</P>
-<!-------------------------------------------------------------------------->
+<p>Beginning in version 21.08, Slurm now supports NVIDIA
+<i>Multi-Instance GPU</i> (MIG) devices. This feature allows some newer NVIDIA
+GPUs (like the A100) to split up a GPU into up to seven separate, isolated GPU
+instances. Slurm can treat these MIG instances as individual GPUs, complete with
+cgroup isolation and task binding.</p>
 
-<p style="text-align: center;">Last modified 17 June 2021</p>
+<p>To configure MIGs in Slurm, specify
+<code class="commandline">AutoDetect=nvml</code> in <i>gres.conf</i> for the
+nodes with MIGs, and specify <code class="commandline">Gres</code>
+in <i>slurm.conf</i> as if the MIGs were regular GPUs. An optional
+GRES type can be specified to distinguish MIGs of different sizes from each
+other, as well as from other GPUs in the cluster. This type must be a substring
+of the "MIG Profile" string as reported by the node in its slurmd log under the
+<code class="commandline">debug2</code> log level. Other MIG attributes will be
+displayed as well, including MIG UUID, GPU Instance (GI) ID, Compute Instance
+(CI) ID, GI and CI minor numbers, the associated MIG device files, and
+"UniqueID" (the value Slurm will use to select MIGs via
+<code class="commandline">CUDA_VISIBLE_DEVICES</code>).</p>
+
+<p>The sanity-check AutoDetect mode is not supported for MIGs.
+Slurm expects MIG devices to already be partitioned, and does not support
+dynamic MIG partitioning.</p>
+
+<p>For more information on NVIDIA MIGs (including how to partition them), see
+<a href="https://docs.nvidia.com/datacenter/tesla/mig-user-guide/index.html">
+the MIG user guide</a>.</p>
+
+<p style="text-align: center;">Last modified 23 June 2021</p>
 
 <!--#include virtual="footer.txt"-->

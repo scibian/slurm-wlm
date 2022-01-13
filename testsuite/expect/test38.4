@@ -31,7 +31,7 @@ source ./globals
 
 set timeout     60
 set job_id      0
-set file_out    "test$test_id.out"
+set file_out    "$test_dir/output"
 
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
@@ -91,16 +91,14 @@ proc test_env {value} {
 	}
 	log_user 1
 	if {$matches != 1} {
-		fail "Output of env incorrect matches: $value ($matches != 1)"
+		fail "Output of env $value incorrect ($matches != 1)"
 	}
 }
 
 proc cleanup { } {
-	global job_id bin_rm file_out test_id
+	global job_id
 
 	cancel_job $job_id
-
-	exec $bin_rm -f $file_out test$test_id*.out
 }
 
 # Start test
@@ -111,24 +109,19 @@ log_info "\n################################################################\n"
 
 salloc
 if {$job_id == 0} {
-	fail "Error submitting job $job_id"
+	fail "Error submitting job ($job_id)"
 }
 
 #
 # Check for desired output
 #
-if {[wait_for_job $job_id DONE] != 0} {
-	fail "Error completing job $job_id"
-}
-if {[wait_for_file $file_out] != 0} {
-	fail "Output file $file_out is missing"
-}
+wait_for_job -fail $job_id DONE
+wait_for_file -fail $file_out
 
 set matches 0
 spawn $bin_grep "SLURM_HET_SIZE" $file_out
 expect {
 	-re "SLURM_HET_SIZE=3" {
-		#once
 		incr matches
 		exp_continue
 	}
@@ -137,7 +130,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	fail "Output of env incorrect matches: SLURM_HET_SIZE=3 ($matches != 1)"
+	fail "Output of env SLURM_HET_SIZE=3 incorrect ($matches != 1)"
 }
 
 set matches 0
@@ -145,7 +138,6 @@ log_user 0
 spawn $bin_grep "SLURM_JOB_PARTITION_HET_GROUP" $file_out
 expect {
 	-re "SLURM_JOB_PARTITION_HET_GROUP" {
-		#three
 		incr matches
 		exp_continue
 	}
@@ -155,7 +147,7 @@ expect {
 }
 log_user 1
 if {$matches != 3} {
-	fail "Output of env incorrect matches: SLURM_JOB_PARTITION_HET_GROUP ($matches != 3)"
+	fail "Output of env SLURM_JOB_PARTITION_HET_GROUP incorrect ($matches != 3)"
 }
 
 test_env "SLURM_CPUS_PER_TASK_HET_GROUP_0=4"

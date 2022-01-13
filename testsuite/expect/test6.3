@@ -28,15 +28,14 @@
 ############################################################################
 source ./globals
 
-set exit_code    0
-set file_in      "test$test_id.input"
-set job_id1      0
+set file_in      "$test_dir/input"
+set job_id       0
 set matches      0
 
 proc cleanup {} {
-	global bin_rm file_in
+	global job_id
 
-	exec $bin_rm -f $file_in
+	cancel_job $job_id
 }
 
 #
@@ -47,35 +46,16 @@ make_bash_script $file_in "$srun $bin_sleep 600"
 #
 # Submit a job so we have something to work with
 #
-set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t1 $file_in]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id1 $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $sbatch_pid
-		fail "srun not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id1 == 0} {
-	fail "Job submit failure"
-}
-#exec $bin_rm -f $file_in
+set job_id [submit_job -fail "--output=/dev/null --error=/dev/null -t1 $file_in"]
 
 #
 # Test interactive scancel
 #
 
-spawn $scancel --interactive $job_id1
+spawn $scancel --interactive $job_id
 expect {
-	-re "Job $job_id1 not found" {
-		log_error "Job initiation failure"
-		set exit_code 1
-		exp_continue
+	-re "Job $job_id not found" {
+		fail "Job initiation failure"
 	}
 	-re "Cancel job.*\? " {
 		send "n\r"
@@ -89,12 +69,8 @@ expect {
 		wait
 	}
 }
-# Quit now if job failed
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
 
-spawn $scancel --interactive $job_id1
+spawn $scancel --interactive $job_id
 expect {
 	-re "Cancel job.*\? " {
 		send "y\r"
@@ -109,9 +85,9 @@ expect {
 	}
 }
 
-spawn $scancel --interactive $job_id1
+spawn $scancel --interactive $job_id
 expect {
-	-re "Kill job error.* $job_id1" {
+	-re "Kill job error.* $job_id" {
 		log_debug "No worries, error is expected"
 		incr matches
 		exp_continue
@@ -124,10 +100,4 @@ expect {
 	}
 }
 
-if {$matches != 3} {
-	fail "scancel interactive option failed"
-}
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
-
+subtest {$matches == 3} "Test interactive scancel"

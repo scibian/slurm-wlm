@@ -27,18 +27,17 @@
 ############################################################################
 source ./globals
 source ./globals_accounting
-source  ./inc21.34_tests
+source ./inc21.34_tests
 
-set exit_code        0
 set test_node        ""
 # Total cpus in test node
 set totcpus          0
 set nthreads         0
 set acct             test_acct
 set user_name        ""
-set test_part        "test$test_id\_part"
-set part_qos         "test$test_id\_part_qos"
-set job_qos          "test$test_id\_job_qos"
+set test_part        "${test_name}_part"
+set part_qos         "${test_name}_part_qos"
+set job_qos          "${test_name}_job_qos"
 set qostest          ""
 set grn              GrpNodes
 set grn_num          0
@@ -145,67 +144,6 @@ if {$overtimelim != 0} {
 	skip "Cannot run this test when OverTimeLimit is set. Exiting now"
 }
 
-proc cleanup { } {
-	global acct job_qos part_qos scontrol sacctmgr test_part def_part
-	global exit_code
-
-	# Delete the test qos
-	set match 0
-	spawn $sacctmgr -i delete qos $job_qos,$part_qos
-	expect {
-		-re "Deleting" {
-			set match 1
-			exp_continue
-		}
-		timeout {
-			fail "sacctmgr is not responding"
-		}
-		eof {
-			wait
-		}
-	}
-
-	#delete account
-	spawn $sacctmgr -i delete account $acct
-	expect {
-		-re "Deleting accounts" {
-			exp_continue
-		}
-		-re "Error" {
-			log_error "Account was not deleted"
-			set exit_code 1
-		}
-		timeout {
-			fail "sacctmgr is not responding"
-		}
-		eof {
-			wait
-		}
-	}
-
-	spawn $scontrol delete partitionname=$test_part
-	expect {
-		timeout {
-			fail "scontrol is not responding"
-		}
-		eof {
-			wait
-		}
-	}
-
-	if {[string length $def_part]} {
-		spawn $scontrol update partitionname=$def_part default=yes
-		expect {
-			timeout {
-				fail "scontrol is not responding"
-			}
-			eof {
-				wait
-			}
-		}
-	}
-}
-
 if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
 	skip "This test can't be run without a usable AccountStorageType"
 }
@@ -231,6 +169,21 @@ if {[get_config_param "PriorityType"] eq "priority/multifactor"} {
 	set prio_multifactor 1
 } else {
 	set prio_multifactor 0
+}
+
+proc cleanup { } {
+	global acct job_qos part_qos scontrol sacctmgr test_part def_part
+
+	# Delete the test qos
+	run_command -none "$sacctmgr -i delete qos $job_qos,$part_qos"
+
+	# Delete account
+	run_command -none "$sacctmgr -i delete account $acct"
+	run_command -none "$scontrol delete partitionname=$test_part"
+
+	if {[string length $def_part]} {
+		run_command -none "$scontrol update partitionname=$def_part default=yes"
+	}
 }
 
 # Remove any vestigial data
@@ -351,7 +304,7 @@ if {$acctmatch != 1} {
 spawn $sacctmgr -i create user name=$user_name account=$acct
 expect {
 	timeout {
-		log_error "sacctmgr not responding"
+		fail "sacctmgr not responding"
 	}
 	eof {
 		wait
@@ -383,7 +336,3 @@ expect {
 
 log_info "========== Run limit test on job's qos limits =========="
 qos_test
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
-}

@@ -73,6 +73,8 @@ strong_alias(_xstrcat,		slurm_xstrcat);
 strong_alias(_xstrncat,		slurm_xstrncat);
 strong_alias(_xstrcatchar,	slurm_xstrcatchar);
 strong_alias(_xstrftimecat,	slurm_xstrftimecat);
+strong_alias(_xiso8601timecat,	slurm_xiso8601timecat);
+strong_alias(_xrfc5424timecat,	slurm_xrfc5424timecat);
 strong_alias(_xstrfmtcat,	slurm_xstrfmtcat);
 strong_alias(_xstrfmtcatat,	slurm_xstrfmtcatat);
 strong_alias(_xmemcat,		slurm_xmemcat);
@@ -80,6 +82,7 @@ strong_alias(xstrdup,		slurm_xstrdup);
 strong_alias(xstrdup_printf,	slurm_xstrdup_printf);
 strong_alias(xstrndup,		slurm_xstrndup);
 strong_alias(xbasename,		slurm_xbasename);
+strong_alias(xdirname,		slurm_xdirname);
 strong_alias(_xstrsubstitute,   slurm_xstrsubstitute);
 strong_alias(xshort_hostname,   slurm_xshort_hostname);
 strong_alias(xstring_is_whitespace, slurm_xstring_is_whitespace);
@@ -367,6 +370,39 @@ char * xbasename(char *path)
 }
 
 /*
+ * Specialized dirname implementation which returns the result of removing the
+ * basename to the given path, or a "." (dot) if the given path doesn't contain
+ * a slash.
+ *
+ * NOTE: This implementation differs from the libgen/libc ones, and it does not
+ *	 conform to the XPG 4.2 or any other standard. For instance, given
+ *	 "/tmp/" as an argument, a conformant implementation would return "/",
+ *	 but this will return "/tmp".
+ *
+ * NOTE: This doesn't handle multiple and contiguous slashes.
+ *
+ * IN:	char pointer to a path
+ * RET:	the path without the xbasename or a dot if no slashes
+ */
+char *xdirname(const char *path)
+{
+	char *fname = xstrdup(path);
+	char *slash;
+
+	if (!fname)
+		return xstrdup(".");
+
+	if (!(slash = strrchr(fname, '/'))) {
+		xfree(fname);
+		return xstrdup(".");
+	}
+
+	*slash = '\0';
+
+	return fname;
+}
+
+/*
  * Duplicate a string.
  *   str (IN)		string to duplicate
  *   RETURN		copy of string
@@ -452,34 +488,63 @@ long int xstrntol(const char *str, char **endptr, size_t n, int base)
  *   str (IN/OUT)	target string (pointer to in case of expansion)
  *   pattern (IN)	substring to look for in str
  *   replacement (IN)   string with which to replace the "pattern" string
+ *   all (IN)           replace all or not
  */
-bool _xstrsubstitute(char **str, const char *pattern, const char *replacement)
+void _xstrsubstitute(char **str, const char *pattern, const char *replacement,
+		     const bool all)
 {
 	int pat_len, rep_len;
-	char *ptr, *end_copy;
-	int pat_offset;
+	char *ptr, *end_copy, *pos = NULL;
+	int append_len, pos_offset;
 
 	if (*str == NULL || pattern == NULL || pattern[0] == '\0')
-		return 0;
+		return;
 
-	if ((ptr = strstr(*str, pattern)) == NULL)
-		return 0;
-	pat_offset = ptr - (*str);
 	pat_len = strlen(pattern);
 	if (replacement == NULL)
 		rep_len = 0;
 	else
 		rep_len = strlen(replacement);
 
-	end_copy = xstrdup(ptr + pat_len);
-	if (rep_len != 0) {
-		_makespace(str, -1, rep_len - pat_len);
-		strcpy((*str)+pat_offset, replacement);
-	}
-	strcpy((*str)+pat_offset+rep_len, end_copy);
-	xfree(end_copy);
+	append_len = rep_len - pat_len;
 
-	return 1;
+	pos_offset = 0;
+again:
+	pos = *str + pos_offset;
+
+	if ((ptr = strstr(pos, pattern)) == NULL)
+		return;
+
+	/* Get the end after the pattern */
+	end_copy = xstrdup(ptr + pat_len);
+
+	pos_offset += ptr - pos;
+
+	if (rep_len != 0) {
+		/*
+		 * If we are making this bigger, make sure we get enough space.
+		 */
+		if (append_len > 0)
+			_makespace(str, -1, append_len);
+		memcpy((*str) + pos_offset, replacement, rep_len);
+		pos_offset += rep_len;
+	}
+
+	/* add the end of new string */
+	if (end_copy) {
+		int end_len = strlen(end_copy);
+		memcpy((*str) + pos_offset, end_copy, end_len);
+
+		/* terminate the string if we are shrinking it */
+		if (append_len < 0)
+			(*str)[pos_offset + end_len] = '\0';
+		xfree(end_copy);
+	}
+
+	if (all)
+		goto again;
+
+	return;
 }
 
 /* xshort_hostname

@@ -64,6 +64,7 @@
 #include "src/common/log.h"
 #include "src/common/net.h"
 #include "src/common/plugstack.h"
+#include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -81,12 +82,12 @@
 #include "launch.h"
 #include "allocate.h"
 #include "srun_job.h"
+#include "step_ctx.h"
 #include "opt.h"
 #include "debugger.h"
 #include "src/srun/srun_pty.h"
 #include "multi_prog.h"
 #include "src/api/pmi_server.h"
-#include "src/api/step_ctx.h"
 #include "src/api/step_launch.h"
 
 #ifndef OPEN_MPI_PORT_ERROR
@@ -122,7 +123,7 @@ typedef struct _launch_app_data
 /*
  * forward declaration of static funcs
  */
-static int   _file_bcast(slurm_opt_t *opt_local, srun_job_t *job);
+static void  _file_bcast(slurm_opt_t *opt_local, srun_job_t *job);
 static void  _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc);
 static void *_launch_one_app(void *data);
 static void  _pty_restore(void);
@@ -158,19 +159,12 @@ void cfmakeraw(struct termios *attr)
 
 static bool _enable_het_job_steps(void)
 {
-	bool enabled = true;
-	char *sched_params = slurm_get_sched_params();
-
 	/* Continue supporting old terminology */
-	if (xstrcasestr(sched_params, "disable_hetero_steps") ||
-	    xstrcasestr(sched_params, "disable_hetjob_steps"))
-		enabled = false;
-	else if (xstrcasestr(sched_params, "enable_hetero_steps") ||
-		 xstrcasestr(sched_params, "enable_hetjob_steps"))
-		enabled = true;
+	if (xstrcasestr(slurm_conf.sched_params, "disable_hetero_steps") ||
+	    xstrcasestr(slurm_conf.sched_params, "disable_hetjob_steps"))
+		return false;
 
-	xfree(sched_params);
-	return enabled;
+	return true;
 }
 
 int srun(int ac, char **av)
@@ -203,6 +197,22 @@ int srun(int ac, char **av)
 		create_srun_job((void **) &job, &got_alloc, 0, 1);
 
 	_setup_job_env(job, srun_job_list, got_alloc);
+
+	/*
+	 * Determine if the first/only job was called with --pty and update
+	 * logging if required
+	 */
+	if (srun_job_list) {
+		srun_job_t *first_job = list_peek(srun_job_list);
+		if (first_job->pty_port) {
+			logopt.raw = true;
+			log_alter(logopt, 0, NULL);
+		}
+	} else if (job && job->pty_port) {
+		logopt.raw = true;
+		log_alter(logopt, 0, NULL);
+	}
+
 	_set_node_alias();
 	_launch_app(job, srun_job_list, got_alloc);
 
@@ -404,9 +414,8 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 
 			xrealloc(het_job_task_cnts,
 				 sizeof(uint16_t)*total_nnodes);
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_TASKS,
-						  &tmp_task_cnt);
+			tmp_task_cnt =
+				job->step_ctx->step_resp->step_layout->tasks;
 			xrealloc(het_job_tid_offsets,
 				 sizeof(uint32_t) * total_ntasks);
 
@@ -425,9 +434,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 
 			xrealloc(het_job_tids,
 				 sizeof(uint32_t *) * total_nnodes);
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_TIDS,
-						  &tmp_tids);
+			tmp_tids = job->step_ctx->step_resp->step_layout->tids;
 			if (!tmp_tids) {
 				fatal("%s: job %u has NULL task ID array",
 				      __func__, job->step_id.job_id);
@@ -445,9 +452,8 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 					node_tids;
 			}
 
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_NODE_LIST,
-						  &node_list);
+			node_list = job->step_ctx->step_resp->
+				step_layout->node_list;
 			if (!node_list) {
 				fatal("%s: job %u has NULL hostname",
 				      __func__, job->step_id.job_id);
@@ -456,7 +462,6 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 				xstrfmtcat(het_job_node_list, ",%s", node_list);
 			else
 				het_job_node_list = xstrdup(node_list);
-			xfree(node_list);
 			node_offset += job->nhosts;
 		}
 		list_iterator_reset(job_iter);
@@ -543,24 +548,20 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 		if (need_mpir)
 			mpir_init(job->ntasks);
 		if (job->het_job_id && (job->het_job_id != NO_VAL)) {
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_TASKS,
-						  &tmp_task_cnt);
 			job->het_job_task_cnts = xcalloc(job->het_job_nnodes,
 							 sizeof(uint16_t));
-			memcpy(job->het_job_task_cnts, tmp_task_cnt,
+			memcpy(job->het_job_task_cnts,
+			       job->step_ctx->step_resp->step_layout->tasks,
 			       sizeof(uint16_t) * job->het_job_nnodes);
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_TIDS,
-						  &tmp_tids);
+
 			job->het_job_tids = xcalloc(job->het_job_nnodes,
 						    sizeof(uint32_t *));
-			memcpy(job->het_job_tids, tmp_tids,
+			memcpy(job->het_job_tids,
+			       job->step_ctx->step_resp->step_layout->tids,
 			       sizeof(uint32_t *) * job->het_job_nnodes);
-
-			(void) slurm_step_ctx_get(job->step_ctx,
-						  SLURM_STEP_CTX_NODE_LIST,
-						  &job->het_job_node_list);
+			job->het_job_node_list =
+				xstrdup(job->step_ctx->step_resp->
+					step_layout->node_list);
 			if (!job->het_job_node_list)
 				fatal("%s: job %u has NULL hostname",
 				      __func__, job->step_id.job_id);
@@ -592,7 +593,6 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 			       bool got_alloc)
 {
 	env_t *env = xmalloc(sizeof(env_t));
-	uint16_t *tasks = NULL;
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	xassert(srun_opt);
 
@@ -637,8 +637,6 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	if (opt_local->job_name)
 		env->job_name = opt_local->job_name;
 
-	slurm_step_ctx_get(job->step_ctx, SLURM_STEP_CTX_TASKS, &tasks);
-
 	env->select_jobinfo = job->select_jobinfo;
 	if (job->het_job_node_list)
 		env->nodelist = job->het_job_node_list;
@@ -653,7 +651,8 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 		env->ntasks = job->het_job_ntasks;
 	else
 		env->ntasks = job->ntasks;
-	env->task_count = _uint16_array_to_str(job->nhosts, tasks);
+	env->task_count = _uint16_array_to_str(
+		job->nhosts, job->step_ctx->step_resp->step_layout->tasks);
 	if (job->het_job_id != NO_VAL)
 		env->jobid = job->het_job_id;
 	else
@@ -678,9 +677,6 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 		tcgetattr(fd, &term);
 		/* Set raw mode on local tty */
 		cfmakeraw(&term);
-		/* Re-enable output processing such that debug() and
-		 * and error() work properly. */
-		term.c_oflag |= OPOST;
 		tcsetattr(fd, TCSANOW, &term);
 		atexit(&_pty_restore);
 
@@ -735,51 +731,74 @@ static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 	}
 }
 
-static int _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
+static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 {
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	struct bcast_parameters *params;
-	int rc;
+	char *sep = NULL, *tmp = NULL;
 	xassert(srun_opt);
 
-	if ((srun_opt->argc == 0) || (srun_opt->argv[0] == NULL)) {
-		error("No command name to broadcast");
-		return SLURM_ERROR;
-	}
+	if ((srun_opt->argc == 0) || (srun_opt->argv[0] == NULL))
+		fatal("No command name to broadcast");
+
 	params = xmalloc(sizeof(struct bcast_parameters));
 	params->block_size = 8 * 1024 * 1024;
-	params->compress = srun_opt->compress;
-	if (srun_opt->bcast_file)
+	if (srun_opt->compress) {
+		params->compress = srun_opt->compress;
+	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
+				      "Compression="))) {
+		tmp += 12;
+		sep = strchr(tmp, ',');
+		if (sep)
+			sep[0] = '\0';
+		params->compress = parse_compress_type(tmp);
+		if (sep)
+			sep[0] = ',';
+	}
+	params->exclude = xstrdup(srun_opt->bcast_exclude);
+	if (srun_opt->bcast_file && (srun_opt->bcast_file[0] == '/')) {
 		params->dst_fname = xstrdup(srun_opt->bcast_file);
-	else
+	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
+				      "DestDir="))) {
+		/* skip past the key to the value */
+		params->dst_fname = xstrdup(tmp + 8);
+		/* handle a further comma-separated value */
+		if ((sep = xstrchr(params->dst_fname, ',')))
+			sep[0] = '\0';
+		xstrcatchar(params->dst_fname, '/');
+	} else {
 		xstrfmtcat(params->dst_fname, "%s/", opt_local->chdir);
+	}
+	if (srun_opt->send_libs)
+		params->flags |= BCAST_FLAG_SEND_LIBS;
 	params->fanout = 0;
 	params->selected_step = xmalloc(sizeof(*params->selected_step));
 	params->selected_step->array_task_id = NO_VAL;
 	memcpy(&params->selected_step->step_id, &job->step_id,
 	       sizeof(params->selected_step->step_id));
-	params->force = true;
+	params->flags |= BCAST_FLAG_FORCE;
 	if (srun_opt->het_grp_bits)
 		params->selected_step->het_job_offset =
 			bit_ffs(srun_opt->het_grp_bits);
 	else
 		params->selected_step->het_job_offset = NO_VAL;
-	params->preserve = true;
-	params->src_fname = srun_opt->argv[0];
+	params->flags |= BCAST_FLAG_PRESERVE;
+	params->src_fname = xstrdup(srun_opt->argv[0]);
 	params->timeout = 0;
 	params->verbose = 0;
 
-	rc = bcast_file(params);
-	if (rc == SLURM_SUCCESS) {
-		xfree(srun_opt->argv[0]);
-		srun_opt->argv[0] = params->dst_fname;
-	} else {
-		xfree(params->dst_fname);
-	}
-	slurm_destroy_selected_step(params->selected_step);
-	xfree(params);
+	if (bcast_file(params) != SLURM_SUCCESS)
+		fatal("Failed to broadcast '%s'. Step launch aborted.",
+		      params->src_fname);
 
-	return rc;
+	xfree(srun_opt->argv[0]);
+	srun_opt->argv[0] = xstrdup(params->dst_fname);
+
+	slurm_destroy_selected_step(params->selected_step);
+	xfree(params->dst_fname);
+	xfree(params->exclude);
+	xfree(params->src_fname);
+	xfree(params);
 }
 
 static int _slurm_debug_env_val (void)
@@ -873,7 +892,13 @@ static void _set_node_alias(void)
 	aliases = xstrdup(tmp);
 	slurm_name = strtok_r(aliases, ":", &save_ptr);
 	while (slurm_name) {
-		addr = strtok_r(NULL, ":", &save_ptr);
+		/* Checking for [] around address */
+		if (save_ptr[0] == '[') {
+			save_ptr++;
+			addr = strtok_r(NULL, "]", &save_ptr);
+			save_ptr++;
+		} else
+			addr = strtok_r(NULL, ":", &save_ptr);
 		if (!addr)
 			break;
 		slurm_reset_alias(slurm_name, addr, addr);

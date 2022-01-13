@@ -56,8 +56,10 @@ static uint32_t _decode_node_state(char *val)
 		return NODE_STATE_DRAIN;
 	else if (!xstrncasecmp(val, "FAIL", MAX(vallen, 3)))
 		return NODE_STATE_FAIL;
+	else if (!xstrncasecmp(val, "REBOOT^", MAX(vallen, 7)))
+		return NODE_STATE_REBOOT_ISSUED;
 	else if (!xstrncasecmp(val, "REBOOT", MAX(vallen, 3)))
-		return NODE_STATE_REBOOT;
+		return NODE_STATE_REBOOT_REQUESTED;
 	else {
 		uint32_t j;
 		for (j = 0; j < NODE_STATE_END; j++) {
@@ -137,7 +139,7 @@ static int _addto_state_char_list(List char_list, char *names)
 				}
 				i++;
 				start = i;
-				if (!names[i]) {
+				if (names[i] == ' ') {
 					info("There is a problem with "
 					     "your request.  It appears you "
 					     "have spaces inside your list.");

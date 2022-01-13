@@ -48,7 +48,6 @@
  *  defined here but is really tree plugin related
 \*****************************************************************************/
 typedef struct {
-	uint64_t consumed_energy;	/* consumed energy, in joules */
 	int level;			/* level in hierarchy, leaf=0 */
 	uint32_t link_speed;		/* link speed, arbitrary units */
 	char *name;			/* switch name */
@@ -58,8 +57,8 @@ typedef struct {
 	uint16_t  num_switches;         /* number of descendant switches */
 	uint16_t  parent;		/* index of parent switch */
 	char *switches;			/* name of direct descendant switches */
+	uint32_t *switches_dist;
 	uint16_t *switch_index;		/* indexes of child switches */
-	uint32_t temp;			/* temperature, in celsius */
 } switch_record_t;
 
 extern switch_record_t *switch_record_table;  /* ptr to switch records */
@@ -80,18 +79,18 @@ struct hypercube_switch {
 	int *node_index; /* index of the connected nodes in the node_record_table */
 };
 
-extern int hypercube_dimensions; /* number of dimensions in hypercube 
+extern int hypercube_dimensions; /* number of dimensions in hypercube
  network topolopy - determined by max number of switch connections*/
 
 /* table of hypercube_switch records */
-extern struct hypercube_switch *hypercube_switch_table; 
+extern struct hypercube_switch *hypercube_switch_table;
 extern int hypercube_switch_cnt; /* size of hypercube_switch_table */
 
 /* An array of hilbert curves, where each hilbert curve
- * is a list of pointers to the hypercube_switch records in the 
+ * is a list of pointers to the hypercube_switch records in the
  * hypercube_switch_table. Each list of pointers is sorted in accordance
  * with the sorting of the Hilbert curve. */
-extern struct hypercube_switch ***hypercube_switches; 
+extern struct hypercube_switch ***hypercube_switches;
 
 /*****************************************************************************\
  *  Slurm topology functions

@@ -52,10 +52,10 @@
 #define xstrfmtcatat(__p, __q, __fmt, args...) \
 	_xstrfmtcatat(&(__p), __q, __fmt, ## args)
 #define xmemcat(__p, __s, __e)          _xmemcat(&(__p), __s, __e)
-#define xstrsubstitute(__p, __pat, __rep) _xstrsubstitute(&(__p), __pat, __rep)
+#define xstrsubstitute(__p, __pat, __rep) \
+	_xstrsubstitute(&(__p), __pat, __rep, 0)
 #define xstrsubstituteall(__p, __pat, __rep)			\
-	while (_xstrsubstitute(&(__p), __pat, __rep))		\
-		;
+	_xstrsubstitute(&(__p), __pat, __rep, 1)
 
 /*
 ** The following functions take a ptr to a string and expand the
@@ -144,11 +144,17 @@ long int xstrntol(const char *str, char **endptr, size_t n, int base);
 char *xbasename(char *path);
 
 /*
+ * Specialized dirname implementation
+ */
+char *xdirname(const char *path);
+
+/*
 ** Find the first instance of a sub-string "pattern" in the string "str",
 ** and replace it with the string "replacement".
 ** If it wasn't found returns 0, otherwise 1
 */
-bool _xstrsubstitute(char **str, const char *pattern, const char *replacement);
+void _xstrsubstitute(char **str, const char *pattern,
+		     const char *replacement, const bool all);
 
 /* xshort_hostname
  *   Returns an xmalloc'd string containing the hostname

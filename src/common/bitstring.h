@@ -86,7 +86,6 @@ typedef bitstr_t bitoff_t;
 
 /* bitstr_t signature in first word */
 #define BITSTR_MAGIC 		0x42434445
-#define BITSTR_MAGIC_STACK	0x42434446 /* signature if on stack */
 
 /* max bit position in word */
 #define BITSTR_MAXPOS		(sizeof(bitstr_t)*8 - 1)
@@ -149,11 +148,12 @@ bitstr_t *bit_pick_cnt(bitstr_t *b, bitoff_t nbits);
 bitoff_t bit_get_bit_num(bitstr_t *b, int32_t pos);
 int32_t	bit_get_pos_num(bitstr_t *b, bitoff_t pos);
 
-#define FREE_NULL_BITMAP(_X)		\
-	do {				\
-		if (_X) bit_free (_X);	\
-		_X	= NULL; 	\
-	} while (0)
+#define FREE_NULL_BITMAP(_X)	\
+do {				\
+	if (_X)			\
+		bit_free (_X);	\
+	_X = NULL;		\
+} while (0)
 
 
 #endif /* !_BITSTRING_H_ */

@@ -5,9 +5,7 @@ AUTOMAKE_OPTIONS = foreign
 
 sbin_PROGRAMS = slurmstepd
 
-depend_libs = 				   \
-	$(top_builddir)/src/common/libdaemonize.la \
-	../common/libslurmd_common.o
+depend_libs = ../common/libslurmd_common.o
 
 # If slurmstepd_LDADD or slurmstepd_LDFLAGS change
 # make sure you alter the below depend_[ldadd|ldflags] to look identical in the
@@ -21,11 +19,12 @@ depend_ldflags = $(HWLOC_LDFLAGS)
 
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
 
-slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd)
+slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd) $(libselinux_LIBS)
 
 slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(depend_ldflags)
 
 slurmstepd_SOURCES = 	        	\
+	container.c container.h	\
 	slurmstepd.c slurmstepd.h	\
 	mgr.c mgr.h			\
 	task.c task.h			\
@@ -34,6 +33,7 @@ slurmstepd_SOURCES = 	        	\
 	ulimits.c ulimits.h     	\
 	pdebug.c pdebug.h		\
 	pam_ses.c pam_ses.h		\
+	read_oci_conf.h read_oci_conf.c \
 	req.c req.h			\
 	multi_prog.c multi_prog.h	\
 	step_terminate_monitor.c step_terminate_monitor.h \

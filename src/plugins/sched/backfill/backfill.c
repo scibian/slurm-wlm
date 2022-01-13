@@ -86,6 +86,7 @@
 #include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/fed_mgr.h"
 #include "src/slurmctld/front_end.h"
+#include "src/slurmctld/gres_ctld.h"
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/licenses.h"
 #include "src/slurmctld/locks.h"
@@ -111,6 +112,7 @@
 #define MAX_BF_JOB_PART_COUNT_RESERVE  100000
 #define MAX_BF_MAX_JOB_ARRAY_RESV      1000
 #define MAX_BF_MAX_JOB_START           10000
+#define DEF_BF_MAX_JOB_TEST            500
 #define MAX_BF_MAX_JOB_TEST            1000000
 #define MAX_BF_MAX_TIME                3600
 #define MAX_BF_MIN_AGE_RESERVE         (30 * 24 * 60 * 60) /* 30 days */
@@ -188,6 +190,7 @@ static int backfill_window = BACKFILL_WINDOW;
 static int bf_job_part_count_reserve = 0;
 static int bf_max_job_array_resv = BF_MAX_JOB_ARRAY_RESV;
 static int bf_min_age_reserve = 0;
+static int bf_node_space_size = 0;
 static bool bf_running_job_reserve = false;
 static uint32_t bf_min_prio_reserve = 0;
 static List deadlock_global_list;
@@ -195,7 +198,7 @@ static bool bf_hetjob_immediate = false;
 static uint16_t bf_hetjob_prio = 0;
 static bool bf_one_resv_per_job = false;
 static uint32_t job_start_cnt = 0;
-static int max_backfill_job_cnt = 100;
+static int max_backfill_job_cnt = DEF_BF_MAX_JOB_TEST;
 static int max_backfill_job_per_assoc = 0;
 static int max_backfill_job_per_part = 0;
 static int max_backfill_job_per_user = 0;
@@ -208,6 +211,7 @@ static int yield_interval = YIELD_INTERVAL;
 static int yield_sleep   = YIELD_SLEEP;
 static List het_job_list = NULL;
 static xhash_t *user_usage_map = NULL; /* look up user usage when no assoc */
+static bitstr_t *planned_bitmap = NULL;
 
 /*********************** local functions *********************/
 static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
@@ -672,9 +676,7 @@ static uint32_t _my_sleep(int64_t usec)
 
 static void _load_config(void)
 {
-	char *sched_params, *tmp_ptr;
-
-	sched_params = slurm_get_sched_params();
+	char *sched_params = slurm_conf.sched_params, *tmp_ptr;
 
 	if ((tmp_ptr = xstrcasestr(sched_params, "bf_interval="))) {
 		backfill_interval = atoi(tmp_ptr + 12);
@@ -717,13 +719,25 @@ static void _load_config(void)
 		fatal("Invalid parameter max_job_bf. The option is no longer supported, please use bf_max_job_test instead.");
 	}
 	else
-		max_backfill_job_cnt = 100;
+		max_backfill_job_cnt = DEF_BF_MAX_JOB_TEST;
 
 	if (max_backfill_job_cnt < 1 ||
 	    max_backfill_job_cnt > MAX_BF_MAX_JOB_TEST) {
 		error("Invalid SchedulerParameters bf_max_job_test: %d",
 		      max_backfill_job_cnt);
-		max_backfill_job_cnt = 100;
+		max_backfill_job_cnt = DEF_BF_MAX_JOB_TEST;
+	}
+
+	if ((tmp_ptr = xstrcasestr(sched_params, "bf_node_space_size=")))
+		bf_node_space_size = atoi(tmp_ptr + 19);
+	else
+		bf_node_space_size = max_backfill_job_cnt;
+
+	if (bf_node_space_size < 2 ||
+	    bf_node_space_size > 2 * MAX_BF_MAX_JOB_TEST) {
+		error("Invalid SchedulerParameters bf_node_space_size: %d",
+		      bf_node_space_size);
+		bf_node_space_size = max_backfill_job_cnt;
 	}
 
 	if ((tmp_ptr = xstrcasestr(sched_params, "bf_resolution="))) {
@@ -949,8 +963,6 @@ static void _load_config(void)
 		      max_rpc_cnt);
 		max_rpc_cnt = 0;
 	}
-
-	xfree(sched_params);
 }
 
 /* Note that slurm.conf has changed */
@@ -1012,6 +1024,7 @@ extern void *backfill_agent(void *args)
 #endif
 	_load_config();
 	last_backfill_time = time(NULL);
+	planned_bitmap = bit_alloc(node_record_count);
 	het_job_list = list_create(_het_job_map_del);
 	while (!stop_backfill) {
 		if (short_sleep)
@@ -1064,6 +1077,7 @@ extern void *backfill_agent(void *args)
 	}
 	FREE_NULL_LIST(het_job_list);
 	xhash_free(user_usage_map); /* May have been init'ed if used */
+	FREE_NULL_BITMAP(planned_bitmap);
 
 	return NULL;
 }
@@ -1158,14 +1172,23 @@ static bool _job_runnable_now(job_record_t *job_ptr)
 {
 	uint16_t cleaning = 0;
 
-	if (IS_JOB_REVOKED(job_ptr))
+	if (IS_JOB_REVOKED(job_ptr)) {
+		log_flag(BACKFILL, "%pJ revoked during bf yield", job_ptr);
 		return false;
-	if (!IS_JOB_PENDING(job_ptr))	/* Started in other partition */
+	}
+	if (!IS_JOB_PENDING(job_ptr)) {	/* Started in other partition */
+		log_flag(BACKFILL, "%pJ started in other partition during bf yield",
+			 job_ptr);
 		return false;
-	if (job_ptr->priority == 0)	/* Job has been held */
+	}
+	if (job_ptr->priority == 0) {	/* Job has been held */
+		log_flag(BACKFILL, "%pJ job held during bf yield", job_ptr);
 		return false;
-	if (IS_JOB_COMPLETING(job_ptr))	/* Started, requeue and completing */
+	}
+	if (IS_JOB_COMPLETING(job_ptr)) { /* Started, requeue and completing */
+		log_flag(BACKFILL, "%pJ job started during bf yield", job_ptr);
 		return false;
+	}
 	/*
 	 * Already reserved resources for either bf_max_job_array_resv or
 	 * max_run_tasks number of jobs in the array. If max_run_tasks is 0, it
@@ -1180,8 +1203,10 @@ static bool _job_runnable_now(job_record_t *job_ptr)
 
 	select_g_select_jobinfo_get(job_ptr->select_jobinfo,
 				    SELECT_JOBDATA_CLEANING, &cleaning);
-	if (cleaning)			/* Started, requeue and completing */
+	if (cleaning) {			/* Started, requeue and completing */
+		log_flag(BACKFILL, "%pJ job cleaning after bf yield", job_ptr);
 		return false;
+	}
 
 	return true;
 }
@@ -1351,6 +1376,9 @@ static int _bf_reserve_running(void *x, void *arg)
 		return SLURM_SUCCESS;
 	if (slurm_job_preempt_mode(job_ptr) != PREEMPT_MODE_OFF)
 		return SLURM_SUCCESS;
+
+	if (*ns_recs_ptr >= bf_node_space_size)
+		return SLURM_ERROR;
 
 	bitstr_t *tmp_bitmap = bit_copy(job_ptr->node_bitmap);
 
@@ -1552,6 +1580,55 @@ static bool _job_exceeds_max_bf_param(job_record_t *job_ptr,
 	return false;
 }
 
+/*
+ * Handle the planned list.
+ * set - If true we are setting bits, else we clear them.
+ */
+static void _handle_planned(bool set)
+{
+	int n_first, n_last;
+	node_record_t *node_ptr;
+	bool node_update = false;
+
+	if (!planned_bitmap)
+		return;
+
+	n_first = bit_ffs(planned_bitmap);
+	if (n_first == -1)
+		return;
+
+	n_last = bit_fls(planned_bitmap);
+
+	for (int n = n_first; n <= n_last; n++) {
+		if (!bit_test(planned_bitmap, n))
+			continue;
+		node_ptr = node_record_table_ptr + n;
+		if (set) {
+			/*
+			 * If the node is allocated ignore this flag. This only
+			 * really matters for IDLE and MIXED.
+			 */
+			if (!IS_NODE_ALLOCATED(node_ptr)) {
+				node_ptr->node_state |= NODE_STATE_PLANNED;
+				node_update = true;
+			} else
+				bit_clear(planned_bitmap, n);
+		} else {
+			node_ptr->node_state &= ~NODE_STATE_PLANNED;
+			node_update = true;
+			bit_clear(planned_bitmap, n);
+		}
+
+		log_flag(BACKFILL, "%s: %s state is %s",
+			 set ? "cleared" : "set",
+			 node_ptr->name,
+			 node_state_string(node_ptr->node_state));
+	}
+
+	if (node_update)
+		last_node_update = time(NULL);
+}
+
 static int _attempt_backfill(void)
 {
 	DEF_TIMERS;
@@ -1563,7 +1640,7 @@ static int _attempt_backfill(void)
 	part_record_t *part_ptr;
 	uint32_t end_time, end_reserve, deadline_time_limit, boot_time;
 	uint32_t orig_end_time;
-	uint32_t time_limit, comp_time_limit, orig_time_limit, part_time_limit;
+	uint32_t time_limit, comp_time_limit, orig_time_limit = 0, part_time_limit;
 	uint32_t min_nodes, max_nodes, req_nodes;
 	bitstr_t *active_bitmap = NULL, *avail_bitmap = NULL;
 	bitstr_t *exc_core_bitmap = NULL, *resv_bitmap = NULL;
@@ -1614,6 +1691,8 @@ static int _attempt_backfill(void)
 	sched_start = orig_sched_start = now = time(NULL);
 	gettimeofday(&start_tv, NULL);
 
+	_handle_planned(false);
+
 	job_queue = build_job_queue(true, true);
 	job_test_count = list_count(job_queue);
 	if (job_test_count == 0) {
@@ -1643,7 +1722,7 @@ static int _attempt_backfill(void)
 	slurmctld_diag_stats.bf_when_last_cycle = now;
 
 	node_space = xmalloc(sizeof(node_space_map_t) *
-			     (max_backfill_job_cnt * 2 + 1));
+			     (bf_node_space_size + 1));
 	node_space[0].begin_time = sched_start;
 	window_end = sched_start + backfill_window;
 	node_space[0].end_time = window_end;
@@ -1680,8 +1759,7 @@ static int _attempt_backfill(void)
 	bit_clear_all(bf_ignore_node_bitmap);
 
 	while (1) {
-		uint32_t bf_array_task_id, bf_job_priority,
-			prio_reserve;
+		uint32_t bf_job_priority, prio_reserve;
 		bool get_boot_time = false;
 
 		/* Run some final guaranteed logic after each job iteration */
@@ -1692,6 +1770,16 @@ static int _attempt_backfill(void)
 			/* Restore preemption state if needed. */
 			_restore_preempt_state(job_ptr, &tmp_preempt_start_time,
 			                       &tmp_preempt_in_progress);
+
+			/*
+			 * Restore the original time limit in every corner case
+			 * we didn't have done yet, like when we are looping
+			 * through array tasks.
+			*/
+			if ((qos_flags & QOS_FLAG_NO_RESERVE) &&
+			    slurm_conf.preempt_mode && orig_time_limit &&
+			    (orig_time_limit != job_ptr->time_limit))
+				job_ptr->time_limit = orig_time_limit;
 		}
 		job_queue_rec = (job_queue_rec_t *) list_pop(job_queue);
 		if (!job_queue_rec) {
@@ -1699,10 +1787,22 @@ static int _attempt_backfill(void)
 			break;
 		}
 
+		if (slurmctld_diag_stats.bf_last_depth_try >=
+		    max_backfill_job_cnt) {
+			log_flag(BACKFILL, "bf_max_job_test: limit of %d reached",
+				 max_backfill_job_cnt);
+			break;
+		}
+
 		job_ptr          = job_queue_rec->job_ptr;
 		part_ptr         = job_queue_rec->part_ptr;
 		bf_job_priority  = job_queue_rec->priority;
-		bf_array_task_id = job_queue_rec->array_task_id;
+
+		if (job_ptr->array_recs &&
+		    (job_queue_rec->array_task_id == NO_VAL))
+			is_job_array_head = true;
+		else
+			is_job_array_head = false;
 
 		if (job_ptr->resv_list)
 			job_queue_rec_resv_list(job_queue_rec);
@@ -1748,10 +1848,12 @@ static int _attempt_backfill(void)
 			START_TIMER;
 		}
 
-		if ((job_ptr->array_task_id != bf_array_task_id) &&
-		    (bf_array_task_id == NO_VAL)) {
+		if (is_job_array_head &&
+		    (job_ptr->array_task_id != NO_VAL)) {
 			/* Job array element started in other partition,
 			 * reset pointer to "master" job array record */
+			log_flag(BACKFILL, "%pJ array scheduled during bf yield, try master",
+				 job_ptr);
 			job_ptr = find_job_record(job_ptr->array_job_id);
 			if (!job_ptr)	/* All task array elements started */
 				continue;
@@ -1774,6 +1876,7 @@ static int _attempt_backfill(void)
 		if (!part_ptr)
 			continue;
 
+		job_ptr->bit_flags |= BACKFILL_SCHED;
 		job_ptr->last_sched_eval = now;
 		job_ptr->part_ptr = part_ptr;
 		job_ptr->priority = bf_job_priority;
@@ -1891,11 +1994,6 @@ static int _attempt_backfill(void)
 
 		orig_start_time = job_ptr->start_time;
 		orig_time_limit = job_ptr->time_limit;
-
-		if (job_ptr->array_recs && (job_ptr->array_task_id == NO_VAL))
-			is_job_array_head = true;
-		else
-			is_job_array_head = false;
 
 next_task:
 		/*
@@ -2079,15 +2177,35 @@ next_task:
 			test_time_count = 0;
 			START_TIMER;
 
+			if (is_job_array_head &&
+			    (job_ptr->array_task_id != NO_VAL)) {
+				/*
+				 * Job array element started in other partition,
+				 * reset pointer to "master" job array record
+				 */
+				log_flag(BACKFILL, "%pJ array scheduled during bf yield, try master",
+					 job_ptr);
+				job_ptr = find_job_record(
+						job_ptr->array_job_id);
+				if (!job_ptr)
+					/* All task array elements started */
+					continue;
+			}
+
 			/*
 			 * With bf_continue configured, the original job could
 			 * have been scheduled. Revalidate the job record here.
 			 */
 			if (!_job_runnable_now(job_ptr))
 				continue;
-			if (!avail_front_end(job_ptr))
+			if (!avail_front_end(job_ptr)) {
+				log_flag(BACKFILL, "%pJ no frontend available after bf yield",
+					 job_ptr);
 				continue;	/* No available frontend */
+			}
 			if (!job_independent(job_ptr)) {
+				log_flag(BACKFILL, "%pJ no longer independent after bf yield",
+					 job_ptr);
 				/* No longer independent
 				 * (e.g. another singleton started) */
 				continue;
@@ -2332,16 +2450,26 @@ next_task:
 		if ((job_ptr->start_time <= now) &&
 		    ((bb = bb_g_job_test_stage_in(job_ptr, true)) != 1)) {
 			if (job_ptr->state_reason != WAIT_NO_REASON) {
+				/*
+				 * Don't change state_reason if it was already
+				 * set.
+				 */
 				;
 			} else if (bb == -1) {
+				/*
+				 * Set reason now instead of in if (bb == -1)
+				 * below for the sched_debug3()
+				 */
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason =
 					WAIT_BURST_BUFFER_RESOURCE;
-				job_ptr->start_time =
-					bb_g_job_get_est_start(job_ptr);
 			} else {	/* bb == 0 */
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason=WAIT_BURST_BUFFER_STAGING;
+				/*
+				 * Cannot start now, set start time in the
+				 * future.
+				 */
 				job_ptr->start_time = now + 1;
 			}
 			sched_debug3("%pJ. State=%s. Reason=%s. Priority=%u.",
@@ -2352,8 +2480,25 @@ next_task:
 			last_job_update = now;
 			_set_job_time_limit(job_ptr, orig_time_limit);
 			later_start = 0;
-			if (bb == -1)
+			if (bb == -1) {
+				/*
+				 * bb == -1 means that burst buffer stage-in
+				 * hasn't started yet. Set an estimated start
+				 * time so stage-in can start.
+				 *
+				 * Clear reject_array_job; otherwise we'll skip
+				 * looking at other jobs in this array (if this
+				 * is a job array), therefore we won't set
+				 * estimated start times, therefore we won't be
+				 * able to start stage-in for any other jobs in
+				 * this array.
+				 */
+				job_ptr->start_time =
+					bb_g_job_get_est_start(job_ptr);
+				reject_array_job = NULL;
+				reject_array_part = NULL;
 				continue;
+			}
 		} else if ((job_ptr->het_job_id == 0) &&
 			   (job_ptr->start_time <= now)) { /* Can start now */
 			uint32_t save_time_limit = job_ptr->time_limit;
@@ -2577,32 +2722,6 @@ skip_start:
 			continue;
 		}
 
-		if (node_space_recs >= max_backfill_job_cnt) {
-			log_flag(BACKFILL, "table size limit of %u reached",
-				 max_backfill_job_cnt);
-			if ((max_backfill_job_per_part != 0) &&
-			    (max_backfill_job_per_part >=
-			     max_backfill_job_cnt)) {
-				error("bf_max_job_part >= bf_max_job_test (%u >= %u)",
-				      max_backfill_job_per_part,
-				      max_backfill_job_cnt);
-			} else if ((max_backfill_job_per_user != 0) &&
-				   (max_backfill_job_per_user >
-				    max_backfill_job_cnt)) {
-				info("warning: bf_max_job_user > bf_max_job_test (%u > %u)",
-				     max_backfill_job_per_user,
-				     max_backfill_job_cnt);
-			} else if  ((max_backfill_job_per_assoc != 0) &&
-				    (max_backfill_job_per_assoc >
-				     max_backfill_job_cnt)) {
-				info("warning: bf_max_job_assoc > bf_max_job_test (%u > %u)",
-				     max_backfill_job_per_assoc,
-				     max_backfill_job_cnt);
-			}
-			_set_job_time_limit(job_ptr, orig_time_limit);
-			break;
-		}
-
 		if ((job_ptr->start_time > now) &&
 		    (job_ptr->state_reason != WAIT_BURST_BUFFER_RESOURCE) &&
 		    (job_ptr->state_reason != WAIT_BURST_BUFFER_STAGING) &&
@@ -2630,6 +2749,7 @@ skip_start:
 		if (!assoc_limit_stop) {
 			uint32_t selected_node_cnt;
 			uint64_t tres_req_cnt[slurmctld_tres_cnt];
+			uint16_t sockets_per_node;
 			assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK,
 				READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK
 			};
@@ -2642,21 +2762,26 @@ skip_start:
 					   job_ptr->total_cpus :
 					   job_ptr->details->min_cpus);
 
+			sockets_per_node = job_get_sockets_per_node(job_ptr);
 			tres_req_cnt[TRES_ARRAY_MEM] = job_get_tres_mem(
 						job_ptr->job_resrcs,
 						job_ptr->details->pn_min_memory,
 						tres_req_cnt[TRES_ARRAY_CPU],
 						selected_node_cnt,
-						job_ptr->part_ptr);
+						job_ptr->part_ptr,
+						job_ptr->gres_list_req,
+						(job_ptr->bit_flags &
+						JOB_MEM_SET), sockets_per_node,
+						job_ptr->details->num_tasks);
 
 			tres_req_cnt[TRES_ARRAY_NODE] =
 				(uint64_t)selected_node_cnt;
 
 			assoc_mgr_lock(&locks);
-			gres_set_job_tres_cnt(job_ptr->gres_list,
-					      selected_node_cnt,
-					      tres_req_cnt,
-					      true);
+			gres_ctld_set_job_tres_cnt(job_ptr->gres_list_req,
+						   selected_node_cnt,
+						   tres_req_cnt,
+						   true);
 
 			tres_req_cnt[TRES_ARRAY_BILLING] =
 				assoc_mgr_tres_weighted(
@@ -2701,10 +2826,40 @@ skip_start:
 			/* Can't start earlier in different partition. */
 			xfree(job_ptr->sched_nodes);
 			job_ptr->sched_nodes = bitmap2node_name(avail_bitmap);
+			/*
+			 * These nodes are planned.  We will set the state
+			 * afterwards.
+			 */
+			bit_or(planned_bitmap, avail_bitmap);
 		}
 		bit_not(avail_bitmap);
 		if ((!bf_one_resv_per_job || !orig_start_time) &&
 		    !(job_ptr->bit_flags & JOB_MAGNETIC)) {
+			if (node_space_recs >= bf_node_space_size) {
+				log_flag(BACKFILL, "table size limit of %u reached",
+					 bf_node_space_size);
+				if ((max_backfill_job_per_part != 0) &&
+				    (max_backfill_job_per_part >=
+				     (bf_node_space_size / 2))) {
+					error("bf_max_job_part >= bf_node_space_size / 2 (%u >= %u)",
+					      max_backfill_job_per_part,
+					      (bf_node_space_size / 2));
+				} else if ((max_backfill_job_per_user != 0) &&
+					   (max_backfill_job_per_user >
+					    (bf_node_space_size / 2))) {
+					info("warning: bf_max_job_user > bf_node_space_size / 2 (%u > %u)",
+					     max_backfill_job_per_user,
+					     (bf_node_space_size / 2));
+				} else if  ((max_backfill_job_per_assoc != 0) &&
+					    (max_backfill_job_per_assoc >
+					     (bf_node_space_size / 2))) {
+					info("warning: bf_max_job_assoc > bf_node_space_size / 2 (%u > %u)",
+					     max_backfill_job_per_assoc,
+					     (bf_node_space_size / 2));
+				}
+				_set_job_time_limit(job_ptr, orig_time_limit);
+				break;
+			}
 			_add_reservation(start_time, end_reserve, avail_bitmap,
 					 node_space, &node_space_recs);
 		}
@@ -2739,6 +2894,8 @@ skip_start:
 				goto next_task;
 		}
 	}
+
+	_handle_planned(true);
 
 	if (job_ptr) {
 		/* Restore preemption state if needed. */
@@ -2955,7 +3112,7 @@ static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
 	bool placed = false;
 	int i, j;
 
-#if 0	
+#if 0
 	info("add job start:%u end:%u", start_time, end_reserve);
 	for (j = 0; ; ) {
 		info("node start:%u end:%u",
@@ -3311,6 +3468,7 @@ static bool _het_job_limit_check(het_job_map_t *map, time_t now)
 	slurmctld_tres_size = sizeof(uint64_t) * slurmctld_tres_cnt;
 	iter = list_iterator_create(map->het_job_rec_list);
 	while ((rec = (het_job_rec_t *) list_next(iter))) {
+		uint16_t sockets_per_node;
 		assoc_mgr_lock_t locks = { READ_LOCK, NO_LOCK,
 			READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 
@@ -3322,17 +3480,23 @@ static bool _het_job_limit_check(het_job_map_t *map, time_t now)
 		tres_req_cnt[TRES_ARRAY_CPU] = (uint64_t)(job_ptr->total_cpus ?
 					       job_ptr->total_cpus :
 					       job_ptr->details->min_cpus);
+		sockets_per_node = job_get_sockets_per_node(job_ptr);
 		tres_req_cnt[TRES_ARRAY_MEM] = job_get_tres_mem(
 					       job_ptr->job_resrcs,
 					       job_ptr->details->pn_min_memory,
 					       tres_req_cnt[TRES_ARRAY_CPU],
 					       selected_node_cnt,
-					       job_ptr->part_ptr);
+					       job_ptr->part_ptr,
+					       job_ptr->gres_list_req,
+					       (job_ptr->bit_flags &
+						JOB_MEM_SET), sockets_per_node,
+					       job_ptr->details->num_tasks);
 		tres_req_cnt[TRES_ARRAY_NODE] = (uint64_t)selected_node_cnt;
 
 		assoc_mgr_lock(&locks);
-		gres_set_job_tres_cnt(job_ptr->gres_list, selected_node_cnt,
-				      tres_req_cnt, true);
+		gres_ctld_set_job_tres_cnt(job_ptr->gres_list_req,
+					   selected_node_cnt,
+					   tres_req_cnt, true);
 
 		tres_req_cnt[TRES_ARRAY_BILLING] =
 			assoc_mgr_tres_weighted(
