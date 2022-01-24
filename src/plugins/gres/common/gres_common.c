@@ -39,7 +39,6 @@
 #include "gres_common.h"
 
 #include "src/common/xstring.h"
-#include "src/common/xcgroup_read_config.h"
 
 static void _free_name_list(void *x)
 {
@@ -98,11 +97,14 @@ extern int common_node_config_load(List gres_conf_list,
 			gres_device = xmalloc(sizeof(gres_device_t));
 			list_append(*gres_devices, gres_device);
 
+			gres_device->dev_num = -1;
 			gres_device->index = index;
 			gres_device->path = xstrdup(one_name);
 
 			gres_device->major = gres_device_major(
 				gres_device->path);
+			gres_device->unique_id =
+				xstrdup(gres_slurmd_conf->unique_id);
 			tmp = strlen(one_name);
 			for (i = 1;  i <= tmp; i++) {
 				if (isdigit(one_name[tmp - i])) {
@@ -119,6 +121,13 @@ extern int common_node_config_load(List gres_conf_list,
 			if (gres_device->dev_num > max_dev_num)
 				max_dev_num = gres_device->dev_num;
 
+			/*
+			 * Don't check for file duplicates or increment the
+			 * device bitmap index if this is a MultipleFiles GRES
+			 */
+			if (gres_slurmd_conf->config_flags & GRES_CONF_HAS_MULT)
+				continue;
+
 			if ((rc == SLURM_SUCCESS) &&
 			    list_find_first(names_list, _match_name_list,
 					    one_name)) {
@@ -129,17 +138,11 @@ extern int common_node_config_load(List gres_conf_list,
 
 			(void) list_append(names_list, one_name);
 
-			/*
-			 * If count == 1, but there are multiple files then
-			 * this is a MultipleFile device. Don't touch the
-			 * index then, as the index keys into the allocation
-			 * bitmap.
-			 */
-			if (gres_slurmd_conf->count != 1)
-				index++;
+			/* Increment device bitmap index */
+			index++;
 		}
 		hostlist_destroy(hl);
-		if (gres_slurmd_conf->count == 1)
+		if (gres_slurmd_conf->config_flags & GRES_CONF_HAS_MULT)
 			index++;
 	}
 	list_iterator_destroy(itr);
@@ -160,196 +163,143 @@ extern int common_node_config_load(List gres_conf_list,
 	return rc;
 }
 
-extern bool common_use_local_device_index(void)
-{
-	slurm_cgroup_conf_t *cg_conf;
-	bool use_cgroup = false;
-	static bool use_local_index = false;
-	static bool is_set = false;
-
-	if (is_set)
-		return use_local_index;
-	is_set = true;
-
-	if (!slurm_conf.task_plugin)
-		return use_local_index;
-
-	if (xstrstr(slurm_conf.task_plugin, "cgroup"))
-		use_cgroup = true;
-	if (!use_cgroup)
-		return use_local_index;
-
-	/* read cgroup configuration */
-	slurm_mutex_lock(&xcgroup_config_read_mutex);
-	cg_conf = xcgroup_get_slurm_cgroup_conf();
-	if (cg_conf->constrain_devices)
-		use_local_index = true;
-	slurm_mutex_unlock(&xcgroup_config_read_mutex);
-
-	return use_local_index;
-}
-
 extern void common_gres_set_env(List gres_devices, char ***env_ptr,
-				void *gres_ptr, int node_inx,
 				bitstr_t *usable_gres, char *prefix,
-				int *local_inx, uint64_t *gres_per_node,
+				int *local_inx, bitstr_t *bit_alloc,
 				char **local_list, char **global_list,
-				bool reset, bool is_job, int *global_id,
-				gres_internal_flags_t flags)
+				bool is_task, bool is_job, int *global_id,
+				gres_internal_flags_t flags, bool use_dev_num)
 {
-	int first_inx = -1;
-	bitstr_t *bit_alloc = NULL;
-	bool use_local_dev_index = common_use_local_device_index();
-	bool alloc_cnt = false, set_global_id = false;
+	bool use_local_dev_index = gres_use_local_device_index();
+	bool set_global_id = false;
 	gres_device_t *gres_device, *first_device = NULL;
 	ListIterator itr;
 	char *global_prefix = "", *local_prefix = "";
 	char *new_global_list = NULL, *new_local_list = NULL;
-	uint64_t tmp_gres_per_node = 0;
+	int device_index = -1;
+	bool device_considered = false;
 
 	if (!gres_devices)
 		return;
 
-	xassert(global_list);
-	xassert(local_list);
-
-	if (is_job) {
-		gres_job_state_t *gres_job_ptr = (gres_job_state_t *) gres_ptr;
-		if (gres_job_ptr &&
-		    (node_inx >= 0) &&
-		    (node_inx < gres_job_ptr->node_cnt) &&
-		    gres_job_ptr->gres_bit_alloc &&
-		    gres_job_ptr->gres_bit_alloc[node_inx]) {
-			bit_alloc = gres_job_ptr->gres_bit_alloc[node_inx];
-		} else if (gres_job_ptr &&
-			   ((gres_job_ptr->gres_per_job    > 0) ||
-			    (gres_job_ptr->gres_per_node   > 0) ||
-			    (gres_job_ptr->gres_per_socket > 0) ||
-			    (gres_job_ptr->gres_per_task   > 0))) {
-			alloc_cnt = true;
-		}
-		if (gres_job_ptr) {
-			tmp_gres_per_node = gres_job_ptr->gres_per_node;
-		}
-	} else {
-		gres_step_state_t *gres_step_ptr =
-			(gres_step_state_t *) gres_ptr;
-		if (gres_step_ptr &&
-		    (gres_step_ptr->node_cnt == 1) &&
-		    gres_step_ptr->gres_bit_alloc &&
-		    gres_step_ptr->gres_bit_alloc[0]) {
-			bit_alloc = gres_step_ptr->gres_bit_alloc[0];
-		} else if (gres_step_ptr &&
-			   ((gres_step_ptr->gres_per_step   > 0) ||
-			    (gres_step_ptr->gres_per_node   > 0) ||
-			    (gres_step_ptr->gres_per_socket > 0) ||
-			    (gres_step_ptr->gres_per_task   > 0))) {
-			alloc_cnt = true;
-		}
-		if (gres_step_ptr) {
-			tmp_gres_per_node = gres_step_ptr->gres_per_node;
-		}
-	}
-
-	/* If we are resetting and we don't have a usable_gres we just exit */
-	if (reset && !usable_gres)
+	/* If we are setting task env but don't have usable_gres, just exit */
+	if (is_task && !usable_gres)
 		return;
 
-	if (bit_alloc) {
-		itr = list_iterator_create(gres_devices);
-		while ((gres_device = list_next(itr))) {
-			int index;
-			if (!bit_test(bit_alloc, gres_device->index))
-				continue;
+	xassert(global_list);
+	xassert(local_list);
+	/* is_task and is_job can't both be true */
+	xassert(!(is_task && is_job));
 
-			index = use_local_dev_index ?
-				(*local_inx)++ : gres_device->dev_num;
-
-			if (reset) {
-				if (!first_device) {
-					first_inx = index;
-					first_device = gres_device;
-				}
-
-				if (!bit_test(usable_gres,
-					      use_local_dev_index ?
-					      index : gres_device->index))
-					continue;
-			}
-
-			if (global_id && !set_global_id) {
-				*global_id = gres_device->dev_num;
-				set_global_id = true;
-			}
-
-			xstrfmtcat(new_local_list, "%s%s%d", local_prefix,
-				   prefix, index);
-			local_prefix = ",";
-			//info("looking at %d and %d",
-			//     gres_device->index, gres_device->dev_num);
-			xstrfmtcat(new_global_list, "%s%s%d", global_prefix,
-				   prefix, gres_device->dev_num);
-			global_prefix = ",";
-		}
-		list_iterator_destroy(itr);
-
-		/*
-		 * Bind to the first allocated device as a fallback if the bind
-		 * request does not specify any devices within the allocation.
-		 */
-		if (reset && !new_global_list && first_device) {
-			char *usable_gres_str = bit_fmt_full(usable_gres);
-			char *usable_gres_str_hex =
-				bit_fmt_hexmask_trim(usable_gres);
-			error("Bind request %s (%s) does not specify any devices within the allocation. Binding to the first device in the allocation instead.",
-			      usable_gres_str, usable_gres_str_hex);
-			xfree(usable_gres_str);
-			xfree(usable_gres_str_hex);
-			xstrfmtcat(new_local_list, "%s%s%d", local_prefix,
-				   prefix, first_inx);
-			(*local_inx) = first_inx;
-			xstrfmtcat(new_global_list, "%s%s%d", global_prefix,
-				   prefix, first_device->dev_num);
-		}
-		if (new_global_list) {
-			xfree(*global_list);
-			*global_list = new_global_list;
-		}
-		if (new_local_list) {
-			xfree(*local_list);
-			*local_list = new_local_list;
-		}
-
-		if (flags & GRES_INTERNAL_FLAG_VERBOSE) {
-			char *usable_str;
-			char *alloc_str;
-			if (usable_gres)
-				usable_str = bit_fmt_hexmask_trim(usable_gres);
-			else
-				usable_str = xstrdup("NULL");
-			alloc_str = bit_fmt_hexmask_trim(bit_alloc);
-			fprintf(stderr, "gpu-bind: usable_gres=%s; bit_alloc=%s; local_inx=%d; global_list=%s; local_list=%s\n",
-				usable_str, alloc_str, *local_inx, *global_list,
-				*local_list);
-			xfree(alloc_str);
-			xfree(usable_str);
-		}
-
-	} else if (alloc_cnt) {
+	if (!bit_alloc) {
 		/*
 		 * The gres.conf file must identify specific device files
 		 * in order to set the CUDA_VISIBLE_DEVICES env var
 		 */
-		debug("%s: unable to set env vars, no device files configured",
-		      __func__);
+		return;
 	}
 
-	if (gres_per_node) {
-		*gres_per_node = tmp_gres_per_node;
+	itr = list_iterator_create(gres_devices);
+	while ((gres_device = list_next(itr))) {
+		int index;
+		int global_env_index;
+		if (!bit_test(bit_alloc, gres_device->index))
+			continue;
+
+		/* Track physical devices if MultipleFiles is used */
+		if (device_index < gres_device->index) {
+			device_index = gres_device->index;
+			device_considered = false;
+		} else if (device_index != gres_device->index)
+			error("gres_device->index was not monotonically increasing! Are gres_devices not sorted by index? device_index: %d, gres_device->index: %d",
+			      device_index, gres_device->index);
+
+		/* Continue if we already bound this physical device */
+		if (device_considered)
+			continue;
+
+		/*
+		 * NICs want env to match the dev_num parsed from the
+		 * file name; GPUs, however, want it to match the order
+		 * they enumerate on the PCI bus, and this isn't always
+		 * the same order as the device file names
+		 */
+		if (use_dev_num)
+			global_env_index = gres_device->dev_num;
+		else
+			global_env_index = gres_device->index;
+
+		index = use_local_dev_index ?
+			(*local_inx)++ : global_env_index;
+
+		if (is_task) {
+			if (!first_device) {
+				first_device = gres_device;
+			}
+
+			if (!bit_test(usable_gres,
+				      use_local_dev_index ?
+				      index : gres_device->index)) {
+				/*
+				 * Since this device is not in usable_gres, skip
+				 * over any other device files associated with
+				 * it by setting device_considered = true
+				 */
+				device_considered = true;
+				continue;
+			}
+		}
+
+		if (global_id && !set_global_id) {
+			*global_id = gres_device->dev_num;
+			set_global_id = true;
+		}
+
+		/*
+		 * If unique_id is set for the device, assume that we
+		 * want to use it for the env var
+		 */
+		if (gres_device->unique_id)
+			xstrfmtcat(new_local_list, "%s%s%s", local_prefix,
+				   prefix, gres_device->unique_id);
+		else
+			xstrfmtcat(new_local_list, "%s%s%d", local_prefix,
+				   prefix, index);
+		xstrfmtcat(new_global_list, "%s%s%d", global_prefix,
+			   prefix, global_env_index);
+
+		local_prefix = ",";
+		global_prefix = ",";
+		device_considered = true;
+	}
+	list_iterator_destroy(itr);
+
+	if (new_global_list) {
+		xfree(*global_list);
+		*global_list = new_global_list;
+	}
+	if (new_local_list) {
+		xfree(*local_list);
+		*local_list = new_local_list;
+	}
+
+	if (flags & GRES_INTERNAL_FLAG_VERBOSE) {
+		char *usable_str;
+		char *alloc_str;
+		if (usable_gres)
+			usable_str = bit_fmt_hexmask_trim(usable_gres);
+		else
+			usable_str = xstrdup("NULL");
+		alloc_str = bit_fmt_hexmask_trim(bit_alloc);
+		fprintf(stderr, "gpu-bind: usable_gres=%s; bit_alloc=%s; local_inx=%d; global_list=%s; local_list=%s\n",
+			usable_str, alloc_str, *local_inx, *global_list,
+			*local_list);
+		xfree(alloc_str);
+		xfree(usable_str);
 	}
 }
 
-extern void common_send_stepd(Buf buffer, List gres_devices)
+extern void common_send_stepd(buf_t *buffer, List gres_devices)
 {
 	uint32_t cnt = 0;
 	gres_device_t *gres_device;
@@ -369,13 +319,14 @@ extern void common_send_stepd(Buf buffer, List gres_devices)
 		pack32(gres_device->dev_num, buffer);
 		packstr(gres_device->major, buffer);
 		packstr(gres_device->path, buffer);
+		packstr(gres_device->unique_id, buffer);
 	}
 	list_iterator_destroy(itr);
 
 	return;
 }
 
-extern void common_recv_stepd(Buf buffer, List *gres_devices)
+extern void common_recv_stepd(buf_t *buffer, List *gres_devices)
 {
 	uint32_t i, cnt;
 	uint32_t uint32_tmp = 0;
@@ -404,6 +355,8 @@ extern void common_recv_stepd(Buf buffer, List *gres_devices)
 				       &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&gres_device->path,
 				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&gres_device->unique_id,
+				       &uint32_tmp, buffer);
 		list_append(*gres_devices, gres_device);
 		/* info("adding %d %s %s", gres_device->dev_num, */
 		/*      gres_device->major, gres_device->path); */
@@ -424,12 +377,12 @@ extern void print_gres_conf(gres_slurmd_conf_t *gres_slurmd_conf,
 			    log_level_t log_lvl)
 {
 	log_var(log_lvl, "    GRES[%s] Type:%s Count:%"PRIu64" Cores(%d):%s  "
-		"Links:%s Flags:%s File:%s", gres_slurmd_conf->name,
+		"Links:%s Flags:%s File:%s UniqueId:%s", gres_slurmd_conf->name,
 		gres_slurmd_conf->type_name, gres_slurmd_conf->count,
 		gres_slurmd_conf->cpu_cnt, gres_slurmd_conf->cpus,
 		gres_slurmd_conf->links,
 		gres_flags2str(gres_slurmd_conf->config_flags),
-		gres_slurmd_conf->file);
+		gres_slurmd_conf->file, gres_slurmd_conf->unique_id);
 }
 
 
@@ -440,11 +393,15 @@ extern void print_gres_conf(gres_slurmd_conf_t *gres_slurmd_conf,
 static void _print_gres_conf_parsable(gres_slurmd_conf_t *gres_slurmd_conf,
 				      log_level_t log_lvl)
 {
-	log_var(log_lvl, "GRES_PARSABLE[%s](%"PRIu64"):%s|%d|%s|%s|%s|",
+	/* Only print out unique_id if set */
+	log_var(log_lvl, "GRES_PARSABLE[%s](%"PRIu64"):%s|%d|%s|%s|%s|%s%s%s",
 		gres_slurmd_conf->name, gres_slurmd_conf->count,
 		gres_slurmd_conf->type_name, gres_slurmd_conf->cpu_cnt,
 		gres_slurmd_conf->cpus, gres_slurmd_conf->links,
-		gres_slurmd_conf->file);
+		gres_slurmd_conf->file,
+		gres_slurmd_conf->unique_id ? gres_slurmd_conf->unique_id : "",
+		gres_slurmd_conf->unique_id ? "|" : "",
+		gres_flags2str(gres_slurmd_conf->config_flags));
 }
 
 /*

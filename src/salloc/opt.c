@@ -187,6 +187,7 @@ env_vars_t env_vars[] = {
   { "SALLOC_CLUSTER_CONSTRAINT", LONG_OPT_CLUSTER_CONSTRAINT },
   { "SALLOC_CLUSTERS", 'M' },
   { "SLURM_CLUSTERS", 'M' },
+  { "SALLOC_CONTAINER", LONG_OPT_CONTAINER },
   { "SALLOC_CONSTRAINT", 'C' },
   { "SALLOC_CORE_SPEC", 'S' },
   { "SALLOC_CPU_FREQ_REQ", LONG_OPT_CPU_FREQ },
@@ -223,6 +224,7 @@ env_vars_t env_vars[] = {
   { "SALLOC_SIGNAL", LONG_OPT_SIGNAL },
   { "SALLOC_SPREAD_JOB", LONG_OPT_SPREAD_JOB },
   { "SALLOC_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
+  { "SALLOC_THREADS_PER_CORE", LONG_OPT_THREADSPERCORE },
   { "SALLOC_TIMELIMIT", 't' },
   { "SALLOC_USE_MIN_NODES", LONG_OPT_USE_MIN_NODES },
   { "SALLOC_WAIT_ALL_NODES", LONG_OPT_WAIT_ALL_NODES },
@@ -259,6 +261,8 @@ static void _set_options(int argc, char **argv)
 	char *opt_string = NULL;
 	int opt_char, option_index = 0;
 	struct option *optz = slurm_option_table_create(&opt, &opt_string);
+
+	opt.submit_line = slurm_option_get_argv_str(argc, argv);
 
 	optind = 0;
 	while ((opt_char = getopt_long(argc, argv, opt_string,
@@ -300,6 +304,12 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 		command_argv[i] = NULL;	/* End of argv's (for possible execv) */
 	}
 
+	if (opt.container &&
+	    !xstrstr(slurm_conf.launch_params, "use_interactive_step")) {
+		error("--container requires LaunchParameters=use_interactive_step");
+		exit(error_exit);
+	}
+
 	if (cli_filter_g_pre_submit(&opt, het_job_offset)) {
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
@@ -336,6 +346,24 @@ static void _salloc_default_command(int *argcp, char **argvp[])
 		else
 			*command = '\0';
 		xstrcat(command, "srun ");
+
+		/* Explicitly pass container if requested */
+		if (opt.container) {
+			int len = strlen(opt.container);
+
+			xstrcat(command, " --container '");
+			/* escape any single quotes if they exist */
+
+			for (int i = 0; i < len; i++) {
+				if (opt.container[i] == '\'')
+					xstrcat(command, "'\"'\"'");
+				else
+					xstrcatchar(command, opt.container[i]);
+			}
+
+			xstrcat(command, "' ");
+		}
+
 		xstrcat(command, slurm_conf.interactive_step_opts);
 
 		*argcp = 3;
@@ -373,7 +401,7 @@ static bool _opt_verify(void)
 		error("Cannot specify both --burst-buffer and --bbf");
 		exit(error_exit);
 	} else if (opt.burst_buffer_file) {
-		Buf buf = create_mmap_buf(opt.burst_buffer_file);
+		buf_t *buf = create_mmap_buf(opt.burst_buffer_file);
 		if (!buf) {
 			error("Invalid --bbf specification");
 			exit(error_exit);
@@ -382,6 +410,9 @@ static bool _opt_verify(void)
 		free_buf(buf);
 		xfree(opt.burst_buffer_file);
 	}
+
+	if (opt.container && !getenv("SLURM_CONTAINER"))
+		setenvf(NULL, "SLURM_CONTAINER", "%s", opt.container);
 
 	if (opt.hint &&
 	    !validate_hint_option(&opt)) {
@@ -483,8 +514,6 @@ static bool _opt_verify(void)
 		      opt.min_nodes, opt.max_nodes);
 		verified = false;
 	}
-
-	validate_memory_options(&opt);
 
         /* Check to see if user has specified enough resources to
 	 * satisfy the plane distribution with the specified
@@ -662,12 +691,9 @@ static bool _opt_verify(void)
 	cpu_freq_set_env("SLURM_CPU_FREQ_REQ",
 			opt.cpu_freq_min, opt.cpu_freq_max, opt.cpu_freq_gov);
 
-	if (saopt.wait_all_nodes == NO_VAL16) {
-		char *sched_params = slurm_get_sched_params();
-		if (xstrcasestr(sched_params, "salloc_wait_nodes"))
+	if ((saopt.wait_all_nodes == NO_VAL16) &&
+	    (xstrcasestr(slurm_conf.sched_params, "salloc_wait_nodes")))
 			saopt.wait_all_nodes = 1;
-		xfree(sched_params);
-	}
 
 	if (opt.x11) {
 		x11_get_display(&opt.x11_target_port, &opt.x11_target);
@@ -679,11 +705,6 @@ static bool _opt_verify(void)
 
 	if (!opt.job_name)
 		opt.job_name = xstrdup("interactive");
-
-	if (opt.gpus_per_socket && (opt.sockets_per_node == NO_VAL)) {
-		error("--gpus-per-socket option requires --sockets-per-node specification");
-		exit(error_exit);
-	}
 
 	return verified;
 }
@@ -823,6 +844,7 @@ static void _help(void)
 "      --bbf=<file_name>       burst buffer specification file\n"
 "  -c, --cpus-per-task=ncpus   number of cpus required per task\n"
 "      --comment=name          arbitrary comment\n"
+"      --container             Path to OCI container bundle\n"
 "      --cpu-freq=min[-max[:gov]] requested cpu frequency (and governor)\n"
 "      --delay-boot=mins       delay boot for desired node features\n"
 "  -d, --dependency=type:jobid[:time] defer job until condition on jobid is satisfied\n"

@@ -5,7 +5,6 @@
 #include <EXTERN.h>
 #include <perl.h>
 #include <XSUB.h>
-#include <slurm/slurm.h>
 #include "ppport.h"
 
 #undef VERSION /* MakeMaker defines VERSION to some version we don't care
@@ -13,10 +12,9 @@
 		* included from src/common/job_resources.h below.
 		*/
 
-#include "src/common/job_resources.h"
-
-#include "bitstr.h"
 #include "slurm-perl.h"
+#include "src/common/job_resources.h"
+#include "src/common/xstring.h"
 
 static node_info_msg_t *job_node_ptr = NULL;
 
@@ -45,7 +43,7 @@ static uint32_t _threads_per_core(char *host)
 
 	for (i = 0; i < job_node_ptr->record_count; i++) {
 		if (job_node_ptr->node_array[i].name &&
-		    !strcmp(host, job_node_ptr->node_array[i].name)) {
+		    !xstrcmp(host, job_node_ptr->node_array[i].name)) {
 			threads = job_node_ptr->node_array[i].threads;
 			break;
 		}

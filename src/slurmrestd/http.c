@@ -538,6 +538,16 @@ extern int send_http_response(const send_http_response_args_t *args)
 		if ((rc = con_mgr_queue_write_fd(args->con, args->body,
 						 args->body_length)))
 			return rc;
+	} else if (((args->status_code >= 100) && (args->status_code < 200)) ||
+		   (args->status_code == 204) ||
+		   (args->status_code == 304)) {
+		/*
+		 * RFC2616 requires empty line after headers for return code
+		 * that "MUST NOT" include a message body
+		 */
+		if ((rc = con_mgr_queue_write_fd(args->con, CRLF,
+						 strlen(CRLF))))
+			return rc;
 	}
 
 	return rc;
@@ -558,6 +568,10 @@ static int _send_reject(const http_parser *parser,
 		.headers = list_create(_free_http_header),
 	};
 
+	/* If we don't have a requested client version, default to 0.9 */
+	if ((args.http_major == 0) && (args.http_minor == 0))
+		args.http_minor = 9;
+
 	/* Ignore response since this connection is already dead */
 	(void) send_http_response(&args);
 
@@ -570,54 +584,6 @@ static int _send_reject(const http_parser *parser,
 	(void) con_mgr_queue_close_fd(request->context->con);
 
 	return HTTP_PARSER_RETURN_ERROR;
-}
-
-extern const char *get_http_method_string(http_request_method_t method)
-{
-	switch (method) {
-	case HTTP_REQUEST_GET:
-		return "GET";
-	case HTTP_REQUEST_POST:
-		return "POST";
-	case HTTP_REQUEST_PUT:
-		return "PUT";
-	case HTTP_REQUEST_DELETE:
-		return "DELETE";
-	case HTTP_REQUEST_OPTIONS:
-		return "OPTIONS";
-	case HTTP_REQUEST_HEAD:
-		return "HEAD";
-	case HTTP_REQUEST_PATCH:
-		return "PATCH";
-	case HTTP_REQUEST_TRACE:
-		return "TRACE";
-	default:
-		fatal_abort("unknown method string");
-		return "UNKNOWN";
-	}
-}
-
-extern http_request_method_t get_http_method(const char *str)
-{
-	if (str == NULL)
-		return HTTP_REQUEST_INVALID;
-	if (!xstrcasecmp(str, "get"))
-		return HTTP_REQUEST_GET;
-	if (!xstrcasecmp(str, "post"))
-		return HTTP_REQUEST_POST;
-	if (!xstrcasecmp(str, "put"))
-		return HTTP_REQUEST_PUT;
-	if (!xstrcasecmp(str, "delete"))
-		return HTTP_REQUEST_DELETE;
-	if (!xstrcasecmp(str, "options"))
-		return HTTP_REQUEST_OPTIONS;
-	if (!xstrcasecmp(str, "head"))
-		return HTTP_REQUEST_HEAD;
-	if (!xstrcasecmp(str, "patch"))
-		return HTTP_REQUEST_PATCH;
-	if (!xstrcasecmp(str, "trace"))
-		return HTTP_REQUEST_TRACE;
-	return HTTP_REQUEST_INVALID;
 }
 
 static int _on_message_complete_request(http_parser *parser,
@@ -778,7 +744,7 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		.on_chunk_complete = _on_chunk_complete
 	};
 	int rc = SLURM_SUCCESS;
-	Buf buffer = con->in;
+	buf_t *buffer = con->in;
 	request_t *request = context->request;
 	http_parser *parser = context->parser;
 
@@ -820,7 +786,7 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		error("%s: [%s] unexpected HTTP error %s: %s",
 		      __func__, con->name, http_errno_name(parser->http_errno),
 		      http_errno_description(parser->http_errno));
-		rc = SLURM_UNEXPECTED_MSG_ERROR;
+		rc = _send_reject(parser, HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
 	} else if (parser->upgrade) {
 		debug2("%s: [%s] HTTP Upgrade currently not supported",
 		       __func__, con->name);
@@ -895,7 +861,7 @@ extern void free_parse_host_port(parsed_host_port_t *parsed)
 	xfree(parsed);
 }
 
-extern http_context_t *_http_context_new(void)
+static http_context_t *_http_context_new(void)
 {
 	http_context_t *context = xmalloc(sizeof(*context));
 	http_parser *parser = xmalloc(sizeof(*parser));
@@ -907,98 +873,6 @@ extern http_context_t *_http_context_new(void)
 	context->auth = NULL;
 
 	return context;
-}
-
-extern const char *get_http_status_code_string(http_status_code_t code)
-{
-	switch (code) {
-	case HTTP_STATUS_CODE_CONTINUE:
-		return "CONTINUE";
-	case HTTP_STATUS_CODE_SWITCH_PROTOCOLS:
-		return "SWITCH PROTOCOLS";
-	case HTTP_STATUS_CODE_SUCCESS_OK:
-		return "OK";
-	case HTTP_STATUS_CODE_SUCCESS_CREATED:
-		return "CREATED";
-	case HTTP_STATUS_CODE_SUCCESS_ACCEPTED:
-		return "ACCEPTED";
-	case HTTP_STATUS_CODE_SUCCESS_NON_AUTHORITATIVE:
-		return "OK (NON AUTHORITATIVE)";
-	case HTTP_STATUS_CODE_SUCCESS_NO_CONTENT:
-		return "NO CONTENT";
-	case HTTP_STATUS_CODE_SUCCESS_RESET_CONNECTION:
-		return "RESET CONNECTION";
-	case HTTP_STATUS_CODE_SUCCESS_PARTIAL_CONENT:
-		return "PARTIAL CONTENT";
-	case HTTP_STATUS_CODE_REDIRECT_MULTIPLE_CHOICES:
-		return "REDIRECT MULTIPLE CHOICES";
-	case HTTP_STATUS_CODE_REDIRECT_MOVED_PERMANENTLY:
-		return "MOVED PERMANENTLY";
-	case HTTP_STATUS_CODE_REDIRECT_FOUND:
-		return "REDIRECT FOUNT";
-	case HTTP_STATUS_CODE_REDIRECT_SEE_OTHER:
-		return "REDIRECT SEE OTHER";
-	case HTTP_STATUS_CODE_REDIRECT_NOT_MODIFIED:
-		return "NOT MODIFIED";
-	case HTTP_STATUS_CODE_REDIRECT_USE_PROXY:
-		return "USE PROXY";
-	case HTTP_STATUS_CODE_REDIRECT_TEMP_REDIRCT:
-		return "TEMP REDIRECT";
-	case HTTP_STATUS_CODE_ERROR_BAD_REQUEST:
-		return "BAD REQUEST";
-	case HTTP_STATUS_CODE_ERROR_UNAUTHORIZED:
-		return "UNAUTHORIZED";
-	case HTTP_STATUS_CODE_ERROR_PAYMENT_REQUIRED:
-		return "PAYMENT REQUIRED";
-	case HTTP_STATUS_CODE_ERROR_FORBIDDEN:
-		return "FORBIDDEN";
-	case HTTP_STATUS_CODE_ERROR_NOT_FOUND:
-		return "NOT FOUND";
-	case HTTP_STATUS_CODE_ERROR_METHOD_NOT_ALLOWED:
-		return "NOT ALLOWED";
-	case HTTP_STATUS_CODE_ERROR_NOT_ACCEPTABLE:
-		return "NOT ACCEPTABLE";
-	case HTTP_STATUS_CODE_ERROR_PROXY_AUTH_REQ:
-		return "PROXY AUTHENTICATION REQUIRED";
-	case HTTP_STATUS_CODE_ERROR_REQUEST_TIMEOUT:
-		return "REQUEST TIMEOUT";
-	case HTTP_STATUS_CODE_ERROR_CONFLICT:
-		return "CONFLICT";
-	case HTTP_STATUS_CODE_ERROR_GONE:
-		return "GONE";
-	case HTTP_STATUS_CODE_ERROR_LENGTH_REQUIRED:
-		return "LENGTH REQUIRED";
-	case HTTP_STATUS_CODE_ERROR_PRECONDITION_FAILED:
-		return "PRECONDITION FAILED";
-	case HTTP_STATUS_CODE_ERROR_ENTITY_TOO_LARGE:
-		return "ENTITY TOO LARGE";
-	case HTTP_STATUS_CODE_ERROR_URI_TOO_LONG:
-		return "URI TOO LONG";
-	case HTTP_STATUS_CODE_ERROR_UNSUPPORTED_MEDIA_TYPE:
-		return "UNSUPPORTED MEDIA TYPE";
-	case HTTP_STATUS_CODE_ERROR_REQUEST_RANGE_UNSATISFIABLE:
-		return "REQUEST RANGE UNJUSTIFIABLE";
-	case HTTP_STATUS_CODE_ERROR_EXPECTATION_FAILED:
-		return "EXPECTATION FAILED";
-	case HTTP_STATUS_CODE_ERROR_IM_A_TEAPOT: /* rfc7168 */
-		return "I'm a Teapot";
-	case HTTP_STATUS_CODE_ERROR_UPGRADE_REQUIRED: /* rfc7231 6.5.15 */
-		return "UPGRADE REQUIRED";
-	case HTTP_STATUS_CODE_SRVERR_INTERNAL:
-		return "INTERNAL ERROR";
-	case HTTP_STATUS_CODE_SRVERR_NOT_IMPLEMENTED:
-		return "NOT IMPLEMENTED";
-	case HTTP_STATUS_CODE_SRVERR_BAD_GATEWAY:
-		return "BAD GATEWAY";
-	case HTTP_STATUS_CODE_SRVERR_SERVICE_UNAVAILABLE:
-		return "SERVICE UNAVAILABLE";
-	case HTTP_STATUS_CODE_SRVERR_GATEWAY_TIMEOUT:
-		return "GATEWAY TIMEOUT";
-	case HTTP_STATUS_CODE_SRVERR_HTTP_VERSION_NOT_SUPPORTED:
-		return "HTTP VERSION NOT SUPPORTED";
-	default:
-		return NULL;
-	}
 }
 
 /* find operator against http_header_entry_t */
@@ -1017,7 +891,7 @@ static int _http_header_find_key(void *x, void *y)
 		return 0;
 }
 
-const char *find_http_header(List headers, const char *name)
+extern const char *find_http_header(List headers, const char *name)
 {
 	http_header_entry_t *header = NULL;
 

@@ -25,7 +25,7 @@ dnl
 AM_INIT_AUTOMAKE(no-define no-dist)
 AM_MAINTAINER_MODE
 AC_CONFIG_HEADERS([config.h])
-AC_CONFIG_HEADERS([slurm/slurm.h])
+AC_CONFIG_HEADERS([slurm/slurm_version.h])
 
 X_AC_RPATH
 
@@ -223,7 +223,6 @@ AM_CONDITIONAL(BUILD_HDF5, test "$with_hdf5" = "yes")
 # the 1.8 API.
 AC_DEFINE([H5_NO_DEPRECATED_SYMBOLS], [1], [Make sure we get the 1.8 HDF5 API])
 
-AX_CHECK_ZLIB([], [])
 X_AC_LZ4
 X_AC_HWLOC
 X_AC_NVML
@@ -233,6 +232,7 @@ X_AC_FREEIPMI
 X_AC_RRDTOOL
 X_AC_UCX
 X_AC_X11
+X_AC_SELINUX
 
 X_AC_CGROUP
 
@@ -394,7 +394,6 @@ AC_CONFIG_FILES([Makefile
 		 contribs/cray/csm/Makefile
 		 contribs/cray/slurmsmwd/Makefile
 		 contribs/lua/Makefile
-		 contribs/mic/Makefile
 		 contribs/nss_slurm/Makefile
 		 contribs/pam/Makefile
 		 contribs/pam_slurm_adopt/Makefile
@@ -414,7 +413,6 @@ AC_CONFIG_FILES([Makefile
 		 doc/Makefile
 		 doc/man/Makefile
 		 doc/man/man1/Makefile
-		 doc/man/man3/Makefile
 		 doc/man/man5/Makefile
 		 doc/man/man8/Makefile
 		 doc/html/Makefile
@@ -450,10 +448,6 @@ AC_CONFIG_FILES([Makefile
 		 src/slurmrestd/plugins/auth/Makefile
 		 src/slurmrestd/plugins/auth/jwt/Makefile
 		 src/slurmrestd/plugins/auth/local/Makefile
-		 src/slurmrestd/plugins/openapi/Makefile
-		 src/slurmrestd/plugins/openapi/v0.0.35/Makefile
-		 src/slurmrestd/plugins/openapi/v0.0.36/Makefile
-		 src/slurmrestd/plugins/openapi/dbv0.0.36/Makefile
 		 src/sprio/Makefile
 		 src/squeue/Makefile
 		 src/srun/Makefile
@@ -494,7 +488,10 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/burst_buffer/Makefile
 		 src/plugins/burst_buffer/common/Makefile
 		 src/plugins/burst_buffer/datawarp/Makefile
-		 src/plugins/burst_buffer/generic/Makefile
+		 src/plugins/burst_buffer/lua/Makefile
+		 src/plugins/cgroup/Makefile
+		 src/plugins/cgroup/common/Makefile
+		 src/plugins/cgroup/v1/Makefile
 		 src/plugins/cli_filter/Makefile
 		 src/plugins/cli_filter/common/Makefile
 		 src/plugins/cli_filter/lua/Makefile
@@ -518,7 +515,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/gres/common/Makefile
 		 src/plugins/gres/gpu/Makefile
 		 src/plugins/gres/nic/Makefile
-		 src/plugins/gres/mic/Makefile
 		 src/plugins/gres/mps/Makefile
 		 src/plugins/jobacct_gather/Makefile
 		 src/plugins/jobacct_gather/common/Makefile
@@ -554,8 +550,15 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/mcs/none/Makefile
 		 src/plugins/mcs/user/Makefile
 		 src/plugins/node_features/Makefile
+		 src/plugins/node_features/helpers/Makefile
 		 src/plugins/node_features/knl_cray/Makefile
 		 src/plugins/node_features/knl_generic/Makefile
+		 src/plugins/openapi/Makefile
+		 src/plugins/openapi/v0.0.35/Makefile
+		 src/plugins/openapi/v0.0.36/Makefile
+		 src/plugins/openapi/v0.0.37/Makefile
+		 src/plugins/openapi/dbv0.0.36/Makefile
+		 src/plugins/openapi/dbv0.0.37/Makefile
 		 src/plugins/power/Makefile
 		 src/plugins/power/common/Makefile
 		 src/plugins/power/cray_aries/Makefile
@@ -580,7 +583,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/sched/Makefile
 		 src/plugins/sched/backfill/Makefile
 		 src/plugins/sched/builtin/Makefile
-		 src/plugins/sched/hold/Makefile
 		 src/plugins/select/Makefile
 		 src/plugins/select/cons_common/Makefile
 		 src/plugins/select/cons_res/Makefile
@@ -588,6 +590,10 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/select/cray_aries/Makefile
 		 src/plugins/select/linear/Makefile
 		 src/plugins/select/other/Makefile
+		 src/plugins/serializer/Makefile
+		 src/plugins/serializer/json/Makefile
+		 src/plugins/serializer/url-encoded/Makefile
+		 src/plugins/serializer/yaml/Makefile
 		 src/plugins/site_factor/Makefile
 		 src/plugins/site_factor/none/Makefile
 		 src/plugins/slurmctld/Makefile
@@ -616,11 +622,12 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/slurm_unit/api/Makefile
 		 testsuite/slurm_unit/api/manual/Makefile
 		 testsuite/slurm_unit/common/Makefile
+		 testsuite/slurm_unit/common/slurm_protocol_defs/Makefile
 		 testsuite/slurm_unit/common/slurm_protocol_pack/Makefile
+		 testsuite/slurm_unit/common/slurmdb_defs/Makefile
 		 testsuite/slurm_unit/common/slurmdb_pack/Makefile
 		 testsuite/slurm_unit/common/bitstring/Makefile
-		 testsuite/slurm_unit/slurmd/Makefile
-		 testsuite/slurm_unit/slurmd/common/Makefile
+		 testsuite/slurm_unit/common/hostlist/Makefile
 		 ]
 )
 

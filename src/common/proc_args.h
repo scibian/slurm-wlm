@@ -53,9 +53,14 @@ void print_slurm_version(void);
 /* print the available gres options */
 void print_gres_help(void);
 
-/* set distribution type strings from distribution type const */
-void set_distribution(task_dist_states_t distribution,
-		      char **dist, char **lllp_dist);
+/*
+ * Set distribution type strings from distribution type const.
+ * The value is xmalloc'd and returned in *dist; caller must free.
+ */
+void set_distribution(task_dist_states_t distribution, char **dist);
+
+/* check if path2 is subpath of path2 */
+extern bool subpath(char *path1, char *path2);
 
 /* verify the requested distribution type */
 task_dist_states_t verify_dist_type(const char *arg, uint32_t *plane_size);
@@ -182,6 +187,8 @@ extern uint64_t parse_resv_flags(const char *flagstr, const char *msg,
 				 resv_desc_msg_t  *resv_msg_ptr);
 
 extern uint16_t parse_compress_type(const char *arg);
+
+extern int parse_send_libs(const char *arg);
 
 extern int validate_acctg_freq(char *acctg_freq);
 

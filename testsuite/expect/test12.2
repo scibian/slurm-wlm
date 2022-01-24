@@ -28,19 +28,13 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_name.input"
-set file_out    "$test_name.output"
-set file_err    "$test_name.error"
+set file_in     "$test_dir/input"
+set file_out    "$test_dir/output"
+set file_err    "$test_dir/error"
 set file_prog   "$test_name.prog"
-set file_stem   "$test_name"
+set file_stem   $test_name
 set job_id      0
 set matches     0
-
-proc cleanup {} {
-	global file_prog file_in file_out file_err file_stem
-
-	exec rm -f $file_prog $file_in $file_out $file_err $file_stem.read $file_stem.write
-}
 
 # job parameters
 set mem_size    102400
@@ -48,7 +42,7 @@ set sleep_time  32
 set ret_code    42
 set file_size   10485760
 set num_tasks   3
-set max_time_error 5
+set max_time_error 10
 set max_mem_error 4300
 set step_id	0
 set job_mem_limit [expr ($mem_size + $max_mem_error)  / 1024 + 10]
@@ -84,6 +78,12 @@ if {![llength $nodes]} {
 	skip "Unable to test with current node configuration"
 }
 
+proc cleanup {} {
+	global file_prog file_stem
+
+	file delete $file_prog $file_stem.read $file_stem.write
+}
+
 proc _get_mem {prog} {
 	global float number mem_size job_id step_id max_mem_error num_tasks
 
@@ -95,7 +95,7 @@ proc _get_mem {prog} {
 
 	set output [run_command_output -fail "$prog --noheader -p --job=$job_id.$step_id --format maxrss,maxrsstask,averss --noconvert"]
 
-	dict set subtest cond [regexp "($number).($number).($number)" $output - mem_used mem_task ave_used]
+	dict set subtest cond [regexp "($number)\\D($number)\\D($number)" $output - mem_used mem_task ave_used]
 	dict set subtest desc "$prog_base should provide the right output format"
 	dict set subtest diag "$output"
 	lappend result $subtest
@@ -132,7 +132,7 @@ proc _get_file_size {prog} {
 
 	set output [run_command_output -fail "$prog --noheader -p --job=$job_id.$step_id --format MaxDiskWrite,AveDiskWrite,MaxDiskRead,AveDiskRead,MaxDiskWriteTask,MaxDiskReadTask --noconvert"]
 
-	dict set subtest cond [regexp "($float)(\[MGT\]*).($float)(\[MGT\]*).($float)(\[MGT\]*).($float)(\[MGT\]*).($number).($number)" $output \
+	dict set subtest cond [regexp "($float)(\[MGT\]*)\\D($float)(\[MGT\]*)\\D($float)(\[MGT\]*)\\D($float)(\[MGT\]*)\\D($number)\\D($number)" $output \
 			       - \
 			       max_disk_write scale1 \
 			       ave_disk_write scale2 \
@@ -195,10 +195,8 @@ proc wait_and_subtest {test prog} {
 # Delete left-over program and rebuild it
 # Compilation is not optimized to avoid memset to be skipped.
 #
-exec $bin_rm -f $file_prog
-exec $bin_rm -f $file_in $file_out $file_err
-exec $bin_cc -o $file_prog ${file_prog}.c
-exec $bin_chmod 700 $file_prog
+run_command -fail "$bin_cc -o $file_prog ${file_prog}.c"
+run_command -fail "$bin_chmod 700 $file_prog"
 
 make_bash_script $file_in "
     $srun ./$file_prog $ret_code $sleep_time $mem_size $file_size $file_stem
@@ -223,9 +221,7 @@ set job_id [submit_job -fail "-n$num_tasks --mem-per-cpu=$job_mem_limit --output
 #
 # Wait for job to run
 #
-if {[wait_for_job $job_id "RUNNING"]} {
-	fail "job never run"
-}
+wait_for_job -fail $job_id "RUNNING"
 
 wait_and_subtest _get_mem       $sstat
 wait_and_subtest _get_file_size $sstat
@@ -233,9 +229,7 @@ wait_and_subtest _get_file_size $sstat
 #
 # Wait for job to complete
 #
-if {[wait_for_job $job_id "DONE"] != 0} {
-	fail "job never end"
-}
+wait_for_job -fail $job_id "DONE"
 
 wait_and_subtest _get_mem       $sacct
 wait_and_subtest _get_file_size $sacct

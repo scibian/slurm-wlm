@@ -434,7 +434,7 @@ extern void create_daemon_popup(GtkAction *action, gpointer user_data)
 		NULL);
 	int i, update = 0;
 	slurm_ctl_conf_info_msg_t *conf;
-	char me[MAX_SLURM_NAME], *b, *c, *n;
+	char me[HOST_NAME_MAX], *b, *c, *n;
 	char *token, *save_ptr = NULL;
 	int actld = 0, ctld = 0, d = 0;
 	GtkTreeStore *treestore =
@@ -450,7 +450,7 @@ extern void create_daemon_popup(GtkAction *action, gpointer user_data)
 	slurm_conf_init(NULL);
 	conf = slurm_conf_lock();
 
-	gethostname_short(me, MAX_SLURM_NAME);
+	gethostname_short(me, HOST_NAME_MAX);
 	for (i = 1; i < conf->control_cnt; i++) {
 		if ((b = conf->control_machine[i])) {
 			if (!xstrcmp(b, me) ||
@@ -710,11 +710,16 @@ extern void create_search_popup(GtkAction *action, gpointer user_data)
 			 "No Respond", true, -1},
 			{G_TYPE_NONE, NODE_STATE_NET | NODE_STATE_IDLE,
 			 "PerfCTRs", true, -1},
-			{G_TYPE_NONE, NODE_STATE_POWER_SAVE,
+			{G_TYPE_NONE, NODE_STATE_IDLE | NODE_STATE_PLANNED,
+			 "Planned", true, -1},
+			{G_TYPE_NONE, NODE_STATE_POWERED_DOWN,
 			 "Power Down", true, -1},
-			{G_TYPE_NONE, NODE_STATE_POWER_UP,
+			{G_TYPE_NONE, NODE_STATE_POWERING_UP,
 			 "Power Up", true, -1},
-			{G_TYPE_NONE, NODE_STATE_REBOOT, "Reboot", true, -1},
+			{G_TYPE_NONE, NODE_STATE_REBOOT_REQUESTED,
+			 "Reboot", true, -1},
+			{G_TYPE_NONE, NODE_STATE_REBOOT_ISSUED,
+			 "Reboot^", true, -1},
 			{G_TYPE_NONE, NODE_STATE_RES | NODE_STATE_IDLE,
 			 "Reserved", true, -1},
 			{G_TYPE_NONE, NODE_STATE_UNKNOWN, "Unknown", true, -1},

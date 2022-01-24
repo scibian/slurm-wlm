@@ -183,6 +183,7 @@ env_vars_t env_vars[] = {
   { "SBATCH_CLUSTER_CONSTRAINT", LONG_OPT_CLUSTER_CONSTRAINT },
   { "SBATCH_CLUSTERS", 'M' },
   { "SLURM_CLUSTERS", 'M' },
+  { "SBATCH_CONTAINER", LONG_OPT_CONTAINER },
   { "SBATCH_CONSTRAINT", 'C' },
   { "SBATCH_CORE_SPEC", 'S' },
   { "SBATCH_CPU_FREQ_REQ", LONG_OPT_CPU_FREQ },
@@ -223,6 +224,7 @@ env_vars_t env_vars[] = {
   { "SBATCH_SIGNAL", LONG_OPT_SIGNAL },
   { "SBATCH_SPREAD_JOB", LONG_OPT_SPREAD_JOB },
   { "SBATCH_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
+  { "SBATCH_THREADS_PER_CORE", LONG_OPT_THREADSPERCORE },
   { "SBATCH_TIMELIMIT", 't' },
   { "SBATCH_USE_MIN_NODES", LONG_OPT_USE_MIN_NODES },
   { "SBATCH_WAIT", 'W' },
@@ -288,6 +290,8 @@ extern char *process_options_first_pass(int argc, char **argv)
 		error("cli_filter plugin terminated with error");
 		exit(error_exit);
 	}
+
+	opt.submit_line = slurm_option_get_argv_str(argc, argv);
 
 	_opt_early_env();
 
@@ -463,21 +467,21 @@ extern char *get_argument(const char *file, int lineno, const char *line,
 	ptr = line;
 	*skipped = 0;
 
-	if ((argument = strcasestr(line, "packjob"))) {
+	/* skip whitespace */
+	while (isspace(*ptr) && *ptr != '\0') {
+		ptr++;
+	}
+
+	if (!xstrncasecmp(ptr, "packjob", 7) &&
+	    ((ptr[7] == '\0') || (isspace(ptr[7])))) {
 		if (!logged) {
 			info("Warning: the \"packjob\" component separator is being deprecated. Please, use \"hetjob\" instead.");
 			logged = true;
 		}
-		memcpy(argument, "       ", 7);
-	} else if ((argument = strcasestr(line, "hetjob"))) {
-		memcpy(argument, "      ", 6);
-	}
-
-	argument = NULL;
-
-	/* skip whitespace */
-	while (isspace(*ptr) && *ptr != '\0') {
-		ptr++;
+		memcpy((char *)ptr, "       ", 7);
+	} else if (!xstrncasecmp(ptr, "hetjob", 6) &&
+		   ((ptr[6] == '\0') || (isspace(ptr[6])))) {
+		memcpy((char *)ptr, "      ", 6);
 	}
 
 	if (*ptr == ':') {
@@ -587,10 +591,17 @@ static bool _opt_batch_script(const char * file, const void *body, int size,
 			continue;
 		}
 
+		/* skip whitespace */
+		while (isspace(*ptr) && *ptr != '\0') {
+			ptr++;
+		}
+
 		/* this line starts with the magic word */
-		if (strcasestr(line, "packjob")) {
+		if (!xstrncasecmp(ptr, "packjob", 7) &&
+		    ((ptr[7] == '\0') || (isspace(ptr[7])))) {
 			het_job_scan_inx++;
-		} else if (strcasestr(line, "hetjob")) {
+		} else if (!xstrncasecmp(ptr, "hetjob", 6) &&
+			   ((ptr[6] == '\0') || (isspace(ptr[6])))) {
 			het_job_scan_inx++;
 		}
 		if (het_job_scan_inx < het_job_inx) {
@@ -650,7 +661,7 @@ static int _set_options(int argc, char **argv)
 static bool _opt_verify(void)
 {
 	bool verified = true;
-	char *dist = NULL, *dist_lllp = NULL;
+	char *dist = NULL;
 	hostlist_t hl = NULL;
 	int hl_cnt = 0;
 
@@ -665,6 +676,10 @@ static bool _opt_verify(void)
 		error("Cannot specify both --burst-buffer and --bbf");
 		exit(error_exit);
 	}
+
+	if (opt.container && !getenv("SLURM_CONTAINER"))
+		setenvf(NULL, "SLURM_CONTAINER", "%s", opt.container);
+
 	/*
 	 * NOTE: this burst_buffer_file processing is intentionally different
 	 * than in salloc/srun, there is not a missing chunk of code here.
@@ -782,8 +797,6 @@ static bool _opt_verify(void)
 		verified = false;
 	}
 
-	validate_memory_options(&opt);
-
 	/* Check to see if user has specified enough resources to
 	 * satisfy the plane distribution with the specified
 	 * plane_size.
@@ -814,13 +827,14 @@ static bool _opt_verify(void)
 	if (opt.cpus_set)
 		 het_job_env.cpus_per_task = opt.cpus_per_task;
 
-	set_distribution(opt.distribution, &dist, &dist_lllp);
-	if (dist)
-		 het_job_env.dist = xstrdup(dist);
+	set_distribution(opt.distribution, &dist);
+	if (dist) {
+		/* set_distribution() xmalloc'd dist; just point at it. */
+		het_job_env.dist = dist;
+		dist = NULL;
+	}
 	if ((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE)
 		 het_job_env.plane_size = opt.plane_size;
-	if (dist_lllp)
-		 het_job_env.dist_lllp = xstrdup(dist_lllp);
 
 	/* massage the numbers */
 	if ((opt.nodes_set || opt.extra_set)				&&
@@ -981,11 +995,6 @@ static bool _opt_verify(void)
 
 	cpu_freq_set_env("SLURM_CPU_FREQ_REQ",
 			 opt.cpu_freq_min, opt.cpu_freq_max, opt.cpu_freq_gov);
-
-	if (opt.gpus_per_socket && (opt.sockets_per_node == NO_VAL)) {
-		error("--gpus-per-socket option requires --sockets-per-node specification");
-		exit(error_exit);
-	}
 
 	return verified;
 }
@@ -1170,6 +1179,7 @@ static void _help(void)
 "                              commands to.  Default is current cluster.\n"
 "                              Name of 'all' will submit to run on all clusters.\n"
 "                              NOTE: SlurmDBD must up.\n"
+"      --container             Path to OCI container bundle\n"
 "  -m, --distribution=type     distribution method for processes to nodes\n"
 "                              (type = block|cyclic|arbitrary)\n"
 "      --mail-type=type        notify on state change: BEGIN, END, FAIL or ALL\n"
@@ -1296,7 +1306,6 @@ extern void init_envs(sbatch_env_t *local_env)
 {
 	local_env->cpus_per_task	= NO_VAL;
 	local_env->dist			= NULL;
-	local_env->dist_lllp		= NULL;
 	local_env->mem_bind		= NULL;
 	local_env->mem_bind_sort	= NULL;
 	local_env->mem_bind_verbose	= NULL;
@@ -1342,12 +1351,6 @@ extern void set_envs(char ***array_ptr, sbatch_env_t *local_env,
 					 het_job_offset, "%s",
 					 local_env->mem_bind_verbose)) {
 		error("Can't set SLURM_MEM_BIND_VERBOSE env variable");
-	}
-	if (local_env->dist_lllp &&
-	    !env_array_overwrite_het_fmt(array_ptr, "SLURM_DIST_LLLP",
-					 het_job_offset, "%s",
-					 local_env->dist_lllp)) {
-		error("Can't set SLURM_DIST_LLLP env variable");
 	}
 	if (local_env->ntasks != NO_VAL) {
 		if (!env_array_overwrite_het_fmt(array_ptr, "SLURM_NPROCS",

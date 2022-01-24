@@ -304,6 +304,12 @@ void env_array_set_environment(char **env_array);
  */
 char **env_array_from_file(const char *filename);
 
+
+/*
+ * Write environment to specified file name.
+ */
+int env_array_to_file(const char *filename, const char **env_array);
+
 /*
  * Return an array of strings representing the specified user's default
  * environment variables following a two-prongged approach.
@@ -374,5 +380,12 @@ extern void set_env_from_opts(slurm_opt_t *opt, char ***dest,
  * e.g. FOO='a,b,c',BAR='d,e,f'
  */
 extern char *find_quote_token(char *tmp, char *sep, char **last);
+
+/*
+ * Propagate select user environment variables to the job.
+ * If ALL is among the specified export variables, propagate the entire user
+ * environment as well.
+ */
+extern void env_merge_filter(slurm_opt_t *opt, job_desc_msg_t *desc);
 
 #endif

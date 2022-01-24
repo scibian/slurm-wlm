@@ -78,12 +78,15 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "src/common/env.h"
+#include "src/common/fd.h"
 #include "src/common/forward.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/run_command.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/uid.h"
@@ -105,6 +108,7 @@
 #define RPC_PACK_MAX_AGE	30	/* Rebuild data over 30 seconds old */
 #define DUMP_RPC_COUNT 		25
 #define HOSTLIST_MAX_SIZE 	80
+#define MAIL_PROG_TIMEOUT 120*1000
 
 typedef enum {
 	DSH_NEW,        /* Request not yet started */
@@ -172,6 +176,7 @@ typedef struct queued_request {
 typedef struct mail_info {
 	char *user_name;
 	char *message;
+	char **environment; /* MailProg environment variables */
 } mail_info_t;
 
 static void _agent_defer(void);
@@ -199,7 +204,7 @@ static mail_info_t *_mail_alloc(void);
 static void  _mail_free(void *arg);
 static void *_mail_proc(void *arg);
 static char *_mail_type_str(uint16_t mail_type);
-static char **_build_mail_env(void);
+static char **_build_mail_env(job_record_t *job_ptr, uint32_t mail_type);
 
 static pthread_mutex_t defer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mail_mutex  = PTHREAD_MUTEX_INITIALIZER;
@@ -803,10 +808,7 @@ finished:	;
 	if (run_scheduler) {
 		run_scheduler = false;
 		/* below functions all have their own locking */
-		if (schedule(0))	{
-			schedule_job_save();
-			schedule_node_save();
-		}
+		schedule(false);
 	}
 	if ((agent_ptr->msg_type == REQUEST_PING) ||
 	    (agent_ptr->msg_type == REQUEST_HEALTH_CHECK) ||
@@ -1236,7 +1238,9 @@ static int _setup_requeue(agent_arg_t *agent_arg_ptr, thd_t *thread_ptr,
 		node_ptr = find_node_record(ret_data_info->node_name);
 #endif
 		if (node_ptr &&
-		    (IS_NODE_DOWN(node_ptr) || IS_NODE_POWER_SAVE(node_ptr))) {
+		    (IS_NODE_DOWN(node_ptr) ||
+		     IS_NODE_POWERING_DOWN(node_ptr) ||
+		     IS_NODE_POWERED_DOWN(node_ptr))) {
 			--(*count);
 		} else if (agent_arg_ptr) {
 			debug("%s: got the name %s to resend out of %d",
@@ -1301,7 +1305,8 @@ static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count)
 #endif
 			if (node_ptr &&
 			    (IS_NODE_DOWN(node_ptr) ||
-			     IS_NODE_POWER_SAVE(node_ptr))) {
+			     IS_NODE_POWERING_DOWN(node_ptr) ||
+			     IS_NODE_POWERED_DOWN(node_ptr))) {
 				/* Do not re-send RPC to DOWN node */
 				if (count)
 					count--;
@@ -1440,7 +1445,7 @@ extern void agent_trigger(int min_wait, bool mail_too)
 }
 
 /* agent_pack_pending_rpc_stats - pack counts of pending RPCs into a buffer */
-extern void agent_pack_pending_rpc_stats(Buf buffer)
+extern void agent_pack_pending_rpc_stats(buf_t *buffer)
 {
 	time_t now;
 	int i;
@@ -1822,6 +1827,8 @@ static void _purge_agent_args(agent_arg_t *agent_arg_ptr)
 			slurm_free_suspend_int_msg(agent_arg_ptr->msg_args);
 		else if (agent_arg_ptr->msg_type == REQUEST_LAUNCH_PROLOG)
 			slurm_free_prolog_launch_msg(agent_arg_ptr->msg_args);
+		else if (agent_arg_ptr->msg_type == REQUEST_REBOOT_NODES)
+			slurm_free_reboot_msg(agent_arg_ptr->msg_args);
 		else
 			xfree(agent_arg_ptr->msg_args);
 	}
@@ -1840,17 +1847,27 @@ static void _mail_free(void *arg)
 	if (mi) {
 		xfree(mi->user_name);
 		xfree(mi->message);
+		env_array_free(mi->environment);
 		xfree(mi);
 	}
 }
 
-static char **_build_mail_env(void)
+/*
+ * Initializes MailProg environment and sets main part of variables, however
+ * additional variables are set in _set_job_time and _set_job_term_info to avoid
+ * code duplication.
+ */
+static char **_build_mail_env(job_record_t *job_ptr, uint32_t mail_type)
 {
-	char **my_env = xcalloc(2, sizeof(char *));
+	char **my_env = job_common_env_vars(job_ptr,
+					    ((mail_type & MAIL_JOB_END) ||
+					     (mail_type & MAIL_JOB_FAIL)));
 
-	my_env[0] = xstrdup_printf("SLURM_CLUSTER_NAME=%s",
-	                           slurm_conf.cluster_name);
-	my_env[1] = NULL;
+	setenvf(&my_env, "SLURM_JOB_STATE", "%s",
+		job_state_string(job_ptr->job_state & JOB_STATE_BASE));
+
+	setenvf(&my_env, "SLURM_JOB_MAIL_TYPE", "%s",
+		_mail_type_str(mail_type));
 
 	return my_env;
 }
@@ -1859,30 +1876,20 @@ static char **_build_mail_env(void)
 static void *_mail_proc(void *arg)
 {
 	mail_info_t *mi = (mail_info_t *) arg;
-	pid_t pid;
+	int status;
+	char *result = NULL;
+	char *argv[5] = {
+		slurm_conf.mail_prog, "-s", mi->message, mi->user_name, NULL};
 
-	pid = fork();
-	if (pid < 0) {		/* error */
-		error("fork(): %m");
-	} else if (pid == 0) {	/* child */
-		int fd_0, fd_1, fd_2, i;
-		char **my_env = NULL;
-		my_env = _build_mail_env();
-		for (i = 0; i < 1024; i++)
-			(void) close(i);
-		if ((fd_0 = open("/dev/null", O_RDWR)) == -1)	// fd = 0
-			error("Couldn't open /dev/null: %m");
-		if ((fd_1 = dup(fd_0)) == -1)			// fd = 1
-			error("Couldn't do a dup on fd 1: %m");
-		if ((fd_2 = dup(fd_0)) == -1)			// fd = 2
-			error("Couldn't do a dup on fd 2 %m");
-		execle(slurm_conf.mail_prog, "mail", "-s", mi->message,
-		       mi->user_name, NULL, my_env);
-		error("Failed to exec %s: %m", slurm_conf.mail_prog);
-		_exit(1);
-	} else {		/* parent */
-		waitpid(pid, NULL, 0);
-	}
+	result = run_command("MailProg", slurm_conf.mail_prog, argv,
+			     mi->environment, MAIL_PROG_TIMEOUT, 0, &status);
+	if (status)
+		error("MailProg returned error, it's output was '%s'", result);
+	else if (result && (strlen(result) > 0))
+		debug("MailProg output was '%s'.", result);
+	else
+		debug2("No output from MailProg, exit code=%d", status);
+	xfree(result);
 	_mail_free(mi);
 	slurm_mutex_lock(&agent_cnt_mutex);
 	slurm_mutex_lock(&mail_mutex);
@@ -1926,16 +1933,19 @@ static char *_mail_type_str(uint16_t mail_type)
 }
 
 static void _set_job_time(job_record_t *job_ptr, uint16_t mail_type,
-			  char *buf, int buf_len)
+			  char *buf, int buf_len, char ***env)
 {
 	time_t interval = NO_VAL;
+	int msg_len;
 
 	buf[0] = '\0';
 	if ((mail_type == MAIL_JOB_BEGIN) && job_ptr->start_time &&
 	    job_ptr->details && job_ptr->details->submit_time) {
 		interval = job_ptr->start_time - job_ptr->details->submit_time;
 		snprintf(buf, buf_len, ", Queued time ");
-		secs2time_str(interval, buf+14, buf_len-14);
+		msg_len = 14;
+		secs2time_str(interval, buf+msg_len, buf_len-msg_len);
+		setenvf(env, "SLURM_JOB_QUEUED_TIME", "%s", buf+msg_len);
 		return;
 	}
 
@@ -1948,7 +1958,9 @@ static void _set_job_time(job_record_t *job_ptr, uint16_t mail_type,
 		} else
 			interval = job_ptr->end_time - job_ptr->start_time;
 		snprintf(buf, buf_len, ", Run time ");
-		secs2time_str(interval, buf+11, buf_len-11);
+		msg_len = 11;
+		secs2time_str(interval, buf+msg_len, buf_len-msg_len);
+		setenvf(env, "SLURM_JOB_RUN_TIME", "%s", buf+msg_len);
 		return;
 	}
 
@@ -1962,20 +1974,24 @@ static void _set_job_time(job_record_t *job_ptr, uint16_t mail_type,
 		} else
 			interval = time(NULL) - job_ptr->start_time;
 		snprintf(buf, buf_len, ", Run time ");
-		secs2time_str(interval, buf+11, buf_len-11);
+		msg_len = 11;
+		secs2time_str(interval, buf+msg_len, buf_len-msg_len);
+		setenvf(env, "SLURM_JOB_RUN_TIME", "%s", buf+msg_len);
 		return;
 	}
 
 	if ((mail_type == MAIL_JOB_STAGE_OUT) && job_ptr->end_time) {
 		interval = time(NULL) - job_ptr->end_time;
 		snprintf(buf, buf_len, " time ");
-		secs2time_str(interval, buf + 6, buf_len - 6);
+		msg_len = 11;
+		secs2time_str(interval, buf+msg_len, buf_len-msg_len);
+		setenvf(env, "SLURM_JOB_STAGE_OUT_TIME", "%s", buf+msg_len);
 		return;
 	}
 }
 
 static void _set_job_term_info(job_record_t *job_ptr, uint16_t mail_type,
-			       char *buf, int buf_len)
+			       char *buf, int buf_len, char ***env)
 {
 	buf[0] = '\0';
 
@@ -2004,17 +2020,27 @@ static void _set_job_term_info(job_record_t *job_ptr, uint16_t mail_type,
 				snprintf(buf, buf_len, ", %s, ExitCode [%d-%d]",
 					 state_string, exit_code_min,
 					 exit_code_max);
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MIN", "%d",
+					exit_code_min);
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MAX", "%d",
+					exit_code_max);
 			} else if (WIFSIGNALED(exit_status_max)) {
 				exit_code_max = WTERMSIG(exit_status_max);
 				snprintf(buf, buf_len, ", %s, MaxSignal [%d]",
 					 "Mixed", exit_code_max);
+				setenvf(env, "SLURM_JOB_TERM_SIGNAL_MAX", "%d",
+					exit_code_max);
 			} else if (WIFEXITED(exit_status_max)) {
 				exit_code_max = WEXITSTATUS(exit_status_max);
 				snprintf(buf, buf_len, ", %s, MaxExitCode [%d]",
 					 "Mixed", exit_code_max);
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MAX", "%d",
+					exit_code_max);
 			} else {
 				snprintf(buf, buf_len, ", %s",
 					 job_state_string(base_state));
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MAX", "%s",
+					"0");
 			}
 
 			if (job_ptr->array_recs->array_flags &
@@ -2028,9 +2054,13 @@ static void _set_job_term_info(job_record_t *job_ptr, uint16_t mail_type,
 				snprintf(buf, buf_len, ", %s, ExitCode %d",
 					 job_state_string(base_state),
 					 exit_code_max);
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MAX", "%d",
+					exit_code_max);
 			} else {
 				snprintf(buf, buf_len, ", %s",
 					 job_state_string(base_state));
+				setenvf(env, "SLURM_JOB_EXIT_CODE_MAX", "%s",
+					"0");
 			}
 		}
 	} else if (buf_len > 0) {
@@ -2067,8 +2097,11 @@ extern void mail_job_info(job_record_t *job_ptr, uint16_t mail_type)
 			job_ptr = master_job_ptr;
 	}
 
-	_set_job_time(job_ptr, mail_type, job_time, sizeof(job_time));
-	_set_job_term_info(job_ptr, mail_type, term_msg, sizeof(term_msg));
+	mi->environment = _build_mail_env(job_ptr, mail_type);
+	_set_job_time(job_ptr, mail_type, job_time, sizeof(job_time),
+		      &mi->environment);
+	_set_job_term_info(job_ptr, mail_type, term_msg, sizeof(term_msg),
+			   &mi->environment);
 	if (job_ptr->array_recs && !(job_ptr->mail_type & MAIL_ARRAY_TASKS)) {
 		mi->message = xstrdup_printf("Slurm Array Summary Job_id=%u_* (%u) Name=%s "
 					     "%s%s",
@@ -2090,7 +2123,7 @@ extern void mail_job_info(job_record_t *job_ptr, uint16_t mail_type)
 					     _mail_type_str(mail_type),
 					     job_time, term_msg);
 	}
-	info("email msg to %s: %s", mi->user_name, mi->message);
+	debug("email msg to %s: %s", mi->user_name, mi->message);
 
 	slurm_mutex_lock(&mail_mutex);
 	if (!mail_list)
@@ -2166,7 +2199,8 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 			return -1;	/* invalid request?? */
 		}
 		xfree(hostname);
-		if (!IS_NODE_POWER_SAVE(node_ptr) &&
+		if (!IS_NODE_POWERED_DOWN(node_ptr) &&
+		    !IS_NODE_POWERING_DOWN(node_ptr) &&
 		    !IS_NODE_NO_RESPOND(node_ptr)) {
 			nodes_ready = 1;
 		}
@@ -2244,7 +2278,7 @@ static void _reboot_from_ctld(agent_arg_t *agent_arg_ptr)
 {
 	char *argv[3], *pname;
 	pid_t child;
-	int i, rc, status = 0;
+	int rc, status = 0;
 
 	if (!agent_arg_ptr->hostlist) {
 		error("%s: hostlist is NULL", __func__);
@@ -2265,8 +2299,7 @@ static void _reboot_from_ctld(agent_arg_t *agent_arg_ptr)
 
 	child = fork();
 	if (child == 0) {
-		for (i = 0; i < 1024; i++)
-			(void) close(i);
+		closeall(0);
 		(void) setpgid(0, 0);
 		(void) execv(slurm_conf.reboot_program, argv);
 		_exit(1);

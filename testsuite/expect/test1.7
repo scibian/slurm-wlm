@@ -29,7 +29,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
 
 # NOTE: If you increase sleep_time, change job time limits as well
@@ -107,7 +106,7 @@ proc capture_debug_for_bug_10313 {} {
 #
 set timeout [expr $max_job_delay + $sleep_time]
 set timed_out 0
-set srun_pid [spawn $srun -t1 $bin_sleep $sleep_time]
+spawn $srun -t1 $bin_sleep $sleep_time
 expect {
 	-re "Incompatible Slurm plugin" {
 		capture_debug_for_bug_10313
@@ -129,22 +128,17 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$timed_out == 1} {
-	log_debug "Early termination is expected, no worries"
-} else {
-	log_error "Time limit not enforced"
-	set exit_code 1
-}
+
+subtest {$timed_out == 1} "Time limit should be enforced"
 
 set completions 0
-set srun_pid [spawn $srun -t4 $bin_sleep $sleep_time]
+spawn $srun -t4 $bin_sleep $sleep_time
 expect {
 	-re "time limit" {
 		set completions -1
@@ -166,7 +160,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -174,10 +167,5 @@ expect {
 		incr completions
 	}
 }
-if {$completions != 1} {
-	fail "Job failed to complete properly"
-}
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$completions == 1} "Job should complete properly"

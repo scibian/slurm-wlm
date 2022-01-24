@@ -253,9 +253,11 @@ typedef struct dbd_job_start_msg {
 	uint32_t array_task_pending;/* number of tasks still pending */
 	uint32_t assoc_id;	/* accounting association id */
 	char *   constraints;   /* features/constraints requested by job */
+	char *container;        /* OCI Container bundle path */
 	uint32_t db_flags;      /* flags about job */
 	uint64_t db_index;	/* index into the db for this job */
 	time_t   eligible_time;	/* time job becomes eligible to run */
+	char *env;              /* job environment in text form */
 	uint32_t gid;	        /* group ID */
 	uint32_t het_job_id;	/* ID of hetjob leader or 0 */
 	uint32_t het_job_offset; /* Hetjob component ID, zero-origin */
@@ -272,9 +274,13 @@ typedef struct dbd_job_start_msg {
 	uint32_t req_cpus;	/* count of req processors */
 	uint64_t req_mem;       /* requested minimum memory */
 	uint32_t resv_id;	/* reservation id */
+	char *script;           /* job_script in text form */
+	buf_t *script_buf;	/* job script as mmap buf */
 	time_t   start_time;	/* job start time */
 	uint32_t state_reason_prev; /* Last reason of blocking before job
 				     * started */
+	char *submit_line;      /* The command issued with all it's options in a
+				 * string */
 	time_t   submit_time;	/* job submit time */
 	uint32_t timelimit;	/* job timelimit */
 	uint32_t uid;	        /* user ID if associations are being used */
@@ -362,6 +368,7 @@ typedef struct dbd_step_comp_msg {
 typedef struct dbd_step_start_msg {
 	uint32_t assoc_id;	/* accounting association id */
 	uint64_t db_index;	/* index into the db for this job */
+	char *container;	/* OCI Container Bundle path */
 	char *   name;		/* step name */
 	char *   nodes;		/* hosts allocated to the step */
 	char *   node_inx;	/* bitmap index of hosts allocated to
@@ -374,6 +381,8 @@ typedef struct dbd_step_start_msg {
 	uint32_t req_cpufreq_max; /* requested maximum CPU frequency  */
 	uint32_t req_cpufreq_gov; /* requested CPU frequency governor */
 	slurm_step_id_t step_id;
+	char *submit_line;      /* The command issued with all it's options in a
+				 * string */
 	uint32_t task_dist;     /* layout method of step */
 	uint32_t total_tasks;	/* count of tasks for step */
 	char *tres_alloc_str;   /* Simple comma separated list of TRES */

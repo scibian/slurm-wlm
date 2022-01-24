@@ -26,18 +26,6 @@ of the Slurm contribs distribution follows:
      job_submit_license.lua - job_submit plugin that can set a job's use of
 		      system licenses
 
-  make-3.81.slurm.patch   [ Patch to "make" command for parallel build ]
-  make-4.0.slurm.patch    [ Patch to "make" command for parallel build ]
-     This patch will use Slurm to launch tasks across a job's current resource
-     allocation. Depending upon the size of modules to be compiled, this may
-     or may not improve performance. If most modules are thousands of lines
-     long, the use of additional resources should more than compensate for the
-     overhead of Slurm's task launch. Use with make's "-j" option within an
-     existing Slurm allocation. Outside of a Slurm allocation, make's behavior
-     will be unchanged. Designed for GNU make-3.81 or make-4.0.
-
-  mic                [Tools for use on Intel MIC processors]
-
   openlava/          [ Wrapper Scripts for OpenLava/LSF migration to Slurm ]
      Helpful scripts to make transition to Slurm easier from OpenLava or LSF.
      These scripts are easily updatable if there is functionality missing.
@@ -104,15 +92,7 @@ of the Slurm contribs distribution follows:
      A Slurm SPANK plugin that can be used to permit users to generated
      light-weight core files rather than full core files.
 
-  time_login.c       [ C program ]
-     This program will report how long a pseudo-login will take for specific
-     users or all users on the system. Users identified by this program
-     will not have their environment properly set for jobs submitted through
-     Moab. Build with "make -f /dev/null time_login" and execute as user root.
-
   torque/            [ Wrapper Scripts for Torque migration to Slurm ]
      Helpful scripts to make transition to Slurm easier from PBS or Torque.
      These scripts are easily updatable if there is functionality missing.
      NOTE: For the showq command, see https://github.com/pedmon/slurm_showq
-
-  web_apps/          [ Script to display job usage statistics and cluster utilization ]

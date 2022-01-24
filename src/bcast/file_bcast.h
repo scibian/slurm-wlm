@@ -40,13 +40,18 @@
 #include "src/common/macros.h"
 #include "src/common/slurm_protocol_defs.h"
 
+#define BCAST_FLAG_FORCE	 0x0001
+#define BCAST_FLAG_PRESERVE	 0x0002
+#define BCAST_FLAG_SEND_LIBS	 0x0004
+#define BCAST_FLAG_SHARED_OBJECT 0x0008
+
 struct bcast_parameters {
 	uint32_t block_size;
 	uint16_t compress;
+	char *exclude;
 	char *dst_fname;
 	int fanout;
-	bool force;
-	bool preserve;
+	uint16_t flags;
 	slurm_selected_step_t *selected_step;
 	char *src_fname;
 	uint32_t step_id;
@@ -61,11 +66,20 @@ typedef struct file_bcast_info {
 	char *fname;		/* filename */
 	gid_t gid;		/* gid of owner */
 	uint32_t job_id;	/* job id */
+	uint32_t step_id;	/* step id */
 	time_t last_update;	/* transfer last block received */
 	int received_blocks;	/* number of blocks received */
 	time_t start_time;	/* transfer start time */
 	uid_t uid;		/* uid of owner */
 } file_bcast_info_t;
+
+typedef struct {
+	uint32_t bcast_sent_cnt;		/* succeeded bcast count */
+	int bcast_total_cnt;			/* libs in list count */
+	struct bcast_parameters *params;	/* bcast parameters */
+	List excluded_paths;			/* excluded paths list */
+	int return_code;			/* bcast_file() rc */
+} foreach_shared_object_t;
 
 extern int bcast_file(struct bcast_parameters *params);
 

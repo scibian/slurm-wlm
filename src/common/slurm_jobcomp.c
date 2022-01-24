@@ -64,10 +64,10 @@ typedef struct slurm_jobcomp_ops {
  * declared for slurm_jobcomp_ops_t.
  */
 static const char *syms[] = {
-	"slurm_jobcomp_set_location",
-	"slurm_jobcomp_log_record",
-	"slurm_jobcomp_get_jobs",
-	"slurm_jobcomp_archive"
+	"jobcomp_p_set_location",
+	"jobcomp_p_log_record",
+	"jobcomp_p_get_jobs",
+	"jobcomp_p_archive"
 };
 
 static slurm_jobcomp_ops_t ops;
@@ -111,8 +111,7 @@ jobcomp_destroy_job(void *object)
 }
 
 
-extern int
-g_slurm_jobcomp_init( char *jobcomp_loc )
+extern int jobcomp_g_init(char *jobcomp_loc)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "jobcomp";
@@ -144,8 +143,7 @@ done:
 	return retval;
 }
 
-extern int
-g_slurm_jobcomp_fini(void)
+extern int jobcomp_g_fini(void)
 {
 	slurm_mutex_lock( &context_lock );
 
@@ -161,7 +159,7 @@ done:
 	return SLURM_SUCCESS;
 }
 
-extern int g_slurm_jobcomp_write(job_record_t *job_ptr)
+extern int jobcomp_g_write(job_record_t *job_ptr)
 {
 	int retval = SLURM_SUCCESS;
 
@@ -176,8 +174,7 @@ extern int g_slurm_jobcomp_write(job_record_t *job_ptr)
 	return retval;
 }
 
-extern List
-g_slurm_jobcomp_get_jobs(slurmdb_job_cond_t *job_cond)
+extern List jobcomp_g_get_jobs(slurmdb_job_cond_t *job_cond)
 {
 	List job_list = NULL;
 
@@ -190,8 +187,7 @@ g_slurm_jobcomp_get_jobs(slurmdb_job_cond_t *job_cond)
 	return job_list;
 }
 
-extern int
-g_slurm_jobcomp_archive(slurmdb_archive_cond_t *arch_cond)
+extern int jobcomp_g_archive(slurmdb_archive_cond_t *arch_cond)
 {
 	int rc = SLURM_ERROR;
 

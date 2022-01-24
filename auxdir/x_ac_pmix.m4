@@ -23,8 +23,8 @@ AC_DEFUN([X_AC_PMIX],
   AC_ARG_WITH(
     [pmix],
     AS_HELP_STRING(--with-pmix=PATH,Specify path to pmix installation(s).  Multiple version directories can be ':' delimited.),
-    [AS_IF([test "x$with_pmix" != xno],[with_pmix=`echo $with_pmix | sed "s/:/ /g"`
-      _x_ac_pmix_dirs="$with_pmix"])])
+    [AS_IF([test "x$with_pmix" != xno && test "x$with_pmix" != xyes],
+           [_x_ac_pmix_dirs="`echo $with_pmix | sed "s/:/ /g"`"])])
 
   if [test "x$with_pmix" = xno]; then
     AC_MSG_WARN([support for pmix disabled])
@@ -34,10 +34,13 @@ AC_DEFUN([X_AC_PMIX],
       [x_ac_cv_pmix_dir],
       [
         for d in $_x_ac_pmix_dirs; do
-          test -d "$d" || continue
-          test -d "$d/include" || continue
-          test -f "$d/include/pmix/pmix_common.h" || test -f $d/include/pmix_common.h || continue
-          test -f "$d/include/pmix_server.h" || continue
+          if [ ! test -d "$d/include" ] || [ ! test -f "$d/include/pmix_server.h" ] ||
+		[ ! test -f "$d/include/pmix/pmix_common.h" && ! test -f $d/include/pmix_common.h ]; then
+		if [ test -n "$with_pmix" && test "$with_pmix" != yes ]; then
+			AC_MSG_ERROR([No PMIX installation found in $d])
+		fi
+		continue
+	  fi
           for d1 in $_x_ac_pmix_libs; do
             test -d "$d/$d1" || continue
             _x_ac_pmix_cppflags_save="$CPPFLAGS"
@@ -77,7 +80,14 @@ AC_DEFUN([X_AC_PMIX],
               #endif
             ], [ ] )],
             [ _x_ac_pmix_version="2" ],
+	    [ AC_PREPROC_IFELSE([AC_LANG_PROGRAM([
+              #include<pmix_server.h>
+              #if (PMIX_VERSION_MAJOR != 1L)
+                #error "not version 1"
+              #endif
+            ], [ ] )],
 	    [ _x_ac_pmix_version="1" ] )
+            ])
             ])
             ])
 
@@ -141,23 +151,29 @@ AC_DEFUN([X_AC_PMIX],
               break
             fi
 
-            if [test "$_x_ac_pmix_version" = "4"]; then
-              if [test "$_x_ac_pmix_v4_found" = "1" ]; then
-                m4_define([err_pmix_v4],[error processing $x_ac_cv_pmix_libdir: PMIx v4.x])
-                AC_MSG_ERROR(err_pmix_v4 err_pmix)
-              fi
-              _x_ac_pmix_v4_found="1"
-              PMIX_V4_CPPFLAGS="-I$x_ac_cv_pmix_dir/include"
-              if test "$ac_with_rpath" = "yes"; then
-                PMIX_V4_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_pmix_libdir -L$x_ac_cv_pmix_libdir"
-              else
-                PMIX_V4_CPPFLAGS=$PMIX_V4_CPPFLAGS" -DPMIXP_V4_LIBPATH=\\\"$x_ac_cv_pmix_libdir\\\""
-              fi
-              # We don't want to search the other lib after we found it in
-              # one place or we might report a false duplicate if lib64 is a
-              # symlink of lib.
-              break
-            fi
+	    # V4 does not compile with Slurm as of this comment. When and if
+	    # it does in the future just uncomment this block below and v4
+	    # will be allowed to compile. We are waiting on PMIx to make this
+	    # happen. If v4 is important to you please contact them instead of
+	    # opening a bug with SchedMD.
+
+            # if [test "$_x_ac_pmix_version" = "4"]; then
+            #   if [test "$_x_ac_pmix_v4_found" = "1" ]; then
+            #     m4_define([err_pmix_v4],[error processing $x_ac_cv_pmix_libdir: PMIx v4.x])
+            #     AC_MSG_ERROR(err_pmix_v4 err_pmix)
+            #   fi
+            #   _x_ac_pmix_v4_found="1"
+            #   PMIX_V4_CPPFLAGS="-I$x_ac_cv_pmix_dir/include"
+            #   if test "$ac_with_rpath" = "yes"; then
+            #     PMIX_V4_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_pmix_libdir -L$x_ac_cv_pmix_libdir"
+            #   else
+            #     PMIX_V4_CPPFLAGS=$PMIX_V4_CPPFLAGS" -DPMIXP_V4_LIBPATH=\\\"$x_ac_cv_pmix_libdir\\\""
+            #   fi
+            #   # We don't want to search the other lib after we found it in
+            #   # one place or we might report a false duplicate if lib64 is a
+            #   # symlink of lib.
+            #   break
+            # fi
           done
         done
       ])
@@ -175,7 +191,11 @@ AC_DEFUN([X_AC_PMIX],
 
     if test $_x_ac_pmix_v1_found = 0 && test $_x_ac_pmix_v2_found = 0 &&
           test $_x_ac_pmix_v3_found = 0 && test $_x_ac_pmix_v4_found = 0; then
-      AC_MSG_WARN([unable to locate pmix installation])
+      if test -z "$with_pmix"; then
+        AC_MSG_WARN([unable to locate pmix installation])
+      else
+        AC_MSG_ERROR([unable to locate pmix installation])
+      fi
     fi
   fi
 

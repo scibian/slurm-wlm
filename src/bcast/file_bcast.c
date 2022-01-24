@@ -50,10 +50,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#if HAVE_LIBZ
-# include <zlib.h>
-#endif
-
 #if HAVE_LZ4
 # include <lz4.h>
 #endif
@@ -63,7 +59,9 @@
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/run_command.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_interface.h"
@@ -75,6 +73,11 @@
 
 #include "file_bcast.h"
 
+/*
+ * This should likely be detected at build time, but I have not
+ * seen any common systems where this is not the correct path.
+ */
+#define LDD_PATH "/usr/bin/ldd"
 #define MAX_THREADS      8	/* These can be huge messages, so
 				 * only run MAX_THREADS at one time */
 
@@ -89,8 +92,11 @@ static int   _file_bcast(struct bcast_parameters *params,
 			 file_bcast_msg_t *bcast_msg,
 			 job_sbcast_cred_msg_t *sbcast_cred);
 static int   _file_state(struct bcast_parameters *params);
+static List _fill_in_excluded_paths(struct bcast_parameters *params);
+static int _find_subpath(void *x, void *key);
+static int _foreach_shared_object(void *x, void *y);
 static int   _get_job_info(struct bcast_parameters *params);
-
+static int _get_lib_paths(char *filename, List lib_paths);
 
 static int _file_state(struct bcast_parameters *params)
 {
@@ -164,7 +170,7 @@ static int _file_bcast(struct bcast_parameters *params,
 	List ret_list = NULL;
 	ListIterator itr;
 	ret_data_info_t *ret_data_info = NULL;
-	int rc = 0, msg_rc;
+	int rc = SLURM_SUCCESS, msg_rc;
 	slurm_msg_t msg;
 
 	slurm_msg_t_init(&msg);
@@ -190,7 +196,7 @@ static int _file_bcast(struct bcast_parameters *params,
 		error("REQUEST_FILE_BCAST(%s): %s",
 		      ret_data_info->node_name,
 		      slurm_strerror(msg_rc));
-		rc = MAX(rc, msg_rc);
+		rc = msg_rc;
 	}
 	list_iterator_destroy(itr);
 	FREE_NULL_LIST(ret_list);
@@ -200,11 +206,17 @@ static int _file_bcast(struct bcast_parameters *params,
 
 /* load a buffer with data from the file to broadcast,
  * return number of bytes read, zero on end of file */
-static int _get_block_none(char **buffer, int *orig_len, bool *more)
+static int _get_block_none(char **buffer, int *orig_len, bool *more,
+			   bool file_start)
 {
 	static int64_t remaining = -1;
 	static void *position;
 	int size;
+
+	if (file_start) {
+		remaining = -1;
+		position = NULL;
+	}
 
 	if (remaining < 0) {
 		*buffer = xmalloc(block_len);
@@ -222,86 +234,21 @@ static int _get_block_none(char **buffer, int *orig_len, bool *more)
 	return size;
 }
 
-static int _get_block_zlib(struct bcast_parameters *params,
-			   char **buffer,
-			   int *orig_len,
-			   bool *more)
-{
-#if HAVE_LIBZ
-	static z_stream strm;
-	int chunk = (256 * 1024);
-	int flush = Z_NO_FLUSH;
-
-	static int64_t remaining = -1;
-	static int max_out;
-	static void *position;
-	int chunk_remaining, out_remaining, chunk_bite, size = 0;
-
-	/* allocate deflate state, compress each block independently */
-	strm.zalloc = Z_NULL;
-	strm.zfree = Z_NULL;
-	strm.opaque = Z_NULL;
-	strm.avail_in = 0;
-	strm.next_in = Z_NULL;
-	if (deflateInit(&strm, Z_DEFAULT_COMPRESSION) != Z_OK) {
-		error("File compression configuration error,"
-		      "sending uncompressed file.");
-		params->compress = 0;
-		return _get_block_none(buffer, orig_len, more);
-	}
-
-	/* first pass through, initialize */
-	if (remaining < 0) {
-		remaining = f_stat.st_size;
-		max_out = deflateBound(&strm, block_len);
-		*buffer = xmalloc(max_out);
-		position = src;
-	}
-
-	chunk_remaining = MIN(block_len, remaining);
-	out_remaining = max_out;
-	strm.next_out = (void *) *buffer;
-	while (chunk_remaining) {
-		strm.next_in = position;
-		chunk_bite = MIN(chunk, chunk_remaining);
-		strm.avail_in = chunk_bite;
-		strm.avail_out = out_remaining;
-
-		if (chunk_remaining <= chunk)
-			flush = Z_FINISH;
-
-		if (deflate(&strm, flush) == Z_STREAM_ERROR)
-			fatal("Error compressing file");
-
-		position += chunk_bite;
-		size += chunk_bite;
-		chunk_remaining -= chunk_bite;
-		out_remaining = strm.avail_out;
-	}
-	remaining -= size;
-
-	(void) deflateEnd(&strm);
-
-	*orig_len = size;
-	*more = (remaining) ? true : false;
-	return (max_out - out_remaining);
-#else
-	info("zlib compression not supported, sending uncompressed file.");
-	params->compress = 0;
-	return _get_block_none(buffer, orig_len, more);
-#endif
-}
-
 static int _get_block_lz4(struct bcast_parameters *params,
 			  char **buffer,
 			  int32_t *orig_len,
-			  bool *more)
+			  bool *more, bool file_start)
 {
 #if HAVE_LZ4
 	int size_out;
 	static int64_t remaining = -1;
 	static void *position;
 	int size;
+
+	if (file_start) {
+		remaining = -1;
+		position = NULL;
+	}
 
 	if (!f_stat.st_size) {
 		*more = false;
@@ -331,7 +278,7 @@ static int _get_block_lz4(struct bcast_parameters *params,
 #else
 	info("lz4 compression not supported, sending uncompressed file.");
 	params->compress = 0;
-	return _get_block_none(buffer, orig_len, more);
+	return _get_block_none(buffer, orig_len, more, file_start);
 #endif
 
 }
@@ -339,22 +286,21 @@ static int _get_block_lz4(struct bcast_parameters *params,
 static int _next_block(struct bcast_parameters *params,
 		       char **buffer,
 		       int32_t *orig_len,
-		       bool *more)
+		       bool *more, bool file_start)
 {
 	switch (params->compress) {
 	case COMPRESS_OFF:
-		return _get_block_none(buffer, orig_len, more);
-	case COMPRESS_ZLIB:
-		return _get_block_zlib(params, buffer, orig_len, more);
+		return _get_block_none(buffer, orig_len, more, file_start);
 	case COMPRESS_LZ4:
-		return _get_block_lz4(params, buffer, orig_len, more);
+		return _get_block_lz4(params, buffer, orig_len, more,
+				      file_start);
 	}
 
 	/* compression type not recognized */
 	error("File compression type %u not supported,"
 	      " sending uncompressed file.", params->compress);
 	params->compress = 0;
-	return _get_block_none(buffer, orig_len, more);
+	return _get_block_none(buffer, orig_len, more, file_start);
 }
 
 /* read and broadcast the file */
@@ -366,7 +312,7 @@ static int _bcast_file(struct bcast_parameters *params)
 	int32_t orig_len = 0;
 	uint64_t size_uncompressed = 0, size_compressed = 0;
 	uint32_t time_compression = 0;
-	bool more = true;
+	bool more = true, file_start = true;
 	DEF_TIMERS;
 
 	if (params->block_size)
@@ -377,7 +323,12 @@ static int _bcast_file(struct bcast_parameters *params)
 	memset(&bcast_msg, 0, sizeof(file_bcast_msg_t));
 	bcast_msg.fname		= params->dst_fname;
 	bcast_msg.block_no	= 1;
-	bcast_msg.force		= params->force;
+	if (params->flags & BCAST_FLAG_FORCE)
+		bcast_msg.flags |= FILE_BCAST_FORCE;
+	if (params->flags & BCAST_FLAG_SHARED_OBJECT)
+		bcast_msg.flags |= FILE_BCAST_SO;
+	else if (params->flags & BCAST_FLAG_SEND_LIBS)
+		bcast_msg.flags |= FILE_BCAST_EXE;
 	bcast_msg.modes		= f_stat.st_mode;
 	bcast_msg.uid		= f_stat.st_uid;
 	bcast_msg.user_name	= uid_to_string(f_stat.st_uid);
@@ -385,7 +336,7 @@ static int _bcast_file(struct bcast_parameters *params)
 	bcast_msg.file_size	= f_stat.st_size;
 	bcast_msg.cred          = sbcast_cred->sbcast_cred;
 
-	if (params->preserve) {
+	if (params->flags & BCAST_FLAG_PRESERVE) {
 		bcast_msg.atime     = f_stat.st_atime;
 		bcast_msg.mtime     = f_stat.st_mtime;
 	}
@@ -398,8 +349,9 @@ static int _bcast_file(struct bcast_parameters *params)
 	while (more) {
 		START_TIMER;
 		bcast_msg.block_len = _next_block(params, &buffer, &orig_len,
-						  &more);
+						  &more, file_start);
 		END_TIMER;
+		file_start = false;
 		time_compression += DELTA_TIMER;
 		size_uncompressed += orig_len;
 		size_compressed += bcast_msg.block_len;
@@ -409,12 +361,12 @@ static int _bcast_file(struct bcast_parameters *params)
 		bcast_msg.uncomp_len = orig_len;
 		bcast_msg.block = buffer;
 		if (!more)
-			bcast_msg.last_block = 1;
+			bcast_msg.flags |= FILE_BCAST_LAST_BLOCK;
 
 		rc = _file_bcast(params, &bcast_msg, sbcast_cred);
 		if (rc != SLURM_SUCCESS)
 			break;
-		if (bcast_msg.last_block)
+		if (bcast_msg.flags & FILE_BCAST_LAST_BLOCK)
 			break;	/* end of file */
 		bcast_msg.block_no++;
 		bcast_msg.block_offset += orig_len;
@@ -438,64 +390,6 @@ static int _bcast_file(struct bcast_parameters *params)
 	return rc;
 }
 
-
-static int _decompress_data_zlib(file_bcast_msg_t *req)
-{
-#if HAVE_LIBZ
-	z_stream strm;
-	int chunk = (256 * 1024); /* must match common/file_bcast.c */
-	int ret;
-	int flush = Z_NO_FLUSH, have;
-	unsigned char zlib_out[chunk];
-	int64_t buf_in_offset = 0;
-	int64_t buf_out_offset = 0;
-	char *out_buf;
-
-	/* Perform decompression */
-	strm.zalloc = Z_NULL;
-	strm.zfree = Z_NULL;
-	strm.opaque = Z_NULL;
-	strm.avail_in = 0;
-	strm.next_in = Z_NULL;
-	ret = inflateInit(&strm);
-	if (ret != Z_OK)
-		return -1;
-
-	out_buf = xmalloc(req->uncomp_len);
-
-	while (req->block_len > buf_in_offset) {
-		strm.next_in = (unsigned char *) (req->block + buf_in_offset);
-		strm.avail_in = MIN(chunk, req->block_len - buf_in_offset);
-		buf_in_offset += strm.avail_in;
-		if (buf_in_offset >= req->block_len)
-			flush = Z_FINISH;
-		do {
-			strm.avail_out = chunk;
-			strm.next_out = zlib_out;
-			ret = inflate(&strm, flush);
-			switch (ret) {
-			case Z_NEED_DICT:
-				/* ret = Z_DATA_ERROR;      and fall through */
-			case Z_DATA_ERROR:
-			case Z_MEM_ERROR:
-				(void)inflateEnd(&strm);
-				xfree(out_buf);
-				return -1;
-			}
-			have = chunk - strm.avail_out;
-			memcpy(out_buf + buf_out_offset, zlib_out, have);
-			buf_out_offset += have;
-		} while (strm.avail_out == 0);
-	}
-	(void)inflateEnd(&strm);
-	xfree(req->block);
-	req->block = out_buf;
-	req->block_len = buf_out_offset;
-	return 0;
-#else
-	return -1;
-#endif
-}
 
 static int _decompress_data_lz4(file_bcast_msg_t *req)
 {
@@ -522,6 +416,208 @@ static int _decompress_data_lz4(file_bcast_msg_t *req)
 #endif
 }
 
+/*
+ * IN: char pointer with the filename.
+ * IN/OUT: List of shared object direct and indirect dependencies.
+ *
+ * RET:	SLURM_[SUCCESS|ERROR]
+ */
+static int _get_lib_paths(char *filename, List lib_paths)
+{
+	char **ldd_argv;
+	char *result = NULL;
+	char *lpath = NULL, *lpath_end = NULL;
+	char *tok = NULL, *save_ptr = NULL;
+	int status = SLURM_ERROR, rc = SLURM_SUCCESS;
+
+	if (!filename || !lib_paths) {
+		rc = SLURM_ERROR;
+		goto fini;
+	}
+
+	ldd_argv = xcalloc(3, sizeof(char *));
+	ldd_argv[0] = xstrdup("ldd");
+	ldd_argv[1] = xstrdup(filename);
+	/* Already zero'd out after xcalloc(), but make it NULL explicitly */
+	ldd_argv[2] = NULL;
+
+	/*
+	 * NOTE: If using ldd ends up causing problems it is possible to
+	 * leverage using other alternatives for ELF inspection like dlinfo(),
+	 * libelf/gelf libraries or others. This would require recursing in
+	 * search for non-direct dependencies and knowing where to find them by
+	 * doing something similar to the search order of the dynamic linker.
+	 */
+	result = run_command("ldd", LDD_PATH, ldd_argv, NULL, 5000, 0, &status);
+	free_command_argv(ldd_argv);
+
+	if (status) {
+		error("Cannot autodetect libraries for '%s' with ldd command",
+		      filename);
+		rc = SLURM_ERROR;
+		goto fini;
+	} else if (!result) {
+		verbose("ldd exited normally but returned no libraries");
+		rc = SLURM_SUCCESS;
+		goto fini;
+	}
+
+	/*
+	 * FIXME: does not handle spaces in library paths correctly.
+	 * (Although libtool itself doesn't love that either.)
+	 */
+	tok = strtok_r(result, "\n", &save_ptr);
+	while (tok) {
+		if ((lpath = xstrstr(tok, "/"))) {
+			if ((lpath_end = xstrstr(lpath, " "))) {
+				*lpath_end = '\0';
+				list_append(lib_paths, xstrdup(lpath));
+			}
+		}
+		tok = strtok_r(NULL, "\n", &save_ptr);
+	}
+
+fini:
+	xfree(result);
+	return rc;
+}
+
+/*
+ * ListFindF for excl_paths.
+ *
+ * IN:	x, list data with excluded path
+ * IN:	key, shared object path to check
+ *
+ * RET: return of subpath()
+ */
+static int _find_subpath(void *x, void *key)
+{
+	char *exclude_path = x;
+	char *so_path = key;
+
+	return subpath(so_path, exclude_path);
+}
+
+static int _bcast_library(struct bcast_parameters *params)
+{
+	int rc;
+
+	if ((rc = _file_state(params)) != SLURM_SUCCESS)
+		return rc;
+	if ((rc = _bcast_file(params)) != SLURM_SUCCESS)
+		return rc;
+
+	return rc;
+}
+
+/*
+ * ListForF to attempt to bcast a shared object.
+ *
+ * IN:	x, list data
+ * IN:	y, arguments
+ * RET:	-1 on error, 0 on success
+ */
+static int _foreach_shared_object(void *x, void *y)
+{
+	foreach_shared_object_t *args = (foreach_shared_object_t *) y;
+	char *library = (char *) x;
+
+	if (list_find_first(args->excluded_paths, _find_subpath, library)) {
+		verbose("Skipping broadcast of excluded '%s'", library);
+		return 0;
+	}
+
+	args->params->src_fname = library;
+	args->params->dst_fname = xbasename(library);
+
+	args->return_code = _bcast_library(args->params);
+
+	if (args->return_code != SLURM_SUCCESS) {
+		error("Broadcast of '%s' failed", args->params->src_fname);
+		return -1;
+	}
+
+	verbose("Broadcast of shared object '%s' to destination cache directory succeeded (%d/%d)",
+		args->params->src_fname, ++args->bcast_sent_cnt,
+		args->bcast_total_cnt);
+
+	return 0;
+}
+
+/*
+ * Validates params->exclude and fills in a List off it.
+ *
+ * IN: bcast_parameters
+ *
+ * RET: List of excluded paths.
+ * NOTE: Caller should free the returned list.
+ */
+static List _fill_in_excluded_paths(struct bcast_parameters *params)
+{
+	char *tmp_str = NULL, *tok = NULL, *saveptr = NULL;
+	List excl_paths = NULL;
+
+	excl_paths = list_create(xfree_ptr);
+	if (!xstrcasecmp(params->exclude, "none"))
+		return excl_paths;
+
+	tmp_str = xstrdup(params->exclude);
+	tok = strtok_r(tmp_str, ",", &saveptr);
+	while (tok) {
+		if (tok[0] != '/')
+			error("Ignorning non-absolute excluded path: '%s'",
+			      tok);
+		else
+			list_append(excl_paths, xstrdup(tok));
+		tok = strtok_r(NULL, ",", &saveptr);
+	}
+
+	xfree(tmp_str);
+	return excl_paths;
+}
+
+/*
+ * IN/OUT: bcast_parameters pointer
+ *
+ * RET: SLURM_[ERROR|SUCCESS]
+ */
+static int _bcast_shared_objects(struct bcast_parameters *params)
+{
+	foreach_shared_object_t args;
+	int rc;
+	List lib_paths = NULL, excl_paths = NULL;
+	char *save_dst = params->dst_fname;
+	char *save_src = params->src_fname;
+
+	memset(&args, 0, sizeof(args));
+	lib_paths = list_create(xfree_ptr);
+	if ((rc = _get_lib_paths(params->src_fname, lib_paths)) !=
+	    SLURM_SUCCESS)
+		goto fini;
+
+	if (!(args.bcast_total_cnt = list_count(lib_paths))) {
+		verbose("No shared objects detected for '%s'",
+			params->src_fname);
+		goto fini;
+	}
+
+	params->flags |= BCAST_FLAG_SHARED_OBJECT;
+	excl_paths = _fill_in_excluded_paths(params);
+	args.params = params;
+	args.excluded_paths = excl_paths;
+
+	list_for_each(lib_paths, _foreach_shared_object, &args);
+	rc = args.return_code;
+	params->flags &= ~BCAST_FLAG_SHARED_OBJECT;
+	params->dst_fname = save_dst;
+	params->src_fname = save_src;
+
+fini:
+	FREE_NULL_LIST(excl_paths);
+	FREE_NULL_LIST(lib_paths);
+	return rc;
+}
+
 extern int bcast_file(struct bcast_parameters *params)
 {
 	int rc;
@@ -531,6 +627,9 @@ extern int bcast_file(struct bcast_parameters *params)
 	if ((rc = _get_job_info(params)) != SLURM_SUCCESS)
 		return rc;
 	if ((rc = _bcast_file(params)) != SLURM_SUCCESS)
+		return rc;
+	if ((params->flags & BCAST_FLAG_SEND_LIBS) &&
+	    ((rc = _bcast_shared_objects(params)) != SLURM_SUCCESS))
 		return rc;
 
 /*	slurm_free_sbcast_cred_msg(sbcast_cred); */
@@ -542,8 +641,6 @@ extern int bcast_decompress_data(file_bcast_msg_t *req)
 	switch (req->compress) {
 	case COMPRESS_OFF:
 		return 0;
-	case COMPRESS_ZLIB:
-		return _decompress_data_zlib(req);
 	case COMPRESS_LZ4:
 		return _decompress_data_lz4(req);
 	}

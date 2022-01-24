@@ -98,6 +98,7 @@
 #include "dist_tasks.h"
 #include "job_test.h"
 #include "select_cons_res.h"
+#include "../cons_common/gres_select_filter.h"
 
 /* Enables module specific debugging */
 #define _DEBUG 0
@@ -137,8 +138,8 @@ static uint32_t _gres_sock_job_test(List job_gres_list, List node_gres_list,
 
 /*
  * Determine how many CPUs on the node can be used by this job
- * IN job_gres_list  - job's gres_list built by gres_plugin_job_state_validate()
- * IN node_gres_list - node's gres_list built by gres_plugin_node_config_validate()
+ * IN job_gres_list  - job's gres_list built by gres_job_state_validate()
+ * IN node_gres_list - node's gres_list built by gres_node_config_validate()
  * IN use_total_gres - if set then consider all gres resources as available,
  *		       and none are commited to running jobs
  * IN cpu_bitmap     - Identification of available CPUs (NULL if no restriction)
@@ -168,10 +169,10 @@ static uint32_t _gres_sock_job_test(List job_gres_list, List node_gres_list,
 	    ((sock_cnt = select_node_record[node_i].sockets) < 2) ||
 	    (sock_cnt <= s_p_n)) {
 		/* No socket filtering possible, use all sockets */
-		return gres_plugin_job_test(job_gres_list, node_gres_list,
-					    use_total_gres, core_bitmap,
-					    core_start_bit, core_end_bit,
-					    job_id, node_name, false);
+		return gres_job_test(job_gres_list, node_gres_list,
+				     use_total_gres, core_bitmap,
+				     core_start_bit, core_end_bit,
+				     job_id, node_name, false);
 	}
 
 	/* Build local data structures */
@@ -205,10 +206,15 @@ static uint32_t _gres_sock_job_test(List job_gres_list, List node_gres_list,
 	for (i = 0; i <= (sock_cnt - s_p_n); i++) {
 		for (j = 1; j < s_p_n; j++)
 			bit_or(sock_core_bitmap[i], sock_core_bitmap[i+j]);
-		avail_cores[i] = gres_plugin_job_test(job_gres_list,
-					node_gres_list, use_total_gres,
-					sock_core_bitmap[i], core_start_bit,
-					core_end_bit, job_id, node_name, false);
+		avail_cores[i] = gres_job_test(job_gres_list,
+					       node_gres_list,
+					       use_total_gres,
+					       sock_core_bitmap[i],
+					       core_start_bit,
+					       core_end_bit,
+					       job_id,
+					       node_name,
+					       false);
 	}
 
 	/* Identify the best sockets */
@@ -1710,7 +1716,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 		}
 	}
 
-	/* Determine lowest level switch satisfying request with best fit 
+	/* Determine lowest level switch satisfying request with best fit
 	 * in respect of the specific required nodes if specified
 	 */
 	best_fit_inx = -1;
@@ -1736,7 +1742,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 		 * lower level switch OR
 		 * same level but tighter switch (less resource waste) OR
 		 * 2 required switches of same level and nodes count
-		 * but the latter accumulated CPUs count is bigger than 
+		 * but the latter accumulated CPUs count is bigger than
 		 * the former one
 		 */
 		if ((best_fit_inx == -1) ||
@@ -1832,12 +1838,12 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 		/* accumulate resources from this leaf on a best-fit basis */
 		while ((max_nodes > 0) && ((rem_nodes > 0) || (rem_cpus > 0))) {
 			/* pick a node using a best-fit approach */
-			/* if rem_cpus < 0, then we will search for nodes 
+			/* if rem_cpus < 0, then we will search for nodes
 			 * with lower free cpus nb first
 			 */
 			int suff = 0, bfsuff = 0, bfloc = 0 , bfsize = 0;
 			int ca_bfloc = 0;
-			for (i = first, j = 0; ((i <= last) && (first >= 0)); 
+			for (i = first, j = 0; ((i <= last) && (first >= 0));
 			     i++, j++) {
 				if (cpus_array[j] == 0)
 					continue;
@@ -1856,7 +1862,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 			/* no node found, break */
 			if (bfsize == 0)
 				break;
-			
+
 			/* clear resources of this node from the switch */
 			bit_clear(switches_bitmap[best_fit_location], bfloc);
 			switches_node_cnt[best_fit_location]--;
@@ -1896,7 +1902,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
 			rem_cpus -= bfsize;
 			if (job_ptr->req_switch != 1)
 				break;
-		}		
+		}
 
 		/* free best-switch nodes available cpus array */
 		xfree(cpus_array);
@@ -2101,19 +2107,19 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 
 	disable_binding = job_ptr->bit_flags & GRES_DISABLE_BIND;
 	if (!disable_binding) {
-		gres_plugin_job_core_filter(job_ptr->gres_list, gres_list,
+		gres_select_filter_cons_res(job_ptr->gres_list_req, gres_list,
 					    test_only, core_map, core_start_bit,
 					    core_end_bit, node_ptr->name);
 	}
 	if (disable_binding || (s_p_n == NO_VAL)) {
-		gres_cores = gres_plugin_job_test(job_ptr->gres_list,
-						  gres_list, test_only,
-						  core_map, core_start_bit,
-						  core_end_bit, job_ptr->job_id,
-						  node_ptr->name,
-						  disable_binding);
+		gres_cores = gres_job_test(job_ptr->gres_list_req,
+					   gres_list, test_only,
+					   core_map, core_start_bit,
+					   core_end_bit, job_ptr->job_id,
+					   node_ptr->name,
+					   disable_binding);
 	} else {
-		gres_cores = _gres_sock_job_test(job_ptr->gres_list,
+		gres_cores = _gres_sock_job_test(job_ptr->gres_list_req,
 						 gres_list, test_only,
 						 core_map, core_start_bit,
 						 core_end_bit, job_ptr->job_id,

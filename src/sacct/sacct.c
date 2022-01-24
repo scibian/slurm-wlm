@@ -35,6 +35,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/common/slurm_auth.h"
+
 #include "sacct.h"
 
 /*
@@ -59,6 +61,7 @@ print_field_t fields[] = {
 	{10, "Cluster", print_fields_str, PRINT_CLUSTER},
 	{14, "Comment", print_fields_str, PRINT_COMMENT},
 	{19, "Constraints", print_fields_str, PRINT_CONSTRAINTS},
+	{19, "Container", print_fields_str, PRINT_CONTAINER},
 	{14, "ConsumedEnergy", print_fields_str, PRINT_CONSUMED_ENERGY},
 	{17, "ConsumedEnergyRaw", print_fields_uint64,
 	 PRINT_CONSUMED_ENERGY_RAW},
@@ -122,6 +125,7 @@ print_field_t fields[] = {
 	{19, "Start", print_fields_date, PRINT_START},
 	{10, "State", print_fields_str, PRINT_STATE},
 	{19, "Submit", print_fields_date, PRINT_SUBMIT},
+	{20, "SubmitLine", print_fields_str, PRINT_SUBMIT_LINE},
 	{10, "Suspended", print_fields_time_from_secs, PRINT_SUSPENDED},
 	{10, "SystemCPU", print_fields_str, PRINT_SYSTEMCPU},
 	{15, "SystemComment", print_fields_str, PRINT_SYSTEM_COMMENT},
@@ -158,6 +162,7 @@ int main(int argc, char **argv)
 {
 	enum {
 		SACCT_LIST,
+		SACCT_LIST_DATA,
 		SACCT_HELP,
 		SACCT_USAGE
 	} op;
@@ -173,19 +178,26 @@ int main(int argc, char **argv)
 
 	if (params.opt_help)
 		op = SACCT_HELP;
+	else if (params.mimetype)
+		op = SACCT_LIST_DATA;
 	else
 		op = SACCT_LIST;
 
 
 	switch (op) {
 	case SACCT_LIST:
-		print_fields_header(print_fields_list);
+		if (!(params.job_cond->flags & JOBCOND_FLAG_SCRIPT) &&
+		    !(params.job_cond->flags & JOBCOND_FLAG_ENV))
+			print_fields_header(print_fields_list);
 		if (get_data() == SLURM_ERROR)
 			exit(errno);
 		if (params.opt_completion)
 			do_list_completion();
 		else
 			do_list();
+		break;
+	case SACCT_LIST_DATA:
+		dump_data(argc, argv);
 		break;
 	case SACCT_HELP:
 		do_help();
@@ -197,5 +209,13 @@ int main(int argc, char **argv)
 	}
 
 	sacct_fini();
+
+#if MEMORY_LEAK_DEBUG
+	data_fini();
+	slurm_auth_fini();
+	slurm_conf_destroy();
+	log_fini();
+#endif
+
 	return (rc);
 }

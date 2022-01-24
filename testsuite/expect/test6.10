@@ -33,24 +33,22 @@
 source ./globals
 
 set default_part  ""
-set exit_code     0
-set file_in       "test$test_id.input"
+set file_in       "$test_dir/input"
 set job_id        0
-
-proc cleanup {} {
-	global bin_rm file_in
-
-	exec $bin_rm -f $file_in
-}
 
 if {[param_contains [get_config_param "JobSubmitPlugins"] "all_partitions"]} {
 	skip "This test is incompatible with JobSubmitPlugins=all_partitions"
 }
 
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
+
 #
 # Execute 'id' to determine my login name
 #
-
 set my_login [get_my_user_name]
 
 #
@@ -61,23 +59,7 @@ make_bash_script $file_in "$srun $bin_sleep $max_job_delay"
 #
 # Spawn a sbatch job
 #
-set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null --hold -t5 $file_in]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $sbatch_pid
-		fail "srun not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	fail "Batch submit failure"
-}
+set job_id [submit_job -fail "--output=/dev/null --error=/dev/null --hold -t5 $file_in"]
 
 #
 # Identify this job's partition
@@ -109,9 +91,7 @@ expect {
 	}
 	-re "Cancel job_id=$job_id .* partition= .*\? " {
 		send "n\r"
-		log_error "scancel partition filter failure"
-		set exit_code 1
-		exp_continue
+		fail "scancel partition filter failure"
 	}
 	timeout {
 		fail "scancel not responding"
@@ -129,9 +109,7 @@ expect {
 	}
 	-re "Cancel job_id=.* partition= .*\? " {
 		send "n\r"
-		log_error "scancel partition filter failure"
-		set exit_code 1
-		exp_continue
+		fail "scancel partition filter failure"
 	}
 	timeout {
 		fail "scancel not responding"
@@ -165,10 +143,4 @@ expect {
 		wait
 	}
 }
-if {$matches != 0} {
-	fail "scancel user filter failed"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$matches == 0} "Kill jobs using user filter"

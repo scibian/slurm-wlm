@@ -26,14 +26,13 @@
 source ./globals
 source ./globals_accounting
 
-set exit_code   0
 set timeout	60
 
-set ta1         "test$test_id-account.1"
-set tq1         "test$test_id-qos.1"
+set ta1         "$test_name-account.1"
+set tq1         "$test_name-qos.1"
 
-set p1          "test$test_id-part.1"
-set p2          "test$test_id-part.2"
+set p1          "$test_name-part.1"
+set p2          "$test_name-part.2"
 
 set jobid1 0
 set jobid2 0
@@ -72,10 +71,7 @@ proc clean_assocs {} {
 proc cleanup {} {
 	global jobid1 jobid2 jobid3 jobid4 config_file
 
-	cancel_job $jobid1
-	cancel_job $jobid2
-	cancel_job $jobid3
-	cancel_job $jobid4
+	cancel_job [list $jobid1 $jobid2 $jobid3 $jobid4]
 
 	clean_assocs
 
@@ -91,7 +87,7 @@ proc part_cpu_cnt { partition } {
 	expect {
 		-re "($number)(K?)\/($number)(K?)" {
 			set cpu_cnt $expect_out(3,string)
-			if {[string compare $expect_out(4,string) ""]} {
+			if {$expect_out(4,string) ne ""} {
 				set cpu_cnt [expr $cpu_cnt * 1024]
 			}
 
@@ -108,7 +104,6 @@ proc part_cpu_cnt { partition } {
 }
 
 proc sub_job { args state } {
-
 	global number sbatch test_id bin_sleep
 
 	set jobid 0
@@ -133,15 +128,14 @@ proc sub_job { args state } {
 		fail "Did not get sbatch jobid"
 	}
 
-	if {[wait_for_job $jobid $state] != 0} {
-		fail "Error starting job $jobid"
-	}
+	wait_for_job -fail $jobid $state
 
 	return $jobid
 }
 
 proc sprio_args { args regex match_cnt } {
 	global sprio
+
 	set matches 0
 
 	spawn $sprio {*}$args
@@ -223,7 +217,7 @@ proc create_part { name nodes prio } {
 	}
 
 	if {$found == 0} {
-		fail "scontrol did not create partition $name"
+		fail "scontrol did not create partition ($name)"
 	}
 }
 

@@ -15,7 +15,7 @@ START_TEST(invalid_protocol)
 	uint32_t x;
 
 	slurmdb_event_cond_t *cond_rec = xmalloc(sizeof(slurmdb_event_cond_t));
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 
 	pack32(22, buf);
 	set_buf_offset(buf, 0);
@@ -84,7 +84,7 @@ static void _test_cond_eq(uint16_t protocol_version,
 			 slurmdb_event_cond_t *pack)
 {
 	int rc;
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 	slurmdb_pack_event_cond(pack, protocol_version, buf);
 	set_buf_offset(buf, 0);
 
@@ -113,23 +113,29 @@ static void _test_cond_eq(uint16_t protocol_version,
 	slurmdb_destroy_event_cond(unpack);
 }
 
-START_TEST(pack_2002_event_cond)
+static void _run_test(uint16_t protocol_version)
 {
 	slurmdb_event_cond_t pack = {0};
-	uint16_t protocol_version = SLURM_20_02_PROTOCOL_VERSION;
 
 	_init_event_cond(&pack);
 	_test_cond_eq(protocol_version, &pack);
 }
+
+START_TEST(pack_current_event_cond)
+{
+	_run_test(SLURM_PROTOCOL_VERSION);
+}
 END_TEST
 
-START_TEST(pack_MIN_event_cond)
+START_TEST(pack_last_event_cond)
 {
-	slurmdb_event_cond_t pack = {0};
-	uint16_t protocol_version = SLURM_MIN_PROTOCOL_VERSION;
+	_run_test(SLURM_ONE_BACK_PROTOCOL_VERSION);
+}
+END_TEST
 
-	_init_event_cond(&pack);
-	_test_cond_eq(protocol_version, &pack);
+START_TEST(pack_min_event_cond)
+{
+	_run_test(SLURM_MIN_PROTOCOL_VERSION);
 }
 END_TEST
 
@@ -142,8 +148,9 @@ Suite *suite(void)
 	Suite *s = suite_create("Pack slurmdb_event_cond_t");
 	TCase *tc_core = tcase_create("Pack slurmdb_event_cond_t");
 	tcase_add_test(tc_core, invalid_protocol);
-	tcase_add_test(tc_core, pack_2002_event_cond);
-	tcase_add_test(tc_core, pack_MIN_event_cond);
+	tcase_add_test(tc_core, pack_current_event_cond);
+	tcase_add_test(tc_core, pack_last_event_cond);
+	tcase_add_test(tc_core, pack_min_event_cond);
 	suite_add_tcase(s, tc_core);
 	return s;
 }

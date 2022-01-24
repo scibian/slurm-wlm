@@ -27,11 +27,10 @@
 ############################################################################
 source ./globals
 
-set exit_code        0
 set node_list        ""
 set highest_cpu_cnt  0
 set default_part     [default_partition]
-set script           "test$test_id\_script"
+set script           "$test_dir/job_script"
 set job_id           0
 set node_l           ""
 set cpu_l_cnt        0
@@ -39,19 +38,7 @@ set node_m           ""
 set cpu_m_cnt        0
 set node_h           ""
 set cpu_h_cnt        0
-set test_part        "test$test_id\_part"
-
-proc cleanup {} {
-	global job_id scontrol test_part bin_rm script
-
-	cancel_job $job_id
-	exec $scontrol delete partition=$test_part
-	exec $bin_rm -fr $script
-}
-
-make_bash_script $script "
-sleep 10
-"
+set test_part        "${test_name}_part"
 
 if {![is_super_user]} {
     skip "This test can't be run without being a super user of the cluster"
@@ -59,31 +46,21 @@ if {![is_super_user]} {
 	skip "This test is incompatible SelectTypeParameters=CR_ONE_TASK_PER_CORE"
 }
 
-proc sub_job { cpu_cnt part } {
-	global sbatch script job_id number
+proc cleanup {} {
+	global job_id scontrol test_part
 
-	set job_id 0
-	spawn $sbatch -t1 -H -p$part -n$cpu_cnt -o/dev/null $script
-	expect {
-		-re "Submitted batch job ($number)" {
-			set job_id $expect_out(1,string)
-			exp_continue
-		}
-		timeout {
-			fail "sbatch is not responding"
-		}
-		eof {
-			wait
-		}
-	}
+	cancel_job $job_id
+	run_command "$scontrol delete partition=$test_part"
+}
 
-	if {!$job_id} {
-		log_error "Job was not submitted"
-	}
+proc sub_job {cpu_cnt part} {
+	global script job_id
+
+	set job_id [submit_job -fail "-t1 -H -p$part -n$cpu_cnt -o/dev/null $script"]
 }
 
 proc check_node_cnt { exp_nodes } {
-	global squeue exit_code
+	global squeue
 
 	set match 0
 	spawn $squeue -h -o%D
@@ -100,10 +77,7 @@ proc check_node_cnt { exp_nodes } {
 		}
 	}
 
-	if {!$match} {
-		log_error "Job did not make proper node estimation, expected = $exp_nodes"
-		set exit_code 1
-	}
+	subtest {$match} "Job should make proper node estimation" "expected = $exp_nodes"
 }
 
 proc update_job { job_id part } {
@@ -125,6 +99,7 @@ proc test_and_check { job_id part exp_nodes } {
 	check_node_cnt $exp_nodes
 }
 
+make_bash_script $script "sleep 10"
 
 # only works when job is in hold. should also work when jobs are waiting
 
@@ -263,8 +238,6 @@ log_debug "L:$node_l:$cpu_l_cnt M:$node_m:$cpu_m_cnt H:$node_h:$cpu_h_cnt"
 if {$cpu_l_cnt == $cpu_h_cnt} {
 	log_debug "The rest of this test expects to have three different nodes \
 		each with different cpu counts -- finishing test now."
-
-	exec $bin_rm -fr $script
 	pass
 }
 
@@ -295,7 +268,7 @@ expect {
 }
 
 if {!$match} {
-	fail "Partition $test_part was not created"
+	fail "Partition ($test_part) was not created"
 }
 
 # Choose a cpu count greater then highest cpu node
@@ -345,7 +318,3 @@ set exp_nodes [expr ($cpu_test_cnt - 1)/$cpu_h_cnt + 1]
 sub_job $cpu_test_cnt $default_part
 sleep 4
 test_and_check $job_id $test_part $exp_nodes
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}

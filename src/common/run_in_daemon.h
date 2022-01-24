@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  run_in_deamon.h - functions to determine if you are a given daemon or not
+ *  run_in_daemon.h - functions to determine if you are a given daemon or not
  *****************************************************************************
  *  Copyright (C) 2020 SchedMD LLC
  *  Written by Danny Auble <da@schedmd.com>
@@ -51,6 +51,9 @@ extern bool running_in_daemon(void);
 
 /* check if running in the slurmctld */
 extern bool running_in_slurmctld(void);
+
+/* call this if you don't want the cached value for running_in_slurmctld */
+extern bool running_in_slurmctld_reset(void);
 
 /* check if running in the slurmd */
 extern bool running_in_slurmd(void);

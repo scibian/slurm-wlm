@@ -10,17 +10,12 @@ REF = usage.txt
 SRCS = \
 	conmgr.h conmgr.c \
 	http.c http.h \
-	http_content_type.c http_content_type.h \
-	http_url.c http_url.h \
-	openapi.c openapi.h \
 	operations.c operations.h \
 	slurmrestd.c \
-	rest_auth.h rest_auth.c \
-	xjson.h xjson.c \
-	xyaml.h xyaml.c
+	rest_auth.h rest_auth.c
 
 if WITH_SLURMRESTD
-AM_CPPFLAGS = -I$(top_srcdir) $(JSON_CPPFLAGS) $(HTTP_PARSER_CPPFLAGS)
+AM_CPPFLAGS = -I$(top_srcdir) $(HTTP_PARSER_CPPFLAGS)
 BIN_REF = $(REF:.txt=.bino)
 BIN_REF2 = $(BIN_REF:.json=.bino)
 
@@ -59,7 +54,6 @@ slurmrestd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 libslurmrest_ref_la_LIBADD = libslurmrest_ref.lo
 slurmrestd_LDADD = \
 	$(convenience_libs) $(HTTP_PARSER_LDFLAGS) \
-	$(YAML_LDFLAGS) $(JSON_LDFLAGS) \
 	libslurmrest_ref.la
 endif
 force:

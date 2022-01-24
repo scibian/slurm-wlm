@@ -799,7 +799,7 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 \****************************************************************************/
 extern void slurmdbd_free_buffer(void *x)
 {
-	Buf buffer = (Buf) x;
+	buf_t *buffer = (buf_t *) x;
 	if (buffer)
 		free_buf(buffer);
 }
@@ -1074,12 +1074,17 @@ extern void slurmdbd_free_job_start_msg(void *in)
 		xfree(msg->account);
 		xfree(msg->array_task_str);
 		xfree(msg->constraints);
+		xfree(msg->container);
+		xfree(msg->env);
 		xfree(msg->gres_used);
 		xfree(msg->mcs_label);
 		xfree(msg->name);
 		xfree(msg->nodes);
 		xfree(msg->node_inx);
 		xfree(msg->partition);
+		xfree(msg->script);
+		FREE_NULL_BUFFER(msg->script_buf);
+		xfree(msg->submit_line);
 		xfree(msg->tres_alloc_str);
 		xfree(msg->tres_req_str);
 		xfree(msg->wckey);
@@ -1192,9 +1197,11 @@ extern void slurmdbd_free_step_complete_msg(dbd_step_comp_msg_t *msg)
 extern void slurmdbd_free_step_start_msg(dbd_step_start_msg_t *msg)
 {
 	if (msg) {
+		xfree(msg->container);
 		xfree(msg->name);
 		xfree(msg->nodes);
 		xfree(msg->node_inx);
+		xfree(msg->submit_line);
 		xfree(msg->tres_alloc_str);
 		xfree(msg);
 	}

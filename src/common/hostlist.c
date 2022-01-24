@@ -143,12 +143,6 @@ do {						\
 /* max number of ranges that will be processed between brackets */
 #define MAX_RANGES   (256*1024)    /* 256K ranks */
 
-/* size of internal hostname buffer (+ some slop), hostnames will probably
- * be truncated if longer than MAXHOSTNAMELEN */
-#ifndef MAXHOSTNAMELEN
-#define MAXHOSTNAMELEN    64
-#endif
-
 /* ----[ Internal Data Structures ]---- */
 
 /* hostname type: A convenience structure used in parsing single hostnames */
@@ -2239,7 +2233,7 @@ int hostlist_delete_host(hostlist_t hl, const char *hostname)
 
 static char *_hostrange_string(hostrange_t *hr, int depth)
 {
-	char buf[MAXHOSTNAMELEN + 16];
+	char buf[HOST_NAME_MAX + 16];
 	const int size = sizeof(buf);
 	int  len = snprintf(buf, size, "%s", hr->prefix);
 	int dims = slurmdb_setup_cluster_name_dims();
@@ -2276,6 +2270,8 @@ char * hostlist_nth(hostlist_t hl, int n)
 	if (!hl)
 		return NULL;
 	LOCK_HOSTLIST(hl);
+	xassert(n >= 0);
+
 	count = 0;
 	for (i = 0; i < hl->nranges; i++) {
 		int num_in_range = hostrange_count(hl->hr[i]);
@@ -2300,7 +2296,7 @@ int hostlist_delete_nth(hostlist_t hl, int n)
 	if (!hl)
 		return -1;
 	LOCK_HOSTLIST(hl);
-	xassert(n >= 0 && n <= hl->nhosts);
+	xassert(n >= 0 && n < hl->nhosts);
 
 	count = 0;
 
@@ -3344,7 +3340,7 @@ static void _iterator_advance_range(hostlist_iterator_t i)
 
 char *hostlist_next_dims(hostlist_iterator_t i, int dims)
 {
-	char buf[MAXHOSTNAMELEN + 16];
+	char buf[HOST_NAME_MAX + 16];
 	const int size = sizeof(buf);
 	int len = 0;
 

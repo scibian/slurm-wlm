@@ -94,6 +94,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Plugin initialization failed"			},
 	{ SLURM_UNKNOWN_FORWARD_ADDR,
 	  "Can't find an address, check slurm.conf"		},
+	{ SLURM_COMMUNICATIONS_MISSING_SOCKET_ERROR,
+	  "Unexpected missing socket error"			},
 
 	/* communication failures to/from slurmctld */
 	{ SLURMCTLD_COMMUNICATIONS_CONNECTION_ERROR,
@@ -380,6 +382,32 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Reservations can't have users and groups specified, only one or the other"},
 	{ ESLURM_PARTITION_ASSOC,
 	  "Multiple partition job request not supported when a partition is set in the association" },
+	{ ESLURM_IN_STANDBY_USE_BACKUP,
+	  "Controller is in standby mode, try a different controller"},
+
+	/* SPANK errors */
+	{ ESPANK_ERROR,
+	  "Generic error"					},
+	{ ESPANK_BAD_ARG,
+	  "Bad argument"					},
+	{ ESPANK_NOT_TASK,
+	  "Not in task context"					},
+	{ ESPANK_ENV_EXISTS,
+	  "Environment variable exists"				},
+	{ ESPANK_ENV_NOEXIST,
+	  "No such environment variable"			},
+	{ ESPANK_NOSPACE,
+	  "Buffer too small"					},
+	{ ESPANK_NOT_REMOTE,
+	  "Valid only in remote context"			},
+	{ ESPANK_NOEXIST,
+	  "Id/PID does not exist on this node"			},
+	{ ESPANK_NOT_EXECD,
+	  "Lookup by PID requested, but no tasks running"	},
+	{ ESPANK_NOT_AVAIL,
+	  "Item not available from this callback"		},
+	{ ESPANK_NOT_LOCAL,
+	  "Valid only in local or allocator context"		},
 
 	/* slurmd error codes */
 	{ ESLURMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -442,6 +470,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Job step is not currently suspended"                 },
 	{ ESLURMD_INVALID_SOCKET_NAME_LEN,
 	  "Unix socket name exceeded maximum length"		},
+	{ ESLURMD_CONTAINER_RUNTIME_INVALID,
+	  "Container runtime not configured or invalid"		},
 
 	/* slurmd errors in user batch job */
 	{ ESCRIPT_CHDIR_FAILED,
@@ -527,6 +557,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Time limit specification required, but not provided"	},
 	{ ESLURM_INVALID_KNL,
 	  "Invalid KNL configuration (MCDRAM or NUMA option)"	},
+	{ ESLURM_PLUGIN_INVALID,
+	  "Plugin has invalid format or unable to be loaded"	},
+	{ ESLURM_PLUGIN_INCOMPLETE,
+	  "Plugin missing required symbol or function"		},
 
 	/* REST errors */
 	{ ESLURM_REST_INVALID_QUERY,
@@ -547,7 +581,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Unable to convert Data type"},
 	{ ESLURM_DATA_REGEX_COMPILE,
 	  "Unable to compile regex"},
-
+	{ ESLURM_DATA_UNKNOWN_MIME_TYPE,
+	  "MIME type is unknown to any loaded plugins"},
+	{ ESLURM_DATA_TOO_LARGE,
+	  "DATA too large to handle"},
 };
 
 /*

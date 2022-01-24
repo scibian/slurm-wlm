@@ -58,7 +58,7 @@
 				      "bool converted: %s -> %s == %s",     \
 				      str ? str : "(null)", (bres ? "true" : "false"), \
 				      (b ? "true" : "false"));              \
-	} while (0);
+	} while (0)
 
 static data_for_each_cmd_t
 	_find_dict_bool(const char *key, const data_t *data, void *arg)
@@ -355,8 +355,8 @@ int main(void)
 	log_opts.stderr_level = LOG_LEVEL_DEBUG5;
 	log_init("data-test", log_opts, 0, NULL);
 
-	if(data_init_static()) {
-		error("data_init_static() failed");
+	if (data_init("", NULL)) {
+		error("data_init() failed");
 		return EXIT_FAILURE;
 	}
 
@@ -366,6 +366,6 @@ int main(void)
 	number_failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
 
-	data_destroy_static();
+	data_fini();
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

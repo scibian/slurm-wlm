@@ -64,6 +64,10 @@ enum {
 	REMOTE_DEPEND
 };
 
+extern void main_sched_init(void);
+
+extern void main_sched_fini(void);
+
 /*
  * build_feature_list - Translate a job's feature string into a feature_list
  * IN  details->features
@@ -208,25 +212,14 @@ extern void prolog_slurmctld(job_record_t *job_ptr);
  */
 extern int reboot_job_nodes(job_record_t *job_ptr);
 
-/* If a job can run in multiple partitions, make sure that the one 
+/* If a job can run in multiple partitions, make sure that the one
  * actually used is first in the string. Needed for job state save/restore */
 extern void rebuild_job_part_list(job_record_t *job_ptr);
 
 /*
- * schedule - attempt to schedule all pending jobs
- *	pending jobs for each partition will be scheduled in priority
- *	order until a request fails
- * IN full_queue - test the full queue, or only default_queue_depth jobs
- * RET count of jobs scheduled
- * Note: If the scheduler has executed recently, rather than executing again
- *	right away, a thread will be spawned to execute later in an effort
- *	to reduce system overhead.
- * Note: We re-build the queue every time. Jobs can not only be added
- *	or removed from the queue, but have their priority or partition
- *	changed with the update_job RPC. In general nodes will be in priority
- *	order (by submit time), so the sorting should be pretty fast.
+ * Queue requests of job scheduler
  */
-extern int schedule(bool full_queue);
+extern void schedule(bool full_queue);
 
 /*
  * set_job_elig_time - set the eligible time for pending jobs once their
@@ -289,8 +282,8 @@ extern bool update_job_dependency_list(job_record_t *job_ptr,
  * 			same array as reject_array_job, then set job_ptr's
  * 			reason to match reject_array_job.
  */
-extern void fill_array_reasons(struct job_record *job_ptr,
-			       struct job_record *reject_arr_job);
+extern void fill_array_reasons(job_record_t *job_ptr,
+			       job_record_t *reject_arr_job);
 
 
 /* Add a job_queue_rec_t to job_queue */

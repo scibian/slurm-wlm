@@ -30,8 +30,8 @@
 source ./globals
 
 set authorized    1
-set exit_code     0
-set file_in       "test$test_id.input"
+set script_name   "job_script"
+set file_in       "$test_dir/$script_name"
 set job_id        0
 set new_prio      1
 set read_priority -1
@@ -50,21 +50,19 @@ make_bash_script $file_in "$srun $bin_sleep 60"
 #
 # Submit a job so we have something to work with
 #
-set srun_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t1 --hold $file_in]
+spawn $sbatch --output=/dev/null --error=/dev/null -t1 --hold $file_in
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-exec $bin_rm -f $file_in
 if {$job_id == 0} {
 	fail "srun failed to initiate job"
 }
@@ -85,10 +83,7 @@ expect {
 		wait
 	}
 }
-if {$read_priority != 0} {
-	log_error "Hold priority error"
-	set exit_code 1
-}
+subtest {$read_priority == 0} "Verify job's original hold priority"
 
 #
 # Change that job's priority
@@ -112,7 +107,7 @@ expect {
 #
 log_info "Test 1"
 set no_jobs 0
-spawn $scontrol update JobName=$file_in UserID=1 Priority=$new_prio
+spawn $scontrol update JobName=$script_name UserID=1 Priority=$new_prio
 expect {
 	-re "No jobs with" {
 		set no_jobs 1
@@ -125,10 +120,7 @@ expect {
 		wait
 	}
 }
-if {$no_jobs == 0} {
-	log_error "No error with bad JobName/UserID specification"
-	set exit_code 1
-}
+subtest {$no_jobs != 0} "Verify bad JobName/UserID error"
 
 #
 # Change that job's priority
@@ -136,7 +128,7 @@ if {$no_jobs == 0} {
 log_info "Test 2"
 set no_jobs 0
 set my_uid  [get_my_uid]
-spawn $scontrol update JobName=$file_in UserID=$my_uid Priority=$new_prio
+spawn $scontrol update JobName=$script_name UserID=$my_uid Priority=$new_prio
 expect {
 	-re "No jobs with" {
 		set no_jobs 1
@@ -149,10 +141,7 @@ expect {
 		wait
 	}
 }
-if {$no_jobs != 0} {
-	log_error "Error with valid JobName/UserID specification"
-	set exit_code 1
-}
+subtest {$no_jobs == 0} "Verify absence of bad JobName/UserID error"
 
 #
 # Validate that job's new priority
@@ -170,10 +159,4 @@ expect {
 		wait
 	}
 }
-if {$read_priority == 0} {
-	fail "scontrol priority change error"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$read_priority != 0} "Validate the job's new priority"

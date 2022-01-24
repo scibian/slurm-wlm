@@ -39,7 +39,7 @@
 #include "sacct.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/parse_time.h"
-#include "slurm.h"
+#include "slurm/slurm.h"
 
 print_field_t *field = NULL;
 int curr_inx = 1;
@@ -50,14 +50,17 @@ char outbuf[FORMAT_STRING_SIZE];
 #define SACCT_TRES_MIN  0x0004
 #define SACCT_TRES_TOT  0x0008
 
-static char *_elapsed_time_helper(uint64_t secs, uint32_t usecs)
+static char *_elapsed_time(uint64_t secs, uint64_t usecs)
 {
 	uint64_t days, hours, minutes, seconds, subsec = 0;
 	char *str = NULL;
 
-	while (usecs >= 1E6) {
-		secs++;
-		usecs -= 1E6;
+	if (secs == NO_VAL64)
+		return NULL;
+
+	if (usecs >= 1E6) {
+		secs += usecs / 1E6;
+		usecs = usecs % (int)1E6;
 	}
 	if (usecs > 0) {
 		/* give me 3 significant digits to tack onto the sec */
@@ -81,20 +84,6 @@ static char *_elapsed_time_helper(uint64_t secs, uint32_t usecs)
 		str = xstrdup_printf("00:%2.2"PRIu64":%2.2"PRIu64"",
 				     minutes, seconds);
 	return str;
-}
-
-static char *_elapsed_time(uint32_t secs, uint32_t usecs)
-{
-	if (secs == NO_VAL)
-		return NULL;
-	return _elapsed_time_helper(secs, usecs);
-}
-
-static char *_elapsed_time64(uint64_t secs, uint32_t usecs)
-{
-	if (secs == NO_VAL64)
-		return NULL;
-	return _elapsed_time_helper(secs, usecs);
 }
 
 static char *_find_qos_name_from_list(List qos_list, int qosid)
@@ -259,84 +248,6 @@ static uint64_t _get_tres_cnt(int type, void *object, int tres_pos,
 	return tmp_uint64;
 }
 
-/* Translate bitmap representation from hex to decimal format, replacing
- * array_task_str. */
-static void _xlate_task_str(slurmdb_job_rec_t *job_ptr)
-{
-	static int bitstr_len = -1;
-	int buf_size, len;
-	int i, i_first, i_last, i_prev, i_step = 0;
-	bitstr_t *task_bitmap;
-	char *in_buf = job_ptr->array_task_str;
-	char *out_buf = NULL;
-
-	if (!in_buf)
-		return;
-
-	i = strlen(in_buf);
-	if (i < 3 || in_buf[1] != 'x')
-		return;
-
-	task_bitmap = bit_alloc(i * 4);
-	(void)bit_unfmt_hexmask(task_bitmap, in_buf);
-
-	/* Check first for a step function */
-	i_first = bit_ffs(task_bitmap);
-	i_last  = bit_fls(task_bitmap);
-	if (((i_last - i_first) > 10) &&
-	    !bit_test(task_bitmap, i_first + 1)) {
-		bool is_step = true;
-		i_prev = i_first;
-		for (i = i_first + 1; i <= i_last; i++) {
-			if (!bit_test(task_bitmap, i))
-				continue;
-			if (i_step == 0) {
-				i_step = i - i_prev;
-			} else if ((i - i_prev) != i_step) {
-				is_step = false;
-				break;
-			}
-			i_prev = i;
-		}
-		if (is_step) {
-			xstrfmtcat(out_buf, "%d-%d:%d",
-				   i_first, i_last, i_step);
-		}
-	}
-
-	if (bitstr_len > 0) {
-		/* Print the first bitstr_len bytes of the bitmap string */
-		buf_size = bitstr_len;
-		out_buf = xmalloc(buf_size);
-		bit_fmt(out_buf, buf_size, task_bitmap);
-		len = strlen(out_buf);
-		if (len > (buf_size - 3))
-			for (i = 0; i < 3; i++)
-				out_buf[buf_size - 2 - i] = '.';
-	} else {
-		/* Print the full bitmap's string representation.
-		 * For huge bitmaps this can take roughly one minute,
-		 * so let the client do the work */
-		buf_size = bit_size(task_bitmap) * 8;
-		while (1) {
-			out_buf = xmalloc(buf_size);
-			bit_fmt(out_buf, buf_size, task_bitmap);
-			len = strlen(out_buf);
-			if ((len > 0) && (len < (buf_size - 32)))
-				break;
-			xfree(out_buf);
-			buf_size *= 2;
-		}
-	}
-
-	if (job_ptr->array_max_tasks)
-		xstrfmtcat(out_buf, "%c%u", '%', job_ptr->array_max_tasks);
-
-	bit_free(task_bitmap);
-	xfree(job_ptr->array_task_str);
-	job_ptr->array_task_str = out_buf;
-}
-
 static void _print_tres_field(char *tres_in, char *nodes, bool convert,
 			      uint32_t tres_flags)
 {
@@ -442,8 +353,8 @@ extern void print_fields(type_t type, void *object)
 						    confirm the values
 						    coming in are
 						    NO_VAL64 */
-		uint32_t tmp_uint32 = NO_VAL, tmp2_uint32 = NO_VAL;
-		uint64_t tmp_uint64 = NO_VAL64;
+		uint32_t tmp_uint32 = NO_VAL;
+		uint64_t tmp_uint64 = NO_VAL64, tmp2_uint64 = NO_VAL64;
 
 		memset(&outbuf, 0, sizeof(outbuf));
 		switch (field->type) {
@@ -578,7 +489,7 @@ extern void print_fields(type_t type, void *object)
 				type, object, TRES_CPU, SACCT_TRES_AVE);
 			if (tmp_uint64 != NO_VAL64) {
 				tmp_uint64 /= CPU_TIME_ADJ;
-				tmp_char = _elapsed_time64(tmp_uint64, 0);
+				tmp_char = _elapsed_time(tmp_uint64, 0);
 			}
 
 			field->print_routine(field,
@@ -714,6 +625,23 @@ extern void print_fields(type_t type, void *object)
 				tmp_char = job->constraints;
 				break;
 			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_CONTAINER:
+			switch(type) {
+			case JOB:
+				tmp_char = job->container;
+				break;
+			case JOBSTEP:
+				tmp_char = step->container;
+				break;
 			case JOBCOMP:
 			default:
 				tmp_char = NULL;
@@ -1026,33 +954,20 @@ extern void print_fields(type_t type, void *object)
 			if (type == JOBSTEP)
 				job = step->job_ptr;
 
-			if (job) {
-				if (job->array_task_str) {
-					_xlate_task_str(job);
-					xstrfmtcat(id, "%u_[%s]",
-						   job->array_job_id,
-						   job->array_task_str);
-				} else if (job->array_task_id != NO_VAL) {
-					xstrfmtcat(id, "%u_%u",
-						   job->array_job_id,
-						   job->array_task_id);
-				} else if (job->het_job_id) {
-					xstrfmtcat(id, "%u+%u", job->het_job_id,
-						   job->het_job_offset);
-				} else {
-					xstrfmtcat(id, "%u", job->jobid);
-				}
-			}
+			if (job)
+				id = slurmdb_get_job_id_str(job);
 
 			switch (type) {
 			case JOB:
-				tmp_char = xstrdup(id);
+				tmp_char = id;
+				id = NULL;
 				break;
 			case JOBSTEP:
-				tmp_int = 64;
+				tmp_int = FORMAT_STRING_SIZE;
 				tmp_char = xmalloc(tmp_int);
 				tmp_int2 =
 					snprintf(tmp_char, tmp_int, "%s.", id);
+				xfree(id);
 				tmp_int -= tmp_int2;
 				log_build_step_id_str(&step->step_id,
 						      tmp_char + tmp_int2,
@@ -1070,7 +985,6 @@ extern void print_fields(type_t type, void *object)
 			field->print_routine(field,
 					     tmp_char,
 					     (curr_inx == field_count));
-			xfree(id);
 			xfree(tmp_char);
 			break;
 		case PRINT_JOBIDRAW:
@@ -1079,15 +993,16 @@ extern void print_fields(type_t type, void *object)
 				tmp_char = xstrdup_printf("%u", job->jobid);
 				break;
 			case JOBSTEP:
-				id = xmalloc(FORMAT_STRING_SIZE);
-				log_build_step_id_str(&step->step_id, id,
-						      sizeof(id),
-						      (STEP_ID_FLAG_NO_PREFIX |
-						       STEP_ID_FLAG_NO_JOB));
-				tmp_char = xstrdup_printf("%u.%s",
-							  step->job_ptr->jobid,
-							  id);
-				xfree(id);
+				tmp_int = FORMAT_STRING_SIZE;
+				tmp_char = xmalloc(tmp_int);
+				tmp_int2 = snprintf(tmp_char, tmp_int, "%u.",
+						    step->job_ptr->jobid);
+				tmp_int -= tmp_int2;
+				log_build_step_id_str(&step->step_id,
+						      tmp_char + tmp_int2,
+						      tmp_int,
+						      STEP_ID_FLAG_NO_PREFIX |
+						      STEP_ID_FLAG_NO_JOB);
 				break;
 			case JOBCOMP:
 				tmp_char = xstrdup_printf("%u",
@@ -1626,7 +1541,7 @@ extern void print_fields(type_t type, void *object)
 
 			if (tmp_uint64 != NO_VAL64) {
 				tmp_uint64 /= CPU_TIME_ADJ;
-				tmp_char = _elapsed_time64(tmp_uint64, 0);
+				tmp_char = _elapsed_time(tmp_uint64, 0);
 			}
 
 			field->print_routine(field,
@@ -1902,11 +1817,11 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_REQ_MEM:
 			switch(type) {
 			case JOB:
-				tmp_uint64 = job->req_mem;
+				tmp_uint64 = slurmdb_find_tres_count_in_string(
+					job->tres_req_str, TRES_MEM);
 				break;
 			case JOBSTEP:
-				tmp_uint64 = step->job_ptr->req_mem;
-				break;
+				/* Step doesn't have requested TRES */
 			case JOBCOMP:
 			default:
 				tmp_uint64 = NO_VAL64;
@@ -1914,20 +1829,10 @@ extern void print_fields(type_t type, void *object)
 			}
 
 			if (tmp_uint64 != NO_VAL64) {
-				bool per_cpu = false;
-				if (tmp_uint64 & MEM_PER_CPU) {
-					tmp_uint64 &= (~MEM_PER_CPU);
-					per_cpu = true;
-				}
-
 				convert_num_unit((double)tmp_uint64,
 						 outbuf, sizeof(outbuf),
 						 UNIT_MEGA, params.units,
 						 params.convert_flags);
-				if (per_cpu)
-					sprintf(outbuf+strlen(outbuf), "c");
-				else
-					sprintf(outbuf+strlen(outbuf), "n");
 			}
 			field->print_routine(field,
 					     outbuf,
@@ -2175,6 +2080,23 @@ extern void print_fields(type_t type, void *object)
 					     tmp_int,
 					     (curr_inx == field_count));
 			break;
+		case PRINT_SUBMIT_LINE:
+			switch(type) {
+			case JOB:
+				tmp_char = job->submit_line;
+				break;
+			case JOBSTEP:
+				tmp_char = step->submit_line;
+				break;
+			case JOBCOMP:
+			default:
+
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
 		case PRINT_SUSPENDED:
 			switch(type) {
 			case JOB:
@@ -2197,18 +2119,18 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_SYSTEMCPU:
 			switch(type) {
 			case JOB:
-				tmp_uint32 = job->sys_cpu_sec;
-				tmp2_uint32 = job->sys_cpu_usec;
+				tmp_uint64 = job->sys_cpu_sec;
+				tmp2_uint64 = job->sys_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_uint32 = step->sys_cpu_sec;
-				tmp2_uint32 = step->sys_cpu_usec;
+				tmp_uint64 = step->sys_cpu_sec;
+				tmp2_uint64 = step->sys_cpu_usec;
 				break;
 			case JOBCOMP:
 			default:
 				break;
 			}
-			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
+			tmp_char = _elapsed_time(tmp_uint64, tmp2_uint64);
 
 			field->print_routine(field,
 					     tmp_char,
@@ -2285,12 +2207,12 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_TOTALCPU:
 			switch(type) {
 			case JOB:
-				tmp_uint32 = job->tot_cpu_sec;
-				tmp2_uint32 = job->tot_cpu_usec;
+				tmp_uint64 = job->tot_cpu_sec;
+				tmp2_uint64 = job->tot_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_uint32 = step->tot_cpu_sec;
-				tmp2_uint32 = step->tot_cpu_usec;
+				tmp_uint64 = step->tot_cpu_sec;
+				tmp2_uint64 = step->tot_cpu_usec;
 				break;
 			case JOBCOMP:
 
@@ -2299,7 +2221,7 @@ extern void print_fields(type_t type, void *object)
 
 				break;
 			}
-			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
+			tmp_char = _elapsed_time(tmp_uint64, tmp2_uint64);
 
 			field->print_routine(field,
 					     tmp_char,
@@ -2385,19 +2307,19 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_USERCPU:
 			switch(type) {
 			case JOB:
-				tmp_uint32 = job->user_cpu_sec;
-				tmp2_uint32 = job->user_cpu_usec;
+				tmp_uint64 = job->user_cpu_sec;
+				tmp2_uint64 = job->user_cpu_usec;
 				break;
 			case JOBSTEP:
-				tmp_uint32 = step->user_cpu_sec;
-				tmp2_uint32 = step->user_cpu_usec;
+				tmp_uint64 = step->user_cpu_sec;
+				tmp2_uint64 = step->user_cpu_usec;
 				break;
 			case JOBCOMP:
 			default:
 				break;
 			}
 
-			tmp_char = _elapsed_time(tmp_uint32, tmp2_uint32);
+			tmp_char = _elapsed_time(tmp_uint64, tmp2_uint64);
 
 
 			field->print_routine(field,

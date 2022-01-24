@@ -29,14 +29,14 @@ source ./globals
 source ./globals_accounting
 
 set cwd           "[$bin_pwd]"
-set exit_code     0
 set test_node     ""
 set job_id        0
 set step_id       0
-set file_err      "${cwd}/test${test_id}_err"
-set file_in       "test${test_id}_script"
-set file_out      "${cwd}/test${test_id}_out"
-set test_acct     "test${test_id}_acct"
+set job_script    "job_script"
+set file_err      "$test_dir/error"
+set file_in       "$test_dir/$job_script"
+set file_out      "$test_dir/output"
+set test_acct     "${test_name}_acct"
 
 ############################Job Format Test############################
 
@@ -58,7 +58,7 @@ set sq_format(numnodes)      1
 # timelimit
 set sq_format(timelimit)     2
 # job
-set sq_format(name)          $file_in
+set sq_format(name)          $job_script
 # account
 set sq_format(account)       $test_acct
 # cpus-per-task
@@ -89,7 +89,7 @@ set sq_format(comment)       1234567890
 if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
 	skip "This test can't be run without AccountStorageType=slurmdbd"
 }
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator"
 }
 set available [llength [get_nodes_by_state]]
@@ -98,67 +98,17 @@ if {$available < 2} {
 }
 
 proc cleanup {} {
-	global job_id test_acct bin_rm file_err file_out file_in
+	global job_id test_acct
 
 	cancel_job $job_id
-
 	remove_acct "" $test_acct
-
-	exec $bin_rm -f $file_err $file_out $file_in
 }
-
-remove_acct [get_config_param "ClusterName"] $test_acct
 
 # Run a job to get a usable node to test
-set tmp_sc  "tmp_sc"
-set tmp_job 0
+set job_id [submit_job -fail "-o/dev/null -N1 --exclusive --wrap 'sleep 2'"]
 
-make_bash_script $tmp_sc "sleep 2"
-
-spawn $sbatch -o/dev/null -N1 --exclusive $tmp_sc
-expect {
-	-re "Submitted batch job ($number)" {
-		set tmp_job $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		fail "sbatch is not responding"
-	}
-	eof {
-		wait
-	}
-}
-
-if {$tmp_job == 0} {
-	fail "Job was not submitted"
-}
-
-if {[wait_for_job $tmp_job "RUNNING"] != 0} {
-	log_error "Error waiting for job $tmp_job to start"
-	cancel_job $tmp_job
-	set exit_code 1
-}
-
-set got_node 0
-spawn $scontrol show job $tmp_job
-expect {
-	-re "NodeList=($re_word_str)" {
-		set test_node $expect_out(1,string)
-		set got_node 1
-		exp_continue
-	}
-	timeout {
-		fail "scontrol is not responding"
-	}
-	eof {
-		wait
-	}
-}
-
-if {$got_node != 1} {
-	fail "Was not able to get usable node"
-}
-
+wait_for_job -fail $job_id "RUNNING"
+set test_node [get_job_param $job_id "NodeList"]
 lassign [get_node_cpus $test_node] cpu_tot sq_format(cpuspertask)
 
 set socket_cnt 1
@@ -173,8 +123,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "scontrol is not responding"
-		exp_continue
+		fail "scontrol is not responding"
 	}
 	eof {
 		wait
@@ -187,12 +136,11 @@ if {$sq_format(ntpernode) > $core_cnt} {
 }
 
 if {$sq_format(ntpersocket) == 0 || $sq_format(cpuspertask) == 0} {
-	fail "failed to get number of threads or cores ThreadsPerCore=$sq_format(cpuspertask) & CoresPerSocket=$sq_format(ntpersocket)"
+	fail "Failed to get number of threads or cores ThreadsPerCore=$sq_format(cpuspertask) & CoresPerSocket=$sq_format(ntpersocket)"
 }
 
 # Remove the tmp script and cancel tmp job
-exec $bin_rm $tmp_sc
-cancel_job $tmp_job
+cancel_job $job_id
 
 set sq_format(username) [get_my_user_name]
 
@@ -211,8 +159,7 @@ expect {
 	}
 }
 if {$match != 1} {
-	log_error "Account was not added"
-	set exit_code 1
+	fail "Account was not added"
 }
 
 set match 0
@@ -230,8 +177,7 @@ expect {
 	}
 }
 if {$match != 1} {
-	log_error "Account was not added"
-	set exit_code 1
+	fail "Account was not added"
 }
 
 #
@@ -247,7 +193,7 @@ spawn $sbatch -A$sq_format(account) -N$sq_format(numnodes) \
     --profile=$sq_format(profile) --ntasks-per-socket=$sq_format(ntpersocket) \
     --ntasks-per-node=$sq_format(ntpernode) -o$sq_format(stdout) \
     --comment=$sq_format(comment) -e$sq_format(stderr) --exclusive \
-    -w$test_node $sq_format(name)
+    -w$test_node $file_in
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -262,11 +208,8 @@ expect {
 	}
 }
 
-if {[wait_for_job $job_id "RUNNING"] != 0} {
-	log_error "Error waiting for job $job_id to start"
-	cancel_job $job_id
-	set exit_code 1
-}
+wait_for_job -fail $job_id "RUNNING"
+
 # Wait for steps to start too
 sleep 5
 
@@ -292,8 +235,7 @@ expect {
 	}
 }
 if {$match != 2} {
-	log_error "scontrol did not provide correct job values ($match != 1)"
-	set exit_code 1
+	fail "scontrol did not provide correct job values ($match != 2)"
 }
 
 set match 0
@@ -316,23 +258,15 @@ foreach option [array names sq_format] {
 			wait
 		}
 	}
-	if {$this_match == 0} {
-		log_error "Failed to match $option with $sq_format($option)"
-		set exit_code 1
-	}
+	subtest {$this_match != 0} "Verify job format value $option" "Failed to match $option with $sq_format($option)"
 }
-if {$match != $cnt} {
-	log_error "Not all squeue outputs match ($match != $cnt)"
-	set exit_code 1
-}
+subtest {$match == $cnt} "Verify all expected job format outputs were seen" "Not all squeue outputs match ($match != $cnt)"
 
 set match 0
 spawn $squeue --job=$job_id --noheader -Ocomment:4
 expect {
 	-re "12345" {
-		log_error "Field width control failure"
-		set exit_code 1
-		exp_continue
+		fail "Field width control failure"
 	}
 	-re "1234" {
 		incr match 1
@@ -345,10 +279,8 @@ expect {
 		wait
 	}
 }
-if {$match != 1} {
-	log_error "Not all squeue outputs match ($match != 1)"
-	set exit_code 1
-}
+subtest {$match == 1} "Verify comment field is seen"
+
 ############################Step Format Test############################
 
 #####################
@@ -401,10 +333,7 @@ expect {
 		wait
 	}
 }
-if {$match != 4} {
-	log_error "scontrol did not provide correct step values ($match != 4)"
-	set exit_code 1
-}
+subtest {$match == 4} "Verify scontrol step format" "scontrol did not provide correct step values ($match != 4)"
 
 set match 0
 set cpu_match 0
@@ -426,17 +355,7 @@ foreach option [array names sq_step_format] {
 			wait
 		}
 	}
-	if {$this_match == 0} {
-		log_error "Failed to match $option with $sq_step_format($option)"
-		set exit_code 1
-	}
+	subtest {$this_match != 0} "Verify step format value $option" "Failed to match $option with $sq_step_format($option)"
 }
 
-if {$match != $cnt} {
-	log_error "Not all squeue outputs match ($match != $cnt)"
-	set exit_code 1
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$match == $cnt} "Verify all expected step format outputs were seen" "Not all squeue outputs match ($match != $cnt)"
