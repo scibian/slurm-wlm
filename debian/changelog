@@ -1,3 +1,11 @@
+slurm-wlm (21.08.5-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Remove no more need health_check_interval patch
+  * Remove pmix support as per uptream do!
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 21:49:12 +0100
+
 slurm-wlm (21.08.5-1) unstable; urgency=medium
 
   * New upstream major release
