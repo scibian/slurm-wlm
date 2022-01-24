@@ -5,7 +5,5 @@ pidfile-path
 rpath
 miscellanea-manpages
 fix-typos
-pmixv4
-fix-pmixv3-dlopen-path
 enforce-cred-cache-clearing
 use-hdf5-18-api
