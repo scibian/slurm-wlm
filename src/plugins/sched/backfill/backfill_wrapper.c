@@ -46,7 +46,6 @@
 
 #include "src/common/plugin.h"
 #include "src/common/log.h"
-#include "src/common/slurm_priority.h"
 #include "src/common/macros.h"
 #include "src/slurmctld/slurmctld.h"
 #include "backfill.h"
@@ -93,14 +92,8 @@ void fini( void )
 	slurm_mutex_unlock( &thread_flag_mutex );
 }
 
-int slurm_sched_p_reconfig( void )
+extern int sched_p_reconfig(void)
 {
 	backfill_reconfig();
 	return SLURM_SUCCESS;
-}
-
-uint32_t slurm_sched_p_initial_priority(uint32_t last_prio,
-					job_record_t *job_ptr)
-{
-	return priority_g_set(last_prio, job_ptr);
 }

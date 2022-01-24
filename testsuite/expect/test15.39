@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set needed_nodes 2
 set matches 0
 set ncpus ""
@@ -62,7 +61,7 @@ if {$matches < $needed_nodes} {
 
 set job_id 0
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -t1 -N1-2 --use-min-nodes -n$ncpus $bin_printenv]
+spawn $salloc -t1 -N1-2 --use-min-nodes -n$ncpus $bin_printenv
 expect {
 	-re "salloc: Pending job allocation $number" {
 		exp_continue
@@ -76,10 +75,7 @@ expect {
 	}
 	-re "SLURM_NNODES=($number)" {
 		set nodes $expect_out(1,string)
-		if {$nodes != 1} {
-			log_error "Expected 1 allocated node"
-			set exit_code 1
-		}
+		subtest {$nodes == 1} "Expected 1 allocated node"
 	}
 	timeout {
 		fail "salloc not responding"
@@ -91,8 +87,4 @@ expect {
 
 if {$job_id == 0} {
 	fail "Job submit failure"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

@@ -105,6 +105,7 @@ typedef enum {
 		PRINT_CLUSTER,
 		PRINT_COMMENT,
 		PRINT_CONSTRAINTS,
+		PRINT_CONTAINER,
 		PRINT_CONSUMED_ENERGY,
 		PRINT_CONSUMED_ENERGY_RAW,
 		PRINT_CPU_TIME,
@@ -164,6 +165,7 @@ typedef enum {
 		PRINT_START,
 		PRINT_STATE,
 		PRINT_SUBMIT,
+		PRINT_SUBMIT_LINE,
 		PRINT_SUSPENDED,
 		PRINT_SYSTEMCPU,
 		PRINT_SYSTEM_COMMENT,
@@ -209,6 +211,7 @@ typedef struct {
 	int opt_uid;		/* running persons uid */
 	int units;		/* --units*/
 	bool use_local_uid;	/* --use-local-uid */
+	char *mimetype;         /* --yaml or --json */
 } sacct_parameters_t;
 
 extern print_field_t fields[];
@@ -235,5 +238,6 @@ void do_list(void);
 void do_list_completion(void);
 void sacct_init(void);
 void sacct_fini(void);
+extern void dump_data(int argc, char **argv);
 
 #endif /* !_SACCT_H */

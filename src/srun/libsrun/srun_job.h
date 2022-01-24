@@ -51,6 +51,7 @@
 
 #include "src/api/step_io.h"
 #include "src/srun/libsrun/opt.h"
+#include "src/srun/libsrun/step_ctx.h"
 
 typedef enum {
 	SRUN_JOB_INIT = 0,         /* Job's initial state                   */
@@ -58,7 +59,6 @@ typedef enum {
 	SRUN_JOB_STARTING,         /* Launch thread is complete             */
 	SRUN_JOB_RUNNING,          /* Launch thread complete                */
 	SRUN_JOB_CANCELLED,        /* CTRL-C cancelled                      */
-	SRUN_JOB_FORCETERM         /* Forced termination of IO thread       */
 } srun_job_state_t;
 
 enum io_t {
@@ -78,7 +78,6 @@ typedef struct fname {
 } fname_t;
 
 typedef struct srun_job {
-	int fir_nodeid;
 	slurm_step_id_t step_id; /* assigned step id */
 	uint32_t het_job_node_offset;	/* Hetjob node offset or NO_VAL */
 	uint32_t het_job_id;	/* Hetjob leader or NO_VAL */
@@ -92,6 +91,7 @@ typedef struct srun_job {
 	uint32_t *het_job_tid_offsets;/* map of tasks (by id) to originating
 				       * hetjob */
 
+	char *container; /* OCI container bundle path */
 	uint32_t cpu_count;	/* allocated CPUs */
 	uint32_t nhosts;	/* node count */
 	uint32_t ntasks;	/* task count */
@@ -125,7 +125,6 @@ typedef struct srun_job {
 	uint16_t ws_col;	/* window size, columns */
 	uint16_t ws_row;	/* window size, row count */
 	slurm_step_ctx_t *step_ctx;
-	slurm_step_ctx_params_t ctx_params;
 	char *account;    /* account of this job */
 	char *qos;        /* job's qos */
 	char *resv_name;  /* reservation the job is using */

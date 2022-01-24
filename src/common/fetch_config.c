@@ -143,22 +143,30 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 	 * slurmctld entry.
 	 */
 	if (env_conf_server || conf_server) {
-		char *server, *port;
-		ctl_entry_t *ctl = xmalloc(sizeof(*ctl));
+		char *server, *tmp, *port, *save_ptr = NULL;
 		controllers = list_create(xfree_ptr);
 
-		if (!(server = env_conf_server))
-			server = conf_server;
-		strlcpy(ctl->hostname, server, sizeof(ctl->hostname));
+		if (env_conf_server)
+			tmp = xstrdup(env_conf_server);
+		else
+			tmp = xstrdup(conf_server);
 
-		if ((port = xstrchr(ctl->hostname, ':'))) {
-			*port = '\0';
-			port++;
-			ctl->port = atoi(port);
-		} else
-			ctl->port = SLURMCTLD_PORT;
+		server = strtok_r(tmp, ",", &save_ptr);
+		while (server) {
+			ctl_entry_t *ctl = xmalloc(sizeof(*ctl));
+			strlcpy(ctl->hostname, server, sizeof(ctl->hostname));
 
-		list_push(controllers, ctl);
+			if ((port = xstrchr(ctl->hostname, ':'))) {
+				*port = '\0';
+				port++;
+				ctl->port = atoi(port);
+			} else
+				ctl->port = SLURMCTLD_PORT;
+
+			list_append(controllers, ctl);
+			server = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp);
 	} else {
                 if (!(controllers = resolve_ctls_from_dns_srv())) {
                         error("%s: DNS SRV lookup failed", __func__);
@@ -241,7 +249,8 @@ int dump_to_memfd(char *type, char *config, char **filename)
 	xfree(*filename);
 	xstrfmtcat(*filename, "/proc/%lu/fd/%d", (unsigned long) pid, fd);
 
-	safe_write(fd, config, strlen(config));
+	if (config)
+		safe_write(fd, config, strlen(config));
 
 	return fd;
 
@@ -261,7 +270,8 @@ rwfail:
 	xfree(*filename);
 	xstrfmtcat(*filename, "/proc/%lu/fd/%d", (unsigned long) pid, fd);
 
-	safe_write(fd, config, strlen(config));
+	if (config)
+		safe_write(fd, config, strlen(config));
 
 	return fd;
 
@@ -305,7 +315,8 @@ static void _init_minimal_conf_server_config(List controllers)
 	xfree(filename);
 }
 
-static int _write_conf(const char *dir, const char *name, const char *content)
+static int _write_conf(const char *dir, const char *name, const char *content,
+		      bool exists)
 {
 	char *file = NULL, *file_final = NULL;
 	int fd = -1;
@@ -313,17 +324,20 @@ static int _write_conf(const char *dir, const char *name, const char *content)
 	xstrfmtcat(file, "%s/%s.new", dir, name);
 	xstrfmtcat(file_final, "%s/%s", dir, name);
 
-	if (!content) {
+	if (!exists) {
 		(void) unlink(file_final);
 		goto cleanup;
 	}
+
 
 	if ((fd = open(file, O_CREAT|O_WRONLY|O_TRUNC|O_CLOEXEC, 0644)) < 0) {
 		error("%s: could not open config file `%s`", __func__, file);
 		goto rwfail;
 	}
 
-	safe_write(fd, content, strlen(content));
+	if (content)
+		safe_write(fd, content, strlen(content));
+
 	close(fd);
 	fd = -1;
 
@@ -344,32 +358,29 @@ rwfail:
 	return SLURM_ERROR;
 }
 
-extern int write_configs_to_conf_cache(config_response_msg_t *msg,
-				       const char *dir)
+extern int find_conf_by_name(void *x, void *key)
 {
-	if (_write_conf(dir, "slurm.conf", msg->config))
+	config_file_t *config = (config_file_t *)x;
+	char *file_name_key = (char *)key;
+	return !xstrcmp(config->file_name, file_name_key);
+}
+
+extern int write_one_config(void *x, void *arg)
+{
+	config_file_t *config = (config_file_t *) x;
+	char *dir = (char *) arg;
+	if (_write_conf(dir, config->file_name, config->file_content,
+		        config->exists))
 		return SLURM_ERROR;
-	if (_write_conf(dir, "acct_gather.conf", msg->acct_gather_config))
+	return SLURM_SUCCESS;
+}
+
+extern int write_configs_to_conf_cache(config_response_msg_t *msg,
+				       char *dir)
+{
+	if (list_for_each(msg->config_files, write_one_config, dir) < 0) {
 		return SLURM_ERROR;
-	if (_write_conf(dir, "cgroup.conf", msg->cgroup_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "cgroup_allowed_devices_file.conf",
-			msg->cgroup_allowed_devices_file_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "ext_sensors.conf", msg->ext_sensors_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "gres.conf", msg->gres_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "job_container.conf", msg->xtra_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "knl_cray.conf", msg->knl_cray_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "knl_generic.conf", msg->knl_generic_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "plugstack.conf", msg->plugstack_config))
-		return SLURM_ERROR;
-	if (_write_conf(dir, "topology.conf", msg->topology_config))
-		return SLURM_ERROR;
+	}
 
 	return SLURM_SUCCESS;
 }
@@ -411,7 +422,7 @@ extern void load_config_response_msg(config_response_msg_t *msg, int flags)
 		   &msg->cgroup_allowed_devices_file_config);
 	_load_conf(dir, "ext_sensors.conf", &msg->ext_sensors_config);
 	_load_conf(dir, "gres.conf", &msg->gres_config);
-	_load_conf(dir, "job_container.conf", &msg->xtra_config);
+	_load_conf(dir, "job_container.conf", &msg->job_container_config);
 	_load_conf(dir, "knl_cray.conf", &msg->knl_cray_config);
 	_load_conf(dir, "knl_generic.conf", &msg->knl_generic_config);
 	_load_conf(dir, "plugstack.conf", &msg->plugstack_config);
@@ -420,4 +431,55 @@ extern void load_config_response_msg(config_response_msg_t *msg, int flags)
 	msg->slurmd_spooldir = xstrdup(slurm_conf.slurmd_spooldir);
 
 	xfree(dir);
+}
+
+static void _load_conf2list(config_response_msg_t *msg, char *file_name)
+{
+	config_file_t *conf_file = NULL;
+	buf_t *config;
+	char *file = get_extra_conf_path(file_name);
+	bool config_exists = true;
+
+	config = create_mmap_buf(file);
+	xfree(file);
+
+	/*
+	 * If we failed to mmap the file, it likely doesn't exist.
+	 * However, since Linux 2.6.16, EINVAL likely indicates an empty file.
+	 * We do need to create that blank file, as certain plugins - cgroup
+	 * especially - treat the absence of the file differently than an
+	 * empty file.
+	 */
+	if (!config && errno != EINVAL)
+		config_exists = false;
+
+	conf_file = xmalloc(sizeof(*conf_file));
+	conf_file->exists = config_exists;
+	if (config)
+		conf_file->file_content = xstrndup(config->head, config->size);
+	conf_file->file_name = xstrdup(file_name);
+	list_append(msg->config_files, conf_file);
+
+	debug3("%s: config file %s %s",
+	       __func__, file_name,
+	       (config_exists ? "exists" : "does not exist"));
+
+	free_buf(config);
+}
+
+extern void load_config_response_list(config_response_msg_t *msg, char *files[])
+{
+	xassert(msg);
+	if (!msg->config_files)
+		msg->config_files = list_create(destroy_config_file);
+
+	for (int i = 0; files[i]; i++)
+		_load_conf2list(msg, files[i]);
+}
+
+extern void destroy_config_file(void *object)
+{
+	config_file_t *conf_file = (config_file_t *)object;
+	xfree(conf_file->file_name);
+	xfree(conf_file->file_content);
 }

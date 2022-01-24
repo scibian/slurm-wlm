@@ -28,14 +28,12 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-
 #
 # Run a job attempting to get some dummy license name
 #
 set match   0
 set timeout $max_job_delay
-set srun_pid [spawn $srun --licenses=DUMMY_FOR_TESTING $bin_printenv SLURMD_NODENAME]
+spawn $srun --licenses=DUMMY_FOR_TESTING $bin_printenv SLURMD_NODENAME
 expect {
 	-re "Invalid license" {
 		set match 1
@@ -43,17 +41,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
-		fail "Srun not responding"
+		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$match == 0} {
-	log_error "No error on with bad license name"
-	set exit_code 1
-}
+
+subtest {$match != 0} "Error expected with bad license name"
 
 #
 # Test if any licenses are configured.
@@ -72,13 +67,11 @@ expect {
 }
 log_user 1
 
-if {[string compare $licenses ""] != 0} {
-	set srun_pid [spawn $srun --licenses=$licenses $bin_printenv SLURMD_NODENAME]
+if {$licenses ne ""} {
+	spawn $srun --licenses=$licenses $bin_printenv SLURMD_NODENAME
 	expect {
 		-re "invalid license" {
-			log_error "Error getting license"
-			set exit_code 1
-			exp_continue
+			fail "Error getting license"
 		}
 		timeout {
 			fail "srun not responding. This test can fail if the selected license is in use"
@@ -92,8 +85,3 @@ if {[string compare $licenses ""] != 0} {
 #
 # Run a job attempting to get a legitimate license name
 #
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
-

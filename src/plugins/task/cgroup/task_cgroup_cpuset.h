@@ -37,8 +37,6 @@
 #ifndef _TASK_CGROUP_CPUSET_H_
 #define _TASK_CGROUP_CPUSET_H_
 
-#include "src/common/xcgroup_read_config.h"
-
 /* initialize cpuset subsystem of task/cgroup */
 extern int task_cgroup_cpuset_init(void);
 
@@ -48,11 +46,9 @@ extern int task_cgroup_cpuset_fini(void);
 /* create user/job/jobstep cpuset cgroups */
 extern int task_cgroup_cpuset_create(stepd_step_rec_t *job);
 
-/* create a task cgroup and attach the task to it */
-extern int task_cgroup_cpuset_attach_task(stepd_step_rec_t *job);
-
 /* set a task affinity based on its local id and job information */
-extern int task_cgroup_cpuset_set_task_affinity(stepd_step_rec_t *job);
+extern int task_cgroup_cpuset_set_task_affinity(stepd_step_rec_t *job,
+						uint32_t taskid);
 
 /* add a pid to the cgroup */
 extern int task_cgroup_cpuset_add_pid(pid_t pid);

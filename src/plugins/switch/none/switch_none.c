@@ -119,9 +119,9 @@ int switch_p_alloc_jobinfo ( switch_jobinfo_t **switch_job,
 	return SLURM_SUCCESS;
 }
 
-int switch_p_build_jobinfo ( switch_jobinfo_t *switch_job,
-			     slurm_step_layout_t *step_layout,
-			     char *network )
+extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
+				  slurm_step_layout_t *step_layout,
+				  step_record_t *step_ptr)
 {
 	return SLURM_SUCCESS;
 }
@@ -136,48 +136,23 @@ void switch_p_free_jobinfo ( switch_jobinfo_t *switch_job )
 	return;
 }
 
-int switch_p_pack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
+int switch_p_pack_jobinfo(switch_jobinfo_t *switch_job, buf_t *buffer,
 			  uint16_t protocol_version)
 {
 	return 0;
 }
 
-int switch_p_unpack_jobinfo(switch_jobinfo_t **switch_job, Buf buffer,
+int switch_p_unpack_jobinfo(switch_jobinfo_t **switch_job, buf_t *buffer,
 			    uint16_t protocol_version)
 {
 	return SLURM_SUCCESS;
 }
 
-void switch_p_print_jobinfo(FILE *fp, switch_jobinfo_t *jobinfo)
-{
-	return;
-}
-
-char *switch_p_sprint_jobinfo(switch_jobinfo_t *switch_jobinfo, char *buf,
-		size_t size)
-{
-	if ((buf != NULL) && size) {
-		buf[0] = '\0';
-		return buf;
-	}
-
-	return NULL;
-}
-
 /*
  * switch functions for job initiation
  */
-int switch_p_node_init ( void )
-{
-	return SLURM_SUCCESS;
-}
 
-int switch_p_node_fini ( void )
-{
-	return SLURM_SUCCESS;
-}
-
-int switch_p_job_preinit ( switch_jobinfo_t *jobinfo )
+int switch_p_job_preinit(stepd_step_rec_t *job)
 {
 	return SLURM_SUCCESS;
 }
@@ -198,13 +173,13 @@ extern void switch_p_job_suspend_info_get(switch_jobinfo_t *jobinfo,
 	return;
 }
 
-extern void switch_p_job_suspend_info_pack(void *suspend_info, Buf buffer,
+extern void switch_p_job_suspend_info_pack(void *suspend_info, buf_t *buffer,
 					   uint16_t protocol_version)
 {
 	return;
 }
 
-extern int switch_p_job_suspend_info_unpack(void **suspend_info, Buf buffer,
+extern int switch_p_job_suspend_info_unpack(void **suspend_info, buf_t *buffer,
 					    uint16_t protocol_version)
 {
 	return SLURM_SUCCESS;
@@ -281,13 +256,13 @@ extern int switch_p_build_node_info(switch_node_info_t *switch_node)
 }
 
 extern int switch_p_pack_node_info(switch_node_info_t *switch_node,
-				   Buf buffer, uint16_t protocol_version)
+				   buf_t *buffer, uint16_t protocol_version)
 {
 	return 0;
 }
 
 extern int switch_p_unpack_node_info(switch_node_info_t **switch_node,
-				     Buf buffer, uint16_t protocol_version)
+				     buf_t *buffer, uint16_t protocol_version)
 {
 	return SLURM_SUCCESS;
 }
@@ -303,34 +278,8 @@ extern int switch_p_job_step_complete(switch_jobinfo_t *jobinfo,
 	return SLURM_SUCCESS;
 }
 
-extern int switch_p_job_step_part_comp(switch_jobinfo_t *jobinfo,
-	char *nodelist)
-{
-	return SLURM_SUCCESS;
-}
-
-extern bool switch_p_part_comp(void)
-{
-	return false;
-}
-
 extern int switch_p_job_step_allocated(switch_jobinfo_t *jobinfo,
 	char *nodelist)
-{
-	return SLURM_SUCCESS;
-}
-
-extern int switch_p_slurmctld_init( void )
-{
-	return SLURM_SUCCESS;
-}
-
-extern int switch_p_slurmd_init( void )
-{
-	return SLURM_SUCCESS;
-}
-
-extern int switch_p_slurmd_step_init( void )
 {
 	return SLURM_SUCCESS;
 }

@@ -33,10 +33,7 @@ sleep 20
 service slurmdbd status
 
 cat > /etc/slurm/slurm.conf <<EOF
-ControlMachine=localhost
-AuthType=auth/munge
-CryptoType=crypto/munge
-MpiDefault=none
+SlurmctldHost=localhost
 ProctrackType=proctrack/pgid
 ReturnToService=1
 SlurmctldPidFile=/run/slurmctld.pid
@@ -46,24 +43,16 @@ SlurmdPort=6818
 SlurmdSpoolDir=/var/lib/slurm/slurmd
 SlurmUser=slurm
 StateSaveLocation=/var/lib/slurm/slurmctld
-SwitchType=switch/none
 TaskPlugin=task/none
-InactiveLimit=0
-KillWait=30
-MinJobAge=300
 SlurmctldTimeout=300
-SlurmdTimeout=300
-Waittime=0
 SchedulerType=sched/backfill
-SchedulerPort=7321
 SelectType=select/linear
-AccountingStorageEnforce=association
+AccountingStorageEnforce=associations
 AccountingStorageHost=localhost
 AccountingStorageType=accounting_storage/slurmdbd
-AccountingStoreJobComment=YES
+AccountingStoreFlags=job_comment
 ClusterName=cluster
-JobCompType=jobcomp/linux
-JobAcctGatherFrequency=30
+JobCompType=jobcomp/none
 JobAcctGatherType=jobacct_gather/none
 SlurmctldDebug=3
 SlurmctldLogFile=/var/log/slurm/slurmctld.log

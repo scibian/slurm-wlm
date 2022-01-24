@@ -49,6 +49,7 @@
 #include <dlfcn.h>
 
 #include "src/common/slurm_xlator.h"
+#include "src/common/cgroup.h"
 #include "src/common/slurm_acct_gather_energy.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/gres.h"
@@ -452,7 +453,6 @@ static void _add_energy(acct_gather_energy_t *energy_tot,
  */
 static void _get_node_energy_up(acct_gather_energy_t *energy)
 {
-	slurm_cgroup_conf_t *cg_conf;
 	bool task_cgroup = false;
 	bool constrained_devices = false;
 	bool cgroups_active = false;
@@ -460,11 +460,8 @@ static void _get_node_energy_up(acct_gather_energy_t *energy)
 	uint16_t i;
 
 	// Check if GPUs are constrained by cgroups
-	slurm_mutex_lock(&xcgroup_config_read_mutex);
-	cg_conf = xcgroup_get_slurm_cgroup_conf();
-	if (cg_conf && cg_conf->constrain_devices)
-		constrained_devices = true;
-	slurm_mutex_unlock(&xcgroup_config_read_mutex);
+	cgroup_conf_init();
+	constrained_devices = slurm_cgroup_conf.constrain_devices;
 
 	// Check if task/cgroup plugin is loaded
 	if (xstrstr(slurm_conf.task_plugin, "cgroup"))

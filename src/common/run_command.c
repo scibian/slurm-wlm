@@ -51,6 +51,7 @@
 #define POLLRDHUP POLLHUP
 #endif
 
+#include "src/common/fd.h"
 #include "src/common/macros.h"
 #include "src/common/timers.h"
 #include "src/common/xmalloc.h"
@@ -108,9 +109,10 @@ static int _tot_wait (struct timeval *start_time)
  *		 -1 for no limit (asynchronous)
  * tid IN - thread we are called from
  * status OUT - Job exit code
+ * env - environment for the command, if NULL execv is used
  * Return stdout+stderr of spawned program, value must be xfreed. */
-extern char *run_command(char *script_type, char *script_path,
-			 char **script_argv, int max_wait,
+extern char *run_command(const char *script_type, const char *script_path,
+			 char **script_argv, char **env, int max_wait,
 			 pthread_t tid, int *status)
 {
 	int i, new_wait, resp_size = 0, resp_offset = 0;
@@ -150,27 +152,41 @@ extern char *run_command(char *script_type, char *script_path,
 	child_proc_count++;
 	slurm_mutex_unlock(&proc_count_mutex);
 	if ((cpid = fork()) == 0) {
-		int cc;
-
-		cc = sysconf(_SC_OPEN_MAX);
 		if (max_wait != -1) {
+			int devnull;
+			if ((devnull = open("/dev/null", O_RDWR)) < 0) {
+				error("%s: Unable to open /dev/null: %m",
+				      __func__);
+				_exit(127);
+			}
+			dup2(devnull, STDIN_FILENO);
 			dup2(pfd[1], STDERR_FILENO);
 			dup2(pfd[1], STDOUT_FILENO);
-			for (i = 0; i < cc; i++) {
-				if ((i != STDERR_FILENO) &&
-				    (i != STDOUT_FILENO))
-					close(i);
-			}
+			closeall(3);
 		} else {
-			for (i = 0; i < cc; i++)
-				close(i);
+			closeall(0);
 			if ((cpid = fork()) < 0)
 				_exit(127);
 			else if (cpid > 0)
 				_exit(0);
 		}
 		setpgid(0, 0);
-		execv(script_path, script_argv);
+		/*
+		 * sync euid -> ruid, egid -> rgid to avoid issues with fork'd
+		 * processes using access() or similar calls.
+		 */
+		if (setresgid(getegid(), getegid(), -1)) {
+			error("%s: Unable to setresgid()", __func__);
+			_exit(127);
+		}
+		if (setresuid(geteuid(), geteuid(), -1)) {
+			error("%s: Unable to setresuid()", __func__);
+			_exit(127);
+		}
+		if (!env)
+			execv(script_path, script_argv);
+		else
+			execve(script_path, script_argv, env);
 		error("%s: execv(%s): %m", __func__, script_path);
 		_exit(127);
 	} else if (cpid < 0) {

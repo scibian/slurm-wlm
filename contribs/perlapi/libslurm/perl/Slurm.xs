@@ -10,7 +10,6 @@
 #include <unistd.h>
 
 #include "slurm-perl.h"
-#include "bitstr.h"
 
 /* Custom typemap that free's memory after copying to perl stack. */
 typedef char char_xfree;
@@ -112,7 +111,7 @@ slurm_strerror(slurm_t self, int errnum=0)
 #
 # These functions are made object method instead of class method.
 
-char *
+const char *
 slurm_preempt_mode_string(slurm_t self, uint16_t preempt_mode);
 	CODE:
 		if (self); /* this is needed to avoid a warning about
@@ -183,14 +182,19 @@ slurm_job_state_num(slurm_t self, char *state_name)
 			    */
 
 char_xfree *
-slurm_reservation_flags_string(slurm_t self, uint16_t flags)
+slurm_reservation_flags_string(slurm_t self, HV *resv_hv)
 	CODE:
 		if (self); /* this is needed to avoid a warning about
 			      unused variables.  But if we take slurm_t self
 			      out of the mix Slurm-> doesn't work,
 			      only Slurm::
 			    */
-		RETVAL = slurm_reservation_flags_string(flags);
+		reserve_info_t resv;
+		if (hv_to_reserve_info(resv_hv, &resv) < 0) {
+			XSRETURN_UNDEF;
+		}
+
+		RETVAL = slurm_reservation_flags_string(&resv);
 	OUTPUT:
 		RETVAL
 
@@ -538,273 +542,6 @@ slurm_terminate_job_step(slurm_t self, uint32_t job_id, uint32_t step_id)
 			    */
 	C_ARGS:
 		job_id, step_id
-
-
-######################################################################
-#       SLURM TASK SPAWNING FUNCTIONS
-######################################################################
-MODULE=Slurm PACKAGE=Slurm PREFIX=slurm_
-
-# $ctx = $slurm->step_ctx_create($params);
-slurm_step_ctx_t *
-slurm_step_ctx_create(slurm_t self, HV *step_params)
-	PREINIT:
-		slurm_step_ctx_params_t sp;
-	CODE:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-		if (hv_to_slurm_step_ctx_params(step_params, &sp) < 0) {
-			XSRETURN_UNDEF;
-		}
-		RETVAL = slurm_step_ctx_create(&sp);
-		if (RETVAL == NULL) {
-			XSRETURN_UNDEF;
-		}
-	OUTPUT:
-		RETVAL
-
-slurm_step_ctx_t *
-slurm_step_ctx_create_no_alloc(slurm_t self, HV *step_params, uint32_t step_id)
-	PREINIT:
-		slurm_step_ctx_params_t sp;
-	CODE:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-		if (hv_to_slurm_step_ctx_params(step_params, &sp) < 0) {
-			XSRETURN_UNDEF;
-		}
-		RETVAL = slurm_step_ctx_create_no_alloc(&sp, step_id);
-		if (RETVAL == NULL) {
-			XSRETURN_UNDEF;
-		}
-	OUTPUT:
-		RETVAL
-
-######################################################################
-MODULE=Slurm PACKAGE=Slurm::Stepctx PREFIX=slurm_step_ctx_
-int
-slurm_step_ctx_get(slurm_step_ctx_t *ctx, int ctx_key, INOUT ...)
-	PREINIT:
-		uint32_t tmp_32, *tmp_32_ptr;
-		uint16_t tmp_16, *tmp_16_ptr;
-#if 0
-		/* TODO: job_step_create_response_msg_t not exported in slurm.h */
-		job_step_create_response_msg_t *resp_msg;
-#endif
-		slurm_cred_t *cred;
-		dynamic_plugin_data_t *switch_info;
-		char *tmp_str;
-		int i, tmp_int, *tmp_int_ptr;
-	CODE:
-		switch(ctx_key) {
-		case SLURM_STEP_CTX_JOBID: /* uint32_t* */
-		case SLURM_STEP_CTX_STEPID: /* uint32_t* */
-		case SLURM_STEP_CTX_NUM_HOSTS: /* uint32_t* */
-			if (items != 3) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &tmp_32);
-			if (RETVAL == SLURM_SUCCESS) {
-				sv_setuv(ST(2), (UV)tmp_32);
-			}
-			break;
-		case SLURM_STEP_CTX_TASKS: /* uint16_t** */
-			if (items != 3) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, SLURM_STEP_CTX_NUM_HOSTS, &tmp_32);
-			if (RETVAL != SLURM_SUCCESS)
-				break;
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &tmp_16_ptr);
-			if (RETVAL == SLURM_SUCCESS) {
-				AV* av = newAV();
-				for(i = 0; i < tmp_32; i ++) {
-					av_store_uint16_t(av, i, tmp_16_ptr[i]);
-				}
-				sv_setsv(ST(2), newRV_noinc((SV*)av));
-			}
-			break;
-		case SLURM_STEP_CTX_TID: /* uint32_t, uint32_t** */
-			if (items != 4) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			tmp_32 = (uint32_t)SvUV(ST(2));
-			RETVAL = slurm_step_ctx_get(ctx, SLURM_STEP_CTX_TASKS, &tmp_16_ptr);
-			if (RETVAL != SLURM_SUCCESS)
-				break;
-			tmp_16 = tmp_16_ptr[tmp_32];
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, tmp_32, &tmp_32_ptr);
-			if (RETVAL == SLURM_SUCCESS) {
-				AV* av = newAV();
-				for(i = 0; i < tmp_16; i ++) {
-					av_store_uint32_t(av, i, tmp_32_ptr[i]);
-				}
-				sv_setsv(ST(3), newRV_noinc((SV*)av));
-			}
-			break;
-#if 0
-		case SLURM_STEP_CTX_RESP: /* job_step_create_response_msg_t** */
-			if (items != 3) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &resp_msg);
-			if (RETVAL == SLURM_SUCCESS) {
-				HV *hv = newHV();
-				if (job_step_create_response_msg_to_hv(resp_msg, hv) < 0) {
-					SVdev_REFCNT((SV*)hv);
-					RETVAL = SLURM_ERROR;
-					break;
-				}
-				sv_setsv(ST(2), newRV_noinc((SV*)hv));
-			}
-			break;
-#endif
-		case SLURM_STEP_CTX_CRED: /* slurm_cred_t** */
-			if (items != 3) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &cred);
-			if (RETVAL == SLURM_SUCCESS && cred) {
-				sv_setref_pv(ST(2), "Slurm::slurm_cred_t", (void*)cred);
-			} else if (RETVAL == SLURM_SUCCESS) {
-				/* the returned cred is NULL */
-				sv_setsv(ST(2), &PL_sv_undef);
-			}
-			break;
-		case SLURM_STEP_CTX_SWITCH_JOB: /* switch_jobinfo_t** */
-			if (items != 3) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &switch_info);
-			if (RETVAL == SLURM_SUCCESS && switch_info) {
-				sv_setref_pv(ST(2), "Slurm::dynamic_plugin_data_t", (void*)switch_info);
-			} else if (RETVAL == SLURM_SUCCESS) {
-				/* the returned switch_info is NULL */
-				sv_setsv(ST(2), &PL_sv_undef);
-			}
-			break;
-		case SLURM_STEP_CTX_HOST: /* uint32_t, char** */
-			if (items != 4) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			tmp_32 = (uint32_t)SvUV(ST(2));
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, tmp_32, &tmp_str);
-			if (RETVAL == SLURM_SUCCESS) {
-				sv_setpv(ST(3), tmp_str);
-			}
-			break;
-		case SLURM_STEP_CTX_USER_MANAGED_SOCKETS: /* int*, int** */
-			if (items != 4) {
-				Perl_warn( aTHX_ "error number of parameters");
-				errno = EINVAL;
-				RETVAL = SLURM_ERROR;
-				break;
-			}
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &tmp_int, &tmp_int_ptr);
-			if (RETVAL == SLURM_SUCCESS) {
-				AV *av = newAV();
-				for (i = 0; i < tmp_int; i ++) {
-					av_store_int(av, i, tmp_int_ptr[i]);
-				}
-				sv_setiv(ST(2), tmp_int);
-				sv_setsv(ST(3), newRV_noinc((SV*)av));
-			} else { /* returned val: 0, NULL */
-				sv_setiv(ST(2), tmp_int);
-				sv_setsv(ST(3), &PL_sv_undef);
-			}
-			break;
-		default:
-			RETVAL = slurm_step_ctx_get(ctx, ctx_key);
-		}
-	OUTPUT:
-		RETVAL
-
-# TODO: data_type not exported in slurm.h
-#int
-#slurm_job_info_ctx_get(switch_jobinfo_t *jobinfo, int data_type, void *data)
-
-void
-slurm_step_ctx_DESTROY(slurm_step_ctx_t *ctx)
-	CODE:
-		slurm_step_ctx_destroy(ctx);
-
-int
-slurm_step_ctx_daemon_per_node_hack(slurm_step_ctx_t *ctx, char *node_list, uint32_t node_cnt, void *curr_task_num)
-        PREINIT:
-	        uint32_t *tmp32;
-        CODE:
-	        tmp32 = (uint32_t *)curr_task_num;
-
-                RETVAL = slurm_step_ctx_daemon_per_node_hack(ctx, node_list, node_cnt, tmp32);
-        OUTPUT:
-	        RETVAL
-
-#####################################################################
-MODULE=Slurm PACKAGE=Slurm::Stepctx PREFIX=slurm_step_
-
-int
-slurm_step_launch(slurm_step_ctx_t *ctx, HV *params, HV *callbacks=NULL)
-	PREINIT:
-		slurm_step_launch_params_t lp;
-		slurm_step_launch_callbacks_t *cb = NULL;
-	CODE:
-		if (hv_to_slurm_step_launch_params(params, &lp) < 0) {
-			Perl_warn( aTHX_ "failed to convert slurm_step_launch_params_t");
-			RETVAL = SLURM_ERROR;
-		} else {
-			if (callbacks) {
-				set_slcb(callbacks);
-				cb = &slcb;
-			}
-			RETVAL = slurm_step_launch(ctx, &lp, cb);
-			free_slurm_step_launch_params_memory(&lp);
-		}
-	OUTPUT:
-		RETVAL
-
-
-int
-slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
-
-void
-slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
-
-void
-slurm_step_launch_abort(slurm_step_ctx_t *ctx)
-
-void
-slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, uint16_t signo)
-
-# TODO: this function is not implemented in libslurm
-#void
-#slurm_step_launch_fwd_wake(slurm_step_ctx_t *ctx)
 
 
 ######################################################################
@@ -1379,10 +1116,10 @@ slurm_job_step_layout_get(slurm_t self, uint32_t job_id, uint32_t step_id_in)
 		RETVAL
 
 HV *
-slurm_job_step_stat(slurm_t self, uint32_t job_id, uint32_t step_id_in, char *nodelist=NULL, uint16_t protocol_version)
+slurm_job_step_stat(slurm_t self, uint32_t job_id, uint32_t step_id_in, char *nodelist=NULL, uint16_t protocol_version=NO_VAL16)
 	PREINIT:
 		int rc;
-		job_step_stat_response_msg_t *resp_msg;
+		job_step_stat_response_msg_t *resp_msg = NULL;
 		slurm_step_id_t step_id;
 	CODE:
 		if (self); /* this is needed to avoid a warning about
@@ -1392,6 +1129,7 @@ slurm_job_step_stat(slurm_t self, uint32_t job_id, uint32_t step_id_in, char *no
 			    */
 		step_id.job_id = job_id;
 		step_id.step_id = step_id_in;
+		step_id.step_het_comp = NO_VAL;
                 rc = slurm_job_step_stat(&step_id, nodelist,
 					 protocol_version, &resp_msg);
 		if (rc == SLURM_SUCCESS) {
@@ -1423,6 +1161,7 @@ slurm_job_step_get_pids(slurm_t self, uint32_t job_id, uint32_t step_id_in, char
 			    */
 		step_id.job_id = job_id;
 		step_id.step_id = step_id_in;
+		step_id.step_het_comp = NO_VAL;
 		rc = slurm_job_step_get_pids(&step_id, nodelist, &resp_msg);
 		if (rc == SLURM_SUCCESS) {
 			RETVAL = newHV();
@@ -1985,7 +1724,7 @@ slurm_sprint_reservation_info(slurm_t self, HV *resv_info, int one_liner=0)
 ######################################################################
 
 int
-slurm_ping(slurm_t self, uint16_t primary=1)
+slurm_ping(slurm_t self, uint16_t primary=0)
 	INIT:
 		if (self); /* this is needed to avoid a warning about
 			      unused variables.  But if we take slurm_t self
@@ -2439,7 +2178,7 @@ slurm_bit_fmt_binmask(bitstr_t *b)
 		RETVAL
 
 # ditto
-int
+void
 slurm_bit_unfmt_binmask(bitstr_t *b, char *str)
 
 void

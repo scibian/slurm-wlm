@@ -161,6 +161,7 @@ static List _build_gpu_list(List gres_list)
 			gpu_record->name = xstrdup(gres_record->name);
 			gpu_record->plugin_id = gres_record->plugin_id;
 			gpu_record->type_name = xstrdup(gres_record->type_name);
+			gpu_record->unique_id = xstrdup(gres_record->unique_id);
 			list_append(gpu_list, gpu_record);
 			free(f_name);
 		}
@@ -216,6 +217,7 @@ static List _build_mps_list(List gres_list)
 			mps_record->name = xstrdup(gres_record->name);
 			mps_record->plugin_id = gres_record->plugin_id;
 			mps_record->type_name = xstrdup(gres_record->type_name);
+			mps_record->unique_id = xstrdup(gres_record->unique_id);
 			list_append(mps_list, mps_record);
 		} else {
 			mps_file_recs++;
@@ -243,6 +245,8 @@ static List _build_mps_list(List gres_list)
 				mps_record->plugin_id = gres_record->plugin_id;
 				mps_record->type_name =
 					xstrdup(gres_record->type_name);
+				mps_record->unique_id =
+					xstrdup(gres_record->unique_id);
 				list_append(mps_list, mps_record);
 				free(f_name);
 			}
@@ -299,7 +303,7 @@ static void _distribute_count(List gres_conf_list, List gpu_conf_list,
 		}
 		mps_record->file = xstrdup(gpu_record->file);
 		mps_record->name = xstrdup("mps");
-		mps_record->plugin_id = gres_plugin_build_id("mps");
+		mps_record->plugin_id = gres_build_id("mps");
 		mps_record->type_name = xstrdup(gpu_record->type_name);
 		list_append(gres_conf_list, mps_record);
 
@@ -362,6 +366,9 @@ static int _merge_lists(List gres_conf_list, List gpu_conf_list,
 				xfree(mps_record->type_name);
 				mps_record->type_name =
 					xstrdup(gpu_record->type_name);
+				xfree(mps_record->unique_id);
+				mps_record->unique_id =
+					xstrdup(gpu_record->unique_id);
 				list_append(gres_conf_list, mps_record);
 				(void) list_remove(mps_itr);
 				break;
@@ -381,8 +388,9 @@ static int _merge_lists(List gres_conf_list, List gpu_conf_list,
 			}
 			mps_record->file = xstrdup(gpu_record->file);
 			mps_record->name = xstrdup("mps");
-			mps_record->plugin_id = gres_plugin_build_id("mps");
+			mps_record->plugin_id = gres_build_id("mps");
 			mps_record->type_name = xstrdup(gpu_record->type_name);
+			mps_record->unique_id = xstrdup(gpu_record->unique_id);
 			list_append(gres_conf_list, mps_record);
 		}
 		list_append(gres_conf_list, gpu_record);
@@ -457,7 +465,6 @@ static int _compute_local_id(char *dev_file_name)
 static uint64_t _build_mps_dev_info(List gres_conf_list)
 {
 	uint64_t mps_count = 0;
-	uint32_t mps_plugin_id = gres_plugin_build_id("mps");
 	gres_slurmd_conf_t *gres_conf;
 	mps_dev_info_t *mps_conf;
 	ListIterator iter;
@@ -465,7 +472,7 @@ static uint64_t _build_mps_dev_info(List gres_conf_list)
 	mps_info = list_create(xfree_ptr);
 	iter = list_iterator_create(gres_conf_list);
 	while ((gres_conf = list_next(iter))) {
-		if (gres_conf->plugin_id != mps_plugin_id)
+		if (!gres_id_shared(gres_conf->plugin_id))
 			continue;
 		mps_conf = xmalloc(sizeof(mps_dev_info_t));
 		mps_conf->count = gres_conf->count;
@@ -482,7 +489,8 @@ static uint64_t _build_mps_dev_info(List gres_conf_list)
  * This only validates that the configuration was specified in gres.conf.
  * In the general case, no code would need to be changed.
  */
-extern int node_config_load(List gres_conf_list, node_config_load_t *config)
+extern int gres_p_node_config_load(List gres_conf_list,
+				   node_config_load_t *config)
 {
 	int rc = SLURM_SUCCESS;
 	log_level_t log_lvl;
@@ -576,14 +584,14 @@ static uint64_t _get_dev_count(int global_id)
 	return count;
 }
 
-static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
-		     bitstr_t *usable_gres,
+static void _set_env(char ***env_ptr, bitstr_t *gres_bit_alloc,
+		     bitstr_t *usable_gres, uint64_t gres_per_node,
 		     bool *already_seen, int *local_inx,
-		     bool reset, bool is_job, gres_internal_flags_t flags)
+		     bool is_task, bool is_job, gres_internal_flags_t flags)
 {
 	char *global_list = NULL, *local_list = NULL, *perc_env = NULL;
 	char perc_str[64], *slurm_env_var = NULL;
-	uint64_t count_on_dev, gres_per_node = 0, percentage;
+	uint64_t count_on_dev, percentage;
 	int global_id = -1;
 
 	if (is_job)
@@ -599,10 +607,10 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
 					  "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"));
 	}
 
-	common_gres_set_env(gres_devices, env_ptr, gres_ptr, node_inx,
-			    usable_gres, "", local_inx,
-			    &gres_per_node, &local_list, &global_list,
-			    reset, is_job, &global_id, flags);
+	common_gres_set_env(gres_devices, env_ptr,
+			    usable_gres, "", local_inx, gres_bit_alloc,
+			    &local_list, &global_list,
+			    is_task, is_job, &global_id, flags, true);
 
 	if (perc_env) {
 		env_array_overwrite(env_ptr,
@@ -650,8 +658,10 @@ static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job's GRES state.
  */
-extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
-			gres_internal_flags_t flags)
+extern void gres_p_job_set_env(char ***job_env_ptr,
+			       bitstr_t *gres_bit_alloc,
+			       uint64_t gres_per_node,
+			       gres_internal_flags_t flags)
 {
 	/*
 	 * Variables are not static like in step_*_env since we could be calling
@@ -664,7 +674,7 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
 	int local_inx = 0;
 	bool already_seen = false;
 
-	_set_env(job_env_ptr, gres_ptr, node_inx, NULL,
+	_set_env(job_env_ptr, gres_bit_alloc, NULL, gres_per_node,
 		 &already_seen, &local_inx, false, true, flags);
 }
 
@@ -672,13 +682,15 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx,
  * Set environment variables as appropriate for a step (i.e. all tasks) based
  * upon the job step's GRES state.
  */
-extern void step_set_env(char ***step_env_ptr, void *gres_ptr,
-			 gres_internal_flags_t flags)
+extern void gres_p_step_set_env(char ***step_env_ptr,
+				bitstr_t *gres_bit_alloc,
+				uint64_t gres_per_node,
+				gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
-	_set_env(step_env_ptr, gres_ptr, 0, NULL,
+	_set_env(step_env_ptr, gres_bit_alloc, NULL, gres_per_node,
 		 &already_seen, &local_inx, false, false, flags);
 }
 
@@ -686,18 +698,21 @@ extern void step_set_env(char ***step_env_ptr, void *gres_ptr,
  * Reset environment variables as appropriate for a job (i.e. this one task)
  * based upon the job step's GRES state and assigned CPUs.
  */
-extern void step_reset_env(char ***step_env_ptr, void *gres_ptr,
-			   bitstr_t *usable_gres, gres_internal_flags_t flags)
+extern void gres_p_task_set_env(char ***step_env_ptr,
+				bitstr_t *gres_bit_alloc,
+				bitstr_t *usable_gres,
+				uint64_t gres_per_node,
+				gres_internal_flags_t flags)
 {
 	static int local_inx = 0;
 	static bool already_seen = false;
 
-	_set_env(step_env_ptr, gres_ptr, 0, usable_gres,
+	_set_env(step_env_ptr, gres_bit_alloc, usable_gres, gres_per_node,
 		 &already_seen, &local_inx, true, false, flags);
 }
 
 /* Send GRES information to slurmstepd on the specified file descriptor */
-extern void send_stepd(Buf buffer)
+extern void gres_p_send_stepd(buf_t *buffer)
 {
 	int mps_cnt;
 	mps_dev_info_t *mps_ptr;
@@ -722,7 +737,7 @@ extern void send_stepd(Buf buffer)
 }
 
 /* Receive GRES information from slurmd on the specified file descriptor */
-extern void recv_stepd(Buf buffer)
+extern void gres_p_recv_stepd(buf_t *buffer)
 {
 	int i, mps_cnt;
 	mps_dev_info_t *mps_ptr = NULL;
@@ -763,8 +778,9 @@ unpack_error:
  *            DO NOT FREE: This is a pointer into the job's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int job_info(gres_job_state_t *job_gres_data, uint32_t node_inx,
-		     enum gres_job_data_type data_type, void *data)
+extern int gres_p_get_job_info(gres_job_state_t *job_gres_data,
+			       uint32_t node_inx,
+			       enum gres_job_data_type data_type, void *data)
 {
 	return EINVAL;
 }
@@ -780,8 +796,9 @@ extern int job_info(gres_job_state_t *job_gres_data, uint32_t node_inx,
  *            DO NOT FREE: This is a pointer into the step's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int step_info(gres_step_state_t *step_gres_data, uint32_t node_inx,
-		     enum gres_step_data_type data_type, void *data)
+extern int gres_p_get_step_info(gres_step_state_t *step_gres_data,
+				uint32_t node_inx,
+				enum gres_step_data_type data_type, void *data)
 {
 	return EINVAL;
 }
@@ -790,17 +807,17 @@ extern int step_info(gres_step_state_t *step_gres_data, uint32_t node_inx,
  * Return a list of devices of this type. The list elements are of type
  * "gres_device_t" and the list should be freed using FREE_NULL_LIST().
  */
-extern List get_devices(void)
+extern List gres_p_get_devices(void)
 {
 	return gres_devices;
 }
 
-extern void step_hardware_init(bitstr_t *usable_gres, char *settings)
+extern void gres_p_step_hardware_init(bitstr_t *usable_gres, char *settings)
 {
 	return;
 }
 
-extern void step_hardware_fini(void)
+extern void gres_p_step_hardware_fini(void)
 {
 	return;
 }
@@ -809,7 +826,8 @@ extern void step_hardware_fini(void)
  * Build record used to set environment variables as appropriate for a job's
  * prolog or epilog based GRES allocated to the job.
  */
-extern gres_epilog_info_t *epilog_build_env(gres_job_state_t *gres_job_ptr)
+extern gres_epilog_info_t *gres_p_epilog_build_env(
+	gres_job_state_t *gres_job_ptr)
 {
 	int i;
 	gres_epilog_info_t *epilog_info;
@@ -840,8 +858,8 @@ extern gres_epilog_info_t *epilog_build_env(gres_job_state_t *gres_job_ptr)
  * Set environment variables as appropriate for a job's prolog or epilog based
  * GRES allocated to the job.
  */
-extern void epilog_set_env(char ***epilog_env_ptr,
-			   gres_epilog_info_t *epilog_info, int node_inx)
+extern void gres_p_epilog_set_env(char ***epilog_env_ptr,
+				  gres_epilog_info_t *epilog_info, int node_inx)
 {
 	int dev_inx = -1, env_inx = 0, global_id = -1, i;
 	uint64_t count_on_dev, gres_per_node = 0, percentage;

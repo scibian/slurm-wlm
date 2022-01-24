@@ -70,6 +70,10 @@
 #  endif
 #endif
 
+#ifdef WITH_SELINUX
+#include <selinux/selinux.h>
+#endif
+
 #include "slurm/slurm_errno.h"
 
 #include "src/common/cbuf.h"
@@ -83,6 +87,7 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/plugstack.h"
+#include "src/common/reverse_tree.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -100,10 +105,8 @@
 #include "src/slurmd/common/core_spec_plugin.h"
 #include "src/slurmd/common/fname.h"
 #include "src/slurmd/common/job_container_plugin.h"
-#include "src/slurmd/common/log_ctld.h"
 #include "src/slurmd/common/proctrack.h"
 #include "src/slurmd/common/run_script.h"
-#include "src/slurmd/common/reverse_tree.h"
 #include "src/slurmd/common/set_oomadj.h"
 #include "src/slurmd/common/slurmd_cgroup.h"
 #include "src/slurmd/common/task_plugin.h"
@@ -192,7 +195,8 @@ static void *_x11_signal_handler(void *arg);
  * Batch job management prototypes:
  */
 static char * _make_batch_dir(stepd_step_rec_t *job);
-static char * _make_batch_script(batch_job_launch_msg_t *msg, char *path);
+static int _make_batch_script(batch_job_launch_msg_t *msg,
+			      stepd_step_rec_t *job);
 static int    _send_complete_batch_script_msg(stepd_step_rec_t *job,
 					      int err, int status);
 
@@ -346,16 +350,23 @@ static uint32_t _get_exit_code(stepd_step_rec_t *job)
 	return step_rc;
 }
 
+static char *_batch_script_path(stepd_step_rec_t *job)
+{
+	return xstrdup_printf("%s/%s", job->batchdir, "slurm_script");
+}
+
 /*
  * Send batch exit code to slurmctld. Non-zero rc will DRAIN the node.
  */
 extern void
 batch_finish(stepd_step_rec_t *job, int rc)
 {
+	char *script = _batch_script_path(job);
 	step_complete.step_rc = _get_exit_code(job);
 
-	if (job->argv[0] && (unlink(job->argv[0]) < 0))
-		error("unlink(%s): %m", job->argv[0]);
+	if (unlink(script) < 0)
+		error("unlink(%s): %m", script);
+	xfree(script);
 
 	if (job->aborted) {
 		if (job->step_id.step_id != SLURM_BATCH_SCRIPT)
@@ -388,16 +399,10 @@ stepd_step_rec_t *
 mgr_launch_batch_job_setup(batch_job_launch_msg_t *msg, slurm_addr_t *cli)
 {
 	stepd_step_rec_t *job = NULL;
-	char *err_msg = NULL;
 
 	if (!(job = batch_stepd_step_rec_create(msg))) {
-		xstrfmtcat(err_msg,
-			   "batch_stepd_step_rec_create() failed for job %u on %s: %s",
-			   msg->job_id, conf->hostname,
-			   slurm_strerror(errno));
-		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
-		error("%s", err_msg);
-		xfree(err_msg);
+		error("batch_stepd_step_rec_create() failed for job %u on %s: %s",
+		      msg->job_id, conf->hostname, slurm_strerror(errno));
 		return NULL;
 	}
 
@@ -407,9 +412,8 @@ mgr_launch_batch_job_setup(batch_job_launch_msg_t *msg, slurm_addr_t *cli)
 
 	xfree(job->argv[0]);
 
-	if ((job->argv[0] = _make_batch_script(msg, job->batchdir)) == NULL) {
+	if (_make_batch_script(msg, job))
 		goto cleanup;
-	}
 
 	/* this is the new way of setting environment variables */
 	env_array_for_batch_job(&job->env, msg, conf->node_name);
@@ -422,13 +426,8 @@ mgr_launch_batch_job_setup(batch_job_launch_msg_t *msg, slurm_addr_t *cli)
 	return job;
 
 cleanup:
-	xstrfmtcat(err_msg,
-		   "batch script setup failed for job %u on %s: %s",
-		   msg->job_id, conf->hostname,
-		   slurm_strerror(errno));
-	(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
-	error("%s", err_msg);
-	xfree(err_msg);
+	error("batch script setup failed for job %u on %s: %s",
+	      msg->job_id, conf->hostname, slurm_strerror(errno));
 
 	if (job->aborted)
 		verbose("job %u abort complete", job->step_id.job_id);
@@ -962,6 +961,19 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	int rc = SLURM_SUCCESS;
 	uint32_t jobid;
 
+#ifdef HAVE_NATIVE_CRAY
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->step_id.job_id;
+#else
+	jobid = job->step_id.job_id;
+#endif
+	if (container_g_stepd_create(jobid, job->uid)) {
+		error("%s: container_g_stepd_create(%u): %m", __func__, jobid);
+		return SLURM_ERROR;
+	}
+
 	debug2("%s: Before call to spank_init()", __func__);
 	if (spank_init(job) < 0) {
 		error("%s: Plugin stack initialization failed.", __func__);
@@ -975,6 +987,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	if (task_g_pre_setuid(job)) {
 		error("%s: Failed to invoke task plugins: one of "
 		      "task_p_pre_setuid functions returned error", __func__);
+		return SLURM_ERROR;
 	}
 
 	acct_gather_profile_g_task_start(0);
@@ -1045,14 +1058,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	jobacct_id.job    = job;
 	jobacct_gather_set_proctrack_container_id(job->cont_id);
 	jobacct_gather_add_task(pid, &jobacct_id, 1);
-#ifdef HAVE_NATIVE_CRAY
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
-	else
-		jobid = job->step_id.job_id;
-#else
-	jobid = job->step_id.job_id;
-#endif
 	container_g_add_cont(jobid, job->cont_id);
 
 	_set_job_state(job, SLURMSTEPD_STEP_RUNNING);
@@ -1150,7 +1155,6 @@ job_manager(stepd_step_rec_t *job)
 {
 	int  rc = SLURM_SUCCESS;
 	bool io_initialized = false;
-	char *err_msg = NULL;
 
 	debug3("Entered job_manager for %ps pid=%d",
 	       &job->step_id, job->jmgr_pid);
@@ -1175,7 +1179,7 @@ job_manager(stepd_step_rec_t *job)
 	    (acct_gather_profile_init() != SLURM_SUCCESS)	||
 	    (slurm_cred_init() != SLURM_SUCCESS)		||
 	    (job_container_init() != SLURM_SUCCESS)		||
-	    (gres_plugin_init() != SLURM_SUCCESS)) {
+	    (gres_init() != SLURM_SUCCESS)) {
 		rc = SLURM_PLUGIN_NAME_INVALID;
 		goto fail1;
 	}
@@ -1188,7 +1192,7 @@ job_manager(stepd_step_rec_t *job)
 
 	if (!job->batch && (job->step_id.step_id != SLURM_EXTERN_CONT) &&
 	    (job->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
-	    (switch_g_job_preinit(job->switch_job) < 0)) {
+	    (switch_g_job_preinit(job) < 0)) {
 		rc = ESLURM_INTERCONNECT_FAILURE;
 		goto fail1;
 	}
@@ -1224,11 +1228,6 @@ job_manager(stepd_step_rec_t *job)
 	    (mpi_hook_slurmstepd_prefork(job, &job->env) != SLURM_SUCCESS)) {
 		error("Failed mpi_hook_slurmstepd_prefork");
 		rc = SLURM_ERROR;
-		xstrfmtcat(err_msg,
-			   "mpi_hook_slurmstepd_prefork failure for %ps on %s",
-			   &job->step_id, conf->hostname);
-		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
-		xfree(err_msg);
 		goto fail3;
 	}
 
@@ -1241,14 +1240,11 @@ job_manager(stepd_step_rec_t *job)
 	if (!job->batch && (job->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
 	    (job->node_tasks > 1) &&
 	    (job->accel_bind_type || job->tres_bind)) {
-		uint64_t gpu_cnt, mic_cnt, nic_cnt;
-		gpu_cnt = gres_plugin_step_count(job->step_gres_list, "gpu");
-		mic_cnt = gres_plugin_step_count(job->step_gres_list, "mic");
-		nic_cnt = gres_plugin_step_count(job->step_gres_list, "nic");
+		uint64_t gpu_cnt, nic_cnt;
+		gpu_cnt = gres_step_count(job->step_gres_list, "gpu");
+		nic_cnt = gres_step_count(job->step_gres_list, "nic");
 		if ((gpu_cnt <= 1) || (gpu_cnt == NO_VAL64))
 			job->accel_bind_type &= (~ACCEL_BIND_CLOSEST_GPU);
-		if ((mic_cnt <= 1) || (mic_cnt == NO_VAL64))
-			job->accel_bind_type &= (~ACCEL_BIND_CLOSEST_MIC);
 		if ((nic_cnt <= 1) || (nic_cnt == NO_VAL64))
 			job->accel_bind_type &= (~ACCEL_BIND_CLOSEST_NIC);
 		if (job->accel_bind_type == ACCEL_BIND_VERBOSE)
@@ -1370,7 +1366,7 @@ fail2:
 	if (!job->batch && (job->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
 	    job->tres_freq) {
 		if (getuid() == (uid_t) 0)
-			gres_plugin_step_hardware_fini();
+			gres_g_step_hardware_fini();
 		else
 			error("%s: invalid permissions: cannot uninitialize GRES hardware unless Slurmd was started as root",
 			      __func__);
@@ -1403,7 +1399,8 @@ fail1:
 	 */
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
 	if (rc != 0) {
-		error("job_manager exiting abnormally, rc = %d", rc);
+		error("%s: exiting abnormally: %s",
+		      __func__, slurm_strerror(rc));
 		_send_launch_resp(job, rc);
 	}
 
@@ -1457,7 +1454,14 @@ static int _pre_task_child_privileged(
 		return rc;
 	}
 
-	if (setwd) {
+	if (job->container) {
+		/* Container jobs must start in the correct directory */
+		if (chdir(job->cwd) < 0) {
+			error("couldn't chdir to `%s': %m", job->cwd);
+			return errno;
+		}
+		debug2("%s: chdir(%s) success", __func__, job->cwd);
+	} else if (setwd) {
 		if (chdir(job->cwd) < 0) {
 			error("couldn't chdir to `%s': %m: going to /tmp instead",
 			      job->cwd);
@@ -1466,7 +1470,6 @@ static int _pre_task_child_privileged(
 				return SLURM_ERROR;
 			}
 		}
-
 	}
 
 	return rc;
@@ -1737,9 +1740,9 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	if (!job->batch && (job->step_id.step_id != SLURM_INTERACTIVE_STEP)
 	    && job->tres_freq) {
 		if (getuid() == (uid_t) 0) {
-			gres_plugin_step_hardware_init(job->step_gres_list,
-						       job->nodeid,
-						       job->tres_freq);
+			gres_g_step_hardware_init(job->step_gres_list,
+						  job->nodeid,
+						  job->tres_freq);
 		} else {
 			error("%s: invalid permissions: cannot initialize GRES hardware unless Slurmd was started as root",
 			      __func__);
@@ -1900,8 +1903,20 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			      i, job->task[i]->pid, job->pgid);
 		}
 
-		if (task_g_pre_launch_priv(job, job->task[i]->pid) < 0) {
-			error("task_g_pre_launch_priv: %m");
+		if (task_g_pre_set_affinity(job, i) < 0) {
+			error("task_g_pre_set_affinity: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
+		if (task_g_set_affinity(job, i) < 0) {
+			error("task_g_set_affinity: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
+		if (task_g_post_set_affinity(job, i) < 0) {
+			error("task_g_post_set_affinity: %m");
 			rc = SLURM_ERROR;
 			goto fail2;
 		}
@@ -2137,6 +2152,7 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 			job->envtp->batch_flag = job->batch;
 			job->envtp->uid = job->uid;
 			job->envtp->user_name = xstrdup(job->user_name);
+			job->envtp->nodeid = job->nodeid;
 
 			/*
 			 * Modify copy of job's environment. Do not alter in
@@ -2152,6 +2168,9 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 
 			setenvf(&job->env, "SLURM_SCRIPT_CONTEXT",
 				"epilog_task");
+			setenvf(&job->env, "SLURMD_NODENAME", "%s",
+				conf->node_name);
+
 			if (job->task_epilog) {
 				_run_script_as_user("user task_epilog",
 						    job->task_epilog,
@@ -2301,7 +2320,8 @@ error:
 	return NULL;
 }
 
-static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
+static int _make_batch_script(batch_job_launch_msg_t *msg,
+			      stepd_step_rec_t *job)
 {
 	int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC;
 	int fd, length;
@@ -2310,16 +2330,16 @@ static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 
 	if (msg->script == NULL) {
 		error("%s: called with NULL script", __func__);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
 	/* note: should replace this with a length as part of msg */
 	if ((length = strlen(msg->script)) < 1) {
 		error("%s: called with empty script", __func__);
-		return NULL;
+		return SLURM_ERROR;
 	}
 
-	xstrfmtcat(script, "%s/%s", path, "slurm_script");
+	script = _batch_script_path(job);
 
 	if ((fd = open(script, flags, S_IRWXU)) < 0) {
 		error("couldn't open `%s': %m", script);
@@ -2347,17 +2367,17 @@ static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 	munmap(output, length);
 
 	if (chown(script, (uid_t) msg->uid, (gid_t) -1) < 0) {
-		error("chown(%s): %m", path);
+		error("chown(%s): %m", script);
 		goto error;
 	}
 
-	return script;
+	job->argv[0] = script;
+	return SLURM_SUCCESS;
 
 error:
 	(void) unlink(script);
 	xfree(script);
-	return NULL;
-
+	return SLURM_ERROR;
 }
 
 extern int stepd_drain_node(char *reason)
@@ -2565,7 +2585,7 @@ _drop_privileges(stepd_step_rec_t *job, bool do_setuid,
 	}
 
 	if (setgroups(job->ngids, job->gids) < 0) {
-		error("getgroups: %m");
+		error("setgroups: %m");
 		return -1;
 	}
 
@@ -2649,8 +2669,11 @@ _slurmd_job_log_init(stepd_step_rec_t *job)
 		}
 	}
 
-	verbose("debug level is '%s'",
-		log_num2string(conf->log_opts.stderr_level));
+	verbose("debug levels are stderr='%s', logfile='%s', syslog='%s'",
+		log_num2string(conf->log_opts.stderr_level),
+		log_num2string(conf->log_opts.logfile_level),
+		log_num2string(conf->log_opts.syslog_level));
+
 	return SLURM_SUCCESS;
 }
 
@@ -2821,6 +2844,19 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 
 		argv[0] = (char *)xstrdup(path);
 		argv[1] = NULL;
+
+#ifdef WITH_SELINUX
+		if (setexeccon(job->selinux_context)) {
+			error("Failed to set SELinux context to %s: %m",
+			      job->selinux_context);
+			_exit(1);
+		}
+#else
+		if (job->selinux_context) {
+			error("Built without SELinux support but context was specified");
+			_exit(1);
+		}
+#endif
 
 		sprivs.gid_list = NULL;	/* initialize to prevent xfree */
 		if (_drop_privileges(job, true, &sprivs, false) < 0) {

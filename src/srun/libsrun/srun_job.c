@@ -694,6 +694,8 @@ extern void init_srun(int argc, char **argv,
 	if (atexit(_call_spank_fini) < 0)
 		error("Failed to register atexit handler for plugins: %m");
 
+	opt.submit_line = slurm_option_get_argv_str(argc, argv);
+
 	het_job_argc = argc;
 	het_job_argv = argv;
 	for (het_job_inx = 0; !het_job_fini; het_job_inx++) {
@@ -907,10 +909,8 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 				hostlist_push(exclude_hl,
 					      step_layout->node_list);
 			}
-			if ((slurm_step_ctx_get(job->step_ctx,
-						SLURM_STEP_CTX_RESP,
-						&step_resp) == SLURM_SUCCESS) &&
-			    step_resp->resv_ports &&
+			step_resp = job->step_ctx->step_resp;
+			if (step_resp && step_resp->resv_ports &&
 			    strcmp(step_resp->resv_ports, "(null)")) {
 				if (resv_ports)
 					xstrcat(resv_ports, ",");
@@ -942,13 +942,11 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 
 			list_iterator_reset(job_iter);
 			while ((job = list_next(job_iter))) {
-				if (slurm_step_ctx_get(job->step_ctx,
-						SLURM_STEP_CTX_RESP,
-						&step_resp) == SLURM_SUCCESS) {
-					xfree(step_resp->resv_ports);
-					step_resp->resv_ports =
-						xstrdup(resv_ports);
-				}
+				if (!job->step_ctx->step_resp)
+					continue;
+				xfree(job->step_ctx->step_resp->resv_ports);
+				job->step_ctx->step_resp->resv_ports =
+					xstrdup(resv_ports);
 			}
 			xfree(resv_ports);
 		}
@@ -1574,7 +1572,7 @@ cleanup:
 	if (!slurm_started)
 		_run_srun_epilog(job);
 
-	slurm_step_ctx_destroy(job->step_ctx);
+	step_ctx_destroy(job->step_ctx);
 
 	if (WIFEXITED(*global_rc))
 		*global_rc = WEXITSTATUS(*global_rc);
@@ -1616,8 +1614,9 @@ job_force_termination(srun_job_t *job)
 
 	if (kill_sent == 0) {
 		info("forcing job termination");
-		/* Sends SIGKILL to tasks directly */
-		update_job_state(job, SRUN_JOB_FORCETERM);
+		/* Send SIGKILL to tasks directly */
+		update_job_state(job, SRUN_JOB_CANCELLED);
+		launch_g_fwd_signal(SIGKILL);
 	} else {
 		time_t now = time(NULL);
 		if (last_msg != now) {
@@ -1672,6 +1671,7 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 	job->state = SRUN_JOB_INIT;
 
  	job->alias_list = xstrdup(ainfo->alias_list);
+	job->container = xstrdup(opt_local->container);
  	job->nodelist = xstrdup(ainfo->nodelist);
  	job->partition = xstrdup(ainfo->partition);
 	memcpy(&job->step_id, &ainfo->step_id, sizeof(job->step_id));
@@ -1833,39 +1833,22 @@ static long _diff_tv_str(struct timeval *tv1, struct timeval *tv2)
 static void _handle_intr(srun_job_t *job)
 {
 	static struct timeval last_intr = { 0, 0 };
-	static struct timeval last_intr_sent = { 0, 0 };
 	struct timeval now;
 
 	gettimeofday(&now, NULL);
-	if (!sropt.quit_on_intr && (_diff_tv_str(&last_intr, &now) > 1000000)) {
+	if (sropt.quit_on_intr || _diff_tv_str(&last_intr, &now) < 1000000) {
+		info("sending Ctrl-C to %ps", &job->step_id);
+		launch_g_fwd_signal(SIGINT);
+		job_force_termination(job);
+	} else {
 		if (sropt.disable_status) {
 			info("sending Ctrl-C to %ps", &job->step_id);
 			launch_g_fwd_signal(SIGINT);
-		} else if (job->state < SRUN_JOB_FORCETERM) {
+		} else if (job->state < SRUN_JOB_CANCELLED) {
 			info("interrupt (one more within 1 sec to abort)");
-			launch_g_print_status();
-		} else {
-			info("interrupt (abort already in progress)");
 			launch_g_print_status();
 		}
 		last_intr = now;
-	} else  { /* second Ctrl-C in half as many seconds */
-		update_job_state(job, SRUN_JOB_CANCELLED);
-		/* terminate job */
-		if (job->state < SRUN_JOB_FORCETERM) {
-			if (_diff_tv_str(&last_intr_sent, &now) < 1000000) {
-				job_force_termination(job);
-				launch_g_fwd_signal(SIGKILL);
-				return;
-			}
-
-			info("sending Ctrl-C to %ps", &job->step_id);
-			last_intr_sent = now;
-			launch_g_fwd_signal(SIGINT);
-		} else
-			job_force_termination(job);
-
-		launch_g_fwd_signal(SIGKILL);
 	}
 }
 
@@ -2176,7 +2159,7 @@ static int _set_rlimit_env(void)
 	/*
 	 *  Now increase NOFILE to the max available for this srun
 	 */
-	rlimits_maximize_nofile();
+	rlimits_use_max_nofile();
 
 	return rc;
 }
@@ -2186,6 +2169,10 @@ static int _set_rlimit_env(void)
 static void _set_submit_dir_env(void)
 {
 	char buf[MAXPATHLEN + 1], host[256];
+
+	/* Only set these environment variables in new allocations */
+	if (sropt.jobid != NO_VAL)
+		return;
 
 	if (setenvf(NULL, "SLURM_CLUSTER_NAME", "%s",
 		    slurm_conf.cluster_name) < 0)

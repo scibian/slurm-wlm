@@ -38,6 +38,14 @@ case "$1" in
       if [ -n "$2" ] && dpkg --compare-versions $2 lt 20.02.1-1 ; then
          cp -a -n /etc/slurm-llnl/. /etc/slurm
       fi
+
+      if [ -n "$2" ] && dpkg --compare-versions $2 lt 21.08.5-1 ; then
+         if [ -e /etc/slurm/slurm.conf ] ; then
+            sed -i "s@^\(AccountingStoreJobComment=YES\)@#\1\nAccountingStoreFlags=job_comment@i" \
+               /etc/slurm/slurm.conf
+         fi
+      fi
+
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

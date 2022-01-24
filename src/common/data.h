@@ -34,6 +34,79 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+/*
+ * The data_t struct exists to provide a generic and type safe way to work with
+ * complex data types in a tree. All data_t pointers and helpers are re-entrant
+ * but not thread safe.
+ *
+ * data_t ptr always has a root instance created by data_new() and cleaned up by
+ * data_free(). Do not use data_free() on a child data_t ptr as it will
+ * eventually cause a double free error. All the helper functions exist to
+ * manipulate the data_t struct. Never directly edit the contents of the data_t
+ * struct without one of the helpers. Most helper calls will return a data_t
+ * pointer which is a child of the existing tree and will be cleaned up by the
+ * root.
+ *
+ * To use data_t, data_init() must be called before anything else. It is safe to
+ * call this multiple times but not advised before every usage as it may be
+ * slow. data_init() is designed to allow calls for a specific plugin
+ * requirement which will not prevent loading of other plugins by the other
+ * calls to data_init(). data_fini() needs to be called after all data
+ * operations are complete is only for testing for memory leaks.
+ *
+ * data_t has very *strict* typing that is based on JSON. All of the possible
+ * types are in data_type_t. The caller is required to verify the type of the
+ * data_t pointer is correct before calling the helper function to retrieve the
+ * contents. If the source data is provided by a user (or is just unknown), then
+ * one of the many data_*convert*() functions must be used to ensure that the
+ * data_t pointer is of the correct type. These convert functions will generally
+ * allow conversion betwen all of the types except DICT and LIST (as converting
+ * between them is not well defined).
+ *
+ * There are helpers to iterate over all members of LIST and DICT data_t
+ * pointers. These are all function pointer based helpers that will call a given
+ * function pointer on each item being iterated over. The return value is
+ * operational command allowing the function pointer to inform the caller how to
+ * proceed. There are purposefully no iterators for data_t pointers to avoid any
+ * form of dangling pointers.
+ *
+ * data_t uses a plugin interface for serialization of the data to common
+ * formats. These plugins require 3rd party libraries and may not have been
+ * compiled. Any code should expect this possiblity as data_init() will fail if
+ * the plugin is not found.
+ *
+ * Example usage:
+ *
+ * //Global init requiring JSON serializer
+ * if (data_init(MIME_TYPE_JSON_PLUGIN, NULL)) fatal("failed");
+ * //Create root data entry:
+ * data_t *ex = data_new();
+ * //Set data entry to be a dictionary type
+ * data_set_dict(ex);
+ * //Set key test1 to be string "test1 value"
+ * data_set_string(data_key_set(ex, "test1"), "test1 value");
+ * //Set key test2 to be integer 12345
+ * data_set_int(data_key_set(ex, "test2"), 12345);
+ * // serialize into JSON string
+ * char *json = NULL;
+ * data_g_serialize(&json, ex, MIME_TYPE_JSON, DATA_SER_FLAGS_PRETTY);
+ * // cleanup the example
+ * FREE_NULL_DATA(ex);
+ * // log the json
+ * debug("example json: %s", json);
+ * // deserialise the JSON back into data_t
+ * data_g_deserialize(&ex, json, strlen(json), MIME_TYPE_JSON);
+ * xfree(json);
+ * // verify contents
+ * xassert(data_get_type(ex) == DATA_TYPE_DICT);
+ * xassert(!xstrcmp(data_get_string(data_key_get(ex, "test1"), "test1 value"));
+ * xassert(data_get_int(data_key_get(ex, "test2") == 12345);
+ * // cleanup tree
+ * FREE_NULL_DATA(ex);
+ * // release all global memory and plugins
+ * data_fini();
+ */
+
 #ifndef _DATA_H
 #define _DATA_H
 
@@ -42,6 +115,7 @@
 #include <stddef.h>
 
 #include "src/common/list.h"
+#include "src/common/plugrack.h"
 
 /*
  * The possible types of data.
@@ -128,12 +202,25 @@ typedef data_for_each_cmd_t (*DataDictForF) (const char *key, data_t *data, void
 typedef data_for_each_cmd_t (*DataDictForFConst) (const char *key, const data_t *data, void *arg);
 
 /*
- * Initialize static structs needed by data functions.
- * WARNING: must be called only once before any data commands
+ * Initialize static structs needed by data functions and
+ * 	load serializer plugins
+ *
+ * It is safe to call this function multiple times with different plugins as
+ * they will be loaded only once.
+ *
+ * IN plugins - comma delimited list of plugins or "list"
+ * 	pass NULL to load all found or "" to load none of them
+ *
+ * IN listf - function to call if plugins="list" (may be NULL)
  * RET SLURM_SUCCESS or error
  */
-extern int data_init_static(void);
-extern void data_destroy_static(void);
+extern int data_init(const char *plugins, plugrack_foreach_t listf);
+/*
+ * Cleanup global memory used by data_t helpers and unload all plugins
+ *
+ * WARNING: must be called only once after all data commands complete
+ */
+extern void data_fini(void);
 
 /*
  * Create new data struct.
@@ -527,5 +614,56 @@ extern int data_retrieve_dict_path_int(const data_t *data, const char *path,
  * RET ptr to dest or NULL on error
  */
 extern data_t *data_copy(data_t *dest, const data_t *src);
+
+typedef enum {
+	DATA_SER_FLAGS_NONE = 0, /* defaults to compact currently */
+	DATA_SER_FLAGS_COMPACT = 1 << 1,
+	DATA_SER_FLAGS_PRETTY = 1 << 2,
+} data_serializer_flags_t;
+
+/*
+ * Define common MIME types to make it easier for serializer callers.
+ *
+ * WARNING: There is no guarantee that plugins for these types
+ * will be loaded at any given time.
+ */
+#define MIME_TYPE_YAML "application/x-yaml"
+#define MIME_TYPE_YAML_PLUGIN "serializer/yaml"
+#define MIME_TYPE_JSON "application/json"
+#define MIME_TYPE_JSON_PLUGIN "serializer/json"
+#define MIME_TYPE_URL_ENCODED "application/x-www-form-urlencoded"
+#define MIME_TYPE_URL_ENCODED_PLUGIN "serializer/url-encoded"
+
+/*
+ * Serialize data in src into string dest
+ * IN/OUT dest - ptr to NULL string ptr to set with output data.
+ * 	caller must xfree(dest) if set.
+ * IN src - populated data ptr to serialize
+ * IN mime_type - serialize data into the given mime_type
+ * IN flags - optional flags to specify to serilzier to change presentation of
+ * 	data
+ * RET SLURM_SUCCESS or error
+ */
+extern int data_g_serialize(char **dest, const data_t *src,
+			    const char *mime_type,
+			    data_serializer_flags_t flags);
+
+/*
+ * Deserialize string in src into data dest
+ * IN/OUT dest - ptr to NULL data ptr to set with output data.
+ * 	caller must FREE_NULL_DATA(dest) if set.
+ * IN src - string to deserialize
+ * IN length - number of bytes in src
+ * IN mime_type - deserialize data using given mime_type
+ * RET SLURM_SUCCESS or error
+ */
+extern int data_g_deserialize(data_t **dest, const char *src, size_t length,
+			      const char *mime_type);
+
+/*
+ * Check if there is a plugin loaded that can handle the requested mime type
+ * RET ptr to best matching mime type or NULL if none can match
+ */
+extern const char *data_resolve_mime_type(const char *mime_type);
 
 #endif /* _DATA_H */

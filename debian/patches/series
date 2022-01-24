@@ -9,3 +9,4 @@ pmixv4
 b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 fix-pmixv3-dlopen-path
 enforce-cred-cache-clearing
+use-hdf5-18-api

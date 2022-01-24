@@ -124,9 +124,6 @@
 /* Define to 1 if you have the `ucp' library (-lucp). */
 #undef HAVE_LIBUCP
 
-/* Define to 1 if you have `z' library (-lz) */
-#undef HAVE_LIBZ
-
 /* Define to 1 if you have the <limits.h> header file. */
 #undef HAVE_LIMITS_H
 
@@ -147,6 +144,9 @@
 
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
+
+/* Define to 1 if NVML library has MIG support */
+#undef HAVE_MIG_SUPPORT
 
 /* Define to 1 if you have the `mtrace' function. */
 #undef HAVE_MTRACE
@@ -562,6 +562,9 @@
 
 /* Building with Linux cgroup support */
 #undef WITH_CGROUP
+
+/* Using internal Slurm SELinux support */
+#undef WITH_SELINUX
 
 /* Using internal Slurm X11 support */
 #undef WITH_SLURM_X11

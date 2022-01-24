@@ -40,6 +40,33 @@
 #include "src/common/read_config.h"
 #include "src/common/xstring.h"
 
+/*
+ * test39.18.prog <etc_dir> <nodename> <conf_gres> [<debug_level>]
+ *
+ * etc_dir	The directory containing slurm.conf, gres.conf, and
+ * 		fake_gpus.conf.
+ * nodename	The name of the node.
+ * conf_gres	A string indicating the GRES ostensibly parsed from a
+ * 		slurm.conf for the node. E.g., `gpu:4`.
+ * debug_level	(optional) A number representing the log_level_t the program
+ * 		should use. If unspecified, defaults to LOG_LEVEL_INFO.
+ * 		LOG_LEVEL_INFO is the lowest log level allowed.
+ * 		Note that debug, debug2, and debug3 may produce too much output
+ * 		and cause expect to fail to parse things properly. This will
+ * 		show up as a test failure. Only use debug+ when debugging and
+ * 		developing tests, and NOT when running the tests in production.
+ *
+ * Note that slurm.conf only needs to specify the following fields:
+ *	ControlMachine=test_machine
+ *	ClusterName=test_cluster
+ *	GresTypes=gpu,mps,nic,mic,tmpdisk
+ *
+ * The actual GRES for the node is specified in conf_gres, not slurm.conf. This
+ * makes it so we don't need to re-create the slurm.conf each time we run this
+ * test runner program.
+ *
+ * However, gres.conf and fake_gpus.conf do need to be re-created for each test.
+ */
 int main(int argc, char *argv[])
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY;
@@ -52,16 +79,27 @@ int main(int argc, char *argv[])
 	char *fake_gpus_conf = NULL;
 	struct stat stat_buf;
 	List gres_list = NULL;
+	log_level_t debug_level = LOG_LEVEL_INFO;
 
-	if (argc < 3 || argc > 4) {
-		printf("FAILURE: Not enough or too many arguments!\n");
+	if (argc < 4) {
+		printf("FAILURE: Not enough arguments!\n");
+		exit(1);
+	}
+
+	if (argc > 5) {
+		printf("FAILURE: Too many arguments!\n");
 		exit(1);
 	}
 
 	etc_dir = argv[1];
 	node_name = argv[2];
-	if (argc >= 4) {
-		slurm_conf_gres_str = argv[3];
+	slurm_conf_gres_str = argv[3];
+	if (argc == 5)
+		debug_level = atoi(argv[4]);
+
+	if (debug_level < LOG_LEVEL_INFO) {
+		printf("FAILURE: LOG_LEVEL_INFO is the lowest log level allowed!\n");
+		exit(1);
 	}
 
 	xstrfmtcat(slurm_conf, "%s/%s", etc_dir, "slurm.conf");
@@ -87,10 +125,7 @@ int main(int argc, char *argv[])
 	printf("gres_conf: %s\n", gres_conf);
 	printf("fake_gpus_conf: %s\n", fake_gpus_conf);
 
-	// Only log info to avoid buffer truncation in expect regex
-	opts.stderr_level = LOG_LEVEL_INFO;
-	// opts.stderr_level = LOG_LEVEL_DEBUG2;
-	// opts.stderr_level = LOG_LEVEL_DEBUG3;
+	opts.stderr_level = debug_level;
 	log_init(argv[0], opts, SYSLOG_FACILITY_USER, NULL);
 
 	// Override where Slurm looks for conf files
@@ -99,17 +134,16 @@ int main(int argc, char *argv[])
 	slurm_init(NULL);
 
 	// Initialize GRES info (from slurm.conf)
-	rc = gres_plugin_init_node_config(node_name, slurm_conf_gres_str,
-					  &gres_list);
+	rc = gres_init_node_config(node_name, slurm_conf_gres_str, &gres_list);
 	if (rc != SLURM_SUCCESS) {
-		slurm_perror("FAILURE: gres_plugin_init_node_config");
+		slurm_perror("FAILURE: gres_init_node_config");
 		exit(1);
 	}
 
-	rc = gres_plugin_node_config_load(4, node_name, gres_list, NULL, NULL);
+	rc = gres_g_node_config_load(4, node_name, gres_list, NULL, NULL);
 	FREE_NULL_LIST(gres_list);
 	if (rc != SLURM_SUCCESS) {
-		slurm_perror("FAILURE: gres_plugin_node_config_load");
+		slurm_perror("FAILURE: gres_node_config_load");
 		exit(1);
 	}
 
@@ -121,7 +155,7 @@ int main(int argc, char *argv[])
 #ifdef USING_VALGRIND
 	// Clean up for valgrind
 	slurm_conf_destroy();
-	gres_plugin_fini();
+	gres_fini();
 	slurm_select_fini();
 	log_fini();
 	xfree(slurm_conf);

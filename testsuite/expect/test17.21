@@ -29,16 +29,16 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_in     "test$test_id.input"
-set file_out    "test$test_id.output"
+set file_in     "$test_dir/input"
+set file_out    "$test_dir/output"
 set job_name    "TEST_NAME"
 set delay       10
+set job_id      0
 
 proc cleanup {} {
-	global file_in file_out
+	global job_id
 
-	file delete $file_in $file_out
+	cancel_job $job_id
 }
 
 if {[get_config_param "EnforcePartLimits"] eq "NO"} {
@@ -51,7 +51,6 @@ $bin_sleep $delay
 "
 
 set timeout $max_job_delay
-set job_id 0
 spawn $sbatch -o $file_out $file_in
 expect {
 	-re "Submitted batch job ($number)" {
@@ -81,8 +80,7 @@ expect {
 }
 cancel_job $job_id
 if {$matches != 1} {
-	log_error "Did not set job name from batch script"
-	set exit_code 1
+	fail "Did not set job name from batch script"
 }
 
 #
@@ -92,7 +90,7 @@ make_bash_script $file_in "#SBATCH -N1000000k
 $bin_sleep $delay
 "
 set match 0
-set sbatch_pid [spawn $sbatch -o $file_out $file_in]
+spawn $sbatch -o $file_out $file_in
 expect {
 	-re "More processors requested than permitted" {
 		log_debug "This error was expected, no worries"
@@ -101,11 +99,9 @@ expect {
 	}
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
-		cancel_job $job_id
 		fail "Test B was supposed to fail submission"
 	}
 	timeout {
-		slow_kill $sbatch_pid
 		fail "sbatch not responding"
 	}
 	eof {
@@ -114,8 +110,7 @@ expect {
 }
 
 if { $match != 1 } {
-	log_error "Did not get expected output from sbatch"
-	set exit_code 1
+	fail "Did not get expected output from sbatch"
 }
 
 make_bash_script $file_in "
@@ -123,29 +118,18 @@ make_bash_script $file_in "
 $bin_sleep $delay
 "
 
-set sbatch_pid [spawn $sbatch -N1 -o $file_out $file_in]
+spawn $sbatch -N1 -o $file_out $file_in
 expect {
 	-re "More processors requested than permitted" {
-		log_error "sbatch read from the batch file options over writing the commandline options"
-		set exit_code 1
-		exp_continue
+		fail "sbatch read from the batch file options over writing the commandline options"
 	}
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
-		cancel_job $job_id
 	}
 	timeout {
-		slow_kill $sbatch_pid
 		fail "sbatch not responding"
 	}
 	eof {
 		wait
 	}
-}
-
-#
-# Post-processing
-#
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

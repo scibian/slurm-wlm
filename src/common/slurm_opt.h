@@ -73,8 +73,10 @@ enum {
 	LONG_OPT_ACCEL_BIND,
 	LONG_OPT_ACCTG_FREQ,
 	LONG_OPT_ALLOC_NODELIST,
+	LONG_OPT_ARGV,
 	LONG_OPT_BATCH,
 	LONG_OPT_BCAST,
+	LONG_OPT_BCAST_EXCLUDE,
 	LONG_OPT_BELL,
 	LONG_OPT_BLRTS_IMAGE,
 	LONG_OPT_BURST_BUFFER_FILE,
@@ -83,6 +85,8 @@ enum {
 	LONG_OPT_CLUSTER_CONSTRAINT,
 	LONG_OPT_COMMENT,
 	LONG_OPT_COMPRESS,
+	LONG_OPT_CONTAINER,
+	LONG_OPT_CONTEXT,
 	LONG_OPT_CONTIGUOUS,
 	LONG_OPT_CORE,
 	LONG_OPT_CORESPERSOCKET,
@@ -157,6 +161,7 @@ enum {
 	LONG_OPT_REQUEUE,
 	LONG_OPT_RESERVATION,
 	LONG_OPT_RESV_PORTS,
+	LONG_OPT_SEND_LIBS,
 	LONG_OPT_SIGNAL,
 	LONG_OPT_SLURMD_DEBUG,
 	LONG_OPT_SOCKETSPERNODE,
@@ -181,7 +186,6 @@ enum {
 	LONG_OPT_WHOLE,
 	LONG_OPT_WRAP,
 	LONG_OPT_X11,
-	LONG_OPT_ARGV,
 	LONG_OPT_ENUM_END
 };
 
@@ -233,6 +237,7 @@ typedef struct {
 
 	uint16_t accel_bind_type;	/* --accel-bind			*/
 	char *alloc_nodelist;		/* grabbed from the environment	*/
+	char *bcast_exclude;		/* --bcast-exclude */
 	char *bcast_file;		/* --bcast, copy executable to compute nodes */
 	bool bcast_flag;		/* --bcast, copy executable to compute nodes */
 	char *cmd_name;			/* name of command to execute	*/
@@ -267,6 +272,7 @@ typedef struct {
 	bool quit_on_intr;		/* --quit-on-interrupt		*/
 	int relative;			/* --relative			*/
 	int resv_port_cnt;		/* --resv_ports			*/
+	bool send_libs;			/* --send-libs			*/
 	int slurmd_debug;		/* --slurmd-debug		*/
 	char *task_epilog;		/* --task-epilog		*/
 	char *task_prolog;		/* --task-prolog		*/
@@ -367,6 +373,8 @@ typedef struct {
 	char *constraint;		/* --constraint			*/
 	char *c_constraint;		/* --cluster-constraint		*/
 	char *gres;			/* --gres			*/
+	char *container;		/* --container			*/
+	char *context;			/* --context			*/
 	bool contiguous;		/* --contiguous			*/
 	char *nodefile;			/* --nodefile			*/
 	char *nodelist;			/* --nodelist=node1,node2,...	*/
@@ -399,6 +407,7 @@ typedef struct {
 	uint32_t step_het_comp_cnt;     /* How many components are in this het
 					 * step that is part of a non-hetjob. */
 	char *step_het_grps;		/* what het groups are used by step */
+	char *submit_line;		/* submit line of the caller	*/
 	char *tres_bind;		/* derived from gpu_bind	*/
 	char *tres_freq;		/* derived from gpu_freq	*/
 	uint16_t x11;			/* --x11			*/
@@ -518,27 +527,42 @@ extern bool slurm_option_get_next_set(slurm_opt_t *opt, char **name,
 				      char **value, size_t *state);
 
 /*
- * Validate that the three memory options (--mem, --mem-per-cpu, --mem-per-gpu)
- * and their associated environment variables are set mutually exclusively.
- *
- * This will fatal() if multiple CLI options are specified simultaneously.
- * If any of the CLI options are specified, the other options are reset to
- * clear anything that may have been set through the environment.
- * Otherwise, if multiple environment variables are set simultaneously,
- * this will fatal().
- */
-extern void validate_memory_options(slurm_opt_t *opt);
-
-/*
  * Validate that conflicting optons (--hint, --ntasks-per-core,
- * --nthreads-per-core) are not used together.
+ * --nthreads-per-core, --cpu-bind [for srun]) are not used together.
  *
  */
 extern int validate_hint_option(slurm_opt_t *opt);
 
 /*
+ * Validate --threads-per-core option and set --cpu-bind=threads if
+ * not already set by user.
+ */
+extern int validate_threads_per_core_option(slurm_opt_t *opt);
+
+/*
  * Validate options that are common to salloc, sbatch, and srun.
  */
 extern void validate_options_salloc_sbatch_srun(slurm_opt_t *opt);
+
+/*
+ * Validate that two spec cores options (-S/--core-spec and --thread-spec)
+ * are not used together.
+ *
+ * This function follows approach of validate_memory_options.
+ */
+extern void validate_spec_cores_options(slurm_opt_t *opt);
+
+/*
+ * Return the argv options in a string.
+ */
+extern char *slurm_option_get_argv_str(const int argc, char **argv);
+
+/*
+ * Return a job_desc_msg_t based on slurm_opt_t.
+ * IN set_defaults - If true, sets default values for struct members. If false,
+ *   all values will be their no value state (either NULL or NO_VAL equiv).
+ */
+extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
+						 bool set_defaults);
 
 #endif	/* _SLURM_OPT_H_ */

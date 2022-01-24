@@ -351,12 +351,14 @@ extern int slurmdb_setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec)
 
 extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond)
 {
+	time_t now = time(NULL);
+
 	if (!job_cond ||
 	    (job_cond->flags & JOBCOND_FLAG_RUNAWAY) ||
 	    (job_cond->flags & JOBCOND_FLAG_NO_DEFAULT_USAGE))
 		return;
 	/*
-	 * Defaults for start and end times...
+	 * Defaults for start (S) and end (E) times:
 	 * - with -j and -s:
 	 *   -S defaults to Epoch 0
 	 *   -E defaults to -S (unless no -S then Now)
@@ -373,14 +375,14 @@ extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond)
 	if (job_cond->state_list && list_count(job_cond->state_list)) {
 		if (!job_cond->usage_start &&
 		    (!job_cond->step_list || !list_count(job_cond->step_list)))
-			job_cond->usage_start = time(NULL);
+			job_cond->usage_start = now;
 
 		if (job_cond->usage_start && !job_cond->usage_end)
 			job_cond->usage_end = job_cond->usage_start;
 	} else if (!job_cond->step_list || !list_count(job_cond->step_list)) {
 		if (!job_cond->usage_start) {
 			struct tm start_tm;
-			job_cond->usage_start = time(NULL);
+			job_cond->usage_start = now;
 			if (!localtime_r(&job_cond->usage_start, &start_tm)) {
 				error("Couldn't get localtime from %ld",
 				      (long)job_cond->usage_start);
@@ -394,7 +396,16 @@ extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond)
 	}
 
 	if (!job_cond->usage_end)
-		job_cond->usage_end = time(NULL);
+		job_cond->usage_end = now;
+
+	/*
+	 * The query will be exclusive of the end time, that is [S,E).
+	 * We must adjust E when E==S to include S, and when E==Now to
+	 * include the current second.
+	 */
+	if ((job_cond->usage_end == job_cond->usage_start) ||
+	    (job_cond->usage_end == now))
+		job_cond->usage_end++;
 }
 
 static uint32_t _str_2_qos_flags(char *flags)
@@ -922,14 +933,18 @@ extern void slurmdb_destroy_job_rec(void *object)
 		xfree(job->blockid);
 		xfree(job->cluster);
 		xfree(job->constraints);
+		xfree(job->container);
 		xfree(job->derived_es);
+		xfree(job->env);
 		xfree(job->jobname);
 		xfree(job->mcs_label);
 		xfree(job->partition);
 		xfree(job->nodes);
 		xfree(job->resv_name);
+		xfree(job->script);
 		slurmdb_free_slurmdb_stats_members(&job->stats);
 		FREE_NULL_LIST(job->steps);
+		xfree(job->submit_line);
 		xfree(job->system_comment);
 		xfree(job->tres_alloc_str);
 		xfree(job->tres_req_str);
@@ -1001,10 +1016,12 @@ extern void slurmdb_destroy_step_rec(void *object)
 {
 	slurmdb_step_rec_t *step = (slurmdb_step_rec_t *)object;
 	if (step) {
+		xfree(step->container);
 		xfree(step->nodes);
 		xfree(step->pid_str);
 		slurmdb_free_slurmdb_stats_members(&step->stats);
 		xfree(step->stepname);
+		xfree(step->submit_line);
 		xfree(step->tres_alloc_str);
 		xfree(step);
 	}
@@ -1593,6 +1610,7 @@ extern void slurmdb_init_qos_rec(slurmdb_qos_rec_t *qos, bool free_it,
 
 	qos->usage_factor = (double)init_val;
 	qos->usage_thres = (double)init_val;
+	qos->limit_factor = (double)init_val;
 }
 
 extern void slurmdb_init_res_rec(slurmdb_res_rec_t *res,
@@ -2143,13 +2161,14 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 	List total_assoc_list = list_create(NULL);
 	List arch_rec_list =
 		list_create(slurmdb_destroy_hierarchical_rec);
-	ListIterator itr, itr2;
+	ListIterator itr;
 
-	/* The list should already be sorted by lfts, do it anyway
-	 * just to make sure it is correct. */
+	/*
+	 * The list should already be sorted by lfts, do it anyway
+	 * just to make sure it is correct.
+	 */
 	list_sort(assoc_list, (ListCmpF)_sort_assoc_by_lft_dec);
 	itr = list_iterator_create(assoc_list);
-	itr2 = list_iterator_create(total_assoc_list);
 
 	while((assoc = list_next(itr))) {
 		arch_rec = xmalloc(sizeof(slurmdb_hierarchical_rec_t));
@@ -2157,20 +2176,19 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 			list_create(slurmdb_destroy_hierarchical_rec);
 		arch_rec->assoc = assoc;
 
-		/* To speed things up we are first looking if we have
-		   a parent_id to look for.  If that doesn't work see
-		   if the last parent we had was what we are looking
-		   for.  Then if that isn't panning out look at the
-		   last account parent.  If still we don't have it we
-		   will look for it in the list.  If it isn't there we
-		   will just add it to the parent and call it good
-		*/
+		/*
+		 * To speed things up we are first looking if we have
+		 * a parent_id to look for.  If that doesn't work see
+		 * if the last parent we had was what we are looking
+		 * for.  Then if that isn't panning out look at the
+		 * last account parent.  If still we don't have it we
+		 * will look for it in the list.  If it isn't there we
+		 * will just add it to the parent and call it good
+		 */
 		if (!assoc->parent_id) {
 			arch_rec->sort_name = assoc->cluster;
-
 			list_append(arch_rec_list, arch_rec);
 			list_append(total_assoc_list, arch_rec);
-
 			continue;
 		}
 
@@ -2179,28 +2197,23 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 		else
 			arch_rec->sort_name = assoc->acct;
 
-		if (last_parent && assoc->parent_id == last_parent->assoc->id
-		    && !xstrcmp(assoc->cluster, last_parent->assoc->cluster)) {
+		if (last_parent &&
+		    (assoc->parent_id == last_parent->assoc->id) &&
+		    !xstrcmp(assoc->cluster, last_parent->assoc->cluster)) {
 			par_arch_rec = last_parent;
-		} else if (last_acct_parent
-			   && (assoc->parent_id == last_acct_parent->assoc->id)
-			   && !xstrcmp(assoc->cluster,
-				       last_acct_parent->assoc->cluster)) {
+		} else if (last_acct_parent &&
+			   (assoc->parent_id == last_acct_parent->assoc->id) &&
+			   !xstrcmp(assoc->cluster,
+				    last_acct_parent->assoc->cluster)) {
 			par_arch_rec = last_acct_parent;
 		} else {
-			list_iterator_reset(itr2);
-			while((par_arch_rec = list_next(itr2))) {
-				if (assoc->parent_id == par_arch_rec->assoc->id
-				    && !xstrcmp(assoc->cluster,
-						par_arch_rec->assoc->cluster)) {
-					if (assoc->user)
-						last_parent = par_arch_rec;
-					else
-						last_parent
-							= last_acct_parent
-							= par_arch_rec;
-					break;
-				}
+			par_arch_rec = list_find_first(total_assoc_list,
+						       _find_arch_in_list,
+						       assoc);
+			if (par_arch_rec) {
+				last_parent = par_arch_rec;
+				if (!assoc->user)
+					last_acct_parent = par_arch_rec;
 			}
 		}
 
@@ -2213,10 +2226,9 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 		list_append(total_assoc_list, arch_rec);
 	}
 	list_iterator_destroy(itr);
-	list_iterator_destroy(itr2);
 
 	FREE_NULL_LIST(total_assoc_list);
-//	info("got %d", list_count(arch_rec_list));
+/*	info("got %d", list_count(arch_rec_list)); */
 	_sort_slurmdb_hierarchical_rec_list(arch_rec_list);
 
 	return arch_rec_list;
@@ -2522,6 +2534,9 @@ extern void log_assoc_rec(slurmdb_assoc_rec_t *assoc_ptr,
 			  List qos_list)
 {
 	xassert(assoc_ptr);
+
+	if (get_log_level() < LOG_LEVEL_DEBUG2)
+		return;
 
 	debug2("association rec id : %u", assoc_ptr->id);
 	debug2("  acct             : %s", assoc_ptr->acct);
@@ -2834,7 +2849,10 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 	}
 
 	itr = list_iterator_create(char_list);
-	if (names) {
+	if (!xstrcmp(names, "")) {
+		list_append(char_list, xstrdup(""));
+		count = 1;
+	} else if (names) {
 		if (names[i] == '\"' || names[i] == '\'') {
 			quote_c = names[i];
 			quote = 1;
@@ -2867,7 +2885,7 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 						      name, tmp);
 						xfree(tmp);
 						xfree(name);
-						break;
+						goto end_it;
 					}
 					xfree(name);
 
@@ -2880,7 +2898,7 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 							      "subtract from "
 							      "it in the same "
 							      "line");
-							break;
+							goto end_it;
 						}
 						add_set = 1;
 						name = xstrdup_printf(
@@ -2894,7 +2912,7 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 							      "subtract from "
 							      "it in the same "
 							      "line");
-							break;
+							goto end_it;
 						}
 						equal_set = 1;
 						name = xstrdup_printf("%u", id);
@@ -2904,25 +2922,23 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 								 name))
 							break;
 					}
-					list_iterator_reset(itr);
 
 					if (!tmp_char) {
 						list_append(char_list, name);
 						count++;
 					} else
 						xfree(name);
-				} else if (!(i-start) && !option) {
-					list_append(char_list, xstrdup(""));
-					count++;
+
+					list_iterator_reset(itr);
 				}
 
 				i++;
 				start = i;
-				if (!names[i]) {
+				if (names[i] == ' ') {
 					error("There is a problem with "
 					      "your request.  It appears you "
 					      "have spaces inside your list.");
-					break;
+					goto end_it;
 				}
 			}
 			i++;
@@ -2979,15 +2995,11 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 				if (!xstrcasecmp(tmp_char, name))
 					break;
 			}
-
 			if (!tmp_char) {
 				list_append(char_list, name);
 				count++;
 			} else
 				xfree(name);
-		} else if (!(i-start) && !option) {
-			list_append(char_list, xstrdup(""));
-			count++;
 		}
 	}
 	if (!count) {
@@ -3052,7 +3064,7 @@ extern int slurmdb_send_accounting_update(List update_list, char *cluster,
 		rc = SLURM_ERROR;
 	}
 	if (resp.auth_cred)
-		g_slurm_auth_destroy(resp.auth_cred);
+		auth_g_destroy(resp.auth_cred);
 
 	switch (resp.msg_type) {
 	case RESPONSE_SLURM_RC:
@@ -3491,6 +3503,7 @@ extern void slurmdb_copy_qos_rec_limits(slurmdb_qos_rec_t *out,
 
 	out->usage_factor = in->usage_factor;
 	out->usage_thres = in->usage_thres;
+	out->limit_factor = in->limit_factor;
 
 }
 
@@ -4217,7 +4230,7 @@ extern int slurmdb_add_cluster_accounting_to_tres_list(
 
 	tres_rec->alloc_secs += accting->alloc_secs
 		+ accting->down_secs + accting->idle_secs
-		+ accting->resv_secs + accting->pdown_secs;
+		+ accting->plan_secs + accting->pdown_secs;
 	tres_rec->count += accting->tres_rec.count;
 	tres_rec->rec_count++;
 
@@ -4305,7 +4318,7 @@ extern int slurmdb_sum_accounting_list(
 	total_acct->alloc_secs += accting->alloc_secs;
 	total_acct->down_secs  += accting->down_secs;
 	total_acct->idle_secs  += accting->idle_secs;
-	total_acct->resv_secs  += accting->resv_secs;
+	total_acct->plan_secs  += accting->plan_secs;
 	total_acct->over_secs  += accting->over_secs;
 	total_acct->pdown_secs += accting->pdown_secs;
 	total_acct->tres_rec.count += accting->tres_rec.count;
@@ -4530,4 +4543,30 @@ extern void slurmdb_merge_grp_node_usage(bitstr_t **grp_node_bitmap1,
 		(*grp_node_job_cnt1)[i] +=
 			grp_node_job_cnt2 ? grp_node_job_cnt2[i] : 1;
 	}
+}
+
+extern char *slurmdb_get_job_id_str(slurmdb_job_rec_t *job)
+{
+	char *id = NULL;
+
+	if (job->array_task_str) {
+		xlate_array_task_str(
+			&job->array_task_str,
+			job->array_max_tasks, NULL);
+		id = xstrdup_printf("%u_[%s]",
+				    job->array_job_id,
+				    job->array_task_str);
+	} else if (job->array_task_id != NO_VAL)
+		id = xstrdup_printf("%u_%u",
+				    job->array_job_id,
+				    job->array_task_id);
+	else if (job->het_job_id)
+		id = xstrdup_printf("%u+%u",
+				    job->het_job_id,
+				    job->het_job_offset);
+	else
+		id = xstrdup_printf("%u", job->jobid);
+
+	return id;
+
 }

@@ -47,6 +47,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "src/common/data.h"
 #include "src/common/read_config.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
@@ -65,6 +66,8 @@
 #define OPT_LONG_SIBLING      0x107
 #define OPT_LONG_FEDR         0x108
 #define OPT_LONG_ME           0x109
+#define OPT_LONG_JSON         0x110
+#define OPT_LONG_YAML         0x111
 
 /* FUNCTIONS */
 static List  _build_job_list( char* str );
@@ -82,8 +85,10 @@ static void _parse_long_token( char *token, char *sep, int *field_size,
 			       bool *right_justify, char **suffix);
 static void  _print_options( void );
 static void  _usage( void );
-static bool _check_node_names(hostset_t);
-static bool _find_a_host(char *, node_info_msg_t *);
+static void _filter_nodes(void);
+static List _load_clusters_nodes(void);
+static void _node_info_list_del(void *data);
+static char *_map_node_name(List clusters_node_info, char *name);
 
 /*
  * parse_command_line
@@ -134,6 +139,8 @@ parse_command_line( int argc, char* *argv )
 		{"users",      required_argument, 0, 'u'},
 		{"verbose",    no_argument,       0, 'v'},
 		{"version",    no_argument,       0, 'V'},
+		{"json", no_argument, 0, OPT_LONG_JSON},
+		{"yaml", no_argument, 0, OPT_LONG_YAML},
 		{NULL,         0,                 0, 0}
 	};
 
@@ -349,6 +356,14 @@ parse_command_line( int argc, char* *argv )
 		case OPT_LONG_USAGE:
 			_usage();
 			exit(0);
+		case OPT_LONG_JSON:
+			params.mimetype = MIME_TYPE_JSON;
+			data_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			break;
+		case OPT_LONG_YAML:
+			params.mimetype = MIME_TYPE_YAML;
+			data_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			break;
 		}
 	}
 
@@ -388,41 +403,8 @@ parse_command_line( int argc, char* *argv )
 		}
 	}
 
-	if ( params.nodes ) {
-		char *name1 = NULL;
-		char *name2 = NULL;
-		hostset_t nodenames = hostset_create(NULL);
-
-		while ( hostset_count(params.nodes) > 0 ) {
-			name1 = hostset_pop(params.nodes);
-
-			/* localhost = use current host name */
-			if ( xstrcasecmp("localhost", name1) == 0 ) {
-				name2 = xmalloc(128);
-				gethostname_short(name2, 128);
-			} else {
-				/* translate NodeHostName to NodeName */
-				name2 = slurm_conf_get_nodename(name1);
-
-				/* use NodeName if translation failed */
-				if ( name2 == NULL )
-					name2 = xstrdup(name1);
-			}
-			hostset_insert(nodenames, name2);
-			free(name1);
-			xfree(name2);
-		}
-
-		/* Replace params.nodes with the new one */
-		hostset_destroy(params.nodes);
-		params.nodes = nodenames;
-		/* Check if all node names specified
-		 * with -w are known to the controller.
-		 */
-		if (!_check_node_names(params.nodes)) {
-			exit(1);
-		}
-	}
+	if ( params.nodes )
+		_filter_nodes();
 
 	if ( ( params.accounts == NULL ) &&
 	     ( env_val = getenv("SQUEUE_ACCOUNT") ) ) {
@@ -985,6 +967,12 @@ extern int parse_long_format( char* format_long )
 							     field_size,
 							     right_justify,
 							     suffix);
+			else if (!xstrncasecmp(token, "container",
+					       strlen("container")))
+				step_format_add_container(params.format_list,
+							  field_size,
+							  right_justify,
+							  suffix);
 			else if (!xstrncasecmp(token, "numtasks",
 					       strlen("numtask")))
 				step_format_add_num_tasks( params.format_list,
@@ -1144,6 +1132,11 @@ extern int parse_long_format( char* format_long )
 							field_size,
 							right_justify,
 							suffix  );
+			else if (!xstrcasecmp(token, "container"))
+				job_format_add_container(params.format_list,
+						       field_size,
+						       right_justify,
+						       suffix );
 			else if (!xstrcasecmp(token, "jobid"))
 				job_format_add_job_id2(params.format_list,
 						       field_size,
@@ -2201,6 +2194,7 @@ Usage: squeue [OPTIONS]\n\
   -i, --iterate=seconds           specify an interation period\n\
   -j, --job=job(s)                comma separated list of jobs IDs\n\
                                   to view, default is all\n\
+      --json                      Produce JSON output\n\
       --local                     Report information only about jobs on the\n\
                                   local cluster. Overrides --federation.\n\
   -l, --long                      long report\n\
@@ -2234,63 +2228,138 @@ Usage: squeue [OPTIONS]\n\
   -V, --version                   output version information and exit\n\
   -w, --nodelist=hostlist         list of nodes to view, default is \n\
 				  all nodes\n\
+      --yaml                      Produce YAML output\n\
 \nHelp options:\n\
   --help                          show this help message\n\
   --usage                         display a brief summary of squeue options\n");
 }
 
-/* _check_node_names()
+/*
+ * Validate and assign filtered nodes to params.nodes.
  */
-static bool
-_check_node_names(hostset_t names)
+static void _filter_nodes(void)
 {
-	int cc;
-	node_info_msg_t *node_info;
-	char *host;
-	hostlist_iterator_t itr;
+	char *name = NULL, *nodename = NULL;
+	hostset_t nodenames = hostset_create(NULL);
+	List clusters_nodes = NULL;
 
-	if (names == NULL)
-		return true;
+	/* Retrieve node_info from controllers */
+	if (!(clusters_nodes = _load_clusters_nodes()))
+		exit(1);
 
-	cc = slurm_load_node(0,
-			     &node_info,
-			     SHOW_ALL);
-	if (cc != 0) {
-		slurm_perror ("slurm_load_node error");
-		return false;
-	}
-
-	itr = hostset_iterator_create(names);
-	while ((host = hostlist_next(itr))) {
-		if (!_find_a_host(host, node_info)) {
-			error("Invalid node name %s", host);
-			free(host);
-			hostlist_iterator_destroy(itr);
-			return false;
+	/* Map all node names specified with -w, if known to any controller. */
+	while ((name = hostset_shift(params.nodes))) {
+		if (!(nodename = _map_node_name(clusters_nodes, name))) {
+			free(name);
+			hostset_destroy(params.nodes);
+			FREE_NULL_LIST(clusters_nodes);
+			exit(1);
 		}
-		free(host);
+		hostset_insert(nodenames, nodename);
+		free(name);
+		xfree(nodename);
 	}
-	hostlist_iterator_destroy(itr);
+	FREE_NULL_LIST(clusters_nodes);
 
-	return true;
+	/* Replace params.nodes with the new one */
+	hostset_destroy(params.nodes);
+	params.nodes = nodenames;
 }
 
-/* _find_a_host()
+/*
+ * ListDelF for a list of node_info_msg_t.
  */
-static bool
-_find_a_host(char *host, node_info_msg_t *node)
+static void _node_info_list_del(void *data)
 {
-	int cc;
+	node_info_msg_t *node_info_ptr = data;
 
-	for (cc = 0; cc < node->record_count; cc++) {
-		/* This can happen if the host is removed
-		 * fron DNS but still in slurm.conf
-		 */
-		if (node->node_array[cc].name == NULL)
-			continue;
-		if (xstrcmp(host, node->node_array[cc].name) == 0)
-			return true;
+	slurm_free_node_info_msg(node_info_ptr);
+}
+
+/*
+ * Retrieve node_info_msg_t for params.clusters or just local cluster.
+ * RET: List of all needed node_info_msg_t or NULL if any fail
+ *
+ * NOTE: caller must free the returned list if not NULL.
+ */
+static List _load_clusters_nodes(void)
+{
+	List node_info_list = NULL;
+	ListIterator iter = NULL;
+	node_info_msg_t *node_info = NULL;
+
+	node_info_list = list_create(_node_info_list_del);
+
+	if (params.clusters)
+		iter = list_iterator_create(params.clusters);
+
+	do {
+		if (slurm_load_node(0, &node_info, SHOW_ALL)) {
+			slurm_perror("slurm_load_node error");
+			FREE_NULL_LIST(node_info_list);
+			break;
+		}
+
+		list_append(node_info_list, node_info);
+	} while (params.clusters && (working_cluster_rec = list_next(iter)));
+
+	/*
+	 * Don't need to reset working_cluster_rec here. Nobody uses it in
+	 * parse_command_line(), and it's already reset later in main().
+	 */
+	if (params.clusters)
+		list_iterator_destroy(iter);
+
+	return node_info_list;
+}
+
+/*
+ * Map name into NodeName, and handle the special "localhost" case.
+ * IN: pointer to an array of pointers to node_info_msg_t
+ * IN: input node name
+ * RET: mapped node name if valid, NULL otherwise
+ *
+ * NOTE: caller must xfree() the returned name.
+ */
+static char *_map_node_name(List clusters_node_info, char *name)
+{
+	char *nodename = NULL;
+	node_info_msg_t *node_info;
+	ListIterator node_info_itr;
+
+	if (!name)
+		return NULL;
+
+	/* localhost = use current host name */
+	if (!xstrcasecmp("localhost", name)) {
+		nodename = xmalloc(128);
+		gethostname_short(nodename, 128);
+	} else
+		nodename = xstrdup(name);
+
+	node_info_itr = list_iterator_create(clusters_node_info);
+
+	while ((node_info = list_next(node_info_itr))) {
+		for (int cc = 0; cc < node_info->record_count; cc++) {
+			/*
+			 * This can happen if the host is removed from DNS but
+			 * still in slurm.conf
+			 */
+			if (!node_info->node_array[cc].name)
+				continue;
+			if (!xstrcmp(nodename,
+				     node_info->node_array[cc].name) ||
+			    !xstrcmp(nodename,
+				     node_info->node_array[cc].node_hostname)) {
+				xfree(nodename);
+				list_iterator_destroy(node_info_itr);
+				return xstrdup(node_info->node_array[cc].name);
+			}
+		}
 	}
 
-	return false;
+	error("Invalid node name %s", name);
+	xfree(nodename);
+	list_iterator_destroy(node_info_itr);
+	return NULL;
 }

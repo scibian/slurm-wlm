@@ -168,10 +168,6 @@ char *slurm_get_ext_sensors_type(void);
  */
 extern uint16_t slurm_get_ext_sensors_freq(void);
 
-/* slurm_get_sched_params
- * RET char * - Value of SchedulerParameters, MUST be xfreed by caller */
-extern char *slurm_get_sched_params(void);
-
 /* slurm_get_select_type
  * get select_type from slurm_conf object
  * RET char *   - select_type, MUST be xfreed by caller
@@ -220,18 +216,18 @@ extern int slurm_init_msg_engine_port(uint16_t port);
  */
 extern int slurm_init_msg_engine_ports(uint16_t *);
 
-/* sock_bind_range()
- *
- * Try to bind() sock to any port in a given interval of ports
+/*
+ * bind() and then listen() to any port in a given range of ports
  */
-extern int sock_bind_range(int, uint16_t *, bool local);
+extern int sock_bind_listen_range(int s, uint16_t *range, bool local);
 
 /* In the socket implementation it creates a socket, binds to it, and
  *	listens for connections.
  * IN slurm_address 	- slurm_addr_t to bind the msg server to
+ * IN permissive 	- log failure errors at "error" or "debug" level
  * RET slurm_fd		- file descriptor of the connection created
  */
-extern int slurm_init_msg_engine(slurm_addr_t * slurm_address);
+extern int slurm_init_msg_engine(slurm_addr_t *slurm_address, bool permissive);
 
 /* In the bsd implmentation maps directly to a accept call
  * IN open_fd		- file descriptor to accept connection on
@@ -252,7 +248,7 @@ extern int slurm_accept_msg_conn(int open_fd, slurm_addr_t * slurm_address);
  * RET int	- returns 0 on success, -1 on failure and sets errno
  */
 
-extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer);
+extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, buf_t *buffer);
 
 /*
  *  Receive a slurm message on the open slurm descriptor "fd" waiting
@@ -261,7 +257,7 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer);
  *    (msg->data) is allocated from within this function, and must be
  *    freed at some point using one of the slurm_free* functions.
  *    Also a slurm_cred is allocated (msg->auth_cred) which must be
- *    freed with g_slurm_auth_destroy() if it exists.
+ *    freed with auth_g_destroy() if it exists.
  *
  * IN open_fd	- file descriptor to receive msg on
  * OUT msg	- a slurm_msg struct to be filled in by the function
@@ -412,8 +408,8 @@ extern int slurm_get_peer_addr(int fd, slurm_addr_t * slurm_address);
  * IN/OUT buffer	- buffer to pack the slurm_addr_t from
  * returns		- Slurm error code
  */
-extern void slurm_pack_slurm_addr_array(slurm_addr_t * slurm_address,
-					uint32_t size_val, Buf buffer);
+extern void slurm_pack_slurm_addr_array(slurm_addr_t *slurm_address,
+					uint32_t size_val, buf_t *buffer);
 /* slurm_unpack_slurm_addr_array
  * unpacks an array of slurm_addrs from a buffer (pre-20.11 protocol)
  * OUT slurm_address	- slurm_addr_t to unpack to
@@ -421,8 +417,8 @@ extern void slurm_pack_slurm_addr_array(slurm_addr_t * slurm_address,
  * IN/OUT buffer	- buffer to upack the slurm_addr_t from
  * returns		- Slurm error code
  */
-extern int slurm_unpack_slurm_addr_array(slurm_addr_t ** slurm_address,
-					 uint32_t * size_val, Buf buffer);
+extern int slurm_unpack_slurm_addr_array(slurm_addr_t **slurm_address,
+					 uint32_t *size_val, buf_t *buffer);
 
 /* slurm_pack_addr_array
  * packs an array of slurm_addrs into a buffer

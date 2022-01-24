@@ -168,12 +168,6 @@ extern int other_job_resized(job_record_t *job_ptr, node_record_t *node_ptr);
 extern int other_job_signal(job_record_t *job_ptr, int signal);
 
 /*
- * Pass job memory allocation confirmation request to other plugin.
- * IN job_ptr - job to be signaled
- */
-extern int other_job_mem_confirm(job_record_t *job_ptr);
-
-/*
  * Note termination of job is starting. Executed from slurmctld.
  * IN job_ptr - pointer to job being terminated
  */
@@ -269,7 +263,7 @@ extern select_jobinfo_t *other_select_jobinfo_copy(
  * RET         - slurm error code
  */
 extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
-				     Buf buffer,
+				     buf_t *buffer,
 				     uint16_t protocol_version);
 
 /* unpack a select job credential from a buffer
@@ -280,7 +274,7 @@ extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
  * NOTE: returned value must be freed using other_select_jobinfo_free
  */
 extern int other_select_jobinfo_unpack(select_jobinfo_t **jobinfo,
-				       Buf buffer,
+				       buf_t *buffer,
 				       uint16_t protocol_version);
 
 /* write select job info to a string
@@ -307,11 +301,11 @@ extern char *other_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
 \*******************************************************/
 
 extern int other_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
-				      Buf buffer,
+				      buf_t *buffer,
 				      uint16_t protocol_version);
 
 extern int other_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo,
-					Buf buffer,
+					buf_t *buffer,
 					uint16_t protocol_version);
 
 extern select_nodeinfo_t *other_select_nodeinfo_alloc(void);

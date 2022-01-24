@@ -42,15 +42,14 @@
 
 #include "src/common/list.h"
 #include "src/common/log.h"
+#include "src/common/openapi.h"
 #include "src/common/plugin.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "src/slurmrestd/openapi.h"
 #include "src/slurmrestd/rest_auth.h"
-#include "src/slurmrestd/xjson.h"
 
 static pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -253,7 +252,16 @@ extern int rest_auth_g_apply(rest_auth_context_t *context)
 
 extern void rest_auth_g_clear(void)
 {
-	g_slurm_auth_thread_clear();
+	auth_g_thread_clear();
+}
+
+extern void *openapi_get_db_conn(void *ctxt)
+{
+	/*
+	 * Implements authentication translation from the generic openapi
+	 * version to the rest pointer
+	 */
+	return rest_auth_g_get_db_conn(ctxt);
 }
 
 extern void *rest_auth_g_get_db_conn(rest_auth_context_t *context)

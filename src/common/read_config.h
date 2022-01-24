@@ -74,6 +74,7 @@ extern uint16_t drop_priv_flag;
 #define DEFAULT_AUTH_TYPE          "auth/munge"
 #define DEFAULT_AUTH_TOKEN_LIFESPAN 1800
 #define DEFAULT_BATCH_START_TIMEOUT 10
+#define DEFAULT_BCAST_EXCLUDE       "/lib,/usr/lib,/lib64,/usr/lib64"
 #define DEFAULT_COMPLETE_WAIT       0
 #define DEFAULT_CRED_TYPE           "cred/munge"
 #define DEFAULT_EPILOG_MSG_TIME     2000
@@ -273,9 +274,15 @@ typedef struct slurm_conf_partition {
 	char    *qos_char;      /* Name of QOS associated with partition */
 	bool     req_resv_flag; /* 1 if partition can only be used in a
 				 * reservation */
+	uint16_t resume_timeout; /* time required in order to perform a node
+				  * resume operation */
 	bool     root_only_flag;/* 1 if allocate/submit RPC can only be
 				   issued by user root */
 	uint16_t state_up;	/* for states see PARTITION_* in slurm.h */
+	uint32_t suspend_time;  /* node idle for this long before power save
+				 * mode */
+	uint16_t suspend_timeout; /* time required in order to perform a node
+				   * suspend operation */
 	uint32_t total_nodes;	/* total number of nodes in the partition */
 	uint32_t total_cpus;	/* total number of cpus in the partition */
 } slurm_conf_partition_t;
@@ -337,11 +344,12 @@ extern int job_defaults_list(char *in_str, List *out_list);
 extern char *job_defaults_str(List in_list);
 
 /* Pack a job_defaults_t element. Used by slurm_pack_list() */
-extern void job_defaults_pack(void *in, uint16_t protocol_version, Buf buffer);
+extern void job_defaults_pack(void *in, uint16_t protocol_version,
+			      buf_t *buffer);
 
 /* Unpack a job_defaults_t element. Used by slurm_pack_list() */
 extern int job_defaults_unpack(void **out, uint16_t protocol_version,
-			       Buf buffer);
+			       buf_t *buffer);
 
 /*
  * list_find_frontend - find an entry in the front_end list, see list.h for
@@ -620,24 +628,24 @@ extern uint16_t reconfig_str2flags(char *reconfig_flags);
 
 extern void destroy_config_plugin_params(void *object);
 extern void pack_config_plugin_params(void *in, uint16_t protocol_version,
-				      Buf buff);
+				      buf_t *buff);
 extern int unpack_config_plugin_params(void **object, uint16_t protocol_version,
-				       Buf buff);
+				       buf_t *buff);
 extern void pack_config_plugin_params_list(void *in, uint16_t protocol_version,
-					   Buf buff);
+					   buf_t *buff);
 extern int unpack_config_plugin_params_list(void **object,
 					    uint16_t protocol_version,
-					    Buf buff);
+					    buf_t *buff);
 
 extern void destroy_config_key_pair(void *object);
 extern void pack_key_pair_list(void *key_pairs, uint16_t protocol_version,
-			       Buf buffer);
+			       buf_t *buffer);
 extern int unpack_key_pair_list(void **key_pairs, uint16_t protocol_version,
-				Buf buffer);
+				buf_t *buffer);
 extern void pack_config_key_pair(void *in, uint16_t protocol_version,
-				 Buf buffer);
+				 buf_t *buffer);
 extern int unpack_config_key_pair(void **object, uint16_t protocol_version,
-				  Buf buffer);
+				  buf_t *buffer);
 
 extern int sort_key_pairs(void *v1, void *v2);
 /*

@@ -61,7 +61,12 @@ typedef struct slurmd_task_ops {
 	int	(*slurmd_resume_job)	    (uint32_t job_id);
 
 	int	(*pre_setuid)		    (stepd_step_rec_t *job);
-	int	(*pre_launch_priv)	    (stepd_step_rec_t *job, pid_t pid);
+	int	(*pre_set_affinity)	    (stepd_step_rec_t *job,
+					     uint32_t node_tid);
+	int	(*set_affinity)		    (stepd_step_rec_t *job,
+					     uint32_t node_tid);
+	int	(*post_set_affinity)	    (stepd_step_rec_t *job,
+					     uint32_t node_tid);
 	int	(*pre_launch)		    (stepd_step_rec_t *job);
 	int	(*post_term)		    (stepd_step_rec_t *job,
 					     stepd_step_task_info_t *task);
@@ -78,7 +83,9 @@ static const char *syms[] = {
 	"task_p_slurmd_suspend_job",
 	"task_p_slurmd_resume_job",
 	"task_p_pre_setuid",
-	"task_p_pre_launch_priv",
+	"task_p_pre_set_affinity",
+	"task_p_set_affinity",
+	"task_p_post_set_affinity",
 	"task_p_pre_launch",
 	"task_p_post_term",
 	"task_p_post_step",
@@ -323,7 +330,7 @@ extern int task_g_pre_setuid(stepd_step_rec_t *job)
  *
  * RET - slurm error code
  */
-extern int task_g_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
+extern int task_g_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 {
 	int i, rc = SLURM_SUCCESS;
 
@@ -332,7 +339,59 @@ extern int task_g_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
 
 	slurm_mutex_lock( &g_task_context_lock );
 	for (i = 0; i < g_task_context_num; i++) {
-		rc = (*(ops[i].pre_launch_priv))(job, pid);
+		rc = (*(ops[i].pre_set_affinity))(job, node_tid);
+		if (rc != SLURM_SUCCESS) {
+			debug("%s: %s: %s", __func__,
+			      g_task_context[i]->type, slurm_strerror(rc));
+			break;
+		}
+	}
+	slurm_mutex_unlock( &g_task_context_lock );
+
+	return (rc);
+}
+
+/*
+ * Note in privileged mode that a task launch is about to occur.
+ *
+ * RET - slurm error code
+ */
+extern int task_g_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+{
+	int i, rc = SLURM_SUCCESS;
+
+	if (slurmd_task_init())
+		return SLURM_ERROR;
+
+	slurm_mutex_lock( &g_task_context_lock );
+	for (i = 0; i < g_task_context_num; i++) {
+		rc = (*(ops[i].set_affinity))(job, node_tid);
+		if (rc != SLURM_SUCCESS) {
+			debug("%s: %s: %s", __func__,
+			      g_task_context[i]->type, slurm_strerror(rc));
+			break;
+		}
+	}
+	slurm_mutex_unlock( &g_task_context_lock );
+
+	return (rc);
+}
+
+/*
+ * Note in privileged mode that a task launch is about to occur.
+ *
+ * RET - slurm error code
+ */
+extern int task_g_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+{
+	int i, rc = SLURM_SUCCESS;
+
+	if (slurmd_task_init())
+		return SLURM_ERROR;
+
+	slurm_mutex_lock( &g_task_context_lock );
+	for (i = 0; i < g_task_context_num; i++) {
+		rc = (*(ops[i].post_set_affinity))(job, node_tid);
 		if (rc != SLURM_SUCCESS) {
 			debug("%s: %s: %s", __func__,
 			      g_task_context[i]->type, slurm_strerror(rc));
@@ -450,16 +509,13 @@ extern int task_g_add_pid(pid_t pid)
 }
 
 extern void task_slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job,
-				   int statval)
+				   int statval, uint32_t node_tid)
 {
 #if defined(__APPLE__)
 	fatal("%s: not supported on macOS", __func__);
 #else
 	char *bind_type, *action, *status, *units;
 	char mstr[1 + CPU_SETSIZE / 4];
-	int task_gid = job->envtp->procid;
-	int task_lid = job->envtp->localid;
-	pid_t mypid = job->envtp->task_pid;
 
 	if (!(job->cpu_bind_type & CPU_BIND_VERBOSE))
 		return;
@@ -509,9 +565,9 @@ extern void task_slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job,
 			"%s, task %2u %2u [%u]: mask 0x%s%s%s\n",
 			units, bind_type,
 			job->node_name,
-			task_gid,
-			task_lid,
-			mypid,
+			job->task[node_tid]->gtid,
+			node_tid,
+			job->task[node_tid]->pid,
 			task_cpuset_to_str(mask, mstr),
 			action,
 			status);

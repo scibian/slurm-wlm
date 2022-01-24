@@ -487,7 +487,9 @@ static con_mgr_fd_t *_add_connection(con_mgr_t *mgr, con_mgr_fd_t *source,
 	if (source && source->unix_socket)
 		con->unix_socket = xstrdup(source->unix_socket);
 
-	if (addr) {
+	if (con->name) {
+		/* do nothing - connection already named */
+	} else if (addr) {
 		xassert(con->is_socket);
 		con->name = sockaddr_to_string(addr, addrlen);
 
@@ -826,6 +828,15 @@ static void _wrap_on_data(void *x)
 	if (rc) {
 		error("%s: [%s] on_data returned rc: %s",
 		      __func__, con->name, slurm_strerror(rc));
+
+		slurm_mutex_lock(&mgr->mutex);
+		if (mgr->exit_on_error)
+			mgr->shutdown = true;
+
+		if (!mgr->error)
+			mgr->error = rc;
+		slurm_mutex_unlock(&mgr->mutex);
+
 		_close_con(false, con);
 		return;
 	}
@@ -1025,7 +1036,7 @@ static int _handle_connection(void *x, void *arg)
 {
 	con_mgr_fd_t *con = x;
 	con_mgr_t *mgr = con->mgr;
-	int count;
+	int count, rc;
 
 	/* cant run full magic checks inside of list lock */
 	xassert(mgr->magic == MAGIC_CON_MGR);
@@ -1160,8 +1171,12 @@ static int _handle_connection(void *x, void *arg)
 	/* have a thread free all the memory */
 	xassert(list_is_empty(con->work));
 	xassert(!con->has_work);
-	workq_add_work(mgr->workq, _connection_fd_delete, con,
-		       "_connection_fd_delete");
+	if ((rc = workq_add_work(mgr->workq, _connection_fd_delete, con,
+				 "_connection_fd_delete"))) {
+		log_flag(NET, "%s: [%s] direct cleanup as workq rejected _connection_fd_delete(): %s",
+			 __func__, con->name, slurm_strerror(rc));
+		_connection_fd_delete(con);
+	}
 
 	/* remove this connection */
 	return 1;
@@ -1322,23 +1337,13 @@ static void _poll_connections(void *x)
 	/* grab counts once */
 	count = list_count(mgr->connections);
 
-	slurm_mutex_unlock(&mgr->mutex);
+	fds_ptr = args->fds;
 
 	xrecalloc(args->fds, ((count * 2) + 2), sizeof(*args->fds));
-	fds_ptr = args->fds;
+	xassert(sizeof(*fds_ptr) == sizeof(*args->fds));
+
 	args->nfds = 0;
-
-	slurm_mutex_lock(&mgr->mutex);
-
-	if (count < list_count(mgr->connections)) {
-		/*
-		 * something changed while calling recalloc.
-		 * this is a poor man's RCU lock.
-		 */
-		log_flag(NET, "%s: connection count increased while allocating fds",
-			 __func__);
-		goto cleanup;
-	}
+	fds_ptr = args->fds;
 
 	/* Add signal fd */
 	fds_ptr->fd = mgr->sigint_fd[0];
@@ -1409,7 +1414,7 @@ static void _poll_connections(void *x)
 		 __func__, args->nfds, count);
 
 	_poll(mgr, args, mgr->connections, &_handle_poll_event, __func__);
-cleanup:
+
 	mgr->poll_active = false;
 	/* notify _watch it can run but don't send signal to event PIPE*/
 	slurm_cond_broadcast(&mgr->cond);

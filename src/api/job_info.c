@@ -64,7 +64,7 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/strlcpy.h"
 #include "src/common/uid.h"
-#include "src/common/uthash/uthash.h"
+#include "src/common/uthash.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -581,7 +581,9 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 	slurm_make_time_str(&job_ptr->last_sched_eval, time_str,
 			    sizeof(time_str));
-	xstrfmtcat(out, "LastSchedEval=%s", time_str);
+	xstrfmtcat(out, "LastSchedEval=%s Scheduler=%s%s", time_str,
+		   job_ptr->bitflags & BACKFILL_SCHED ? "Backfill" : "Main",
+		   job_ptr->bitflags & BACKFILL_LAST ? ":*" : "");
 	xstrcat(out, line_end);
 
 	/****** Line 11 ******/
@@ -639,7 +641,11 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	_sprint_range(tmp_line, sizeof(tmp_line), job_ptr->num_cpus, job_ptr->max_cpus);
 	xstrfmtcat(out, "NumCPUs=%s ", tmp_line);
 
-	xstrfmtcat(out, "NumTasks=%u ", job_ptr->num_tasks);
+	if (job_ptr->num_tasks == NO_VAL)
+		xstrcat(out, "NumTasks=N/A ");
+	else
+		xstrfmtcat(out, "NumTasks=%u ", job_ptr->num_tasks);
+
 	if (job_ptr->cpus_per_task == NO_VAL16)
 		xstrfmtcat(out, "CPUs/Task=N/A ");
 	else
@@ -1027,13 +1033,27 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 			   print_mail_type(job_ptr->mail_type));
 	}
 
-	/****** Line ******/
+	/****** Line (optional) ******/
+	if ((job_ptr->ntasks_per_tres) &&
+	    (job_ptr->ntasks_per_tres != NO_VAL16) &&
+	    (job_ptr->ntasks_per_tres != INFINITE16)) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "NtasksPerTRES=%u", job_ptr->ntasks_per_tres);
+	}
+
+	/****** Line (optional) ******/
+	if (job_ptr->container) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "Container=%s", job_ptr->container);
+	}
+
+	/****** Line (optional) ******/
+	if (job_ptr->selinux_context) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "SELinuxContext=%s", job_ptr->selinux_context);
+	}
+
 	xstrcat(out, line_end);
-	if ((job_ptr->ntasks_per_tres == NO_VAL16) ||
-	    (job_ptr->ntasks_per_tres == INFINITE16))
-		xstrcat(out, "NtasksPerTRES:*");
-	else
-		xstrfmtcat(out, "NtasksPerTRES:%u", job_ptr->ntasks_per_tres);
 
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
@@ -1516,11 +1536,11 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 
 	if ((rc != 0) || !resp_msg.auth_cred) {
 		if (resp_msg.auth_cred)
-			g_slurm_auth_destroy(resp_msg.auth_cred);
+			auth_g_destroy(resp_msg.auth_cred);
 		return SLURM_ERROR;
 	}
 	if (resp_msg.auth_cred)
-		g_slurm_auth_destroy(resp_msg.auth_cred);
+		auth_g_destroy(resp_msg.auth_cred);
 	switch (resp_msg.msg_type) {
 	case RESPONSE_JOB_ID:
 		*jobid = ((job_id_response_msg_t *) resp_msg.data)->job_id;

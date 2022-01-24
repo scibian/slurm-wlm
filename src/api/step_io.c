@@ -220,10 +220,9 @@ static eio_obj_t *
 _create_server_eio_obj(int fd, client_io_t *cio, int nodeid,
 		       int stdout_objs, int stderr_objs)
 {
-	struct server_io_info *info = NULL;
 	eio_obj_t *eio = NULL;
+	struct server_io_info *info = xmalloc(sizeof(*info));
 
-	info = (struct server_io_info *)xmalloc(sizeof(struct server_io_info));
 	info->cio = cio;
 	info->node_id = nodeid;
 	info->testing_connection = false;
@@ -536,11 +535,9 @@ static eio_obj_t *
 create_file_write_eio_obj(int fd, uint32_t taskid, uint32_t nodeid,
 			  client_io_t *cio)
 {
-	struct file_write_info *info = NULL;
 	eio_obj_t *eio = NULL;
+	struct file_write_info *info = xmalloc(sizeof(*info));
 
-	info = (struct file_write_info *)
-		xmalloc(sizeof(struct file_write_info));
 	info->cio = cio;
 	info->msg_queue = list_create(NULL); /* FIXME! Add destructor */
 	info->out_msg = NULL;
@@ -634,11 +631,9 @@ static eio_obj_t *
 create_file_read_eio_obj(int fd, uint32_t taskid, uint32_t nodeid,
 			 client_io_t *cio)
 {
-	struct file_read_info *info = NULL;
 	eio_obj_t *eio = NULL;
+	struct file_read_info *info = xmalloc(sizeof(*info));
 
-	info = (struct file_read_info *)
-		xmalloc(sizeof(struct file_read_info));
 	info->cio = cio;
 	if (taskid == (uint32_t)-1) {
 		info->header.type = SLURM_IO_ALLSTDIN;
@@ -697,7 +692,7 @@ static int _file_read(eio_obj_t *obj, List objs)
 	struct io_buf *msg;
 	io_hdr_t header;
 	void *ptr;
-	Buf packbuf;
+	buf_t *packbuf;
 	int len;
 
 	debug2("Entering _file_read");
@@ -745,7 +740,7 @@ again:
 	io_hdr_pack(&header, packbuf);
 	msg->length = io_hdr_packed_size() + header.length;
 	msg->ref_count = 0; /* make certain it is initialized */
-	/* free the Buf packbuf, but not the memory to which it points */
+	/* free the packbuf structure, but not the memory to which it points */
 	packbuf->head = NULL;
 	free_buf(packbuf);
 	debug3("  msg->length = %d", msg->length);
@@ -833,7 +828,7 @@ _create_listensock_eio(int fd, client_io_t *cio)
 
 static int _read_io_init_msg(int fd, client_io_t *cio, slurm_addr_t *host)
 {
-	struct slurm_io_init_msg msg;
+	io_init_msg_t msg = { 0 };
 
 	if (io_init_msg_read_from_fd(fd, &msg) != SLURM_SUCCESS) {
 		error("failed reading io init message");
@@ -875,9 +870,11 @@ static int _read_io_init_msg(int fd, client_io_t *cio, slurm_addr_t *host)
 	if (cio->sls)
 		step_launch_clear_questionable_state(cio->sls, msg.nodeid);
 
+	xfree(msg.io_key);
 	return SLURM_SUCCESS;
 
     fail:
+	xfree(msg.io_key);
 	if (fd > STDERR_FILENO)
 		close(fd);
 	return SLURM_ERROR;
@@ -962,22 +959,26 @@ _wid(int n)
 static struct io_buf *
 _alloc_io_buf(void)
 {
-	struct io_buf *buf;
+	struct io_buf *buf = xmalloc(sizeof(*buf));
 
-	buf = (struct io_buf *)xmalloc(sizeof(struct io_buf));
-	if (!buf)
-		return NULL;
 	buf->ref_count = 0;
 	buf->length = 0;
 	/* The following "+ 1" is just temporary so I can stick a \0 at
 	   the end and do a printf of the data pointer */
 	buf->data = xmalloc(MAX_MSG_LEN + io_hdr_packed_size() + 1);
-	if (!buf->data) {
-		xfree(buf);
-		return NULL;
-	}
 
 	return buf;
+}
+
+static void _free_io_buf(void *ptr)
+{
+	struct io_buf *buf = (struct io_buf *) ptr;
+
+	if (!buf)
+		return;
+
+	xfree(buf->data);
+	xfree(buf);
 }
 
 static void
@@ -1093,7 +1094,8 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 		error("%s: invalid credential", __func__);
 		return NULL;
 	}
-	cio->io_key = (char *)xmalloc(siglen);
+	cio->io_key = xmalloc(siglen);
+	cio->io_key_len = siglen;
 	memcpy(cio->io_key, sig, siglen);
 	/* no need to free "sig", it is just a pointer into the credential */
 
@@ -1104,10 +1106,10 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 	 * overstressing the TCP/IP backoff/retry algorithm
 	 */
 	cio->num_listen = _estimate_nports(num_nodes, 48);
-	cio->listensock = (int *)xmalloc(cio->num_listen * sizeof(int));
-	cio->listenport = (uint16_t *)xmalloc(cio->num_listen*sizeof(uint16_t));
+	cio->listensock = xcalloc(cio->num_listen, sizeof(int));
+	cio->listenport = xcalloc(cio->num_listen, sizeof(uint16_t));
 
-	cio->ioserver = (eio_obj_t **)xmalloc(num_nodes*sizeof(eio_obj_t *));
+	cio->ioserver = xcalloc(num_nodes, sizeof(eio_obj_t *));
 	cio->ioservers_ready_bits = bit_alloc(num_nodes);
 	cio->ioservers_ready = 0;
 	slurm_mutex_init(&cio->ioservers_lock);
@@ -1135,12 +1137,12 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 		eio_new_initial_obj(cio->eio, obj);
 	}
 
-	cio->free_incoming = list_create(NULL); /* FIXME! Needs destructor */
+	cio->free_incoming = list_create(_free_io_buf);
 	cio->incoming_count = 0;
 	for (i = 0; i < STDIO_MAX_FREE_BUF; i++) {
 		list_enqueue(cio->free_incoming, _alloc_io_buf());
 	}
-	cio->free_outgoing = list_create(NULL); /* FIXME! Needs destructor */
+	cio->free_outgoing = list_create(_free_io_buf);
 	cio->outgoing_count = 0;
 	for (i = 0; i < STDIO_MAX_FREE_BUF; i++) {
 		list_enqueue(cio->free_outgoing, _alloc_io_buf());
@@ -1218,6 +1220,8 @@ client_io_handler_destroy(client_io_t *cio)
 	xfree(cio->listensock);
 	eio_handle_destroy(cio->eio);
 	xfree(cio->io_key);
+	FREE_NULL_LIST(cio->free_incoming);
+	FREE_NULL_LIST(cio->free_outgoing);
 	xfree(cio);
 }
 
@@ -1291,7 +1295,7 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 {
 	struct io_buf *msg;
 	io_hdr_t header;
-	Buf packbuf;
+	buf_t *packbuf;
 	struct server_io_info *server;
 	int rc = SLURM_SUCCESS;
 	slurm_mutex_lock(&cio->ioservers_lock);
@@ -1333,7 +1337,7 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 
 		packbuf = create_buf(msg->data, io_hdr_packed_size());
 		io_hdr_pack(&header, packbuf);
-		/* free the Buf packbuf, but not the memory to which it points*/
+		/* free the packbuf, but not the memory to which it points */
 		packbuf->head = NULL;
 		free_buf(packbuf);
 

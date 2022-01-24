@@ -54,12 +54,9 @@
 #include "src/common/job_options.h"
 #include "src/common/stepd_api.h"
 
-#ifndef MAXHOSTNAMELEN
-#define MAXHOSTNAMELEN	64
-#endif
-
 typedef struct {
-	unsigned char data[SLURM_IO_KEY_SIZE];
+	char *data;
+	uint32_t len;
 } srun_key_t;
 
 typedef struct {
@@ -123,6 +120,7 @@ typedef struct {		/* MPMD specifications, needed for Cray */
 } mpmd_set_t;
 
 typedef struct {
+	char *container;		/* OCI Container Bundle path	*/
 	slurmstepd_state_t state;	/* Job state			*/
 	pthread_cond_t state_cond;	/* Job state conditional	*/
 	pthread_mutex_t state_mutex;	/* Job state mutex		*/
@@ -225,7 +223,6 @@ typedef struct {
 	jobacctinfo_t *jobacct;
 	uint8_t        open_mode;	/* stdout/err append or truncate */
 	job_options_t  options;
-	uint32_t       resv_id;		/* Cray/BASIL reservation ID	*/
 	uint16_t       restart_cnt;	/* batch job restart count	*/
 	char	      *job_alloc_cores;	/* needed by the SPANK cpuset plugin */
 	char	      *step_alloc_cores;/* needed by the SPANK cpuset plugin */
@@ -252,6 +249,8 @@ typedef struct {
 	char *x11_target;		/* remote target. unix socket if port == 0 */
 	uint16_t x11_target_port;	/* remote x11 port to connect back to */
 	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
+
+	char *selinux_context;
 } stepd_step_rec_t;
 
 
@@ -265,6 +264,8 @@ srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
 			       slurm_addr_t *ioaddr, uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
+
+void srun_key_destroy(srun_key_t *key);
 
 stepd_step_task_info_t * task_info_create(int taskid, int gtaskid,
 					  char *ifname, char *ofname,

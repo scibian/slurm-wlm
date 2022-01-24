@@ -75,6 +75,8 @@ static pthread_mutex_t sinfo_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*************
  * Functions *
  *************/
+extern int dump_data(int argc, char **argv);
+
 static void _free_sinfo_format(void *object);
 static void _free_params(void);
 void *      _build_part_info(void *args);
@@ -121,6 +123,9 @@ int main(int argc, char **argv)
 		opts.stderr_level += params.verbose;
 		log_alter(opts, SYSLOG_FACILITY_USER, NULL);
 	}
+
+	if (params.mimetype)
+		exit(dump_data(argc, argv));
 
 	while (1) {
 		if ((!params.no_header) &&
@@ -808,6 +813,11 @@ static bool _match_node_data(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr)
 		return false;
 
 	if (sinfo_ptr->nodes &&
+	    params.match_flags.extra_flag &&
+	    (xstrcmp(node_ptr->extra, sinfo_ptr->extra)))
+		return false;
+
+	if (sinfo_ptr->nodes &&
 	    params.match_flags.features_flag &&
 	    (xstrcmp(node_ptr->features, sinfo_ptr->features)))
 		return false;
@@ -853,6 +863,19 @@ static bool _match_node_data(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr)
 		state1 = node_state_string(node_ptr->node_state);
 		state2 = node_state_string(sinfo_ptr->node_state);
 		if (xstrcmp(state1, state2))
+			return false;
+	}
+
+	if (params.match_flags.statecomplete_flag) {
+		char *state1, *state2;
+		int rc = true;
+		state1 = node_state_string_complete(node_ptr->node_state);
+		state2 = node_state_string_complete(sinfo_ptr->node_state);
+		rc = xstrcmp(state1, state2);
+		xfree(state1);
+		xfree(state2);
+
+		if (rc)
 			return false;
 	}
 
@@ -1009,6 +1032,7 @@ static void _update_sinfo(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr)
 		sinfo_ptr->gres       = node_ptr->gres;
 		sinfo_ptr->gres_used  = node_ptr->gres_used;
 		sinfo_ptr->comment    = node_ptr->comment;
+		sinfo_ptr->extra      = node_ptr->extra;
 		sinfo_ptr->reason     = node_ptr->reason;
 		sinfo_ptr->reason_time= node_ptr->reason_time;
 		sinfo_ptr->reason_uid = node_ptr->reason_uid;

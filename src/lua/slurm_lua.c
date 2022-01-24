@@ -376,6 +376,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->burst_buffer);
 	} else if (!xstrcmp(name, "comment")) {
 		lua_pushstring(L, job_ptr->comment);
+	} else if (!xstrcmp(name, "container")) {
+		lua_pushstring(L, job_ptr->container);
 	} else if (!xstrcmp(name, "cpus_per_tres")) {
 		lua_pushstring(L, job_ptr->cpus_per_tres);
 	} else if (!xstrcmp(name, "delay_boot")) {
@@ -502,7 +504,7 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 	} else if (!xstrcmp(name, "resv_name")) {
 		lua_pushstring(L, job_ptr->resv_name);
 	} else if (!xstrcmp(name, "script")) {
-		Buf bscript = get_job_script(job_ptr);
+		buf_t *bscript = get_job_script(job_ptr);
 		if (bscript) {
 			char *script = bscript->head;
 			if (script && script[0] != '\0')
@@ -512,6 +514,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		} else
 			lua_pushnil(L);
 		free_buf(bscript);
+	} else if (!xstrcmp(name, "selinux_context")) {
+		lua_pushstring(L, job_ptr->selinux_context);
  	} else if (!xstrcmp(name, "site_factor")) {
 		if (job_ptr->site_factor == NO_VAL)
 			lua_pushnumber(L, job_ptr->site_factor);
@@ -784,7 +788,12 @@ extern int slurm_lua_init(void)
 
 	char *const lua_libs[] = {
 		"liblua.so",
-#if LUA_VERSION_NUM == 503
+#if LUA_VERSION_NUM == 504
+		"liblua-5.4.so",
+		"liblua5.4.so",
+		"liblua5.4.so.0",
+		"liblua.so.5.4",
+#elif LUA_VERSION_NUM == 503
 		"liblua-5.3.so",
 		"liblua5.3.so",
 		"liblua5.3.so.0",

@@ -47,6 +47,46 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+static int _slurm_kill_job_internal(uint32_t job_id,
+				    const char *sjob_id_in, const char *sibling,
+				    uint16_t signal, uint16_t flags)
+{
+	int cc = 0, rc = SLURM_SUCCESS;
+	slurm_msg_t msg;
+	job_step_kill_msg_t req;
+	char *sjob_id =
+		job_id ? xstrdup_printf("%u", job_id) : xstrdup(sjob_id_in);
+
+	if (!sjob_id) {
+		errno = EINVAL;
+		return SLURM_ERROR;
+	}
+
+	slurm_msg_t_init(&msg);
+
+	memset(&req, 0, sizeof(req));
+	req.step_id.job_id = NO_VAL;
+	req.sjob_id = sjob_id;
+	req.step_id.step_id = NO_VAL;
+	req.step_id.step_het_comp = NO_VAL;
+	req.signal = signal;
+	req.flags = flags;
+	req.sibling = xstrdup(sibling);
+	msg.msg_type = REQUEST_KILL_JOB;
+        msg.data = &req;
+
+	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec))
+		rc = SLURM_ERROR;
+
+	xfree(sjob_id);
+	xfree(req.sibling);
+
+	if (cc)
+		slurm_seterrno_ret(cc);
+
+	return rc;
+}
+
 /*
  * slurm_kill_job - send the specified signal to all steps of an existing job
  * IN job_id     - the job's id
@@ -57,30 +97,7 @@
 extern int
 slurm_kill_job (uint32_t job_id, uint16_t signal, uint16_t flags)
 {
-	int rc;
-	slurm_msg_t msg;
-	job_step_kill_msg_t req;
-
-	slurm_msg_t_init(&msg);
-	/*
-	 * Request message:
-	 */
-	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.step_id.job_id = job_id;
-	req.sjob_id     = NULL;
-	req.step_id.step_id = NO_VAL;
-	req.step_id.step_het_comp = NO_VAL;
-	req.signal      = signal;
-	req.flags       = flags;
-	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
-	msg.data        = &req;
-	if (slurm_send_recv_controller_rc_msg(&msg, &rc, working_cluster_rec)<0)
-		return SLURM_ERROR;
-
-	if (rc)
-		slurm_seterrno_ret(rc);
-
-	return SLURM_SUCCESS;
+	return _slurm_kill_job_internal(job_id, NULL, NULL, signal, flags);
 }
 
 /*
@@ -121,66 +138,8 @@ slurm_kill_job_step (uint32_t job_id, uint32_t step_id, uint16_t signal)
 	return SLURM_SUCCESS;
 }
 
-/* slurm_kill_job2()
- */
-int
-slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
+extern int slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags,
+			   const char *sibling)
 {
-	int cc, rc = SLURM_SUCCESS;
-	slurm_msg_t msg;
-	job_step_kill_msg_t req;
-
-	if (job_id == NULL) {
-		errno = EINVAL;
-		return SLURM_ERROR;
-	}
-
-	slurm_msg_t_init(&msg);
-
-	memset(&req, 0, sizeof(job_step_kill_msg_t));
-	req.step_id.job_id = NO_VAL;
-	req.sjob_id     = xstrdup(job_id);
-	req.step_id.step_id = NO_VAL;
-	req.step_id.step_het_comp = NO_VAL;
-	req.signal      = signal;
-	req.flags	= flags;
-	msg.msg_type    = REQUEST_KILL_JOB;
-        msg.data        = &req;
-
-	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)) {
-		rc = SLURM_ERROR;
-		goto fini;
-	}
-
-	if (cc)
-		slurm_seterrno_ret(cc);
-
-fini:
-	xfree(req.sjob_id);
-	return rc;
-}
-
-/*
- * slurm_kill_job_msg - send kill msg to and existing job or step.
- *
- * IN msg_type - msg_type to send
- * IN kill_msg - job_step_kill_msg_t parameters.
- * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
- */
-extern int slurm_kill_job_msg(uint16_t msg_type, job_step_kill_msg_t *kill_msg)
-{
-	int cc;
-	slurm_msg_t msg;
-	slurm_msg_t_init(&msg);
-
-	msg.msg_type = msg_type;
-        msg.data     = kill_msg;
-
-	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)<0)
-		return SLURM_ERROR;
-
-	if (cc)
-		slurm_seterrno_ret(cc);
-
-	return SLURM_SUCCESS;
+	return _slurm_kill_job_internal(0, job_id, sibling, signal, flags);
 }

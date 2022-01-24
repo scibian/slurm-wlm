@@ -50,7 +50,7 @@ set my_squeue   "${fed_slurm_base}/$fedc1/bin/squeue"
 set my_scontrol "${fed_slurm_base}/$fedc1/bin/scontrol"
 regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
 set min_job_age [expr {$min_job_age + 65}]
-set file_in     "test$test_id.in"
+set file_in     "$test_dir/input"
 
 set jid(0) 0
 set jid(1) 0
@@ -63,7 +63,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -87,7 +87,7 @@ proc srun { regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "srun failure: expected $regex"
+		fail "srun failure (expected $regex)"
 	}
 	return $job_id
 }
@@ -115,7 +115,7 @@ proc sbatch { options } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Batch submit failure: expected $regex"
+		fail "Batch submit failure (expected $regex)"
 	}
 
 	sleep 2
@@ -138,7 +138,7 @@ proc squeue { regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue. expected $regex"
+		fail "Unexpected error in squeue (expected $regex)"
 	}
 }
 
@@ -164,7 +164,7 @@ proc scontrol { fed id regex } {
 			}
 		}
 		if {$matches != 1} {
-			fail "scontrol failure: expected $regex"
+			fail "scontrol failure (expected $regex)"
 		}
 	}
 }
@@ -185,7 +185,7 @@ proc my_cat { id } {
 		}
 	}
 	if {$matches != 3} {
-		fail "cat failure: expected .+error: from ($fedc1|$fedc2|$fedc3). matches=$matches"
+		fail "cat failure (expected .+error from $fedc1|$fedc2|$fedc3. matches=$matches)"
 	}
 }
 
@@ -202,14 +202,12 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
-	global test_id bin_bash my_sacctmgr jid
+	global fed_name bin_bash bin_rm jid test_name
 
 	cancel_federation_jobs
-	exec $bin_rm -f $file_in slurm-$jid(0).out slurm-$jid(1).out slurm-$jid(2).out
-	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
-
-	return [delete_federations $fed_name]
+	exec $bin_rm -f slurm-$jid(0).out slurm-$jid(1).out slurm-$jid(2).out
+	exec $bin_bash -c "$bin_rm -f $test_name*.out"
+	delete_federations $fed_name
 }
 
 if {![check_federation_setup]} {
@@ -223,9 +221,7 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-if {[cleanup] != 0} {
-	fail "Failed to cleanup"
-}
+cleanup
 
 # add clusters to federation
 if {[setup_federation $fed_name]} {
@@ -240,7 +236,7 @@ log_info "Setup cluster features"
 log_info "################################################################"
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
+spawn $sacctmgr -i modify cluster $fedc1 set features=fa
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -259,7 +255,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -267,11 +262,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
+spawn $sacctmgr -i modify cluster $fedc2 set features=fb
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -290,7 +285,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -298,11 +292,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
+spawn $sacctmgr -i modify cluster $fedc3 set features=fc
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -321,7 +315,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -329,7 +322,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 make_bash_script $file_in "sleep 300"

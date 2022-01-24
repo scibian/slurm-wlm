@@ -224,8 +224,7 @@ handle_write:
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L2CACHE,
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
-		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L3CACHE,
-					       HWLOC_TYPE_FILTER_KEEP_NONE);
+		/* need to preserve HWLOC_OBJ_L3CACHE for l3cache_as_socket */
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L4CACHE,
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L5CACHE,
@@ -322,14 +321,20 @@ extern int xcpuinfo_hwloc_topo_get(
 	objtype[PU]     = HWLOC_OBJ_PU;
 	if (hwloc_get_type_depth(topology, HWLOC_OBJ_NODE) >
 	    hwloc_get_type_depth(topology, HWLOC_OBJ_SOCKET)) {
-		char *sched_params = slurm_get_sched_params();
-		if (xstrcasestr(sched_params, "Ignore_NUMA")) {
+		if (xstrcasestr(slurm_conf.sched_params, "Ignore_NUMA")) {
 			info("Ignoring NUMA nodes within a socket");
 		} else {
 			info("Considering each NUMA node as a socket");
 			objtype[SOCKET] = HWLOC_OBJ_NODE;
 		}
-		xfree(sched_params);
+	}
+
+	if (xstrcasestr(slurm_conf.slurmd_params, "l3cache_as_socket")) {
+#if HWLOC_API_VERSION >= 0x00020000
+		objtype[SOCKET] = HWLOC_OBJ_L3CACHE;
+#else
+		error("SlurmdParameters=l3cache_as_socket requires hwloc v2");
+#endif
 	}
 
 	/* Groups below root obj are interpreted as boards */

@@ -29,7 +29,6 @@
 ############################################################################
 source ./globals
 
-set exit_code        0
 set job_id           0
 set matches          0
 set task_id          3
@@ -39,7 +38,7 @@ set task_num         10
 # Spawn a shell via srun with stdout forwarding disabled
 #
 set timeout $max_job_delay
-set srun_pid [spawn $srun --input=$task_id -N1 -n$task_num -O -v --wait=2 -t1 $bin_bash]
+spawn $srun --input=$task_id -N1 -n$task_num -O -v --wait=2 -t1 $bin_bash
 expect {
 	-re "launching StepId=($number)\\.0 on host" {
 		set job_id $expect_out(1,string)
@@ -52,7 +51,6 @@ expect {
 			incr matches
 		} else {
 			log_error "Wrong task_id responded"
-			set exit_code 1
 		}
 		send "exit\r"
 		exp_continue
@@ -62,32 +60,27 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 1} {
-	log_error "Stdin to specific task_id failed"
-	set exit_code 1
-}
+
+subtest {$matches == 1} "Verify stdin to specific task id"
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
     skip "Additional portions of this test are incompatible with front-end systems"
 }
 
-if {$exit_code == 0} {
-	log_info "So far... stdin to specific task worked fine"
-}
+log_debug "So far... stdin to specific task worked fine"
 
 #
 # Spawn program to print task number, we only expect to see output from task 2
 #
 set job_id  0
 set matches 0
-set srun_pid [spawn $srun --output=$task_id -N1 -n$task_num -O -v -t1 env]
+spawn $srun --output=$task_id -N1 -n$task_num -O -v -t1 env
 expect {
 	-re "launching StepId=($number)\\.0 on host" {
 		set job_id $expect_out(1,string)
@@ -99,23 +92,15 @@ expect {
 			incr matches
 		} else {
 			log_error "Wrong task_id responded"
-			set exit_code 1
 		}
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 1} {
-	log_error "Stdout from specific task_id failed"
-	set exit_code 1
-}
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$matches == 1} "Verify stdout from specific task id"
