@@ -89,6 +89,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_threads)
 #define format_add_disk(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_disk)
+#define format_add_extra(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_extra)
 #define format_add_features(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_features)
 #define format_add_features_act(list,wid,right,suffix) \
@@ -139,6 +141,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_size)
 #define format_add_state_compact(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_state_compact)
+#define format_add_state_complete(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_state_complete)
 #define format_add_state_long(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_state_long)
 #define format_add_time(list,wid,right,suffix) \
@@ -194,6 +198,8 @@ int _print_threads(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_disk(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
+int _print_extra(sinfo_data_t *sinfo_data, int width, bool right_justify,
+		 char *suffix);
 int _print_features(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_features_act(sinfo_data_t * sinfo_data, int width,
@@ -242,6 +248,8 @@ int _print_size(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_state_compact(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
+int _print_state_complete(sinfo_data_t * sinfo_data, int width,
+			  bool right_justify, char *suffix);
 int _print_state_long(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_time(sinfo_data_t * sinfo_data, int width,

@@ -55,7 +55,6 @@ slurm_persist_conn_t *slurmdbd_conn = NULL;
 
 
 #define DBD_MAGIC		0xDEAD3219
-#define SLURMDBD_TIMEOUT	900	/* Seconds SlurmDBD for response */
 #define DEBUG_PRINT_MAX_MSG_TYPES 10
 #define MAX_DBD_DEFAULT_ACTION MAX_DBD_ACTION_DISCARD
 
@@ -66,13 +65,14 @@ static pthread_t agent_tid      = 0;
 
 static bool      halt_agent          = 0;
 static time_t    slurmdbd_shutdown   = 0;
+static bool      agent_running       = 0;
 
 static pthread_mutex_t slurmdbd_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  slurmdbd_cond = PTHREAD_COND_INITIALIZER;
 
 static int max_dbd_msg_action = MAX_DBD_DEFAULT_ACTION;
 
-static int _unpack_return_code(uint16_t rpc_version, Buf buffer)
+static int _unpack_return_code(uint16_t rpc_version, buf_t *buffer)
 {
 	uint16_t msg_type = -1;
 	persist_rc_msg_t *msg;
@@ -143,7 +143,7 @@ static int _unpack_return_code(uint16_t rpc_version, Buf buffer)
 static int _get_return_code(void)
 {
 	int rc = SLURM_ERROR;
-	Buf buffer = slurm_persist_recv_msg(slurmdbd_conn);
+	buf_t *buffer = slurm_persist_recv_msg(slurmdbd_conn);
 	if (buffer == NULL)
 		return rc;
 
@@ -155,12 +155,12 @@ static int _get_return_code(void)
 
 static int _handle_mult_rc_ret(void)
 {
-	Buf buffer;
+	buf_t *buffer;
 	uint16_t msg_type;
 	persist_rc_msg_t *msg = NULL;
 	dbd_list_msg_t *list_msg = NULL;
 	int rc = SLURM_ERROR;
-	Buf out_buf = NULL;
+	buf_t *out_buf = NULL;
 
 	buffer = slurm_persist_recv_msg(slurmdbd_conn);
 	if (buffer == NULL)
@@ -182,7 +182,7 @@ static int _handle_mult_rc_ret(void)
 			ListIterator itr =
 				list_iterator_create(list_msg->my_list);
 			while ((out_buf = list_next(itr))) {
-				Buf b;
+				buf_t *b;
 				if ((rc = _unpack_return_code(
 					     slurmdbd_conn->version, out_buf))
 				    != SLURM_SUCCESS)
@@ -244,24 +244,24 @@ unpack_error:
 /****************************************************************************
  * Functions for agent to manage queue of pending message for the Slurm DBD
  ****************************************************************************/
-static Buf _load_dbd_rec(int fd)
+static buf_t *_load_dbd_rec(int fd)
 {
 	ssize_t size, rd_size;
 	uint32_t msg_size, magic;
 	char *msg;
-	Buf buffer;
+	buf_t *buffer;
 
 	size = sizeof(msg_size);
 	rd_size = read(fd, &msg_size, size);
 	if (rd_size == 0)
-		return (Buf) NULL;
+		return NULL;
 	if (rd_size != size) {
 		error("state recover error: %m");
-		return (Buf) NULL;
+		return NULL;
 	}
 	if (msg_size > MAX_DBD_MSG_LEN) {
 		error("state recover error, msg_size=%u", msg_size);
-		return (Buf) NULL;
+		return NULL;
 	}
 
 	buffer = init_buf((int) msg_size);
@@ -278,7 +278,7 @@ static Buf _load_dbd_rec(int fd)
 		else {
 			error("state recover error: %m");
 			free_buf(buffer);
-			return (Buf) NULL;
+			return NULL;
 		}
 	}
 
@@ -287,7 +287,7 @@ static Buf _load_dbd_rec(int fd)
 	if ((rd_size != size) || (magic != DBD_MAGIC)) {
 		error("state recover error");
 		free_buf(buffer);
-		return (Buf) NULL;
+		return NULL;
 	}
 
 	return buffer;
@@ -296,7 +296,7 @@ static Buf _load_dbd_rec(int fd)
 static void _load_dbd_state(void)
 {
 	char *dbd_fname = NULL;
-	Buf buffer;
+	buf_t *buffer;
 	int fd, recovered = 0;
 	uint16_t rpc_version = 0;
 
@@ -374,7 +374,7 @@ static void _load_dbd_state(void)
 	xfree(dbd_fname);
 }
 
-static int _save_dbd_rec(int fd, Buf buffer)
+static int _save_dbd_rec(int fd, buf_t *buffer)
 {
 	ssize_t size, wrote;
 	uint32_t msg_size = get_buf_offset(buffer);
@@ -415,7 +415,7 @@ static int _save_dbd_rec(int fd, Buf buffer)
 static void _save_dbd_state(void)
 {
 	char *dbd_fname = NULL;
-	Buf buffer;
+	buf_t *buffer;
 	int fd, rc, wrote = 0;
 	uint16_t msg_type;
 	uint32_t offset;
@@ -482,7 +482,7 @@ static int _purge_step_req(void)
 	ListIterator iter;
 	uint16_t msg_type;
 	uint32_t offset;
-	Buf buffer;
+	buf_t *buffer;
 
 	iter = list_iterator_create(agent_list);
 	while ((buffer = list_next(iter))) {
@@ -511,7 +511,7 @@ static int _purge_job_start_req(void)
 	ListIterator iter;
 	uint16_t msg_type;
 	uint32_t offset;
-	Buf buffer;
+	buf_t *buffer;
 
 	iter = list_iterator_create(agent_list);
 	while ((buffer = list_next(iter))) {
@@ -555,7 +555,7 @@ static void _sig_handler(int signal)
 
 static int _print_agent_list_msg_type(void *x, void *arg)
 {
-	Buf buffer = (Buf) x;
+	buf_t *buffer = (buf_t *) x;
 	char *mlist = (char *) arg;
 	uint16_t msg_type;
 	uint32_t offset = get_buf_offset(buffer);
@@ -603,13 +603,17 @@ static void *_agent(void *x)
 {
 	int rc;
 	uint32_t cnt;
-	Buf buffer;
+	buf_t *buffer;
 	struct timespec abs_time;
 	static time_t fail_time = 0;
 	int sigarray[] = {SIGUSR1, 0};
 	persist_msg_t list_req = {0};
 	dbd_list_msg_t list_msg;
 	DEF_TIMERS;
+
+	slurm_mutex_lock(&agent_lock);
+	agent_running = true;
+	slurm_mutex_unlock(&agent_lock);
 
 	list_req.msg_type = DBD_SEND_MULT_MSG;
 	list_req.conn = slurmdbd_conn;
@@ -667,27 +671,26 @@ static void *_agent(void *x)
 			info("agent_count:%d", cnt);
 		/* Leave item on the queue until processing complete */
 		if (agent_list) {
-			int handle_agent_count = 1000;
-			if (cnt > handle_agent_count) {
+			uint32_t msg_size = sizeof(list_req);
+			if (cnt > 1) {
 				int agent_count = 0;
 				ListIterator agent_itr =
 					list_iterator_create(agent_list);
 				list_msg.my_list = list_create(NULL);
 				while ((buffer = list_next(agent_itr))) {
+					msg_size += size_buf(buffer);
+					if (msg_size > MAX_MSG_SIZE)
+						break;
 					list_enqueue(list_msg.my_list, buffer);
 					agent_count++;
-					if (agent_count > handle_agent_count)
+					if (agent_count > 1000)
 						break;
 				}
 				list_iterator_destroy(agent_itr);
 				buffer = pack_slurmdbd_msg(
 					&list_req, SLURM_PROTOCOL_VERSION);
-			} else if (cnt > 1) {
-				list_msg.my_list = agent_list;
-				buffer = pack_slurmdbd_msg(
-					&list_req, SLURM_PROTOCOL_VERSION);
 			} else
-				buffer = (Buf) list_peek(agent_list);
+				buffer = list_peek(agent_list);
 		} else
 			buffer = NULL;
 		slurm_mutex_unlock(&agent_lock);
@@ -748,7 +751,7 @@ static void *_agent(void *x)
 					FREE_NULL_LIST(list_msg.my_list);
 				list_msg.my_list = NULL;
 			} else
-				buffer = (Buf) list_dequeue(agent_list);
+				buffer = list_dequeue(agent_list);
 
 			free_buf(buffer);
 			fail_time = 0;
@@ -780,6 +783,7 @@ static void *_agent(void *x)
 		 list_count(agent_list));
 
 	FREE_NULL_LIST(agent_list);
+	agent_running = false;
 	slurm_mutex_unlock(&agent_lock);
 	return NULL;
 }
@@ -809,12 +813,20 @@ static void _shutdown_agent(void)
 	if (agent_tid) {
 		slurmdbd_shutdown = time(NULL);
 		for (i=0; i<50; i++) {	/* up to 5 secs total */
+			slurm_mutex_lock(&agent_lock);
+			if (!agent_running) {
+				slurm_mutex_unlock(&agent_lock);
+				goto fini;
+			}
 			slurm_cond_broadcast(&agent_cond);
+			slurm_mutex_unlock(&agent_lock);
+
 			usleep(100000);	/* 0.1 sec per try */
 			if (pthread_kill(agent_tid, SIGUSR1))
 				break;
 
 		}
+
 		/* On rare occasions agent thread may not end quickly,
 		 * perhaps due to communication problems with slurmdbd.
 		 * Cancel it and join before returning or we could remove
@@ -824,6 +836,8 @@ static void _shutdown_agent(void)
 			error("unable to save pending requests");
 			pthread_cancel(agent_tid);
 		}
+
+fini:
 		pthread_join(agent_tid,  NULL);
 		agent_tid = 0;
 	}
@@ -907,7 +921,7 @@ extern int slurmdbd_agent_send_recv(uint16_t rpc_version,
  * Returns SLURM_SUCCESS or an error code */
 extern int slurmdbd_agent_send(uint16_t rpc_version, persist_msg_t *req)
 {
-	Buf buffer;
+	buf_t *buffer;
 	uint32_t cnt, rc = SLURM_SUCCESS;
 	static time_t syslog_time = 0;
 

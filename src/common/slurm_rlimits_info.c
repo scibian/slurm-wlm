@@ -199,20 +199,32 @@ extern void print_rlimits(void)
 	}
 }
 
-extern void rlimits_maximize_nofile(void)
+extern void rlimits_adjust_nofile(void)
 {
 	struct rlimit rlim;
 
-	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0)
+	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
 		error("getrlimit(RLIMIT_NOFILE): %m");
-
-	if (rlim.rlim_cur < rlim.rlim_max) {
-#if defined(__APPLE__)
-		rlim.rlim_cur = MIN(OPEN_MAX, rlim.rlim_max);
-#else
-		rlim.rlim_cur = rlim.rlim_max;
-#endif
-		if (setrlimit(RLIMIT_NOFILE, &rlim) < 0)
-			error("Unable to increase maximum number of open files: %m");
+		return;
 	}
+
+	rlim.rlim_cur = MIN(4096, rlim.rlim_max);
+
+	if (setrlimit(RLIMIT_NOFILE, &rlim) < 0)
+		error("Unable to adjust maximum number of open files: %m");
+}
+
+extern void rlimits_use_max_nofile(void)
+{
+	struct rlimit rlim;
+
+	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
+		error("getrlimit(RLIMIT_NOFILE): %m");
+		return;
+	}
+
+	rlim.rlim_cur = rlim.rlim_max;
+
+	if (setrlimit(RLIMIT_NOFILE, &rlim) < 0)
+		error("Unable to adjust maximum number of open files: %m");
 }

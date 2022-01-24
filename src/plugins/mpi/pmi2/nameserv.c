@@ -112,7 +112,7 @@ name_unpublish_local (char *name)
 extern int
 name_publish_up(char *name, char *port)
 {
-	Buf buf = NULL, resp_buf = NULL;
+	buf_t *buf = NULL, *resp_buf = NULL;
 	uint32_t size, tmp_32;
 	int rc;
 
@@ -133,14 +133,14 @@ name_publish_up(char *name, char *port)
 unpack_error:
 	if (resp_buf)
 		free_buf(resp_buf);
-	
+
 	return rc;
 }
 
 extern int
 name_unpublish_up(char *name)
 {
-	Buf buf = NULL, resp_buf = NULL;
+	buf_t *buf = NULL, *resp_buf = NULL;
 	uint32_t size, tmp_32;
 	int rc;
 
@@ -160,7 +160,7 @@ name_unpublish_up(char *name)
 unpack_error:
 	if (resp_buf)
 		free_buf(resp_buf);
-	
+
 	return rc;
 }
 
@@ -168,7 +168,7 @@ unpack_error:
 extern char *
 name_lookup_up(char *name)
 {
-	Buf buf = NULL, resp_buf = NULL;
+	buf_t *buf = NULL, *resp_buf = NULL;
 	uint32_t size;
 	char * port = NULL;
 	int rc;
@@ -186,6 +186,6 @@ name_lookup_up(char *name)
 unpack_error:
 	if (resp_buf)
 		free_buf(resp_buf);
-	
+
 	return port;
 }

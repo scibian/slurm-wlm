@@ -60,12 +60,12 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/eio.h"
 #include "src/common/fd.h"
-#include "src/common/mapping.h"
 #include "src/common/net.h"
 #include "src/common/slurm_mpi.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
+#include "src/plugins/mpi/pmix/mapping.h"
 
 /* ----------------------------------------------------------
  * Slurm environment that influence us:
@@ -169,7 +169,7 @@ typedef uint32_t (*pmixp_2p2_payload_size_cb_t)(void *hdr);
 typedef size_t (*pmixp_p2p_buf_size_cb_t)(void *msg);
 typedef void (*pmixp_p2p_send_complete_cb_t)(void *msg,
 					     pmixp_p2p_ctx_t ctx, int rc);
-typedef void (*pmixp_p2p_msg_return_cb_t)(void *hdr, Buf buf);
+typedef void (*pmixp_p2p_msg_return_cb_t)(void *hdr, buf_t *buf);
 
 typedef struct {
 	/* receiver-related fields */

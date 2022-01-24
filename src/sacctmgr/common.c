@@ -628,12 +628,12 @@ static print_field_t *_get_print_field(char *object)
 		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("ParentID", object, MAX(command_len, 7))) {
 		field->type = PRINT_PID;
-		field->name = xstrdup("Par ID");
-		field->len = 6;
+		field->name = xstrdup("ParentID");
+		field->len = 8;
 		field->print_routine = print_fields_uint;
 	} else if (!xstrncasecmp("ParentName", object, MAX(command_len, 7))) {
 		field->type = PRINT_PNAME;
-		field->name = xstrdup("Par Name");
+		field->name = xstrdup("ParentName");
 		field->len = 10;
 		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("Partition", object, MAX(command_len, 4))) {
@@ -777,6 +777,11 @@ static print_field_t *_get_print_field(char *object)
 		field->type = PRINT_UT;
 		field->name = xstrdup("UsageThres");
 		field->len = 10;
+		field->print_routine = print_fields_double;
+	} else if (!xstrncasecmp("LimitFactor", object, MAX(command_len, 6))) {
+		field->type = PRINT_LF;
+		field->name = xstrdup("LimitFactor");
+		field->len = 11;
 		field->print_routine = print_fields_double;
 	} else if (!xstrncasecmp("Allocated", object, MAX(command_len, 7))) {
 		field->type = PRINT_ALLOCATED;
@@ -1563,7 +1568,7 @@ extern int addto_action_char_list(List char_list, char *names)
 
 				i++;
 				start = i;
-				if (!names[i]) {
+				if (names[i] == ' ') {
 					error("There is a problem with "
 					      "your request.  It appears you "
 					      "have spaces inside your list.");
@@ -2189,6 +2194,11 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 		printf("  UsageThreshold           = NONE\n");
 	else if (qos->usage_thres != NO_VAL)
 		printf("  UsageThreshold           = %.4lf\n", qos->usage_thres);
+
+	if (qos->limit_factor == INFINITE)
+		printf("  LimitFactor              = NONE\n");
+	else if(qos->limit_factor != NO_VAL)
+		printf("  LimitFactor              = %.4lf\n", qos->limit_factor);
 
 }
 

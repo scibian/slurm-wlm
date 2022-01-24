@@ -72,7 +72,6 @@ const char *node_select_syms[] = {
 	"select_p_job_expand",
 	"select_p_job_resized",
 	"select_p_job_signal",
-	"select_p_job_mem_confirm",
 	"select_p_job_fini",
 	"select_p_job_suspend",
 	"select_p_job_resume",
@@ -328,18 +327,6 @@ extern int other_job_signal(job_record_t *job_ptr, int signal)
 }
 
 /*
- * Pass job memory allocation confirmation request to other plugin.
- * IN job_ptr - job to be signaled
- */
-extern int other_job_mem_confirm(job_record_t *job_ptr)
-{
-	if (other_select_init() < 0)
-		return SLURM_ERROR;
-
-	return (*(ops.job_mem_confirm))(job_ptr);
-}
-
-/*
  * Note termination of job is starting. Executed from slurmctld.
  * IN job_ptr - pointer to job being terminated
  */
@@ -432,7 +419,7 @@ extern int other_step_finish(step_record_t *step_ptr, bool killing_step)
 }
 
 extern int other_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
-				      Buf buffer,
+				      buf_t *buffer,
 				      uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -442,7 +429,7 @@ extern int other_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
 }
 
 extern int other_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo,
-					Buf buffer,
+					buf_t *buffer,
 					uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -557,7 +544,7 @@ extern select_jobinfo_t *other_select_jobinfo_copy(
  * RET         - slurm error code
  */
 extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
-				     Buf buffer,
+				     buf_t *buffer,
 				     uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -573,7 +560,7 @@ extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
  * NOTE: returned value must be freed using other_free_jobinfo
  */
 extern int other_select_jobinfo_unpack(select_jobinfo_t **jobinfo,
-				       Buf buffer,
+				       buf_t *buffer,
 				       uint16_t protocol_version)
 {
 	if (other_select_init() < 0)

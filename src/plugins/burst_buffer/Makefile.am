@@ -1,7 +1,7 @@
 # Makefile for burst buffer plugins
 
-SUBDIRS = generic
+SUBDIRS = common
 
 if WITH_JSON_PARSER
-SUBDIRS += datawarp
+SUBDIRS += datawarp lua
 endif

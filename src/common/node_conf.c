@@ -90,7 +90,7 @@ uint16_t *cr_node_num_cores = NULL;
 uint32_t *cr_node_cores_offset = NULL;
 
 /* Local function definitions */
-static int	_delete_config_record (void);
+static void _delete_config_record(void);
 #if _DEBUG
 static void	_dump_hash (void);
 #endif
@@ -105,13 +105,11 @@ static void _node_record_hash_identity (void* item, const char** key,
  * RET 0 if no error, errno otherwise
  * global: config_list - list of all configuration records
  */
-static int _delete_config_record (void)
+static void _delete_config_record(void)
 {
 	last_node_update = time (NULL);
 	list_flush(config_list);
 	list_flush(front_end_list);
-
-	return SLURM_SUCCESS;
 }
 
 
@@ -263,12 +261,12 @@ static void _dump_front_end(slurm_conf_frontend_t *fe_ptr)
  * is_slurmd_context: set to true if run from slurmd
  * RET 0 if no error, error code otherwise
  */
-extern int build_all_frontend_info (bool is_slurmd_context)
+extern void build_all_frontend_info (bool is_slurmd_context)
 {
 	slurm_conf_frontend_t **ptr_array;
 #ifdef HAVE_FRONT_END
 	slurm_conf_frontend_t *fe_single, *fe_line;
-	int i, count, max_rc = SLURM_SUCCESS;
+	int i, count;
 
 	count = slurm_conf_frontend_array(&ptr_array);
 	if (count == 0)
@@ -325,11 +323,9 @@ extern int build_all_frontend_info (bool is_slurmd_context)
 		hostlist_destroy(hl_addr);
 		hostlist_destroy(hl_name);
 	}
-	return max_rc;
 #else
 	if (slurm_conf_frontend_array(&ptr_array) != 0)
 		fatal("FrontendName information configured!");
-	return SLURM_SUCCESS;
 #endif
 }
 
@@ -363,16 +359,14 @@ static void _check_callback(char *alias, char *hostname,
  * build_all_nodeline_info - get a array of slurm_conf_node_t structures
  *	from the slurm.conf reader, build table, and set values
  * IN set_bitmap - if true then set node_bitmap in config record (used by
- *		    slurmd), false is used by slurmctld and testsuite
+ *		    slurmd), false is used by slurmctld, clients, and testsuite
  * IN tres_cnt - number of TRES configured on system (used on controller side)
- * RET 0 if no error, error code otherwise
  */
-extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt)
+extern void build_all_nodeline_info(bool set_bitmap, int tres_cnt)
 {
 	slurm_conf_node_t *node, **ptr_array;
 	config_record_t *config_ptr = NULL;
-	int count;
-	int i, rc, max_rc = SLURM_SUCCESS;
+	int count, i;
 	bool in_daemon;
 	static bool daemon_run = false, daemon_set = false;
 
@@ -412,13 +406,11 @@ extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt)
 		if (node->feature && node->feature[0])
 			config_ptr->feature = xstrdup(node->feature);
 		if (in_daemon) {
-			config_ptr->gres = gres_plugin_name_filter(node->gres,
-							       node->nodenames);
+			config_ptr->gres = gres_name_filter(node->gres,
+							    node->nodenames);
 		}
 
-		rc = check_nodeline_info(node, config_ptr, LOG_LEVEL_FATAL,
-					 _check_callback);
-		max_rc = MAX(max_rc, rc);
+		check_nodeline_info(node, config_ptr, _check_callback);
 	}
 
 	if (set_bitmap) {
@@ -430,28 +422,22 @@ extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt)
 		}
 		list_iterator_destroy(config_iterator);
 	}
-
-	return max_rc;
 }
 
 /*
- * check_nodeline_info - From the slurm.conf reader, build table,
- * 	and set values
- * RET 0 if no error, error code otherwise
+ * check_nodeline_info - From the slurm.conf reader, build table, and set values
  * Note: Operates on common variables
  *	default_node_record - default node configuration values
  */
-extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
-			       config_record_t *config_ptr,
-			       log_level_t lvl,
-			       void (*_callback) (
+extern void check_nodeline_info(slurm_conf_node_t *node_ptr,
+			        config_record_t *config_ptr,
+			        void (*_callback) (
 				       char *alias, char *hostname,
 				       char *address, char *bcast_address,
 				       uint16_t port, int state_val,
 				       slurm_conf_node_t *node_ptr,
 				       config_record_t *config_ptr))
 {
-	int error_code = SLURM_SUCCESS;
 	hostlist_t address_list = NULL;
 	hostlist_t alias_list = NULL;
 	hostlist_t bcast_list = NULL;
@@ -466,10 +452,10 @@ extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
 	int address_count, alias_count, bcast_count, hostname_count, port_count;
 	uint16_t port = slurm_conf.slurmd_port;
 
-	if ((node_ptr->nodenames == NULL) || (node_ptr->nodenames[0] == '\0'))
-		return -1;
+	if (!node_ptr->nodenames || !node_ptr->nodenames[0])
+		fatal("Empty NodeName in config.");
 
-	if (node_ptr->state != NULL) {
+	if (node_ptr->state) {
 		state_val = state_str2int(node_ptr->state, node_ptr->nodenames);
 		if (state_val == NO_VAL)
 			fatal("Invalid state %s from %s",
@@ -566,10 +552,8 @@ extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
 				free(port_str);
 			port_str = hostlist_shift(port_list);
 			port_int = atoi(port_str);
-			if ((port_int <= 0) || (port_int > 0xffff)) {
-				log_var(lvl, "Invalid Port %s",
-					node_ptr->port_str);
-			}
+			if ((port_int <= 0) || (port_int > 0xffff))
+				fatal("Invalid Port %s", node_ptr->port_str);
 			port = port_int;
 		}
 
@@ -597,7 +581,6 @@ extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
 		hostlist_destroy(hostname_list);
 	if (port_list)
 		hostlist_destroy(port_list);
-	return error_code;
 }
 
 /*
@@ -637,6 +620,7 @@ extern node_record_t *create_node_record(config_record_t *config_ptr,
 {
 	node_record_t *node_ptr;
 	int old_buffer_size, new_buffer_size;
+	uint32_t tot_cores;
 
 	last_node_update = time (NULL);
 	xassert(config_ptr);
@@ -689,6 +673,19 @@ extern node_record_t *create_node_record(config_record_t *config_ptr,
 	node_ptr->next_state = NO_VAL;
 	node_ptr->protocol_version = SLURM_MIN_PROTOCOL_VERSION;
 	node_ptr->magic = NODE_MAGIC;
+	node_ptr->resume_timeout = NO_VAL16;
+	node_ptr->suspend_time = NO_VAL;
+	node_ptr->suspend_timeout = NO_VAL16;
+
+	/*
+	 * Here we determine if this node is scheduling threads or not.
+	 * We will set vpus to be the number of schedulable threads.
+	 */
+	tot_cores = config_ptr->tot_sockets * config_ptr->cores;
+	if (tot_cores >= config_ptr->cpus)
+		node_ptr->vpus = 1;
+	else
+		node_ptr->vpus = config_ptr->threads;
 
 	return node_ptr;
 }
@@ -759,8 +756,8 @@ static node_record_t *_find_node_record(char *name, bool test_alias,
 		return (&node_record_table_ptr[0]);
 
 	if (log_missing)
-		error("%s(%d): lookup failure for %s",
-		      __func__, __LINE__, name);
+		error("%s: lookup failure for node \"%s\"",
+		      __func__, name);
 
 	if (test_alias) {
 		char *alias = slurm_conf_get_nodename(name);
@@ -771,8 +768,8 @@ static node_record_t *_find_node_record(char *name, bool test_alias,
 
 		node_ptr = xhash_get_str(node_hash_table, alias);
 		if (log_missing)
-			error("%s(%d): lookup failure for %s alias %s",
-			      __func__, __LINE__, name, alias);
+			error("%s: lookup failure for node \"%s\", alias \"%s\"",
+			      __func__, name, alias);
 		xfree(alias);
 		return node_ptr;
 	}
@@ -784,9 +781,8 @@ static node_record_t *_find_node_record(char *name, bool test_alias,
  * init_node_conf - initialize the node configuration tables and values.
  *	this should be called before creating any node or configuration
  *	entries.
- * RET 0 if no error, otherwise an error code
  */
-extern int init_node_conf (void)
+extern void init_node_conf(void)
 {
 	last_node_update = time (NULL);
 	int i;
@@ -801,13 +797,11 @@ extern int init_node_conf (void)
 	xhash_free(node_hash_table);
 
 	if (config_list)	/* delete defunct configuration entries */
-		(void) _delete_config_record ();
+		_delete_config_record();
 	else {
 		config_list    = list_create (_list_delete_config);
 		front_end_list = list_create (destroy_frontend);
 	}
-
-	return SLURM_SUCCESS;
 }
 
 
@@ -831,6 +825,18 @@ extern void node_fini2 (void)
 	node_record_count = 0;
 }
 
+extern int node_name_get_inx(char *node_name)
+{
+	node_record_t *node_ptr = NULL;
+
+	if (node_name)
+		node_ptr = find_node_record(node_name);
+
+	if (!node_ptr)
+		return -1;
+
+	return (node_ptr - node_record_table_ptr);
+}
 
 /*
  * node_name2bitmap - given a node name regular expression, build a bitmap
@@ -872,8 +878,8 @@ extern int node_name2bitmap (char *node_names, bool best_effort,
 			bit_set (my_bitmap, (bitoff_t) (node_ptr -
 							node_record_table_ptr));
 		} else {
-			error ("node_name2bitmap: invalid node specified %s",
-			       this_node_name);
+			error("%s: invalid node specified: \"%s\"", __func__,
+			      this_node_name);
 			if (!best_effort)
 				rc = EINVAL;
 		}
@@ -930,6 +936,7 @@ extern void purge_node_rec(node_record_t *node_ptr)
 	xfree(node_ptr->comment);
 	xfree(node_ptr->comm_name);
 	xfree(node_ptr->cpu_spec_list);
+	xfree(node_ptr->extra);
 	xfree(node_ptr->features);
 	xfree(node_ptr->features_act);
 	xfree(node_ptr->gres);
@@ -991,7 +998,7 @@ extern int state_str2int(const char *state_str, char *node_name)
 	if (i >= NODE_STATE_END) {
 		if (xstrncasecmp("CLOUD", state_str, 5) == 0)
 			state_val = NODE_STATE_IDLE | NODE_STATE_CLOUD |
-				    NODE_STATE_POWER_SAVE;
+				    NODE_STATE_POWERED_DOWN;
 		else if (xstrncasecmp("DRAIN", state_str, 5) == 0)
 			state_val = NODE_STATE_UNKNOWN | NODE_STATE_DRAIN;
 		else if (xstrncasecmp("FAIL", state_str, 4) == 0)

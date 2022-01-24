@@ -13,7 +13,7 @@ START_TEST(invalid_protocol)
 	uint32_t x;
 
 	slurmdb_cluster_accounting_rec_t *cluster_accounting_rec = xmalloc(sizeof(slurmdb_cluster_accounting_rec_t));
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 
 	pack32(22, buf);
 	set_buf_offset(buf, 0);
@@ -34,7 +34,7 @@ END_TEST
 START_TEST(pack_1702_null_cluster_accounting_rec)
 {
 	int rc;
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 	slurmdb_cluster_accounting_rec_t pack_car = {0};
 
 	slurmdb_pack_cluster_accounting_rec(NULL, SLURM_MIN_PROTOCOL_VERSION, buf);
@@ -53,7 +53,7 @@ START_TEST(pack_1702_null_cluster_accounting_rec)
 	ck_assert(pack_car.over_secs    == unpack_car->over_secs);
 	ck_assert(pack_car.pdown_secs   == unpack_car->pdown_secs);
 	ck_assert(pack_car.period_start == unpack_car->period_start);
-	ck_assert(pack_car.resv_secs    == unpack_car->resv_secs);
+	ck_assert(pack_car.plan_secs    == unpack_car->plan_secs);
 
 	ck_assert(btr->alloc_secs       == atr->alloc_secs);
 	ck_assert(btr->rec_count        == atr->rec_count);

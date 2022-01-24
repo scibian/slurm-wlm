@@ -416,7 +416,7 @@ static int _background_process_msg(slurm_msg_t *msg)
 
 	if (msg->msg_type != REQUEST_PING) {
 		bool super_user = false;
-		uid_t uid = g_slurm_auth_get_uid(msg->auth_cred);
+		uid_t uid = auth_g_get_uid(msg->auth_cred);
 
 		if (validate_slurm_user(uid))
 			super_user = true;
@@ -438,9 +438,18 @@ static int _background_process_msg(slurm_msg_t *msg)
 		} else if (msg->msg_type == REQUEST_CONTROL_STATUS) {
 			slurm_rpc_control_status(msg);
 			send_rc = false;
+		} else if (msg->msg_type == REQUEST_CONFIG) {
+			/*
+			 * Config was asked for from the wrong controller
+			 * Assume there was a misconfiguration and redirect
+			 * to the correct controller.  This usually indicates a
+			 * configuration issue.
+			 */
+			error("REQUEST_CONFIG recieved while in standby.");
+			error_code = ESLURM_IN_STANDBY_USE_BACKUP;
 		} else {
-			error("Invalid RPC received %d while in standby mode",
-			      msg->msg_type);
+			error("Invalid RPC received %s while in standby mode",
+			      rpc_num2string(msg->msg_type));
 			error_code = ESLURM_IN_STANDBY_MODE;
 		}
 	}
@@ -480,7 +489,7 @@ static void *_ping_ctld_thread(void *arg)
 		}
 		slurm_free_msg_data(resp.msg_type, resp.data);
 		if (resp.auth_cred)
-			g_slurm_auth_destroy(resp.auth_cred);
+			auth_g_destroy(resp.auth_cred);
 	}
 
 	slurm_mutex_lock(&ping_mutex);
@@ -605,7 +614,7 @@ static void *_shutdown_controller(void *arg)
 	               slurm_conf.control_addr[shutdown_inx]);
 	if (do_shutdown) {
 		req.msg_type = REQUEST_SHUTDOWN;
-		shutdown_msg.options = 2;
+		shutdown_msg.options = SLURMCTLD_SHUTDOWN_CTLD;
 		req.data = &shutdown_msg;
 	} else {
 		req.msg_type = REQUEST_CONTROL;

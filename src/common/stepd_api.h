@@ -49,24 +49,24 @@
 
 typedef enum {
 	REQUEST_CONNECT = 0,
-	REQUEST_SIGNAL_PROCESS_GROUP, /* Defunct since July 2013 */
-	REQUEST_SIGNAL_TASK_LOCAL, /* Defunct see REQUEST_SIGNAL_CONTAINER */
-	REQUEST_SIGNAL_TASK_GLOBAL, /* Defunct see REQUEST_SIGNAL_CONTAINER */
+	REQUEST_STEP_DEFUNCT_1,
+	REQUEST_STEP_DEFUNCT_2,
+	REQUEST_STEP_DEFUNCT_3,
 	REQUEST_SIGNAL_CONTAINER,
 	REQUEST_STATE,
-	REQUEST_INFO,  /* Defunct, See REQUEST_STEP_MEM_LIMITS|UID|NODEID */
+	REQUEST_STEP_DEFUNCT_6,
 	REQUEST_ATTACH,
 	REQUEST_PID_IN_CONTAINER,
 	REQUEST_DAEMON_PID,
 	REQUEST_STEP_SUSPEND,
 	REQUEST_STEP_RESUME,
 	REQUEST_STEP_TERMINATE,
-	REQUEST_STEP_COMPLETION,  /* Defunct, See REQUEST_STEP_COMPLETION_V2 */
+	REQUEST_STEP_DEFUNCT_13,
 	REQUEST_STEP_TASK_INFO,
 	REQUEST_STEP_LIST_PIDS,
 	REQUEST_STEP_RECONFIGURE,
 	REQUEST_STEP_STAT,
-	REQUEST_STEP_COMPLETION_V2,
+	REQUEST_STEP_COMPLETION,
 	REQUEST_STEP_MEM_LIMITS,
 	REQUEST_STEP_UID,
 	REQUEST_STEP_NODEID,
@@ -154,13 +154,6 @@ extern int stepd_connect(const char *directory, const char *nodename,
  * Retrieve a job step's current state.
  */
 slurmstepd_state_t stepd_state(int fd, uint16_t protocol_version);
-
-/*
- * Retrieve slurmstepd_info_t structure for a job step.
- *
- * Must be xfree'd by the caller.
- */
-slurmstepd_info_t *stepd_get_info(int fd);
 
 /*
  * Send job notification message to a batch job

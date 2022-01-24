@@ -28,9 +28,8 @@
 ############################################################################
 source ./globals
 
-set exit_code      0
-set exit_script    "./test$test_id.exit.bash"
-set test_script    "./test$test_id.bash"
+set exit_script    "$test_dir/script.exit.bash"
+set test_script    "$test_dir/script.bash"
 set task_cnt       2
 
 #
@@ -59,7 +58,7 @@ make_bash_script $test_script "
 set sum 0
 set myexit 0
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N1 -n $task_cnt -O -t1 $exit_script]
+spawn $srun -N1 -n $task_cnt -O -t1 $exit_script
 expect {
 	-re "exit code ($number)" {
 		log_debug "This error is expected, no worries"
@@ -67,7 +66,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -76,8 +74,7 @@ expect {
 }
 
 if {$sum != 21} {
-	log_error "srun failed to report exit code ($sum != 21) $myexit"
-	set exit_code 1
+	fail "srun failed to report exit code ($sum != 21) $myexit"
 }
 
 #
@@ -95,16 +92,5 @@ expect {
 		wait
 	}
 }
-if {$matches != 1} {
-	log_error "srun's exit code is bad"
-	set exit_code 1
-}
 
-#
-# Post-processing
-#
-if {$exit_code == 0} {
-	exec $bin_rm -f $exit_script $test_script
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$matches == 1} "Verify correct exit code from srun"

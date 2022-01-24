@@ -71,16 +71,16 @@
 		memcpy(data_ptr, static_ref_start(name), data_size); \
 		data_ptr[data_size] = '\0';                          \
 		src = (void *) data_ptr;                             \
-	} while (0);
+	} while (0)
 
 /* static data to a data_t */
-#define static_ref_json_to_data_t(data, name)               \
-	do {                                                \
-		char *json_data_ptr;                        \
-		static_ref_to_cstring(json_data_ptr, name); \
-		data = parse_json(json_data_ptr,            \
-				  static_ref_size(name));   \
-		xfree(json_data_ptr);                       \
+#define static_ref_json_to_data_t(data, name)                              \
+	do {                                                               \
+		char *json_data_ptr;                                       \
+		static_ref_to_cstring(json_data_ptr, name);                \
+		data_g_deserialize(&data, json_data_ptr,                   \
+				   static_ref_size(name), MIME_TYPE_JSON); \
+		xfree(json_data_ptr);                                      \
 	} while (0);
 
 #endif /* _COMMON_REF_H_ */

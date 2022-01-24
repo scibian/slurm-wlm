@@ -90,6 +90,7 @@ function displayfile()
    "# Put this file on all nodes of your cluster.<br>" +
    "# See the slurm.conf man page for more information.<br>" +
    "#<br>" +
+   get_field("ClusterName",document.config.cluster_name) + "<br>" +
    "SlurmctldHost=" + document.config.control_machine.value + "<br>" +
    get_field("SlurmctldHost",document.config.backup_controller) + "<br>" +
    "# <br>" +
@@ -98,20 +99,20 @@ function displayfile()
    get_field("Epilog",document.config.epilog) + "<br>" +
    "#EpilogSlurmctld= <br>" +
    "#FirstJobId=1 <br>" +
-   "#MaxJobId=999999 <br>" +
+   "#MaxJobId=67043328 <br>" +
    "#GresTypes= <br>" +
    "#GroupUpdateForce=0 <br>" +
    "#GroupUpdateTime=600 <br>" +
    "#JobFileAppend=0 <br>" +
    "#JobRequeue=1 <br>" +
-   "#JobSubmitPlugins=1 <br>" +
+   "#JobSubmitPlugins=lua <br>" +
    "#KillOnBadExit=0 <br>" +
    "#LaunchType=launch/slurm <br>" +
    "#Licenses=foo*4,bar <br>" +
    "#MailProg=/bin/mail <br>" +
-   "#MaxJobCount=5000 <br>" +
+   "#MaxJobCount=10000 <br>" +
    "#MaxStepCount=40000 <br>" +
-   "#MaxTasksPerNode=128 <br>" +
+   "#MaxTasksPerNode=512 <br>" +
    "MpiDefault=" + get_radio_value(document.config.mpi_default) + "<br>" +
    "#MpiParams=ports=#-# <br>" +
    "#PluginDir= <br>" +
@@ -199,9 +200,7 @@ function displayfile()
    get_field("AccountingStoragePort",document.config.accounting_storage_port) + "<br>" +
    "AccountingStorageType=accounting_storage/" + get_radio_value(document.config.accounting_storage_type) + "<br>" +
    get_field("AccountingStorageUser",document.config.accounting_storage_user) + "<br>" +
-   get_field("AccountingStoreJobComment",document.config.acctng_store_job_comment) + "<br>" +
-   get_field("ClusterName",document.config.cluster_name) + "<br>" +
-   "#DebugFlags= <br>" +
+   get_field("AccountingStoreFlags",document.config.acctng_store_flags) + "<br>" +
    get_field("JobCompHost",document.config.job_comp_host) + "<br>" +
    get_field("JobCompLoc",document.config.job_comp_loc) + "<br>" +
    get_field("JobCompPass",document.config.job_comp_pass) + "<br>" +
@@ -217,6 +216,7 @@ function displayfile()
    get_field("SlurmdLogFile",document.config.slurmd_logfile) + "<br>" +
    "#SlurmSchedLogFile= <br>" +
    "#SlurmSchedLogLevel= <br>" +
+   "#DebugFlags= <br>" +
    "# <br>" +
    "# <br>" +
    "# POWER SAVE SUPPORT FOR IDLE NODES (optional) <br>" +
@@ -241,7 +241,7 @@ function displayfile()
    get_field2(" ThreadsPerCore",document.config.threads_per_core) +
    " State=UNKNOWN <br>" +
    "PartitionName=" + document.config.partition_name.value +
-   " Nodes=" + document.config.node_name.value +
+   " Nodes=ALL" +
    " Default=YES"+
    " MaxTime=" + document.config.max_time.value +
    " State=UP"
@@ -302,6 +302,12 @@ as <I>slurm.conf</I> for use by Slurm.
 
 <P>For more information about Slurm, see
 <A HREF="https://slurm.schedmd.com/slurm.html">https://slurm.schedmd.com/slurm.html</A>
+
+<h2>Cluster Name</h2>
+<input type="text" name="cluster_name" value="cluster"> <b>ClusterName</b>:
+The name of your cluster. Using different names for each of your clusters is
+important when usign a single database to record information from multiple
+Slurm-managed clusters.
 
 <H2>Control Machines</H2>
 Define the hostname of the computer on which the Slurm controller and
@@ -403,11 +409,12 @@ The location of a directory where slurmd saves state should also be defined.
 This must be a unique directory on each compute server (local disk).
 The use of a highly reliable file system (e.g. RAID) is recommended.
 <P>
-<input type="text" name="state_save_location" value="/var/spool"> <B>StateSaveLocation</B>:
-Slurmctld state save directory <B>Must be writable by all SlurmctldHost nodes</B>
+<input type="text" name="state_save_location" value="/var/spool/slurmctld">
+<b>StateSaveLocation</b>: Slurmctld state save directory
+<b>Must be writable by all SlurmctldHost nodes</b>
 <P>
-<input type="text" name="slurmd_spool_dir" value="/var/spool/slurmd"> <B>SlurmdSpoolDir</B>:
-Slurmd state save directory
+<input type="text" name="slurmd_spool_dir" value="/var/spool/slurmd">
+<b>SlurmdSpoolDir</b>: Slurmd state save directory
 <P>
 Define when a non-responding (DOWN) node is returned to service.<BR>
 Select one value for <B>ReturnToService</B>:<BR>
@@ -564,14 +571,18 @@ levels of logging verbosity from 0 (quiet) to 7 (extremely verbose).
 Each may also be configured to use debug files. Use fully qualified
 pathnames for the files.
 <P>
-<input type="text" name="slurmctld_debug" value="info"> <B>SlurmctldDebug</B> (default is info)
+<input type="text" name="slurmctld_debug" value="info"> <b>SlurmctldDebug</b>
+(default is info)
 <P>
-<input type="text" name="slurmctld_logfile" value=""> <B>SlurmctldLogFile</B> (default is none, log goes to syslog)
+<input type="text" name="slurmctld_logfile" value="/var/log/slurmctld.log">
+<b>SlurmctldLogFile</b> (if empty, log goes to syslog)
 <P>
-<input type="text" name="slurmd_debug" value="info"> <B>SlurmdDebug</B> (default is info)
+<input type="text" name="slurmd_debug" value="info"> <b>SlurmdDebug</b>
+(default is info)
 <P>
-<input type="text" name="slurmd_logfile" value=""> <B>SlurmdLogFile</B> (default is none,
-log goes to syslog, string "%h" in name gets replaced with hostname)
+<input type="text" name="slurmd_logfile" value="/var/log/slurmd.log">
+<b>SlurmdLogFile</b> (if empty, log goes to syslog. String "%h" in name gets
+replaced with hostname)
 <P>
 
 <H2>Job Completion Logging</H2>
@@ -645,13 +656,10 @@ Password we are to use to talk to the database for Job Accounting.
 In the case of SlurmDBD, this will be an alternate socket name for use with a Munge
 daemon providing enterprise-wide authentication (while the default Munge socket
 would provide cluster-wide authentication only).<br>
-<input type="text" name="acctng_store_job_comment" value="YES"> <B>AccountingStoreJobComment</B>:
-Set to NO to prevent the job comment field from being saved to the database<br>
-<input type="text" name="cluster_name" value="cluster"> <B>ClusterName</B>:
-Name to be recorded in database for jobs from this cluster.
-This is important if a single database is used to record information
-from multiple Slurm-managed clusters.<br>
-
+<input type="text" name="acctng_store_flags" value=""> <B>AccountingStoreFlags</B>:
+Comma separated list.  Options are 'job_comment' - store the job comment field
+in the database, 'job_script' - store the job batch script in the database,
+'job_env' - store a batch job's env in the database.<br>
 <P>
 
 <H2>Process ID Logging</H2>

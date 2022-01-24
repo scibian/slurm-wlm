@@ -4,6 +4,7 @@
  *****************************************************************************
  *  Copyright (C) 2009 CEA/DAM/DIF
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
+ *  Modified by Felip Moll <felip.moll@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -42,239 +43,200 @@
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
-#include "src/common/xcgroup_read_config.h"
 #include "src/common/xstring.h"
-
+#include "src/common/cgroup.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
-
 #include "src/slurmd/slurmd/slurmd.h"
-
-#include "src/slurmd/common/xcgroup.h"
-
 #include "task_cgroup.h"
 #include "task_cgroup_cpuset.h"
 #include "task_cgroup_memory.h"
 #include "task_cgroup_devices.h"
 
-/*
- * These variables are required by the generic plugin interface.  If they
- * are not found in the plugin, the plugin loader will ignore it.
- *
- * plugin_name - a string giving a human-readable description of the
- * plugin.  There is no maximum length, but the symbol must refer to
- * a valid string.
- *
- * plugin_type - a string suggesting the type of the plugin or its
- * applicability to a particular form of data or method of data handling.
- * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  Slurm uses the higher-level plugin
- * interface which requires this string to be of the form
- *
- *      <application>/<method>
- *
- * where <application> is a description of the intended application of
- * the plugin (e.g., "task" for task control) and <method> is a description
- * of how this plugin satisfies that application.  Slurm will only load
- * a task plugin if the plugin_type string has a prefix of "task/".
- *
- * plugin_version - an unsigned 32-bit integer containing the Slurm version
- * (major.minor.micro combined into a single number).
- */
-const char plugin_name[]        = "Tasks containment using linux cgroup";
+const char plugin_name[]        = "Tasks containment cgroup plugin";
 const char plugin_type[]        = "task/cgroup";
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static bool use_cpuset  = false;
 static bool use_memory  = false;
 static bool use_devices = false;
+static bool do_task_affinity = false;
 
-/*
- * init() is called when the plugin is loaded, before any other functions
- *	are called.  Put global initialization here.
- */
-extern int init (void)
+extern int init(void)
 {
-	slurm_cgroup_conf_t *cg_conf;
+	int rc = SLURM_SUCCESS;
 
-	/* read cgroup configuration */
-	slurm_mutex_lock(&xcgroup_config_read_mutex);
-	cg_conf = xcgroup_get_slurm_cgroup_conf();
-	/* enable subsystems based on conf */
-	if (cg_conf->constrain_cores)
+	if (!running_in_slurmstepd())
+		goto end;
+
+	if (slurm_cgroup_conf.constrain_cores)
 		use_cpuset = true;
-	if (cg_conf->constrain_ram_space ||
-	    cg_conf->constrain_swap_space)
+	if (slurm_cgroup_conf.constrain_ram_space ||
+	    slurm_cgroup_conf.constrain_swap_space)
 		use_memory = true;
-	if (cg_conf->constrain_devices)
+	if (slurm_cgroup_conf.constrain_devices)
 		use_devices = true;
-	slurm_mutex_unlock(&xcgroup_config_read_mutex);
+	if (slurm_cgroup_conf.task_affinity)
+		do_task_affinity = true;
 
-	/* enable subsystems based on conf */
 	if (use_cpuset) {
-		if (task_cgroup_cpuset_init() != SLURM_SUCCESS) {
-			return SLURM_ERROR;
-		}
-		debug("core enforcement enabled");
+		if ((rc = task_cgroup_cpuset_init())) {
+			error("failure enabling core enforcement: %s",
+			      slurm_strerror(rc));
+			return rc;
+		} else
+			debug("core enforcement enabled");
 	}
 
 	if (use_memory) {
-		if (task_cgroup_memory_init() != SLURM_SUCCESS) {
-			return SLURM_ERROR;
-		}
-		debug("memory enforcement enabled");
+		if ((rc = task_cgroup_memory_init())) {
+			error("failure enabling memory enforcement: %s",
+			      slurm_strerror(rc));
+			return rc;
+		} else
+			debug("memory enforcement enabled");
 	}
 
 	if (use_devices) {
-		if (task_cgroup_devices_init() != SLURM_SUCCESS) {
-			return SLURM_ERROR;
-		}
-		debug("device enforcement enabled");
+		if ((rc = task_cgroup_devices_init())) {
+			error("failure enabling device enforcement: %s",
+			      slurm_strerror(rc));
+			return rc;
+		} else
+			debug("device enforcement enabled");
 	}
-
-	debug("%s: loaded", plugin_type);
-	return SLURM_SUCCESS;
+end:
+	debug("%s loaded", plugin_name);
+	return rc;
 }
 
-/*
- * fini() is called when the plugin is removed. Clear any allocated
- *	storage here.
- */
-extern int fini (void)
+extern int fini(void)
 {
+	int rc = SLURM_SUCCESS;
 
-	if (use_cpuset) {
-		task_cgroup_cpuset_fini();
-	}
-	if (use_memory) {
-		task_cgroup_memory_fini();
-	}
-	if (use_devices) {
-		task_cgroup_devices_fini();
-	}
+	if (use_cpuset && (task_cgroup_cpuset_fini() != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
 
-	return SLURM_SUCCESS;
+	if (use_memory && (task_cgroup_memory_fini() != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	if (use_devices && (task_cgroup_devices_fini() != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	debug("%s unloaded", plugin_name);
+
+	return rc;
 }
 
-/*
- * task_p_slurmd_batch_request()
- */
-extern int task_p_slurmd_batch_request (batch_job_launch_msg_t *req)
+extern int task_p_slurmd_batch_request(batch_job_launch_msg_t *req)
 {
 	return SLURM_SUCCESS;
 }
 
-/*
- * task_p_slurmd_launch_request()
- */
-extern int task_p_slurmd_launch_request (launch_tasks_request_msg_t *req,
-					 uint32_t node_id)
+extern int task_p_slurmd_launch_request(launch_tasks_request_msg_t *req,
+					uint32_t node_id)
 {
 	return SLURM_SUCCESS;
 }
 
-/*
- * task_p_slurmd_suspend_job()
- */
-extern int task_p_slurmd_suspend_job (uint32_t job_id)
+extern int task_p_slurmd_suspend_job(uint32_t job_id)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int task_p_slurmd_resume_job(uint32_t job_id)
 {
 	return SLURM_SUCCESS;
 }
 
 /*
- * task_p_slurmd_resume_job()
+ * task_p_pre_setuid() is called as root before setting the UID for the user to
+ * launch his jobs. Use this to create the cgroup hierarchy and set the owner
+ * appropriately.
  */
-extern int task_p_slurmd_resume_job (uint32_t job_id)
+extern int task_p_pre_setuid(stepd_step_rec_t *job)
 {
+	int rc = SLURM_SUCCESS;
+
+	if (use_cpuset && (task_cgroup_cpuset_create(job) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	if (use_memory && (task_cgroup_memory_create(job) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	if (use_devices && (task_cgroup_devices_create(job) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	return rc;
+}
+
+/*
+ * task_p_pre_set_affinity() is called prior to exec of application task.
+ * Runs in privileged mode.
+ */
+extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+{
+	int rc = SLURM_SUCCESS;
+
+	if (use_cpuset &&
+	    (task_cgroup_cpuset_add_pid(
+		    job->task[node_tid]->pid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	if (use_memory &&
+	    (task_cgroup_memory_add_pid(
+		    job->task[node_tid]->pid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	return rc;
+}
+
+/*
+ * task_p_set_affinity() is called prior to exec of application task.
+ * Runs in privileged mode.
+ */
+extern int task_p_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+{
+	if (use_cpuset && do_task_affinity)
+		return task_cgroup_cpuset_set_task_affinity(job, node_tid);
+
 	return SLURM_SUCCESS;
 }
 
 /*
- * task_p_pre_setuid() is called before setting the UID for the
- * user to launch his jobs. Use this to create the CPUSET directory
- * and set the owner appropriately.
+ * task_p_post_set_affinity is called prior to exec of application task.
+ * Runs in privileged mode.
  */
-extern int task_p_pre_setuid (stepd_step_rec_t *job)
+extern int task_p_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 {
-
-	if (use_cpuset) {
-		/* we create the cpuset container as we are still root */
-		task_cgroup_cpuset_create(job);
-	}
-
-	if (use_memory) {
-		/* we create the memory container as we are still root */
-		task_cgroup_memory_create(job);
-	}
-
-	if (use_devices) {
-		task_cgroup_devices_create(job);
-		/* here we should create the devices container as we are root */
-	}
-
-	return SLURM_SUCCESS;
-}
-
-/*
- * task_p_pre_launch_priv() is called prior to exec of application task.
- * in privileged mode, just after slurm_spank_task_init_privileged
- */
-extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
-{
-
-	if (use_cpuset) {
-		/* attach the task to the cpuset cgroup */
-		task_cgroup_cpuset_attach_task(job);
-	}
-
-	if (use_memory) {
-		/* attach the task to the memory cgroup */
-		task_cgroup_memory_attach_task(job, pid);
-	}
-
-	if (use_devices) {
-		/* attach the task to the devices cgroup */
-		task_cgroup_devices_attach_task(job);
-	}
-
+	if (use_devices)
+		return task_cgroup_devices_add_pid(job,
+						   job->task[node_tid]->pid,
+						   node_tid);
 	return SLURM_SUCCESS;
 }
 
 /*
  * task_p_pre_launch() is called prior to exec of application task.
- *	It is followed by TaskProlog program (from slurm.conf) and
- *	--task-prolog (from srun command line).
+ * It is followed by TaskProlog program (from slurm.conf) and --task-prolog
+ * (from srun command line).
  */
-extern int task_p_pre_launch (stepd_step_rec_t *job)
+extern int task_p_pre_launch(stepd_step_rec_t *job)
 {
-
-	if (use_cpuset) {
-		slurm_cgroup_conf_t *cg_conf;
-
-		/* read cgroup configuration */
-		slurm_mutex_lock(&xcgroup_config_read_mutex);
-		cg_conf = xcgroup_get_slurm_cgroup_conf();
-
-		/* set affinity if requested */
-		if (cg_conf->task_affinity)
-			task_cgroup_cpuset_set_task_affinity(job);
-
-		slurm_mutex_unlock(&xcgroup_config_read_mutex);
-	}
-
 	return SLURM_SUCCESS;
 }
 
 /*
  * task_term() is called after termination of application task.
- *	It is preceded by --task-epilog (from srun command line)
- *	followed by TaskEpilog program (from slurm.conf).
+ * It is preceded by --task-epilog (from srun command line) fllowed by
+ * TaskEpilog program (from slurm.conf).
  */
-extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task)
+extern int task_p_post_term(stepd_step_rec_t *job, stepd_step_task_info_t *task)
 {
 	static bool ran = false;
 	int rc = SLURM_SUCCESS;
 
-	/* Only run this on the first call since this will run for
+	/*
+	 * Only run this on the first call since this will run for
 	 * every task on the node.
 	 */
 	if (use_memory && !ran) {
@@ -284,79 +246,26 @@ extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task
 	return rc;
 }
 
-/*
- * task_p_post_step() is called after termination of the step
- * (all the task)
- */
-extern int task_p_post_step (stepd_step_rec_t *job)
+/* task_p_post_step() is called after termination of the step (all the task). */
+extern int task_p_post_step(stepd_step_rec_t *job)
 {
-	fini();
-	return SLURM_SUCCESS;
+	return fini();
 }
 
-extern char* task_cgroup_create_slurm_cg (xcgroup_ns_t* ns) {
-
-	/* we do it here as we do not have access to the conf structure */
-	/* in libslurm (src/common/xcgroup.c) */
-	xcgroup_t slurm_cg;
-	char *pre;
-	slurm_cgroup_conf_t *cg_conf;
-
-	/* read cgroup configuration */
-	slurm_mutex_lock(&xcgroup_config_read_mutex);
-	cg_conf = xcgroup_get_slurm_cgroup_conf();
-
-	pre = xstrdup(cg_conf->cgroup_prepend);
-
-	slurm_mutex_unlock(&xcgroup_config_read_mutex);
-
-#ifdef MULTIPLE_SLURMD
-	if ( conf->node_name != NULL )
-		xstrsubstitute(pre,"%n", conf->node_name);
-	else {
-		xfree(pre);
-		pre = (char*) xstrdup("/slurm");
-	}
-#endif
-
-	/* create slurm cgroup in the ns (it could already exist) */
-	if (xcgroup_create(ns,&slurm_cg,pre,
-			   getuid(), getgid()) != XCGROUP_SUCCESS) {
-		xfree(pre);
-		return pre;
-	}
-	if (xcgroup_instantiate(&slurm_cg) != XCGROUP_SUCCESS) {
-		error("unable to build slurm cgroup for ns %s: %m",
-		      ns->subsystems);
-		xcgroup_destroy(&slurm_cg);
-		xfree(pre);
-		return pre;
-	}
-	else {
-		debug3("slurm cgroup %s successfully created for ns %s: %m",
-		       pre,ns->subsystems);
-		xcgroup_destroy(&slurm_cg);
-	}
-
-	return pre;
-}
-
-/*
- * Add pid to specific cgroup.
- */
-extern int task_p_add_pid (pid_t pid)
+/* Add pid to specific cgroup. */
+extern int task_p_add_pid(pid_t pid)
 {
-	if (use_cpuset) {
-		task_cgroup_cpuset_add_pid(pid);
-	}
+	int rc = SLURM_SUCCESS;
 
-	if (use_memory) {
-		task_cgroup_memory_add_pid(pid);
-	}
+	if (use_cpuset && (task_cgroup_cpuset_add_pid(pid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
 
-	if (use_devices) {
-		task_cgroup_devices_add_pid(pid);
-	}
+	if (use_memory && (task_cgroup_memory_add_pid(pid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
 
-	return SLURM_SUCCESS;
+	if (use_devices &&
+	    (task_cgroup_devices_add_extern_pid(pid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	return rc;
 }

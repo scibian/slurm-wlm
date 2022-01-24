@@ -11,10 +11,8 @@ perl_sources = \
 	       $(perl_dir)/lib/Slurm/Bitstr.pm \
 	       $(perl_dir)/lib/Slurm/Constant.pm \
 	       $(perl_dir)/lib/Slurm/Hostlist.pm \
-	       $(perl_dir)/lib/Slurm/Stepctx.pm \
 	       $(perl_dir)/typemap \
 	       $(perl_dir)/classmap \
-	       $(perl_dir)/bitstr.h \
 	       $(perl_dir)/slurm-perl.h \
 	       $(perl_dir)/alloc.c \
 	       $(perl_dir)/conf.c \
@@ -61,7 +59,7 @@ $(perl_dir)/Makefile:	$(perl_dir)/Makefile.PL
 			${LN_S} -f ${abs_srcdir}/$$f $$f; \
 		done; \
 	fi
-	@cd $(perl_dir) && $(perlpath) Makefile.PL $(PERL_MM_PARAMS) prefix=${prefix} INSTALL_BASE= PERL_MM_OPT=
+	@cd $(perl_dir) && $(perlpath) Makefile.PL $(PERL_MM_PARAMS) prefix=${prefix} INSTALL_BASE= PERL_MM_OPT= INSTALLSITEMAN1DIR=$(mandir)/man1 INSTALLSITEMAN3DIR=$(mandir)/man3
 
 #
 # Note on linking logic below
@@ -76,7 +74,7 @@ $(perl_dir)/Makefile:	$(perl_dir)/Makefile.PL
 all-local: $(perl_dir)/Makefile #libslurm
 	@cd $(perl_dir) && \
 	if [ ! -f Makefile ]; then \
-		$(perlpath) Makefile.PL $(PERL_MM_PARAMS) prefix=${prefix} INSTALL_BASE= PERL_MM_OPT= ; \
+		$(perlpath) Makefile.PL $(PERL_MM_PARAMS) prefix=${prefix} INSTALL_BASE= PERL_MM_OPT= INSTALLSITEMAN1DIR=$(mandir)/man1 INSTALLSITEMAN3DIR=$(mandir)/man3; \
 	fi && \
 	($(MAKE) CC="$(CC)" LD="$(CC) $(CFLAGS) $(LDFLAGS)" CCFLAGS="$(PERL_CFLAGS) -g -static $(CFLAGS) $(CPPFLAGS)" $(PERL_EXTRA_OPTS) || \
 	 $(MAKE) CC="$(CC)" LD="$(CC) $(CFLAGS) $(LDFLAGS)" CCFLAGS="$(PERL_CFLAGS) -g -static $(CFLAGS) $(CPPFLAGS)" $(PERL_EXTRA_OPTS)) && \

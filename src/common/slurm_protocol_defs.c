@@ -76,13 +76,56 @@ strong_alias(job_share_string, slurm_job_share_string);
 strong_alias(job_state_string, slurm_job_state_string);
 strong_alias(job_state_string_compact, slurm_job_state_string_compact);
 strong_alias(job_state_num, slurm_job_state_num);
+strong_alias(valid_base_state, slurm_valid_base_state);
+strong_alias(node_state_base_string, slurm_node_state_base_string);
+strong_alias(node_state_flag_string, slurm_node_state_flag_string);
+strong_alias(node_state_flag_string_single, slurm_node_state_flag_string_single);
 strong_alias(node_state_string, slurm_node_state_string);
 strong_alias(node_state_string_compact, slurm_node_state_string_compact);
+strong_alias(node_state_string_complete, slurm_node_state_string_complete);
 strong_alias(private_data_string, slurm_private_data_string);
 strong_alias(accounting_enforce_string, slurm_accounting_enforce_string);
 strong_alias(cray_nodelist2nids, slurm_cray_nodelist2nids);
 strong_alias(reservation_flags_string, slurm_reservation_flags_string);
 strong_alias(print_multi_line_string, slurm_print_multi_line_string);
+
+typedef struct {
+	uint32_t flag;
+	const char *str;
+} node_state_flags_t;
+
+static const node_state_flags_t node_states[] = {
+	{ NODE_STATE_DOWN, "DOWN" },
+	{ NODE_STATE_IDLE, "IDLE" },
+	{ NODE_STATE_ALLOCATED, "ALLOCATED" },
+	{ NODE_STATE_ERROR, "ERROR" },
+	{ NODE_STATE_MIXED, "MIXED" },
+	{ NODE_STATE_FUTURE, "FUTURE" },
+	{ NODE_STATE_UNKNOWN, "UNKNOWN" },
+};
+
+static const node_state_flags_t node_state_flags[] = {
+	{ NODE_STATE_CLOUD, "CLOUD" },
+	{ NODE_STATE_COMPLETING, "COMPLETING" },
+	{ NODE_STATE_DRAIN, "DRAIN" },
+	{ NODE_STATE_DYNAMIC, "DYNAMIC" },
+	{ NODE_STATE_INVALID_REG, "INVALID_REG" },
+	{ NODE_STATE_FAIL, "FAIL" },
+	{ NODE_STATE_MAINT, "MAINTENANCE" },
+	{ NODE_STATE_POWER_DOWN, "POWER_DOWN" },
+	{ NODE_STATE_POWER_UP, "POWER_UP" },
+	{ NODE_STATE_NET, "PERFCTRS" }, /* net performance counters */
+	{ NODE_STATE_POWERED_DOWN, "POWERED_DOWN" },
+	{ NODE_STATE_REBOOT_REQUESTED, "REBOOT_REQUESTED" },
+	{ NODE_STATE_REBOOT_ISSUED, "REBOOT_ISSUED" },
+	{ NODE_STATE_RES, "RESERVED" },
+	{ NODE_RESUME, "RESUME" },
+	{ NODE_STATE_NO_RESPOND, "NOT_RESPONDING" },
+	{ NODE_STATE_PLANNED, "PLANNED" },
+	{ NODE_STATE_POWERING_UP, "POWERING_UP" },
+	{ NODE_STATE_POWERING_DOWN, "POWERING_DOWN" },
+};
+
 
 static void _free_all_front_end_info(front_end_info_msg_t *msg);
 
@@ -354,7 +397,7 @@ extern int slurm_addto_char_list_with_case(List char_list, char *names,
 					 * ",,this".
 					 */
 					start = i + 1;
-					if (!names[i + 1]) {
+					if (names[i + 1] == ' ') {
 						info("There is a problem "
 						     "with your request. "
 						     "It appears you have "
@@ -369,7 +412,7 @@ extern int slurm_addto_char_list_with_case(List char_list, char *names,
 					 * Skip over the "," so it is
 					 * not included in the char list
 					 */
-					start = ++i;
+					start = i + 1;
 				}
 			} else if (names[i] == ']') {
 				brack_not = true;
@@ -946,12 +989,15 @@ extern void slurm_free_config_request_msg(config_request_msg_t *msg)
 extern void slurm_free_config_response_msg(config_response_msg_t *msg)
 {
 	if (msg) {
+		if (msg->config_files)
+			list_destroy(msg->config_files);
 		xfree(msg->config);
 		xfree(msg->acct_gather_config);
 		xfree(msg->cgroup_config);
 		xfree(msg->cgroup_allowed_devices_file_config);
 		xfree(msg->ext_sensors_config);
 		xfree(msg->gres_config);
+		xfree(msg->job_container_config);
 		xfree(msg->knl_cray_config);
 		xfree(msg->knl_generic_config);
 		xfree(msg->plugstack_config);
@@ -965,8 +1011,6 @@ extern void slurm_free_config_response_msg(config_response_msg_t *msg)
 extern void slurm_free_update_step_msg(step_update_request_msg_t * msg)
 {
 	if (msg) {
-		jobacctinfo_destroy(msg->jobacct);
-		xfree(msg->name);
 		xfree(msg);
 	}
 }
@@ -1048,6 +1092,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t *msg)
 		xfree(msg->burst_buffer);
 		xfree(msg->clusters);
 		xfree(msg->comment);
+		xfree(msg->container);
 		xfree(msg->cpu_bind);
 		xfree(msg->cpus_per_tres);
 		free_cron_entry(msg->crontab_entry);
@@ -1069,6 +1114,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t *msg)
 		xfree(msg->origin_cluster);
 		xfree(msg->partition);
 		xfree(msg->qos);
+		xfree(msg->req_context);
 		xfree(msg->req_nodes);
 		xfree(msg->reservation);
 		xfree(msg->resp_host);
@@ -1076,6 +1122,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t *msg)
 		free_buf(msg->script_buf);
 		select_g_select_jobinfo_free(msg->select_jobinfo);
 		msg->select_jobinfo = NULL;
+		xfree(msg->selinux_context);
 		xfree(msg->std_err);
 		xfree(msg->std_in);
 		xfree(msg->std_out);
@@ -1084,6 +1131,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t *msg)
 				xfree(msg->spank_job_env[i]);
 			xfree(msg->spank_job_env);
 		}
+		xfree(msg->submit_line);
 		xfree(msg->tres_bind);
 		xfree(msg->tres_freq);
 		xfree(msg->tres_req_cnt);
@@ -1122,14 +1170,6 @@ extern void slurm_free_dep_update_origin_msg(dep_update_origin_msg_t *msg)
 {
 	if (msg) {
 		FREE_NULL_LIST(msg->depend_list);
-	}
-}
-
-extern void slurm_free_event_log_msg(slurm_event_log_msg_t * msg)
-{
-	if (msg) {
-		xfree(msg->string);
-		xfree(msg);
 	}
 }
 
@@ -1180,6 +1220,7 @@ extern void slurm_free_job_launch_msg(batch_job_launch_msg_t * msg)
 				xfree(msg->argv[i]);
 			xfree(msg->argv);
 		}
+		xfree(msg->container);
 		xfree(msg->cpu_bind);
 		xfree(msg->cpus_per_node);
 		xfree(msg->cpu_count_reps);
@@ -1238,6 +1279,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->cluster);
 		xfree(job->command);
 		xfree(job->comment);
+		xfree(job->container);
 		xfree(job->cpus_per_tres);
 		xfree(job->dependency);
 		xfree(job->exc_nodes);
@@ -1270,6 +1312,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		select_g_select_jobinfo_free(job->select_jobinfo);
 		job->select_jobinfo = NULL;
 		free_job_resources(&job->job_resrcs);
+		xfree(job->selinux_context);
 		xfree(job->state_desc);
 		xfree(job->std_err);
 		xfree(job->std_in);
@@ -1353,6 +1396,7 @@ extern void slurm_free_update_node_msg(update_node_msg_t * msg)
 {
 	if (msg) {
 		xfree(msg->comment);
+		xfree(msg->extra);
 		xfree(msg->features);
 		xfree(msg->features_act);
 		xfree(msg->gres);
@@ -1433,6 +1477,7 @@ extern void slurm_free_job_step_create_request_msg(
 		job_step_create_request_msg_t *msg)
 {
 	if (msg) {
+		xfree(msg->container);
 		xfree(msg->cpus_per_tres);
 		xfree(msg->exc_nodes);
 		xfree(msg->features);
@@ -1442,6 +1487,7 @@ extern void slurm_free_job_step_create_request_msg(
 		xfree(msg->network);
 		xfree(msg->node_list);
 		xfree(msg->step_het_grps);
+		xfree(msg->submit_line);
 		xfree(msg->tres_bind);
 		xfree(msg->tres_freq);
 		xfree(msg->tres_per_step);
@@ -1494,6 +1540,7 @@ extern void slurm_free_kill_job_msg(kill_job_msg_t * msg)
 				xfree(msg->spank_job_env[i]);
 			xfree(msg->spank_job_env);
 		}
+		xfree(msg->work_dir);
 		xfree(msg);
 	}
 }
@@ -1524,6 +1571,7 @@ extern void slurm_free_launch_tasks_request_msg(launch_tasks_request_msg_t * msg
 	xfree(msg->acctg_freq);
 	xfree(msg->user_name);
 	xfree(msg->alias_list);
+	xfree(msg->container);
 	xfree(msg->cwd);
 	xfree(msg->cpu_bind);
 	xfree(msg->mem_bind);
@@ -1578,6 +1626,7 @@ extern void slurm_free_launch_tasks_request_msg(launch_tasks_request_msg_t * msg
 		select_g_select_jobinfo_free(msg->select_jobinfo);
 
 	xfree(msg->tres_bind);
+	xfree(msg->tres_per_task);
 	xfree(msg->tres_freq);
 	xfree(msg->x11_alloc_host);
 	xfree(msg->x11_magic_cookie);
@@ -2671,7 +2720,7 @@ extern void slurm_free_will_run_response_msg(will_run_response_msg_t *msg)
 	}
 }
 
-inline void slurm_free_forward_data_msg(forward_data_msg_t *msg)
+extern void slurm_free_forward_data_msg(forward_data_msg_t *msg)
 {
 	if (msg) {
 		xfree(msg->address);
@@ -2847,8 +2896,6 @@ extern char *job_state_string(uint32_t inx)
 		return "CONFIGURING";
 	if (inx & JOB_RESIZING)
 		return "RESIZING";
-	if (inx & JOB_REQUEUE_CRON)
-		return "REQUEUED_CRON";
 	if (inx & JOB_REQUEUE)
 		return "REQUEUED";
 	if (inx & JOB_REQUEUE_FED)
@@ -2908,8 +2955,6 @@ extern char *job_state_string_compact(uint32_t inx)
 		return "CF";
 	if (inx & JOB_RESIZING)
 		return "RS";
-	if (inx & JOB_REQUEUE_CRON)
-		return "RC";
 	if (inx & JOB_REQUEUE)
 		return "RQ";
 	if (inx & JOB_REQUEUE_FED)
@@ -3028,8 +3073,6 @@ extern char *job_state_string_complete(uint32_t state)
 		xstrcat(state_str, ",RECONFIG_FAIL");
 	if (state & JOB_RESIZING)
 		xstrcat(state_str, ",RESIZING");
-	if (state & JOB_REQUEUE_CRON)
-		xstrcat(state_str, ",REQUEUED_CRON");
 	if (state & JOB_REQUEUE)
 		xstrcat(state_str, ",REQUEUED");
 	if (state & JOB_REQUEUE_FED)
@@ -3070,8 +3113,6 @@ extern uint32_t job_state_num(const char *state_name)
 			return i;
 	}
 
-	if (_job_name_test(JOB_STAGE_OUT, state_name))
-		return JOB_STAGE_OUT;
 	if (_job_name_test(JOB_COMPLETING, state_name))
 		return JOB_COMPLETING;
 	if (_job_name_test(JOB_CONFIGURING, state_name))
@@ -3080,22 +3121,22 @@ extern uint32_t job_state_num(const char *state_name)
 		return JOB_RESIZING;
 	if (_job_name_test(JOB_RESV_DEL_HOLD, state_name))
 		return JOB_RESV_DEL_HOLD;
-	if (_job_name_test(JOB_REQUEUE_CRON, state_name))
-		return JOB_REQUEUE_CRON;
 	if (_job_name_test(JOB_REQUEUE, state_name))
 		return JOB_REQUEUE;
 	if (_job_name_test(JOB_REQUEUE_FED, state_name))
 		return JOB_REQUEUE_FED;
 	if (_job_name_test(JOB_REQUEUE_HOLD, state_name))
 		return JOB_REQUEUE_HOLD;
-	if (_job_name_test(JOB_SPECIAL_EXIT, state_name))
-		return JOB_SPECIAL_EXIT;
-	if (_job_name_test(JOB_STOPPED, state_name))
-		return JOB_STOPPED;
 	if (_job_name_test(JOB_REVOKED, state_name))
 		return JOB_REVOKED;
 	if (_job_name_test(JOB_SIGNALING, state_name))
 		return JOB_SIGNALING;
+	if (_job_name_test(JOB_SPECIAL_EXIT, state_name))
+		return JOB_SPECIAL_EXIT;
+	if (_job_name_test(JOB_STAGE_OUT, state_name))
+		return JOB_STAGE_OUT;
+	if (_job_name_test(JOB_STOPPED, state_name))
+		return JOB_STOPPED;
 
 	return NO_VAL;
 }
@@ -3138,10 +3179,11 @@ extern char *health_check_node_state_str(uint32_t node_state)
 		return state_str;
 	}
 
-	if (node_state & HEALTH_CHECK_NODE_IDLE)
+	if (node_state & HEALTH_CHECK_NODE_IDLE) {
 		if (state_str[0])
 			xstrcat(state_str, ",");
 		xstrcat(state_str, "IDLE");
+	}
 	if (node_state & HEALTH_CHECK_NODE_ALLOC) {
 		if (state_str[0])
 			xstrcat(state_str, ",");
@@ -3442,6 +3484,8 @@ extern char *bb_state_string(uint16_t state)
 		return "staged-in";
 	if (state == BB_STATE_PRE_RUN)
 		return "pre-run";
+	if (state == BB_STATE_ALLOC_REVOKE)
+		return "alloc-revoke";
 	if (state == BB_STATE_RUNNING)
 		return "running";
 	if (state == BB_STATE_SUSPEND)
@@ -3481,6 +3525,8 @@ extern uint16_t bb_state_num(char *tok)
 		return BB_STATE_STAGED_IN;
 	if (!xstrcasecmp(tok, "pre-run"))
 		return BB_STATE_PRE_RUN;
+	if (!xstrcasecmp(tok, "alloc-revoke"))
+		return BB_STATE_ALLOC_REVOKE;
 	if (!xstrcasecmp(tok, "running"))
 		return BB_STATE_RUNNING;
 	if (!xstrcasecmp(tok, "suspend"))
@@ -3500,6 +3546,72 @@ extern uint16_t bb_state_num(char *tok)
 	return 0;
 }
 
+extern bool valid_base_state(uint32_t state)
+{
+	for (int i = 0; i < ARRAY_SIZE(node_states); i++) {
+		if (node_states[i].flag == (state & NODE_STATE_BASE))
+			return true;
+	}
+	return false;
+}
+
+extern const char *node_state_base_string(uint32_t state)
+{
+	state &= NODE_STATE_BASE;
+
+	for (int i = 0; i < ARRAY_SIZE(node_states); i++)
+		if (node_states[i].flag == state)
+			return node_states[i].str;
+
+	return "INVALID";
+}
+
+extern const char *node_state_flag_string_single(uint32_t *state)
+{
+	uint32_t flags = *state & NODE_STATE_FLAGS;
+
+	if (!flags)
+		return NULL;
+
+	for (int i = 0; i < ARRAY_SIZE(node_state_flags); i++) {
+		if (flags & node_state_flags[i].flag) {
+			*state &= ~node_state_flags[i].flag;
+			return node_state_flags[i].str;
+		}
+	}
+	/*
+	 * clear lowest flag bit, in order to guarantee that flags goes to 0 on
+	 * repeated calls. Any uncaught flags are unknown here.
+	 */
+	*state &= ~(flags & -flags);
+	return "?";
+}
+
+extern char *node_state_flag_string(uint32_t state)
+{
+	uint32_t flags = state & NODE_STATE_FLAGS;
+	const char *flag_str = NULL;
+	char *state_str = NULL;
+
+	while ((flag_str = node_state_flag_string_single(&flags))) {
+		xstrfmtcat(state_str, "+%s", flag_str);
+	}
+	return state_str;
+}
+
+extern char *node_state_string_complete(uint32_t state)
+{
+	char *state_str = NULL, *flags_str = NULL;
+
+	state_str = xstrdup(node_state_base_string(state));
+	if ((flags_str = node_state_flag_string(state))) {
+		xstrcat(state_str, flags_str);
+		xfree(flags_str);
+	}
+
+	return state_str;
+}
+
 extern char *node_state_string(uint32_t inx)
 {
 	int  base            = (inx & NODE_STATE_BASE);
@@ -3508,13 +3620,19 @@ extern char *node_state_string(uint32_t inx)
 	bool fail_flag       = (inx & NODE_STATE_FAIL);
 	bool maint_flag      = (inx & NODE_STATE_MAINT);
 	bool net_flag        = (inx & NODE_STATE_NET);
-	bool reboot_flag     = (inx & NODE_STATE_REBOOT);
+	bool reboot_flag     = (inx & NODE_STATE_REBOOT_REQUESTED);
+	bool reboot_issued_flag = (inx & NODE_STATE_REBOOT_ISSUED);
 	bool res_flag        = (inx & NODE_STATE_RES);
 	bool resume_flag     = (inx & NODE_RESUME);
 	bool no_resp_flag    = (inx & NODE_STATE_NO_RESPOND);
-	bool powered_down_flag = (inx & NODE_STATE_POWER_SAVE);
-	bool power_up_flag   = (inx & NODE_STATE_POWER_UP);
+	bool planned_flag    = (inx & NODE_STATE_PLANNED);
+	bool powered_down_flag = (inx & NODE_STATE_POWERED_DOWN);
+	bool power_up_flag   = (inx & NODE_STATE_POWERING_UP);
 	bool powering_down_flag = (inx & NODE_STATE_POWERING_DOWN);
+	bool power_down_flag = (inx & NODE_STATE_POWER_DOWN);
+
+	if (inx & NODE_STATE_INVALID_REG)
+		return "INVAL";
 
 	if (maint_flag) {
 		if (drain_flag ||
@@ -3527,10 +3645,12 @@ extern char *node_state_string(uint32_t inx)
 		else
 			return "MAINT";
 	}
-	if (reboot_flag) {
+	if (reboot_flag || reboot_issued_flag) {
 		if ((base == NODE_STATE_ALLOCATED) ||
 		    (base == NODE_STATE_MIXED))
 			;
+		else if (reboot_issued_flag)
+			return "REBOOT^";
 		else if (no_resp_flag)
 			return "REBOOT*";
 		else
@@ -3542,6 +3662,8 @@ extern char *node_state_string(uint32_t inx)
 		    || (base == NODE_STATE_MIXED)) {
 			if (maint_flag)
 				return "DRAINING$";
+			if (reboot_issued_flag)
+				return "DRAINING^";
 			if (reboot_flag)
 				return "DRAINING@";
 			if (power_up_flag)
@@ -3550,12 +3672,16 @@ extern char *node_state_string(uint32_t inx)
 				return "DRAINING%";
 			if (powered_down_flag)
 				return "DRAINING~";
+			if (power_down_flag)
+				return "DRAINING!";
 			if (no_resp_flag)
 				return "DRAINING*";
 			return "DRAINING";
 		} else {
 			if (maint_flag)
 				return "DRAINED$";
+			if (reboot_issued_flag)
+				return "DRAINED^";
 			if (reboot_flag)
 				return "DRAINED@";
 			if (power_up_flag)
@@ -3564,6 +3690,8 @@ extern char *node_state_string(uint32_t inx)
 				return "DRAINED%";
 			if (powered_down_flag)
 				return "DRAINED~";
+			if (power_down_flag)
+				return "DRAINED!";
 			if (no_resp_flag)
 				return "DRAINED*";
 			return "DRAINED";
@@ -3581,19 +3709,27 @@ extern char *node_state_string(uint32_t inx)
 		}
 	}
 
-	if (inx == NODE_STATE_CANCEL_REBOOT)
+	if (inx == NODE_STATE_REBOOT_ISSUED)
+		return "REBOOT_ISSUED";
+	if (inx == NODE_STATE_REBOOT_CANCEL)
 		return "CANCEL_REBOOT";
 	if (inx == NODE_STATE_CLOUD)
 		return "CLOUD";
-	if (inx == NODE_STATE_POWERING_DOWN)
-		return "POWERING_DOWN";
-	if (inx == NODE_STATE_POWER_SAVE)
+	if (inx == NODE_STATE_POWER_DOWN)
 		return "POWER_DOWN";
 	if (inx == NODE_STATE_POWER_UP)
 		return "POWER_UP";
+	if (inx == NODE_STATE_POWERING_DOWN)
+		return "POWERING_DOWN";
+	if (inx == NODE_STATE_POWERED_DOWN)
+		return "POWERED_DOWN";
+	if (inx == NODE_STATE_POWERING_UP)
+		return "POWERING_UP";
 	if (base == NODE_STATE_DOWN) {
 		if (maint_flag)
 			return "DOWN$";
+		if (reboot_issued_flag)
+			return "DOWN^";
 		if (reboot_flag)
 			return "DOWN@";
 		if (power_up_flag)
@@ -3602,6 +3738,8 @@ extern char *node_state_string(uint32_t inx)
 			return "DOWN%";
 		if (powered_down_flag)
 			return "DOWN~";
+		if (power_down_flag)
+			return "DOWN!";
 		if (no_resp_flag)
 			return "DOWN*";
 		return "DOWN";
@@ -3610,6 +3748,8 @@ extern char *node_state_string(uint32_t inx)
 	if (base == NODE_STATE_ALLOCATED) {
 		if (maint_flag)
 			return "ALLOCATED$";
+		if (reboot_issued_flag)
+			return "ALLOCATED^";
 		if (reboot_flag)
 			return "ALLOCATED@";
 		if (power_up_flag)
@@ -3618,6 +3758,8 @@ extern char *node_state_string(uint32_t inx)
 			return "ALLOCATED%";
 		if (powered_down_flag)
 			return "ALLOCATED~";
+		if (power_down_flag)
+			return "ALLOCATED!";
 		if (no_resp_flag)
 			return "ALLOCATED*";
 		if (comp_flag)
@@ -3627,6 +3769,8 @@ extern char *node_state_string(uint32_t inx)
 	if (comp_flag) {
 		if (maint_flag)
 			return "COMPLETING$";
+		if (reboot_issued_flag)
+			return "COMPLETING^";
 		if (reboot_flag)
 			return "COMPLETING@";
 		if (power_up_flag)
@@ -3635,6 +3779,8 @@ extern char *node_state_string(uint32_t inx)
 			return "COMPLETING%";
 		if (powered_down_flag)
 			return "COMPLETING~";
+		if (power_down_flag)
+			return "COMPLETING!";
 		if (no_resp_flag)
 			return "COMPLETING*";
 		return "COMPLETING";
@@ -3642,6 +3788,8 @@ extern char *node_state_string(uint32_t inx)
 	if (base == NODE_STATE_IDLE) {
 		if (maint_flag)
 			return "IDLE$";
+		if (reboot_issued_flag)
+			return "IDLE^";
 		if (reboot_flag)
 			return "IDLE@";
 		if (power_up_flag)
@@ -3650,17 +3798,23 @@ extern char *node_state_string(uint32_t inx)
 			return "IDLE%";
 		if (powered_down_flag)
 			return "IDLE~";
+		if (power_down_flag)
+			return "IDLE!";
 		if (no_resp_flag)
 			return "IDLE*";
 		if (net_flag)
 			return "PERFCTRS";
 		if (res_flag)
 			return "RESERVED";
+		if (planned_flag)
+			return "PLANNED";
 		return "IDLE";
 	}
 	if (base == NODE_STATE_MIXED) {
 		if (maint_flag)
 			return "MIXED$";
+		if (reboot_issued_flag)
+			return "MIXED^";
 		if (reboot_flag)
 			return "MIXED@";
 		if (power_up_flag)
@@ -3669,13 +3823,19 @@ extern char *node_state_string(uint32_t inx)
 			return "MIXED%";
 		if (powered_down_flag)
 			return "MIXED~";
+		if (power_down_flag)
+			return "MIXED!";
 		if (no_resp_flag)
 			return "MIXED*";
+		if (planned_flag)
+			return "MIXED-";
 		return "MIXED";
 	}
 	if (base == NODE_STATE_FUTURE) {
 		if (maint_flag)
 			return "FUTURE$";
+		if (reboot_issued_flag)
+			return "FUTURE^";
 		if (reboot_flag)
 			return "FUTURE@";
 		if (power_up_flag)
@@ -3684,6 +3844,8 @@ extern char *node_state_string(uint32_t inx)
 			return "FUTURE%";
 		if (powered_down_flag)
 			return "FUTURE~";
+		if (power_down_flag)
+			return "FUTURE!";
 		if (no_resp_flag)
 			return "FUTURE*";
 		return "FUTURE";
@@ -3705,13 +3867,19 @@ extern char *node_state_string_compact(uint32_t inx)
 	bool fail_flag       = (inx & NODE_STATE_FAIL);
 	bool maint_flag      = (inx & NODE_STATE_MAINT);
 	bool net_flag        = (inx & NODE_STATE_NET);
-	bool reboot_flag     = (inx & NODE_STATE_REBOOT);
+	bool reboot_flag     = (inx & NODE_STATE_REBOOT_REQUESTED);
+	bool reboot_issued_flag = (inx & NODE_STATE_REBOOT_ISSUED);
 	bool res_flag        = (inx & NODE_STATE_RES);
 	bool resume_flag     = (inx & NODE_RESUME);
 	bool no_resp_flag    = (inx & NODE_STATE_NO_RESPOND);
-	bool powered_down_flag = (inx & NODE_STATE_POWER_SAVE);
-	bool power_up_flag   = (inx & NODE_STATE_POWER_UP);
+	bool planned_flag    = (inx & NODE_STATE_PLANNED);
+	bool powered_down_flag = (inx & NODE_STATE_POWERED_DOWN);
+	bool power_up_flag   = (inx & NODE_STATE_POWERING_UP);
 	bool powering_down_flag = (inx & NODE_STATE_POWERING_DOWN);
+	bool power_down_flag = (inx & NODE_STATE_POWER_DOWN);
+
+	if (inx & NODE_STATE_INVALID_REG)
+		return "INVAL";
 
 	inx = (inx & NODE_STATE_BASE);
 
@@ -3726,9 +3894,11 @@ extern char *node_state_string_compact(uint32_t inx)
 		else
 			return "MAINT";
 	}
-	if (reboot_flag) {
+	if (reboot_flag || reboot_issued_flag) {
 		if ((inx == NODE_STATE_ALLOCATED) || (inx == NODE_STATE_MIXED))
 			;
+		else if (reboot_issued_flag)
+			return "BOOT^";
 		else if (no_resp_flag)
 			return "BOOT*";
 		else
@@ -3740,6 +3910,8 @@ extern char *node_state_string_compact(uint32_t inx)
 		    || (inx == NODE_STATE_MIXED)) {
 			if (maint_flag)
 				return "DRNG$";
+			if (reboot_issued_flag)
+				return "DRNG^";
 			if (reboot_flag)
 				return "DRNG@";
 			if (power_up_flag)
@@ -3748,12 +3920,16 @@ extern char *node_state_string_compact(uint32_t inx)
 				return "DRNG%";
 			if (powered_down_flag)
 				return "DRNG~";
+			if (power_down_flag)
+				return "DRNG!";
 			if (no_resp_flag)
 				return "DRNG*";
 			return "DRNG";
 		} else {
 			if (maint_flag)
 				return "DRAIN$";
+			if (reboot_issued_flag)
+				return "DRAIN^";
 			if (reboot_flag)
 				return "DRAIN@";
 			if (power_up_flag)
@@ -3762,6 +3938,8 @@ extern char *node_state_string_compact(uint32_t inx)
 				return "DRAIN%";
 			if (powered_down_flag)
 				return "DRAIN~";
+			if (power_down_flag)
+				return "DRAIN!";
 			if (no_resp_flag)
 				return "DRAIN*";
 			return "DRAIN";
@@ -3779,19 +3957,27 @@ extern char *node_state_string_compact(uint32_t inx)
 		}
 	}
 
-	if (inx == NODE_STATE_CANCEL_REBOOT)
+	if (inx == NODE_STATE_REBOOT_ISSUED)
+		return "BOOT^";
+	if (inx == NODE_STATE_REBOOT_CANCEL)
 		return "CANC_R";
 	if (inx == NODE_STATE_CLOUD)
 		return "CLOUD";
-	if (inx == NODE_STATE_POWERING_DOWN)
-		return "POWRNG_DN";
-	if (inx == NODE_STATE_POWER_SAVE)
+	if (inx == NODE_STATE_POWER_DOWN)
 		return "POW_DN";
 	if (inx == NODE_STATE_POWER_UP)
 		return "POW_UP";
+	if (inx == NODE_STATE_POWERING_DOWN)
+		return "POWRING_DN";
+	if (inx == NODE_STATE_POWERED_DOWN)
+		return "POWERED_DN";
+	if (inx == NODE_STATE_POWERING_UP)
+		return "POWERING_UP";
 	if (inx == NODE_STATE_DOWN) {
 		if (maint_flag)
 			return "DOWN$";
+		if (reboot_issued_flag)
+			return "DOWN^";
 		if (reboot_flag)
 			return "DOWN@";
 		if (power_up_flag)
@@ -3800,6 +3986,8 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "DOWN%";
 		if (powered_down_flag)
 			return "DOWN~";
+		if (power_down_flag)
+			return "DOWN!";
 		if (no_resp_flag)
 			return "DOWN*";
 		return "DOWN";
@@ -3808,6 +3996,8 @@ extern char *node_state_string_compact(uint32_t inx)
 	if (inx == NODE_STATE_ALLOCATED) {
 		if (maint_flag)
 			return "ALLOC$";
+		if (reboot_issued_flag)
+			return "ALLOC^";
 		if (reboot_flag)
 			return "ALLOC@";
 		if (power_up_flag)
@@ -3816,6 +4006,8 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "ALLOC%";
 		if (powered_down_flag)
 			return "ALLOC~";
+		if (power_down_flag)
+			return "ALLOC!";
 		if (no_resp_flag)
 			return "ALLOC*";
 		if (comp_flag)
@@ -3825,6 +4017,8 @@ extern char *node_state_string_compact(uint32_t inx)
 	if (comp_flag) {
 		if (maint_flag)
 			return "COMP$";
+		if (reboot_issued_flag)
+			return "COMP^";
 		if (reboot_flag)
 			return "COMP@";
 		if (power_up_flag)
@@ -3833,6 +4027,8 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "COMP%";
 		if (powered_down_flag)
 			return "COMP~";
+		if (power_down_flag)
+			return "COMP!";
 		if (no_resp_flag)
 			return "COMP*";
 		return "COMP";
@@ -3840,6 +4036,8 @@ extern char *node_state_string_compact(uint32_t inx)
 	if (inx == NODE_STATE_IDLE) {
 		if (maint_flag)
 			return "IDLE$";
+		if (reboot_issued_flag)
+			return "IDLE^";
 		if (reboot_flag)
 			return "IDLE@";
 		if (power_up_flag)
@@ -3848,17 +4046,23 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "IDLE%";
 		if (powered_down_flag)
 			return "IDLE~";
+		if (power_down_flag)
+			return "IDLE!";
 		if (no_resp_flag)
 			return "IDLE*";
 		if (net_flag)
 			return "NPC";
 		if (res_flag)
 			return "RESV";
+		if (planned_flag)
+			return "PLND";
 		return "IDLE";
 	}
 	if (inx == NODE_STATE_MIXED) {
 		if (maint_flag)
 			return "MIX$";
+		if (reboot_issued_flag)
+			return "MIX^";
 		if (reboot_flag)
 			return "MIX@";
 		if (power_up_flag)
@@ -3867,13 +4071,19 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "MIX%";
 		if (powered_down_flag)
 			return "MIX~";
+		if (power_down_flag)
+			return "MIX!";
 		if (no_resp_flag)
 			return "MIX*";
+		if (planned_flag)
+			return "MIX-";
 		return "MIX";
 	}
 	if (inx == NODE_STATE_FUTURE) {
 		if (maint_flag)
 			return "FUTR$";
+		if (reboot_issued_flag)
+			return "FUTR^";
 		if (reboot_flag)
 			return "FUTR@";
 		if (power_up_flag)
@@ -3882,6 +4092,8 @@ extern char *node_state_string_compact(uint32_t inx)
 			return "FUTR%";
 		if (powered_down_flag)
 			return "FUTR~";
+		if (power_down_flag)
+			return "FUTR!";
 		if (no_resp_flag)
 			return "FUTR*";
 		return "FUTR";
@@ -4274,6 +4486,7 @@ extern void slurm_free_job_step_info_members(job_step_info_t * msg)
 {
 	if (msg) {
 		xfree(msg->cluster);
+		xfree(msg->container);
 		xfree(msg->tres_per_node);
 		xfree(msg->mem_per_tres);
 		xfree(msg->name);
@@ -5214,9 +5427,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_ASSOC_MGR_INFO:
 		slurm_free_assoc_mgr_info_request_msg(data);
 		break;
-	case REQUEST_EVENT_LOG:
-		slurm_free_event_log_msg(data);
-		break;
 	case REQUEST_CTLD_MULT_MSG:
 	case RESPONSE_CTLD_MULT_MSG:
 		slurm_free_ctld_multi_msg(data);
@@ -5498,8 +5708,6 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_ASSOC_MGR_INFO";
 	case RESPONSE_ASSOC_MGR_INFO:
 		return "RESPONSE_ASSOC_MGR_INFO";
-	case REQUEST_EVENT_LOG:
-		return "REQUEST_EVENT_LOG";
 
 	case REQUEST_FED_INFO:					/* 2048 */
 		return "REQUEST_FED_INFO";
@@ -5790,11 +5998,6 @@ slurm_bb_flags2str(uint32_t bb_flags)
 			strcat(bb_str, ",");
 		strcat(bb_str, "PrivateData");
 	}
-	if (bb_flags & BB_FLAG_SET_EXEC_HOST) {
-		if (bb_str[0])
-			strcat(bb_str, ",");
-		strcat(bb_str, "SetExecHost");
-	}
 	if (bb_flags & BB_FLAG_TEARDOWN_FAILURE) {
 		if (bb_str[0])
 			strcat(bb_str, ",");
@@ -5804,22 +6007,19 @@ slurm_bb_flags2str(uint32_t bb_flags)
 	return bb_str;
 }
 
-extern uint32_t
-slurm_bb_str2flags(char *bb_str)
+extern uint32_t slurm_bb_str2flags(char *bb_str)
 {
 	uint32_t bb_flags = 0;
 
-	if (bb_str && strstr(bb_str, "DisablePersistent"))
+	if (xstrcasestr(bb_str, "DisablePersistent"))
 		bb_flags |= BB_FLAG_DISABLE_PERSISTENT;
-	if (bb_str && strstr(bb_str, "EmulateCray"))
+	if (xstrcasestr(bb_str, "EmulateCray"))
 		bb_flags |= BB_FLAG_EMULATE_CRAY;
-	if (bb_str && strstr(bb_str, "EnablePersistent"))
+	if (xstrcasestr(bb_str, "EnablePersistent"))
 		bb_flags |= BB_FLAG_ENABLE_PERSISTENT;
-	if (bb_str && strstr(bb_str, "PrivateData"))
+	if (xstrcasestr(bb_str, "PrivateData"))
 		bb_flags |= BB_FLAG_PRIVATE_DATA;
-	if (bb_str && strstr(bb_str, "SetExecHost"))
-		bb_flags |= BB_FLAG_SET_EXEC_HOST;
-	if (bb_str && strstr(bb_str, "TeardownFailure"))
+	if (xstrcasestr(bb_str, "TeardownFailure"))
 		bb_flags |= BB_FLAG_TEARDOWN_FAILURE;
 
 	return bb_flags;
@@ -6007,7 +6207,6 @@ extern uint64_t suffix_mult(char *suffix)
 		multiplier = ((uint64_t)1000 * 1000 * 1000 * 1000 * 1000);
 
 	} else {
-		debug("%s: Unrecognized numeric suffix '%s'", __func__, suffix);
 		multiplier = NO_VAL64;
 	}
 
@@ -6072,4 +6271,160 @@ extern char *slurm_get_selected_step_id(
 	}
 endit:
 	return job_id_str;
+}
+
+extern void xlate_array_task_str(char **array_task_str,
+				 uint32_t array_max_tasks, void **array_bitmap)
+{
+	static int bitstr_len = -1;
+	int buf_size, len;
+	int i, i_first, i_last, i_prev, i_step = 0;
+	bitstr_t *task_bitmap;
+	char *out_buf = NULL;
+
+	xassert(array_task_str);
+
+	if (!array_task_str || !*array_task_str || !*array_task_str[0]) {
+		if (array_bitmap)
+			*array_bitmap = NULL;
+		return;
+	}
+
+	i = strlen(*array_task_str);
+	if ((i < 3) || ((*array_task_str)[1] != 'x')) {
+		if (array_bitmap)
+			*array_bitmap = NULL;
+		return;
+	}
+
+	task_bitmap = bit_alloc(i * 4);
+	if (bit_unfmt_hexmask(task_bitmap, *array_task_str) == -1)
+		error("%s: bit_unfmt_hexmask error on '%s'", __func__,
+		      *array_task_str);
+
+	if (array_bitmap)
+		*array_bitmap = (void *)task_bitmap;
+
+	/* Check first for a step function */
+	i_first = bit_ffs(task_bitmap);
+	i_last  = bit_fls(task_bitmap);
+	if (((i_last - i_first) > 10) && (bit_set_count(task_bitmap) > 5) &&
+	    !bit_test(task_bitmap, i_first + 1)) {
+		bool is_step = true;
+		i_prev = i_first;
+		for (i = i_first + 1; i <= i_last; i++) {
+			if (!bit_test(task_bitmap, i))
+				continue;
+			if (i_step == 0) {
+				i_step = i - i_prev;
+			} else if ((i - i_prev) != i_step) {
+				is_step = false;
+				break;
+			}
+			i_prev = i;
+		}
+		if (is_step) {
+			xstrfmtcat(out_buf, "%d-%d:%d",
+				   i_first, i_last, i_step);
+			goto out;
+		}
+	}
+
+	if (bitstr_len == -1) {
+		char *bitstr_len_str = getenv("SLURM_BITSTR_LEN");
+		if (bitstr_len_str)
+			bitstr_len = atoi(bitstr_len_str);
+		if (bitstr_len < 0)
+			bitstr_len = 64;
+		else
+			bitstr_len = MIN(bitstr_len, 4096);
+	}
+
+	if (bitstr_len > 0) {
+		/* Print the first bitstr_len bytes of the bitmap string */
+		buf_size = bitstr_len;
+		out_buf = xmalloc(buf_size);
+		bit_fmt(out_buf, buf_size, task_bitmap);
+		len = strlen(out_buf);
+		if (len > (buf_size - 3)) {
+			for (i = 0; i < 3; i++)
+				out_buf[buf_size - 2 - i] = '.';
+		}
+	} else {
+		/* Print the full bitmap's string representation.
+		 * For huge bitmaps this can take roughly one minute,
+		 * so let the client do the work */
+		out_buf = bit_fmt_full(task_bitmap);
+	}
+
+out:
+	if (array_max_tasks)
+		xstrfmtcat(out_buf, "%%%u", array_max_tasks);
+
+	xfree(*array_task_str);
+	*array_task_str = out_buf;
+
+	if (!array_bitmap)
+		bit_free(task_bitmap);
+}
+
+extern void slurm_array64_to_value_reps(uint64_t *array, uint32_t array_cnt,
+					uint64_t **values,
+					uint32_t **values_reps,
+					uint32_t *values_cnt)
+{
+	uint64_t prev_value;
+	int values_inx = 0;
+
+	xassert(values);
+	xassert(values_reps);
+	xassert(values_cnt);
+
+	if (!array)
+		return;
+
+	*values_cnt = 1;
+
+	/* Figure out how big the compressed arrays should be */
+	prev_value = array[0];
+	for (int i = 0; i < array_cnt; i++) {
+		if (prev_value != array[i]) {
+			prev_value = array[i];
+			(*values_cnt)++;
+		}
+	}
+
+	*values = xcalloc(*values_cnt, sizeof(**values));
+	*values_reps = xcalloc(*values_cnt, sizeof(**values_reps));
+
+	prev_value = (*values)[0] = array[0];
+	for (int i = 0; i < array_cnt; i++) {
+		if (prev_value != array[i]) {
+			prev_value = array[i];
+			values_inx++;
+			(*values)[values_inx] = array[i];
+		}
+		(*values_reps)[values_inx]++;
+	}
+
+
+}
+
+extern int slurm_get_rep_count_inx(
+	uint32_t *rep_count, uint32_t rep_count_size, int inx)
+{
+	int rep_count_sum = 0;
+
+	for (int i = 0; i < rep_count_size; i++) {
+		if (rep_count[i] == 0) {
+			error("%s: rep_count should never be zero",
+			      __func__);
+			return -1;
+		}
+		rep_count_sum += rep_count[i];
+		if (rep_count_sum > inx)
+			return i;
+	}
+
+	return -1;
 }

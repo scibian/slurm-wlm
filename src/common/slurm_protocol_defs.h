@@ -67,7 +67,6 @@
 #include "src/common/working_cluster.h"
 #include "src/common/xassert.h"
 
-#define MAX_SLURM_NAME 64
 #define FORWARD_INIT 0xfffe
 
 /* Defined job states */
@@ -148,20 +147,26 @@
 	(_X->node_state & NODE_STATE_DYNAMIC)
 #define IS_NODE_COMPLETING(_X)	\
 	(_X->node_state & NODE_STATE_COMPLETING)
+#define IS_NODE_INVALID_REG(_X)	\
+	(_X->node_state & NODE_STATE_INVALID_REG)
+#define IS_NODE_POWER_DOWN(_X)		\
+	(_X->node_state & NODE_STATE_POWER_DOWN)
+#define IS_NODE_POWER_UP(_X)		\
+	(_X->node_state & NODE_STATE_POWER_UP)
 #define IS_NODE_NO_RESPOND(_X)		\
 	(_X->node_state & NODE_STATE_NO_RESPOND)
-#define IS_NODE_POWER_SAVE(_X)		\
-	(_X->node_state & NODE_STATE_POWER_SAVE)
+#define IS_NODE_POWERED_DOWN(_X)		\
+	(_X->node_state & NODE_STATE_POWERED_DOWN)
 #define IS_NODE_POWERING_DOWN(_X)	\
 	(_X->node_state & NODE_STATE_POWERING_DOWN)
 #define IS_NODE_FAIL(_X)		\
 	(_X->node_state & NODE_STATE_FAIL)
-#define IS_NODE_POWER_UP(_X)		\
-	(_X->node_state & NODE_STATE_POWER_UP)
+#define IS_NODE_POWERING_UP(_X)		\
+	(_X->node_state & NODE_STATE_POWERING_UP)
 #define IS_NODE_MAINT(_X)		\
 	(_X->node_state & NODE_STATE_MAINT)
-#define IS_NODE_REBOOT(_X)		\
-	(_X->node_state & NODE_STATE_REBOOT)
+#define IS_NODE_REBOOT_REQUESTED(_X)	\
+	(_X->node_state & NODE_STATE_REBOOT_REQUESTED)
 #define IS_NODE_REBOOT_ISSUED(_X)	\
 	(_X->node_state & NODE_STATE_REBOOT_ISSUED)
 #define IS_NODE_RUNNING_JOB(_X)		\
@@ -286,7 +291,7 @@ typedef enum {
 	DEFUNCT_RPC_2042,
 	REQUEST_ASSOC_MGR_INFO,
 	RESPONSE_ASSOC_MGR_INFO,
-	REQUEST_EVENT_LOG,
+	DEFUNCT_RPC_2045,
 	DEFUNCT_RPC_2046, /* free for reuse */
 	DEFUNCT_RPC_2047,
 	DEFUNCT_RPC_2048,
@@ -520,7 +525,8 @@ typedef struct slurm_msg {
 				 */
 	uint32_t body_offset; /* DON'T PACK: offset in buffer where body part of
 				 buffer starts. */
-	Buf buffer; /* DON't PACK! ptr to buffer that msg was unpacked from. */
+	buf_t *buffer;		/* DON'T PACK! ptr to buffer that msg was
+				 * unpacked from. */
 	slurm_persist_conn_t *conn; /* DON'T PACK OR FREE! this is here to
 				     * distinguish a persistent connection from
 				     * a normal connection it should be filled
@@ -726,6 +732,12 @@ typedef struct shutdown_msg {
 	uint16_t options;
 } shutdown_msg_t;
 
+typedef enum {
+	SLURMCTLD_SHUTDOWN_ALL = 0,	/* all slurm daemons are shutdown */
+	SLURMCTLD_SHUTDOWN_ABORT,	/* slurmctld only and generate core */
+	SLURMCTLD_SHUTDOWN_CTLD,	/* slurmctld only (no core file) */
+} slurmctld_shutdown_type_t;
+
 typedef struct last_update_msg {
 	time_t last_update;
 } last_update_msg_t;
@@ -740,6 +752,7 @@ typedef struct set_debug_level_msg {
 } set_debug_level_msg_t;
 
 typedef struct job_step_specs {
+	char *container; /* OCI container bundle path */
 	uint32_t cpu_count;	/* count of required processors */
 	uint32_t cpu_freq_gov;  /* cpu frequency governor */
 	uint32_t cpu_freq_max;  /* Maximum cpu frequency  */
@@ -776,6 +789,8 @@ typedef struct job_step_specs {
 	char *step_het_grps;	/* what het groups are used by step */
 	slurm_step_id_t step_id;
 	uint32_t srun_pid;	/* PID of srun command, also see host */
+	char *submit_line;	/* The command issued with all it's options in a
+				 * string */
 	uint32_t task_dist;	/* see enum task_dist_state in slurm.h */
 	uint32_t time_limit;	/* maximum run time in minutes, default is
 				 * partition limit */
@@ -847,8 +862,10 @@ typedef struct launch_tasks_request_msg {
 	uint16_t  node_cpus;
 	uint16_t  cpus_per_task;
 	uint16_t  threads_per_core;
+	char *tres_per_task;	/* semicolon delimited list of TRES=# values */
 	char    **env;
 	char    **argv;
+	char *container;	/* OCI Container Bundle Path */
 	char     *cwd;
 	uint16_t cpu_bind_type;	/* --cpu-bind=                    */
 	char     *cpu_bind;	/* binding map for map/mask_cpu           */
@@ -992,6 +1009,7 @@ typedef struct kill_job_msg {
 	time_t   start_time;	/* time of job start, track job requeue */
 	slurm_step_id_t step_id;
 	time_t   time;		/* slurmctld's time of request */
+	char *work_dir;
 } kill_job_msg_t;
 
 typedef struct reattach_tasks_request_msg {
@@ -1047,6 +1065,7 @@ typedef struct batch_job_launch_msg {
 	char *alias_list;	/* node name/address/hostname aliases */
 	uint32_t array_job_id;	/* job array master job ID */
 	uint32_t array_task_id;	/* job array ID or NO_VAL */
+	char *container;	/* OCI Container Bundle path */
 	uint32_t cpu_freq_min;  /* Minimum cpu frequency  */
 	uint32_t cpu_freq_max;  /* Maximum cpu frequency  */
 	uint32_t cpu_freq_gov;  /* cpu frequency governor */
@@ -1076,7 +1095,7 @@ typedef struct batch_job_launch_msg {
 	char *nodes;		/* list of nodes allocated to job_step */
 	uint32_t profile;       /* what to profile for the batch step */
 	char *script;		/* the actual job script, default NONE */
-	Buf script_buf;		/* the job script as a mmap buf */
+	buf_t *script_buf;	/* the job script as a mmap buf */
 	char *std_err;		/* pathname of stderr */
 	char *std_in;		/* pathname of stdin */
 	char *qos;              /* qos the job is running under */
@@ -1125,17 +1144,29 @@ typedef struct {
 } config_request_msg_t;
 
 typedef struct {
+	bool exists;
+	char *file_name;
+	char *file_content;
+} config_file_t;
+
+typedef struct {
+	List config_files;
+
+	/* Remove 2 versions after 21.08 */
 	char *config;
 	char *acct_gather_config;
 	char *cgroup_config;
 	char *cgroup_allowed_devices_file_config;
 	char *ext_sensors_config;
 	char *gres_config;
+	char *job_container_config;
 	char *knl_cray_config;
 	char *knl_generic_config;
 	char *plugstack_config;
 	char *topology_config;
-	char *xtra_config;	/* in case we forgot one ;) */
+	char *xtra_config;	/* in case we forgot one ;)
+				 * shouldn't be used - for new versions just
+				 * use the List */
 
 	char *slurmd_spooldir;
 } config_response_msg_t;
@@ -1154,17 +1185,24 @@ typedef struct kvs_get_msg {
 } kvs_get_msg_t;
 
 enum compress_type {
-	COMPRESS_OFF = 0x0,	/* no compression */
-	COMPRESS_ZLIB,		/* zlib (aka gzip) compression */
-	COMPRESS_LZ4		/* lz4 compression */
+	COMPRESS_OFF = 0,	/* no compression */
+				/* = 1 was zlib */
+	COMPRESS_LZ4 = 2,	/* lz4 compression */
 };
+
+typedef enum {
+	FILE_BCAST_NONE = 0,		/* No flags set */
+	FILE_BCAST_FORCE = 1 << 0,	/* replace existing file */
+	FILE_BCAST_LAST_BLOCK = 1 << 1,	/* last file block */
+	FILE_BCAST_SO = 1 << 2, 	/* shared object */
+	FILE_BCAST_EXE = 1 << 3,	/* executable ahead of shared object */
+} file_bcast_flags_t;
 
 typedef struct file_bcast_msg {
 	char *fname;		/* name of the destination file */
 	uint32_t block_no;	/* block number of this data */
-	uint16_t last_block;	/* last block of bcast if set (flag) */
-	uint16_t force;		/* replace existing file if set (flag) */
 	uint16_t compress;	/* compress file if set, use compress_type */
+	uint16_t flags;		/* flags from file_bcast_flags_t */
 	uint16_t modes;		/* access rights for destination file */
 	uint32_t uid;		/* owner for destination file */
 	char *user_name;
@@ -1263,7 +1301,7 @@ typedef struct slurm_node_registration_status_msg {
 	acct_gather_energy_t *energy;
 	char *features_active;	/* Currently active node features */
 	char *features_avail;	/* Available node features */
-	Buf gres_info;		/* generic resource info */
+	buf_t *gres_info;	/* generic resource info */
 	uint32_t hash_val;      /* hash value of slurm.conf and included files
 				 * existing on node */
 	uint32_t job_count;	/* number of associate job_id's */
@@ -1294,16 +1332,11 @@ typedef struct requeue_msg {
 	uint32_t flags;         /* JobExitRequeue | Hold | JobFailed | etc. */
 } requeue_msg_t;
 
-typedef struct slurm_event_log_msg {
-	uint16_t level;		/* Message level, from log.h */
-	char *   string;	/* String for slurmctld to log */
-} slurm_event_log_msg_t;
-
 typedef struct {
 	uint32_t cluster_id;	/* cluster id of cluster making request */
 	void    *data;		/* Unpacked buffer
 				 * Only populated on the receiving side. */
-	Buf      data_buffer;	/* Buffer that holds an unpacked data type.
+	buf_t *data_buffer;	/* Buffer that holds an unpacked data type.
 				 * Only populated on the sending side. */
 	uint32_t data_offset;	/* DON'T PACK: offset where body part of buffer
 				 * starts -- the part that gets sent. */
@@ -1438,7 +1471,6 @@ extern void slurm_free_reboot_msg(reboot_msg_t * msg);
 extern void slurm_free_shutdown_msg(shutdown_msg_t * msg);
 
 extern void slurm_free_job_desc_msg(job_desc_msg_t * msg);
-extern void slurm_free_event_log_msg(slurm_event_log_msg_t * msg);
 
 extern void
 slurm_free_node_registration_status_msg(slurm_node_registration_status_msg_t *
@@ -1592,8 +1624,34 @@ extern char *job_state_string_compact(uint32_t inx);
 /* Caller must xfree() the return value */
 extern char *job_state_string_complete(uint32_t state);
 extern uint32_t job_state_num(const char *state_name);
+/*
+ * Returns true is the node's base state is a known base state.
+ */
+extern bool valid_base_state(uint32_t state);
+/*
+ * Return the string representing a given node base state.
+ */
+extern const char *node_state_base_string(uint32_t state);
+/*
+ * Return the string representing a single node state flag.
+ *
+ * Clears the flag bit in the passed state variable.
+ */
+extern const char *node_state_flag_string_single(uint32_t *state);
+/*
+ * Return + separated string of node state flags.
+ *
+ * Caller must xfree() the return value.
+ */
+extern char *node_state_flag_string(uint32_t state);
 extern char *node_state_string(uint32_t inx);
 extern char *node_state_string_compact(uint32_t inx);
+/*
+ * Return node base state + flags strings.
+ *
+ * Caller must xfree() the return value.
+ */
+extern char *node_state_string_complete(uint32_t inx);
 
 extern uint16_t power_flags_id(const char *power_flags);
 extern char    *power_flags_str(uint16_t power_flags);
@@ -1670,6 +1728,46 @@ extern bool verify_step_id(slurm_step_id_t *object, slurm_step_id_t *key);
 extern char *slurm_get_selected_step_id(
 	char *job_id_str, int len,
 	slurm_selected_step_t *selected_step);
+
+/*
+ * Translate bitmap representation of array from hex to decimal format,
+ * replacing array_task_str and store the bitmap in array_bitmap.
+ *
+ * IN/OUT array_task_str - job's array task string
+ * IN array_max_tasks - job's array_max_tasks
+ * OUT array_bitmap - job's array_bitmap
+ */
+extern void xlate_array_task_str(char **array_task_str,
+				 uint32_t array_max_tasks, void **array_bitmap);
+
+/*
+ * slurm_array64_to_value_reps - Compress array into an array that represents
+ *                               the number of repeated values compressed.
+ *
+ * IN array - Array of values.
+ * IN array_cnt - Count of elements in 'array'.
+ * OUT values - Array of values compressed.
+ * OUT values_reps - How many each corrisponding element in 'values' there are.
+ * OUT values_cnt - Count of elements in 'values' and 'values_reps'.
+ */
+extern void slurm_array64_to_value_reps(uint64_t *array, uint32_t array_cnt,
+					uint64_t **values,
+					uint32_t **values_reps,
+					uint32_t *values_cnt);
+
+/*
+ * slurm_get_rep_count_inx - given a compressed array of counts and the actual
+ *                           index you are looking for if the array was
+ *                           uncompressed return the matching index for the
+ *                           compressed array.
+ * IN rep_count - compressed array
+ * IN rep_count_size - size of compressed_array
+ * IN inx - uncompressed index
+ *
+ * RET - compressed index or -1 on failure.
+ */
+extern int slurm_get_rep_count_inx(
+	uint32_t *rep_count, uint32_t rep_count_size, int inx);
 
 #define safe_read(fd, buf, size) do {					\
 		int remaining = size;					\

@@ -549,11 +549,13 @@ _ping_slurmctld(uint32_t control_cnt, char **control_machine)
 	bool down_msg = false;
 	int i;
 
+	exit_code = 1;
 	for (i = 0; i < control_cnt; i++) {
 		int status = 0;
-		if (slurm_ping(i) == SLURM_SUCCESS)
+		if (slurm_ping(i) == SLURM_SUCCESS) {
 			status = 1;
-		else
+			exit_code = 0;
+		} else
 			down_msg = true;
 		if (i == 0)
 			snprintf(mode, sizeof(mode), "primary");
@@ -579,16 +581,16 @@ static void
 _print_daemons (void)
 {
 	slurm_ctl_conf_info_msg_t *conf;
-	char node_name_short[MAX_SLURM_NAME];
-	char node_name_long[MAX_SLURM_NAME];
+	char node_name_short[HOST_NAME_MAX];
+	char node_name_long[HOST_NAME_MAX];
 	char *c, *n, *token, *save_ptr = NULL;
 	int actld = 0, ctld = 0, d = 0, i;
 	char *daemon_list = NULL;
 
 	conf = slurm_conf_lock();
 
-	gethostname_short(node_name_short, MAX_SLURM_NAME);
-	gethostname(node_name_long, MAX_SLURM_NAME);
+	gethostname_short(node_name_short, HOST_NAME_MAX);
+	gethostname(node_name_long, HOST_NAME_MAX);
 	for (i = 0; i < conf->control_cnt; i++) {
 		if (!conf->control_machine[i])
 			break;
@@ -635,11 +637,11 @@ _print_daemons (void)
 static void
 _print_aliases (char* node_hostname)
 {
-	char me[MAX_SLURM_NAME], *n = NULL, *a = NULL;
+	char me[HOST_NAME_MAX], *n = NULL, *a = NULL;
 	char *s;
 
 	if (!node_hostname) {
-		gethostname_short(me, MAX_SLURM_NAME);
+		gethostname_short(me, HOST_NAME_MAX);
 		s = me;
 	} else
 		s = node_hostname;
@@ -973,8 +975,8 @@ static int _process_command (int argc, char **argv)
 			fprintf (stderr,
 				 "too many arguments for keyword:%s\n",
 				 tag);
-		}
-		_print_ping ();
+		} else
+			_print_ping();
 	}
 	else if ((xstrncasecmp(tag, "\\q", 2) == 0) ||
 		 (xstrncasecmp(tag, "quiet", MAX(tag_len, 4)) == 0)) {
@@ -1397,7 +1399,7 @@ static int _process_command (int argc, char **argv)
 	}
 	else if (xstrncasecmp(tag, "shutdown", MAX(tag_len, 8)) == 0) {
 		/* require full command name */
-		uint16_t options = 0;
+		uint16_t options = SLURMCTLD_SHUTDOWN_ALL;
 		if (argc == 2) {
 			if (xstrcmp(argv[1], "slurmctld") &&
 			    xstrcmp(argv[1], "controller")) {
@@ -1407,7 +1409,7 @@ static int _process_command (int argc, char **argv)
 					 "invalid shutdown argument:%s\n",
 					 argv[1]);
 			} else
-				options= 2;
+				options= SLURMCTLD_SHUTDOWN_CTLD;
 		} else if (argc > 2) {
 			error_code = 1;
 			exit_code = 1;
@@ -1585,6 +1587,7 @@ static void _delete_it(int argc, char **argv)
 			char errmsg[64];
 			snprintf(errmsg, 64, "delete_partition %s", argv[0]);
 			slurm_perror(errmsg);
+			exit_code = 1;
 		}
 	} else if (xstrncasecmp(tag, "ReservationName", MAX(tag_len, 3)) == 0) {
 		reservation_name_msg_t   res_msg;
@@ -1594,6 +1597,7 @@ static void _delete_it(int argc, char **argv)
 			char errmsg[64];
 			snprintf(errmsg, 64, "delete_reservation %s", argv[0]);
 			slurm_perror(errmsg);
+			exit_code = 1;
 		}
 	} else {
 		exit_code = 1;

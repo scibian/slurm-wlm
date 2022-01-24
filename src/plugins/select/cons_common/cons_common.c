@@ -44,6 +44,8 @@
 #include "src/common/slurm_selecttype_info.h"
 #include "src/common/slurm_topology.h"
 
+#include "src/slurmctld/gres_ctld.h"
+
 /* These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
  * overwritten when linking with the slurmctld.
@@ -157,6 +159,48 @@ static void _dump_job_res(struct job_resources *job)
 	     job->nhosts, str);
 }
 
+static bool _check_ntasks_per_sock(uint16_t core, uint16_t socket,
+				   uint16_t threads_per_core, uint16_t cps,
+				   uint16_t *cpu_cnt, bitstr_t * core_map)
+{
+	if (!cpu_cnt[socket]) {	/* Start use of next socket */
+		cpu_cnt[socket] = threads_per_core;
+	} else {	/* Continued use of same socket */
+		if (cpu_cnt[socket] >= cps) {
+			/* do not allocate this core */
+			bit_clear(core_map, core);
+			return true;
+		}
+		cpu_cnt[socket] += threads_per_core;
+	}
+	return false;
+}
+
+static void _count_used_cpus(uint16_t threads_per_core, uint16_t cpus_per_task,
+			     uint16_t ntasks_per_core, bool use_tpc,
+			     int *remain_cpt, uint16_t *avail_cpus,
+			     uint16_t *cpu_count)
+{
+	if (*avail_cpus >= threads_per_core) {
+		int used;
+		if (use_tpc) {
+			used = threads_per_core;
+		} else if ((ntasks_per_core == 1) &&
+			   (cpus_per_task > threads_per_core)) {
+			used = MIN(*remain_cpt, threads_per_core);
+		} else
+			used = threads_per_core;
+		*avail_cpus -= used;
+		*cpu_count  += used;
+		if (*remain_cpt <= used)
+			*remain_cpt = cpus_per_task;
+		else
+			*remain_cpt -= used;
+	} else {
+		*cpu_count += *avail_cpus;
+		*avail_cpus = 0;
+	}
+}
 /*
  * _allocate_sc - Given the job requirements, determine which CPUs/cores
  *                from the given node can be allocated (if any) to this
@@ -178,8 +222,9 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 				 int *cpu_alloc_size, bool entire_sockets_only,
 				 bitstr_t *req_sock_map)
 {
-	uint16_t cpu_count = 0, cpu_cnt = 0, part_cpu_limit = 0xffff;
-	uint16_t si, cps, avail_cpus = 0, num_tasks = 0;
+	uint16_t cpu_count = 0, part_cpu_limit = INFINITE16;
+	uint16_t cps, avail_cpus = 0, num_tasks = 0;
+	uint16_t req_sock_cpus = 0;
 	uint32_t c;
 	uint32_t core_begin;
 	uint32_t core_end;
@@ -191,14 +236,18 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	uint16_t cores_per_socket = select_node_record[node_i].cores;
 	uint16_t threads_per_core = select_node_record[node_i].vpus;
 	uint16_t min_cores = 1, min_sockets = 1, ntasks_per_socket = 0;
-	uint16_t ncpus_per_core = 0xffff;	/* Usable CPUs per core */
-	uint16_t ntasks_per_core = 0xffff;
+	uint16_t ncpus_per_core = INFINITE16;	/* Usable CPUs per core */
+	uint16_t ntasks_per_core = INFINITE16;
 	uint32_t free_cpu_count = 0, used_cpu_count = 0;
 	int tmp_cpt = 0; /* cpus_per_task */
 	uint16_t free_cores[sockets];
 	uint16_t used_cores[sockets];
 	uint32_t used_cpu_array[sockets];
+	uint16_t cpu_cnt[sockets];
+	uint16_t max_cpu_per_req_sock = INFINITE16;
 	avail_res_t *avail_res = xmalloc(sizeof(avail_res_t));
+	bitstr_t *tmp_core = NULL;
+	bool use_tpc = false;
 
 
 	if (is_cons_tres) {
@@ -212,6 +261,7 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	memset(free_cores, 0, sockets * sizeof(uint16_t));
 	memset(used_cores, 0, sockets * sizeof(uint16_t));
 	memset(used_cpu_array, 0, sockets * sizeof(uint32_t));
+	memset(cpu_cnt, 0, sockets * sizeof(uint16_t));
 
 	if (entire_sockets_only && details_ptr->whole_node &&
 	    (details_ptr->core_spec != NO_VAL16)) {
@@ -351,10 +401,11 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 			part_cpu_limit = job_ptr->part_ptr->max_cpus_per_node -
 				used_cpu_count;
 			if ((part_cpu_limit == 1) &&
-			    (((ntasks_per_core != 0xffff) &&
+			    (((ntasks_per_core != INFINITE16) &&
 			      (ntasks_per_core > part_cpu_limit)) ||
-			     (ntasks_per_socket > part_cpu_limit) ||
-			     ((ncpus_per_core != 0xffff) &&
+			     ((ntasks_per_socket != INFINITE16) &&
+			      (ntasks_per_socket > part_cpu_limit)) ||
+			     ((ncpus_per_core != INFINITE16) &&
 			      (ncpus_per_core > part_cpu_limit)) ||
 			     (cpus_per_task > part_cpu_limit))) {
 				/* insufficient available CPUs on this node */
@@ -452,10 +503,13 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 
 	for (i = 0; i < sockets; i++) {
 		uint16_t tmp = free_cores[i] * threads_per_core;
-		if ((tmp == 0) && req_sock_map && bit_test(req_sock_map, i)) {
-			/* no available resources on required socket */
-			num_tasks = 0;
-			goto fini;
+		if (req_sock_map && bit_test(req_sock_map, i)) {
+			if (tmp == 0) {
+				/* no available resources on required socket */
+				num_tasks = 0;
+				goto fini;
+			}
+			req_sock_cpus += tmp;
 		}
 		avail_cpus += tmp;
 		if (ntasks_per_socket)
@@ -467,8 +521,11 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	/*
 	 * If job requested exclusive rights to the node don't do the min
 	 * here since it will make it so we don't allocate the entire node.
+	 * Don't min num_tasks if cpus_per_tres given, since number of
+	 * CPUs in that case is not determined by tasks.
 	 */
-	if (details_ptr->ntasks_per_node && details_ptr->share_res)
+	if (details_ptr->ntasks_per_node && details_ptr->share_res &&
+	    !job_ptr->cpus_per_tres)
 		num_tasks = MIN(num_tasks, details_ptr->ntasks_per_node);
 
 	if (cpus_per_task < 2) {
@@ -522,30 +579,74 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	} else
 		cps = cores_per_socket * threads_per_core;
 
-	si = 9999;
 	tmp_cpt = cpus_per_task;
-	for (c = core_begin; c < core_end && (avail_cpus > 0); c++) {
-		if (!bit_test(core_map, c))
+	if (req_sock_map) {
+		i = 0;
+		tmp_core = bit_alloc(bit_size(core_map));
+		if (req_sock_cpus > avail_cpus) {
+			max_cpu_per_req_sock = avail_cpus /
+					       bit_set_count(req_sock_map);
+		}
+	} else {
+		i = sockets;
+	}
+
+	if (is_cons_tres &&
+	    (slurm_conf.select_type_param & CR_ONE_TASK_PER_CORE) &&
+	    (details_ptr->min_gres_cpu > 0)) {
+		use_tpc = true;
+	}
+	for ( ; ((i < sockets) && (avail_cpus > 0)); i++) {
+		if (bit_test(req_sock_map, i)) {
+			for (j = 0; j < cores_per_socket &&
+				    free_cores[i]; j++) {
+				c = (i * cores_per_socket) + j;
+				if (!bit_test(core_map, c))
+					continue;
+				/*
+				 * this socket has free cores, but make sure we don't
+				 * use more than are needed for ntasks_per_socket
+				 */
+				if (_check_ntasks_per_sock(c, i,
+							   threads_per_core,
+							   cps, cpu_cnt,
+							   core_map)) {
+					continue;
+				}
+				free_cores[i]--;
+				/*
+				 * we have to ensure that cpu_count is not bigger than
+				 * avail_cpus due to hyperthreading or this would break
+				 * the selection logic providing more CPUs than allowed
+				 * after task-related data processing of stage 3
+				 */
+				_count_used_cpus(threads_per_core,
+						 cpus_per_task, ntasks_per_core,
+						 use_tpc, &tmp_cpt, &avail_cpus,
+						 &cpu_count);
+
+				bit_set(tmp_core, c);
+				if (cpu_cnt[i] > max_cpu_per_req_sock)
+					break;
+			}
+		}
+	}
+	for (c = core_begin; c < core_end ; c++) {
+		if (!bit_test(core_map, c) || (tmp_core &&
+					       bit_test(tmp_core, c)))
 			continue;
 
 		/* Socket index */
 		i = (uint16_t) ((c - core_begin) / cores_per_socket);
-		if (free_cores[i] > 0) {
+		if (free_cores[i] > 0 && (avail_cpus > 0)) {
 			/*
 			 * this socket has free cores, but make sure we don't
 			 * use more than are needed for ntasks_per_socket
 			 */
-			if (si != i) {	/* Start use of next socket */
-				si = i;
-				cpu_cnt = threads_per_core;
-			} else {	/* Continued use of same socket */
-				if (cpu_cnt >= cps) {
-					/* do not allocate this core */
-					bit_clear(core_map, c);
-					continue;
-				}
-				cpu_cnt += threads_per_core;
-			}
+			if (_check_ntasks_per_sock(c, i, threads_per_core, cps,
+						   cpu_cnt, core_map))
+				continue;
+
 			free_cores[i]--;
 			/*
 			 * we have to ensure that cpu_count is not bigger than
@@ -553,35 +654,12 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 			 * the selection logic providing more CPUs than allowed
 			 * after task-related data processing of stage 3
 			 */
-			if (avail_cpus >= threads_per_core) {
-				int used;
-				if (is_cons_tres &&
-				    (slurm_conf.select_type_param &
-				     CR_ONE_TASK_PER_CORE) &&
-				    (details_ptr->min_gres_cpu > 0)) {
-					used = threads_per_core;
-				} else if ((ntasks_per_core == 1) &&
-					   (cpus_per_task > threads_per_core)) {
-					used = MIN(tmp_cpt, threads_per_core);
-				} else
-					used = threads_per_core;
-				avail_cpus -= used;
-				cpu_count  += used;
-				if (tmp_cpt <= used)
-					tmp_cpt = cpus_per_task;
-				else
-					tmp_cpt -= used;
-			} else {
-				cpu_count += avail_cpus;
-				avail_cpus = 0;
-			}
-
+			_count_used_cpus(threads_per_core, cpus_per_task,
+				         ntasks_per_core, use_tpc, &tmp_cpt,
+					 &avail_cpus, &cpu_count);
 		} else
 			bit_clear(core_map, c);
 	}
-	/* clear leftovers */
-	if (c < core_end)
-		bit_nclear(core_map, c, core_end - 1);
 
 fini:
 	/* if num_tasks == 0 then clear all bits on this node */
@@ -625,6 +703,7 @@ fini:
 		avail_res->spec_threads = spec_threads;
 		avail_res->vpus = select_node_record[node_i].vpus;
 	}
+	FREE_NULL_BITMAP(tmp_core);
 
 	return avail_res;
 }
@@ -726,20 +805,18 @@ extern void common_free_avail_res(avail_res_t *avail_res)
 
 /*
  * Return the number of usable logical processors by a given job on
- * some specified node. Returns 0xffff if no limit.
+ * some specified node. Returns INFINITE16 if no limit.
  */
-extern int common_cpus_per_core(struct job_details *details, int node_inx)
+extern uint16_t common_cpus_per_core(struct job_details *details, int node_inx)
 {
-	uint16_t ncpus_per_core = 0xffff;	/* Usable CPUs per core */
+	uint16_t ncpus_per_core = INFINITE16;	/* Usable CPUs per core */
 	uint16_t threads_per_core = select_node_record[node_inx].vpus;
 
 	if (is_cons_tres &&
 	    (slurm_conf.select_type_param & CR_ONE_TASK_PER_CORE) &&
 	    (details->min_gres_cpu > 0)) {
 		/* May override default of 1 CPU per core */
-		uint16_t pu_per_core = 0xffff;	/* Usable CPUs per core */
-		uint16_t vpus_per_core = select_node_record[node_inx].vpus;
-		return MIN(vpus_per_core, pu_per_core);
+		return select_node_record[node_inx].vpus;
 	}
 
 	if (details && details->mc_ptr) {
@@ -1011,10 +1088,15 @@ extern int select_p_job_init(List job_list)
  */
 extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 {
-	char *preempt_type, *sched_params, *tmp_ptr;
+	char *preempt_type, *tmp_ptr;
 	uint32_t cume_cores = 0;
 	int i;
 
+	if (!slurm_conf.select_type_param) {
+		info("%s SelectTypeParameters not specified, using default value: CR_Core_Memory",
+		     plugin_type);
+		slurm_conf.select_type_param = (CR_CORE | CR_MEMORY);
+	}
 	if (!(slurm_conf.select_type_param & (CR_CPU | CR_CORE | CR_SOCKET))) {
 		fatal("Invalid SelectTypeParameters: %s (%u), "
 		      "You need at least CR_(CPU|CORE|SOCKET)*",
@@ -1030,12 +1112,12 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 		return SLURM_ERROR;
 	}
 
-	sched_params = slurm_get_sched_params();
-	if (xstrcasestr(sched_params, "preempt_strict_order"))
+	if (xstrcasestr(slurm_conf.sched_params, "preempt_strict_order"))
 		preempt_strict_order = true;
 	else
 		preempt_strict_order = false;
-	if ((tmp_ptr = xstrcasestr(sched_params, "preempt_reorder_count="))) {
+	if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+				   "preempt_reorder_count="))) {
 		preempt_reorder_cnt = atoi(tmp_ptr + 22);
 		if (preempt_reorder_cnt < 0) {
 			error("Invalid SchedulerParameters preempt_reorder_count: %d",
@@ -1043,7 +1125,9 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 			preempt_reorder_cnt = 1;	/* Use default value */
 		}
 	}
-	if ((tmp_ptr = xstrcasestr(sched_params, "bf_window_linear="))) {
+
+	if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+				   "bf_window_linear="))) {
 		bf_window_scale = atoi(tmp_ptr + 17);
 		if (bf_window_scale <= 0) {
 			error("Invalid SchedulerParameters bf_window_linear: %d",
@@ -1053,19 +1137,18 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 	} else
 		bf_window_scale = 0;
 
-	if (xstrcasestr(sched_params, "pack_serial_at_end"))
+	if (xstrcasestr(slurm_conf.sched_params, "pack_serial_at_end"))
 		pack_serial_at_end = true;
 	else
 		pack_serial_at_end = false;
-	if (xstrcasestr(sched_params, "spec_cores_first"))
+	if (xstrcasestr(slurm_conf.sched_params, "spec_cores_first"))
 		spec_cores_first = true;
 	else
 		spec_cores_first = false;
-	if (xstrcasestr(sched_params, "bf_busy_nodes"))
+	if (xstrcasestr(slurm_conf.sched_params, "bf_busy_nodes"))
 		backfill_busy_nodes = true;
 	else
 		backfill_busy_nodes = false;
-	xfree(sched_params);
 
 	preempt_type = slurm_get_preempt_type();
 	preempt_by_part = false;
@@ -1142,7 +1225,7 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 			_check_allocatable_sockets(&select_node_record[i]);
 
 		select_node_usage[i].node_state = NODE_CR_AVAILABLE;
-		gres_plugin_node_state_dealloc_all(
+		gres_node_state_dealloc_all(
 			select_node_record[i].node_ptr->gres_list);
 	}
 	part_data_create_array();
@@ -1174,7 +1257,8 @@ extern int select_p_job_ready(job_record_t *job_ptr)
 		if (bit_test(job_ptr->node_bitmap, i) == 0)
 			continue;
 		node_ptr = node_record_table_ptr + i;
-		if (IS_NODE_POWER_SAVE(node_ptr) || IS_NODE_POWER_UP(node_ptr))
+		if (IS_NODE_POWERED_DOWN(node_ptr) ||
+		    IS_NODE_POWERING_UP(node_ptr))
 			return 0;
 	}
 
@@ -1223,13 +1307,13 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	}
 
 	if (is_cons_tres) {
-		if (to_job_ptr->gres_list) {
+		if (to_job_ptr->gres_list_req) {
 			/* Can't reset gres/mps fields today */
 			error("%pJ has allocated GRES",
 			      to_job_ptr);
 			return SLURM_ERROR;
 		}
-		if (from_job_ptr->gres_list) {
+		if (from_job_ptr->gres_list_req) {
 			/* Can't reset gres/mps fields today */
 			error("%pJ has allocated GRES",
 			      from_job_ptr);
@@ -1263,6 +1347,10 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 	new_job_resrcs_ptr->nodes = bitmap2node_name(new_job_resrcs_ptr->
 						     node_bitmap);
 	new_job_resrcs_ptr->whole_node = to_job_resrcs_ptr->whole_node;
+	new_job_resrcs_ptr->threads_per_core =
+		to_job_resrcs_ptr->threads_per_core;
+	new_job_resrcs_ptr->cr_type = to_job_resrcs_ptr->cr_type;
+
 	build_job_resources(new_job_resrcs_ptr, node_record_table_ptr);
 	xfree(to_job_ptr->node_addr);
 	to_job_ptr->node_addr = xcalloc(node_cnt, sizeof(slurm_addr_t));
@@ -1360,10 +1448,15 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 		}
 	}
 	build_job_resources_cpu_array(new_job_resrcs_ptr);
-	gres_plugin_job_merge(from_job_ptr->gres_list,
-			      from_job_resrcs_ptr->node_bitmap,
-			      to_job_ptr->gres_list,
-			      to_job_resrcs_ptr->node_bitmap);
+	gres_ctld_job_merge(from_job_ptr->gres_list_req,
+			    from_job_resrcs_ptr->node_bitmap,
+			    to_job_ptr->gres_list_req,
+			    to_job_resrcs_ptr->node_bitmap);
+	/* copy the allocated gres */
+	gres_ctld_job_merge(from_job_ptr->gres_list_alloc,
+			    from_job_resrcs_ptr->node_bitmap,
+			    to_job_ptr->gres_list_alloc,
+			    to_job_resrcs_ptr->node_bitmap);
 
 	/* Now swap data: "new" -> "to" and clear "from" */
 	free_job_resources(&to_job_ptr->job_resrcs);
@@ -1452,10 +1545,10 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 			gres_list = node_usage[i].gres_list;
 		else
 			gres_list = node_ptr->gres_list;
-		gres_plugin_job_dealloc(job_ptr->gres_list, gres_list, n,
-					job_ptr->job_id, node_ptr->name,
-					old_job, job_ptr->user_id, true);
-		gres_plugin_node_state_log(gres_list, node_ptr->name);
+		gres_ctld_job_dealloc(job_ptr->gres_list_alloc, gres_list, n,
+				      job_ptr->job_id, node_ptr->name,
+				      old_job, true);
+		gres_node_state_log(gres_list, node_ptr->name);
 
 		if (node_usage[i].alloc_memory < job->memory_allocated[n]) {
 			error("node %s memory is underallocated (%"PRIu64"-%"PRIu64") for %pJ",
@@ -1542,39 +1635,6 @@ extern int select_p_job_signal(job_record_t *job_ptr, int signal)
 	return SLURM_SUCCESS;
 }
 
-extern int select_p_job_mem_confirm(job_record_t *job_ptr)
-{
-	int i_first, i_last, i, offset;
-	uint64_t avail_mem, lowest_mem = 0;
-
-	xassert(job_ptr);
-
-	if ((job_ptr->details == NULL) ||
-	    (job_ptr->job_resrcs == NULL) ||
-	    (job_ptr->job_resrcs->node_bitmap == NULL) ||
-	    (job_ptr->job_resrcs->memory_allocated == NULL))
-		return SLURM_ERROR;
-	i_first = bit_ffs(job_ptr->job_resrcs->node_bitmap);
-	if (i_first >= 0)
-		i_last = bit_fls(job_ptr->job_resrcs->node_bitmap);
-	else
-		i_last = i_first - 1;
-	for (i = i_first, offset = 0; i <= i_last; i++) {
-		if (!bit_test(job_ptr->job_resrcs->node_bitmap, i))
-			continue;
-		avail_mem = select_node_record[i].real_memory -
-			select_node_record[i].mem_spec_limit;
-		job_ptr->job_resrcs->memory_allocated[offset] = avail_mem;
-		select_node_usage[i].alloc_memory = avail_mem;
-		if ((offset == 0) || (lowest_mem > avail_mem))
-			lowest_mem = avail_mem;
-		offset++;
-	}
-	job_ptr->details->pn_min_memory = lowest_mem;
-
-	return SLURM_SUCCESS;
-}
-
 extern int select_p_job_fini(job_record_t *job_ptr)
 {
 	xassert(job_ptr);
@@ -1650,7 +1710,7 @@ extern int select_p_step_finish(step_record_t *step_ptr, bool killing_step)
 }
 
 extern int select_p_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
-					 Buf buffer,
+					 buf_t *buffer,
 					 uint16_t protocol_version)
 {
 	select_nodeinfo_t *nodeinfo_empty = NULL;
@@ -1700,7 +1760,7 @@ extern int select_p_select_nodeinfo_free(select_nodeinfo_t *nodeinfo)
 }
 
 extern int select_p_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo,
-					   Buf buffer,
+					   buf_t *buffer,
 					   uint16_t protocol_version)
 {
 	uint32_t uint32_tmp;
@@ -1849,8 +1909,8 @@ extern int select_p_select_nodeinfo_set_all(void)
 			gres_list = select_node_usage[n].gres_list;
 		else
 			gres_list = node_ptr->gres_list;
-		gres_set_node_tres_cnt(gres_list, nodeinfo->tres_alloc_cnt,
-				       false);
+		gres_ctld_set_node_tres_cnt(gres_list, nodeinfo->tres_alloc_cnt,
+					    false);
 
 		xfree(nodeinfo->tres_alloc_fmt_str);
 		nodeinfo->tres_alloc_fmt_str =
@@ -1884,7 +1944,12 @@ extern int select_p_select_nodeinfo_set(job_record_t *job_ptr)
 	} else
 		return SLURM_SUCCESS;
 
-	gres_plugin_job_state_log(job_ptr->gres_list, job_ptr->job_id);
+	gres_job_state_log(job_ptr->gres_list_req, job_ptr->job_id);
+
+	if ((slurm_conf.debug_flags & DEBUG_FLAG_GRES) &&
+	    job_ptr->gres_list_alloc)
+		info("Alloc GRES");
+	gres_job_state_log(job_ptr->gres_list_alloc, job_ptr->job_id);
 
 	return rc;
 }
@@ -1973,7 +2038,8 @@ extern select_jobinfo_t *select_p_select_jobinfo_copy(select_jobinfo_t *jobinfo)
 }
 
 /* Unused for this plugin */
-extern int select_p_select_jobinfo_pack(select_jobinfo_t *jobinfo, Buf buffer,
+extern int select_p_select_jobinfo_pack(select_jobinfo_t *jobinfo,
+					buf_t *buffer,
 					uint16_t protocol_version)
 {
 	return SLURM_SUCCESS;
@@ -1981,7 +2047,7 @@ extern int select_p_select_jobinfo_pack(select_jobinfo_t *jobinfo, Buf buffer,
 
 /* Unused for this plugin */
 extern int select_p_select_jobinfo_unpack(select_jobinfo_t *jobinfo,
-					  Buf buffer,
+					  buf_t *buffer,
 					  uint16_t protocol_version)
 {
 	return SLURM_SUCCESS;
@@ -2154,6 +2220,11 @@ extern bitstr_t *select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 		 */
 		if (!exc_core_bitmap)
 			exc_core_bitmap = build_core_array();
+		/*
+		 * FIXME: spec_core_filter for cons_res is really checking if
+		 * CPUs are not in use by running jobs. Neither cons_res nor
+		 * cons_tres checks spec cores today.
+		 */
 		(*cons_common_callbacks.spec_core_filter)(
 			avail_node_bitmap, exc_core_bitmap);
 	}

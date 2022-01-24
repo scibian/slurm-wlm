@@ -319,8 +319,8 @@ extern void assoc_mgr_info_get_pack_msg(
  * IN: version of Slurm this is packed in
  * RET: SLURM_SUCCESS on SUCCESS, SLURM_ERROR else
  */
-extern int assoc_mgr_info_unpack_msg(
-	assoc_mgr_info_msg_t **object, Buf buffer, uint16_t protocol_version);
+extern int assoc_mgr_info_unpack_msg(assoc_mgr_info_msg_t **object,
+				     buf_t *buffer, uint16_t protocol_version);
 
 /*
  * assoc_mgr_update - update the association manager
@@ -482,15 +482,6 @@ extern int assoc_mgr_find_tres_pos2(slurmdb_tres_rec_t *tres_rec, bool locked);
  */
 extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec(
 	slurmdb_tres_rec_t *tres_rec);
-
-/*
- * Calls assoc_mgr_find_tres_pos and returns the pointer in the
- * assoc_mgr_tres_array. Ignores GRES "type" option.
- * NOTE: The assoc_mgr tres read lock needs to be locked before calling this
- * function and while using the returned record.
- */
-extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec2(
-		slurmdb_tres_rec_t *tres_rec);
 
 /* fills in allocates and sets tres_cnt based off tres_str
  * OUT tres_cnt - array to be filled in g_tres_cnt in length

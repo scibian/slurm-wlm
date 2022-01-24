@@ -886,7 +886,7 @@ extern int jobacctinfo_setinfo(jobacctinfo_t *jobacct,
 	struct rusage *rusage = (struct rusage *)data;
 	uint64_t *uint64 = (uint64_t *) data;
 	struct jobacctinfo *send = (struct jobacctinfo *) data;
-	Buf buffer = NULL;
+	buf_t *buffer = NULL;
 
 	if (!plugin_polling)
 		return SLURM_SUCCESS;
@@ -981,7 +981,7 @@ extern int jobacctinfo_getinfo(
 	case JOBACCT_DATA_PIPE:
 		if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 			int len;
-			Buf buffer;
+			buf_t *buffer;
 
 			safe_read(*fd, &len, sizeof(int));
 			buf = xmalloc(len);
@@ -1016,9 +1016,8 @@ rwfail:
 	return SLURM_ERROR;
 }
 
-extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
-			     uint16_t rpc_version, uint16_t protocol_type,
-			     Buf buffer)
+extern void jobacctinfo_pack(jobacctinfo_t *jobacct, uint16_t rpc_version,
+			     uint16_t protocol_type, buf_t *buffer)
 {
 	bool no_pack;
 
@@ -1031,10 +1030,58 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 
 	pack8((uint8_t) 1, buffer);
 
-	if (rpc_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		pack32((uint32_t)jobacct->user_cpu_sec, buffer);
+	if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
+		pack64(jobacct->user_cpu_sec, buffer);
 		pack32((uint32_t)jobacct->user_cpu_usec, buffer);
-		pack32((uint32_t)jobacct->sys_cpu_sec, buffer);
+		pack64(jobacct->sys_cpu_sec, buffer);
+		pack32((uint32_t)jobacct->sys_cpu_usec, buffer);
+		pack32((uint32_t)jobacct->act_cpufreq, buffer);
+		pack64((uint64_t)jobacct->energy.consumed_energy, buffer);
+
+		pack32_array(jobacct->tres_ids, jobacct->tres_count, buffer);
+
+		slurm_pack_list(jobacct->tres_list,
+				slurmdb_pack_tres_rec, buffer,
+				SLURM_PROTOCOL_VERSION);
+
+		pack64_array(jobacct->tres_usage_in_max,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_max_nodeid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_max_taskid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_min,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_min_nodeid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_min_taskid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_in_tot,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_max,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_max_nodeid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_max_taskid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_min,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_min_nodeid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_min_taskid,
+			     jobacct->tres_count, buffer);
+		pack64_array(jobacct->tres_usage_out_tot,
+			     jobacct->tres_count, buffer);
+	} else if (rpc_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		if (jobacct->user_cpu_sec > NO_VAL) {
+			pack32((uint32_t)NO_VAL, buffer);
+		} else
+			pack32((uint32_t)jobacct->user_cpu_sec, buffer);
+		pack32((uint32_t)jobacct->user_cpu_usec, buffer);
+		if (jobacct->sys_cpu_sec > NO_VAL) {
+			pack32((uint32_t)NO_VAL, buffer);
+		} else
+			pack32((uint32_t)jobacct->sys_cpu_sec, buffer);
 		pack32((uint32_t)jobacct->sys_cpu_usec, buffer);
 		pack32((uint32_t)jobacct->act_cpufreq, buffer);
 		pack64((uint64_t)jobacct->energy.consumed_energy, buffer);
@@ -1079,9 +1126,8 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 	}
 }
 
-extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
-			      uint16_t rpc_version, uint16_t protocol_type,
-			      Buf buffer, bool alloc)
+extern int jobacctinfo_unpack(jobacctinfo_t **jobacct, uint16_t rpc_version,
+			      uint16_t protocol_type, buf_t *buffer, bool alloc)
 {
 	uint32_t uint32_tmp;
 	uint8_t  uint8_tmp;
@@ -1102,7 +1148,53 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 		_free_tres_usage(*jobacct);
 	}
 
-	if (rpc_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
+		safe_unpack64(&(*jobacct)->user_cpu_sec, buffer);
+		safe_unpack32(&uint32_tmp, buffer);
+		(*jobacct)->user_cpu_usec = uint32_tmp;
+		safe_unpack64(&(*jobacct)->sys_cpu_sec, buffer);
+		safe_unpack32(&uint32_tmp, buffer);
+		(*jobacct)->sys_cpu_usec = uint32_tmp;
+
+		safe_unpack32(&(*jobacct)->act_cpufreq, buffer);
+		safe_unpack64(&(*jobacct)->energy.consumed_energy, buffer);
+
+		safe_unpack32_array(&(*jobacct)->tres_ids,
+				    &(*jobacct)->tres_count, buffer);
+		if (slurm_unpack_list(&(*jobacct)->tres_list,
+				      slurmdb_unpack_tres_rec,
+				      slurmdb_destroy_tres_rec,
+				      buffer, rpc_version) != SLURM_SUCCESS)
+			goto unpack_error;
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_max,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_max_nodeid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_max_taskid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_min,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_min_nodeid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_min_taskid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_in_tot,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_max,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_max_nodeid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_max_taskid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_min,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_min_nodeid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_min_taskid,
+				    &uint32_tmp, buffer);
+		safe_unpack64_array(&(*jobacct)->tres_usage_out_tot,
+				    &uint32_tmp, buffer);
+	} else if (rpc_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&uint32_tmp, buffer);
 		(*jobacct)->user_cpu_sec = uint32_tmp;
 		safe_unpack32(&uint32_tmp, buffer);
@@ -1161,8 +1253,10 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 unpack_error:
 	debug2("jobacctinfo_unpack: unpack_error: size_buf(buffer) %u",
 	       size_buf(buffer));
-	if (alloc)
+	if (alloc) {
 		jobacctinfo_destroy(*jobacct);
+		*jobacct = NULL;
+	}
 
        	return SLURM_ERROR;
 }
@@ -1179,15 +1273,15 @@ extern void jobacctinfo_aggregate(jobacctinfo_t *dest, jobacctinfo_t *from)
 
 	dest->user_cpu_sec	+= from->user_cpu_sec;
 	dest->user_cpu_usec	+= from->user_cpu_usec;
-	while (dest->user_cpu_usec >= 1E6) {
-		dest->user_cpu_sec++;
-		dest->user_cpu_usec -= 1E6;
+	if (dest->user_cpu_usec >= 1E6) {
+		dest->user_cpu_sec += dest->user_cpu_usec / 1E6;
+		dest->user_cpu_usec = dest->user_cpu_usec % (int)1E6;
 	}
 	dest->sys_cpu_sec	+= from->sys_cpu_sec;
 	dest->sys_cpu_usec	+= from->sys_cpu_usec;
-	while (dest->sys_cpu_usec >= 1E6) {
-		dest->sys_cpu_sec++;
-		dest->sys_cpu_usec -= 1E6;
+	if (dest->sys_cpu_usec >= 1E6) {
+		dest->sys_cpu_sec += dest->sys_cpu_usec / 1E6;
+		dest->sys_cpu_usec = dest->sys_cpu_usec % (int)1E6;
 	}
 	dest->act_cpufreq 	+= from->act_cpufreq;
 	if (dest->energy.consumed_energy != NO_VAL64) {

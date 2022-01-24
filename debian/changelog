@@ -1,3 +1,24 @@
+slurm-wlm (21.08.5-1) unstable; urgency=medium
+
+  * New upstream major release
+  * Refresh patches and drop changes included upstream
+  * Bump libslurm to soname 37
+  * Update d/copyright
+  * Remove man3 section dropped upstream
+  * Remove pmix support
+  * Remove defaults and old parameters in tests configuration files
+  * Explicitly use the 1.8 HDF5 API
+  * Update configurators
+  * Update simple and cgroup example
+  * Add slurm.conf with cgroup example
+  * Change AccountingStoreJobComment into AccountingStoreFlags in
+    slurm-wlm-basic-plugins postinst
+  * Add example files to slurmctld, slurmd, slurm-client and slurmdbd
+  * Add bash completion
+  * Bump standard version to 4.6.0 (no changes)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 13 Jan 2022 16:30:47 +0100
+
 slurm-wlm (20.11.8-1sci10u1) scibian10; urgency=medium
 
   * Backport to scibian10

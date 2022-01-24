@@ -5,31 +5,31 @@
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Chris Dunlap <cdunlap@llnl.gov>.
  *  UCRL-CODE-2002-009.
- *  
+ *
  *  This file is part of ConMan, a remote console management program.
  *  For details, see <http://www.llnl.gov/linux/conman/>.
- *  
+ *
  *  ConMan is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  In addition, as a special exception, the copyright holders give permission 
- *  to link the code of portions of this program with the OpenSSL library under 
- *  certain conditions as described in each individual source file, and 
- *  distribute linked combinations including the two. You must obey the GNU 
- *  General Public License in all respects for all of the code used other than 
- *  OpenSSL. If you modify file(s) with this exception, you may extend this 
- *  exception to your version of the file(s), but you are not obligated to do 
+ *  In addition, as a special exception, the copyright holders give permission
+ *  to link the code of portions of this program with the OpenSSL library under
+ *  certain conditions as described in each individual source file, and
+ *  distribute linked combinations including the two. You must obey the GNU
+ *  General Public License in all respects for all of the code used other than
+ *  OpenSSL. If you modify file(s) with this exception, you may extend this
+ *  exception to your version of the file(s), but you are not obligated to do
  *  so. If you do not wish to do so, delete this exception statement from your
- *  version.  If you delete this exception statement from all source files in 
+ *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
- *  
+ *
  *  ConMan is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
- *  
+ *
  *  You should have received a copy of the GNU General Public License along
  *  with ConMan; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
@@ -39,6 +39,7 @@
 #define _FD_H
 
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -46,13 +47,7 @@
 #include "src/common/macros.h"
 
 /* close all FDs >= a specified value */
-static inline void closeall(int fd)
-{
-	int fdlimit = sysconf(_SC_OPEN_MAX);
-
-	while (fd < fdlimit)
-		close(fd++);
-}
+extern void closeall(int fd);
 
 void fd_set_close_on_exec(int fd);
 /*
@@ -100,14 +95,6 @@ pid_t fd_is_read_lock_blocked(int fd);
  *    returns the pid of the process holding the lock; o/w, returns 0.
  */
 
-ssize_t fd_read_line(int fd, void *buf, size_t maxlen);
-/*
- *  Reads at most (maxlen-1) bytes up to a newline from (fd) into (buf).
- *  The (buf) is guaranteed to be NUL-terminated and will contain the
- *    newline if it is encountered within (maxlen-1) bytes.
- *  Returns the number of bytes read, 0 on EOF, or -1 on error.
- */
-
 extern int wait_fd_readable(int fd, int time_limit);
 /* Wait for a file descriptor to be readable (up to time_limit seconds).
  * Return 0 when readable or -1 on error */
@@ -121,7 +108,7 @@ extern int fsync_and_close(int fd, const char *file_type);
 
 /*
  * Sets err to socket error
- * or returns SLURM_ERROR on error
+ * Returns SLURM_SUCCESS or errno value from getsockopt on error
  * */
 int fd_get_socket_error(int fd, int *err);
 
@@ -140,6 +127,16 @@ int fd_get_socket_error(int fd, int *err);
  *
  */
 extern char *fd_resolve_path(int fd);
+
+/*
+ * Resolve peer address for a given socket (fd)
+ *
+ * Explicitly preserves value of errno.
+ *
+ * IN fd - file descriptor to resolve peer
+ * IN RET ptr to a peer address (must xfree()) or NULL on failure
+ */
+extern char *fd_resolve_peer(int fd);
 
 /*
  * Set inline Out of Band (OOB) data on socket fd

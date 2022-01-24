@@ -10,7 +10,7 @@
  * This file is part of Slurm, a resource management program.
  * For details, see <https://slurm.schedmd.com/>.
  * Please also read the included file: DISCLAIMER.
- * 
+ *
  * LLNL Preamble Notice
  *
  * A. This notice is required to be provided under our contract with
@@ -244,7 +244,7 @@ static int pmix_stepd_send(const char* buf, uint32_t size, int rank)
 	free(host); /* strdup-ed */
 
 	return rc;
-} 
+}
 
 /* allocate resources to track PMIX_Ring state */
 int pmix_ring_init(const pmi2_job_info_t* job, char*** env)
@@ -418,7 +418,7 @@ int pmix_ring_out(int count, char* left, char* right)
 		/* TODO: do we need hton translation? */
 
 		/* construct message */
-		Buf buf = init_buf(1024);
+		buf_t *buf = init_buf(1024);
 		pack16(TREE_CMD_RING_RESP,    buf); /* specify message type (RING_OUT) */
 		pack32((uint32_t) msg->count, buf); /* send count value */
 		packstr(msg->left,            buf); /* send left value */
@@ -548,7 +548,7 @@ int pmix_ring_in(int ring_id, int count, char* left, char* right)
 			/* TODO: do we need hton translation? */
 
 			/* construct message */
-			Buf buf = init_buf(1024);
+			buf_t *buf = init_buf(1024);
 			pack16(TREE_CMD_RING, buf); /* specify message type (RING_IN) */
 			pack32(my_rank,       buf); /* send our rank */
 			pack32(sum,           buf); /* send count value */

@@ -56,6 +56,7 @@
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/assoc_mgr.h"
+#include "src/common/gres.h"
 #include "src/common/uid.h"
 #include "src/lua/slurm_lua.h"
 #include "src/slurmctld/locks.h"
@@ -94,7 +95,7 @@ const char plugin_name[]       	= "Job submit lua plugin";
 const char plugin_type[]       	= "job_submit/lua";
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
-static const char lua_script_path[] = DEFAULT_SCRIPT_DIR "/job_submit.lua";
+static char *lua_script_path;
 static time_t lua_script_last_loaded = (time_t) 0;
 static lua_State *L = NULL;
 static char *user_msg = NULL;
@@ -493,6 +494,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushstring(L, job_desc->clusters);
 	} else if (!xstrcmp(name, "comment")) {
 		lua_pushstring(L, job_desc->comment);
+	} else if (!xstrcmp(name, "container")) {
+		lua_pushstring(L, job_desc->container);
 	} else if (!xstrcmp(name, "contiguous")) {
 		lua_pushnumber(L, job_desc->contiguous);
 	} else if (!xstrcmp(name, "cores_per_socket")) {
@@ -604,6 +607,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushstring(L, job_desc->qos);
 	} else if (!xstrcmp(name, "reboot")) {
 		lua_pushnumber(L, job_desc->reboot);
+	} else if (!xstrcmp(name, "req_context")) {
+		lua_pushstring(L, job_desc->req_context);
 	} else if (!xstrcmp(name, "req_nodes")) {
 		lua_pushstring(L, job_desc->req_nodes);
 	} else if (!xstrcmp(name, "req_switch")) {
@@ -767,6 +772,11 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->comment);
 		if (strlen(value_str))
 			job_desc->comment = xstrdup(value_str);
+	} else if (!xstrcmp(name, "container")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->container);
+		if (strlen(value_str))
+			job_desc->container = xstrdup(value_str);
 	} else if (!xstrcmp(name, "contiguous")) {
 		job_desc->contiguous = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "cores_per_socket")) {
@@ -813,7 +823,8 @@ static int _set_job_req_field(lua_State *L)
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->tres_per_node);
 		if (strlen(value_str))
-			job_desc->tres_per_node = xstrdup(value_str);
+			job_desc->tres_per_node =
+				gres_prepend_tres_type(value_str);
 	} else if (!xstrcmp(name, "immediate")) {
 		job_desc->immediate = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "licenses")) {
@@ -901,6 +912,11 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->script);
 		if (strlen(value_str))
 			job_desc->script = xstrdup(value_str);
+	} else if (!xstrcmp(name, "selinux_context")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->selinux_context);
+		if (strlen(value_str))
+			job_desc->selinux_context = xstrdup(value_str);
 	} else if (!xstrcmp(name, "shared") ||
 		   !xstrcmp(name, "oversubscribe")) {
 		job_desc->shared = luaL_checknumber(L, 3);
@@ -1256,6 +1272,7 @@ int init(void)
 
 	if ((rc = slurm_lua_init()) != SLURM_SUCCESS)
 		return rc;
+	lua_script_path = get_extra_conf_path("job_submit.lua");
 
 	return slurm_lua_loadscript(&L, "job_submit/lua",
 				    lua_script_path, req_fxns,
@@ -1271,6 +1288,7 @@ int fini(void)
 		L = NULL;
 		lua_script_last_loaded = 0;
 	}
+	xfree(lua_script_path);
 
 	slurm_lua_fini();
 

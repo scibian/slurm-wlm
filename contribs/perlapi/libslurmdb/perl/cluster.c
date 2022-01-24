@@ -395,7 +395,7 @@ cluster_accounting_rec_to_hv(slurmdb_cluster_accounting_rec_t* ar, HV* hv)
     STORE_FIELD(hv, ar, over_secs,    uint64_t);
     STORE_FIELD(hv, ar, pdown_secs,   uint64_t);
     STORE_FIELD(hv, ar, period_start, time_t);
-    STORE_FIELD(hv, ar, resv_secs,    uint64_t);
+    STORE_FIELD(hv, ar, plan_secs,    uint64_t);
 
     rh = (HV*)sv_2mortal((SV*)newHV());
     if (tres_rec_to_hv(&ar->tres_rec, rh) < 0) {
@@ -738,6 +738,7 @@ job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
     STORE_FIELD(hv, rec, elapsed,         uint32_t);
     STORE_FIELD(hv, rec, eligible,        time_t);
     STORE_FIELD(hv, rec, end,             time_t);
+    STORE_FIELD(hv, rec, env,             charp);
     STORE_FIELD(hv, rec, exitcode,        uint32_t);
     /*STORE_FIELD(hv, rec, first_step_ptr,  void*);*/
     STORE_FIELD(hv, rec, gid,             uint32_t);
@@ -753,10 +754,12 @@ job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
     STORE_FIELD(hv, rec, requid,          uint32_t);
     STORE_FIELD(hv, rec, resvid,          uint32_t);
     STORE_FIELD(hv, rec, resv_name,       charp);
+    STORE_FIELD(hv, rec, script,          charp);
     STORE_FIELD(hv, rec, show_full,       uint32_t);
     STORE_FIELD(hv, rec, start,           time_t);
     STORE_FIELD(hv, rec, state,           uint32_t);
     STORE_FIELD(hv, rec, submit,          time_t);
+    STORE_FIELD(hv, rec, submit_line,     charp);
     STORE_FIELD(hv, rec, suspended,       uint32_t);
     STORE_FIELD(hv, rec, sys_cpu_sec,     uint32_t);
     STORE_FIELD(hv, rec, sys_cpu_usec,    uint32_t);
@@ -811,6 +814,7 @@ qos_rec_to_hv(slurmdb_qos_rec_t* rec, HV* hv, List all_qos)
     STORE_FIELD(hv, rec, grp_tres_mins,       charp);
     STORE_FIELD(hv, rec, grp_tres_run_mins,   charp);
     STORE_FIELD(hv, rec, grp_wall,            uint32_t);
+    STORE_FIELD(hv, rec, limit_factor,        double);
     STORE_FIELD(hv, rec, max_jobs_pu,         uint32_t);
     STORE_FIELD(hv, rec, max_submit_jobs_pu,  uint32_t);
     STORE_FIELD(hv, rec, max_tres_mins_pj,    charp);

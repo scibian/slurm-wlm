@@ -266,7 +266,8 @@ static int _fd_writeable(int fd)
 	if ((ufds.revents & POLLHUP) || fstat(fd, &stat_buf) ||
 	    ((S_ISSOCK(stat_buf.st_mode) &&
 	     (rc = recv(fd, &temp, 1, MSG_DONTWAIT) <= 0) &&
-	     ((rc == 0) || ((errno != EAGAIN) && (errno != EWOULDBLOCK))))))
+	     ((rc == 0) ||
+	      (errno && (errno != EAGAIN) && (errno != EWOULDBLOCK))))))
 		return -1;
 	else if ((ufds.revents & POLLNVAL)
 		 || (ufds.revents & POLLERR)
@@ -675,7 +676,7 @@ static void _set_idbuf(char *idbuf, size_t size)
 	gettimeofday(&now, NULL);
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_GET_NAME, thread_name, NULL, NULL, NULL) < 0) {
-		error("failed to get thread name: %m");
+		fprintf(stderr, "failed to get thread name: %m\n");
 		max_len = 0;
 		thread_name[0] = '\0';
 	}
@@ -778,24 +779,7 @@ static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
 				     STEP_ID_FLAG_SPACE | STEP_ID_FLAG_NO_JOB);
 }
 
-/*
- * return a heap allocated string formed from fmt and ap arglist
- * returned string is allocated with xmalloc, so must free with xfree.
- *
- * args are like printf, with the addition of the following format chars:
- * - %m expands to strerror(errno)
- * - %M expand to time stamp, format is configuration dependent
- * - %pA expands to "AAA.BBB.CCC.DDD:XXXX" for the given slurm_addr_t.
- * - %pJ expands to "JobId=XXXX" for the given job_ptr, with the appropriate
- *       format for job arrays and hetjob components.
- * - %pS expands to "JobId=XXXX StepId=YYYY" for a given step_ptr.
- * - %t expands to strftime("%x %X") [ locally preferred short date/time ]
- * - %T expands to rfc2822 date time  [ "dd, Mon yyyy hh:mm:ss GMT offset" ]
- *
- * these formats are expanded first, leaving all others to be passed to
- * vsnprintf() to complete the expansion using the ap arglist.
- */
-static char *vxstrfmt(const char *fmt, va_list ap)
+extern char *vxstrfmt(const char *fmt, va_list ap)
 {
 	char	*intermediate_fmt = NULL;
 	char	*out_string = NULL;
@@ -1191,6 +1175,7 @@ static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt,
 	char *pfx = "";
 	char *buf = NULL;
 	char *msgbuf = NULL;
+	char *eol = "\n";
 	int priority = LOG_INFO;
 
 	slurm_mutex_lock(&log_lock);
@@ -1199,6 +1184,9 @@ static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt,
 		log_options_t opts = LOG_OPTS_STDERR_ONLY;
 		_log_init(NULL, opts, 0, NULL);
 	}
+
+	if (log->opt.raw)
+		eol = "\r\n";
 
 	if (SCHED_LOG_INITIALIZED && sched &&
 	    (highest_sched_log_level > LOG_LEVEL_QUIET)) {
@@ -1278,15 +1266,15 @@ static void _log_msg(log_level_t level, bool sched, bool spank, const char *fmt,
 
 		fflush(stdout);
 		if (spank) {
-			_log_printf(log, log->buf, stderr, "%s\n", buf);
+			_log_printf(log, log->buf, stderr, "%s%s", buf, eol);
 		} else if (log->fmt == LOG_FMT_THREAD_ID) {
 			char tmp[64];
 			_set_idbuf(tmp, sizeof(tmp));
-			_log_printf(log, log->buf, stderr, "%s: %s%s\n",
-			            tmp, pfx, buf);
+			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
+			            tmp, pfx, buf, eol);
 		} else {
-			_log_printf(log, log->buf, stderr, "%s: %s%s\n",
-			            log->argv0, pfx, buf);
+			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
+			            log->argv0, pfx, buf, eol);
 		}
 		fflush(stderr);
 	}
@@ -1555,4 +1543,34 @@ extern char *log_build_step_id_str(
 			 step_id->step_het_comp);
 
 	return buf;
+}
+
+extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...)
+{
+	va_list ap;
+	char *prepend;
+	static const int hex_cols = 16, hex_rows = 16;
+
+	if (!data || !len)
+		return;
+
+	va_start(ap, fmt);
+	prepend = vxstrfmt(fmt, ap);
+	va_end(ap);
+
+	for (int i = 0; (i < len) && (i < (hex_cols * hex_rows)); ) {
+		int remain = len - i;
+		int print = (remain < hex_cols) ? remain : hex_cols;
+		char *phex = bytes_to_hex((data + i), print, " ");
+		char *pstr = bytes_to_printable((data + i), print, '.');
+
+		format_print(LOG_LEVEL_VERBOSE, "%s [%04d/%04zu] 0x%s \"%s\"",
+			     prepend, i, len, phex, pstr);
+
+		i += print;
+		xfree(phex);
+		xfree(pstr);
+	}
+
+	xfree(prepend);
 }
