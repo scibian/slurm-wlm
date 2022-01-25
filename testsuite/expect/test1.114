@@ -27,26 +27,27 @@
 source ./globals
 
 set node_cnt    0
-set job_id      0
 set jobid_excl  0
 
 proc cleanup {} {
-	global job_id jobid_excl
+	global jobid_excl
 
-	cancel_job [list $job_id $jobid_excl]
+	cancel_job $jobid_excl
 }
 
 proc run_spread_job { task_cnt } {
-	global max_job_delay srun scontrol bin_printenv number job_id
+	global max_job_delay srun scontrol bin_printenv number
 
 	set timeout $max_job_delay
-	spawn $srun -n $task_cnt --spread-job $bin_printenv SLURM_JOB_ID
+	set job_id 0
+	set srun_pid [spawn $srun -n $task_cnt --spread-job $bin_printenv SLURM_JOB_ID]
 	expect {
 		-re "($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sun_pid
 			fail "srun not responding"
 		}
 		eof {
@@ -54,10 +55,13 @@ proc run_spread_job { task_cnt } {
 		}
 	}
 	if {$job_id == 0} {
-		fail "srun job ID not found"
+		fail "Srun job ID not found"
 	}
 
-	wait_for_job -fail $job_id "DONE"
+	if {[wait_for_job $job_id "DONE"] != 0} {
+		cancel_job $job_id
+		fail "Error waiting for job $job_id to complete"
+	}
 
 	set timeout 10
 	set num_nodes 0
@@ -75,7 +79,7 @@ proc run_spread_job { task_cnt } {
 		}
 	}
 	if {$num_nodes != $task_cnt} {
-		fail "Invalid node count for job ($job_id) ($num_nodes != $task_cnt)"
+		fail "Invalid node count for job $job_id ($num_nodes != $task_cnt)"
 	}
 }
 
@@ -96,7 +100,9 @@ set output [run_command_output -fail "$sbatch --exclusive -w $node_exclusive --w
 if {![regexp {Submitted batch job (\d+)} $output {} jobid_excl]} {
 	fail "Job submission of exclusive job failed"
 }
-wait_for_job -fail $jobid_excl "RUNNING"
+if {[wait_for_job $jobid_excl "RUNNING"]} {
+	fail "Job submission of exclusive job never start running"
+}
 
 if {$node_cnt > 8} {
 	set max_task_cnt 8

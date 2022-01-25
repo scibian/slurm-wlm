@@ -140,7 +140,7 @@ make_bash_script $file_in "
 #
 set timeout $max_job_delay
 set no_start 0
-spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in
+set sbatch_pid [spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -154,6 +154,7 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -233,7 +234,7 @@ make_bash_script $file_in "
 #
 set job_id   0
 set no_start 0
-spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in
+set sbatch_pid [spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -247,6 +248,7 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -355,7 +357,7 @@ make_bash_script $file_in "
 #
 set job_id   0
 set no_start 0
-spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in
+set sbatch_pid [spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -369,6 +371,7 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -450,7 +453,7 @@ make_bash_script $file_in "
 #
 set job_id   0
 set no_start 0
-spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in
+set sbatch_pid [spawn $sbatch -N1 -n2 --output=$file_out --error=$file_err -t1 : -N1 -n2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -464,6 +467,7 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {

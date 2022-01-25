@@ -28,9 +28,7 @@
 ############################################################################
 source ./globals
 
-set file_in "$test_dir/job_script"
-
-make_bash_script $file_in {echo CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES}
+set file_in "$test_name.bash"
 
 proc run_gpu_test { gres_cnt } {
 	global max_job_delay srun number file_in
@@ -39,7 +37,7 @@ proc run_gpu_test { gres_cnt } {
 	set bad_format 0
 	set devices    0
 	set invalid    0
-	spawn $srun -N1 -n1 --gres=gpu:$gres_cnt -t1 $file_in
+	set srun_pid [spawn $srun -N1 -n1 --gres=gpu:$gres_cnt -t1 ./$file_in]
 	expect {
 		-re "Unable to allocate" {
 			incr invalid
@@ -72,6 +70,7 @@ proc run_gpu_test { gres_cnt } {
 			exp_continue
 		}
 		timeout {
+			slow_kill $srun_pid
 			fail "srun not responding"
 		}
 		eof {
@@ -96,13 +95,14 @@ proc run_gpu_fail { gres_spec } {
 	set bad_format 0
 	set devices    0
 	set invalid    0
-	spawn $srun -N1 -n1 --gres=$gres_spec -t1 $file_in
+	set srun_pid [spawn $srun -N1 -n1 --gres=$gres_spec -t1 ./$file_in]
 	expect {
 		-re "Invalid" {
 			incr invalid
 			exp_continue
 		}
 		timeout {
+			slow_kill $srun_pid
 			fail "srun not responding"
 		}
 		eof {

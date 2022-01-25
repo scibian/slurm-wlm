@@ -42,6 +42,7 @@ source ./globals_accounting
 source ./globals_federation
 
 set fed_name     "feda"
+set file_in      "test$test_id.in"
 set user_name    ""
 set srun_job_cnt 0
 set my_scontrol  "${fed_slurm_base}/$fedc1/bin/scontrol"
@@ -59,7 +60,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -81,7 +82,7 @@ proc sacctmgr_show { regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Didn't match regex ($regex: $matches)"
+		fail "Didn't match regex $regex: $matches"
 	}
 }
 
@@ -109,6 +110,7 @@ proc sacctmgr_mod { state } {
 			exp_continue
 		}
 		timeout {
+			slow_kill $my_pid
 			fail "sacctmgr mod not responding"
 		}
 		eof {
@@ -116,7 +118,7 @@ proc sacctmgr_mod { state } {
 		}
 	}
 	if {$matches != 4} {
-		fail "Unexpected error (got $matches)"
+		fail "Unexpected error. Got $matches"
 	}
 
 }
@@ -139,7 +141,7 @@ proc scontrol { category regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Didn't match regex ($regex: $matches)"
+		fail "Didn't match regex $regex: $matches"
 	}
 
 }
@@ -202,7 +204,7 @@ proc squeue { regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue (expected $regex)"
+		fail "Unexpected error in squeue. expected $regex"
 	}
 }
 
@@ -219,14 +221,17 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global fed_name bin_bash bin_rm test_name
+	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
+	global test_id bin_bash my_sacctmgr
 
 	cancel_federation_jobs
-	delete_federations $fed_name
-	exec $bin_bash -c "$bin_rm -f $test_name*.out"
+	exec $bin_rm -f $file_in
+	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
+
+	return [delete_federations $fed_name]
 }
 
-# Start test
+#start test
 
 if {![check_federation_setup]} {
 	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
@@ -239,10 +244,15 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-cleanup
+if {[cleanup] != 0} {
+	fail "Failed to cleanup"
+}
 
-# Get number of nodes per cluster
+# get number of nodes per cluster
 set node_count [llength [get_nodes_by_state idle,alloc,comp]]
+
+make_bash_script $file_in "env; $bin_sleep 300"
+
 
 log_info "################################################################"
 log_info "Setup cluster features"
@@ -286,6 +296,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -293,7 +304,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 set matches 0
@@ -305,6 +316,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -312,7 +324,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 sacctmgr_mod ACTIVE
@@ -381,6 +393,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -388,7 +401,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 sbatch  1 1
@@ -406,7 +419,7 @@ sacctmgr_show "\\s+ACTIVE\\s+"
 scontrol jobs "Requeue=0.+"
 
 
-# Make sure we can submit to removed cluster.
+#Make sure we can submit to removed cluster.
 
 set job_id [sbatch 1 0]
 
@@ -437,6 +450,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -444,7 +458,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 
@@ -471,6 +485,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -478,7 +493,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 sacctmgr_show "\\s+ACTIVE.+DRAIN\\s+"

@@ -42,7 +42,7 @@ source ./globals_accounting
 source ./globals_federation
 
 set fed_name    "feda"
-set file_in     "$test_dir/input"
+set file_in     "test$test_id.in"
 set user_name   ""
 set srun_job_cnt 0
 
@@ -55,7 +55,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -72,13 +72,14 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global scancel fed_name user_name bin_rm fedc1 fedc2 fedc3
-	global test_name bin_bash
+	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
+	global test_id bin_bash
 
 	cancel_federation_jobs
-	exec $bin_bash -c "$bin_rm -f $test_name*.out"
+	exec $bin_rm -f $file_in
+	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
 
-	delete_federations $fed_name
+	return [delete_federations $fed_name]
 }
 
 proc submit_fed_batch_job { cname expected_origin expected_sib extra_args expected_state } {
@@ -92,7 +93,7 @@ proc submit_fed_batch_job { cname expected_origin expected_sib extra_args expect
 		append command " $extra_args"
 	}
 	append command " $file_in"
-	spawn {*}$command
+	set sbatch_pid [spawn {*}$command]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
@@ -103,6 +104,7 @@ proc submit_fed_batch_job { cname expected_origin expected_sib extra_args expect
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			fail "sbatch not responding"
 		}
 		eof {
@@ -113,9 +115,9 @@ proc submit_fed_batch_job { cname expected_origin expected_sib extra_args expect
 		fail "Batch submit failure"
 	}
 
-	if {$expected_state ne ""} {
+	if {[string compare $expected_state ""]} {
 		set run_cluster [wait_for_fed_job $job_id $expected_state ""]
-		if {$run_cluster eq ""} {
+		if {[string compare $run_cluster ""] == 0} {
 			fail "Didn't find cluster with $expected_state job"
 		}
 	}
@@ -149,15 +151,17 @@ proc submit_fed_srun_job { cname expected_origin expected_sib extra_args check_e
 		}
 	}
 
-	if {$expected_state ne ""} {
+	if {[string compare $expected_state ""]} {
 		set run_cluster [wait_for_fed_job $job_id $expected_state ""]
-		if {$run_cluster eq ""} {
+		if {[string compare $run_cluster ""] == 0} {
 			fail "Didn't find cluster with $expected_state job"
 		}
 	}
 
 	if {$check_env} {
-		wait_for_file -fail $file_out
+		if {[wait_for_file $file_out]} {
+			fail "Failed waiting for file '$file_out'"
+		}
 
 		spawn grep SLURM_CLUSTER_NAME $file_out
 		expect {
@@ -210,15 +214,17 @@ proc submit_fed_salloc_job { cname expected_origin expected_sib extra_args check
 		}
 	}
 
-	if {$expected_state ne ""} {
+	if {[string compare $expected_state ""]} {
 		set run_cluster [wait_for_fed_job $job_id $expected_state ""]
-		if {$run_cluster eq ""} {
+		if {[string compare $run_cluster ""] == 0} {
 			fail "Didn't find cluster with $expected_state job"
 		}
 	}
 
 	if {$check_env} {
-		wait_for_file -fail $file_out
+		if {[wait_for_file $file_out]} {
+			fail "failed waiting for file '$file_out'"
+		}
 
 		spawn grep SLURM_CLUSTER_NAME $file_out
 		expect {
@@ -311,12 +317,13 @@ proc validate_cluster_features { cname job_id expected_features } {
 
 	set my_scontrol "${fed_slurm_base}/$cname/bin/scontrol"
 	set matches 0
-	spawn $bin_bash -c "$my_scontrol show jobid=$job_id | $bin_grep ClusterFeatures="
+	set scontrol_pid [spawn $bin_bash -c "$my_scontrol show jobid=$job_id | $bin_grep ClusterFeatures="]
 	expect {
 		"ClusterFeatures=$expected_features" {
 			incr matches
 		}
 		timeout {
+			slow_kill $scontrol_pid
 			fail "scontrol not responding"
 		}
 		eof {
@@ -324,7 +331,7 @@ proc validate_cluster_features { cname job_id expected_features } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Didn't find ClusterFeatures=$expected_features on job ($matches != 1)"
+		fail "$matches didn't find ClusterFeatures=$expected_features on job"
 	}
 }
 
@@ -339,10 +346,12 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-cleanup
+if {[cleanup] != 0} {
+	fail "Failed to cleanup"
+}
 
 # add clusters to federation
-if [setup_federation $fed_name] {
+if {[setup_federation $fed_name]} {
 	fail "Failed to setup federation"
 }
 
@@ -370,16 +379,16 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have a pending job on them"
+	fail "$fedc1,$fedc2,$fedc3 don't have a pending job on it"
 }
 
 
@@ -399,16 +408,16 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have a pending job on them"
+	fail "$fedc1,$fedc2,$fedc3 don't have a pending job on it"
 }
 
 log_info "################################################################"
@@ -427,16 +436,16 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have a pending job on them"
+	fail "$fedc1,$fedc2,$fedc3 don't have a pending job on it"
 }
 
 log_info "################################################################"
@@ -474,23 +483,23 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 3} {
-	fail "Cluster 1 ($fedc1) doesn't have 3 jobs running on it"
+	fail "$fedc1 doesn't have 3 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2) != 1} {
-	fail "Clusters 1 and 2 ($fedc1,$fedc2) don't have 1 job running on them"
+	fail "$fedc1,$fedc2 doesn't have 1 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2,$fedc3) != 1} {
-	fail "Clusters 2 and 3 ($fedc2,$fedc3) don't have 1 jobs running on them"
+	fail "$fedc2,$fedc3 doesn't have 1 jobs running on it"
 }
 
 log_info "################################################################"
@@ -528,23 +537,23 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 3} {
-	fail "Cluster 1 ($fedc1) doesn't have 3 jobs running on it"
+	fail "$fedc1 doesn't have 3 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2) != 1} {
-	fail "Clusters 1 and 2 ($fedc1,$fedc2) don't have 1 job running on them"
+	fail "$fedc1,$fedc2 doesn't have 1 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2,$fedc3) != 1} {
-	fail "Clusters 2 and 3 ($fedc2,$fedc3) don't have 1 job running on them"
+	fail "$fedc2,$fedc3 doesn't have 1 jobs running on it"
 }
 
 
@@ -583,23 +592,23 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 3} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2) != 1} {
-	fail "Clusters 1 and 2 ($fedc1,$fedc2) don't have 1 job running on them"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2,$fedc3) != 1} {
-	fail "Clusters 2 and 3 ($fedc2,$fedc3) don't have 1 job running on them"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 
@@ -609,7 +618,7 @@ log_info "################################################################"
 cancel_federation_jobs
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc1 set features=fa
+set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -628,6 +637,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -635,11 +645,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc2 set features=fb
+set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -658,6 +668,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -665,11 +676,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc3 set features=fc
+set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -688,6 +699,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -695,7 +707,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 log_info "################################################################"
@@ -721,19 +733,19 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have 1 job running on them"
+	fail "$fedc1,$fedc2,$fedc3 doesn't have 2 jobs running on it"
 }
 
 log_info "################################################################"
@@ -760,19 +772,19 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have 1 job running on them"
+	fail "$fedc1,$fedc2,$fedc3 doesn't have 2 jobs running on it"
 }
 
 log_info "################################################################"
@@ -799,19 +811,19 @@ incr job_counts($ret_sib)
 parray job_counts
 
 if {$job_counts($fedc1) != 2} {
-	fail "Cluster 1 ($fedc1) doesn't have 2 jobs running on it"
+	fail "$fedc1 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc2) != 2} {
-	fail "Cluster 2 ($fedc2) doesn't have 2 jobs running on it"
+	fail "$fedc2 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc3) != 2} {
-	fail "Cluster 3 ($fedc3) doesn't have 2 jobs running on it"
+	fail "$fedc3 doesn't have 2 jobs running on it"
 }
 
 if {$job_counts($fedc1,$fedc2,$fedc3) != 1} {
-	fail "Clusters ($fedc1,$fedc2,$fedc3) don't have 1 job running on them"
+	fail "$fedc1,$fedc2,$fedc3 doesn't have 2 jobs running on it"
 }
 
 log_info "################################################################"
@@ -819,12 +831,13 @@ log_info "Test jobs with invalid cluster features"
 log_info "################################################################"
 set matches 0
 set my_sbatch "${fed_slurm_base}/$fedc1/bin/sbatch"
-spawn $my_sbatch --output=/dev/null --error=/dev/null -n1 -t3 --cluster-constraint=invalid $file_in
+set sbatch_pid [spawn $my_sbatch --output=/dev/null --error=/dev/null -n1 -t3 --cluster-constraint=invalid $file_in]
 expect {
 	"sbatch: error: Batch job submission failed: Invalid cluster feature specification" {
 		incr matches
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "sbatch not responding"
 	}
 	eof {
@@ -832,5 +845,5 @@ expect {
 	}
 }
 if {$matches != 1} {
-	fail "Invalid cluster features sbatch didn't fail (got $matches)"
+	fail "Invalid cluster features sbatch didn't fail. Got $matches"
 }

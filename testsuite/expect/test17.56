@@ -71,7 +71,9 @@ if {$job_id == 0} {
 	fail "Batch job not submitted"
 }
 
-wait_for_job -fail $job_id DONE
+if {[wait_for_job $job_id DONE] != 0} {
+	fail "Job failed to run to completion"
+}
 
 spawn $scontrol show job $job_id
 expect {

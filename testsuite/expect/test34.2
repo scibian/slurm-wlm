@@ -186,7 +186,7 @@ proc cleanup {} {
 	}
 
 	if { $clean != 4 } {
-		log_warn "Unable to clean up accounts and qos"
+		log_error "Unable to clean up accounts and qos"
 	}
 }
 
@@ -225,39 +225,47 @@ foreach preempt_mode $preempt_mode_list {
 		}
 
 		set qos_1_id [sub_job $acct_1 $have_het_job]
-		wait_for_job -fail $qos_1_id $running_state $have_het_job
+		if { [wait_for_job $qos_1_id $running_state $have_het_job] } {
+			fail "Job $qos_1_id failed to start"
+		}
 
 		set qos_2_id [sub_job $acct_2]
-		wait_for_job -fail $qos_2_id $running_state
+		if { [wait_for_job $qos_2_id $running_state] } {
+			fail "Job $qos_2_id failed to start"
+		}
 
 		if { $preempt_mode == $preempt_mode_cancel } {
 			set jobs_ok false
 			wait_for {$jobs_ok} {
 				set jobs_ok [check_job_state $qos_1_id $preempted_state $have_het_job]
 			}
-			subtest {$jobs_ok} "Job ($qos_1_id) should be fully in the $preempted_state state"
+			subtest {$jobs_ok} "Job $qos_1_id should be (fully) on $preempted_state state"
 		} else {
 			# Requeue state
 			set jobs_ok false
 			wait_for {$jobs_ok} {
 				set jobs_ok [check_job_state $qos_1_id $pending_state $have_het_job]
 			}
-			subtest {$jobs_ok} "Job ($qos_1_id) should be fully in the $pending_state state"
+			subtest {$jobs_ok} "Job $qos_1_id should be (fully) on $pending_state state"
 
 			# Make job eligible to run now to avoid delay
 			run_command "$scontrol update job $qos_2_id $eligible_now_job_directive"
-			ait_for_job -fail $qos_2_id $done_state
+			if { [wait_for_job $qos_2_id $done_state] != 0} {
+				fail "Job $qos_2_id failed to complete"
+			}
 			# Wait for requeued job to restart
 
 			# Make job eligible to run now to avoid delay
 			run_command "$scontrol update job $qos_1_id $eligible_now_job_directive"
-			wait_for_job -fail $qos_1_id $running_state $have_het_job
+			if { [wait_for_job $qos_1_id $running_state $have_het_job] } {
+				fail "Job $qos_1_id failed to start"
+			}
 
 			set jobs_ok false
 			wait_for {$jobs_ok} {
 				set jobs_ok [check_job_state $qos_1_id $running_state $have_het_job]
 			}
-			subtest {$jobs_ok} "Job ($qos_1_id) should be fully in the $running_state state"
+			subtest {$jobs_ok} "Job $qos_1_id should be (fully) on $running_state state"
 		}
 
 		wait_for_account_done $acct_1,$acct_2

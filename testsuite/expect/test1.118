@@ -29,17 +29,16 @@ set job_id 0
 
 proc cleanup {} {
 	global job_id
-
 	cancel_job $job_id
 }
 
 proc check_error {client option prog error} {
-	global sbatch salloc srun test_name number job_id
+	global sbatch salloc srun test_id number job_id
+	set cmd "$client -v -H -Jtest$test_id -t1 --hint=nomultithread $option $prog"
 
-	set cmd "$client -v -H -J$test_name -t1 --hint=nomultithread $option $prog"
 	set job_id 0
 	set matches 0
-	spawn {*}$cmd
+	set pid [spawn {*}$cmd]
 	expect {
 		-ex "$error" {
 			incr matches
@@ -49,7 +48,7 @@ proc check_error {client option prog error} {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
-			fail "[file tail $client] not responding"
+			fail "$client not responding"
 		}
 		eof {
 			wait
@@ -61,7 +60,7 @@ proc check_error {client option prog error} {
 
 
 proc mutual_error_tests {} {
-	global sbatch salloc srun test_name number job_id
+	global sbatch salloc srun test_id number job_id
 
 	set clients [list "$sbatch" "$salloc" "$srun"]
 	set options [list "--threads-per-core=1" "--ntasks-per-core=1" "-B1"]
@@ -99,11 +98,11 @@ set client "$sbatch"
 set prog "--wrap=hostname"
 set options [list "--threads-per-core=2 --ntasks-per-core=3"]
 foreach option $options {
-	set cmd "$client -v -H -J$test_name -t1 $option $prog"
+	set cmd "$client -v -H -Jtest$test_id -t1 $option $prog"
 
 	set job_id 0
 	set matches 0
-	spawn {*}$cmd
+	set pid [spawn {*}$cmd]
 	expect {
 		"mutually exclusive" {
 			incr matches
@@ -113,21 +112,21 @@ foreach option $options {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
-			fail "[file tail $client] not responding"
+			fail "$client not responding"
 		}
 		eof {
 			wait
 		}
 	}
 	subtest {$job_id != 0} "$cmd should have given an id"
-	subtest {$matches == 0} "$cmd should not find 'mutually exclusive'" "got $matches matches"
+	subtest {$matches == 0} "$cmd should not find 'mutually exclsive'" "(got $matches matches)"
 
 	set threads_req [get_job_param $job_id "ReqB:S:C:T"]
 	set tasks_req [get_job_param $job_id "NtasksPerN:B:S:C"]
 	set threads_match "0:0:*:2"
 	set tasks_match "0:0:*:3"
-	subtest {$threads_match eq $threads_req} "ReqB:S:C:T should be $threads_match" "$threads_req != $threads_match"
-	subtest {$tasks_match eq $tasks_req} "NtasksPerN:B:S:C should be $tasks_match" "$tasks_req != $tasks_match"
+	subtest {[string compare $threads_match $threads_req] == 0} "ReqB:S:C:T should be $threads_match" "($threads_req != $threads_match)"
+	subtest {[string compare $tasks_match $tasks_req] == 0} "NtasksPerN:B:S:C should be $tasks_match" "($tasks_req != $tasks_match)"
 	cancel_job $job_id
 }
 

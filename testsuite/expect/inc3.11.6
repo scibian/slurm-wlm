@@ -30,7 +30,7 @@
 ############################################################################
 
 proc inc3_11_6 {} {
-	global user_name
+	global user_name file_in bin_rm
 
 	set res_name "resv3.11.6"
 	set res_name_test "resv3.11.6.0"
@@ -47,7 +47,7 @@ proc inc3_11_6 {} {
 
 	# Test for time reservation conflict (front overlap)
 	set ret_code [create_res $res_name_test "StartTime=now+30minutes Duration=60 Nodes=[node_list_to_range [get_nodes_by_state]] user=$user_name"]
-	subtest {$ret_code != 0} "Reservation should fail due to time conflict with front overlap"
+	subtest {$ret_code != 0} "Reservation should fail due to time conflict (front overlap)"
 
 	# Delete the reservation
 	set ret_code [delete_res $res_name]
@@ -63,11 +63,15 @@ proc inc3_11_6 {} {
 
 	# Test for time reservation conflict (tail overlap)
 	set ret_code [create_res $res_name_test "StartTime=now+60minutes Duration=60 Nodes=[node_list_to_range [get_nodes_by_state]] user=$user_name"]
-	subtest {$ret_code != 0} "Reservation should fail due to time conflict with rail overlap"
+	subtest {$ret_code != 0} "Reservation should fail due to time conflict (rail overlap)"
 
 	# Delete the reservation
 	set ret_code [delete_res $res_name]
 	if {$ret_code != 0} {
 		fail "Unable to delete reservation ($res_name)"
 	}
+
+	#
+	# Remove the temporary job script
+	exec $bin_rm -f $file_in
 }

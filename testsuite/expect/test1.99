@@ -106,7 +106,7 @@ expect {
 	}
 }
 
-if {$show_config_range ne $slurm_conf_range} {
+if {[string compare $show_config_range $slurm_conf_range]} {
 	fail "SrunPortRange from scontrol show config does not match what is in slurm.conf"
 }
 
@@ -174,7 +174,7 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "RUNNING"] != 0} {
-	fail "Error waiting for job ($job_id) to start"
+	fail "Error waiting for job $job_id to start"
 }
 set match 0
 spawn $srun -t1 sleep 10

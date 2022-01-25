@@ -8803,7 +8803,7 @@ extern bool valid_tres_cnt(char *tres)
 		}
 
 		/* gres doesn't have to be a TRES to be valid */
-		if (sep && !xstrcmp(tok, "gres")) {
+		if (!xstrcmp(tok, "gres")) {
 			/* We only want the first part of a gres for this */
 			if ((tok = strchr(sep, ':')))
 				tok[0] = '\0';
@@ -10059,8 +10059,6 @@ extern void pack_all_jobs(char **buffer_ptr, int *buffer_size,
 	_foreach_pack_job_info_t pack_info = {0};
 	buf_t *buffer;
 	assoc_mgr_lock_t locks = { .user = READ_LOCK, .qos = READ_LOCK };
-	ListIterator itr;
-	job_record_t *job_ptr = NULL;
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
@@ -10083,11 +10081,7 @@ extern void pack_all_jobs(char **buffer_ptr, int *buffer_size,
 	assoc_mgr_fill_in_user(acct_db_conn, &pack_info.user_rec,
 			       accounting_enforce, NULL, true);
 	pack_info.privileged = validate_operator_user_rec(&pack_info.user_rec);
-	itr = list_iterator_create(job_list);
-	while ((job_ptr = list_next(itr))) {
-		_pack_job(job_ptr, &pack_info);
-	}
-	list_iterator_destroy(itr);
+	list_for_each(job_list, _pack_job, &pack_info);
 	assoc_mgr_unlock(&locks);
 
 	/* put the real record count in the message body header */

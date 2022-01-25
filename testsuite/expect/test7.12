@@ -31,27 +31,30 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
+set file_in     "test$test_id.input"
 set job_id      0
 set step_id	0
 set pid_count	1
-set test_prog   "$test_name.prog"
+set test_prog   "test$test_id.prog"
+
+proc cleanup {} {
+	global job_id file_in test_prog
+
+	cancel_job $job_id
+	file delete $file_in $test_prog
+}
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
     skip "This test is incompatible with front-end systems"
 }
 
-proc cleanup {} {
-	global job_id test_prog
-
-	cancel_job $job_id
-	file delete $test_prog
-}
-
 #
-# Rebuild program
+# Delete left-over program and rebuild it
 #
-make_bash_script $file_in "$srun $bin_sleep 120"
+file delete $file_in $test_prog
+make_bash_script $file_in "
+  $srun $bin_sleep 120
+"
 if [compile_against_libslurm ${test_prog}] {
 	fail "Cannot compile test program"
 }
@@ -79,7 +82,10 @@ if { $job_id == 0 } {
 #
 # Wait for job to start
 #
-wait_for_job -fail $job_id "RUNNING"
+if {[wait_for_job $job_id "RUNNING"] != 0} {
+	cancel_job $job_id
+	fail "Waiting for job to start"
+}
 # wait for job step to start
 sleep 5
 set debug 0
@@ -119,7 +125,7 @@ expect {
 }
 
 if {$step_matches != 1} {
-	fail "Error running slurm_job_step_stat program ($step_matches != 1)"
+	fail "Error running slurm_job_step_stat() program ($step_matches != 1)"
 }
 if {$pid_matches != $pid_count} {
 	log_warn "Failed to load PIDs associated with job step ($pid_matches != $pid_count). This is dependent upon the ProctrackType configured. proctrack/pgid does NOT support this functionality"

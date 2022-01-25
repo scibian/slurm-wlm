@@ -28,10 +28,16 @@
 ############################################################################
 source ./globals
 
-set file_in          "$test_dir/input"
+set file_in          "test$test_id.input"
 set test_env_name    "TEST_ENV_$test_id"
 set test_env_val     123
 set matches          0
+
+proc cleanup {} {
+	global bin_rm file_in
+
+	exec $bin_rm -f $file_in
+}
 
 make_bash_script $file_in "env | grep TEST; exit 0"
 
@@ -39,7 +45,7 @@ make_bash_script $file_in "env | grep TEST; exit 0"
 # Spawn a job via srun to print environment variables
 #
 set timeout $max_job_delay
-spawn $srun -N1 --export=$test_env_name=$test_env_val -t1 $file_in
+set srun_pid [spawn $srun -N1 --export=$test_env_name=$test_env_val -t1 ./$file_in]
 expect {
 	-re "$test_env_name=($number)" {
 		if {$expect_out(1,string) == $test_env_val} {
@@ -48,6 +54,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -64,7 +71,7 @@ if {$matches != 1} {
 global env
 set env($test_env_name) $test_env_val
 set matches 0
-spawn $srun -N1 -t1 $file_in
+set srun_pid [spawn $srun -N1 -t1 ./$file_in]
 expect {
 	-re "$test_env_name=($number)" {
 		if {$expect_out(1,string) == $test_env_val} {
@@ -73,6 +80,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -87,7 +95,7 @@ if {$matches != 1} {
 # Spawn a job via srun to print environment variables with --export=ALL
 #
 set matches 0
-spawn $srun -N1 -t1 --export=ALL $file_in
+set srun_pid [spawn $srun -N1 -t1 --export=ALL ./$file_in]
 expect {
 	-re "$test_env_name=($number)" {
 		if {$expect_out(1,string) == $test_env_val} {
@@ -96,6 +104,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -110,7 +119,7 @@ if {$matches != 1} {
 # Spawn a job via srun to print environment variables with --export=NONE
 #
 set matches 0
-spawn $srun -N1 -t1 --export=NONE $file_in
+set srun_pid [spawn $srun -N1 -t1 --export=NONE ./$file_in]
 expect {
 	-re "$test_env_name=($number)" {
 		if {$expect_out(1,string) == $test_env_val} {
@@ -119,6 +128,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

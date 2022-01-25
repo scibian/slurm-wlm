@@ -52,7 +52,7 @@ set timeout [expr $max_job_delay + 60 + 60 + 120]
 
 set node_cnt 1-2
 
-spawn $srun -N$node_cnt -n$task_cnt --overcommit --debugger-test -t1 $bin_id
+set srun_pid [spawn $srun -N$node_cnt -n$task_cnt --overcommit --debugger-test -t1 $bin_id]
 expect {
 	-re "uid=" {
 		fail "Task not stopped"
@@ -66,6 +66,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -77,4 +78,4 @@ if {$timed_out == 1} {
 	log_debug "Early termination is expected, no worries"
 }
 
-subtest {$task_cnt == $resp_cnt} "srun got proper number of tasks" "$task_cnt != $resp_cnt"
+subtest {$task_cnt == $resp_cnt} "Srun got proper number of tasks" "$task_cnt != $resp_cnt"

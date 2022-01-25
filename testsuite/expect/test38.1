@@ -30,20 +30,20 @@
 source ./globals
 source ./globals_het_jobs
 
-set file_in      "$test_dir/input"
-set job_id       0
-
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
 }
 
+set file_in      "test$test_id.in"
+set job_id       0
+
 proc sbatch {} {
-	global number sbatch file_in
+	global number sbatch file_in bin_sleep
 
 	set matches 0
 	set job_id 0
 
-	spawn $sbatch -t1 -o /dev/null $file_in
+	set sbatch_pid [spawn $sbatch -t1 -o /dev/null $file_in]
 	expect {
 		-re "Batch job submission failed" {
 			skip "Unable to execute test due to system configuration"
@@ -53,6 +53,7 @@ proc sbatch {} {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			fail "sbatch not responding"
 		}
 		eof {
@@ -60,7 +61,7 @@ proc sbatch {} {
 		}
 	}
 	if {$matches != 1} {
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	return $job_id
@@ -75,13 +76,16 @@ proc cancel_job_id { } {
 }
 
 proc cleanup { } {
-	global bin_rm test_name
+	global scancel user_name bin_rm file_in
+	global test_id bin_bash
 
 	cancel_job_id
-	exec $bin_rm -f $test_name*.out
+
+	exec $bin_rm -f $file_in test$test_id*.out
+	return 0
 }
 
-# Start test
+#start test
 
 make_bash_script $file_in "#SBATCH --cpus-per-task=4 --mem-per-cpu=10 --ntasks=1
 #SBATCH hetjob

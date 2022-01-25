@@ -95,7 +95,7 @@ if {![is_super_user]} {
 	skip "Test can only be ran as SlurmUser"
 }
 
-#if {[get_admin_level] ne "Administrator"} {
+#if {[string compare [get_admin_level] "Administrator"]} {
 #	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 #}
 
@@ -145,7 +145,7 @@ if {[check_resource_limits $sr1 [array get resource1_chck]] == 1} {
 # use scontrol show license to verify the cluster license was created
 #
 set matches 0
-spawn $scontrol show license
+set my_pid [eval spawn $scontrol show license]
 expect {
 	-re "LicenseName=($sr1@$resource1(Server))" {
 		incr matches
@@ -163,7 +163,7 @@ expect {
 	}
 }
 if {$matches != 2} {
-	fail "License output is incorrect ($matches != 2. Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Reserved=0 Remote=yes)"
+	fail "License output is incorrect ($matches != 2). Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Reserved=0 Remote=yes"
 }
 
 #
@@ -187,7 +187,7 @@ if {[check_resource_limits $sr1 [array get resource1_chck]] == 1} {
 # use scontrol to verify the modified cluster license
 #
 set matches 0
-eval spawn $scontrol show license $sr1@$resource1(Server)
+set my_pid [eval spawn $scontrol show license $sr1@$resource1(Server)]
 expect {
 	-re "LicenseName=$sr1@$resource1(Server)" {
 		incr matches
@@ -205,7 +205,7 @@ expect {
 	}
 }
 if {$matches != 2} {
-	fail "License output is incorrect ($matches != 2. Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Reserved=0 Remote=yes)"
+	fail "License output is incorrect ($matches != 2). Expected: LicenseName=$sr1@$resource1(Server). Expected: Total=$ect1 Used=0 Free=$ect1 Reserved=0 Remote=yes"
 }
 
 #
@@ -219,7 +219,7 @@ if [remove_res $sr1] {
 # use scontrol to verify cluster license was removed
 #
 set matches 0
-spawn $scontrol show license
+set my_pid [eval spawn $scontrol show license]
 expect {
 	-re "LicenseName=$sr1@$resource1(Server)" {
 		incr matches
@@ -233,7 +233,7 @@ expect {
 	}
 }
 if {$matches != 0} {
-	fail "scontrol failed to remove license ($sr1@$resource1(Server))"
+	fail "scontrol failed to remove license $sr1@$resource1(Server)"
 }
 
 #

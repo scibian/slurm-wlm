@@ -28,13 +28,19 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
-set file_out    "$test_dir/output"
-set file_err    "$test_dir/error"
+set file_in     "$test_name.input"
+set file_out    "$test_name.output"
+set file_err    "$test_name.error"
 set file_prog   "$test_name.prog"
-set file_stem   $test_name
+set file_stem   "$test_name"
 set job_id      0
 set matches     0
+
+proc cleanup {} {
+	global file_prog file_in file_out file_err file_stem
+
+	exec rm -f $file_prog $file_in $file_out $file_err $file_stem.read $file_stem.write
+}
 
 # job parameters
 set mem_size    102400
@@ -76,12 +82,6 @@ if {[get_config_param AccountingStorageType] == "accounting_storage/none"} {
 set nodes [get_nodes_by_request "-n$num_tasks --mem-per-cpu=$job_mem_limit -t2"]
 if {![llength $nodes]} {
 	skip "Unable to test with current node configuration"
-}
-
-proc cleanup {} {
-	global file_prog file_stem
-
-	file delete $file_prog $file_stem.read $file_stem.write
 }
 
 proc _get_mem {prog} {
@@ -195,8 +195,10 @@ proc wait_and_subtest {test prog} {
 # Delete left-over program and rebuild it
 # Compilation is not optimized to avoid memset to be skipped.
 #
-run_command -fail "$bin_cc -o $file_prog ${file_prog}.c"
-run_command -fail "$bin_chmod 700 $file_prog"
+exec $bin_rm -f $file_prog
+exec $bin_rm -f $file_in $file_out $file_err
+exec $bin_cc -o $file_prog ${file_prog}.c
+exec $bin_chmod 700 $file_prog
 
 make_bash_script $file_in "
     $srun ./$file_prog $ret_code $sleep_time $mem_size $file_size $file_stem
@@ -221,7 +223,9 @@ set job_id [submit_job -fail "-n$num_tasks --mem-per-cpu=$job_mem_limit --output
 #
 # Wait for job to run
 #
-wait_for_job -fail $job_id "RUNNING"
+if {[wait_for_job $job_id "RUNNING"]} {
+	fail "job never run"
+}
 
 wait_and_subtest _get_mem       $sstat
 wait_and_subtest _get_file_size $sstat
@@ -229,7 +233,9 @@ wait_and_subtest _get_file_size $sstat
 #
 # Wait for job to complete
 #
-wait_for_job -fail $job_id "DONE"
+if {[wait_for_job $job_id "DONE"] != 0} {
+	fail "job never end"
+}
 
 wait_and_subtest _get_mem       $sacct
 wait_and_subtest _get_file_size $sacct

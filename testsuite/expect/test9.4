@@ -66,18 +66,22 @@ set other_opts    "-O"
 # Returns 0 on successful completion, returns 1 otherwise
 proc run_cat_job { input_file output_file } {
 	global bin_cat bin_rm job_name number srun node_cnt other_opts task_cnt timeout
-	spawn $srun --job-name=$job_name -e - -i $input_file -o $output_file -N$node_cnt -n$task_cnt $other_opts -t1 $bin_cat -
+	set srun_pid [spawn $srun --job-name=$job_name -e - -i $input_file -o $output_file -N$node_cnt -n$task_cnt $other_opts -t1 $bin_cat - ]
 	expect {
 		-re "Unable to contact" {
-			fail "Slurm appears to be down"
+			log_error "Slurm appears to be down"
+			return 1
 		}
 		timeout {
-			fail "srun not responding"
+			log_error "srun not responding"
+			slow_kill $srun_pid
+			return 1
 		}
 		eof {
 			wait
 		}
 	}
+	return 0
 }
 
 #
@@ -89,12 +93,13 @@ set stdin_lines [get_line_cnt $file_in]
 
 # Make a text file for each task
 set timeout $max_job_delay
-spawn $srun -e /dev/null -i $file_in -o $file_in_task -N$node_cnt -n$task_cnt $other_opts -t1 $bin_cat
+set srun_pid [spawn $srun -e /dev/null -i $file_in -o $file_in_task -N$node_cnt -n$task_cnt $other_opts -t1 $bin_cat]
 expect {
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -112,8 +117,10 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 		set file_out_glob "$test_name.$tsk.output"
 		exec $bin_rm -f $file_out_glob
 	}
-	run_cat_job $file_in_task $file_out_task
-	# Test output file sizes
+	if {[run_cat_job $file_in_task $file_out_task]} {
+		fail "Unable to run cat job"
+	}
+#	Test output file sizes
 	for {set tsk 0} {$tsk < $task_cnt} {incr tsk} {
 		set file_out_glob "$test_name.$tsk.output"
 		wait_for_file $file_out_glob
@@ -124,9 +131,9 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 		}
 		if {$stdout_lines != $stdin_lines} {
 			if {$stdout_lines == 0} {
-				fail "stdout is empty. Is current working directory writable from compute nodes?"
+				fail "Stdout is empty, is current working directory writable from compute nodes?"
 			} else {
-				fail "stdout is incomplete"
+				fail "Stdout is incomplete"
 			}
 		} else {
 			incr success_cnt

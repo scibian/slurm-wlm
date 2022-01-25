@@ -47,20 +47,22 @@ if {[check_config_select "linear"]} {
 proc cleanup {} {
 	global job_id1 job_id2 bin_rm test_id
 
-	cancel_job [list $job_id1 $job_id2]
+	cancel_job $job_id1
+	cancel_job $job_id2
 	exec $bin_rm -f slurm-$job_id1.sh $test_id.sh
 }
 
 #
 # Submit a couple jobs so we have something to work with
 #
-spawn $sbatch --output=/dev/null --error=/dev/null -t5 --wrap "$srun $bin_sleep 60"
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 --wrap "$srun $bin_sleep 60"]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id1 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -71,13 +73,15 @@ if {$job_id1 == 0} {
 	fail "srun submit failed"
 }
 
-spawn $sbatch --output=/dev/null --error=/dev/null -t5 --wrap "$srun $bin_sleep 60"
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 --wrap "$srun $bin_sleep 60"]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id2 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		cancel_job $job_id1
+		slow_kill $sbatch_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -85,11 +89,20 @@ expect {
 	}
 }
 if {$job_id2 == 0} {
+	cancel_job $job_id1
 	fail "srun submit failed"
 }
 
-wait_for_job -fail $job_id1 "RUNNING"
-wait_for_job -fail $job_id2 "RUNNING"
+if {[wait_for_job $job_id1 "RUNNING"] != 0} {
+        cancel_job $job_id1
+        cancel_job $job_id2
+        log_error "Waiting for job $job_id1 to start"
+}
+if {[wait_for_job $job_id2 "RUNNING"] != 0} {
+        cancel_job $job_id1
+        cancel_job $job_id2
+        fail "Waiting for job $job_id2 to start"
+}
 
 #
 # Look for these jobs with scontrol
@@ -280,7 +293,7 @@ expect {
 	}
 }
 if {$matches != 1} {
-	fail "scontrol failed to find job step ($job_id1.$step_id)"
+	fail "scontrol failed to find job step $job_id1.$step_id"
 }
 
 #
