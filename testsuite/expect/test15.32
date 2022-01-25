@@ -69,19 +69,19 @@ if {$found == -1} {
 	fail "scontrol output format error"
 }
 if {$found == 1} {
-	fail "Partition ($part_name) already exists"
+	fail "Partition $part_name already exists"
 }
 
 #
 # Identify usable nodes in default partition
 #
 set def_node [lindex [get_nodes_by_state] 0]
-if {$def_node eq ""} {
+if {[string compare $def_node ""] == 0} {
 #	Wait for possible Epilog
 	sleep 10
 	set def_node [lindex [get_nodes_by_state] 0]
 }
-if {$def_node eq ""} {
+if {[string compare $def_node ""] == 0} {
 	fail "Default partition seems to have no nodes"
 }
 

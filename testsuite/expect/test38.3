@@ -30,8 +30,10 @@
 source ./globals
 source ./globals_het_jobs
 
+set timeout 60
+
+set file_in      "test$test_id.in"
 set job_id       0
-set timeout      60
 
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
@@ -79,13 +81,14 @@ proc salloc {} {
 }
 
 proc cleanup { } {
-	global job_id bin_rm test_name
+	global job_id bin_rm file_in test_id
 
 	cancel_job $job_id
-	exec $bin_rm -f $test_name*.out
+
+	exec $bin_rm -f $file_in test$test_id*.out
 }
 
-# Start test
+#start test
 
 log_info "\n################################################################\n"
 log_info "Salloc hetjob and verify output from scontrol show job"

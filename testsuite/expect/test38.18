@@ -36,14 +36,15 @@ proc submit_job_error {cmd expected_error} {
 
 	set err_match 0
 
-	spawn {*}$cmd
+	set cmd_pid [spawn {*}$cmd]
 	expect {
 		-re $expected_error {
 			incr err_match
 			exp_continue
 		}
 		timeout {
-			fail "Command ($cmd) not responding"
+			slow_kill $cmd_pid
+			fail "command not responding"
 		}
 		eof {
 			wait
@@ -58,20 +59,21 @@ proc submit_job {cmd} {
 	set err_match 0
 	set job_id 0
 
-	spawn {*}$cmd
+	set cmd_pid [spawn {*}$cmd]
 	expect {
 		-re "job ($number)" {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
-			fail "Command ($cmd) not responding"
+			slow_kill $cmd_pid
+			fail "command not responding"
 		}
 		eof {
 			wait
 		}
 	}
 	if {!$job_id} {
-		fail "Didn't get a job_id"
+		fail "didn't get a job_id"
 	}
 
 	return $job_id
@@ -502,3 +504,4 @@ if {[check_config_select "cons_tres"]} {
 if {$is_skip} {
 	skip "Some tests were skipped"
 }
+

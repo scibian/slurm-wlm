@@ -47,7 +47,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -57,7 +57,6 @@ if {![check_user_id $tu3]} {
 
 proc cleanup {} {
 	global tu1 tu2 tu3 ta1 ta2 ta3 tc1 tc2
-
 	remove_user "" "" $tu1
 	remove_user "" "" $tu2
 	remove_user "" "" $tu3

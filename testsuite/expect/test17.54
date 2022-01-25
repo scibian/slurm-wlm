@@ -76,11 +76,13 @@ make_bash_script $file_in "$bin_sleep 1"
 #
 set job_id [submit_job -fail "--output=/dev/null --error=/dev/null --deadline now+1hour $file_in"]
 
-wait_for_job -fail $job_id DONE
+if {[wait_for_job $job_id DONE] != 0} {
+	fail "Job failed to run to completion"
+}
 
 #
 # verify time limit
 #
 set timelimit [get_job_param $job_id "TimeLimit"]
 subtest {[regexp "00:59:" $timelimit] ||
-         [regexp "01:00:00" $timelimit]} "Verify that TimeLimit of the job ($job_id) is 1h"
+         [regexp "01:00:00" $timelimit]} "Verify that TimeLimit of the job $job_id is 1h"

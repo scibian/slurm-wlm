@@ -51,7 +51,7 @@ set my_squeue    "${fed_slurm_base}/$fedc1/bin/squeue"
 set my_scontrol  "${fed_slurm_base}/$fedc1/bin/scontrol"
 regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
 set min_job_age [expr {$min_job_age + 65}]
-set file_in      "$test_dir/input"
+set file_in      "test$test_id.in"
 
 #
 # Check accounting config and bail if not found.
@@ -60,7 +60,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -134,6 +134,7 @@ proc sbatch { args } {
 }
 
 
+
 proc squeue { options regex } {
 	global my_squeue
 
@@ -150,7 +151,7 @@ proc squeue { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue (expected $regex)"
+		fail "Unexpected error in squeue. expected $regex"
 	}
 }
 
@@ -180,14 +181,17 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global fed_name bin_bash bin_rm test_name
+	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
+	global test_id bin_bash my_sacctmgr
 
 	cancel_federation_jobs
-	delete_federations $fed_name
-	exec $bin_bash -c "$bin_rm -f $test_name*.out"
+	exec $bin_rm -f $file_in
+	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
+
+	return [delete_federations $fed_name]
 }
 
-# Start test
+#start test
 
 if {![check_federation_setup]} {
 	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
@@ -204,12 +208,12 @@ if {[cleanup] != 0} {
 	fail "failed to cleanup"
 }
 
-# Add clusters to federation
+# add clusters to federation
 if {[setup_federation $fed_name]} {
 	fail "failed to setup federation"
 }
 
-# Get number of nodes per cluster
+# get number of nodes per cluster
 set node_count [llength [get_nodes_by_state idle,alloc,comp]]
 
 log_info "################################################################"
@@ -217,7 +221,7 @@ log_info "Setup cluster features"
 log_info "################################################################"
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc1 set features=fa
+set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -236,6 +240,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -243,11 +248,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc2 set features=fb
+set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -266,6 +271,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -273,11 +279,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 set matches 0
-spawn $sacctmgr -i modify cluster $fedc3 set features=fc
+set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
 expect {
 
 	-re "Setting$eol" {
@@ -297,6 +303,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -304,7 +311,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error (got $matches)"
+	fail "Unexpected error. Got $matches"
 }
 
 make_bash_script $file_in "sleep 900"

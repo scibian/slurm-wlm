@@ -33,7 +33,7 @@
 
 proc inc3_11_3 {} {
 	global user_name
-	global file_in bin_sleep sbatch number scontrol
+	global bin_rm file_in bin_sleep sbatch number scontrol
 	global re_word_str scancel
 
 	set res_name "resv3.11.3"
@@ -48,17 +48,19 @@ proc inc3_11_3 {} {
 	}
 
 	# Make the job script
+	exec $bin_rm -f $file_in
 	make_bash_script $file_in "$bin_sleep 10"
 
 	# Submit the batch job
 	set job_id 0
-	spawn $sbatch -N1 --reservation=$res_name $file_in
+	set sbatch_pid [spawn $sbatch -N1 --reservation=$res_name $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -81,7 +83,7 @@ proc inc3_11_3 {} {
 		}
 		-re "Invalid job id specified" {
 			delete_res $res_name
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		timeout {
 			delete_res $res_name
@@ -100,7 +102,7 @@ proc inc3_11_3 {} {
 	expect {
 		-re "Invalid job_id" {
 			delete_res $res_name
-			fail "Error cancelling the job submitted to the reservation. Job ($job_id) not found"
+			fail "Error cancelling the job submitted to the reservation.  Job $job_id not found"
 		}
 		timeout {
 			delete_res $res_name

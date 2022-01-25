@@ -76,7 +76,7 @@ if {$found == -1} {
 	fail "scontrol output format error"
 }
 if {$found == 1} {
-	fail "Partition ($part_name) already exists"
+	fail "Partition $part_name already exists"
 }
 
 #
@@ -94,7 +94,7 @@ expect {
 		wait
 	}
 }
-if {$def_name eq ""} {
+if {[string compare $def_name ""] == 0} {
 	fail "Failed to find default partition"
 }
 spawn $sinfo -h -o "=%N=" -p $def_name
@@ -107,7 +107,7 @@ expect {
 		wait
 	}
 }
-if {$def_node eq ""} {
+if {[string compare $def_node ""] == 0} {
 	fail "Default partition seems to have no nodes"
 }
 
@@ -187,14 +187,15 @@ subtest {$found == 1} "Partition group should be reset"
 set timed_out 0
 set sleep_time 300
 set timeout [expr $max_job_delay + $sleep_time]
-spawn $srun -t1 -p $part_name $bin_sleep $sleep_time
+set srun_pid [spawn $srun -t1 -p $part_name $bin_sleep $sleep_time]
 expect {
 	-re "(time limit|TIME LIMIT|Terminated)" {
 		set timed_out 1
 		exp_continue
 	}
 	timeout {
-		fail "srun not responding"
+		log_error "srun not responding"
+		slow_kill $srun_pid
 	}
 	eof {
 		wait

@@ -68,7 +68,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 #
 # Verify if Administrator privileges
 #
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -100,7 +100,7 @@ add_acct "$ta1,$ta2" [array get acct]
 #
 # Use sacctmgr to list the test associations
 #
-spawn $sacctmgr -p list associations cluster=$tc1,$tc2
+set as_list_pid [spawn $sacctmgr -p list associations cluster=$tc1,$tc2]
 expect {
 	-re "$tc1.$ta1" {
 		incr almatches
@@ -111,12 +111,13 @@ expect {
 		exp_continue
 	}
 	-re "$tc2.$ta1" {
-		fail "Account 1 ($ta1) erroneously added to cluster 2 ($tc2)"
+		fail "$ta1 account erroneously added to $tc2"
 	}
 	-re "$tc2.$ta2" {
-		fail "Account 2 ($ta2) erroneously added to cluster 2 ($tc2)"
+		fail "$ta2 account erroneously added to $tc2"
 	}
 	timeout {
+		slow_kill $as_list_pid
 		fail "sacctmgr list associations not responding"
 	}
 	eof {
@@ -125,7 +126,7 @@ expect {
 }
 
 if {$almatches != 2} {
-	fail "Added associations not found (Need 2 matches and got $almatches instead)"
+	fail "Added associations not found. Need 2 matches and got $almatches instead"
 }
 
 if {![check_acct_associations]} {
@@ -135,7 +136,7 @@ if {![check_acct_associations]} {
 #
 # Use sacctmgr to list the test accounts
 #
-spawn $sacctmgr -p -n list account
+set ac_list_pid [spawn $sacctmgr -p -n list account]
 expect {
 	-nocase -re "$ta1.$acct(Description).$acct(Organization)" {
 		incr aclmatches
@@ -146,6 +147,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $ac_list_pid
 		fail "sacctmgr list associations not responding"
 	}
 	eof {
@@ -154,5 +156,5 @@ expect {
 }
 
 if {$aclmatches != 2} {
-	fail "Added account incorrect (Need 2 matches and got $aclmatches instead)"
+	fail "Added account incorrect. Need 2 matches and got $aclmatches instead"
 }

@@ -106,7 +106,7 @@ proc capture_debug_for_bug_10313 {} {
 #
 set timeout [expr $max_job_delay + $sleep_time]
 set timed_out 0
-spawn $srun -t1 $bin_sleep $sleep_time
+set srun_pid [spawn $srun -t1 $bin_sleep $sleep_time]
 expect {
 	-re "Incompatible Slurm plugin" {
 		capture_debug_for_bug_10313
@@ -128,6 +128,7 @@ expect {
 		fail "Slurm appears to be down"
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -138,7 +139,7 @@ expect {
 subtest {$timed_out == 1} "Time limit should be enforced"
 
 set completions 0
-spawn $srun -t4 $bin_sleep $sleep_time
+set srun_pid [spawn $srun -t4 $bin_sleep $sleep_time]
 expect {
 	-re "time limit" {
 		set completions -1
@@ -160,6 +161,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

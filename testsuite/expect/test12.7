@@ -50,7 +50,8 @@ proc mod_state { state reason } {
 	set output [run_command_output "$scontrol update nodename=$node state=$state reason=$reason"]
 	set bad_state [regexp "Invalid node state specified" $output]
 
-	if {$bad_state == 1 && $state eq "resume" && [get_config_param "ReturnToService"] == 2} {
+	if {$bad_state == 1 && ![string compare $state "resume"] &&
+	    [get_config_param "ReturnToService"] == 2} {
 		log_warn "This error is expected, no worries"
 		set bad_state 0
 	}
@@ -65,7 +66,7 @@ proc check_step { num } {
 	set output [run_command_output -fail "$sacct --job=$job_id\.batch -D --start=today --noheader --format=jobid -P"]
 	set steps [regexp -all "batch" $output]
 
-	subtest {$num == $steps} "Check number of steps" "$steps != $num"
+	subtest {$num == $steps} "Chech number of steps" "$steps != $num"
 }
 
 # Count the number of jobs and steps with a specific job ID and state
