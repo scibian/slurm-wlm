@@ -29,7 +29,7 @@
 ############################################################################
 source ./globals
 
-set file_in      "$test_dir/input"
+set file_in      "test$test_id.input"
 set job_id1      0
 set job_id2      0
 set step_id      0
@@ -37,7 +37,8 @@ set step_id      0
 proc cleanup {} {
 	global job_id1 job_id2
 
-	cancel_job [list $job_id1 $job_id2]
+	cancel_job $job_id1
+	cancel_job $job_id2
 }
 
 #
@@ -49,10 +50,48 @@ make_bash_script $file_in "$srun $bin_sleep 90"
 #
 # Submit a couple of job so we have something to look at
 #
-set job_id1 [submit_job -fail "--output=/dev/null --error=/dev/null -t1 $file_in"]
-set job_id2 [submit_job -fail "--output=/dev/null --error=/dev/null --hold -t1 $file_in"]
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t1 $file_in]
+expect {
+	-re "Submitted batch job ($number)" {
+		set job_id1 $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		slow_kill $sbatch_pid
+		fail "srun not responding"
+	}
+	eof {
+		wait
+	}
+}
+if {$job_id1 == 0} {
+	fail "srun job submit failure"
+}
 
-wait_for_job -fail $job_id1 RUNNING
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null --hold -t1 $file_in]
+expect {
+	-re "Submitted batch job ($number)" {
+		set job_id2 $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		slow_kill $sbatch_pid
+		fail "srun not responding"
+	}
+	eof {
+		wait
+	}
+}
+if {$job_id2 == 0} {
+    fail "srun job submit failure"
+}
+
+if {[wait_for_job $job_id1 RUNNING] != 0} {
+	cancel_job $job_id1
+	cancel_job $job_id2
+	fail "Failed to start job $job_id1"
+}
+exec $bin_rm -f $file_in
 
 #
 # Check the squeue noheader output

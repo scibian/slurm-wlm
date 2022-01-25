@@ -44,7 +44,10 @@ cset fedc3 		""
 proc check_federation_setup { } {
 	global fed_slurm_base fedc1 fedc2 fedc3
 	set rc true
-	if {$fed_slurm_base eq "" || $fedc1 eq "" || $fedc2 eq "" || $fedc3 eq ""} {
+	if {![string compare $fed_slurm_base ""] ||
+	    ![string compare $fedc1 ""] ||
+	    ![string compare $fedc2 ""] ||
+	    ![string compare $fedc3 ""]} {
 		set rc false
 	}
 
@@ -54,10 +57,9 @@ proc check_federation_setup { } {
 
 proc setup_federation { fed_name } {
 	global sacctmgr fedc1 fedc2 fedc3 eol
-
 	set rc $::RETURN_SUCCESS
 
-	spawn $sacctmgr -i add federation $fed_name
+	set my_pid [spawn $sacctmgr -i add federation $fed_name]
 	set matches 0
 	expect {
 		-re "Adding Federation\\(s\\)$eol" {
@@ -69,7 +71,9 @@ proc setup_federation { fed_name } {
 				exp_continue
 		}
 		timeout {
-			fail "sacctmgr add not responding"
+			log_error "sacctmgr add not responding"
+			slow_kill $my_pid
+			set rc $::RETURN_TIMEOUT
 		}
 		eof {
 			wait
@@ -83,7 +87,7 @@ proc setup_federation { fed_name } {
 	set count 0
 	foreach cluster [list $fedc1 $fedc2 $fedc3] {
 		incr count
-		spawn $sacctmgr -i mod cluster $cluster set federation=$fed_name features=
+		set my_pid [spawn $sacctmgr -i mod cluster $cluster set federation=$fed_name features=]
 		set matches 0
 		expect {
 			-re "Setting$eol" {
@@ -107,7 +111,9 @@ proc setup_federation { fed_name } {
 				exp_continue
 			}
 			timeout {
-				fail "sacctmgr add not responding"
+				log_error "sacctmgr add not responding"
+				slow_kill $my_pid
+				set rc $::RETURN_TIMEOUT
 			}
 			eof {
 				wait
@@ -178,7 +184,7 @@ proc delete_federations { names } {
 	set matches 0
 	set rc $::RETURN_SUCCESS
 	set object "federation"
-	spawn $sacctmgr -i delete $object $names
+	set my_pid [spawn $sacctmgr -i delete $object $names]
 	expect {
 		-re "privilege to perform this action" {
 			log_error "Don't have privileges"
@@ -209,7 +215,9 @@ proc delete_federations { names } {
 			exp_continue
 		}
 		timeout {
-			fail "sacctmgr delete not responding"
+			log_error "sacctmgr delete not responding"
+			slow_kill $my_pid
+			set rc $::RETURN_TIMEOUT
 		}
 		eof {
 			wait
@@ -228,8 +236,8 @@ proc get_clusterfed_info { fed_name } {
 	global sacctmgr eol
 	set matches 0
 	array set clusters {}
-	spawn $sacctmgr show cluster federation=$fed_name \
-		    format="cluster%20,federation%20,id,controlhost,controlport,features,fedstate"
+	set my_pid [spawn $sacctmgr show cluster federation=$fed_name \
+		    format="cluster%20,federation%20,id,controlhost,controlport,features,fedstate"]
 	expect {
 		-re "Cluster\\s+Federation\\s+ID\\s+ControlHost\\s+ControlPort\\s+Features\\s+FedState $eol" {
 			incr matches
@@ -245,6 +253,7 @@ proc get_clusterfed_info { fed_name } {
 			exp_continue
 		}
 		timeout {
+			slow_kill $my_pid
 			fail "sacctmgr add not responding"
 		}
 		eof {
@@ -252,7 +261,7 @@ proc get_clusterfed_info { fed_name } {
 		}
 	}
 	if {$matches < 2} {
-		fail "Didn't match enough clusters for federation ($fed_name) ($matches < 2)"
+		fail "$matches didn't match enough clusters for $fed_name"
 	}
 
 	return [array get clusters]
@@ -270,7 +279,7 @@ proc add_cluster_to_fed {cname fed_name} {
 
 	set rc $::RETURN_SUCCESS
 	set matches 0
-	spawn $sacctmgr -i modify federation $fed_name set clusters+=$cname
+	set my_pid [spawn $sacctmgr -i modify federation $fed_name set clusters+=$cname]
 	expect {
 		-re "Setting$eol" {
 			incr matches
@@ -289,14 +298,16 @@ proc add_cluster_to_fed {cname fed_name} {
 			exp_continue
 		}
 		timeout {
-			fail "sacctmgr add not responding"
+			log_error "sacctmgr add not responding"
+			slow_kill $my_pid
+			set rc $::RETURN_TIMEOUT
 		}
 		eof {
 			wait
 		}
 	}
 	if {$rc || $matches != 4} {
-		log_error "Failed to add $cname to $fed_name ($matches != 4)"
+		log_error "$matches failed to add $cname to $fed_name"
 		set $rc $::RETURN_ERROR
 	}
 
@@ -315,7 +326,7 @@ proc remove_cluster_from_fed {cname fed_name} {
 
 	set rc $::RETURN_SUCCESS
 	set matches 0
-	spawn $sacctmgr -i modify federation $fed_name set clusters-=$cname
+	set my_pid [spawn $sacctmgr -i modify federation $fed_name set clusters-=$cname]
 	expect {
 		-re "Setting$eol" {
 			incr matches
@@ -334,7 +345,9 @@ proc remove_cluster_from_fed {cname fed_name} {
 			exp_continue
 		}
 		timeout {
-			fail "sacctmgr add not responding"
+			log_error "sacctmgr add not responding"
+			slow_kill $my_pid
+			set rc $::RETURN_TIMEOUT
 		}
 		eof {
 			wait
@@ -346,6 +359,43 @@ proc remove_cluster_from_fed {cname fed_name} {
 	}
 
 	return $rc
+}
+
+
+proc modify_federation_flags {fed_name mode flags} {
+	global sacctmgr eol
+	set matches 0
+	set my_pid [spawn $sacctmgr -i modify federation $fed_name set flags$mode$flags]
+	expect {
+		-re "Setting$eol" {
+			incr matches
+			exp_continue
+		}
+		-re "^\\s+Flags\\s+\\$mode\\s+$flags$eol" {
+			incr matches
+			exp_continue
+		}
+		-re "^\\s+Modified federation...$eol" {
+			incr matches
+			exp_continue
+		}
+		-re "^\\s+$fed_name$eol" {
+			incr matches
+			exp_continue
+		}
+		timeout {
+			log_error "sacctmgr add not responding"
+			slow_kill $my_pid
+			end_it 1
+		}
+		eof {
+			wait
+		}
+	}
+	if {$matches != 4} {
+		log_error "$matches unexpected error"
+		end_it 1
+	}
 }
 
 
@@ -433,7 +483,7 @@ proc wait_for_fed_job args {
 	set my_delay    0
 
 	set spec_clusters [list $fedc1 $fedc2 $fedc3]
-	if {$clusters ne ""} {
+	if {[string compare $clusters ""]} {
 		set spec_clusters [split $clusters ","]
 	}
 	log_debug "Checking for job '$job_id' in state '$desired_state' on [join $spec_clusters ,]"
@@ -458,49 +508,49 @@ proc wait_for_fed_job args {
 				"NODE_FAIL" -
 				"PREEMPTED" -
 				"COMPLETED" {
-					if {$desired_state eq "DONE"} {
+					if {[string compare $desired_state "DONE"] == 0} {
 						log_debug "Job $job_id is DONE ($state) on $cluster"
 						sleep 2
 						return $cluster
 					}
-					if {$desired_state eq "RUNNING"} {
+					if {[string compare $desired_state "RUNNING"] == 0} {
 						log_warn "Job $job_id is $state but we wanted RUNNING"
 					}
-					if {$desired_state eq "SUSPENDED"} {
+					if {[string compare $desired_state "SUSPENDED"] == 0} {
 						log_warn "Job $job_id is $state but we wanted SUSPENDED"
 					}
 					return ""
 				}
 				"PENDING" {
-					if {$desired_state eq "PENDING"} {
+					if {[string compare $desired_state "PENDING"] == 0} {
 						log_debug "Job $job_id is PENDING on $cluster"
 						return $cluster
 					}
 					log_warn "Job $job_id is in state $state, but desired state $desired_state"
 				}
 				"REVOKED" {
-					if {$desired_state eq "REVOKED"} {
+					if {[string compare $desired_state "REVOKED"] == 0} {
 						log_debug "Job $job_id is REVOKED on $cluster"
 						return $cluster
 					}
 					log_warn "Job $job_id is in state $state, but desired state $desired_state"
 				}
 				"RUNNING" {
-					if {$desired_state eq "RUNNING"} {
+					if {[string compare $desired_state "RUNNING"] == 0} {
 						log_debug "Job $job_id is RUNNING on $cluster"
 						return $cluster
 					}
 					log_warn "Job $job_id is in state $state, but desired state $desired_state"
 				}
 				"SPECIAL_EXIT" {
-					if {$desired_state eq "SPECIAL_EXIT"} {
+					if {[string compare $desired_state "SPECIAL_EXIT"] == 0} {
 						log_debug "Job $job_id is SPECIAL_EXIT on $cluster"
 						return $cluster
 					}
 					log_warn "Job $job_id is in state $state, but desired state $desired_state"
 				}
 				"SUSPENDED" {
-					if {$desired_state eq "SUSPENDED"} {
+					if {[string compare $desired_state "SUSPENDED"] == 0} {
 						log_debug "Job $job_id is SUSPENDED on $cluster"
 						return $cluster
 					}

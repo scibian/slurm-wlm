@@ -53,7 +53,7 @@ set expected_layout2 [list 0 0 1 1]
 set expected_layout3 [list 0 1 1 1]
 set tested_layout [list -1 -1 -1 -1]
 set timeout $max_job_delay
-spawn $srun -O -N2 --ntasks-per-node=2 -l --distribution=block -t1 $bin_printenv SLURM_NODEID
+set srun_pid [spawn $srun -O -N2 --ntasks-per-node=2 -l --distribution=block -t1 $bin_printenv SLURM_NODEID]
 expect {
 	-re "srun: error" {
 		skip "Can't test srun task distribution"
@@ -77,6 +77,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -90,9 +91,9 @@ expect {
 
 log_debug "Optimal task layout was: $expected_layout2"
 log_debug "Actual task layout was : $tested_layout"
-if {$tested_layout ne $expected_layout1 &&
-	$tested_layout ne $expected_layout2 &&
-	$tested_layout ne $expected_layout3} {
+if {[string compare $tested_layout $expected_layout1] &&
+    [string compare $tested_layout $expected_layout2] &&
+    [string compare $tested_layout $expected_layout3]} {
 	fail "Failed to distribute tasks in block fashion"
 }
 
@@ -112,7 +113,7 @@ set expected_layout1 [list 0 1 1 1]
 set expected_layout2 [list 0 1 0 1]
 set expected_layout3 [list 0 1 0 0]
 set tested_layout [list -1 -1 -1 -1]
-spawn $srun -O -N2 --ntasks-per-node=2 -l --distribution=cyclic -t1 $bin_printenv SLURM_NODEID
+set srun_pid [spawn $srun -O -N2 --ntasks-per-node=2 -l --distribution=cyclic -t1 $bin_printenv SLURM_NODEID]
 expect {
 	-re "More processors requested than permitted" {
 		skip "Can't test srun task distribution"
@@ -139,6 +140,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -151,8 +153,8 @@ expect {
 #
 log_debug "Optimal task layout was: $expected_layout2"
 log_debug "Actual task layout was : $tested_layout"
-if {$tested_layout ne $expected_layout1 &&
-	$tested_layout ne $expected_layout2 &&
-	$tested_layout ne $expected_layout3} {
+if {[string compare $tested_layout $expected_layout1] &&
+    [string compare $tested_layout $expected_layout2] &&
+    [string compare $tested_layout $expected_layout3]} {
 	fail "Failed to distribute tasks in cyclic fashion"
 }

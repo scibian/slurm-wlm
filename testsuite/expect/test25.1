@@ -55,7 +55,8 @@ if { [string first "CR_ONE_TASK_PER_CORE" $select_type_params] != -1 } {
 proc cleanup {} {
 	global jobid1 jobid2
 
-	cancel_job [list $jobid1 $jobid2]
+	cancel_job $jobid1
+	cancel_job $jobid2
 }
 
 #
@@ -157,7 +158,7 @@ proc sprio_opt { soption } {
 			skip "Can not test without accounting enabled"
 		}
 
-		subtest {$matches == 4} "Verify sprio $soption option" "$matches != 4"
+		subtest {$matches == 4} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio usage option
@@ -185,7 +186,7 @@ proc sprio_opt { soption } {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 1} "Verify sprio $soption option" "$matches != 1"
+		subtest {$matches == 1} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio version options
@@ -214,7 +215,7 @@ proc sprio_opt { soption } {
 			skip "Can not test without accounting enabled"
 		}
 
-		subtest {$matches == 1} "Verify sprio $soption option" "$matches != 1"
+		subtest {$matches == 1} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio weights options
@@ -248,7 +249,7 @@ proc sprio_opt { soption } {
 			skip "Can not test without accounting enabled"
 		}
 
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 }
 
@@ -296,7 +297,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 0} "Verify sprio $soption option" "$matches != 0"
+		subtest {$matches == 0} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio jobs options
@@ -329,7 +330,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio long options
@@ -362,7 +363,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio norm options
@@ -395,7 +396,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio format options
@@ -433,7 +434,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 3} "Verify sprio $soption option" "$matches != 3"
+		subtest {$matches == 3} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio u option
@@ -466,7 +467,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio usage option
@@ -499,7 +500,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 2} "Verify sprio $soption option" "$matches != 2"
+		subtest {$matches == 2} "Verify sprio $soption option" $matches"
 	}
 
 ############# sprio verbose options
@@ -537,7 +538,7 @@ proc sprio_args { soption sargs jobid} {
 		if {$not_support == 1} {
 			skip "Can not test without accounting enabled"
 		}
-		subtest {$matches == 3} "Verify sprio $soption option" "$matches != 3"
+		subtest {$matches == 3} "Verify sprio $soption option" $matches"
 	}
 
 }

@@ -90,15 +90,15 @@ make_bash_script $file_in2 "echo HOST:\$SLURMD_NODENAME CUDA_VISIBLE_DEVICES:\$C
 #
 # Submit job with various --gpus counters, up to 2 full nodes or 32 GPUs
 #
-#	spawn $sbatch --cpus-per-gpu=1 --gpus=$inx -t1 -w $node_name -J $test_name --output=$ofile $file_in1
+#	spawn $sbatch --cpus-per-gpu=1 --gpus=$inx -t1 -w $node_name -J "test$test_id" --output=$ofile $file_in1
 for {set inx 1} {$inx <= $tot_gpus} {incr inx} {
 	set job_id 0
 	set ofile ${file_out}.${inx}
 	if {$tot_gpus > $tot_cpus} {
 		# Assumes no configured DefCPUsPerGPU
-		set job_id [submit_job "--gpus=$inx -t1 -w $node_name -J $test_name --output=$ofile $file_in1"]
+		set job_id [submit_job "--gpus=$inx -t1 -w $node_name -J \"test$test_id\" --output=$ofile $file_in1"]
 	} else {
-		set job_id [submit_job "--cpus-per-gpu=1 --gpus=$inx -t1 -w $node_name -J $test_name --output=$ofile $file_in1"]
+		set job_id [submit_job "--cpus-per-gpu=1 --gpus=$inx -t1 -w $node_name -J \"test$test_id\" --output=$ofile $file_in1"]
 	}
 	if {$job_id == 0} {
 		fail "sbatch job submit failure"
@@ -108,12 +108,16 @@ for {set inx 1} {$inx <= $tot_gpus} {incr inx} {
 }
 
 foreach job_id $job_list {
-	wait_for_job -fail $job_id "DONE"
+	if {[wait_for_job $job_id "DONE"]} {
+		fail "Job $job_id not end"
+	}
 }
 
 for {set inx 1} {$inx <= $tot_gpus} {incr inx} {
 	set ofile ${file_out}.${inx}
-	wait_for_file -fail -timeout 20 $ofile
+	if {[wait_for_file -timeout 20 $ofile] != 0} {
+		fail "Output file $ofile not found"
+	}
 	set output [run_command_output "$bin_cat $ofile"]
 	set matches_list [regexp -inline -all "CUDA_VISIBLE_DEVICES:($number_commas)" $output]
 	set match 0
@@ -121,5 +125,5 @@ for {set inx 1} {$inx <= $tot_gpus} {incr inx} {
 		incr match [cuda_count $devices]
 	}
 
-	subtest {$match == $inx} "GPU count should be $inx in output file" "$match != $inx, file: $ofile, output: $output"
+	subtest {$match == $inx} "GPU count should be $inx in file $ofile" "$match != $inx, file: $output"
 }

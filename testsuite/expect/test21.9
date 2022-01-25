@@ -50,7 +50,7 @@ set cluster(MaxJobs)       500
 set cluster(MaxSubmitJobs) 400
 set cluster(MaxNodes)      200
 set cluster(MaxWall)       01:00:00
-set cluster(DefaultQos)    "${test_name}_qos_1"
+set cluster(DefaultQos)    "test$test_id\_qos_1"
 
 # Modified Cluster Limits
 array set mod_cluster {}
@@ -66,7 +66,7 @@ set mod_cluster(MaxJobs)       600
 set mod_cluster(MaxSubmitJobs) 700
 set mod_cluster(MaxNodes)      300
 set mod_cluster(MaxWall)       12:00:00
-set mod_cluster(DefaultQos)    "${test_name}_qos_2"
+set mod_cluster(DefaultQos)    "test$test_id\_qos_2"
 
 set access_err  0
 
@@ -77,7 +77,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 #
 # Verify if Administrator privileges
 #
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -106,7 +106,7 @@ expect {
 	}
 }
 if {$qos_set != 1} {
-	fail "QOS ($dqos) was not created"
+	fail "QOS $dqos was not created"
 }
 
 #
@@ -120,17 +120,17 @@ if {$access_err != 0} {
 
 # Check Cluster 1
 if {![check_assoc_limit 1 cluster $tc1 [array get cluster]]} {
-	fail "The association limits for cluster 1 ($tc1) are incorrect"
+	fail "The association limits for cluster $tc1 are incorrect"
 }
 
 # Check Cluster 2
 if {![check_assoc_limit 1 cluster $tc2 [array get cluster]]} {
-	fail "The association limits for cluster 2 ($tc2) are incorrect"
+	fail "The association limits for cluster $tc2 are incorrect"
 }
 
 # Check Cluster 3
 if {![check_assoc_limit 1 cluster $tc3 [array get cluster]]} {
-	fail "The association limits for cluster 3 ($tc3) are incorrect"
+	fail "The association limits for cluster $tc3 are incorrect"
 }
 
 if {![check_acct_associations]} {
@@ -145,17 +145,17 @@ mod_cluster "$tc1,$tc2,$tc3" [array get mod_cluster]
 log_info "Checking modifed cluster limits:"
 # Check Cluster 1
 if {![check_assoc_limit 1 cluster $tc1 [array get mod_cluster]]} {
-	fail "The association limits for cluster 1 ($tc1) are incorrect"
+	fail "The association limits for cluster $tc1 are incorrect"
 }
 
 # Check Cluster 2
 if {![check_assoc_limit 1 cluster $tc2 [array get mod_cluster]]} {
-	fail "The association limits for cluster 2 ($tc2) are incorrect"
+	fail "The association limits for cluster $tc2 are incorrect"
 }
 
 # Check Cluster 3
 if {![check_assoc_limit 1 cluster $tc3 [array get mod_cluster]]} {
-	fail "The association limits for cluster 3 ($tc3) are incorrect"
+	fail "The association limits for cluster $tc3 are incorrect"
 }
 
 if {![check_acct_associations]} {

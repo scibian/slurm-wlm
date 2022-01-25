@@ -41,12 +41,14 @@ proc cleanup {} {
 # job steps.
 #
 set timeout $max_job_delay
-spawn $salloc -v -N1 -n1 -t2 $bin_sleep 600
+set srun_alloc_pid [spawn $salloc -v -N1 -n1 -t2 $bin_sleep 600]
+set srun_alloc_sid $spawn_id
 expect {
 	-re "salloc: Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
 	}
 	timeout {
+		slow_kill $srun_alloc_pid
 		fail "srun failed to grab an allocation in a timely manner"
 	}
 }
@@ -60,7 +62,7 @@ if {$job_id == 0} {
 #
 set pattern "sdiouetj49udfj"
 set got_pattern 0
-spawn $srun --jobid $job_id echo $pattern
+set srun_launch_pid [spawn $srun --jobid $job_id echo $pattern]
 expect {
 	-re "error" {
 		fail "Unexpected error occurred"
@@ -70,6 +72,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_launch_pid
 		fail "srun timed out"
 	}
 	eof {
@@ -78,3 +81,21 @@ expect {
 }
 
 subtest {$got_pattern != 0} "srun should run under existing job allocation"
+
+#
+# Release the allocation by killing salloc (really it kills the "sleep")
+#
+if {[cancel_job $job_id] != 0} {
+	fail "Unable to cancel job"
+}
+
+set spawn_id $srun_alloc_sid
+exec kill -9 $srun_alloc_pid
+expect {
+	timeout {
+		exec kill -9 $srun_alloc_pid
+	}
+	eof {
+		wait
+	}
+}

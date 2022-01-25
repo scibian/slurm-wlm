@@ -28,8 +28,8 @@
 ############################################################################
 source ./globals
 
-set test_acct   "${test_name}_acct"
-set timeout     60
+set test_acct   "test$test_id\_acct"
+set timeout 60
 
 #
 # Check accounting config and bail if not found.
@@ -38,7 +38,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -61,7 +61,7 @@ set user_gid [get_my_gid]
 # Use sacctmgr to add an account
 #
 set aamatches 0
-spawn $sacctmgr -i add account $test_acct cluster=$cluster
+set sadd_pid [spawn $sacctmgr -i add account $test_acct cluster=$cluster]
 expect {
 	-re "Adding Account" {
 		incr aamatches
@@ -73,6 +73,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -86,9 +87,10 @@ if {$aamatches != 1} {
 #
 # Add self to this new account
 #
-spawn $sacctmgr -i create user name=$user_name account=$test_acct cluster=$cluster
+set sadd_pid [spawn $sacctmgr -i create user name=$user_name account=$test_acct cluster=$cluster]
 expect {
 	 timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -422,7 +424,7 @@ proc sacct_vargs { soption vargs job_id} {
 # Use sacctmgr to add an account
 #
 set aamatches 0
-spawn $sacctmgr -i add account $test_acct cluster=$cluster
+set sadd_pid [spawn $sacctmgr -i add account $test_acct cluster=$cluster]
 expect {
 	-re "Adding Account" {
 		incr aamatches
@@ -434,6 +436,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -447,9 +450,10 @@ if {$aamatches != 1} {
 #
 # Add self to this new account
 #
-spawn $sacctmgr -i create user name=$user_name account=$test_acct cluster=$cluster
+set sadd_pid [spawn $sacctmgr -i create user name=$user_name account=$test_acct cluster=$cluster]
 expect {
 	 timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {

@@ -32,7 +32,7 @@
 ############################################################################
 
 proc inc3_11_7 {} {
-	global re_word_str bin_sleep cluster_cpus cores_per_node
+	global re_word_str bin_rm bin_sleep cluster_cpus cores_per_node
 	global def_partition file_in number part_cores part_node
 	global part_node_cnt part_node_cores
 	global sbatch scancel scontrol user_name wait_for_job
@@ -64,12 +64,13 @@ proc inc3_11_7 {} {
 	set res_info [get_reservations $res_name]
 	if { ![dict exists $res_info $res_name] } {
 		delete_res $res_name
-		fail "Unable to get info about reservation ($res_name)"
+		fail "Unable to get info about reservation $res_name"
 	}
 	lassign [get_node_cpus [dict get $res_info $res_name "Nodes"]] cputot threadcnt
 	set thread_res_num [ expr $corecnt * $threadcnt ]
 
 	# Make the job script
+	exec $bin_rm -f $file_in
 	make_bash_script $file_in "$bin_sleep 100"
 
 	# Sleep short time in case clocks are not synchronized
@@ -77,13 +78,14 @@ proc inc3_11_7 {} {
 
 	# (First test) Submit the batch job: a simple job using just 1 core inside the reservation
 	set job_id 0
-	spawn $sbatch -n1 --reservation=$res_name --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -n1 --reservation=$res_name --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -94,7 +96,7 @@ proc inc3_11_7 {} {
 	}
 	if {$job_id == 0} {
 		delete_res $res_name
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	subtest {[wait_for_job $job_id RUNNING] == 0} "A simple job using just 1 core should run inside the reservation"
@@ -103,13 +105,14 @@ proc inc3_11_7 {} {
 	sleep 1
 
 	# (Second test) Submit the batch job: a job using all cores allocated by the reservation
-	spawn $sbatch -n$thread_res_num --reservation=$res_name --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --reservation=$res_name --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -120,7 +123,7 @@ proc inc3_11_7 {} {
 	}
 	if {$job_id == 0} {
 		delete_res $res_name
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	# Show the job, make sure reservation tag is right
@@ -130,13 +133,14 @@ proc inc3_11_7 {} {
 	sleep 1
 
 	# (Third test) Submit the batch job: a job using all cores not allocated by the reservation
-	spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -147,7 +151,7 @@ proc inc3_11_7 {} {
 	}
 	if {$job_id == 0} {
 		delete_res $res_name
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	# Show the job, make sure reservation tag is right
@@ -157,13 +161,14 @@ proc inc3_11_7 {} {
 
 	# (Fourth test) Submit a batch job: a job using more cores than allocated by the reservation
 	set thread_res_num [ expr ($thread_res_num + 1) ]
-	spawn $sbatch -n$thread_res_num --reservation=$res_name --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --reservation=$res_name --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -174,7 +179,7 @@ proc inc3_11_7 {} {
 	}
 	if {$job_id == 0} {
 		delete_res $res_name
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	sleep 10
@@ -185,7 +190,7 @@ proc inc3_11_7 {} {
 		-re "Invalid job id specified" {
 			delete_res $res_name
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			log_info "Job $job_id is PENDING as expected"
@@ -194,7 +199,7 @@ proc inc3_11_7 {} {
 		-re "JobState=RUNNING" {
 			delete_res $res_name
 			cancel_job $job_id
-			fail "Job ($job_id) is RUNNING but it should not be"
+			fail "Job $job_id is RUNNING but it should not"
 		}
 		timeout {
 			delete_res $res_name
@@ -210,13 +215,14 @@ proc inc3_11_7 {} {
 
 	# (Fifth test) Submit a batch job: a job specifying node in reservation and
 	#              using more cores than allocated by the reservation
-	spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --nodes=1 --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -n$thread_res_num --nodelist=[dict get $res_info $res_name "Nodes"] --nodes=1 --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			cancel_job $job_id
 			fail "sbatch not responding"
@@ -227,7 +233,7 @@ proc inc3_11_7 {} {
 	}
 	if {$job_id == 0} {
 		delete_res $res_name
-		fail "Batch submit failure"
+		fail "batch submit failure"
 	}
 
 	sleep 10
@@ -238,7 +244,7 @@ proc inc3_11_7 {} {
 		-re "Invalid job id specified" {
 			delete_res $res_name
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			log_info "Job $job_id is PENDING as expected"
@@ -247,7 +253,7 @@ proc inc3_11_7 {} {
 		-re "JobState=RUNNING" {
 			delete_res $res_name
 			cancel_job $job_id
-			fail "Job ($job_id) is RUNNING but it should not be"
+			fail "Job $job_id is RUNNING but it should not"
 		}
 		timeout {
 			delete_res $res_name
@@ -274,11 +280,11 @@ proc inc3_11_7 {} {
 	spawn $scontrol show job $job_id
 	expect {
 		-re "Invalid job id specified" {
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			cancel_job $job_id
-			fail "Job ($job_id) is PENDING but it should not be"
+			fail "Job $job_id is PENDING but it should not"
 		}
 		-re "JobState=RUNNING" {
 			log_info "Job $job_id is RUNNING as expected"

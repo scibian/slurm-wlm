@@ -26,13 +26,13 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
+set file_in     "test$test_id.in"
 set job_id      0
 
 proc cleanup {} {
-	global job_id
+	global file_in
 
-	cancel_job $job_id
+	exec rm -f $file_in
 }
 
 #

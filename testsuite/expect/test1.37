@@ -28,6 +28,8 @@
 ############################################################################
 source ./globals
 
+set task_num    0
+
 if {[get_config_param "FrontendName"] ne "MISSING"} {
         skip "This test is incompatible with front-end systems"
 } else {
@@ -39,7 +41,7 @@ if {[get_config_param "FrontendName"] ne "MISSING"} {
 #
 set task_output 0
 set timeout $max_job_delay
-spawn $srun -N1 --ntasks-per-node=$task_num -O -l -t1 $bin_id
+set srun_pid [spawn $srun -N1 --ntasks-per-node=$task_num -O -l -t1 $bin_id]
 expect {
 	-re "($number): uid=" {
 		incr task_output
@@ -52,6 +54,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

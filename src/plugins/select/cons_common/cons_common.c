@@ -521,11 +521,8 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	/*
 	 * If job requested exclusive rights to the node don't do the min
 	 * here since it will make it so we don't allocate the entire node.
-	 * Don't min num_tasks if cpus_per_tres given, since number of
-	 * CPUs in that case is not determined by tasks.
 	 */
-	if (details_ptr->ntasks_per_node && details_ptr->share_res &&
-	    !job_ptr->cpus_per_tres)
+	if (details_ptr->ntasks_per_node && details_ptr->share_res)
 		num_tasks = MIN(num_tasks, details_ptr->ntasks_per_node);
 
 	if (cpus_per_task < 2) {

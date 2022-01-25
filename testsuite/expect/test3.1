@@ -28,24 +28,29 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
 set job_id      0
+set file_in     "$test_name.input"
 
 # TODO Temporary variables to troubleshoot bug 9647 (remove once fixed)
-set file_out    "$test_dir/output"
+set file_out    "$test_name.output"
+
+proc cleanup {} {
+	global job_id file_in
+
+	cancel_job $job_id
+	file delete $file_in
+
+	# TODO Cleanup debug variables for bug 9647 (remove once fixed)
+	global file_out
+	file delete $file_out
+}
 
 #
 # This test must be run as a Slurm administrator, root, or SlurmUser in order to
 # issue scontrol reconfigure.
 #
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can be run only for Administrators"
-}
-
-proc cleanup {} {
-	global job_id
-
-	cancel_job $job_id
 }
 
 #
@@ -57,13 +62,14 @@ make_bash_script $file_in "
   #$srun $bin_sleep 60
 "
 # TODO Temporarily saving output to troubleshoot bug 9647 (revert once fixed)
-spawn $sbatch -N1 --output=$file_out -t2 $file_in
+set sbatch_pid [spawn $sbatch -N1 --output=$file_out -t2 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		catch {exec $bin_kill -KILL $sbatch_pid}
 		fail "sbatch not responding"
 	}
 	eof {
@@ -73,7 +79,9 @@ expect {
 if {$job_id == 0} {
 	fail "sbatch job submit failed"
 }
-wait_for_job -fail $job_id RUNNING
+if {[wait_for_job $job_id RUNNING] != 0} {
+	fail "Waiting for job $job_id to start"
+}
 
 #
 # Issue scontrol reconfigure
@@ -84,5 +92,5 @@ if {[wait_for_job $job_id RUNNING] != 0} {
 	# TODO Temporary debug to troubleshoot bug 9647 (revert once fixed)
 	run_command "$bin_cat $file_out"
 
-	fail "Job ($job_id) not running after reconfiguration"
+	fail "Job $job_id not running after reconfiguration"
 }

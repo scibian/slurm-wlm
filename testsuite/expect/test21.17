@@ -83,7 +83,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -103,31 +103,31 @@ proc cleanup {} {
 
 # Add cluster
 if [add_cluster "$tc1,$tc2,$tc3" [array get clus_req]] {
-	fail "Unable to add clusters ($tc1,$tc2,$tc3)"
+	fail "Unable to add cluster ($tc1,$tc2,$tc3)"
 }
 
 # Add accounts
 if [add_acct "$ta1,$ta2,$ta3" [array get acct_req]] {
-	fail "Unable to add accounts ($ta1,$ta2,$ta3)"
+	fail "Unable to add account ($ta1,$ta2,$ta3)"
 }
 
 # Add users
 if [add_user "$tu1,$tu2,$tu3" [array get user_req]] {
-	fail "Unable to add users ($tu1,$tu2,$tu3)"
+	fail "Unable to add user ($tu1,$tu2,$tu3)"
 }
 
 # First test change the AdminLevel and DefaultAccount of a user
 # cluster account name part wadmin wdacct wdwckey qos fairshare grpcpumin grpcpu grpjob grpnode grpsubmit grpwall maxcpumin maxcpu maxjob maxnode maxsubmit maxwall admin dacct dwckey
 
 if [mod_user $tu1 [array get user_mod_info] [array get user_mod_acct] [array get user_mod_assoc]] {
-	fail "Unable to modify user 1 ($tu1)"
+	fail "Unable to modify user ($tu1)"
 }
 
 #
 # Use sacctmgr to list the test user modification
 #
 set matches 0
-spawn $sacctmgr -n -p list user names=$tu1,$tu2,$tu3 format="User,DefaultA,Admin" cluster=$tc1
+set my_pid [spawn $sacctmgr -n -p list user names=$tu1,$tu2,$tu3 format="User,DefaultA,Admin" cluster=$tc1]
 expect {
 	-re "There was a problem" {
 		fail "There was a problem with the sacctmgr command"
@@ -145,21 +145,21 @@ expect {
 }
 
 if {$matches != 3} {
-	fail "User modification 3 incorrect ($matches != 3)"
+	fail "User modification 3 incorrect with only $matches"
 }
 
 # Next, test change the limits of one user
 # cluster account name part wadmin wdacct wdwckey qos fairshare grpcpumin grpcpu grpjob grpnode grpsubmit grpwall maxcpumin maxcpu maxjob maxnode maxsubmit maxwall admin dacct dwckey
 
 if [mod_user $tu2 [array get user_mod_info2] [array get user_mod_acct2] [array get user_mod_assoc2]] {
-	fail "Unable to modify user 2 ($tu2)"
+	fail "Unable to modify user ($tu2)"
 }
 
 #
 # Use sacctmgr to list the test user modifications
 #
 set matches 0
-spawn $sacctmgr -n -p list assoc users=$tu1,$tu2,$tu3 format="User,Cluster,Fairshare,Maxcpum,MaxJ,MaxN,MaxW"
+set my_pid [spawn $sacctmgr -n -p list assoc users=$tu1,$tu2,$tu3 format="User,Cluster,Fairshare,Maxcpum,MaxJ,MaxN,MaxW"]
 expect {
 	-re "There was a problem" {
 		fail "There was a problem with the sacctmgr command"
@@ -177,5 +177,5 @@ expect {
 }
 
 if {$matches != 27} {
-	fail "User modification 27 incorrect ($matches != 27)"
+	fail "User modification 27 incorrect with only $matches"
 }

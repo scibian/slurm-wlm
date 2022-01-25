@@ -34,7 +34,6 @@ set job_id      0
 run_command -fail "$scontrol update partitionname=[default_partition] DefaultTime=10"
 
 proc cleanup {} {
-
 	# Restore DefaultTime
 	reconfigure
 }
@@ -43,7 +42,7 @@ proc cleanup {} {
 # Spawn a batch job with a deadline and no time
 #
 set timeout $max_job_delay
-spawn $salloc --begin now+1 --deadline now+600 --time-min 5 $bin_sleep 1
+set salloc_pid [spawn $salloc --begin now+1 --deadline now+600 --time-min 5 $bin_sleep 1 ]
 expect {
 	-re "Requested time limit is invalid" {
 		fail "Requested time limit is invalid"
@@ -75,11 +74,11 @@ wait_for_job -fail $job_id DONE
 #
 # test job status in scontrol and sacct
 #
-subtest {[get_job_param $job_id "JobState"] == "COMPLETED"} "Verify job ($job_id) is COMPLETED"
+subtest {[get_job_param $job_id "JobState"] == "COMPLETED"} "Verify job $job_id is COMPLETED"
 
 if {[param_contains [get_config_param "AccountingStorageType"] "*/slurmdbd"]} {
 	set output [run_command_output -fail "$sacct -n -P -X -j $job_id -o State"]
-	subtest {![regexp "DEADLINE" $output]} "Verify job ($job_id) is not in State DEADLINE in sacct"
+	subtest {![regexp "DEADLINE" $output]} "Verify job $job_id is not in State DEADLINE in ssact"
 } else {
 	subskip "Can not subtest without accounting enabled"
 }
