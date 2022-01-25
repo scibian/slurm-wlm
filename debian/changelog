@@ -1,3 +1,9 @@
+slurm-wlm (21.08.4-1sci10u1) scibian10; urgency=medium
+
+  * Backport to scibian10
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 25 Jan 2022 16:07:41 +0100
+
 slurm-wlm (21.08.4-1) unstable; urgency=medium
 
   * New upstream release
