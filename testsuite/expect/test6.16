@@ -29,13 +29,14 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
+set file_in     "test$test_id.input"
 set job_id      0
 
 proc cleanup {} {
-	global job_id
+	global file_in job_id
 
 	cancel_job $job_id
+	exec rm -f $file_in
 }
 
 #
@@ -50,9 +51,27 @@ make_bash_script $file_in "
 #
 # Spawn sbatch job
 #
-set job_id [submit_job -fail "-n3 --mem=30 --output=/dev/null --error=/dev/null --job-name=job.$test_id -t5 $file_in"]
+set sbatch_pid [spawn $sbatch -n3 --mem=30 --output=/dev/null --error=/dev/null --job-name=job.$test_id -t5 $file_in]
+expect {
+	-re "Submitted batch job ($number)" {
+		set job_id $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		slow_kill $sbatch_pid
+		fail "srun not responding"
+	}
+	eof {
+		wait
+	}
+}
+if {$job_id == 0} {
+	fail "Batch submit failure"
+}
 
-wait_for_job -fail $job_id RUNNING
+if {[wait_for_job $job_id RUNNING] != 0} {
+	fail "Error starting job $job_id"
+}
 # Wait for job steps to begin
 exec $bin_sleep 3
 

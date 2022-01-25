@@ -29,7 +29,7 @@
 
 proc inc3_11_9 {} {
 	global user_name node_count
-	global file_in bin_sleep sbatch number scontrol
+	global bin_rm file_in bin_sleep sbatch number scontrol
 	global re_word_str scancel
 	global cluster_cpus cores_per_node def_partition
 	global def_node_name def_node_inx_min def_node_inx_max
@@ -51,6 +51,7 @@ proc inc3_11_9 {} {
 	}
 
 	# Make the job script
+	exec $bin_rm -f $file_in
 	make_bash_script $file_in "$bin_sleep 100"
 
 	# Make a reservation, just to get node size information
@@ -63,7 +64,7 @@ proc inc3_11_9 {} {
 	set res_info [get_reservations $res_name]
 	if { ![dict exists $res_info $res_name] } {
 		delete_res $res_name
-		fail "Unable to get info about reservation ($res_name)"
+		fail "Unable to get info about reservation $res_name"
 	}
 	lassign [get_node_cpus [dict get $res_info $res_name "Nodes"]] cputot threadcnt
 
@@ -81,13 +82,14 @@ proc inc3_11_9 {} {
 	set job_id 0
 
 	# Submit a batch job using half the threads on the nodes
-	spawn $sbatch -w[node_list_to_range $nodes] --time=10:00 --ntasks-per-node=$thread_res_num --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch -w[node_list_to_range $nodes] --time=10:00 --ntasks-per-node=$thread_res_num --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			cancel_job $job_id
 			fail "sbatch not responding"
 		}
@@ -130,7 +132,7 @@ proc inc3_11_9 {} {
 	if { ![dict exists $res_info $res_name] } {
 		delete_res $res_name
 		cancel_job $job_id
-		fail "Unable to get info about reservation ($res_name)"
+		fail "Unable to get info about reservation $res_name"
 	}
 	lassign [get_node_cpus [dict get $res_info $res_name "Nodes"]] cputot threadcnt
 
@@ -222,7 +224,7 @@ proc inc3_11_9 {} {
 	if { ![dict exists $res_info $res_name] } {
 		delete_res $res_name
 		delete_res $res_name_test
-		fail "Unable to get info about reservation ($res_name)"
+		fail "Unable to get info about reservation $res_name"
 	}
 	lassign [get_node_cpus [dict get $res_info $res_name "Nodes"]] cputot threadcnt
 
@@ -231,13 +233,14 @@ proc inc3_11_9 {} {
 	set core_res_num   [ expr $core_res_num - 1 ]
 	set thread_res_num [ expr $core_res_num * $threadcnt ]
 
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
 			fail "sbatch not responding"
@@ -261,13 +264,13 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is PENDING"
+			fail "Job $job_id is PENDING"
 		}
 		timeout {
 			delete_res $res_name
@@ -287,13 +290,14 @@ proc inc3_11_9 {} {
 	# Submit a batch job: a job using more cores than available in first 5 nodes
 	set core_res_num   [ expr $cores_per_node / 2 ]
 	set thread_res_num [ expr $core_res_num * $threadcnt ]
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
 			fail "sbatch not responding"
@@ -317,7 +321,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			log_debug "Job is PENDING as expected"
@@ -327,7 +331,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is RUNNING"
+			fail "Job $job_id is RUNNING"
 		}
 		timeout {
 			delete_res $res_name
@@ -345,13 +349,14 @@ proc inc3_11_9 {} {
 	# Submit a batch job: a job using cores reserved in first reservation
 	set core_res_num   [ expr $cores_per_node / 2 ]
 	set thread_res_num [ expr $core_res_num * $threadcnt ]
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
 			fail "sbatch not responding"
@@ -375,7 +380,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=RUNNING" {
 			log_debug "Job is RUNNING as expected"
@@ -385,7 +390,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is PENDING"
+			fail "Job $job_id is PENDING"
 		}
 		timeout {
 			delete_res $res_name
@@ -405,13 +410,14 @@ proc inc3_11_9 {} {
 	set core_res_num   [ expr $core_res_num * 5 ]
 	set core_res_num   [ expr $core_res_num + 1 ]
 	set thread_res_num [ expr $core_res_num * $threadcnt ]
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
 			fail "sbatch not responding"
@@ -435,7 +441,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			log_debug "Job is PENDING as expected"
@@ -445,7 +451,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is RUNNING"
+			fail "Job $job_id is RUNNING"
 		}
 		timeout {
 			delete_res $res_name
@@ -462,13 +468,14 @@ proc inc3_11_9 {} {
 
 	# Submit a batch job: a job using cores reserved in second reservation
 	set thread_res_num [ expr 1 * $threadcnt ]
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name_test --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name_test --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
 			fail "sbatch not responding"
@@ -492,7 +499,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=RUNNING" {
 			log_debug "Job is RUNNING as expected"
@@ -502,7 +509,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is PENDING"
+			fail "Job $job_id is PENDING"
 		}
 		timeout {
 			delete_res $res_name
@@ -519,16 +526,17 @@ proc inc3_11_9 {} {
 
 	# Submit a batch job: a job using more cores than reserved in second reservation
 	set thread_res_num [ expr 2 * $threadcnt ]
-	spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name_test --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$thread_res_num --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --reservation=$res_name_test --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
+			slow_kill $sbatch_pid
 			delete_res $res_name
 			delete_res $res_name_test
-			fail "sbatch not responding"
+			fail "sbatch not responding (within: inc3.11.9)"
 		}
 		eof {
 			wait
@@ -549,7 +557,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=PENDING" {
 			log_debug "Job is PENDING as expected"
@@ -559,7 +567,7 @@ proc inc3_11_9 {} {
 			delete_res $res_name
 			delete_res $res_name_test
 			cancel_job $job_id
-			fail "Job ($job_id) is RUNNING"
+			fail "Job $job_id is RUNNING"
 		}
 		timeout {
 			delete_res $res_name
@@ -577,23 +585,24 @@ proc inc3_11_9 {} {
 	set ret_code1 [delete_res $res_name]
 	if { $ret_code1 != 0 } {
 		delete_res $res_name_test
-		fail "Failed to delete reservation ($res_name)"
+		fail "Failed to delete reservation $res_name."
 	}
 	set ret_code [delete_res $res_name_test]
 	if { $ret_code != 0 } {
-		fail "Failed to delete reservation ($res_name_test)"
+		fail "Failed to delete reservation $res_name_test."
 	}
 
 	# Create a job that uses all cores in the node range and is not
 	# part of a reservation.
-	spawn $sbatch --ntasks-per-node=$cores_per_node --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=$cores_per_node --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			fail "sbatch not responding"
+			slow_kill $sbatch_pid
+			fail "sbatch not responding (within: inc3.11.9)"
 		}
 		eof {
 			wait
@@ -611,7 +620,7 @@ proc inc3_11_9 {} {
 	expect {
 		-re "Invalid job id specified" {
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=RUNNING" {
 			set job_is_running true
@@ -698,7 +707,7 @@ proc inc3_11_9 {} {
 	cancel_job $job_id
 	set ret_code [delete_res $res_name]
 	if { $ret_code != 0 } {
-		fail "Error $ret_code deleting reservation"
+		fail "Error $ret_code deleting reservation."
 	}
 
 	subtest {$hosts_correct == 1} "Reservation should have correct node list"
@@ -708,14 +717,15 @@ proc inc3_11_9 {} {
 
 	# Create a job that runs on a single core on all nodes in the reservation.
 
-	spawn $sbatch --ntasks-per-node=1 --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in
+	set sbatch_pid [spawn $sbatch --ntasks-per-node=1 --nodelist=$def_node_name\[$min_node_inx\-$max_node_inx\] --output=/dev/null $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			fail "sbatch not responding"
+			slow_kill $sbatch_pid
+			fail "sbatch not responding (within: inc3.11.9)"
 		}
 		eof {
 			wait
@@ -731,7 +741,7 @@ proc inc3_11_9 {} {
 	expect {
 		-re "Invalid job id specified" {
 			cancel_job $job_id
-			fail "Job ($job_id) not found"
+			fail "Job $job_id not found"
 		}
 		-re "JobState=RUNNING" {
 			log_debug "Job is RUNNING as expected"

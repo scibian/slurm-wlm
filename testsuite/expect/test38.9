@@ -41,9 +41,11 @@ if {$nb_nodes < 3} {
 }
 
 proc cleanup {} {
-	global het_job_id
+	global het_job_id scancel
 
-	cancel_job $het_job_id
+	if {$het_job_id > 0} {
+		exec $scancel $het_job_id
+	}
 }
 
 set het_job_id 0
@@ -51,7 +53,7 @@ set matches 0
 set index 0
 set component(0) 0
 set timeout $max_job_delay
-spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash
+set sid [spawn $salloc -t1 -N1 : -N1 : -N1 $bin_bash]
 expect {
 	-re "Granted job allocation ($number)" {
 		set het_job_id $expect_out(1,string)
@@ -127,7 +129,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -146,7 +148,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -165,7 +167,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -184,7 +186,7 @@ expect {
 	}
 }
 if { $matches != 3} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -203,7 +205,7 @@ expect {
 	}
 }
 if { $matches != 2} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 log_info "Testing Error Messages"
@@ -225,7 +227,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -244,7 +246,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 set matches 0
@@ -263,7 +265,7 @@ expect {
 	}
 }
 if { $matches != 1} {
-	fail "srun failure ($matches != 1: $expect_out(buffer))"
+	fail "srun failure $matches $expect_out(buffer)"
 }
 
 send "exit\r"

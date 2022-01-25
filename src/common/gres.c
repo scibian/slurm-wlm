@@ -3600,7 +3600,12 @@ static int _node_reconfig(char *node_name, char *new_gres, char **gres_str,
 	context_ptr->total_cnt -= orig_cnt;
 	context_ptr->total_cnt += gres_data->gres_cnt_config;
 
-	gres_data->gres_cnt_avail = gres_data->gres_cnt_config;
+	if (!gres_data->gres_cnt_config)
+		gres_data->gres_cnt_avail = gres_data->gres_cnt_config;
+	else if (gres_data->gres_cnt_found != NO_VAL64)
+		gres_data->gres_cnt_avail = gres_data->gres_cnt_found;
+	else if (gres_data->gres_cnt_avail == NO_VAL64)
+		gres_data->gres_cnt_avail = 0;
 
 	if (context_ptr->config_flags & GRES_CONF_HAS_FILE) {
 		if (gres_id_shared(context_ptr->plugin_id))
@@ -8744,8 +8749,7 @@ static int _handle_ntasks_per_tres_step(List new_step_list,
 		if (*num_tasks < tmp) {
 			*num_tasks = tmp;
 		}
-		if (*cpu_count && (*cpu_count < tmp)) {
-			/* step_spec->cpu_count == 0 means SSF_OVERSUBSCRIBE */
+		if (*cpu_count < tmp) {
 			*cpu_count = tmp;
 		}
 	} else {

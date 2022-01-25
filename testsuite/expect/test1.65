@@ -31,7 +31,7 @@ set matches     0
 #
 # Report the srun help message
 #
-spawn $srun --mpi=list
+set srun_pid [spawn $srun --mpi=list]
 expect {
 	-re "MPI types are" {
 		incr matches
@@ -42,6 +42,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

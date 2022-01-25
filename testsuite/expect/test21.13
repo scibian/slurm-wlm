@@ -84,7 +84,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 #
 # Verify if Administrator privileges
 #
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -104,24 +104,24 @@ proc cleanup {} {
 
 # Add cluster
 if [add_cluster "$tc1,$tc2" ""] {
-	fail "Unable to add clusters ($tc1,$tc2)"
+	fail "Unable to add cluster ($tc1,$tc2)"
 }
 
 # Add accounts
 if [add_acct "$ta1,$ta2,$ta3" [array get acct_req]] {
-	fail "Unable to add accounts ($ta1,$ta2,$ta3)"
+	fail "Unable to add account ($ta1,$ta2,$ta3)"
 }
 
 # OK This is the real test. First test change the desc and org of the accounts
 if [mod_acct "$ta1,$ta2,$ta3" [array get acct_mod_desc] [array get acct_mod_assoc_vals] [array get acct_mod_acct_vals]] {
-	fail "Unable to modify accounts ($ta1,$ta2,$ta3)"
+	fail "Unable to modify account ($ta1,$ta2,$ta3)"
 }
 
 #
 # Use sacctmgr to list the test account modifications
 #
 set matches 0
-spawn $sacctmgr -n -p list account account=$ta1,$ta2,$ta3 format="Account,Description,Organization"
+set my_pid [spawn $sacctmgr -n -p list account account=$ta1,$ta2,$ta3 format="Account,Description,Organization"]
 expect {
 	-re "There was a problem" {
 		fail "There was a problem with the sacctmgr command"
@@ -138,7 +138,7 @@ expect {
 	}
 }
 if {$matches != 3} {
-	fail "Account modification 1 incorrect ($matches != 3)"
+	fail "Account modification 1 incorrect with only $matches"
 }
 
 # Next, test change the limits of the accounts
@@ -150,7 +150,7 @@ if [mod_acct $ta1  [array get acct_mod_desc2] [array get acct_mod_assoc_vals2] [
 # Use sacctmgr to list the test account modifications
 #
 set matches 0
-spawn $sacctmgr -n -p list associations account=$ta1,$ta2,$ta3 format="Account,Cluster,Fairshare,MaxCPUM,MaxJobs,MaxNodes,MaxWall"
+set my_pid [spawn $sacctmgr -n -p list associations account=$ta1,$ta2,$ta3 format="Account,Cluster,Fairshare,MaxCPUM,MaxJobs,MaxNodes,MaxWall"]
 expect {
 	-re "There was a problem" {
 		fail "There was a problem with the sacctmgr command"
@@ -168,7 +168,7 @@ expect {
 }
 
 if {$matches != 6} {
-	fail "Account modification 2 incorrect ($matches != 6)"
+	fail "Account modification 2 incorrect with only $matches"
 }
 
 # Next, test change the desc and limits of the accounts
@@ -180,7 +180,7 @@ if [mod_acct $ta1  [array get acct_mod_desc3] [array get acct_mod_assoc_vals3] [
 # Use sacctmgr to list the test account modifications
 #
 set matches 0
-eval spawn $sacctmgr -n -p list account withassoc account=$ta1,$ta2,$ta3 format="Account,Description,Organization,Cluster,Fairshare,MaxCPUM,MaxJobs,MaxNodes,MaxWall"
+set my_pid [eval spawn $sacctmgr -n -p list account withassoc account=$ta1,$ta2,$ta3 format="Account,Description,Organization,Cluster,Fairshare,MaxCPUM,MaxJobs,MaxNodes,MaxWall"]
 expect {
 	-re "There was a problem" {
 		fail "There was a problem with the sacctmgr command"
@@ -200,5 +200,5 @@ expect {
 }
 
 if {$matches != 6} {
-	fail "Account modification 6 incorrect ($matches != 6)"
+	fail "Account modification 6 incorrect with $matches"
 }

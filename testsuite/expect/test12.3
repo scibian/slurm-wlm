@@ -37,13 +37,14 @@ set job_id_1    0
 set job_id_2    0
 set job_name_1  "JOB1"
 set job_name_2  "JOB2"
-set test_acct	"${test_name}-account.1"
-set step_id     0
+set file_in     "test.$test_id.input"
+set test_acct	"slurm_test-account.1"
+set step_id	0
 
 # TODO: Remove this precondition check once 20.11 is no longer supported
 regexp {(\d+).(\d+).(\S+)} [get_config_param SLURM_VERSION] - major minor release
 if {$major < 21} {
-	skip "This test is disabled in Slurm versions older than 21.08 (see bugs 9681, 11453 and 12084)"
+	skip "This test is disabled in Slurm versions older than 21.08 (see bugs 11453 and 9681)"
 }
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
@@ -57,7 +58,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[get_admin_level] ne "Administrator"} {
+if {[string compare [get_admin_level] "Administrator"]} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -81,13 +82,14 @@ proc cleanup {} {
 #
 set acct_name ""
 set user_name [get_my_user_name]
-spawn $sacctmgr show user $user_name
+set s_pid [spawn $sacctmgr show user $user_name]
 expect {
 	-re "$user_name *($re_word_str)" {
 		set acct_name $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
+		slow_kill $s_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -99,7 +101,7 @@ expect {
 # Use sacctmgr to add a test account
 #
 set aamatches 0
-spawn $sacctmgr -i add account $test_acct
+set sadd_pid [spawn $sacctmgr -i add account $test_acct]
 expect {
 	-re "Adding Account" {
 		incr aamatches
@@ -111,6 +113,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -124,9 +127,10 @@ if {$aamatches != 1} {
 #
 # Add self to this new account
 #
-spawn $sacctmgr -i create user name=$user_name account=$test_acct
+set sadd_pid [spawn $sacctmgr -i create user name=$user_name account=$test_acct]
 expect {
 	 timeout {
+		slow_kill $sadd_pid
 		fail "sacctmgr add not responding"
 	}
 	eof {
@@ -139,7 +143,7 @@ expect {
 #
 set job_1_node_inx 0
 set timeout $max_job_delay
-spawn $srun -N2 -w$node1,$node2 -t1 -A $test_acct -J $job_name_1 -v $bin_id
+set srun_pid [spawn $srun -N2 -w$node1,$node2 -t1 -A $test_acct -J $job_name_1 -v $bin_id]
 expect {
 	-re "launching StepId=($number)\\.$re_word_str on host ($re_word_str)," {
 		set job_id_1 $expect_out(1,string)
@@ -147,6 +151,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -159,7 +164,7 @@ subtest {$job_1_node_inx == 2} "Verify host count for job 1" "srun host count ba
 # Second job includes one node from the first job and another different node
 #
 set job_2_node_inx 0
-spawn $srun -N2 -w$node2,$node3 -t1 -A $test_acct -J $job_name_2 -v $bin_id
+set srun_pid [spawn $srun -N2 -w$node2,$node3 -t1 -A $test_acct -J $job_name_2 -v $bin_id]
 expect {
 
 	-re "launching StepId=($number)\\.$re_word_str on host ($re_word_str)," {
@@ -168,6 +173,7 @@ expect {
 		exp_continue
 	}
 	timeout {
+		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -178,14 +184,12 @@ subtest {$job_2_node_inx == 2} "Verify host count for job 2" "srun host count ba
 
 #
 # Wait for accounting data to be propagated to slurmdbd
-# Using sacct -N <node_superset>, we force a time comparison that will not show
-# the accounting record until the start time is stored in the accounting
-# database, which is needed for subsequent sacct -N queries to be displayed.
+# Third job explicitly excludes node 1 from previous job
 #
-if [wait_for_command_match "$sacct -A ${test_name}-account.1 --name=$job_name_1 -X -n -P -j $job_id_1 -N $node1,$node2,$node3 -o jobid,jobname" "$job_id_1.$job_name_1"] {
+if [wait_for_command_match "$sacct -A 'slurm_test-account.1' --name=$job_name_1 -X -n -P -j $job_id_1 -o jobid,jobname" "$job_id_1.$job_name_1"] {
 	fail "Accounting data for job 1 ($job_id_1) not propogated to slurmdbd"
 }
-if [wait_for_command_match "$sacct -A ${test_name}-account.1 --name=$job_name_2 -X -n -P -j $job_id_2 -N $node1,$node2,$node3 -o jobid,jobname" "$job_id_2.$job_name_2"] {
+if [wait_for_command_match "$sacct -A 'slurm_test-account.1' --name=$job_name_2 -X -n -P -j $job_id_2 -o jobid,jobname" "$job_id_2.$job_name_2"] {
 	fail "Accounting data for job 2 ($job_id_2) not propogated to slurmdbd"
 }
 

@@ -30,13 +30,14 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
+set file_in     "test$test_id.input"
 set job_id      0
 
 proc cleanup {} {
-	global job_id
+	global job_id file_in
 
 	cancel_job $job_id
+	file delete $file_in
 }
 
 # NOTE: If you increase sleep_time, change job time limits as well
@@ -106,7 +107,7 @@ make_bash_script $file_in "
 #
 set timeout [expr $max_job_delay + $sleep_time]
 set job_id    0
-spawn $salloc -t1 --kill-command=KILL $file_in
+set salloc_pid [spawn $salloc -t1 --kill-command=KILL ./$file_in]
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
@@ -128,7 +129,7 @@ expect {
 
 set completions 0
 set job_id      0
-spawn $salloc -t4 --kill-command=KILL $file_in
+set salloc_pid [spawn $salloc -t4 --kill-command=KILL ./$file_in]
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)

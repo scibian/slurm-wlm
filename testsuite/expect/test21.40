@@ -67,7 +67,9 @@ proc run_job_test { } {
 	set job_id1 [submit_job -fail "-p $test_part --account=$test_acct --qos=$job_qos -t1 --mem=10 -o /dev/null -N1 $file_in"]
 
 	# Wait for job to start and get its info
-	wait_for_job -fail $job_id1 "RUNNING"
+	if {[wait_for_job $job_id1 "RUNNING"] != 0} {
+		fail "Error waiting for job $job_id1 to run"
+	}
 
 	set hostname [get_job_param $job_id1 "NodeList"]
 
@@ -82,11 +84,11 @@ proc run_job_test { } {
 
 	set reason [get_job_param $job_id2 "Reason"]
 	subtest {$reason eq "AssocGrpNodeLimit" ||
-		 $reason eq "QOSGrpNodeLimit"} "Job 2 ($job_id2) should be waiting on GrpNodeLimit"
+		 $reason eq "QOSGrpNodeLimit"} "Job $job_id2 should be waiting on GrpNodeLimit"
 
 	set reason [get_job_param $job_id3 "Reason"]
 	subtest {$reason ne "AssocGrpNodeLimit" &&
-		 $reason ne "QOSGrpNodeLimit"} "Job 3 ($job_id3) should NOT be waiting on GrpNodeLimit"
+		 $reason ne "QOSGrpNodeLimit"} "Job $job_id3 should NOT be waiting on GrpNodeLimit"
 
 	cancel_job $job_id1
 	cancel_job $job_id2
@@ -101,7 +103,7 @@ proc run_job_test { } {
 	sleep $sleep_for_reason_set
 	set reason [get_job_param $job_id4 "Reason"]
 	subtest {$reason eq "AssocGrpNodeLimit" ||
-		 $reason eq "QOSGrpNodeLimit"} "Job 4 ($job_id4) should be waiting on GrpNodeLimit"
+		 $reason eq "QOSGrpNodeLimit"} "Job $job_id4 should be waiting on GrpNodeLimit"
 	cancel_job $job_id4
 }
 

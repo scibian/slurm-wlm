@@ -90,6 +90,9 @@ proc cleanup { } {
 	remove_cluster $test_cluster
 }
 
+# Delete any vestigial data
+cleanup
+
 set added 0
 spawn $sacctmgr add -i cluster $test_cluster
 expect {
@@ -114,28 +117,32 @@ if {$added != 1} {
 #
 add_resource $test_res1 [array get res1]
 if {[check_resource_limits $test_res1 [array get res1]]} {
-	fail "$test_res1 has bad values"
+	log_error "$test_res1 has bad values"
+	cleanup
 }
 
 add_resource $test_res2 [array get res2]
 if {[check_resource_limits $test_res2 [array get res2]]} {
-	fail "$test_res2 has bad values"
+	log_error "$test_res2 has bad values"
+	cleanup
 }
 
 #
 # Add a resources to the cluster
 #
 add_resource $test_res1 [array get res1_cluster]
+
 if {[check_val $test_res1] != 1} {
-	fail "sacctmgr did not add resource ($test_res1) to cluster ($test_cluster)"
+	fail "sacctmgr did not add resource $test_res1 to cluster $test_cluster"
 }
 
 #
 # Add another resource to the cluster
 #
 add_resource $test_res2 [array get res2_cluster]
+
 if {[check_val $test_res2] != 1} {
-	fail "sacctmgr did not add resource ($test_res2) to cluster ($test_cluster)"
+	fail "sacctmgr did not add resource $test_res2 to cluster $test_cluster"
 }
 
 #
@@ -158,9 +165,9 @@ expect {
 }
 
 if {$deleted != 1} {
-	fail "Resource ($test_res1) was not deleted"
+	fail "Resource $test_res1 was not deleted"
 }
 
 if {[check_val $test_res2] != 1} {
-	fail "Only resource ($test_res2) should be associated with cluster ($test_cluster)"
+	fail "Only $test_res2 should be associated with cluster $test_cluster"
 }
