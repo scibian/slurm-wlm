@@ -3,7 +3,7 @@ Description: Move general info man pages to the miscellanea section (7)
  to the miscellanea section since they are not related to commands
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=8719
-Last-Update: 2021-05-17
+Last-Update: 2021-02-01
 
 --- a/configure.ac
 +++ b/configure.ac
@@ -58,15 +58,15 @@ Last-Update: 2021-05-17
 +
 --- a/doc/man/man5/slurm.conf.5
 +++ b/doc/man/man5/slurm.conf.5
-@@ -2157,7 +2157,7 @@
+@@ -1807,7 +1807,7 @@
  be called before and/or after execution of each task spawned as
  part of a user's job step.  Default location is "plugstack.conf"
  in the same directory as the system slurm.conf. For more information
 -on SPANK plugins, see the \fBspank\fR(8) manual.
 +on SPANK plugins, see the \fBspank\fR(7) manual.
- .IP
  
  .TP
+ \fBPowerParameters\fR
 @@ -7226,4 +7226,4 @@
  \fBgetrlimit\fR(2), \fBgres.conf\fR(5), \fBgroup\fR(5), \fBhostname\fR(1),
  \fBscontrol\fR(1), \fBslurmctld\fR(8), \fBslurmd\fR(8),
