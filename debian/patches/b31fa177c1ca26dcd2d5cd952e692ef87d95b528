@@ -1,0 +1,87 @@
+Author: Thomas Hamel <hmlth@t-hamel.fr>
+Description: Revert b31fa177c1ca26dcd2d5cd952e692ef87d95b528
+
+Commit b31fa177c1ca26dcd2d5cd952e692ef87d95b528 was made to fix an issue
+with nodes states but introduces a new regression wrt. energy power saving
+mode where it leaves a way for jobs to start on nodes not ready yet.
+
+We revert this patch for now until we find a better fix.
+
+Upstream: https://github.com/SchedMD/slurm/commit/b31fa177c1ca26dcd2d5cd952e692ef87d95b528
+
+Index: slurm-llnl/doc/man/man5/slurm.conf.5
+===================================================================
+--- slurm-llnl.orig/doc/man/man5/slurm.conf.5
++++ slurm-llnl/doc/man/man5/slurm.conf.5
+@@ -1083,8 +1083,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
+ on all nodes to minimize its impact upon parallel programs.
+ This program is will be killed if it does not terminate normally within
+ 60 seconds.
+-This program will also be executed when the slurmd daemon is first started and
+-before it registers with the slurmctld daemon.
++When slurmd is first started, this program will be run repeatedly until
++it returns an exit code of 0, and will block slurmd from registering with
++slurmctld until this has been satisfied.
++The return code is otherwise ignored.
+ By default, no program will be executed.
+ 
+ .TP
+Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
+===================================================================
+--- slurm-llnl.orig/src/slurmd/slurmd/slurmd.c
++++ slurm-llnl/src/slurmd/slurmd/slurmd.c
+@@ -123,6 +123,8 @@
+ #  define MAXHOSTNAMELEN	64
+ #endif
+ 
++#define HEALTH_RETRY_DELAY 10
++
+ #define MAX_THREADS		256
+ 
+ #define _free_and_set(__dst, __src)		\
+@@ -217,6 +219,7 @@ static void      _usage(void);
+ static void      _usr_handler(int);
+ static int       _validate_and_convert_cpu_list(void);
+ static void      _wait_for_all_threads(int secs);
++static void      _wait_health_check(void);
+ 
+ /**************************************************************************\
+  * To test for memory leaks, set MEMORY_LEAK_DEBUG to 1 using
+@@ -394,7 +397,8 @@ main (int argc, char **argv)
+ 	slurm_conf_install_fork_handlers();
+ 	record_launched_jobs();
+ 
+-	run_script_health_check();
++	/* Wait for a successful health check if HealthCheckInterval != 0 */
++	_wait_health_check();
+ 
+ 	slurm_thread_create_detached(NULL, _registration_engine, NULL);
+ 
+@@ -2605,5 +2610,27 @@ static void _resource_spec_fini(void)
+ 
+ /*
++ * Wait for health check to execute successfully
++ *
++ * Return immediately if a shutdown has been requested or
++ * if the HealthCheckInterval is 0.
++ */
++static void _wait_health_check(void)
++{
++	int last_check_time = 0;
++	while (!_shutdown && (slurm_conf.health_check_interval != 0) ) {
++		if (time(NULL) - last_check_time > HEALTH_RETRY_DELAY) {
++			if (run_script_health_check() == SLURM_SUCCESS) {
++				break;
++			}
++			last_check_time = time(NULL);
++			info ("Health Check failed, retrying in %ds...",
++				HEALTH_RETRY_DELAY);
++		}
++		usleep(10000);
++	}
++}
++
++/*
+  * Run the configured health check program
+  *
+  * Returns the run result. If the health check program
