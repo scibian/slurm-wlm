@@ -1,3 +1,15 @@
+slurm-wlm (21.08.4-1sci9u2) scibian9; urgency=medium
+
+  * Remove generated debian/files
+  * Restore pmix support
+  * Restore debian + scibian patches
+  * Backport manpage/typos patch to 21.08.4
+  * Update PMIx v3 dlopen patch for slurm 21.08
+  * Update wait health check patch for slurm 21.08
+  * Install new slurm_version.h in libslurm-dev
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 01 Feb 2022 11:06:47 +0100
+
 slurm-wlm (21.08.4-1sci9u1) scibian9; urgency=medium
 
   * Backport to scibian9
