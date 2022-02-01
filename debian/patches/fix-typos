@@ -1,57 +1,57 @@
 Description: Fix typos
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=13103
-Last-Update: 2021-12-29
+Last-Update: 2022-02-01
 
 --- slurm-wlm-21.08.5.orig/doc/man/man1/sacct.1
 +++ slurm-wlm-21.08.5/doc/man/man1/sacct.1
-@@ -317,7 +317,7 @@ changes the default \-S and \-E options.
+@@ -305,7 +305,7 @@ changes the default \-S and \-E options.
  
  .TP
  \fB\-\-json\fR
 -Dump job information as JSON. All other formating arugments will be ignored.
 +Dump job information as JSON. All other formatting arguments will be ignored.
- .IP
  
  .TP
-@@ -531,7 +531,7 @@ leader.
+ \fB\-\-local\fR
+@@ -497,7 +497,7 @@ leader.
  
  .TP
  \fB\-\-yaml\fR
 -Dump job information as YAML. All other formating arugments will be ignored.
 +Dump job information as YAML. All other formatting arguments will be ignored.
- .IP
  
  .SS "Job Accounting Fields"
+ The following describes each job accounting field:
 --- slurm-wlm-21.08.5.orig/doc/man/man1/sinfo.1
 +++ slurm-wlm-21.08.5/doc/man/man1/sinfo.1
-@@ -448,7 +448,7 @@ Size of temporary disk space per node in
- 
+@@ -311,7 +311,7 @@ \fBDisk\fR
+ Size of temporary disk space per node in megabytes.
  .TP
  \fBExtra\fR
 -Arbitray string on the node.
 +Arbitrary string on the node.
- .IP
- 
  .TP
-@@ -658,7 +658,7 @@ By default prints a time stamp with the
+ \fBFeatures\fR
+ Features available on the nodes. Also see \fBfeatures_act\fR.
+@@ -445,7 +445,7 @@ By default prints a time stamp with the
  
  .TP
  \f3\-\-json\fP
 -Dump node information as JSON. All other formating and filtering arugments will
 +Dump node information as JSON. All other formatting and filtering arguments will
  be ignored.
- .IP
  
-@@ -799,7 +799,7 @@ Print version information and exit.
+ .TP
+@@ -569,7 +569,7 @@ Print version information and exit.
  
  .TP
  \f3\-\-yaml\fP
 -Dump node information as YAML. All other formating and filtering arugments will
 +Dump node information as YAML. All other formatting and filtering arguments will
  be ignored.
- .IP
  
+ .SH "OUTPUT FIELD DESCRIPTIONS"
 --- slurm-wlm-21.08.5.orig/doc/man/man1/squeue.1
 +++ slurm-wlm-21.08.5/doc/man/man1/squeue.1
 @@ -1336,7 +1336,7 @@ Use the environment variable SLURM_BITST
@@ -61,8 +61,8 @@ Last-Update: 2021-12-29
 -Dump job information as JSON. All other formating and filtering arugments will
 +Dump job information as JSON. All other formatting and filtering arguments will
  be ignored.
- .IP
  
+ .TP
 @@ -1499,7 +1499,7 @@ Print version information and exit.
  
  .TP
@@ -70,11 +70,11 @@ Last-Update: 2021-12-29
 -Dump job information as YAML. All other formating and filtering arugments will
 +Dump job information as YAML. All other formatting and filtering arguments will
  be ignored.
- .IP
  
+ .SH "JOB REASON CODES"
 --- slurm-wlm-21.08.5.orig/doc/man/man5/slurm.conf.5
 +++ slurm-wlm-21.08.5/doc/man/man5/slurm.conf.5
-@@ -4415,7 +4415,7 @@ time.
+@@ -3671,7 +3671,7 @@ time.
  Percentage of memory a node is allowed to register with without being marked as
  invalid with low memory. Default is 100. For State=CLOUD nodes, the default is
  90. To disable this for cloud nodes set it to 100. \fIconfig_overrides\fR takes
