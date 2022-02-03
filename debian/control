@@ -27,6 +27,10 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
+ libhttp-parser-dev,
+ libyaml-dev,
+ libjson-c-dev,
+ libjwt-dev,
  libpmix-dev,
  liblz4-dev,
  bash-completion
