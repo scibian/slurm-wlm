@@ -35,7 +35,7 @@ source ./globals
 set err_msg	0
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --mincpus=999999 -t1 $bin_date]
+spawn $srun -N1 -l --mincpus=999999 -t1 $bin_date
 expect {
 	-re "configuration is not available" {
 		log_debug "This error is expected, no worries"
@@ -47,7 +47,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -55,7 +54,7 @@ expect {
 	}
 }
 
-subtest {[string compare $this_date ""] == 0} "Job should not run with invalid mincpus option"
+subtest {$this_date eq ""} "Job should not run with invalid mincpus option"
 subtest {$err_msg == 1} "Job should report required error"
 
 #
@@ -63,7 +62,7 @@ subtest {$err_msg == 1} "Job should report required error"
 #
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --mincpus=1 -t1 $bin_date]
+spawn $srun -N1 -l --mincpus=1 -t1 $bin_date
 expect {
 	-re "0: *($re_word_str)" {
 		set this_date $expect_out(1,string)
@@ -75,7 +74,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -83,7 +81,7 @@ expect {
 	}
 }
 
-subtest {[string compare $this_date ""] != 0} "Job should run with valid mincpus option"
+subtest {$this_date ne ""} "Job should run with valid mincpus option"
 
 #
 # Submit a job with invalid mem requirement
@@ -91,7 +89,7 @@ subtest {[string compare $this_date ""] != 0} "Job should run with valid mincpus
 set err_msg	0
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --mem=999999 -t1 $bin_date]
+spawn $srun -N1 -l --mem=999999 -t1 $bin_date
 expect {
 	-re "not available" {
 		log_debug "This error is expected, no worries"
@@ -103,7 +101,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -111,7 +108,7 @@ expect {
 	}
 }
 
-subtest {[string compare $this_date ""] == 0} "Job should not run with invalid mem option"
+subtest {$this_date eq ""} "Job should not run with invalid mem option"
 subtest {$err_msg == 1} "Job should report required error"
 
 #
@@ -124,7 +121,7 @@ subtest {$err_msg == 1} "Job should report required error"
 set err_msg	0
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --mem=10 -t1 $bin_date]
+spawn $srun -N1 -l --mem=10 -t1 $bin_date
 expect {
 	-re "not available" {
 		log_debug "This error is not unexpected, no worries"
@@ -141,7 +138,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -149,7 +145,7 @@ expect {
 	}
 }
 
-subtest {$err_msg != 0 || [string compare $this_date ""] != 0} "Job should run with valid mem option"
+subtest {$err_msg != 0 || $this_date ne ""} "Job should run with valid mem option"
 
 #
 # Submit a job with invalid tmp requirement
@@ -157,7 +153,7 @@ subtest {$err_msg != 0 || [string compare $this_date ""] != 0} "Job should run w
 set err_msg	0
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --tmp=999999999 -t1 $bin_date]
+spawn $srun -N1 -l --tmp=999999999 -t1 $bin_date
 expect {
 	-re "configuration is not available" {
 		log_debug "This error is expected, no worries"
@@ -169,7 +165,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -177,7 +172,7 @@ expect {
 	}
 }
 
-subtest {[string compare $this_date ""] == 0} "Job should not run with invalid tmp option"
+subtest {$this_date eq ""} "Job should not run with invalid tmp option"
 subtest {$err_msg == 1} "Job should report required error"
 
 #
@@ -185,7 +180,7 @@ subtest {$err_msg == 1} "Job should report required error"
 #
 set this_date	""
 set timeout	$max_job_delay
-set srun_pid [spawn $srun -N1 -l --tmp=0 -t1 $bin_date]
+spawn $srun -N1 -l --tmp=0 -t1 $bin_date
 expect {
 	-re "0: *($re_word_str)" {
 		set this_date $expect_out(1,string)
@@ -197,7 +192,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -205,4 +199,4 @@ expect {
 	}
 }
 
-subtest {[string compare $this_date ""] != 0} "Job should run with valid tmp option"
+subtest {$this_date ne ""} "Job should run with valid tmp option"

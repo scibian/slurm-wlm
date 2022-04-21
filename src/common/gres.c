@@ -371,7 +371,8 @@ extern int gres_find_job_by_key_with_cnt(void *x, void *key)
 
 	/* This gres has been allocated on this node */
 	if (!gres_data_ptr->node_cnt ||
-	    gres_data_ptr->gres_cnt_node_alloc[job_key->node_offset])
+	    ((job_key->node_offset < gres_data_ptr->node_cnt) &&
+	     gres_data_ptr->gres_cnt_node_alloc[job_key->node_offset]))
 		return 1;
 
 	return 0;
@@ -3600,12 +3601,7 @@ static int _node_reconfig(char *node_name, char *new_gres, char **gres_str,
 	context_ptr->total_cnt -= orig_cnt;
 	context_ptr->total_cnt += gres_data->gres_cnt_config;
 
-	if (!gres_data->gres_cnt_config)
-		gres_data->gres_cnt_avail = gres_data->gres_cnt_config;
-	else if (gres_data->gres_cnt_found != NO_VAL64)
-		gres_data->gres_cnt_avail = gres_data->gres_cnt_found;
-	else if (gres_data->gres_cnt_avail == NO_VAL64)
-		gres_data->gres_cnt_avail = 0;
+	gres_data->gres_cnt_avail = gres_data->gres_cnt_config;
 
 	if (context_ptr->config_flags & GRES_CONF_HAS_FILE) {
 		if (gres_id_shared(context_ptr->plugin_id))
@@ -8363,8 +8359,12 @@ static int _step_get_gres_cnt(void *x, void *arg)
 
 	gres_job_state = job_gres_ptr->gres_data;
 
-	if ((node_offset >= gres_job_state->node_cnt) &&
-	    (gres_job_state->node_cnt != 0)) { /* GRES is type no_consume */
+	if (gres_job_state->total_gres == NO_CONSUME_VAL64) {
+		foreach_gres_cnt->gres_cnt = NO_CONSUME_VAL64;
+		return -1;
+	}
+
+	if ((node_offset >= gres_job_state->node_cnt)) {
 		error("gres/%s: %s %ps node offset invalid (%d >= %u)",
 		      gres_job_state->gres_name, __func__, step_id,
 		      node_offset, gres_job_state->node_cnt);
@@ -8749,7 +8749,8 @@ static int _handle_ntasks_per_tres_step(List new_step_list,
 		if (*num_tasks < tmp) {
 			*num_tasks = tmp;
 		}
-		if (*cpu_count < tmp) {
+		if (*cpu_count && (*cpu_count < tmp)) {
+			/* step_spec->cpu_count == 0 means SSF_OVERSUBSCRIBE */
 			*cpu_count = tmp;
 		}
 	} else {
@@ -10023,6 +10024,12 @@ extern uint64_t gres_step_test(List step_gres_list, List job_gres_list,
 			core_cnt = 0;
 			break;
 		}
+
+		if (foreach_gres_cnt.gres_cnt == NO_CONSUME_VAL64) {
+			core_cnt = NO_VAL64;
+			break;
+		}
+
 		tmp_cnt = _step_test(step_data_ptr, first_step_node,
 				     cpus_per_task, max_rem_nodes,
 				     ignore_alloc, foreach_gres_cnt.gres_cnt,
@@ -10594,8 +10601,27 @@ extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 	else
 		gpu_record = xmalloc(sizeof(gres_slurmd_conf_t));
 	gpu_record->cpu_cnt = cpu_cnt;
-	if (cpu_aff_mac_bitstr)
-		gpu_record->cpus_bitmap = bit_copy(cpu_aff_mac_bitstr);
+	if (cpu_aff_mac_bitstr) {
+		bitstr_t *cpu_aff = bit_copy(cpu_aff_mac_bitstr);
+
+		/*
+		 * Size down (or possibly up) cpus_bitmap, if necessary, so that
+		 * the size of cpus_bitmap for system-detected devices matches
+		 * the size of cpus_bitmap for configured devices.
+		 */
+		if (bit_size(cpu_aff) != cpu_cnt) {
+			/* Calculate minimum size to hold CPU affinity */
+			int64_t size = bit_fls(cpu_aff) + 1;
+			if (size > cpu_cnt) {
+				char *cpu_str = bit_fmt_hexmask_trim(cpu_aff);
+				fatal("This CPU affinity bitmask (%s) does not fit within the CPUs configured for this node (%d). Make sure that the node's CPU count is configured correctly.",
+				      cpu_str, cpu_cnt);
+				xfree(cpu_str);
+			}
+			cpu_aff = bit_realloc(cpu_aff, cpu_cnt);
+		}
+		gpu_record->cpus_bitmap = cpu_aff;
+	}
 	gpu_record->config_flags = flags;
 
 	/* Set default env flags, if necessary */

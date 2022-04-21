@@ -27,6 +27,10 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
+ libhttp-parser-dev,
+ libyaml-dev,
+ libjson-c-dev,
+ libjwt-dev,
  liblz4-dev,
  bash-completion
 Standards-Version: 4.6.0

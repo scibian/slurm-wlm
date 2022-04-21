@@ -41,15 +41,15 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
-set fed_name    "feda"
-set user_name   ""
-set srun_job_cnt 0
-set my_sbatch "${fed_slurm_base}/$fedc1/bin/sbatch"
-set my_srun "${fed_slurm_base}/$fedc1/bin/srun"
-set my_squeue "${fed_slurm_base}/$fedc1/bin/squeue"
+set fed_name        "feda"
+set user_name       ""
+set srun_job_cnt    0
+set my_sbatch       "${fed_slurm_base}/$fedc1/bin/sbatch"
+set my_srun         "${fed_slurm_base}/$fedc1/bin/srun"
+set my_squeue       "${fed_slurm_base}/$fedc1/bin/squeue"
 regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
-set min_job_age [expr {$min_job_age + 65}]
-set file_in2         "test$test_id.in2"
+set min_job_age     [expr {$min_job_age + 65}]
+set file_in2        "$test_dir/input2"
 
 #
 # Check accounting config and bail if not found.
@@ -58,7 +58,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -96,7 +96,7 @@ proc sbatch_to { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Batch submit failure: expected $regex"
+		fail "Batch submit failure (expected $regex)"
 	}
 
 	return $job_id
@@ -126,7 +126,7 @@ proc srun { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "srun failure: expected $regex"
+		fail "srun failure (expected $regex)"
 	}
 	return $job_id
 
@@ -145,14 +145,11 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global scancel fed_name user_name bin_rm file_in2 fedc1 fedc2 fedc3
-	global test_id bin_bash my_sacctmgr
+	global fed_name bin_bash bin_rm test_name
 
 	cancel_federation_jobs
-	exec $bin_rm -f $file_in2
-	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
-
-	return [delete_federations $fed_name]
+	delete_federations $fed_name
+	exec $bin_bash -c "$bin_rm -f $test_name*.out"
 }
 
 #start test
@@ -168,9 +165,7 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-if {[cleanup] != 0} {
-	fail "Failed to cleanup"
-}
+cleanup
 
 # add clusters to federation
 if {[setup_federation $fed_name]} {
@@ -185,7 +180,7 @@ log_info "Setup cluster features"
 log_info "################################################################"
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
+spawn $sacctmgr -i modify cluster $fedc1 set features=fa
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -204,7 +199,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -212,11 +206,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error: Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
+spawn $sacctmgr -i modify cluster $fedc2 set features=fb
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -235,7 +229,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -243,11 +236,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
+spawn $sacctmgr -i modify cluster $fedc3 set features=fc
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -266,7 +259,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -274,7 +266,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 make_bash_script $file_in2 "sleep 900"
@@ -326,7 +318,7 @@ sbatch_to "--test-only -M$f2,$f3" [build_regex $f2]
 
 set pend_job [sbatch_to "-M$f1 -t50" $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f1]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 
@@ -338,7 +330,7 @@ sbatch_to "--test-only -M$f2,$f3" [build_regex $f2]
 
 set pend_job [sbatch_to "-M$f2 -t50" $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f2]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 
@@ -351,7 +343,7 @@ sbatch_to "--test-only -M$f2,$f3" [build_regex $f3]
 
 set pend_job [sbatch_to "-M$f3 -t50" $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f3]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 
@@ -427,7 +419,7 @@ srun "--test-only -M$f2,$f3" [build_regex $f2]
 
 set pend_job [srun "-M$f1 -t50"  $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f1]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 
@@ -439,7 +431,7 @@ srun "--test-only -M$f2,$f3" [build_regex $f2]
 
 set pend_job [srun "-M$f2 -t50"  $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f2]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 
@@ -452,7 +444,7 @@ srun "--test-only -M$f2,$f3" [build_regex $f3]
 
 set pend_job [srun "-M$f3 -t50"  $reg_default]
 set pend_cluster [wait_for_fed_job $pend_job PENDING $f3]
-if {[string compare $pend_cluster ""] == 0} {
+if {$pend_cluster eq ""} {
 	fail "Didn't find cluster with pending job"
 }
 

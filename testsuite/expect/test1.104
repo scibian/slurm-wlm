@@ -26,24 +26,21 @@
 ############################################################################
 source ./globals
 
-set file_in        "test$test_id.bash"
-set test_srun      "test$test_id.test_srun"
+set file_in        "$test_dir/script"
+set test_srun      "$test_dir/test_srun"
 set job_id         0
 set authorized     1
 set part_name      "QA_TEST"
-set test_script    "./test$test_id.bash"
 
 if {![is_super_user]} {
 	skip "Can not test more unless SlurmUser or root"
 }
 
 proc cleanup {} {
-	global scontrol part_name job_id
-	global test_srun file_in
+	global job_id scontrol part_name
 
 	cancel_job $job_id
 	run_command "$scontrol delete PartitionName=$part_name"
-	file delete $test_srun $file_in
 }
 
 #
@@ -72,14 +69,14 @@ if {$found == -1} {
 	fail "scontrol output format error"
 }
 if {$found == 1} {
-	fail "Partition $part_name already exists"
+	fail "Partition ($part_name) already exists"
 }
 
 #
 # Identify usable nodes in default partition
 #
 set def_node [lindex [get_nodes_by_state] 0]
-if {[string compare $def_node ""] == 0} {
+if {$def_node eq ""} {
 	fail "Default partition seems to have no idle nodes"
 }
 
@@ -140,12 +137,12 @@ $srun -N1 --deadline now+1hour -p $part_name -t100  -v $bin_sleep 1 &
 "
 
 make_bash_script $file_in "
-bash -i ./$test_srun
+bash -i $test_srun
 "
 
 set timeout $max_job_delay
 spawn bash -i $file_in
-if {[string compare $enforcepartlimits "NO"] == 0} {
+if {$enforcepartlimits eq "NO"} {
 
 	#
 	# Job is not rejected at submit time

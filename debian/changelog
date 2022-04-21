@@ -1,8 +1,23 @@
-slurm-wlm (21.08.4-1) unstable; urgency=medium
+slurm-wlm (21.08.7-1) unstable; urgency=medium
 
   * New upstream release
 
- -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 25 Jan 2022 13:49:00 +0200
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 21 Apr 2022 21:51:00 +0200
+
+slurm-wlm (21.08.6-1) unstable; urgency=medium
+
+  * New upstream release
+  * Remove fix-typos patch included upstream
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 22 Mar 2022 21:59:40 +0100
+
+slurm-wlm (21.08.5-2) unstable; urgency=medium
+
+  * Add slurm_version.h to libslurm-dev (Closes: #1004409)
+  * Add retry-getaddrinfo patch (Closes: #984928)
+  * Update service files
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 28 Jan 2022 23:36:39 +0100
 
 slurm-wlm (21.08.5-1) unstable; urgency=medium
 

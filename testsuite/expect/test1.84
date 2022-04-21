@@ -33,8 +33,6 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.bash"
-
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with FRONT_END systems"
 }
@@ -107,7 +105,7 @@ while {[gets $fd line] != -1} {
 	}
 }
 exp_internal 0
-if {[string compare $units ""]} {
+if {$units ne ""} {
 	set cpu_cnt [expr $cpu_cnt * 1024]
 }
 catch {close $fd}
@@ -121,13 +119,13 @@ if {!$cpu_cnt} {
 #
 # Check CPU count
 #
-if {[string compare $host ""] == 0} {
+if {$host eq ""} {
 	fail "Did not get hostname from idle node"
 }
 
 log_debug "Found idle node $host with $cpu_cnt processors"
 
-set srun_pid [spawn $srun -N1 -w$host --cpus-per-task=1 --exclusive -l -t1 $bin_printenv SLURM_PROCID]
+spawn $srun -N1 -w$host --cpus-per-task=1 --exclusive -l -t1 $bin_printenv SLURM_PROCID
 expect {
 	-re "($number):" {
 		incr task_cnt
@@ -137,7 +135,6 @@ expect {
 		skip "Nodes have too many CPUs for test"
  	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -169,7 +166,7 @@ if {$cpu_cnt < 2} {
 # Now verify the --cpus-per-task option
 #
 set task_cnt  0
-set srun_pid [spawn $srun -N1 --cpus-per-task=2 --exclusive -l -t1 --nodelist=$host $bin_printenv SLURM_PROCID]
+spawn $srun -N1 --cpus-per-task=2 --exclusive -l -t1 --nodelist=$host $bin_printenv SLURM_PROCID
 expect {
 	-re "Invalid node name specified" {
 		skip "Appears you are using multiple slurmd testing. This test won't work in that fashion"
@@ -179,7 +176,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

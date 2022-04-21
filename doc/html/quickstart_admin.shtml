@@ -19,7 +19,7 @@ perform <a href="#upgrade">upgrades</a>.</p>
 across the cluster.</li>
 <li>Install <a href="https://dun.github.io/munge/">MUNGE</a> for
 authentication. Make sure that all nodes in your cluster have the
-same <i>munge.key</i>. Make sure the MUNGE daemon, <i>munged</i>
+same <i>munge.key</i>. Make sure the MUNGE daemon, <i>munged</i>,
 is started before you start the Slurm daemons.</li>
 <li>bunzip2 the distributed tar-ball and untar the files:<br>
 <i>tar --bzip -x -f slurm*tar.bz2</i></li>
@@ -31,14 +31,14 @@ and <i>--sysconfdir=</i></li>
 header files, etc.</li>
 <li>Build a configuration file using your favorite web browser and the
 <a href="configurator.html">Slurm Configuration Tool</a>.<br>
-NOTE: The <i>SlurmUser</i> must exist prior to starting Slurm
+<b>NOTE</b>: The <i>SlurmUser</i> must exist prior to starting Slurm
 and must exist on all nodes of the cluster.<br>
-NOTE: The parent directories for Slurm's log files, process ID files,
+<b>NOTE</b>: The parent directories for Slurm's log files, process ID files,
 state save directories, etc. are not created by Slurm.
 They must be created and made writable by <i>SlurmUser</i> as needed prior to
 starting Slurm daemons.<br>
-NOTE: If any parent directories are created during the installation process
-(for the executable files, libraries, etc.),
+<b>NOTE</b>: If any parent directories are created during the installation
+process (for the executable files, libraries, etc.),
 those directories will have access rights equal to read/write/execute for
 everyone minus the umask value (e.g. umask=0022 generates directories with
 permissions of "drwxr-r-x" and mask=0000 generates directories with
@@ -46,7 +46,8 @@ permissions of "drwxrwrwx" which is a security problem).</li>
 <li>Type <i>ldconfig -n &lt;library_location&gt;</i> so that the Slurm libraries
 can be found by applications that intend to use Slurm APIs directly.</li>
 <li>Install the configuration file in <i>&lt;sysconfdir&gt;/slurm.conf</i>.<br>
-NOTE: You will need to install this configuration file on all nodes of the cluster.</li>
+<b>NOTE</b>: You will need to install this configuration file on all nodes of
+the cluster.</li>
 <li>systemd (optional): enable the appropriate services on each system:
 <ul>
 <li>Controller: <code>systemctl enable slurmctld</code>
@@ -55,7 +56,7 @@ NOTE: You will need to install this configuration file on all nodes of the clust
 </ul></li>
 <li>Start the <i>slurmctld</i> and <i>slurmd</i> daemons.</li>
 </ol>
-<p>NOTE: Items 3 through 8 can be replaced with</p>
+<p><b>NOTE</b>: Items 3 through 8 can be replaced with</p>
 <ol>
 <li><code>rpmbuild -ta slurm*.tar.bz2</code></li>
 <li><code>rpm --install &lt;the rpm files&gt;</code></li>
@@ -110,7 +111,7 @@ present. Build dependencies for various plugins and commands are denoted below:
 		present.</li>
 <li> <b>HTML Man Pages</b> HTML versions of the man pages will be generated if
 		the <i>man2html</i> command is present.</li>
-<li> <b>IPMI Engergy Consumption</b> The <i>acct_gather_energy/ipmi</i>
+<li> <b>IPMI Energy Consumption</b> The <i>acct_gather_energy/ipmi</i>
 		accouting plugin will be built if the <i>freeipmi</i>
 		development library is present.</li>
 <li> <b>InfiniBand Accounting</b> The <i>acct_gather_interconnect/ofed</i>
@@ -123,7 +124,9 @@ present. Build dependencies for various plugins and commands are denoted below:
 		authentication development library is installed. MUNGE is used
 		as the default authentication mechanism.</li>
 <li> <b>MySQL</b> MySQL support for accounting will be built if the
-		<i>mysql</i> development library is present.</li>
+		<i>mysql</i> development library (preferably version 5.5 or
+		later), or if the <i>MariaDB</i> development library is
+		present.</li>
 <li> <b>PAM Support</b> PAM support will be added if the <i>PAM</i> development
 		library is installed.</li>
 <li> <b>NUMA Affinity</b> NUMA support in the task/affinity plugin will be
@@ -143,7 +146,7 @@ required software to build these plugins.</p>
 
 <p>To build RPMs directly, copy the distributed tarball into a directory
 and execute (substituting the appropriate Slurm version
-number):<br><code>rpmbuild -ta slurm-20.02.1.tar.bz2</code></p>
+number):<br><code>rpmbuild -ta slurm-21.08.1.tar.bz2</code></p>
 The rpm files will be installed under the <code>$(HOME)/rpmbuild</code>
 directory of the user building them.
 
@@ -156,8 +159,9 @@ Some macro definitions that may be used in building Slurm include:
 <dd>Specify if debugging logic within Slurm is to be enabled
 <dt>_prefix
 <dd>Pathname of directory to contain the Slurm files
-<dt>_sysconfdir  (or _slurm_sysconfdir)
-<dd>Pathname of directory containing the slurm.conf configuration file
+<dt>_slurm_sysconfdir
+<dd>Pathname of directory containing the slurm.conf configuration file (default
+/etc/slurm)
 <dt>with_munge
 <dd>Specifies the MUNGE (authentication library) installation location
 <dt>with_ssl
@@ -171,7 +175,7 @@ Some macro definitions that may be used in building Slurm include:
 #
 %_enable_debug     "--with-debug"
 %_prefix           /opt/slurm
-%_sysconfdir       %{_prefix}/etc/slurm
+%_slurm_sysconfdir %{_prefix}/etc/slurm
 %_defaultdocdir    %{_prefix}/doc
 %with_munge        "--with-munge=/opt/munge"
 </pre>
@@ -234,7 +238,15 @@ established on your system. An <a href="accounting.html">Accounting</a> web
 page contains more information.</p>
 
 <p><b>slurmctld</b> and/or <b>slurmd</b> should be initiated at node startup
-time per the Slurm configuration.
+time per the Slurm configuration.</p>
+
+<p>The <b>slurmrestd</b> daemon was introduced in version 20.02 and allows
+clients to communicate with Slurm via the REST API. This is installed by
+default, assuming the <a href="rest.html#prereq">prerequisites</a> are met.
+It has two <a href="slurmrestd.html#SECTION_DESCRIPTION">run modes</a>,
+allowing you to have it run as a traditional Unix service and always listen
+for TCP connections, or you can have it run as an Inet service and only have
+it active when in use.</p>
 
 <h3 id="HA">High Availability<a class="slurm_link" href="#HA"></a></h3>
 
@@ -636,23 +648,23 @@ the year and month of that major release. The third number in the version
 designates a specific maintenance level:
 year.month.maintenance-release (e.g. 20.02.2 is major Slurm release 20.02, and
 maintenance version 2).
-Thus version 20.02.x was initially released in February 2020.
+Thus version 21.08.x was initially released in August 2021.
 Changes in the RPCs (remote procedure calls) and state files will only be made
 if the major release number changes, which typically happens about every nine
 months. A list of most recent major Slurm releases is shown below.</p>
 <ul>
-<li>19.05.x (Released May 2019)</li>
 <li>20.02.x (Released February 2020)</li>
 <li>20.11.x (Released November 2020)</li>
+<li>21.08.x (Released August 2021)</li>
 </ul>
 
-<p>Slurm's MPI libraries may also change if the major release number change,
+<p>Slurm's MPI libraries may also change if the major release number changes,
 requiring applications be re-linked (behavior may vary depending upon
 the MPI implementation used and the specific Slurm changes between releases).
 Locally developed Slurm plugins may also require modification.
 Slurm daemons will support RPCs and state files from the two previous major
-releases (e.g. a version 20.11.x SlurmDBD will support slurmctld daemons and
-commands with a version of 20.11.x, 20.02.x, or 19.05.x).
+releases (e.g. a version 21.08.x SlurmDBD will support slurmctld daemons and
+commands with a version of 21.08.x, 20.11.x, or 20.02.x).
 This means that upgrading at least once each year is recommended.
 Otherwise, intermediate upgrades will be required to preserve state information.
 Changes in the mainenance release number generally represent only bug fixes,
@@ -699,7 +711,7 @@ Also see the note above about reverse compatibility.</p>
 <p>Almost every new major release of Slurm (e.g. 20.02.x to 20.11.x)
 involves changes to the state files with new data structures, new options, etc.
 Slurm permits upgrades to a new major release from the past two major releases,
-which happen every nine months (e.g. 19.05.x or 20.02.x to 20.11.x) without loss of
+which happen every nine months (e.g. 20.02.x or 20.11.x to 21.08.x) without loss of
 jobs or other state information.
 State information from older versions will not be recognized and will be
 discarded, resulting in loss of all running and pending jobs.
@@ -743,7 +755,10 @@ The recommended upgrade order is as follows:</p>
 <li>Backup the Slurm database using mysqldump (or similar tool), e.g. <span
     class="commandline">mysqldump --databases slurm_acct_db > backup.sql</span>.
     You may also want to take this opportunity to verify that
-    the innodb_buffer_pool_size in my.cnf is at least 128M.</li>
+    the innodb_buffer_pool_size in my.cnf is greater than the default.
+    See the recommendation in the
+    <a href="accounting.html#slurm-accounting-configuration-before-build">
+    accounting page</a>.</li>
 <li>Upgrade the slurmdbd daemon.</li>
 <li>Restart the slurmdbd daemon.</li>
 <ul>
@@ -768,7 +783,7 @@ than using systemd when performing an upgrade.</li>
     execute "scontrol reconfig" for them to take effect.</li>
 <li>Destroy backup copies of database and/or state files.</li>
 </ol>
-<p><b>Note</b>: It is possible to update the slurmd daemons on a node-by-node
+<p><b>NOTE</b>: It is possible to update the slurmd daemons on a node-by-node
 basis after the slurmctld daemon(s) are upgraded, but do make sure their down
 time is below the SlurmdTimeout value.</p>
 
@@ -776,6 +791,18 @@ time is below the SlurmdTimeout value.</p>
 need modification to support a new version of Slurm. It is common for plugins
 to add new functions and function arguments during major updates.
 See the RELEASE_NOTES file for details.</p>
+
+<p><b>NOTE</b>: In the beginning of 2021, a version of Slurm was added to the
+EPEL repository. This version is not supported or maintained by SchedMD, and is
+not currently recommend for customer use. Unfortunately, this inclusion could
+cause Slurm to be updated to a newer version outside of a planned maintenance
+period. In order to prevent Slurm from being updated unintentionally, we
+recommend you modify the EPEL Repository configuration to exclude all Slurm
+packages from automatic updates.
+<pre>
+exclude=slurm*
+</pre>
+</p>
 
 <h2 id="FreeBSD">FreeBSD<a class="slurm_link" href="#FreeBSD"></a></h2>
 
@@ -794,6 +821,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 18 October 2021</p>
+<p style="text-align:center;">Last modified 15 February 2022</p>
 
 <!--#include virtual="footer.txt"-->

@@ -474,6 +474,8 @@ static void _do_power_work(time_t now)
 		    (!IS_NODE_POWERING_UP(node_ptr))			&&
 		    (!IS_NODE_POWERING_UP(node_ptr))			&&
 		    (!IS_NODE_POWERING_DOWN(node_ptr))			&&
+		    (!IS_NODE_REBOOT_ISSUED(node_ptr))			&&
+		    (!IS_NODE_REBOOT_REQUESTED(node_ptr))		&&
 		    (IS_NODE_POWER_DOWN(node_ptr) ||
 		     ((node_ptr->last_busy != 0) &&
 		      (node_ptr->last_busy < (now - node_ptr->suspend_time)) &&
@@ -540,7 +542,7 @@ static void _do_power_work(time_t now)
 			if (!IS_NODE_DOWN(node_ptr) &&
 			    !IS_NODE_DRAIN(node_ptr) &&
 			    !IS_NODE_FAIL(node_ptr))
-				make_node_avail(i);
+				make_node_avail(node_ptr);
 
 			node_ptr->last_busy = 0;
 			node_ptr->power_save_req_time = 0;
@@ -561,6 +563,8 @@ static void _do_power_work(time_t now)
 			 * avail_node_bitmap.
 			 */
 			set_node_down_ptr(node_ptr, "ResumeTimeout reached");
+			node_ptr->node_state &= (~NODE_STATE_DRAIN);
+			node_ptr->node_state &= (~NODE_STATE_POWER_DOWN);
 			node_ptr->node_state &= (~NODE_STATE_POWERING_UP);
 			node_ptr->node_state |= NODE_STATE_POWERED_DOWN;
 			bit_set(power_node_bitmap, i);
@@ -662,6 +666,7 @@ extern int power_job_reboot(job_record_t *job_ptr)
 		    bit_overlap_any(booting_node_bitmap,
 				    job_ptr->node_bitmap)) {
 			job_ptr->job_state |= JOB_CONFIGURING;
+			job_ptr->job_state |= JOB_POWER_UP_NODE;
 			job_ptr->bit_flags |= NODE_REBOOT;
 		}
 		return SLURM_SUCCESS;
