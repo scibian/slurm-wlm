@@ -39,6 +39,100 @@ guide to where changes have taken place in the OpenAPI specifications.</p>
 href="https://stedolan.github.io/jq/">jq</a>. Make sure to always place the
 paths in a single quote string to avoid shell replacements.</p>
 
+<h2>Slurm 21.08.7</h2>
+
+<h3>openapi/v0.0.37 (src/plugins/openapi/v0.0.37/openapi.json)</h3>
+
+<h4>Fix misspelling: change account_gather_freqency to account_gather_frequency
+(only the spec was wrong; the underlying code already worked with the correct spelling).</h4>
+
+<table class="tchange">
+<tr class="trchange">
+        <td class="tdfield">previous path</td>
+        <td class="tdchange">.components.schemas."v0.0.37_job_properties".properties.account_gather_freqency</td>
+</tr>
+<tr class="trchange">
+        <td class="tdfield">new path</td>
+        <td class="tdchange">.components.schemas."v0.0.37_job_properties".properties.account_gather_frequency</td>
+</tr>
+</table>
+
+<h4>Fix misspelling: change cluster_constraints to cluster_constraint (only the
+spec was wrong; the underlying code already worked with the correct spelling).
+</h4>
+
+<table class="tchange">
+<tr class="trchange">
+        <td class="tdfield">previous path</td>
+        <td class="tdchange">.components.schemas."v0.0.37_job_properties".properties.cluster_constraints</td>
+</tr>
+<tr class="trchange">
+        <td class="tdfield">new path</td>
+        <td class="tdchange">.components.schemas."v0.0.37_job_properties".properties.cluster_constraint</td>
+</tr>
+</table>
+
+
+<h2>Slurm 21.08.6</h2>
+
+<h3>openapi/dbv0.0.37 (src/plugins/openapi/dbv0.0.37/openapi.json)</h3>
+
+<h4>Add association fields</h4>
+<table class="tchange">
+<tr class="trchange">
+	<td class="tdfield">new fields</td>
+	<td class="tdchange" colspan=2>
+		<ul>
+			<li>.components.schemas."dbv0.0.37_association".properties.is_default</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.tres.group.minutes</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.tres.group.active</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.jobs.active</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.jobs.accruing</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.jobs.total</li>
+			<li>.components.schemas."dbv0.0.37_association".properties.max.tres.minutes.per.job</li>
+		</ul>
+	</td>
+</tr>
+</table>
+
+<h4>Move incorrectly named field</h4>
+<table class="tchange">
+<tr class="trchange">
+	<td class="tdfield">old path</td>
+	<td class="tdchange">.components.schemas."dbv0.0.37_qos".properties.limits.max.jobs.per.account</td>
+</tr>
+<tr class="trchange">
+	<td class="tdfield">new path</td>
+	<td class="tdchange">.components.schemas."dbv0.0.37_qos".properties.limits.max.jobs.active_jobs.per.account</td>
+</tr>
+</table>
+
+<h4>Move incorrectly named field</h4>
+<table class="tchange">
+<tr class="trchange">
+	<td class="tdfield">old path</td>
+	<td class="tdchange">.components.schemas."dbv0.0.37_qos".properties.limits.properties.max.properties.jobs.properties.per.properties.user</td>
+</tr>
+<tr class="trchange">
+	<td class="tdfield">new path</td>
+	<td class="tdchange">.components.schemas."dbv0.0.37_qos".properties.limits.properties.max.properties.jobs.properties.active_jobs.properties.per.properties.user</td>
+</tr>
+</table>
+
+<h4>Add QOS fields</h4>
+<table class="tchange">
+<tr class="trchange">
+	<td class="tdfield">new fields</td>
+	<td class="tdchange" colspan=2>
+		<ul>
+			<li>.components.schemas."dbv0.0.37_qos".properties.limits.properties.factor</li>
+			<li>.components.schemas."dbv0.0.37_qos".properties.limits.properties.max.properties.accruing.properties.per.properties.account</li>
+			<li>.components.schemas."dbv0.0.37_qos".properties.limits.properties.max.properties.accruing.properties.per.properties.user</li>
+		</ul>
+	</td>
+</tr>
+</table>
+
 <h2>Slurm 21.08.3</h2>
 
 <h3>openapi/v0.0.37 (src/plugins/openapi/v0.0.37/openapi.json)</h3>
@@ -87,7 +181,7 @@ paths in a single quote string to avoid shell replacements.</p>
 </tr>
 </table>
 
-<h2>Slurm 21.08.0pre1</h2>
+<h2>Slurm 21.08.0</h2>
 
 <p>All of the OpenAPI plugins have moved from "src/slurmrestd/plugins/openapi/"
 to "src/plugins/openapi/".</p>
@@ -190,72 +284,72 @@ The v0.0.35 plugin has now been deprecated.
 <h4>Mark job environment as required</h4>
 <table class="tchange">
 <tr class="trchange">
-       <td class="tdfield">new path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_properties".required</td>
+	<td class="tdfield">new path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_properties".required</td>
 </tr>
 </table>
 
 <h4>Correct preemption_mode type to list of strings</h4>
 <table class="tchange">
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_partition".properties.preemption_mode</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_partition".properties.preemption_mode</td>
 </tr>
 </table>
 
 <h4>Set UNIX timestamps to int64 instead of string</h4>
 <table class="tchange">
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.accrue_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.accrue_time</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.eligible_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.eligible_time</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.end_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.end_time</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.preempt_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.preempt_time</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.pre_sus_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.pre_sus_time</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">modify path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.resize_time</td>
+	<td class="tdfield">modify path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_job_response_properties".properties.resize_time</td>
 </tr>
 </table>
 
 <h4>Add new fields to node properties</h4>
 <table class="tchange">
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.tres_used</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.tres_used</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.tres_weighted</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.tres_weighted</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.alloc_cpus</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.alloc_cpus</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.idle_cpus</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.idle_cpus</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.alloc_memory</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.alloc_memory</td>
 </tr>
 <tr class="trchange">
-       <td class="tdfield">add path</td>
-       <td class="tdchange">.components.schemas."v0.0.37_node".properties.partitions</td>
+	<td class="tdfield">add path</td>
+	<td class="tdchange">.components.schemas."v0.0.37_node".properties.partitions</td>
 </tr>
 </table>
 
@@ -603,6 +697,6 @@ The v0.0.35 plugin has now been deprecated.
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 2 March 2021</p>
+<p style="text-align:center;">Last modified 18 March 2022</p>
 
 <!--#include virtual="footer.txt"-->

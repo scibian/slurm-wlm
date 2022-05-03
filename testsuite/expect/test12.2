@@ -28,30 +28,25 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_name.input"
-set file_out    "$test_name.output"
-set file_err    "$test_name.error"
+set file_in     "$test_dir/input"
+set file_out    "$test_dir/output"
+set file_err    "$test_dir/error"
 set file_prog   "$test_name.prog"
-set file_stem   "$test_name"
+set file_stem   $test_name
 set job_id      0
+set step_id     0
 set matches     0
 
-proc cleanup {} {
-	global file_prog file_in file_out file_err file_stem
-
-	exec rm -f $file_prog $file_in $file_out $file_err $file_stem.read $file_stem.write
-}
-
 # job parameters
-set mem_size    102400
+set mem_size    102400; # 100 MiB
+set file_size   10485760
 set sleep_time  32
 set ret_code    42
-set file_size   10485760
 set num_tasks   3
+set max_rss_tolerance 4300; # 4.2 MiB
+set ave_rss_tolerance 10240; # 10 MiB
 set max_time_error 10
-set max_mem_error 4300
-set step_id	0
-set job_mem_limit [expr ($mem_size + $max_mem_error)  / 1024 + 10]
+set job_mem_limit [expr ($mem_size + $max_rss_tolerance) / 1024 + 10]
 
 # Expected values in sacct
 set expected_state    "FAILED"
@@ -84,18 +79,24 @@ if {![llength $nodes]} {
 	skip "Unable to test with current node configuration"
 }
 
+proc cleanup {} {
+	global file_prog file_stem
+
+	file delete $file_prog $file_stem.read $file_stem.write
+}
+
 proc _get_mem {prog} {
-	global float number mem_size job_id step_id max_mem_error num_tasks
+	global float number mem_size job_id step_id max_rss_tolerance ave_rss_tolerance num_tasks
 
 	set result   [list]
-	set mem_used -1
+	set max_rss -1
 	set mem_task -1
-	set ave_used -1
+	set ave_rss -1
 	set prog_base [file rootname [file tail $prog]]
 
 	set output [run_command_output -fail "$prog --noheader -p --job=$job_id.$step_id --format maxrss,maxrsstask,averss --noconvert"]
 
-	dict set subtest cond [regexp "($number)\\D($number)\\D($number)" $output - mem_used mem_task ave_used]
+	dict set subtest cond [regexp "($number)\\D($number)\\D($number)" $output - max_rss mem_task ave_rss]
 	dict set subtest desc "$prog_base should provide the right output format"
 	dict set subtest diag "$output"
 	lappend result $subtest
@@ -103,17 +104,22 @@ proc _get_mem {prog} {
 		return $result
 	}
 
-	set mem_used [scale_to_ks $mem_used ""]
-	set ave_used [scale_to_ks $ave_used ""]
+	set max_rss [scale_to_ks $max_rss ""]
+	# Since we will be multiplying ave_rss by num_tasks below and expecting it to be greater than
+	# max_rss, we must add 1 to ave_rss to compensate for the small potential truncation loss that
+	# can occur in the slurm code when calculating AveRSS (effectively int(TotRSS / tasks)).
+	set ave_rss [scale_to_ks [expr $ave_rss + 1] ""]
 
-	dict set subtest cond [tolerance $mem_size $mem_used "+$max_mem_error"]
-	dict set subtest desc "$prog_base should provide MaxRSS close and bigger than $mem_size"
-	dict set subtest diag "$mem_used not in tolerance values of $mem_size"
+	dict set subtest cond [tolerance $mem_size $max_rss $max_rss_tolerance]
+	dict set subtest desc "MaxRSS is within expected tolerance for $prog_base"
+	dict set subtest diag "Observed MaxRSS ($max_rss) is not within tolerance $max_rss_tolerance of expected value ($mem_size)"
 	lappend result $subtest
 
-	dict set subtest cond [expr {$mem_used <= ($ave_used * $num_tasks)}]
-	dict set subtest desc "$prog_base should provide MaxrRSS <= AveRSS * num_tasks"
-	dict set subtest diag "$mem_used > $ave_used * $num_tasks"
+	# We expect ave_rss to be greater than or equal to max_rss / num_tasks.
+	# We are assuming that the two non-memory tasks will not climb above a total of 10 MiB.
+	dict set subtest cond [tolerance $max_rss [expr $ave_rss * $num_tasks] "+$ave_rss_tolerance"]
+	dict set subtest desc "AveRSS is within expected tolerance for $prog_base"
+	dict set subtest diag "Observed AveRSS ($ave_rss) is not within tolerance +$ave_rss_tolerance of expected value ([expr $max_rss / 3])"
 	lappend result $subtest
 
 	return $result
@@ -195,10 +201,8 @@ proc wait_and_subtest {test prog} {
 # Delete left-over program and rebuild it
 # Compilation is not optimized to avoid memset to be skipped.
 #
-exec $bin_rm -f $file_prog
-exec $bin_rm -f $file_in $file_out $file_err
-exec $bin_cc -o $file_prog ${file_prog}.c
-exec $bin_chmod 700 $file_prog
+run_command -fail "$bin_cc -o $file_prog ${file_prog}.c"
+run_command -fail "$bin_chmod 700 $file_prog"
 
 make_bash_script $file_in "
     $srun ./$file_prog $ret_code $sleep_time $mem_size $file_size $file_stem
@@ -223,9 +227,7 @@ set job_id [submit_job -fail "-n$num_tasks --mem-per-cpu=$job_mem_limit --output
 #
 # Wait for job to run
 #
-if {[wait_for_job $job_id "RUNNING"]} {
-	fail "job never run"
-}
+wait_for_job -fail $job_id "RUNNING"
 
 wait_and_subtest _get_mem       $sstat
 wait_and_subtest _get_file_size $sstat
@@ -233,9 +235,7 @@ wait_and_subtest _get_file_size $sstat
 #
 # Wait for job to complete
 #
-if {[wait_for_job $job_id "DONE"] != 0} {
-	fail "job never end"
-}
+wait_for_job -fail $job_id "DONE"
 
 wait_and_subtest _get_mem       $sacct
 wait_and_subtest _get_file_size $sacct
@@ -250,31 +250,34 @@ wait_for -fail {![regexp "COMPLETING" $output]} {
 subtest {[regexp "$job_id\\.$step_id.$file_prog.$expected_state.$expected_ret_code" $output]} "sacct should report $job_id\\.$step_id.$file_prog.$expected_state.$expected_ret_code" "$output"
 
 #
-# Report the sacct accounting info
+# Report the sacct accounting info: Elapsed
 #
-set hours 0
 set mins 0
 set secs 0
 set output [run_command_output "$sacct --noheader -P --job=$job_id.$step_id --format elapsed --starttime=00:00"]
-set matches [scan $output "%d:%d:%d" hours mins secs]
-set value  [expr ($hours * 3600) + ($mins * 60) + $secs]
-subtest {$matches == 3} "sacct should report the elapsed time in the format HH:MM:SS" "$output"
+subtest {[regexp {(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?} $output - hours mins secs msecs]} "sacct should report the elapsed time in the format \[HH:\]MM:SS\[.sss\]" "$output"
+# Use scan to avoid TCL octals
+set value  [expr ([scan $mins "%d"] * 60) + [scan $secs "%d"]]
 subtest {[tolerance $sleep_time $value +$max_time_error]} "Elapsed time reported by sacct should be close to $sleep_time" "$value too different from $sleep_time"
 
-set hours 0
+#
+# Report the sacct accounting info: TotalCPU
+#
 set mins 0
 set secs 0
 set output [run_command_output "$sacct --noheader -P --job=$job_id.$step_id --format totalcpu --starttime=00:00"]
-set matches [scan $output "%d:%d.%d" mins secs msecs]
-set value  [expr ($mins * 60) + $secs]
-subtest {$matches == 3} "sacct should report the TotalCPU time in the format MM:SS.sss" "$output"
+subtest {[regexp {(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?} $output - hours mins secs msecs]} "sacct should report the TotalCPU time in the format \[HH:\]MM:SS\[.sss\]" "$output"
+# Use scan to avoid TCL octals
+set value  [expr ([scan $mins "%d"] * 60) + [scan $secs "%d"]]
 subtest {$value <= $sleep_time} "TotalCPU reported by sacct should be less than $sleep_time secs" "$value > $sleep_time"
 
-set hours 0
+#
+# Report the sacct accounting info: MinCPU
+#
 set mins 0
 set secs 0
 set output [run_command_output "$sacct --noheader -P --job=$job_id.$step_id --format mincpu --starttime=00:00"]
-set matches [scan $output "%d:%d:%d" hours mins secs]
-set value  [expr ($hours * 3600) + ($mins * 60) + $secs]
-subtest {$matches == 3} "sacct should report the MinCPU time in the format HH:MM:SS" "$output"
+subtest {[regexp {(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?} $output - hours mins secs msecs]} "sacct should report the MinCPU time in the format \[HH:\]MM:SS\[.sss\]" "$output"
+# Use scan to avoid TCL octals
+set value  [expr ([scan $mins "%d"] * 60) + [scan $secs "%d"]]
 subtest {$value <= $sleep_time} "MinCPU reported by sacct should be less than $sleep_time secs" "$value > $sleep_time"

@@ -56,7 +56,7 @@ proc scontrol_check { job_id } {
 	expect {
 		-re "JobState=($re_word_str)" {
 			set tmp $expect_out(1,string)
-			if {[string compare $tmp "CANCELLED"]} {
+			if {$tmp ne "CANCELLED"} {
 				fail "Job was not cancelled"
 			}
 			exp_continue
@@ -79,7 +79,7 @@ proc multi_squeue_check {job_id} {
 		-re "$job_id\_($number\)" {
 			set array_id $expect_out(1,string)
 			if {$array_id != $array_in} {
-				fail "Array IDs do not match $array_id != $array_in"
+				fail "Array IDs do not match ($array_id != $array_in)"
 			}
 			incr array_in
 			exp_continue

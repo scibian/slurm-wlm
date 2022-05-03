@@ -33,18 +33,17 @@ source ./globals
 # Submit a job with one thread fanout
 #
 set host_0      ""
-set timeout $max_job_delay
-set node_cnt 1-64
-set task_num [get_config_param "MaxTasksPerNode"]
+set timeout     $max_job_delay
+set node_cnt    1-64
+set task_num    [get_config_param "MaxTasksPerNode"]
 
-set srun_pid [spawn $srun -N$node_cnt -l --threads=1 -t1 $bin_printenv SLURMD_NODENAME]
+spawn $srun -N$node_cnt -l --threads=1 -t1 $bin_printenv SLURMD_NODENAME
 expect {
 	-re "0: *($re_word_str)" {
 		set host_0 $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -55,7 +54,7 @@ expect {
 #
 # Verify node registration
 #
-subtest {[string compare $host_0 ""] != 0} "Verify node registration" "Did not get hostname of task 0"
+subtest {$host_0 ne ""} "Verify node registration" "Did not get hostname of task 0"
 
 #
 # Submit a job with up to 32 thread fanout (Slurm limit is 60)
@@ -66,7 +65,7 @@ if {$task_num <= 32} {
 } else {
 	set thread_cnt 32
 }
-set srun_pid [spawn $srun -N$node_cnt -n$task_num -O -l --threads=$thread_cnt -t1 $bin_printenv SLURMD_NODENAME]
+spawn $srun -N$node_cnt -n$task_num -O -l --threads=$thread_cnt -t1 $bin_printenv SLURMD_NODENAME
 expect {
 	-re "Memory required by task is not available" {
 		log_warn "DefMemPerTask is configured too high for this test"
@@ -77,7 +76,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -88,4 +86,4 @@ expect {
 #
 # Verify node registration
 #
-subtest {[string compare $host_0 ""] != 0} "Verify node registration" "Did not get hostname of task 0"
+subtest {$host_0 ne ""} "Verify node registration" "Did not get hostname of task 0"

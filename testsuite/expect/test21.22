@@ -193,7 +193,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -261,7 +261,7 @@ proc _remove_cluster {name} {
 		fail "We need a name to remove"
 	}
 
-	set my_pid [spawn $sacctmgr -i delete cluster $name]
+	spawn $sacctmgr -i delete cluster $name
 	expect {
 		-re "privilege to perform this action" {
 			set access_err 1
@@ -299,7 +299,7 @@ proc _remove_cluster {name} {
 		return 1
 	}
 	if {$matches != 1} {
-		fail "sacctmgr had a problem deleting cluster got $matches"
+		fail "sacctmgr had a problem deleting cluster ($matches != 1)"
 	}
 	if { !$nothing } {
 		if {![check_acct_associations]} {
@@ -329,7 +329,7 @@ proc _remove_acct { cluster name } {
 		set check "Deleting account associations"
 	}
 
-	set my_pid [eval spawn $sacctmgr -i delete account $command]
+	eval spawn $sacctmgr -i delete account $command
 	expect {
 		-re "(There was a problem|Unknown condition|Bad format on|Bad MaxWall|Unknown option)" {
 			fail "There was a problem with the sacctmgr command"
@@ -361,7 +361,7 @@ proc _remove_acct { cluster name } {
 	}
 
 	if {$matches != 1} {
-		fail "sacctmgr had a problem deleting account. Got $matches"
+		fail "sacctmgr had a problem deleting account ($matches != 1)"
 	}
 
 	if { !$nothing } {
@@ -392,7 +392,7 @@ proc _remove_user { acct user } {
 		set check "Deleting user associations"
 	}
 
-	set my_pid [eval spawn $sacctmgr -i delete user $command]
+	eval spawn $sacctmgr -i delete user $command
 	expect {
 		-re "(There was a problem|Unknown condition|Bad format on|Bad MaxWall|Unknown option)" {
 			fail "There was a problem with the sacctmgr command"
@@ -424,7 +424,7 @@ proc _remove_user { acct user } {
 	}
 
 	if {$matches != 1} {
-		fail "sacctmgr had a problem deleting user. Got $matches"
+		fail "sacctmgr had a problem deleting user ($matches != 1)"
 	}
 
 	if { !$nothing } {
@@ -454,7 +454,7 @@ if {$access_err != 0} {
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i load $file_in]
+spawn $sacctmgr -i load $file_in
 expect {
 	-re "(Unable to read *.* * No such file or directory)" {
 	        fail "There was a problem with the file"
@@ -482,14 +482,14 @@ expect {
 }
 
 if {$matches != 2} {
-	fail "File load 1 incorrect with only $matches"
+	fail "File load 1 incorrect ($matches != 2)"
 }
 
 #
 # Use sacctmgr to list the test original association additions
 #
 set matches 0
-set my_pid [spawn $sacctmgr -n -p $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$pts,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs]
+spawn $sacctmgr -n -p $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$pts,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs
 expect {
 	-re "There was a problem" {
 	        fail "There was a problem with the sacctmgr command"
@@ -523,7 +523,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 2"
 	}
 	eof {
@@ -532,14 +531,14 @@ expect {
 }
 
 if {$matches != 7} {
-	fail "Associations addition 7 incorrect with only $matches"
+	fail "Associations addition 7 incorrect ($matches != 7)"
 }
 
 #
 # Use sacctmgr to list the test original Admin Levels and Account Coordinators
 #
 set matches 0
-set my_pid [spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco]
+spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco
 expect {
 	-re "There was a problem" {
 	    fail "There was a problem with the sacctmgr command"
@@ -553,7 +552,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 3"
 	}
 	eof {
@@ -562,11 +560,11 @@ expect {
 }
 
 if {$matches != 2} {
-	fail "Adminstrator and coordinator 2 incorrect with only $matches"
+	fail "Adminstrator and coordinator 2 incorrect ($matches != 2)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i load $file_in2]
+spawn $sacctmgr -i load $file_in2
 expect {
 	-re "(Unable to read *.* * No such file or directory)" {
 	    fail "There was a problem with the file"
@@ -587,7 +585,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr load not responding 4"
 	}
 	eof {
@@ -596,7 +593,7 @@ expect {
 }
 
 if {$matches != 2} {
-	fail "File load 2 incorrect with only $matches"
+	fail "File load 2 incorrect ($matches != 2)"
 }
 
 #
@@ -604,7 +601,7 @@ if {$matches != 2} {
 #
 set matches 0
 
-set my_pid [spawn $sacctmgr -n -P $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs]
+spawn $sacctmgr -n -P $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs
 expect {
 	-re "There was a problem" {
 	    fail "there was a problem with the sacctmgr command"
@@ -659,7 +656,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 5"
 	}
 	eof {
@@ -668,14 +664,14 @@ expect {
 }
 
 if {$matches != 10} {
-	fail "Association modification 10 incorrect with only $matches"
+	fail "Association modification 10 incorrect ($matches != 10)"
 }
 
 #
 # Use sacctmgr to list the test modification Admin Levels and Account Coordinators
 #
 set matches 0
-set my_pid [spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco]
+spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco
 expect {
 	-re "There was a problem" {
 	    fail "There was a problem with the sacctmgr command"
@@ -693,7 +689,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 6"
 	}
 	eof {
@@ -702,11 +697,11 @@ expect {
 }
 
 if {$matches != 3} {
-	fail "Adminstrator and coordinator 3 incorrect with only $matches"
+	fail "Adminstrator and coordinator 3 incorrect ($matches != 3)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i load  $file_in3 clean]
+spawn $sacctmgr -i load $file_in3 clean
 expect {
 	-re "(Unable to read *.* * No such file or directory)" {
 	    fail "There was a problem with the file"
@@ -726,7 +721,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 7"
 	}
 	eof {
@@ -735,14 +729,14 @@ expect {
 }
 
 if {$matches != 2} {
-	fail "File load 2 incorrect with only $matches"
+	fail "File load 2 incorrect ($matches != 2)"
 }
 
 #
 # Use sacctmgr to list the test modifications to the original association
 #
 set matches 0
-set my_pid [spawn $sacctmgr -n -p $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$pts,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs]
+spawn $sacctmgr -n -p $lis $as $clu=$tc1 $fmt=$clu,$acc,$usr,$pts,$fs,$gm,$gc,$gj,$gn,$gs,$gw,$mc,$mm,$mj,$mn,$ms,$mw,$qs
 expect {
 	-re "There was a problem" {
 	    fail "there was a problem with the sacctmgr command"
@@ -788,7 +782,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr list associations not responding 8"
 	}
 	eof {
@@ -797,14 +790,14 @@ expect {
 }
 
 if {$matches != 10} {
-	fail "Clean association addition 10 incorrect with only $matches"
+	fail "Clean association addition 10 incorrect ($matches != 10)"
 }
 
 #
 # Use sacctmgr to list the test modification Admin Levels and Account Coordinators
 #
 set matches 0
-set my_pid [spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco]
+spawn $sacctmgr -n -p $lis $usr $fmt=$usr,$col,$al $wco
 expect {
 	-re "There was a problem" {
 	    fail "There was a problem with the sacctmgr command"
@@ -830,5 +823,5 @@ expect {
 }
 
 if {$matches != 3} {
-	fail "Adminstrator and coordinator 3 incorrect with only $matches"
+	fail "Adminstrator and coordinator 3 incorrect ($matches != 3)"
 }

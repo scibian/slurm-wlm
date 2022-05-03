@@ -193,7 +193,8 @@ extern void allocate_nodes(job_record_t *job_ptr)
 
 		if (IS_NODE_CLOUD(node_ptr)) {
 			has_cloud = true;
-			if (IS_NODE_POWERED_DOWN(node_ptr))
+			if (IS_NODE_POWERED_DOWN(node_ptr) ||
+			    IS_NODE_POWERING_UP(node_ptr))
 				has_cloud_power_save = true;
 		}
 		make_node_alloc(node_ptr, job_ptr);
@@ -203,7 +204,13 @@ extern void allocate_nodes(job_record_t *job_ptr)
 	license_job_get(job_ptr);
 
 	if (has_cloud) {
-		if (cloud_dns) {
+		if (has_cloud_power_save &&
+		    job_ptr->origin_cluster &&
+		    xstrcmp(slurm_conf.cluster_name, job_ptr->origin_cluster)) {
+			/* Set TBD so remote srun will updated node_addrs */
+			job_ptr->alias_list = xstrdup("TBD");
+			job_ptr->wait_all_nodes = 1;
+		} else if (cloud_dns) {
 			job_ptr->wait_all_nodes = 1;
 		} else if (has_cloud_power_save) {
 			job_ptr->alias_list = xstrdup("TBD");
@@ -220,15 +227,31 @@ extern void set_job_alias_list(job_record_t *job_ptr)
 {
 	int i;
 	node_record_t *node_ptr;
+	static bool cloud_dns = false;
+	static time_t sched_update = 0;
+
+	if (sched_update != slurm_conf.last_update) {
+		if (xstrcasestr(slurm_conf.slurmctld_params, "cloud_dns"))
+			cloud_dns = true;
+		else
+			cloud_dns = false;
+
+		sched_update = slurm_conf.last_update;
+	}
 
 	xfree(job_ptr->alias_list);
+
+	if (cloud_dns)
+		return;
+
 	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
 	     i++, node_ptr++) {
 		if (!bit_test(job_ptr->node_bitmap, i))
 			continue;
 
 		if (IS_NODE_DYNAMIC(node_ptr) || IS_NODE_CLOUD(node_ptr)) {
-			if (IS_NODE_POWERED_DOWN(node_ptr)) {
+			if (IS_NODE_POWERED_DOWN(node_ptr) ||
+			    IS_NODE_POWERING_UP(node_ptr)) {
 				xfree(job_ptr->alias_list);
 				job_ptr->alias_list = xstrdup("TBD");
 				break;
@@ -358,7 +381,9 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 		if (!bit_test(job_ptr->node_bitmap_cg, i))
 			continue;
 		node_ptr = &node_record_table_ptr[i];
+		/* Sync up conditionals with make_node_comp() */
 		if (IS_NODE_DOWN(node_ptr) ||
+		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_UP(node_ptr)) {
 			/* Issue the KILL RPC, but don't verify response */
 			down_node_cnt++;
@@ -383,15 +408,20 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	}
 #endif
 	if (job_ptr->details->prolog_running) {
-		/* Job wasn't launched on nodes so don't run epilog on nodes. */
-		if (job_ptr->epilog_running) {
+		/*
+		 * Job was configuring when it was cancelled and epilog wasn't
+		 * run on the nodes, so cleanup the nodes now. Final cleanup
+		 * will happen after EpilogSlurmctld is done.
+		 */
+		if (job_ptr->node_bitmap_cg) {
 			/*
-			 * Cleanup completing nodes after EpilogSlurmctld is
-			 * completed in prep_epilog_slurmctld_callback().
+			 * Call cleanup_completing before job_epilog_complete or
+			 * we will end up requeuing there before this is called.
 			 */
-			job_ptr->bit_flags |= NOT_LAUNCHED;
-		} else if (job_ptr->node_bitmap_cg) {
-			/* No async epilog running so cleanup now. */
+			if ((job_ptr->node_cnt == 0) &&
+			    !job_ptr->epilog_running)
+				cleanup_completing(job_ptr);
+
 			i_first = bit_ffs(job_ptr->node_bitmap_cg);
 			if (i_first >= 0)
 				i_last = bit_fls(job_ptr->node_bitmap_cg);
@@ -404,9 +434,6 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 					job_ptr->job_id,
 					node_record_table_ptr[i].name, 0);
 			}
-			if ((job_ptr->node_cnt == 0) &&
-			    !job_ptr->epilog_running)
-				cleanup_completing(job_ptr);
 		}
 
 		return;
@@ -673,7 +700,8 @@ extern void build_active_feature_bitmap(job_record_t *job_ptr,
 /* Return bitmap of nodes with all specified features currently active */
 extern bitstr_t *build_active_feature_bitmap2(char *reboot_features)
 {
-	char *tmp, *sep;
+	const char *delim = ",";
+	char *tmp, *tok, *save_ptr = NULL;
 	bitstr_t *active_node_bitmap = NULL;
 	node_feature_t *node_feat_ptr;
 
@@ -684,34 +712,38 @@ extern bitstr_t *build_active_feature_bitmap2(char *reboot_features)
 	}
 
 	tmp = xstrdup(reboot_features);
-	sep = strchr(tmp, ',');
-	if (sep) {
-		sep[0] = '\0';
+	tok = strtok_r(tmp, delim, &save_ptr);
+
+	while (tok) {
 		node_feat_ptr = list_find_first(active_feature_list,
-						list_find_feature, sep + 1);
+						list_find_feature, tok);
 		if (node_feat_ptr && node_feat_ptr->node_bitmap) {
-			active_node_bitmap =
-				bit_copy(node_feat_ptr->node_bitmap);
+			/*
+			 * Found feature, add nodes with this feature and
+			 * remove nodes without this feature (bit_and)
+			 */
+			if (!active_node_bitmap)
+				active_node_bitmap =
+					bit_copy(node_feat_ptr->node_bitmap);
+			else
+				bit_and(active_node_bitmap,
+					node_feat_ptr->node_bitmap);
 		} else {
-			active_node_bitmap = bit_alloc(node_record_count);
+			/*
+			 * Feature not found in any nodes, so we definitely
+			 * need to reboot all of the nodes
+			 */
+			if (!active_node_bitmap)
+				active_node_bitmap =
+					bit_alloc(node_record_count);
+			else
+				bit_clear_all(active_node_bitmap);
+			break;
 		}
+
+		tok = strtok_r(NULL, delim, &save_ptr);
 	}
-	node_feat_ptr = list_find_first(active_feature_list, list_find_feature,
-					tmp);
-	if (node_feat_ptr && node_feat_ptr->node_bitmap) {
-		if (active_node_bitmap) {
-			bit_and(active_node_bitmap, node_feat_ptr->node_bitmap);
-		} else {
-			active_node_bitmap =
-				bit_copy(node_feat_ptr->node_bitmap);
-		}
-	} else {
-		if (active_node_bitmap) {
-			bit_clear_all(active_node_bitmap);
-		} else {
-			active_node_bitmap = bit_alloc(node_record_count);
-		}
-	}
+
 	xfree(tmp);
 
 	return active_node_bitmap;

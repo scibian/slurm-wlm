@@ -71,7 +71,7 @@
  * plugin_version - an unsigned 32-bit integer containing the Slurm version
  * (major.minor.micro combined into a single number).
  */
-const char *plugin_name = "Serializer URL encoded plugin";
+const char plugin_name[] = "Serializer URL encoded plugin";
 const char plugin_type[] = "serializer/url-encoded";
 const uint32_t  plugin_version = SLURM_VERSION_NUMBER;
 const char *mime_types[] = {
@@ -240,7 +240,7 @@ extern int serializer_p_deserialize(data_t **dest, const char *src,
 				       __func__);
 			} else if (key != NULL && buffer != NULL) {
 				/* example: test=value=testv */
-				error("%s: invalid url characer = before new key name",
+				error("%s: invalid url character = before new key name",
 				      __func__);
 				rc = SLURM_ERROR;
 			}

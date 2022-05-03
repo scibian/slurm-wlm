@@ -59,7 +59,7 @@ if [set_partition_maximum_time_limit "" -1] {
 # Spawn a job with a deadline and no time
 #
 set timeout $max_job_delay
-set srun_pid [spawn $srun -v  -N1 --deadline now+1hour --time-min 20 -t120 $bin_sleep 1]
+spawn $srun -v  -N1 --deadline now+1hour --time-min 20 -t120 $bin_sleep 1
 expect {
 	-re "Requested time limit is invalid" {
 		fail "Time limit error"
@@ -76,7 +76,7 @@ expect {
 	}
 }
 if {$job_id == 0} {
-	fail "Job not submitted. This can be due to QOS or account time limit <120 minutes"
+	fail "Job not submitted. This can be due to QOS or account time limit < 120 minutes"
 }
 
 #

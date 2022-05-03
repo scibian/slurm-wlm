@@ -92,6 +92,9 @@ static void _step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc);
 #endif
 static int _process_cmdline (int argc, char **argv);
 
+static pthread_mutex_t cleanup_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool cleanup = false;
+
 /*
  *  List of signals to block in this process
  */
@@ -192,6 +195,11 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
 			 slurm_addr_t *cli, slurm_addr_t *self,
 			 int rc, bool only_mem)
 {
+	slurm_mutex_lock(&cleanup_mutex);
+
+	if (cleanup)
+		goto done;
+
 	if (!only_mem) {
 		if (job->batch)
 			batch_finish(job, rc); /* sends batch complete message */
@@ -248,6 +256,9 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
 	xfree(conf->cpu_spec_list);
 	xfree(conf);
 #endif
+	cleanup = true;
+done:
+	slurm_mutex_unlock(&cleanup_mutex);
 	info("done with job");
 	return rc;
 }
@@ -307,28 +318,27 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	free_buf(buffer);
 
 	confl->log_opts.prefix_level = 1;
-	confl->log_opts.stderr_level = confl->debug_level;
 	confl->log_opts.logfile_level = confl->debug_level;
-	confl->log_opts.syslog_level = confl->debug_level;
-	/*
-	 * If daemonizing, turn off stderr logging -- also, if
-	 * logging to a file, turn off syslog.
-	 *
-	 * Otherwise, if remaining in foreground, turn off logging
-	 * to syslog (but keep logfile level)
-	 */
-	if (confl->daemonize) {
+
+	if (confl->daemonize)
 		confl->log_opts.stderr_level = LOG_LEVEL_QUIET;
-		if (confl->logfile)
-			confl->log_opts.syslog_level = LOG_LEVEL_QUIET;
+	else
+		confl->log_opts.stderr_level = confl->debug_level;
+
+	if (confl->syslog_debug != LOG_LEVEL_END) {
+		confl->log_opts.syslog_level = confl->syslog_debug;
+	} else if (!confl->daemonize) {
+		confl->log_opts.syslog_level = LOG_LEVEL_QUIET;
+	} else if ((confl->debug_level > LOG_LEVEL_QUIET) && !confl->logfile) {
+		confl->log_opts.syslog_level = confl->debug_level;
 	} else
-		confl->log_opts.syslog_level  = LOG_LEVEL_QUIET;
+		confl->log_opts.syslog_level = LOG_LEVEL_FATAL;
 
 	/*
 	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
 	 * up in the log.
 	 */
-	log_alter(confl->log_opts, 0, confl->logfile);
+	log_alter(confl->log_opts, SYSLOG_FACILITY_DAEMON, confl->logfile);
 	log_set_timefmt(slurm_conf.log_fmt);
 	debug2("debug level read from slurmd is '%s'.",
 		log_num2string(confl->debug_level));
@@ -549,6 +559,7 @@ _init_from_slurmd(int sock, char **argv,
 	if (cgroup_read_conf(sock) != SLURM_SUCCESS)
 		fatal("Failed to read cgroup conf from slurmd");
 
+	slurm_conf.slurmd_port = conf->port;
 	/* receive acct_gather conf from slurmd */
 	if (acct_gather_read_conf(sock) != SLURM_SUCCESS)
 		fatal("Failed to read acct_gather conf from slurmd");
