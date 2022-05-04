@@ -9,11 +9,9 @@ We revert this patch for now until we find a better fix.
 
 Upstream: https://github.com/SchedMD/slurm/commit/b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 
-diff --git a/doc/man/man5/slurm.conf.5 b/doc/man/man5/slurm.conf.5
-index 9a80754..c73d491 100644
 --- a/doc/man/man5/slurm.conf.5
 +++ b/doc/man/man5/slurm.conf.5
-@@ -1098,8 +1098,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
+@@ -1370,8 +1370,10 @@ Note that the \fBHealthCheckProgram\fR w
  on all nodes to minimize its impact upon parallel programs.
  This program is will be killed if it does not terminate normally within
  60 seconds.
@@ -24,10 +22,8 @@ index 9a80754..c73d491 100644
 +slurmctld until this has been satisfied.
 +The return code is otherwise ignored.
  By default, no program will be executed.
+ .IP
  
- .TP
-diff --git a/src/slurmd/slurmd/slurmd.c b/src/slurmd/slurmd/slurmd.c
-index b2b328e..1355f85 100644
 --- a/src/slurmd/slurmd/slurmd.c
 +++ b/src/slurmd/slurmd/slurmd.c
 @@ -120,6 +120,8 @@
@@ -57,7 +53,7 @@ index b2b328e..1355f85 100644
  
  	slurm_thread_create_detached(NULL, _registration_engine, NULL);
  
-@@ -2584,6 +2588,28 @@ static void _resource_spec_fini(void)
+@@ -2588,6 +2592,28 @@ static void _resource_spec_fini(void)
  }
  
  /*
