@@ -100,21 +100,26 @@ following features:</p>
 <ul>
 <li>The ability to confine jobs and steps to their allocated cpuset.</li>
 <li>The ability to bind tasks to sockets, cores and threads within their step's
-allocated cpuset on a node.</li>
+allocated cpuset on a node.
 <ul>
 <li>Supports block and cyclic distribution of allocated cpus to tasks for
 binding.</li>
 </ul>
+</li>
 <li>The ability to confine jobs and steps to specific memory resources.</li>
 <li>The ability to confine jobs to their allocated set of generic resources
 (gres devices).</li>
 </ul>
 <p>The task/cgroup plugin uses the cpuset, memory and devices subsystems.</p>
-<p>To enable this plugin, configure the following option in slurm.conf:
-<pre>TaskPlugin=task/cgroup</pre></p>
+<p>To enable this plugin, add <i>task/cgroup</i> to the TaskPlugin configuration
+parameter in slurm.conf:</p>
+<pre>TaskPlugin=task/cgroup</pre>
 <p>There are many specific options for this plugin in cgroup.conf.  The general
 options also apply. See the <a href="cgroup.conf.html">cgroup.conf</a> man page
 for details.</p>
+<p>Note that task/cgroup and task/affinity are not mutually exclusive and can
+work side by side:</p>
+<pre>TaskPlugin=task/cgroup,task/affinity</pre>
 
 <h3 id="jobacct_gather">jobacct_gather/cgroup plugin
 <a class="slurm_link" href="#jobacct_gather"></a>
@@ -125,9 +130,7 @@ plugin for the collection of accounting statistics for jobs, steps and tasks.
 jobacct_gather/cgroup uses the cpuacct, memory and blkio subsystems. Note: the
 cpu and memory statistics collected by this plugin do not represent the same
 resources as the cpu and memory statistics collected by the
-jobacct_gather/linux plugin (sourced from /proc stat). While originally
-thought to be faster, in practice it has been proven to be slower than the
-jobacct_gather/linux plugin.
+jobacct_gather/linux plugin (sourced from /proc stat).
 <p>To enable this plugin, configure the following option in slurm.conf:
 <pre>JobacctGatherType=jobacct_gather/cgroup</pre>
 </p>
@@ -172,6 +175,6 @@ hierarchies:</p>
 use more than one node will have a cgroup structure on each node.</p>
 
 
-<p style="text-align:center;">Last modified 9 June 2021</p>
+<p style="text-align:center;">Last modified 18 March 2022</p>
 
 <!--#include virtual="footer.txt"-->

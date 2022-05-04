@@ -498,7 +498,12 @@ extern int load_all_node_state ( bool state_only )
 				comm_name = NULL;
 				node_hostname = NULL;
 			}
-			if (IS_NODE_CLOUD(node_ptr)) {
+			if (IS_NODE_FUTURE(node_ptr) &&
+			    (node_state & NODE_STATE_DYNAMIC)) {
+				/* Preserve active dynamic future node state */
+				node_ptr->node_state    = node_state;
+
+			} else if (IS_NODE_CLOUD(node_ptr)) {
 				if ((!power_save_mode) &&
 				    ((node_state & NODE_STATE_POWERED_DOWN) ||
 				     (node_state & NODE_STATE_POWERING_DOWN) ||
@@ -1642,7 +1647,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 				node_ptr->node_state &= (~NODE_STATE_FAIL);
 				if (!IS_NODE_NO_RESPOND(node_ptr) ||
 				     IS_NODE_POWERED_DOWN(node_ptr))
-					make_node_avail(node_inx);
+					make_node_avail(node_ptr);
 				bit_set (idle_node_bitmap, node_inx);
 				bit_set (up_node_bitmap, node_inx);
 				if (IS_NODE_POWERED_DOWN(node_ptr))
@@ -1653,7 +1658,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 				if (!IS_NODE_DRAIN(node_ptr) &&
 				    !IS_NODE_FAIL(node_ptr)  &&
 				    !IS_NODE_NO_RESPOND(node_ptr))
-					make_node_avail(node_inx);
+					make_node_avail(node_ptr);
 				bit_set (up_node_bitmap, node_inx);
 				bit_clear (idle_node_bitmap, node_inx);
 			} else if ((state_val == NODE_STATE_DRAIN) ||
@@ -1694,6 +1699,35 @@ int update_node ( update_node_msg_t * update_node_msg )
 					continue;
 				}
 
+				/* Abort reboot request */
+				if (IS_NODE_REBOOT_REQUESTED(node_ptr) ||
+				    IS_NODE_REBOOT_ISSUED(node_ptr)) {
+					/*
+					 * A node is DOWN+REBOOT_ISSUED when the
+					 * reboot has been issued. Set node
+					 * state back to idle only if the reboot
+					 * has been issued. Node will remain
+					 * cleared in the avail_node_bitmap
+					 * until the node is powered down.
+					 */
+					if (IS_NODE_REBOOT_ISSUED(node_ptr) &&
+					    IS_NODE_DOWN(node_ptr)) {
+						node_ptr->node_state =
+							NODE_STATE_IDLE |
+							(node_ptr->node_state &
+							 NODE_STATE_FLAGS);
+					}
+
+					node_ptr->node_state &=
+						(~NODE_STATE_REBOOT_REQUESTED);
+					node_ptr->node_state &=
+						(~NODE_STATE_REBOOT_ISSUED);
+					xfree(node_ptr->reason);
+
+					info("Canceling REBOOT on node %s",
+					     this_node_name);
+				}
+
 				if (IS_NODE_POWERED_DOWN(node_ptr)) {
 					node_ptr->node_state &=
 						(~NODE_STATE_POWERED_DOWN);
@@ -1725,6 +1759,16 @@ int update_node ( update_node_msg_t * update_node_msg )
 
 				node_ptr->node_state |=
 					NODE_STATE_POWER_DOWN;
+
+				if (IS_NODE_IDLE(node_ptr)) {
+					/*
+					 * remove node from avail_node_bitmap so
+					 * that it will power_down before jobs
+					 * get on it.
+					 */
+					bit_clear(avail_node_bitmap, node_inx);
+				}
+
 				node_ptr->next_state = NO_VAL;
 				bit_clear(rs_node_bitmap, node_inx);
 				free(this_node_name);
@@ -3450,7 +3494,7 @@ static void _sync_bitmaps(node_record_t *node_ptr, int job_count)
 	    IS_NODE_FAIL(node_ptr) || IS_NODE_NO_RESPOND(node_ptr))
 		bit_clear (avail_node_bitmap, node_inx);
 	else
-		make_node_avail(node_inx);
+		make_node_avail(node_ptr);
 	if (IS_NODE_DOWN(node_ptr))
 		bit_clear (up_node_bitmap, node_inx);
 	else
@@ -3550,8 +3594,10 @@ static void _node_did_resp(node_record_t *node_ptr)
 		bit_set (idle_node_bitmap, node_inx);
 		bit_set (share_node_bitmap, node_inx);
 	}
-	if (IS_NODE_DOWN(node_ptr) || IS_NODE_DRAIN(node_ptr) ||
-	    IS_NODE_FAIL(node_ptr)) {
+	if (IS_NODE_DOWN(node_ptr) ||
+	    IS_NODE_DRAIN(node_ptr) ||
+	    IS_NODE_FAIL(node_ptr) ||
+	    (IS_NODE_POWER_DOWN(node_ptr) && !IS_NODE_ALLOCATED(node_ptr))) {
 		bit_clear (avail_node_bitmap, node_inx);
 	} else
 		bit_set   (avail_node_bitmap, node_inx);
@@ -4012,8 +4058,11 @@ extern void make_node_alloc(node_record_t *node_ptr, job_record_t *job_ptr)
 }
 
 /* make_node_avail - flag specified node as available */
-extern void make_node_avail(int node_inx)
+extern void make_node_avail(node_record_t *node_ptr)
 {
+	int node_inx = node_ptr - node_record_table_ptr;
+	if (IS_NODE_POWER_DOWN(node_ptr) || IS_NODE_POWERING_DOWN(node_ptr))
+		return;
 	bit_set(avail_node_bitmap, node_inx);
 
 	/*
@@ -4063,7 +4112,10 @@ extern void make_node_comp(node_record_t *node_ptr, job_record_t *job_ptr,
 		}
 	}
 
-	if (!IS_NODE_DOWN(node_ptr) && !IS_NODE_POWERING_UP(node_ptr)) {
+	/* Sync up conditionals with deallocate_nodes() */
+	if (!IS_NODE_DOWN(node_ptr) &&
+	    !IS_NODE_POWERED_DOWN(node_ptr) &&
+	    !IS_NODE_POWERING_UP(node_ptr)) {
 		/* Don't verify RPC if node in DOWN or POWER_UP state */
 		(node_ptr->comp_job_cnt)++;
 		node_ptr->node_state |= NODE_STATE_COMPLETING;
@@ -4212,9 +4264,10 @@ void make_node_idle(node_record_t *node_ptr, job_record_t *job_ptr)
 	}
 
 	node_flags = node_ptr->node_state & NODE_STATE_FLAGS;
-	if (IS_NODE_DOWN(node_ptr)) {
-		debug3("%s: %pJ node %s being left DOWN",
-		       __func__, job_ptr, node_ptr->name);
+	if (IS_NODE_DOWN(node_ptr) || IS_NODE_FUTURE(node_ptr)) {
+		debug3("%s: %pJ node %s being left %s",
+		       __func__, job_ptr, node_ptr->name,
+		       node_state_base_string(node_ptr->node_state));
 		goto fini;
 	}
 	bit_set(up_node_bitmap, inx);
@@ -4223,7 +4276,7 @@ void make_node_idle(node_record_t *node_ptr, job_record_t *job_ptr)
 	    IS_NODE_NO_RESPOND(node_ptr))
 		bit_clear(avail_node_bitmap, inx);
 	else
-		make_node_avail(inx);
+		make_node_avail(node_ptr);
 
 	if ((IS_NODE_DRAIN(node_ptr) || IS_NODE_FAIL(node_ptr)) &&
 	    (node_ptr->run_job_cnt == 0) && (node_ptr->comp_job_cnt == 0)) {
@@ -4242,16 +4295,25 @@ void make_node_idle(node_record_t *node_ptr, job_record_t *job_ptr)
 		node_ptr->node_state = NODE_STATE_ALLOCATED | node_flags;
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		     !IS_NODE_FAIL(node_ptr) && !IS_NODE_DRAIN(node_ptr))
-			make_node_avail(inx);
+			make_node_avail(node_ptr);
 	} else {
 		node_ptr->node_state = NODE_STATE_IDLE | node_flags;
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		     !IS_NODE_FAIL(node_ptr) && !IS_NODE_DRAIN(node_ptr))
-			make_node_avail(inx);
+			make_node_avail(node_ptr);
 		if (!IS_NODE_NO_RESPOND(node_ptr) &&
 		    !IS_NODE_COMPLETING(node_ptr))
 			bit_set(idle_node_bitmap, inx);
 		node_ptr->last_busy = now;
+	}
+
+	if (IS_NODE_IDLE(node_ptr) && IS_NODE_POWER_DOWN(node_ptr)) {
+		/*
+		 * Now that the node is idle and is to be powered off, remove
+		 * from the avail_node_bitmap to prevent jobs being scheduled on
+		 * the node before it power's off.
+		 */
+		bit_clear(avail_node_bitmap, inx);
 	}
 
 fini:
@@ -4425,7 +4487,8 @@ extern bool waiting_for_node_power_down(node_record_t *node_ptr)
 
 	if (IS_NODE_POWERING_DOWN(node_ptr) &&
 	    node_ptr->power_save_req_time &&
-	    (node_ptr->boot_time < node_ptr->last_response)) {
+	    (node_ptr->boot_time <
+	     (node_ptr->power_save_req_time + slurm_conf.suspend_timeout))) {
 		debug("Still waiting for node '%s' to power off",
 		      node_ptr->name);
 		return true;

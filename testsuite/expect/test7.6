@@ -41,15 +41,8 @@
 source ./globals
 
 set job_id        0
-set test_prog     "test$test_id.prog"
+set test_prog     "$test_name.prog"
 set timeout       $max_job_delay
-
-proc cleanup {} {
-	global job_id bin_rm test_prog
-
-	cancel_job $job_id
-	exec $bin_rm -f $test_prog ${test_prog}.o ${test_prog}.TVD.v3breakpoints
-}
 
 # Note this appears as a single argv value to totalviewcli
 set no_bulk       "dset TV::bulk_launch_enabled false"
@@ -73,6 +66,13 @@ if {[get_config_param "FrontendName"] ne "MISSING"} {
     skip "This test is incompatible with front-end systems"
 }
 
+proc cleanup {} {
+	global job_id bin_rm test_prog
+
+	cancel_job $job_id
+	exec $bin_rm -f $test_prog ${test_prog}.o ${test_prog}.TVD.v3breakpoints
+}
+
 #
 # Put desired Slurm install directory at head of search path for bulk launch
 # command to work (runs "srun" without path)
@@ -89,16 +89,12 @@ exec $mpicc -o $test_prog ${test_prog}.c
 #
 # Create a slurm job step
 #
-set salloc_pid [spawn $salloc -N1-2 -t1 $srun --input=none -n4 --overcommit ./$test_prog]
+spawn $salloc -N1-2 -t1 $srun --input=none -n4 --overcommit ./$test_prog
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
 	}
 	timeout {
-		if {$job_id != 0} {
-			cancel_job $job_id
-		}
-		slow_kill [expr 0 - $salloc_pid]
 		fail "salloc not responding"
 	}
 	eof {

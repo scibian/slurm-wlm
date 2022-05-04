@@ -28,7 +28,7 @@
 ############################################################################
 source ./globals
 
-set file_out    "$test_name.output"
+set file_out    "$test_dir/output"
 set file_prog   "$test_name.prog"
 set hdf5_file   "$test_name.h5"
 set job_id      0
@@ -38,9 +38,9 @@ if {[get_config_param "FrontendName"] ne "MISSING"} {
 }
 
 proc cleanup {} {
-	global file_prog file_out hdf5_file
+	global file_prog hdf5_file
 
-	file delete $file_prog $file_out $hdf5_file
+	file delete $file_prog $hdf5_file
 }
 
 # Check if acct_gather_profile/hdf5 is installed
@@ -76,7 +76,7 @@ exec $bin_chmod 700 $file_prog
 
 set timeout [expr $max_job_delay + 200]
 
-set srun_pid [spawn $srun --acctg-freq=$task_freq --profile=task -t5 ./$file_prog]
+spawn $srun --acctg-freq=$task_freq --profile=task -t5 ./$file_prog
 expect {
 	-re "SLURM_JobId=($number)" {
 		set job_id $expect_out(1,string)
@@ -90,8 +90,7 @@ expect {
 		fail "Something happened on start of job"
 	}
 	timeout {
-		slow_kill $srun_pid
-		fail "Srun not responding"
+		fail "srun not responding"
 	}
 	eof {
 		wait
@@ -99,30 +98,26 @@ expect {
 }
 
 set timeout 10
-set srun_pid [spawn $sh5util -j $job_id]
+spawn $sh5util -j $job_id
 expect {
 	"Output file generated is empty" {
-		slow_kill $srun_pid
-		fail "Sh5util merge didn't make anything"
+		fail "sh5util merge didn't make anything"
 	}
 	timeout {
-		slow_kill $srun_pid
-		fail "Sh5util merge not responding"
+		fail "sh5util merge not responding"
 	}
 	eof {
 		wait
 	}
 }
 
-set srun_pid [spawn $sh5util -j $job_id -E -l Node:TimeSeries -s Tasks -o $file_out]
+spawn $sh5util -j $job_id -E -l Node:TimeSeries -s Tasks -o $file_out
 expect {
 	"Output file generated is empty" {
-		slow_kill $srun_pid
-		fail "Sh5util extract didn't make anything"
+		fail "sh5util extract didn't make anything"
 	}
 	timeout {
-		fail "Sh5util extract not responding"
-		slow_kill $srun_pid
+		fail "sh5util extract not responding"
 	}
 	eof {
 		wait
@@ -197,9 +192,9 @@ while {$fd > 0 && [gets $fd line] != -1} {
 close $fd
 
 if {$lno == 0} {
-	fail "$file_out is empty"
+	fail "Output file ($file_out) is empty"
 }
 
 if {$nerr > 3} {
-	fail "$nerr is too many values out of range"
+	fail "Too many values out of range ($nerr)"
 }

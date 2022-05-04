@@ -30,8 +30,6 @@
 ############################################################################
 source ./globals
 
-set file_in     "$test_dir/input"
-
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
 }
@@ -43,19 +41,15 @@ if { $node_count < 4 } {
 }
 
 #
-# Build input script file
-#
-make_bash_script $file_in "
-  $reset_bash_prompt
-  $bin_bash -norc
-"
-
-#
 # Submit a 4 node job
 #
 set timeout $max_job_delay
-set srun_pid [spawn $salloc -N4 $file_in]
+spawn $salloc -N4 $bin_bash
 expect {
+	-re "Granted job allocation" {
+		reset_bash_prompt
+		exp_continue
+	}
 	-re "More processors requested than permitted" {
 		skip "Can't test srun task distribution"
 	}
@@ -63,7 +57,6 @@ expect {
 		skip "Can't test srun task distribution"
 	}
 	-re "configuration is not available" {
-		slow_kill $srun_pid
 		skip "Partition too small for test"
 	}
 	-re "Required node not available" {
@@ -77,7 +70,6 @@ expect {
 #		log_debug "Job initiated"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -118,7 +110,6 @@ expect {
 #		log_debug "Srun completed"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -171,7 +162,6 @@ expect {
 #		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -215,7 +205,6 @@ expect {
 #		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -247,7 +236,6 @@ expect {
 #		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -262,7 +250,6 @@ subtest {$error != 0} "Error expected for inconsistent node count"
 send "exit\r"
 expect {
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

@@ -2072,7 +2072,15 @@ static int arg_set_gres(slurm_opt_t *opt, const char *arg)
 	}
 
 	xfree(opt->gres);
-	opt->gres = gres_prepend_tres_type(arg);
+	/*
+	 * Do not prepend "gres:" to none; none is handled specially by
+	 * slurmctld to mean "do not copy the job's GRES to the step" -
+	 * see _copy_job_tres_to_step()
+	 */
+	if (!xstrcasecmp(arg, "none"))
+		opt->gres = xstrdup(arg);
+	else
+		opt->gres = gres_prepend_tres_type(arg);
 
 	return SLURM_SUCCESS;
 }
@@ -2089,7 +2097,16 @@ static int arg_set_data_gres(slurm_opt_t *opt, const data_t *arg,
 		ADD_DATA_ERROR("GRES \"help\" not supported", rc);
 	} else {
 		xfree(opt->gres);
-		opt->gres = gres_prepend_tres_type(str);
+		/*
+		 * Do not prepend "gres:" to none; none is handled specially by
+		 * slurmctld to mean "do not copy the job's GRES to the step" -
+		 * see _copy_job_tres_to_step()
+		 */
+		if (!xstrcasecmp(str, "none")) {
+			opt->gres = str;
+			str = NULL;
+		} else
+			opt->gres = gres_prepend_tres_type(str);
 	}
 
 	xfree(str);
@@ -5831,13 +5848,23 @@ static void _validate_ntasks_per_gpu(slurm_opt_t *opt)
 
 	/* Validate --ntasks-per-gpu and --ntasks-per-gpu */
 	if (gpu && tres) {
-		fatal("--ntasks-per-gpu and --ntasks-per-tres are mutually exclusive");
+		if (opt->ntasks_per_gpu != opt->ntasks_per_tres)
+			fatal("Inconsistent values set to --ntasks-per-gpu=%d and --ntasks-per-tres=%d ",
+			      opt->ntasks_per_gpu,
+			      opt->ntasks_per_tres);
 	} else if (gpu && tres_env) {
-		fatal("--ntasks-per-gpu and SLURM_NTASKS_PER_TRES are mutually exclusive");
+		if (opt->verbose)
+			info("Ignoring SLURM_NTASKS_PER_TRES since --ntasks-per-gpu given as command line option");
+		slurm_option_reset(opt, "ntasks-per-tres");
 	} else if (tres && gpu_env) {
-		fatal("--ntasks-per-tres and SLURM_NTASKS_PER_GPU are mutually exclusive");
+		if (opt->verbose)
+			info("Ignoring SLURM_NTASKS_PER_GPU since --ntasks-per-tres given as command line option");
+		slurm_option_reset(opt, "ntasks-per-gpu");
 	} else if (gpu_env && tres_env) {
-		fatal("SLURM_NTASKS_PER_GPU and SLURM_NTASKS_PER_TRES are mutually exclusive");
+		if (opt->ntasks_per_gpu != opt->ntasks_per_tres)
+			fatal("Inconsistent values set by environment variables SLURM_NTASKS_PER_GPU=%d and SLURM_NTASKS_PER_TRES=%d ",
+			      opt->ntasks_per_gpu,
+			      opt->ntasks_per_tres);
 	}
 
 	if (slurm_option_set_by_cli(opt, LONG_OPT_GPUS_PER_TASK))
@@ -6112,6 +6139,7 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	xfmt_tres(&job_desc->tres_per_job, "gres:gpu", opt_local->gpus);
 	xfmt_tres(&job_desc->tres_per_node, "gres:gpu",
 		  opt_local->gpus_per_node);
+	/* --gres=none for jobs means no GRES, so don't send it to slurmctld */
 	if (opt_local->gres && xstrcasecmp(opt_local->gres, "NONE")) {
 		if (job_desc->tres_per_node)
 			xstrfmtcat(job_desc->tres_per_node, ",%s",

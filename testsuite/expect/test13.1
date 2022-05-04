@@ -68,11 +68,10 @@ set timeout $max_job_delay
 set job_id 0
 set matches 0
 
-set srun_pid [spawn $salloc -N1 --verbose -t2 $bin_bash]
+spawn $salloc -N1 --verbose -t2 $bin_bash
 expect -re "Granted job allocation ($number)"
 set job_id $expect_out(1,string)
-send "$reset_bash_prompt\r"
-expect -re "\"$test_prompt\""
+reset_bash_prompt
 
 # start initial job step to claim some switch windows
 expect -re $test_prompt
@@ -89,8 +88,7 @@ for {set inx 0} {$inx < $windows_iterations} {incr inx} {
 			send "$srun -N1 -O -n$windows_used true\r"
 		}
 		timeout {
-			slow_kill $srun_pid
-			fail "Salloc not responding"
+			fail "salloc not responding"
 		}
 		eof {
 			fail "srun aborted"
@@ -106,10 +104,9 @@ send "exit\r"
 
 expect {
 	-re "error" {
-		fail "some error occurred"
+		fail "Some error occurred"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "salloc not responding"
 	}
 	eof {

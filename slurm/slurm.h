@@ -631,6 +631,16 @@ enum auth_plugin_type {
 	AUTH_PLUGIN_JWT		= 102,
 };
 
+/*
+ * Hash plugin (id) used for communication.
+ */
+enum hash_plugin_type {
+	HASH_PLUGIN_DEFAULT = 0,
+	HASH_PLUGIN_NONE,
+	HASH_PLUGIN_K12,
+	HASH_PLUGIN_CNT,
+};
+
 /* Select plugin (id) in use by cluster */
 enum select_plugin_type {
 	/* 100 unused (originally for BlueGene) */
@@ -1110,7 +1120,7 @@ enum node_states {
 					  * last_eval_time */
 #define BACKFILL_LAST      SLURM_BIT(33) /* Job was considered in last
 					  * schedule attempt */
-#define NOT_LAUNCHED       SLURM_BIT(34) /* Job was alloc'ed but not launched */
+/*                         SLURM_BIT(34)    Available after 23.02 */
 
 /* These bits are set in the x11 field of job_desc_msg_t */
 #define X11_FORWARD_ALL		0x0001	/* all nodes should setup forward */
@@ -1126,6 +1136,8 @@ typedef enum {
 				  * to a node than available processors. */
 	SSF_WHOLE = 1 << 3, /* Use whole nodes in step allocation */
 	SSF_INTERACTIVE = 1 << 4, /* Request interactive step allocation */
+	SSF_MEM_ZERO = 1 << 5, /* Requested --mem=0; use all memory but do not
+				* count against the job's memory allocation */
 } step_spec_flags_t;
 
 /*****************************************************************************\

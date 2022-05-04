@@ -110,7 +110,8 @@ static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 static void	_job_queue_append(List job_queue, job_record_t *job_ptr,
 				  part_record_t *part_ptr, uint32_t priority);
 static bool	_job_runnable_test1(job_record_t *job_ptr, bool clear_start);
-static bool	_job_runnable_test2(job_record_t *job_ptr, bool check_min_time);
+static bool	_job_runnable_test2(job_record_t *job_ptr, time_t now,
+				    bool check_min_time);
 static bool	_scan_depend(List dependency_list, job_record_t *job_ptr);
 static void *	_sched_agent(void *args);
 static int	_schedule(bool full_queue);
@@ -304,6 +305,7 @@ static bool _job_runnable_test1(job_record_t *job_ptr, bool sched_plugin)
 		 * previous run hasn't finished yet */
 		job_ptr->state_reason = WAIT_CLEANING;
 		xfree(job_ptr->state_desc);
+		last_job_update = now;
 		sched_debug3("%pJ. State=PENDING. Reason=Cleaning.", job_ptr);
 		return false;
 	}
@@ -345,6 +347,7 @@ static bool _job_runnable_test1(job_record_t *job_ptr, bool sched_plugin)
 		/* released behind active dependency? */
 		job_ptr->state_reason = WAIT_DEPENDENCY;
 		xfree(job_ptr->state_desc);
+		last_job_update = now;
 	}
 
 	if (!job_indepen)	/* can not run now */
@@ -356,10 +359,12 @@ static bool _job_runnable_test1(job_record_t *job_ptr, bool sched_plugin)
 /*
  * Job and partition tests for ability to run now
  * IN job_ptr - job to test
+ * IN now - update time
  * IN check_min_time - If set, test job's minimum time limit
  *		otherwise test maximum time limit
  */
-static bool _job_runnable_test2(job_record_t *job_ptr, bool check_min_time)
+static bool _job_runnable_test2(job_record_t *job_ptr, time_t now,
+				bool check_min_time)
 {
 	int reason;
 
@@ -369,6 +374,7 @@ static bool _job_runnable_test2(job_record_t *job_ptr, bool check_min_time)
 	     (!part_policy_job_runnable_state(job_ptr)))) {
 		job_ptr->state_reason = reason;
 		xfree(job_ptr->state_desc);
+		last_job_update = now;
 	}
 	if (reason != WAIT_NO_REASON)
 		return false;
@@ -444,7 +450,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	job_record_t *job_ptr = NULL, *new_job_ptr;
 	part_record_t *part_ptr;
 	depend_spec_t *dep_ptr;
-	int i, pend_cnt, reason, dep_corr;
+	int i, pend_cnt, dep_corr;
 	struct timeval start_tv = {0, 0};
 	int tested_jobs = 0;
 	int job_part_pairs = 0;
@@ -596,6 +602,8 @@ extern List build_job_queue(bool clear_start, bool backfill)
 					job_ptr->state_reason;
 			last_job_update = now;
 		}
+		if (job_ptr->resv_list)
+			job_ptr->resv_ptr = NULL;
 		if (!_job_runnable_test1(job_ptr, clear_start))
 			continue;
 
@@ -605,18 +613,15 @@ extern List build_job_queue(bool clear_start, bool backfill)
 				job_ptr->part_ptr_list);
 			while ((part_ptr = list_next(part_iterator))) {
 				job_ptr->part_ptr = part_ptr;
-				reason = job_limits_check(&job_ptr, backfill);
-				if ((reason != WAIT_NO_REASON) &&
-				    (reason != job_ptr->state_reason)) {
-					job_ptr->state_reason = reason;
-					xfree(job_ptr->state_desc);
-					last_job_update = now;
-				}
+
 				/* priority_array index matches part_ptr_list
 				 * position: increment inx */
 				inx++;
-				if (reason != WAIT_NO_REASON)
+
+				if (!_job_runnable_test2(
+					    job_ptr, now, backfill))
 					continue;
+
 				job_part_pairs++;
 				if (job_ptr->priority_array) {
 					_job_queue_append(job_queue, job_ptr,
@@ -644,7 +649,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 				job_ptr->bit_flags |= JOB_PART_ASSIGNED;
 
 			}
-			if (!_job_runnable_test2(job_ptr, backfill))
+			if (!_job_runnable_test2(job_ptr, now, backfill))
 				continue;
 			job_part_pairs++;
 			_job_queue_append(job_queue, job_ptr,
@@ -954,6 +959,7 @@ extern void fill_array_reasons(job_record_t *job_ptr,
 		/* Set the reason for the subsequent array task */
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = reject_array_job->state_reason;
+		last_job_update = time(NULL);
 		debug3("%s: Setting reason of array task %pJ to %s",
 		       __func__, job_ptr,
 		       job_reason_string(job_ptr->state_reason));
@@ -1011,6 +1017,7 @@ static int _schedule(bool full_queue)
 	time_t now, last_job_sched_start, sched_start;
 	job_record_t *reject_array_job = NULL;
 	part_record_t *reject_array_part = NULL;
+	slurmctld_resv_t *reject_array_resv = NULL;
 	bool fail_by_part, wait_on_resv;
 	uint32_t deadline_time_limit, save_time_limit = 0;
 	uint32_t prio_reserve;
@@ -1258,6 +1265,7 @@ static int _schedule(bool full_queue)
 				continue;
 			job_ptr->state_reason = WAIT_FRONT_END;
 			xfree(job_ptr->state_desc);
+			last_job_update = now;
 		}
 		list_iterator_destroy(job_iterator);
 
@@ -1397,7 +1405,7 @@ next_part:
 					continue;
 				}
 			} else {
-				if (!_job_runnable_test2(job_ptr, false))
+				if (!_job_runnable_test2(job_ptr, now, false))
 					continue;
 			}
 		} else {
@@ -1409,16 +1417,11 @@ next_part:
 			part_ptr = job_queue_rec->part_ptr;
 			job_ptr->priority = job_queue_rec->priority;
 
-			if (job_ptr->resv_list)
-				job_queue_rec_resv_list(job_queue_rec);
-			else
-				job_queue_rec_magnetic_resv(job_queue_rec);
-			xfree(job_queue_rec);
-
 			if (!avail_front_end(job_ptr)) {
 				job_ptr->state_reason = WAIT_FRONT_END;
 				xfree(job_ptr->state_desc);
 				last_job_update = now;
+				xfree(job_queue_rec);
 				continue;
 			}
 			if ((job_ptr->array_task_id != array_task_id) &&
@@ -1426,9 +1429,18 @@ next_part:
 				/* Job array element started in other partition,
 				 * reset pointer to "master" job array record */
 				job_ptr = find_job_record(job_ptr->array_job_id);
+				job_queue_rec->job_ptr = job_ptr;
 			}
-			if (!job_ptr || !IS_JOB_PENDING(job_ptr))
+			if (!job_ptr || !IS_JOB_PENDING(job_ptr)) {
+				xfree(job_queue_rec);
 				continue;	/* started in other partition */
+			}
+
+			if (job_ptr->resv_list)
+				job_queue_rec_resv_list(job_queue_rec);
+			else
+				job_queue_rec_magnetic_resv(job_queue_rec);
+			xfree(job_queue_rec);
 
 			if (!_job_runnable_test3(job_ptr, part_ptr))
 				continue;
@@ -1465,12 +1477,14 @@ next_task:
 			if (reject_array_job &&
 			    (reject_array_job->array_job_id ==
 				job_ptr->array_job_id) &&
-			    (reject_array_part == part_ptr))
+			    (reject_array_part == part_ptr) &&
+			    (reject_array_resv == job_ptr->resv_ptr))
 				continue;  /* already rejected array element */
 
 			/* assume reject whole array for now, clear if OK */
 			reject_array_job = job_ptr;
 			reject_array_part = part_ptr;
+			reject_array_resv = job_ptr->resv_ptr;
 
 			if (!job_array_start_test(job_ptr))
 				continue;
@@ -1489,6 +1503,7 @@ next_task:
 				if (job_ptr->state_reason == WAIT_NO_REASON) {
 					xfree(job_ptr->state_desc);
 					job_ptr->state_reason = WAIT_PRIORITY;
+					last_job_update = now;
 				}
 				if (job_ptr->part_ptr == skip_part_ptr)
 					continue;
@@ -1541,6 +1556,7 @@ next_task:
 			if (found_resv) {
 				job_ptr->state_reason = WAIT_PRIORITY;
 				xfree(job_ptr->state_desc);
+				last_job_update = now;
 				sched_debug3("%pJ. State=PENDING. Reason=Priority. Priority=%u. Resv=%s.",
 					     job_ptr,
 					     job_ptr->priority,
@@ -1560,6 +1576,7 @@ next_task:
 					    job_ptr->priority);
 				job_ptr->state_reason = WAIT_PRIORITY;
 				xfree(job_ptr->state_desc);
+				last_job_update = now;
 			} else {
 				/*
 				 * Log job can not run even though we are not
@@ -1753,6 +1770,7 @@ skip_start:
 				 */
 				reject_array_job = NULL;
 				reject_array_part = NULL;
+				reject_array_resv = NULL;
 			}
 			sched_debug3("%pJ. State=%s. Reason=%s. Priority=%u.",
 				     job_ptr,
@@ -1801,6 +1819,7 @@ skip_start:
 			/* Clear assumed rejected array status */
 			reject_array_job = NULL;
 			reject_array_part = NULL;
+			reject_array_resv = NULL;
 
 			sched_info("Allocate %pJ NodeList=%s #CPUs=%u Partition=%s",
 				   job_ptr, job_ptr->nodes,
@@ -2248,6 +2267,7 @@ job_failed:
 	xfree(job_ptr->state_desc);
 	job_ptr->state_desc = xstrdup(fail_why);
 	job_ptr->state_reason = FAIL_SYSTEM;
+	last_job_update = time(NULL);
 	slurm_free_job_launch_msg(launch_msg_ptr);
 	/* ignore the return as job is in an unknown state anyway */
 	job_complete(job_ptr->job_id, slurm_conf.slurm_user_id, false, false,
@@ -3045,6 +3065,7 @@ extern int test_job_dependency(job_record_t *job_ptr, bool *was_changed)
 	if (or_satisfied && (job_ptr->state_reason == WAIT_DEP_INVALID)) {
 		job_ptr->state_reason = WAIT_NO_REASON;
 		xfree(job_ptr->state_desc);
+		last_job_update = time(NULL);
 	}
 
 	if (or_satisfied || (!or_flag && !and_failed && !has_unfulfilled)) {
@@ -3599,6 +3620,7 @@ extern int handle_job_dependency_updates(void *object, void *arg)
 	ListIterator itr;
 	bool or_satisfied = false, and_failed = false, or_flag = false,
 	     has_unfulfilled = false;
+	time_t now = time(NULL);
 
 	xassert(job_ptr->details);
 	xassert(job_ptr->details->depend_list);
@@ -3632,6 +3654,7 @@ extern int handle_job_dependency_updates(void *object, void *arg)
 		    (job_ptr->state_reason == WAIT_DEPENDENCY)) {
 			job_ptr->state_reason = WAIT_NO_REASON;
 			xfree(job_ptr->state_desc);
+			last_job_update = now;
 		}
 		_depend_list2str(job_ptr, false);
 		fed_mgr_job_requeue(job_ptr);
@@ -3646,6 +3669,7 @@ extern int handle_job_dependency_updates(void *object, void *arg)
 			/* Still dependent */
 			job_ptr->state_reason = WAIT_DEPENDENCY;
 			xfree(job_ptr->state_desc);
+			last_job_update = now;
 		}
 	}
 	if (slurm_conf.debug_flags & DEBUG_FLAG_DEPENDENCY)
@@ -4352,7 +4376,7 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 		reboot_msg = xmalloc(sizeof(reboot_msg_t));
 		slurm_init_reboot_msg(reboot_msg, false);
 		reboot_agent_args->msg_args = reboot_msg;
-		reboot_msg->features = reboot_features;	/* Move, not copy */
+		reboot_msg->features = xstrdup(reboot_features);
 		for (i = i_first; i <= i_last; i++) {
 			if (!bit_test(feature_node_bitmap, i))
 				continue;
@@ -4408,6 +4432,7 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 	slurm_thread_create(&tid, _wait_boot, wait_boot_arg);
 	FREE_NULL_BITMAP(boot_node_bitmap);
 	FREE_NULL_BITMAP(feature_node_bitmap);
+	xfree(reboot_features);
 
 	return rc;
 }
@@ -4629,6 +4654,7 @@ extern int build_feature_list(job_record_t *job_ptr)
 	struct job_details *detail_ptr = job_ptr->details;
 	char *tmp_requested, *str_ptr, *feature = NULL;
 	int bracket = 0, count = 0, i, paren = 0, rc;
+	int brack_set_count = 0;
 	bool fail = false;
 	job_feature_t *feat;
 	bool can_reboot;
@@ -4719,6 +4745,9 @@ extern int build_feature_list(job_record_t *job_ptr)
 				break;
 			}
 			bracket++;
+			brack_set_count++;
+			if (brack_set_count > 1)
+				break;
 		} else if (tmp_requested[i] == ']') {
 			tmp_requested[i] = '\0';
 			if ((feature == NULL) || (bracket == 0)) {
@@ -4770,6 +4799,16 @@ extern int build_feature_list(job_record_t *job_ptr)
 				job_ptr, detail_ptr->features);
 		} else {
 			verbose("Reservation invalid constraint %s",
+				detail_ptr->features);
+		}
+		return ESLURM_INVALID_FEATURE;
+	}
+	if (brack_set_count > 1) {
+		if (job_ptr->job_id) {
+			verbose("%pJ constraint has more than one set of brackets: %s",
+				job_ptr, detail_ptr->features);
+		} else {
+			verbose("Reservation constraint has more than one set of brackets: %s",
 				detail_ptr->features);
 		}
 		return ESLURM_INVALID_FEATURE;
@@ -5013,6 +5052,9 @@ extern void rebuild_job_part_list(job_record_t *job_ptr)
 void cleanup_completing(job_record_t *job_ptr)
 {
 	time_t delay;
+
+	if (job_ptr->epilog_running)
+		return;
 
 	log_flag(TRACE_JOBS, "%s: %pJ", __func__, job_ptr);
 

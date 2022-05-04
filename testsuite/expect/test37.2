@@ -52,13 +52,14 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
 proc cleanup { } {
 	global fed_name
-	return [delete_federations $fed_name]
+
+	delete_federations $fed_name
 }
 
 # submit jobs to each cluster and ensure that they return a unique job id
@@ -74,7 +75,7 @@ proc test_fed_job_id { cname cid} {
 	set max_local_id [expr 0x3FFFFFF]
 
 	set my_sbatch "${fed_slurm_base}/$cname/bin/sbatch"
-	set sbatch_pid [spawn $my_sbatch --wrap="hostname" -o/dev/null]
+	spawn $my_sbatch --wrap="hostname" -o/dev/null
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
@@ -121,7 +122,7 @@ proc test_loc_job_id { cname } {
 	set max_local_id [expr 0x3FFFFFF]
 
 	set my_sbatch "${fed_slurm_base}/$cname/bin/sbatch"
-	set sbatch_pid [spawn $my_sbatch --wrap="hostname" -o/dev/null]
+	spawn $my_sbatch --wrap="hostname" -o/dev/null
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
@@ -158,12 +159,10 @@ if {![check_federation_up]} {
 }
 
 # Remove existing setup
-if {[cleanup] != 0} {
-	fail "Failed to cleanup"
-}
+cleanup
 
 # add clusters to federation
-if {[setup_federation $fed_name]} {
+if [setup_federation $fed_name] {
 	fail "Failed to setup federation"
 }
 
@@ -181,7 +180,7 @@ if {[test_fed_job_id $fedc1 [dict get $clusters($fedc1) id]] ||
 # Verify that after clusters are removed from federation that they give normal
 # job ids again.
 if {[delete_federations $fed_name]} {
-	fail "Failed delete federation $fed_name"
+	fail "Failed delete federation ($fed_name)"
 }
 
 sleep 2

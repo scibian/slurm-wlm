@@ -41,19 +41,19 @@ source ./globals
 source ./globals_accounting
 source ./globals_federation
 
-set fed_name    "feda"
-set user_name   ""
+set fed_name     "feda"
+set user_name    ""
 set srun_job_cnt 0
 set my_scontrol "${fed_slurm_base}/$fedc1/bin/scontrol"
-set my_sbatch "${fed_slurm_base}/$fedc1/bin/sbatch"
-set my_srun "${fed_slurm_base}/$fedc1/bin/srun"
-set my_sinfo "${fed_slurm_base}/$fedc1/bin/sinfo"
-set my_sprio "${fed_slurm_base}/$fedc1/bin/sprio"
-set my_squeue "${fed_slurm_base}/$fedc1/bin/squeue"
+set my_sbatch   "${fed_slurm_base}/$fedc1/bin/sbatch"
+set my_srun     "${fed_slurm_base}/$fedc1/bin/srun"
+set my_sinfo    "${fed_slurm_base}/$fedc1/bin/sinfo"
+set my_sprio    "${fed_slurm_base}/$fedc1/bin/sprio"
+set my_squeue   "${fed_slurm_base}/$fedc1/bin/squeue"
 set my_scontrol "${fed_slurm_base}/$fedc1/bin/scontrol"
 regexp "($number)" [get_config_param "MinJobAge"] {} min_job_age
 set min_job_age [expr {$min_job_age + 65}]
-set file_in          "test$test_id.in"
+set file_in     "$test_dir/input"
 
 #
 # Check accounting config and bail if not found.
@@ -62,7 +62,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -112,7 +112,7 @@ proc squeue { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue. expected $regex"
+		fail "Unexpected error in squeue (expected $regex)"
 	}
 }
 
@@ -150,7 +150,7 @@ proc sinfo { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in sinfo. expected $regex"
+		fail "Unexpected error in sinfo (expected $regex)"
 	}
 }
 
@@ -171,7 +171,7 @@ proc sprio { options regex {match_cnt 1} } {
 		}
 	}
 	if {$matches != $match_cnt} {
-		fail "Unexpected error in sprio. expected $regex ($matches != $match_cnt)"
+		fail "Unexpected error in sprio (expected $regex: $matches != $match_cnt)"
 	}
 }
 
@@ -194,10 +194,8 @@ proc scontrol_show { category tasks regex option } {
 		}
 	}
 	if {$matches != 1} {
-		fail Uunexpected error in scontrol_show. expected $regex \
-			$matches matches"
+		fail "Unexpected error in scontrol_show (expected $regex $matches matches)"
 	}
-
 }
 
 proc cancel_federation_jobs { } {
@@ -213,17 +211,14 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
-	global test_id bin_bash my_sacctmgr
+	global fed_name bin_bash bin_rm test_name
 
 	cancel_federation_jobs
-	exec $bin_rm -f $file_in
-	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
-
-	return [delete_federations $fed_name]
+	delete_federations $fed_name
+	exec $bin_bash -c "$bin_rm -f $test_name*.out"
 }
 
-#start test
+# Start test
 
 if {![check_federation_setup]} {
 	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
@@ -236,16 +231,14 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-if {[cleanup] != 0} {
-	fail "Failed to cleanup"
-}
+cleanup
 
-# add clusters to federation
-if {[setup_federation $fed_name]} {
+# Add clusters to federation
+if [setup_federation $fed_name] {
 	fail "Failed to setup federation"
 }
 
-# get number of nodes per cluster
+# Get number of nodes per cluster
 set node_count [llength [get_nodes_by_state idle,alloc,comp]]
 
 log_info "################################################################"
@@ -253,7 +246,7 @@ log_info "Setup cluster features"
 log_info "################################################################"
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
+spawn $sacctmgr -i modify cluster $fedc1 set features=fa
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -272,7 +265,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -280,11 +272,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
+spawn $sacctmgr -i modify cluster $fedc2 set features=fb
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -303,7 +295,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -311,11 +302,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
+spawn $sacctmgr -i modify cluster $fedc3 set features=fc
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -334,7 +325,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -342,7 +332,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 make_bash_script $file_in "env; $my_srun sleep 900 & $my_srun sleep 900"
@@ -408,10 +398,10 @@ squeue "-s -O jobid,stepid,cluster " "$x\\s+$y\\s+$z"
 squeue "-s -O jobid,stepid,cluster -Scluster " "$x1\\s+$y1\\s+$z1"
 squeue "-s -O jobid,stepid,cluster -S-cluster " "$z1\\s+$y1\\s+$x1"
 squeue "-O jobid,stepid,cluster -Scluster " "squeue: error: Invalid job format specification: stepid"
-#squeue "-O jobid,cluster -Scluster " "$a$b$c"
+# squeue "-O jobid,cluster -Scluster " "$a$b$c"
 squeue "-O jobid,cluster -S-cluster " "$c$b$a"
 
-#verify that -M<cluster> implies --local
+# Verify that -M<cluster> implies --local
 
 squeue "-O jobid,stepid,cluster -s " "$x\\s+$y\\s+$z"
 

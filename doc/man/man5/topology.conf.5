@@ -1,4 +1,4 @@
-.TH "topology.conf" "5" "Slurm Configuration File" "April 2015" "Slurm Configuration File"
+.TH "topology.conf" "5" "Slurm Configuration File" "January 2022" "Slurm Configuration File"
 
 .SH "NAME"
 topology.conf \- Slurm configuration file for defining the network topology
@@ -13,10 +13,7 @@ switch fabric, even if there are available idle nodes.
 .SH "DESCRIPTION"
 \fBtopology.conf\fP is an ASCII file which describes the
 cluster's network topology for optimized job resource allocation.
-The file location can be modified at system build time using the
-DEFAULT_SLURM_CONF parameter or at execution time by setting the SLURM_CONF
-environment variable. The file will always be located in the
-same directory as the \fBslurm.conf\fP file.
+The file will always be located in the same directory as the \fBslurm.conf\fR.
 .LP
 Parameter names are case insensitive.
 Any text following a "#" in the configuration file is treated
@@ -43,44 +40,44 @@ The overall configuration parameters available include:
 The name of a switch. This name is internal to Slurm and arbitrary.
 Each switch should have a unique name.
 This field must be specified.
+.IP
+
 .TP
 \fBSwitches\fR
 Child switches of the named switch.
 Either this option or the \fBNodes\fR option must be specified.
+.IP
+
 .TP
 \fBNodes\fR
 Child Nodes of the named leaf switch.
 Either this option or the \fBSwitches\fR option must be specified.
+.IP
+
 .TP
 \fBLinkSpeed\fR
 An optional value specifying the performance of this communication link.
 The units used are arbitrary and this information is currently not used.
 It may be used in the future to optimize resource allocations.
+.IP
 
 .SH "EXAMPLE"
-.LP
-.br
+.nf
 ##################################################################
-.br
 # Slurm's network topology configuration file for use with the
-.br
 # topology/tree plugin
-.br
 ##################################################################
-.br
 SwitchName=s0 Nodes=dev[0\-5]
-.br
 SwitchName=s1 Nodes=dev[6\-11]
-.br
 SwitchName=s2 Nodes=dev[12\-17]
-.br
 SwitchName=s3 Switches=s[0\-2]
+.fi
 
 .SH "COPYING"
 Copyright (C) 2009 Lawrence Livermore National Security.
 Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
-Copyright (C) 2010\-2021 SchedMD LLC.
+Copyright (C) 2010\-2022 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
 For details, see <https://slurm.schedmd.com/>.

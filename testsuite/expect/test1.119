@@ -126,9 +126,7 @@ proc test_sbatch {expected_tasks args {env ""}} {
 	set job_id [submit_job -fail -env $env "$args -t1 -o $file_out -J $test_name $file_in"]
 	lappend job_list $job_id
 
-	if {[wait_for_job $job_id "DONE"] != 0} {
-		fail "Job $job_id did not complete"
-	}
+	wait_for_job -fail $job_id "DONE"
 	wait_for_file -fail $file_out
 	set output [run_command_output -fail "$bin_cat $file_out"]
 	set match  [regexp -all {[0|1]} $output]
@@ -164,7 +162,7 @@ proc test_invalid {cmd args {env ""}} {
 		}
 		subtest {$rc == 1} "srun should have failed due to invalid argument combination: $args$env_str" "$job_id != 0"
 	} else {
-		fail "`$cmd` is invalid"
+		fail "Command '$cmd' is invalid"
 	}
 }
 
