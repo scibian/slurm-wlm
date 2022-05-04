@@ -30,7 +30,7 @@
 source ./globals
 
 set authorized    1
-set file_in       "test$test_id.input"
+set file_in       "$test_dir/input"
 set job_id        0
 set new_prio      1
 set read_priority -1
@@ -49,21 +49,19 @@ make_bash_script $file_in "$srun $bin_sleep 60"
 #
 # Submit a job so we have something to work with
 #
-set srun_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t1 --hold $file_in]
+spawn $sbatch --output=/dev/null --error=/dev/null -t1 --hold $file_in
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-exec $bin_rm -f $file_in
 if {$job_id == 0} {
 	fail "srun failed to initiate job"
 }
@@ -71,7 +69,7 @@ if {$job_id == 0} {
 #
 # Record that job's state
 #
-spawn  $scontrol show job $job_id
+spawn $scontrol show job $job_id
 expect {
 	-re "Priority=($number)" {
 		set read_priority $expect_out(1,string)
@@ -127,7 +125,7 @@ expect {
 #
 # Validate that job's new priority
 #
-spawn  $scontrol show job $job_id
+spawn $scontrol show job $job_id
 expect {
 	-re "Priority=($number)" {
 		set read_priority $expect_out(1,string)

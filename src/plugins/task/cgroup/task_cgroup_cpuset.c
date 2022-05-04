@@ -917,9 +917,10 @@ extern int task_cgroup_cpuset_fini(void)
 
 extern int task_cgroup_cpuset_create(stepd_step_rec_t *job)
 {
-	cgroup_limits_t limits, *root_limits = NULL;
+	cgroup_limits_t limits, *slurm_cg_limits = NULL;
 	char *job_alloc_cpus = NULL;
 	char *step_alloc_cpus = NULL;
+	pid_t pid;
 	int rc = SLURM_SUCCESS;
 
 	/* First create the cpuset hierarchy for this job */
@@ -948,17 +949,17 @@ extern int task_cgroup_cpuset_create(stepd_step_rec_t *job)
 	/*
 	 * check that user's cpuset cgroup is consistent and add the job's CPUs
 	 */
-	root_limits = cgroup_g_root_constrain_get(CG_CPUS);
+	slurm_cg_limits = cgroup_g_root_constrain_get(CG_CPUS);
 
-	if (!root_limits)
+	if (!slurm_cg_limits)
 		goto endit;
 
 	memset(&limits, 0, sizeof(limits));
-	limits.allow_mems = root_limits->allow_mems;
+	limits.allow_mems = slurm_cg_limits->allow_mems;
 
 	/* User constrain */
 	limits.allow_cores = xstrdup_printf(
-		"%s,%s", job_alloc_cpus, root_limits->allow_cores);
+		"%s,%s", job_alloc_cpus, slurm_cg_limits->allow_cores);
 	rc = cgroup_g_user_constrain_set(CG_CPUS, job, &limits);
 	xfree(limits.allow_cores);
 	if (rc != SLURM_SUCCESS)
@@ -976,13 +977,17 @@ extern int task_cgroup_cpuset_create(stepd_step_rec_t *job)
 	if (rc != SLURM_SUCCESS)
 		goto endit;
 
+	/* attach the slurmstepd to the step cpuset cgroup */
+	pid = getpid();
+	rc = cgroup_g_step_addto(CG_CPUS, &pid, 1);
+
 	/* validate the requested cpu frequency and set it */
 	cpu_freq_cgroup_validate(job, step_alloc_cpus);
 
 endit:
 	xfree(job_alloc_cpus);
 	xfree(step_alloc_cpus);
-	cgroup_free_limits(root_limits);
+	cgroup_free_limits(slurm_cg_limits);
 	return rc;
 }
 

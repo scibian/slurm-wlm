@@ -30,12 +30,8 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.input"
-
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
-} elseif {[get_config_param "MULTIPLE_SLURMD"] eq "Yes"} {
-	skip "This test is incompatible with multiple slurmd systems"
 }
 
 # find out if we have enough nodes to test functionality
@@ -43,14 +39,6 @@ set node_count [get_partition_param [default_partition] "TotalNodes"]
 if { $node_count < 2 } {
 	skip "Insufficient nodes in default partition ($node_count < 2)"
 }
-
-#
-# Build input script file
-#
-make_bash_script $file_in "
-  $reset_bash_prompt
-  $bin_bash --norc
-"
 
 #
 # Expect seems to have trouble parsing with this test due to a bug in Expect.
@@ -64,14 +52,14 @@ set env(PATH) "${slurm_dir}/bin:$env(PATH)"
 #
 set job_id 0
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -N2 -t1 ./$file_in]
+spawn $salloc -N2 -t1 $bin_bash
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
+		reset_bash_prompt
 		exp_continue
 	}
 	-re "salloc: error" {
-		exec $bin_rm -f $file_in
 		skip "Can't test srun task distribution"
 	}
 	-re "Unable to contact" {
@@ -81,7 +69,6 @@ expect {
 		log_debug "Job initiated"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "salloc not responding"
 	}
 	eof {
@@ -89,7 +76,6 @@ expect {
 		fail "salloc terminated"
 	}
 }
-exec $bin_rm -f $file_in
 
 #
 # Get node names
@@ -115,7 +101,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -126,8 +111,8 @@ expect {
 #
 # Verify node count
 #
-subtest {[string compare $host_0 ""] != 0} "Should get hostname of task 0"
-subtest {[string compare $host_1 ""] != 0} "Should get hostname of task 1"
+subtest {$host_0 ne ""} "Should get hostname of task 0"
+subtest {$host_1 ne ""} "Should get hostname of task 1"
 
 #
 # Exclude specific node
@@ -136,7 +121,7 @@ set matches 0
 send "$srun -l -N1 -n1 --exclude=$host_0 $bin_printenv SLURMD_NODENAME\r"
 expect {
 	-re "0: *($re_word_str)" {
-		if {[string compare $expect_out(1,string) $host_1] == 0} {
+		if {$expect_out(1,string) eq $host_1} {
 			incr matches
 		} else {
 			fail "Wrong node responded"
@@ -150,7 +135,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -167,7 +151,7 @@ set matches 0
 send "$srun -l -N1 -n1 --exclude=$host_1 $bin_printenv SLURMD_NODENAME\r"
 expect {
 	-re "0: *($re_word_str)" {
-		if {[string compare $expect_out(1,string) $host_0] == 0} {
+		if {$expect_out(1,string) eq $host_0} {
 			incr matches
 		} else {
 			fail "Wrong node responded"
@@ -181,7 +165,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -202,7 +185,7 @@ expect {
 		skip "Appears you are using multiple slurmd testing. This test won't work in that fashion"
 	}
 	-re "0: *($re_word_str)" {
-		if {[string compare $expect_out(1,string) $host_0] == 0} {
+		if {$expect_out(1,string) eq $host_0} {
 			incr matches
 		} else {
 			fail "Wrong node responded"
@@ -216,7 +199,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -233,7 +215,7 @@ set matches 0
 send "$srun -l -N1 -n1 --nodelist=$host_1 $bin_printenv SLURMD_NODENAME\r"
 expect {
 	-re "0: *($re_word_str)" {
-		if {[string compare $expect_out(1,string) $host_1] == 0} {
+		if {$expect_out(1,string) eq $host_1} {
 			incr matches
 		} else {
 			fail "Wrong node responded"
@@ -247,7 +229,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -278,7 +259,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -306,7 +286,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -345,7 +324,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -353,7 +331,7 @@ expect {
 	}
 }
 
-subtest {[string compare $test_0 $test_1] == 0} "Expecting only a single node to respond"
+subtest {$test_0 eq $test_1} "Expecting only a single node to respond"
 
 #
 # Error test: Exceed task count, first get the processor count then exceed it
@@ -376,7 +354,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -401,7 +378,6 @@ expect {
 		log_debug "srun completed"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -421,7 +397,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "srun not responding"
 	}
 	eof {

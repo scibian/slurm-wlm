@@ -475,10 +475,12 @@ static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
 		if (rc) {
 			error("%s: init script: %s failed",
 			      __func__, jc_conf->initscript);
+			xfree(result);
 			goto exit2;
 		} else {
 			debug3("initscript stdout: %s", result);
 		}
+		xfree(result);
 	}
 
 	rc = mkdir(src_bind, 0700);
@@ -777,7 +779,8 @@ static int _delete_ns(uint32_t job_id, bool is_slurmd)
 		xfree(job);
 		if (list_count(legacy_jobs) == 0)
 			FREE_NULL_LIST(legacy_jobs);
-	}
+	} else if (is_slurmd)
+		return SLURM_SUCCESS;
 
 	rc = umount2(ns_holder, MNT_DETACH);
 	if (rc) {

@@ -330,6 +330,9 @@ again:
 	return entries;
 
 fail:
+	for (entry = entries; entry <= entries + count; entry++)
+		xfree(entry->entry);
+
 	xfree(entries);
 	xfree(buffer);
 	return NULL;
@@ -962,6 +965,7 @@ extern void destroy_openapi(openapi_t *oas)
 		xfree(oas->plugin_types[i]);
 	}
 	xfree(oas->plugin_types);
+	xfree(oas->plugin_handles);
 	if ((rc = plugrack_destroy(oas->rack)))
 		fatal_abort("unable to clean up plugrack: %s",
 			    slurm_strerror(rc));

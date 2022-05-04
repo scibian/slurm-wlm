@@ -28,7 +28,6 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.in"
 set pnumsc      0
 set pnumsi      0
 set aprocsc     0
@@ -41,10 +40,9 @@ set select_type ""
 set job_id      0
 
 proc cleanup {} {
-	global job_id file_in
+	global job_id
 
 	cancel_job $job_id
-	file delete $file_in
 }
 
 proc scontrol_test { node proc_cnt } {
@@ -85,19 +83,19 @@ proc sinfo_test_1 { node proc_cnt total_procs idle_cpus } {
 		-re "($float)(K?)($slash)($float)(K?)($slash)($float)(K?)($slash)($float)(K?) ($number)($slash)($number) $node" {
 			set found 1
 			set num_alloc $expect_out(1,string)
-			if {[string compare $expect_out(2,string) ""]} {
+			if {$expect_out(2,string) ne ""} {
 				set num_alloc [expr $num_alloc * 1024]
 			}
 			set num_idle $expect_out(4,string)
-			if {[string compare $expect_out(5,string) ""]} {
+			if {$expect_out(5,string) ne ""} {
 				set num_idle [expr $num_idle * 1024]
 			}
 			set num_other $expect_out(7,string)
-			if {[string compare $expect_out(8,string) ""]} {
+			if {$expect_out(8,string) ne ""} {
 				set num_other [expr $num_other * 1024]
 			}
 			set num_total $expect_out(10,string)
-			if {[string compare $expect_out(11,string) ""]} {
+			if {$expect_out(11,string) ne ""} {
 				set num_total [expr $num_total * 1024]
 			}
 
@@ -135,21 +133,21 @@ proc sinfo_test_2 { node proc_cnt total_procs } {
 	expect {
 		-re "alloc ($number)(K?) $node" {
 			set num_alloc $expect_out(1,string)
-			if {[string compare $expect_out(2,string) ""]} {
+			if {$expect_out(2,string) ne ""} {
 				set num_alloc [expr $inode_procs * 1024]
 			}
 			exp_continue
 		}
 		-re "idle ($number)(K?) $node" {
 			set num_idle $expect_out(1,string)
-			if {[string compare $expect_out(2,string) ""]} {
+			if {$expect_out(2,string) ne ""} {
 				set num_idle [expr $num_idle * 1024]
 			}
 			exp_continue
 		}
 		-re "mix ($number)(K?) $node" {
 			set num_alloc $expect_out(1,string)
-			if {[string compare $expect_out(2,string) ""]} {
+			if {$expect_out(2,string) ne ""} {
 				set num_alloc [expr $inode_procs * 1024]
 			}
 			exp_continue
@@ -172,22 +170,18 @@ proc sinfo_test_2 { node proc_cnt total_procs } {
 proc allocate_and_quit { node proc_cnt total_procs } {
 	global bin_bash salloc scontrol sinfo number re_word_str
 	global test_prompt select_type procs_per_node
-	global reset_bash_prompt job_id file_in
+	global job_id
 
 	set num_alloc 0
 	set block ""
 	set timeout 60
 	set idle_cpus [expr $total_procs - $proc_cnt]
 
-	make_bash_script $file_in "
-	  $reset_bash_prompt
-	  $bin_bash --norc
-	"
-
-	spawn $salloc -w $node -N 1 -t 5 -n $proc_cnt ./$file_in
+	spawn $salloc -w $node -N 1 -t 5 -n $proc_cnt $bin_bash
 	expect {
 		-re "Granted job allocation ($number)" {
 			set job_id $expect_out(1,string)
+			reset_bash_prompt
 			exp_continue
 		}
 
@@ -241,7 +235,7 @@ expect {
 		wait
 	}
 }
-if {[string compare $def_node_name ""] == 0} {
+if {$def_node_name eq ""} {
 	skip "Node name format not supported for this test"
 }
 
@@ -309,7 +303,7 @@ while {[gets $fd line] != -1} {
 	}
 }
 exp_internal 0
-if {[string compare $units ""]} {
+if {$units ne ""} {
 	set inode_procs [expr $inode_procs * 1024]
 }
 catch {close $fd}

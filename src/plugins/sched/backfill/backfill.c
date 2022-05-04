@@ -1633,14 +1633,14 @@ static int _attempt_backfill(void)
 {
 	DEF_TIMERS;
 	List job_queue;
-	job_queue_rec_t *job_queue_rec;
+	job_queue_rec_t *job_queue_rec = NULL;
 	int bb, i, j, node_space_recs, mcs_select = 0;
 	slurmdb_qos_rec_t *qos_ptr = NULL;
 	job_record_t *job_ptr = NULL;
 	part_record_t *part_ptr;
 	uint32_t end_time, end_reserve, deadline_time_limit, boot_time;
 	uint32_t orig_end_time;
-	uint32_t time_limit, comp_time_limit, orig_time_limit, part_time_limit;
+	uint32_t time_limit, comp_time_limit, orig_time_limit = 0, part_time_limit;
 	uint32_t min_nodes, max_nodes, req_nodes;
 	bitstr_t *active_bitmap = NULL, *avail_bitmap = NULL;
 	bitstr_t *exc_core_bitmap = NULL, *resv_bitmap = NULL;
@@ -1653,6 +1653,7 @@ static int _attempt_backfill(void)
 	bool already_counted, many_rpcs = false;
 	job_record_t *reject_array_job = NULL;
 	part_record_t *reject_array_part = NULL;
+	slurmctld_resv_t *reject_array_resv = NULL;
 	uint32_t start_time;
 	time_t config_update = slurm_conf.last_update;
 	time_t part_update = last_part_update;
@@ -1770,7 +1771,18 @@ static int _attempt_backfill(void)
 			/* Restore preemption state if needed. */
 			_restore_preempt_state(job_ptr, &tmp_preempt_start_time,
 			                       &tmp_preempt_in_progress);
+
+			/*
+			 * Restore the original time limit in every corner case
+			 * we didn't have done yet, like when we are looping
+			 * through array tasks.
+			*/
+			if ((qos_flags & QOS_FLAG_NO_RESERVE) &&
+			    slurm_conf.preempt_mode && orig_time_limit &&
+			    (orig_time_limit != job_ptr->time_limit))
+				job_ptr->time_limit = orig_time_limit;
 		}
+		xfree(job_queue_rec);
 		job_queue_rec = (job_queue_rec_t *) list_pop(job_queue);
 		if (!job_queue_rec) {
 			log_flag(BACKFILL, "reached end of job queue");
@@ -1794,11 +1806,6 @@ static int _attempt_backfill(void)
 		else
 			is_job_array_head = false;
 
-		if (job_ptr->resv_list)
-			job_queue_rec_resv_list(job_queue_rec);
-		else
-			job_queue_rec_magnetic_resv(job_queue_rec);
-		xfree(job_queue_rec);
 		if (slurmctld_config.shutdown_time ||
 		    (difftime(time(NULL),orig_sched_start) >= bf_max_time)){
 			break;
@@ -1847,6 +1854,7 @@ static int _attempt_backfill(void)
 			job_ptr = find_job_record(job_ptr->array_job_id);
 			if (!job_ptr)	/* All task array elements started */
 				continue;
+			job_queue_rec->job_ptr = job_ptr;
 		}
 
 		/*
@@ -1865,6 +1873,12 @@ static int _attempt_backfill(void)
 			continue;
 		if (!part_ptr)
 			continue;
+
+		if (job_ptr->resv_list)
+			job_queue_rec_resv_list(job_queue_rec);
+		else
+			job_queue_rec_magnetic_resv(job_queue_rec);
+		xfree(job_queue_rec);
 
 		job_ptr->bit_flags |= BACKFILL_SCHED;
 		job_ptr->last_sched_eval = now;
@@ -2012,12 +2026,14 @@ next_task:
 			if (reject_array_job &&
 			    (reject_array_job->array_job_id ==
 				job_ptr->array_job_id) &&
-			    (reject_array_part == part_ptr))
+			    (reject_array_part == part_ptr) &&
+			    (reject_array_resv == job_ptr->resv_ptr))
 				continue;  /* already rejected array element */
 
 			/* assume reject whole array for now, clear if OK */
 			reject_array_job = job_ptr;
 			reject_array_part = part_ptr;
+			reject_array_resv = job_ptr->resv_ptr;
 
 			if (!job_array_start_test(job_ptr))
 				continue;
@@ -2140,6 +2156,7 @@ next_task:
 
 		if (many_rpcs || (slurm_delta_tv(&start_tv) >= yield_interval)) {
 			uint32_t save_time_limit = job_ptr->time_limit;
+			slurmctld_resv_t *save_resv_ptr = job_ptr->resv_ptr;
 			_set_job_time_limit(job_ptr, orig_time_limit);
 			if (slurm_conf.debug_flags & DEBUG_FLAG_BACKFILL) {
 				END_TIMER;
@@ -2193,6 +2210,7 @@ next_task:
 					 job_ptr);
 				continue;	/* No available frontend */
 			}
+			job_ptr->resv_ptr = save_resv_ptr;
 			if (!job_independent(job_ptr)) {
 				log_flag(BACKFILL, "%pJ no longer independent after bf yield",
 					 job_ptr);
@@ -2487,6 +2505,7 @@ next_task:
 					bb_g_job_get_est_start(job_ptr);
 				reject_array_job = NULL;
 				reject_array_part = NULL;
+				reject_array_resv = NULL;
 				continue;
 			}
 		} else if ((job_ptr->het_job_id == 0) &&
@@ -2621,6 +2640,7 @@ skip_start:
 				/* Clear assumed rejected array status */
 				reject_array_job = NULL;
 				reject_array_part = NULL;
+				reject_array_resv = NULL;
 
 				/* Update the database if job time limit
 				 * changed and move to next job */
@@ -2810,6 +2830,7 @@ skip_start:
 		/* Clear assumed rejected array status */
 		reject_array_job = NULL;
 		reject_array_part = NULL;
+		reject_array_resv = NULL;
 
 		if ((orig_start_time == 0) ||
 		    (job_ptr->start_time < orig_start_time)) {
@@ -2886,6 +2907,8 @@ skip_start:
 	}
 
 	_handle_planned(true);
+
+	xfree(job_queue_rec);
 
 	if (job_ptr) {
 		/* Restore preemption state if needed. */

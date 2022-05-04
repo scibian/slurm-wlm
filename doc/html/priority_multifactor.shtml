@@ -36,7 +36,7 @@ is enabled by setting <i>PriorityType=priority/multifactor</i>. This provides
 a very versatile method of ordering the queue of jobs waiting to be scheduled
 based on several <a href="#mfjppintro">factors</a>.</p>
 
-<p>There are several several considerations the scheduler makes when making
+<p>There are several considerations the scheduler makes when making
 scheduling decisions. Jobs are selected to be evaluated by the scheduler
 in the following order:</p>
 
@@ -383,7 +383,7 @@ PriorityType=priority/multifactor.
 	highest partition PriorityJobFactor.</li>
 <li>NO_NORMAL_QOS: If set, the QOS factor is not normalized against the
 	highest qos priority.</li>
-<li>NO_NORMAL_TRES: If set, the QOS factor is not normalized against the job's
+<li>NO_NORMAL_TRES: If set, the TRES factor is not normalized against the job's
 	partition TRES counts.</li>
 <li>SMALL_RELATIVE_TO_TIME: If set, the job's size component will be based
 	upon not the job size alone, but the job's size divided by its time

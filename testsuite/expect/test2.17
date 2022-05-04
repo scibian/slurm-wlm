@@ -26,8 +26,8 @@
 ############################################################################
 source ./globals
 
-set qos_name       "test$test_id\_qos"
-set part_name      "test$test_id\_part"
+set qos_name       "${test_name}_qos"
+set part_name      "${test_name}_part"
 
 #
 # Check accounting config and bail if not found.
@@ -35,7 +35,7 @@ set part_name      "test$test_id\_part"
 if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
 	skip "This test can't be run without a usable AccountStorageType"
 }
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin"
 }
 

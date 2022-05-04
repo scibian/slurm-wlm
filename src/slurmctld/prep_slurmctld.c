@@ -74,17 +74,42 @@ extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id)
 
 	/* all async prologs have completed, continue on now */
 	if (job_ptr->prep_prolog_failed) {
+		uint32_t jid = job_id;
+
 		job_ptr->prep_prolog_failed = false;
-		if ((rc = job_requeue(0, job_id, NULL, false, 0))) {
-			info("unable to requeue JobId=%u: %s", job_id,
+
+		/* requeue het leader if het job */
+		if (job_ptr->het_job_id)
+			jid = job_ptr->het_job_id;
+
+		if ((rc = job_requeue(0, jid, NULL, false, 0)) &&
+		    (rc != ESLURM_JOB_PENDING)) {
+			info("unable to requeue JobId=%u: %s", jid,
 			     slurm_strerror(rc));
 
 			srun_user_message(job_ptr,
 					  "PrologSlurmctld failed, job killed");
 
-			if (job_ptr->het_job_list) {
-				(void) het_job_signal(job_ptr, SIGKILL, 0, 0,
-						       false);
+			if (job_ptr->het_job_id) {
+				job_record_t *het_leader = job_ptr;
+
+				if (!het_leader->het_job_list) {
+					het_leader = find_job_record(
+						job_ptr->het_job_id);
+				}
+
+				/*
+				 * Don't do anything if there isn't a het_leader
+				 * (which there should be).
+				 */
+				if (het_leader) {
+					(void) het_job_signal(het_leader,
+							      SIGKILL,
+							      0, 0, false);
+				} else {
+					error("No het_leader found for %pJ",
+					      job_ptr);
+				}
 			} else {
 				job_signal(job_ptr, SIGKILL, 0, 0, false);
 			}
@@ -125,36 +150,14 @@ extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id)
 	/* all async prologs have completed, continue on now */
 	job_ptr->epilog_running = false;
 
-	if (job_ptr->bit_flags & NOT_LAUNCHED) {
-		/*
-		 * Job was configuring when it was cancelled and epilog wasn't
-		 * run on the nodes, so cleanup the nodes after EpilogSlurmctld
-		 * is done.
-		 */
-		job_ptr->bit_flags &= ~NOT_LAUNCHED;
-		if (job_ptr->node_bitmap_cg) {
-			int i_first, i_last;
-			i_first = bit_ffs(job_ptr->node_bitmap_cg);
-			if (i_first >= 0)
-				i_last = bit_fls(job_ptr->node_bitmap_cg);
-			else
-				i_last = i_first - 1;
-			for (int i = i_first; i <= i_last; i++) {
-				if (!bit_test(job_ptr->node_bitmap_cg, i))
-					continue;
-				job_epilog_complete(
-					job_ptr->job_id,
-					node_record_table_ptr[i].name, 0);
-			}
-		}
-	}
-
 	/*
 	 * Clear the JOB_COMPLETING flag only if the node count is 0
 	 * meaning the slurmd epilogs have already completed.
 	 */
-	if ((job_ptr->node_cnt == 0) && IS_JOB_COMPLETING(job_ptr))
+	if ((job_ptr->node_cnt == 0) && IS_JOB_COMPLETING(job_ptr)) {
 		cleanup_completing(job_ptr);
+		batch_requeue_fini(job_ptr);
+	}
 
 	unlock_slurmctld(job_write_lock);
 }

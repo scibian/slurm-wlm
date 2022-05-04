@@ -61,11 +61,8 @@ extern int parse_rlimits( char *rlimits_str, int propagate_flag );
 extern void print_rlimits( void );
 
 /*
- * Adjust the RLIMIT_NOFILE setting.
- *
- * But still cap at 4096 to avoid performance issues with massive values.
- * Handled through this so cross-platform issues can be isolated.
+ * Adjust the RLIMIT_NOFILE setting to max possible.
  */
-extern void rlimits_adjust_nofile(void);
+extern void rlimits_use_max_nofile(void);
 
 #endif /*__SLURM_RLIMITS_INFO_H__*/

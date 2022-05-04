@@ -75,7 +75,7 @@ if {$store_gpu == -1} {
 	skip "This test can't be run without AccountingStorageEnforce=limits"
 } elseif {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
-} elseif {[string compare [get_admin_level] "Administrator"]} {
+} elseif {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator"
 }
 
@@ -169,7 +169,7 @@ expect {
 	}
 }
 if {$match != 2} {
-	fail "Job $job_id1 state is bad"
+	fail "Job ($job_id1) state is bad"
 }
 cancel_job $job_id1
 
@@ -210,7 +210,7 @@ expect {
 	}
 }
 if {$match != 2} {
-	fail "Job $job_id1 state is bad"
+	fail "Job ($job_id1) state is bad"
 }
 cancel_job $job_id1
 
@@ -255,5 +255,5 @@ expect {
 	}
 }
 if {$match != 2} {
-	fail "Job $job_id1 state is bad"
+	fail "Job ($job_id1) state is bad"
 }
