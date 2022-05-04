@@ -1,3 +1,10 @@
+slurm-wlm (21.08.7-1sci10u1) scibian10; urgency=medium
+
+  * Backport to scibian10
+  * Update wait health check patch for slurm 21.08.7
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:14:50 +0200
+
 slurm-wlm (21.08.7-1) unstable; urgency=medium
 
   * New upstream release
