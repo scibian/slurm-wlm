@@ -65,39 +65,9 @@ typedef enum {
 typedef struct het_job_limits {
 	slurmdb_assoc_rec_t *assoc_ptr;
 	job_record_t *job_ptr;
+	slurmdb_qos_rec_t *qos_ptr_1;
+	slurmdb_qos_rec_t *qos_ptr_2;
 } het_job_limits_t;
-
-typedef struct acct_policy_validate_args {
-	acct_policy_limit_set_t *acct_policy_limit_set;
-	slurmdb_assoc_rec_t *assoc_in;
-	job_desc_msg_t *job_desc;
-	slurmdb_qos_rec_t *job_qos_ptr;
-	uint32_t *reason;
-	bool update_call;
-} acct_policy_validate_args_t;
-
-static void _apply_limit_factor(uint64_t *limit, double limit_factor)
-{
-	int64_t new_val;
-
-	xassert(limit);
-
-	if ((limit_factor <= 0.0) ||
-	    (*limit == NO_VAL64) ||
-	    (*limit == INFINITE64))
-		return;
-
-	new_val = (int64_t)(*limit) * limit_factor;
-        if (new_val < 0) {
-		/* We overflowed, setting to INFINITE */
-		debug2("Factored limit overflowed setting to INFINITE");
-		*limit = INFINITE64;
-	} else {
-		debug2("Limit adjusted from %"PRIu64" to %"PRIu64,
-		       *limit, new_val);
-		*limit = new_val;
-	}
-}
 
 /*
  * Update a job's allocated node count to reflect only nodes that are not
@@ -137,8 +107,8 @@ static void _get_unique_job_node_cnt(job_record_t *job_ptr,
 			uint64_t init_cnt = bit_set_count(
 				job_ptr->job_resrcs->node_bitmap);
 			*node_cnt = init_cnt - overlap_cnt;
-			debug2("%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
-			       __func__, job_ptr, init_cnt, *node_cnt);
+			log_flag(TRES_NODE, "%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
+				 __func__, job_ptr, init_cnt, *node_cnt);
 		}
 	} else if (job_ptr->details && job_ptr->details->req_node_bitmap &&
 		   grp_node_bitmap) {
@@ -146,7 +116,7 @@ static void _get_unique_job_node_cnt(job_record_t *job_ptr,
 			job_ptr->details->req_node_bitmap, grp_node_bitmap);
 		if (overlap_cnt <= *node_cnt) {
 			*node_cnt -=  overlap_cnt;
-			debug2("%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
+			log_flag(TRES_NODE, "%s: %pJ unique allocated node count changed from %"PRIu64" to %"PRIu64,
 				 __func__, job_ptr, *node_cnt + overlap_cnt, *node_cnt);
 		}
 	}
@@ -1383,27 +1353,29 @@ static bool _validate_tres_time_limits(
  *                                 has been changed since initially being set
  *                                 to INFINITE64
  *                              3) tres_limit_array is INFINITE64
- * IN - tres_req_cnt - must be set; the following is checked with tres_req_cnt:
- *                     1) safe_limits && tres_req_cnt > tres_limit_array,
+ * IN - tres_req_cnt - must be set when safe_limits is true; the following
+ *                     is checked with tres_req_cnt:
+ *                     1) tres_req_cnt > tres_limit_array,
  *                        return TRES_USAGE_REQ_EXCEEDS_LIMIT
- *                     2) when safe_limits and tres_usage are set:
+ *                     2) when tres_usage is set:
  *                        (tres_req_cnt + tres_usage) >
  *                        (tres_limit_array - curr_usage),
  *                        return TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE
  *                        curr_usage will be 0 when not passed
  * IN - tres_usage - TRES (currently running if curr_usage is set, already used
- *                   otherwise) optional; This value is used only if
+ *                   otherwise) optional; This value is used primarily only if
  *                   safe_limits is true.  It will be added to tres_req_cnt to
  *                   count as extra time to observe, see tres_req_cnt section
  *                   above for tres_usage interaction
  * IN - curr_usage - TRES (already used) optional; when set, check if:
- *                   1) curr_usage > tres_limit_array && tres_req_cnt
+ *                   1) curr_usage > tres_limit_array
  *                      return TRES_USAGE_CUR_EXCEEDS_LIMIT
  *                   2) when safe_limits is true, see tres_req_cnt section
  *                      above for curr_usage interaction
  * IN - admin_limit_set - limits that have been overridden by an admin, see
  *                        out_tres_limit_array section above for interaction
- * IN - safe_limits - see tres_req_cnt section above for interaction
+ * IN - safe_limits - requires tres_req_cnt when true; see tres_req_cnt
+ *                    section above for interaction
  * IN - out_tres_limit_set - out_tres_limit_array is set as described above
  *      when true; out_tres_limit_array is not modified when false
  * RET - TRES_USAGE_OKAY if no limit is violated, otherwise one of the other
@@ -1425,7 +1397,6 @@ static acct_policy_tres_usage_t _validate_tres_usage_limits(
 	uint64_t usage = 0;
 
 	xassert(tres_limit_array);
-	xassert(tres_req_cnt);
 
 	for (i = 0; i < g_tres_count; i++) {
 		(*tres_pos) = i;
@@ -1440,11 +1411,11 @@ static acct_policy_tres_usage_t _validate_tres_usage_limits(
 		if (out_tres_limit_set && out_tres_limit_array)
 			out_tres_limit_array[i] = tres_limit_array[i];
 
-		if (curr_usage && tres_req_cnt[i] &&
-		    (curr_usage[i] >= tres_limit_array[i]))
+		if (curr_usage && (curr_usage[i] >= tres_limit_array[i]))
 			return TRES_USAGE_CUR_EXCEEDS_LIMIT;
 
 		if (safe_limits) {
+			xassert(tres_req_cnt);
 			if (tres_req_cnt[i] > tres_limit_array[i])
 				return TRES_USAGE_REQ_EXCEEDS_LIMIT;
 
@@ -2560,7 +2531,7 @@ static int _qos_job_time_out(job_record_t *job_ptr,
 
 	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos, qos_ptr->grp_tres_mins_ctld,
-		qos_out_ptr->grp_tres_mins_ctld, job_tres_usage_mins,
+		qos_out_ptr->grp_tres_mins_ctld, NULL,
 		NULL, tres_usage_mins, NULL, false);
 	switch (tres_usage) {
 	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
@@ -2782,21 +2753,31 @@ static void _get_accrue_create_cnt(uint32_t *max_jobs_accrue, int *create_cnt,
 }
 
 static void _add_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
-				      slurmdb_qos_rec_t *qos_ptr,
-				      slurmdb_used_limits_t *used_limits_acct,
-				      slurmdb_used_limits_t *used_limits_user,
+				      slurmdb_qos_rec_t *qos_ptr_1,
+				      slurmdb_used_limits_t *used_limits_a1,
+				      slurmdb_used_limits_t *used_limits_u1,
+				      slurmdb_qos_rec_t *qos_ptr_2,
+				      slurmdb_used_limits_t *used_limits_a2,
+				      slurmdb_used_limits_t *used_limits_u2,
 				      int cnt)
 {
-	log_flag(ACCRUE, "%s: Adding %d to assoc_ptr %p (%p %p %p)",
-		 __func__, cnt, assoc_ptr, qos_ptr, used_limits_acct,
-		 used_limits_user);
+	log_flag(ACCRUE, "%s: Adding %d to assoc_ptr %p (%p %p %p %p %p %p)",
+		 __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
+		 used_limits_u1, qos_ptr_2, used_limits_a2, used_limits_u2);
 
-	if (qos_ptr)
-		qos_ptr->usage->accrue_cnt += cnt;
-	if (used_limits_acct)
-		used_limits_acct->accrue_cnt += cnt;
-	if (used_limits_user)
-		used_limits_user->accrue_cnt += cnt;
+	if (qos_ptr_1)
+		qos_ptr_1->usage->accrue_cnt += cnt;
+	if (used_limits_a1)
+		used_limits_a1->accrue_cnt += cnt;
+	if (used_limits_u1)
+		used_limits_u1->accrue_cnt += cnt;
+
+	if (qos_ptr_2)
+		qos_ptr_2->usage->accrue_cnt += cnt;
+	if (used_limits_a2)
+		used_limits_a2->accrue_cnt += cnt;
+	if (used_limits_u2)
+		used_limits_u2->accrue_cnt += cnt;
 
 	while (assoc_ptr) {
 		log_flag(ACCRUE, "assoc_id %u(%s/%s/%s/%p) added %d count %d",
@@ -2810,50 +2791,88 @@ static void _add_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
 	}
 }
 
-static void _remove_accrue_time_internal(
-				 slurmdb_assoc_rec_t *assoc_ptr,
-				 slurmdb_qos_rec_t *qos_ptr,
-				 slurmdb_used_limits_t *used_limits_acct,
-				 slurmdb_used_limits_t *used_limits_user,
-				 int cnt)
+static void _remove_accrue_time_internal(slurmdb_assoc_rec_t *assoc_ptr,
+					 slurmdb_qos_rec_t *qos_ptr_1,
+					 slurmdb_used_limits_t *used_limits_a1,
+					 slurmdb_used_limits_t *used_limits_u1,
+					 slurmdb_qos_rec_t *qos_ptr_2,
+					 slurmdb_used_limits_t *used_limits_a2,
+					 slurmdb_used_limits_t *used_limits_u2,
+					 int cnt)
 {
-	log_flag(ACCRUE, "%s: Removing %d from assoc_ptr %p (%p %p %p)",
-		 __func__, cnt, assoc_ptr, qos_ptr, used_limits_acct,
-		 used_limits_user);
+	log_flag(ACCRUE, "%s: Removing %d from assoc_ptr %p (%p %p %p %p %p %p)",
+		 __func__, cnt, assoc_ptr, qos_ptr_1, used_limits_a1,
+		 used_limits_u1, qos_ptr_2, used_limits_a2, used_limits_u2);
 
-	if (qos_ptr) {
-		if (qos_ptr->usage->accrue_cnt >= cnt)
-			qos_ptr->usage->accrue_cnt -= cnt;
+	if (qos_ptr_1) {
+		if (qos_ptr_1->usage->accrue_cnt >= cnt)
+			qos_ptr_1->usage->accrue_cnt -= cnt;
 		else {
 			error("%s: QOS %s accrue_cnt underflow",
-			      __func__, qos_ptr->name);
-			qos_ptr->usage->accrue_cnt = 0;
+			      __func__, qos_ptr_1->name);
+			qos_ptr_1->usage->accrue_cnt = 0;
 		}
 	}
 
-	if (used_limits_acct) {
-		if (used_limits_acct->accrue_cnt >= cnt)
-			used_limits_acct->accrue_cnt -= cnt;
+	if (used_limits_a1) {
+		if (used_limits_a1->accrue_cnt >= cnt)
+			used_limits_a1->accrue_cnt -= cnt;
 		else {
-			if (qos_ptr) {
+			if (qos_ptr_1) {
 				error("%s: QOS %s acct %s accrue_cnt underflow",
-				      __func__, qos_ptr->name,
-				      used_limits_acct->acct);
+				      __func__, qos_ptr_1->name,
+				      used_limits_a1->acct);
 			}
-			used_limits_acct->accrue_cnt = 0;
+			used_limits_a1->accrue_cnt = 0;
 		}
 	}
 
-	if (used_limits_user) {
-		if (used_limits_user->accrue_cnt >= cnt)
-			used_limits_user->accrue_cnt -= cnt;
+	if (used_limits_u1) {
+		if (used_limits_u1->accrue_cnt >= cnt)
+			used_limits_u1->accrue_cnt -= cnt;
 		else {
-			if (qos_ptr) {
+			if (qos_ptr_1) {
 				error("%s: QOS %s user %u accrue_cnt underflow",
-				      __func__, qos_ptr->name,
-				      used_limits_user->uid);
+				      __func__, qos_ptr_1->name,
+				      used_limits_u1->uid);
 			}
-			used_limits_user->accrue_cnt = 0;
+			used_limits_u1->accrue_cnt = 0;
+		}
+	}
+
+	if (qos_ptr_2) {
+		if (qos_ptr_2->usage->accrue_cnt)
+			qos_ptr_2->usage->accrue_cnt -= cnt;
+		else {
+			error("%s: QOS %s accrue_cnt underflow",
+			      __func__, qos_ptr_2->name);
+			qos_ptr_2->usage->accrue_cnt = 0;
+		}
+	}
+
+	if (used_limits_a2) {
+		if (used_limits_a2->accrue_cnt >= cnt)
+			used_limits_a2->accrue_cnt -= cnt;
+		else {
+			if (qos_ptr_2) {
+				error("%s: QOS %s acct %s accrue_cnt underflow",
+				      __func__, qos_ptr_2->name,
+				      used_limits_a2->acct);
+			}
+			used_limits_a2->accrue_cnt = 0;
+		}
+	}
+
+	if (used_limits_u2) {
+		if (used_limits_u2->accrue_cnt >= cnt)
+			used_limits_u2->accrue_cnt -= cnt;
+		else {
+			if (qos_ptr_2 && used_limits_a2) {
+				error("%s: QOS %s user %u accrue_cnt underflow",
+				      __func__, qos_ptr_2->name,
+				      used_limits_a2->uid);
+			}
+			used_limits_u2->accrue_cnt = 0;
 		}
 	}
 
@@ -2886,7 +2905,7 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 				  uint32_t *reason,
 				  acct_policy_limit_set_t *
 					acct_policy_limit_set,
-				  bool update_call, bool locked)
+				  bool update_call)
 {
 	slurmdb_qos_rec_t qos_rec;
 	slurmdb_assoc_rec_t *assoc_ptr = assoc_in;
@@ -2896,9 +2915,6 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 	assoc_mgr_lock_t locks =
 		{ .assoc = READ_LOCK, .qos = READ_LOCK, .tres = READ_LOCK };
 	bool strict_checking;
-	double limit_factor = -1.0;
-	uint64_t grp_tres_ctld[slurmctld_tres_cnt];
-	uint64_t max_tres_ctld[slurmctld_tres_cnt];
 
 	xassert(acct_policy_limit_set);
 
@@ -2913,12 +2929,7 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 
 	slurmdb_init_qos_rec(&qos_rec, 0, INFINITE);
 
-	if (!locked)
-		assoc_mgr_lock(&locks);
-
-	xassert(verify_assoc_lock(ASSOC_LOCK, READ_LOCK));
-	xassert(verify_assoc_lock(QOS_LOCK, READ_LOCK));
-	xassert(verify_assoc_lock(TRES_LOCK, READ_LOCK));
+	assoc_mgr_lock(&locks);
 
 	assoc_mgr_set_qos_tres_cnt(&qos_rec);
 
@@ -2947,23 +2958,12 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 		*/
 		strict_checking = true;
 
-	if (qos_ptr_1 && !fuzzy_equal(qos_ptr_1->limit_factor, INFINITE))
-		limit_factor = qos_ptr_1->limit_factor;
-	else if (qos_ptr_2 && !fuzzy_equal(qos_ptr_2->limit_factor, INFINITE))
-                limit_factor = qos_ptr_2->limit_factor;
-
 	while (assoc_ptr) {
 		int tres_pos = 0;
-		for (int i = 0; i < slurmctld_tres_cnt; i++) {
-			grp_tres_ctld[i] = assoc_ptr->grp_tres_ctld[i];
-			max_tres_ctld[i] = assoc_ptr->max_tres_ctld[i];
-			_apply_limit_factor(&grp_tres_ctld[i], limit_factor);
-			_apply_limit_factor(&max_tres_ctld[i], limit_factor);
-		}
 
 		if (!_validate_tres_limits_for_assoc(
 			    &tres_pos, job_desc->tres_req_cnt, 0,
-			    grp_tres_ctld,
+			    assoc_ptr->grp_tres_ctld,
 			    qos_rec.grp_tres_ctld,
 			    acct_policy_limit_set->tres,
 			    strict_checking, update_call, 1)) {
@@ -2978,7 +2978,7 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 			       job_desc->user_id,
 			       assoc_mgr_tres_name_array[tres_pos],
 			       job_desc->tres_req_cnt[tres_pos],
-			       grp_tres_ctld[tres_pos],
+			       assoc_ptr->grp_tres_ctld[tres_pos],
 			       assoc_ptr->acct);
 			rc = false;
 			break;
@@ -3102,7 +3102,7 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 		tres_pos = 0;
 		if (!_validate_tres_limits_for_assoc(
 			    &tres_pos, job_desc->tres_req_cnt, 0,
-			    max_tres_ctld,
+			    assoc_ptr->max_tres_ctld,
 			    qos_rec.max_tres_pj_ctld,
 			    acct_policy_limit_set->tres,
 			    strict_checking, update_call, 1)) {
@@ -3117,7 +3117,7 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 			       job_desc->user_id,
 			       assoc_mgr_tres_name_array[tres_pos],
 			       job_desc->tres_req_cnt[tres_pos],
-			       max_tres_ctld[tres_pos],
+			       assoc_ptr->max_tres_ctld[tres_pos],
 			       assoc_ptr->acct);
 			rc = false;
 			break;
@@ -3226,30 +3226,9 @@ static bool _acct_policy_validate(job_desc_msg_t *job_desc,
 		parent = 1;
 	}
 end_it:
-	if (!locked)
-		assoc_mgr_unlock(&locks);
+	assoc_mgr_unlock(&locks);
 	slurmdb_free_qos_rec_members(&qos_rec);
 
-	return rc;
-}
-
-static int _list_acct_policy_validate(void *x, void *arg)
-{
-	part_record_t *part_ptr = (part_record_t *) x;
-	acct_policy_validate_args_t *args = (acct_policy_validate_args_t *) arg;
-	slurmdb_qos_rec_t *qos_ptr_1 = NULL, *qos_ptr_2 = NULL;
-	job_record_t job_rec;
-	bool rc;
-
-	job_rec.qos_ptr = args->job_qos_ptr;
-	job_rec.part_ptr = part_ptr;
-	acct_policy_set_qos_order(&job_rec, &qos_ptr_1, &qos_ptr_2);
-	rc = _acct_policy_validate(args->job_desc, part_ptr, args->assoc_in,
-				   qos_ptr_1, qos_ptr_2, args->reason,
-				   args->acct_policy_limit_set,
-				   args->update_call, true);
-	if (!rc)
-		return SLURM_ERROR; /* Break out of list_for_each. */
 	return rc;
 }
 
@@ -3257,9 +3236,7 @@ static int _list_acct_policy_validate(void *x, void *arg)
  * acct_policy_validate - validate that a job request can be satisfied without
  * exceeding any association or QOS limit.
  * job_desc IN - job descriptor being submitted
- * part_ptr IN - first partition to which the job is being submitted
- * part_ptr_list IN - list of partitions to which the job is being submitted
- *                    (can be NULL)
+ * part_ptr IN - pointer to (one) partition to which the job is being submitted
  * assoc_in IN - pointer to association to which the job is being submitted
  * qos_ptr IN - pointer to QOS to which the job is being submitted
  * state_reason OUT - if non-NULL, set to reason for rejecting the job
@@ -3270,34 +3247,26 @@ static int _list_acct_policy_validate(void *x, void *arg)
  */
 extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 				 part_record_t *part_ptr,
-				 List part_ptr_list,
 				 slurmdb_assoc_rec_t *assoc_in,
 				 slurmdb_qos_rec_t *qos_ptr,
 				 uint32_t *reason,
 				 acct_policy_limit_set_t *acct_policy_limit_set,
 				 bool update_call)
 {
-	int rc = true;
+	slurmdb_qos_rec_t *qos_ptr_1 = NULL, *qos_ptr_2 = NULL;
+	job_record_t job_rec;
+	bool rc;
 	assoc_mgr_lock_t locks =
 		{ .assoc = READ_LOCK, .qos = READ_LOCK, .tres = READ_LOCK };
-	acct_policy_validate_args_t args = {
-		.acct_policy_limit_set = acct_policy_limit_set,
-		.assoc_in = assoc_in, .job_desc = job_desc,
-		.job_qos_ptr = qos_ptr, .reason = reason,
-		.update_call = update_call };
 
 	assoc_mgr_lock(&locks);
-	if (!part_ptr_list) {
-		if (_list_acct_policy_validate(part_ptr, &args) == SLURM_ERROR)
-			rc = false;
-		assoc_mgr_unlock(&locks);
-		return rc;
-	}
-
-	if (list_for_each(part_ptr_list, _list_acct_policy_validate, &args) < 0)
-		rc = false;
+	job_rec.qos_ptr = qos_ptr;
+	job_rec.part_ptr = part_ptr;
+	acct_policy_set_qos_order(&job_rec, &qos_ptr_1, &qos_ptr_2);
 	assoc_mgr_unlock(&locks);
-
+	rc = _acct_policy_validate(job_desc, part_ptr, assoc_in,
+				   qos_ptr_1, qos_ptr_2, reason,
+				   acct_policy_limit_set, update_call);
 	return rc;
 }
 
@@ -3329,6 +3298,7 @@ extern bool acct_policy_validate_het_job(List submit_job_list)
 		{ .assoc = READ_LOCK, .qos = READ_LOCK, .tres = READ_LOCK };
 	List het_job_limit_list;
 	ListIterator iter1, iter2;
+	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	job_record_t *job_ptr1, *job_ptr2;
 	het_job_limits_t *job_limit1, *job_limit2;
 	bool rc = true;
@@ -3348,9 +3318,14 @@ extern bool acct_policy_validate_het_job(List submit_job_list)
 	iter1 = list_iterator_create(submit_job_list);
 	assoc_mgr_lock(&locks);
 	while ((job_ptr1 = list_next(iter1))) {
+		qos_ptr_1 = NULL;
+		qos_ptr_2 = NULL;
+		acct_policy_set_qos_order(job_ptr1, &qos_ptr_1, &qos_ptr_2);
 		job_limit1 = xmalloc(sizeof(het_job_limits_t));
 		job_limit1->assoc_ptr = job_ptr1->assoc_ptr;
 		job_limit1->job_ptr   = job_ptr1;
+		job_limit1->qos_ptr_1 = qos_ptr_1;
+		job_limit1->qos_ptr_2 = qos_ptr_2;
 		list_append(het_job_limit_list, job_limit1);
 	}
 	assoc_mgr_unlock(&locks);
@@ -3391,11 +3366,11 @@ extern bool acct_policy_validate_het_job(List submit_job_list)
 				 * validated when each individual component of
 				 * the heterogeneous job was created.
 				*/
-				rc = acct_policy_validate(&job_desc,
+				rc = _acct_policy_validate(&job_desc,
 						job_ptr1->part_ptr,
-						job_ptr1->part_ptr_list,
 						job_limit1->assoc_ptr,
-						job_ptr1->qos_ptr,
+						job_limit1->qos_ptr_1,
+						job_limit1->qos_ptr_2,
 						&reason,
 						&acct_policy_limit_set,
 						false);
@@ -3678,8 +3653,6 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_qos_rec_t qos_rec;
 	slurmdb_assoc_rec_t *assoc_ptr;
-	uint64_t grp_tres_ctld[slurmctld_tres_cnt];
-	uint64_t max_tres_ctld[slurmctld_tres_cnt];
 	uint64_t tres_usage_mins[slurmctld_tres_cnt];
 	uint64_t tres_run_mins[slurmctld_tres_cnt];
 	uint64_t job_tres_time_limit[slurmctld_tres_cnt];
@@ -3690,7 +3663,6 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 	int i, tres_pos = 0;
 	acct_policy_tres_usage_t tres_usage;
 	double usage_factor = 1.0;
-	double limit_factor = -1.0;
 	int parent = 0; /* flag to tell us if we are looking at the
 			 * parent or not
 			 */
@@ -3774,11 +3746,6 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 						 job_tres_time_limit)))
 		goto end_it;
 
-	if (qos_ptr_1 && !fuzzy_equal(qos_ptr_1->limit_factor, INFINITE))
-		limit_factor = qos_ptr_1->limit_factor;
-	else if (qos_ptr_2 && !fuzzy_equal(qos_ptr_2->limit_factor, INFINITE))
-                limit_factor = qos_ptr_2->limit_factor;
-
 	assoc_ptr = job_ptr->assoc_ptr;
 	while (assoc_ptr) {
 		for (i = 0; i < slurmctld_tres_cnt; i++) {
@@ -3798,12 +3765,6 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 				tres_usage_mins[i] *= usage_factor;
 				tres_run_mins[i] *= usage_factor;
 			}
-
-			grp_tres_ctld[i] = assoc_ptr->grp_tres_ctld[i];
-			max_tres_ctld[i] = assoc_ptr->max_tres_ctld[i];
-
-			_apply_limit_factor(&grp_tres_ctld[i], limit_factor);
-			_apply_limit_factor(&max_tres_ctld[i], limit_factor);
 		}
 
 #if _DEBUG
@@ -3882,7 +3843,7 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 					 &tres_req_cnt[TRES_ARRAY_NODE]);
 		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos,
-			grp_tres_ctld, qos_rec.grp_tres_ctld,
+			assoc_ptr->grp_tres_ctld, qos_rec.grp_tres_ctld,
 			tres_req_cnt, assoc_ptr->usage->grp_used_tres,
 			NULL, job_ptr->limit_set.tres, true);
 		tres_req_cnt[TRES_ARRAY_NODE] = orig_node_cnt;
@@ -3899,7 +3860,7 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 			       assoc_ptr->user, assoc_ptr->partition,
 			       assoc_mgr_tres_name_array[tres_pos],
 			       tres_req_cnt[tres_pos],
-			       grp_tres_ctld[tres_pos]);
+			       assoc_ptr->grp_tres_ctld[tres_pos]);
 			rc = false;
 			goto end_it;
 			break;
@@ -3911,7 +3872,7 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 			       job_ptr, assoc_ptr->id, assoc_ptr->acct,
 			       assoc_ptr->user, assoc_ptr->partition,
 			       assoc_mgr_tres_name_array[tres_pos],
-			       grp_tres_ctld[tres_pos],
+			       assoc_ptr->grp_tres_ctld[tres_pos],
 			       assoc_ptr->usage->grp_used_tres[tres_pos],
 			       tres_req_cnt[tres_pos]);
 			rc = false;
@@ -3999,7 +3960,7 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 
 		if (!_validate_tres_limits_for_assoc(
 			    &tres_pos, tres_req_cnt, 0,
-			    max_tres_ctld,
+			    assoc_ptr->max_tres_ctld,
 			    qos_rec.max_tres_pj_ctld,
 			    job_ptr->limit_set.tres,
 			    1, 0, 1)) {
@@ -4010,7 +3971,7 @@ extern bool acct_policy_job_runnable_post_select(job_record_t *job_ptr,
 			       job_ptr, assoc_ptr->id, assoc_ptr->acct,
 			       assoc_ptr->user, assoc_ptr->partition,
 			       assoc_mgr_tres_name_array[tres_pos],
-			       max_tres_ctld[tres_pos],
+			       assoc_ptr->max_tres_ctld[tres_pos],
 			       tres_req_cnt[tres_pos]);
 			rc = false;
 			break;
@@ -4065,7 +4026,6 @@ extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
 			  * parent or not
 			  */
 	bool grp_set = 0;
-	double limit_factor = -1.0;
 
 	/* check to see if we are enforcing associations */
 	if (!(accounting_enforce & ACCOUNTING_ENFORCE_LIMITS))
@@ -4087,9 +4047,6 @@ extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
 
 		grp_nodes = qos_ptr_1->grp_tres_ctld[TRES_ARRAY_NODE];
 
-		if (!fuzzy_equal(qos_ptr_1->limit_factor, INFINITE))
-			limit_factor = qos_ptr_1->limit_factor;
-
 		if (qos_ptr_2) {
 			if (max_nodes_pa == INFINITE64)
 				max_nodes_pa = qos_ptr_2->max_tres_pa_ctld[
@@ -4103,9 +4060,6 @@ extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
 			if (grp_nodes == INFINITE64)
 				grp_nodes = qos_ptr_2->grp_tres_ctld[
 					TRES_ARRAY_NODE];
-			if ((limit_factor == -1.0) &&
-			    !fuzzy_equal(qos_ptr_1->limit_factor, INFINITE))
-				limit_factor = qos_ptr_2->limit_factor;
 		}
 
 		if (max_nodes_pa < max_nodes_limit) {
@@ -4135,26 +4089,23 @@ extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
 	   not override a particular limit.
 	*/
 	while (assoc_ptr) {
-		uint64_t node_limit = assoc_ptr->grp_tres_ctld[TRES_ARRAY_NODE];
-
-		_apply_limit_factor(&node_limit, limit_factor);
-
 		if ((!qos_ptr_1 || (grp_nodes == INFINITE64))
-		    && (node_limit != INFINITE64)
-		    && (node_limit < max_nodes_limit)) {
-			max_nodes_limit = node_limit;
+		    && (assoc_ptr->grp_tres_ctld[TRES_ARRAY_NODE] != INFINITE64)
+		    && (assoc_ptr->grp_tres_ctld[TRES_ARRAY_NODE] <
+			max_nodes_limit)) {
+			max_nodes_limit =
+				assoc_ptr->grp_tres_ctld[TRES_ARRAY_NODE];
 			*wait_reason = WAIT_ASSOC_GRP_NODE;
 			grp_set = 1;
 		}
 
-		node_limit = assoc_ptr->max_tres_ctld[TRES_ARRAY_NODE];
-
-		_apply_limit_factor(&node_limit, limit_factor);
 		if (!parent
 		    && (qos_max_p_limit == INFINITE64)
-		    && (node_limit != INFINITE64)
-		    && (node_limit < max_nodes_limit)) {
-			max_nodes_limit = node_limit;
+		    && (assoc_ptr->max_tres_ctld[TRES_ARRAY_NODE] != INFINITE64)
+		    && (assoc_ptr->max_tres_ctld[TRES_ARRAY_NODE] <
+			max_nodes_limit)) {
+			max_nodes_limit =
+				assoc_ptr->max_tres_ctld[TRES_ARRAY_NODE];
 			*wait_reason = WAIT_ASSOC_MAX_NODE_PER_JOB;
 		}
 
@@ -4221,7 +4172,6 @@ extern int acct_policy_update_pending_job(job_record_t *job_ptr)
 		job_desc.time_limit = job_ptr->time_limit;
 
 	if (!acct_policy_validate(&job_desc, job_ptr->part_ptr,
-				  job_ptr->part_ptr_list,
 				  job_ptr->assoc_ptr, job_ptr->qos_ptr,
 				  &job_ptr->state_reason,
 				  &acct_policy_limit_set, 0)) {
@@ -4341,7 +4291,7 @@ extern bool acct_policy_job_time_out(job_record_t *job_ptr)
 
 		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos, assoc->grp_tres_mins_ctld,
-			qos_rec.grp_tres_mins_ctld, job_tres_usage_mins,
+			qos_rec.grp_tres_mins_ctld, NULL,
 			NULL, tres_usage_mins, NULL, false);
 		switch (tres_usage) {
 		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
@@ -4422,11 +4372,11 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 					  bool assoc_mgr_locked)
 {
 	job_record_t *old_job_ptr;
-	slurmdb_qos_rec_t *qos_ptr;
+	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_assoc_rec_t *assoc_ptr;
 	struct job_details *details_ptr;
-	slurmdb_used_limits_t *used_limits_acct = NULL;
-	slurmdb_used_limits_t *used_limits_user = NULL;
+	slurmdb_used_limits_t *used_limits_a1 = NULL, *used_limits_u1 = NULL;
+	slurmdb_used_limits_t *used_limits_a2 = NULL, *used_limits_u2 = NULL;
 
 	uint32_t max_jobs_accrue = INFINITE;
 	int create_cnt = 0, i, rc = SLURM_SUCCESS;
@@ -4480,13 +4430,23 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 	if (!assoc_mgr_locked)
 		assoc_mgr_lock(&locks);
 
-	qos_ptr = job_ptr->qos_ptr;
-	if (qos_ptr) {
-		used_limits_acct = acct_policy_get_acct_used_limits(
-			&qos_ptr->usage->acct_limit_list,
+	acct_policy_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
+
+	if (qos_ptr_1) {
+		used_limits_a1 = acct_policy_get_acct_used_limits(
+			&qos_ptr_1->usage->acct_limit_list,
 			assoc_ptr->acct);
-		used_limits_user = acct_policy_get_user_used_limits(
-				&qos_ptr->usage->user_limit_list,
+		used_limits_u1 = acct_policy_get_user_used_limits(
+				&qos_ptr_1->usage->user_limit_list,
+				job_ptr->user_id);
+	}
+
+	if (qos_ptr_2) {
+		used_limits_a2 = acct_policy_get_acct_used_limits(
+			&qos_ptr_2->usage->acct_limit_list,
+			assoc_ptr->acct);
+		used_limits_u2 = acct_policy_get_user_used_limits(
+				&qos_ptr_2->usage->user_limit_list,
 				job_ptr->user_id);
 	}
 
@@ -4511,9 +4471,12 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 			job_ptr->bit_flags |= JOB_ACCRUE_OVER;
 
 			_remove_accrue_time_internal(job_ptr->assoc_ptr,
-						     qos_ptr,
-						     used_limits_acct,
-						     used_limits_user,
+						     qos_ptr_1,
+						     used_limits_a1,
+						     used_limits_u1,
+						     qos_ptr_2,
+						     used_limits_a2,
+						     used_limits_u2,
 						     job_cnt);
 		}
 
@@ -4524,19 +4487,32 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 	} else if (!IS_JOB_PENDING(job_ptr))
 		goto endit;
 
-	if (qos_ptr)
+	if (qos_ptr_1)
 		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
-				       qos_ptr->grp_jobs_accrue,
-				       qos_ptr->usage->accrue_cnt);
-	if (used_limits_acct)
+				       qos_ptr_1->grp_jobs_accrue,
+				       qos_ptr_1->usage->accrue_cnt);
+	if (used_limits_a1)
 		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
-				       qos_ptr->max_jobs_accrue_pa,
-				       used_limits_acct->accrue_cnt);
+				       qos_ptr_1->max_jobs_accrue_pa,
+				       used_limits_a1->accrue_cnt);
 
-	if (used_limits_user)
+	if (used_limits_u1)
 		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
-				       qos_ptr->max_jobs_accrue_pu,
-				       used_limits_user->accrue_cnt);
+				       qos_ptr_1->max_jobs_accrue_pu,
+				       used_limits_u1->accrue_cnt);
+	if (qos_ptr_2)
+		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
+				       qos_ptr_2->grp_jobs_accrue,
+				       qos_ptr_2->usage->accrue_cnt);
+	if (used_limits_a2)
+		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
+				       qos_ptr_2->max_jobs_accrue_pa,
+				       used_limits_a2->accrue_cnt);
+
+	if (used_limits_u2)
+		_get_accrue_create_cnt(&max_jobs_accrue, &create_cnt,
+				       qos_ptr_2->max_jobs_accrue_pu,
+				       used_limits_u2->accrue_cnt);
 
 	assoc_ptr = job_ptr->assoc_ptr;
 	while (assoc_ptr) {
@@ -4586,9 +4562,12 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 				create_cnt = 1;
 
 			_add_accrue_time_internal(job_ptr->assoc_ptr,
-						  qos_ptr,
-						  used_limits_acct,
-						  used_limits_user,
+						  qos_ptr_1,
+						  used_limits_a1,
+						  used_limits_u1,
+						  qos_ptr_2,
+						  used_limits_a2,
+						  used_limits_u2,
 						  create_cnt);
 		}
 
@@ -4633,9 +4612,12 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 	 * the future some how we will need to address it.
 	 */
 	_add_accrue_time_internal(job_ptr->assoc_ptr,
-				  qos_ptr,
-				  used_limits_acct,
-				  used_limits_user,
+				  qos_ptr_1,
+				  used_limits_a1,
+				  used_limits_u1,
+				  qos_ptr_2,
+				  used_limits_a2,
+				  used_limits_u2,
 				  create_cnt);
 
 endit:
@@ -4649,10 +4631,10 @@ endit:
 extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 					bool assoc_mgr_locked)
 {
-	slurmdb_qos_rec_t *qos_ptr;
+	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_assoc_rec_t *assoc_ptr;
-	slurmdb_used_limits_t *used_limits_acct = NULL;
-	slurmdb_used_limits_t *used_limits_user = NULL;
+	slurmdb_used_limits_t *used_limits_a1 = NULL, *used_limits_u1 = NULL;
+	slurmdb_used_limits_t *used_limits_a2 = NULL, *used_limits_u2 = NULL;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
 				   NO_LOCK, NO_LOCK, NO_LOCK };
 	int job_cnt;
@@ -4679,13 +4661,23 @@ extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 	if (!assoc_mgr_locked)
 		assoc_mgr_lock(&locks);
 
-	qos_ptr = job_ptr->qos_ptr;
-	if (qos_ptr) {
-		used_limits_acct = acct_policy_get_acct_used_limits(
-			&qos_ptr->usage->acct_limit_list,
+	acct_policy_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
+
+	if (qos_ptr_1) {
+		used_limits_a1 = acct_policy_get_acct_used_limits(
+			&qos_ptr_1->usage->acct_limit_list,
 			assoc_ptr->acct);
-		used_limits_user = acct_policy_get_user_used_limits(
-				&qos_ptr->usage->user_limit_list,
+		used_limits_u1 = acct_policy_get_user_used_limits(
+				&qos_ptr_1->usage->user_limit_list,
+				job_ptr->user_id);
+	}
+
+	if (qos_ptr_2) {
+		used_limits_a2 = acct_policy_get_acct_used_limits(
+			&qos_ptr_2->usage->acct_limit_list,
+			assoc_ptr->acct);
+		used_limits_u2 = acct_policy_get_user_used_limits(
+				&qos_ptr_2->usage->user_limit_list,
 				job_ptr->user_id);
 	}
 
@@ -4699,9 +4691,12 @@ extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 		job_cnt = 1;
 
 	_add_accrue_time_internal(assoc_ptr,
-				  qos_ptr,
-				  used_limits_acct,
-				  used_limits_user,
+				  qos_ptr_1,
+				  used_limits_a1,
+				  used_limits_u1,
+				  qos_ptr_2,
+				  used_limits_a2,
+				  used_limits_u2,
 				  job_cnt);
 	if (!assoc_mgr_locked)
 		assoc_mgr_unlock(&locks);
@@ -4710,10 +4705,10 @@ extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 extern void acct_policy_remove_accrue_time(job_record_t *job_ptr,
 					   bool assoc_mgr_locked)
 {
-	slurmdb_qos_rec_t *qos_ptr;
+	slurmdb_qos_rec_t *qos_ptr_1, *qos_ptr_2;
 	slurmdb_assoc_rec_t *assoc_ptr;
-	slurmdb_used_limits_t *used_limits_acct = NULL;
-	slurmdb_used_limits_t *used_limits_user = NULL;
+	slurmdb_used_limits_t *used_limits_a1 = NULL, *used_limits_u1 = NULL;
+	slurmdb_used_limits_t *used_limits_a2 = NULL, *used_limits_u2 = NULL;
 	assoc_mgr_lock_t locks = { .assoc = WRITE_LOCK, .qos = WRITE_LOCK };
 	int job_cnt;
 
@@ -4738,13 +4733,23 @@ extern void acct_policy_remove_accrue_time(job_record_t *job_ptr,
 		goto end_it;
 	}
 
-	qos_ptr = job_ptr->qos_ptr;
-	if (qos_ptr) {
-		used_limits_acct = acct_policy_get_acct_used_limits(
-			&qos_ptr->usage->acct_limit_list,
+	acct_policy_set_qos_order(job_ptr, &qos_ptr_1, &qos_ptr_2);
+
+	if (qos_ptr_1) {
+		used_limits_a1 = acct_policy_get_acct_used_limits(
+			&qos_ptr_1->usage->acct_limit_list,
 			assoc_ptr->acct);
-		used_limits_user = acct_policy_get_user_used_limits(
-				&qos_ptr->usage->user_limit_list,
+		used_limits_u1 = acct_policy_get_user_used_limits(
+				&qos_ptr_1->usage->user_limit_list,
+				job_ptr->user_id);
+	}
+
+	if (qos_ptr_2) {
+		used_limits_a2 = acct_policy_get_acct_used_limits(
+			&qos_ptr_2->usage->acct_limit_list,
+			assoc_ptr->acct);
+		used_limits_u2 = acct_policy_get_user_used_limits(
+				&qos_ptr_2->usage->user_limit_list,
 				job_ptr->user_id);
 	}
 
@@ -4758,9 +4763,12 @@ extern void acct_policy_remove_accrue_time(job_record_t *job_ptr,
 		job_cnt = 1;
 
 	_remove_accrue_time_internal(assoc_ptr,
-				     qos_ptr,
-				     used_limits_acct,
-				     used_limits_user,
+				     qos_ptr_1,
+				     used_limits_a1,
+				     used_limits_u1,
+				     qos_ptr_2,
+				     used_limits_a2,
+				     used_limits_u2,
 				     job_cnt);
 
 	/* reset the job */
@@ -4848,10 +4856,6 @@ extern bool acct_policy_is_job_preempt_exempt(job_record_t *job_ptr)
 	return now < preempt_time;
 }
 
-/*
- * WARNING: Since we only look at the first partition's QOS, this function
- * must only be used in places where we loop over all partitions in the job.
- */
 extern void acct_policy_set_qos_order(job_record_t *job_ptr,
 				      slurmdb_qos_rec_t **qos_ptr_1,
 				      slurmdb_qos_rec_t **qos_ptr_2)

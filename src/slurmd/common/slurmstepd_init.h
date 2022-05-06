@@ -61,12 +61,12 @@ typedef enum slurmd_step_tupe {
  * Pack information needed for the forked slurmstepd process.
  * Does not pack everything from the slurm_conf_t struct.
  */
-void pack_slurmd_conf_lite(slurmd_conf_t *conf, buf_t *buffer);
+void pack_slurmd_conf_lite(slurmd_conf_t *conf, Buf buffer);
 
 /*
  * Unpack information needed for the forked slurmstepd process.
  * Does not unpack everything from the slurm_conf_t struct.
 */
-int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, buf_t *buffer);
+int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer);
 
 #endif /* _SLURMD_STEP_INIT_H */

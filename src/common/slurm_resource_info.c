@@ -94,7 +94,7 @@ static char *_expand_mult(char *list, char *type, int *error_code)
 
 	*error_code = SLURM_SUCCESS;
 
-	if (!list)		/* Nothing to convert */
+	if (!list)		/* Nothing to convert */	
 		return NULL;
 
 	tmp = xstrdup(list);
@@ -259,12 +259,13 @@ void slurm_print_cpu_bind_help(void)
 "        cores           auto-generated masks bind to cores\n"
 "        threads         auto-generated masks bind to threads\n"
 "        ldoms           auto-generated masks bind to NUMA locality domains\n"
+"        boards          auto-generated masks bind to boards\n"
 "        help            show this help message\n");
 	}
 }
 
 /*
- * verify cpu_bind arguments
+ * verify cpu_bind arguments, set default values as needed
  *
  * we support different launch policy names
  * we also allow a verbose setting to be specified
@@ -279,10 +280,12 @@ void slurm_print_cpu_bind_help(void)
  * arg IN - user task binding option
  * cpu_bind OUT - task binding string
  * flags OUT OUT - task binding flags
+ * default_cpu_bind IN - default task binding (based upon Slurm configuration)
  * RET SLURM_SUCCESS, SLURM_ERROR (-1) on failure, 1 for return for "help" arg
  */
 extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
-				 cpu_bind_type_t *flags)
+				 cpu_bind_type_t *flags,
+				 uint32_t default_cpu_bind)
 {
 	char *buf, *p, *tok;
 	int bind_bits, bind_to_bits;
@@ -296,6 +299,36 @@ extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 	bind_to_bits = CPU_BIND_TO_SOCKETS | CPU_BIND_TO_CORES |
 		       CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS |
 		       CPU_BIND_TO_BOARDS;
+
+	if (arg == NULL) {
+		if (((*flags & bind_to_bits) != 0) ||	/* already set values */
+		   ((*flags & bind_bits) != 0) ||	/* already set values */
+		    (*cpu_bind != NULL) ||		/* already set values */
+		    (default_cpu_bind == 0))		/* no system defaults */
+			return SLURM_SUCCESS;
+
+		/* set system defaults */
+		xfree(*cpu_bind);
+		if (default_cpu_bind & CPU_BIND_NONE)
+			*flags = CPU_BIND_NONE;
+		else if (default_cpu_bind & CPU_BIND_TO_SOCKETS)
+			*flags = CPU_BIND_TO_SOCKETS;
+		else if (default_cpu_bind & CPU_BIND_TO_CORES)
+			*flags = CPU_BIND_TO_CORES;
+		else if (default_cpu_bind & CPU_BIND_TO_THREADS)
+			*flags |= CPU_BIND_TO_THREADS;
+		else if (default_cpu_bind & CPU_BIND_TO_LDOMS)
+			*flags |= CPU_BIND_TO_LDOMS;
+		else if (default_cpu_bind & CPU_BIND_TO_BOARDS)
+			*flags |= CPU_BIND_TO_BOARDS;
+		if (default_cpu_bind & CPU_BIND_VERBOSE)
+			*flags |= CPU_BIND_VERBOSE;
+		return SLURM_SUCCESS;
+	}
+
+	/* Start with system default verbose flag (if set) */
+	if (default_cpu_bind & CPU_BIND_VERBOSE)
+		*flags |= CPU_BIND_VERBOSE;
 
     	buf = xstrdup(arg);
     	p = buf;
@@ -418,6 +451,22 @@ extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		}
 	}
 	xfree(buf);
+
+	/* Set system default CPU binding as needed */
+	if ((rc == SLURM_SUCCESS) && (*flags & (~CPU_BIND_VERBOSE)) == 0) {
+                if (default_cpu_bind & CPU_BIND_NONE)
+                        *flags = CPU_BIND_NONE;
+                else if (default_cpu_bind & CPU_BIND_TO_SOCKETS)
+                        *flags = CPU_BIND_TO_SOCKETS;
+                else if (default_cpu_bind & CPU_BIND_TO_CORES)
+                        *flags = CPU_BIND_TO_CORES;
+                else if (default_cpu_bind & CPU_BIND_TO_THREADS)
+                        *flags |= CPU_BIND_TO_THREADS;
+                else if (default_cpu_bind & CPU_BIND_TO_LDOMS)
+                        *flags |= CPU_BIND_TO_LDOMS;
+                else if (default_cpu_bind & CPU_BIND_TO_BOARDS)
+                        *flags |= CPU_BIND_TO_BOARDS;
+	}
 
 	return rc;
 }

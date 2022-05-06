@@ -666,21 +666,6 @@ static bool _check_user_has_default_assoc(char *user_name, List assoc_list)
 	return any_def_found;
 }
 
-/*
- * TODO: This is a duplicated function from slurmctld/proc_req.c.
- *       We can not use the original due the drop_priv feature.
- *       This feature is not necessary anymore, we should remove it and remove
- *       the duplication.
- */
-static bool _validate_operator_user_rec(slurmdb_user_rec_t *user)
-{
-	if ((user->uid == 0) ||
-	    (user->uid == slurm_conf.slurm_user_id) ||
-	    (user->admin_level >= SLURMDB_ADMIN_OPERATOR))
-		return true;
-	else
-		return false;
-}
 
 extern int sacctmgr_add_user(int argc, char **argv)
 {
@@ -761,25 +746,6 @@ extern int sacctmgr_add_user(int argc, char **argv)
 			admin_level = str_2_slurmdb_admin_level(argv[i]+end);
 		} else if (!xstrncasecmp(argv[i], "DefaultAccount",
 					 MAX(command_len, 8))) {
-			/*
-			 * Check operator permissions in client to avoid cases
-			 * where DefaultAccount is not changed by slurmdbd but
-			 * no error is returned.
-			 */
-			char *user_name = uid_to_string_cached(my_uid);
-			slurmdb_user_rec_t *db_user;
-			if ((db_user = sacctmgr_find_user(user_name))) {
-				/* uid needs to be set in the client */
-				db_user->uid = my_uid;
-
-				if (!_validate_operator_user_rec(db_user)) {
-					fprintf(stderr,
-						" Your user/uid (%s/%u) is not AdminLevel >= Operator, you cannot set DefaultAccount.\n",
-						user_name, my_uid);
-					exit_code = 1;
-					continue;
-				}
-			}
 			if (default_acct) {
 				fprintf(stderr,
 					" Already listed DefaultAccount %s\n",
@@ -1962,38 +1928,17 @@ extern int sacctmgr_delete_user(int argc, char **argv)
 	/* Since the association flag isn't set we need to change
 	   things to handle things correctly.
 	*/
-	if (user_cond->assoc_cond) {
+	if (user_cond->assoc_cond && user_cond->assoc_cond->cluster_list
+	    && list_count(user_cond->assoc_cond->cluster_list)) {
 		if (cond_set & SA_SET_WCKEY) {
-			/*
-			 * You can no delete associations and wckeys at the same
-			 * time, so if SA_SET_WCKEY is set we need to grab some
-			 * lists that are only set up in the assoc_cond and use
-			 * them in the wckey_cond.
-			 */
-			if (user_cond->assoc_cond->cluster_list &&
-			    list_count(user_cond->assoc_cond->cluster_list)) {
-				wckey_cond->cluster_list =
-					user_cond->assoc_cond->cluster_list;
-				user_cond->assoc_cond->cluster_list = NULL;
-			}
-			if (user_cond->assoc_cond->user_list &&
-			    list_count(user_cond->assoc_cond->user_list)) {
-				wckey_cond->user_list =
-					user_cond->assoc_cond->user_list;
-				user_cond->assoc_cond->user_list = NULL;
-			}
-		} else if (user_cond->assoc_cond->cluster_list &&
-			   list_count(user_cond->assoc_cond->cluster_list)) {
-			/*
-			 * If not deleting wckeys specifically we need to check
-			 * if we have a cluster list.  If we do we are only
-			 * deleting a user from a set of clusters and not really
-			 * from the whole system. If this is the case then we
-			 * need to set SA_SET_ASSOC so we don't remove the user
-			 * from the whole system.
-			 */
+			wckey_cond->cluster_list =
+				user_cond->assoc_cond->cluster_list;
+			user_cond->assoc_cond->cluster_list = NULL;
+			wckey_cond->user_list =
+				user_cond->assoc_cond->user_list;
+			user_cond->assoc_cond->user_list = NULL;
+		} else
 			cond_set |= SA_SET_ASSOC;
-		}
 	}
 
 	if (!cond_set) {

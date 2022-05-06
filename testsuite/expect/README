@@ -250,7 +250,6 @@ test1.116  Extended MPI functionality tests via srun.
 test1.117  Test of standalone srun not ignoring --mem-per-cpu
 test1.118  Test --hint mutual exclusion properties.
 test1.119  Test of srun --ntasks-per-gpu option.
-test1.120  Test of --distribution options
 
 test2.#    Testing of scontrol options (to be run as unprivileged user).
 ========================================================================
@@ -378,6 +377,8 @@ test7.1    Test priorities slurmctld assigns to jobs. Uses srun --hold and
 	   --batch options.
 test7.2    Test of PMI functions available via API library. Tests
 	   --pmi-threads option in srun command.
+test7.3    Test of slurm_step_launch API with spawn_io=true
+	   (needed by poe on IBM AIX systems).
 test7.4    Test of TotalView operation with srun, with and without bulk
 	   transfer.
 test7.5    Test of TotalView termination logic for srun.
@@ -402,7 +403,6 @@ test7.20   Test lua JobSubmitPlugin
 test7.21   Test SPANK plugins that link against libslurm
 test7.22   Test basic functionality of backfill scheduler
 test7.23   Test min_mem_per_{cpu,node} in lua JobSubmitPlugin
-test7.24   Test that SPANK plugins return codes are reported to user
 
 test8.#    Testing of advanced reservation functionality.
 =========================================================
@@ -833,7 +833,7 @@ test39.1   Test full set of sbatch --gpu options and scontrol show job
 test39.2   Test full set of salloc --gpu options and scontrol show job
 test39.3   Test full set of srun --gpu options and scontrol show step
 test39.4   Test some invalid combinations of --gpu options
-test39.5   Test some combinations of srun and sbatch --gpu options
+test39.5   Test some valid combinations of srun --gpu options
 test39.6   Ensure job requesting GPUs on multiple sockets gets CPUs on them
 test39.7   Test --cpus-per-gpu option
 test39.8   Test --gpu-bind options
@@ -867,4 +867,3 @@ test40.8   Simple CUDA MPS test
 test41.#   Testing of slurmrestd
 =============================================================
 test41.1   Test slurmrestd plugins
-test41.2   Test slurmrestd OpenAPI generation and functionality

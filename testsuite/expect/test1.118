@@ -65,7 +65,7 @@ proc mutual_error_tests {} {
 
 	set clients [list "$sbatch" "$salloc" "$srun"]
 	set options [list "--threads-per-core=1" "--ntasks-per-core=1" "-B1"]
-	set error "Following options are mutually exclusive with --hint: --ntasks-per-core, --threads-per-core, -B and --cpu-bind (other then --cpu-bind=verbose). Ignoring --hint."
+	set error "Following options are mutually exclusive: --hint, --ntasks-per-core, --threads-per-core, -B."
 
 	foreach client $clients {
 		set prog "hostname"
@@ -80,13 +80,36 @@ proc mutual_error_tests {} {
 	# Test srun --hint only with works with --cpu-bind=verbose
 	set client $srun
 	set options [list "--cpu-bind=threads" "--cpu-bind=threads,verbose"]
+	set error "--hint and --cpu-bind (other than --cpu-bind=verbose) are mutually exclusive."
 	foreach option $options {
 		check_error $client $option "hostname" $error
 	}
 
-	# Test if srun --cpu-bind=verbose --hint=nomultithread actually enabled cpu-bind
-	set output [run_command_output -subtest "$srun --hint=nomultithread --cpu-bind=verbose /bin/true"]
-	subtest {[regexp  "cpu-bind=" $output]} "The output should contain line starting with cpu-bind=, indicating that --cpu-bind=verbose is in effect"
+	set options [list "--cpu-bind=verbose"]
+	foreach option $options {
+		set cmd "$client -v -H -J$test_name -t1 --begin=now+1 --hint=nomultithread $option $prog"
+
+		set job_id 0
+		set matches 0
+		spawn {*}$cmd
+		expect {
+			"mutually exclusive" {
+				incr matches
+				exp_continue
+			}
+			-re "job ($number)" {
+				set job_id $expect_out(1,string)
+			}
+			timeout {
+				fail "[file tail $client] not responding"
+			}
+			eof {
+				wait
+			}
+		}
+		cancel_job $job_id
+		subtest {$matches == 0} "$client should not find 'mutually exclusive'" "got $matches matches"
+	}
 }
 
 mutual_error_tests
@@ -119,8 +142,8 @@ foreach option $options {
 			wait
 		}
 	}
-	subtest {$job_id != 0} "$cmd should have given an id"
-	subtest {$matches == 0} "$cmd should not find 'mutually exclusive'" "got $matches matches"
+	subtest {$job_id != 0} "$client should have given an id"
+	subtest {$matches == 0} "$client should not find 'mutually exclusive'" "got $matches matches"
 
 	set threads_req [get_job_param $job_id "ReqB:S:C:T"]
 	set tasks_req [get_job_param $job_id "NtasksPerN:B:S:C"]
@@ -131,12 +154,3 @@ foreach option $options {
 	cancel_job $job_id
 }
 
-# Test using --cpu-bind=verbose and --hint for salloc/srun sequence
-set output [run_command_output -subtest "$salloc --hint=nomultithread $srun --cpu-bind=verbose /bin/true"]
-subtest {[regexp  "cpu-bind=" $output]} "The output should contain line starting with cpu-bind=, indicating that --cpu-bind=verbose is in effect"
-
-set output [run_command_output -subtest "$salloc --hint=nomultithread /bin/bash -c 'SLURM_CPU_BIND=verbose $srun /bin/true'"]
-subtest {[regexp  "cpu-bind=" $output]} "The output should contain line starting with cpu-bind=, indicating that SLURM_CPU_BIND=verbose srun .. is in effect"
-
-set output [run_command_output -subtest "SLURM_CPU_BIND=verbose $salloc --hint=nomultithread $srun /bin/true"]
-subtest {[regexp  "cpu-bind=" $output]} "The output should contain line starting with cpu-bind=, indicating that SLURM_CPU_BIND=verbose srun .. is in effect"

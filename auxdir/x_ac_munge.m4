@@ -22,8 +22,7 @@ AC_DEFUN([X_AC_MUNGE], [
   AC_ARG_WITH(
     [munge],
     AS_HELP_STRING(--with-munge=PATH,Specify path to munge installation),
-    [AS_IF([test "x$with_munge" != xno && test "x$with_munge" != xyes],
-           [_x_ac_munge_dirs="$with_munge"])])
+    [AS_IF([test "x$with_munge" != xno],[_x_ac_munge_dirs="$with_munge $_x_ac_munge_dirs"])])
 
   if [test "x$with_munge" = xno]; then
     AC_MSG_WARN([support for munge disabled])
@@ -51,11 +50,7 @@ AC_DEFUN([X_AC_MUNGE], [
       ])
 
     if test -z "$x_ac_cv_munge_dir"; then
-      if test -z "$with_munge"; then
-        AC_MSG_WARN([unable to locate munge installation])
-      else
-        AC_MSG_ERROR([unable to locate munge installation])
-      fi
+      AC_MSG_WARN([unable to locate munge installation])
     else
       MUNGE_LIBS="-lmunge"
       MUNGE_CPPFLAGS="-I$x_ac_cv_munge_dir/include"

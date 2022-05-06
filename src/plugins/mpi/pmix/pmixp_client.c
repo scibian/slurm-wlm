@@ -208,7 +208,7 @@ static void _set_procdatas(List lresp)
 		pmix_info_t *info;
 		int tmp;
 
-		rankinfo = list_create(xfree_ptr);
+		rankinfo = list_create(pmixp_xfree_xmalloced);
 
 		PMIXP_KVP_ALLOC(kvp, PMIX_RANK);
 		PMIXP_VAL_SET_RANK(&kvp->value, i);
@@ -656,7 +656,7 @@ extern int pmixp_libpmix_job_set(void)
 	pmixp_debug_hang(0);
 
 	/* Use list to safely expand/reduce key-value pairs. */
-	lresp = list_create(xfree_ptr);
+	lresp = list_create(pmixp_xfree_xmalloced);
 
 	_general_proc_info(lresp);
 

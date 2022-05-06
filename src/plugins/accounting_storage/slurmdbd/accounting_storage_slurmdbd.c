@@ -127,8 +127,6 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->account);
 		xfree(req->array_task_str);
 		xfree(req->constraints);
-		xfree(req->container);
-		xfree(req->env);
 		xfree(req->mcs_label);
 		xfree(req->name);
 		xfree(req->nodes);
@@ -136,8 +134,6 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->node_inx);
 		xfree(req->wckey);
 		xfree(req->gres_used);
-		FREE_NULL_BUFFER(req->script_buf);
-		xfree(req->submit_line);
 		xfree(req->tres_alloc_str);
 		xfree(req->tres_req_str);
 		xfree(req->work_dir);
@@ -153,7 +149,6 @@ static void _partial_destroy_dbd_job_start(void *object)
 	}
 }
 
-/* Anything allocated here must be freed in _partial_free_dbd_job_start() */
 static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 				job_record_t *job_ptr)
 {
@@ -210,7 +205,6 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 
 	req->db_index      = job_ptr->db_index;
 	req->constraints   = xstrdup(job_ptr->details->features);
-	req->container     = xstrdup(job_ptr->container);
 	req->job_state     = job_ptr->job_state;
 	req->state_reason_prev = job_ptr->state_reason_prev_db;
 	req->name          = xstrdup(job_ptr->name);
@@ -231,7 +225,6 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	if (job_ptr->details) {
 		req->req_cpus = job_ptr->details->min_cpus;
 		req->req_mem = job_ptr->details->pn_min_memory;
-		req->submit_line = xstrdup(job_ptr->details->submit_line);
 	}
 	req->resv_id       = job_ptr->resv_id;
 	req->priority      = job_ptr->priority;
@@ -243,25 +236,6 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	req->uid           = job_ptr->user_id;
 	req->qos_id        = job_ptr->qos_id;
 	req->gres_used     = xstrdup(job_ptr->gres_used);
-
-	/* Only send this once per instance of the job! */
-	if (!job_ptr->db_index || (job_ptr->db_index == NO_VAL64)) {
-		if (slurm_conf.conf_flags & CTL_CONF_SJS)
-			req->script_buf = get_job_script(job_ptr);
-		if (job_ptr->batch_flag &&
-		    (slurm_conf.conf_flags & CTL_CONF_SJE)) {
-			uint32_t env_size = 0;
-			char **env = get_job_env(job_ptr, &env_size);
-			if (env) {
-				char *pos = NULL;
-				for (int i = 0; i < env_size; i++)
-					xstrfmtcatat(req->env, &pos,
-						     "%s\n", env[i]);
-				xfree(env[0]);
-				xfree(env);
-			}
-		}
-	}
 
 	return SLURM_SUCCESS;
 }
@@ -282,12 +256,6 @@ static void *_set_db_inx_thread(void *no_data)
 		{ NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	/* DEF_TIMERS; */
 
-	/*
-	 * We only want to destory the pointer here not the contents so call
-	 * special function _partial_destroy_dbd_job_start.
-	 */
-	List local_job_list = list_create(_partial_destroy_dbd_job_start);
-
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NAME, "dbinx", NULL, NULL, NULL) < 0) {
 		error("cannot set my name to dbinx: %m");
@@ -297,6 +265,7 @@ static void *_set_db_inx_thread(void *no_data)
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	while (!plugin_shutdown) {
+		List local_job_list = NULL;
 		/* START_TIMER; */
 		/* info("starting db_thread"); */
 		slurm_mutex_lock(&db_inx_lock);
@@ -356,6 +325,14 @@ static void *_set_db_inx_thread(void *no_data)
 				continue;
 			}
 
+			/*
+			 * We only want to destory the pointer
+			 * here not the contents so call special function
+			 * _partial_destroy_dbd_job_start.
+			 */
+			if (!local_job_list)
+				local_job_list = list_create(
+					_partial_destroy_dbd_job_start);
 			list_append(local_job_list, req);
 			/* Just so we don't have a crazy
 			   amount of messages at once.
@@ -366,7 +343,7 @@ static void *_set_db_inx_thread(void *no_data)
 		list_iterator_destroy(itr);
 		unlock_slurmctld(job_read_lock);
 
-		while (list_count(local_job_list)) {
+		if (local_job_list) {
 			persist_msg_t req = {0}, resp = {0};
 			dbd_list_msg_t send_msg, *got_msg;
 			int rc = SLURM_SUCCESS;
@@ -377,9 +354,9 @@ static void *_set_db_inx_thread(void *no_data)
 
 			req.msg_type = DBD_SEND_MULT_JOB_START;
 			req.data = &send_msg;
-
 			rc = dbd_conn_send_recv(
 				SLURM_PROTOCOL_VERSION, &req, &resp);
+			FREE_NULL_LIST(local_job_list);
 			if (rc != SLURM_SUCCESS) {
 				error("DBD_SEND_MULT_JOB_START "
 				      "failure: %m");
@@ -428,25 +405,10 @@ static void *_set_db_inx_thread(void *no_data)
 				list_iterator_destroy(itr);
 				unlock_slurmctld(job_write_lock);
 
-				/*
-				 * Assume the returned number of elements is
-				 * equivalent to the number that was sent out,
-				 * and thus those have completed processing
-				 * and need to be dropped.
-				 *
-				 * This is due to slurm_pack_list_until()
-				 * potentially sending only a part of the List
-				 * to avoid creating an overly-large RPC that
-				 * cannot be processed the SlurmDBD.
-				 */
-				list_flush_max(local_job_list,
-					       list_count(got_msg->my_list));
-
 				slurmdbd_free_list_msg(got_msg);
 			}
 
 			if (reset) {
-				list_flush(local_job_list);
 				lock_slurmctld(job_read_lock);
 				/* USE READ LOCK, SEE ABOVE on first
 				 * read lock */
@@ -485,8 +447,6 @@ static void *_set_db_inx_thread(void *no_data)
 
 		slurm_mutex_unlock(&db_inx_lock);
 	}
-
-	FREE_NULL_LIST(local_job_list);
 
 	return NULL;
 }
@@ -2813,7 +2773,6 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 	memset(&req, 0, sizeof(dbd_step_start_msg_t));
 
 	req.assoc_id    = step_ptr->job_ptr->assoc_id;
-	req.container   = step_ptr->container;
 	req.db_index    = step_ptr->job_ptr->db_index;
 	req.name        = step_ptr->name;
 	req.nodes       = node_list;
@@ -2840,7 +2799,6 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 
 	req.total_tasks = tasks;
 
-	req.submit_line = step_ptr->submit_line;
 	req.tres_alloc_str = step_ptr->tres_alloc_str;
 
 	req.req_cpufreq_min = step_ptr->cpu_freq_min;

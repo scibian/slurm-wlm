@@ -92,6 +92,7 @@ target_triplet = @target@
 subdir = doc/man/man5
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
+	$(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
@@ -131,7 +132,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
-	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
@@ -142,8 +142,7 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = $(top_builddir)/config.h \
-	$(top_builddir)/slurm/slurm_version.h
+CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 AM_V_P = $(am__v_P_@AM_V@)
@@ -389,6 +388,9 @@ UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 YAML_CPPFLAGS = @YAML_CPPFLAGS@
 YAML_LDFLAGS = @YAML_LDFLAGS@
+ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
+ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
+ZLIB_LIBS = @ZLIB_LIBS@
 _libcurl_config = @_libcurl_config@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -428,8 +430,6 @@ infodir = @infodir@
 install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
-libselinux_CFLAGS = @libselinux_CFLAGS@
-libselinux_LIBS = @libselinux_LIBS@
 localedir = @localedir@
 localstatedir = @localstatedir@
 lua_CFLAGS = @lua_CFLAGS@
@@ -446,7 +446,6 @@ sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
 sysconfdir = @sysconfdir@
-systemdsystemunitdir = @systemdsystemunitdir@
 target = @target@
 target_alias = @target_alias@
 target_cpu = @target_cpu@
@@ -461,11 +460,9 @@ man5_MANS = \
 	cgroup.conf.5 \
 	ext_sensors.conf.5 \
 	gres.conf.5 \
-	helpers.conf.5 \
 	job_container.conf.5 \
 	knl.conf.5 \
 	nonstop.conf.5 \
-	oci.conf.5 \
 	slurm.conf.5 \
 	slurmdbd.conf.5 \
 	topology.conf.5
@@ -476,11 +473,9 @@ man5_MANS = \
 @HAVE_MAN2HTML_TRUE@	cgroup.conf.html \
 @HAVE_MAN2HTML_TRUE@	ext_sensors.conf.html \
 @HAVE_MAN2HTML_TRUE@	gres.conf.html \
-@HAVE_MAN2HTML_TRUE@	helpers.conf.html \
 @HAVE_MAN2HTML_TRUE@	job_container.conf.html \
 @HAVE_MAN2HTML_TRUE@	knl.conf.html \
 @HAVE_MAN2HTML_TRUE@	nonstop.conf.html \
-@HAVE_MAN2HTML_TRUE@	oci.conf.html \
 @HAVE_MAN2HTML_TRUE@	slurm.conf.html \
 @HAVE_MAN2HTML_TRUE@	slurmdbd.conf.html \
 @HAVE_MAN2HTML_TRUE@	topology.conf.html

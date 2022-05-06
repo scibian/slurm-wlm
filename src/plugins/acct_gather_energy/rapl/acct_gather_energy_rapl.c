@@ -129,7 +129,7 @@ static int dataset_id = -1; /* id of the dataset for profile data */
 /* one cpu in the package */
 static int pkg2cpu[MAX_PKGS] = {[0 ... MAX_PKGS-1] = -1};
 static int pkg_fd[MAX_PKGS] = {[0 ... MAX_PKGS-1] = -1};
-static char hostname[HOST_NAME_MAX];
+static char hostname[MAXHOSTNAMELEN];
 
 static int nb_pkg = 0;
 
@@ -376,11 +376,8 @@ static void _get_joules_task(acct_gather_energy_t *energy)
 	energy->previous_consumed_energy = (uint64_t)ret;
 	energy->poll_time = time(NULL);
 
-	log_flag(ENERGY, "PollTime = %ld, ConsumedEnergy = %"PRIu64"J, CurrentWatts = %uW, AveWatts = %uW",
-		 energy->poll_time,
-		 energy->consumed_energy,
-		 energy->current_watts,
-		 energy->ave_watts);
+	log_flag(ENERGY, "%s: current %.6f Joules, consumed %"PRIu64"",
+		 __func__, ret, energy->consumed_energy);
 }
 
 static int _running_profile(void)
@@ -458,7 +455,7 @@ extern int acct_gather_energy_p_update_node_energy(void)
  */
 extern int init(void)
 {
-	gethostname(hostname, HOST_NAME_MAX);
+	gethostname(hostname, MAXHOSTNAMELEN);
 
 	/* put anything that requires the .conf being read in
 	   acct_gather_energy_p_conf_parse

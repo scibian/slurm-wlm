@@ -80,9 +80,8 @@
 #include "src/common/xstring.h"
 
 #include "src/api/step_launch.h"
+#include "src/api/step_ctx.h"
 #include "src/api/pmi_server.h"
-
-#include "src/srun/libsrun/step_ctx.h"
 
 #define STEP_ABORT_TIME 2
 
@@ -93,7 +92,7 @@ extern char **environ;
  **********************************************************************/
 static int _launch_tasks(slurm_step_ctx_t *ctx,
 			 launch_tasks_request_msg_t *launch_msg,
-			 uint32_t timeout, char *nodelist);
+			 uint32_t timeout, char *nodelist, int start_nodeid);
 static char *_lookup_cwd(void);
 static void _print_launch_msg(launch_tasks_request_msg_t *msg,
 			      char *hostname, int nodeid);
@@ -263,7 +262,6 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.argv = params->argv;
 	launch.spank_job_env = params->spank_job_env;
 	launch.spank_job_env_size = params->spank_job_env_size;
-	launch.container = xstrdup(params->container);
 	launch.cred = ctx->step_resp->cred;
 	launch.het_job_node_offset = params->het_job_node_offset;
 	launch.het_job_step_cnt = params->het_job_step_cnt;
@@ -320,8 +318,6 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	if (params->multi_prog)
 		launch.flags	|= LAUNCH_MULTI_PROG;
 	launch.cpus_per_task	= params->cpus_per_task;
-	launch.tres_per_task	= ctx->step_req->tres_per_task;
-
 	launch.threads_per_core	= params->threads_per_core;
 	launch.ntasks_per_board = params->ntasks_per_board;
 	launch.ntasks_per_core  = params->ntasks_per_core;
@@ -385,7 +381,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 			goto fail1;
 		}
 		launch.num_io_port = ctx->launch_state->io.normal->num_listen;
-		launch.io_port = xcalloc(launch.num_io_port, sizeof(uint16_t));
+		launch.io_port = xmalloc(sizeof(uint16_t) * launch.num_io_port);
 		memcpy(launch.io_port, ctx->launch_state->io.normal->listenport,
 		       (sizeof(uint16_t) * launch.num_io_port));
 		/*
@@ -396,18 +392,19 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 		ctx->launch_state->io_timeout = slurm_conf.msg_timeout;
 	} else { /* user_managed_io is true */
 		/* initialize user_managed_io_t */
-		ctx->launch_state->io.user = xmalloc(sizeof(user_managed_io_t));
+		ctx->launch_state->io.user =
+			(user_managed_io_t *)xmalloc(sizeof(user_managed_io_t));
 		ctx->launch_state->io.user->connected = 0;
 		ctx->launch_state->io.user->sockets =
-			xcalloc(ctx->step_req->num_tasks, sizeof(int));
+			(int *)xmalloc(sizeof(int) * ctx->step_req->num_tasks);
 	}
 
 	launch.num_resp_port = ctx->launch_state->num_resp_port;
-	launch.resp_port = xcalloc(launch.num_resp_port, sizeof(uint16_t));
+	launch.resp_port = xmalloc(sizeof(uint16_t) * launch.num_resp_port);
 	memcpy(launch.resp_port, ctx->launch_state->resp_port,
 	       (sizeof(uint16_t) * launch.num_resp_port));
 	rc = _launch_tasks(ctx, &launch, params->msg_timeout,
-			   launch.complete_nodelist);
+			   launch.complete_nodelist, 0);
 
 	/* clean up */
 	xfree(launch.resp_port);
@@ -430,12 +427,14 @@ fail1:
  *		first component of the job step
  * IN params - job step parameters
  * IN node_list - list of extra nodes to add
+ * IN start_nodeid - in the global scheme which node id is the first
+ *                   node in node_list.
  * RET SLURM_SUCCESS or SLURM_ERROR (with errno set)
  */
 extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 				 slurm_step_ctx_t *first_ctx,
 				 const slurm_step_launch_params_t *params,
-				 char *node_list)
+				 char *node_list, int start_nodeid)
 {
 	launch_tasks_request_msg_t launch;
 	char **env = NULL;
@@ -575,7 +574,7 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 			goto fail1;
 		}
 		launch.num_io_port = ctx->launch_state->io.normal->num_listen;
-		launch.io_port = xcalloc(launch.num_io_port, sizeof(uint16_t));
+		launch.io_port = xmalloc(sizeof(uint16_t) * launch.num_io_port);
 		memcpy(launch.io_port, ctx->launch_state->io.normal->listenport,
 		       (sizeof(uint16_t) * launch.num_io_port));
 		/*
@@ -592,13 +591,14 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	if (first_ctx->launch_state->num_resp_port &&
 	    first_ctx->launch_state->resp_port) {
 		launch.num_resp_port = first_ctx->launch_state->num_resp_port;
-		launch.resp_port = xcalloc(launch.num_resp_port,
-					   sizeof(uint16_t));
+		launch.resp_port = xmalloc(sizeof(uint16_t) *
+					  launch.num_resp_port);
 		memcpy(launch.resp_port, first_ctx->launch_state->resp_port,
 		       (sizeof(uint16_t) * launch.num_resp_port));
 	}
 
-	rc = _launch_tasks(ctx, &launch, params->msg_timeout, node_list);
+	rc = _launch_tasks(ctx, &launch, params->msg_timeout,
+			   node_list, start_nodeid);
 
 fail1:
 	/* clean up */
@@ -902,6 +902,7 @@ extern void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	hostlist_destroy(hl);
 
 RESEND:	slurm_msg_t_init(&req);
+	slurm_msg_set_r_uid(&req, SLURM_AUTH_UID_ANY);
 	req.msg_type = REQUEST_SIGNAL_TASKS;
 	req.data     = &msg;
 
@@ -967,7 +968,7 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 	sls->tasks_started = bit_alloc(layout->task_cnt);
 	sls->tasks_exited = bit_alloc(layout->task_cnt);
 	sls->node_io_error = bit_alloc(layout->node_cnt);
-	sls->io_deadline = xcalloc(layout->node_cnt, sizeof(time_t));
+	sls->io_deadline = (time_t *)xmalloc(sizeof(time_t) * layout->node_cnt);
 	sls->io_timeout_thread_created = false;
 	sls->io_timeout = 0;
 	sls->halt_io_test = false;
@@ -1150,7 +1151,7 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 
 	sls->msg_handle = eio_handle_create(slurm_conf.eio_timeout);
 	sls->num_resp_port = _estimate_nports(num_nodes, 48);
-	sls->resp_port = xcalloc(sls->num_resp_port, sizeof(uint16_t));
+	sls->resp_port = xmalloc(sizeof(uint16_t) * sls->num_resp_port);
 
 	/* multiple jobs (easily induced via no_alloc) and highly
 	 * parallel jobs using PMI sometimes result in slow message
@@ -1319,7 +1320,7 @@ _node_fail_handler(struct step_launch_state *sls, slurm_msg_t *fail_msg)
 	fail_nodes = hostset_create(nf->nodelist);
 	fail_itr = hostset_iterator_create(fail_nodes);
 	num_node_ids = hostset_count(fail_nodes);
-	node_ids = xcalloc(num_node_ids, sizeof(int));
+	node_ids = xmalloc(sizeof(int) * num_node_ids);
 
 	slurm_mutex_lock(&sls->lock);
 	all_nodes = hostset_create(sls->layout->node_list);
@@ -1517,7 +1518,9 @@ _step_step_signal(struct step_launch_state *sls, slurm_msg_t *signal_msg)
  * The TCP connection that was used to send the task_spawn_io_msg_t message
  * will be used as the user managed IO stream.  The remote end of the TCP stream
  * will be connected to the stdin, stdout, and stderr of the task.  The
- * local end of the stream is stored in the user_managed_io_t structure.
+ * local end of the stream is stored in the user_managed_io_t structure, and
+ * is left to the user to manage (the user can retrieve the array of
+ * socket descriptors using slurm_step_ctx_get()).
  *
  * To allow the message TCP stream to be reused for spawn IO traffic we
  * set the slurm_msg_t's conn_fd to -1 to avoid having the caller close the
@@ -1563,7 +1566,7 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	srun_user_msg_t *um;
 	int rc;
 
-	req_uid = auth_g_get_uid(msg->auth_cred);
+	req_uid = g_slurm_auth_get_uid(msg->auth_cred);
 
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
@@ -1684,7 +1687,7 @@ static int _fail_step_tasks(slurm_step_ctx_t *ctx, char *node, int ret_code)
 
 static int _launch_tasks(slurm_step_ctx_t *ctx,
 			 launch_tasks_request_msg_t *launch_msg,
-			 uint32_t timeout, char *nodelist)
+			 uint32_t timeout, char *nodelist, int start_nodeid)
 {
 #ifdef HAVE_FRONT_END
 	slurm_cred_arg_t cred_args;
@@ -1700,7 +1703,7 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 	if (ctx->verbose_level) {
 		char *name = NULL;
 		hostlist_t hl = hostlist_create(nodelist);
-		int i = 0;
+		int i = start_nodeid;
 		while ((name = hostlist_shift(hl))) {
 			_print_launch_msg(launch_msg, name, i++);
 			free(name);
@@ -1718,6 +1721,7 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 	}
 
 	slurm_msg_t_init(&msg);
+	slurm_msg_set_r_uid(&msg, SLURM_AUTH_UID_ANY);
 	msg.msg_type = REQUEST_LAUNCH_TASKS;
 	msg.data = launch_msg;
 
@@ -1843,9 +1847,9 @@ _exec_prog(slurm_msg_t *msg)
 			error("%s: can not open /dev/null", __func__);
 			exit(1);
 		}
-		dup2(fd, STDIN_FILENO);		/* stdin from /dev/null */
-		dup2(pfd[1], STDOUT_FILENO);	/* stdout to pipe */
-		dup2(pfd[1], STDERR_FILENO);	/* stderr to pipe */
+		dup2(fd, 0);		/* stdin from /dev/null */
+		dup2(pfd[1], 1);	/* stdout to pipe */
+		dup2(pfd[1], 2);	/* stderr to pipe */
 		close(pfd[0]);
 		close(pfd[1]);
 		execvp(exec_msg->argv[0], exec_msg->argv);

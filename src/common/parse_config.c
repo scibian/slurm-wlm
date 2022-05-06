@@ -552,80 +552,64 @@ static void *_handle_string(const char *key, const char *value)
 static void *_handle_long(const char *key, const char *value)
 {
 	long *data = xmalloc(sizeof(*data));
-	if (s_p_handle_long(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_long(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_uint16(const char *key, const char *value)
 {
 	uint16_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint16(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_uint16(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_uint32(const char *key, const char *value)
 {
 	uint32_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint32(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_uint32(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_uint64(const char *key, const char *value)
 {
 	uint64_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint64(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_uint64(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_boolean(const char *key, const char *value)
 {
 	bool *data = xmalloc(sizeof(*data));
-	if (s_p_handle_boolean(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_boolean(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_float(const char *key, const char *value)
 {
 	float *data = xmalloc(sizeof(*data));
-	if (s_p_handle_float(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_float(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_double(const char *key, const char *value)
 {
 	double *data = xmalloc(sizeof(*data));
-	if (s_p_handle_double(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_double(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
 static void *_handle_ldouble(const char *key, const char *value)
 {
 	long double *data = xmalloc(sizeof(*data));
-	if (s_p_handle_long_double(data, key, value) == SLURM_ERROR) {
-		xfree(data);
+	if (s_p_handle_long_double(data, key, value) == SLURM_ERROR)
 		return NULL;
-	}
 	return data;
 }
 
@@ -885,64 +869,55 @@ static int _handle_expline(s_p_values_t* v, const char* value,
  *                  If the handler for that key parses more of the line,
  *                  it will move the leftover pointer to point to the character
  *                  after it has finished parsing in the line.
- * RET:
- *	-1 if the value is invalid.
- *	0 if the value is validbut no value will be set for "data".
- *	1 if "data" is set.
  */
-static int _handle_keyvalue_match(s_p_values_t *v,
-				  const char *value, const char *line,
-				  char **leftover)
+static void _handle_keyvalue_match(s_p_values_t *v,
+				   const char *value, const char *line,
+				   char **leftover)
 {
-	int rc = 1;
-
 	switch (v->type) {
 	case S_P_IGNORE:
 		/* do nothing */
 		break;
 	case S_P_STRING:
-		rc = _handle_common(v, value, line, leftover, _handle_string);
+		_handle_common(v, value, line, leftover, _handle_string);
 		break;
 	case S_P_LONG:
-		rc = _handle_common(v, value, line, leftover, _handle_long);
+		_handle_common(v, value, line, leftover, _handle_long);
 		break;
 	case S_P_UINT16:
-		rc = _handle_common(v, value, line, leftover, _handle_uint16);
+		_handle_common(v, value, line, leftover, _handle_uint16);
 		break;
 	case S_P_UINT32:
-		rc = _handle_common(v, value, line, leftover, _handle_uint32);
+		_handle_common(v, value, line, leftover, _handle_uint32);
 		break;
 	case S_P_UINT64:
-		rc = _handle_common(v, value, line, leftover, _handle_uint64);
+		_handle_common(v, value, line, leftover, _handle_uint64);
 		break;
 	case S_P_POINTER:
-		rc = _handle_pointer(v, value, line, leftover);
+		_handle_pointer(v, value, line, leftover);
 		break;
 	case S_P_ARRAY:
-		rc = _handle_array(v, value, line, leftover);
+		_handle_array(v, value, line, leftover);
 		break;
 	case S_P_BOOLEAN:
-		rc = _handle_common(v, value, line, leftover, _handle_boolean);
+		_handle_common(v, value, line, leftover, _handle_boolean);
 		break;
 	case S_P_LINE:
-		rc = _handle_line(v, value, line, leftover);
+		_handle_line(v, value, line, leftover);
 		break;
 	case S_P_EXPLINE:
-		rc = _handle_expline(v, value, line, leftover);
+		_handle_expline(v, value, line, leftover);
 		break;
 	case S_P_FLOAT:
-		rc = _handle_common(v, value, line, leftover, _handle_float);
+		_handle_common(v, value, line, leftover, _handle_float);
 		break;
 	case S_P_DOUBLE:
-		rc = _handle_common(v, value, line, leftover, _handle_double);
+		_handle_common(v, value, line, leftover, _handle_double);
 		break;
 	case S_P_LONG_DOUBLE:
-		rc = _handle_common(v, value, line, leftover, _handle_ldouble);
+		_handle_common(v, value, line, leftover, _handle_ldouble);
 		break;
-	default:
-		fatal("%s: unsupported s_p_value_t type %d", __func__, v->type);
 	}
-	return rc;
 }
 
 /*
@@ -981,13 +956,8 @@ int s_p_parse_line(s_p_hashtbl_t *hashtbl, const char *line, char **leftover)
 	while (_keyvalue_regex(hashtbl, ptr, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
-			if (_handle_keyvalue_match(p, value, new_leftover,
-						   &new_leftover) == -1) {
-				xfree(key);
-				xfree(value);
-				slurm_seterrno(EINVAL);
-				return 0;
-			}
+			_handle_keyvalue_match(p, value,
+					       new_leftover, &new_leftover);
 			*leftover = ptr = new_leftover;
 		} else {
 			error("Parsing error at unrecognized key: %s", key);
@@ -1018,14 +988,8 @@ static int _parse_next_key(s_p_hashtbl_t *hashtbl,
 	if (_keyvalue_regex(hashtbl, line, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
-			if (_handle_keyvalue_match(p, value, new_leftover,
-						   &new_leftover) == -1) {
-				xfree(key);
-				xfree(value);
-				*leftover = (char *)line;
-				slurm_seterrno(EINVAL);
-				return 0;
-			}
+			_handle_keyvalue_match(p, value,
+					       new_leftover, &new_leftover);
 			*leftover = new_leftover;
 		} else if (ignore_new) {
 			debug("%s: Parsing error at unrecognized key: %s",
@@ -1206,12 +1170,7 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 						  line, &leftover, ignore_new,
 						  filename);
 		if (inc_rc == 0) {
-			if (!_parse_next_key(hashtbl, line, &leftover,
-					     ignore_new)) {
-				rc = SLURM_ERROR;
-				line_number += merged_lines;
-				continue;
-			}
+			_parse_next_key(hashtbl, line, &leftover, ignore_new);
 		} else if (inc_rc < 0) {
 			error("\"Include\" failed in file %s line %d",
 			      filename, line_number);
@@ -1243,7 +1202,7 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 }
 
 int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
-		     buf_t *buffer, bool ignore_new)
+		     Buf buffer, bool ignore_new)
 {
 	char *leftover = NULL;
 	int rc = SLURM_SUCCESS;
@@ -1265,12 +1224,7 @@ int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 				xfree(tmp_str);
 				continue;
 			}
-			if (!_parse_next_key(hashtbl, tmp_str, &leftover,
-					     ignore_new)) {
-				rc = SLURM_ERROR;
-				xfree(tmp_str);
-				continue;
-			}
+			_parse_next_key(hashtbl, tmp_str, &leftover, ignore_new);
 			/* Make sure that after parsing only whitespace
 			   is left over */
 			if (!_line_is_space(leftover)) {
@@ -1804,11 +1758,7 @@ int s_p_parse_pair_with_op(s_p_hashtbl_t *hashtbl, const char *key,
 		leftover++;
 	while (*leftover != '\0' && isspace(*leftover))
 		leftover++; /* skip trailing spaces */
-	if (_handle_keyvalue_match(p, value, leftover, &leftover) == -1) {
-		xfree(value);
-		slurm_seterrno(EINVAL);
-		return 0;
-	}
+	_handle_keyvalue_match(p, value, leftover, &leftover);
 	xfree(value);
 
 	return 1;
@@ -2158,11 +2108,11 @@ void s_p_dump_values(const s_p_hashtbl_t *hashtbl,
  * Primarily for sending a table across the network so you don't have to read a
  * file in.
  */
-extern buf_t *s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
-			       const s_p_options_t options[],
-			       const uint32_t cnt)
+extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
+			   const s_p_options_t options[],
+			   const uint32_t cnt)
 {
-	buf_t *buffer = init_buf(0);
+	Buf buffer = init_buf(0);
 	s_p_values_t *p;
 	int i;
 
@@ -2226,7 +2176,7 @@ extern buf_t *s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
 /*
  * Given a buffer, unpack key, type, op and value into a hashtbl.
  */
-extern s_p_hashtbl_t *s_p_unpack_hashtbl(buf_t *buffer)
+extern s_p_hashtbl_t *s_p_unpack_hashtbl(Buf buffer)
 {
 	s_p_values_t *value = NULL;
 	s_p_hashtbl_t *hashtbl = NULL;

@@ -30,62 +30,38 @@ ids = {}
 title = ''
 dirname = ''
 
-# Insert tags for options
+# Instert tags for options
 #   Two styles are processed.
 #       <DT><B>pppppp</B><DD>
 #           has tag <a id="OPT_pppppp"></a>
 #       <DT><B>--pppppp</B> or <DT><B>-P</B>, <B>--pppppp</B>
 #           has tag <a id="OPT_pppppp"></a>
 #   <H2>hhhh</h2> also has tag has tag <a id="SECTION_hhhh"></a> inserted
-def insert_tag(lineIn):
-    lineOt = ""
-    if lineIn[0:2] == "<H" and lineIn[3] == ">":
-        header_num = lineIn[2]
-        # Don't make links to h1 tags - no need, since already at top of page
-        if header_num == "1":
-            return lineIn;
+def insert_tag(html, lineIn):
+    if lineIn[0:4] == "<H2>":
+        posEnd = lineIn.find("</H2>")
+        if posEnd != -1:
+            id_name = lineIn[4:posEnd]
+            id_name = id_name.replace(' ','-')
+            if id_name in ids:
+                ids[id_name] += 1
+                id_name += "_" + str(ids[id_name])
+            else:
+                ids[id_name] = 0
+            html.write('<a id="SECTION_' + id_name + '"></a>\n')
+            return
 
-        posEnd = lineIn.find("</H%s>" % header_num)
-        if posEnd == -1:
-            return lineIn;
-
-        contents = lineIn[4:posEnd]
-        id_name = contents.replace(' ','-')
-        if id_name in ids:
-            ids[id_name] += 1
-            id_name += "_" + str(ids[id_name])
-        else:
-            ids[id_name] = 0
-        id_name = "SECTION_%s" % (id_name)
-        lineOt = '<h%s>%s<a class="slurm_link" id="%s" href="#%s"></a></h%s>' % (header_num, contents, id_name, id_name, header_num)
-        return lineOt
-
-    if lineIn[0:4] != "<DT>":
-        return lineIn
-    if lineIn[4:7] == "<B>":
-        bold_tag = True
-    elif lineIn[4:7] == "<I>":
-        bold_tag = False
-    else:
-        return lineIn
-    contentsBgn = 4
-    contentsEnd = lineIn.find("<DD>")
-    contents = lineIn[contentsBgn:contentsEnd]
+    if lineIn[0:7] != "<DT><B>":
+        return
     posBgn = lineIn.find("--")
     if posBgn == -1:
         # 1st form
-        posBgn = 7
-    else:
-        posBgn += 2
-
-    if bold_tag:
-        posEnd = lineIn.find("</B>",posBgn)
-    else:
-        posEnd = lineIn.find("</I>",posBgn)
-
+        posBgn = 5
+    posBgn = posBgn + 2
+    posEnd = lineIn.find("</B>",posBgn)
     if posEnd == -1:
         # poorly constructed
-        return lineIn
+        return
 
     id_name = lineIn[posBgn:posEnd]
     id_name = id_name.replace(' ','-')
@@ -94,10 +70,8 @@ def insert_tag(lineIn):
         id_name += "_" + str(ids[id_name])
     else:
         ids[id_name] = 0
-    id_name = "OPT_%s" % (id_name)
-    link_and_contents = '%s<a class="slurm_link" id="%s" href="#%s"></a>' % (contents, id_name, id_name)
-    lineOt = "<dt>" + link_and_contents + "</dt><dd>"
-    return lineOt
+    html.write('<a id="OPT_' + id_name + '"></a>\n')
+    return
 
 
 def llnl_references(line):
@@ -273,7 +247,7 @@ for filename in files:
         # Special case some html references
         line = llnl_references(line)
         #insert tags for some options
-        line = insert_tag(line)
+        insert_tag(html, line)
         # Make man2html links relative ones
         line = relative_reference(line)
 

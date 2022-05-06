@@ -96,6 +96,7 @@ sbin_PROGRAMS = slurmstepd$(EXEEXT)
 subdir = src/slurmd/slurmstepd
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
+	$(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
@@ -135,7 +136,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
-	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
@@ -146,18 +146,16 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = $(top_builddir)/config.h \
-	$(top_builddir)/slurm/slurm_version.h
+CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(sbindir)"
 PROGRAMS = $(sbin_PROGRAMS)
-am_slurmstepd_OBJECTS = container.$(OBJEXT) slurmstepd.$(OBJEXT) \
-	mgr.$(OBJEXT) task.$(OBJEXT) slurmstepd_job.$(OBJEXT) \
-	io.$(OBJEXT) ulimits.$(OBJEXT) pdebug.$(OBJEXT) \
-	pam_ses.$(OBJEXT) read_oci_conf.$(OBJEXT) req.$(OBJEXT) \
-	multi_prog.$(OBJEXT) step_terminate_monitor.$(OBJEXT) \
-	x11_forwarding.$(OBJEXT)
+am_slurmstepd_OBJECTS = slurmstepd.$(OBJEXT) mgr.$(OBJEXT) \
+	task.$(OBJEXT) slurmstepd_job.$(OBJEXT) io.$(OBJEXT) \
+	ulimits.$(OBJEXT) pdebug.$(OBJEXT) pam_ses.$(OBJEXT) \
+	req.$(OBJEXT) multi_prog.$(OBJEXT) \
+	step_terminate_monitor.$(OBJEXT) x11_forwarding.$(OBJEXT)
 slurmstepd_OBJECTS = $(am_slurmstepd_OBJECTS)
 am__DEPENDENCIES_1 =
 am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
@@ -184,10 +182,9 @@ am__v_at_1 =
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir) -I$(top_builddir)/slurm
 depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
 am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = ./$(DEPDIR)/container.Po ./$(DEPDIR)/io.Po \
-	./$(DEPDIR)/mgr.Po ./$(DEPDIR)/multi_prog.Po \
-	./$(DEPDIR)/pam_ses.Po ./$(DEPDIR)/pdebug.Po \
-	./$(DEPDIR)/read_oci_conf.Po ./$(DEPDIR)/req.Po \
+am__depfiles_remade = ./$(DEPDIR)/io.Po ./$(DEPDIR)/mgr.Po \
+	./$(DEPDIR)/multi_prog.Po ./$(DEPDIR)/pam_ses.Po \
+	./$(DEPDIR)/pdebug.Po ./$(DEPDIR)/req.Po \
 	./$(DEPDIR)/slurmstepd.Po ./$(DEPDIR)/slurmstepd_job.Po \
 	./$(DEPDIR)/step_terminate_monitor.Po ./$(DEPDIR)/task.Po \
 	./$(DEPDIR)/ulimits.Po ./$(DEPDIR)/x11_forwarding.Po
@@ -425,6 +422,9 @@ UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 YAML_CPPFLAGS = @YAML_CPPFLAGS@
 YAML_LDFLAGS = @YAML_LDFLAGS@
+ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
+ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
+ZLIB_LIBS = @ZLIB_LIBS@
 _libcurl_config = @_libcurl_config@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -464,8 +464,6 @@ infodir = @infodir@
 install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
-libselinux_CFLAGS = @libselinux_CFLAGS@
-libselinux_LIBS = @libselinux_LIBS@
 localedir = @localedir@
 localstatedir = @localstatedir@
 lua_CFLAGS = @lua_CFLAGS@
@@ -482,7 +480,6 @@ sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
 sysconfdir = @sysconfdir@
-systemdsystemunitdir = @systemdsystemunitdir@
 target = @target@
 target_alias = @target_alias@
 target_cpu = @target_cpu@
@@ -492,7 +489,10 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
-depend_libs = ../common/libslurmd_common.o
+depend_libs = \
+	$(top_builddir)/src/common/libdaemonize.la \
+	../common/libslurmd_common.o
+
 
 # If slurmstepd_LDADD or slurmstepd_LDFLAGS change
 # make sure you alter the below depend_[ldadd|ldflags] to look identical in the
@@ -504,10 +504,9 @@ depend_libs = ../common/libslurmd_common.o
 depend_ldadd = $(HWLOC_LIBS) $(PAM_LIBS) $(UTIL_LIBS)
 depend_ldflags = $(HWLOC_LDFLAGS)
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
-slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd) $(libselinux_LIBS)
+slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd)
 slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(depend_ldflags)
 slurmstepd_SOURCES = \
-	container.c container.h	\
 	slurmstepd.c slurmstepd.h	\
 	mgr.c mgr.h			\
 	task.c task.h			\
@@ -516,7 +515,6 @@ slurmstepd_SOURCES = \
 	ulimits.c ulimits.h     	\
 	pdebug.c pdebug.h		\
 	pam_ses.c pam_ses.h		\
-	read_oci_conf.h read_oci_conf.c \
 	req.c req.h			\
 	multi_prog.c multi_prog.h	\
 	step_terminate_monitor.c step_terminate_monitor.h \
@@ -616,13 +614,11 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/container.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/io.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/mgr.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/multi_prog.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pam_ses.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pdebug.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/read_oci_conf.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/req.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmstepd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmstepd_job.Po@am__quote@ # am--include-marker
@@ -758,13 +754,11 @@ clean-am: clean-generic clean-libtool clean-sbinPROGRAMS \
 	mostlyclean-am
 
 distclean: distclean-am
-		-rm -f ./$(DEPDIR)/container.Po
-	-rm -f ./$(DEPDIR)/io.Po
+		-rm -f ./$(DEPDIR)/io.Po
 	-rm -f ./$(DEPDIR)/mgr.Po
 	-rm -f ./$(DEPDIR)/multi_prog.Po
 	-rm -f ./$(DEPDIR)/pam_ses.Po
 	-rm -f ./$(DEPDIR)/pdebug.Po
-	-rm -f ./$(DEPDIR)/read_oci_conf.Po
 	-rm -f ./$(DEPDIR)/req.Po
 	-rm -f ./$(DEPDIR)/slurmstepd.Po
 	-rm -f ./$(DEPDIR)/slurmstepd_job.Po
@@ -817,13 +811,11 @@ install-ps-am:
 installcheck-am:
 
 maintainer-clean: maintainer-clean-am
-		-rm -f ./$(DEPDIR)/container.Po
-	-rm -f ./$(DEPDIR)/io.Po
+		-rm -f ./$(DEPDIR)/io.Po
 	-rm -f ./$(DEPDIR)/mgr.Po
 	-rm -f ./$(DEPDIR)/multi_prog.Po
 	-rm -f ./$(DEPDIR)/pam_ses.Po
 	-rm -f ./$(DEPDIR)/pdebug.Po
-	-rm -f ./$(DEPDIR)/read_oci_conf.Po
 	-rm -f ./$(DEPDIR)/req.Po
 	-rm -f ./$(DEPDIR)/slurmstepd.Po
 	-rm -f ./$(DEPDIR)/slurmstepd_job.Po

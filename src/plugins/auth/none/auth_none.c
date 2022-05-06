@@ -75,6 +75,7 @@ const char plugin_name[] = "Null authentication plugin";
 const char plugin_type[] = "auth/none";
 const uint32_t plugin_id = AUTH_PLUGIN_NONE;
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
+bool hash_enable = false;
 
 /*
  * An opaque type representing authentication credentials.  This type can be
@@ -107,12 +108,12 @@ const uint32_t plugin_version = SLURM_VERSION_NUMBER;
  * to avoid that.
  *
  */
-typedef struct {
+typedef struct _slurm_auth_credential {
 	int index; /* MUST ALWAYS BE FIRST. DO NOT PACK. */
 	char *hostname;
 	uid_t uid;
 	gid_t gid;
-} auth_credential_t;
+} slurm_auth_credential_t;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -138,9 +139,10 @@ extern int fini(void)
  * Allocate and initializes a credential.  This function should return
  * NULL if it cannot allocate a credential.
  */
-auth_credential_t *auth_p_create(char *auth_info)
+slurm_auth_credential_t *slurm_auth_create(char *auth_info, uid_t r_uid,
+					   void *data, int dlen)
 {
-	auth_credential_t *cred = xmalloc(sizeof(*cred));
+	slurm_auth_credential_t *cred = xmalloc(sizeof(*cred));
 
 	cred->uid = geteuid();
 	cred->gid = getegid();
@@ -151,10 +153,10 @@ auth_credential_t *auth_p_create(char *auth_info)
 }
 
 /*
- * Free a credential that was allocated with auth_p_create() or
- * auth_p_unpack().
+ * Free a credential that was allocated with slurm_auth_create() or
+ * slurm_auth_unpack().
  */
-int auth_p_destroy(auth_credential_t *cred)
+int slurm_auth_destroy(slurm_auth_credential_t *cred)
 {
 	if (!cred) {
 		slurm_seterrno(ESLURM_AUTH_MEMORY);
@@ -170,16 +172,16 @@ int auth_p_destroy(auth_credential_t *cred)
  *
  * Return SLURM_SUCCESS if the credential is in order and valid.
  */
-int auth_p_verify(auth_credential_t *cred, char *auth_info)
+int slurm_auth_verify(slurm_auth_credential_t *cred, char *auth_info)
 {
 	return SLURM_SUCCESS;
 }
 
 /*
  * Obtain the Linux UID from the credential.  The accuracy of this data
- * is not assured until auth_p_verify() has been called for it.
+ * is not assured until slurm_auth_verify() has been called for it.
  */
-uid_t auth_p_get_uid(auth_credential_t *cred)
+uid_t slurm_auth_get_uid(slurm_auth_credential_t *cred)
 {
 	if (!cred) {
 		slurm_seterrno(ESLURM_AUTH_BADARG);
@@ -191,9 +193,9 @@ uid_t auth_p_get_uid(auth_credential_t *cred)
 
 /*
  * Obtain the Linux GID from the credential.
- * See auth_p_get_uid() above for details on correct behavior.
+ * See slurm_auth_get_uid() above for details on correct behavior.
  */
-gid_t auth_p_get_gid(auth_credential_t *cred)
+gid_t slurm_auth_get_gid(slurm_auth_credential_t *cred)
 {
 	if (!cred) {
 		slurm_seterrno(ESLURM_AUTH_BADARG);
@@ -205,9 +207,9 @@ gid_t auth_p_get_gid(auth_credential_t *cred)
 
 /*
  * Obtain the originating hostname from the credential.
- * See auth_p_get_uid() above for details on correct behavior.
+ * See slurm_auth_get_uid() above for details on correct behavior.
  */
-char *auth_p_get_host(auth_credential_t *cred)
+char *slurm_auth_get_host(slurm_auth_credential_t *cred)
 {
 	if (!cred) {
 		slurm_seterrno(ESLURM_AUTH_BADARG);
@@ -217,11 +219,25 @@ char *auth_p_get_host(auth_credential_t *cred)
 	return xstrdup(cred->hostname);
 }
 
+int auth_p_get_data(slurm_auth_credential_t *cred, char **data, uint32_t *len)
+{
+	if (!cred) {
+		slurm_seterrno(ESLURM_AUTH_BADARG);
+		return SLURM_ERROR;
+	}
+
+	*data = NULL;
+	*len = 0;
+
+	return SLURM_SUCCESS;
+}
+
 /*
  * Marshall a credential for transmission over the network, according to
  * Slurm's marshalling protocol.
  */
-int auth_p_pack(auth_credential_t *cred, buf_t *buf, uint16_t protocol_version)
+int slurm_auth_pack(slurm_auth_credential_t *cred, Buf buf,
+		    uint16_t protocol_version)
 {
 	if (!cred || !buf) {
 		slurm_seterrno(ESLURM_AUTH_BADARG);
@@ -245,9 +261,9 @@ int auth_p_pack(auth_credential_t *cred, buf_t *buf, uint16_t protocol_version)
  * Unmarshall a credential after transmission over the network according
  * to Slurm's marshalling protocol.
  */
-auth_credential_t *auth_p_unpack(buf_t *buf, uint16_t protocol_version)
+slurm_auth_credential_t *slurm_auth_unpack(Buf buf, uint16_t protocol_version)
 {
-	auth_credential_t *cred = NULL;
+	slurm_auth_credential_t *cred = NULL;
 	uint32_t tmpint;
 	uint32_t uint32_tmp = 0;
 
@@ -283,23 +299,23 @@ auth_credential_t *auth_p_unpack(buf_t *buf, uint16_t protocol_version)
 	return cred;
 
 unpack_error:
-	auth_p_destroy(cred);
+	slurm_auth_destroy(cred);
 	slurm_seterrno(ESLURM_AUTH_UNPACK);
 	return NULL;
 }
 
-int auth_p_thread_config(const char *token, const char *username)
+int slurm_auth_thread_config(const char *token, const char *username)
 {
 	/* No auth -> everything works */
 	return SLURM_SUCCESS;
 }
 
-void auth_p_thread_clear(void)
+void slurm_auth_thread_clear(void)
 {
 	/* no op */
 }
 
-char *auth_p_token_generate(const char *username, int lifespan)
+char *slurm_auth_token_generate(const char *username, int lifespan)
 {
 	return NULL;
 }

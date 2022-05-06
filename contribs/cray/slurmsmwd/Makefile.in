@@ -98,6 +98,7 @@ sbin_PROGRAMS = slurmsmwd$(EXEEXT)
 subdir = contribs/cray/slurmsmwd
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
+	$(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
@@ -137,7 +138,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
-	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
@@ -148,8 +148,7 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = $(top_builddir)/config.h \
-	$(top_builddir)/slurm/slurm_version.h
+CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(sbindir)"
@@ -157,7 +156,8 @@ PROGRAMS = $(sbin_PROGRAMS)
 am_slurmsmwd_OBJECTS = main.$(OBJEXT) read_config.$(OBJEXT)
 slurmsmwd_OBJECTS = $(am_slurmsmwd_OBJECTS)
 am__DEPENDENCIES_1 =
-slurmsmwd_DEPENDENCIES = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
+slurmsmwd_DEPENDENCIES = $(top_builddir)/src/common/libdaemonize.la \
+	$(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
@@ -416,6 +416,9 @@ UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 YAML_CPPFLAGS = @YAML_CPPFLAGS@
 YAML_LDFLAGS = @YAML_LDFLAGS@
+ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
+ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
+ZLIB_LIBS = @ZLIB_LIBS@
 _libcurl_config = @_libcurl_config@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -455,8 +458,6 @@ infodir = @infodir@
 install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
-libselinux_CFLAGS = @libselinux_CFLAGS@
-libselinux_LIBS = @libselinux_LIBS@
 localedir = @localedir@
 localstatedir = @localstatedir@
 lua_CFLAGS = @lua_CFLAGS@
@@ -473,7 +474,6 @@ sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
 sysconfdir = @sysconfdir@
-systemdsystemunitdir = @systemdsystemunitdir@
 target = @target@
 target_alias = @target_alias@
 target_cpu = @target_cpu@
@@ -485,7 +485,10 @@ top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src/common $(JSON_CPPFLAGS)
 slurmsmwd_SOURCES = main.c read_config.c
-slurmsmwd_LDADD = $(LIB_SLURM) $(DL_LIBS)
+slurmsmwd_LDADD = \
+	$(top_builddir)/src/common/libdaemonize.la \
+	$(LIB_SLURM) $(DL_LIBS)
+
 slurmsmwd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 ETC_FILES = slurmsmwd.service
 CLEANFILES = $(ETC_FILES)

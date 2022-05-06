@@ -39,24 +39,28 @@
 #include "sstat.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/parse_time.h"
-#include "slurm/slurm.h"
+#include "slurm.h"
 #define FORMAT_STRING_SIZE 34
 
 print_field_t *field = NULL;
 int curr_inx = 1;
 char outbuf[FORMAT_STRING_SIZE];
 
-char *_elapsed_time(uint64_t secs, uint64_t usecs)
+char *_elapsed_time(long secs, long usecs);
+
+char *_elapsed_time(long secs, long usecs)
 {
-	uint64_t days, hours, minutes, seconds, subsec = 0;
+	long	days, hours, minutes, seconds;
+	long    subsec = 0;
 	char *str = NULL;
 
-	if (secs == NO_VAL64)
+	if ((secs < 0) || (secs == NO_VAL))
 		return NULL;
 
-	if (usecs >= 1E6) {
-		secs += usecs / 1E6;
-		usecs = usecs % (int)1E6;
+
+	while (usecs >= 1E6) {
+		secs++;
+		usecs -= 1E6;
 	}
 	if (usecs > 0) {
 		/* give me 3 significant digits to tack onto the sec */
@@ -68,17 +72,14 @@ char *_elapsed_time(uint64_t secs, uint64_t usecs)
 	days    =  secs / 86400;
 
 	if (days)
-		str = xstrdup_printf("%"PRIu64"-%2.2"PRIu64":%2.2"PRIu64":%2.2"PRIu64"",
+		str = xstrdup_printf("%ld-%2.2ld:%2.2ld:%2.2ld",
 				     days, hours, minutes, seconds);
 	else if (hours)
-		str = xstrdup_printf("%2.2"PRIu64":%2.2"PRIu64":%2.2"PRIu64"",
+		str = xstrdup_printf("%2.2ld:%2.2ld:%2.2ld",
 				     hours, minutes, seconds);
-	else if (subsec)
-		str = xstrdup_printf("%2.2"PRIu64":%2.2"PRIu64".%3.3"PRIu64"",
-				     minutes, seconds, subsec);
 	else
-		str = xstrdup_printf("00:%2.2"PRIu64":%2.2"PRIu64"",
-				     minutes, seconds);
+		str = xstrdup_printf("%2.2ld:%2.2ld.%3.3ld",
+				     minutes, seconds, subsec);
 	return str;
 }
 

@@ -54,7 +54,6 @@ enum {
 	SORTID_CORES,
 	SORTID_CURRENT_WATTS,
 	SORTID_ERR_CPUS,
-	SORTID_EXTRA,
 	SORTID_FREE_MEM,
 	SORTID_GRES,
 	SORTID_IDLE_CPUS,
@@ -69,7 +68,6 @@ enum {
 	SORTID_SLURMD_START_TIME,
 	SORTID_SOCKETS,
 	SORTID_STATE,
-	SORTID_STATE_COMPLETE,
 	SORTID_STATE_NUM,
 	SORTID_THREADS,
 	SORTID_TMP_DISK,
@@ -113,8 +111,6 @@ static display_data_t display_data_node[] = {
 	 refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_STATE, "State", false, EDIT_MODEL, refresh_node,
 	 create_model_node, admin_edit_node},
-	{G_TYPE_STRING, SORTID_STATE_COMPLETE, "StateComplete", false,
-	 EDIT_MODEL, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_INT, SORTID_STATE_NUM, NULL, false, EDIT_NONE, refresh_node,
 	 create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_CPUS, "CPU Count", false,
@@ -122,8 +118,6 @@ static display_data_t display_data_node[] = {
 	{G_TYPE_STRING, SORTID_USED_CPUS, "Used CPU Count", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_ERR_CPUS, "Error CPU Count", false,
-	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
-	{G_TYPE_STRING, SORTID_EXTRA, "Extra", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_IDLE_CPUS, "Idle CPU Count", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
@@ -336,14 +330,6 @@ static void _layout_node_record(GtkTreeView *treeview,
 				   lower);
 	xfree(lower);
 
-	lower = node_state_string_complete(node_ptr->node_state);
-	xstrtolower(lower);
-	add_display_treestore_line(update, treestore, &iter,
-				   find_col_name(display_data_node,
-						 SORTID_STATE_COMPLETE),
-				   lower);
-	xfree(lower);
-
 	convert_num_unit((float)node_ptr->boards, tmp_cnt, sizeof(tmp_cnt),
 			 UNIT_NONE, NO_VAL, working_sview_config.convert_flags);
 	add_display_treestore_line(update, treestore, &iter,
@@ -474,11 +460,6 @@ static void _layout_node_record(GtkTreeView *treeview,
 						 SORTID_COMMENT),
 				   node_ptr->comment);
 
-	add_display_treestore_line(update, treestore, &iter,
-				   find_col_name(display_data_node,
-						 SORTID_EXTRA),
-				   node_ptr->extra);
-
 	if (node_ptr->version == NULL) {
 		snprintf(tmp_version, sizeof(tmp_version), "N/A");
 	} else {
@@ -503,7 +484,7 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 	char tmp_used_cpus[20], tmp_cpu_load[20], tmp_free_mem[20], tmp_owner[32];
 	char tmp_current_watts[50], tmp_ave_watts[50];
 	char tmp_cap_watts[50], tmp_version[50];
-	char *tmp_state_lower, *tmp_state_upper, *tmp_state_complete;
+	char *tmp_state_lower, *tmp_state_upper;
 	char *node_alloc_tres = NULL;
 
 	if (node_ptr->energy->current_watts == NO_VAL) {
@@ -576,9 +557,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 	tmp_state_upper = node_state_string(node_ptr->node_state);
 	tmp_state_lower = str_tolower(tmp_state_upper);
 
-	tmp_state_complete = node_state_string_complete(node_ptr->node_state);
-	xstrtolower(tmp_state_complete);
-
 	convert_num_unit((float)node_ptr->real_memory, tmp_mem, sizeof(tmp_mem),
 			 UNIT_MEGA, NO_VAL, working_sview_config.convert_flags);
 
@@ -624,7 +602,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			   SORTID_CPUS,      tmp_cpus,
 			   SORTID_CURRENT_WATTS, tmp_current_watts,
 			   SORTID_CPU_LOAD,  tmp_cpu_load,
-			   SORTID_EXTRA, node_ptr->extra,
 			   SORTID_FREE_MEM,  tmp_free_mem,
 			   SORTID_TMP_DISK,  tmp_disk,
 			   SORTID_IDLE_CPUS, tmp_idle_cpus,
@@ -641,7 +618,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 				sview_node_info_ptr->slurmd_start_time,
 			   SORTID_SOCKETS,   node_ptr->sockets,
 			   SORTID_STATE,     tmp_state_lower,
-			   SORTID_STATE_COMPLETE, tmp_state_complete,
 			   SORTID_STATE_NUM, node_ptr->node_state,
 			   SORTID_THREADS,   node_ptr->threads,
 			   SORTID_TRES_ALLOC, node_alloc_tres ?
@@ -654,7 +630,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			   SORTID_UPDATED,   1,
 			  -1);
 
-	xfree(tmp_state_complete);
 	xfree(tmp_state_lower);
 	xfree(node_alloc_tres);
 	return;

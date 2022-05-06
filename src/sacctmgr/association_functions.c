@@ -655,11 +655,7 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 			g_qos_list = slurmdb_qos_get(
 				db_conn, NULL);
 		tmp_char = slurmdb_qos_str(g_qos_list, assoc->def_qos_id);
-		if (!tmp_char)
-			tmp_char = print_acct =
-				xstrdup_printf("UNKN-%u", assoc->def_qos_id);
 		field->print_routine(field, tmp_char, last);
-		xfree(print_acct);
 		break;
 	case PRINT_FAIRSHARE:
 		if (assoc->shares_raw == SLURMDB_FS_USE_PARENT)
@@ -912,3 +908,15 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	tree_display = 0;
 	return rc;
 }
+
+/* extern int sacctmgr_modify_assoc(int argc, char **argv) */
+/* { */
+/* 	int rc = SLURM_SUCCESS; */
+/* 	return rc; */
+/* } */
+
+/* extern int sacctmgr_delete_assoc(int argc, char **argv) */
+/* { */
+/* 	int rc = SLURM_SUCCESS; */
+/* 	return rc; */
+/* } */

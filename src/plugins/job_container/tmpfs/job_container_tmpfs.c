@@ -8,7 +8,7 @@
  *  Written by Aditi Gaur <agaur@lbl.gov>
  *  All rights reserved.
  *
- *  This file is part of Slurm, a resource management program.
+ *  This file is part of SLURM, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
@@ -58,8 +58,8 @@
 
 #include "read_jcconf.h"
 
-static int _create_ns(uint32_t job_id, uid_t uid, bool remount);
-static int _delete_ns(uint32_t job_id, bool is_slurmd);
+static int _create_ns(uint32_t job_id, bool remount);
+static int _delete_ns(uint32_t job_id);
 
 #if defined (__APPLE__)
 extern slurmd_conf_t *conf __attribute__((weak_import));
@@ -74,17 +74,13 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 static slurm_jc_conf_t *jc_conf = NULL;
 static int step_ns_fd = -1;
 static bool force_rm = true;
-List legacy_jobs;
-
-typedef struct {
-	uint32_t job_id;
-	uint16_t protocol_version;
-} legacy_job_info_t;
+static List running_job_ids = NULL;
 
 static int _create_paths(uint32_t job_id,
 			 char *job_mount,
 			 char *ns_holder,
-			 char *src_bind)
+			 char *src_bind,
+			 char *active)
 {
 	jc_conf = get_slurm_jc_conf();
 
@@ -121,24 +117,49 @@ static int _create_paths(uint32_t job_id,
 		}
 	}
 
+	if (active) {
+		if (snprintf(active, PATH_MAX, "%s/.active", job_mount)
+		    >= PATH_MAX) {
+			error("%s: Unable to build job %u active path: %m",
+			__func__, job_id);
+			return SLURM_ERROR;
+		}
+	}
+
 	return SLURM_SUCCESS;
 }
 
-static int _find_step_in_list(step_loc_t *stepd, uint32_t *job_id)
+static int _find_job_id_in_list(uint32_t *list_job_id, uint32_t *job_id)
 {
-	return (stepd->step_id.job_id == *job_id);
+	return (*list_job_id == *job_id);
 }
 
-static int _find_legacy_job_in_list(legacy_job_info_t *job, uint32_t *job_id)
+static int _append_job_in_list(void *element, void *arg)
 {
-	return (job->job_id == *job_id);
+	step_loc_t *stepd = (step_loc_t *) element;
+	List job_id_list = (List) arg;
+
+	xassert(job_id_list);
+
+	if (!list_find_first(job_id_list, (ListFindF)_find_job_id_in_list,
+			     &stepd->step_id.job_id)) {
+		int fd = stepd_connect(stepd->directory,
+				       stepd->nodename,
+				       &stepd->step_id,
+				       &stepd->protocol_version);
+		if (fd != -1) {
+			list_append(job_id_list, &stepd->step_id.job_id);
+			close(fd);
+		}
+	}
+
+	return SLURM_SUCCESS;
 }
 
-static int _restore_ns(List steps, const char *d_name)
+static int _restore_ns(const char *d_name)
 {
-	int fd;
+	int rc = SLURM_SUCCESS;
 	uint32_t job_id;
-	step_loc_t *stepd;
 
 	if (!(job_id = slurm_atoul(d_name))) {
 		debug3("ignoring %s, could not convert to jobid.", d_name);
@@ -146,35 +167,17 @@ static int _restore_ns(List steps, const char *d_name)
 	}
 
 	/* here we think this is a job container */
-	debug3("determine if job %u is still running", job_id);
-	stepd = list_find_first(steps, (ListFindF)_find_step_in_list, &job_id);
-	if (!stepd) {
-		debug("%s: Job %u not found, deleting the namespace",
+	debug3("attempting to restore namespace for job %u", job_id);
+	if (_create_ns(job_id, true)) {
+		error("%s: failed to restore namespace for %u",
 		      __func__, job_id);
-		return _delete_ns(job_id, false);
-	}
+		rc = SLURM_ERROR;
+	} else if (!list_find_first(running_job_ids,
+				    (ListFindF)_find_job_id_in_list,
+				    &job_id))
+		rc = _delete_ns(job_id);
 
-	fd = stepd_connect(stepd->directory, stepd->nodename,
-			   &stepd->step_id, &stepd->protocol_version);
-	if (fd == -1) {
-		error("%s: failed to connect to stepd for %u.",
-		      __func__, job_id);
-		return _delete_ns(job_id, false);
-	}
-
-	close(fd);
-
-	if (stepd->protocol_version == SLURM_20_11_PROTOCOL_VERSION) {
-		legacy_job_info_t *job = xmalloc(sizeof(*job));
-		if (!legacy_jobs)
-			legacy_jobs = list_create(NULL);
-		job->job_id = job_id;
-		job->protocol_version = stepd->protocol_version;
-		list_append(legacy_jobs, job);
-		return _create_ns(job_id, 0, true);
-	}
-
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 extern void container_p_reconfig(void)
@@ -198,20 +201,6 @@ extern int init(void)
 	return SLURM_SUCCESS;
 }
 
-static int _legacy_fini(void *x, void *arg) {
-	char job_mount[PATH_MAX];
-	legacy_job_info_t *job = (legacy_job_info_t *)x;
-
-	if (_create_paths(job->job_id, job_mount, NULL, NULL)
-	    != SLURM_SUCCESS)
-		return SLURM_ERROR;
-
-	if (umount2(job_mount, MNT_DETACH))
-		debug2("umount2: %s failed: %s", job_mount, strerror(errno));
-
-	return SLURM_SUCCESS;
-}
-
 /*
  * fini() is called when the plugin is removed. Clear any allocated
  *	storage here.
@@ -219,23 +208,28 @@ static int _legacy_fini(void *x, void *arg) {
 extern int fini(void)
 {
 	int rc = SLURM_SUCCESS;
+
 	debug("%s unloaded", plugin_name);
 
 #ifdef HAVE_NATIVE_CRAY
 	return SLURM_SUCCESS;
 #endif
 
+	jc_conf = get_slurm_jc_conf();
+	if (!jc_conf) {
+		error("%s: Configuration not loaded", __func__);
+		return SLURM_ERROR;
+	}
 	if (step_ns_fd != -1) {
 		close(step_ns_fd);
 		step_ns_fd = -1;
 	}
-
-	if (!legacy_jobs)
-		return SLURM_SUCCESS;
-
-	rc = list_for_each(legacy_jobs, _legacy_fini, NULL);
-
-	FREE_NULL_LIST(legacy_jobs);
+	if (umount2(jc_conf->basepath, MNT_DETACH)) {
+		error("%s: umount2: %s failed: %s",
+		      __func__, jc_conf->basepath, strerror(errno));
+		rc = SLURM_ERROR;
+	}
+	free_jc_conf();
 
 	return rc;
 }
@@ -302,7 +296,38 @@ extern int container_p_restore(char *dir_name, bool recover)
 
 	}
 
+	/* It could fail if no leaks, it can clean as much leaks as possible. */
+	if (umount2(jc_conf->basepath, MNT_DETACH))
+		debug2("umount2: %s failed: %s", jc_conf->basepath, strerror(errno));
+
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
+	/*
+	 * MS_BIND mountflag would make mount() ignore all other mountflags
+	 * except MS_REC. We need MS_PRIVATE mountflag as well to make the
+	 * mount (as well as all mounts inside it) private, which needs to be
+	 * done by calling mount() a second time with MS_PRIVATE and MS_REC
+	 * flags.
+	 */
+	if (mount(jc_conf->basepath, jc_conf->basepath, "xfs", MS_BIND, NULL)) {
+		error("%s: Initial base mount failed, %s",
+		      __func__, strerror(errno));
+		return SLURM_ERROR;
+	}
+	if (mount(jc_conf->basepath, jc_conf->basepath, "xfs",
+		  MS_PRIVATE | MS_REC, NULL)) {
+		error("%s: Initial base mount failed, %s",
+		      __func__, strerror(errno));
+		return SLURM_ERROR;
+	}
+#endif
+	debug3("tmpfs: Base namespace created");
+
 	steps = stepd_available(conf->spooldir, conf->node_name);
+	running_job_ids = list_create(NULL);
+
+	/* Iterate over steps, and check once per job if it's still running. */
+	(void)list_for_each(steps, _append_job_in_list, running_job_ids);
+	FREE_NULL_LIST(steps);
 
 	/*
 	 * Iterate over basepath, restore only the folders that seem bounded to
@@ -316,11 +341,11 @@ extern int container_p_restore(char *dir_name, bool recover)
 	}
 
 	while ((ep = readdir(dp))) {
-		if (_restore_ns(steps, ep->d_name))
+		if (_restore_ns(ep->d_name))
 			rc = SLURM_ERROR;
 	}
 	closedir(dp);
-	FREE_NULL_LIST(steps);
+	FREE_NULL_LIST(running_job_ids);
 
 	if (rc)
 		error("Encountered an error while restoring job containers.");
@@ -400,11 +425,12 @@ static int _rm_data(const char *path, const struct stat *st_buf,
 	return rc;
 }
 
-static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
+static int _create_ns(uint32_t job_id, bool remount)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
 	char src_bind[PATH_MAX];
+	char active[PATH_MAX];
 	char *result = NULL;
 	int fd;
 	int rc = 0;
@@ -416,7 +442,7 @@ static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
 	return 0;
 #endif
 
-	if (_create_paths(job_id, job_mount, ns_holder, src_bind)
+	if (_create_paths(job_id, job_mount, ns_holder, src_bind, active)
 	    != SLURM_SUCCESS) {
 		return -1;
 	}
@@ -427,33 +453,26 @@ static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
 		      __func__, job_mount, strerror(errno));
 		return -1;
 	} else if (!remount && rc && errno == EEXIST) {
+		/* stat to see if .active exists */
+		struct stat st;
+		rc = stat(active, &st);
+		if (rc) {
+			/*
+			 * If .active does not exist, then the directory for
+			 * the job exists but namespace is not active. This
+			 * should not happen normally. Throw error and exit
+			 */
+			error("%s: Dir %s exists but %s was not found, exiting",
+			      __func__, job_mount, active);
+			goto exit2;
+		}
 		/*
-		 * This is coming from sbcast likely,
+		 * If it exists, this is coming from sbcast likely,
 		 * exit as success
 		 */
 		rc = 0;
 		goto exit2;
 	}
-
-#if !defined(__APPLE__) && !defined(__FreeBSD__)
-	/*
-	 * MS_BIND mountflag would make mount() ignore all other mountflags
-	 * except MS_REC. We need MS_PRIVATE mountflag as well to make the
-	 * mount (as well as all mounts inside it) private, which needs to be
-	 * done by calling mount() a second time with MS_PRIVATE and MS_REC
-	 * flags.
-	 */
-	if (mount(job_mount, job_mount, "xfs", MS_BIND, NULL)) {
-		error("%s: Initial base mount failed, %s",
-		      __func__, strerror(errno));
-		return SLURM_ERROR;
-	}
-	if (mount(job_mount, job_mount, "xfs", MS_PRIVATE | MS_REC, NULL)) {
-		error("%s: Initial base mount failed, %s",
-		      __func__, strerror(errno));
-		return SLURM_ERROR;
-	}
-#endif
 
 	fd = open(ns_holder, O_CREAT|O_RDWR, S_IRWXU);
 	if (fd == -1) {
@@ -471,16 +490,14 @@ static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
 	/* run any initialization script- if any*/
 	if (jc_conf->initscript) {
 		result = run_command("initscript", jc_conf->initscript, NULL,
-				     NULL, 10000, 0, &rc);
+				     10000, 0, &rc);
 		if (rc) {
 			error("%s: init script: %s failed",
 			      __func__, jc_conf->initscript);
-			xfree(result);
 			goto exit2;
 		} else {
 			debug3("initscript stdout: %s", result);
 		}
-		xfree(result);
 	}
 
 	rc = mkdir(src_bind, 0700);
@@ -554,28 +571,13 @@ static int _create_ns(uint32_t job_id, uid_t uid, bool remount)
 			rc = -1;
 			goto child_exit;
 		}
-
-		/*
-		 * this happens when restarting the slurmd, the ownership should
-		 * already be correct here.
-		 */
-		if (!remount) {
-			rc = chown(src_bind, uid, -1);
-			if (rc) {
-				error("%s: chown failed for %s: %s",
-				      __func__, src_bind, strerror(errno));
-				rc = -1;
-				goto child_exit;
-			}
-		}
-
 		/*
 		 * This umount is to remove the basepath mount from being
 		 * visible inside the namespace. So if a user looks up the
 		 * mounts inside the job, they will only see their job mount
 		 * but not the basepath mount.
 		 */
-		rc = umount2(job_mount, MNT_DETACH);
+		rc = umount2(jc_conf->basepath, MNT_DETACH);
 		if (rc) {
 			error("%s: umount2 failed: %s",
 			      __func__, strerror(errno));
@@ -658,15 +660,15 @@ exit2:
 			      __func__, job_mount, strerror(errno));
 			return SLURM_ERROR;
 		}
-		umount2(job_mount, MNT_DETACH);
+
 	}
 
 	return rc;
 }
 
-extern int container_p_create(uint32_t job_id, uid_t uid)
+extern int container_p_create(uint32_t job_id)
 {
-	return SLURM_SUCCESS;
+	return _create_ns(job_id, false);
 }
 
 /* Add a process to a job container, create the proctrack container to add */
@@ -674,9 +676,25 @@ extern int container_p_join_external(uint32_t job_id)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
+	char active[PATH_MAX];
+	int rc = 0;
+	struct stat st;
 
-	if (_create_paths(job_id, job_mount, ns_holder, NULL)
+	if (_create_paths(job_id, job_mount, ns_holder, NULL, active)
 	    != SLURM_SUCCESS) {
+		return -1;
+	}
+
+	/* assert that namespace is active */
+	rc = stat(active, &st);
+	if (rc) {
+		/*
+		 * If .active does not exist, then dont pass
+		 * the fd of the namespace. It means perhaps
+		 * namespace may not have been fully set up when
+		 * the request for the fd came in.
+		 */
+		debug("%s not found, namespace cannot be joined", active);
 		return -1;
 	}
 
@@ -701,6 +719,8 @@ extern int container_p_join(uint32_t job_id, uid_t uid)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
+	char src_bind[PATH_MAX];
+	char active[PATH_MAX];
 	int fd;
 	int rc = 0;
 
@@ -715,8 +735,15 @@ extern int container_p_join(uint32_t job_id, uid_t uid)
 	if (job_id == 0)
 		return SLURM_SUCCESS;
 
-	if (_create_paths(job_id, job_mount, ns_holder, NULL)
+	if (_create_paths(job_id, job_mount, ns_holder, src_bind, active)
 	    != SLURM_SUCCESS) {
+		return SLURM_ERROR;
+	}
+
+	rc = chown(src_bind, uid, -1);
+	if (rc) {
+		error("%s: chown failed for %s: %s",
+		      __func__, src_bind, strerror(errno));
 		return SLURM_ERROR;
 	}
 
@@ -736,13 +763,22 @@ extern int container_p_join(uint32_t job_id, uid_t uid)
 		close(fd);
 		return SLURM_ERROR;
 	} else {
+		/* touch .active to imply namespace is active */
+		close(fd);
+		fd = open(active, O_CREAT|O_RDWR, S_IRWXU);
+		if (fd == -1) {
+			error("%s: open failed %s: %s",
+			      __func__, active, strerror(errno));
+			return SLURM_ERROR;
+		}
+		close(fd);
 		debug3("job entered namespace");
 	}
 
 	return SLURM_SUCCESS;
 }
 
-static int _delete_ns(uint32_t job_id, bool is_slurmd)
+static int _delete_ns(uint32_t job_id)
 {
 	char job_mount[PATH_MAX];
 	char ns_holder[PATH_MAX];
@@ -752,36 +788,12 @@ static int _delete_ns(uint32_t job_id, bool is_slurmd)
 	return SLURM_SUCCESS;
 #endif
 
-	if (_create_paths(job_id, job_mount, ns_holder, NULL)
+	if (_create_paths(job_id, job_mount, ns_holder, NULL, NULL)
 	    != SLURM_SUCCESS) {
 		return SLURM_ERROR;
 	}
 
 	errno = 0;
-
-	/*
-	 * FIXME: only used for SLURM_20_11_PROTOCOL_VERSION
-	 * This is only here to handle upgrades from 20.11, and should be
-	 * removed once upgrading from 20.11 is no longer supported.
-	 */
-	if (is_slurmd && legacy_jobs) {
-		legacy_job_info_t *job;
-		job = list_find_first(legacy_jobs,
-				      (ListFindF)_find_legacy_job_in_list,
-				      &job_id);
-		/* if we didn't find the job, it doesn't need legacy handling */
-		if (!job)
-			return SLURM_SUCCESS;
-		/* cleanup the list */
-		list_delete_first(legacy_jobs,
-				  (ListFindF)_find_legacy_job_in_list,
-				  &job_id);
-		xfree(job);
-		if (list_count(legacy_jobs) == 0)
-			FREE_NULL_LIST(legacy_jobs);
-	} else if (is_slurmd)
-		return SLURM_SUCCESS;
-
 	rc = umount2(ns_holder, MNT_DETACH);
 	if (rc) {
 		error("%s: umount2 %s failed: %s",
@@ -806,25 +818,10 @@ static int _delete_ns(uint32_t job_id, bool is_slurmd)
 		return SLURM_ERROR;
 	}
 
-	if (umount2(job_mount, MNT_DETACH))
-		debug2("umount2: %s failed: %s", job_mount, strerror(errno));
-	rmdir(job_mount);
-
 	return SLURM_SUCCESS;
 }
 
 extern int container_p_delete(uint32_t job_id)
 {
-	/* change to return SLURM_SUCCESS when 20.11 is not supported) */
-	return _delete_ns(job_id, true);
-}
-
-extern int container_p_stepd_create(uint32_t job_id, uid_t uid)
-{
-	return _create_ns(job_id, uid, false);
-}
-
-extern int container_p_stepd_delete(uint32_t job_id)
-{
-	return _delete_ns(job_id, false);
+	return _delete_ns(job_id);
 }

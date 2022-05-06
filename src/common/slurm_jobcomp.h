@@ -84,27 +84,29 @@ typedef struct {
 	char *exit_code;
 } jobcomp_job_rec_t;
 
+typedef struct slurm_jobcomp_context * slurm_jobcomp_context_t;
+
 extern void jobcomp_destroy_job(void *object);
 
 /* initialization of job completion logging */
-extern int jobcomp_g_init(char *jobcomp_loc);
+extern int g_slurm_jobcomp_init(char *jobcomp_loc);
 
 /* terminate pthreads and free, general clean-up for termination */
-extern int jobcomp_g_fini(void);
+extern int g_slurm_jobcomp_fini(void);
 
 /* write record of a job's completion */
-extern int jobcomp_g_write(job_record_t *job_ptr);
+extern int g_slurm_jobcomp_write(job_record_t *job_ptr);
 
 /*
  * get info from the storage
  * returns List of jobcomp_job_rec_t *
  * note List needs to be freed when called
  */
-extern List jobcomp_g_get_jobs(slurmdb_job_cond_t *job_cond);
+extern List g_slurm_jobcomp_get_jobs(slurmdb_job_cond_t *job_cond);
 
 /*
  * expire old info from the storage
  */
-extern int jobcomp_g_archive(slurmdb_archive_cond_t *arch_cond);
+extern int g_slurm_jobcomp_archive(slurmdb_archive_cond_t *arch_cond);
 
 #endif /*__SLURM_JOBCOMP_H__*/

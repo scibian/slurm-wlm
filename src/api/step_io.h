@@ -50,7 +50,6 @@ struct client_io {
 					 * NO_VAL */
 
 	char *io_key;
-	uint32_t io_key_len;
 
 	/* internal variables */
 	pthread_t ioid;		/* stdio thread id 		  */

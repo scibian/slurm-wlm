@@ -397,9 +397,10 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
 		out_msg.msg_type = ACCOUNTING_FIRST_REG;
 		out_msg.flags = SLURM_GLOBAL_AUTH_KEY;
 		out_msg.data = &update;
+		slurm_msg_set_r_uid(&out_msg, SLURM_AUTH_UID_ANY);
 		slurm_send_node_msg(fd, &out_msg);
 		/* We probably need to add matching recv_msg function
-		 * for an arbitrary fd or should these be fire
+		 * for an arbitray fd or should these be fire
 		 * and forget?  For this, that we can probably
 		 * forget about it */
 		close(fd);
@@ -879,7 +880,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 	return fullname;
 }
 
-extern int archive_write_file(buf_t *buffer, char *cluster_name,
+extern int archive_write_file(Buf buffer, char *cluster_name,
 			      time_t period_start, time_t period_end,
 			      char *arch_dir, char *arch_type,
 			      uint32_t archive_period)

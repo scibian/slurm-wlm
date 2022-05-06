@@ -96,6 +96,7 @@ noinst_PROGRAMS = libslurmd_common.o$(EXEEXT)
 subdir = src/slurmd/common
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
+	$(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
@@ -135,7 +136,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
-	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
@@ -146,17 +146,17 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = $(top_builddir)/config.h \
-	$(top_builddir)/slurm/slurm_version.h
+CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 PROGRAMS = $(noinst_PROGRAMS)
 LTLIBRARIES = $(noinst_LTLIBRARIES)
 libslurmd_common_la_LIBADD =
 am_libslurmd_common_la_OBJECTS = core_spec_plugin.lo fname.lo \
-	job_container_plugin.lo proctrack.lo slurmd_cgroup.lo \
-	slurmstepd_init.lo run_script.lo task_plugin.lo set_oomadj.lo \
-	xcpuinfo.lo
+	job_container_plugin.lo log_ctld.lo proctrack.lo \
+	setproctitle.lo slurmd_cgroup.lo slurmstepd_init.lo \
+	run_script.lo task_plugin.lo set_oomadj.lo xcpuinfo.lo \
+	xcgroup.lo
 libslurmd_common_la_OBJECTS = $(am_libslurmd_common_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -166,6 +166,10 @@ libslurmd_common_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(AM_CFLAGS) $(CFLAGS) $(libslurmd_common_la_LDFLAGS) \
 	$(LDFLAGS) -o $@
+libslurmd_reverse_tree_math_la_LIBADD =
+am_libslurmd_reverse_tree_math_la_OBJECTS = reverse_tree_math.lo
+libslurmd_reverse_tree_math_la_OBJECTS =  \
+	$(am_libslurmd_reverse_tree_math_la_OBJECTS)
 am_libslurmd_common_o_OBJECTS =
 libslurmd_common_o_OBJECTS = $(am_libslurmd_common_o_OBJECTS)
 libslurmd_common_o_LDADD = $(LDADD)
@@ -186,9 +190,11 @@ depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/core_spec_plugin.Plo \
 	./$(DEPDIR)/fname.Plo ./$(DEPDIR)/job_container_plugin.Plo \
-	./$(DEPDIR)/proctrack.Plo ./$(DEPDIR)/run_script.Plo \
-	./$(DEPDIR)/set_oomadj.Plo ./$(DEPDIR)/slurmd_cgroup.Plo \
-	./$(DEPDIR)/slurmstepd_init.Plo ./$(DEPDIR)/task_plugin.Plo \
+	./$(DEPDIR)/log_ctld.Plo ./$(DEPDIR)/proctrack.Plo \
+	./$(DEPDIR)/reverse_tree_math.Plo ./$(DEPDIR)/run_script.Plo \
+	./$(DEPDIR)/set_oomadj.Plo ./$(DEPDIR)/setproctitle.Plo \
+	./$(DEPDIR)/slurmd_cgroup.Plo ./$(DEPDIR)/slurmstepd_init.Plo \
+	./$(DEPDIR)/task_plugin.Plo ./$(DEPDIR)/xcgroup.Plo \
 	./$(DEPDIR)/xcpuinfo.Plo
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
@@ -209,7 +215,9 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
-SOURCES = $(libslurmd_common_la_SOURCES) $(libslurmd_common_o_SOURCES)
+SOURCES = $(libslurmd_common_la_SOURCES) \
+	$(libslurmd_reverse_tree_math_la_SOURCES) \
+	$(libslurmd_common_o_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -424,6 +432,9 @@ UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 YAML_CPPFLAGS = @YAML_CPPFLAGS@
 YAML_LDFLAGS = @YAML_LDFLAGS@
+ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
+ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
+ZLIB_LIBS = @ZLIB_LIBS@
 _libcurl_config = @_libcurl_config@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -463,8 +474,6 @@ infodir = @infodir@
 install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
-libselinux_CFLAGS = @libselinux_CFLAGS@
-libselinux_LIBS = @libselinux_LIBS@
 localedir = @localedir@
 localstatedir = @localstatedir@
 lua_CFLAGS = @lua_CFLAGS@
@@ -481,7 +490,6 @@ sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
 sysconfdir = @sysconfdir@
-systemdsystemunitdir = @systemdsystemunitdir@
 target = @target@
 target_alias = @target_alias@
 target_cpu = @target_cpu@
@@ -495,24 +503,32 @@ CLEANFILES = core.*
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
 
 # making a .la
-noinst_LTLIBRARIES = libslurmd_common.la
+noinst_LTLIBRARIES = libslurmd_common.la libslurmd_reverse_tree_math.la
 libslurmd_common_la_SOURCES = \
 	core_spec_plugin.c core_spec_plugin.h \
 	fname.c fname.h \
 	job_container_plugin.c job_container_plugin.h \
+	log_ctld.c log_ctld.h \
 	proctrack.c proctrack.h \
+	setproctitle.c setproctitle.h \
 	slurmd_cgroup.c slurmd_cgroup.h \
 	slurmstepd_init.c slurmstepd_init.h \
 	run_script.c run_script.h \
 	task_plugin.c task_plugin.h \
 	set_oomadj.c set_oomadj.h \
-	xcpuinfo.c xcpuinfo.h
+	reverse_tree.h \
+	xcpuinfo.c xcpuinfo.h \
+	xcgroup.c xcgroup.h
 
 libslurmd_common_la_LDFLAGS = $(HWLOC_LDFLAGS) $(HWLOC_LIBS)
 
 # This was made so we could export all symbols from libslurm_common
 # Since the plugins loaded may need all the symbols here.
 libslurmd_common_o_SOURCES = 
+libslurmd_reverse_tree_math_la_SOURCES = \
+	reverse_tree_math.c \
+	reverse_tree_math.h
+
 all: all-am
 
 .SUFFIXES:
@@ -570,6 +586,9 @@ clean-noinstLTLIBRARIES:
 libslurmd_common.la: $(libslurmd_common_la_OBJECTS) $(libslurmd_common_la_DEPENDENCIES) $(EXTRA_libslurmd_common_la_DEPENDENCIES) 
 	$(AM_V_CCLD)$(libslurmd_common_la_LINK)  $(libslurmd_common_la_OBJECTS) $(libslurmd_common_la_LIBADD) $(LIBS)
 
+libslurmd_reverse_tree_math.la: $(libslurmd_reverse_tree_math_la_OBJECTS) $(libslurmd_reverse_tree_math_la_DEPENDENCIES) $(EXTRA_libslurmd_reverse_tree_math_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(LINK)  $(libslurmd_reverse_tree_math_la_OBJECTS) $(libslurmd_reverse_tree_math_la_LIBADD) $(LIBS)
+
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
 
@@ -579,12 +598,16 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/core_spec_plugin.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/fname.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_container_plugin.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/log_ctld.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/proctrack.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/reverse_tree_math.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/run_script.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/set_oomadj.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/setproctitle.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmd_cgroup.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmstepd_init.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/task_plugin.Plo@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/xcgroup.Plo@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/xcpuinfo.Plo@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
@@ -715,12 +738,16 @@ distclean: distclean-am
 		-rm -f ./$(DEPDIR)/core_spec_plugin.Plo
 	-rm -f ./$(DEPDIR)/fname.Plo
 	-rm -f ./$(DEPDIR)/job_container_plugin.Plo
+	-rm -f ./$(DEPDIR)/log_ctld.Plo
 	-rm -f ./$(DEPDIR)/proctrack.Plo
+	-rm -f ./$(DEPDIR)/reverse_tree_math.Plo
 	-rm -f ./$(DEPDIR)/run_script.Plo
 	-rm -f ./$(DEPDIR)/set_oomadj.Plo
+	-rm -f ./$(DEPDIR)/setproctitle.Plo
 	-rm -f ./$(DEPDIR)/slurmd_cgroup.Plo
 	-rm -f ./$(DEPDIR)/slurmstepd_init.Plo
 	-rm -f ./$(DEPDIR)/task_plugin.Plo
+	-rm -f ./$(DEPDIR)/xcgroup.Plo
 	-rm -f ./$(DEPDIR)/xcpuinfo.Plo
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
@@ -770,12 +797,16 @@ maintainer-clean: maintainer-clean-am
 		-rm -f ./$(DEPDIR)/core_spec_plugin.Plo
 	-rm -f ./$(DEPDIR)/fname.Plo
 	-rm -f ./$(DEPDIR)/job_container_plugin.Plo
+	-rm -f ./$(DEPDIR)/log_ctld.Plo
 	-rm -f ./$(DEPDIR)/proctrack.Plo
+	-rm -f ./$(DEPDIR)/reverse_tree_math.Plo
 	-rm -f ./$(DEPDIR)/run_script.Plo
 	-rm -f ./$(DEPDIR)/set_oomadj.Plo
+	-rm -f ./$(DEPDIR)/setproctitle.Plo
 	-rm -f ./$(DEPDIR)/slurmd_cgroup.Plo
 	-rm -f ./$(DEPDIR)/slurmstepd_init.Plo
 	-rm -f ./$(DEPDIR)/task_plugin.Plo
+	-rm -f ./$(DEPDIR)/xcgroup.Plo
 	-rm -f ./$(DEPDIR)/xcpuinfo.Plo
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic

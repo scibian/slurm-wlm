@@ -3,7 +3,7 @@
  *			    single user can submit based upon configuration.
  *
  *  NOTE: Enforce by configuring
- *  SchedulerParameters=jobs_per_user_per_hour=#
+ *  SchedulingParameters=jobs_per_user_per_hour=#
  *****************************************************************************
  *  Copyright (C) 2014 SchedMD LLC.
  *  Written by Morris Jette <jette@schedmd.com>
@@ -92,13 +92,14 @@ static int thru_put_size = 0;
 static void _get_config(void)
 {
 	char *opt;
+	char *sched_params = slurm_get_sched_params();
 
-	/*                      01234567890123456789012 */
-	if ((opt = xstrcasestr(slurm_conf.sched_params,
-			       "jobs_per_user_per_hour=")))
+	/*                                    01234567890123456789012 */
+	if ((opt = xstrcasestr(sched_params, "jobs_per_user_per_hour=")))
 		jobs_per_user_per_hour = atoi(opt + 23);
 	info("%s: jobs_per_user_per_hour=%d",
 	     plugin_type, jobs_per_user_per_hour);
+	xfree(sched_params);
 }
 
 static void _reset_counters(void)

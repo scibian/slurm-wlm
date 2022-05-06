@@ -8,7 +8,6 @@ ok(defined $slurm,  "create slurm object with default configuration");
 
 
 # 2
-my %env = ('PATH' => $ENV{'PATH'});
 my $job_desc = {
     min_nodes => 1,
     num_tasks => 1,
@@ -17,7 +16,6 @@ my $job_desc = {
     name => "perlapi_test",
     stdout => "/dev/null",
     stderr => "/dev/null",
-    environment => \%env,
 };
 $resp = $slurm->submit_batch_job($job_desc);
 ok($resp, "submit batch job") or diag ("submit_batch_job: " . $slurm->strerror());

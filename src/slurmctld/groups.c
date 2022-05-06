@@ -67,7 +67,6 @@
 
 #define _DEBUG 0
 
-static uid_t *_get_group_members(char *group_name);
 static void   _cache_del_func(void *x);
 static uid_t *_get_group_cache(char *group_name);
 static void   _log_group_members(char *group_name, uid_t *group_uids);
@@ -167,7 +166,7 @@ extern uid_t *get_groups_members(char *group_names)
 	tmp_names = xstrdup(group_names);
 	one_group_name = strtok_r(tmp_names, ",", &name_ptr);
 	while (one_group_name) {
-		temp_uids = _get_group_members(one_group_name);
+		temp_uids = get_group_members(one_group_name);
 		if (temp_uids == NULL)
 			;
 		else if (group_uids == NULL) {
@@ -191,13 +190,13 @@ extern uid_t *get_groups_members(char *group_names)
 }
 
 /*
- * _get_group_members - identify the users in a given group name
+ * get_group_members - identify the users in a given group name
  * IN group_name - a single group name
  * RET a zero terminated list of its UIDs or NULL on error
  * NOTE: User root has implicitly access to every group
  * NOTE: The caller must xfree non-NULL return values
  */
-static uid_t *_get_group_members(char *group_name)
+extern uid_t *get_group_members(char *group_name)
 {
 	char *grp_buffer = NULL;
   	struct group grp,  *grp_result = NULL;

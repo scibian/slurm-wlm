@@ -288,14 +288,14 @@ static bool _check_jobs_before_remove(mysql_conn_t *mysql_conn,
 		xfree(object);
 	} else {
 		query = xstrdup_printf(
-			"select t0.id_assoc from \"%s_%s\" as t2 STRAIGHT_JOIN "
-			"\"%s_%s\" as t1 STRAIGHT_JOIN \"%s_%s\" as t0 "
+			"select t0.id_assoc from \"%s_%s\" as t0, "
+			"\"%s_%s\" as t1, \"%s_%s\" as t2 "
 			"where t1.lft between "
 			"t2.lft and t2.rgt && (%s) "
 			"and t0.id_assoc=t1.id_assoc limit 1;",
-			cluster_name, assoc_table,
-			cluster_name, assoc_table,
 			cluster_name, job_table,
+			cluster_name, assoc_table,
+			cluster_name, assoc_table,
 			assoc_char);
 	}
 
@@ -568,7 +568,6 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ "priority", "int unsigned default 0" },
 		{ "usage_factor", "double default 1.0 not null" },
 		{ "usage_thres", "double default NULL" },
-                { "limit_factor", "double default NULL"},
 		{ NULL, NULL}
 	};
 
@@ -1223,7 +1222,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "down_secs", "bigint unsigned default 0 not null" },
 		{ "pdown_secs", "bigint unsigned default 0 not null" },
 		{ "idle_secs", "bigint unsigned default 0 not null" },
-		{ "plan_secs", "bigint unsigned default 0 not null" },
+		{ "resv_secs", "bigint unsigned default 0 not null" },
 		{ "over_secs", "bigint unsigned default 0 not null" },
 		{ NULL, NULL}
 	};
@@ -1260,13 +1259,10 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "array_task_str", "text" },
 		{ "array_max_tasks", "int unsigned default 0 not null" },
 		{ "array_task_pending", "int unsigned default 0 not null" },
-		{ "batch_script", "longtext" },
 		{ "constraints", "text default ''" },
-		{ "container", "text" },
 		{ "cpus_req", "int unsigned not null" },
 		{ "derived_ec", "int unsigned default 0 not null" },
 		{ "derived_es", "text" },
-		{ "env_vars", "longtext" },
 		{ "exit_code", "int unsigned default 0 not null" },
 		{ "flags", "int unsigned default 0 not null" },
 		{ "job_name", "tinytext not null" },
@@ -1301,7 +1297,6 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "gres_used", "text not null default ''" },
 		{ "wckey", "tinytext not null default ''" },
 		{ "work_dir", "text not null default ''" },
-		{ "submit_line", "text" },
 		{ "system_comment", "text" },
 		{ "track_steps", "tinyint not null" },
 		{ "tres_alloc", "text not null default ''" },
@@ -1344,21 +1339,19 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "state", "smallint unsigned not null" },
 		{ "step_name", "text not null" },
 		{ "task_cnt", "int unsigned not null" },
-		{ "task_dist", "int default 0 not null" },
+		{ "task_dist", "smallint default 0 not null" },
 		{ "time_start", "bigint unsigned default 0 not null" },
 		{ "time_end", "bigint unsigned default 0 not null" },
 		{ "time_suspended", "bigint unsigned default 0 not null" },
-		{ "user_sec", "bigint unsigned default 0 not null" },
+		{ "user_sec", "int unsigned default 0 not null" },
 		{ "user_usec", "int unsigned default 0 not null" },
-		{ "sys_sec", "bigint unsigned default 0 not null" },
+		{ "sys_sec", "int unsigned default 0 not null" },
 		{ "sys_usec", "int unsigned default 0 not null" },
 		{ "act_cpufreq", "double unsigned default 0.0 not null" },
 		{ "consumed_energy", "bigint unsigned default 0 not null" },
-		{ "container", "text" },
 		{ "req_cpufreq_min", "int unsigned default 0 not null" },
 		{ "req_cpufreq", "int unsigned default 0 not null" }, /* max */
 		{ "req_cpufreq_gov", "int unsigned default 0 not null" },
-		{ "submit_line", "text" },
 		{ "tres_alloc", "text not null default ''" },
 		{ "tres_usage_in_ave", "text not null default ''" },
 		{ "tres_usage_in_max", "text not null default ''" },
@@ -2165,8 +2158,7 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 				   "preempt_exempt_time=DEFAULT, "
 				   "priority=DEFAULT, "
 				   "usage_factor=DEFAULT, "
-				   "usage_thres=DEFAULT, "
-				   "limit_factor=DEFAULT "
+				   "usage_thres=DEFAULT "
 				   "where deleted=0 && (%s);",
 				   qos_table, now, name_char);
 		} else {

@@ -2,7 +2,7 @@
 
 <h1><a name="top">cli_filter Plugin API</a></h1>
 
-<h2 id="overview">Overview<a class="slurm_link" href="#overview"></a></h2>
+<h2>Overview</h2>
 <p>This document describes Slurm cli_filter plugins and the API that
 defines them. It is intended as a resource to programmers wishing to write
 their own Slurm cli_filter plugins.</p>
@@ -40,7 +40,7 @@ consistent interface as well as being safer to run disruptive operations
 for integrating policy decisions), which can be problematic if run from the
 controller. The disadvantage of the cli_filter is that it must not be relied
 upon for security purposes as an enterprising user can circumvent it simply
-by providing an alternate slurm.conf with the CliFilterPlugins option
+by providing loading an alternate slurm.conf with the CliFilterPlugins option
 disabled. If you plan to use the cli_filter for managing policies, you should
 also configure a job_submit plugin to reinforce those policies.</p>
 
@@ -78,7 +78,7 @@ located in the default script directory (typically the subdirectory "etc" of
 the installation directory).</p>
 
 
-<h2 id="api">API Functions<a class="slurm_link" href="#api"></a></h2>
+<h2>API Functions</h2>
 <p>All of the following functions are required. Functions which are not
 implemented must be stubbed.
 
@@ -172,6 +172,6 @@ cli_filter_p_post_submit().<br>
 <span class="commandline">stepid</span>
 (input) step id of the job if appropriate, NO_VAL otherwise<br>
 
-<p style="text-align:center;">Last modified 29 June 2021</p>
+<p style="text-align:center;">Last modified 9 June 2021</p>
 
 <!--#include virtual="footer.txt"-->

@@ -56,10 +56,10 @@
 #include "src/common/slurm_xlator.h"
 #include "src/common/net.h"
 #include "src/common/proc_args.h"
-#include "src/common/reverse_tree.h"
 #include "src/common/slurm_mpi.h"
 #include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
+#include "src/slurmd/common/reverse_tree_math.h"
 
 #include "setup.h"
 #include "tree.h"
@@ -110,6 +110,8 @@ _setup_stepd_job_info(const stepd_step_rec_t *job, char ***env)
 		job_info.step_id.job_id  = job->het_job_id;
 	else
 		job_info.step_id.job_id  = job->step_id.job_id;
+
+	job_info.uid = job->uid;
 
 	if (job->het_job_offset != NO_VAL) {
 		job_info.step_id.step_id = job->step_id.step_id;
@@ -334,6 +336,11 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 
 	if (bind(tree_sock, (struct sockaddr *)&sa, SUN_LEN(&sa)) < 0) {
 		error("mpi/pmi2: failed to bind tree socket: %m");
+		unlink(sa.sun_path);
+		return SLURM_ERROR;
+	}
+	if (chown(sa.sun_path, job->uid, -1) < 0) {
+		error("mpi/pmi2: failed to chown tree socket: %m");
 		unlink(sa.sun_path);
 		return SLURM_ERROR;
 	}

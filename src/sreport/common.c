@@ -41,8 +41,6 @@
 #include "sreport.h"
 #include "src/common/proc_args.h"
 
-int sort_user_tres_id = TRES_CPU; /* controls sorting users (sort_user_dec) */
-
 extern void slurmdb_report_print_time(print_field_t *field, uint64_t value,
 				      uint64_t total_time, int last)
 {
@@ -243,7 +241,7 @@ extern void addto_char_list(List char_list, char *names)
 }
 
 /*
- * Comparator to sort users from higher usage of sort_user_tres_id to smallest
+ * Comparator used for sorting users largest cpu to smallest cpu
  *
  * returns: 1: user_a > user_b   0: user_a == user_b   -1: user_a < user_b
  *
@@ -253,6 +251,8 @@ extern int sort_user_dec(void *v1, void *v2)
 	slurmdb_report_user_rec_t *user_a;
 	slurmdb_report_user_rec_t *user_b;
 	int diff;
+	/* FIXME : this only works for CPUs now */
+	int tres_id = TRES_CPU;
 
 	user_a = *(slurmdb_report_user_rec_t **)v1;
 	user_b = *(slurmdb_report_user_rec_t **)v2;
@@ -265,12 +265,12 @@ extern int sort_user_dec(void *v1, void *v2)
 
 		if (!(tres_a = list_find_first(user_a->tres_list,
 					       slurmdb_find_tres_in_list,
-					       &sort_user_tres_id)))
+					       &tres_id)))
 			return 1;
 
 		if (!(tres_b = list_find_first(user_b->tres_list,
 					       slurmdb_find_tres_in_list,
-					       &sort_user_tres_id)))
+					       &tres_id)))
 			return -1;
 
 

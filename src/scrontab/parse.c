@@ -106,9 +106,6 @@ static int _handle_step(bitstr_t *b, int start, char **pos)
 
 extern cron_entry_t *cronspec_to_bitstring(char *pos)
 {
-	/* save initial string position for later */
-	char *pos_init = pos;
-
 	cron_entry_t *entry = new_cron_entry();
 
 	if (*pos == '@') {
@@ -333,8 +330,6 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 	bit_clear(entry->day_of_week, 7);
 
 command:
-	/* set initial cronspec */
-	entry->cronspec = xstrndup(pos_init, pos - pos_init);
 	if (*pos != ' ' && *pos != '\t')
 		goto fail;
 	while (*pos == ' ' || *pos == '\t')

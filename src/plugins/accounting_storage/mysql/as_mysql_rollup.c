@@ -553,7 +553,9 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 				    sizeof(start_char));
 		slurm_make_time_str(&curr_end, end_char,
 				    sizeof(end_char));
-		error("We have more allocated time than is possible (%"PRIu64" > %"PRIu64") for cluster %s(%"PRIu64") from %s - %s tres %u (this may happen if oversubscription of resources is allowed without Gang)",
+		error("We have more allocated time than is "
+		      "possible (%"PRIu64" > %"PRIu64") for "
+		      "cluster %s(%"PRIu64") from %s - %s tres %u",
 		      loc_tres->time_alloc, loc_tres->total_time,
 		      cluster_name, loc_tres->count,
 		      start_char, end_char, loc_tres->id);
@@ -572,7 +574,10 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 				    sizeof(start_char));
 		slurm_make_time_str(&curr_end, end_char,
 				    sizeof(end_char));
-		error("We have more time than is possible (%"PRIu64"+%"PRIu64"+%"PRIu64")(%"PRIu64") > %"PRIu64" for cluster %s(%"PRIu64") from %s - %s tres %u (this may happen if oversubscription of resources is allowed without Gang)",
+		error("We have more time than is "
+		      "possible (%"PRIu64"+%"PRIu64"+%"
+		      PRIu64")(%"PRIu64") > %"PRIu64" for "
+		      "cluster %s(%"PRIu64") from %s - %s tres %u",
 		      loc_tres->time_alloc, loc_tres->time_down,
 		      loc_tres->time_pd, total_used,
 		      loc_tres->total_time,
@@ -666,7 +671,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 			   "(creation_time, mod_time, "
 			   "time_start, id_tres, count, "
 			   "alloc_secs, down_secs, pdown_secs, "
-			   "idle_secs, over_secs, plan_secs) "
+			   "idle_secs, over_secs, resv_secs) "
 			   "values (%ld, %ld, %ld, %u, %"PRIu64", "
 			   "%"PRIu64", %"PRIu64", %"PRIu64", "
 			   "%"PRIu64", %"PRIu64", %"PRIu64")",
@@ -718,7 +723,7 @@ static int _process_cluster_usage(mysql_conn_t *mysql_conn,
 		   "pdown_secs=VALUES(pdown_secs), "
 		   "idle_secs=VALUES(idle_secs), "
 		   "over_secs=VALUES(over_secs), "
-		   "plan_secs=VALUES(plan_secs)",
+		   "resv_secs=VALUES(resv_secs)",
 		   now);
 
 	/* Spacing out the inserts here instead of doing them
@@ -884,7 +889,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 	 * state.  We handle those later with the reservations.
 	 */
 	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "!(state & %"PRIu64") && (time_start < %ld "
+			       "!(state & %d) && (time_start < %ld "
 			       "&& (time_end >= %ld "
 			       "|| time_end = 0)) "
 			       "order by node_name, time_start",
@@ -1640,7 +1645,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 				int temp_start = row_eligible;
 				if (c_usage->start > temp_start)
 					temp_start = c_usage->start;
-				if (!temp_end || (c_usage->end < temp_end))
+				if (c_usage->end < temp_end)
 					temp_end = c_usage->end;
 				loc_seconds = (temp_end - temp_start);
 				if (loc_seconds > 0) {
@@ -1937,7 +1942,7 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 			   "insert into \"%s_%s\" (creation_time, "
 			   "mod_time, time_start, id_tres, count, "
 			   "alloc_secs, down_secs, pdown_secs, "
-			   "idle_secs, over_secs, plan_secs) "
+			   "idle_secs, over_secs, resv_secs) "
 			   "select %ld, %ld, "
 			   "%ld, id_tres, @CPU:=MAX(count), "
 			   "@ASUM:=SUM(alloc_secs), "
@@ -1945,14 +1950,14 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 			   "@PDSUM:=SUM(pdown_secs), "
 			   "@ISUM:=SUM(idle_secs), "
 			   "@OSUM:=SUM(over_secs), "
-			   "@PSUM:=SUM(plan_secs) from \"%s_%s\" where "
+			   "@RSUM:=SUM(resv_secs) from \"%s_%s\" where "
 			   "(time_start < %ld && time_start >= %ld) "
 			   "group by deleted, id_tres "
 			   "on duplicate key update "
 			   "mod_time=%ld, count=@CPU, "
 			   "alloc_secs=@ASUM, down_secs=@DSUM, "
 			   "pdown_secs=@PDSUM, idle_secs=@ISUM, "
-			   "over_secs=@OSUM, plan_secs=@PSUM;",
+			   "over_secs=@OSUM, resv_secs=@RSUM;",
 			   cluster_name,
 			   run_month ? cluster_month_table : cluster_day_table,
 			   now, now, curr_start,

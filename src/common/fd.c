@@ -3,31 +3,31 @@
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Chris Dunlap <cdunlap@llnl.gov>.
  *  UCRL-CODE-2002-009.
- *
+ *  
  *  This file is part of ConMan, a remote console management program.
  *  For details, see <http://www.llnl.gov/linux/conman/>.
- *
+ *  
  *  ConMan is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  In addition, as a special exception, the copyright holders give permission
- *  to link the code of portions of this program with the OpenSSL library under
- *  certain conditions as described in each individual source file, and
- *  distribute linked combinations including the two. You must obey the GNU
- *  General Public License in all respects for all of the code used other than
- *  OpenSSL. If you modify file(s) with this exception, you may extend this
- *  exception to your version of the file(s), but you are not obligated to do
+ *  In addition, as a special exception, the copyright holders give permission 
+ *  to link the code of portions of this program with the OpenSSL library under 
+ *  certain conditions as described in each individual source file, and 
+ *  distribute linked combinations including the two. You must obey the GNU 
+ *  General Public License in all respects for all of the code used other than 
+ *  OpenSSL. If you modify file(s) with this exception, you may extend this 
+ *  exception to your version of the file(s), but you are not obligated to do 
  *  so. If you do not wish to do so, delete this exception statement from your
- *  version.  If you delete this exception statement from all source files in
+ *  version.  If you delete this exception statement from all source files in 
  *  the program, then also delete it here.
- *
+ *  
  *  ConMan is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
- *
+ *  
  *  You should have received a copy of the GNU General Public License along
  *  with ConMan; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
@@ -48,19 +48,15 @@
 #include "src/common/fd.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/net.h"
-#include "src/common/read_config.h"
-#include "src/common/slurm_protocol_api.h"
 #include "src/common/timers.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 /*
- * Define slurm-specific aliases for use by plugins, see slurm_xlator.h
- * for details.
+ * Define slurm-specific aliases for use by plugins, see slurm_xlator.h 
+ * for details. 
  */
-strong_alias(closeall, slurm_closeall);
 strong_alias(fd_set_blocking,	slurm_fd_set_blocking);
 strong_alias(fd_set_nonblocking,slurm_fd_set_nonblocking);
 strong_alias(fd_get_socket_error, slurm_fd_get_socket_error);
@@ -70,18 +66,6 @@ strong_alias(receive_fd_over_pipe, slurm_receive_fd_over_pipe);
 static int fd_get_lock(int fd, int cmd, int type);
 static pid_t fd_test_lock(int fd, int type);
 
-extern void closeall(int fd)
-{
-	struct rlimit rlim;
-
-	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
-		error("getrlimit(RLIMIT_NOFILE): %m");
-		rlim.rlim_cur = 4096;
-	}
-
-	while (fd < rlim.rlim_cur)
-		close(fd++);
-}
 
 void fd_set_close_on_exec(int fd)
 {
@@ -154,13 +138,6 @@ int fd_get_socket_error(int fd, int *err)
 	socklen_t errlen = sizeof(*err);
 
 	xassert(fd >= 0);
-
-	/*
-	 * SOL_SOCKET/SO_ERROR may not find an error and will not set err.
-	 * This may happen if on duplicate calls or if something else has
-	 * cleared the error.
-	 */
-	*err = SLURM_COMMUNICATIONS_MISSING_SOCKET_ERROR;
 
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void *)err, &errlen))
 		return errno;
@@ -306,28 +283,6 @@ extern char *fd_resolve_path(int fd)
 	return resolved;
 }
 
-extern char *fd_resolve_peer(int fd)
-{
-	slurm_addr_t addr;
-	socklen_t size = sizeof(addr);
-	int err = errno;
-	char *peer;
-
-	if (fd < 0)
-		return NULL;
-
-	if (slurm_get_peer_addr(fd, &addr)) {
-		log_flag(NET, "%s: unable to resolve peername for fd:%d: %m",
-			 __func__, fd);
-		return NULL;
-	}
-
-	peer = sockaddr_to_string(&addr, size);
-
-	errno = err;
-	return peer;
-}
-
 extern void fd_set_oob(int fd, int value)
 {
 	if (setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &value, sizeof(value)))
@@ -413,7 +368,7 @@ extern int receive_fd_over_pipe(int socket)
 
 	cmsg = CMSG_FIRSTHDR(&msg);
 	if (!cmsg) {
-		error("%s: CMSG_FIRSTHDR failed", __func__);
+		error("%s: CMSG_FIRSTHDR error: %m", __func__);
 		return -1;
 	}
 	memmove(&fd, CMSG_DATA(cmsg), sizeof(fd));

@@ -2,9 +2,7 @@
 
 <h1>Cgroups Guide</h1>
 
-<h2 id="overview">Cgroups Overview
-<a class="slurm_link" href="#overview"></a>
-</h2>
+<h2>Cgroups Overview</h2>
 <p>For a comprehensive description of Linux Control Groups (cgroups) see the
 <a href="https://www.kernel.org/doc/Documentation/cgroup-v1/cgroups.txt"> 
 cgroups documentation</A> at kernel.org. Detailed knowledge of cgroups is not
@@ -27,9 +25,7 @@ apply controls to a cgroup:
 </ul>
 </ul>
 
-<h2 id="Usage">General Usage Notes
-<a class="slurm_link" href="#Usage"></a>
-</h2>
+<h2>General Usage Notes</h2>
 <ul>
 <li>There can be a serious performance problem with memory cgroups
 on conventional multi-socket, multi-core nodes in kernels prior to 2.6.38 due
@@ -47,9 +43,7 @@ correctly with this configuration. Please make sure your system.conf does
 not use JoinControllers.</li>
 </ul>
 
-<h2 id="cgroups">Use of Cgroups in Slurm
-<a class="slurm_link" href="#cgroups"></a>
-</h2>
+<h2>Use of Cgroups in Slurm</h2>
 <p>Slurm provides cgroup versions of a number of plugins.</p>
 <ul>
 <li>proctrack (process tracking)</li>
@@ -60,9 +54,7 @@ other more standard plugins, as described below.
 </ul>
 <p>Slurm also uses cgroups for resource specialization.</p>
 
-<h2 id="Configuration">Slurm Cgroups Configuration Overview
-<a class="slurm_link" href="#Configuration"></a>
-</h2>
+<h2>Slurm Cgroups Configuration Overview</h2>
 <p>There are several sets of configuration options for Slurm cgroups:</p>
 <ul>
 <li><a href="slurm.conf.html">slurm.conf</a> provides options to enable the
@@ -74,14 +66,11 @@ specific plugins.</li>
 <li>System-level resource specialization is enabled using node configuration 
 parameters.</li>
 </ul>
+<a name="available"></a>
 
-<h2 id="Plugins">Currently Available Cgroup Plugins
-<a class="slurm_link" href="#Plugins"></a>
-</h2>
+<h2>Currently Available Cgroup Plugins</h2>
 
-<h3 id="proctrack">proctrack/cgroup plugin
-<a class="slurm_link" href="#proctrack"></a>
-</h3>
+<h3>proctrack/cgroup plugin</h3>
 <p>The proctrack/cgroup plugin is an alternative to other proctrack
 plugins such as proctrack/linux for process tracking and
 suspend/resume capability. proctrack/cgroup uses the freezer subsystem
@@ -93,44 +82,39 @@ which is more reliable for tracking and control than proctrack/linux.</p>
 options apply. See the <a href="cgroup.conf.html">cgroup.conf</a> man page for
 details.</p>
 
-<h3 id="task">task/cgroup plugin<a class="slurm_link" href="#task"></a></h3>
+<h3>task/cgroup plugin</h3>
 <p>The task/cgroup plugin is an alternative to other task plugins such as
 the task/affinity plugin for task management. task/cgroup provides the
 following features:</p>
 <ul>
 <li>The ability to confine jobs and steps to their allocated cpuset.</li>
 <li>The ability to bind tasks to sockets, cores and threads within their step's
-allocated cpuset on a node.
+allocated cpuset on a node.</li>
 <ul>
 <li>Supports block and cyclic distribution of allocated cpus to tasks for
 binding.</li>
 </ul>
-</li>
 <li>The ability to confine jobs and steps to specific memory resources.</li>
 <li>The ability to confine jobs to their allocated set of generic resources
 (gres devices).</li>
 </ul>
 <p>The task/cgroup plugin uses the cpuset, memory and devices subsystems.</p>
-<p>To enable this plugin, add <i>task/cgroup</i> to the TaskPlugin configuration
-parameter in slurm.conf:</p>
-<pre>TaskPlugin=task/cgroup</pre>
+<p>To enable this plugin, configure the following option in slurm.conf:
+<pre>TaskPlugin=task/cgroup</pre></p>
 <p>There are many specific options for this plugin in cgroup.conf.  The general
 options also apply. See the <a href="cgroup.conf.html">cgroup.conf</a> man page
 for details.</p>
-<p>Note that task/cgroup and task/affinity are not mutually exclusive and can
-work side by side:</p>
-<pre>TaskPlugin=task/cgroup,task/affinity</pre>
 
-<h3 id="jobacct_gather">jobacct_gather/cgroup plugin
-<a class="slurm_link" href="#jobacct_gather"></a>
-</h3>
+<h3>jobacct_gather/cgroup plugin</h3>
 <p>
 The jobacct_gather/cgroup plugin is an alternative to the jobacct_gather/linux
 plugin for the collection of accounting statistics for jobs, steps and tasks.
 jobacct_gather/cgroup uses the cpuacct, memory and blkio subsystems. Note: the
 cpu and memory statistics collected by this plugin do not represent the same
 resources as the cpu and memory statistics collected by the
-jobacct_gather/linux plugin (sourced from /proc stat).
+jobacct_gather/linux plugin (sourced from /proc stat). While originally
+thought to be faster, in practice it has been proven to be slower than the
+jobacct_gather/linux plugin.
 <p>To enable this plugin, configure the following option in slurm.conf:
 <pre>JobacctGatherType=jobacct_gather/cgroup</pre>
 </p>
@@ -138,9 +122,7 @@ jobacct_gather/linux plugin (sourced from /proc stat).
 options apply. See the <a href="cgroup.conf.html">cgroup.conf</a> man page for
 details.</p>
 
-<h2 id="Specialization">Use of Cgroups for Resource Specialization
-<a class="slurm_link" href="#Specialization"></a>
-</h2>
+<h2>Use of Cgroups for Resource Specialization</h2>
 <p>Resource Specialization may be used to reserve a subset of cores on each compute 
 node for exclusive use by the Slurm compute node daemons (slurmd, slurmstepd).
 It may also be used to apply a real memory limit to the daemons. The daemons are
@@ -150,9 +132,7 @@ in the memory hierarchy. System-level resource specialization is enabled with
 special node configuration parameters in 
 <a href="slurm.conf.html">slurm.conf</a> and core specialization in
 <a href="core_spec.html">core_spec.html</a>.
-<h2 id="Organization">Organization of Slurm Cgroups
-<a class="slurm_link" href="#Organization"></a>
-</h2>
+<h2>Organization of Slurm Cgroups</h2>
 <p>Slurm cgroups are organized as follows.  A base directory (mount point) is
 created at /sys/fs/cgroup, or as configured by the <i>CgroupMountpoint</I> option in
 <a href="cgroup.conf.html">cgroup.conf</a>. All cgroup
@@ -175,6 +155,6 @@ hierarchies:</p>
 use more than one node will have a cgroup structure on each node.</p>
 
 
-<p style="text-align:center;">Last modified 18 March 2022</p>
+<p style="text-align:center;">Last modified 9 June 2021</p>
 
 <!--#include virtual="footer.txt"-->

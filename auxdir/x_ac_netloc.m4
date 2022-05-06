@@ -18,8 +18,7 @@ AC_DEFUN([X_AC_NETLOC],
   AC_ARG_WITH(
     [netloc],
     AS_HELP_STRING(--with-netloc=PATH,Specify path to netloc installation),
-    [AS_IF([test "x$with_netloc" != xno && test "x$with_netloc" != xyes],
-           [_x_ac_netloc_dirs="$with_netloc"])])
+    [AS_IF([test "x$with_netloc" != xno],[_x_ac_netloc_dirs="$with_netloc $_x_ac_netloc_dirs"])])
 
   if [test "x$with_netloc" = xno]; then
     AC_MSG_WARN([support for netloc disabled])
@@ -61,11 +60,7 @@ AC_DEFUN([X_AC_NETLOC],
       ])
 
     if test -z "$x_ac_cv_netloc_dir"; then
-      if test -z "$with_netloc"; then
-        AC_MSG_WARN([unable to locate netloc installation])
-      else
-        AC_MSG_ERROR([unable to locate netloc installation])
-      fi
+      AC_MSG_WARN([unable to locate netloc installation])
     else
       NETLOC_CPPFLAGS="-I$x_ac_cv_netloc_dir/include"
       if test "$ac_with_rpath" = "yes"; then

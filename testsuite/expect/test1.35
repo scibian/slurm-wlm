@@ -35,8 +35,8 @@ set file_err    "$test_dir/error"
 
 set job_id               0
 set steps_started        30
-set job_mem_opt          "--mem-per-cpu=256M"
-set step_mem_opt         "--mem-per-cpu=6M"
+set job_mem_opt          "--mem-per-cpu=128M"
+set step_mem_opt         "--mem-per-cpu=4M"
 
 proc cleanup {} {
 	global job_id

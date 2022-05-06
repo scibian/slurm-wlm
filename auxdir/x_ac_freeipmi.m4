@@ -14,12 +14,10 @@ AC_DEFUN([X_AC_FREEIPMI],
   _x_ac_freeipmi_dirs="/usr /usr/local"
   _x_ac_freeipmi_libs="lib64 lib"
 
-
   AC_ARG_WITH(
     [freeipmi],
     AS_HELP_STRING(--with-freeipmi=PATH,Specify path to freeipmi installation),
-    [AS_IF([test "x$with_freipmi" != xno && test "x$with_freeipmi" != xyes],
-           [_x_ac_freeipmi_dirs="$with_freeipmi"])])
+    [AS_IF([test "x$with_freeipmi" != xno],[_x_ac_freeipmi_dirs="$with_freeipmi $_x_ac_freeipmi_dirs"])])
 
   if [test "x$with_freeipmi" = xno]; then
     AC_MSG_WARN([support for freeipmi disabled])
@@ -55,11 +53,7 @@ AC_DEFUN([X_AC_FREEIPMI],
       ])
 
     if test -z "$x_ac_cv_freeipmi_dir"; then
-      if test -z "$with_freeipmi"; then
-        AC_MSG_WARN([unable to locate freeipmi installation (libipmonitoring/libfreeipmi])
-      else
-        AC_MSG_ERROR([unable to locate freeipmi installation (libipmonitoring/libfreeipmi])
-      fi
+      AC_MSG_WARN([unable to locate freeipmi installation (libipmonitoring/libfreeipmi])
     else
       FREEIPMI_CPPFLAGS="-I$x_ac_cv_freeipmi_dir/include"
       if test "$ac_with_rpath" = "yes"; then

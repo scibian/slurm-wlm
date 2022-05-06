@@ -263,7 +263,8 @@ START_TEST(test_data_job)
 	data_set_string(arg, "invalid");
 	ck_assert_msg(slurm_process_option_data(&opt, 'm', arg, errors) != 0,
 		      "distribution");
-	ck_assert_msg(opt.distribution == SLURM_ERROR, "distribution value");
+	ck_assert_msg(opt.distribution == SLURM_DIST_UNKNOWN,
+		      "distribution value");
 	ck_assert_msg(opt.plane_size == NO_VAL, "distribution value");
 
 	data_set_string(arg, "cyclic:block:fcyclic");
@@ -339,7 +340,7 @@ START_TEST(test_data_job)
 	data_set_string(arg, "gpu:10");
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_GRES, arg,
 						errors) == 0, "gres");
-	ck_assert_msg(!xstrcmp(opt.gres, "gres:gpu:10"), "gres value");
+	ck_assert_msg(!xstrcmp(opt.gres, "gpu:10"), "gres value");
 
 	data_set_string(arg, "invalid");
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_GRES_FLAGS, arg,
@@ -786,8 +787,8 @@ int main(void)
 	xfree(slurm_unit_conf_filename);
 	close(fd);
 
-	/* data_init() is necessary on this test */
-	if (data_init(NULL, NULL)) {
+	/* data_init_static() is necessary on this test */
+	if(data_init_static()) {
 		error("data_init_static() failed");
 		return EXIT_FAILURE;
 	}
@@ -801,7 +802,7 @@ int main(void)
 	srunner_free(sr);
 
 	/* Cleanup */
-	data_fini();
+	data_destroy_static();
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

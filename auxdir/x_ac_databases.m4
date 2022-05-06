@@ -39,11 +39,7 @@ AC_DEFUN([X_AC_DATABASES],
 			sed 's/\([[0-9]]*\).\([[0-9]]*\).\([[a-zA-Z0-9]]*\)/\3/'`
 
 		if test $mysql_config_major_version -lt 5; then
-			if test -z "$with_mysql_config"; then
-				AC_MSG_WARN([*** mysql-$mysql_config_major_version.$mysql_config_minor_version.$mysql_config_micro_version available, we need >= mysql-5.0.0 installed for the mysql interface.])
-			else
-				AC_MSG_ERROR([*** mysql-$mysql_config_major_version.$mysql_config_minor_version.$mysql_config_micro_version available, we need >= mysql-5.0.0 installed for the mysql interface.])
-			fi
+	   		AC_MSG_WARN([*** mysql-$mysql_config_major_version.$mysql_config_minor_version.$mysql_config_micro_version available, we need >= mysql-5.0.0 installed for the mysql interface.])
 			ac_have_mysql="no"
 		else
 		# mysql_config puts -I on the front of the dir.  We don't
@@ -71,11 +67,7 @@ AC_DEFUN([X_AC_DATABASES],
 			else
 				MYSQL_CFLAGS=""
 				MYSQL_LIBS=""
-				if test -z "$with_mysql_config"; then
-					AC_MSG_WARN([*** MySQL test program execution failed. A thread-safe MySQL library is required.])
-				else
-					AC_MSG_ERROR([*** MySQL test program execution failed. A thread-safe MySQL library is required.])
-				fi
+				AC_MSG_WARN([*** MySQL test program execution failed. A thread-safe MySQL library is required.])
 			fi
 		fi
       	fi

@@ -1,11 +1,6 @@
 AUTOMAKE_OPTIONS = foreign
 
-SUBDIRS = bitstring \
-	  hostlist \
-	  slurm_protocol_defs \
-	  slurm_protocol_pack \
-	  slurmdb_defs \
-	  slurmdb_pack
+SUBDIRS = bitstring slurm_protocol_pack slurmdb_pack
 
 AM_CPPFLAGS = -I$(top_srcdir) -ldl -lpthread
 LDADD = $(top_builddir)/src/api/libslurm.o $(DL_LIBS)
@@ -21,13 +16,14 @@ TESTS = \
 if HAVE_CHECK
 MYCFLAGS  = @CHECK_CFLAGS@ -Wall
 MYCFLAGS += -D_ISO99_SOURCE -Wunused-but-set-variable
-TESTS += xhash-test \
+TESTS += xtree-test \
+	 xhash-test \
 	 data-test \
 	 slurm_opt-test \
 	 xstring-test \
-	 parse_time-test \
-	 reverse_tree-test
-
+	 parse_time-test
+xtree_test_CFLAGS = $(MYCFLAGS)
+xtree_test_LDADD  = $(LDADD) @CHECK_LIBS@
 xhash_test_CFLAGS = $(MYCFLAGS)
 xhash_test_LDADD  = $(LDADD) @CHECK_LIBS@
 data_test_CFLAGS  = $(MYCFLAGS)
@@ -38,7 +34,5 @@ xstring_test_CFLAGS   = $(MYCFLAGS)
 xstring_test_LDADD    = $(LDADD) @CHECK_LIBS@
 parse_time_test_CFLAGS= $(MYCFLAGS)
 parse_time_test_LDADD = $(LDADD) @CHECK_LIBS@
-reverse_tree_test_CFLAGS = $(MYCFLAGS)
-reverse_tree_test_LDADD = $(LDADD) @CHECK_LIBS@
 endif
 

@@ -394,11 +394,6 @@ void plugrack_release_by_type(plugrack_t *rack, const char *type)
 			     (void *) type);
 }
 
-typedef struct {
-	plugrack_foreach_t f;
-	void *arg;
-} plugrack_foreach_args_t;
-
 extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 {
 	ListIterator itr;
@@ -436,19 +431,14 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 static int _foreach_plugin(void *x, void *arg)
 {
 	plugrack_entry_t *entry = (plugrack_entry_t *) x;
-	plugrack_foreach_args_t *args = arg;
+	plugrack_foreach_t f = (plugrack_foreach_t) arg;
 
-	args->f(entry->full_type, entry->fq_path, entry->plug, args->arg);
+	f(entry->full_type, entry->fq_path, entry->plug);
 
 	return 0;
 }
 
-extern void plugrack_foreach(plugrack_t *rack, plugrack_foreach_t f, void *arg)
+extern void plugrack_foreach(plugrack_t *rack, plugrack_foreach_t f)
 {
-	plugrack_foreach_args_t args = {
-		.f = f,
-		.arg = arg,
-	};
-
-	(void) list_for_each(rack->entries, _foreach_plugin, &args);
+	(void) list_for_each(rack->entries, _foreach_plugin, f);
 }

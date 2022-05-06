@@ -38,7 +38,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include "src/common/data.h"
 #include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
@@ -56,9 +55,6 @@
 #define OPT_LONG_FEDR      0x105
 #define OPT_LONG_WHETJOB   0x106
 #define OPT_LONG_LOCAL_UID 0x107
-#define OPT_LONG_ENV       0x108
-#define OPT_LONG_JSON      0x109
-#define OPT_LONG_YAML      0x110
 
 #define JOB_HASH_SIZE 1000
 
@@ -163,7 +159,7 @@ static int _addto_reason_char_list(List char_list, char *names)
 				}
 				i++;
 				start = i;
-				if (names[i] == ' ') {
+				if (!names[i]) {
 					info("There is a problem with "
 					     "your request.  It appears you "
 					     "have spaces inside your list.");
@@ -283,7 +279,7 @@ static int _addto_state_char_list(List char_list, char *names)
 				}
 				i++;
 				start = i;
-				if (names[i] == ' ') {
+				if (!names[i]) {
 					info("There is a problem with "
 					     "your request.  It appears you "
 					     "have spaces inside your list.");
@@ -334,11 +330,6 @@ sacct [<OPTION>]                                                            \n \
                    to display.  By default, all accounts are selected.      \n\
      -b, --brief:                                                           \n\
 	           Equivalent to '--format=jobstep,state,error'.            \n\
-     -B, --batch-script:                                                    \n\
-	           Print batch script of job.                               \n\
-                   NOTE: AccountingStoreFlags=job_script is required for this\n\
-                   NOTE: Requesting specific job(s) with '-j' is required   \n\
-                         for this.                                          \n\
      -c, --completion: Use job completion instead of accounting data.       \n\
          --delimiter:                                                       \n\
 	           ASCII characters used to separate the fields when        \n\
@@ -357,11 +348,6 @@ sacct [<OPTION>]                                                            \n \
                    Select jobs eligible before this time.  If states are    \n\
                    given with the -s option return jobs in this state before\n\
                    this period.                                             \n\
-         --env-vars:                                                        \n\
-	           Print the environment to launch the batch script of job. \n\
-                   NOTE: AccountingStoreFlags=job_env is required for this  \n\
-                   NOTE: Requesting specific job(s) with '-j' is required   \n\
-                         for this.                                          \n\
          --federation: Report jobs from federation if a member of a one.    \n\
      -f, --file=file:                                                       \n\
 	           Read data from the specified file, rather than Slurm's   \n\
@@ -382,8 +368,6 @@ sacct [<OPTION>]                                                            \n \
                    jobs. Adding .step will display the specific job step of \n\
                    that job. (A step id of 'batch' will display the         \n\
                    information about the batch step.)                       \n\
-     --json:                                                                \n\
-                   Produce JSON output                                      \n\
      -k, --timelimit-min:                                                   \n\
                    Only send data about jobs with this timelimit.           \n\
                    If used with timelimit_max this will be the minimum      \n\
@@ -467,20 +451,16 @@ sacct [<OPTION>]                                                            \n \
      -V, --version: Print version.                                          \n\
      -W, --wckeys:                                                          \n\
                    Only send data about these wckeys.  Default is all.      \n\
-     --whole-hetjob[=yes|no]:                                               \n\
-		   If set to 'yes' (or no argument), then information about \n\
-		   all the heterogeneous components will be retrieved. If   \n\
-		   set to 'no' only the specific filtered components will   \n\
-		   be retrieved. The default behavior without this option is\n\
-		   that all components are retrieved only if filtering the  \n\
-		   leader component with --jobs.                            \n\
+     --whole-hetjob=[yes|no]:                                               \n\
+		   If set to 'yes' (or not set), then information about all \n\
+		   the heterogeneous components will be retrieved. If set   \n\
+		   to 'no' only the specific filtered components will be    \n\
+		   retrieved.                                               \n\
      -x, --associations:                                                    \n\
                    Only send data about these association id.  Default is all.\n\
      -X, --allocations:                                                     \n\
 	           Only show statistics relevant to the job allocation      \n\
 	           itself, not taking steps into consideration.             \n\
-     --yaml:                                                                \n\
-                   Produce YAML output                                      \n\
 	                                                                    \n\
      Note, valid start/end time formats are...                              \n\
 	           HH:MM[:SS] [AM|PM]                                       \n\
@@ -717,7 +697,6 @@ extern void parse_command_line(int argc, char **argv)
                 {"accounts",       required_argument, 0,    'A'},
                 {"allocations",    no_argument,       0,    'X'},
                 {"brief",          no_argument,       0,    'b'},
-		{"batch-script",   no_argument,       0,    'B'},
                 {"completion",     no_argument,       0,    'c'},
                 {"constraints",    required_argument, 0,    'C'},
                 {"delimiter",      required_argument, 0,    OPT_LONG_DELIMITER},
@@ -726,7 +705,6 @@ extern void parse_command_line(int argc, char **argv)
                 {"helpformat",     no_argument,       0,    'e'},
                 {"help-fields",    no_argument,       0,    'e'},
                 {"endtime",        required_argument, 0,    'E'},
-                {"env-vars",       no_argument,       0,    OPT_LONG_ENV},
                 {"file",           required_argument, 0,    'f'},
                 {"flags",          required_argument, 0,    'F'},
                 {"gid",            required_argument, 0,    'g'},
@@ -766,8 +744,6 @@ extern void parse_command_line(int argc, char **argv)
                 {"wckeys",         required_argument, 0,    'W'},
                 {"whole-hetjob",   optional_argument, 0,    OPT_LONG_WHETJOB},
                 {"associations",   required_argument, 0,    'x'},
-                {"json", no_argument, 0, OPT_LONG_JSON},
-                {"yaml", no_argument, 0, OPT_LONG_YAML},
                 {0,                0,		      0,    0}};
 
 	params.opt_uid = getuid();
@@ -787,7 +763,7 @@ extern void parse_command_line(int argc, char **argv)
 
 	while (1) {		/* now cycle through the command line */
 		c = getopt_long(argc, argv,
-				"aA:bBcC:DeE:f:F:g:hi:I:j:k:K:lLM:nN:o:pPq:r:s:S:Ttu:UvVW:x:X",
+				"aA:bcC:DeE:f:F:g:hi:I:j:k:K:lLM:nN:o:pPq:r:s:S:Ttu:UvVW:x:X",
 				long_options, &optionIndex);
 		if (c == -1)
 			break;
@@ -802,10 +778,6 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case 'b':
 			brief_output = true;
-			break;
-		case 'B':
-			job_cond->flags |= JOBCOND_FLAG_SCRIPT;
-			job_cond->flags |= JOBCOND_FLAG_NO_STEP;
 			break;
 		case 'c':
 			params.opt_completion = 1;
@@ -843,19 +815,9 @@ extern void parse_command_line(int argc, char **argv)
 			if (errno == ESLURM_INVALID_TIME_VALUE)
 				exit(1);
 			break;
-		case OPT_LONG_ENV:
-			job_cond->flags |= JOBCOND_FLAG_ENV;
-			job_cond->flags |= JOBCOND_FLAG_NO_STEP;
-			break;
 		case 'f':
-			xfree(slurm_conf.job_comp_loc);
-			if ((stat(optarg, &stat_buf) != 0) ||
-			    (!S_ISREG(stat_buf.st_mode))) {
-				fprintf(stderr, "%s is not a valid file\n",
-					optarg);
-				exit(1);
-			}
-			slurm_conf.job_comp_loc = xstrdup(optarg);
+			xfree(params.opt_filein);
+			params.opt_filein = xstrdup(optarg);
 			break;
 		case 'F':
 			job_cond->db_flags = str_2_job_flags(optarg);
@@ -950,7 +912,7 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case 'N':
 			if (job_cond->used_nodes) {
-				error("Already asked for nodes '%s'",
+				error("Aleady asked for nodes '%s'",
 				      job_cond->used_nodes);
 				break;
 			}
@@ -1057,36 +1019,11 @@ extern void parse_command_line(int argc, char **argv)
 		case 'X':
 			job_cond->flags |= JOBCOND_FLAG_NO_STEP;
 			break;
-		case OPT_LONG_JSON:
-			params.mimetype = MIME_TYPE_JSON;
-			data_init(MIME_TYPE_JSON_PLUGIN, NULL);
-			break;
-		case OPT_LONG_YAML:
-			params.mimetype = MIME_TYPE_YAML;
-			data_init(MIME_TYPE_YAML_PLUGIN, NULL);
-			break;
 		case ':':
 		case '?':	/* getopt() has explained it */
 			exit(1);
 		}
 	}
-
-	if (!job_cond->step_list || !list_count(job_cond->step_list)) {
-		char *reason = NULL;
-		if (job_cond->flags & JOBCOND_FLAG_SCRIPT)
-			reason = "job scripts";
-
-		if (job_cond->flags & JOBCOND_FLAG_ENV)
-			reason = "job environment";
-
-		if (reason)
-			fatal("When requesting %s you must also request specific jobs with the '-j' option.", reason);
-	}
-
-	if ((job_cond->flags & JOBCOND_FLAG_SCRIPT) &&
-	    (job_cond->flags & JOBCOND_FLAG_ENV))
-		fatal("Options --batch-script and --env-vars are mutually exclusive");
-
 
 	if (long_output && params.opt_field_list)
 		fatal("Options -o(--format) and -l(--long) are mutually exclusive. Please remove one and retry.");
@@ -1148,24 +1085,25 @@ extern void parse_command_line(int argc, char **argv)
 	}
 
 	debug("Options selected:\n"
-	      "\topt_completion=%s\n"
-	      "\topt_dup=%s\n"
+	      "\topt_completion=%d\n"
+	      "\topt_dup=%d\n"
 	      "\topt_field_list=%s\n"
 	      "\topt_help=%d\n"
-	      "\topt_no_steps=%s\n"
+	      "\topt_no_steps=%d\n"
 	      "\topt_whole_hetjob=%s",
-	      params.opt_completion ? "yes" : "no",
-	      (job_cond->flags & JOBCOND_FLAG_DUP) ? "yes" : "no",
+	      params.opt_completion,
+	      job_cond->flags & JOBCOND_FLAG_DUP,
 	      params.opt_field_list,
 	      params.opt_help,
-	      (job_cond->flags & JOBCOND_FLAG_NO_STEP) ? "yes" : "no",
-	      (job_cond->flags & JOBCOND_FLAG_WHOLE_HETJOB) ? "yes" :
+	      job_cond->flags & JOBCOND_FLAG_NO_STEP,
+	      job_cond->flags & JOBCOND_FLAG_WHOLE_HETJOB ? "yes" :
 	      (job_cond->flags & JOBCOND_FLAG_NO_WHOLE_HETJOB ? "no" : 0));
 
 	if (params.opt_completion) {
-		slurmdb_jobcomp_init(slurm_conf.job_comp_loc);
+		slurmdb_jobcomp_init(params.opt_filein);
 
-		if (!xstrcmp(slurm_conf.job_comp_type, "jobcomp/none")) {
+		if (!xstrcmp(slurm_conf.job_comp_type, "jobcomp/none")
+		    &&  (stat(params.opt_filein, &stat_buf) != 0)) {
 			fprintf(stderr, "Slurm job completion is disabled\n");
 			exit(1);
 		}
@@ -1209,7 +1147,7 @@ extern void parse_command_line(int argc, char **argv)
 
 	/* specific clusters requested? */
 	if (params.opt_federation && !all_clusters && !job_cond->cluster_list &&
-	    !params.opt_local && !params.opt_completion) {
+	    !params.opt_local) {
 		/* Test if in federated cluster and if so, get information from
 		 * all clusters in that federation */
 		slurmdb_federation_rec_t *fed = NULL;
@@ -1488,26 +1426,6 @@ static inline bool _test_local_job(uint32_t job_id)
 	return false;
 }
 
-static void _print_script(slurmdb_job_rec_t *job)
-{
-	char *id = slurmdb_get_job_id_str(job);
-
-	printf("Batch Script for %s\n--------------------------------------------------------------------------------\n%s\n",
-	       id, job->script ? job->script : "NONE\n");
-	xfree(id);
-	return;
-}
-
-static void _print_env(slurmdb_job_rec_t *job)
-{
-	char *id = slurmdb_get_job_id_str(job);
-
-	printf("Environment used for %s (must be batch to display)\n--------------------------------------------------------------------------------\n%s\n",
-	       id, job->env ? job->env : "NONE\n");
-	xfree(id);
-	return;
-}
-
 /* do_list() -- List the assembled data
  *
  * In:	Nothing explicit.
@@ -1533,14 +1451,6 @@ extern void do_list(void)
 		    _test_local_job(job->jobid) &&
 		    xstrcmp(params.cluster_name, job->cluster))
 			continue;
-
-		if (job_cond->flags & JOBCOND_FLAG_SCRIPT) {
-			_print_script(job);
-			continue;
-		} else if (job_cond->flags & JOBCOND_FLAG_ENV) {
-			_print_env(job);
-			continue;
-		}
 
 		if (job->show_full)
 			print_fields(JOB, job);
@@ -1606,5 +1516,6 @@ extern void sacct_fini(void)
 		slurm_acct_storage_fini();
 	}
 	xfree(params.opt_field_list);
+	xfree(params.opt_filein);
 	slurmdb_destroy_job_cond(params.job_cond);
 }

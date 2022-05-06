@@ -263,11 +263,9 @@ void ping_nodes (void)
 	for (i = 0, node_ptr = node_record_table_ptr;
 	     i < node_record_count; i++, node_ptr++) {
 		if (IS_NODE_FUTURE(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr) ||
-		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERING_UP(node_ptr) ||
-		    IS_NODE_INVALID_REG(node_ptr) ||
-		    IS_NODE_REBOOT_ISSUED(node_ptr))
+		    IS_NODE_POWER_SAVE(node_ptr) ||
+		    IS_NODE_POWER_UP(node_ptr) ||
+		    (IS_NODE_DOWN(node_ptr) && IS_NODE_REBOOT(node_ptr)))
 			continue;
 		if ((slurm_conf.slurmd_timeout == 0) && (!restart_flag) &&
 		    (!IS_NODE_UNKNOWN(node_ptr)) &&
@@ -342,6 +340,7 @@ void ping_nodes (void)
 		debug("Spawning ping agent for %s", host_str);
 		xfree(host_str);
 		ping_begin();
+		set_agent_arg_r_uid(ping_agent_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(ping_agent_args);
 	}
 
@@ -356,6 +355,7 @@ void ping_nodes (void)
 		      host_str, reg_agent_args->node_count);
 		xfree(host_str);
 		ping_begin();
+		set_agent_arg_r_uid(reg_agent_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(reg_agent_args);
 	}
 
@@ -456,10 +456,8 @@ extern void run_health_check(void)
 		} else {
 			node_ptr = node_record_table_ptr + i;
 		}
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
-		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		if (IS_NODE_NO_RESPOND(node_ptr) || IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_POWER_SAVE(node_ptr))
 			continue;
 		if (node_states != HEALTH_CHECK_NODE_ANY) {
 			uint16_t cpus_total, cpus_used = 0;
@@ -514,6 +512,7 @@ extern void run_health_check(void)
 		debug("Spawning health check agent for %s", host_str);
 		xfree(host_str);
 		ping_begin();
+		set_agent_arg_r_uid(check_agent_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(check_agent_args);
 	}
 }
@@ -552,10 +551,8 @@ extern void update_nodes_acct_gather_data(void)
 #else
 	for (i = 0, node_ptr = node_record_table_ptr;
 	     i < node_record_count; i++, node_ptr++) {
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
-		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		if (IS_NODE_NO_RESPOND(node_ptr) || IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_POWER_SAVE(node_ptr))
 			continue;
 		if (agent_args->protocol_version > node_ptr->protocol_version)
 			agent_args->protocol_version =
@@ -574,6 +571,7 @@ extern void update_nodes_acct_gather_data(void)
 		log_flag(ENERGY, "Updating acct_gather data for %s", host_str);
 		xfree(host_str);
 		ping_begin();
+		set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(agent_args);
 	}
 }

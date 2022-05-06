@@ -193,7 +193,7 @@ static void *_window_manager(void *arg);
  * General declarations
  **********************************************************************/
 static void *_io_thr(void *);
-static int _send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *job,
+static int _send_io_init_msg(int sock, srun_key_t *key, stepd_step_rec_t *job,
 			     bool init);
 static void _send_eof_msg(struct task_read_info *out);
 static struct io_buf *_task_build_message(struct task_read_info *out,
@@ -513,7 +513,7 @@ _local_file_write(eio_obj_t *obj, List objs)
 	void *buf;
 	int n;
 	struct slurm_io_header header;
-	buf_t *header_tmp_buf;
+	Buf header_tmp_buf;
 
 	xassert(client->magic == CLIENT_IO_MAGIC);
 	/*
@@ -1241,7 +1241,7 @@ static struct io_buf *
 _build_connection_okay_message(stepd_step_rec_t *job)
 {
 	struct io_buf *msg;
-	buf_t *packbuf;
+	Buf packbuf;
 	struct slurm_io_header header;
 
 	if (_outgoing_buf_free(job)) {
@@ -1264,7 +1264,7 @@ _build_connection_okay_message(stepd_step_rec_t *job)
 	msg->length = io_hdr_packed_size();
 	msg->ref_count = 0; /* make certain it is initialized */
 
-	/* free packbuf, but not the memory to which it points */
+	/* free the Buf packbuf, but not the memory to which it points */
 	packbuf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(packbuf);
 
@@ -1560,7 +1560,7 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *job,
 	}
 
 	fd_set_blocking(sock);  /* just in case... */
-	_send_io_init_msg(sock, srun, job, true);
+	_send_io_init_msg(sock, srun->key, job, true);
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
@@ -1614,7 +1614,7 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *job)
 	}
 
 	fd_set_blocking(sock);  /* just in case... */
-	_send_io_init_msg(sock, srun, job, false);
+	_send_io_init_msg(sock, srun->key, job, false);
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
@@ -1643,20 +1643,12 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *job)
 }
 
 static int
-_send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *job, bool init)
+_send_io_init_msg(int sock, srun_key_t *key, stepd_step_rec_t *job, bool init)
 {
-	io_init_msg_t msg;
+	struct slurm_io_init_msg msg;
 
-	msg.io_key = xmalloc(srun->key->len);
-	msg.io_key_len = srun->key->len;
-	memcpy(msg.io_key, srun->key->data, srun->key->len);
+	memcpy(msg.cred_signature, key->data, SLURM_IO_KEY_SIZE);
 	msg.nodeid = job->nodeid;
-
-	if (srun->protocol_version >= SLURM_21_08_PROTOCOL_VERSION)
-		msg.version = SLURM_PROTOCOL_VERSION;
-	else
-		msg.version = IO_PROTOCOL_VERSION;
-
 	/*
 	 * The initial message does not need the node_offset it is needed for
 	 * sattach
@@ -1675,11 +1667,9 @@ _send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *job, bool init)
 
 	if (io_init_msg_write_to_fd(sock, &msg) != SLURM_SUCCESS) {
 		error("Couldn't sent slurm_io_init_msg");
-		xfree(msg.io_key);
 		return SLURM_ERROR;
 	}
 
-	xfree(msg.io_key);
 
 	return SLURM_SUCCESS;
 }
@@ -1722,7 +1712,7 @@ _send_eof_msg(struct task_read_info *out)
 	eio_obj_t *eio;
 	ListIterator clients;
 	struct slurm_io_header header;
-	buf_t *packbuf;
+	Buf packbuf;
 
 	debug4("Entering _send_eof_msg");
 	out->eof_msg_sent = true;
@@ -1754,7 +1744,7 @@ _send_eof_msg(struct task_read_info *out)
 	msg->length = io_hdr_packed_size() + header.length;
 	msg->ref_count = 0; /* make certain it is initialized */
 
-	/* free packbuf, but not the memory to which it points */
+	/* free the Buf packbuf, but not the memory to which it points */
 	packbuf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(packbuf);
 
@@ -1783,7 +1773,7 @@ static struct io_buf *_task_build_message(struct task_read_info *out,
 {
 	struct io_buf *msg;
 	char *ptr;
-	buf_t *packbuf;
+	Buf packbuf;
 	bool must_truncate = false;
 	int avail;
 	struct slurm_io_header header;
@@ -1845,7 +1835,7 @@ static struct io_buf *_task_build_message(struct task_read_info *out,
 	msg->length = io_hdr_packed_size() + header.length;
 	msg->ref_count = 0; /* make certain it is initialized */
 
-	/* free packbuf, but not the memory to which it points */
+	/* free the Buf packbuf, but not the memory to which it points */
 	packbuf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(packbuf);
 
@@ -1929,6 +1919,7 @@ _user_managed_io_connect(srun_info_t *srun, uint32_t gtid)
 	slurm_msg_t_init(&msg);
 	msg.protocol_version = srun->protocol_version;
 	msg.msg_type = TASK_USER_MANAGED_IO_STREAM;
+	slurm_msg_set_r_uid(&msg, srun->uid);
 	msg.data = &user_io_msg;
 	user_io_msg.task_id = gtid;
 

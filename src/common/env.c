@@ -286,7 +286,7 @@ char *getenvp(char **env, const char *name)
 int setup_env(env_t *env, bool preserve_env)
 {
 	int rc = SLURM_SUCCESS;
-	char *addr, *dist = NULL;
+	char *addr, *dist = NULL, *lllp_dist = NULL;
 	char addrbuf[INET6_ADDRSTRLEN];
 
 	if (env == NULL)
@@ -368,14 +368,12 @@ int setup_env(env_t *env, bool preserve_env)
 		rc = SLURM_ERROR;
 	}
 
-	set_distribution(env->distribution, &dist);
-	if (dist) {
+	set_distribution(env->distribution, &dist, &lllp_dist);
+	if (dist)
 		if (setenvf(&env->env, "SLURM_DISTRIBUTION", "%s", dist)) {
 			error("Can't set SLURM_DISTRIBUTION env variable");
 			rc = SLURM_ERROR;
 		}
-		xfree(dist);
-	}
 
 	if ((env->distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE)
 		if (setenvf(&env->env, "SLURM_DIST_PLANESIZE", "%u",
@@ -383,6 +381,13 @@ int setup_env(env_t *env, bool preserve_env)
 			error("Can't set SLURM_DIST_PLANESIZE env variable");
 			rc = SLURM_ERROR;
 		}
+
+	if (lllp_dist)
+		if (setenvf(&env->env, "SLURM_DIST_LLLP", "%s", lllp_dist)) {
+			error("Can't set SLURM_DIST_LLLP env variable");
+			rc = SLURM_ERROR;
+		}
+
 
 	if (env->cpu_bind_type && !env->batch_flag &&
 	    (env->stepid != SLURM_INTERACTIVE_STEP)) {
@@ -931,7 +936,7 @@ extern int env_array_for_job(char ***dest,
 			     const job_desc_msg_t *desc, int het_job_offset)
 {
 	char *tmp = NULL;
-	char *dist = NULL;
+	char *dist = NULL, *lllp_dist = NULL;
 	char *key, *value;
 	slurm_step_layout_t *step_layout = NULL;
 	int i, rc = SLURM_SUCCESS;
@@ -965,16 +970,19 @@ extern int env_array_for_job(char ***dest,
 	env_array_overwrite_het_fmt(dest, "SLURM_JOB_PARTITION", het_job_offset,
 				    "%s", alloc->partition);
 
-	set_distribution(desc->task_dist, &dist);
+	set_distribution(desc->task_dist, &dist, &lllp_dist);
 	if (dist) {
 		env_array_overwrite_het_fmt(dest, "SLURM_DISTRIBUTION",
 					    het_job_offset, "%s", dist);
-		xfree(dist);
 	}
 	if ((desc->task_dist & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE) {
 		env_array_overwrite_het_fmt(dest, "SLURM_DIST_PLANESIZE",
 					    het_job_offset, "%u",
 					    desc->plane_size);
+	}
+	if (lllp_dist) {
+		env_array_overwrite_het_fmt(dest, "SLURM_DIST_LLLP",
+					    het_job_offset, "%s", lllp_dist);
 	}
 	tmp = uint32_compressed_to_str(alloc->num_cpu_groups,
 					alloc->cpus_per_node,
@@ -1692,7 +1700,7 @@ void env_array_set_environment(char **env_array)
  * Unset all of the environment variables in a user's current
  * environment.
  *
- * (Note: because the environ array is decrementing with each
+ * (Note: becuae the environ array is decrementing with each
  *  unsetenv, only increment the ptr on a failure to unset.)
  */
 void env_unset_environment(void)
@@ -1885,36 +1893,6 @@ char **env_array_from_file(const char *fname)
 	return env;
 }
 
-int env_array_to_file(const char *filename, const char **env_array)
-{
-	int outfd = -1;
-	int rc = SLURM_SUCCESS;
-
-	outfd = open(filename, (O_WRONLY | O_CREAT | O_EXCL), 0600);
-	if (outfd < 0) {
-		error("%s: unable to open %s: %m",
-		      __func__, filename);
-		goto rwfail;
-	}
-
-	for (const char **p = env_array; p && *p; p++) {
-		safe_write(outfd, *p, strlen(*p));
-		safe_write(outfd, "\0", 1);
-	}
-
-	(void) close(outfd);
-
-	return rc;
-
-rwfail:
-	rc = errno;
-
-	if (outfd >= 0)
-		(void) close(outfd);
-
-	return rc;
-}
-
 /*
  * Load user environment from a cache file located in
  * <state_save_location>/env_username
@@ -2000,7 +1978,7 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	char *stoptoken  = "XXXXSLURMSTOPPARSINGHEREXXXXX";
 	char cmdstr[256], *env_loc = NULL;
 	char *stepd_path = NULL;
-	int fildes[2], found, fval, len, rc, timeleft;
+	int fd1, fd2, fildes[2], found, fval, len, rc, timeleft;
 	int buf_read, buf_rem, config_timeout;
 	pid_t child;
 	struct timeval begin, now;
@@ -2047,18 +2025,16 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	}
 	if (child == 0) {
 		char **tmp_env = NULL;
-		int devnull;
 		tmp_env = env_array_create();
 		env_array_overwrite(&tmp_env, "ENVIRONMENT", "BATCH");
 		setpgid(0, 0);
-
-		if ((devnull = open("/dev/null", O_RDONLY)) == -1)
+		close(0);
+		if ((fd1 = open("/dev/null", O_RDONLY)) == -1)
 			error("%s: open(/dev/null): %m", __func__);
-		dup2(devnull, STDIN_FILENO);
-		dup2(fildes[1], STDOUT_FILENO);
-		dup2(devnull, STDERR_FILENO);
-		closeall(3);
-
+		dup2(fildes[1], 1);
+		close(2);
+		if ((fd2 = open("/dev/null", O_WRONLY)) == -1)
+			error("%s: open(/dev/null): %m", __func__);
 		if      (mode == 1)
 			execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
 		else if (mode == 2)
@@ -2070,8 +2046,10 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 			execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
 #endif
 		}
-		if (devnull >= 0)	/* Avoid Coverity resource leak notification */
-			(void) close(devnull);
+		if (fd1 >= 0)	/* Avoid Coverity resource leak notification */
+			(void) close(fd1);
+		if (fd2 >= 0)	/* Avoid Coverity resource leak notification */
+			(void) close(fd2);
 		_exit(1);
 	}
 
@@ -2318,51 +2296,5 @@ extern char *find_quote_token(char *tmp, char *sep, char **last)
 			return start;
 		}
 
-	}
-}
-
-extern void env_merge_filter(slurm_opt_t *opt, job_desc_msg_t *desc)
-{
-	extern char **environ;
-	int i, len;
-	char *save_env[2] = { NULL, NULL }, *tmp, *tok, *last = NULL;
-
-	tmp = xstrdup(opt->export_env);
-	tok = find_quote_token(tmp, ",", &last);
-	while (tok) {
-
-		if (xstrcasecmp(tok, "ALL") == 0) {
-			env_array_merge(&desc->environment,
-					(const char **)environ);
-			tok = find_quote_token(NULL, ",", &last);
-			continue;
-		}
-
-		if (strchr(tok, '=')) {
-			save_env[0] = tok;
-			env_array_merge(&desc->environment,
-					(const char **)save_env);
-		} else {
-			len = strlen(tok);
-			for (i = 0; environ[i]; i++) {
-				if (xstrncmp(tok, environ[i], len) ||
-				    (environ[i][len] != '='))
-					continue;
-				save_env[0] = environ[i];
-				env_array_merge(&desc->environment,
-						(const char **)save_env);
-				break;
-			}
-		}
-		tok = find_quote_token(NULL, ",", &last);
-	}
-	xfree(tmp);
-
-	for (i = 0; environ[i]; i++) {
-		if (xstrncmp("SLURM_", environ[i], 6))
-			continue;
-		save_env[0] = environ[i];
-		env_array_merge(&desc->environment,
-				(const char **)save_env);
 	}
 }

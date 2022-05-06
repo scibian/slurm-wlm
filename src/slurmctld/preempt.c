@@ -221,6 +221,7 @@ extern int slurm_preempt_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "preempt";
+	char *sched_params;
 
 	/* This function is called frequently, so it should be as fast as
 	 * possible. The test below will be true almost all of the time and
@@ -245,8 +246,10 @@ extern int slurm_preempt_init(void)
 	}
 	init_run = true;
 
-	if (xstrcasestr(slurm_conf.sched_params, "preempt_youngest_first"))
+	sched_params = slurm_get_sched_params();
+	if (xstrcasestr(sched_params, "preempt_youngest_first"))
 		youngest_order = true;
+	xfree(sched_params);
 
 done:
 	slurm_mutex_unlock(&g_context_lock);

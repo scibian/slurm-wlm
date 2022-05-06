@@ -63,6 +63,7 @@ enum wrappers {
 typedef struct sbatch_env_opts {
 	uint32_t cpus_per_task;
 	char *   dist;
+	char *   dist_lllp;
 	char *   mem_bind;
 	char *   mem_bind_sort;
 	char *   mem_bind_verbose;

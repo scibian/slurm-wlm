@@ -92,6 +92,7 @@ target_triplet = @target@
 subdir = doc/html
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
+	$(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
@@ -131,7 +132,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
-	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
@@ -142,8 +142,7 @@ am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am
 mkinstalldirs = $(install_sh) -d
-CONFIG_HEADER = $(top_builddir)/config.h \
-	$(top_builddir)/slurm/slurm_version.h
+CONFIG_HEADER = $(top_builddir)/config.h $(top_builddir)/slurm/slurm.h
 CONFIG_CLEAN_FILES = configurator.html configurator.easy.html
 CONFIG_CLEAN_VPATH_FILES =
 AM_V_P = $(am__v_P_@AM_V@)
@@ -386,6 +385,9 @@ UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 YAML_CPPFLAGS = @YAML_CPPFLAGS@
 YAML_LDFLAGS = @YAML_LDFLAGS@
+ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
+ZLIB_LDFLAGS = @ZLIB_LDFLAGS@
+ZLIB_LIBS = @ZLIB_LIBS@
 _libcurl_config = @_libcurl_config@
 abs_builddir = @abs_builddir@
 abs_srcdir = @abs_srcdir@
@@ -425,8 +427,6 @@ infodir = @infodir@
 install_sh = @install_sh@
 libdir = @libdir@
 libexecdir = @libexecdir@
-libselinux_CFLAGS = @libselinux_CFLAGS@
-libselinux_LIBS = @libselinux_LIBS@
 localedir = @localedir@
 localstatedir = @localstatedir@
 lua_CFLAGS = @lua_CFLAGS@
@@ -443,7 +443,6 @@ sbindir = @sbindir@
 sharedstatedir = @sharedstatedir@
 srcdir = @srcdir@
 sysconfdir = @sysconfdir@
-systemdsystemunitdir = @systemdsystemunitdir@
 target = @target@
 target_alias = @target_alias@
 target_cpu = @target_cpu@
@@ -454,8 +453,13 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 generated_html = \
 	accounting.html \
+	accounting_storageplugins.html \
+	acct_gather_energy_plugins.html \
+	acct_gather_profile_plugins.html \
 	add.html \
 	api.html \
+	authplugins.html \
+	bb_plugins.html \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
@@ -467,50 +471,65 @@ generated_html = \
 	containers.html \
 	contributor.html \
 	core_spec.html \
+	core_spec_plugins.html \
 	cpu_management.html \
 	cray.html \
+	cred_plugins.html \
 	disclaimer.html \
 	dist_plane.html \
 	documentation.html \
 	download.html \
 	elasticsearch.html \
 	elastic_computing.html \
+	ext_sensorsplugins.html \
 	faq.html \
 	federation.html \
 	gang_scheduling.html \
 	gres.html \
 	gres_design.html \
+	gres_plugins.html \
 	hdf5_profile_user_guide.html \
 	heterogeneous_jobs.html \
 	high_throughput.html \
 	intel_knl.html \
+	jobacct_gatherplugins.html \
 	job_array.html \
+	job_container_plugins.html \
 	job_exit_code.html \
 	job_launch.html \
 	job_submit_plugins.html \
+	jobcompplugins.html \
 	jwt.html \
+	launch_plugins.html \
 	licenses.html \
 	fair_tree.html \
 	mail.html \
 	man_index.html \
 	mc_support.html \
 	mcs.html \
+	mcs_plugins.html \
 	meetings.html \
 	mpi_guide.html \
+	mpiplugins.html \
 	multi_cluster.html \
 	network.html \
 	news.html \
 	nss_slurm.html \
+	node_features_plugins.html \
 	overview.html \
 	pam_slurm_adopt.html \
 	platforms.html \
 	plugins.html \
 	power_mgmt.html \
 	power_save.html \
+	power_plugins.html \
 	preempt.html \
 	prep_plugins.html \
+	preemption_plugins.html \
 	priority_multifactor.html \
 	priority_multifactor3.html \
+	priority_plugins.html \
+	proctrack_plugins.html \
 	programmer_guide.html \
 	prolog_epilog.html \
 	publications.html \
@@ -522,17 +541,22 @@ generated_html = \
 	resource_limits.html \
 	rest.html \
 	rest_api.html \
-	rest_release_notes.html \
 	rosetta.html \
+	route_plugin.html \
 	sched_config.html \
+	schedplugins.html \
 	select_design.html \
-	selinux.html \
+	selectplugins.html \
 	site_factor.html \
 	slurm.html \
+	slurmctld_plugstack.html \
 	slurm_ug_agenda.html \
+	switchplugins.html \
+	taskplugins.html \
 	team.html \
 	testimonials.html \
 	topology.html \
+	topology_plugin.html \
 	tres.html \
 	troubleshoot.html \
 	tutorials.html \
@@ -562,7 +586,6 @@ html_DATA = \
 	network_multi_cluster.gif \
 	network_srun.gif \
 	network_standard.gif \
-	node_lifecycle.png \
 	plane_ex1.gif \
 	plane_ex2.gif \
 	plane_ex3.gif \

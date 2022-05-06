@@ -45,16 +45,9 @@ set conf_mismatch_err	"WARNING: A line in gres.conf for GRES $re_word_str has $n
 set slurm_conf_type_err	"GRES in slurm.conf have a type while others do not"
 set gres_conf_type_err	"fatal: gres.conf for $re_word_str, some records have \"Type=\" specification while others do not"
 set gres_conf_file_err	"fatal: gres.conf for $re_word_str, some records have \"File\" specification while others do not"
-set flags_mismatch_err	"fatal: Invalid GRES record name=${re_word_str} type=${re_word_str}: Flags (${re_word_str}) does not match env flags for previous GRES of same node and name"
-set flags_no_gpu_err	"fatal: Invalid GRES record name=${re_word_str} type=${re_word_str}: Flags (${re_word_str}) contains \"no_gpu_env\", which must be mutually exclusive to all other GRES env flags of same node and name"
-set key_parse_err	"error: _parse_next_key: Parsing error at unrecognized key"
-set flags_default	"HAS_FILE,ENV_NVML,ENV_RSMI,ENV_OPENCL,ENV_DEFAULT"
-set flags_default_type	"HAS_FILE,HAS_TYPE,ENV_NVML,ENV_RSMI,ENV_OPENCL,ENV_DEFAULT"
-set flags_type		"HAS_TYPE"
-set flags_file		"HAS_FILE"
-set flags_file_type	"HAS_FILE,HAS_TYPE"
 
 set debug_mode 0
+# set debug_mode 1
 
 if {[get_config_param "SwitchType"] eq "switch/cray"} {
 	# Many Cray-specific changes required in slurm.conf test files
@@ -78,39 +71,9 @@ proc cleanup {} {
 # Run the test under valgrind if any arguments are given
 set use_valgrind 0
 
-# log_level_t values in log.h
-# NOTE: The test requires output from log level INFO, so can't go any lower
-set SLURM_LOG_LEVEL_INFO 3
-set SLURM_LOG_LEVEL_VERBOSE 4
-set SLURM_LOG_LEVEL_DEBUG 5
-set SLURM_LOG_LEVEL_DEBUG2 6
-set SLURM_LOG_LEVEL_DEBUG3 7
-
-set debug_level $SLURM_LOG_LEVEL_INFO
-
 if {[lindex $argv 0] == "v" || [lindex $argv 0] == "valgrind"} {
 	set use_valgrind 1
 	log_info "Running tests under valgrind!"
-} elseif {[lindex $argv 0] == "i" || [lindex $argv 0] == "info"} {
-	set debug_mode 1
-	log_info "Running tests under debug mode with log level INFO"
-	set debug_level $SLURM_LOG_LEVEL_INFO
-} elseif {[lindex $argv 0] == "verbose"} {
-	set debug_mode 1
-	log_info "Running tests under debug mode with log level VERBOSE"
-	set debug_level $SLURM_LOG_LEVEL_VERBOSE
-} elseif {[lindex $argv 0] == "d" || [lindex $argv 0] == "d1" || [lindex $argv 0] == "debug"} {
-	set debug_mode 1
-	log_info "Running tests under debug mode with log level DEBUG"
-	set debug_level $SLURM_LOG_LEVEL_DEBUG
-} elseif {[lindex $argv 0] == "d2" || [lindex $argv 0] == "debug2"} {
-	set debug_mode 1
-	log_info "Running tests under debug mode with log level DEBUG2"
-	set debug_level $SLURM_LOG_LEVEL_DEBUG2
-} elseif {[lindex $argv 0] == "d3" || [lindex $argv 0] == "debug3"} {
-	set debug_mode 1
-	log_info "Running tests under debug mode with log level DEBUG3"
-	set debug_level $SLURM_LOG_LEVEL_DEBUG3
 }
 
 proc touch_file {file} {
@@ -185,6 +148,7 @@ if {$output != $ulong_bits} {
 
 #
 # Tests if $test_prog actual output matches expected output
+# NOTE: The output strings are sorted so the order of lines is irrelevant
 #
 # test_minor -		The minor test number (39.18.X).
 # slurm_conf_gres -     This is the `Gres=` value that would be in
@@ -206,44 +170,42 @@ if {$output != $ulong_bits} {
 #
 proc test_cfg {test_minor slurm_conf_gres gres_conf fake_gpus_conf output_expected {err_msgs ""} {errs_expected 0} } {
 	global test_dir nodename test_prog re_word_str
-	global test_name use_valgrind file_in file_out
-	global bin_cat debug_mode debug_level
+	global test_name use_valgrind bin_sort file_in file_out
+	global bin_cat debug_mode
 
 	log_info "====$test_name.$test_minor===="
 
 	generate_file $gres_conf $test_dir/gres.conf
 	generate_file $fake_gpus_conf $test_dir/fake_gpus.conf
 
+	# We don't want to sort when debugging - we want to see output in order
+	if {$debug_mode} {
+		set output_method "$bin_cat $file_out"
+	} else {
+		set output_method "$bin_sort <$file_out"
+	}
+
 	if {$use_valgrind} {
 		make_bash_script $file_in "
-valgrind --tool=memcheck --error-limit=no --leak-check=full --show-reachable=yes --max-stackframe=16777216 --num-callers=20 --child-silent-after-fork=yes --track-origins=yes ./$test_prog \"$test_dir\" \"$nodename\" \"$slurm_conf_gres\" $debug_level > $file_out 2>&1
-$bin_cat $file_out
+valgrind --tool=memcheck --error-limit=no --leak-check=full --show-reachable=yes --max-stackframe=16777216 --num-callers=20 --child-silent-after-fork=yes --track-origins=yes ./$test_prog \"$test_dir\" \"$nodename\" \"$slurm_conf_gres\" >$file_out 2>&1
+$output_method
 rm -rf $file_out"
 	} else {
 		make_bash_script $file_in "
-./$test_prog \"$test_dir\" \"$nodename\" \"$slurm_conf_gres\" $debug_level > $file_out 2>&1
-$bin_cat $file_out
+./$test_prog \"$test_dir\" \"$nodename\" \"$slurm_conf_gres\" >$file_out 2>&1
+$output_method
 rm -rf $file_out"
 	}
 
 	##
 	### Parse the `GRES_PARSABLE` output
 	##
-	# The order of GPUs is important because it directly corresponds to the
-	# bits of the GRES bitmaps used to track the GPUs, and this shouldn't
-	# change unless we deliberately change it.
-	#
-	# Also, we will eventually want to sort GPUs by PCI bus ID if AutoDetect
-	# is used, so we need to test the order to make sure that works. We may
-	# also want to guarantee that the GPU order in gres.conf is preserved if
-	# AutoDetect is NOT used, so users can manually specify the PCI bus
-	# order.
 	if {$debug_mode} {
 		set output [run_command_output -fail "$file_in"]
 	} else {
 		set output [run_command_output -fail -nolog "$file_in"]
 	}
-	set actual [regexp -all -inline "GRES_PARSABLE$re_word_str" $output]
+	set sorted_actual [regexp -all -inline "GRES_PARSABLE$re_word_str" $output]
 
 	# Check for expected errors
 	if {$err_msgs != ""} {
@@ -252,18 +214,20 @@ rm -rf $file_out"
 		set errs_actual 0
 	}
 
-	set expected [regexp -all -inline "GRES_PARSABLE$re_word_str" $output_expected]
+	make_bash_script $file_in "/bin/echo \"$output_expected\" | $bin_sort"
+	set output [run_command_output -fail -nolog "$file_in"]
+	set sorted_expected [regexp -all -inline "GRES_PARSABLE$re_word_str" $output]
 
 	file delete $file_in
 
 	# Check the output with what is expected
-	log_debug "Actual:"
-	foreach {value} $actual {
+	log_debug "Actual (sorted):"
+	foreach {value} $sorted_actual {
 		log_debug "$value"
 	}
-	if {![subtest {$actual == $expected} "Expected output does not match actual output"]} {
-		log_debug "Expected:"
-		foreach {value} $expected {
+	if {![subtest {$sorted_actual == $sorted_expected} "Expected output does not match actual output"]} {
+		log_debug "Expected (sorted):"
+		foreach {value} $sorted_expected {
 			log_debug "$value"
 		}
 	}
@@ -280,19 +244,19 @@ rm -rf $file_out"
 # fake_gpus.conf is of the following format, with each line representing one
 # GPU device:
 #
-#     type|cpu_count|cpu_range|links|device_files[|unique_id]
+#     type|cpu_count|cpu_range|links|device_files
 #
 # Optionally, cpu_range allows special keywords starting in `~` to aid in
 # testing the conversion from an NVML cpu affinity array to Slurm bitstring.
 #
 # The GRES_PARSABLE output is of the following format:
 #
-# GRES_PARSABLE[name](device_count):type|cpu_count|cpu_range|links|device_files[|unique_id]
+# GRES_PARSABLE[name](device_count):type|cpu_count|cpu_range|links|device_files
 #
 # To better decipher the tests, temporarily increase the log verbosity in
 # test39.18.prog.c. E.g.:
 #
-#     opts.stderr_level = SLURM_LOG_LEVEL_DEBUG2;
+#     opts.stderr_level = LOG_LEVEL_DEBUG2;
 #
 # Note that there is a known issue with Expect where the regex parsing fails
 # when the output is somewhat large. So to avoid random errors, each test output
@@ -322,10 +286,10 @@ tesla|4|2-3|(null)|${dev}4
 tesla|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}3|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}4|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a2" test_cfg "a2" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -339,22 +303,22 @@ set fake_gpus_conf "
 # This file was autogenerated by $test_name
 tesla|4|(null)|(null)|(null)
 tesla|4|(null)|(null)|${dev}1
-tesla|4|(null)|-1,0|(null)
-tesla|4|(null)|-1,0|${dev}3
+tesla|4|(null)|0-1|(null)
+tesla|4|(null)|0-1|${dev}3
 tesla|4|0-1|(null)|(null)
 tesla|4|0-1|(null)|${dev}2
-tesla|4|0-1|-1,0|(null)
-tesla|4|0-1|-1,0|${dev}4
+tesla|4|0-1|0-1|(null)
+tesla|4|0-1|0-1|${dev}4
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|-1,0|(null)|
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|-1,0|(null)|
 GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|(null)|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|0-1|(null)|
 GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|(null)|
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|-1,0|${dev}3|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|-1,0|${dev}4|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}1|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|0-1|(null)|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|0-1|${dev}3|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|0-1|${dev}4|
 "
 testproc_alias "a4" test_cfg "a4" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -387,7 +351,7 @@ set fake_gpus_conf "# This file was autogenerated by $test_name
 tesla|$cpus_count|~$cpu_array|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|
 "
 testproc_alias "a6" test_cfg "a6" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -407,7 +371,7 @@ set fake_gpus_conf "# This file was autogenerated by $test_name
 tesla|$cpus_count|~$cpu_array|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|
 "
 testproc_alias "a8" test_cfg "a8" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -427,7 +391,7 @@ set fake_gpus_conf "# This file was autogenerated by $test_name
 tesla|$cpus_count|~$cpu_array|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|
 "
 testproc_alias "a10" test_cfg "a10" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -447,7 +411,7 @@ set fake_gpus_conf "# This file was autogenerated by $test_name
 tesla|$cpus_count|~max|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|$cpus_count|0-$cpus_count_m1|(null)|${dev}1|
 "
 testproc_alias "a12" test_cfg "a12" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -479,7 +443,7 @@ set fake_gpus_conf "
 tesla|16|~one|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|16|0|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|16|0|(null)|${dev}1|
 "
 testproc_alias "a16" test_cfg "a16" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -495,7 +459,7 @@ set fake_gpus_conf "
 tesla|4|~three|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|
 "
 testproc_alias "a18" test_cfg "a18" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -511,7 +475,7 @@ set fake_gpus_conf "
 tesla|16|~half|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|16|8-15|(null)|${dev}1|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|16|8-15|(null)|${dev}1|
 "
 testproc_alias "a20" test_cfg "a20" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -539,10 +503,10 @@ tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4
 tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}3|$flags_file
-GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}4|$flags_file
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):(null)|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a22" test_cfg "a22" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -561,10 +525,10 @@ tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4
 tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):v100|4|2-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):v100|4|2-3|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):v100|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):v100|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a24" test_cfg "a24" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -585,10 +549,10 @@ tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4
 tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):TESLA_V100|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):TESLA_V100|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):TESLA_V100|4|2-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):TESLA_V100|4|2-3|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):TESLA_V100|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):TESLA_V100|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):TESLA_V100|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):TESLA_V100|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a26" test_cfg "a26" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -608,10 +572,10 @@ tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4
 tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):pcie-16gb|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):pcie-16gb|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):pcie-16gb|4|2-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):pcie-16gb|4|2-3|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):pcie-16gb|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):pcie-16gb|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):pcie-16gb|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):pcie-16gb|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a28" test_cfg "a28" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -630,10 +594,10 @@ tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4
 tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|2-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla_v100-pcie-16gb|4|2-3|(null)|${dev}4|
 "
 testproc_alias "a30" test_cfg "a30" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -651,9 +615,9 @@ tesla_k20m|4|0-1|(null)|${dev}2
 tesla_v100-sxm2-32gb|4|0-1|(null)|${dev}3
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):k20m1|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}3|$flags_file_type
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):k20m1|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):v100|4|0-1|(null)|${dev}3|
 "
 testproc_alias "a32" test_cfg "a32" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -674,7 +638,7 @@ nvidia-p100|4|0-1|(null)|${dev}1
 nvidia-p100|4|0-1|(null)|${dev}5
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):p100|4|0-1|(null)|${dev}1|$flags_file_type
+GRES_PARSABLE\[gpu\](1):p100|4|0-1|(null)|${dev}1|
 "
 testproc_alias "a34" test_cfg "a34" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -693,10 +657,10 @@ a|4|0-1|(null)|${dev}3
 aaaa|4|0-1|(null)|${dev}4
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):aa|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a|4|0-1|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):aaaa|4|0-1|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):aa|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):a|4|0-1|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):aaaa|4|0-1|(null)|${dev}4|
 "
 
 testproc_alias "a36" test_cfg "a36" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -720,12 +684,12 @@ k20|4|0-1|(null)|${dev}6
 k20m|4|0-1|(null)|${dev}8
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}4|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}7|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}8|$flags_file_type
+GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}4|
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}7|
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}8|
 "
 
 testproc_alias "a38" test_cfg "a38" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -747,10 +711,10 @@ k20|4|0-1|(null)|${dev}4
 k20|4|0-1|(null)|${dev}5
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}4|$flags_file_type
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):k20m|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):k20|4|0-1|(null)|${dev}4|
 "
 
 testproc_alias "a39" test_cfg "a39" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -774,11 +738,11 @@ test-bbb-test|4|0-1|(null)|${dev}4
 test-ccc-test|4|0-1|(null)|${dev}6
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):bbb|4|0-1|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):bbb|4|0-1|(null)|${dev}4|$flags_file_type
-GRES_PARSABLE\[gpu\](1):ccc|4|0-1|(null)|${dev}5|$flags_file_type
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):bbb|4|0-1|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):bbb|4|0-1|(null)|${dev}4|
+GRES_PARSABLE\[gpu\](1):ccc|4|0-1|(null)|${dev}5|
 "
 
 testproc_alias "a40" test_cfg "a40" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -798,9 +762,9 @@ test-aaa-test|4|0-1|(null)|${dev}2
 test-aaa-test|4|0-1|(null)|${dev}1
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}3|$flags_file_type
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):aaa|4|0-1|(null)|${dev}3|
 "
 
 testproc_alias "a42" test_cfg "a42" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -822,9 +786,9 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|$flags_file_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|
 "
 
 testproc_alias "a52" test_cfg "a52" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -849,10 +813,10 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|
 "
 
 testproc_alias "a53" test_cfg "a53" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -879,9 +843,9 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|
 "
 
 testproc_alias "a54" test_cfg "a54" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -911,10 +875,10 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|
 "
 set err_msgs $conf_mismatch_err
 set expected_errs 1
@@ -942,11 +906,11 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):special|4|(null)|(null)|${dev}5|
 "
 
 testproc_alias "a56" test_cfg "a56" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -986,7 +950,7 @@ set gres_conf ""
 # Effectively "turn off" AutoDetect
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[tmpdisk\](100):(null)|4|(null)|(null)|(null)|CountOnly
+GRES_PARSABLE\[tmpdisk\](100):(null)|4|(null)|(null)|(null)|
 "
 testproc_alias "a58" test_cfg "a58" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1015,37 +979,15 @@ tesla|4|0-1|-1|${dev}1
 tesla|4|0-1|-1|${dev}2
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):gtx|4|(null)|(null)|${dev}7|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|-1|${dev}1|
+GRES_PARSABLE\[gpu\](1):gtx|4|(null)|(null)|${dev}7|
 "
 
 set err_msgs $conf_mismatch_err
 set expected_errs 5
 
 testproc_alias "a59" test_cfg "a59" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
-
-
-# ##############################################################################
-# Test a60 - Test unique_id parsing (for MIGs)
-# ##############################################################################
-
-set slurm_conf_gres "gpu:tesla:4"
-set gres_conf ""
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-tesla|4|0-1|(null)|${dev}1|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/7/0
-tesla|4|0-1|(null)|${dev}2|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/10/0
-tesla|4|2-3|(null)|${dev}3|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/8/0
-tesla|4|2-3|(null)|${dev}4|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/9/0
-"
-set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}1|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/7/0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}2|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/10/0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/8/0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/9/0|$flags_file_type
-"
-testproc_alias "a60" test_cfg "a60" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
 
 # ##############################################################################
@@ -1068,12 +1010,12 @@ tesla|4|0-1|(null)|${dev}1
 gtx560|4|0-1|(null)|${dev}0
 "
 set expected_output "
-GRES_PARSABLE\[mps\](100):gtx560|4|0-1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):gtx560|4|0-1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[mps\](100):tesla|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[mps\](100):1080|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}2|$flags_file_type
+GRES_PARSABLE\[gpu\](1):gtx560|4|0-1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[mps\](100):tesla|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[mps\](100):1080|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[mps\](100):gtx560|4|0-1|(null)|${dev}0|
 "
 
 testproc_alias "b2" test_cfg "b2" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -1089,7 +1031,7 @@ set gres_conf "
 # This file was autogenerated by $test_name
 Name=gpu Type=ti File=${dev}0 COREs=0
 Name=gpu Type=ti File=${dev}\[1-2\] COREs=0-1
-Name=gpu Type=gtx File=${dev}\[3-5\] COREs=0-1 Links=-1,0,0,0,0,0
+Name=gpu Type=gtx File=${dev}\[3-5\] COREs=0-1 Links=0,0,0,0,0,0
 "
 
 set fake_gpus_conf "
@@ -1097,63 +1039,20 @@ set fake_gpus_conf "
 1080ti|4|0-1|(null)|${dev}0
 1080ti|4|0-1|(null)|${dev}1
 1080ti|4|0-1|(null)|${dev}2
-gtx560|4|0-1|0,0,0,-1,0,0|${dev}3
-gtx560|4|0-1|0,0,0,0,-1,0|${dev}4
-gtx560|4|0-1|-1,0,0,0,0,0|${dev}5
+gtx560|4|0-1|0,0,0,1,0,0|${dev}3
+gtx560|4|0-1|0,0,0,0,1,0|${dev}4
+gtx560|4|0-1|0,0,0,0,0,0|${dev}5
 "
 
 set expected_output "
-GRES_PARSABLE\[gpu\](1):gtx|4|0-1|-1,0,0,0,0,0|${dev}5|$flags_file_type
-GRES_PARSABLE\[gpu\](1):ti|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):ti|4|0-1|(null)|${dev}2|$flags_file_type
+GRES_PARSABLE\[gpu\](1):ti|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):ti|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):gtx|4|0-1|0,0,0,0,0,0|${dev}5|
 "
 
 set err_msgs $mismatch_err
 set expected_errs 3
 testproc_alias "b4" test_cfg "b4" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
-
-
-# ##############################################################################
-# # Test b5 - Test that GPUs are sorted according to links, not device file
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:8"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 COREs=0-1  Links=0,0,0,-1,0,0,0,0
-Name=gpu Type=a100 File=${dev}1 COREs=0-1  Links=0,0,-1,0,0,0,0,0
-Name=gpu Type=a100 File=${dev}2 COREs=0-1  Links=0,-1,0,0,0,0,0,0
-Name=gpu Type=a100 File=${dev}3 COREs=0-1  Links=-1,0,0,0,0,0,0,0
-Name=gpu Type=a100 File=${dev}4 COREs=2-3 Links=0,0,0,0,0,0,0,-1
-Name=gpu Type=a100 File=${dev}5 COREs=2-3 Links=0,0,0,0,0,0,-1,0
-Name=gpu Type=a100 File=${dev}6 COREs=2-3 Links=0,0,0,0,0,-1,0,0
-Name=gpu Type=a100 File=${dev}7 COREs=2-3 Links=0,0,0,0,-1,0,0,0
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|-1,0,0,0,0,0,0,0|${dev}3
-a100|4|0-1|0,-1,0,0,0,0,0,0|${dev}2
-a100|4|0-1|0,0,-1,0,0,0,0,0|${dev}1
-a100|4|0-1|0,0,0,-1,0,0,0,0|${dev}0
-a100|4|2-3|0,0,0,0,-1,0,0,0|${dev}7
-a100|4|2-3|0,0,0,0,0,-1,0,0|${dev}6
-a100|4|2-3|0,0,0,0,0,0,-1,0|${dev}5
-a100|4|2-3|0,0,0,0,0,0,0,-1|${dev}4
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|-1,0,0,0,0,0,0,0|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,-1,0,0,0,0,0,0|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,0,-1,0,0,0,0,0|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,0,0,-1,0,0,0,0|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|0,0,0,0,-1,0,0,0|${dev}7|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|0,0,0,0,0,-1,0,0|${dev}6|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|0,0,0,0,0,0,-1,0|${dev}5|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|0,0,0,0,0,0,0,-1|${dev}4|$flags_file_type
-"
-
-testproc_alias "b5" test_cfg "b5" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
 
 # ##############################################################################
@@ -1168,59 +1067,12 @@ Name=gpu Type=1080 File=${dev}\[0-2\] COREs=0-1
 
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}2|$flags_default_type
+GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):1080|4|0-1|(null)|${dev}2|
 "
 
 testproc_alias "b6" test_cfg "b6" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-
-
-# ##############################################################################
-# # Test b7 - Test that GPUs are sorted according links, if specified, and
-# 	       device file, if not specified. Test also that null links are
-# 	       sorted after non-null links.
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:8"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 COREs=0-1  Links=0,0,0,-1
-Name=gpu Type=a100 File=${dev}1 COREs=0-1  Links=0,0,-1,0
-Name=gpu Type=a100 File=${dev}2 COREs=0-1  Links=0,-1,0,0
-Name=gpu Type=a100 File=${dev}3 COREs=0-1  Links=-1,0,0,0
-Name=gpu Type=a100 File=${dev}4 COREs=2-3
-Name=gpu Type=a100 File=${dev}5 COREs=2-3
-Name=gpu Type=a100 File=${dev}6 COREs=2-3
-Name=gpu Type=a100 File=${dev}7 COREs=2-3
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|-1,0,0,0|${dev}3
-a100|4|0-1|0,-1,0,0|${dev}2
-a100|4|0-1|0,0,-1,0|${dev}1
-a100|4|0-1|0,0,0,-1|${dev}0
-a100|4|2-3|(null)|${dev}7
-a100|4|2-3|(null)|${dev}6
-a100|4|2-3|(null)|${dev}5
-a100|4|2-3|(null)|${dev}4
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|-1,0,0,0|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,-1,0,0|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,0,-1,0|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|0,0,0,-1|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|(null)|${dev}4|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|(null)|${dev}5|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|(null)|${dev}6|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|2-3|(null)|${dev}7|$flags_file_type
-"
-
-testproc_alias "b7" test_cfg "b7" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
 
 
 # ##############################################################################
@@ -1239,11 +1091,11 @@ Name=gpu File=${dev}4 Cores=0
 
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|0,1|-1|${dev}2|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0,1|-1|${dev}3|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0,1|(null)|${dev}0|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0,1|(null)|${dev}1|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0|(null)|${dev}4|$flags_default
+GRES_PARSABLE\[gpu\](1):(null)|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):(null)|4|0,1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|0,1|-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|0,1|-1|${dev}3|
+GRES_PARSABLE\[gpu\](1):(null)|4|0|(null)|${dev}4|
 "
 
 testproc_alias "b8" test_cfg "b8" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
@@ -1318,10 +1170,10 @@ Name=mps Count=100 File=${dev}0
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[mps\](100):gtx560|4|0,1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[mps\](100):tesla|4|2,3|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|$flags_default_type
+GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|
+GRES_PARSABLE\[mps\](100):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[mps\](100):tesla|4|2,3|(null)|${dev}1|
 "
 testproc_alias "c2" test_cfg "c2" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1339,10 +1191,10 @@ Name=mps Count=210
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[mps\](105):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[mps\](105):tesla|4|2,3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|$flags_default_type
+GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|
+GRES_PARSABLE\[mps\](105):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[mps\](105):tesla|4|2,3|(null)|${dev}1|
 "
 testproc_alias "c4" test_cfg "c4" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1364,9 +1216,9 @@ tesla|4|2-3|(null)|${dev}3
 tesla|4|2-3|(null)|${dev}4
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|
 "
 testproc_alias "c6" test_cfg "c6" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1388,12 +1240,12 @@ tesla|4|0-1|(null)|${dev}5
 tesla|4|0-1|(null)|${dev}6
 "
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}5|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}6|$flags_file_type
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}5|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}6|
 "
 testproc_alias "c8" test_cfg "c8" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1418,14 +1270,14 @@ Name=gpu Type=tesla File=${dev}7 Cores=0-3 Links=0,0,0,0,0,0,2,-1
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|-1,2,2,0,0,0,0,0|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|2,-1,2,0,0,0,0,0|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|2,2,-1,0,0,0,0,0|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,-1,0,1,0,0|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,-1,1,0,0|${dev}4|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,1,1,-1,0,0|${dev}5|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,0,0,-1,2|${dev}6|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,0,0,2,-1|${dev}7|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|-1,2,2,0,0,0,0,0|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|2,-1,2,0,0,0,0,0|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|2,2,-1,0,0,0,0,0|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,-1,0,1,0,0|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,-1,1,0,0|${dev}4|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,1,1,-1,0,0|${dev}5|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,0,0,-1,2|${dev}6|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,0,0,0,0,0,2,-1|${dev}7|
 "
 testproc_alias "c10" test_cfg "c10" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1450,10 +1302,10 @@ Name=gpu Type=tesla File=${dev}\[1-4\] Cores=2-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|2-3|(null)|${dev}4|
 "
 testproc_alias "c14" test_cfg "c14" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1472,10 +1324,10 @@ Name=mic     Type=mickey File=${dev}4 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[nic\](1):nikki|4|0-3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[mic\](1):mickey|4|0-3|(null)|${dev}4|$flags_file_type
-GRES_PARSABLE\[tmpdisk\](1):disky|4|0-3|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[tmpdisk\](1):disky|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[nic\](1):nikki|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[mic\](1):mickey|4|0-3|(null)|${dev}4|
 "
 testproc_alias "c16" test_cfg "c16" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1493,10 +1345,10 @@ Name=mic     File=${dev}4 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[nic\](1):(null)|4|0-3|(null)|${dev}3|HAS_FILE
-GRES_PARSABLE\[mic\](1):(null)|4|0-3|(null)|${dev}4|HAS_FILE
-GRES_PARSABLE\[tmpdisk\](1):(null)|4|0-3|(null)|${dev}2|HAS_FILE
-GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}1|$flags_default
+GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[tmpdisk\](1):(null)|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[nic\](1):(null)|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[mic\](1):(null)|4|0-3|(null)|${dev}4|
 "
 testproc_alias "c17" test_cfg "c17" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1512,7 +1364,7 @@ NodeName=$nodename              Type=tesla File=${dev}2 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|
 "
 
 set err_msgs $no_name_err
@@ -1530,7 +1382,7 @@ Type=tesla File=${dev}1 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output ""
-set err_msgs $key_parse_err
+set err_msgs $parse_err
 set expected_errs 1
 testproc_alias "c20" test_cfg "c20" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
 
@@ -1556,7 +1408,7 @@ set slurm_conf_gres "tmpdisk:tempy:10g"
 set gres_conf "Name=tmpdisk Type=tempy Count=10g Cores=0-1"
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[tmpdisk\](10737418240):tempy|4|0-1|(null)|(null)|HAS_TYPE
+GRES_PARSABLE\[tmpdisk\](10737418240):tempy|4|0-1|(null)|(null)|
 "
 testproc_alias "c23" test_cfg "c23" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1574,10 +1426,10 @@ Name=gpu Type=b File=${dev}6 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):a|4|0-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):a|4|0-3|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):b|4|0-3|(null)|${dev}5|$flags_default_type
-GRES_PARSABLE\[gpu\](1):b|4|0-3|(null)|${dev}6|$flags_default_type
+GRES_PARSABLE\[gpu\](1):a|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):a|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):b|4|0-3|(null)|${dev}5|
+GRES_PARSABLE\[gpu\](1):b|4|0-3|(null)|${dev}6|
 "
 testproc_alias "c24" test_cfg "c24" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1597,14 +1449,14 @@ Name=gpu Type=tesla_b File=${dev}8       Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}4|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}5|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}6|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}7|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}8|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}4|
+GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}5|
+GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}6|
+GRES_PARSABLE\[gpu\](1):tesla_a|4|0-3|(null)|${dev}7|
+GRES_PARSABLE\[gpu\](1):tesla_b|4|0-3|(null)|${dev}8|
 "
 testproc_alias "c28" test_cfg "c28" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1695,16 +1547,16 @@ Name=gpu Type=tesla File=${dev}4 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-2|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}4|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-1|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-2|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}4|
 "
 testproc_alias "c38" test_cfg "c38" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
 
 # ##############################################################################
-# # Test c40 - Test that nulled, empty, and zeroed links produce errors
+# # Test c40 - Work with null links
 # ##############################################################################
 
 set slurm_conf_gres "gpu:tesla:4"
@@ -1717,13 +1569,13 @@ Name=gpu Type=tesla File=${dev}4 Cores=0-3 Links=0
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}4|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0|${dev}4|
 "
 set err_msgs $links_err
-set expected_errs 3
+set expected_errs 1
 testproc_alias "c40" test_cfg "c40" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
 
 # ##############################################################################
@@ -1740,10 +1592,10 @@ Name=gpu Type=tesla File=${dev}4 Cores=0-3 Links=0,-1,2
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,-1|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,-1,2|${dev}4|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}3|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,-1|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|0-3|0,-1,2|${dev}4|
 "
 testproc_alias "c42" test_cfg "c42" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1762,10 +1614,10 @@ Name=gpu File=${dev}4 Cores=0-3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}1|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}2|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}3|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}4|$flags_default
+GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):(null)|4|0-3|(null)|${dev}4|
 "
 testproc_alias "c46" test_cfg "c46" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1784,11 +1636,11 @@ Name=gpu Type=tesla File=${dev}5 Cores=0
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|(null)|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|(null)|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4||(null)|${dev}3|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|null|(null)|${dev}4|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0|(null)|${dev}5|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|(null)|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|(null)|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):tesla|4||(null)|${dev}3|
+GRES_PARSABLE\[gpu\](1):tesla|4|null|(null)|${dev}4|
+GRES_PARSABLE\[gpu\](1):tesla|4|0|(null)|${dev}5|
 "
 testproc_alias "c48" test_cfg "c48" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1813,10 +1665,10 @@ Name=mps Count=100 File=${dev}1
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[mps\](100):gtx560|4|0,1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[mps\](100):tesla|4|2,3|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|$flags_default_type
+GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|
+GRES_PARSABLE\[mps\](100):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[mps\](100):tesla|4|2,3|(null)|${dev}1|
 "
 testproc_alias "c50" test_cfg "c50" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1834,9 +1686,9 @@ Name=gpu Type=tesla File=${dev}3 COREs=2,3
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):tesla|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|0,1|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}3|$flags_default_type
+GRES_PARSABLE\[gpu\](1):tesla|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|0,1|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}3|
 "
 testproc_alias "c52" test_cfg "c52" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1858,10 +1710,10 @@ NodeName=${nodename_base}\[4-15\] Name=gpu File=${dev}\[0-3\]
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}0|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}1|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}2|$flags_default
-GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}3|$flags_default
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}2|
+GRES_PARSABLE\[gpu\](1):(null)|4|(null)|(null)|${dev}3|
 "
 testproc_alias "c54" test_cfg "c54" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
 
@@ -1883,274 +1735,11 @@ Name=mps Count=400 File=${dev}8
 "
 set fake_gpus_conf ""
 set expected_output "
-GRES_PARSABLE\[mps\](0):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[mps\](200):tesla|4|2,3|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[mps\](300):tesla|4|2,3|(null)|${dev}3|$flags_file_type
-GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}3|$flags_default_type
+GRES_PARSABLE\[gpu\](1):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}1|
+GRES_PARSABLE\[gpu\](1):tesla|4|2,3|(null)|${dev}3|
+GRES_PARSABLE\[mps\](0):gtx560|4|0,1|(null)|${dev}0|
+GRES_PARSABLE\[mps\](200):tesla|4|2,3|(null)|${dev}1|
+GRES_PARSABLE\[mps\](300):tesla|4|2,3|(null)|${dev}3|
 "
 testproc_alias "c56" test_cfg "c56" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-# ==============================================================================
-# ==============================================================================
-# # Tests dX - Test Flags parsing with and without AutoDetect
-# ==============================================================================
-# ==============================================================================
-
-# ##############################################################################
-# # Test d1 - Default (all envs set)
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 Cores=0-1
-Name=gpu Type=a100 File=${dev}1 Cores=0-1
-Name=gpu Type=a100 File=${dev}2 Cores=0-1
-Name=gpu Type=a100 File=${dev}3 Cores=0-1
-"
-
-set fake_gpus_conf ""
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_default_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_default_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_default_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_default_type
-"
-
-testproc_alias "d1" test_cfg "d1" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-
-# ##############################################################################
-# # Test d2 - No envs set
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 Cores=0-1 Flags=no_gpu_env
-Name=gpu Type=a100 File=${dev}1 Cores=0-1 Flags=no_gpu_env
-Name=gpu Type=a100 File=${dev}2 Cores=0-1 Flags=no_gpu_env
-Name=gpu Type=a100 File=${dev}3 Cores=0-1 Flags=no_gpu_env
-"
-
-set fake_gpus_conf ""
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type
-"
-
-testproc_alias "d2" test_cfg "d2" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-# ##############################################################################
-# # Test d3 - Test with NodeName
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-NodeName=$nodename      Name=gpu Type=a100 File=${dev}0 Cores=0-1 Flags=amd_gpu_env
-NodeName=$nodename      Name=gpu Type=a100 File=${dev}1 Cores=0-1 Flags=amd_gpu_env
-NodeName=$nodename_diff Name=gpu Type=a100 File=${dev}2 Cores=0-1 Flags=nvidia_gpu_env
-NodeName=$nodename_diff Name=gpu Type=a100 File=${dev}3 Cores=0-1 Flags=nvidia_gpu_env
-"
-
-set fake_gpus_conf ""
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_RSMI
-"
-
-testproc_alias "d3" test_cfg "d3" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-# ##############################################################################
-# # Test d4 - AutoDetect match with conf does NOT overwrite no_gpu_env
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0       Cores=0-1 Flags=no_gpu_env
-Name=gpu Type=a100 File=${dev}\[1-3\] Cores=0-1 Flags=no_gpu_env
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|(null)|${dev}0|(null)|nvidia_gpu_env
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type
-"
-
-testproc_alias "d4" test_cfg "d4" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-# ##############################################################################
-# # Test d5 - Test that AutoDetect and conf can match with correct Flags
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0       Cores=0-1 Flags=nvidia_gpu_env
-Name=gpu Type=a100 File=${dev}\[1-3\] Cores=0-1 Flags=nvidia_gpu_env
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|(null)|${dev}0|(null)|nvidia_gpu_env
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type,ENV_NVML
-"
-
-testproc_alias "d5" test_cfg "d5" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-
-# ##############################################################################
-# # Test d6 - Test that AutoDetect works with no conf
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}\[1-3\] Cores=0-1 Flags=nvidia_gpu_env
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|(null)|${dev}0|(null)|nvidia_gpu_env
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type,ENV_NVML
-"
-
-testproc_alias "d6" test_cfg "d6" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-
-# ##############################################################################
-# # Test d7 - Test that AutoDetect works with no conf, and other conf different
-#              NOTE: The stepd will combine all env flags of records on the same
-#              node, so in reality, both CUDA_* and ROCR_* would be set on all.
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}\[1-3\] Cores=0-1 Flags=amd_gpu_env
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|(null)|${dev}0|(null)|nvidia_gpu_env
-"
-
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_NVML
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type,ENV_RSMI
-"
-
-testproc_alias "d7" test_cfg "d7" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-
-# ##############################################################################
-# # Test d8 - Test that flags propagate to next GRES line
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 Cores=0-1 Flags=amd_gpu_env,nvidia_gpu_env
-Name=gpu Type=a100 File=${dev}1 Cores=0-1
-Name=gpu Type=a100 File=${dev}2 Cores=0-1
-Name=gpu Type=a100 File=${dev}3 Cores=0-1
-"
-
-set fake_gpus_conf ""
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_NVML,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_NVML,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}2|$flags_file_type,ENV_NVML,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}3|$flags_file_type,ENV_NVML,ENV_RSMI
-"
-
-testproc_alias "d8" test_cfg "d8" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output
-
-# ##############################################################################
-# # Test d9 - Fatal on env flag mismatch
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}\[0-1\] Cores=0-1 Flags=no_gpu_env
-Name=gpu Type=a100 File=${dev}\[2-3\] Cores=0-1 Flags=nvidia_gpu_env
-"
-
-set fake_gpus_conf ""
-set expected_output ""
-set err_msgs $flags_mismatch_err
-set expected_errs 1
-testproc_alias "d9" test_cfg "d9" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
-
-# ##############################################################################
-# # Test d10 - Fatal on env flag mismatch with default
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:4"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0       Cores=0-1
-Name=gpu Type=a100 File=${dev}\[1-3\] Cores=0-1 Flags=nvidia_gpu_env
-"
-
-set fake_gpus_conf "
-# This file was autogenerated by $test_name
-a100|4|0-1|(null)|${dev}0|(null)|nvidia_gpu_env
-"
-
-set expected_output ""
-set err_msgs $flags_mismatch_err
-set expected_errs 1
-
-testproc_alias "d10" test_cfg "d10" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output $err_msgs $expected_errs
-
-# ##############################################################################
-# # Test d11 - Make sure that env flag propagation works with different types
-#               of the same GRES name
-# ##############################################################################
-
-set slurm_conf_gres "gpu:a100:1,gpu:b100:1,gpu:c100:1,gpu:d100:1"
-set gres_conf "
-# This file was autogenerated by $test_name
-Name=gpu Type=a100 File=${dev}0 Cores=0-1 Flags=amd_gpu_env
-Name=gpu Type=b100 File=${dev}1 Cores=0-1
-Name=gpu Type=c100 File=${dev}2 Cores=0-1
-Name=gpu Type=d100 File=${dev}3 Cores=0-1
-"
-
-set fake_gpus_conf ""
-set expected_output "
-GRES_PARSABLE\[gpu\](1):a100|4|0-1|(null)|${dev}0|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):b100|4|0-1|(null)|${dev}1|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):c100|4|0-1|(null)|${dev}2|$flags_file_type,ENV_RSMI
-GRES_PARSABLE\[gpu\](1):d100|4|0-1|(null)|${dev}3|$flags_file_type,ENV_RSMI
-"
-
-testproc_alias "d11" test_cfg "d11" $slurm_conf_gres $gres_conf $fake_gpus_conf $expected_output

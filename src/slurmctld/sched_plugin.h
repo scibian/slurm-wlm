@@ -47,14 +47,14 @@
  *
  * Returns a Slurm errno.
  */
-extern int sched_g_init(void);
+int slurm_sched_init(void);
 
 /*
  * Terminate sched plugin, free memory.
  *
  * Returns a Slurm errno.
  */
-extern int sched_g_fini(void);
+extern int slurm_sched_fini(void);
 
 /*
  **************************************************************************
@@ -65,6 +65,12 @@ extern int sched_g_fini(void);
 /*
  * Perform reconfig, re-read any configuration files
  */
-extern int sched_g_reconfig(void);
+int slurm_sched_g_reconfig(void);
+
+/*
+ * Supply the initial priority for a newly-submitted job.
+ */
+extern uint32_t slurm_sched_g_initial_priority(uint32_t max_prio,
+					       job_record_t *job_ptr);
 
 #endif /*__SLURM_CONTROLLER_SCHED_PLUGIN_API_H__*/

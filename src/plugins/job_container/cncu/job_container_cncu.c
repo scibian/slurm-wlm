@@ -256,7 +256,7 @@ extern int container_p_restore(char *dir_name, bool recover)
 	return SLURM_SUCCESS;
 }
 
-extern int container_p_create(uint32_t job_id, uid_t uid)
+extern int container_p_create(uint32_t job_id)
 {
 #ifdef HAVE_NATIVE_CRAY
 	rid_t resv_id = job_id;
@@ -461,14 +461,4 @@ extern int container_p_delete(uint32_t job_id)
 	return SLURM_SUCCESS;
 #endif
 
-}
-
-extern int container_p_stepd_create(uint32_t job_id, uid_t uid)
-{
-	return SLURM_SUCCESS;
-}
-
-extern int container_p_stepd_delete(uint32_t job_id)
-{
-	return SLURM_SUCCESS;
 }

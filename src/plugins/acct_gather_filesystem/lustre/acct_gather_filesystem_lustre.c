@@ -404,7 +404,7 @@ extern int fini(void)
 	if (!running_in_slurmstepd())
 		return SLURM_SUCCESS;
 
-	debug("lustre: ended");
+	log_flag(FILESYSTEM, "lustre: ended");
 
 	return SLURM_SUCCESS;
 }

@@ -84,8 +84,7 @@ static void _kill_script(track_script_rec_t *r)
 
 	pid_to_kill = r->cpid;
 	r->cpid = -1;
-	/* The script could have spawned processes. Kill the process group. */
-	killpg(pid_to_kill, SIGKILL);
+	kill(pid_to_kill, SIGKILL);
 }
 
 /*
@@ -100,7 +99,7 @@ static void *_track_script_rec_cleanup(void *arg)
 	struct timespec abs;
 	track_script_rec_t *r = (track_script_rec_t *)arg;
 
-	info("Script for jobid=%u found running, tid=%lu, force ending. Ignore errors about not finding this thread id after this.",
+	debug("Script for jobid=%u found running, tid=%lu, force ending. Ignore errors about not finding this thread id after this.",
 	      r->job_id, (unsigned long)r->tid);
 
 	_kill_script(r);

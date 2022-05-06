@@ -13,7 +13,8 @@
 
 
 
-<h2 id="Overview">Overview<a class="slurm_link" ref="#Overview"></a></h2>
+<a id="Overview"></a>
+<h2>Overview</h2>
 <p>The acct_gather_profile/hdf5 plugin allows Slurm to coordinate collecting
 data on jobs it runs on a cluster that is more detailed than is practical to
 include in its database. The data comes from periodically sampling various
@@ -36,11 +37,14 @@ that the data is voluminous so solutions that pass data to the Slurm control
 daemon via RPC may not scale to very large clusters or jobs with
 many allocated nodes.</p>
 
-<h2 id="Administration">Administration
-<a class="slurm_link" href="#Administration"></a>
-</h2>
+<p>A separate <a href="acct_gather_profile_plugins.html">
+Slurm Profile Accounting Plugin API (AcctGatherProfileType)</a> documents how
+to write other Profile Accounting plugins.</P>
 
-<h3 id="shared">Shared File System<a class="slurm_link" href="#shared"></a></h3>
+<a id="Administration"></a>
+<h2>Administration</h2>
+
+<h3>Shared File System</h3>
 <div style="margin-left: 20px;">
 <p>The HDF5 Profile Plugin requires a common shared file system on all
 the compute nodes. While a job is running, the plugin writes a
@@ -62,9 +66,7 @@ the ProfileHDF5Dir.</p>
 <p>Each user that creates a profile will have a subdirectory in the profile
 directory that has read/write permission only for the user.</p>
 </div>
-<h3 id="config">Configuration parameters
-<a class="slurm_link" href="#config"></a>
-</h3>
+<h3>Configuration parameters</h3>
 
 <p><div style="margin-left: 20px;">
 <p>The profile plugin is enabled in the
@@ -74,9 +76,7 @@ configured in the
 </div>
 <div style="margin-left: 20px;">
 <br>
-<h3 id="slurm_conf">slurm.conf parameters
-<a class="slurm_link" href="#slurm_conf"></a>
-</h3>
+<h3>slurm.conf parameters</h3>
 <div style="margin-left: 20px;">
 <dl>
 <dt><b>AcctGatherProfileType</b>=acct_gather_profile/hdf5</dt>
@@ -88,9 +88,7 @@ configured in the
 </div>
 <div style="margin-left: 20px;">
 <br>
-<h3 id="acct_gather">acct_gather.conf parameters
-<a class="slurm_link" href="#acct_gather"></a>
-</h3>
+<h3>acct_gather.conf parameters</h3>
 <div style="margin-left: 20px;">
 <p>These parameters are directly used by the HDF5 Profile Plugin.</p>
 <dl>
@@ -100,7 +98,7 @@ acct_gather_profile plugin will write detailed data as an HDF5 file.
 The directory is assumed to be on a file system shared by the controller and
 all compute nodes. This is a required parameter.</dd>
 <dt><b>ProfileHDF5Default</b>=[options]</dt>
-<dd>A comma-delimited list of data types to be collected for each job
+<dd>A comma delimited list of data types to be collected for each job
 submission. Use this option with caution. A node-step file will be created on
 every node for every step of every job. They will not automatically be merged
 into job files. (Even job files for large numbers of small jobs would fill the
@@ -116,9 +114,7 @@ srun, salloc and sbatch commands.</dd>
 
 <div style="margin-left: 20px;">
 <br>
-<h3 id="time">Time Series Control Parameters
-<a class="slurm_link" href="#time"></a>
-</h3>
+<h3>Time Series Control Parameters</h3>
 <div style="margin-left: 20px;">
 <p>Other plugins add time series data to the HDF5 collection. They typically
 have a default polling frequency specified in slurm.conf in the
@@ -143,12 +139,9 @@ for 2013 era Intel processors is 3 seconds.</p>
 
 </div>
 </div>
-<h2 id="Profiling">Profiling Jobs
-<a class="slurm_link" href="#Profiling"></a>
-</h2>
-<h3 id="collection">Data Collection
-<a class="slurm_link" href="#collection"></a>
-</h3>
+<a id="Profiling"></a>
+<h2>Profiling Jobs</h2>
+<h3>Data Collection</h3>
 <p>The --profile option on salloc|sbatch|srun  controls whether data is
 collected and what type of data is collected. If --profile is not specified
 no data collected unless the <B>ProfileHDF5Default</B>
@@ -189,9 +182,7 @@ Lustre filesystem is supported.</DD>
 </dl>
 </div>
 
-<h3 id="consolidation">Data Consolidation
-<a class="slurm_link" href="#consolidation"></a>
-</h3>
+<h3>Data Consolidation</h3>
 <p>The node-step files are merged into one HDF5 file for the job using the
 <a href="sh5util.html">sh5util</a>.</p>
 
@@ -201,14 +192,13 @@ launch script,  For example:</p>
 sbatch -n1 -d$SLURM_JOB_ID --wrap="sh5util -j $SLURM_JOB_ID"
 </pre>
 
-<h3 id="extraction">Data Extraction
-<a class="slurm_link" href="#extraction"></a>
-</h3>
+<h3>Data Extraction</h3>
 <p>The <a href="sh5util.html">sh5util</a> program can also be used to extract
 specific data from the HDF5 file and write it in <i>comma separated value (csv)</i>
 form for importation into other analysis tools such as spreadsheets.</p>
 
-<h2 id="HDF5">HDF5<a class="slurm_link" href="#HDF5"></a></h2>
+<a id="HDF5"></a>
+<h2>HDF5</h2>
 <p>HDF5 is a well known structured data set that allows heterogeneous but
 related data to be stored in one file.
 (.i.e. sections for energy statistics, network I/O, Task data, etc.)
@@ -227,9 +217,8 @@ attributes for a specific task.</p>
 <img src="hdf5_task_attr.png" width="275" height="275" >
 
 
-<h2 id="DataSeries">Data Structure
-<a class="slurm_link" href="#DataSeries"></a>
-</h2>
+<a id="DataSeries"></a>
+<h2>Data Structure</h2>
 
 <table>
 <tr>
@@ -263,7 +252,7 @@ executed. This set of groups is essentially a cross reference table.
 </td></tr>
 </table>
 
-<h3 id="energy">Energy Data<a class="slurm_link" href="#energy"></a></h3>
+<h3>Energy Data</h3>
 <p><b>AcctGatherEnergyType</b>=acct_gather_energy/ipmi<p>
 is required in slurm.conf to collect energy data.
 Appropriately set energy=freq in either JobAcctGatherFrequency in slurm.conf
@@ -283,9 +272,7 @@ correlate activity with other sources such as logs.</DD>
 <DD>CPU Frequency at time of sample in kilohertz.</DD>
 </DL>
 
-<h3 id="filesystem">Filesystem Data
-<a class="slurm_link" href="#filesystem"></a>
-</h3>
+<h3>Filesystem Data</h3>
 <p><b>AcctGatherFilesystemType</b>=acct_gather_filesystem/lustre<p>
 is required in slurm.conf to collect task data.
 Appropriately set Filesystem=freq in either JobAcctGatherFrequency in slurm.conf
@@ -309,9 +296,7 @@ correlate activity with other sources such as logs.</DD>
 <DD>Number of megabytes written.</DD>
 </DL>
 
-<h3 id="network">Network (Infiniband Data)
-<a class="slurm_link" href="#network"></a>
-</h3>
+<h3>Network (Infiniband Data)</h3>
 <p><b>JobAcctInfinibandType</b>=acct_gather_interconnect/ofed<p>
 is required in slurm.conf to collect task data.
 Appropriately set network=freq in either JobAcctGatherFrequency in slurm.conf
@@ -334,7 +319,7 @@ correlate activity with other sources such as logs.</DD>
 <DD>Number of megabytes going out through the interface.</DD>
 </DL>
 
-<h3 id="task">Task Data<a class="slurm_link" href="#task"></a></h3>
+<h3>Task Data</h3>
 <p><b>JobAcctGatherType</b>=jobacct_gather/linux<p>
 is required in slurm.conf to collect task data.
 Appropriately set task=freq in either JobAcctGatherFrequency in slurm.conf
@@ -367,6 +352,6 @@ correlate activity with other sources such as logs.</DD>
 
 
 
-<p style="text-align:center;">Last modified 8 March 2022</p>
+<p style="text-align:center;">Last modified 9 April 2021</p>
 
 <!--#include virtual="footer.txt"-->

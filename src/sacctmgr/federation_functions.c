@@ -148,9 +148,9 @@ static int _set_rec(int *start, int argc, char **argv,
 
 			if (*(argv[i]+end) == '\0' &&
 			    (option == '+' || option == '-')) {
-				fprintf(stderr,
-					" You didn't specify any clusters to %s\n",
-					(option == '-') ? "remove" : "add");
+				printf(" You didn't specify any clusters to"
+				       " %s\n",
+				       (option == '-') ? "remove" : "add");
 				exit_code = 1;
 				break;
 			}
@@ -191,20 +191,19 @@ static int _set_rec(int *start, int argc, char **argv,
 				tmp_char =
 					slurmdb_federation_flags_str(
 							fed->flags);
-				fprintf(stderr,
-					" Unknown federation flag used in:\n '%s'\n"
-					" Valid federation flags are\n  '%s'\n",
-					argv[i]+end, tmp_char);
+				printf(" Unknown federation flag used in:\n"
+				       " '%s'\n"
+				       " Valid federation flags are\n  '%s'\n",
+				       argv[i]+end, tmp_char);
 				xfree(tmp_char);
 				exit_code = 1;
 			} else
 				set = 1;
 		} else {
 			exit_code = 1;
-			fprintf(stderr,
-				" Unknown option: %s\n"
-				" Use keyword 'where' to modify condition\n",
-				argv[i]);
+			printf(" Unknown option: %s\n"
+			       " Use keyword 'where' to modify condition\n",
+			       argv[i]);
 		}
 	}
 
@@ -252,9 +251,7 @@ static int _verify_federations(List name_list, bool report_existing)
 			       "Not adding.\n", name);
 			list_delete_item(itr_c);
 		} else if (!fed_rec && !report_existing) {
-			fprintf(stderr,
-				" The federation %s doesn't exist.\n",
-				name);
+			printf(" The federation %s doesn't exist.\n", name);
 			rc = SLURM_ERROR;
 		}
 	}

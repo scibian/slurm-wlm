@@ -94,6 +94,8 @@ again:
 	else
 		pc->flags &= (~PERSIST_FLAG_SUPPRESS_ERR);
 
+	pc->r_uid = SLURM_AUTH_UID_ANY;
+
 	if (((rc = slurm_persist_conn_open(pc)) != SLURM_SUCCESS) &&
 	    backup_host) {
 		xfree(pc->rem_host);
@@ -199,7 +201,7 @@ extern int dbd_conn_check_and_reopen(slurm_persist_conn_t *pc)
 extern void dbd_conn_close(slurm_persist_conn_t **pc)
 {
 	int rc;
-	buf_t *buffer;
+	Buf buffer;
 	dbd_fini_msg_t req;
 
 	if (!pc)
@@ -252,7 +254,7 @@ extern int dbd_conn_send_recv_direct(uint16_t rpc_version,
 				     persist_msg_t *resp)
 {
 	int rc = SLURM_SUCCESS;
-	buf_t *buffer;
+	Buf buffer;
 	slurm_persist_conn_t *use_conn = req->conn;
 
 	xassert(req);

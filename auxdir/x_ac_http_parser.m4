@@ -21,8 +21,7 @@ AC_DEFUN([X_AC_HTTP_PARSER], [
 	AC_ARG_WITH(
 		[http_parser],
 		AS_HELP_STRING(--with-http-parser=PATH,Specify path to HTTP Parser installation),
-		[AS_IF([test "x$with_http_parser" != xno && test "x$with_http_parser" != xyes],
-		       [_x_ac_http_parser_dirs="$with_http_parser"])])
+		[AS_IF([test "x$with_http_parser" != xno],[_x_ac_http_parser_dirs="$with_http_parser $_x_ac_http_parser_dirs"])])
 
 	if [test "x$with_http_parser" = xno]; then
 		AC_MSG_WARN([support for HTTP parser disabled])
@@ -49,11 +48,7 @@ AC_DEFUN([X_AC_HTTP_PARSER], [
 		  ])
 
 	if test -z "$x_ac_cv_http_parser_dir"; then
-		if test -z "$with_http_parser"; then
-			AC_MSG_WARN([unable to locate HTTP Parser library])
-		else
-			AC_MSG_ERROR([unable to locate HTTP Parser library])
-		fi
+	  AC_MSG_WARN([unable to locate HTTP Parser library])
 	else
 	  AC_DEFINE([HAVE_HTTP_PARSER], [1], [Define if you are compiling with HTTP parser.])
 	  HTTP_PARSER_CPPFLAGS="-I$x_ac_cv_http_parser_dir/include"

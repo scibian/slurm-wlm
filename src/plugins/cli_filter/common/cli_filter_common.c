@@ -6,7 +6,7 @@
  *  Written by Douglas Jacobsen <dmjacobsen@lbl.gov>
  *  All rights reserved.
  *
- *  This file is part of Slurm, a resource management program.
+ *  This file is part of SLURM, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
@@ -42,7 +42,6 @@
 #include "cli_filter_common.h"
 
 #include "src/common/cli_filter.h"
-#include "src/common/data.h"
 #include "src/common/plugstack.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
@@ -51,30 +50,103 @@
 
 extern char **environ;
 
+/* Escape characters according to RFC7159, stolen from jobcomp/elasticsearch */
+static char *_json_escape(const char *str)
+{
+	char *ret = NULL;
+	int i, o, len;
+
+	len = strlen(str) * 2 + 128;
+	ret = xmalloc(len);
+	for (i = 0, o = 0; str[i]; ++i) {
+		if (o >= MAX_STR_LEN) {
+			break;
+		} else if ((o + 8) >= len) {
+			len *= 2;
+			ret = xrealloc(ret, len);
+		}
+		switch (str[i]) {
+		case '\\':
+			ret[o++] = '\\';
+			ret[o++] = '\\';
+			break;
+		case '"':
+			ret[o++] = '\\';
+			ret[o++] = '\"';
+			break;
+		case '\n':
+			ret[o++] = '\\';
+			ret[o++] = 'n';
+			break;
+		case '\b':
+			ret[o++] = '\\';
+			ret[o++] = 'b';
+			break;
+		case '\f':
+			ret[o++] = '\\';
+			ret[o++] = 'f';
+			break;
+		case '\r':
+			ret[o++] = '\\';
+			ret[o++] = 'r';
+			break;
+		case '\t':
+			ret[o++] = '\\';
+			ret[o++] = 't';
+			break;
+		case '<':
+			ret[o++] = '\\';
+			ret[o++] = 'u';
+			ret[o++] = '0';
+			ret[o++] = '0';
+			ret[o++] = '3';
+			ret[o++] = 'C';
+			break;
+		case '/':
+			ret[o++] = '\\';
+			ret[o++] = '/';
+			break;
+		default:
+			ret[o++] = str[i];
+		}
+	}
+	return ret;
+}
+
 char *cli_filter_json_set_options(slurm_opt_t *options)
 {
-	int rc;
 	int  argc = 0;
 	char **argv = NULL;
-	char *json = NULL;
+	char *json = xmalloc(2048);
 	char *name = NULL;
 	char *value = NULL;
 	char *plugin = NULL;
+	size_t len = 0;
 	size_t st = 0;
 	void *spst = NULL;
-	data_t *d, *dargv;
 
-	d = data_set_dict(data_new());
-
-	while (slurm_option_get_next_set(options, &name, &value, &st))
-		data_set_string_own(data_key_set(d, name), value);
+	xstrcat(json, "{");
+	st = 0;
+	while (slurm_option_get_next_set(options, &name, &value, &st)) {
+		char *lname = _json_escape(name);
+		char *lvalue = _json_escape(value);
+		xstrfmtcat(json, "\"%s\":\"%s\",", lname, lvalue);
+		xfree(lname);
+		xfree(lvalue);
+		xfree(name);
+		xfree(value);
+	}
 
 	while (spank_option_get_next_set(&plugin, &name, &value, &spst)) {
-		char *sname = xstrdup_printf("spank:%s", name);
-
-		data_set_string_own(data_key_set(d, sname), value);
-
-		xfree(sname);
+		char *tmp = xstrdup_printf("\"spank:%s:%s\":\"%s\",",
+					   plugin, name, value);
+		char *esc = _json_escape(tmp);
+		xstrcat(json, esc);
+		xfree(tmp);
+		xfree(esc);
+		xfree(plugin);
+		xfree(name);
+		xfree(value);
 	}
 
 	if (options->sbatch_opt) {
@@ -85,36 +157,29 @@ char *cli_filter_json_set_options(slurm_opt_t *options)
 		argc = options->srun_opt->argc;
 	}
 
-	dargv = data_set_list(data_key_set(d, "argv"));
-	for (char **ptr = argv; ptr && *ptr && ptr - argv < argc; ptr++)
-		data_set_string(data_list_append(dargv), *ptr);
-
-	if ((rc = data_g_serialize(&json, d, MIME_TYPE_JSON,
-				   DATA_SER_FLAGS_COMPACT))) {
-		/* json will remain NULL on failure */
-		error("%s: unable to serialize JSON: %s", __func__,
-		      slurm_strerror(rc));
+	xstrcat(json, "\"argv\": [");
+	for (char **ptr = argv; ptr && *ptr && ptr - argv < argc; ptr++) {
+		char *esc = _json_escape(*ptr);
+		xstrfmtcat(json, "\"%s\",", esc);
+		xfree(esc);
 	}
-
-	FREE_NULL_DATA(d);
-	xfree(plugin);
-	xfree(name);
-
+	len = strlen(json);
+	if (json[len - 1] == ',')
+		json[len - 1] = '\0';
+	xstrcat(json, "]}");
 	return json;
 }
 
 char *cli_filter_json_env(void)
 {
-	int rc;
-	char *json = NULL;
+	char *json = NULL, *sep = "{";
 	static size_t len = 0;
-	data_t *d = data_set_dict(data_new());
 
 	if (!len)
 		len = strlen(SPANK_OPTION_ENV_PREFIX);
 
 	for (char **ptr = environ; ptr && *ptr; ptr++) {
-		char *key, *value;
+		char *key, *value, *key_esc, *value_esc;
 
 		if (!xstrncmp(*ptr, "SLURM_", 6) ||
 		    !xstrncmp(*ptr, "SPANK_", 6) ||
@@ -129,19 +194,19 @@ char *cli_filter_json_env(void)
 		}
 		*value++ = '\0';
 
-		data_set_string(data_key_set(d, key), value);
+		key_esc = _json_escape(key);
+		value_esc = _json_escape(value);
+
+		xstrfmtcat(json, "%s\"%s\":\"%s\"", sep, key_esc, value_esc);
+		sep = ",";
 
 		xfree(key);
+		xfree(key_esc);
+		xfree(value_esc);
 	}
 
-	if ((rc = data_g_serialize(&json, d, MIME_TYPE_JSON,
-				   DATA_SER_FLAGS_COMPACT))) {
-		/* json will remain NULL on failure */
-		error("%s: unable to serialize JSON: %s", __func__,
-		      slurm_strerror(rc));
-	}
-
-	FREE_NULL_DATA(d);
+	if (json)
+		xstrcatchar(json, '}');
 
 	return json;
 }

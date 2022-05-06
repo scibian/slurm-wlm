@@ -61,15 +61,14 @@ typedef struct {
 	uint32_t het_job_id;
 	uint32_t jobid;
 	uint32_t step_id;
-	char *node_aliases;
 	char *node_list;
 	char *partition;
+	char *resv_id;
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
 	uid_t uid;
 	gid_t gid;
 	char *user_name;
-	char *work_dir;
 } job_env_t;
 
 /*
@@ -79,7 +78,7 @@ typedef struct slurmd_config {
 	char         *prog;		/* Program basename		   */
 	char         ***argv;           /* pointer to argument vector      */
 	int          *argc;             /* pointer to argument count       */
-	buf_t        *buf;              /* packed version of this lite config */
+	Buf          buf;               /* packed version of this lite config */
 	char         *hostname;	 	/* local hostname		   */
 	char         *conf_server;	/* slurmctld to fetch config from  */
 	char         *conf_cache;	/* cache of slurm configs          */
@@ -128,7 +127,6 @@ typedef struct slurmd_config {
 	uint16_t      debug_level_set;	/* debug_level set on command line */
 	int	      boot_time:1;      /* Report node boot time now (-b)  */
 	int           daemonize:1;	/* daemonize flag (-D)		   */
-	bool          setwd;		/* setwd flag (-s)		   */
 	bool          def_config;       /* We haven't read in the config yet */
 	int	      cleanstart:1;     /* clean start requested (-c)      */
 	int           mlock_pages:1;	/* mlock() slurmd  */

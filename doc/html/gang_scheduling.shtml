@@ -37,7 +37,7 @@ This will continue until one of the jobs terminates.
 NOTE: Heterogeneous jobs are excluded from gang scheduling operations.
 </P>
 
-<h2 id="config">Configuration<a class="slurm_link" href="#config"></a></h2>
+<H2>Configuration</H2>
 
 <P>
 There are several important configuration parameters relating to
@@ -124,9 +124,7 @@ just change the partition <I>OverSubscribe</I> setting, this can be updated with
 <I>scontrol reconfig</I>.
 </P>
 
-<h2 id="time_slice">Timeslicer Design and Operation
-<a class="slurm_link" href="#time_slice"></a>
-</h2>
+<H2>Timeslicer Design and Operation</H2>
 
 <P>
 When enabled, the gang scheduler keeps track of the resources
@@ -166,9 +164,7 @@ A good way to observe the operation of the timeslicer is by running
 equal to <I>SchedulerTimeSlice</I>.
 </P>
 
-<h2 id="example1">A Simple Example
-<a class="slurm_link" href="#example1"></a>
-</h2>
+<H2>A Simple Example</H2>
 
 <P>
 The following example is configured with <I>select/linear</I> and <I>OverSubscribe=FORCE</I>.
@@ -264,7 +260,7 @@ When the gang scheduler is enabled, this type of output in the user
 jobs should be considered benign.
 </P>
 
-<h2 id="example2">More examples<a class="slurm_link" href="#example2"></a></h2>
+<H2>More examples</H2>
 
 <P>
 The following example shows how the timeslicer algorithm keeps the resources
@@ -340,9 +336,7 @@ so this value effectively controls the scope of "local backfilling".
 Normal backfill algorithms check <U>all</U> jobs in the wait queue.
 </P>
 
-<h2 id="example3">Consumable Resource Examples
-<a class="slurm_link" href="#example3"></a>
-</h2>
+<H2>Consumable Resource Examples</H2>
 
 <P>
 The following two examples illustrate the primary difference between

@@ -25,8 +25,6 @@ slurmctld_SOURCES =     \
 	front_end.h	\
 	gang.c		\
 	gang.h		\
-	gres_ctld.c	\
-	gres_ctld.h	\
 	groups.c	\
 	groups.h	\
 	heartbeat.c	\
@@ -66,8 +64,6 @@ slurmctld_SOURCES =     \
 	slurmctld.h	\
 	slurmctld_plugstack.c \
 	slurmctld_plugstack.h \
-	slurmscriptd.c \
-	slurmscriptd.h \
 	srun_comm.c	\
 	srun_comm.h	\
 	state_save.c	\
@@ -80,10 +76,12 @@ slurmctld_SOURCES =     \
 
 sbin_PROGRAMS = slurmctld
 
-slurmctld_LDADD = $(LIB_SLURM) $(DL_LIBS)
+depend_libs = $(top_builddir)/src/common/libdaemonize.la
+
+slurmctld_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS)
 slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 
-slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD)
+slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD) $(depend_libs)
 
 force:
 $(slurmctld_DEPENDENCIES) : force

@@ -294,8 +294,7 @@ extern int node_features_g_job_valid(char *job_features)
  * Translate a job's feature request to the node features needed at boot time.
  *	If multiple MCDRAM or NUMA values are ORed, pick the first ones.
  * IN job_features - job's --constraint specification
- * RET comma-delimited features required on node reboot. Must xfree to release
- *     memory
+ * RET features required on node reboot. Must xfree to release memory
  */
 extern char *node_features_g_job_xlate(char *job_features)
 {
@@ -624,7 +623,7 @@ extern List node_features_g_get_config(void)
 extern uint32_t node_features_g_reboot_weight(void)
 {
 	DEF_TIMERS;
-	uint32_t weight = INFINITE - 1;
+	int weight = INFINITE - 1;
 
 	START_TIMER;
 	(void) node_features_g_init();

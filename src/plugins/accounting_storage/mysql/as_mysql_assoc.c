@@ -2433,7 +2433,6 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 	bool is_coord = false;
 	slurmdb_update_object_t *update_object = NULL;
 	List assoc_list_tmp = NULL;
-	bool acct_added = false;
 
 	if (!assoc_list) {
 		error("No association list given");
@@ -2507,7 +2506,6 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 		 */
 		if (is_coord && (object->is_def == 1)) {
 			char *query = NULL;
-			int has_def_acct = 0;
 			/* Check if there is already a default account. */
 			xstrfmtcat(query, "select id_assoc from \"%s_%s\" "
 				   "where user='%s' && acct!='%s' && is_def=1 "
@@ -2524,14 +2522,15 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 			}
 
 			xfree(query);
-			has_def_acct = mysql_num_rows(result);
+			rc = mysql_num_rows(result);
 			mysql_free_result(result);
 
-			if (has_def_acct) {
-				debug("Coordinator %s(%d) tried to change the default account of user %s to account %s.  This is only allowed on initial user creation. Ignoring default account.",
+			if (rc) {
+				error("Coordinator %s(%d) tried to change the default account of user %s to account %s.  This is only allowed on initial user creation.",
 				      user_name, uid, object->user,
 				      object->acct);
-				object->is_def = 0;
+				rc = ESLURM_ACCESS_DENIED;
+				break;
 			}
 		}
 
@@ -2587,7 +2586,6 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 		xstrfmtcat(extra, ", mod_time=%ld, acct='%s'",
 			   now, object->acct);
 		if (!object->user) {
-			acct_added = true;
 			xstrcat(cols, ", parent_acct");
 			xstrfmtcat(vals, ", '%s'", parent);
 			xstrfmtcat(extra, ", parent_acct='%s', user=''",
@@ -3039,11 +3037,11 @@ end_it:
 			 * since you can't query on mod time here and I don't
 			 * want to rewrite code to make it happen
 			 */
-			memset(&assoc_cond, 0, sizeof(assoc_cond));
+			memset(&assoc_cond, 0,
+			       sizeof(slurmdb_assoc_cond_t));
 			assoc_cond.cluster_list = local_cluster_list;
 			if (!(assoc_list_tmp =
-			      as_mysql_get_assocs(mysql_conn, uid,
-						  &assoc_cond))) {
+			      as_mysql_get_assocs(mysql_conn, uid, NULL))) {
 				FREE_NULL_LIST(local_cluster_list);
 				return rc;
 			}
@@ -3051,19 +3049,6 @@ end_it:
 			_move_assoc_list_to_update_list(mysql_conn->update_list,
 							assoc_list_tmp);
 			FREE_NULL_LIST(assoc_list_tmp);
-		}
-
-		/*
-		 * We need to refresh the assoc_mgr_user_list to ensure that
-		 * coordinators of parent accounts are also assigned to
-		 * subaccounts potentially added here.
-		 */
-		if (acct_added) {
-			if (assoc_mgr_refresh_lists((void *)mysql_conn,
-						    ASSOC_MGR_CACHE_USER)) {
-				error ("Cannot refresh users/coordinators cache after new ccount was added");
-				rc = SLURM_ERROR;
-			}
 		}
 	} else {
 		FREE_NULL_LIST(added_user_list);

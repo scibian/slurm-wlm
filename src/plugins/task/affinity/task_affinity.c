@@ -108,6 +108,66 @@ extern int fini (void)
 	return SLURM_SUCCESS;
 }
 
+/* cpu bind enforcement, update binding type based upon the
+ *	TaskPluginParam configuration parameter */
+static void _update_bind_type(launch_tasks_request_msg_t *req)
+{
+	bool set_bind = false;
+
+	if (req->step_id.step_id == SLURM_INTERACTIVE_STEP)
+		return;
+
+	if ((req->cpu_bind_type & (~CPU_BIND_VERBOSE)) == 0) {
+		if (slurm_conf.task_plugin_param & CPU_BIND_NONE) {
+			req->cpu_bind_type |= CPU_BIND_NONE;
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_SOCKETS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_CORES) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type |= CPU_BIND_TO_CORES;
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_THREADS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type |= CPU_BIND_TO_THREADS;
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_LDOMS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= CPU_BIND_TO_LDOMS;
+			set_bind = true;
+		}
+	}
+	if (slurm_conf.task_plugin_param & CPU_BIND_VERBOSE) {
+		req->cpu_bind_type |= CPU_BIND_VERBOSE;
+		set_bind = true;
+	}
+
+	if (set_bind) {
+		char bind_str[128];
+		slurm_sprint_cpu_bind_type(bind_str, req->cpu_bind_type);
+		info("task affinity : enforcing '%s' cpu bind method",
+		     bind_str);
+	}
+}
+
 /*
  * task_p_slurmd_batch_request()
  */
@@ -125,20 +185,21 @@ extern int task_p_slurmd_launch_request (launch_tasks_request_msg_t *req,
 					 uint32_t node_id)
 {
 	char buf_type[100];
-	bool have_debug_flag = slurm_conf.debug_flags & DEBUG_FLAG_CPU_BIND;
 
-	if (have_debug_flag) {
+	if (((conf->sockets >= 1)
+	     && ((conf->cores > 1) || (conf->threads > 1)))
+	    || (!(req->cpu_bind_type & CPU_BIND_NONE))) {
+		_update_bind_type(req);
+
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
-		log_flag(CPU_BIND, "task affinity : before lllp distribution cpu bind method is '%s' (%s)",
-			 buf_type, req->cpu_bind);
-	}
+		debug("task affinity : before lllp distribution cpu bind "
+		      "method is '%s' (%s)", buf_type, req->cpu_bind);
 
-	lllp_distribution(req, node_id);
+		lllp_distribution(req, node_id);
 
-	if (have_debug_flag) {
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
-		log_flag(CPU_BIND, "task affinity : after lllp distribution cpu bind method is '%s' (%s)",
-			 buf_type, req->cpu_bind);
+		debug("task affinity : after lllp distribution cpu bind "
+		      "method is '%s' (%s)", buf_type, req->cpu_bind);
 	}
 
 	return SLURM_SUCCESS;
@@ -197,13 +258,25 @@ static void _numa_set_preferred(nodemask_t *new_mask)
 extern int task_p_pre_launch (stepd_step_rec_t *job)
 {
 	int rc = SLURM_SUCCESS;
-	char tmp_str[128];
 
-	if (get_log_level() >= LOG_LEVEL_DEBUG) {
-		slurm_sprint_cpu_bind_type(tmp_str, job->cpu_bind_type);
+	debug("affinity %ps, task:%u bind:%u",
+	      &job->step_id, job->envtp->procid, job->cpu_bind_type);
 
-		debug("affinity %ps, task:%u bind:%s",
-		      &job->step_id, job->envtp->procid, tmp_str);
+	/*** CPU binding support ***/
+	if (job->cpu_bind_type) {
+		cpu_set_t new_mask, cur_mask;
+		pid_t mypid  = job->envtp->task_pid;
+
+		slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
+		if (get_cpuset(&new_mask, job) &&
+		    (!(job->cpu_bind_type & CPU_BIND_NONE))) {
+			reset_cpuset(&new_mask, &cur_mask);
+			rc = slurm_setaffinity(mypid, sizeof(new_mask),
+					       &new_mask);
+			slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
+		}
+		task_slurm_chkaffinity(rc ? &cur_mask : &new_mask,
+				       job, rc);
 	}
 
 #ifdef HAVE_NUMA
@@ -211,18 +284,14 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		nodemask_t new_mask, cur_mask;
 
 		cur_mask = numa_get_membind();
-		if ((job->mem_bind_type & MEM_BIND_NONE) ||
-		    (job->mem_bind_type == MEM_BIND_SORT) ||
-		    (job->mem_bind_type == MEM_BIND_VERBOSE)) {
-			/* Do nothing */
-		} else if (get_memset(&new_mask, job)) {
+		if (get_memset(&new_mask, job)
+		    &&  (!(job->mem_bind_type & MEM_BIND_NONE))) {
 			if (job->mem_bind_type & MEM_BIND_PREFER)
 				_numa_set_preferred(&new_mask);
 			else
 				numa_set_membind(&new_mask);
 			cur_mask = new_mask;
-		} else
-			rc = SLURM_ERROR;
+		}
 		slurm_chk_memset(&cur_mask, job);
 	}
 #endif
@@ -231,43 +300,10 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 }
 
 /*
- * task_p_pre_set_affinity() is called prior to exec of application task.
- * Runs in privileged mode.
+ * task_p_pre_launch_priv() is called prior to exec of application task.
+ * in privileged mode, just after slurm_spank_task_init_privileged
  */
-extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
-{
-	return SLURM_SUCCESS;
-}
-
-/*
- * task_p_set_affinity() is called prior to exec of application task.
- * Runs in privileged mode.
- */
-extern int task_p_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
-{
-	int rc = SLURM_SUCCESS;
-	cpu_set_t new_mask, cur_mask;
-	pid_t mypid  = job->task[node_tid]->pid;
-
-	if (!job->cpu_bind_type)
-		return SLURM_SUCCESS;
-
-	slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
-	if (get_cpuset(&new_mask, job, node_tid) &&
-	    (!(job->cpu_bind_type & CPU_BIND_NONE))) {
-		reset_cpuset(&new_mask, &cur_mask);
-		rc = slurm_setaffinity(mypid, sizeof(new_mask), &new_mask);
-		slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
-	}
-	task_slurm_chkaffinity(rc ? &cur_mask : &new_mask, job, rc, node_tid);
-	return rc;
-}
-
-/*
- * task_p_post_set_affinity is called prior to exec of application task.
- * Runs in privileged mode.
- */
-extern int task_p_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
 {
 	return SLURM_SUCCESS;
 }

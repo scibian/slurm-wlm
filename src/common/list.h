@@ -2,7 +2,6 @@
  *  list.h
  *****************************************************************************
  *  Copyright (C) 2001-2002 The Regents of the University of California.
- *  Copyright (C) 2021 NVIDIA Corporation.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Chris Dunlap <cdunlap@llnl.gov>.
  *
@@ -202,18 +201,6 @@ void *list_remove_first(List l, ListFindF f, void *key);
 int list_delete_all(List l, ListFindF f, void *key);
 
 /*
- *  Traverses list [l] using [f] to match each item with [key].
- *  Removes the first item from the list for which the function [f] returns
- *    a positive value; if a deletion function was specified when the list was
- *    created, it will be called to deallocate each item being removed.
- *  If [f] returns a negative value, processing is stopped without removing
- *    any items.
- *  Returns 0 if no item was found, 1 if an item was removed, -1 if processing
- *    was stopped.
- */
-int list_delete_first(List l, ListFindF f, void *key);
-
-/*
  *  Traverses list [l] and deletes 'key' from it.
  *  Removes this ptr from the list; if a deletion function was specified when
  *  the list was created, it will be called to deallocate each item being
@@ -258,26 +245,11 @@ int list_for_each_max(List l, int *max, ListForF f, void *arg,
 int list_flush(List l);
 
 /*
- *  Traverses list [l] and removes items.
- *  Will process up to [max] number of list items, or set [max] to -1 for all.
- *  If a deletion function was specified when the list was
- *  created, it will be called to deallocate each item being removed.
- *  Returns a count of the number of items removed from the list.
- */
-int list_flush_max(List l, int max);
-
-/*
  *  Sorts list [l] into ascending order according to the function [f].
  *  Note: Sorting a list resets all iterators associated with the list.
  *  This function uses the libC qsort() algorithm.
  */
 void list_sort(List l, ListCmpF f);
-
-/*
- * Reverses the order of the items in list [l].
- * Note: Reversing a list resets all iterators associated with the list.
- */
-void list_flip(List l);
 
 /****************************
  *  Stack Access Functions  *

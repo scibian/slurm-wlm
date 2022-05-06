@@ -37,7 +37,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include "slurm/slurm.h"
+#include "slurm.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/uid.h"
 
@@ -95,9 +95,8 @@ scontrol_update_node (int argc, char **argv)
 				return -1;
 			}
 			update_cnt++;
-		} else if (!xstrncasecmp(tag, "Extra", MAX(tag_len, 1))) {
-			node_msg.extra = val;
-			update_cnt++;
+
+
 		} else if (!xstrncasecmp(tag, "Features", MAX(tag_len, 1)) ||
 			   !xstrncasecmp(tag, "AvailableFeatures",
 					 MAX(tag_len,3))) {
@@ -171,7 +170,7 @@ scontrol_update_node (int argc, char **argv)
 				update_cnt++;
 			} else if (xstrncasecmp(val, "CANCEL_REBOOT",
 				   MAX(val_len, 3)) == 0) {
-				node_msg.node_state = NODE_STATE_REBOOT_CANCEL;
+				node_msg.node_state = NODE_STATE_CANCEL_REBOOT;
 				update_cnt++;
 			} else if (xstrncasecmp(val, "DRAIN",
 				   MAX(val_len, 3)) == 0) {
@@ -189,21 +188,9 @@ scontrol_update_node (int argc, char **argv)
 				   MAX(val_len, 3)) == 0) {
 				node_msg.node_state = NODE_RESUME;
 				update_cnt++;
-			} else if (xstrncasecmp(val, "POWER_DOWN_ASAP",
-				   MAX(val_len, 12)) == 0) {
-				node_msg.node_state =
-					NODE_STATE_POWER_DOWN |
-					NODE_STATE_POWER_DRAIN;
-				update_cnt++;
-			} else if (xstrncasecmp(val, "POWER_DOWN_FORCE",
-				   MAX(val_len, 12)) == 0) {
-				node_msg.node_state =
-					NODE_STATE_POWER_DOWN |
-					NODE_STATE_POWERED_DOWN;
-				update_cnt++;
 			} else if (xstrncasecmp(val, "POWER_DOWN",
 				   MAX(val_len, 7)) == 0) {
-				node_msg.node_state = NODE_STATE_POWER_DOWN;
+				node_msg.node_state = NODE_STATE_POWER_SAVE;
 				update_cnt++;
 			} else if (xstrncasecmp(val, "POWER_UP",
 				   MAX(val_len, 7)) == 0) {

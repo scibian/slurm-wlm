@@ -57,10 +57,11 @@ pkglib_LTLIBRARIES = libslurmfull.la libslurm_pmi.la
 
 # BUILT_SOURCES tells automake that when "make" is called, these targets
 # need to be built before anything else.
-BUILT_SOURCES = $(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) libslurm.la
+BUILT_SOURCES = $(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT)\
+		$(SLURM_PMI_VERSION_SCRIPT) libslurm.la
 
 # Note that libslurmhelper is mostly the same as libslurm, except that
-# it exports ALL symbols used by the process, libcommon, etc.
+# it exports ALL symbols used by the process, libcommon, libeio, etc.
 # Only link with libslurmhelper if you are sure you are not going to be
 # loading a plugin that could use something you yourself are not
 # calling from here.
@@ -116,6 +117,8 @@ slurmapi_src =           \
 	slurm_get_statistics.c \
 	slurm_pmi.c      \
 	slurm_pmi.h	 \
+	step_ctx.c       \
+	step_ctx.h       \
 	step_io.c        \
 	step_io.h        \
 	step_launch.c    \
@@ -133,6 +136,8 @@ common_dir = $(top_builddir)/src/common
 
 slurmapi_add = 			 \
 	$(common_dir)/libcommon.la	\
+	$(common_dir)/libspank.la      	\
+	$(common_dir)/libeio.la		\
 	-lpthread
 
 libslurmhelper_la_SOURCES = $(slurmapi_src)
@@ -167,7 +172,8 @@ libslurm_pmi_la_LDFLAGS        = \
 # on multiple platforms
 libslurm_o_SOURCES =
 
-libslurm_o_LDADD =				\
+libslurm_o_LDADD = $(top_builddir)/src/common/libeio.o	\
+	$(top_builddir)/src/common/libspank.o	\
 	$(top_builddir)/src/common/libcommon.o
 
 libslurm.o$(EXEEXT): $(libslurmhelper_la_OBJECTS) $(libslurm_o_LDADD)
@@ -192,7 +198,7 @@ $(FULL_VERSION_SCRIPT) :
 	(echo "{ global: *; };") > $(FULL_VERSION_SCRIPT)
 
 CLEANFILES = \
-	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT)
+	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) $(SLURM_PMI_VERSION_SCRIPT)
 
 DISTCLEANFILES = \
-	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT)
+	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) $(SLURM_PMI_VERSION_SCRIPT)

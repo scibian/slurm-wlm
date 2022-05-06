@@ -82,6 +82,7 @@ static void *_handle_accept(void *arg);
 static int _handle_request(int fd, stepd_step_rec_t *job,
 			   uid_t uid, pid_t remote_pid);
 static int _handle_state(int fd, stepd_step_rec_t *job);
+static int _handle_info(int fd, stepd_step_rec_t *job);
 static int _handle_mem_limits(int fd, stepd_step_rec_t *job);
 static int _handle_uid(int fd, stepd_step_rec_t *job);
 static int _handle_nodeid(int fd, stepd_step_rec_t *job);
@@ -90,7 +91,7 @@ static int _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_pid_in_container(int fd, stepd_step_rec_t *job);
 static void *_wait_extern_pid(void *args);
 static int _handle_add_extern_pid_internal(stepd_step_rec_t *job, pid_t pid);
-static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job, uid_t uid);
+static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job);
 static int _handle_x11_display(int fd, stepd_step_rec_t *job);
 static int _handle_getpw(int fd, stepd_step_rec_t *job, pid_t remote_pid);
 static int _handle_getgr(int fd, stepd_step_rec_t *job, pid_t remote_pid);
@@ -418,7 +419,7 @@ static void *_handle_accept(void *arg)
 	stepd_step_rec_t *job = ((struct request_params *)arg)->job;
 	int req;
 	int client_protocol_ver;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	int rc;
 	uid_t uid;
 	pid_t remote_pid = NO_VAL;
@@ -496,6 +497,8 @@ int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 	}
 
 	switch (req) {
+	case REQUEST_SIGNAL_TASK_LOCAL:		/* Defunct */
+	case REQUEST_SIGNAL_TASK_GLOBAL:	/* Defunct */
 	case REQUEST_SIGNAL_CONTAINER:
 		debug("Handling REQUEST_SIGNAL_CONTAINER");
 		rc = _handle_signal_container(fd, job, uid);
@@ -503,6 +506,10 @@ int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 	case REQUEST_STATE:
 		debug("Handling REQUEST_STATE");
 		rc = _handle_state(fd, job);
+		break;
+	case REQUEST_INFO:
+		debug("Handling REQUEST_INFO");
+		rc = _handle_info(fd, job);
 		break;
 	case REQUEST_STEP_MEM_LIMITS:
 		debug("Handling REQUEST_STEP_MEM_LIMITS");
@@ -540,8 +547,8 @@ int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 		debug("Handling REQUEST_STEP_TERMINATE");
 		rc = _handle_terminate(fd, job, uid);
 		break;
-	case REQUEST_STEP_COMPLETION:
-		debug("Handling REQUEST_STEP_COMPLETION");
+	case REQUEST_STEP_COMPLETION_V2:
+		debug("Handling REQUEST_STEP_COMPLETION_V2");
 		rc = _handle_completion(fd, job, uid);
 		break;
 	case REQUEST_STEP_TASK_INFO:
@@ -566,7 +573,7 @@ int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 		break;
 	case REQUEST_ADD_EXTERN_PID:
 		debug("Handling REQUEST_ADD_EXTERN_PID");
-		rc = _handle_add_extern_pid(fd, job, uid);
+		rc = _handle_add_extern_pid(fd, job);
 		break;
 	case REQUEST_X11_DISPLAY:
 		debug("Handling REQUEST_X11_DISPLAY");
@@ -598,6 +605,31 @@ static int
 _handle_state(int fd, stepd_step_rec_t *job)
 {
 	safe_write(fd, &job->state, sizeof(slurmstepd_state_t));
+
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_ERROR;
+}
+
+static int
+_handle_info(int fd, stepd_step_rec_t *job)
+{
+	uint16_t protocol_version = SLURM_PROTOCOL_VERSION;
+
+	safe_write(fd, &job->uid, sizeof(uid_t));
+	safe_write(fd, &job->step_id.job_id, sizeof(uint32_t));
+	safe_write(fd, &job->step_id.step_id, sizeof(uint32_t));
+
+	/* protocol_version was added in Slurm version 2.2,
+	 * so it needed to be added later in the data sent
+	 * for backward compatibility (so that it doesn't
+	 * get confused for a huge UID, job ID or step ID;
+	 * we should be save in avoiding huge node IDs). */
+	safe_write(fd, &protocol_version, sizeof(uint16_t));
+	safe_write(fd, &job->nodeid, sizeof(uint32_t));
+	safe_write(fd, &job->job_mem, sizeof(uint64_t));
+	safe_write(fd, &job->step_mem, sizeof(uint64_t));
+	safe_write(fd, &job->step_id.step_het_comp, sizeof(uint32_t));
 
 	return SLURM_SUCCESS;
 rwfail:
@@ -948,15 +980,14 @@ _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid)
 	debug("_handle_attach for %ps", &job->step_id);
 
 	srun       = xmalloc(sizeof(srun_info_t));
-	srun->key = xmalloc(sizeof(srun_key_t));
-	srun->key->len = SLURM_IO_KEY_SIZE;
-	srun->key->data = xmalloc(SLURM_IO_KEY_SIZE);
+	srun->key  = (srun_key_t *)xmalloc(SLURM_IO_KEY_SIZE);
 
 	debug("sizeof(srun_info_t) = %d, sizeof(slurm_addr_t) = %d",
 	      (int) sizeof(srun_info_t), (int) sizeof(slurm_addr_t));
 	safe_read(fd, &srun->ioaddr, sizeof(slurm_addr_t));
 	safe_read(fd, &srun->resp_addr, sizeof(slurm_addr_t));
-	safe_read(fd, srun->key->data, SLURM_IO_KEY_SIZE);
+	safe_read(fd, srun->key, SLURM_IO_KEY_SIZE);
+	safe_read(fd, &srun->uid, sizeof(uid_t));
 	safe_read(fd, &srun->protocol_version, sizeof(uint16_t));
 
 	if (!srun->protocol_version)
@@ -1026,7 +1057,7 @@ done:
 		}
 	}
 	if (srun) {
-		srun_key_destroy(srun->key);
+		xfree(srun->key);
 		xfree(srun);
 	}
 	return SLURM_SUCCESS;
@@ -1162,7 +1193,6 @@ static void *_wait_extern_pid(void *args)
 	next_pid:
 		fclose(stat_fp);
 	}
-	xfree(pids);
 
 	return NULL;
 }
@@ -1215,19 +1245,15 @@ static int _handle_add_extern_pid_internal(stepd_step_rec_t *job, pid_t pid)
 	return SLURM_SUCCESS;
 }
 
-static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job, uid_t uid)
+static int
+_handle_add_extern_pid(int fd, stepd_step_rec_t *job)
 {
 	int rc = SLURM_SUCCESS;
 	pid_t pid;
 
 	safe_read(fd, &pid, sizeof(pid_t));
 
-	if (!_slurm_authorized_user(uid)) {
-		error("uid %u attempt to add pid %u to %ps",
-		      uid, pid, &job->step_id);
-		rc = SLURM_ERROR;
-	} else
-		rc = _handle_add_extern_pid_internal(job, pid);
+	rc = _handle_add_extern_pid_internal(job, pid);
 
 	/* Send the return code */
 	safe_write(fd, &rc, sizeof(int));
@@ -1587,7 +1613,7 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 	int step_rc;
 	char *buf = NULL;
 	int len;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	bool lock_set = false;
 
 	debug("_handle_completion for %ps", &job->step_id);
@@ -1730,41 +1756,12 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *job, uid_t uid)
 	jobacct = jobacctinfo_create(NULL);
 	debug3("num tasks = %d", job->node_tasks);
 
-	/*
-	 * Extern step has pid = -1 so it would be skipped, deal with it
-	 * differently
-	 */
-	if (job->step_id.step_id == SLURM_EXTERN_CONT) {
-		pid_t *pids = NULL;
-		int npids = 0;
-
-		/*
-		 * We only have one task in the extern step on each node,
-		 * despite many pids may have been adopted.
-		 */
-		num_tasks = 1;
-		proctrack_g_get_pids(job->cont_id, &pids, &npids);
-
-		for (i = 0; i < npids; i++) {
-			temp_jobacct = jobacct_gather_stat_task(pids[i]);
-			if (temp_jobacct) {
-				jobacctinfo_aggregate(jobacct, temp_jobacct);
-				jobacctinfo_destroy(temp_jobacct);
-			}
-			log_flag(JAG, "%s: step_extern cont_id=%lu includes pid=%lu",
-				 __func__, job->cont_id, (uint64_t) pids[i]);
-		}
-
-		xfree(pids);
-	} else {
-		for (i = 0; i < job->node_tasks; i++) {
-			temp_jobacct =
-				jobacct_gather_stat_task(job->task[i]->pid);
-			if (temp_jobacct) {
-				jobacctinfo_aggregate(jobacct, temp_jobacct);
-				jobacctinfo_destroy(temp_jobacct);
-				num_tasks++;
-			}
+	for (i = 0; i < job->node_tasks; i++) {
+		temp_jobacct = jobacct_gather_stat_task(job->task[i]->pid);
+		if (temp_jobacct) {
+			jobacctinfo_aggregate(jobacct, temp_jobacct);
+			jobacctinfo_destroy(temp_jobacct);
+			num_tasks++;
 		}
 	}
 

@@ -4,7 +4,6 @@ CLEANFILES = core.* *.bino
 REF = default_crontab.txt usage.txt
 
 SRCS = \
-	env.c \
 	opt.c \
 	parse.c \
 	scrontab.c \

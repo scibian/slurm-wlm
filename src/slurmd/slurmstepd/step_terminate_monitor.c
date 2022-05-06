@@ -1,26 +1,26 @@
 /*****************************************************************************\
- *  step_terminate_monitor.c - Run an external program if there are
+ *  step_terminate_monitor.c - Run an external program if there are 
  *    unkillable processes at step termination.
  *****************************************************************************
  *  Copyright (C) 2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
- *
+ *  
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
- *
+ *  
  *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
- *
+ *  
  *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
- *
+ *  
  *  You should have received a copy of the GNU General Public License along
  *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
@@ -44,13 +44,11 @@
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static bool running_flag = false;
+static int running_flag = 0;
+static int stop_flag = 0;
 static pthread_t tid;
 static uint16_t timeout;
 static char *program_name;
-#ifdef HAVE_NATIVE_CRAY
-static uint32_t recorded_het_jobid = NO_VAL;
-#endif
 static uint32_t recorded_jobid = NO_VAL;
 static uint32_t recorded_stepid = NO_VAL;
 
@@ -73,12 +71,9 @@ void step_terminate_monitor_start(stepd_step_rec_t *job)
 	program_name = xstrdup(conf->unkillable_program);
 	slurm_conf_unlock();
 
-	running_flag = true;
 	slurm_thread_create(&tid, _monitor, job);
 
-#ifdef HAVE_NATIVE_CRAY
-	recorded_het_jobid = job->het_job_id;
-#endif
+	running_flag = 1;
 	recorded_jobid = job->step_id.job_id;
 	recorded_stepid = job->step_id.step_id;
 
@@ -87,27 +82,27 @@ void step_terminate_monitor_start(stepd_step_rec_t *job)
 
 void step_terminate_monitor_stop(void)
 {
-	int *retval = NULL;
-
 	slurm_mutex_lock(&lock);
 
 	if (!running_flag) {
-		error("%s: already stopped", __func__);
+		slurm_mutex_unlock(&lock);
+		return;
+	}
+	if (stop_flag) {
+		error("step_terminate_monitor_stop: already stopped");
 		slurm_mutex_unlock(&lock);
 		return;
 	}
 
-	running_flag = false;
-	debug("signaling condition");
+	stop_flag = 1;
+	debug("step_terminate_monitor_stop signaling condition");
 	slurm_cond_signal(&cond);
 	slurm_mutex_unlock(&lock);
 
-	if (pthread_join(tid, (void **) &retval) != 0)
-		error("%s pthread_join: %m", __func__);
+	if (pthread_join(tid, NULL) != 0) {
+		error("step_terminate_monitor_stop: pthread_join: %m");
+	}
 
-	debug2("_monitor exit code: %d", retval ? *retval : 0);
-
-	xfree(retval);
 	xfree(program_name);
 	return;
 }
@@ -124,14 +119,14 @@ static void *_monitor(void *arg)
 	ts.tv_sec = time(NULL) + 1 + timeout;
 
 	slurm_mutex_lock(&lock);
-	if (!running_flag)
+	if (stop_flag)
 		goto done;
 
 	rc = pthread_cond_timedwait(&cond, &lock, &ts);
 	if (rc == ETIMEDOUT) {
 		char entity[45], time_str[24];
 		time_t now = time(NULL);
-		int rc, *retval;
+		int rc;
 
 		_call_external_program(job);
 
@@ -181,17 +176,7 @@ static void *_monitor(void *arg)
 			stepd_send_step_complete_msgs(job);
 		}
 
-		/*
-		 * See man pthread_exit,
-		 * The value pointed to by retval should not be located on the
-		 * calling thread's stack, since the contents of that stack are
-		 * undefined after the thread terminates.
-		 */
-		retval = xmalloc(sizeof(*retval));
-		*retval = stepd_cleanup(NULL, job, NULL, NULL, rc, 0);
-		slurm_mutex_unlock(&lock);
-	        pthread_exit((void *) retval);
-
+	        exit(stepd_cleanup(NULL, job, NULL, NULL, rc, 0));
 	} else if (rc != 0) {
 		error("Error waiting on condition in _monitor: %m");
 	}
@@ -231,7 +216,6 @@ static int _call_external_program(stepd_step_rec_t *job)
 		/* child */
 		char *argv[2];
 		char **env = NULL;
-		uint32_t jobid;
 
 		/* container_g_join needs to be called in the
 		   forked process part of the fork to avoid a race
@@ -239,16 +223,9 @@ static int _call_external_program(stepd_step_rec_t *job)
 		   detacts itself from a child before we add the pid
 		   to the container in the parent of the fork.
 		*/
-#ifdef HAVE_NATIVE_CRAY
-		if (recorded_het_jobid && (recorded_het_jobid != NO_VAL))
-			jobid = recorded_het_jobid;
-		else
-			jobid = recorded_jobid;
-#else
-		jobid = recorded_jobid;
-#endif
-		if (container_g_join(jobid, getuid()) != SLURM_SUCCESS)
-			error("container_g_join(%u): %m", jobid);
+		if (container_g_join(recorded_jobid, getuid())
+		    != SLURM_SUCCESS)
+			error("container_g_join(%u): %m", recorded_jobid);
 		env = env_array_create();
 		env_array_append_fmt(&env, "SLURM_JOBID", "%u", recorded_jobid);
 		env_array_append_fmt(&env, "SLURM_JOB_ID", "%u", recorded_jobid);

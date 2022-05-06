@@ -74,7 +74,6 @@
 #include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/gang.h"
-#include "src/slurmctld/gres_ctld.h"
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/licenses.h"
 #include "src/slurmctld/node_scheduler.h"
@@ -83,7 +82,6 @@
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/slurmctld_plugstack.h"
-#include "src/slurmctld/power_save.h"
 
 #define _DEBUG	0
 #define MAX_FEATURES  64	/* max exclusive features "[fs1|fs2]"=2 */
@@ -149,7 +147,7 @@ static uint32_t reboot_weight = 0;
 
 /*
  * _get_ntasks_per_core - Retrieve the value of ntasks_per_core from
- *	the given job_details record.  If it wasn't set, return INFINITE16.
+ *	the given job_details record.  If it wasn't set, return 0xffff.
  *	Intended for use with the adjust_cpus_nppcu function.
  */
 static uint16_t _get_ntasks_per_core(struct job_details *details)
@@ -157,7 +155,7 @@ static uint16_t _get_ntasks_per_core(struct job_details *details)
 	if (details->mc_ptr)
 		return details->mc_ptr->ntasks_per_core;
 	else
-		return INFINITE16;
+		return 0xffff;
 }
 
 /*
@@ -193,8 +191,7 @@ extern void allocate_nodes(job_record_t *job_ptr)
 
 		if (IS_NODE_CLOUD(node_ptr)) {
 			has_cloud = true;
-			if (IS_NODE_POWERED_DOWN(node_ptr) ||
-			    IS_NODE_POWERING_UP(node_ptr))
+			if (IS_NODE_POWER_SAVE(node_ptr))
 				has_cloud_power_save = true;
 		}
 		make_node_alloc(node_ptr, job_ptr);
@@ -204,13 +201,7 @@ extern void allocate_nodes(job_record_t *job_ptr)
 	license_job_get(job_ptr);
 
 	if (has_cloud) {
-		if (has_cloud_power_save &&
-		    job_ptr->origin_cluster &&
-		    xstrcmp(slurm_conf.cluster_name, job_ptr->origin_cluster)) {
-			/* Set TBD so remote srun will updated node_addrs */
-			job_ptr->alias_list = xstrdup("TBD");
-			job_ptr->wait_all_nodes = 1;
-		} else if (cloud_dns) {
+		if (cloud_dns) {
 			job_ptr->wait_all_nodes = 1;
 		} else if (has_cloud_power_save) {
 			job_ptr->alias_list = xstrdup("TBD");
@@ -227,31 +218,15 @@ extern void set_job_alias_list(job_record_t *job_ptr)
 {
 	int i;
 	node_record_t *node_ptr;
-	static bool cloud_dns = false;
-	static time_t sched_update = 0;
-
-	if (sched_update != slurm_conf.last_update) {
-		if (xstrcasestr(slurm_conf.slurmctld_params, "cloud_dns"))
-			cloud_dns = true;
-		else
-			cloud_dns = false;
-
-		sched_update = slurm_conf.last_update;
-	}
 
 	xfree(job_ptr->alias_list);
-
-	if (cloud_dns)
-		return;
-
 	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
 	     i++, node_ptr++) {
 		if (!bit_test(job_ptr->node_bitmap, i))
 			continue;
 
 		if (IS_NODE_DYNAMIC(node_ptr) || IS_NODE_CLOUD(node_ptr)) {
-			if (IS_NODE_POWERED_DOWN(node_ptr) ||
-			    IS_NODE_POWERING_UP(node_ptr)) {
+			if (IS_NODE_POWER_SAVE(node_ptr)) {
 				xfree(job_ptr->alias_list);
 				job_ptr->alias_list = xstrdup("TBD");
 				break;
@@ -259,17 +234,9 @@ extern void set_job_alias_list(job_record_t *job_ptr)
 			if (job_ptr->alias_list)
 				xstrcat(job_ptr->alias_list, ",");
 			xstrcat(job_ptr->alias_list, node_ptr->name);
-			if (job_ptr->start_protocol_ver <
-			    SLURM_21_08_PROTOCOL_VERSION)
-				xstrcat(job_ptr->alias_list, ":");
-			else
-				xstrcat(job_ptr->alias_list, ":[");
+			xstrcat(job_ptr->alias_list, ":");
 			xstrcat(job_ptr->alias_list, node_ptr->comm_name);
-			if (job_ptr->start_protocol_ver <
-			    SLURM_21_08_PROTOCOL_VERSION)
-				xstrcat(job_ptr->alias_list, ":");
-			else
-				xstrcat(job_ptr->alias_list, "]:");
+			xstrcat(job_ptr->alias_list, ":");
 			xstrcat(job_ptr->alias_list, node_ptr->node_hostname);
 		}
 	}
@@ -289,13 +256,11 @@ extern void set_job_alias_list(job_record_t *job_ptr)
 extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 			     bool suspended, bool preempted)
 {
-	int i, i_first, i_last, node_count = 0;
+	int i;
 	kill_job_msg_t *kill_job = NULL;
 	agent_arg_t *agent_args = NULL;
 	int down_node_cnt = 0;
 	node_record_t *node_ptr;
-	hostlist_t hostlist = NULL;
-	uint16_t use_protocol_version = 0;
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #endif
@@ -310,13 +275,39 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 		error("select_g_job_fini(%pJ): %m", job_ptr);
 	epilog_slurmctld(job_ptr);
 
-	if (!job_ptr->details->prolog_running)
-		hostlist = hostlist_create(NULL);
+	agent_args = xmalloc(sizeof(agent_arg_t));
+	if (timeout)
+		agent_args->msg_type = REQUEST_KILL_TIMELIMIT;
+	else if (preempted)
+		agent_args->msg_type = REQUEST_KILL_PREEMPTED;
+	else
+		agent_args->msg_type = REQUEST_TERMINATE_JOB;
+	agent_args->retry = 0;	/* re_kill_job() resends as needed */
+	agent_args->hostlist = hostlist_create(NULL);
+	kill_job = xmalloc(sizeof(kill_job_msg_t));
+	last_node_update    = time(NULL);
+	kill_job->job_gres_info =
+		 gres_plugin_epilog_build_env(job_ptr->gres_list,job_ptr->nodes);
+	kill_job->step_id.job_id    = job_ptr->job_id;
+	kill_job->het_job_id = job_ptr->het_job_id;
+	kill_job->step_id.step_id = NO_VAL;
+	kill_job->step_id.step_het_comp = NO_VAL;
+	kill_job->job_state = job_ptr->job_state;
+	kill_job->job_uid   = job_ptr->user_id;
+	kill_job->job_gid   = job_ptr->group_id;
+	kill_job->nodes     = xstrdup(job_ptr->nodes);
+	kill_job->time      = time(NULL);
+	kill_job->start_time = job_ptr->start_time;
+	kill_job->select_jobinfo = select_g_select_jobinfo_copy(
+			job_ptr->select_jobinfo);
+	kill_job->spank_job_env = xduparray(job_ptr->spank_job_env_size,
+					    job_ptr->spank_job_env);
+	kill_job->spank_job_env_size = job_ptr->spank_job_env_size;
 
 #ifdef HAVE_FRONT_END
 	if (job_ptr->batch_host &&
 	    (front_end_ptr = job_ptr->front_end_ptr)) {
-		use_protocol_version = front_end_ptr->protocol_version;
+		agent_args->protocol_version = front_end_ptr->protocol_version;
 		if (IS_NODE_DOWN(front_end_ptr)) {
 			/* Issue the KILL RPC, but don't verify response */
 			front_end_ptr->job_cnt_comp = 0;
@@ -363,30 +354,26 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 			}
 		}
 
-		if (hostlist)
-			hostlist_push_host(hostlist, job_ptr->batch_host);
-		node_count++;
+		hostlist_push_host(agent_args->hostlist, job_ptr->batch_host);
+		agent_args->node_count++;
 	}
 #else
 	if (!job_ptr->node_bitmap_cg)
 		build_cg_bitmap(job_ptr);
-	use_protocol_version = SLURM_PROTOCOL_VERSION;
-
-	i_first = bit_ffs(job_ptr->node_bitmap_cg);
-	if (i_first >= 0)
-		i_last = bit_fls(job_ptr->node_bitmap_cg);
-	else
-		i_last = i_first - 1;
-	for (i = i_first; i <= i_last; i++) {
+	agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
+	for (i = 0, node_ptr = node_record_table_ptr;
+	     i < node_record_count; i++, node_ptr++) {
 		if (!bit_test(job_ptr->node_bitmap_cg, i))
 			continue;
-		node_ptr = &node_record_table_ptr[i];
-		/* Sync up conditionals with make_node_comp() */
 		if (IS_NODE_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr) ||
-		    IS_NODE_POWERING_UP(node_ptr)) {
+		    IS_NODE_POWER_UP(node_ptr)) {
 			/* Issue the KILL RPC, but don't verify response */
 			down_node_cnt++;
+			if (job_ptr->node_bitmap_cg == NULL) {
+				error("deallocate_nodes: node_bitmap_cg is "
+				      "not set");
+				build_cg_bitmap(job_ptr);
+			}
 			bit_clear(job_ptr->node_bitmap_cg, i);
 			job_update_tres_cnt(job_ptr, i);
 			/*
@@ -400,94 +387,33 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 		}
 		make_node_comp(node_ptr, job_ptr, suspended);
 
-		if (use_protocol_version > node_ptr->protocol_version)
-			use_protocol_version = node_ptr->protocol_version;
-		if (hostlist)
-			hostlist_push_host(hostlist, node_ptr->name);
-		node_count++;
+		if (agent_args->protocol_version > node_ptr->protocol_version)
+			agent_args->protocol_version =
+				node_ptr->protocol_version;
+		hostlist_push_host(agent_args->hostlist, node_ptr->name);
+		agent_args->node_count++;
 	}
 #endif
-	if (job_ptr->details->prolog_running) {
-		/*
-		 * Job was configuring when it was cancelled and epilog wasn't
-		 * run on the nodes, so cleanup the nodes now. Final cleanup
-		 * will happen after EpilogSlurmctld is done.
-		 */
-		if (job_ptr->node_bitmap_cg) {
-			/*
-			 * Call cleanup_completing before job_epilog_complete or
-			 * we will end up requeuing there before this is called.
-			 */
-			if ((job_ptr->node_cnt == 0) &&
-			    !job_ptr->epilog_running)
-				cleanup_completing(job_ptr);
 
-			i_first = bit_ffs(job_ptr->node_bitmap_cg);
-			if (i_first >= 0)
-				i_last = bit_fls(job_ptr->node_bitmap_cg);
-			else
-				i_last = i_first - 1;
-			for (int i = i_first; i <= i_last; i++) {
-				if (!bit_test(job_ptr->node_bitmap_cg, i))
-					continue;
-				job_epilog_complete(
-					job_ptr->job_id,
-					node_record_table_ptr[i].name, 0);
-			}
-		}
-
-		return;
-	}
-
-	if ((node_count - down_node_cnt) == 0) {
+	if ((agent_args->node_count - down_node_cnt) == 0) {
 		/* Can not wait for epilog complete to release licenses and
 		 * update gang scheduling table */
 		cleanup_completing(job_ptr);
 	}
 
-	if (node_count == 0) {
+	if (agent_args->node_count == 0) {
 		if (job_ptr->details->expanding_jobid == 0) {
 			error("%s: %pJ allocated no nodes to be killed on",
 			      __func__, job_ptr);
 		}
-		hostlist_destroy(hostlist);
+		slurm_free_kill_job_msg(kill_job);
+		hostlist_destroy(agent_args->hostlist);
+		xfree(agent_args);
 		return;
 	}
 
-	agent_args = xmalloc(sizeof(agent_arg_t));
-	if (timeout)
-		agent_args->msg_type = REQUEST_KILL_TIMELIMIT;
-	else if (preempted)
-		agent_args->msg_type = REQUEST_KILL_PREEMPTED;
-	else
-		agent_args->msg_type = REQUEST_TERMINATE_JOB;
-	agent_args->retry = 0;	/* re_kill_job() resends as needed */
-	agent_args->protocol_version = use_protocol_version;
-	agent_args->hostlist = hostlist;
-	agent_args->node_count = node_count;
-
-	kill_job = xmalloc(sizeof(kill_job_msg_t));
-	last_node_update = time(NULL);
-	kill_job->job_gres_info =
-		gres_g_epilog_build_env(job_ptr->gres_list_req, job_ptr->nodes);
-	kill_job->step_id.job_id = job_ptr->job_id;
-	kill_job->het_job_id = job_ptr->het_job_id;
-	kill_job->step_id.step_id = NO_VAL;
-	kill_job->step_id.step_het_comp = NO_VAL;
-	kill_job->job_state = job_ptr->job_state;
-	kill_job->job_uid = job_ptr->user_id;
-	kill_job->job_gid = job_ptr->group_id;
-	kill_job->nodes = xstrdup(job_ptr->nodes);
-	kill_job->time = time(NULL);
-	kill_job->start_time = job_ptr->start_time;
-	kill_job->select_jobinfo = select_g_select_jobinfo_copy(
-		job_ptr->select_jobinfo);
-	kill_job->spank_job_env = xduparray(job_ptr->spank_job_env_size,
-					    job_ptr->spank_job_env);
-	kill_job->spank_job_env_size = job_ptr->spank_job_env_size;
-	kill_job->work_dir = xstrdup(job_ptr->details->work_dir);
-
 	agent_args->msg_args = kill_job;
+	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_args);
 	return;
 }
@@ -700,8 +626,7 @@ extern void build_active_feature_bitmap(job_record_t *job_ptr,
 /* Return bitmap of nodes with all specified features currently active */
 extern bitstr_t *build_active_feature_bitmap2(char *reboot_features)
 {
-	const char *delim = ",";
-	char *tmp, *tok, *save_ptr = NULL;
+	char *tmp, *sep;
 	bitstr_t *active_node_bitmap = NULL;
 	node_feature_t *node_feat_ptr;
 
@@ -712,38 +637,34 @@ extern bitstr_t *build_active_feature_bitmap2(char *reboot_features)
 	}
 
 	tmp = xstrdup(reboot_features);
-	tok = strtok_r(tmp, delim, &save_ptr);
-
-	while (tok) {
+	sep = strchr(tmp, ',');
+	if (sep) {
+		sep[0] = '\0';
 		node_feat_ptr = list_find_first(active_feature_list,
-						list_find_feature, tok);
+						list_find_feature, sep + 1);
 		if (node_feat_ptr && node_feat_ptr->node_bitmap) {
-			/*
-			 * Found feature, add nodes with this feature and
-			 * remove nodes without this feature (bit_and)
-			 */
-			if (!active_node_bitmap)
-				active_node_bitmap =
-					bit_copy(node_feat_ptr->node_bitmap);
-			else
-				bit_and(active_node_bitmap,
-					node_feat_ptr->node_bitmap);
+			active_node_bitmap =
+				bit_copy(node_feat_ptr->node_bitmap);
 		} else {
-			/*
-			 * Feature not found in any nodes, so we definitely
-			 * need to reboot all of the nodes
-			 */
-			if (!active_node_bitmap)
-				active_node_bitmap =
-					bit_alloc(node_record_count);
-			else
-				bit_clear_all(active_node_bitmap);
-			break;
+			active_node_bitmap = bit_alloc(node_record_count);
 		}
-
-		tok = strtok_r(NULL, delim, &save_ptr);
 	}
-
+	node_feat_ptr = list_find_first(active_feature_list, list_find_feature,
+					tmp);
+	if (node_feat_ptr && node_feat_ptr->node_bitmap) {
+		if (active_node_bitmap) {
+			bit_and(active_node_bitmap, node_feat_ptr->node_bitmap);
+		} else {
+			active_node_bitmap =
+				bit_copy(node_feat_ptr->node_bitmap);
+		}
+	} else {
+		if (active_node_bitmap) {
+			bit_clear_all(active_node_bitmap);
+		} else {
+			active_node_bitmap = bit_alloc(node_record_count);
+		}
+	}
 	xfree(tmp);
 
 	return active_node_bitmap;
@@ -2210,8 +2131,7 @@ static void _end_null_job(job_record_t *job_ptr)
 	time_t now = time(NULL);
 
 	job_ptr->exit_code = 0;
-	gres_ctld_job_clear(job_ptr->gres_list_req);
-	gres_ctld_job_clear(job_ptr->gres_list_alloc);
+	gres_plugin_job_clear(job_ptr->gres_list);
 	job_ptr->job_state = JOB_RUNNING;
 	job_ptr->bit_flags |= JOB_WAS_RUNNING;
 	FREE_NULL_BITMAP(job_ptr->node_bitmap);
@@ -2259,7 +2179,7 @@ static List _handle_exclusive_gres(job_record_t *job_ptr,
 	int i_first, i_last;
 	List post_list = NULL;
 
-	if (test_only || !gres_get_gres_cnt())
+	if (test_only || !gres_plugin_get_gres_cnt())
 		return NULL;
 
 	xassert(job_ptr);
@@ -2278,7 +2198,7 @@ static List _handle_exclusive_gres(job_record_t *job_ptr,
 	for (int i = i_first; i <= i_last; i++) {
 		if (!bit_test(select_bitmap, i))
 			continue;
-		gres_ctld_job_select_whole_node(
+		gres_plugin_job_select_whole_node(
 			&post_list,
 			node_record_table_ptr[i].gres_list,
 			job_ptr->job_id,
@@ -2474,8 +2394,8 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 
 		if (gres_list_whole_node) {
 			gres_list_pre_set = true;
-			gres_list_pre = job_ptr->gres_list_req;
-			job_ptr->gres_list_req = gres_list_whole_node;
+			gres_list_pre = job_ptr->gres_list;
+			job_ptr->gres_list = gres_list_whole_node;
 		}
 
 	} else
@@ -2489,18 +2409,14 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 					job_ptr->job_resrcs,
 					job_ptr->details->pn_min_memory,
 					tres_req_cnt[TRES_ARRAY_CPU],
-					selected_node_cnt, job_ptr->part_ptr,
-					job_ptr->gres_list_req,
-					job_ptr->bit_flags & JOB_MEM_SET,
-					job_get_sockets_per_node(job_ptr),
-					job_ptr->details->num_tasks);
+					selected_node_cnt, job_ptr->part_ptr);
 	tres_req_cnt[TRES_ARRAY_NODE] = (uint64_t)selected_node_cnt;
 
 	assoc_mgr_lock(&job_read_locks);
-	gres_ctld_set_job_tres_cnt(job_ptr->gres_list_req,
-				   selected_node_cnt,
-				   tres_req_cnt,
-				   true);
+	gres_set_job_tres_cnt(job_ptr->gres_list,
+			      selected_node_cnt,
+			      tres_req_cnt,
+			      true);
 
 	tres_req_cnt[TRES_ARRAY_BILLING] =
 		assoc_mgr_tres_weighted(tres_req_cnt,
@@ -2636,8 +2552,7 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 	xfree(job_ptr->nodes);
 	xfree(job_ptr->sched_nodes);
 	job_ptr->exit_code = 0;
-	gres_ctld_job_clear(job_ptr->gres_list_req);
-	gres_ctld_job_clear(job_ptr->gres_list_alloc);
+	gres_plugin_job_clear(job_ptr->gres_list);
 	if (!job_ptr->step_list)
 		job_ptr->step_list = list_create(free_step_record);
 
@@ -2696,9 +2611,9 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 	job_ptr->state_reason = WAIT_NO_REASON;
 	xfree(job_ptr->state_desc);
 
-	if (job_ptr->job_resrcs && job_ptr->job_resrcs->nodes) {
+	if (job_ptr->job_resrcs && job_ptr->job_resrcs->nodes)
 		job_ptr->nodes = xstrdup(job_ptr->job_resrcs->nodes);
-	} else {
+	else {
 		error("Select plugin failed to set job resources, nodes");
 		/* Do not attempt to allocate the select_bitmap nodes since
 		 * select plugin failed to set job resources */
@@ -2777,14 +2692,8 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 	gs_job_start(job_ptr);
 	power_g_job_start(job_ptr);
 
-	if (bit_overlap_any(job_ptr->node_bitmap, power_node_bitmap)) {
+	if (bit_overlap_any(job_ptr->node_bitmap, power_node_bitmap))
 		job_ptr->job_state |= JOB_POWER_UP_NODE;
-		if (resume_job_list) {
-			uint32_t *tmp = xmalloc(sizeof(uint32_t));
-			*tmp = job_ptr->job_id;
-			list_append(resume_job_list, tmp);
-		}
-	}
 	if (configuring || IS_JOB_POWER_UP_NODE(job_ptr) ||
 	    !bit_super_set(job_ptr->node_bitmap, avail_node_bitmap)) {
 		/* This handles nodes explicitly requesting node reboot */
@@ -2826,9 +2735,9 @@ cleanup:
 	if (error_code != SLURM_SUCCESS) {
 		FREE_NULL_BITMAP(job_ptr->node_bitmap);
 		if (gres_list_pre_set &&
-		    (job_ptr->gres_list_req != gres_list_pre)) {
-			FREE_NULL_LIST(job_ptr->gres_list_req);
-			job_ptr->gres_list_req = gres_list_pre;
+		    (job_ptr->gres_list != gres_list_pre)) {
+			FREE_NULL_LIST(job_ptr->gres_list);
+			job_ptr->gres_list = gres_list_pre;
 		}
 	} else
 		FREE_NULL_LIST(gres_list_pre);
@@ -2956,7 +2865,7 @@ extern void launch_prolog(job_record_t *job_ptr)
 		job_ptr->state_reason = WAIT_PROLOG;
 
 	prolog_msg_ptr->job_gres_info =
-		 gres_g_epilog_build_env(job_ptr->gres_list_req,job_ptr->nodes);
+		 gres_plugin_epilog_build_env(job_ptr->gres_list,job_ptr->nodes);
 	prolog_msg_ptr->job_id = job_ptr->job_id;
 	prolog_msg_ptr->het_job_id = job_ptr->het_job_id;
 	prolog_msg_ptr->uid = job_ptr->user_id;
@@ -2993,18 +2902,10 @@ extern void launch_prolog(job_record_t *job_ptr)
 	cred_arg.gid                 = job_ptr->group_id;
 	cred_arg.x11                 = job_ptr->details->x11;
 	cred_arg.job_core_spec       = job_ptr->details->core_spec;
-	cred_arg.job_gres_list       = job_ptr->gres_list_alloc;
+	cred_arg.job_gres_list       = job_ptr->gres_list;
 	cred_arg.job_nhosts          = job_ptr->job_resrcs->nhosts;
 	cred_arg.job_constraints     = job_ptr->details->features;
 	cred_arg.job_mem_limit       = job_ptr->details->pn_min_memory;
-	if (job_resrcs_ptr->memory_allocated) {
-		slurm_array64_to_value_reps(job_resrcs_ptr->memory_allocated,
-					    job_resrcs_ptr->nhosts,
-					    &cred_arg.job_mem_alloc,
-					    &cred_arg.job_mem_alloc_rep_count,
-					    &cred_arg.job_mem_alloc_size);
-	}
-
 	cred_arg.step_mem_limit      = job_ptr->details->pn_min_memory;
 	cred_arg.cores_per_socket    = job_resrcs_ptr->cores_per_socket;
 	cred_arg.job_core_bitmap     = job_resrcs_ptr->core_bitmap;
@@ -3021,14 +2922,9 @@ extern void launch_prolog(job_record_t *job_ptr)
 	cred_arg.step_hostlist   = job_ptr->job_resrcs->nodes;
 #endif
 
-	cred_arg.selinux_context = job_ptr->selinux_context;
-
 	prolog_msg_ptr->cred = slurm_cred_create(slurmctld_config.cred_ctx,
 						 &cred_arg,
 						 protocol_version);
-	xfree(cred_arg.job_mem_alloc);
-	xfree(cred_arg.job_mem_alloc_rep_count);
-
 	if (!prolog_msg_ptr->cred) {
 		error("%s: slurm_cred_create failure for %pJ",
 		      __func__, job_ptr);
@@ -3066,6 +2962,7 @@ extern void launch_prolog(job_record_t *job_ptr)
 	}
 
 	/* Launch the RPC via agent */
+	set_agent_arg_r_uid(agent_arg_ptr, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_arg_ptr);
 }
 
@@ -3483,8 +3380,9 @@ static int _build_node_list(job_record_t *job_ptr,
 		node_set_ptr[node_set_inx].node_cnt =
 			bit_set_count(node_set_ptr[node_set_inx].my_bitmap);
 		if (node_set_ptr[node_set_inx].node_cnt == 0) {
-			debug2("%s: JobId=%u matched 0 nodes (%s) due to job partition or features",
-			       __func__, job_ptr->job_id, config_ptr->nodes);
+			debug2("%s: JobId=%u matched 0 nodes (%s): %s",
+			       __func__, job_ptr->job_id, config_ptr->nodes,
+			       err_msg ? *err_msg : NULL);
 			FREE_NULL_BITMAP(node_set_ptr[node_set_inx].my_bitmap);
 			continue;
 		}
@@ -4144,8 +4042,8 @@ static bitstr_t *_valid_features(job_record_t *job_ptr,
 	int last_op = FEATURE_OP_AND, paren_op = FEATURE_OP_AND;
 	int last_paren = 0, position = 0;
 
+	result_node_bitmap = bit_alloc(MAX_FEATURES);
 	if (details_ptr->feature_list == NULL) {	/* no constraints */
-		result_node_bitmap = bit_alloc(MAX_FEATURES);
 		bit_set(result_node_bitmap, 0);
 		return result_node_bitmap;
 	}
@@ -4208,9 +4106,6 @@ static bitstr_t *_valid_features(job_record_t *job_ptr,
 		      (last_op == FEATURE_OP_XOR)))) {
 			if (bit_overlap_any(config_ptr->node_bitmap,
 					    working_node_bitmap)) {
-				if (!result_node_bitmap)
-					result_node_bitmap =
-						bit_alloc(MAX_FEATURES);
 				bit_set(result_node_bitmap, position);
 				if (can_reboot && reboot_bitmap &&
 				    active_node_bitmap) {
@@ -4233,10 +4128,7 @@ static bitstr_t *_valid_features(job_record_t *job_ptr,
 #if _DEBUG
 {
 	char tmp[64];
-	if (result_node_bitmap)
-		bit_fmt(tmp, sizeof(tmp), result_node_bitmap);
-	else
-		snprintf(tmp, sizeof(tmp), "NONE");
+	bit_fmt(tmp, sizeof(tmp), result_node_bitmap);
 	info("CONFIG_FEATURE:%s FEATURE_XOR_BITS:%s", config_ptr->feature, tmp);
 	if (reboot_bitmap && (bit_ffs(reboot_bitmap) >= 0)) {
 		char *reboot_node_str = bitmap2node_name(reboot_bitmap);
@@ -4283,7 +4175,7 @@ extern void re_kill_job(job_record_t *job_ptr)
 	agent_args->retry = 0;
 	kill_job = xmalloc(sizeof(kill_job_msg_t));
 	kill_job->job_gres_info	=
-		gres_g_epilog_build_env(job_ptr->gres_list_req,job_ptr->nodes);
+		gres_plugin_epilog_build_env(job_ptr->gres_list,job_ptr->nodes);
 	kill_job->step_id.job_id    = job_ptr->job_id;
 	kill_job->het_job_id = job_ptr->het_job_id;
 	kill_job->step_id.step_id = NO_VAL;
@@ -4298,7 +4190,6 @@ extern void re_kill_job(job_record_t *job_ptr)
 	kill_job->spank_job_env = xduparray(job_ptr->spank_job_env_size,
 					    job_ptr->spank_job_env);
 	kill_job->spank_job_env_size = job_ptr->spank_job_env_size;
-	kill_job->work_dir = xstrdup(job_ptr->details->work_dir);
 
 	/* On a Cray system this will start the NHC early so it is
 	 * able to gather any information it can from the apparent
@@ -4402,6 +4293,7 @@ extern void re_kill_job(job_record_t *job_ptr)
 	last_job_id = job_ptr->job_id;
 	hostlist_destroy(kill_hostlist);
 	agent_args->msg_args = kill_job;
+	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_args);
 	return;
 }

@@ -285,12 +285,6 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 		xstrfmtcat(out, "TresPerTask=%s", job_step_ptr->tres_per_task);
 	}
 
-	/****** Line (optional) ******/
-	if (job_step_ptr->container) {
-		xstrcat(out, line_end);
-		xstrfmtcat(out, "Container=%s", job_step_ptr->container);
-	}
-
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
 		xstrcat(out, "\n");
@@ -590,6 +584,7 @@ extern int slurm_job_step_stat(slurm_step_id_t *step_id,
 	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
 
 	memcpy(&req, step_id, sizeof(req));
 	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));
@@ -701,6 +696,7 @@ extern int slurm_job_step_get_pids(slurm_step_id_t *step_id,
 	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
 
 	memcpy(&req, step_id, sizeof(req));
 	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));

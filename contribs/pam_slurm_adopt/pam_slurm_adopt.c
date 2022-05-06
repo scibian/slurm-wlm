@@ -66,7 +66,12 @@
 #include "slurm/slurm.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/cgroup.h"
+#include "src/common/xcgroup_read_config.h"
+
+/* This definition would probably be good to centralize somewhere */
+#ifndef MAXHOSTNAMELEN
+#define MAXHOSTNAMELEN    64
+#endif
 
 typedef enum {
 	CALLERID_ACTION_NEWEST,
@@ -185,8 +190,8 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 	close(fd);
 
 	if (rc == PAM_SUCCESS)
-		info("Process %d adopted into job %u",
-		     pid, stepd->step_id.job_id);
+		info("Process %d adopted into job %u", pid,
+		     stepd->step_id.job_id);
 	else
 		info("Process %d adoption FAILED for job %u",
 		     pid, stepd->step_id.job_id);
@@ -252,6 +257,7 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 	char uidcg[PATH_MAX];
 	char *cgroup_suffix = "";
 	char *cgroup_res = "";
+	slurm_cgroup_conf_t *cg_conf;
 
 	if (opts.action_unknown == CALLERID_ACTION_DENY) {
 		debug("Denying due to action_unknown=deny");
@@ -265,13 +271,17 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 	if (opts.node_name)
 		cgroup_suffix = xstrdup_printf("_%s", opts.node_name);
 
+	/* read cgroup configuration */
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
+
 	/* pick a cgroup that is likely to exist */
-	if (slurm_cgroup_conf.constrain_ram_space ||
-	    slurm_cgroup_conf.constrain_swap_space) {
+	if (cg_conf->constrain_ram_space ||
+	    cg_conf->constrain_swap_space) {
 		cgroup_res = "memory";
-	} else if (slurm_cgroup_conf.constrain_cores) {
+	} else if (cg_conf->constrain_cores) {
 		cgroup_res = "cpuset";
-	} else if (slurm_cgroup_conf.constrain_devices) {
+	} else if (cg_conf->constrain_devices) {
 		cgroup_res = "devices";
 	} else {
 		/* last resort, from proctrack/cgroup */
@@ -279,18 +289,18 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 	}
 
 	if (snprintf(uidcg, PATH_MAX, "%s/%s/slurm%s/uid_%u",
-		     slurm_cgroup_conf.cgroup_mountpoint, cgroup_res,
-		     cgroup_suffix, uid)
+		     cg_conf->cgroup_mountpoint, cgroup_res, cgroup_suffix, uid)
 	    >= PATH_MAX) {
 		info("snprintf: '%s/%s/slurm%s/uid_%u' longer than PATH_MAX of %d",
-		     slurm_cgroup_conf.cgroup_mountpoint, cgroup_res,
-		     cgroup_suffix, uid, PATH_MAX);
+		     cg_conf->cgroup_mountpoint, cgroup_res, cgroup_suffix,
+		     uid, PATH_MAX);
 		/* Make the uidcg an empty string. This will effectively switch
 		 * to a (somewhat) random selection of job rather than picking
 		 * the latest, but how did you overflow PATH_MAX chars anyway?
 		 */
 		uidcg[0] = '\0';
 	}
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
 
 	if (opts.node_name)
 		xfree(cgroup_suffix);
@@ -321,7 +331,9 @@ static int _indeterminate_multiple(pam_handle_t *pamh, List steps, uid_t uid,
 	if (rc != PAM_SUCCESS) {
 		if (opts.action_no_jobs == CALLERID_ACTION_DENY) {
 			debug("uid %u owns no jobs => deny", uid);
-			send_user_msg(pamh, "Access denied by " PAM_MODULE_NAME
+			send_user_msg(pamh,
+				      "Access denied by "
+				      PAM_MODULE_NAME
 				      ": you have no active jobs on this node");
 			rc = PAM_PERM_DENIED;
 		} else {
@@ -395,12 +407,12 @@ static int _user_job_count(List steps, uid_t uid, step_loc_t **out_stepd)
 	return user_job_cnt;
 }
 
-static int _rpc_network_callerid(callerid_conn_t *conn, char *user_name,
+static int _rpc_network_callerid(struct callerid_conn *conn, char *user_name,
 				 uint32_t *job_id)
 {
 	network_callerid_msg_t req;
 	char ip_src_str[INET6_ADDRSTRLEN];
-	char node_name[HOST_NAME_MAX];
+	char node_name[MAXHOSTNAMELEN];
 
 	memset(&req, 0, sizeof(req));
 	memcpy((void *)&req.ip_src, (void *)&conn->ip_src, 16);
@@ -409,19 +421,26 @@ static int _rpc_network_callerid(callerid_conn_t *conn, char *user_name,
 	req.port_dst = conn->port_dst;
 	req.af = conn->af;
 
-	inet_ntop(req.af, &conn->ip_src, ip_src_str, sizeof(ip_src_str));
-	if (slurm_network_callerid(req, job_id, node_name, sizeof(node_name))
+	inet_ntop(req.af, &conn->ip_src, ip_src_str, INET6_ADDRSTRLEN);
+	if (slurm_network_callerid(req, job_id, node_name, MAXHOSTNAMELEN)
 	    != SLURM_SUCCESS) {
 		debug("From %s port %d as %s: unable to retrieve callerid data from remote slurmd",
-		      ip_src_str, req.port_src, user_name);
+		      ip_src_str,
+		      req.port_src,
+		      user_name);
 		return SLURM_ERROR;
 	} else if (*job_id == NO_VAL) {
 		debug("From %s port %d as %s: job indeterminate",
-		      ip_src_str, req.port_src, user_name);
+		      ip_src_str,
+		      req.port_src,
+		      user_name);
 		return SLURM_ERROR;
 	} else {
 		info("From %s port %d as %s: member of job %u",
-		     ip_src_str, req.port_src, user_name, *job_id);
+		     ip_src_str,
+		     req.port_src,
+		     user_name,
+		     *job_id);
 		return SLURM_SUCCESS;
 	}
 }
@@ -435,7 +454,7 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
 	uint32_t job_id;
 	int rc;
 	char ip_src_str[INET6_ADDRSTRLEN];
-	callerid_conn_t conn;
+	struct callerid_conn conn;
 
 	/* Gather network information for RPC call. */
 	debug("Checking file descriptors for network socket");
@@ -452,7 +471,7 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
 		return PAM_IGNORE;
 	}
 
-	if (inet_ntop(conn.af, &conn.ip_src, ip_src_str, sizeof(ip_src_str))
+	if (inet_ntop(conn.af, &conn.ip_src, ip_src_str, INET6_ADDRSTRLEN)
 	    == NULL) {
 		/* Somehow we successfully grabbed bad data. Fall through to
 		 * next action. */
@@ -484,7 +503,9 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
 	}
 
 	info("From %s port %d as %s: unable to determine source job",
-	     ip_src_str, conn.port_src, pwd->pw_name);
+	     ip_src_str,
+	     conn.port_src,
+	     pwd->pw_name);
 
 	return PAM_IGNORE;
 }
@@ -520,7 +541,8 @@ log_level_t _parse_log_level(pam_handle_t *pamh, const char *log_level_str)
 		else if(!strcasecmp(log_level_str, "debug5"))
 			u = LOG_LEVEL_DEBUG5;
 		else {
-			pam_syslog(pamh, LOG_ERR,
+			pam_syslog(pamh,
+				   LOG_ERR,
 				   "unrecognized log level %s, setting to max",
 				   log_level_str);
 			/* We'll set it to the highest logging
@@ -530,7 +552,8 @@ log_level_t _parse_log_level(pam_handle_t *pamh, const char *log_level_str)
 	} else {
 		/* An integer was specified */
 		if (u >= LOG_LEVEL_END) {
-			pam_syslog(pamh, LOG_ERR,
+			pam_syslog(pamh,
+				   LOG_ERR,
 				   "log level %u too high, lowering to max", u);
 			u = (unsigned int)LOG_LEVEL_END - 1;
 		}
@@ -555,7 +578,8 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 			else if (!xstrncasecmp(v, "ignore", 6))
 				opts.action_no_jobs = CALLERID_ACTION_IGNORE;
 			else {
-				pam_syslog(pamh, LOG_ERR,
+				pam_syslog(pamh,
+					   LOG_ERR,
 					   "unrecognized action_no_jobs=%s, setting to 'deny'",
 					   v);
 			}
@@ -568,7 +592,8 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 			else if (!xstrncasecmp(v, "deny", 4))
 				opts.action_unknown = CALLERID_ACTION_DENY;
 			else {
-				pam_syslog(pamh, LOG_ERR,
+				pam_syslog(pamh,
+					   LOG_ERR,
 					   "unrecognized action_unknown=%s, setting to 'newest'",
 					   v);
 			}
@@ -584,7 +609,8 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 				opts.action_generic_failure =
 					CALLERID_ACTION_DENY;
 			else {
-				pam_syslog(pamh, LOG_ERR,
+				pam_syslog(pamh,
+					   LOG_ERR,
 					   "unrecognized action_generic_failure=%s, setting to 'allow'",
 					   v);
 			}
@@ -597,7 +623,8 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 				opts.action_adopt_failure =
 					CALLERID_ACTION_DENY;
 			else {
-				pam_syslog(pamh, LOG_ERR,
+				pam_syslog(pamh,
+					   LOG_ERR,
 					   "unrecognized action_adopt_failure=%s, setting to 'allow'",
 					   v);
 			}
@@ -658,8 +685,7 @@ static int check_pam_service(pam_handle_t *pamh)
 		return PAM_SUCCESS;
 	}
 
-	pam_syslog(pamh, LOG_INFO,
-		   "Not adopting process since this is not an allowed pam service");
+	pam_syslog(pamh, LOG_INFO, "Not adopting process since this is not an allowed pam service");
 	return PAM_IGNORE;
 }
 
@@ -765,7 +791,6 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	 * in case the config file won't load on this node for some reason.
 	 */
 	slurm_conf_init(NULL);
-	slurm_cgroup_conf_init();
 
 	/*
 	 * Check if there are any steps on the node from any user. A failure here
@@ -784,7 +809,9 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	user_jobs = _user_job_count(steps, pwd.pw_uid, &stepd);
 	if (user_jobs == 0) {
 		if (opts.action_no_jobs == CALLERID_ACTION_DENY) {
-			send_user_msg(pamh, "Access denied by " PAM_MODULE_NAME
+			send_user_msg(pamh,
+				      "Access denied by "
+				      PAM_MODULE_NAME
 				      ": you have no active jobs on this node");
 			rc = PAM_PERM_DENIED;
 		} else {
@@ -796,7 +823,8 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	} else if (user_jobs == 1) {
 		if (opts.single_job_skip_rpc) {
 			info("Connection by user %s: user has only one job %u",
-			     user_name, stepd->step_id.job_id);
+			     user_name,
+			     stepd->step_id.job_id);
 			slurmrc = _adopt_process(pamh, getpid(), stepd);
 			/* If adoption into the only job fails, it is time to
 			 * exit. Return code is based on the
@@ -829,11 +857,11 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	rc = _action_unknown(pamh, &pwd, steps);
 
 cleanup:
-	slurm_cgroup_conf_destroy();
 	FREE_NULL_LIST(steps);
 	xfree(buf);
 	xfree(opts.node_name);
 	xfree(opts.pam_service);
+	xcgroup_fini_slurm_cgroup_conf();
 	return rc;
 }
 

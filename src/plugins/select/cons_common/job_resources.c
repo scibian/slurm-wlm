@@ -38,7 +38,6 @@
 #include "cons_common.h"
 
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/gres_ctld.h"
 
 bool select_state_initializing = true;
 
@@ -311,7 +310,6 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	List node_gres_list;
 	int i, i_first, i_last, n;
 	bitstr_t *core_bitmap;
-	bool new_alloc = true;
 
 	if (!job || !job->core_bitmap) {
 		error("%pJ has no job_resrcs info",
@@ -331,9 +329,6 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	else
 		i_last = -2;
 
-	if (job_ptr->gres_list_alloc)
-		new_alloc = false;
-
 	for (i = i_first, n = -1; i <= i_last; i++) {
 		if (!bit_test(job->node_bitmap, i))
 			continue;
@@ -350,21 +345,22 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 			core_bitmap = copy_job_resources_node(job, n);
 			if (job_ptr->details &&
 			    (job_ptr->details->whole_node == 1))
-				gres_ctld_job_alloc_whole_node(
-					job_ptr->gres_list_req,
-					&job_ptr->gres_list_alloc,
+				gres_plugin_job_alloc_whole_node(
+					job_ptr->gres_list,
 					node_gres_list, job->nhosts,
 					i, n, job_ptr->job_id,
-					node_ptr->name, core_bitmap, new_alloc);
+					node_ptr->name, core_bitmap,
+					job_ptr->user_id);
 			else
-				gres_ctld_job_alloc(
-					job_ptr->gres_list_req,
-					&job_ptr->gres_list_alloc,
+				gres_plugin_job_alloc(
+					job_ptr->gres_list,
 					node_gres_list, job->nhosts,
 					i, n, job_ptr->job_id,
-					node_ptr->name, core_bitmap, new_alloc);
+					node_ptr->name, core_bitmap,
+					job_ptr->user_id);
 
-			gres_node_state_log(node_gres_list, node_ptr->name);
+			gres_plugin_node_state_log(node_gres_list,
+						   node_ptr->name);
 			FREE_NULL_BITMAP(core_bitmap);
 
 			if (job->memory_allocated[n] == 0)
@@ -383,10 +379,10 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	}
 
 	if (action != JOB_RES_ACTION_RESUME) {
-		gres_ctld_job_build_details(job_ptr->gres_list_alloc,
-					    &job_ptr->gres_detail_cnt,
-					    &job_ptr->gres_detail_str,
-					    &job_ptr->gres_used);
+		gres_build_job_details(job_ptr->gres_list,
+				       &job_ptr->gres_detail_cnt,
+				       &job_ptr->gres_detail_str,
+				       &job_ptr->gres_used);
 	}
 
 	/* add cores */
@@ -523,23 +519,15 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 
 		node_ptr = node_record_table_ptr + i;
 		if (action != JOB_RES_ACTION_RESUME) {
-			List job_gres_list;
-
 			if (node_usage[i].gres_list)
 				gres_list = node_usage[i].gres_list;
 			else
 				gres_list = node_ptr->gres_list;
-
-			/* Dealloc from allocated GRES if not testing */
-			if (job_fini)
-				job_gres_list = job_ptr->gres_list_alloc;
-			else
-				job_gres_list = job_ptr->gres_list_req;
-
-			gres_ctld_job_dealloc(job_gres_list, gres_list,
-					      n, job_ptr->job_id,
-					      node_ptr->name, old_job, false);
-			gres_node_state_log(gres_list, node_ptr->name);
+			gres_plugin_job_dealloc(job_ptr->gres_list, gres_list,
+						n, job_ptr->job_id,
+						node_ptr->name, old_job,
+						job_ptr->user_id, job_fini);
+			gres_plugin_node_state_log(gres_list, node_ptr->name);
 
 			if (node_usage[i].alloc_memory <
 			    job->memory_allocated[n]) {

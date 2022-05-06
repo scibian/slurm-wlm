@@ -74,42 +74,17 @@ extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id)
 
 	/* all async prologs have completed, continue on now */
 	if (job_ptr->prep_prolog_failed) {
-		uint32_t jid = job_id;
-
 		job_ptr->prep_prolog_failed = false;
-
-		/* requeue het leader if het job */
-		if (job_ptr->het_job_id)
-			jid = job_ptr->het_job_id;
-
-		if ((rc = job_requeue(0, jid, NULL, false, 0)) &&
-		    (rc != ESLURM_JOB_PENDING)) {
-			info("unable to requeue JobId=%u: %s", jid,
+		if ((rc = job_requeue(0, job_id, NULL, false, 0))) {
+			info("unable to requeue JobId=%u: %s", job_id,
 			     slurm_strerror(rc));
 
 			srun_user_message(job_ptr,
 					  "PrologSlurmctld failed, job killed");
 
-			if (job_ptr->het_job_id) {
-				job_record_t *het_leader = job_ptr;
-
-				if (!het_leader->het_job_list) {
-					het_leader = find_job_record(
-						job_ptr->het_job_id);
-				}
-
-				/*
-				 * Don't do anything if there isn't a het_leader
-				 * (which there should be).
-				 */
-				if (het_leader) {
-					(void) het_job_signal(het_leader,
-							      SIGKILL,
-							      0, 0, false);
-				} else {
-					error("No het_leader found for %pJ",
-					      job_ptr);
-				}
+			if (job_ptr->het_job_list) {
+				(void) het_job_signal(job_ptr, SIGKILL, 0, 0,
+						       false);
 			} else {
 				job_signal(job_ptr, SIGKILL, 0, 0, false);
 			}
@@ -119,13 +94,24 @@ extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id)
 
 	prolog_running_decr(job_ptr);
 
+	if (power_save_test()) {
+		/* Wait for node to register after booting */
+	} else if (job_ptr->node_bitmap) {
+		for (int i=0; i < node_record_count; i++) {
+			if (bit_test(job_ptr->node_bitmap, i) == 0)
+				continue;
+			bit_clear(booting_node_bitmap, i);
+			node_record_table_ptr[i].node_state &=
+				(~NODE_STATE_POWER_UP);
+		}
+	}
+
 	unlock_slurmctld(job_write_lock);
 }
 
 extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id)
 {
-	slurmctld_lock_t job_write_lock = {
-		.job = WRITE_LOCK, .node = WRITE_LOCK};
+	slurmctld_lock_t job_write_lock = { .job = WRITE_LOCK };
 	job_record_t *job_ptr;
 
 	lock_slurmctld(job_write_lock);
@@ -149,15 +135,12 @@ extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id)
 
 	/* all async prologs have completed, continue on now */
 	job_ptr->epilog_running = false;
-
 	/*
 	 * Clear the JOB_COMPLETING flag only if the node count is 0
 	 * meaning the slurmd epilogs have already completed.
 	 */
-	if ((job_ptr->node_cnt == 0) && IS_JOB_COMPLETING(job_ptr)) {
+	if ((job_ptr->node_cnt == 0) && IS_JOB_COMPLETING(job_ptr))
 		cleanup_completing(job_ptr);
-		batch_requeue_fini(job_ptr);
-	}
 
 	unlock_slurmctld(job_write_lock);
 }

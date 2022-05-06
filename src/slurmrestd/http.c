@@ -144,7 +144,7 @@ static void _http_parser_url_init(struct http_parser_url *url)
 
 static int _on_message_begin(http_parser *parser)
 {
-	log_flag(NET, "%s: stub called", __func__);
+	debug5("%s: stub called", __func__);
 	return 0;
 }
 
@@ -169,14 +169,14 @@ static int _on_url(http_parser *parser, const char *at, size_t length)
 	}
 
 	if (url.field_set & (1 << UF_SCHEMA))
-		log_flag(NET, "%s: [%s] URL Schema currently not supported",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] URL Schema currently not supported",
+		       __func__, request->context->con->name);
 	if (url.field_set & (1 << UF_HOST))
-		log_flag(NET, "%s: [%s] URL host currently not supported",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] URL host currently not supported",
+		       __func__, request->context->con->name);
 	if (url.field_set & (1 << UF_PORT))
-		log_flag(NET, "%s: [%s] URL port currently not supported",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] URL port currently not supported",
+		       __func__, request->context->con->name);
 	if (url.field_set & (1 << UF_PATH)) {
 		xassert(url.field_data[UF_PATH].len <= length);
 		request->path = xstrndup(at + url.field_data[UF_PATH].off,
@@ -188,11 +188,11 @@ static int _on_url(http_parser *parser, const char *at, size_t length)
 					  url.field_data[UF_QUERY].len);
 	}
 	if (url.field_set & (1 << UF_FRAGMENT))
-		log_flag(NET, "%s: [%s] URL fragment currently not supported",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] URL fragment currently not supported",
+		       __func__, request->context->con->name);
 	if (url.field_set & (1 << UF_USERINFO))
-		log_flag(NET, "%s: [%s] URL user currently not supported",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] URL user currently not supported",
+		       __func__, request->context->con->name);
 
 	debug("%s: [%s] url path: %s query: %s",
 	      __func__, request->context->con->name, request->path,
@@ -203,7 +203,7 @@ static int _on_url(http_parser *parser, const char *at, size_t length)
 
 static int _on_status(http_parser *parser, const char *at, size_t length)
 {
-	log_flag(NET, "%s: stub called", __func__);
+	debug5("%s: stub called", __func__);
 	return 0;
 }
 
@@ -239,9 +239,9 @@ static int _on_header_value(http_parser *parser, const char *at, size_t length)
 	xstrtrim(buffer->name);
 
 	list_append(request->headers, buffer);
-	log_flag(NET, "%s: [%s] Header: %s Value: %s",
-		 __func__, request->context->con->name, buffer->name,
-		 buffer->value);
+	debug2("%s: [%s] Header: %s Value: %s",
+	       __func__, request->context->con->name, buffer->name,
+	       buffer->value);
 
 	/* Watch for connection headers */
 	if (!xstrcasecmp(buffer->name, "Connection")) {
@@ -316,15 +316,15 @@ static int _on_headers_complete(http_parser *parser)
 	xassert(request->magic == MAGIC_REQUEST_T);
 
 	if (parser->http_major == 1 && parser->http_minor == 0) {
-		log_flag(NET, "%s: [%s] HTTP/1.0 connection",
-			 __func__, request->context->con->name);
+		debug3("%s: [%s] HTTP/1.0 connection",
+		       __func__, request->context->con->name);
 
 		/* 1.0 defaults to close w/o keep_alive */
 		if (!request->keep_alive)
 			request->connection_close = true;
 	} else if (parser->http_major == 1 && parser->http_minor == 1) {
-		log_flag(NET, "%s: [%s] HTTP/1.1 connection",
-			 __func__, request->context->con->name);
+		debug3("%s: [%s] HTTP/1.1 connection",
+		       __func__, request->context->con->name);
 
 		/* keep alive is assumed for 1.1 */
 		if (request->keep_alive == -1)
@@ -400,9 +400,9 @@ static int _on_body(http_parser *parser, const char *at, size_t length)
 		request->body[length] = '\0';
 	}
 
-	log_flag(NET, "%s: [%s] received %zu bytes for HTTP body length %zu/%zu bytes",
-		 __func__, request->context->con->name, length,
-		 request->body_length, request->expected_body_length);
+	debug2("%s: [%s] received %zu bytes for HTTP body length %zu/%zu bytes",
+	       __func__, request->context->con->name, length,
+	       request->body_length, request->expected_body_length);
 
 	return 0;
 
@@ -530,23 +530,13 @@ extern int send_http_response(const send_http_response_args_t *args)
 						 strlen(CRLF))))
 			return rc;
 
-		log_flag(NET, "%s: [%s] rc=%s(%u) sending body:\n%s",
-			 __func__, args->con->name,
-			 get_http_status_code_string(args->status_code),
-			 args->status_code, args->body);
+		debug5("%s: [%s] rc=%s(%u) sending body:\n%s",
+		       __func__, args->con->name,
+		       get_http_status_code_string(args->status_code),
+		       args->status_code, args->body);
 
 		if ((rc = con_mgr_queue_write_fd(args->con, args->body,
 						 args->body_length)))
-			return rc;
-	} else if (((args->status_code >= 100) && (args->status_code < 200)) ||
-		   (args->status_code == 204) ||
-		   (args->status_code == 304)) {
-		/*
-		 * RFC2616 requires empty line after headers for return code
-		 * that "MUST NOT" include a message body
-		 */
-		if ((rc = con_mgr_queue_write_fd(args->con, CRLF,
-						 strlen(CRLF))))
 			return rc;
 	}
 
@@ -568,13 +558,8 @@ static int _send_reject(const http_parser *parser,
 		.headers = list_create(_free_http_header),
 	};
 
-	/* If we don't have a requested client version, default to 0.9 */
-	if ((args.http_major == 0) && (args.http_minor == 0))
-		args.http_minor = 9;
-
 	/* Ignore response since this connection is already dead */
 	(void) send_http_response(&args);
-	FREE_NULL_LIST(args.headers);
 
 	if (request->connection_close ||
 	    ((parser->http_major == 1) && (parser->http_minor >= 1)) ||
@@ -585,6 +570,54 @@ static int _send_reject(const http_parser *parser,
 	(void) con_mgr_queue_close_fd(request->context->con);
 
 	return HTTP_PARSER_RETURN_ERROR;
+}
+
+extern const char *get_http_method_string(http_request_method_t method)
+{
+	switch (method) {
+	case HTTP_REQUEST_GET:
+		return "GET";
+	case HTTP_REQUEST_POST:
+		return "POST";
+	case HTTP_REQUEST_PUT:
+		return "PUT";
+	case HTTP_REQUEST_DELETE:
+		return "DELETE";
+	case HTTP_REQUEST_OPTIONS:
+		return "OPTIONS";
+	case HTTP_REQUEST_HEAD:
+		return "HEAD";
+	case HTTP_REQUEST_PATCH:
+		return "PATCH";
+	case HTTP_REQUEST_TRACE:
+		return "TRACE";
+	default:
+		fatal_abort("unknown method string");
+		return "UNKNOWN";
+	}
+}
+
+extern http_request_method_t get_http_method(const char *str)
+{
+	if (str == NULL)
+		return HTTP_REQUEST_INVALID;
+	if (!xstrcasecmp(str, "get"))
+		return HTTP_REQUEST_GET;
+	if (!xstrcasecmp(str, "post"))
+		return HTTP_REQUEST_POST;
+	if (!xstrcasecmp(str, "put"))
+		return HTTP_REQUEST_PUT;
+	if (!xstrcasecmp(str, "delete"))
+		return HTTP_REQUEST_DELETE;
+	if (!xstrcasecmp(str, "options"))
+		return HTTP_REQUEST_OPTIONS;
+	if (!xstrcasecmp(str, "head"))
+		return HTTP_REQUEST_HEAD;
+	if (!xstrcasecmp(str, "patch"))
+		return HTTP_REQUEST_PATCH;
+	if (!xstrcasecmp(str, "trace"))
+		return HTTP_REQUEST_TRACE;
+	return HTTP_REQUEST_INVALID;
 }
 
 static int _on_message_complete_request(http_parser *parser,
@@ -610,9 +643,9 @@ static int _on_message_complete_request(http_parser *parser,
 	xassert(request->magic == MAGIC_REQUEST_T);
 
 	if ((rc = request->context->on_http_request(&args))) {
-		log_flag(NET, "%s: [%s] on_http_request rejected: %s",
-			 __func__, request->context->con->name,
-			 slurm_strerror(rc));
+		debug2("%s: [%s] on_http_request rejected: %s",
+		       __func__, request->context->con->name,
+		       slurm_strerror(rc));
 		return HTTP_PARSER_RETURN_ERROR;
 	} else
 		return SLURM_SUCCESS;
@@ -686,8 +719,8 @@ static int _on_message_complete(http_parser *parser)
 
 	if (request->keep_alive) {
 		//TODO: implement keep alive correctly
-		log_flag(NET, "%s: [%s] keep alive not currently implemented",
-			 __func__, request->context->con->name);
+		debug2("%s: [%s] keep alive not currently implemented",
+		       __func__, request->context->con->name);
 	}
 
 	if (!request->connection_close) {
@@ -719,13 +752,13 @@ static int _on_message_complete(http_parser *parser)
 
 static int _on_chunk_header(http_parser *parser)
 {
-	log_flag(NET, "%s: stub called", __func__);
+	debug5("%s: stub called", __func__);
 	return 0;
 }
 
 static int _on_chunk_complete(http_parser *parser)
 {
-	log_flag(NET, "%s: stub called", __func__);
+	debug5("%s: stub called", __func__);
 	return 0;
 }
 
@@ -745,7 +778,7 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		.on_chunk_complete = _on_chunk_complete
 	};
 	int rc = SLURM_SUCCESS;
-	buf_t *buffer = con->in;
+	Buf buffer = con->in;
 	request_t *request = context->request;
 	http_parser *parser = context->parser;
 
@@ -757,8 +790,8 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 	if (!request) {
 		/* Connection has already been closed */
 		rest_auth_g_clear();
-		log_flag(NET, "%s: [%s] Rejecting continued HTTP connection",
-			 __func__, con->name);
+		debug("%s: [%s] Rejecting continued HTTP connection",
+		      __func__, con->name);
 		return SLURM_UNEXPECTED_MSG_ERROR;
 	}
 
@@ -772,14 +805,14 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 
 	parser->data = request;
 
-	log_flag(NET, "%s: [%s] Accepted HTTP connection", __func__, con->name);
+	debug("%s: [%s] Accepted HTTP connection", __func__, con->name);
 
 	size_t bytes_parsed = http_parser_execute(parser, &settings,
 						  get_buf_data(buffer),
 						  size_buf(buffer));
 
-	log_flag(NET, "%s: [%s] parsed %zu/%u bytes",
-		 __func__, con->name, bytes_parsed, size_buf(buffer));
+	debug4("%s: [%s] parsed %zu/%u bytes",
+	       __func__, con->name, bytes_parsed, size_buf(buffer));
 
 	if (bytes_parsed > 0)
 		set_buf_offset(buffer, bytes_parsed);
@@ -787,10 +820,10 @@ extern int parse_http(con_mgr_fd_t *con, void *x)
 		error("%s: [%s] unexpected HTTP error %s: %s",
 		      __func__, con->name, http_errno_name(parser->http_errno),
 		      http_errno_description(parser->http_errno));
-		rc = _send_reject(parser, HTTP_STATUS_CODE_ERROR_BAD_REQUEST);
+		rc = SLURM_UNEXPECTED_MSG_ERROR;
 	} else if (parser->upgrade) {
-		log_flag(NET, "%s: [%s] HTTP Upgrade currently not supported",
-			 __func__, con->name);
+		debug2("%s: [%s] HTTP Upgrade currently not supported",
+		       __func__, con->name);
 		rc = SLURM_UNEXPECTED_MSG_ERROR;
 	}
 
@@ -846,8 +879,8 @@ extern parsed_host_port_t *parse_host_port(const char *str)
 					url.field_data[UF_PORT].len);
 
 	if (parsed->host && parsed->port)
-		log_flag(NET, "%s: parsed: %s -> %s:%s",
-			 __func__, str, parsed->host, parsed->port);
+		debug4("%s: parsed: %s -> %s:%s",
+		       __func__, str, parsed->host, parsed->port);
 
 	return parsed;
 }
@@ -862,7 +895,7 @@ extern void free_parse_host_port(parsed_host_port_t *parsed)
 	xfree(parsed);
 }
 
-static http_context_t *_http_context_new(void)
+extern http_context_t *_http_context_new(void)
 {
 	http_context_t *context = xmalloc(sizeof(*context));
 	http_parser *parser = xmalloc(sizeof(*parser));
@@ -874,6 +907,98 @@ static http_context_t *_http_context_new(void)
 	context->auth = NULL;
 
 	return context;
+}
+
+extern const char *get_http_status_code_string(http_status_code_t code)
+{
+	switch (code) {
+	case HTTP_STATUS_CODE_CONTINUE:
+		return "CONTINUE";
+	case HTTP_STATUS_CODE_SWITCH_PROTOCOLS:
+		return "SWITCH PROTOCOLS";
+	case HTTP_STATUS_CODE_SUCCESS_OK:
+		return "OK";
+	case HTTP_STATUS_CODE_SUCCESS_CREATED:
+		return "CREATED";
+	case HTTP_STATUS_CODE_SUCCESS_ACCEPTED:
+		return "ACCEPTED";
+	case HTTP_STATUS_CODE_SUCCESS_NON_AUTHORITATIVE:
+		return "OK (NON AUTHORITATIVE)";
+	case HTTP_STATUS_CODE_SUCCESS_NO_CONTENT:
+		return "NO CONTENT";
+	case HTTP_STATUS_CODE_SUCCESS_RESET_CONNECTION:
+		return "RESET CONNECTION";
+	case HTTP_STATUS_CODE_SUCCESS_PARTIAL_CONENT:
+		return "PARTIAL CONTENT";
+	case HTTP_STATUS_CODE_REDIRECT_MULTIPLE_CHOICES:
+		return "REDIRECT MULTIPLE CHOICES";
+	case HTTP_STATUS_CODE_REDIRECT_MOVED_PERMANENTLY:
+		return "MOVED PERMANENTLY";
+	case HTTP_STATUS_CODE_REDIRECT_FOUND:
+		return "REDIRECT FOUNT";
+	case HTTP_STATUS_CODE_REDIRECT_SEE_OTHER:
+		return "REDIRECT SEE OTHER";
+	case HTTP_STATUS_CODE_REDIRECT_NOT_MODIFIED:
+		return "NOT MODIFIED";
+	case HTTP_STATUS_CODE_REDIRECT_USE_PROXY:
+		return "USE PROXY";
+	case HTTP_STATUS_CODE_REDIRECT_TEMP_REDIRCT:
+		return "TEMP REDIRECT";
+	case HTTP_STATUS_CODE_ERROR_BAD_REQUEST:
+		return "BAD REQUEST";
+	case HTTP_STATUS_CODE_ERROR_UNAUTHORIZED:
+		return "UNAUTHORIZED";
+	case HTTP_STATUS_CODE_ERROR_PAYMENT_REQUIRED:
+		return "PAYMENT REQUIRED";
+	case HTTP_STATUS_CODE_ERROR_FORBIDDEN:
+		return "FORBIDDEN";
+	case HTTP_STATUS_CODE_ERROR_NOT_FOUND:
+		return "NOT FOUND";
+	case HTTP_STATUS_CODE_ERROR_METHOD_NOT_ALLOWED:
+		return "NOT ALLOWED";
+	case HTTP_STATUS_CODE_ERROR_NOT_ACCEPTABLE:
+		return "NOT ACCEPTABLE";
+	case HTTP_STATUS_CODE_ERROR_PROXY_AUTH_REQ:
+		return "PROXY AUTHENTICATION REQUIRED";
+	case HTTP_STATUS_CODE_ERROR_REQUEST_TIMEOUT:
+		return "REQUEST TIMEOUT";
+	case HTTP_STATUS_CODE_ERROR_CONFLICT:
+		return "CONFLICT";
+	case HTTP_STATUS_CODE_ERROR_GONE:
+		return "GONE";
+	case HTTP_STATUS_CODE_ERROR_LENGTH_REQUIRED:
+		return "LENGTH REQUIRED";
+	case HTTP_STATUS_CODE_ERROR_PRECONDITION_FAILED:
+		return "PRECONDITION FAILED";
+	case HTTP_STATUS_CODE_ERROR_ENTITY_TOO_LARGE:
+		return "ENTITY TOO LARGE";
+	case HTTP_STATUS_CODE_ERROR_URI_TOO_LONG:
+		return "URI TOO LONG";
+	case HTTP_STATUS_CODE_ERROR_UNSUPPORTED_MEDIA_TYPE:
+		return "UNSUPPORTED MEDIA TYPE";
+	case HTTP_STATUS_CODE_ERROR_REQUEST_RANGE_UNSATISFIABLE:
+		return "REQUEST RANGE UNJUSTIFIABLE";
+	case HTTP_STATUS_CODE_ERROR_EXPECTATION_FAILED:
+		return "EXPECTATION FAILED";
+	case HTTP_STATUS_CODE_ERROR_IM_A_TEAPOT: /* rfc7168 */
+		return "I'm a Teapot";
+	case HTTP_STATUS_CODE_ERROR_UPGRADE_REQUIRED: /* rfc7231 6.5.15 */
+		return "UPGRADE REQUIRED";
+	case HTTP_STATUS_CODE_SRVERR_INTERNAL:
+		return "INTERNAL ERROR";
+	case HTTP_STATUS_CODE_SRVERR_NOT_IMPLEMENTED:
+		return "NOT IMPLEMENTED";
+	case HTTP_STATUS_CODE_SRVERR_BAD_GATEWAY:
+		return "BAD GATEWAY";
+	case HTTP_STATUS_CODE_SRVERR_SERVICE_UNAVAILABLE:
+		return "SERVICE UNAVAILABLE";
+	case HTTP_STATUS_CODE_SRVERR_GATEWAY_TIMEOUT:
+		return "GATEWAY TIMEOUT";
+	case HTTP_STATUS_CODE_SRVERR_HTTP_VERSION_NOT_SUPPORTED:
+		return "HTTP VERSION NOT SUPPORTED";
+	default:
+		return NULL;
+	}
 }
 
 /* find operator against http_header_entry_t */
@@ -892,7 +1017,7 @@ static int _http_header_find_key(void *x, void *y)
 		return 0;
 }
 
-extern const char *find_http_header(List headers, const char *name)
+const char *find_http_header(List headers, const char *name)
 {
 	http_header_entry_t *header = NULL;
 

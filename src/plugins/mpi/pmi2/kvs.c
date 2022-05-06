@@ -95,7 +95,7 @@ temp_kvs_init(void)
 {
 	uint16_t cmd;
 	uint32_t nodeid, num_children, size;
-	buf_t *buf = NULL;
+	Buf buf = NULL;
 
 	xfree(temp_kvs_buf);
 	temp_kvs_cnt = 0;
@@ -141,7 +141,7 @@ temp_kvs_init(void)
 extern int
 temp_kvs_add(char *key, char *val)
 {
-	buf_t *buf;
+	Buf buf;
 	uint32_t size;
 
 	if ( key == NULL || val == NULL )
@@ -162,7 +162,8 @@ temp_kvs_add(char *key, char *val)
 	return SLURM_SUCCESS;
 }
 
-extern int temp_kvs_merge(buf_t *buf)
+extern int
+temp_kvs_merge(Buf buf)
 {
 	char *data;
 	uint32_t offset, size;

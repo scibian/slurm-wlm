@@ -102,7 +102,6 @@ typedef struct {
 	char *gres_used;
 	char *cluster_name;
 	char *comment;
-	char *extra;
 	char *reason;
 	time_t reason_time;
 	uint32_t reason_uid;
@@ -129,7 +128,6 @@ struct sinfo_match_flags {
 	bool threads_flag;
 	bool sct_flag;
 	bool disk_flag;
-	bool extra_flag;
 	bool features_flag;
 	bool features_act_flag;
 	bool groups_flag;
@@ -151,7 +149,6 @@ struct sinfo_match_flags {
 	bool root_flag;
 	bool oversubscribe_flag;
 	bool state_flag;
-	bool statecomplete_flag;
 	bool weight_flag;
 	bool reason_timestamp_flag;
 	bool reason_user_flag;
@@ -186,7 +183,6 @@ struct sinfo_parameters {
 	struct sinfo_match_flags match_flags;
 
 	char* format;
-	char *mimetype; /* --yaml or --json */
 	char* nodes;
 	char* partition;
 	char* sort;

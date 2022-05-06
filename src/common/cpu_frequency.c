@@ -70,7 +70,6 @@
 #define GOV_PERFORMANCE		0x04
 #define GOV_POWERSAVE		0x08
 #define GOV_USERSPACE		0x10
-#define GOV_SCHEDUTIL		0x20
 
 static uint16_t cpu_freq_count = 0;
 static int set_batch_freq = -1;
@@ -352,11 +351,6 @@ cpu_freq_init(slurmd_conf_t *conf)
 			if (i == 0)
 				log_flag(CPU_FREQ, "cpu_freq: UserSpace governor defined on cpu 0");
 		}
-		if (strstr(value, "schedutil")) {
-			cpufreq[i].avail_governors |= GOV_SCHEDUTIL;
-			if (i == 0)
-				log_flag(CPU_FREQ, "cpu_freq: SchedUtil governor defined on cpu 0");
-		}
 		fclose(fp);
 		if (_cpu_freq_cpu_avail(i) == SLURM_ERROR)
 			continue;
@@ -428,7 +422,7 @@ rwfail:
 
 /*
  * Validate the cpus and select the frequency to set
- * Called from task/affinity code with task launch request containing
+ * Called from task cpuset code with task launch request containing
  *  a pointer to a hex map string of the cpus to be used by this step
  */
 extern void
@@ -706,21 +700,11 @@ _cpu_freq_set_gov(stepd_step_rec_t *job, int cpuidx, char* gov )
 	char path[PATH_MAX];
 	FILE *fp;
 	int fd, rc;
-	uint32_t jobid;
-
-#ifdef HAVE_NATIVE_CRAY
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
-	else
-		jobid = job->step_id.job_id;
-#else
-	jobid = job->step_id.job_id;
-#endif
 
 	rc = SLURM_SUCCESS;
 	snprintf(path, sizeof(path), PATH_TO_CPU
 		 "cpu%u/cpufreq/scaling_governor", cpuidx);
-	fd = _set_cpu_owner_lock(cpuidx, jobid);
+	fd = _set_cpu_owner_lock(cpuidx, job->step_id.job_id);
 	if ((fp = fopen(path, "w"))) {
 		fputs(gov, fp);
 		fputc('\n', fp);
@@ -795,21 +779,11 @@ _cpu_freq_set_scaling_freq(stepd_step_rec_t *job, int cpx, uint32_t freq,
 	FILE *fp;
 	int fd, rc;
 	uint32_t newfreq;
-	uint32_t jobid;
-
-#ifdef HAVE_NATIVE_CRAY
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
-	else
-		jobid = job->step_id.job_id;
-#else
-	jobid = job->step_id.job_id;
-#endif
 
 	rc = SLURM_SUCCESS;
 	snprintf(path, sizeof(path), PATH_TO_CPU
 		 "cpu%u/cpufreq/%s", cpx, option);
-	fd = _set_cpu_owner_lock(cpx, jobid);
+	fd = _set_cpu_owner_lock(cpx, job->step_id.job_id);
 	if ((fp = fopen(path, "w"))) {
 		fprintf(fp, "%u\n", freq);
 		fclose(fp);
@@ -904,7 +878,7 @@ _cpu_freq_govspec_string(uint32_t cpu_freq, int cpuidx)
 
 	if ((cpu_freq & CPU_FREQ_RANGE_FLAG) == 0)
 		return SLURM_ERROR;
-
+		
 	switch(cpu_freq)
 	{
 	case CPU_FREQ_CONSERVATIVE:
@@ -927,10 +901,6 @@ _cpu_freq_govspec_string(uint32_t cpu_freq, int cpuidx)
 		if (cpufreq[cpuidx].avail_governors & GOV_USERSPACE)
 			strcpy(cpufreq[cpuidx].new_governor, "userspace");
 		return SLURM_SUCCESS;
-	case CPU_FREQ_SCHEDUTIL:
-		if (cpufreq[cpuidx].avail_governors & GOV_SCHEDUTIL)
-			strcpy(cpufreq[cpuidx].new_governor, "schedutil");
-		return SLURM_SUCCESS;
 	default:
 		return SLURM_ERROR;
 	}
@@ -952,27 +922,27 @@ _cpu_freq_freqspec_num(uint32_t cpu_freq, int cpuidx)
 		{
 		case CPU_FREQ_LOW :
 			return cpufreq[cpuidx].avail_freq[0];
-
+	
 		case CPU_FREQ_MEDIUM :
 			if (cpufreq[cpuidx].nfreq == 1)
 				return cpufreq[cpuidx].avail_freq[0];
 			fx = (cpufreq[cpuidx].nfreq - 1) / 2;
 			return cpufreq[cpuidx].avail_freq[fx];
-
+	
 		case CPU_FREQ_HIGHM1 :
 			if (cpufreq[cpuidx].nfreq == 1)
 				return cpufreq[cpuidx].avail_freq[0];
 			fx = cpufreq[cpuidx].nfreq - 2;
 			return cpufreq[cpuidx].avail_freq[fx];
-
+	
 		case CPU_FREQ_HIGH :
 			fx = cpufreq[cpuidx].nfreq - 1;
 			return cpufreq[cpuidx].avail_freq[fx];
-
+		
 		default:
 			return NO_VAL;
 		}
-	}
+	}		
 
 	/* check for request above or below available values */
 	if (cpu_freq < cpufreq[cpuidx].avail_freq[0]) {
@@ -1112,8 +1082,6 @@ _cpu_freq_check_gov(const char* arg, uint32_t illegal)
 		rc = CPU_FREQ_USERSPACE;
 	} else if (xstrncasecmp(arg, "onde", 4) == 0) {
 		rc = CPU_FREQ_ONDEMAND;
-	} else if (xstrncasecmp(arg, "sche", 4) == 0) {
-		rc = CPU_FREQ_SCHEDUTIL;
 	}
 	rc &= (~illegal);
 	if (rc == 0)
@@ -1373,8 +1341,6 @@ cpu_freq_to_string(char *buf, int buf_size, uint32_t cpu_freq)
 		snprintf(buf, buf_size, "UserSpace");
 	else if (cpu_freq == CPU_FREQ_ONDEMAND)
 		snprintf(buf, buf_size, "OnDemand");
-	else if (cpu_freq == CPU_FREQ_SCHEDUTIL)
-		snprintf(buf, buf_size, "SchedUtil");
 	else if (cpu_freq & CPU_FREQ_RANGE_FLAG)
 		snprintf(buf, buf_size, "Unknown");
 	else if (fuzzy_equal(cpu_freq, NO_VAL)) {
@@ -1464,31 +1430,46 @@ extern void
 cpu_freq_govlist_to_string(char* buf, uint16_t bufsz, uint32_t govs)
 {
 	char *list = NULL;
-	char *sep = "", *pos = NULL;
 
 	if ((govs & CPU_FREQ_CONSERVATIVE) == CPU_FREQ_CONSERVATIVE) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "Conservative");
-		sep = ",";
-	}
-	if ((govs & CPU_FREQ_ONDEMAND) == CPU_FREQ_ONDEMAND) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "OnDemand");
-		sep = ",";
+		if (list == NULL)
+			list = xstrdup("Conservative");
+		else {
+			xstrcatchar(list,',');
+			xstrcat(list,"Conservative");
+		}
 	}
 	if ((govs & CPU_FREQ_PERFORMANCE) == CPU_FREQ_PERFORMANCE) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "Performance");
-		sep = ",";
+		if (list == NULL)
+			list = xstrdup("Performance");
+		else {
+			xstrcatchar(list,',');
+			xstrcat(list,"Performance");
+		}
 	}
 	if ((govs & CPU_FREQ_POWERSAVE) == CPU_FREQ_POWERSAVE) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "PowerSave");
-		sep = ",";
+		if (list == NULL)
+			list = xstrdup("PowerSave");
+		else {
+			xstrcatchar(list,',');
+			xstrcat(list,"PowerSave");
+		}
 	}
-	if ((govs & CPU_FREQ_SCHEDUTIL) == CPU_FREQ_SCHEDUTIL) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "SchedUtil");
-		sep = ",";
+	if ((govs & CPU_FREQ_ONDEMAND) == CPU_FREQ_ONDEMAND) {
+		if (list == NULL)
+			list = xstrdup("OnDemand");
+		else {
+			xstrcatchar(list,',');
+			xstrcat(list,"OnDemand");
+		}
 	}
 	if ((govs & CPU_FREQ_USERSPACE) == CPU_FREQ_USERSPACE) {
-		xstrfmtcatat(list, &pos, "%s%s", sep, "UserSpace");
-		sep = ",";
+		if (list == NULL)
+			list = xstrdup("UserSpace");
+		else {
+			xstrcatchar(list,',');
+			xstrcat(list,"UserSpace");
+		}
 	}
 
 	if (list) {

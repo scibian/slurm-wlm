@@ -49,15 +49,18 @@
 #include "src/slurmctld/sched_plugin.h"
 #include "src/slurmctld/slurmctld.h"
 
-typedef struct {
-	int (*reconfig)(void);
+typedef struct slurm_sched_ops {
+	uint32_t	(*initial_priority)	( uint32_t,
+						  job_record_t * );
+	int		(*reconfig)		( void );
 } slurm_sched_ops_t;
 
 /*
  * Must be synchronized with slurm_sched_ops_t above.
  */
 static const char *syms[] = {
-	"sched_p_reconfig",
+	"slurm_sched_p_initial_priority",
+	"slurm_sched_p_reconfig",
 };
 
 static slurm_sched_ops_t ops;
@@ -71,7 +74,7 @@ static bool init_run = false;
  * slurmctld must be restarted and job priority changes may be
  * required to change the scheduler type.
  */
-extern int sched_g_init(void)
+extern int slurm_sched_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "sched";
@@ -94,7 +97,6 @@ extern int sched_g_init(void)
 		retval = SLURM_ERROR;
 		goto done;
 	}
-	main_sched_init();
 	init_run = true;
 
 done:
@@ -102,7 +104,7 @@ done:
 	return retval;
 }
 
-extern int sched_g_fini(void)
+extern int slurm_sched_fini(void)
 {
 	int rc;
 
@@ -113,20 +115,26 @@ extern int sched_g_fini(void)
 	rc = plugin_context_destroy(g_context);
 	g_context = NULL;
 
-	main_sched_fini();
-
-	if (slurm_conf.preempt_mode & PREEMPT_MODE_GANG)
-		gs_fini();
+	gs_fini();
 
 	return rc;
 }
 
-extern int sched_g_reconfig(void)
+extern int slurm_sched_g_reconfig(void)
 {
-	if (sched_g_init() < 0)
+	if ( slurm_sched_init() < 0 )
 		return SLURM_ERROR;
 
 	gs_reconfig();
 
 	return (*(ops.reconfig))();
+}
+
+extern uint32_t slurm_sched_g_initial_priority(uint32_t last_prio,
+					       job_record_t *job_ptr)
+{
+	if ( slurm_sched_init() < 0 )
+		return SLURM_ERROR;
+
+	return (*(ops.initial_priority))( last_prio, job_ptr );
 }

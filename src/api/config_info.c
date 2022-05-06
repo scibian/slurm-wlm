@@ -408,24 +408,6 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 			fprintf(fp, " TRESBillingWeights=%s",
 			        p[i].billing_weights_str);
 
-		if (p[i].resume_timeout == INFINITE16)
-	                fprintf(fp, " ResumeTimeout=INFINITE");
-		else if (p[i].resume_timeout != NO_VAL16)
-	                fprintf(fp, " ResumeTimeout=%d",
-				p[i].resume_timeout);
-
-		if (p[i].suspend_timeout == INFINITE16)
-	                fprintf(fp, " SuspendTimeout=INFINITE");
-		else if (p[i].suspend_timeout != NO_VAL16)
-	                fprintf(fp, " SuspendTimeout=%d",
-				p[i].suspend_timeout);
-
-		if (p[i].suspend_time == INFINITE)
-	                fprintf(fp, " SuspendTime=INFINITE");
-		else if (p[i].suspend_time != NO_VAL)
-	                fprintf(fp, " SuspendTime=%d",
-				p[i].suspend_time);
-
 		fprintf(fp, "\n");
 	}
 
@@ -573,16 +555,9 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AccountingStoreFlags");
-	if (slurm_ctl_conf_ptr->conf_flags & CTL_CONF_SJC)
-		xstrfmtcat(key_pair->value, "%sjob_comment",
-			   key_pair->value ? "," : "");
-	if (slurm_ctl_conf_ptr->conf_flags & CTL_CONF_SJE)
-		xstrfmtcat(key_pair->value, "%sjob_env",
-			   key_pair->value ? "," : "");
-	if (slurm_ctl_conf_ptr->conf_flags & CTL_CONF_SJS)
-		xstrfmtcat(key_pair->value, "%sjob_script",
-			   key_pair->value ? "," : "");
+	key_pair->name = xstrdup("AccountingStoreJobComment");
+	key_pair->value = xstrdup(
+		(slurm_ctl_conf_ptr->conf_flags & CTL_CONF_SJC) ? "Yes" : "No");
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -646,16 +621,6 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("BatchStartTimeout");
 	key_pair->value = xstrdup(tmp_str);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("BcastExclude");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->bcast_exclude);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("BcastParameters");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->bcast_parameters);
 	list_append(ret_list, key_pair);
 
 	slurm_make_time_str((time_t *)&slurm_ctl_conf_ptr->boot_time,
@@ -1470,6 +1435,11 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("SbcastParameters");
+	key_pair->value = xstrdup(slurm_ctl_conf_ptr->sbcast_parameters);
+	list_append(ret_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SchedulerParameters");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->sched_params);
 	list_append(ret_list, key_pair);
@@ -1731,11 +1701,11 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(tmp_str);
 	list_append(ret_list, key_pair);
 
-	if (slurm_ctl_conf_ptr->suspend_time == INFINITE) {
-		snprintf(tmp_str, sizeof(tmp_str), "INFINITE");
+	if (slurm_ctl_conf_ptr->suspend_time == 0) {
+		snprintf(tmp_str, sizeof(tmp_str), "NONE");
 	} else {
-		snprintf(tmp_str, sizeof(tmp_str), "%u sec",
-			 slurm_ctl_conf_ptr->suspend_time);
+		snprintf(tmp_str, sizeof(tmp_str), "%d sec",
+			 ((int)slurm_ctl_conf_ptr->suspend_time - 1));
 	}
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SuspendTime");
@@ -1751,11 +1721,6 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SuspendTimeout");
 	key_pair->value = xstrdup(tmp_str);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("SwitchParameters");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->switch_param);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1949,17 +1914,18 @@ slurm_load_slurmd_status(slurmd_status_t **slurmd_status_ptr)
 	}
 	req_msg.msg_type = REQUEST_DAEMON_STATUS;
 	req_msg.data     = NULL;
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
 
 	rc = slurm_send_recv_node_msg(&req_msg, &resp_msg, 0);
 
 	if ((rc != 0) || !resp_msg.auth_cred) {
 		error("slurm_slurmd_info: %m");
 		if (resp_msg.auth_cred)
-			auth_g_destroy(resp_msg.auth_cred);
+			g_slurm_auth_destroy(resp_msg.auth_cred);
 		return SLURM_ERROR;
 	}
 	if (resp_msg.auth_cred)
-		auth_g_destroy(resp_msg.auth_cred);
+		g_slurm_auth_destroy(resp_msg.auth_cred);
 
 	switch (resp_msg.msg_type) {
 	case RESPONSE_SLURMD_STATUS:
@@ -2184,7 +2150,7 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 		    !xstrcasecmp(key_pair->name, "AccountingStoragePort") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageType") ||
 		    !xstrcasecmp(key_pair->name, "AccountingStorageUser") ||
-		    !xstrcasecmp(key_pair->name, "AccountingStoreFlags") ||
+		    !xstrcasecmp(key_pair->name, "AccountingStoreJobComment") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherEnergyType") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherFilesystemType") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherInterconnectType") ||

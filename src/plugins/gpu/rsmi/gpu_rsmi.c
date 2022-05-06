@@ -39,7 +39,6 @@
 #define _GNU_SOURCE
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/cgroup.h"
 #include "src/common/gres.h"
 #include "src/common/log.h"
 #include "src/common/read_config.h"
@@ -69,17 +68,17 @@ typedef struct rsmiPciInfo_st {
 	union {
 		struct {
 #ifdef SLURM_BIGENDIAN
-			uint64_t domain : 32;
-			uint64_t reserved : 16;
-			uint64_t bus : 8;
+			uint64_t reserved : 35;
+			uint64_t domain : 16;
+			uint64_t bus : 5;
 			uint64_t device : 5;
 			uint64_t function : 3;
 #else
 			uint64_t function : 3;
 			uint64_t device : 5;
-			uint64_t bus : 8;
-			uint64_t reserved : 16;
-			uint64_t domain : 32;
+			uint64_t bus : 5;
+			uint64_t domain : 16;
+			uint64_t reserved : 35;
 #endif
 		};
 		uint64_t bdfid;
@@ -111,7 +110,7 @@ typedef struct rsmiPciInfo_st {
  * plugin_version - an unsigned 32-bit integer containing the Slurm version
  * (major.minor.micro combined into a single number).
  */
-const char plugin_name[] = "GPU RSMI plugin";
+const char	*plugin_name		= "GPU RSMI plugin";
 const char	plugin_type[]		= "gpu/rsmi";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 
@@ -792,6 +791,7 @@ static void _set_freq(bitstr_t *gpus, char *gpu_freq)
 	uint64_t mem_bitmask = 0, gpu_bitmask = 0;
 	bool freq_set = false, freq_logged = false;
 	char *tmp = NULL;
+	slurm_cgroup_conf_t *cg_conf;
 	bool task_cgroup = false;
 	bool constrained_devices = false;
 	bool cgroups_active = false;
@@ -815,9 +815,11 @@ static void _set_freq(bitstr_t *gpus, char *gpu_freq)
 	}
 
 	// Check if GPUs are constrained by cgroups
-	cgroup_conf_init();
-	if (slurm_cgroup_conf.constrain_devices)
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
+	if (cg_conf && cg_conf->constrain_devices)
 		constrained_devices = true;
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
 
 	// Check if task/cgroup plugin is loaded
 	if (xstrstr(slurm_conf.task_plugin, "cgroup"))
@@ -1066,7 +1068,7 @@ static List _get_system_gpu_list_rsmi(node_config_load_t *node_config)
 	// Loop through all the GPUs on the system and add to gres_list_system
 	for (i = 0; i < device_count; ++i) {
 		unsigned int minor_number = 0;
-		char *device_file = NULL, *links = NULL;
+		char *device_file = NULL;
 		char device_name[RSMI_STRING_BUFFER_SIZE] = {0};
 		char device_brand[RSMI_STRING_BUFFER_SIZE] = {0};
 		rsmiPciInfo_t pci_info;
@@ -1080,9 +1082,6 @@ static List _get_system_gpu_list_rsmi(node_config_load_t *node_config)
 		_rsmi_get_device_pci_info(i, &pci_info);
 		_rsmi_get_device_unique_id(i, &uuid);
 
-		/* Use links to record PCI bus ID order */
-		links = gres_links_create_empty(i, device_count);
-
 		xstrfmtcat(device_file, "/dev/dri/renderD%u", minor_number);
 
 		debug2("GPU index %u:", i);
@@ -1092,7 +1091,6 @@ static List _get_system_gpu_list_rsmi(node_config_load_t *node_config)
 		debug2("    PCI Domain/Bus/Device/Function: %u:%u:%u.%u",
 		       pci_info.domain,
 		       pci_info.bus, pci_info.device, pci_info.function);
-		debug2("    Links: %s", links);
 		debug2("    Device File (minor number): %s", device_file);
 		if (minor_number != i+128)
 			debug("Note: GPU index %u is different from minor # %u",
@@ -1103,11 +1101,9 @@ static List _get_system_gpu_list_rsmi(node_config_load_t *node_config)
 
 		add_gres_to_list(gres_list_system, "gpu", 1,
 				 node_config->cpu_cnt, NULL, NULL,
-				 device_file, device_brand, links, NULL,
-				 GRES_CONF_ENV_RSMI);
+				 device_file, device_brand, NULL);
 
 		xfree(device_file);
-		xfree(links);
 	}
 
 	rsmi_shut_down();

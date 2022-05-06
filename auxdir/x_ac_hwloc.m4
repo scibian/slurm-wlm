@@ -6,7 +6,7 @@
 #    X_AC_HWLOC
 #
 #  DESCRIPTION:
-#    Determine if the HWLOC libraries exists and if they support PCI data.
+#    Determine if the HWLOC libraries exists and if they support PCI data. 
 ##*****************************************************************************
 
 AC_DEFUN([X_AC_HWLOC],
@@ -17,8 +17,7 @@ AC_DEFUN([X_AC_HWLOC],
   AC_ARG_WITH(
     [hwloc],
     AS_HELP_STRING(--with-hwloc=PATH,Specify path to hwloc installation),
-    [AS_IF([test "x$with_hwloc" != xno && test "x$with_hwloc" != xyes],
-           [_x_ac_hwloc_dirs="$with_hwloc"])])
+    [AS_IF([test "x$with_hwloc" != xno],[_x_ac_hwloc_dirs="$with_hwloc $_x_ac_hwloc_dirs"])])
 
   if [test "x$with_hwloc" = xno]; then
      AC_MSG_WARN([support for hwloc disabled])
@@ -49,11 +48,7 @@ AC_DEFUN([X_AC_HWLOC],
       ])
 
     if test -z "$x_ac_cv_hwloc_dir"; then
-      if test -z "$with_hwloc"; then
-        AC_MSG_WARN([unable to locate hwloc installation])
-      else
-        AC_MSG_ERROR([unable to locate hwloc installation])
-      fi
+      AC_MSG_WARN([unable to locate hwloc installation])
     else
       HWLOC_CPPFLAGS="-I$x_ac_cv_hwloc_dir/include"
       if test "$ac_with_rpath" = "yes"; then

@@ -55,6 +55,7 @@ slurm_persist_conn_t *slurmdbd_conn = NULL;
 
 
 #define DBD_MAGIC		0xDEAD3219
+#define SLURMDBD_TIMEOUT	900	/* Seconds SlurmDBD for response */
 #define DEBUG_PRINT_MAX_MSG_TYPES 10
 #define MAX_DBD_DEFAULT_ACTION MAX_DBD_ACTION_DISCARD
 
@@ -72,7 +73,7 @@ static pthread_cond_t  slurmdbd_cond = PTHREAD_COND_INITIALIZER;
 
 static int max_dbd_msg_action = MAX_DBD_DEFAULT_ACTION;
 
-static int _unpack_return_code(uint16_t rpc_version, buf_t *buffer)
+static int _unpack_return_code(uint16_t rpc_version, Buf buffer)
 {
 	uint16_t msg_type = -1;
 	persist_rc_msg_t *msg;
@@ -143,7 +144,7 @@ static int _unpack_return_code(uint16_t rpc_version, buf_t *buffer)
 static int _get_return_code(void)
 {
 	int rc = SLURM_ERROR;
-	buf_t *buffer = slurm_persist_recv_msg(slurmdbd_conn);
+	Buf buffer = slurm_persist_recv_msg(slurmdbd_conn);
 	if (buffer == NULL)
 		return rc;
 
@@ -155,12 +156,12 @@ static int _get_return_code(void)
 
 static int _handle_mult_rc_ret(void)
 {
-	buf_t *buffer;
+	Buf buffer;
 	uint16_t msg_type;
 	persist_rc_msg_t *msg = NULL;
 	dbd_list_msg_t *list_msg = NULL;
 	int rc = SLURM_ERROR;
-	buf_t *out_buf = NULL;
+	Buf out_buf = NULL;
 
 	buffer = slurm_persist_recv_msg(slurmdbd_conn);
 	if (buffer == NULL)
@@ -182,7 +183,7 @@ static int _handle_mult_rc_ret(void)
 			ListIterator itr =
 				list_iterator_create(list_msg->my_list);
 			while ((out_buf = list_next(itr))) {
-				buf_t *b;
+				Buf b;
 				if ((rc = _unpack_return_code(
 					     slurmdbd_conn->version, out_buf))
 				    != SLURM_SUCCESS)
@@ -244,24 +245,24 @@ unpack_error:
 /****************************************************************************
  * Functions for agent to manage queue of pending message for the Slurm DBD
  ****************************************************************************/
-static buf_t *_load_dbd_rec(int fd)
+static Buf _load_dbd_rec(int fd)
 {
 	ssize_t size, rd_size;
 	uint32_t msg_size, magic;
 	char *msg;
-	buf_t *buffer;
+	Buf buffer;
 
 	size = sizeof(msg_size);
 	rd_size = read(fd, &msg_size, size);
 	if (rd_size == 0)
-		return NULL;
+		return (Buf) NULL;
 	if (rd_size != size) {
 		error("state recover error: %m");
-		return NULL;
+		return (Buf) NULL;
 	}
-	if (msg_size > MAX_BUF_SIZE) {
+	if (msg_size > MAX_DBD_MSG_LEN) {
 		error("state recover error, msg_size=%u", msg_size);
-		return NULL;
+		return (Buf) NULL;
 	}
 
 	buffer = init_buf((int) msg_size);
@@ -278,7 +279,7 @@ static buf_t *_load_dbd_rec(int fd)
 		else {
 			error("state recover error: %m");
 			free_buf(buffer);
-			return NULL;
+			return (Buf) NULL;
 		}
 	}
 
@@ -287,7 +288,7 @@ static buf_t *_load_dbd_rec(int fd)
 	if ((rd_size != size) || (magic != DBD_MAGIC)) {
 		error("state recover error");
 		free_buf(buffer);
-		return NULL;
+		return (Buf) NULL;
 	}
 
 	return buffer;
@@ -296,7 +297,7 @@ static buf_t *_load_dbd_rec(int fd)
 static void _load_dbd_state(void)
 {
 	char *dbd_fname = NULL;
-	buf_t *buffer;
+	Buf buffer;
 	int fd, recovered = 0;
 	uint16_t rpc_version = 0;
 
@@ -374,7 +375,7 @@ static void _load_dbd_state(void)
 	xfree(dbd_fname);
 }
 
-static int _save_dbd_rec(int fd, buf_t *buffer)
+static int _save_dbd_rec(int fd, Buf buffer)
 {
 	ssize_t size, wrote;
 	uint32_t msg_size = get_buf_offset(buffer);
@@ -415,7 +416,7 @@ static int _save_dbd_rec(int fd, buf_t *buffer)
 static void _save_dbd_state(void)
 {
 	char *dbd_fname = NULL;
-	buf_t *buffer;
+	Buf buffer;
 	int fd, rc, wrote = 0;
 	uint16_t msg_type;
 	uint32_t offset;
@@ -482,7 +483,7 @@ static int _purge_step_req(void)
 	ListIterator iter;
 	uint16_t msg_type;
 	uint32_t offset;
-	buf_t *buffer;
+	Buf buffer;
 
 	iter = list_iterator_create(agent_list);
 	while ((buffer = list_next(iter))) {
@@ -511,7 +512,7 @@ static int _purge_job_start_req(void)
 	ListIterator iter;
 	uint16_t msg_type;
 	uint32_t offset;
-	buf_t *buffer;
+	Buf buffer;
 
 	iter = list_iterator_create(agent_list);
 	while ((buffer = list_next(iter))) {
@@ -555,7 +556,7 @@ static void _sig_handler(int signal)
 
 static int _print_agent_list_msg_type(void *x, void *arg)
 {
-	buf_t *buffer = (buf_t *) x;
+	Buf buffer = (Buf) x;
 	char *mlist = (char *) arg;
 	uint16_t msg_type;
 	uint32_t offset = get_buf_offset(buffer);
@@ -603,7 +604,7 @@ static void *_agent(void *x)
 {
 	int rc;
 	uint32_t cnt;
-	buf_t *buffer;
+	Buf buffer;
 	struct timespec abs_time;
 	static time_t fail_time = 0;
 	int sigarray[] = {SIGUSR1, 0};
@@ -671,26 +672,27 @@ static void *_agent(void *x)
 			info("agent_count:%d", cnt);
 		/* Leave item on the queue until processing complete */
 		if (agent_list) {
-			uint32_t msg_size = sizeof(list_req);
-			if (cnt > 1) {
+			int handle_agent_count = 1000;
+			if (cnt > handle_agent_count) {
 				int agent_count = 0;
 				ListIterator agent_itr =
 					list_iterator_create(agent_list);
 				list_msg.my_list = list_create(NULL);
 				while ((buffer = list_next(agent_itr))) {
-					msg_size += size_buf(buffer);
-					if (msg_size > MAX_MSG_SIZE)
-						break;
 					list_enqueue(list_msg.my_list, buffer);
 					agent_count++;
-					if (agent_count > 1000)
+					if (agent_count > handle_agent_count)
 						break;
 				}
 				list_iterator_destroy(agent_itr);
 				buffer = pack_slurmdbd_msg(
 					&list_req, SLURM_PROTOCOL_VERSION);
+			} else if (cnt > 1) {
+				list_msg.my_list = agent_list;
+				buffer = pack_slurmdbd_msg(
+					&list_req, SLURM_PROTOCOL_VERSION);
 			} else
-				buffer = list_peek(agent_list);
+				buffer = (Buf) list_peek(agent_list);
 		} else
 			buffer = NULL;
 		slurm_mutex_unlock(&agent_lock);
@@ -751,7 +753,7 @@ static void *_agent(void *x)
 					FREE_NULL_LIST(list_msg.my_list);
 				list_msg.my_list = NULL;
 			} else
-				buffer = list_dequeue(agent_list);
+				buffer = (Buf) list_dequeue(agent_list);
 
 			free_buf(buffer);
 			fail_time = 0;
@@ -921,7 +923,7 @@ extern int slurmdbd_agent_send_recv(uint16_t rpc_version,
  * Returns SLURM_SUCCESS or an error code */
 extern int slurmdbd_agent_send(uint16_t rpc_version, persist_msg_t *req)
 {
-	buf_t *buffer;
+	Buf buffer;
 	uint32_t cnt, rc = SLURM_SUCCESS;
 	static time_t syslog_time = 0;
 

@@ -101,7 +101,7 @@ struct node_record {
 	uint32_t cpu_bind;		/* default CPU binding type */
 	time_t slurmd_start_time;	/* Time of slurmd startup */
 	time_t last_response;		/* last response from the node */
-	time_t last_busy;		/* time node was last busy (no jobs) */
+	time_t last_idle;		/* time node last become idle */
 	uint16_t cpus;			/* count of processors on the node */
 	uint16_t boards; 		/* count of boards configured */
 	uint16_t tot_sockets;		/* number of sockets per node */
@@ -127,7 +127,6 @@ struct node_record {
 	uint16_t no_share_job_cnt;	/* count of jobs running that will
 					 * not share nodes */
 	char *comment;			/* arbitrary comment */
-	char *extra;			/* arbitrary string */
 	char *reason; 			/* why a node is DOWN or DRAINING */
 	time_t reason_time;		/* Time stamp when reason was
 					 * set, ignore if no reason is set. */
@@ -171,18 +170,10 @@ struct node_record {
 	bitstr_t *node_spec_bitmap;	/* node cpu specialization bitmap */
 	uint32_t owner;			/* User allowed to use node or NO_VAL */
 	uint16_t owner_job_cnt;		/* Count of exclusive jobs by "owner" */
-	uint16_t resume_timeout; 	/* time required in order to perform a
-					 * node resume operation */
-	uint32_t suspend_time; 		/* node idle for this long before
-					 * power save mode */
-	uint16_t suspend_timeout;	/* time required in order to perform a
-					 * node suspend operation */
 	char *tres_str;                 /* tres this node has */
 	char *tres_fmt_str;		/* tres this node has */
 	uint64_t *tres_cnt;		/* tres this node has. NO_PACK*/
 	char *mcs_label;		/* mcs_label if mcs plugin in use */
-	uint16_t vpus;	                /* number of threads we are using per
-					 * core */
 };
 extern node_record_t *node_record_table_ptr;  /* ptr to node records */
 extern int node_record_count;		/* count in node_record_table_ptr */
@@ -227,26 +218,31 @@ hostlist_t bitmap2hostlist (bitstr_t *bitmap);
  * build_all_nodeline_info - get a array of slurm_conf_node_t structures
  *	from the slurm.conf reader, build table, and set values
  * IN set_bitmap - if true then set node_bitmap in config record (used by
- *		    slurmd), false is used by slurmctld, clients, and testsuite
+ *		    slurmd), false is used by slurmctld and testsuite
  * IN tres_cnt - number of TRES configured on system (used on controller side)
+ * RET 0 if no error, error code otherwise
  */
-extern void build_all_nodeline_info(bool set_bitmap, int tres_cnt);
+extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt);
 
 /*
  * build_all_frontend_info - get a array of slurm_conf_frontend_t structures
  *	from the slurm.conf reader, build table, and set values
  * is_slurmd_context: set to true if run from slurmd
+ * RET 0 if no error, error code otherwise
  */
-extern void build_all_frontend_info (bool is_slurmd_context);
+extern int build_all_frontend_info (bool is_slurmd_context);
 
 /*
- * check_nodeline_info - From the slurm.conf reader, build table, and set values
+ * check_nodeline_info - From the slurm.conf reader, build table,
+ * 	and set values
+ * RET 0 if no error, error code otherwise
  * Note: Operates on common variables
  *	default_node_record - default node configuration values
  */
-extern void check_nodeline_info(slurm_conf_node_t *node_ptr,
-			        config_record_t *config_ptr,
-			        void (*_callback) (
+extern int check_nodeline_info(slurm_conf_node_t *node_ptr,
+			       config_record_t *config_ptr,
+			       log_level_t lvl,
+			       void (*_callback) (
 				       char *alias, char *hostname,
 				       char *address, char *bcast_addr,
 				       uint16_t port, int state_val,
@@ -313,16 +309,12 @@ extern int hostlist2bitmap (hostlist_t hl, bool best_effort, bitstr_t **bitmap);
  * init_node_conf - initialize the node configuration tables and values.
  *	this should be called before creating any node or configuration
  *	entries.
+ * RET 0 if no error, otherwise an error code
  */
-extern void init_node_conf(void);
+extern int init_node_conf (void);
 
 /* node_fini2 - free memory associated with node records (except bitmaps) */
 extern void node_fini2 (void);
-
-/*
- * given a node name return inx in node_record_table_ptr
- */
-extern int node_name_get_inx(char *node_name);
 
 /*
  * node_name2bitmap - given a node name regular expression, build a bitmap

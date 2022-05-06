@@ -22,14 +22,12 @@ can generate a lot of requests for the configuration files. In cases like
 this, you may want to consider running slurmd on the machine so it can
 manage the configuration files, but not allowing it to run jobs.</p>
 
-<h2 id="INSTALLATION">Installation
-<a class="slurm_link" href="#INSTALLATION"></a>
-</h2>
+<h2><a name="INSTALLATION">Installation</a></h2>
 
 <p>There are no extra steps required to install this feature. It is built in
 by default starting with Slurm 20.02.</p>
 
-<h2 id="SETUP">Setup<a class="slurm_link" href="#SETUP"></a></h2>
+<h2><a name="SETUP">Setup</a></h2>
 
 <p>The slurmctld must first be configured to run in the configless mode.
 This is handled by setting <b>SlurmctldParameters=enable_configless</b> in
@@ -47,11 +45,6 @@ is no local configuration file on the compute node.</p>
 slurmd --conf-server slurmctl-primary:6817
 </pre>
 Specifying the port is optional and will default to 6817 if it is not present.
-Multiple slurmctlds can be specified as a comma-separated list, in priority
-order (highest to lowest).
-<pre>
-slurmd --conf-server slurmctl-primary:6817,slurmctl-secondary
-</pre>
 </p>
 
 <p>The same information can be provided in a DNS SRV record. For example:
@@ -65,9 +58,7 @@ setup. The DNS SRV entry with the lowest priority should be your primary
 slurmctld, with higher priority values for backup slurmctlds.
 </p>
 
-<h2 id="INITIAL_TESTING">Initial Testing
-<a class="slurm_link" href="#INITIAL_TESTING"></a>
-</h2>
+<h2><a name="INITIAL_TESTING">Initial Testing</a></h2>
 
 <p>With the slurmctld configured and slurmd started, you can check in a couple
 places to make sure the configs are present on the node. Config files will be
@@ -78,9 +69,7 @@ slurmctld node and running
 <span class="commandline">scontrol reconfig</span> and checking that the config
 was updated.</p>
 
-<h2 id="LIMITATIONS">Limitations
-<a class="slurm_link" href="#LIMITATIONS"></a>
-</h2>
+<h2><a name="LIMITATIONS">Limitations</a></h2>
 
 <p>Using "%n" in "SlurmdSpoolDir" or "SlurmdPidFile" will not be properly
 substituted for the NodeName unless slurmd is also launched with the "-N"
@@ -96,7 +85,7 @@ the Included configs will <b>NOT</b> be shipped to the slurmds. Any additional
 config files will need to be shared a different way or added to the parent
 config.</p>
 
-<h2 id="NOTES">Notes<a class="slurm_link" href="#NOTES"></a></h2>
+<h2><a name="NOTES">Notes</a></h2>
 
 <p>The order of precedence for determining what configuration source to use
 is as follows:
@@ -115,19 +104,16 @@ is as follows:
 <li>acct_gather.conf</li>
 <li>cgroup.conf</li>
 <li>cgroup_allowed_devices_file.conf</li>
-<li>cli_filter.lua</li>
 <li>ext_sensors.conf</li>
 <li>gres.conf</li>
-<li>helpers.conf</li>
 <li>job_container.conf</li>
 <li>knl_cray.conf</li>
 <li>knl_generic.conf</li>
-<li>oci.conf</li>
 <li>plugstack.conf</li>
 <li>topology.conf</li>
 </ul>
 </p>
 
-<p style="text-align:center;">Last modified 13 October 2021</p>
+<p style="text-align:center;">Last modified 11 March 2021</p>
 
 <!--#include virtual="footer.txt"-->

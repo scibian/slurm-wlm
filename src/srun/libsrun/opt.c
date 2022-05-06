@@ -276,7 +276,6 @@ static slurm_opt_t *_opt_copy(void)
 	opt_dup->srun_opt->cmd_name = xstrdup(sropt.cmd_name);
 	opt_dup->comment = xstrdup(opt.comment);
 	opt.constraint = NULL;		/* Moved by memcpy */
-	opt_dup->context = xstrdup(opt.context);
 	opt_dup->srun_opt->cpu_bind = xstrdup(sropt.cpu_bind);
 	opt_dup->chdir = xstrdup(opt.chdir);
 	opt_dup->dependency = xstrdup(opt.dependency);
@@ -388,8 +387,6 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off)
 		/* initialize options with argv */
 		_set_options(argc, argv);
 		_opt_args(argc, argv, i);
-
-
 
 		if (argc_off)
 			*argc_off = optind;
@@ -534,7 +531,6 @@ env_vars_t env_vars[] = {
   { "SLURM_ACCOUNT", 'A' },
   { "SLURM_ACCTG_FREQ", LONG_OPT_ACCTG_FREQ },
   { "SLURM_BCAST", LONG_OPT_BCAST },
-  { "SLURM_BCAST_EXCLUDE", LONG_OPT_BCAST_EXCLUDE },
   { "SLURM_BURST_BUFFER", LONG_OPT_BURST_BUFFER_SPEC },
   { "SLURM_CLUSTERS", 'M' },
   { "SLURM_CLUSTER_CONSTRAINT", LONG_OPT_CLUSTER_CONSTRAINT },
@@ -596,7 +592,6 @@ env_vars_t env_vars[] = {
   { "SLURM_REQ_SWITCH", LONG_OPT_SWITCH_REQ },
   { "SLURM_RESERVATION", LONG_OPT_RESERVATION },
   { "SLURM_RESV_PORTS", LONG_OPT_RESV_PORTS },
-  { "SLURM_SEND_LIBS", LONG_OPT_SEND_LIBS },
   { "SLURM_SIGNAL", LONG_OPT_SIGNAL },
   { "SLURM_SPREAD_JOB", LONG_OPT_SPREAD_JOB },
   { "SLURM_SRUN_MULTI", LONG_OPT_MULTI },
@@ -616,7 +611,6 @@ env_vars_t env_vars[] = {
   { "SLURM_WCKEY", LONG_OPT_WCKEY },
   { "SLURM_WORKING_DIR", 'D' },
   { "SLURMD_DEBUG", LONG_OPT_SLURMD_DEBUG },
-  { "SRUN_CONTAINER", LONG_OPT_CONTAINER },
   { NULL }
 };
 
@@ -678,7 +672,6 @@ static bitstr_t *_get_het_group(const int argc, char **argv,
 
 	*opt_found = false;
 	optind = 0;
-	opterr = 0;	/* disable error messages about unrecognized options */
 	while ((opt_char = getopt_long(argc, argv, opt_string,
 				       optz, &option_index)) != -1) {
 		slurm_process_option_or_exit(&opt, opt_char, optarg, false,
@@ -733,7 +726,6 @@ static void _set_options(const int argc, char **argv)
 	struct option *optz = slurm_option_table_create(&opt, &opt_string);
 
 	optind = 0;
-	opterr = 1;	/* re-enable error messages for unrecognized options */
 	while ((opt_char = getopt_long(argc, argv, opt_string,
 				       optz, &option_index)) != -1) {
 		slurm_process_option_or_exit(&opt, opt_char, optarg, false,
@@ -756,8 +748,7 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 	sropt.het_grp_bits = bit_alloc(MAX_HET_JOB_COMPONENTS);
 	bit_set(sropt.het_grp_bits, het_job_offset);
 
-	if (opt.container && !getenv("SLURM_CONTAINER"))
-		setenvf(NULL, "SLURM_CONTAINER", "%s", opt.container);
+	validate_memory_options(&opt);
 
 #ifdef HAVE_NATIVE_CRAY
 	/* only fatal on the allocation */
@@ -873,26 +864,6 @@ static bool _opt_verify(void)
 	validate_options_salloc_sbatch_srun(&opt);
 
 	/*
-	 * If they are requesting block without 'nopack' and the system
-	 * is setup to pack nodes set it here.
-	 */
-	if ((slurm_conf.select_type_param & CR_PACK_NODES) &&
-	    !(opt.distribution & SLURM_DIST_NO_PACK_NODES) &&
-	    ((opt.distribution & SLURM_DIST_BLOCK) ||
-	     (opt.distribution == SLURM_DIST_UNKNOWN)))
-		opt.distribution |= SLURM_DIST_PACK_NODES;
-
-	/*
-	 * If we are packing the nodes in an allocation set min_nodes to
-	 * 1. The slurmctld will adjust the max_nodes to the approriate
-	 * number if the allocation is homogeneous.
-	 */
-	if ((opt.distribution & SLURM_DIST_PACK_NODES) &&
-	    slurm_option_set_by_env(&opt, 'N'))
-		opt.min_nodes = 1;
-
-
-	/*
 	 *  Do not set slurmd debug level higher than DEBUG2,
 	 *   as DEBUG3 is used for slurmd IO operations, which
 	 *   are not appropriate to be sent back to srun. (because
@@ -914,7 +885,7 @@ static bool _opt_verify(void)
 		error("Cannot specify both --burst-buffer and --bbf");
 		exit(error_exit);
 	} else if (opt.burst_buffer_file) {
-		buf_t *buf = create_mmap_buf(opt.burst_buffer_file);
+		Buf buf = create_mmap_buf(opt.burst_buffer_file);
 		if (!buf) {
 			error("Invalid --bbf specification");
 			exit(error_exit);
@@ -968,15 +939,20 @@ static bool _opt_verify(void)
 
 	if (opt.hint &&
 	    !validate_hint_option(&opt)) {
-		xassert(opt.ntasks_per_core == NO_VAL);
-		xassert(opt.threads_per_core == NO_VAL);
-		if (verify_hint(opt.hint,
-				&opt.sockets_per_node,
-				&opt.cores_per_socket,
-				&opt.threads_per_core,
-				&opt.ntasks_per_core,
-				&sropt.cpu_bind_type)) {
-			exit(error_exit);
+		if (sropt.cpu_bind_type & ~CPU_BIND_VERBOSE) {
+			if (opt.verbose)
+				info("--hint and --cpu-bind (other than --cpu-bind=verbose) are mutually exclusive. Ignoring --hint.");
+		} else {
+			xassert(opt.ntasks_per_core == NO_VAL);
+			xassert(opt.threads_per_core == NO_VAL);
+			if (verify_hint(opt.hint,
+					&opt.sockets_per_node,
+					&opt.cores_per_socket,
+					&opt.threads_per_core,
+					&opt.ntasks_per_core,
+					&sropt.cpu_bind_type)) {
+				exit(error_exit);
+			}
 		}
 	}
 
@@ -990,12 +966,6 @@ static bool _opt_verify(void)
 
 	if (opt.exclude && !_valid_node_list(&opt.exclude))
 		exit(error_exit);
-
-	if (slurm_option_set_by_cli(&opt, LONG_OPT_EXCLUSIVE) &&
-	    slurm_option_set_by_cli(&opt, LONG_OPT_OVERLAP)) {
-		error("--exclusive and --overlap are mutually exclusive");
-		verified = false;
-	}
 
 	if (opt.nodefile) {
 		char *tmp;
@@ -1304,6 +1274,13 @@ static bool _opt_verify(void)
 		opt.x11_magic_cookie = x11_get_xauth();
 	}
 
+	/* Validate allocation request only. */
+	if ((sropt.jobid == NO_VAL) &&
+	    opt.gpus_per_socket && (opt.sockets_per_node == NO_VAL)) {
+		error("--gpus-per-socket option requires --sockets-per-node specification");
+		exit(error_exit);
+	}
+
 	return verified;
 }
 
@@ -1458,8 +1435,7 @@ static void _usage(void)
 "            [--switches=max-switches{@max-time-to-wait}] [--reboot]\n"
 "            [--core-spec=cores] [--thread-spec=threads]\n"
 "            [--bb=burst_buffer_spec] [--bbf=burst_buffer_file]\n"
-"            [--bcast=<dest_path>] [--bcast-exclude=<NONE|path1,...,pathN>]\n"
-"            [--send-libs[=y|n]] [--compress[=library]]\n"
+"            [--bcast=<dest_path>] [--compress[=library]]\n"
 "            [--acctg-freq=<datatype>=<interval>] [--delay-boot=mins]\n"
 "            [-w hosts...] [-x hosts...] [--use-min-nodes]\n"
 "            [--mpi-combine=yes|no] [--het-group=value]\n"
@@ -1486,12 +1462,10 @@ static void _help(void)
 "      --bb=<spec>             burst buffer specifications\n"
 "      --bbf=<file_name>       burst buffer specification file\n"
 "      --bcast=<dest_path>     Copy executable file to compute nodes\n"
-"      --bcast-exclude=<paths> Shared object directory paths to exclude\n"
 "  -b, --begin=time            defer job until HH:MM MM/DD/YY\n"
 "  -c, --cpus-per-task=ncpus   number of cpus required per task\n"
 "      --comment=name          arbitrary comment\n"
 "      --compress[=library]    data compression library used with --bcast\n"
-"      --container             Path to OCI container bundle\n"
 "      --cpu-freq=min[-max[:gov]] requested cpu frequency (and governor)\n"
 "  -d, --dependency=type:jobid[:time] defer job until condition on jobid is satisfied\n"
 "      --deadline=time         remove the job if no ending possible before\n"
@@ -1556,7 +1530,6 @@ static void _help(void)
 "  -r, --relative=n            run job step relative to node n of allocation\n"
 "  -s, --oversubscribe         over-subscribe resources with other jobs\n"
 "  -S, --core-spec=cores       count of reserved cores\n"
-"      --send-libs[=yes|no]    autodetect and broadcast shared objects\n"
 "      --signal=[R:]num[@time] send signal when time limit within time seconds\n"
 "      --slurmd-debug=level    slurmd debug level\n"
 "      --spread-job            spread job across as many nodes as possible\n"

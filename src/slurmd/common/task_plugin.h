@@ -110,21 +110,7 @@ extern int task_g_pre_setuid(stepd_step_rec_t *job);
  *
  * RET - slurm error code
  */
-extern int task_g_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid);
-
-/*
- * Note in privileged mode that a task launch is about to occur.
- *
- * RET - slurm error code
- */
-extern int task_g_set_affinity(stepd_step_rec_t *job, uint32_t node_tid);
-
-/*
- * Note in privileged mode that a task launch is about to occur.
- *
- * RET - slurm error code
- */
-extern int task_g_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid);
+extern int task_g_pre_launch_priv(stepd_step_rec_t *job, pid_t pid);
 
 /*
  * Note that a task launch is about to occur.
@@ -157,7 +143,7 @@ extern int task_g_add_pid(pid_t pid);
 
 
 extern void task_slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job,
-				   int statval, uint32_t taskid);
+				   int statval);
 extern char *task_cpuset_to_str(const cpu_set_t *mask, char *str);
 
 extern int task_str_to_cpuset(cpu_set_t *mask, const char* str);

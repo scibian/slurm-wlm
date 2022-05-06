@@ -777,7 +777,8 @@ static slurmdb_assoc_rec_t* _find_assoc_parent(
 	return parent;
 }
 
-static int _set_assoc_parent_and_user(slurmdb_assoc_rec_t *assoc)
+static int _set_assoc_parent_and_user(slurmdb_assoc_rec_t *assoc,
+				      int reset)
 {
 	xassert(verify_assoc_lock(ASSOC_LOCK, WRITE_LOCK));
 	xassert(verify_assoc_lock(QOS_LOCK, READ_LOCK));
@@ -1010,6 +1011,7 @@ static int _post_assoc_list(void)
 {
 	slurmdb_assoc_rec_t *assoc = NULL;
 	ListIterator itr = NULL;
+	int reset = 1;
 	g_assoc_max_priority = 0;
 	//DEF_TIMERS;
 
@@ -1029,9 +1031,10 @@ static int _post_assoc_list(void)
 	//START_TIMER;
 	g_user_assoc_count = 0;
 	while ((assoc = list_next(itr))) {
-		_set_assoc_parent_and_user(assoc);
+		_set_assoc_parent_and_user(assoc, reset);
 		_add_assoc_hash(assoc);
 		assoc_mgr_set_assoc_tres_cnt(assoc);
+		reset = 0;
 	}
 
 	if (setup_children) {
@@ -2824,7 +2827,6 @@ extern int assoc_mgr_fill_in_qos(void *db_conn, slurmdb_qos_rec_t *qos,
 	/* if (!qos->usage->user_limit_list) */
 	/* 	qos->usage->user_limit_list = found_qos->usage->user_limit_list; */
 	qos->usage_factor = found_qos->usage_factor;
-	qos->limit_factor = found_qos->limit_factor;
 
 	if (!locked)
 		assoc_mgr_unlock(&locks);
@@ -3303,7 +3305,7 @@ extern void assoc_mgr_info_get_pack_msg(
 
 	assoc_mgr_lock_t locks = { .assoc = READ_LOCK, .res = READ_LOCK,
 				   .tres = READ_LOCK, .user = READ_LOCK };
-	buf_t *buffer;
+	Buf buffer;
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
@@ -3516,8 +3518,8 @@ end_it:
 	return;
 }
 
-extern int assoc_mgr_info_unpack_msg(assoc_mgr_info_msg_t **object,
-				     buf_t *buffer, uint16_t protocol_version)
+extern int assoc_mgr_info_unpack_msg(
+	assoc_mgr_info_msg_t **object, Buf buffer, uint16_t protocol_version)
 {
 	assoc_mgr_info_msg_t *object_ptr =
 		xmalloc(sizeof(assoc_mgr_info_msg_t));
@@ -4034,6 +4036,7 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 	 * we may have added the parent which wasn't in the list before
 	 */
 	if (parents_changed) {
+		int reset = 1;
 		g_user_assoc_count = 0;
 		slurmdb_sort_hierarchical_assoc_list(
 			assoc_mgr_assoc_list, true);
@@ -4074,10 +4077,11 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 				addit = true;
 			}
 
-			_set_assoc_parent_and_user(object);
+			_set_assoc_parent_and_user(object, reset);
 
 			if (addit)
 				_add_assoc_hash(object);
+			reset = 0;
 		}
 		/* Now that we have set up the parents correctly we
 		   can update the used limits
@@ -4708,9 +4712,6 @@ extern int assoc_mgr_update_qos(slurmdb_update_object_t *update, bool locked)
 			if (!fuzzy_equal(object->usage_thres, NO_VAL))
 				rec->usage_thres = object->usage_thres;
 
-			if (!fuzzy_equal(object->limit_factor, NO_VAL))
-				rec->limit_factor = object->limit_factor;
-
 			if (update_jobs && init_setup.update_qos_notify) {
 				/* since there are some deadlock
 				   issues while inside our lock here
@@ -5299,7 +5300,7 @@ extern int dump_assoc_mgr_state(void)
 	char *old_file = NULL, *new_file = NULL, *reg_file = NULL,
 		*tmp_char = NULL;
 	dbd_list_msg_t msg;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	assoc_mgr_lock_t locks = { .assoc = READ_LOCK, .file = WRITE_LOCK,
 				   .qos = READ_LOCK, .res = READ_LOCK,
 				   .tres = READ_LOCK, .user = READ_LOCK,
@@ -5621,7 +5622,7 @@ extern int load_assoc_usage(void)
 	int i;
 	uint16_t ver = 0;
 	char *state_file, *tmp_str = NULL;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	time_t buf_time;
 	assoc_mgr_lock_t locks = { .assoc = WRITE_LOCK, .file = READ_LOCK };
 
@@ -5724,7 +5725,7 @@ extern int load_qos_usage(void)
 {
 	uint16_t ver = 0;
 	char *state_file, *tmp_str = NULL;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	time_t buf_time;
 	ListIterator itr = NULL;
 	assoc_mgr_lock_t locks = { .file = READ_LOCK, .qos = WRITE_LOCK };
@@ -5819,7 +5820,7 @@ extern int load_assoc_mgr_last_tres(void)
 	int error_code = SLURM_SUCCESS;
 	uint16_t ver = 0;
 	char *state_file;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	time_t buf_time;
 	dbd_list_msg_t *msg = NULL;
 	assoc_mgr_lock_t locks = { .tres = WRITE_LOCK };
@@ -5892,7 +5893,7 @@ extern int load_assoc_mgr_state(bool only_tres)
 	uint16_t type = 0;
 	uint16_t ver = 0;
 	char *state_file;
-	buf_t *buffer = NULL;
+	Buf buffer = NULL;
 	time_t buf_time;
 	dbd_list_msg_t *msg = NULL;
 	assoc_mgr_lock_t locks = { .assoc = WRITE_LOCK, .file = READ_LOCK,
@@ -6286,6 +6287,23 @@ extern int assoc_mgr_find_tres_pos2(slurmdb_tres_rec_t *tres_rec, bool locked)
 extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec(slurmdb_tres_rec_t *tres_rec)
 {
 	int pos = assoc_mgr_find_tres_pos(tres_rec, 1);
+
+	if (pos == -1)
+		return NULL;
+	else
+		return assoc_mgr_tres_array[pos];
+}
+
+/*
+ * Calls assoc_mgr_find_tres_pos and returns the pointer in the
+ * assoc_mgr_tres_array. Ignores GRES "type" option.
+ * NOTE: The assoc_mgr tres read lock needs to be locked before calling this
+ * function and while using the returned record.
+ */
+extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec2(
+		slurmdb_tres_rec_t *tres_rec)
+{
+	int pos = assoc_mgr_find_tres_pos2(tres_rec, 1);
 
 	if (pos == -1)
 		return NULL;
