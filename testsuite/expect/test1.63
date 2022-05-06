@@ -1,7 +1,7 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of Slurm functionality
-#          Test of srun --disbale-status/-X option, SIGINT to be sent to tasks.
+#          Test of srun --disable-status/-X option, SIGINT to be sent to tasks.
 ############################################################################
 # Copyright (C) 2002-2007 The Regents of the University of California.
 # Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -29,12 +29,12 @@
 ############################################################################
 source ./globals
 
-set file_prog   "test$test_id.prog"
+set file_prog   "$test_name.prog"
 
 proc cleanup {} {
-	global bin_rm file_prog
+	global file_prog
 
-	exec $bin_rm -f $file_prog
+	file delete $file_prog
 }
 
 #
@@ -77,7 +77,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {

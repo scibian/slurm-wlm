@@ -27,20 +27,10 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.bash"
-set test_timer  "test$test_id.test_timer"
-set test_srun   "test$test_id.test_srun"
+set file_in     "$test_dir/job_script"
+set test_timer  "$test_dir/test_timer"
+set test_srun   "$test_dir/test_srun"
 set job_id      0
-set exit_code   0
-
-proc cleanup {} {
-	global bin_rm test_timer test_srun file_in
-
-	exec $bin_rm -f $test_timer $test_srun $file_in
-}
-
-# remove any remaining files
-exec $bin_rm -f $test_timer $test_srun $file_in
 
 make_bash_script $test_timer "
 for i in \{1..10\}
@@ -53,14 +43,14 @@ echo \"Test finished\"
 
 make_bash_script $test_srun "
 set -m
-$srun -t1 -v ./$test_timer &
+$srun -t1 -v $test_timer &
 $bin_sleep 15
 echo \"sending job to foreground\"
 fg
 "
 
 make_bash_script $file_in "
-bash -i ./$test_srun
+$bin_bash -i $test_srun
 "
 
 set timeout $max_job_delay
@@ -72,8 +62,7 @@ expect {
 	-re "sending job to foreground" {
 		set send_match 1
 		if {$time_match == 0} {
-			log_error "srun is not generating output"
-			set exit_code 1
+			fail "srun is not generating output"
 		}
 		exp_continue
 	}
@@ -93,17 +82,6 @@ expect {
 	}
 }
 
-if {$send_match != 1} {
-	fail "srun was not sent to the foreground"
-}
-if {$time_match != 10} {
-	fail "srun is not generating output ($time_match != 10)"
-}
-if {$fini_match != 1} {
-	fail "srun did not finish the program submitted"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
-
+subtest {$send_match == 1} "srun should be sent to the foreground"
+subtest {$time_match == 10} "srun should generate the correct output" "$time_match != 10"
+subtest {$fini_match == 1} "srun should finish the submitted program"

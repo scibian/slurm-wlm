@@ -32,6 +32,7 @@ import os
 import re
 import sys
 import time
+import signal
 from optparse import OptionParser
 from optparse import OptionValueError
 from subprocess import Popen
@@ -44,6 +45,7 @@ def main(argv=None):
     passed_tests = []
     skipped_tests = []
     begin = (1,1)
+    abort = False
 
     # Handle command line parameters
     if argv is None:
@@ -131,8 +133,14 @@ def main(argv=None):
             t1 = time.time()
             test_dict['start_time'] = float("%.03f" % t1)
 
-        retcode = Popen(('expect', test[2]), shell=False,
-                        env=test_env, stdout=testlog, stderr=testlog).wait()
+        try:
+            child = Popen(('expect', test[2]), shell=False,
+                            env=test_env, stdout=testlog, stderr=testlog)
+            retcode = child.wait()
+        except KeyboardInterrupt:
+            child.send_signal(signal.SIGINT)
+            retcode = child.wait()
+            abort = True
 
         if options.time_individual:
             t2 = time.time()
@@ -156,43 +164,22 @@ def main(argv=None):
         if status != 'pass' and options.results_file:
             testlog.flush()
             testlog.seek(0)
+            test_output = testlog.read()
 
-            fatals = []
-            errors = []
-            section = 'pre'
-            for line in testlog.readlines():
-                if re.search(fr"^{'=' * 78}", line):
-                    if section == 'pre':
-                        section = 'header'
-                    elif section == 'header':
-                        section = 'body'
-                    elif section == 'body':
-                        section = 'footer'
-                    elif section == 'footer':
-                        section = 'post'
-                    elif section != 'unknown':
-                        section = 'unknown'
-                    continue
-                if section == 'pre' and re.search(r'^TEST:\s+test', line):
-                    section = 'header'
-                    continue
-                if section == 'body':
-                    match = re.search(r'^\[[^\]]+\][ \[]+Fatal[ \]:]+(.*) \([^\)\(]+\)$', line)
-                    if match:
-                        fatals.append(match.group(1))
-                    else:
-                        match = re.search(r'^\[[^\]]+\][ \[]+Error[ \]:]+(.*) \([^\)\(]+\)$', line)
-                        if match:
-                            errors.append(match.group(1))
-                    continue
-                if section == 'footer':
-                    if re.search(r'^(?:SUCCESS\|SKIPPED\|FAILURE)\s+: test', line):
-                        continue
+            sections = [s for s in test_output.split('=' * 78 + "\n") if s.strip() != '']
+            header = sections[0]
+            body = sections[1]
+            footer = ''.join(sections[2:])
 
-            if fatals and not re.search(r'previous errors', fatals[0]):
+            fatals = re.findall(r'(?ms)^\[[^\]]+\][ \[]+Fatal[ \]:]+(.*?) \(fail[^\)]+\)$', body)
+            errors = re.findall(r'(?ms)^\[[^\]]+\][ \[]+Error[ \]:]+(.*?) \(subfail[^\)]+\)$', body)
+            warnings = re.findall(r'(?ms)^\[[^\]]+\][ \[]+Warning[ \]:]+((?:(?!Warning).)*) \((?:sub)?skip[^\)]+\)$', body)
+            if fatals:
                 test_dict['reason'] = fatals[0]
             elif errors:
                 test_dict['reason'] = errors[0]
+            elif warnings:
+                test_dict['reason'] = warnings[0]
 
         results_list.append(test_dict)
 
@@ -224,6 +211,10 @@ def main(argv=None):
                 break
         sys.stdout.flush()
 
+        if abort:
+            sys.stdout.write('\nRegression interrupted!\n')
+            break
+
     end_time = time.time()
     print('Ended:', time.asctime(time.localtime(end_time)), file=sys.stdout)
     print('\nTestsuite ran for %d minutes %d seconds'\
@@ -247,6 +238,11 @@ def main(argv=None):
             sys.stdout.write('%d.%d'%(test[0], test[1]))
         sys.stdout.write('\n')
         sys.stdout.flush()
+
+    if abort:
+        print('INCOMPLETE', file=sys.stdout)
+
+    if len(failed_tests) > 0:
         return 1
 
 def test_in_list(major, minor, test_list):

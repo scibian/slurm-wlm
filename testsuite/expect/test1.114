@@ -27,28 +27,26 @@
 source ./globals
 
 set node_cnt    0
-set exit_code   0
+set job_id      0
 set jobid_excl  0
 
 proc cleanup {} {
-	global jobid_excl
+	global job_id jobid_excl
 
-	cancel_job $jobid_excl
+	cancel_job [list $job_id $jobid_excl]
 }
 
 proc run_spread_job { task_cnt } {
-	global max_job_delay srun scontrol bin_printenv number exit_code
+	global max_job_delay srun scontrol bin_printenv number job_id
 
 	set timeout $max_job_delay
-	set job_id 0
-	set srun_pid [spawn $srun -n $task_cnt --spread-job $bin_printenv SLURM_JOB_ID]
+	spawn $srun -n $task_cnt --spread-job $bin_printenv SLURM_JOB_ID
 	expect {
 		-re "($number)" {
 			set job_id $expect_out(1,string)
 			exp_continue
 		}
 		timeout {
-			slow_kill $sun_pid
 			fail "srun not responding"
 		}
 		eof {
@@ -56,14 +54,10 @@ proc run_spread_job { task_cnt } {
 		}
 	}
 	if {$job_id == 0} {
-		fail "Srun job ID not found"
+		fail "srun job ID not found"
 	}
 
-	if {[wait_for_job $job_id "DONE"] != 0} {
-		log_error "Error waiting for job $job_id to complete"
-		cancel_job $job_id
-		set exit_code 1
-	}
+	wait_for_job -fail $job_id "DONE"
 
 	set timeout 10
 	set num_nodes 0
@@ -81,8 +75,7 @@ proc run_spread_job { task_cnt } {
 		}
 	}
 	if {$num_nodes != $task_cnt} {
-		log_error "Invalid node count for job $job_id ($num_nodes != $task_cnt)"
-		set exit_code 1
+		fail "Invalid node count for job ($job_id) ($num_nodes != $task_cnt)"
 	}
 }
 
@@ -103,9 +96,7 @@ set output [run_command_output -fail "$sbatch --exclusive -w $node_exclusive --w
 if {![regexp {Submitted batch job (\d+)} $output {} jobid_excl]} {
 	fail "Job submission of exclusive job failed"
 }
-if {[wait_for_job $jobid_excl "RUNNING"]} {
-	fail "Job submission of exclusive job never start running"
-}
+wait_for_job -fail $jobid_excl "RUNNING"
 
 if {$node_cnt > 8} {
 	set max_task_cnt 8
@@ -115,12 +106,5 @@ if {$node_cnt > 8} {
 
 for {set inx 2} {$inx < $max_task_cnt} {incr inx 2} {
 	run_spread_job $inx
-	if {$exit_code != 0} {
-		break
-	}
 	sleep 1
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

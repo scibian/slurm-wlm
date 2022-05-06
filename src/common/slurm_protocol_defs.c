@@ -168,6 +168,8 @@ extern void slurm_msg_t_copy(slurm_msg_t *dest, slurm_msg_t *src)
 #endif
 
 	dest->orig_addr.ss_family = AF_UNSPEC;
+	if (src->auth_uid_set)
+		slurm_msg_set_r_uid(dest, src->auth_uid);
 }
 
 /* here to add \\ to all \" in a string this needs to be xfreed later */
@@ -3138,10 +3140,11 @@ extern char *health_check_node_state_str(uint32_t node_state)
 		return state_str;
 	}
 
-	if (node_state & HEALTH_CHECK_NODE_IDLE)
+	if (node_state & HEALTH_CHECK_NODE_IDLE) {
 		if (state_str[0])
 			xstrcat(state_str, ",");
 		xstrcat(state_str, "IDLE");
+	}
 	if (node_state & HEALTH_CHECK_NODE_ALLOC) {
 		if (state_str[0])
 			xstrcat(state_str, ",");

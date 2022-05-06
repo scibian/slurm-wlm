@@ -25,39 +25,32 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_in     "test$test_id.input"
+set file_in     "$test_dir/input"
 set job_id      0
-set timeout $max_job_delay
-
-proc cleanup {} {
-	global file_in
-
-	exec rm -f $file_in
-}
+set timeout     $max_job_delay
 
 if {[get_config_param "SlurmdUser"] ne "root(0)"} {
 	skip "This test is incompatible with SlurmdUser != root"
 }
 
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
+
 make_bash_script $file_in "echo \$0"
-set salloc_pid [spawn $salloc -N1-5 -t1 bash]
+spawn $salloc -N1-5 -t1 bash
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
-		exp_continue
-	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+		reset_bash_prompt
 		exp_continue
 	}
 	-re "$test_prompt" {
 		#log_debug "Job initiated"
 	}
 	timeout {
-		cancel_job $job_id
-		slow_kill [expr 0 - $salloc_pid]
 		fail "salloc not responding"
 	}
 }
@@ -65,22 +58,21 @@ if {$job_id == 0} {
 	fail "Did not get job_id"
 }
 
-send "$srun rm -f /tmp/test$test_id\r"
+send "$srun rm -f /tmp/$test_name\r"
 expect {
 	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding"
-		set exit_code 1
+		fail "srun not responding"
 	}
 }
 
-set node_cnt 99
-send "echo \$SLURM_NNODES\r"
+set node_cnt -1
+send "echo SLURM_NNODES=\$SLURM_NNODES\r"
 expect {
-	-re "($number)" {
-		if { $node_cnt == 99 } {
+	-re "SLURM_NNODES=($number)" {
+		if { $node_cnt == -1 } {
 			set node_cnt $expect_out(1,string)
 		}
 		exp_continue
@@ -89,20 +81,17 @@ expect {
 		#break
 	}
 	timeout {
-		log_error "srun not responding"
-		set exit_code 1
+		fail "srun not responding"
 	}
 }
 
 set exec_cnt 0
-send "$srun -l --bcast=/tmp/test$test_id ./$file_in\r"
+send "$srun -l --bcast=/tmp/$test_name $file_in\r"
 expect {
 	-re "not supported" {
-		log_warn "srun --bcast option not supported on this system type (e.g. front-end)"
-		set exec_cnt $node_cnt
-		exp_continue
+		skip "srun --bcast option not supported on this system type (e.g. front-end)"
 	}
-	-re "($number): /tmp/test$test_id" {
+	-re "($number): /tmp/$test_name" {
 		incr exec_cnt
 		exp_continue
 	}
@@ -110,29 +99,25 @@ expect {
 		#break
 	}
 	timeout {
-		log_error "srun not responding"
-		set exit_code 1
+		fail "srun not responding"
 	}
 }
 
-send "$srun -l rm -v /tmp/test$test_id\r"
+send "$srun -l rm -v /tmp/$test_name\r"
 expect {
 	-re "$test_prompt" {
 		#break
 	}
 	timeout {
-		log_error "srun not responding"
-		set exit_code 1
+		fail "srun not responding"
 	}
 }
 
 send "exit\r"
-
-if {$exec_cnt != $node_cnt} {
-	log_error "Executable count != node count ($exec_cnt != $node_cnt)"
-	set exit_code 1
+expect {
+	eof {
+		wait
+	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$exec_cnt == $node_cnt} "Executable count equals node count" "$exec_cnt != $node_cnt"

@@ -160,6 +160,7 @@ cset bjobs     	 "${slurm_dir}/bin/bjobs"
 cset bkill     	 "${slurm_dir}/bin/bkill"
 cset bsub     	 "${slurm_dir}/bin/bsub"
 
+cset influx	"/usr/bin/influx"
 # If using MPICH-2 or other version of MPI requiring pmi libary, use this
 #cset mpicc	"/home/jette/mpich2-install/bin/mpicc"
 #cset use_pmi	1
@@ -177,10 +178,8 @@ cset totalviewcli	"/usr/local/bin/totalviewcli"
 # Set if using "--enable-memory-leak-debug" configuration option
 cset enable_memory_leak_debug 0
 
-# test_prompt: to be used as prompt for interactive shells
+# test_prompt: to be used as prompt for interactive shells (see proc reset_bash_prompt)
 set test_prompt  "TEST_PROMPT: "
-# reset_bash_prompt: to be used as command on scripts or interactive jobs
-set reset_bash_prompt "unset PROMPT_COMMAND; unset PS0; export PS1=\"$test_prompt\""
 
 #
 # Specify locations of other executable files used
@@ -209,6 +208,7 @@ cset bin_perldoc "/usr/bin/perldoc"
 cset bin_hostname "hostname"
 
 cset bin_kill	"kill"
+cset bin_lscpu	"lscpu"
 cset bin_make	"make"
 cset bin_mv	"mv"
 cset bin_od	"od"
@@ -222,10 +222,12 @@ cset bin_sleep  "sleep"
 cset bin_sort	"sort"
 cset bin_sum	"sum"
 cset bin_sudo	"sudo"
+cset bin_systemd_detect_virt "systemd-detect-virt"
 cset bin_touch	"touch"
 cset bin_true	"true"
 cset bin_uname	"uname"
 cset bin_uniq	"uniq"
+cset bin_virtualenv "virtualenv"
 cset bin_wc	"wc"
 
 #
@@ -250,6 +252,7 @@ cset sleep_error_message "(invalid time interval)|(bad character in argument)|(u
 set ::env(LANG)          "en_US.UTF-8"
 
 # Testsuite level variables
+cset testsuite_dir "[file dirname [file normalize [info script]]]"
 cset testsuite_shared_dir "[$bin_pwd]"
 
 # Testsuite non-privileged user (set it in globals.local)
@@ -280,6 +283,7 @@ cset testsuite_subtest_fatal   false
 # Set to all, fail_skip, fail or none print datails of subtests and testprocs
 cset testsuite_subtest_details  fail
 cset testsuite_testproc_details fail
+cset testsuite_testproc_log_calls ignore_skips
 
 # To automatically call cleanup or not when ending the test
 cset testsuite_cleanup_on_failure true
@@ -301,10 +305,18 @@ set _testproc_messages    [dict create]
 set _testproc_skip_next   false
 set _testproc_skip_reason ""
 set _incomplete_reason    ""
+set _subtest_messages     [dict create]
+
 set _subtest_pass_count   0
 set _subtest_skip_count   0
 set _subtest_fail_count   0
-set _subtest_messages     [dict create]
+
+set STATUS_PASS 0
+set STATUS_FAIL 1
+set STATUS_SKIP -1
+
+# Final test status
+set test_status $STATUS_PASS
 
 # Other common variables
 set re_word_str          "\\S+"
@@ -372,7 +384,7 @@ set RETURN_TIMEOUT 110 ; # ETIMEDOUT
 ################################################################
 
 proc fail { message } {
-	global _incomplete_reason
+	global _incomplete_reason STATUS_FAIL
 
 	# Avoid recursive calls from within cleanup
 	if {[info level] > 1 && [lindex [info level -1] 0] eq "cleanup"} {
@@ -384,7 +396,7 @@ proc fail { message } {
 	set _incomplete_reason $message
 
 	# _test_fini will handle cleanup and print the failure message.
-	_test_fini 1
+	_test_fini $STATUS_FAIL
 }
 
 
@@ -408,7 +420,7 @@ proc fail { message } {
 ################################################################
 
 proc skip { message } {
-	global _incomplete_reason
+	global _incomplete_reason STATUS_SKIP
 
 	# Avoid recursive calls from within cleanup
 	if {[info level] > 1 && [lindex [info level -1] 0] eq "cleanup"} {
@@ -420,7 +432,7 @@ proc skip { message } {
 	set _incomplete_reason $message
 
 	# _test_fini will handle cleanup and print the skipped message.
-	_test_fini -1
+	_test_fini $STATUS_SKIP
 }
 
 
@@ -443,6 +455,7 @@ proc skip { message } {
 ################################################################
 
 proc pass { } {
+	global STATUS_PASS
 
 	# Avoid recursive calls from within cleanup
 	if {[info level] > 1 && [lindex [info level -1] 0] eq "cleanup"} {
@@ -451,7 +464,7 @@ proc pass { } {
 	}
 
 	# _test_fini will handle cleanup and print the success message.
-	_test_fini 0
+	_test_fini $STATUS_PASS
 }
 
 
@@ -578,8 +591,14 @@ proc subskip args {
 
 	set description ""
 	set count       1
+	set nolog       0
 	while {[llength $args]} {
 		switch -glob -- [lindex $args 0] {
+			-nolog {
+				set nolog 1
+				# Shift args down one
+				set args [lassign $args -]
+			}
 			-count   {set args [lassign $args - count]}
 			-*       {fail "Unknown option: [lindex $args 0]"}
 			default  break
@@ -599,8 +618,62 @@ proc subskip args {
 		set message [format "Subtest %2d skipped" $subtest_count]
 	}
 	if {$description ne ""} { append message " : $description" }
-	log_warn $message
+	if {$nolog != 1} {
+		log_warn $message
+	}
 	dict set _subtest_messages [expr $subtest_count] [list skip $message]
+}
+
+
+################################################################
+#
+# NAME
+#	get_subtest_fail_count - returns the current subtest failure count
+#
+# SYNOPSIS
+#	get_subtest_fail_count
+#
+################################################################
+
+proc get_subtest_fail_count {} {
+	global _subtest_fail_count
+
+	return $_subtest_fail_count
+}
+
+
+################################################################
+#
+# NAME
+#	reset_bash_prompt - used in expect body to reset bash prompt
+#
+# SYNOPSIS
+#	reset_bash_prompt
+#
+# DESCRIPTION
+#	The procedure will normally be called within an expect body to
+#	reset the bash prompt to the $test_prompt.
+#
+# EXAMPLE
+#	spawn $salloc $bin_bash
+#	expect {
+#		-re "Granted job allocation ($number)" {
+#			set job_id $expect_out(1,string)
+#			reset_bash_prompt
+#			exp_continue
+#		}
+#		-re $test_prompt {}; # Expect initial test prompt from bash
+#		timeout {
+#			fail "salloc not responding or prompt not recognized"
+#		}
+#	}
+#
+################################################################
+
+proc reset_bash_prompt {} {
+	global testsuite_dir
+
+	send "source $testsuite_dir/reset_bash_prompt.sh\n"
 }
 
 
@@ -834,6 +907,43 @@ proc check_run_as_user user {
 		return false
 	}
 	if {[run_command_status -none -user $user "$bin_id -un"]} {
+		return false
+	}
+
+	if {[get_admin_level $user] != ""} {
+		log_warn "User $user already exists in DB, but it's probable that it's going to be removed by the test cleanup"
+	}
+
+	return true
+}
+
+
+################################################################
+#
+# NAME
+#	check_user_id - check if user exists in the system
+#
+# SYNOPSIS
+#	check_user_id user
+#
+# DESCRIPTION
+#	This proc also log_warn a message if user already exists in the DB
+#	because most probably this user is testsuite_user and that user is
+#	expected NOT to be in the DB and could potentially be removed from
+#	it by the test.
+#
+# RETURN VALUE
+#	Returns true if the user passed exists in the system, false otherwise.
+#
+################################################################
+
+proc check_user_id user {
+	global bin_id
+
+	if {$user eq ""} {
+		return false
+	}
+	if {[run_command_status -none "$bin_id -un $user"]} {
 		return false
 	}
 
@@ -1164,6 +1274,14 @@ proc run_command_status args {
 # SYNOPSIS
 #	cancel_job job_id_list ?het_job?
 #
+# DESCRIPTION
+#	Cancels one or more jobs. A job_id of 0 will be silently ignored.
+#
+# OPTIONS
+#	-fail
+#		if scancel fails with exit code or timeout, or the job doesn't
+#		end, test will will fail
+#
 # ARGUMENTS
 #	job_id_list
 #		The list of Slurm job ids that we want to cancel
@@ -1171,16 +1289,35 @@ proc run_command_status args {
 #		1 if jobs are hetjobs and we want to confirm each
 #		component has completed
 #
-# DESCRIPTION
-#	Cancels one or more jobs. A job_id of 0 will be silently ignored.
-#
 # RETURN VALUE
 #	RETURN_SUCCESS if jobs are cancelled, or non-zero value otherwise.
 #
 ################################################################
 
-proc cancel_job { job_id_list {het_job 0}} {
+proc cancel_job args {
 	global scancel
+
+	set fatal         false
+	while {[llength $args]} {
+		switch -glob -- [lindex $args 0] {
+			-fail   {set fatal true; set args [lrange $args 1 end]}
+			-*      {fail "Unknown option: [lindex $args 0]"}
+			default break
+		}
+	}
+
+	set argument_count [llength $args]
+	if {$argument_count < 1} {
+		fail "Too few arguments ($argument_count): $args"
+	} elseif {$argument_count > 2} {
+		fail "Too many arguments ($argument_count): $args"
+	}
+	lassign $args job_id_list
+	if {$argument_count == 2} {
+		set het_job [lindex $args 1]
+	} else {
+		set het_job 0
+	}
 
 	set job_list_clean [list]
 	foreach job_id $job_id_list {
@@ -1194,14 +1331,25 @@ proc cancel_job { job_id_list {het_job 0}} {
 	}
 
 	log_debug "Cancelling $job_list_clean"
-	if {[run_command_status "$scancel -Q $job_list_clean"]} {
-		log_warn "scancel command returned error"
-		return $::RETURN_ERROR
+	set result [run_command "$scancel -Q $job_list_clean"]
+	if {[dict get $result exit_code]} {
+		set message "scancel command returned an error ([dict get $result output])"
+		if {$fatal} {
+			fail $message
+		} else {
+			log_warn $message
+			return $::RETURN_ERROR
+		}
 	}
 	foreach job_id $job_list_clean {
 		if {[wait_for_job $job_id "DONE" $het_job]} {
-			log_warn "Job $job_id not ended"
-			return $::RETURN_ERROR
+			set message "Job ($job_id) did not end when cancelled"
+			if {$fatal} {
+				fail $message
+			} else {
+				log_warn $message
+				return $::RETURN_ERROR
+			}
 		}
 	}
 	return $::RETURN_SUCCESS
@@ -1685,6 +1833,9 @@ proc wait_for_command args {
 #	A command is repeated until its output matches the specified pattern
 #
 # OPTIONS
+#	-negate
+#		negates the match. The command is repeated until its output does not
+#		match the specified pattern
 #	-fail
 #		abort the test with failure if output does not match the pattern
 #		by the timeout
@@ -1711,8 +1862,14 @@ proc wait_for_command_match args {
 
 	set pattern [lindex $args end]
 	set args [lrange $args 0 end-1]
+	set match 1
+	set idx [lsearch $args "-negate"]
+	if {$idx != -1} {
+		set match 0
+		set args [lreplace $args $idx $idx]; # Remove the -negate argument
+	}
 
-	return [wait_for_command {*}$args "\[regexp {$pattern} \[dict get \$result output\]\] == 1"]
+	return [wait_for_command {*}$args "\[regexp -- {$pattern} \[dict get \$result output\]\] == $match"]
 }
 
 
@@ -1788,12 +1945,12 @@ proc wait_for_file args {
 		}
 		exec /bin/ls $dir_name
 	}
-	set message "Timeout waiting for file $file_name"
+	set message "Timeout waiting for file ($file_name)"
 	if {$fatal} {
 		fail $message
 	}
 
-	log_error $message
+	log_warn $message
 	return $::RETURN_TIMEOUT
 }
 
@@ -1825,11 +1982,12 @@ proc wait_for_file args {
 #	desired_state
 #		The state you want the job to attain before
 #		returning.  Currently supports:
-#			DONE any terminated state
-#			PENDING job is pending
-#			RUNNING job is running
+#			CANCELLED - job is cancelled
+#			DONE      - any terminated state (includes cancelled)
+#			PENDING   - job is pending
+#			RUNNING   - job is running
 #			SPECIAL_EXIT
-#			SUSPENDED job is suspended
+#			SUSPENDED - job is suspended
 #
 # RETURN VALUE
 #	RETURN_SUCCESS, or non-zero on error.
@@ -1864,6 +2022,7 @@ proc _wait_for_single_job args {
 
 	# First verify that desired_state is supported
 	switch $desired_state {
+		"CANCELLED" {}
 		"DONE" {}
 		"PENDING" {}
 		"RUNNING" {}
@@ -1880,7 +2039,7 @@ proc _wait_for_single_job args {
 	}
 
 	if {$job_id == 0} {
-		set message "Invalid job ID: $job_id"
+		set message "Invalid job ID ($job_id)"
 		if {$fatal} {
 			fail $message
 		}
@@ -1898,9 +2057,26 @@ proc _wait_for_single_job args {
 		}
 
 		switch $state {
+			"CANCELLED" {
+				if {$desired_state eq "CANCELLED"} {
+					log_debug "Job $job_id is CANCELLED"
+					sleep 2
+					return $::RETURN_SUCCESS
+				}
+				if {$desired_state eq "DONE"} {
+					log_debug "Job $job_id is DONE ($state)"
+					sleep 2
+					return $::RETURN_SUCCESS
+				}
+				set message "Job ($job_id) is $state, but we wanted $desired_state"
+				if {$fatal} {
+					fail $message
+				}
+				log_debug $message
+				return $::RETURN_ERROR
+			}
 			"NOT_FOUND" -
 			"BOOT_FAIL" -
-			"CANCELLED" -
 			"COMPLETED" -
 			"DEADLINE" -
 			"FAILED" -
@@ -1908,17 +2084,12 @@ proc _wait_for_single_job args {
 			"OUT_OF_MEMORY" -
 			"PREEMPTED" -
 			"TIMEOUT" {
-				if {[string compare $desired_state "DONE"] == 0} {
+				if {$desired_state eq "DONE"} {
 					log_debug "Job $job_id is DONE ($state)"
 					sleep 2
 					return $::RETURN_SUCCESS
 				}
-				if {[string compare $desired_state "RUNNING"] == 0} {
-					set message "Job $job_id is $state, but we wanted RUNNING"
-				}
-				if {[string compare $desired_state "SUSPENDED"] == 0} {
-					set message "Job $job_id is $state, but we wanted SUSPENDED"
-				}
+				set message "Job ($job_id) is $state, but we wanted $desired_state"
 				if {$fatal} {
 					fail $message
 				}
@@ -1926,28 +2097,28 @@ proc _wait_for_single_job args {
 				return $::RETURN_ERROR
 			}
 			"PENDING" {
-				if {[string compare $desired_state "PENDING"] == 0} {
+				if {$desired_state eq "PENDING"} {
 					log_debug "Job $job_id is PENDING"
 					return $::RETURN_SUCCESS
 				}
 				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"RUNNING" {
-				if {[string compare $desired_state "RUNNING"] == 0} {
+				if {$desired_state eq "RUNNING"} {
 					log_debug "Job $job_id is RUNNING"
 					return $::RETURN_SUCCESS
 				}
 				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"SPECIAL_EXIT" {
-				if {[string compare $desired_state "SPECIAL_EXIT"] == 0} {
+				if {$desired_state eq "SPECIAL_EXIT"} {
 					log_debug "Job $job_id is SPECIAL_EXIT"
 					return $::RETURN_SUCCESS
 				}
 				log_debug "Job $job_id is in state $state, desire $desired_state"
 			}
 			"SUSPENDED" {
-				if {[string compare $desired_state "SUSPENDED"] == 0} {
+				if {$desired_state eq "SUSPENDED"} {
 					log_debug "Job $job_id is SUSPENDED"
 					return $::RETURN_SUCCESS
 				}
@@ -2000,11 +2171,12 @@ proc _wait_for_single_job args {
 #	desired_state
 #		The state you want the job to attain before returning.
 #		Currently supports:
-#			DONE any terminated state
-#			PENDING job is pending
-#			RUNNING job is running
+#			CANCELLED - job is cancelled
+#			DONE      - any terminated state (including cancelled)
+#			PENDING   - job is pending
+#			RUNNING   - job is running
 #			SPECIAL_EXIT
-#			SUSPENDED job is suspended
+#			SUSPENDED - job is suspended
 #	het_job
 #		If set, checks the state of each component job if the job
 #		is a het one.
@@ -2074,6 +2246,79 @@ proc wait_for_job args {
 ################################################################
 #
 # NAME
+#	wait_for_job_acct - waits for the job accounting record to be updated
+#
+# SYNOPSIS
+#	wait_for_job_acct ?options? job_id ?field?
+#
+# DESCRIPTION
+#	Wait for evidence that a specific job stage has been recorded in the
+#	accounting database by verifying that a field has been populated.
+#
+# OPTIONS
+#	-fail
+#		If an error occurs or the job does has not populated the field
+#		by the timeout, fail the test rather than returning an error
+#	-timeout <integer_number>
+#		time in seconds to wait for the job's field to be populated
+#		before timing out (default is 90)
+#	-pollinterval <integer_number>
+#		time in seconds between each field check (default is 1)
+#
+# ARGUMENTS
+#	job_id
+#		The Slurm job id of a job we want to wait for.
+#	field
+#		The field that we are waiting to be populated, not empty and
+#		not "Unknown". (Default: End)
+#
+# RETURN VALUE
+#	RETURN_SUCCESS if the desired field has been populated for the job
+#	in the accounting database, or non-zero value otherwise.
+#
+################################################################
+
+proc wait_for_job_acct args {
+	global sacct
+
+	set options [list]
+	set timeout 10
+	set pollinterval .2
+	set field End
+
+	while {[llength $args]} {
+		switch -glob -- [lindex $args 0] {
+			-fail   {
+				lappend options [lindex $args 0]
+				set args [lrange $args 1 end]
+			}
+			-time*  {set args [lassign $args - timeout]}
+			-poll*  {set args [lassign $args - pollinterval]}
+			default break
+		}
+	}
+	lappend options -timeout $timeout
+	lappend options -pollinterval $pollinterval
+
+	set argument_count [llength $args]
+	if {$argument_count < 1} {
+		fail "Too few arguments ($argument_count): $args"
+	} elseif {$argument_count > 2}  {
+		fail "Too many arguments ($argument_count): $args"
+	}
+	lassign $args job_id
+	if {$argument_count == 2} {set field [lindex $args 1]}
+
+	# Wait for sacct to populate the specified field
+	# We want to see the field be populated with anything but "Unknown"
+	# We can't use a negation match here because empty would match
+	return [wait_for_command_match {*}$options "$sacct -j $job_id --allocation --format $field --parsable2 --noheader" (?n)^(?!.*Unknown$).]
+}
+
+
+################################################################
+#
+# NAME
 #	wait_for_account_done - cancels and waits on jobs in specified accounts
 #
 # SYNOPSIS
@@ -2124,8 +2369,7 @@ proc wait_for_account_done args {
 	}
 
 	if { $accounts == "" } {
-		log_error "No account given"
-		return $::RETURN_ERROR
+		fail "An account must be specified"
 	}
 
 	log_user 0
@@ -2162,7 +2406,7 @@ proc wait_for_account_done args {
 		}
 
 		if { $my_delay > $timeout } {
-			log_error "Timeout waiting for account(s) '$accounts' to be finished"
+			log_error "Timeout waiting for account(s) ($accounts) to be finished"
 			log_user 1
 			return $::RETURN_TIMEOUT
 		}
@@ -2228,20 +2472,10 @@ proc wait_for_part_done args {
 	}
 
 	if { $partition == "" } {
-		log_error "No partition given"
-		return $::RETURN_ERROR
+		fail "A partition must be specified"
 	}
 
-	log_user 0
-	spawn $scancel -p $partition
-	expect {
-		timeout {
-			log_error "No response from scancel"
-		}
-		eof {
-			wait
-		}
-	}
+	run_command -fail -nolog "$scancel -p $partition"
 
 	set my_delay    0
 	while 1 {
@@ -2263,15 +2497,13 @@ proc wait_for_part_done args {
 		}
 
 		if { $my_delay > $timeout } {
-			log_error "Timeout waiting for partition '$partition' to be finished"
-			log_user 1
+			log_error "Timeout waiting for partition ($partition) to be finished"
 			return $::RETURN_TIMEOUT
 		}
 
 		exec sleep $poll_interval
 		set my_delay [expr $my_delay + $poll_interval]
 	}
-	log_user 1
 	return $::RETURN_SUCCESS
 }
 
@@ -2335,98 +2567,13 @@ proc wait_for_step args {
 			return $::RETURN_SUCCESS
 		}
 		if { $my_delay > $timeout } {
-			log_error "Timeout waiting for job step"
+			log_warn "Timeout waiting for job step"
 			return $::RETURN_TIMEOUT
 		}
 
 		log_debug "Step $step_id not done yet. Waiting for $poll_interval seconds"
 		exec sleep $poll_interval
 		set my_delay [expr $my_delay + $poll_interval]
-	}
-}
-
-
-################################################################
-#
-# NAME
-#	wait_for_all_jobs - waits for jobs to finish having a specified name
-#
-# SYNOPSIS
-#	wait_for_all_jobs ?options? job_name
-#
-# DESCRIPTION
-#	Wait for previously submitted Slurm jobs to finish of a certain name.
-#
-# OPTIONS
-#	-timeout <integer_number>
-#		time in seconds to wait for the jobs to finish before
-#		timing out (default is 30)
-#	-pollinterval <integer_number>
-#		time in seconds between each job state check (default is 1)
-#
-# ARGUMENTS
-#	job_name
-#		The name of job to wait for
-#
-# RETURN VALUE
-#	RETURN_SUCCESS if all jobs with the specified name are finished,
-#	or non-zero otherwise.
-#	If jobs are not completed after timeout, they are cancelled.
-#
-################################################################
-
-proc wait_for_all_jobs args {
-	global scancel squeue
-
-	set timeout         30
-	set poll_interval   1
-	while {[llength $args]} {
-		switch -glob -- [lindex $args 0] {
-			-time*  {set args [lassign $args - timeout]}
-			-poll*  {set args [lassign $args - poll_interval]}
-			-*      {fail "Unknown option: [lindex $args 0]"}
-			default break
-		}
-	}
-	set argument_count [llength $args]
-	if {$argument_count != 1} {
-		fail "Invalid number of arguments ($argument_count): $args"
-	} else {
-		lassign $args job_name
-	}
-
-	log_debug "Waiting for all jobs to terminate"
-	set jobs_found   -1
-	set jobs_desired  0
-
-	wait_for -timeout $timeout -pollinterval $poll_interval {$jobs_found == $jobs_desired} {
-		set jobs_found 0
-		log_user 0
-		spawn $squeue -o %j -n $job_name
-		expect {
-			-re "$job_name" {
-				incr jobs_found
-				exp_continue
-			}
-			timeout {
-				fail "No response from squeue"
-			}
-			eof {
-				wait
-			}
-		}
-		log_user 1
-		if {$jobs_found != $jobs_desired} {
-			log_debug "Still $jobs_found jobs remaining"
-		}
-	}
-	if {$jobs_found == $jobs_desired} {
-		log_debug "All jobs complete"
-		return $::RETURN_SUCCESS
-	} else {
-		log_debug "Cancelling uncompleted jobs"
-		run_command "$scancel -n $job_name"
-		return $::RETURN_ERROR
 	}
 }
 
@@ -2809,6 +2956,74 @@ proc get_mps_count_by_index { index hostname } {
 ################################################################
 #
 # NAME
+#	check_influxdb_access - determines if user can access to the desired influxdb
+#
+# SYNOPSIS
+#	check_influxdb_access host port database
+#
+# DESCRIPTION
+#	It uses the global $influx CLI command to try to connect and use
+#	the desired database.
+#
+# RETURN VALUE
+#	Returns true if we can connect to host:port and use the database,
+#	false otherwise
+#
+################################################################
+
+proc check_influxdb_access {host port database} {
+	global influx
+	set connected 0
+	set access 0
+
+	if {![file executable $influx]} {
+		log_warn "Cannot execute influx command: $influx"
+		return false
+	}
+
+	set log_user_save [log_user -info]
+	log_user 0
+	spawn $influx -host $host -port $port
+	expect {
+		-re "Connected to" {
+			set connected 1
+			send "use $database\r"
+			exp_continue
+		}
+		-re "Using database" {
+			set access 1
+			send "quit\r"
+		}
+		-re "unable to parse authentication credentials" {
+			send "quit\r"
+		}
+		-re "authorization failed" {
+			send "quit\r"
+		}
+		timeout {
+			fail "InfluxDB instance not responding"
+		}
+		eof {
+			wait
+		}
+	}
+	log_user $log_user_save
+
+	if {!$connected} {
+		log_warn "Cannot connect to $host:$port"
+		return false
+	}
+	if {!$access} {
+		log_warn "Connected to $host:$port, but cannot use $database"
+		return false
+	}
+	return true
+}
+
+
+################################################################
+#
+# NAME
 #	check_bb_emulate - determines if Cray burst buffers API is emulated
 #
 # SYNOPSIS
@@ -2870,46 +3085,6 @@ proc check_bb_persistent { } {
 	}
 	log_user 1
 	return $bb_persistent
-}
-
-
-################################################################
-#
-# NAME
-#	get_bb_types - gets the burst buffer plugins running with task/ stripped
-#
-# SYNOPSIS
-#	get_bb_types
-#
-# RETURN VALUE
-#	Returns comma separated list of task plugins running without the task/
-#
-################################################################
-
-proc get_bb_types { } {
-	global scontrol re_word_str
-
-	log_user 0
-	set bb_types ""
-	spawn $scontrol show config
-	expect {
-		-re "BurstBufferType *= ($re_word_str)" {
-			set parts [split $expect_out(1,string) ",/"]
-			while 1 {
-				set task_found [lsearch $parts "burst_buffer"]
-				if { $task_found == -1 } break
-				set parts [lreplace $parts $task_found $task_found]
-			}
-			set bb_types [join $parts ","]
-			exp_continue
-		}
-		eof {
-			wait
-		}
-	}
-
-	log_user 1
-	return $bb_types
 }
 
 
@@ -3006,7 +3181,7 @@ proc get_select_type_params { {partition ""} } {
 		set partition [default_partition]
 	}
 
-	if {[string compare $partition ""]} {
+	if {$partition ne ""} {
 		spawn -noecho $bin_bash -c "exec $scontrol show part $partition | $bin_grep SelectTypeParameters"
 		expect {
 			-re "SelectTypeParameters *= *NONE" {
@@ -3021,7 +3196,7 @@ proc get_select_type_params { {partition ""} } {
 			}
 		}
 	}
-	if { [string compare params ""] } {
+	if {$params eq ""} {
 		spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep SelectTypeParameters"
 		expect {
 			-re "SelectTypeParameters *= *($re_word_str)" {
@@ -3091,13 +3266,13 @@ proc check_config_select { type } {
 ################################################################
 #
 # NAME
-#	get_total_cpus - gets the total amount of CPUs on the default partition
+#	get_total_cpus - gets the total available CPUs on the default partition
 #
 # SYNOPSIS
 #	get_total_cpus
 #
 # RETURN VALUE
-#	The total amount of CPUs on the default partition.
+#	The total available CPUs on the default partition.
 #
 # NOTE
 #	CoreSpecCount are not part of the total.
@@ -3105,35 +3280,66 @@ proc check_config_select { type } {
 ################################################################
 
 proc get_total_cpus {} {
-	global sinfo scontrol re_word_str
 
-	set partition [default_partition]
-	set cpu_cnt 0
-	set nodes_matched [list]
+	set total_cpu_count 0
 
-	set re_with_cs    "NodeName=($re_word_str).*CPUTot=(\\d+).*CoreSpecCount=(\\d+).*ThreadsPerCore=(\\d+)"
-	set re_without_cs "NodeName=($re_word_str).*CPUTot=(\\d+)"
+	# Obtain the list of available nodes in the default partition
+	set node_list [get_nodes_by_state]
 
-	set out [run_command_output -fail "$sinfo -h -o \"%P %N\" -p $partition --state=idle"]
-	if {[regexp "$partition\\* ($re_word_str)" $out - def_hostlist] != 1} {
-		fail "Not able to get the hostlist from sinfo"
-	}
+	# Tally the cpus on these nodes
+	set nodes_dict [get_nodes]
+	foreach node_name $node_list {
+		set node_dict [dict get $nodes_dict $node_name]
+		set node_cpu_count [dict get $node_dict "CPUTot"]
 
-	set out [run_command_output "$scontrol --oneliner show node $def_hostlist"]
-	foreach {re node_name tmp_cpu_cnt core_spec_cnt threads_per_core} [regexp -all -inline -linestop $re_with_cs $out] {
-		set cpu_cnt [expr $cpu_cnt + $tmp_cpu_cnt - $core_spec_cnt * $threads_per_core]
-		lappend nodes_matched $node_name
-	}
-	foreach {re node_name tmp_cpu_cnt} [regexp -all -inline -linestop $re_without_cs $out] {
-		# Not count nodes already counted
-		if {[lsearch $nodes_matched $node_name] == -1} {
-			set cpu_cnt [expr $cpu_cnt + $tmp_cpu_cnt]
+		# Subtract out any spec cores
+		if {[dict exists $node_dict "CoreSpecCount"] && [dict exists $node_dict "ThreadsPerCore"]} {
+			set spec_cpu_count [expr [dict get $node_dict "CPUTot"] * [dict get $node_dict "ThreadsPerCore"]]
+			incr node_cpu_count -$spec_cpu_count
 		}
+
+		incr total_cpu_count $node_cpu_count
 	}
 
-	return $cpu_cnt
+	return $total_cpu_count
 }
 
+
+################################################################
+#
+# NAME
+#	is_running_in_container
+#
+# SYNOPSIS
+#	is_running_in_container
+#
+# DESCRIPTION
+#	Determine if test script is running inside of a container.
+#
+# RETURN VALUE
+#	true if container detected or systemd-detect-virt is not found,
+#	false otherwise
+#
+################################################################
+
+proc is_running_in_container {} {
+	global bin_systemd_detect_virt
+
+	if {[run_command_status -nolog -none "$bin_systemd_detect_virt --version"]} {
+		log_warn "$bin_systemd_detect_virt not found, assuming container"
+		return true
+	}
+
+	set result [run_command -nolog -none "$bin_systemd_detect_virt -c"]
+	set output [string trimright [dict get $result output] "\r\n"]
+	if { $output != "none"} {
+		log_debug "Detected container type: $output"
+	}
+	if {[dict get $result exit_code]} {
+		return false
+	}
+	return true
+}
 
 ################################################################
 #
@@ -3160,7 +3366,7 @@ proc is_super_user {{user ""}} {
 	}
 
 	# Check if user is root
-	if {[string compare $user "root"] == 0} {
+	if {$user eq "root"} {
 		return true
 	}
 
@@ -3292,7 +3498,7 @@ proc partition_oversubscribe { {partition ""} } {
 #	Use scontrol to determine the name of the default partition
 #
 # RETURN VALUE
-#	Name of the current default partition
+#	Name of the current default partition, or fail if not found.
 #
 ################################################################
 
@@ -3310,7 +3516,7 @@ proc default_partition {} {
 	catch {close $fd}
 
 	if {[string length $name] == 0} {
-		log_error "Could not identify the default partition"
+		fail "Could not identify the default partition"
 	}
 
 	return $name
@@ -3337,7 +3543,7 @@ proc default_partition {} {
 proc default_part_exclusive {} {
 	set def_part [default_partition]
 	set oversubscribe [partition_oversubscribe $def_part]
-	if {[string compare $oversubscribe "EXCLUSIVE"] == 0} {
+	if {$oversubscribe eq "EXCLUSIVE"} {
 		return 1
 	} else {
 		return 0
@@ -3380,55 +3586,7 @@ proc make_bash_script { script_name script_contents } {
 	puts $fd "#!$bin_bash"
 	puts $fd $script_contents
 	close $fd
-	exec $bin_chmod 700 $script_name
-}
-
-
-################################################################
-#
-# NAME
-#	get_suffix - given a hostname, returns it's numeric suffix
-#
-# SYNOPSIS
-#	get_suffix hostname
-#
-# DESCRIPTION
-#	Given a hostname, return it's numeric suffix
-#
-# RETURN VALUE
-#	numerical suffix for input 'hostname' or -1 if not a number
-#
-################################################################
-
-proc get_suffix { hostname } {
-	set host_len [string length $hostname]
-	set host_inx [expr $host_len-1]
-	set host_char [string index $hostname $host_inx]
-	if {[string compare $host_char "0"] < 0 || [string compare $host_char "9"] > 0} {
-		return -1
-	}
-
-	for {set host_inx [expr $host_len-1]} {$host_inx >= 0} {incr host_inx -1} {
-		set host_char [string index $hostname $host_inx]
-		if {[string compare $host_char "0"] < 0} { break }
-		if {[string compare $host_char "9"] > 0} { break }
-	}
-	incr host_inx
-
-	if {$host_inx == $host_len} {
-		log_warn "Hostname lacks a suffix: $hostname"
-		return "-1"
-	}
-
-#	Strip off leading zeros to avoid doing octal arithmetic
-	set suffix [string range $hostname $host_inx $host_len]
-	set suffix_len [string length $suffix]
-	for {set suffix_inx 0} {$suffix_inx < [expr $suffix_len - 1]} {incr suffix_inx} {
-		set suffix_char [string index $suffix $suffix_inx]
-		if {[string compare $suffix_char "0"] != 0} { break }
-	}
-
-	return [string range $suffix $suffix_inx $suffix_len]
+	exec $bin_chmod 777 $script_name
 }
 
 
@@ -3457,7 +3615,7 @@ proc check_acct_associations { } {
 	#
 	# Use sacctmgr to check associations
 	#
-	set s_pid [spawn $sacctmgr -n -p list assoc wopi wopl withd format=lft,rgt,cluster]
+	spawn $sacctmgr -n -p list assoc wopi wopl withd format=lft,rgt,cluster
 	expect {
 	       -re "($number)\\|($number)\\|($re_word_str)\\|" {
 		      # Here we are checking if we have duplicates and
@@ -3495,7 +3653,6 @@ proc check_acct_associations { } {
 		      exp_continue
 	       }
 	       timeout {
-			slow_kill $s_pid
 			fail "sacctmgr add not responding"
 	       }
 	       eof {
@@ -3594,14 +3751,13 @@ proc get_admin_level {{user_name ""}} {
 	# Use sacctmgr to check admin_level
 	#
 	log_user 0
-	set s_pid [spawn $sacctmgr -n -P list user $user_name format=admin]
+	spawn $sacctmgr -n -P list user $user_name format=admin
 	expect {
 		-re "($re_word_str)" {
 		      set admin_level $expect_out(1,string)
 		      exp_continue
 	       }
 	       timeout {
-		      slow_kill $s_pid
 		      fail "sacctmgr add not responding"
 	       }
 	       eof {
@@ -3611,82 +3767,6 @@ proc get_admin_level {{user_name ""}} {
 	log_user 1
 
 	return $admin_level
-}
-
-
-###############################################################
-#
-# NAME
-#	change_subbp_state - sets sub mid plane state
-#
-# SYNOPSIS
-#	change_subbp_state node ionodes state
-#
-# RETURN VALUE
-#	Returns SUCCESS if state of mid plane is changed
-#
-###############################################################
-
-proc change_subbp_state { node ionodes state } {
-	global scontrol smap
-
-	set return_code 0
-
-	set my_pid [spawn $scontrol update subbpname=$node\[$ionodes\] state=$state]
-	expect {
-		-re "slurm_update error:" {
-			set return_code 1
-			exp_continue
-		}
-		-re "Unable to contact" {
-			log_error "Slurm appears to be down"
-			exp_continue
-		}
-		timeout {
-			log_error "scontrol not responding"
-			slow_kill $my_pid
-			set return_code 1
-		}
-		eof {
-			wait
-		}
-	}
-
-	if { $return_code } {
-		return $return_code
-	}
-
-	set match 0
-	set my_pid [spawn $smap -Db -c -h -n $node -I $ionodes]
-	expect {
-		-nocase -re "$state" {
-			incr match
-			exp_continue
-		}
-		-re "$node" {
-			incr match
-			exp_continue
-		}
-		-re "Unable to contact" {
-			log_error "Slurm appears to be down"
-			exp_continue
-		}
-		timeout {
-			log_error "smap not responding"
-			slow_kill $my_pid
-			set return_code 1
-		}
-		eof {
-			wait
-		}
-	}
-
-	if {$match != 2} {
-		log_error "Subbp did not go into $state state. $match"
-		set return_code 1
-	}
-
-	return $return_code
 }
 
 
@@ -3708,13 +3788,13 @@ proc change_subbp_state { node ionodes state } {
 
 proc scale_to_megs { value factor } {
 
-	if {[string compare $factor "T"] == 0} {
+	if {$factor == "T"} {
 		set value [expr $value * 1024 * 1024]
-	} elseif {[string compare $factor "G"] == 0} {
+	} elseif {$factor == "G"} {
 		set value [expr $value * 1024]
-	} elseif {[string compare $factor "M"] == 0} {
+	} elseif {$factor == "M"} {
 		set value [expr $value * 1]
-	} elseif {[string compare $factor "K"] == 0} {
+	} elseif {$factor == "K"} {
 		set value [expr $value / 1024]
 		set value [expr {round($value)}]
 	} else {
@@ -3744,11 +3824,11 @@ proc scale_to_megs { value factor } {
 
 proc scale_to_ks { value factor } {
 
-	if {[string compare $factor "G"] == 0} {
+	if {$factor == "G"} {
 		set value [expr $value * 1024 * 1024]
-	} elseif {[string compare $factor "M"] == 0} {
+	} elseif {$factor == "M"} {
 		set value [expr $value * 1024]
-	} elseif {[string compare $factor "K"] == 0} {
+	} elseif {$factor == "K"} {
 		set value [expr $value * 1]
 	} else {
 		set value [expr $value / 1024]
@@ -3859,23 +3939,8 @@ proc wait_for_node args {
 	}
 
 	while {$done != 1 && $wait_time < $timeout} {
-
-		log_user 0
-		spawn $sinfo --noheader --partition $partition --state $state --format %D
-		expect {
-			-re "($number)" {
-				set cnt $expect_out(1,string)
-				exp_continue
-			}
-			timeout {
-				log_error "sinfo is not responding"
-				set rt $::RETURN_TIMEOUT
-			}
-			eof {
-				wait
-			}
-		}
-		log_user 1
+		set output [run_command_output -fail "$sinfo --noheader --partition $partition --state $state --format %D"]
+		regexp "$number" $output cnt
 
 		if {$num_nodes <= $cnt} {
 			set done 1
@@ -3896,10 +3961,10 @@ proc wait_for_node args {
 #####################################################################
 #
 # NAME
-#	list2hostlist - converts a TCL list into a Slurm hostlist using scontrol
+#	node_list_to_range - converts a TCL list into a Slurm hostlist using scontrol
 #
 # SYNOPSIS
-#	list2hostlist nodes_list
+#	node_list_to_range nodes_list
 #
 # ARGUMENTS
 #
@@ -3911,12 +3976,96 @@ proc wait_for_node args {
 #
 #####################################################################
 
-proc list2hostlist {nodes_list} {
+proc node_list_to_range {nodes_list} {
 	global scontrol
 
 	set comalist [join $nodes_list ,]
-	set hostlist [run_command_output -fail "$scontrol show hostlist $comalist"]
+	set hostlist [run_command_output -nolog -fail "$scontrol show hostlist $comalist"]
 	set hostlist [string trimright $hostlist "\r\n"]
+}
+
+
+################################################################
+#
+# NAME
+#	list_to_range - converts a list of integer numbers to a range expression
+#
+# SYNOPSIS
+#	list_to_range ?numeric_list?
+#
+# DESCRIPTION
+#	Collapse a numeric list to a range expression defined by the following
+#	EBNF:
+#		<expression> ::= <range> {, <range>}*
+#		<range> ::= <integer> - <integer> | <integer>
+#
+# RETURN VALUE
+#	a range expression representing the numeric elements on the given list.
+#
+################################################################
+
+proc list_to_range {numeric_list} {
+	set node_range_expression [node_list_to_range $numeric_list]
+	set range_expression [regsub {^\[(.*)\]$} $node_range_expression {\1}]
+	return $range_expression
+}
+
+
+#####################################################################
+#
+# NAME
+#	node_range_to_list - converts a node range expression into a list of nodes using scontrol
+#
+# SYNOPSIS
+#	node_range_to_list node_range_expression
+#
+# ARGUMENTS
+#
+#	node_range_expression
+#		a node range expression accepted by scontrol
+#
+# RETURN VALUE
+#	a list contining all node names expanded from the node range expression
+#
+#####################################################################
+
+proc node_range_to_list {node_range_expression} {
+	global scontrol
+
+	set node_list [list]
+	set output [run_command_output -nolog -fail "$scontrol show hostnames $node_range_expression"]
+	foreach line [split $output "\n"] {
+		if {$line eq ""} {
+			break
+		}
+		lappend node_list $line
+	}
+	return $node_list
+}
+
+
+################################################################
+#
+# NAME
+#	range_to_list - converts a range expression into a list with the numbers of the range
+#
+# SYNOPSIS
+#	range_to_list ?range_expression?
+#
+# DESCRIPTION
+#	Expands a range expression defined by the following EBNF into a numeric list
+#		<expression> ::= <range> {, <range>}*
+#		<range> ::= <integer> - <integer> | <integer>
+#
+# RETURN VALUE
+#	Returns the list of integer numbers defined by the range_expression
+#
+################################################################
+
+proc range_to_list {range_expression} {
+	set node_range_expression \[$range_expression\]
+	set range_list [node_range_to_list $node_range_expression]
+	return $range_list
 }
 
 
@@ -3929,13 +4078,15 @@ proc list2hostlist {nodes_list} {
 #	get_nodes_by_state partition states
 #
 # DESCRIPTION
-#	Get the list of node names in a given partition/states
+#	sinfo is used to list node names and states in the specified partition.
+#	This list of nodes is filtered to return only the nodes matching one of
+#	the requested states.
 #
 # ARGUMENTS
 #	partition
 #		partition to get nodes off
 #	states
-#		states to filter on nodes
+#		comma-separated list of allowed states
 #
 # RETURN VALUE
 #	node names list, -1 on sinfo error
@@ -3943,35 +4094,29 @@ proc list2hostlist {nodes_list} {
 #####################################################################
 
 proc get_nodes_by_state {{states ""} {partition ""}} {
+	global sinfo
 
-	global sinfo re_word_str
-	log_user 0
-	set node_list ""
+	set node_list [list]
 
-	if {[string length $partition] == 0} {
+	if {$partition eq ""} {
 		set partition [default_partition]
 	}
 
-	if {[string length $states] == 0} {
-		set states "Idle"
+	if {$states eq ""} {
+		set states "idle"
 	}
 
-	set sinfo_pid [spawn -noecho $sinfo -h -N -p $partition -o %N -t $states -e]
-	expect {
-		-re "($re_word_str)" {
-			lappend node_list $expect_out(1,string)
-			exp_continue
-		}
-		timeout {
-			slow_kill $sinfo_pid
-			fail "sinfo not responding"
-		}
-		eof {
-			wait
+	set output [run_command_output -fail "$sinfo -h -N -p $partition -o '%N|%t' -e"]
+	foreach line [split $output "\n"] {
+		if {$line eq ""} { continue }
+		lassign [split $line |] node_name node_state
+		foreach requested_state [split $states ,] {
+			if {$node_state eq $requested_state} {
+				lappend node_list $node_name
+			}
 		}
 	}
 
-	log_user 1
 	return $node_list
 }
 
@@ -4000,8 +4145,7 @@ proc set_partition_maximum_time_limit {partition limit} {
 	}
 
 	if { $limit < -1 } {
-		log_error "Trying to set invalid partition time limit of $limit"
-		return $::RETURN_ERROR
+		fail "Trying to set invalid partition time limit of $limit"
 	}
 	if { $limit == -1 } {
 		set expected_lim "UNLIMITED"
@@ -4009,16 +4153,7 @@ proc set_partition_maximum_time_limit {partition limit} {
 		set expected_lim limit
 	}
 
-	spawn $scontrol update partitionname=$partition MaxTime=-1
-	expect {
-		timeout {
-			log_error "scontrol not responding"
-			return $::RETURN_TIMEOUT
-		}
-		eof {
-			wait
-		}
-	}
+	run_command -fail "$scontrol update partitionname=$partition MaxTime=-1"
 
 	set maxtime [get_partition_maximum_time_limit $partition]
 	if { $maxtime != $limit } {
@@ -4055,7 +4190,7 @@ proc get_partition_maximum_time_limit {partition} {
 
 	set secs 0
 	log_user 0
-	set sinfo_pid [spawn -noecho $sinfo -h -p $partition -O time -e]
+	spawn -noecho $sinfo -h -p $partition -O time -e
 	expect {
 		-re "infinite" {
 			set secs -1
@@ -4088,7 +4223,6 @@ proc get_partition_maximum_time_limit {partition} {
 			exp_continue
 		}
 		timeout {
-			slow_kill $sinfo_pid
 			fail "sinfo not responding"
 		}
 		eof {
@@ -4127,7 +4261,7 @@ proc get_partition_default_time_limit { {partition ""} } {
 
 	set secs 0
 	log_user 0
-	set sinfo_pid [spawn -noecho $sinfo -h -p $partition -O defaulttime -e]
+	spawn -noecho $sinfo -h -p $partition -O defaulttime -e
 	expect {
 		-re "infinite" {
 			set secs -1
@@ -4160,7 +4294,6 @@ proc get_partition_default_time_limit { {partition ""} } {
 			exp_continue
 		}
 		timeout {
-			slow_kill $sinfo_pid
 			fail "sinfo not responding"
 		}
 		eof {
@@ -4191,8 +4324,8 @@ proc get_partition_default_time_limit { {partition ""} } {
 #####################################################################
 
 proc get_node_cores {node} {
-
 	global sinfo number
+
 	set cores -1
 	set sockets_per_node 0
 	set cores_per_socket 0
@@ -4202,8 +4335,7 @@ proc get_node_cores {node} {
 	}
 
 	log_user 0
-	set sinfo_pid [spawn -noecho $sinfo -o "%X %Y" -h -n $node]
-
+	spawn -noecho $sinfo -o "%X %Y" -h -n $node
 	expect {
 		-re "($number)" {
 			if {$sockets_per_node == 0} {
@@ -4214,14 +4346,12 @@ proc get_node_cores {node} {
 			exp_continue
 		}
 		timeout {
-			slow_kill $sinfo_pid
 			fail "sinfo not responding"
 		}
 		eof {
 			wait
 		}
 	}
-
 	log_user 1
 
 	set cores [expr $sockets_per_node * $cores_per_socket]
@@ -4262,7 +4392,7 @@ proc get_node_cpus {node} {
 	}
 
 	# Get the number of CPUs on a node
-	set scontrol_pid [spawn $scontrol show node $node]
+	spawn $scontrol show node $node
 	expect {
 		-re "CoresPerSocket=($number)" {
 			set ncores $expect_out(1,string)
@@ -4281,7 +4411,6 @@ proc get_node_cpus {node} {
 			exp_continue
 		}
 		timeout {
-			slow_kill $scontrol_pid
 			fail "scontrol is not responding"
 		}
 		eof {
@@ -4324,7 +4453,7 @@ proc get_node_cpus {node} {
 
 proc get_part_total_cores {part states} {
 	global sinfo number
-	log_user 0
+
 	set cores 0
 	set tmp 0
 	set i 0
@@ -4333,12 +4462,12 @@ proc get_part_total_cores {part states} {
 		set part [default_partition]
 	}
 
+	log_user 0
 	if {[string length $states] == 0} {
-		set sinfo_pid [spawn -noecho $sinfo -h -N -p $part -o "%X %Y"]
+		spawn -noecho $sinfo -h -N -p $part -o "%X %Y"
 	} else {
-		set sinfo_pid [spawn -noecho $sinfo -h -N -p $part -t $states -o "%X %Y"]
+		spawn -noecho $sinfo -h -N -p $part -t $states -o "%X %Y"
 	}
-
 	expect {
 		-re "($number)" {
 			set is_even [expr {($i % 2) == 0}]
@@ -4352,15 +4481,14 @@ proc get_part_total_cores {part states} {
 			exp_continue
 		}
 		timeout {
-			slow_kill $sinfo_pid
 			fail "sinfo not responding"
 		}
 		eof {
 			wait
 		}
 	}
-
 	log_user 1
+
 	return $cores
 }
 
@@ -4385,7 +4513,6 @@ proc get_part_total_cores {part states} {
 #####################################################################
 
 proc check_hosts_contiguous { check_hosts_list {partition ""} } {
-
 	global sinfo re_word_str
 
 	if {[string length $partition] == 0} {
@@ -4395,19 +4522,16 @@ proc check_hosts_contiguous { check_hosts_list {partition ""} } {
 	set part_hosts_list {}
 
 	log_user 0
-	set sinfo_pid [spawn $sinfo --noheader -p $partition -N -o %N]
+	spawn $sinfo --noheader -p $partition -N -o %N
 	expect {
 		-re "($re_word_str)" {
 			lappend part_hosts_list $expect_out(1,string)
 			exp_continue
 		}
 		-re "Unable to contact" {
-			log_user 1
 			fail "Slurm appears to be down"
 		}
 		timeout {
-			log_user 1
-			slow_kill $sinfo_pid
 			fail "sinfo not responding"
 		}
 		eof {
@@ -4419,7 +4543,7 @@ proc check_hosts_contiguous { check_hosts_list {partition ""} } {
 	foreach host $check_hosts_list {
 		set idx_cur [lsearch $part_hosts_list $host]
 		if {$idx_cur == -1} {
-			fail "$host not found in list of hosts from partition $partition"
+			fail "Host ($host) not found in list of hosts from partition $partition"
 		}
 		if {[info exists idx_old]} {
 			if {$idx_cur != [expr $idx_old + 1]} {
@@ -4476,8 +4600,7 @@ proc get_het_job_ids { jobid {use_offset 0}} {
 			exp_continue
 		}
 		timeout {
-			log_error "scontrol not responding"
-			set id_list ""
+			fail "scontrol not responding"
 		}
 		eof {
 			wait
@@ -4742,18 +4865,11 @@ proc log_trace {message} {
 proc in_fed {} {
 	global scontrol
 
-	spawn $scontrol show fed
-	expect {
-		-re "Federation" {
-			return true
-		}
-		timeout {
-			log_error "scontrol not responding"
-		}
-		eof {
-			wait
-		}
+	set output [run_command_output -fail -nolog "$scontrol show fed"]
+	if {[regexp "Federation" $output]} {
+		return true
 	}
+
 	return false
 }
 
@@ -4920,7 +5036,7 @@ proc count_gres { gres_param } {
 
 proc get_highest_gres_count { node_count gres_name } {
 
-	set available_nodes [list2hostlist [get_nodes_by_state]]
+	set available_nodes [node_list_to_range [get_nodes_by_state]]
 	set gres_dict [get_gres_count $gres_name $available_nodes]
 	set gres_count [list]
 
@@ -5007,10 +5123,10 @@ proc _set_gpu_socket_range { sock_first_inx sock_last_inx } {
 ################################################################
 
 proc get_gpu_socket_count { gpu_cnt sockets_per_node } {
-	global re_word_str bin_rm number scontrol srun
-	global gpu_sock_list
+	global test_dir re_word_str bin_rm number scontrol srun gpu_sock_list
+
 	set sockets_with_gpus 1
-	set file_in "test_get_gpu_socket_count.input"
+	set file_in "$test_dir/test_get_gpu_socket_count"
 
 	if {$sockets_per_node == 1} {
 		return 1
@@ -5074,7 +5190,6 @@ proc get_gpu_socket_count { gpu_cnt sockets_per_node } {
 		}
 	}
 	log_user 1
-	exec $bin_rm -f $file_in
 
 	set sock_cnt [llength $gpu_sock_list]
 	if {$sock_cnt > 1} {
@@ -5103,7 +5218,7 @@ proc get_highest_mps_count { node_count } {
 	# We cannot use get_highest_gres_count because we need "per gpu",
 	# so we get all the mps per node and all gpus per node, to create
 	# a mps_per_gpu list to sort and get the count.
-	set available_nodes [list2hostlist [get_nodes_by_state]]
+	set available_nodes [node_list_to_range [get_nodes_by_state]]
 	set mps_dict [get_gres_count "mps" $available_nodes]
 	set gpu_dict [get_gres_count "gpu" $available_nodes]
 	set mps_per_gpu [list]
@@ -5273,8 +5388,7 @@ proc get_conf_path { } {
 ################################################################
 
 proc save_conf { file_name } {
-	global test_id
-	global bin_chmod bin_cp bin_mv bin_touch
+	global bin_chmod bin_cp bin_mv bin_touch test_name
 
 	log_debug "Saving backup of $file_name"
 
@@ -5296,7 +5410,7 @@ proc save_conf { file_name } {
 	# the sticky bit set and allow the test to continue.
 	# restore_conf will remove the file.
 	#
-	set new_backup_file "$file_name.test$test_id"
+	set new_backup_file "$file_name.$test_name"
 	if {![file exists $file_name]} {
 		log_warn "Backup of a nonexistent file requested: $file_name"
 		run_command -fail -nolog "$bin_touch $new_backup_file"
@@ -5329,7 +5443,6 @@ proc save_conf { file_name } {
 ################################################################
 
 proc restore_conf { file_name } {
-	global test_id
 	global bin_mv bin_rm
 
 	log_debug "Restoring backup of $file_name"
@@ -5656,8 +5769,7 @@ proc create_part { part_name num_nodes_in } {
 			exp_continue
 		}
 		timeout {
-			log_error "srun is not responding getting number of nodes creating part"
-			return $::RETURN_TIMEOUT
+			fail "srun is not responding getting number of nodes creating part"
 		}
 		eof {
 			wait
@@ -5675,8 +5787,7 @@ proc create_part { part_name num_nodes_in } {
 	spawn $scontrol create partitionname=$part_name nodes=$nodes
 	expect {
 		timeout {
-			log_error "scontrol is not responding creating partition"
-			return $::RETURN_ERROR
+			fail "scontrol is not responding creating partition"
 		}
 		eof {
 			wait
@@ -5830,7 +5941,7 @@ proc get_nodes_by_request args {
 				lappend options [lrange $args 0 0]
 				set args [lrange $args 1 end]
 			}
-			default  break
+			default break
 		}
 	}
 
@@ -5842,6 +5953,7 @@ proc get_nodes_by_request args {
 		fail "[lindex [info level 0] 0]: Invalid number of arguments ([llength $args]): $args"
 	}
 
+	log_debug "Getting nodes that can be allocated with request: $request_args"
 	set command "$srun -Q $request_args printenv SLURMD_NODENAME"
 	set result [run_command {*}$options $command]
 
@@ -6091,14 +6203,19 @@ proc submit_job args {
 		set run_options [lrange $args 0 [expr [llength $args] - 2 ]]
 	}
 
-	set output [run_command_output {*}$run_options "$env $sbatch $job_options"]
+	set command ""
+	if {$env ne ""} {
+		set command "$env "
+	}
+	set command "$command$sbatch $job_options"
+	set output [run_command_output {*}$run_options "$command"]
 	regexp {Submitted \S+ job (\d+)} $output - job_id
 
 	return $job_id
 }
 
 
-################################################################################
+################################################################
 #
 # NAME
 #	compile_against_libslurm - compiles a test program against either libslurm.so or libslurmfull.so
@@ -6270,35 +6387,37 @@ proc subtest args {
 ################################################################
 #
 # NAME
-#	_is_testproc_included - returns if testproc_num was included or not excluded in argv
+#	_is_testproc_included - returns if testproc_id was included or not excluded in argv
 #
 # SYNOPSIS
-#	_is_testproc_included testproc_num
+#	_is_testproc_included testproc_id testproc_alias
 #
 # DESCRIPTION
 #	From command line the test runner can use -i and -e to include or
 #	exclude some test functions by their number. This function must be
 #	used to check if the test runner included or excluded the given
-#	testproc_num.
+#	testproc_id.
 #
 # RETURN VALUE
-#	true is testproc_num was included with -i or not excluded -e,
-#	false otherwise
+#	true is testproc_id or testproc_alias was included with -i or not
+#	excluded -e, false otherwise
 #
 ################################################################
 
-proc _is_testproc_included {testproc_num} {
+proc _is_testproc_included {testproc_id testproc_alias} {
 	global _testproc_included _testproc_excluded
 
 	if {[llength $_testproc_included]} {
-		if {[lsearch $_testproc_included $testproc_num] >= 0} {
+		if {[lsearch $_testproc_included $testproc_id] >= 0 || \
+		    [lsearch $_testproc_included $testproc_alias] >= 0} {
 			return true
 		}
 		return false
 	}
 
 	if {[llength $_testproc_excluded]} {
-		if {[lsearch $_testproc_excluded $testproc_num] >= 0} {
+		if {[lsearch $_testproc_excluded $testproc_id] >= 0 || \
+		    [lsearch $_testproc_excluded $testproc_alias] >= 0} {
 			return false
 		}
 	}
@@ -6396,12 +6515,35 @@ proc run_following_testprocs {} {
 ################################################################
 
 proc testproc args {
+	return [testproc_alias "" {*}$args]
+}
+
+
+################################################################
+#
+# NAME
+#	testproc_alias - launcher to run or skip a testproc_call, with an alias
+#
+# SYNOPSIS
+#	testproc alias testproc_call
+#
+# DESCRIPTION
+#	See testproc
+#
+################################################################
+
+proc testproc_alias {alias args} {
 	global _testproc_pass_list _testproc_skip_list _testproc_fail_list
 	global _testproc_skip_next _testproc_skip_reason
-	global _testproc_messages
+	global _testproc_messages testsuite_testproc_log_calls
 	global _subtest_pass_count
 	global _subtest_skip_count
 	global _subtest_fail_count
+
+	# Avoid integer alias to avoid confusions with testproc_id
+	if {[llength $alias] && [string is integer -strict $alias]} {
+		fail "testproc_alias doesn't support integer alias, use alphanumeric"
+	}
 
 	# Save previous subtest counts and next subtest num
 	set prev_pass $_subtest_pass_count
@@ -6412,22 +6554,34 @@ proc testproc args {
 	                       $_subtest_fail_count + 1]
 
 	# Get the testproc number
-	set testproc_num [expr [llength $_testproc_pass_list] + \
-	                       [llength $_testproc_skip_list] + \
-	                       [llength $_testproc_fail_list] + 1]
+	set testproc_id [expr [llength $_testproc_pass_list] + \
+	                      [llength $_testproc_skip_list] + \
+	                      [llength $_testproc_fail_list] + 1]
 
 	# Run or skip the testproc
 	set rc $::RETURN_SUCCESS
 	set reason ""
-	if {![_is_testproc_included $testproc_num]} {
+	if {![_is_testproc_included $testproc_id $alias]} {
 		set reason "(Excluded from command line)"
-		subskip "Skipping testproc $testproc_num: {$args} $reason"
+		if {$testsuite_testproc_log_calls == yes} {
+			subskip -nolog "Skipping testproc $testproc_id: {$args} $reason"
+		} else {
+			subskip -nolog "Skipping testproc $testproc_id: $reason"
+		}
 	} else {
 		if {$_testproc_skip_next} {
 			set reason "($_testproc_skip_reason)"
-			subskip  "Skipping testproc $testproc_num: {$args} $reason"
+			if {$testsuite_testproc_log_calls == yes} {
+				subskip  "Skipping testproc $testproc_id: {$args} $reason"
+			} else {
+				subskip  "Skipping testproc $testproc_id: $reason"
+			}
 		} else {
-			log_info "Running testproc $testproc_num: $args"
+			if {$testsuite_testproc_log_calls != no} {
+				log_info "Running testproc $testproc_id: $args"
+			} else {
+				log_info "Running testproc $testproc_id"
+			}
 			set rc [{*}$args]
 		}
 	}
@@ -6438,16 +6592,32 @@ proc testproc args {
 	                       $_subtest_fail_count]
 
 	# Register the testproc as fail, skip or pass (based on subtests)
+	if {[llength $alias]} {
+		set alias "${alias}: "
+	}
 	if {$_subtest_fail_count > $prev_fail} {
 		set reason "(Subtests: $prev_subtest to $curr_subtest)"
-		lappend  _testproc_fail_list $testproc_num
-		dict set _testproc_messages  $testproc_num [list failed "{$args} $reason"]
+		lappend  _testproc_fail_list $testproc_id
+		if {$testsuite_testproc_log_calls != no} {
+			dict set _testproc_messages  $testproc_id [list failed "$alias{$args} $reason"]
+		} else {
+			dict set _testproc_messages  $testproc_id [list failed "$alias$reason"]
+		}
 	} elseif {$_subtest_skip_count > $prev_skip} {
-		lappend  _testproc_skip_list $testproc_num
-		dict set _testproc_messages  $testproc_num [list skipped "{$args} $reason"]
+		lappend  _testproc_skip_list $testproc_id
+		if {$testsuite_testproc_log_calls == yes} {
+			dict set _testproc_messages  $testproc_id [list skipped "$alias{$args} $reason"]
+		} else {
+			dict set _testproc_messages  $testproc_id [list skipped "$alias$reason"]
+		}
 	} else {
-		lappend  _testproc_pass_list $testproc_num
-		dict set _testproc_messages  $testproc_num [list passed "{$args}"]
+		set reason "(Subtests: $prev_subtest to $curr_subtest)"
+		lappend  _testproc_pass_list $testproc_id
+		if {$testsuite_testproc_log_calls == yes} {
+			dict set _testproc_messages  $testproc_id [list passed "$alias{$args} $reason"]
+		} else {
+			dict set _testproc_messages  $testproc_id [list passed "$alias$reason"]
+		}
 	}
 
 	return $rc
@@ -6827,7 +6997,7 @@ proc _test_cleanup {} {
 
 proc _test_init {} {
 	global test_dir test_id test_name testsuite_shared_dir
-	global _testproc_included _testproc_excluded argv
+	global _testproc_included _testproc_excluded argv bin_chmod
 
 	# parse argv to get and remove _testproc_included and _testproc_excluded params
 	set idx [expr {[info exists argv] ? [lsearch $argv -i] : -1}]
@@ -6860,6 +7030,7 @@ proc _test_init {} {
 
 	# Create temporary shared test directory
 	exec mkdir -p $test_dir
+	exec $bin_chmod a+rwx $test_dir
 }
 
 
@@ -6888,6 +7059,7 @@ proc _test_init {} {
 proc _test_fini { status } {
 	global testsuite_cleanup_on_failure _test_fini_called
 	global _subtest_fail_count _subtest_skip_count
+	global STATUS_FAIL STATUS_PASS STATUS_SKIP test_status
 
 	# Avoid potential infinite recursive calls.
 	# _test_fini should be called only once, but custom cleanup procs
@@ -6900,19 +7072,22 @@ proc _test_fini { status } {
 
 
 	# Determine if test completed or was aborted
-	set completed [expr $status == 0 ? true : false]
+	set completed [expr $status == $STATUS_PASS ? true : false]
 
 	# Override status with subtest status if available and necessary
-	if {$status < 1} {
+	if {$status != $STATUS_FAIL} {
 		if {$_subtest_fail_count > 0} {
-			set status 1
+			set status $STATUS_FAIL
 		} elseif {$_subtest_skip_count > 0} {
-			set status -1
+			set status $STATUS_SKIP
 		}
 	}
 
+	# Set final test status global variable so it can be used in cleanup
+	set test_status $status
+
 	# Only cleanup if test not failed or configured to do so
-	if {$status != 1 || $testsuite_cleanup_on_failure} {
+	if {$status != $STATUS_FAIL || $testsuite_cleanup_on_failure} {
 		_test_cleanup
 	}
 	_print_summary $status $completed
@@ -6964,7 +7139,7 @@ proc exit { {status 0} } {
 	}
 
 	if {$status != 0} {
-		fail "Some Expect/TCL exception happen"
+		fail "An Expect/TCL exception occurred"
 	}
 
 	# The exit was called implicitly when the test ends, allowed but

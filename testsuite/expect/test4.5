@@ -29,7 +29,6 @@
 ############################################################################
 source ./globals
 
-set exit_code    0
 set matches      0
 set name_string  "\[a-zA-Z0-9\]\[^ ]*"
 set node_state   ""
@@ -40,7 +39,7 @@ set mismatches   0
 # used for allocated state since scontrol cannot change node state to allocated
 set node_pos     2
 set tmp_id       0
-set tmp_sc       "test$test_id\_tmp_sc"
+set tmp_sc       "${test_name}_tmp_sc"
 array set node_list {}
 
 proc change_state { state nodes } {
@@ -74,8 +73,9 @@ proc reset_state { } {
 }
 
 proc cleanup {} {
-	global tmp_sc
+	global tmp_sc tmp_id
 
+	cancel_job $tmp_id
 	#
 	# Reset node states back to idle
 	#
@@ -159,15 +159,10 @@ expect {
 }
 
 if {$tmp_id == 0} {
-	log_error "sbatch did not submit job"
-	set exit_code 1
+	fail "sbatch did not submit job"
 }
 
-if {[wait_for_job $tmp_id "RUNNING"] != 0} {
-	log_error "Error waiting for job $tmp_id to start"
-	cancel_job $tmp_id
-	set exit_code 1
-}
+wait_for_job -fail $tmp_id "RUNNING"
 
 set allocated_count 0
 spawn $sinfo --Node --node=$node_list_str --long --exact --state=allocated -p$partition
@@ -175,9 +170,9 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "allocated"]) &&
-		    ((![string compare $node $node_list(0)]) ||
-		     (![string compare $node $node_list(1)]))} {
+		if {$expect_out(5,string) eq "allocated" &&
+		    ($node eq $node_list(0) ||
+		     $node eq $node_list(1))} {
 			incr allocated_cnt
 		} else {
 			log_debug "$node:$state"
@@ -186,8 +181,7 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
@@ -203,7 +197,7 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error"
 }
 if {$allocated_cnt != 2} {
-	fail "allocated_cnt($allocated_cnt) != 2"
+	fail "Allocated count ($allocated_cnt) != 2"
 }
 
 cancel_job $tmp_id
@@ -225,16 +219,16 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "idle"]) &&
-		    ((![string compare $node $node_list(0)]) ||
-		     (![string compare $node $node_list(1)]) ||
-		     (![string compare $node $node_list(2)]) ||
-		     (![string compare $node $node_list(3)]))} {
+		if {$expect_out(5,string) eq "idle" &&
+		    ($node eq $node_list(0) ||
+		     $node eq $node_list(1) ||
+		     $node eq $node_list(2) ||
+		     $node eq $node_list(3))} {
 			incr idle_cnt
 		# NOTE: drained nodes can be idle as well.
-		} elseif {(![string compare $expect_out(5,string) "drained"]) &&
-			  ((![string compare $node $node_list(6)]) ||
-			   (![string compare $node $node_list(7)]))} {
+		} elseif {$expect_out(5,string) eq "drained" &&
+			  ($node eq $node_list(6) ||
+			   $node eq $node_list(7))} {
 			incr idle_drain_cnt
 		} else {
 			log_debug "$node:$state"
@@ -243,8 +237,7 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
@@ -260,10 +253,10 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error"
 }
 if {$idle_cnt != 4} {
-	fail "idle($idle_cnt) != 4"
+	fail "Idle count ($idle_cnt) != 4"
 }
 if {$idle_drain_cnt != 2} {
-	fail "idle_drain_cnt($idle_drain_cnt) != 2"
+	fail "Idle drain count ($idle_drain_cnt) != 2"
 }
 
 #
@@ -276,9 +269,9 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "down"]) &&
-		    ((![string compare $node $node_list(4)]) ||
-		     (![string compare $node $node_list(5)]))} {
+		if {$expect_out(5,string) eq "down" &&
+		    ($node eq $node_list(4) ||
+		     $node eq $node_list(5))} {
 			incr down_cnt
 		} else {
 			log_debug "$node:$state"
@@ -287,8 +280,7 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
@@ -304,7 +296,7 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error"
 }
 if {$down_cnt != 2} {
-	fail "down_cnt($down_cnt) != 2"
+	fail "Down count ($down_cnt) != 2"
 }
 
 #
@@ -317,9 +309,9 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "drained"]) &&
-		    ((![string compare $node $node_list(6)]) ||
-		     (![string compare $node $node_list(7)]))} {
+		if {$expect_out(5,string) eq "drained" &&
+		    ($node eq $node_list(6) ||
+		     $node eq $node_list(7))} {
 			incr drain_cnt
 		} else {
 			log_debug "$node:$state"
@@ -328,8 +320,7 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
@@ -345,7 +336,7 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error"
 }
 if {$drain_cnt != 2} {
-	fail "drain_cnt($drain_cnt) != 2"
+	fail "Drain count ($drain_cnt) != 2"
 }
 
 #
@@ -359,13 +350,13 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "down"]) &&
-		    ((![string compare $node $node_list(4)]) ||
-		     (![string compare $node $node_list(5)]))} {
+		if {$expect_out(5,string) eq "down" &&
+		    ($node eq $node_list(4) ||
+		     $node eq $node_list(5))} {
 			incr down_cnt
-		} elseif {(![string compare $expect_out(5,string) "drained"]) &&
-			  ((![string compare $node $node_list(6)]) ||
-			   (![string compare $node $node_list(7)]))} {
+		} elseif {$expect_out(5,string) eq "drained" &&
+			  ($node eq $node_list(6) ||
+			   $node eq $node_list(7))} {
 			incr drain_cnt
 		} else {
 			log_debug "$node:$state"
@@ -374,15 +365,13 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "sinfo not responding"
-		set exit_code 1
+		fail "sinfo not responding"
 	}
 	eof {
 		wait
@@ -392,10 +381,10 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error ($mismatches)"
 }
 if {$down_cnt != 2} {
-	fail "down_cnt($down_cnt) != 2"
+	fail "Down count ($down_cnt) != 2"
 }
 if {$drain_cnt != 2} {
-	fail "drain_cnt($drain_cnt) != 2"
+	fail "Drain count ($drain_cnt) != 2"
 }
 
 #
@@ -409,9 +398,9 @@ expect {
 	-re "($eol)($name_string) *($number_with_suffix) *($name_string) *($re_word_str)" {
 		set node $expect_out(2,string)
 		set state $expect_out(5,string)
-		if {(![string compare $expect_out(5,string) "drained"]) &&
-		    ((![string compare $node $node_list(4)]) ||
-		     (![string compare $node $node_list(5)]))} {
+		if {$expect_out(5,string) eq "drained" &&
+		    ($node eq $node_list(4) ||
+		     $node eq $node_list(5))} {
 			incr drain_cnt
 		} else {
 			log_debug "$node:$state"
@@ -420,15 +409,13 @@ expect {
 		exp_continue
 	}
 	-re "error:" {
-		log_error "Unexpected error from sinfo"
-		set exit_code 1
+		fail "Unexpected error from sinfo"
 	}
 	-re "Unable to contact" {
 		fail "Slurm appears to be down"
 	}
 	timeout {
-		log_error "sinfo not responding"
-		set exit_code 1
+		fail "sinfo not responding"
 	}
 	eof {
 		wait
@@ -438,9 +425,5 @@ if {$mismatches != 0} {
 	fail "sinfo node filtering error ($mismatches)"
 }
 if {$drain_cnt != 2} {
-	fail "drain_cnt($drain_cnt) != 2"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	fail "Drain count ($drain_cnt) != 2"
 }

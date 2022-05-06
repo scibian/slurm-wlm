@@ -445,7 +445,7 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 		memset(&io_addr, 0, sizeof(slurm_addr_t));
 	}
 
-	srun = srun_info_create(msg->cred, &resp_addr, &io_addr,
+	srun = srun_info_create(msg->cred, &resp_addr, &io_addr, job->uid,
 				protocol_version);
 
 	job->profile     = msg->profile;
@@ -481,7 +481,7 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 	 */
 	if (msg->threads_per_core && (msg->threads_per_core != NO_VAL16) &&
 	    (msg->threads_per_core < conf->threads))
-		cpus = msg->threads_per_core * conf->cores;
+		cpus = msg->threads_per_core * conf->cores * conf->sockets;
 
 	format_core_allocs(msg->cred, conf->node_name, cpus,
 			   &job->job_alloc_cores, &job->step_alloc_cores,
@@ -619,7 +619,7 @@ batch_stepd_step_rec_create(batch_job_launch_msg_t *msg)
 		uint32_t threads_per_core =
 			strtol(threads_per_core_str, NULL, 10);
 		if (threads_per_core && (threads_per_core < conf->threads))
-			cpus = threads_per_core * conf->cores;
+			cpus = threads_per_core * conf->cores * conf->sockets;
 	}
 
 	format_core_allocs(msg->cred, conf->node_name, cpus,
@@ -633,7 +633,7 @@ batch_stepd_step_rec_create(batch_job_launch_msg_t *msg)
 	get_cred_gres(msg->cred, conf->node_name,
 		      &job->job_gres_list, &job->step_gres_list);
 
-	srun = srun_info_create(NULL, NULL, NULL, NO_VAL16);
+	srun = srun_info_create(NULL, NULL, NULL, job->uid, NO_VAL16);
 
 	list_append(job->sruns, (void *) srun);
 
@@ -721,7 +721,7 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 
 extern srun_info_t *
 srun_info_create(slurm_cred_t *cred, slurm_addr_t *resp_addr,
-		 slurm_addr_t *ioaddr, uint16_t protocol_version)
+		 slurm_addr_t *ioaddr, uid_t uid, uint16_t protocol_version)
 {
 	char             *data = NULL;
 	uint32_t          len  = 0;
@@ -732,6 +732,7 @@ srun_info_create(slurm_cred_t *cred, slurm_addr_t *resp_addr,
 	if (!protocol_version || (protocol_version == NO_VAL16))
 		protocol_version = SLURM_PROTOCOL_VERSION;
 	srun->protocol_version = protocol_version;
+	srun->uid = uid;
 	/*
 	 * If no credential was provided, return the empty
 	 * srun info object. (This is used, for example, when

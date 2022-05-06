@@ -27,27 +27,29 @@
 source ./globals
 
 set skipped        ""
-set file_in1       "test$test_id.input1"
-set file_in2       "test$test_id.input2"
+set file_in1       "$test_dir/input1"
+set file_in2       "$test_dir/input2"
 set number_commas  "\[0-9_,\]+"
 set one_task_pc    0
-
-proc cleanup {} {
-	global bin_rm file_in1 file_in2
-	exec $bin_rm -f $file_in1 $file_in2
-}
+set cpu_to_socket  {}
 
 proc test_gpus_cnt {srun_opts expected_gpus_times_tasks expected_job_gpus} {
-	global file_in1 test_id srun number_commas
+	global file_in1 test_name srun number_commas cpu_to_socket
+
 	set match 0
 	set job_gpus 0
-	set srun_pid [spawn /bin/sh -c "$srun $srun_opts -t1 -J test$test_id -l ./$file_in1"]
+	set cpus_allowed_list [list]
+	set allocated_sockets 0
+
+	spawn /bin/sh -c "$srun $srun_opts -t1 -J $test_name -l $file_in1"
 	expect {
-		-re "JOB_GRES=gpu:(\[0-9\]+)|CUDA_VISIBLE_DEVICES:($number_commas)" {
+		-re "JOB_GRES=gpu:(\[0-9\]+)|CUDA_VISIBLE_DEVICES:($number_commas)|Cpus_allowed_list:\t(\[0-9,-\]+)" {
 			if {[string first "JOB_GRES" $expect_out(0,string)] != -1} {
 				set job_gpus $expect_out(1,string)
 			} elseif {[string first "CUDA" $expect_out(0,string)] != -1} {
 				incr match [cuda_count $expect_out(2,string)]
+			} elseif {[string first "Cpus_allowed_list" $expect_out(0,string)] != -1} {
+				lappend cpus_allowed_list $expect_out(3,string)
 			}
 			exp_continue
 		}
@@ -58,12 +60,29 @@ proc test_gpus_cnt {srun_opts expected_gpus_times_tasks expected_job_gpus} {
 			wait
 		}
 	}
+	if [llength $cpus_allowed_list] {
+		set allocated_sockets_dict {}
+		foreach allocated_cpus_expression $cpus_allowed_list {
+			foreach cpu_id [range_to_list $allocated_cpus_expression] {
+				dict set allocated_sockets_dict [dict get $cpu_to_socket $cpu_id] true
+				}
+		}
+		set allocated_sockets [dict size $allocated_sockets_dict]
+	}
+	set expected_gpus_times_tasks [expr [regsub {allocated_sockets} $expected_gpus_times_tasks $allocated_sockets]]
+	set expected_job_gpus [expr [regsub {allocated_sockets} $expected_job_gpus $allocated_sockets]]
 	if {$match != $expected_gpus_times_tasks} {
 		fail "srun $srun_opts failure tasks*gpus ($match != $expected_gpus_times_tasks)"
 	}
 	if {$job_gpus != $expected_job_gpus} {
 		fail "srun $srun_opts failure job_gpus ($job_gpus != $expected_job_gpus)"
 	}
+}
+
+# TODO: Remove this precondition check once 20.02 is no longer supported
+regexp {(\d+).(\d+).(\S+)} [get_config_param SLURM_VERSION] - major minor release
+if {$major < 21 && $minor < 11} {
+	skip "This test is disabled in Slurm versions older than 20.11 (see bug 11771)"
 }
 
 if {![check_config_select "cons_tres"]} {
@@ -115,13 +134,22 @@ if {$gpus_per_node > 1 && $sockets_per_node > 1} {
 	set gpus_per_socket $gpus_per_node
 }
 
+# Build up cpu/socket mapping for determining the number of allocated sockets
+set output [run_command -fail "$bin_lscpu -a --parse=cpu,socket -y"]
+foreach line [split $output "\n"] {
+	if {[regexp {^(\d+),(\d+)$} $line {} cpu_id socket_id] == 1} {
+		dict set cpu_to_socket $cpu_id $socket_id
+	}
+}
+
 #
 # Build input script files
 #
 make_bash_script $file_in1 "echo HOST:\$SLURMD_NODENAME CUDA_VISIBLE_DEVICES:\$CUDA_VISIBLE_DEVICES
 if \[ \$SLURM_PROCID -eq 0 \]; then
-$scontrol -dd show job \$SLURM_JOB_ID | grep \"JOB_GRES=\"
+$scontrol -dd show job \$SLURM_JOB_ID | grep JOB_GRES=
 fi
+grep Cpus_allowed_list /proc/\$SLURM_TASK_PID/status
 exit 0"
 
 make_bash_script $file_in2 "echo HOST:\$SLURMD_NODENAME CUDA_VISIBLE_DEVICES:\$CUDA_VISIBLE_DEVICES
@@ -172,7 +200,7 @@ set node_list [get_nodes_by_request "--gpus-per-socket=1 --sockets-per-node=$soc
 if { [llength $node_list] != $nb_nodes } {
 	lappend skipped "This test need to be able to submit jobs with at least --gpus-per-socket=1 --sockets-per-node=$sockets_with_gpus --nodes=$node_list"
 } else {
-	set srun_pid [spawn $srun --gpus-per-socket=1 --sockets-per-node=$sockets_with_gpus --ntasks-per-socket=1 --exclusive --nodelist=[join $node_list ","] -t1 -J "test$test_id" -l ./$file_in1]
+	spawn $srun --gpus-per-socket=1 --sockets-per-node=$sockets_with_gpus --ntasks-per-socket=1 --exclusive --nodelist=[join $node_list ","] -t1 -J $test_name -l $file_in1
 	expect {
 		-re "CUDA_VISIBLE_DEVICES:($number_commas)" {
 			incr match [cuda_count $expect_out(1,string)]
@@ -238,7 +266,7 @@ test_gpus_cnt "--gpus-per-task=1 --tasks-per-node=$use_tasks_per_node -N $nb_nod
 log_info "TEST: -c1 and --cpus-per-gpu=\$cpus_per_socket implicit task count with one GPU"
 test_gpus_cnt "--gres=gpu:1 -c 1 --cpus-per-gpu=$cpus_per_socket" $cpus_per_socket 1
 test_gpus_cnt "--gpus=1 --sockets-per-node=1 -c 1 --cpus-per-gpu=$cpus_per_socket" $cpus_per_socket 1
-test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 -c 1 --cpus-per-gpu=$cpus_per_socket -mblock:cyclic" [expr $cpus_per_socket * $sockets_per_node] $sockets_per_node
+test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 -c 1 --cpus-per-gpu=$cpus_per_socket -mblock:cyclic" "$cpus_per_socket*allocated_sockets" "allocated_sockets"
 test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 -c 1 --cpus-per-gpu=$cpus_per_socket -mblock:block" $cpus_per_socket 1
 
 log_info "TEST -c1 --cpus-per-gpu=\$cpus_per_socket with 1 GPU per socket"
@@ -293,7 +321,7 @@ test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 -c 1 -n1 --cpus-per-gpu=
 
 test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 -c 1 -n$sockets_per_node --cpus-per-gpu=$cpus_per_socket" [expr $target_gpus * $sockets_per_node] $target_gpus
 
-#Negative tests - number of CPUs reqired by (-n -c) doesn't match --gpus-per-task and --cpus-per-gpu results
+# Negative tests - number of CPUs reqired by (-n -c) doesn't match --gpus-per-task and --cpus-per-gpu results
 if {$cpus_per_socket > 1} {
 	test_gpus_cnt "--gpus-per-task=1 -c 1 -n1 --cpus-per-gpu=$cpus_per_socket" 0 0
 	test_gpus_cnt "--gpus-per-task=1 -c 1 -n$sockets_per_node --cpus-per-gpu=$cpus_per_socket" 0 0
@@ -305,7 +333,7 @@ if {$threads_per_core == 4} {
 	log_info "Testing high thread count ThreadsPerCore = 4"
 	test_gpus_cnt "--gpus-per-socket=1 --sockets-per-node=1 --threads-per-core=2 -c [expr $cpus_per_node / 2]" $sockets_per_node $sockets_per_node
 }
-#Negative tests - srun is expected to fail
+# Negative tests - srun is expected to fail
 log_info "Negative tests - srun is expected to fail here"
 test_gpus_cnt "--sockets-per-node=1 --gpus-per-socket=1 --ntasks-per-core=1 -c [expr $cpus_per_node * 2]" 0 0
 test_gpus_cnt "--gres=gpu:1 -c [expr $cpus_per_node * 2]" 0 0
@@ -318,7 +346,7 @@ if {$threads_per_core > 1} {
 } else {
 	test_gpus_cnt "--gpus=1 --threads-per-core=1 -c [expr $cpus_per_node]" 1 1
 }
-##End of tests from Bug 9937
+# End of tests from Bug 9937
 
 test_gpus_cnt "--gres=gpu:1 --ntasks-per-node=1 -c $cpus_per_node" 1 1
 test_gpus_cnt "--gres=gpu:1 --ntasks-per-node=1 -c $cpus_per_socket" 1 1

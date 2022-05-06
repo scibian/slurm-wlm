@@ -34,7 +34,7 @@ source ./globals
 set err_msg     0
 set host_0      ""
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N1 -l --constraint=invalid,constraint -t1 $bin_printenv SLURMD_NODENAME]
+spawn $srun -N1 -l --constraint=invalid,constraint -t1 $bin_printenv SLURMD_NODENAME
 expect {
 	-re "error:.*Invalid feature specification" {
 		log_debug "This error is expected, no worries"
@@ -46,7 +46,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -54,7 +53,7 @@ expect {
 	}
 }
 
-if {[string compare $host_0 ""] != 0} {
+if {$host_0 ne ""} {
 	fail "Job ran with invalid constraint option"
 }
 if {$err_msg != 1} {

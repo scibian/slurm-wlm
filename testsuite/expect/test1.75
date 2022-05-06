@@ -26,30 +26,34 @@
 ############################################################################
 source ./globals
 
-set file_id      "test$test_id\_id.bash"
-set file_in      "test$test_id\.bash"
-set file_out     "test$test_id\.out"
+set file_id      "$test_dir/id"
+set file_in      "$test_dir/job_script"
+set file_out     "$test_dir/output"
 set node         ""
 set threads      0
 set job_id       0
-set exit_code    0
+
 array set freq_lvl_1 {
-	high          0
-	highm1        0
-	medium        0
-	low           0
+	high         0
+	highm1       0
+	medium       0
+	low          0
 }
 array set freq_lvl_2 {
-	conservative  0
-	ondemand      0
-	performance   0
-	powersave     0
+	conservative 0
+	ondemand     0
+	performance  0
+	powersave    0
 }
 
 proc cleanup {} {
-	global bin_rm file_id file_in file_out
+	global job_id
 
-	exec $bin_rm -f $file_id $file_in $file_out
+	cancel_job $job_id
+}
+
+if {[is_running_in_container]} {
+	skip "This test will not work in a container"
 }
 
 if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"} {
@@ -60,7 +64,7 @@ if {[get_config_param "ProctrackType"] eq "proctrack/linuxproc"} {
 }
 if {[get_config_param "JobAcctGatherType"] eq "jobacct_gather/none"} {
 	skip "This test cannot run on JobAcctGatherType of none"
-} 
+}
 if {[get_config_param "SlurmdUser"] ne "root(0)"} {
 	skip "This test is incompatible with SlurmdUser != root"
 }
@@ -73,8 +77,7 @@ if {[param_contains $accounting_storage_enforce "nosteps"] || [param_contains $a
 }
 
 proc sub_job { freq } {
-
-	global srun sacct node threads job_id number wait_for_job float timeout exit_code
+	global srun sacct node threads job_id number wait_for_job float timeout
 	global re_word_str file_id avail_governors
 
 	set timeout 120
@@ -84,15 +87,14 @@ proc sub_job { freq } {
 		log_info "======= TESTING FREQUENCY/GOVERNOR $option ======="
 		set skip false
 		set job_id 0
-		set srun_pid [spawn $srun -t1 --cpu-freq=$option -n$threads -w$node ./$file_id]
+		spawn $srun -t1 --cpu-freq=$option -n$threads -w$node $file_id
 		expect {
 			-re "not allowed" {
 				if {[string first $option $avail_governors] == -1} {
 					log_debug "This error is expected, no worries"
 					set skip true
 				} else {
-					log_error "This CPU frequency should be valid"
-					set exit_code 1
+					fail "This CPU frequency should be valid"
 				}
 				exp_continue
 			}
@@ -115,33 +117,18 @@ proc sub_job { freq } {
 			fail "srun did not submit job"
 		}
 
-		if {[wait_for_job $job_id "DONE"] != 0} {
-			log_error "Error waiting for job $job_id to complete"
-			cancel_job $job_id
-			set exit_code 1
-		}
+		wait_for_job -fail $job_id "DONE"
 
-		spawn $sacct -j$job_id -oavecpufreq --noheader
-		expect {
-			-re "($float)($re_word_str)" {
-				set this_freq($option) $expect_out(1,string)
-				set tmp $expect_out(2,string)
-				if {[string compare $tmp "M"] == 0} {
-					set this_freq($option) [expr $this_freq($option) / 1000.0]
-				}
-				exp_continue
-			}
-			timeout {
-				fail "sacct is not responding"
-			}
-			eof {
-				wait
+		set avecpufreq [string trim [run_command_output -fail "$sacct -j $job_id -o avecpufreq --noheader"]]
+		if [regexp {(\d+\.?\d*)([A-Z])?} $avecpufreq - base_number scale] {
+			set this_freq($option) $base_number
+			if {$scale eq "M"} {
+				set this_freq($option) [expr $this_freq($option) / 1000.0]
 			}
 		}
 
 		if {$this_freq($option) == 0} {
-			log_error "Did not get cpu frequency for $option"
-			set exit_code 1
+			fail "Did not get cpu frequency for $option"
 		}
 	}
 	return [array get this_freq]
@@ -151,43 +138,13 @@ make_bash_script $file_id "echo SLURM_JOB_ID=\$SLURM_JOB_ID; $bin_sleep 30"
 make_bash_script $file_in "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors"
 
 # Identify a node that we can use and available governors
-spawn $sbatch -N1 -t1 -o/dev/null --exclusive -o $file_out ./$file_in
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		fail "sbatch is not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	fail "sbatch did not submit job"
-}
+set job_id [submit_job -fail "-N1 -t1 -o/dev/null --exclusive -o $file_out $file_in"]
 
-if {[wait_for_job $job_id "DONE"] != 0} {
-	cancel_job $job_id
-	fail "Waiting for job to complete"
-}
+wait_for_job -fail $job_id "DONE"
 
-set userspace_governor 0
-if {[wait_for_file $file_out] == 0} {
-	spawn $bin_cat $file_out
-	expect {
-		-re "ondemand" {
-			set userspace_governor 1
-			exp_continue
-		}
-                eof {
-			wait
-                }
-        }
-}
-if {$userspace_governor == 0} {
-	exec $bin_rm -f $file_id $file_in $file_out
+wait_for_file -fail $file_out
+set output [run_command_output -fail "$bin_cat $file_out"]
+if {![regexp "ondemand" $output]} {
 	skip "Node configuration prevents direct control over CPU frequency"
 }
 
@@ -225,8 +182,7 @@ array set freq_lvl_2 [sub_job [array get freq_lvl_2]]
 
 if {($freq_lvl_2(conservative) == 0) || ($freq_lvl_2(ondemand) == 0) ||
     ($freq_lvl_2(performance) == 0)  || ($freq_lvl_2(powersave) == 0)} {
-	log_error "CPU frequency values are invalid"
-	set exit_code 1
+	fail "CPU frequency values are invalid"
 }
 
 #
@@ -243,8 +199,4 @@ if { (($freq_lvl_1(low) > $freq_lvl_1(medium)) ||
       ($freq_lvl_1(medium) > $freq_lvl_1(high)) ||
       ($freq_lvl_1(highm1) > $freq_lvl_1(high)))} {
 	fail "CPU frequency values are not valid. Test with smaller JobAcctGatherFrequency configuration or longer running jobs"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

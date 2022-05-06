@@ -28,8 +28,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-
 #
 # Report the slurm network and use it to establish window parameters
 #
@@ -70,11 +68,10 @@ set timeout $max_job_delay
 set job_id 0
 set matches 0
 
-set srun_pid [spawn $salloc -N1 --verbose -t2 $bin_bash]
+spawn $salloc -N1 --verbose -t2 $bin_bash
 expect -re "Granted job allocation ($number)"
 set job_id $expect_out(1,string)
-send "$reset_bash_prompt\r"
-expect -re "\"$test_prompt\""
+reset_bash_prompt
 
 # start initial job step to claim some switch windows
 expect -re $test_prompt
@@ -84,17 +81,14 @@ send "$srun -N1 -O -n$windows_used $bin_sleep $step_delay &\r"
 for {set inx 0} {$inx < $windows_iterations} {incr inx} {
         expect {
                 -re "error" {
-                        log_error "Some error occurred"
-                        set exit_code 1
-                        exp_continue
+                        fail "Some error occurred"
                 }
 		-re $test_prompt {
 			log_debug "Spawning step $inx"
 			send "$srun -N1 -O -n$windows_used true\r"
 		}
 		timeout {
-			slow_kill $srun_pid
-			fail "Salloc not responding"
+			fail "salloc not responding"
 		}
 		eof {
 			fail "srun aborted"
@@ -110,20 +104,12 @@ send "exit\r"
 
 expect {
 	-re "error" {
-		log_error "some error occurred"
-		set exit_code 1
-		exp_continue
+		fail "Some error occurred"
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "salloc not responding"
 	}
 	eof {
 		wait
 	}
 }
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
-

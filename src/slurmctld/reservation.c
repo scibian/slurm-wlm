@@ -459,9 +459,6 @@ static void _restore_resv(slurmctld_resv_t *dest_resv,
 	xfree(dest_resv->user_list);
 	dest_resv->user_list = src_resv->user_list;
 	src_resv->user_list = NULL;
-
-	if (dest_resv->flags & RESERVE_FLAG_MAGNETIC)
-		list_append(magnetic_resv_list, dest_resv);
 }
 
 static void _del_resv_rec(void *x)
@@ -475,9 +472,16 @@ static void _del_resv_rec(void *x)
 		 * we don't need to remove anything from it.
 		 */
 		if (magnetic_resv_list &&
-		    (resv_ptr->flags & RESERVE_FLAG_MAGNETIC))
-			(void)list_remove_first(
-				magnetic_resv_list, _find_resv_ptr, resv_ptr);
+		    (resv_ptr->flags & RESERVE_FLAG_MAGNETIC)) {
+			int cnt;
+			cnt = list_delete_all(magnetic_resv_list,
+					      _find_resv_ptr,
+					      resv_ptr);
+			if (cnt > 1) {
+				error("%s: magnetic_resv_list contained %d references to %s",
+				      __func__, cnt, resv_ptr->name);
+			}
+		}
 
 		xassert(resv_ptr->magic == RESV_MAGIC);
 		resv_ptr->magic = 0;
@@ -3002,6 +3006,7 @@ extern int update_resv(resv_desc_msg_t *resv_desc_ptr)
 	resv_desc_msg_t resv_desc;
 	int error_code = SLURM_SUCCESS, i, rc;
 	bool skip_it = false;
+	bool append_magnetic_resv = false, remove_magnetic_resv = false;
 
 	_create_resv_lists(false);
 	_dump_resv_req(resv_desc_ptr, "update_resv");
@@ -3129,13 +3134,12 @@ extern int update_resv(resv_desc_msg_t *resv_desc_ptr)
 		if ((resv_desc_ptr->flags & RESERVE_FLAG_MAGNETIC) &&
 		    !(resv_ptr->flags & RESERVE_FLAG_MAGNETIC)) {
 			resv_ptr->flags |= RESERVE_FLAG_MAGNETIC;
-			list_append(magnetic_resv_list, resv_ptr);
+			append_magnetic_resv = true;
 		}
 		if ((resv_desc_ptr->flags & RESERVE_FLAG_NO_MAGNETIC) &&
 		    (resv_ptr->flags & RESERVE_FLAG_MAGNETIC)) {
 			resv_ptr->flags &= (~RESERVE_FLAG_MAGNETIC);
-			(void)list_remove_first(
-				magnetic_resv_list, _find_resv_ptr, resv_ptr);
+			remove_magnetic_resv = true;
 		}
 
 		/* handle skipping later */
@@ -3493,6 +3497,17 @@ extern int update_resv(resv_desc_msg_t *resv_desc_ptr)
 		}
 	}
 
+	/*
+	 * The following two checks need to happen once it is guaranteed the
+	 * whole update succeeds, avoiding any path leading to update failure.
+	 */
+	if (append_magnetic_resv)
+		list_append(magnetic_resv_list, resv_ptr);
+
+	if (remove_magnetic_resv)
+		(void) list_remove_first(magnetic_resv_list, _find_resv_ptr,
+					 resv_ptr);
+
 	_del_resv_rec(resv_backup);
 	(void) set_node_maint_mode(true);
 
@@ -3510,7 +3525,7 @@ update_failure:
 /* Determine if a running or pending job is using a reservation */
 static bool _is_resv_used(slurmctld_resv_t *resv_ptr)
 {
-	if (list_find_first(resv_list,
+	if (list_find_first(job_list,
 			    _find_running_job_with_resv_ptr,
 			    resv_ptr))
 		return true;
@@ -5681,7 +5696,7 @@ extern void job_claim_resv(job_record_t *job_ptr)
 
 	resv_ptr = job_ptr->resv_ptr;
 
-	if (!resv_ptr ||
+	if (!resv_ptr || !resv_ptr->node_bitmap ||
 	    (!(resv_ptr->ctld_flags & RESV_CTLD_FULL_NODE) &&
 	     (resv_ptr->node_cnt > 1)) ||
 	    !(resv_ptr->flags & RESERVE_FLAG_REPLACE) ||
@@ -7108,7 +7123,8 @@ extern bool is_node_in_maint_reservation(int nodenum)
 		if (! (t >= resv_ptr->start_time
 		       && t <= resv_ptr->end_time))
 			continue;
-		if (bit_test(resv_ptr->node_bitmap, nodenum)) {
+		if (resv_ptr->node_bitmap &&
+		    bit_test(resv_ptr->node_bitmap, nodenum)) {
 			res = true;
 			break;
 		}

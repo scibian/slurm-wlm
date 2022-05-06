@@ -29,8 +29,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front end systems"
 }
@@ -46,7 +44,7 @@ if { $node_count < 2 } {
 #
 set timeout $max_job_delay
 set min_cpu_cnt 4
-set srun_pid [spawn $srun -O -N2 -n4 --exclusive -l -t1 $bin_printenv SLURM_CPUS_ON_NODE]
+spawn $srun -O -N2 -n4 --exclusive -l -t1 $bin_printenv SLURM_CPUS_ON_NODE
 expect {
 	-re "($number): ($number)" {
 		if {$expect_out(2,string) < $min_cpu_cnt} {
@@ -55,7 +53,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -71,7 +68,7 @@ if {$min_cpu_cnt < 3} {
 #
 set expected_layout [list 0 0 0 1]
 set tested_layout [list -1 -1 -1 -1]
-set srun_pid [spawn $srun -O -N2 -n4 --exclusive -l --distribution=pack -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -O -N2 -n4 --exclusive -l --distribution=pack -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "srun: error" {
 		skip "Can't test srun task distribution"
@@ -95,7 +92,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -108,10 +104,7 @@ expect {
 #
 log_debug "Optimal task layout was: $expected_layout"
 log_debug "Actual task layout was : $tested_layout"
-if {[string compare $tested_layout $expected_layout]} {
-	log_error "Failed to distribute tasks in nopack fashion"
-	set exit_code 1
-}
+subtest {$tested_layout eq $expected_layout} "Tasks distributed in pack fashion" "$tested_layout != $expected_layout"
 
 #
 # Submit a two node job with "nopack" distribution
@@ -119,7 +112,7 @@ if {[string compare $tested_layout $expected_layout]} {
 set expected_layout [list 0 0 1 1]
 set tested_layout [list -1 -1 -1 -1]
 set timeout $max_job_delay
-set srun_pid [spawn $srun -O -N2 -n4 --exclusive -l --distribution=nopack -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -O -N2 -n4 --exclusive -l --distribution=nopack -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "More processors requested than permitted" {
 		skip "Can't test srun task distribution"
@@ -146,7 +139,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -159,10 +151,4 @@ expect {
 #
 log_debug "Optimal task layout was: $expected_layout"
 log_debug "Actual task layout was : $tested_layout"
-if {[string compare $tested_layout $expected_layout]} {
-	fail "Failed to distribute tasks in nopack fashion"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$tested_layout eq $expected_layout} "Tasks distributed in nopack fashion" "$tested_layout != $expected_layout"

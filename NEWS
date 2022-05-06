@@ -1,6 +1,36 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 20.11.9
+==========================
+ -- burst_buffer - add missing common directory to the Makefile SUBDIRS.
+ -- sacct - fix truncation when printing jobidraw field.
+ -- GRES - Fix loading state of jobs using --gpus to request gpus.
+ -- Fix minor logic error in health check node state output
+ -- Fix GCC 11.1 compiler warnings.
+ -- Delay steps when memory already used instead of rejecting step request.
+ -- Fix memory leak in the slurmdbd when requesting wckeys from all clusters.
+ -- Fix determining if a reservation is used or not.
+ -- openapi/v0.0.35 - Honor kill_on_invalid_dependency as job parameter.
+ -- openapi/v0.0.36 - Honor kill_on_invalid_dependency as job parameter.
+ -- Fix various issues dealing with updates on magnetic reservations that could
+    lead to abort slurmctld.
+ -- openapi/v0.0.36 - Avoid setting default values of min_cpus, job name, cwd,
+    mail_type, and contiguous on job update.
+ -- openapi/v0.0.36 - Clear user hold on job update if hold=false.
+ -- Fix slurmctld segfault due to a bit_test() call with a MAINT+ANY_NODES
+    reservation NULL node_bitmap.
+ -- Fix slurmctld segfault due to a bit_copy() call with a REPLACE+ANY_NODES
+    reservation NULL node_bitmap.
+ -- Fix error in GPU frequency validation logic.
+ -- Fix error in pmix logic dealing with the incorrect size of buffer.
+ -- PMIx v1.1.4 and below are no longer supported.
+ -- Fix shutdown of slurmdbd plugin to correctly notice when the agent thread
+    finishes.
+ -- Fix slurmctld segfault due to job array --batch features double free.
+ -- CVE-2022-29500 - Prevent credential abuse.
+ -- CVE-2022-29501 - Prevent abuse of REQUEST_FORWARD_DATA.
+
 * Changes in Slurm 20.11.8
 ==========================
  -- slurmctld - fix erroneous "StepId=CORRUPT" messages in error logs.

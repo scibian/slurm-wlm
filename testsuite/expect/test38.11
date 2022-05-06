@@ -27,22 +27,15 @@
 ############################################################################
 source ./globals
 
-set script1   "test$test_id.in1"
-set exit_code  0
+set script    "$test_dir/job_script"
+set stdout    "$test_dir/output"
+set stderr    "$test_dir/error"
 set job_id     0
 set hostlist   ""
 set node1      ""
 set node2      ""
 set het_job_id 0
-
-proc cleanup { } {
-	global bin_rm script1 het_job_id scancel
-
-	if {$het_job_id > 0} {
-		exec $scancel $het_job_id
-	}
-	exec $bin_rm -rf $script1
-}
+set tmp_dir    "/tmp/${test_name}_[pid]"
 
 set accounting_storage_enforce [get_config_param "AccountingStorageEnforce"]
 if {[param_contains $accounting_storage_enforce "nosteps"] || [param_contains $accounting_storage_enforce "nojobs"]} {
@@ -60,22 +53,22 @@ if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 }
 
 set def_part [default_partition]
-spawn $bin_bash -c "exec $scontrol show hostnames \$($sinfo -tidle --partition=$def_part -h -o%N) | head -n2 |tr \'\n\' ' ' "
-expect {
-	-re "($re_word_str) ($re_word_str)" {
-		set node1 $expect_out(1,string)
-		set node2 $expect_out(2,string)
-		exp_continue
-	}
-	timeout {
-		fail "sinfo is not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {![string compare $node1 ""] || ![string compare $node2 ""]} {
+set nodes [get_nodes_by_request "-N2 -p $def_part"]
+
+if { [llength $nodes] != 2 } {
 	skip "Did not find at least 2 idle nodes"
+}
+
+set node1 [lindex $nodes 0]
+set node2 [lindex $nodes 1]
+if {$node1 eq "" || $node2 eq ""} {
+	skip "Did not find at least 2 idle nodes"
+}
+
+proc cleanup { } {
+	global het_job_id
+
+	cancel_job $het_job_id
 }
 
 set matches 0
@@ -85,11 +78,7 @@ spawn $salloc -t2 -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
 		set het_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
-		exp_continue
-	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+		reset_bash_prompt
 		exp_continue
 	}
 	-re "$test_prompt" {
@@ -106,55 +95,43 @@ if {$het_job_id == 0} {
 	fail "salloc failure"
 }
 
-make_bash_script $script1 "
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}/$node1
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}/$node2
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}
+make_bash_script $script "
+$srun -N1 -n1 --het-group=0 mkdir -p $tmp_dir/$node1
+$srun -N1 -n1 --het-group=1 mkdir -p $tmp_dir/$node2
 
-$srun -N1 -n1 --het-group=0 mkdir /tmp/test_${test_id}
-$srun -N1 -n1 --het-group=1 mkdir /tmp/test_${test_id}
-$srun -N1 -n1 --het-group=0 mkdir /tmp/test_${test_id}/$node1
-$srun -N1 -n1 --het-group=1 mkdir /tmp/test_${test_id}/$node2
-
-$sbcast -f -j$het_job_id $srun /tmp/test_${test_id}/test$test_id\_file
-$sbcast -f -j${het_job_id}+0 $srun /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$sbcast -f -j${het_job_id}+1 $srun /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
+$sbcast -f -j$het_job_id $srun $tmp_dir/file
+$sbcast -f -j${het_job_id}+0 $srun $tmp_dir/$node1/file_comp0
+$sbcast -f -j${het_job_id}+1 $srun $tmp_dir/$node2/file_comp1
 
 echo -n \"\nChecking node 1: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/test$test_id\_file
+$srun -Q -N1 -n1 --het-group=1 ls $tmp_dir/file
 
 echo -n \"\nChecking node 0: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/test$test_id\_file
+$srun -Q -N1 -n1 --het-group=0 ls $tmp_dir/file
 
 echo -n \"\nChecking node 1 again: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
+$srun -Q -N1 -n1 --het-group=1 ls $tmp_dir/$node2/file_comp1
 
 echo -n \"\nChecking node 0 again: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
+$srun -Q -N1 -n1 --het-group=0 ls $tmp_dir/$node1/file_comp0
 
 echo -n \"\nChecking node 1 for lack: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/$node2/test$test_id\_file\_comp0
+$srun -Q -N1 -n1 --het-group=1 ls $tmp_dir/$node2/file_comp0
 
 echo -n \"\nChecking node 0 for lack: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/$node1/test$test_id\_file\_comp1
+$srun -Q -N1 -n1 --het-group=0 ls $tmp_dir/$node1/file_comp1
 
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}/$node1
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}/$node2
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}
+$srun --het-group=1 $bin_rm -rf $tmp_dir
+$srun --het-group=0 $bin_rm -rf $tmp_dir
 "
+
+set het_job_id [submit_job -fail "-o $stdout -e $stderr -t2 -N1 -w $node1 : -w $node2 -N1 -t10 $script"]
+wait_for_job -fail $het_job_id "DONE" 1
+wait_for_file -timeout 2 -fail $stdout
 
 set timeout $max_job_delay
 set matches 0
-send "./$script1 \r"
+spawn $bin_cat $stdout
 expect {
 	-re "Permission denied" {
 		fail "Unable to delete/create file, check permissions"
@@ -163,31 +140,27 @@ expect {
 		log_debug "This error is expected when nodes share the same tmp directory"
 		exp_continue
 	}
-	-re "Checking node 1: */tmp/test_${test_id}/test$test_id\_file" {
+	-re "Checking node 1: *$tmp_dir/file" {
 		incr matches
 		exp_continue
 	}
-	-re "Checking node 0: */tmp/test_${test_id}/test$test_id\_file" {
+	-re "Checking node 0: *$tmp_dir/file" {
 		incr matches
 		exp_continue
 	}
-	-re "Checking node 1 again: */tmp/test_${test_id}/$node2/test$test_id\_file\_comp1" {
+	-re "Checking node 1 again: *$tmp_dir/$node2/file_comp1" {
 		incr matches
 		exp_continue
 	}
-	-re "Checking node 0 again: */tmp/test_${test_id}/$node1/test$test_id\_file\_comp0" {
+	-re "Checking node 0 again: *$tmp_dir/$node1/file_comp0" {
 		incr matches
 		exp_continue
 	}
-	-re "Checking node 1 for lack: */tmp/test_${test_id}/$node1/test$test_id\_file\_comp0" {
-		log_error "sbcast copied file to wrong node"
-		set exit_code 1
-		exp_continue
+	-re "Checking node 1 for lack: *$tmp_dir/$node1/file_comp0" {
+		fail "sbcast copied file to wrong node"
 	}
-	-re "Checking node 0 for lack: */tmp/test_${test_id}/$node2/test$test_id\_file\_comp1" {
-		log_error "sbcast copied file to wrong node"
-		set exit_code 1
-		exp_continue
+	-re "Checking node 0 for lack: *$tmp_dir/$node2/file_comp1" {
+		fail "sbcast copied file to wrong node"
 	}
 	-re "$test_prompt" {
 		#log_debug "Job initiated"
@@ -201,8 +174,4 @@ expect {
 }
 if {$matches != 4} {
 	fail "sbcast did not copy the file(s) to the correct nodes ($matches != 4)"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

@@ -26,101 +26,73 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.input"
-set file_out    "test$test_id.output"
-set file_err    "test$test_id.error"
-
-proc cleanup {} {
-	global bin_rm file_in file_out file_err
-
-	exec $bin_rm -f $file_in $file_out $file_err
-}
-
-set exit_code            0
-set job_id               0
+set bcast_file  "/tmp/${test_name}_sbcast"
+set job_id      0
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
-} elseif [is_super_user] {
-	skip "This test can not be run as SlurmUser or root"
+}
+if {![check_run_as_user $testsuite_user]} {
+	skip "This test needs testsuite_user configured in globals.local"
 }
 
-# Delete left-over stdout/err files
-file delete $file_out $file_err
+proc cleanup {} {
+	global job_id sacctmgr testsuite_user test_name
 
-#
-# Build input script file that broacasts a file
-#
-make_bash_script $file_in "
-  export SLURM_SBCAST_AUTH_FAIL_TEST=1
-  $srun $bin_rm -f /tmp/test1.$test_id
-  $sbcast $sbcast /tmp/test1.$test_id
-  $srun ls /tmp/test1.$test_id
-"
-
-#
-# Spawn an sbatch job that uses stdout/err and confirm their contents
-#
-set timeout $max_job_delay
-set sbatch_pid [spawn $sbatch -N1 --output=$file_out --error=$file_err -t1 $file_in]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $sbatch_pid
-		fail "srun not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	fail "Batch submit failure"
+	cancel_job $job_id
+	run_command -none "$sacctmgr -vi delete user name=$testsuite_user"
+	run_command -none "$sacctmgr -vi delete account name=$test_name"
 }
 
+# Setup the test user
+run_command -fail "$sacctmgr -vi add account name=$test_name"
+run_command -fail "$sacctmgr -vi add user name=$testsuite_user account=$test_name"
+run_command -fail "$sacctmgr -vi update user $testsuite_user set adminlevel=None"
+
 #
-# Wait for job to complete and check output file
+# Test that testsuite_user can sbcast to own jobs
 #
-if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Waiting for job to complete"
-	set exit_code 1
+log_info "Test that a user can sbcast to its own jobs"
+
+# Spawn an salloc job and obtain the job id
+set salloc_output [run_command_output -fail -user $testsuite_user "$salloc -v -N1 -t2 --no-shell"]
+if {![regexp {Granted job allocation (\d+)} $salloc_output - job_id]} {
+	fail "Allocation not granted ($output)"
 }
 
-set matches 0
-if {[wait_for_file $file_err] == 0} {
-	spawn $bin_cat $file_err
-	expect {
-		-re "error: REQUEST_FILE_BCAST" {
-			log_debug "These errors are expected, no worries"
-			incr matches
-			exp_continue
-		}
-		-re "ls.* No such file" {
-			log_debug "These errors are expected, no worries"
-			incr matches
-			exp_continue
-		}
-		-re "ls.* does not exist" {
-			log_debug "These errors are expected, no worries"
-			incr matches
-			exp_continue
-		}
-		-re "ls.* not found" {
-			log_debug "These errors are expected, no worries"
-			incr matches
-			exp_continue
-		}
-		eof {
-			wait
-		}
-	}
-}
-if {$matches != 2} {
-	fail "sbcast moved file with invalid credential ($matches)"
+# Clear out the broadcast file
+run_command -fail -user $testsuite_user "$srun --jobid $job_id $bin_rm -f $bcast_file"
+
+# Attempt to broadcast the file
+set sbcast_output [run_command_output -user $testsuite_user -subtest "$sbcast --jobid $job_id $sbcast $bcast_file"]
+subtest {![regexp -line {error:.*Invalid user id} $sbcast_output]} "sbcast should NOT generate an error"
+
+# Verify the file was broadcasted
+set ls_output [run_command_output -user $testsuite_user -subtest "$srun --jobid $job_id ls $bcast_file"]
+subtest [regexp $bcast_file $ls_output] "The file should have been broadcasted"
+
+# Clear out the broadcast file
+run_command -fail -user $testsuite_user "$srun --jobid $job_id $bin_rm -f $bcast_file"
+run_command -fail -user $testsuite_user "$scancel $job_id"
+
+#
+# Test that testsuite_user cannot sbcast to jobs from other users
+#
+log_info "Test that unauthorized users cannot sbcast to a job"
+
+# Spawn an salloc job and obtain the job id
+set salloc_output [run_command_output -fail "$salloc -v -N1 -t2 --no-shell"]
+if {![regexp {Granted job allocation (\d+)} $salloc_output - job_id]} {
+    fail "Allocation not granted ($output)"
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+# Clear out the broadcast file
+run_command -fail "$srun --jobid $job_id $bin_rm -f $bcast_file"
+
+# Attempt to broadcast the file as a different (and unauthorized) user
+set sbcast_output [run_command_output -user $testsuite_user -subtest -xfail "$sbcast --jobid $job_id $sbcast $bcast_file"]
+subtest [regexp -line {error:.*Invalid user id} $sbcast_output] "sbcast should generate an error"
+
+# Verify the file was not broadcast
+set ls_output [run_command_output -subtest -xfail "$srun --jobid $job_id ls $bcast_file"]
+subtest [regexp -line {ls.* (?:No such file|does not exist|not found)} $ls_output] "The file should not have been broadcast"

@@ -51,10 +51,8 @@ if { [string first "CR_ONE_TASK_PER_CORE" $select_type_params] != -1 } {
 proc cleanup {} {
 	global jobid1 jobid2
 
-	cancel_job $jobid1
-	cancel_job $jobid2
+	cancel_job [list $jobid1 $jobid2]
 }
-
 
 proc sub_job { cpu_cnt state } {
 	global number sbatch test_id bin_sleep
@@ -75,12 +73,10 @@ proc sub_job { cpu_cnt state } {
 	}
 
 	if {$jobid == 0} {
-		fail "did not get sbatch jobid"
+		fail "Did not get sbatch jobid"
 	}
 
-	if {[wait_for_job $jobid $state] != 0} {
-		fail "error starting job $jobid"
-	}
+	wait_for_job -fail $jobid $state
 
 	return $jobid
 }
@@ -117,7 +113,7 @@ proc update_job { jobid prio {error ""} } {
 	}
 
 	if {($error != "") && !$matches} {
-		fail "didn't get expected error '$error'"
+		fail "Didn't get expected error '$error'"
 	}
 }
 
