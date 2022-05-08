@@ -28,21 +28,12 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_in     "test$test_id.input"
-set num_nodes   3
-set node_count  0
-set task_count  0
+set hostfile    "$test_dir/hostfile"
 set job_id      0
-set hostfile    "test$test_id.hostfile"
+set node_count  0
+set num_nodes   3
+set task_count  0
 
-proc cleanup {} {
-	global bin_rm hostfile
-
-	exec $bin_rm -f $hostfile
-}
-
-exec $bin_rm -f $hostfile
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test incompatible with front-end systems"
 }
@@ -53,39 +44,36 @@ if { $node_count < 3 } {
 	skip "Insufficient nodes in default partition ($node_count < 3)"
 }
 
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
+
 set node0 0
 set node1 0
 set node2 0
 set node3 0
 set node4 0
 
-#
-# Build input script file
-#
-make_bash_script $file_in "
-  $reset_bash_prompt
-  $bin_bash --norc
-"
-
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -N$num_nodes -v -t2 ./$file_in]
+spawn $salloc -N$num_nodes -v -t2 $bin_bash
 expect {
 	-re "salloc: Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
+		reset_bash_prompt
 		exp_continue
 	}
 	-re $test_prompt {
 		#log_debug "Job initiated"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "salloc not responding"
 	}
 	eof {
 		wait
 	}
 }
-exec $bin_rm -f $file_in
 if {$job_id == 0} {
 	fail "salloc failure"
 }
@@ -95,7 +83,7 @@ for {set i 0} {$i<4} {incr i} {
 
 	if { $i==1 } {
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		send "export SLURM_HOSTFILE=$hostfile\r"
 		expect {
@@ -114,7 +102,7 @@ for {set i 0} {$i<4} {incr i} {
 			skip "System must have at least 3 nodes to finish this test.  This system only has $node_count"
 		}
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 2node0 $node1
 		set 2node1 $node0
@@ -127,7 +115,7 @@ for {set i 0} {$i<4} {incr i} {
 		set extra "-n5"
 	} elseif { $i==3 } {
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 3node0 $node1
 		set 3node1 $node0
@@ -175,57 +163,42 @@ for {set i 0} {$i<4} {incr i} {
 			exp_continue
 		}
 		timeout {
-			log_error "srun not responding"
-			cancel_job $job_id
-			set exit_code 1
+			fail "srun not responding"
 		}
 		eof {
 		}
 	}
 	if { $i == 1 } {
-		if { [string compare $node0 $1node2] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node1 $1node0] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node2 $1node1] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
+		if {$node0 ne $1node2} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node1 ne $1node0} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node2 ne $1node1} {
+			fail "Tasks not distributed by hostfile"
 		}
 	} elseif { $i == 2 } {
-		if { [string compare $node0 $2node0] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node1 $2node1] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node2 $2node2] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node3 $2node3] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node4 $2node4] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
+		if {$node0 ne $2node0} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node1 ne $2node1} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node2 ne $2node2} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node3 ne $2node3} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node4 ne $2node4} {
+			fail "Tasks not distributed by hostfile"
 		}
 	} elseif { $i==3 } {
-		if { [string compare $node0 $3node0] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node1 $3node1] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node2 $3node2] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node3 $3node3] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
-		} elseif { [string compare $node4 $3node4] } {
-			log_error "Tasks not distributed by hostfile"
-			set exit_code 1
+		if {$node0 ne $3node0} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node1 ne $3node1} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node2 ne $3node2} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node3 ne $3node3} {
+			fail "Tasks not distributed by hostfile"
+		} elseif {$node4 ne $3node4} {
+			fail "Tasks not distributed by hostfile"
 		}
 	}
 }
@@ -242,7 +215,7 @@ for {set i 0} {$i<5} {incr i} {
 
 	if { $i==1 } {
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 1node0 $node0
 		set 1node1 $node1
@@ -253,7 +226,7 @@ for {set i 0} {$i<5} {incr i} {
 			skip "System must have at least 3 nodes to finish this test. This system only has $node_count"
 		}
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 2node0 $node1
 		set 2node1 $node0
@@ -263,13 +236,13 @@ for {set i 0} {$i<5} {incr i} {
 		set extra " -m arbitrary -w $node1,$node0,$node0,$node0,$node0"
 	} elseif { $i==3 } {
 		if { $node1 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 4node0 $node1
 		set extra " -w $node1"
 	} elseif { $i==4 } {
 		if { $node0 == 0 || $node1 == 0 || $node2 == 0 } {
-			fail "node names not set from previous srun"
+			fail "Node names not set from previous srun"
 		}
 		set 4node0 $node1
 		set 4node1 $node0
@@ -313,7 +286,7 @@ for {set i 0} {$i<5} {incr i} {
 			if { $i == 4 } {
 				log_debug "This error is expected, no worries"
 			} else {
-				set exit_code 1
+				fail "Unexpected error received"
 			}
 			exp_continue
 		}
@@ -325,45 +298,34 @@ for {set i 0} {$i<5} {incr i} {
 			exp_continue
 		}
 		timeout {
-			log_error "srun not responding"
-			cancel_job $job_id
-			set exit_code 1
+			fail "srun not responding"
 		}
 		eof {
 		}
 	}
 	if { $i == 1 } {
-		if { [string compare $node0 $1node2] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node1 $1node0] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node2 $1node1] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
+		if {$node0 ne $1node2} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node1 ne $1node0} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node2 ne $1node1} {
+			fail "Tasks not distributed by -w"
 		}
 	} elseif { $i == 2 } {
-		if { [string compare $node0 $2node0] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node1 $2node1] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node2 $2node2] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node3 $2node3] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
-		} elseif { [string compare $node4 $2node4] } {
-			log_error "Tasks not distributed by -w"
-			set exit_code 1
+		if {$node0 ne $2node0} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node1 ne $2node1} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node2 ne $2node2} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node3 ne $2node3} {
+			fail "Tasks not distributed by -w"
+		} elseif {$node4 ne $2node4} {
+			fail "Tasks not distributed by -w"
 		}
 	} elseif { $i == 3 } {
-		if { [string compare $node2 $4node0] } {
-			log_error "We only asked for 1 node in the allocation and we were unable to get it"
-			set exit_code 1
+		if {$node2 ne $4node0} {
+			fail "We only asked for 1 node in the allocation and we were unable to get it"
 		}
 	}
 }
@@ -375,15 +337,10 @@ expect {
 		exp_continue
 	}
 	timeout {
-		cancel_job $job_id
 		kill_srun
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

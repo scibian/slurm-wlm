@@ -26,25 +26,25 @@
 source ./globals
 source ./globals_accounting
 
-set timeout	60
+set timeout	    60
 
-set ta1         "test$test_id-account.1"
-set ta2         "test$test_id-account.2"
-set tq1         "test$test_id-qos.1"
-set tq2         "test$test_id-qos.2"
+set ta1         "$test_name-account.1"
+set ta2         "$test_name-account.2"
+set tq1         "$test_name-qos.1"
+set tq2         "$test_name-qos.2"
 
-set p1         "test$test_id-part.1"
-set p2         "test$test_id-part.2"
+set p1          "$test_name-part.1"
+set p2          "$test_name-part.2"
 
-set config_path  ""
+set config_path ""
 
-set jobid_list ""
+set jobid_list  ""
 
-set cwd "[$bin_pwd]"
+set cwd         "[$bin_pwd]"
 
-set access_err 0
+set access_err  0
 
-set user [get_my_user_name]
+set user        [get_my_user_name]
 
 #
 # Check accounting config and bail if not found.
@@ -92,7 +92,7 @@ proc part_cpu_cnt { partition } {
 	expect {
 		-re "($number)(K?)\/($number)(K?)" {
 			set cpu_cnt $expect_out(3,string)
-			if {[string compare $expect_out(4,string) ""]} {
+			if {$expect_out(4,string) ne ""} {
 				set cpu_cnt [expr $cpu_cnt * 1024]
 			}
 
@@ -134,9 +134,7 @@ proc sub_job { args state } {
 		fail "Did not get sbatch jobid"
 	}
 
-	if {[wait_for_job $jobid $state] != 0} {
-		fail "Error starting job $jobid"
-	}
+	wait_for_job -fail $jobid $state
 
 	lappend jobid_list $jobid
 	return $jobid
@@ -232,7 +230,7 @@ proc create_part { name nodes prio } {
 	}
 
 	if {$found == 0} {
-		fail "scontrol did not create partition $name"
+		fail "scontrol did not create partition ($name)"
 	}
 }
 
@@ -306,28 +304,28 @@ clean_assocs
 array set qos_req {}
 set qos_req(priority) $weight
 if {[add_qos $tq1 [array get qos_req]]} {
-	fail "Unable to create qos $tq1"
+	fail "Unable to create qos ($tq1)"
 }
 set qos_req(priority) $weight_half
 if {[add_qos $tq2 [array get qos_req]]} {
-	fail "Unable to create qos $tq2"
+	fail "Unable to create qos ($tq2)"
 }
 
 array set acct_req {}
 set acct_req(qos) "$tq1,$tq2"
 set acct_req(priority) $weight
 if {[add_acct $ta1 [array get acct_req]]} {
-	fail "Unable to create account $ta1"
+	fail "Unable to create account ($ta1)"
 }
 set acct_req(priority) $weight_half
 if {[add_acct $ta2 [array get acct_req]]} {
-	fail "Unable to create account $ta2"
+	fail "Unable to create account ($ta2)"
 }
 
 array set user_req {}
 set user_req(account) "$ta1,$ta2"
 if {[add_user $user [array get user_req]]} {
-	fail "Unable to add user $user"
+	fail "Unable to add user ($user)"
 }
 
 log_info "test1"
@@ -354,10 +352,10 @@ array set acct_mod_acct_vals {}
 array set acct_mod_assoc_vals {}
 set acct_mod_assoc_vals(priority) $weight_half
 if {[mod_acct $ta1 [array get acct_mod_desc] [array get acct_mod_assoc_vals] [array get acct_mod_acct_vals]] } {
-	fail "Unable to modify account $ta1"
+	fail "Unable to modify account ($ta1)"
 }
 if {[mod_qos $tq1 [array get acct_mod_assoc_vals]] } {
-	fail "Unable to modify qos $tq1"
+	fail "Unable to modify qos ($tq1)"
 }
 
 scontrol "show assoc account=$ta1 flags=assoc" "(Account=$ta1 UserName= Partition= Priority=$weight_half)|(Account=$ta1 UserName=$user\\S+ Partition= Priority=$weight_half)" 2
@@ -377,10 +375,10 @@ array set acct_mod_acct_vals {}
 array set acct_mod_assoc_vals {}
 set acct_mod_assoc_vals(priority) $weight
 if {[mod_acct $ta1 [array get acct_mod_desc] [array get acct_mod_assoc_vals] [array get acct_mod_acct_vals]] } {
-	fail "Unable to modify account $ta1"
+	fail "Unable to modify account ($ta1)"
 }
 if {[mod_qos $tq1 [array get acct_mod_assoc_vals]] } {
-	fail "Unable to modify qos $tq1"
+	fail "Unable to modify qos ($tq1)"
 }
 
 scontrol "show assoc account=$ta1 flags=assoc" "(Account=$ta1 UserName= Partition= Priority=$weight)|(Account=$ta1 UserName=$user\\S+ Partition= Priority=$weight)" 2

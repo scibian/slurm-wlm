@@ -28,24 +28,23 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.input"
-set exit_code   0
-
-proc cleanup {} {
-	global bin_rm file_in
-
-	exec $bin_rm -f $file_in
-}
+set file_in     "$test_dir/input"
+set job_id      0
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
+}
+
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
 }
 
 #
 # Delete left-over input script
 # Build input script file
 #
-exec $bin_rm -f $file_in
 set file [open $file_in "w"]
 puts $file "# multi-program configuration file
 1-2   $bin_echo task:%t:offset:%o
@@ -59,7 +58,7 @@ exec $bin_chmod 700 $file_in
 #
 set matches 0
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog ./$file_in]
+spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog $file_in
 expect {
 	-re "($number): *task:($number):offset:($number)" {
 		set label       $expect_out(1,string)
@@ -80,18 +79,14 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 4} {
-	fail "Did not get expected multi-program output"
-} else {
-	log_debug "So far, so good"
-}
+
+subtest {$matches == 4} "Expecting multi-program output" "$matches != 4"
 
 #
 # Submit a slurm job that will execute different executables and check debug info
@@ -112,19 +107,18 @@ puts $file "# multi-program configuration file
 close $file
 exec $bin_chmod 700 $file_in
 
-set job_id    0
 set matches   0
-set srun_pid [spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog --debugger-test -v ./$file_in]
+set srun_pid [spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog --debugger-test -v $file_in]
 expect {
 	-re "launching StepId=($number)\\.($re_word_str)" {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
 	-re "executable:($re_word_str)" {
-		if {[string compare $expect_out(1,string) "date"] != 0} {
+		if {$expect_out(1,string) ne "date"} {
 			incr matches
 		}
-		if {[string compare $expect_out(1,string) "hostname"] != 0} {
+		if {$expect_out(1,string) ne "hostname"} {
 			incr matches
 		}
 		if {$matches == 4} {
@@ -133,54 +127,38 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 4} {
-	log_error "Did not generate full list of executables."
-	set exit_code 1
-}
 if {$job_id == 0} {
-	log_error "Failed to get job id"
-	set exit_code 1
-} else {
-	cancel_job $job_id
+	fail "Failed to get job id"
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-} else {
-	log_debug "So far, so good"
-}
+subtest {$matches == 4} "Expecting to generate full list of executables" "$matches != 4"
 
 #
 # Submit a slurm job that asks for more tasks than specified in our
 # configuration file
 #
 set matches   0
-set srun_pid [spawn $srun -N1 -n5 --overcommit -l -t1 --multi-prog  ./$file_in]
+spawn $srun -N1 -n5 --overcommit -l -t1 --multi-prog $file_in
 expect {
 	-re "Configuration file .* invalid" {
 		log_debug "No worries. This error is expected"
 		incr matches
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 1} {
-	log_error "Did not note lack of a executable for task 5."
-	set exit_code 1
-}
 
+subtest {$matches == 1} "Srun output should note lack of an executable for task 5"
 
 exec $bin_rm -f $file_in
 set file [open $file_in "w"]
@@ -195,7 +173,7 @@ close $file
 exec $bin_chmod 700 $file_in
 
 set matches   0
-set srun_pid [spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog ./$file_in]
+spawn $srun -N1 -n4 --overcommit -l -t1 --multi-prog $file_in
 expect {
 	-re "($number): aaaa task:($number):offset:($number) bbbb" {
 		if {$expect_out(1,string) == 0 && $expect_out(2,string) == 0 && $expect_out(3,string) == 0} {
@@ -204,22 +182,15 @@ expect {
 			incr matches
 		} else {
 			log_error "Processing MPMD line continuation"
-			set exit_code 1
 		}
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$matches != 2} {
-	fail "Processing MPMD line continuation ($matches != 2)"
-}
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$matches == 2} "Should not process MPMD line continuation" "$matches != 2"

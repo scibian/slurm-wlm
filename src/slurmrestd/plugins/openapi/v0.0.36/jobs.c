@@ -150,6 +150,7 @@ const params_t job_params[] = {
 	{ "job_name", 'J' },
 	{ "kill_command", 'K', true },
 	{ "kill_on_bad_exit", 'K', true },
+	{ "kill_on_invalid_dependency", LONG_OPT_KILL_INV_DEP },
 	{ "kill_on_invalid dependency", LONG_OPT_KILL_INV_DEP },
 	{ "label", 'l', true },
 	{ "license", 'L' },
@@ -333,7 +334,8 @@ static data_for_each_cmd_t _per_job_param(const char *key, const data_t *data,
  * Returns 0 on success, -1 on failure
  */
 static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
-					   job_desc_msg_t *desc)
+					   job_desc_msg_t *desc,
+					   bool update_only)
 {
 	const sbatch_opt_t *sbopt = opt->sbatch_opt;
 	int i;
@@ -353,14 +355,18 @@ static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
 		env_array_overwrite(&desc->environment, "SLURM_GET_USER_ENV",
 				    "1");
 
-	desc->contiguous = opt->contiguous ? 1 : 0;
+	if (slurm_option_isset(opt, "contiguous"))
+		desc->contiguous = opt->contiguous ? 1 : 0;
+	else
+		desc->contiguous = NO_VAL16;
+
 	if (opt->core_spec != NO_VAL16)
 		desc->core_spec = opt->core_spec;
 	desc->features = xstrdup(opt->constraint);
 	desc->cluster_features = xstrdup(opt->c_constraint);
 	if (opt->job_name)
 		desc->name = xstrdup(opt->job_name);
-	else
+	else if (!update_only)
 		desc->name = xstrdup("sbatch");
 	desc->reservation = xstrdup(opt->reservation);
 	desc->wckey = xstrdup(opt->wckey);
@@ -415,7 +421,8 @@ static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
 	if (opt->priority)
 		desc->priority = opt->priority;
 
-	desc->mail_type = opt->mail_type;
+	if (slurm_option_isset(opt, "mail_type"))
+		desc->mail_type = opt->mail_type;
 	if (opt->mail_user)
 		desc->mail_user = xstrdup(opt->mail_user);
 	if (opt->begin)
@@ -433,8 +440,14 @@ static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
 	if (opt->qos)
 		desc->qos = xstrdup(opt->qos);
 
-	if (opt->hold)
-		desc->priority = 0;
+	if (slurm_option_isset(opt, "hold")) {
+		if (opt->hold)
+			desc->priority = 0;
+		else
+			desc->priority = INFINITE;
+	} else
+		desc->priority = NO_VAL;
+
 	if (opt->reboot)
 		desc->reboot = 1;
 
@@ -454,7 +467,7 @@ static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
 		desc->min_cpus = opt->ntasks * opt->cpus_per_task;
 	else if (opt->nodes_set && (opt->min_nodes == 0))
 		desc->min_cpus = 0;
-	else
+	else if (!update_only)
 		desc->min_cpus = opt->ntasks;
 
 	if (opt->ntasks_set)
@@ -498,7 +511,9 @@ static int _fill_job_desc_from_sbatch_opts(slurm_opt_t *opt,
 	desc->std_err = xstrdup(opt->efname);
 	desc->std_in = xstrdup(opt->ifname);
 	desc->std_out = xstrdup(opt->ofname);
-	desc->work_dir = xstrdup(opt->chdir);
+
+	if (slurm_option_isset(opt, "chdir"))
+		desc->work_dir = xstrdup(opt->chdir);
 	if (sbopt->requeue != NO_VAL)
 		desc->requeue = sbopt->requeue;
 	if (opt->open_mode)
@@ -596,7 +611,7 @@ static job_desc_msg_t *_parse_job_desc(const data_t *job, data_t *errors,
 	if (!update_only)
 		req->task_dist = SLURM_DIST_UNKNOWN;
 
-	if (_fill_job_desc_from_sbatch_opts(&opt, req)) {
+	if (_fill_job_desc_from_sbatch_opts(&opt, req, update_only)) {
 		rc = SLURM_ERROR;
 		goto cleanup;
 	}

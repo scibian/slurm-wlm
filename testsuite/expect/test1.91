@@ -29,8 +29,7 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_prog   "test$test_id.prog"
+set file_prog   "$test_name.prog"
 
 if {[param_contains [get_config_param "SelectTypeParameters"] "CR_ONE_TASK_PER_CORE"]} {
 	skip "This test is incompatible SelectTypeParameters=CR_ONE_TASK_PER_CORE"
@@ -114,22 +113,20 @@ if {$force == 1} {
 # Identify a usable node
 set timeout $max_job_delay
 set node_name ""
-set srun_pid [spawn $srun -N1 --exclusive --verbose $bin_printenv SLURMD_NODENAME]
+spawn $srun -N1 --exclusive --verbose $bin_printenv SLURMD_NODENAME
 expect {
 	-re "on host ($re_word_str)" {
 		set node_name $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
-		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {[string compare $node_name ""] == 0} {
+if {$node_name eq ""} {
 	fail "Failed to get a usable node name"
 }
 
@@ -177,10 +174,22 @@ if {$num_cputot < $total_thread_count} {
 	skip "CPUs=$num_cputot < (Sockets($num_sockets)*Cores($num_cores)*Threads($num_threads)). Test incompatible with lowered CPUs count"
 }
 
+proc cleanup {} {
+	global file_prog test_status STATUS_FAIL
+
+	file delete $file_prog
+
+	if {$test_status == $STATUS_FAIL} {
+		if [param_contains [get_config_param "SlurmdParameters"] "config_overrides"] {
+			log_warn "This test can fail if the node configuration in slurm.conf (sockets, cores, threads) differs from the actual configuration or if using task/cgroup without task/affinity"
+		}
+	}
+
+}
+
 #
 # Build a test program to report affinity by task
 #
-exec $bin_rm -f $file_prog
 exec $bin_cc -I$build_dir $file_prog.c -o $file_prog
 exec $bin_chmod 700 $file_prog
 
@@ -189,37 +198,19 @@ exec $bin_chmod 700 $file_prog
 #
 global env
 set env(SLURM_CPU_BIND) "verbose"
-set salloc_pid [spawn $salloc -w $node_name -N1 --exclusive --verbose -t2 $bin_bash]
+spawn $salloc -w $node_name -N1 --exclusive --verbose -t2 $bin_bash
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
-		exp_continue
-	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+		reset_bash_prompt
 		exp_continue
 	}
 	-re $test_prompt {
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "salloc not responding or failure to recognize prompt"
 	}
 }
-
-#
-# Reading a second prompt is required by some versions of Expect
-#
-set timeout 1
-expect {
-	-re $test_prompt {
-		exp_continue
-	}
-	timeout {
-	}
-}
-set timeout 30
 
 #############################################################################
 #
@@ -233,12 +224,9 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
-		set exit_code 1
-		exp_continue
+		fail "Some error occurred"
 	}
 	timeout {
-		slow_kill $salloc_pid
 		fail "salloc not responding or failure to recognize prompt"
 	}
 	-re "$srun" {
@@ -260,13 +248,10 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
-		set exit_code 1
-		exp_continue
+		fail "Some error occurred"
 	}
 	timeout {
-		log_error "srun (from --allocate) not responding or failure to recognize prompt"
-		set exit_code 1
+		fail "srun (from --allocate) not responding or failure to recognize prompt"
 	}
 	-re "$srun" {
 		# just so we don't grab the srun call
@@ -274,10 +259,7 @@ expect {
 	}
 	-re $test_prompt
 }
-if {$task_mask != $expected_mask} {
-	log_error "Affinity mask inconsistency ($task_mask,$expected_mask)"
-	set exit_code 1
-}
+subtest {$task_mask == $expected_mask} "Affinity mask is consistent for a job step with affinity to verify unique masks" "$task_mask != $expected_mask"
 
 #############################################################################
 #
@@ -301,13 +283,10 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
-		set exit_code 1
-		exp_continue
+		fail "Some error occurred"
 	}
 	timeout {
-		log_error "srun (from --allocate) not responding or failure to recognize prompt"
-		set exit_code 1
+		fail "srun (from --allocate) not responding or failure to recognize prompt"
 	}
 	-re "$srun" {
 		# just so we don't grab the srun call
@@ -315,10 +294,7 @@ expect {
 	}
 	-re $test_prompt
 }
-if {$task_mask != $expected_mask} {
-	log_error "Affinity mask inconsistency ($task_mask,$expected_mask)"
-	set exit_code 1
-}
+subtest {$task_mask == $expected_mask} "Affinity mask is consistent for a job step with affinity to verify unique masks with min -B 1:1:1" "$task_mask != $expected_mask"
 
 #############################################################################
 #
@@ -346,13 +322,10 @@ while {$this_cnt <= $num_sockets} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
-			set exit_code 1
-			exp_continue
+			fail "Some error occurred"
 		}
 		timeout {
-			log_error "srun (from --allocate) not responding or failure to recognize prompt"
-			set exit_code 1
+			fail "srun (from --allocate) not responding or failure to recognize prompt"
 		}
 		-re "$srun" {
 			# just so we don't grab the srun call
@@ -361,14 +334,8 @@ while {$this_cnt <= $num_sockets} {
 		-re $test_prompt
 	}
 
-	if {$num_tasks != $expected_tasks} {
-		log_error "Number of tasks inconsistent ($num_tasks,$expected_tasks)"
-		set exit_code 1
-	}
-	if {$num_bits != $expected_tasks} {
-		log_error "Number of set bits inconsistent ($num_bits,$expected_tasks)"
-		set exit_code 1
-	}
+	subtest {$num_tasks == $expected_tasks} "Number of tasks is consistent for $this_cnt sockets" "$num_tasks != $expected_tasks"
+	subtest {$num_bits == $expected_tasks} "Number of set bits is consistent for $this_cnt sockets" "$num_bits != $expected_tasks"
 	incr this_cnt 1
 }
 
@@ -399,13 +366,10 @@ while {$this_cnt <= $num_cores} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
-			set exit_code 1
-			exp_continue
+			fail "Some error occurred"
 		}
 		timeout {
-			log_error "salloc not responding or failure to recognize prompt"
-			set exit_code 1
+			fail "salloc not responding or failure to recognize prompt"
 		}
 		-re "$srun" {
 			# just so we don't grab the srun call
@@ -414,14 +378,8 @@ while {$this_cnt <= $num_cores} {
 		-re $test_prompt
 	}
 
-	if {$num_tasks != $expected_tasks} {
-		log_error "Number of tasks inconsistent ($num_tasks,$expected_tasks)"
-		set exit_code 1
-	}
-	if {$num_bits != $expected_tasks} {
-		log_error "Number of set bits inconsistent ($num_bits,$expected_tasks)"
-		set exit_code 1
-	}
+	subtest {$num_tasks == $expected_tasks} "Number of tasks is consistent for $this_cnt cores" "$num_tasks != $expected_tasks"
+	subtest {$num_bits == $expected_tasks} "Number of set bits is consistent for $this_cnt cores" "$num_bits != $expected_tasks"
 	incr this_cnt 1
 }
 
@@ -452,13 +410,10 @@ while {$this_cnt <= $num_threads} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
-			set exit_code 1
-			exp_continue
+			fail "Some error occurred"
 		}
 		timeout {
-			log_error "salloc not responding or failure to recognize prompt"
-			set exit_code 1
+			fail "salloc not responding or failure to recognize prompt"
 		}
 		-re "$srun" {
 			# just so we don't grab the srun call
@@ -467,14 +422,8 @@ while {$this_cnt <= $num_threads} {
 		-re $test_prompt
 	}
 
-	if {$num_tasks != $expected_tasks} {
-		log_error "Number of tasks inconsistent ($num_tasks,$expected_tasks)"
-		set exit_code 1
-	}
-	if {$num_bits != $expected_tasks} {
-		log_error "Number of set bits inconsistent ($num_bits,$expected_tasks)"
-		set exit_code 1
-	}
+	subtest {$num_tasks == $expected_tasks} "Number of tasks is consistent for $this_cnt threads" "$num_tasks != $expected_tasks"
+	subtest {$num_bits == $expected_tasks} "Number of set bits is consistent for $this_cnt threads" "$num_bits != $expected_tasks"
 	incr this_cnt 1
 }
 
@@ -504,13 +453,10 @@ while {$this_cnt <= $core_task_cnt} {
 			exp_continue
 		}
 		-re "error" {
-			log_error "Some error occurred"
-			set exit_code 1
-			exp_continue
+			fail "Some error occurred"
 		}
 		timeout {
-			log_error "salloc not responding or failure to recognize prompt"
-			set exit_code 1
+			fail "salloc not responding or failure to recognize prompt"
 		}
 		-re "$srun" {
 			# just so we don't grab the srun call
@@ -519,14 +465,8 @@ while {$this_cnt <= $core_task_cnt} {
 		-re $test_prompt
 	}
 
-	if {$num_tasks != $expected_tasks} {
-		log_error "Number of tasks inconsistent ($num_tasks,$expected_tasks)"
-		set exit_code 1
-	}
-	if {$num_bits != $this_cnt} {
-		log_error "Number of set bits inconsistent ($num_bits,$this_cnt)"
-		set exit_code 1
-	}
+	subtest {$num_tasks == $expected_tasks} "Number of tasks is consistent for $this_cnt cpus per task" "$num_tasks != $expected_tasks"
+	subtest {$num_bits == $this_cnt} "Number of set bits is consistent for $this_cnt cpus per task" "$num_bits != $this_cnt"
 	incr this_cnt 1
 }
 
@@ -544,13 +484,10 @@ expect {
 		exp_continue
 	}
 	-re "error" {
-		log_error "Some error occurred"
-		set exit_code 1
-		exp_continue
+		fail "Some error occurred"
 	}
 	timeout {
-		log_error "salloc not responding or failure to recognize prompt"
-		set exit_code 1
+		fail "salloc not responding or failure to recognize prompt"
 	}
 	-re "$srun" {
 		# just so we don't grab the srun call
@@ -559,10 +496,7 @@ expect {
 	-re $test_prompt
 }
 
-if {$task_mask != $expected_mask} {
-	log_error "Affinity mask inconsistency ($task_mask,$expected_mask)"
-	set exit_code 1
-}
+subtest {$task_mask == $expected_mask} "Affinity mask is consistent for a job step with plane distribution" "$task_mask != $expected_mask"
 
 #############################################################################
 #
@@ -571,25 +505,12 @@ if {$task_mask != $expected_mask} {
 send "exit\r"
 expect {
 	-re "error" {
-		log_error "Some error occurred"
-		set exit_code 1
+		fail "Some error occurred"
 	}
 	timeout {
-		log_error "salloc not responding or failure to recognize prompt"
-		slow_kill $salloc_pid
-		set exit_code 1
+		fail "salloc not responding or failure to recognize prompt"
 	}
 	eof {
 		wait
 	}
 }
-
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_prog
-} elseif {[param_contains [get_config_param "SlurmdParameters"] "config_overrides"]} {
-	exec $bin_rm -f $file_prog
-	fail "This test can fail if the node configuration in slurm.conf (sockets, cores, threads) differs from the actual configuration or if using task/cgroup without task/affinity"
-} else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
-

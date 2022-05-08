@@ -26,19 +26,17 @@
 ############################################################################
 source ./globals
 
-set exit_code        0
-set file_prog       "test$test_id.prog"
+set file_prog       "$test_name.prog"
 
 proc cleanup {} {
-	global bin_rm file_prog
+	global file_prog
 
-	exec $bin_rm -f $file_prog
+	file delete $file_prog
 }
 
 #
-# Delete left-over programs and rebuild them.
+# Build program
 #
-exec $bin_rm -f $file_prog
 exec $bin_cc -O -o $file_prog ${file_prog}.c
 
 #
@@ -60,33 +58,21 @@ if {$have_runjob} {
 #  Run the test_prog to ensure that no signals are blocked by
 #   default for the job.
 #
-set timeout $max_job_delay
-set srun_pid  [exp_spawn $srun -t1 -N$nnodes ./$file_prog]
-expect {
-	-re "Signal ($number) is ignored!" {
-		set signal $expect_out(1,string)
-		if { $have_runjob && (($signal == 1) || ($signal == 5) || ($signal == 12) || ($signal == 13)) } {
-			log_debug "Signal $signal is ignored by default when using runjob, this error is expected, turn that frown upside down!"
-			exp_continue
-		} else {
-			log_error "At least one signal is ignored!"
-			set exit_code 1
-		}
-	}
-	timeout {
-		slow_kill $srun_pid
-		fail "srun not responding"
-	}
-	eof {
-		# The above signals will result in a bad exit code,
-		# ignore on runjob systems
-		if { !$have_runjob } {
-			catch wait result
-			set exit_code [lindex $result 3]
-		}
+set result [run_command "$srun -t1 -N$nnodes ./$file_prog"]
+if {[regexp "Signal ($number) is ignored!" [dict get $result output] - signal]} {
+	if { $have_runjob && (($signal == 1) || ($signal == 5) ||
+			      ($signal == 12) || ($signal == 13)) } {
+		log_debug "Signal $signal is ignored by default when using runjob, this error is expected, turn that frown upside down!"
+		exp_continue
+	} else {
+		fail "At least one signal is ignored!"
 	}
 }
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+# The above signals will result in a bad exit code,
+# ignore on runjob systems
+if {!$have_runjob} {
+	if {[dict get $result exit_code]} {
+		fail "The signals resulted in a bad exit code"
+	}
 }

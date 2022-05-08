@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
 
 #
@@ -60,15 +59,13 @@ if [set_partition_maximum_time_limit "" -1] {
 # Spawn a job with a deadline
 #
 set timeout $max_job_delay
-set srun_pid [spawn $srun -v --begin=now+5 --deadline=now+600 --time=100 --time-min=9 $bin_sleep 1]
+spawn $srun -v --begin=now+5 --deadline=now+600 --time=100 --time-min=9 $bin_sleep 1
 expect {
 	-re "Requested time limit is invalid" {
-		set exit_code 1
-		exp_continue
+		fail "Requested time limit is invalid"
 	}
 	-re "Incompatible begin and deadline time specification" {
-		set exit_code 1
-		exp_continue
+		fail "Incompatible begin and deadline time specification"
 	}
 	-re "job ($number) queued and waiting for resources" {
 		set job_id $expect_out(1,string)
@@ -101,17 +98,12 @@ expect {
 		exp_continue
 	}
 	-re "TimeLimit=" {
-		log_error "Job submitted with a time limit different than calculated (00:09:00)"
-		set exit_code 1
+		fail "Job submitted with a time limit different than calculated (00:09:00)"
 	}
 	timeout {
-		fail "sacct not responding"
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
 	}
-}
-
-if {$exit_code != 0} {
-        fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

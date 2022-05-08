@@ -26,8 +26,7 @@
 ############################################################################
 source ./globals
 
-set file_in     "test$test_id.input"
-set exit_code   0
+set file_in     "$test_dir/input"
 set job_id      0
 
 #
@@ -36,53 +35,27 @@ set job_id      0
 run_command -fail "$scontrol update partitionname=[default_partition] DefaultTime=10"
 
 proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
 	# Restore DefaultTime
 	reconfigure
 }
 #
 # Build input script file
 #
-exec $bin_rm -f $file_in
 make_bash_script $file_in "$bin_sleep 5"
 
 #
 # Spawn a batch job with a deadline and no time
 #
-set timeout $max_job_delay
-spawn $sbatch --output=/dev/null --error=/dev/null --begin now+1 --deadline now+600 --time-min 5 $file_in
-expect {
-	-re "Requested time limit is invalid (missing or exceeds some limit)" {
-		set exit_code 1
-		exp_continue
-	}
-	-re "Incompatible begin and deadline time specification" {
-		set exit_code 1
-		exp_continue
-	}
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		set exit_code 0
-		exp_continue
-	}
-	timeout {
-		log_error "sbatch not responding"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
-
-if {$job_id == 0} {
-	fail "Batch not submitted with a deadline too short"
-}
+set job_id [submit_job "--output=/dev/null --error=/dev/null --begin now+1 --deadline now+600 --time-min 5 $file_in"]
+subtest {$job_id != 0} "Verify batch job with a deadline and no time can be submitted"
 
 #
 # test status deadline in scontrol and sacct
 #
-if {[wait_for_job $job_id DONE] != 0} {
-	fail "Job failed to run to completion"
-}
+wait_for_job -fail $job_id DONE
 
 spawn $scontrol show job $job_id
 expect {
@@ -90,47 +63,19 @@ expect {
 		exp_continue
 	}
 	-re "JobState=" {
-		log_error "Invalid job state"
-		set exit_code 1
-		exp_continue
+		fail "Invalid job state"
 	}
 	timeout {
-		log_error "scontrol not responding"
-		set exit_code 1
-		exp_continue
+		fail "scontrol not responding"
 	}
 	eof {
 		wait
 	}
 }
 
-set not_support 0
-spawn $sacct  -n -P -X -j $job_id -o State
-expect {
-	-re "Slurm accounting storage is disabled" {
-		set not_support 1
-		exp_continue
-	}
-	-re "DEADLINE" {
-		log_error "Batch not submitted with a deadline and a time-min OK"
-		set exit_code 1
-		exp_continue
-	}
-	timeout {
-		log_error "sacct not responding"
-		set exit_code 1
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$not_support != 0} {
-	log_warn "Can not fully test without accounting enabled"
-}
-
-if {$exit_code == 0} {
-	exec $bin_rm -f $file_in
+if {[get_config_param "AccountingStorageType"] eq "accounting_storage/slurmdbd"} {
+	set state [string trim [run_command_output -fail "$sacct -X -j $job_id --format State --parsable2 --noheader"]]
+	subtest {$state ne "DEADLINE"} "Verify batch submitted with a deadline is valid time-min"
 } else {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
+	subskip "Unable to test status deadline in sacct without accounting enabled"
 }

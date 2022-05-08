@@ -28,7 +28,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
 set job_name    "jobname$test_id"
 set name_read   ""
@@ -37,13 +36,19 @@ if {[get_config_param "PriorityType"] eq "priority/multifactor"} {
 	skip "Not compatible with priority/multifactor"
 }
 
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
+
 #
 # Test setting job's name and get priority
 #
 set priority1  0
 set matches    0
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -t1 --job-name=$job_name $bin_bash]
+spawn $salloc -t1 --job-name=$job_name $bin_bash
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
@@ -60,30 +65,23 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "salloc not responding"
-		cancel_job $job_id
-		slow_kill [expr 0 - $salloc_pid]
-		set exit_code 1
+		fail "salloc not responding"
 	}
 	eof {
 		wait
 	}
 }
 if {$job_id == 0} {
-	log_error "salloc failed to initiate job"
-	set exit_code 1
+	fail "salloc failed to initiate job"
 }
-if {$matches == 0} {
-	log_error "Failed to set job name"
-	set exit_code 1
-}
+subtest {$matches != 0} "Verify that the job set the job name"
 
 #
 # Test setting job's name and get priority
 #
 set job_id     0
 set priority2  0
-set salloc_pid [spawn $salloc -t1 --nice=1000 $bin_bash]
+spawn $salloc -t1 --nice=1000 $bin_bash
 expect {
 	-re "Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
@@ -96,21 +94,11 @@ expect {
 		exp_continue
         }
 	timeout {
-		log_error "salloc not responding"
-		cancel_job $job_id
-		slow_kill [expr 0 - $salloc_pid]
-		set exit_code 1
-		exp_continue
+		fail "salloc not responding"
 	}
 	eof {
 		wait
 	}
 }
 set delta_prio [expr $priority1 - $priority2]
-if {$delta_prio < 950} {
-	fail "Failed to process nice option"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$delta_prio >= 950} "Verify that the job processed the nice option" "$delta_prio < 950"
