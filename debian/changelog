@@ -1,3 +1,10 @@
+slurm-wlm (21.08.7-1sci11u1) scibian11; urgency=medium
+
+  * Drop support for PMIx
+  * Release in scibian11
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 18 May 2022 14:22:59 +0200
+
 slurm-wlm (21.08.7-1sci10u1) scibian10; urgency=medium
 
   * Backport to scibian10
