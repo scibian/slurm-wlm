@@ -31,7 +31,6 @@ Build-Depends:
  libyaml-dev,
  libjson-c-dev,
  libjwt-dev,
- libpmix-dev,
  liblz4-dev,
  bash-completion
 Standards-Version: 4.6.0
