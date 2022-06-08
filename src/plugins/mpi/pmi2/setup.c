@@ -111,6 +111,8 @@ _setup_stepd_job_info(const stepd_step_rec_t *job, char ***env)
 	else
 		job_info.step_id.job_id  = job->step_id.job_id;
 
+	job_info.uid = job->uid;
+
 	if (job->het_job_offset != NO_VAL) {
 		job_info.step_id.step_id = job->step_id.step_id;
 		job_info.step_id.step_het_comp = job->step_id.step_het_comp;
@@ -334,6 +336,11 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 
 	if (bind(tree_sock, (struct sockaddr *)&sa, SUN_LEN(&sa)) < 0) {
 		error("mpi/pmi2: failed to bind tree socket: %m");
+		unlink(sa.sun_path);
+		return SLURM_ERROR;
+	}
+	if (chown(sa.sun_path, job->uid, -1) < 0) {
+		error("mpi/pmi2: failed to chown tree socket: %m");
 		unlink(sa.sun_path);
 		return SLURM_ERROR;
 	}
