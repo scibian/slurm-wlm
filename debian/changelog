@@ -1,3 +1,12 @@
+slurm-wlm (21.08.8.2-1sci11u1) scibian11; urgency=medium
+
+  * Import Upstream release fixes CVE-2022-29500,
+    CVE-2022-29501 and CVE-2022-29502
+    (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Thierno BALDE <thierno.balde@edf.fr>  Wed, 08 Jun 2022 15:18:18 +0200
+
 slurm-wlm (21.08.7-1sci11u1) scibian11; urgency=medium
 
   * Drop support for PMIx
