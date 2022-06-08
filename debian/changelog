@@ -5,6 +5,15 @@ slurm-wlm (21.08.7-1sci9u1) scibian9; urgency=medium
 
  -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:03:06 +0200
 
+slurm-wlm (21.08.8.2-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2022-29500,
+    CVE-2022-29501 and CVE-2022-29502
+    (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 06 May 2022 21:14:09 +0200
+
 slurm-wlm (21.08.7-1) unstable; urgency=medium
 
   * New upstream release

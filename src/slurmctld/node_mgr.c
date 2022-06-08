@@ -1733,6 +1733,12 @@ int update_node ( update_node_msg_t * update_node_msg )
 						(~NODE_STATE_POWERED_DOWN);
 					info("power down request repeating "
 					     "for node %s", this_node_name);
+				} else if (IS_NODE_POWERING_DOWN(node_ptr)) {
+					info("ignoring power down request for node %s, already powering down",
+					     this_node_name);
+					node_ptr->next_state = NO_VAL;
+					free(this_node_name);
+					continue;
 				} else
 					info("powering down node %s",
 					     this_node_name);
@@ -3000,10 +3006,8 @@ extern int validate_node_specs(slurm_msg_t *slurm_msg, bool *newly_up)
 			    NODE_STATE_DOWN) {
 				node_ptr->node_state = NODE_STATE_DOWN |
 						       node_flags;
-				if (node_ptr->reason) {
-					xstrcat(node_ptr->reason,
-						" : reboot complete");
-				}
+				set_node_reboot_reason(node_ptr,
+						       "reboot complete");
 			} else if (reg_msg->job_count) {
 				node_ptr->node_state = NODE_STATE_ALLOCATED |
 						       node_flags;
@@ -3905,6 +3909,7 @@ void msg_to_slurmd (slurm_msg_type_t msg_type)
 		xfree (kill_agent_args);
 	} else {
 		debug ("Spawning agent msg_type=%d", msg_type);
+		set_agent_arg_r_uid(kill_agent_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(kill_agent_args);
 	}
 }
@@ -3990,6 +3995,7 @@ void push_reconfig_to_slurmd(char **slurmd_config_files)
 		xfree(curr_args);
 	} else {
 		debug("Spawning agent msg_type=%d", curr_args->msg_type);
+		set_agent_arg_r_uid(curr_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(curr_args);
 	}
 
@@ -3999,6 +4005,7 @@ void push_reconfig_to_slurmd(char **slurmd_config_files)
 		xfree(prev_args);
 	} else {
 		debug("Spawning agent msg_type=%d", prev_args->msg_type);
+		set_agent_arg_r_uid(prev_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(prev_args);
 	}
 
@@ -4008,6 +4015,7 @@ void push_reconfig_to_slurmd(char **slurmd_config_files)
 		xfree(old_args);
 	} else {
 		debug("Spawning agent msg_type=%d", old_args->msg_type);
+		set_agent_arg_r_uid(old_args, SLURM_AUTH_UID_ANY);
 		agent_queue_request(old_args);
 	}
 #else
@@ -4441,18 +4449,8 @@ extern void check_reboot_nodes()
 		if (IS_NODE_REBOOT_ISSUED(node_ptr) &&
 		    node_ptr->boot_req_time &&
 		    (node_ptr->boot_req_time + resume_timeout < now)) {
-			char *timeout_msg = "reboot timed out";
-
-			if ((node_ptr->next_state != NO_VAL) &&
-			    node_ptr->reason) {
-				xstrfmtcat(node_ptr->reason, " : %s",
-					   timeout_msg);
-			} else {
-				xfree(node_ptr->reason);
-				node_ptr->reason = xstrdup(timeout_msg);
-			}
-			node_ptr->reason_time = now;
-			node_ptr->reason_uid = slurm_conf.slurm_user_id;
+			set_node_reboot_reason(node_ptr,
+					       "reboot timed out");
 
 			/*
 			 * Remove states now so that event state shows as DOWN.
@@ -4509,4 +4507,26 @@ extern void set_node_comm_name(node_record_t *node_ptr, char *comm_name,
 	slurm_reset_alias(node_ptr->name,
 			  node_ptr->comm_name,
 			  node_ptr->node_hostname);
+}
+
+extern void set_node_reboot_reason(node_record_t *node_ptr, char *message)
+{
+	xassert(verify_lock(CONF_LOCK, READ_LOCK));
+	xassert(node_ptr);
+
+	if (message == NULL) {
+		xfree(node_ptr->reason);
+		node_ptr->reason_time = 0;
+		node_ptr->reason_uid = NO_VAL;
+	} else {
+		if (node_ptr->reason &&
+		    !xstrstr(node_ptr->reason, message)) {
+			xstrfmtcat(node_ptr->reason, " : %s", message);
+		} else {
+			xfree(node_ptr->reason);
+			node_ptr->reason = xstrdup(message);
+		}
+		node_ptr->reason_time = time(NULL);
+		node_ptr->reason_uid = slurm_conf.slurm_user_id;
+	}
 }
