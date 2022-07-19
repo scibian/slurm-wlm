@@ -1,3 +1,9 @@
+slurm-wlm (21.08.8.2-1sci9u2) scibian9; urgency=medium
+
+  * Revert back support of slurmrestd
+
+ -- KWAME AMEDODJI <kwame-externe.amedodji@edf.fr>  Wed, 29 Jun 2022 10:30:40 +0200
+
 slurm-wlm (21.08.8.2-1sci9u1) scibian9; urgency=medium
 
   * Import Upstream release fixes CVE-2022-29500,
