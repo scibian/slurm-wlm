@@ -28,6 +28,10 @@ Build-Depends:
  man2html,
  libcurl4-openssl-dev,
  libpmix-dev,
+ libhttp-parser-dev (>= 2.9),
+ libyaml-dev,
+ libjson-c-dev,
+ libjwt-dev,
  liblz4-dev,
  bash-completion
 Standards-Version: 4.6.0
@@ -65,6 +69,18 @@ Description: SLURM client side commands
  that strives to be simple, scalable, portable, fault-tolerant, and
  interconnect agnostic.
  This package contains all client side commands.
+
+Package: slurmrestd
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: SLURM REST API daemon
+ SLURM stands for Simple Linux Utility for Resource Management, it
+ is an open-source cluster resource management and job scheduling system
+ that strives to be simple, scalable, portable, fault-tolerant, and
+ interconnect agnostic.
+ This package contains the REST API daemon slurmrestd.
 
 Package: slurmd
 Architecture: any
