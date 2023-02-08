@@ -302,19 +302,21 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 	 * tree_sock_addr has to remain unformatted since the formatting
 	 * happens on the slurmd side
 	 */
-	spool = xstrdup(slurm_conf.slurmd_spooldir);
 	snprintf(tree_sock_addr, sizeof(tree_sock_addr), PMI2_SOCK_ADDR_FMT,
-		 spool, job_info.step_id.job_id, job_info.step_id.step_id);
+		 slurm_conf.slurmd_spooldir,
+		 job_info.step_id.job_id, job_info.step_id.step_id);
 	/*
 	 * Make sure we adjust for the spool dir coming in on the address to
 	 * point to the right spot.
 	 * We need to unlink this later so we need a formatted version of the
 	 * string to unlink.
 	 */
-	xstrsubstitute(spool, "%n", job->node_name);
-	xstrsubstitute(spool, "%h", job->node_name);
+	spool = slurm_conf_expand_slurmd_path(slurm_conf.slurmd_spooldir,
+					      job->node_name,
+					      job->node_name);
 	xstrfmtcat(fmt_tree_sock_addr, PMI2_SOCK_ADDR_FMT, spool,
 		   job_info.step_id.job_id, job_info.step_id.step_id);
+	xfree(spool);
 
 	/*
 	 * If socket name would be truncated, emit error and exit
@@ -324,7 +326,6 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 		      __func__, fmt_tree_sock_addr,
 		      (long int)(strlen(fmt_tree_sock_addr) + 1),
 		      (long int)sizeof(sa.sun_path));
-		xfree(spool);
 		xfree(fmt_tree_sock_addr);
 		return SLURM_ERROR;
 	}
@@ -332,7 +333,6 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 	strlcpy(sa.sun_path, fmt_tree_sock_addr, sizeof(sa.sun_path));
 
 	unlink(sa.sun_path);    /* remove possible old socket */
-	xfree(spool);
 
 	if (bind(tree_sock, (struct sockaddr *)&sa, SUN_LEN(&sa)) < 0) {
 		error("mpi/pmi2: failed to bind tree socket: %m");
@@ -442,8 +442,10 @@ pmi2_setup_stepd(const stepd_step_rec_t *job, char ***env)
 extern void
 pmi2_cleanup_stepd(void)
 {
-	close(tree_sock);
-	_remove_tree_sock();
+	if (run_in_stepd) {
+		close(tree_sock);
+		_remove_tree_sock();
+	}
 }
 /**************************************************************/
 
@@ -764,7 +766,7 @@ _task_launch_detection(void *unused)
 
 	/*
 	 * mpir_init() is called in plugins/launch/slurm/launch_slurm.c before
-	 * mpi_hook_client_prelaunch() is called in api/step_launch.c
+	 * mpi_g_client_prelaunch() is called in api/step_launch.c
 	 */
 	start = time(NULL);
 	while (_tasks_launched() == 0) {

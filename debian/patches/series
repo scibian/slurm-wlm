@@ -4,5 +4,7 @@ sacctmgr-increase-buffer
 pidfile-path
 rpath
 miscellanea-manpages
-use-hdf5-18-api
 retry-getaddrinfo
+set_default_cgroup_basedir
+fix-spelling-error
+force-nvml

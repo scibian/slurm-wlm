@@ -88,6 +88,15 @@ extern ssize_t slurm_msg_recvfrom_timeout(int fd, char **buf,
 extern ssize_t slurm_msg_sendto(int open_fd,
 				char *buffer,
 				size_t size);
+
+/*
+ * Send message over the given connection, default timeout value
+ * IN open_fd - an open file descriptor
+ * IN buffer - array of buffers to transmit
+ * RET number of bytes written
+ */
+extern size_t slurm_bufs_sendto(int fd, msg_bufs_t buffer);
+
 /* slurm_msg_sendto_timeout is identical to _slurm_msg_sendto except
  * IN timeout - maximum time to wait for a message in milliseconds */
 extern ssize_t slurm_msg_sendto_timeout(int open_fd,
@@ -139,23 +148,6 @@ extern int slurm_recv_timeout(int open_fd, char *buffer, size_t size,
 /*****************************/
 /* slurm addr pack functions */
 /*****************************/
-
-/* slurm_pack_slurm_addr
- * packs a slurm_addr_t into a buffer to serialization transport (pre-20.11)
- * IN slurm_address	- slurm_addr_t to pack
- * IN/OUT buffer	- buffer to pack the slurm_addr_t into
- */
-extern void slurm_pack_slurm_addr(slurm_addr_t *slurm_address,
-				  buf_t *buffer);
-
-/* slurm_unpack_slurm_addr_no_alloc
- * unpacks a buffer into a slurm_addr_t after serialization transport (pre-20.11)
- * OUT slurm_address	- slurm_addr_t to unpack to
- * IN/OUT buffer	- buffer to upack the slurm_addr_t from
- * returns 		- Slurm error code
- */
-extern int slurm_unpack_slurm_addr_no_alloc(slurm_addr_t *slurm_address,
-					    buf_t *buffer);
 
 /* slurm_pack_addr
  * packs a slurm_addr_t into a buffer to serialization transport

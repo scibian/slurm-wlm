@@ -62,17 +62,9 @@
 #include "src/common/slurm_jobcomp.h"
 #include "src/common/print_fields.h"
 
-#define ERROR 2
-
 #define STAT_FIELDS "jobid,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,tresusageinave,tresusageinmax,tresusageinmaxn,tresusageinmaxt,tresusageinmin,tresusageinminn,tresusageinmint,tresusageintot,tresusageoutave,tresusageoutmax,tresusageoutmaxn,tresusageoutmaxt,tresusageoutmin,tresusageoutminn,tresusageoutmint,tresusageouttot"
 
 #define STAT_FIELDS_PID "jobid,nodelist,pids"
-
-#define MAX_PRINTFIELDS 100
-
-#define SECONDS_IN_MINUTE 60
-#define SECONDS_IN_HOUR (60*SECONDS_IN_MINUTE)
-#define SECONDS_IN_DAY (24*SECONDS_IN_HOUR)
 
 /* On output, use fields 12-37 from JOB_STEP */
 
@@ -149,12 +141,6 @@ extern sstat_parameters_t params;
 extern int field_count;
 
 extern List jobs;
-
-extern int printfields[MAX_PRINTFIELDS],	/* Indexed into fields[] */
-	nprintfields;
-
-/* process.c */
-void aggregate_stats(slurmdb_stats_t *dest, slurmdb_stats_t *from);
 
 /* print.c */
 void print_fields(slurmdb_step_rec_t *step);

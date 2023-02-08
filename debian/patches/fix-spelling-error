@@ -1,0 +1,17 @@
+Description: Fix spelling error in the mysql plugin
+ This patch fix a spelling error in the mysql plugin
+Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=15950
+Last-Update: 2022-12-21
+
+--- a/src/plugins/accounting_storage/mysql/as_mysql_assoc.c
++++ b/src/plugins/accounting_storage/mysql/as_mysql_assoc.c
+@@ -526,7 +526,7 @@
+ 	}
+ 	xfree(query);
+ 	if (!(row = mysql_fetch_row(result))) {
+-		debug4("Can't move a none existent association");
++		debug4("Can't move a non-existent association");
+ 		mysql_free_result(result);
+ 		return ESLURM_INVALID_PARENT_ACCOUNT;
+ 	}

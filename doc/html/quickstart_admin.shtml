@@ -465,8 +465,6 @@ AuthType=auth/munge
 Epilog=/usr/local/slurm/etc/epilog
 JobCompLoc=/var/tmp/jette/slurm.job.log
 JobCompType=jobcomp/filetxt
-JobCredentialPrivateKey=/usr/local/etc/slurm.key
-JobCredentialPublicCertificate=/usr/local/etc/slurm.cert
 PluginDir=/usr/local/slurm/lib/slurm
 Prolog=/usr/local/slurm/etc/prolog
 SchedulerType=sched/backfill
@@ -645,34 +643,22 @@ that represent both the major Slurm release and maintenance release level.
 The first two parts combine together to represent the major release, and match
 the year and month of that major release. The third number in the version
 designates a specific maintenance level:
-year.month.maintenance-release (e.g. 20.02.2 is major Slurm release 20.02, and
+year.month.maintenance-release (e.g. 21.08.2 is major Slurm release 21.08, and
 maintenance version 2).
 Thus version 21.08.x was initially released in August 2021.
 Changes in the RPCs (remote procedure calls) and state files will only be made
 if the major release number changes, which typically happens about every nine
 months. A list of most recent major Slurm releases is shown below.</p>
 <ul>
-<li>20.02.x (Released February 2020)</li>
 <li>20.11.x (Released November 2020)</li>
 <li>21.08.x (Released August 2021)</li>
+<li>22.05.x (Released May 2022)</li>
 </ul>
-
-<p>Slurm's MPI libraries may also change if the major release number changes,
-requiring applications be re-linked (behavior may vary depending upon
-the MPI implementation used and the specific Slurm changes between releases).
-Locally developed Slurm plugins may also require modification.
-Slurm daemons will support RPCs and state files from the two previous major
-releases (e.g. a version 21.08.x SlurmDBD will support slurmctld daemons and
-commands with a version of 21.08.x, 20.11.x, or 20.02.x).
-This means that upgrading at least once each year is recommended.
-Otherwise, intermediate upgrades will be required to preserve state information.
-Changes in the mainenance release number generally represent only bug fixes,
-but may also include minor enhancements.</p>
 
 <p>If the SlurmDBD daemon is used, it must be at the same or higher major
 release number as the Slurmctld daemons.
 In other words, when changing the version to a higher release number (e.g
-from 20.02.x to 20.11.x) <b>always upgrade the SlurmDBD daemon first</b>.
+from 21.08.x to 22.05.x) <b>always upgrade the SlurmDBD daemon first</b>.
 Database table changes may be required for the upgrade, for example
 adding new fields to existing tables.
 If the database contains a large number of entries, <b>the SlurmDBD daemon
@@ -712,14 +698,14 @@ although rolling upgrades are also possible (i.e. upgrading the head node(s)
 first then upgrading the compute and login nodes later at various times).
 Also see the note above about reverse compatibility.</p>
 
-<p>Almost every new major release of Slurm (e.g. 20.02.x to 20.11.x)
+<p>Almost every new major release of Slurm (e.g. 20.11.x to 21.08.x)
 involves changes to the state files with new data structures, new options, etc.
 Slurm permits upgrades to a new major release from the past two major releases,
-which happen every nine months (e.g. 20.02.x or 20.11.x to 21.08.x) without loss of
+which happen every nine months (e.g. 20.11.x or 21.08.x to 22.05.x) without loss of
 jobs or other state information.
 State information from older versions will not be recognized and will be
 discarded, resulting in loss of all running and pending jobs.
-State files are <b>not</b> recognized when downgrading (e.g. from 20.11.x to 20.02.x)
+State files are <b>not</b> recognized when downgrading (e.g. from 21.08.x to 20.11.x)
 and will be discarded, resulting in loss of all running and pending jobs.
 For this reason, creating backup copies of state files (as described below)
 can be of value.
@@ -731,7 +717,7 @@ recover the jobs.
 Jobs submitted under the new version will not be in those state files,
 but it can let you recover most jobs.
 An exception to this is that jobs may be lost when installing new pre-release
-versions (e.g. 20.02.0-pre1 to 20.02.0-pre2).
+versions (e.g. 22.05.0-pre1 to 22.05.0-pre2).
 Developers will try to note these cases in the NEWS file.
 Contents of major releases are also described in the RELEASE_NOTES file.</p>
 
@@ -743,10 +729,45 @@ period as well as easily switch between versions should you need to roll
 back for any reason. It also avoids potential problems with library conflicts
 that might arise from installing different versions to the same directory.</p>
 
-<p>The libslurm.so version is increased every major release.
-So things like MPI libraries with Slurm integration should be recompiled.
-Sometimes it works to just symlink the old .so name(s) to the new one, but this
-has no guarantee of working.</p>
+<p>Slurm's main public API library (libslurm.so.X.0.0) increases its version
+number with every major release, so any application linked against it should be
+recompiled after an upgrade. This includes locally developed Slurm plugins.</p>
+
+<p>If you have built your own version of Slurm plugins, besides having to
+recompile them, they will likely need modification to support the new version
+of Slurm. It is common for plugins to add new functions and function arguments
+during major updates. See the RELEASE_NOTES file for details about these
+changes.</p>
+
+<p>Slurm's PMI-1 (libpmi.so.0.0.0) and PMI-2 (libpmi2.so.0.0.0) public API
+libraries do not change between releases and are meant to be permanently
+fixed. This means that linking against either of them will not require you
+to recompile the application after a Slurm upgrade, except in the unlikely
+event that one of them changes. It is unlikely because these libraries must
+be compatible with any other PMI-1 and PMI-2 implementations. If there was a
+change, it would be announced in the RELEASE_NOTES and would only happen on
+a major release.</p>
+
+<p>As an example, MPI stacks like OpenMPI and MVAPICH2 link against Slurm's
+PMI-1 and/or PMI-2 API, but not against our main public API. This means that at
+the time of writting this documentation, you don't need to recompile these
+stacks after a Slurm upgrade. One known exception is MPICH. When MPICH is
+compiled with Slurm support and with the Hydra Process Manager, it will use
+the Slurm API to obtain job information. This link means you will need to
+recompile the MPICH stack after an upgrade.</p>
+
+<p>One easy way to know if an application requires a recompile is to inspect all
+of its ELF files with 'ldd' and grep for 'slurm'. If you see a versioned
+'libslurm.so.x.y.z' reference, then the application will likely need to be
+recompiled.</p>
+
+<p>Slurm daemons will support RPCs and state files from the two previous major
+releases (e.g. a version 22.05.x SlurmDBD will support slurmctld daemons and
+commands with a version of 22.05.x, 21.08.x or 20.11.x).
+This means that upgrading at least once each year is recommended.
+Otherwise, intermediate upgrades will be required to preserve state information.
+Changes in the mainenance release number generally only include bug fixes,
+but may also include other minor enhancements.</p>
 
 <p><b>Be mindful of your configured SlurmdTimeout and SlurmctldTimeout values</b>.
 If the Slurm daemons are down for longer than the specified timeout during an
@@ -791,11 +812,6 @@ than using systemd when performing an upgrade.</li>
 basis after the slurmctld daemon(s) are upgraded, but do make sure their down
 time is below the SlurmdTimeout value.</p>
 
-<p>If you have built your own version of Slurm plugins, they will likely
-need modification to support a new version of Slurm. It is common for plugins
-to add new functions and function arguments during major updates.
-See the RELEASE_NOTES file for details.</p>
-
 <p><b>NOTE</b>: In the beginning of 2021, a version of Slurm was added to the
 EPEL repository. This version is not supported or maintained by SchedMD, and is
 not currently recommend for customer use. Unfortunately, this inclusion could
@@ -825,6 +841,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 27 April 2022</p>
+<p style="text-align:center;">Last modified 14 Jul 2022</p>
 
 <!--#include virtual="footer.txt"-->

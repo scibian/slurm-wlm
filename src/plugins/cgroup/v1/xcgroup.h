@@ -86,23 +86,6 @@ extern int xcgroup_ns_is_available(xcgroup_ns_t *cgns);
 extern int xcgroup_ns_find_by_pid(xcgroup_ns_t *cgns, xcgroup_t *cg, pid_t pid);
 
 /*
- * Use filesystem lock over a cgroup path typically to avoid removal from one
- * step when another one is creating it.
- *
- * IN cg - Cgroup object containing path to lock.
- * RETURN SLURM_SUCCESS if lock was successful, SLURM_ERROR otherwise.
- */
-extern int xcgroup_lock(xcgroup_t *cg);
-
-/*
- * Unlock a cgroup using filesystem lock.
- *
- * IN cg - Cgroup object containing path to unlock.
- * RETURN SLURM_SUCCESS if unlock was successful, SLURM_ERROR otherwise.
- */
-extern int xcgroup_unlock(xcgroup_t *cg);
-
-/*
  * Set the cgroup struct parameters for a given cgroup from a namespace.
  *
  * IN cgns - Cgroup namespace where the cgroup resides.
@@ -168,8 +151,9 @@ extern int xcgroup_cpuset_init(xcgroup_t *cg);
  * ownership and so on.
  *
  * IN ns - Namespace where the cgroup will reside.
- * OUT slurm_cg - The created slurm/ cgroup.
- * RET rc - If operation has suceeded.
+ * OUT slurm_cg - Object where that will be created
+ * RET SLURM_ERROR typically indicates the directory could not be created.
+ *     SLURM_SUCCESS when the object is filled in and the directory created.
  */
 extern int xcgroup_create_slurm_cg(xcgroup_ns_t *ns, xcgroup_t *slurm_cg);
 
@@ -179,10 +163,7 @@ extern int xcgroup_create_slurm_cg(xcgroup_ns_t *ns, xcgroup_t *slurm_cg);
  * IN calling_func - Name of the caller, for logging purposes.
  * IN job - Step record which contains required info for creating the paths.
  * IN ns - Namespace used to build paths.
- * OUT job_cg - Up to the job level directory cgroup.
- * OUT step_cg - Up to the step level directory cgroup. Typically the inner one.
- * OUT user_cg - Up to the user step level directory cgroup.
- * OUT slurm_cg - Up to the slurm level directory cgroup.
+ * OUT int_cg - Array with internal cgroups to be set.
  * OUT job_cgroup_path - Path to job level directory.
  * OUT step_cgroup_path - Path to step level directory.
  * OUT user_cgroup_path - Path to user level directory.
@@ -192,10 +173,7 @@ extern int xcgroup_create_slurm_cg(xcgroup_ns_t *ns, xcgroup_t *slurm_cg);
 extern int xcgroup_create_hierarchy(const char *calling_func,
 				    stepd_step_rec_t *job,
 				    xcgroup_ns_t *ns,
-				    xcgroup_t *job_cg,
-				    xcgroup_t *step_cg,
-				    xcgroup_t *user_cg,
-				    xcgroup_t *slurm_cg,
+				    xcgroup_t int_cg[],
 				    char job_cgroup_path[],
 				    char step_cgroup_path[],
 				    char user_cgroup_path[]);

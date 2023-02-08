@@ -413,6 +413,12 @@ extern int clusteracct_storage_p_node_down(void *db_conn,
 {
 	return SLURM_SUCCESS;
 }
+
+extern char *acct_storage_p_node_inx(void *db_conn, char *nodes)
+{
+	return NULL;
+}
+
 extern int clusteracct_storage_p_node_up(void *db_conn, node_record_t *node_ptr,
 					 time_t event_time)
 {
@@ -450,6 +456,14 @@ extern int clusteracct_storage_p_cluster_tres(void *db_conn,
  * load into the storage the start of a job
  */
 extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr)
+{
+	return SLURM_SUCCESS;
+}
+
+/*
+ * load into the storage heavy info of a job
+ */
+extern int jobacct_storage_p_job_heavy(void *db_conn, job_record_t *job_ptr)
 {
 	return SLURM_SUCCESS;
 }
@@ -553,6 +567,12 @@ extern int acct_storage_p_get_data(void *db_conn, acct_storage_info_t dinfo,
 				   void *data)
 {
 	return SLURM_SUCCESS;
+}
+
+extern void acct_storage_p_send_all(void *db_conn, time_t event_time,
+				    slurm_msg_type_t msg_type)
+{
+	return;
 }
 
 extern int acct_storage_p_shutdown(void *db_conn, bool dbd)

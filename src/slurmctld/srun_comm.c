@@ -41,7 +41,7 @@
 
 #include <string.h>
 
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -213,6 +213,7 @@ static int _srun_node_fail(void *x, void *arg)
 	step_record_t *step_ptr = (step_record_t *) x;
 	srun_node_fail_args_t *args = (srun_node_fail_args_t *) arg;
 	slurm_addr_t *addr;
+	char *nodeaddr;
 	srun_node_fail_msg_t *msg_arg;
 
 	if (!step_ptr->step_node_bitmap)   /* pending step */
@@ -225,8 +226,11 @@ static int _srun_node_fail(void *x, void *arg)
 	if (!step_ptr->port || !step_ptr->host || (step_ptr->host[0] == '\0'))
 		return 0;
 
-	addr = xmalloc(sizeof(*addr));
-	slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+	addr = xmalloc(sizeof(slurm_addr_t));
+	nodeaddr = slurm_conf_get_nodeaddr(step_ptr->host);
+	slurm_set_addr(addr, step_ptr->port, nodeaddr);
+	xfree(nodeaddr);
+
 	msg_arg = xmalloc(sizeof(*msg_arg));
 	memcpy(&msg_arg->step_id, &step_ptr->step_id, sizeof(msg_arg->step_id));
 	msg_arg->nodelist = xstrdup(args->node_name);
@@ -264,7 +268,7 @@ extern void srun_node_fail(job_record_t *job_ptr, char *node_name)
 #else
 	if (!node_name || (node_ptr = find_node_record(node_name)) == NULL)
 		return;
-	args.bit_position = node_ptr - node_record_table_ptr;
+	args.bit_position = node_ptr->index;
 #endif
 
 	list_for_each(job_ptr->step_list, _srun_node_fail, &args);
@@ -322,13 +326,14 @@ extern void srun_ping (void)
 	if (slurm_conf.inactive_limit == 0)
 		return;		/* No limit, don't bother pinging */
 
-	list_for_each(job_list, _srun_ping, &old);
+	list_for_each_ro(job_list, _srun_ping, &old);
 }
 
 static int _srun_step_timeout(void *x, void *arg)
 {
 	step_record_t *step_ptr = (step_record_t *) x;
 	slurm_addr_t *addr;
+	char *nodeaddr;
 	srun_timeout_msg_t *msg_arg;
 
 	xassert(step_ptr);
@@ -342,7 +347,10 @@ static int _srun_step_timeout(void *x, void *arg)
 	addr = xmalloc(sizeof(*addr));
 	msg_arg = xmalloc(sizeof(*msg_arg));
 
-	slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+	nodeaddr = slurm_conf_get_nodeaddr(step_ptr->host);
+	slurm_set_addr(addr, step_ptr->port, nodeaddr);
+	xfree(nodeaddr);
+
 	memcpy(&msg_arg->step_id, &step_ptr->step_id, sizeof(msg_arg->step_id));
 	msg_arg->timeout = step_ptr->job_ptr->end_time;
 
@@ -528,8 +536,12 @@ extern void srun_step_complete(step_record_t *step_ptr)
 
 	xassert(step_ptr);
 	if (step_ptr->port && step_ptr->host && step_ptr->host[0]) {
+		char *nodeaddr;
 		addr = xmalloc(sizeof(slurm_addr_t));
-		slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+		nodeaddr = slurm_conf_get_nodeaddr(step_ptr->host);
+		slurm_set_addr(addr, step_ptr->port, nodeaddr);
+		xfree(nodeaddr);
+
 		msg_arg = xmalloc(sizeof(srun_job_complete_msg_t));
 		memcpy(&msg_arg->step_id, &step_ptr->step_id,
 		       sizeof(msg_arg->step_id));
@@ -552,8 +564,12 @@ extern void srun_step_missing(step_record_t *step_ptr, char *node_list)
 
 	xassert(step_ptr);
 	if (step_ptr->port && step_ptr->host && step_ptr->host[0]) {
+		char *nodeaddr;
 		addr = xmalloc(sizeof(slurm_addr_t));
-		slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+		nodeaddr = slurm_conf_get_nodeaddr(step_ptr->host);
+		slurm_set_addr(addr, step_ptr->port, nodeaddr);
+		xfree(nodeaddr);
+
 		msg_arg = xmalloc(sizeof(srun_step_missing_msg_t));
 		memcpy(&msg_arg->step_id, &step_ptr->step_id,
 		       sizeof(msg_arg->step_id));
@@ -577,8 +593,12 @@ extern void srun_step_signal(step_record_t *step_ptr, uint16_t signal)
 
 	xassert(step_ptr);
 	if (step_ptr->port && step_ptr->host && step_ptr->host[0]) {
+		char *nodeaddr;
 		addr = xmalloc(sizeof(slurm_addr_t));
-		slurm_set_addr(addr, step_ptr->port, step_ptr->host);
+		nodeaddr = slurm_conf_get_nodeaddr(step_ptr->host);
+		slurm_set_addr(addr, step_ptr->port, nodeaddr);
+		xfree(nodeaddr);
+
 		msg_arg = xmalloc(sizeof(job_step_kill_msg_t));
 		memcpy(&msg_arg->step_id, &step_ptr->step_id,
 		       sizeof(msg_arg->step_id));
@@ -586,41 +606,6 @@ extern void srun_step_signal(step_record_t *step_ptr, uint16_t signal)
 		_srun_agent_launch(addr, step_ptr->host, SRUN_STEP_SIGNAL,
 				   msg_arg, step_ptr->job_ptr->user_id,
 				   step_ptr->start_protocol_ver);
-	}
-}
-
-/*
- * srun_exec - request that srun execute a specific command
- *	and route it's output to stdout
- * IN step_ptr - pointer to the slurmctld job step record
- * IN argv - command and arguments to execute
- */
-extern void srun_exec(step_record_t *step_ptr, char **argv)
-{
-	slurm_addr_t * addr;
-	srun_exec_msg_t *msg_arg;
-	int cnt = 1, i;
-
-	xassert(step_ptr);
-
-	if (step_ptr->port && step_ptr->host && step_ptr->host[0]) {
-		for (i=0; argv[i]; i++)
-			cnt++;	/* start at 1 to include trailing NULL */
-		addr = xmalloc(sizeof(slurm_addr_t));
-		slurm_set_addr(addr, step_ptr->port, step_ptr->host);
-		msg_arg = xmalloc(sizeof(srun_exec_msg_t));
-		memcpy(&msg_arg->step_id, &step_ptr->step_id,
-		       sizeof(msg_arg->step_id));
-		msg_arg->argc    = cnt;
-		msg_arg->argv    = xmalloc(sizeof(char *) * cnt);
-		for (i=0; i<cnt ; i++)
-			msg_arg->argv[i] = xstrdup(argv[i]);
-		_srun_agent_launch(addr, step_ptr->host, SRUN_EXEC,
-				   msg_arg, step_ptr->job_ptr->user_id,
-				   step_ptr->start_protocol_ver);
-	} else {
-		error("srun_exec %pS lacks communication channel",
-		      step_ptr);
 	}
 }
 

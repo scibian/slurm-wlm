@@ -86,16 +86,18 @@ const uint32_t pstate_version = 7;	/* version control on saved state */
 const uint16_t nodeinfo_magic = 0x8a5d;
 
 /* Global variables */
-bitstr_t **spec_core_res	= NULL;
 
 /* Clear from avail_cores all specialized cores */
 static void _spec_core_filter(bitstr_t *node_bitmap, bitstr_t **avail_cores)
 {
-	if (!spec_core_res)
-		return;	/* No specialized cores */
+	bitstr_t **avail_core_map =
+		common_mark_avail_cores(node_bitmap, NO_VAL16);
 
 	xassert(avail_cores);
-	core_array_and_not(avail_cores, spec_core_res);
+
+	core_array_not(avail_core_map);
+	core_array_or(avail_cores, avail_core_map);
+	free_core_array(&avail_core_map);
 }
 
 /*
@@ -129,7 +131,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 				 tmp);
 		}
 
-		c = select_node_record[select_node_cnt-1].cume_cores;
+		c = cr_get_coremap_offset(node_record_count);
 		tmp_core_bitmap = bit_alloc(c);
 		bit_not(tmp_core_bitmap);
 		avail_cores = core_bitmap_to_array(tmp_core_bitmap);
@@ -140,7 +142,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 			bit_fmt(tmp, sizeof(tmp), avail_node_bitmap);
 			log_flag(RESERVATION, "avail_nodes:%s",
 				 tmp);
-			for (i = 0; i < select_node_cnt; i++) {
+			for (i = 0; i < node_record_count; i++) {
 				if (!tmp_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), tmp_cores[i]);
@@ -152,7 +154,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 		 * Ensure all nodes in avail_node_bitmap are represented
 		 * in exc_cores. For now include ALL nodes.
 		 */
-		c = select_node_record[select_node_cnt-1].cume_cores;
+		c = cr_get_coremap_offset(node_record_count);
 		tmp_core_bitmap = bit_alloc(c);
 		bit_not(tmp_core_bitmap);
 		avail_cores = core_bitmap_to_array(tmp_core_bitmap);
@@ -162,7 +164,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 
 	xassert(avail_cores);
 
-	picked_node_bitmap = bit_alloc(select_node_cnt);
+	picked_node_bitmap = bit_alloc(node_record_count);
 	for (i = 0; i < node_record_count; i++) {
 		if (fini ||
 		    !avail_cores[i] ||
@@ -175,7 +177,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 		}
 		bit_set(picked_node_bitmap, i);
 		c_cnt = 0;
-		for (c = 0; c < select_node_record[i].tot_cores; c++) {
+		for (c = 0; c < node_record_table_ptr[i]->tot_cores; c++) {
 			if (!bit_test(avail_cores[i], c))
 				continue;
 			if (++c_cnt > core_cnt[local_node_offset])
@@ -194,7 +196,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 		*exc_cores = avail_cores;
 
 		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
-			for (i = 0; i < select_node_cnt; i++) {
+			for (i = 0; i < node_record_count; i++) {
 				if (!avail_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), avail_cores[i]);
@@ -273,7 +275,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 	}
 #endif
 
-	picked_node_bitmap = bit_alloc(select_node_cnt);
+	picked_node_bitmap = bit_alloc(node_record_count);
 	if (core_cnt) { /* Reservation is using partial nodes */
 		debug2("Reservation is using partial nodes");
 		if (*exc_cores == NULL) {      /* Exclude no cores by default */
@@ -282,7 +284,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 			info("avail_nodes:%s", tmp);
 			info("exc_cores: NULL");
 #endif
-			c = select_node_record[select_node_cnt-1].cume_cores;
+			c = cr_get_coremap_offset(node_record_count);
 			tmp_core_bitmap = bit_alloc(c);
 			bit_not(tmp_core_bitmap);
 			avail_cores = core_bitmap_to_array(tmp_core_bitmap);
@@ -292,7 +294,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 			tmp_cores = *exc_cores;
 			bit_fmt(tmp, sizeof(tmp), avail_node_bitmap);
 			info("avail_nodes:%s", tmp);
-			for (i = 0; i < select_node_cnt; i++) {
+			for (i = 0; i < node_record_count; i++) {
 				if (!tmp_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), tmp_cores[i]);
@@ -303,7 +305,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 			 * Ensure all nodes in avail_node_bitmap are represented
 			 * in exc_cores. For now include ALL nodes.
 			 */
-			c = select_node_record[select_node_cnt-1].cume_cores;
+			c = cr_get_coremap_offset(node_record_count);
 			tmp_core_bitmap = bit_alloc(c);
 			bit_not(tmp_core_bitmap);
 			avail_cores = core_bitmap_to_array(tmp_core_bitmap);
@@ -312,7 +314,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 		}
 		xassert(avail_cores);
 
-		for (i = 0; i < select_node_cnt; i++) {
+		for (i = 0; i < node_record_count; i++) {
 			if (fini || !avail_cores[i] ||
 			    !bit_test(avail_node_bitmap, i)) {
 				FREE_NULL_BITMAP(avail_cores[i]);
@@ -346,7 +348,8 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 				c_target = core_cnt[local_node_offset];
 			}
 			c_cnt = 0;
-			for (c = 0; c < select_node_record[i].tot_cores; c++) {
+			for (c = 0; c < node_record_table_ptr[i]->tot_cores;
+			     c++) {
 				if (!bit_test(avail_cores[i], c))
 					continue;
 				if (c_cnt >= c_target)
@@ -429,8 +432,6 @@ extern int fini(void)
 {
 	common_fini();
 
-	free_core_array(&spec_core_res);
-
 	return SLURM_SUCCESS;
 }
 
@@ -488,7 +489,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	if (exc_cores) {
 		int i;
 		char tmp[128];
-		for (i = 0; i < select_node_cnt; i++) {
+		for (i = 0; i < node_record_count; i++) {
 			if (!exc_cores[i])
 				continue;
 			bit_fmt(tmp, sizeof(tmp), exc_cores[i]);

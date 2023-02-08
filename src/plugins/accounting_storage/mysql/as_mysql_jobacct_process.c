@@ -95,16 +95,15 @@ char *job_req_inx[] = {
 	"t1.time_submit",
 	"t1.time_suspended",
 	"t1.timelimit",
-	"t1.track_steps",
 	"t1.wckey",
 	"t1.gres_used",
 	"t1.tres_alloc",
 	"t1.tres_req",
 	"t1.work_dir",
 	"t1.mcs_label",
-	"t1.batch_script",
+	"t4.batch_script",
 	"t1.submit_line",
-	"t1.env_vars",
+	"t4.env_vars",
 	"t2.acct",
 	"t2.lft",
 	"t2.user"
@@ -153,7 +152,6 @@ enum {
 	JOB_REQ_SUBMIT,
 	JOB_REQ_SUSPENDED,
 	JOB_REQ_TIMELIMIT,
-	JOB_REQ_TRACKSTEPS,
 	JOB_REQ_WCKEY,
 	JOB_REQ_GRES_USED,
 	JOB_REQ_TRESA,
@@ -314,13 +312,12 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 		if (job_ids) {
 			if (job_cond->flags & JOBCOND_FLAG_WHOLE_HETJOB)
 				xstrfmtcat(*extra, "t1.id_job in (%s) || "
-					   "(t1.het_job_offset<>%u && "
 					   "t1.het_job_id in (select "
 					   "t4.het_job_id from \"%s_%s\" as "
 					   "t4 where t4.id_job in (%s) && "
-					   "t4.het_job_id<>0))",
-					   job_ids, NO_VAL, cluster_name,
-					   job_table, job_ids);
+					   "t4.het_job_id)",
+					   job_ids, cluster_name, job_table,
+					   job_ids);
 			else if (job_cond->flags & JOBCOND_FLAG_NO_WHOLE_HETJOB)
 				xstrfmtcat(*extra, "t1.id_job in (%s)",
 					   job_ids);
@@ -579,6 +576,17 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			       cluster_name, assoc_table,
 			       cluster_name, resv_table);
 
+	if (job_cond->flags & JOBCOND_FLAG_SCRIPT)
+		xstrfmtcat(query,
+			   " left join \"%s_%s\" as t4 "
+			   "on t1.script_hash_inx=t4.hash_inx",
+			   cluster_name, job_script_table);
+	else if (job_cond->flags & JOBCOND_FLAG_ENV)
+		xstrfmtcat(query,
+			   " left join \"%s_%s\" as t4 "
+			   "on t1.env_hash_inx=t4.hash_inx",
+			   cluster_name, job_env_table);
+
 	if (job_cond->flags & JOBCOND_FLAG_RUNAWAY) {
 		if (extra)
 			xstrcat(extra, " && (t1.time_end=0)");
@@ -670,6 +678,14 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		if (!job->array_job_id && !job->array_task_id)
 			job->array_task_id = NO_VAL;
 
+		/*
+		 * This shouldn't happen with new jobs.
+		 * If older jobs have het_job_id == 0 and het_job_offset == 0,
+		 * then correct het_job_offset to be NO_VAL.
+		 */
+		if (!job->het_job_id && !job->het_job_offset)
+			job->het_job_offset = NO_VAL;
+
 		if (row[JOB_REQ_RESV_NAME] && row[JOB_REQ_RESV_NAME][0])
 			job->resv_name = xstrdup(row[JOB_REQ_RESV_NAME]);
 
@@ -727,7 +743,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		/* since the job->end could be set later end it here */
 		if (job->end) {
 			job_ended = 1;
-			if (!job->start || (job->start > job->end))
+			if (job->start > job->end)
 				job->start = job->end;
 		}
 
@@ -833,6 +849,15 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->constraints = xstrdup(row[JOB_REQ_CONSTRAINTS]);
 		job->container = xstrdup(row[JOB_REQ_CONTAINER]);
 		job->flags = slurm_atoul(row[JOB_REQ_FLAGS]);
+
+		/*
+		 * This tells us we never had a start time so the job was
+		 * canceled before it ran.
+		 */
+		if (!job->start && job->end &&
+		    (job->flags & SLURMDB_JOB_FLAG_START_R))
+			job->start = NO_VAL;
+
 		job->state_reason_prev = slurm_atoul(row[JOB_REQ_STATE_REASON]);
 
 		if (row[JOB_REQ_PARTITION])
@@ -846,11 +871,13 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			job->nodes = xstrdup("(unknown)");
 		}
 
-		job->track_steps = slurm_atoul(row[JOB_REQ_TRACKSTEPS]);
 		job->priority = slurm_atoul(row[JOB_REQ_PRIORITY]);
 		job->req_cpus = slurm_atoul(row[JOB_REQ_REQ_CPUS]);
 		job->req_mem = slurm_atoull(row[JOB_REQ_REQ_MEM]);
-		job->requid = slurm_atoul(row[JOB_REQ_KILL_REQUID]);
+		if (!row[JOB_REQ_KILL_REQUID])
+			job->requid = INFINITE;
+		else
+			job->requid = slurm_atoul(row[JOB_REQ_KILL_REQUID]);
 		job->qosid = slurm_atoul(row[JOB_REQ_QOS]);
 		job->show_full = 1;
 
@@ -1028,8 +1055,11 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 
 			step->stepname = xstrdup(step_row[STEP_REQ_NAME]);
 			step->nodes = xstrdup(step_row[STEP_REQ_NODELIST]);
-			step->requid =
-				slurm_atoul(step_row[STEP_REQ_KILL_REQUID]);
+			if (!step_row[STEP_REQ_KILL_REQUID])
+				step->requid = INFINITE;
+			else
+				step->requid = slurm_atoul(
+					step_row[STEP_REQ_KILL_REQUID]);
 
 			step->submit_line =
 				xstrdup(step_row[STEP_REQ_SUBMIT_LINE]);
@@ -1105,31 +1135,6 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 					xstrdup(step_row[STEP_REQ_TRES]);
 		}
 		mysql_free_result(step_result);
-
-		if (!job->track_steps) {
-			uint64_t j_cpus, s_cpus;
-			/* If we don't have track_steps we want to see
-			   if we have multiple steps.  If we only have
-			   1 step check the job name against the step
-			   name in most all cases it will be
-			   different.  If it is different print out
-			   the step separate.  It could also be a single
-			   step/allocation where the job was allocated more than
-			   the step requested (eg. CR_Socket).
-			*/
-			if (list_count(job->steps) > 1)
-				job->track_steps = 1;
-			else if (step &&
-				 (xstrcmp(step->stepname, job->jobname) ||
-				  (((j_cpus = slurmdb_find_tres_count_in_string(
-					     job->tres_alloc_str, TRES_CPU))
-				    != INFINITE64) &&
-				   ((s_cpus = slurmdb_find_tres_count_in_string(
-					     step->tres_alloc_str, TRES_CPU))
-				    != INFINITE64) &&
-				  j_cpus != s_cpus)))
-					job->track_steps = 1;
-		}
 	skip_steps:
 		/* need to reset here to make the above test valid */
 		step = NULL;
@@ -1586,12 +1591,17 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 		else
 			xstrcat(*extra, " where (");
 
+		xstrfmtcat(*extra,
+			   "(CONVERT(SUBSTRING_INDEX(t1.tres_alloc,'%d=',-1),"
+			   "UNSIGNED INTEGER)",
+			   TRES_CPU);
+
 		if (job_cond->cpus_max) {
-			xstrfmtcat(*extra, "(t1.ext_1 between %u and %u))",
+			xstrfmtcat(*extra, " between %u and %u))",
 				   job_cond->cpus_min, job_cond->cpus_max);
 
 		} else {
-			xstrfmtcat(*extra, "(t1.ext_1='%u'))",
+			xstrfmtcat(*extra, "='%u'))",
 				   job_cond->cpus_min);
 
 		}

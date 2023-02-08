@@ -185,7 +185,7 @@ static void _clear_spec_cores(job_record_t *job_ptr,
 
 		if (is_cons_tres) {
 			first_core = 0;
-			last_core  = select_node_record[i].tot_cores;
+			last_core  = node_record_table_ptr[i]->tot_cores;
 			use_core_array = core_array[i];
 		} else {
 			first_core = cr_get_coremap_offset(i);
@@ -196,7 +196,7 @@ static void _clear_spec_cores(job_record_t *job_ptr,
 		for (c = first_core; c < last_core; c++) {
 			alloc_core++;
 			if (bit_test(use_core_array, c)) {
-				uint16_t tpc = select_node_record[i].vpus;
+				uint16_t tpc = node_record_table_ptr[i]->tpc;
 				if (mc_ptr &&
 				    (mc_ptr->threads_per_core != NO_VAL16) &&
 				    (mc_ptr->threads_per_core < tpc))
@@ -360,9 +360,9 @@ static int _set_task_dist(job_record_t *job_ptr, const uint16_t cr_type)
 		for (int n = n_first; n <= n_last; n++) {
 			if (!bit_test(job_res->node_bitmap, n) ||
 			    (job_ptr->details->mc_ptr->threads_per_core ==
-			     select_node_record[n].vpus))
+			     node_record_table_ptr[n]->tpc))
 				continue;
-			job_res->cpus[i++] *= select_node_record[n].vpus;
+			job_res->cpus[i++] *= node_record_table_ptr[n]->tpc;
 		}
 	}
 	return SLURM_SUCCESS;
@@ -370,9 +370,11 @@ static int _set_task_dist(job_record_t *job_ptr, const uint16_t cr_type)
 
 /* distribute blocks (planes) of tasks cyclically */
 static int _compute_plane_dist(job_record_t *job_ptr,
-			       uint32_t *gres_task_limit)
+			       uint32_t *gres_task_limit,
+			       uint32_t *gres_min_cpus)
 {
 	bool over_subscribe = false;
+	bool do_gres_min_cpus = false;
 	uint32_t n, i, p, tid, maxtasks, l;
 	uint16_t *avail_cpus, plane_size = 1;
 	job_resources_t *job_res = job_ptr->job_resrcs;
@@ -428,6 +430,8 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 				more_tres_tasks = true;
 				if ((job_res->cpus[n] < avail_cpus[n]) ||
 				    over_subscribe) {
+					if (gres_min_cpus[n])
+						do_gres_min_cpus = true;
 					tid++;
 					job_res->tasks_per_node[n]++;
 					for (l = 0;
@@ -447,6 +451,8 @@ static int _compute_plane_dist(job_record_t *job_ptr,
 		if (!space_remaining)
 			over_subscribe = true;
 	}
+	if (is_cons_tres && do_gres_min_cpus)
+		dist_tasks_gres_min_cpus(job_ptr, avail_cpus, gres_min_cpus);
 	xfree(avail_cpus);
 	return SLURM_SUCCESS;
 }
@@ -514,10 +520,10 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 	n_first = bit_ffs(job_res->node_bitmap);
 	if (n_first != -1) {
 		n_last = bit_fls(job_res->node_bitmap);
-		sockets_nb  = select_node_record[n_first].tot_sockets;
+		sockets_nb  = node_record_table_ptr[n_first]->tot_sockets;
 		sockets_core_cnt = xcalloc(sockets_nb, sizeof(int));
 		sockets_used = xcalloc(sockets_nb, sizeof(bool));
-		boards_nb = select_node_record[n_first].boards;
+		boards_nb = node_record_table_ptr[n_first]->boards;
 		boards_core_cnt = xcalloc(boards_nb, sizeof(int));
 		sort_brds_core_cnt = xcalloc(boards_nb, sizeof(int));
 	} else
@@ -544,9 +550,9 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 			continue;
 
 		core_cnt = 0;
-		ncores_nb = select_node_record[n].cores;
-		nsockets_nb = select_node_record[n].tot_sockets;
-		nboards_nb = select_node_record[n].boards;
+		ncores_nb = node_record_table_ptr[n]->cores;
+		nsockets_nb = node_record_table_ptr[n]->tot_sockets;
+		nboards_nb = node_record_table_ptr[n]->boards;
 		num_bits =  nsockets_nb * ncores_nb;
 
 		if ((c + num_bits) > csize) {
@@ -593,7 +599,7 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		}
 
 		/* Count available cores on each socket and board */
-		sock_per_brd = select_node_record[n].sockets;
+		sock_per_brd = nsockets_nb / nboards_nb;
 
 		for (b = 0; b < nboards_nb; b++) {
 			boards_core_cnt[b] = 0;
@@ -632,7 +638,7 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 			bit_fmt(core_str, 64, job_res->core_bitmap);
 			error("b_min > nboards_nb (%d > %u) node:%s core_bitmap:%s",
 			      b_min, nboards_nb,
-			      node_record_table_ptr[n].name, core_str);
+			      node_record_table_ptr[n]->name, core_str);
 			break;
 		}
 		sock_per_comb = b_min * sock_per_brd;
@@ -858,9 +864,9 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 
 		/* adjust cpus count of the current node */
 		if ((alloc_cores || alloc_sockets) &&
-		    (select_node_record[n].vpus >= 1)) {
+		    (node_record_table_ptr[n]->tpc >= 1)) {
 			job_res->cpus[i] = core_cnt *
-				select_node_record[n].vpus;
+				node_record_table_ptr[n]->tpc;
 		}
 		i++;
 
@@ -903,7 +909,7 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 	n_first = bit_ffs(job_res->node_bitmap);
 	if (n_first != -1) {
 		n_last = bit_fls(job_res->node_bitmap);
-		sock_size  = select_node_record[n_first].sockets;
+		sock_size  = node_record_table_ptr[n_first]->tot_sockets;
 		sock_avoid = xcalloc(sock_size, sizeof(bool));
 		sock_start = xcalloc(sock_size, sizeof(uint32_t));
 		sock_end   = xcalloc(sock_size, sizeof(uint32_t));
@@ -933,13 +939,13 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 	for (c = 0, i = 0, n = n_first; n <= n_last; n++) {
 		if (bit_test(job_res->node_bitmap, n) == 0)
 			continue;
-		sockets = select_node_record[n].sockets;
-		cps     = select_node_record[n].cores;
+		sockets = node_record_table_ptr[n]->tot_sockets;
+		cps     = node_record_table_ptr[n]->cores;
 		vpus    = common_cpus_per_core(job_ptr->details, n);
 
 		log_flag(SELECT_TYPE, "%pJ node %s vpus %u cpus %u",
 		         job_ptr,
-		         select_node_record[n].node_ptr->name,
+		         node_record_table_ptr[n]->name,
 		         vpus, job_res->cpus[i]);
 
 		if ((c + (sockets * cps)) > csize) {
@@ -1105,7 +1111,7 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 				      "tried to use %u CPUs on node %s core_map:%s avoided_sockets:%s vpus:%u",
 				      job_ptr,
 				      orig_cpu_cnt,
-				      select_node_record[n].node_ptr->name,
+				      node_record_table_ptr[n]->name,
 				      core_str, sock_str, vpus);
 				xfree(core_str);
 				xfree(sock_str);
@@ -1125,7 +1131,7 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 				bit_nclear(core_map, sock_start[s],
 					   sock_end[s]-1);
 			}
-			if ((select_node_record[n].vpus >= 1) &&
+			if ((node_record_table_ptr[n]->tpc >= 1) &&
 			    (alloc_sockets || alloc_cores) && sock_used[s]) {
 				for (j = sock_start[s]; j < sock_end[s]; j++) {
 					/* Mark all cores as used */
@@ -1137,9 +1143,9 @@ static int _cyclic_sync_core_bitmap(job_record_t *job_ptr,
 			}
 		}
 		if ((alloc_cores || alloc_sockets) &&
-		    (select_node_record[n].vpus >= 1)) {
+		    (node_record_table_ptr[n]->tpc >= 1)) {
 			job_res->cpus[i] = core_cnt *
-					   select_node_record[n].vpus;
+					   node_record_table_ptr[n]->tpc;
 		}
 		i++;
 		/* advance 'c' to the beginning of the next node */
@@ -1189,10 +1195,14 @@ fini:	xfree(sock_avoid);
  *		the job, only used to identify specialized cores
  * IN gres_task_limit - array of task limits based upon job GRES specification,
  *		offset based upon bits set in job_ptr->job_resrcs->node_bitmap
+ * IN gres_min_cpus - array of minimum required CPUs based upon job's GRES
+ * 		      specification, offset based upon bits set in
+ * 		      job_ptr->job_resrcs->node_bitmap
  */
 extern int dist_tasks(job_record_t *job_ptr, const uint16_t cr_type,
 		      bool preempt_mode, bitstr_t **core_array,
-		      uint32_t *gres_task_limit)
+		      uint32_t *gres_task_limit,
+		      uint32_t *gres_min_cpus)
 {
 	int error_code;
 	bool one_task_per_node = false;
@@ -1239,13 +1249,14 @@ extern int dist_tasks(job_record_t *job_ptr, const uint16_t cr_type,
 	if (((job_ptr->details->task_dist & SLURM_DIST_STATE_BASE) ==
 	     SLURM_DIST_PLANE) && !one_task_per_node) {
 		/* Perform plane distribution on the job_resources_t struct */
-		error_code = _compute_plane_dist(job_ptr, gres_task_limit);
+		error_code = _compute_plane_dist(job_ptr, gres_task_limit,
+						 gres_min_cpus);
 		if (error_code != SLURM_SUCCESS)
 			return error_code;
 	} else {
 		/* Perform cyclic distribution on the job_resources_t struct */
 		error_code = (*cons_common_callbacks.dist_tasks_compute_c_b)(
-			job_ptr, gres_task_limit);
+			job_ptr, gres_task_limit, gres_min_cpus);
 		if (error_code != SLURM_SUCCESS)
 			return error_code;
 	}
@@ -1320,3 +1331,36 @@ extern bool dist_tasks_tres_tasks_avail(uint32_t *gres_task_limit,
 		return true;
 	return false;
 }
+
+extern void dist_tasks_gres_min_cpus(job_record_t *job_ptr,
+				     uint16_t *avail_cpus,
+				     uint32_t *gres_min_cpus)
+{
+	job_resources_t *job_res = job_ptr->job_resrcs;
+
+	for (int n = 0; n < job_res->nhosts; n++) {
+		/*
+		 * Make sure that enough cpus are available to meet the minimum
+		 * number of required cores to satisfy a gres request. This
+		 * can increase the number of cpus per task on a given node.
+		 */
+		if (job_res->cpus[n] < gres_min_cpus[n]) {
+			/*
+			 * If avail_cpus is less then gres_min_cpus,
+			 * something went wrong. Get as many cpus
+			 * as we can.
+			 */
+			if (avail_cpus[n] < gres_min_cpus[n]) {
+				error("%pJ: gres_min_cpus=%u is greater than avail_cpus=%u for node %u",
+				      job_ptr, gres_min_cpus[n],
+				      avail_cpus[n], n);
+				job_res->cpus[n] = avail_cpus[n];
+			} else {
+				log_flag(SELECT_TYPE, "%pJ: Setting job_res->cpus to gres_min_cpus (%u) for node %u",
+					 job_ptr, gres_min_cpus[n], n);
+				job_res->cpus[n] = gres_min_cpus[n];
+			}
+		}
+	}
+}
+

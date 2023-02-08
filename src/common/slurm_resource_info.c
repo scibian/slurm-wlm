@@ -91,6 +91,8 @@ static char *_expand_mult(char *list, char *type, int *error_code)
 	char *ast, *end_ptr = NULL, *result = NULL, *save_ptr = NULL;
 	char *sep = "", *tmp, *tok;
 	long int count, i;
+	int (*isfunc) (int) = isdigit;
+	bool mask = false;
 
 	*error_code = SLURM_SUCCESS;
 
@@ -98,13 +100,28 @@ static char *_expand_mult(char *list, char *type, int *error_code)
 		return NULL;
 
 	tmp = xstrdup(list);
-	if (!strchr(tmp, '*'))	/* No expansion needed*/
-		return tmp;
+
+	if (!xstrncmp(type, "mask", 4)) {
+		isfunc = isxdigit;
+		mask = true;
+	}
 
 	tok = strtok_r(tmp, ",", &save_ptr);
 	while (tok) {
+		if (mask && !xstrncmp(tok, "0x", 2))
+			tok+=2;
+
 		ast = strchr(tok, '*');
 		if (ast) {
+			/* Starting from 1 since we know that ast[0] == '*' */
+			for (int i = 1; ast[i]; i++)
+				if (!isdigit(ast[i])) {
+					error("Failed to validate number: %s, the offending character is %c",
+					      ast, ast[i]);
+					*error_code = SLURM_ERROR;
+					return 0;
+				}
+
 			count = strtol(ast + 1, &end_ptr, 10);
 			if ((count <= 0) || (end_ptr[0] != '\0') ||
 			    (count == LONG_MIN) || (count == LONG_MAX)) {
@@ -115,11 +132,26 @@ static char *_expand_mult(char *list, char *type, int *error_code)
 				break;
 			}
 			ast[0] = '\0';
+			for (int i = 0; tok[i]; i++)
+				if (!isfunc(tok[i])) {
+					error("Failed to validate number: %s, the offending character is %c",
+					      tok, tok[i]);
+					*error_code = SLURM_ERROR;
+					return 0;
+				}
+
 			for (i = 0; i < count; i++) {
 				xstrfmtcat(result, "%s%s", sep, tok);
 				sep = ",";
 			}
 		} else {
+			for (int i = 0; tok[i]; i++)
+				if (!isfunc(tok[i])) {
+					error("Failed to validate number: %s, the offending character is %c",
+					      tok, tok[i]);
+					*error_code = SLURM_ERROR;
+					return 0;
+				}
 			xstrfmtcat(result, "%s%s", sep, tok);
 			sep = ",";
 		}
@@ -162,8 +194,6 @@ void slurm_sprint_cpu_bind_type(char *str, cpu_bind_type_t cpu_bind_type)
 		strcat(str, "sockets,");
 	if (cpu_bind_type & CPU_BIND_TO_LDOMS)
 		strcat(str, "ldoms,");
-	if (cpu_bind_type & CPU_BIND_TO_BOARDS)
-		strcat(str, "boards,");
 	if (cpu_bind_type & CPU_BIND_NONE)
 		strcat(str, "none,");
 	if (cpu_bind_type & CPU_BIND_RANK)
@@ -294,8 +324,7 @@ extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		    CPU_BIND_MASK | CPU_BIND_LDRANK | CPU_BIND_LDMAP |
 		    CPU_BIND_LDMASK;
 	bind_to_bits = CPU_BIND_TO_SOCKETS | CPU_BIND_TO_CORES |
-		       CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS |
-		       CPU_BIND_TO_BOARDS;
+		       CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS;
 
     	buf = xstrdup(arg);
     	p = buf;
@@ -408,16 +437,14 @@ extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		           (xstrcasecmp(tok, "ldoms") == 0)) {
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_LDOMS);
-		} else if ((xstrcasecmp(tok, "board") == 0) ||
-		           (xstrcasecmp(tok, "boards") == 0)) {
-			_clear_then_set((int *)flags, bind_to_bits,
-				       CPU_BIND_TO_BOARDS);
 		} else {
 			error("unrecognized --cpu-bind argument \"%s\"", tok);
 			rc = SLURM_ERROR;
 		}
 	}
 	xfree(buf);
+	if (rc)
+		fatal("Failed to parse --cpu-bind= values.");
 
 	return rc;
 }
@@ -448,15 +475,6 @@ extern int xlate_cpu_bind_str(char *cpu_bind_str, uint32_t *flags)
 				break;
 			} else {
 				*flags |= CPU_BIND_NONE;
-				have_bind_type = true;
-			}
-		} else if ((xstrcasecmp(tok, "board") == 0) ||
-			   (xstrcasecmp(tok, "boards") == 0)) {
-			if (have_bind_type) {
-				rc = SLURM_ERROR;
-				break;
-			} else {
-				*flags |= CPU_BIND_TO_BOARDS;
 				have_bind_type = true;
 			}
 		} else if ((xstrcasecmp(tok, "socket") == 0) ||

@@ -41,75 +41,35 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/assoc_mgr.h"
 
-static uint16_t _parse_preempt_modes(char *names)
+static int _parse_preempt_modes_internal(List null, char *name, void *x)
 {
-	int i=0, start=0;
-	char *name = NULL;
-	char quote_c = '\0';
-	int quote = 0;
-	int count = 0;
-	uint16_t preempt_mode = 0;
+	uint16_t *preempt_mode = x;
 	uint16_t ret_mode = 0;
 
-	if (names) {
-		if (names[i] == '\"' || names[i] == '\'') {
-			quote_c = names[i];
-			quote = 1;
-			i++;
-		}
-		start = i;
-		while(names[i]) {
-			//info("got %d - %d = %d", i, start, i-start);
-			if (quote && names[i] == quote_c)
-				break;
-			else if (names[i] == '\"' || names[i] == '\'')
-				names[i] = '`';
-			else if (names[i] == ',') {
-				name = xmalloc((i-start+1));
-				memcpy(name, names+start, (i-start));
-				//info("got %s %d", name, i-start);
-
-				ret_mode = preempt_mode_num(name);
-				if (ret_mode == NO_VAL16) {
-					error("Unknown preempt_mode given '%s'",
-					      name);
-					xfree(name);
-					preempt_mode = NO_VAL16;
-					break;
-				}
-				preempt_mode |= ret_mode;
-				count++;
-				xfree(name);
-
-				i++;
-				start = i;
-				if (names[i] == ' ') {
-					info("There is a problem with "
-					     "your request.  It appears you "
-					     "have spaces inside your list.");
-					break;
-				}
-			}
-			i++;
-		}
-
-		name = xmalloc((i-start+1));
-		memcpy(name, names+start, (i-start));
-		//info("got %s %d", name, i-start);
-
-		ret_mode = preempt_mode_num(name);
-		if (ret_mode == NO_VAL16) {
-			error("Unknown preempt_mode given '%s'",
-			      name);
-			xfree(name);
-			preempt_mode = NO_VAL16;
-			return preempt_mode;
-		}
-		preempt_mode |= ret_mode;
-		count++;
-		xfree(name);
+	ret_mode = preempt_mode_num(name);
+	if (ret_mode == NO_VAL16) {
+		error("Unknown preempt_mode given '%s'", name);
+		*preempt_mode = NO_VAL16;
+		return SLURM_ERROR;
 	}
-	return preempt_mode;
+
+	/*
+	 * Since we can't really add 0 to a bitstring
+	 * put on one that we can track.
+	 */
+	if (ret_mode == PREEMPT_MODE_OFF)
+		ret_mode = PREEMPT_MODE_COND_OFF;
+
+	*preempt_mode |= ret_mode;
+	return 1;
+}
+
+static uint16_t _parse_preempt_modes(char *names)
+{
+	uint16_t preempt_mode = 0;
+	slurm_parse_char_list(NULL, names, &preempt_mode,
+			      _parse_preempt_modes_internal);
+ 	return preempt_mode;
 }
 
 static int _set_cond(int *start, int argc, char **argv,
@@ -382,7 +342,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "GrpTRESMins",
 					 MAX(command_len, 8))) {
 			sacctmgr_initialize_g_tres_list();
@@ -394,7 +355,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "GrpTRESRunMins",
 					 MAX(command_len, 8))) {
 			sacctmgr_initialize_g_tres_list();
@@ -406,7 +368,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "GrpWall",
 					 MAX(command_len, 4))) {
 			mins = time_str2mins(argv[i]+end);
@@ -544,7 +507,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESPerJob",
 					 MAX(command_len, 7))) {
 			sacctmgr_initialize_g_tres_list();
@@ -556,7 +520,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESPerNode",
 					 MAX(command_len, 11))) {
 			sacctmgr_initialize_g_tres_list();
@@ -568,7 +533,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESPerUser",
 					 MAX(command_len, 11)) ||
 			   !xstrncasecmp(argv[i], "MaxTRESPU",
@@ -582,7 +548,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESMinsPerJob",
 					 MAX(command_len, 8))) {
 			sacctmgr_initialize_g_tres_list();
@@ -594,7 +561,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPA",
 					 MAX(command_len, 16))) {
 			sacctmgr_initialize_g_tres_list();
@@ -606,7 +574,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPU",
 					 MAX(command_len, 8))) {
 			sacctmgr_initialize_g_tres_list();
@@ -618,7 +587,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxWallDurationPerJob",
 					 MAX(command_len, 4))) {
 			mins = time_str2mins(argv[i]+end);
@@ -659,7 +629,8 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				set = 1;
 				xfree(tmp_char);
-			}
+			} else
+				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "PreemptMode",
 					 MAX(command_len, 8))) {
 			qos->preempt_mode = preempt_mode_num(argv[i]+end);
@@ -682,7 +653,7 @@ static int _set_rec(int *start, int argc, char **argv,
 
 			if (slurmdb_addto_qos_char_list(qos->preempt_list,
 						       g_qos_list, argv[i]+end,
-						       option))
+						       option) > 0)
 				set = 1;
 			else
 				exit_code = 1;
@@ -808,7 +779,7 @@ end_it:
 extern int sacctmgr_add_qos(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
-	int i, limit_set = 0;
+	int i;
 	ListIterator itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	slurmdb_qos_rec_t *start_qos = xmalloc(sizeof(slurmdb_qos_rec_t));
@@ -826,7 +797,7 @@ extern int sacctmgr_add_qos(int argc, char **argv)
 		    || !xstrncasecmp(argv[i], "Set", MAX(command_len, 3)))
 			i++;
 
-		limit_set += _set_rec(&i, argc, argv, name_list, start_qos);
+		_set_rec(&i, argc, argv, name_list, start_qos);
 	}
 
 	if (exit_code) {

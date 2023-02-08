@@ -49,7 +49,7 @@
 #include "src/common/bitstring.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
@@ -248,7 +248,7 @@ static uint16_t _get_part_gr_type(part_record_t *part_ptr)
  */
 static void _load_phys_res_cnt(void)
 {
-	uint16_t bit = 0, sock = 0;
+	uint16_t bit = 0;
 	uint32_t i, bit_index = 0;
 	node_record_t *node_ptr;
 
@@ -259,13 +259,11 @@ static void _load_phys_res_cnt(void)
 
 	gs_bits_per_node = xmalloc(node_record_count * sizeof(uint16_t));
 
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (int i = 0; (node_ptr = next_node(&i)); i++) {
 		if (gr_type == GS_CPU) {
 			bit = node_ptr->config_ptr->cpus;
 		} else {
-			sock = node_ptr->config_ptr->tot_sockets;
-			bit  = node_ptr->config_ptr->cores * sock;
+			bit  = node_ptr->tot_cores;
 		}
 
 		gs_bits_per_node[bit_index++] = bit;
@@ -281,17 +279,16 @@ static void _load_phys_res_cnt(void)
 
 static uint16_t _get_phys_bit_cnt(int node_index)
 {
-	node_record_t *node_ptr = node_record_table_ptr + node_index;
+	node_record_t *node_ptr = node_record_table_ptr[node_index];
 
 	if (gr_type == GS_CPU)
-		return node_ptr->config_ptr->cpus;
-	return node_ptr->config_ptr->cores *
-		node_ptr->config_ptr->tot_sockets;
+		return node_ptr->cpus;
+	return node_ptr->tot_cores;
 }
 
 static uint16_t _get_socket_cnt(int node_index)
 {
-	node_record_t *node_ptr = node_record_table_ptr + node_index;
+	node_record_t *node_ptr = node_record_table_ptr[node_index];
 
 	return node_ptr->config_ptr->tot_sockets;
 }

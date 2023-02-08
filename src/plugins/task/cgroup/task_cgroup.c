@@ -59,11 +59,16 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 static bool use_cpuset  = false;
 static bool use_memory  = false;
 static bool use_devices = false;
-static bool do_task_affinity = false;
 
 extern int init(void)
 {
 	int rc = SLURM_SUCCESS;
+
+	if (slurm_cgroup_conf.constrain_swap_space &&
+	    !cgroup_g_has_feature(CG_MEMCG_SWAP)) {
+		error("ConstrainSwapSpace is enabled but there is no support for swap in the memory cgroup controller.");
+		return SLURM_ERROR;
+	}
 
 	if (!running_in_slurmstepd())
 		goto end;
@@ -75,8 +80,6 @@ extern int init(void)
 		use_memory = true;
 	if (slurm_cgroup_conf.constrain_devices)
 		use_devices = true;
-	if (slurm_cgroup_conf.task_affinity)
-		do_task_affinity = true;
 
 	if (use_cpuset) {
 		if ((rc = task_cgroup_cpuset_init())) {
@@ -133,7 +136,7 @@ extern int task_p_slurmd_batch_request(batch_job_launch_msg_t *req)
 }
 
 extern int task_p_slurmd_launch_request(launch_tasks_request_msg_t *req,
-					uint32_t node_id)
+					uint32_t node_id, char **err_msg)
 {
 	return SLURM_SUCCESS;
 }
@@ -183,8 +186,13 @@ extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 		rc = SLURM_ERROR;
 
 	if (use_memory &&
-	    (task_cgroup_memory_add_pid(
-		    job->task[node_tid]->pid) != SLURM_SUCCESS))
+	    (task_cgroup_memory_add_pid(job, job->task[node_tid]->pid,
+					node_tid) != SLURM_SUCCESS))
+		rc = SLURM_ERROR;
+
+	if (use_devices &&
+	    (task_cgroup_devices_add_pid(job, job->task[node_tid]->pid,
+					 node_tid) != SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
 	return rc;
@@ -196,9 +204,6 @@ extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
  */
 extern int task_p_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 {
-	if (use_cpuset && do_task_affinity)
-		return task_cgroup_cpuset_set_task_affinity(job, node_tid);
-
 	return SLURM_SUCCESS;
 }
 
@@ -209,9 +214,9 @@ extern int task_p_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 extern int task_p_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 {
 	if (use_devices)
-		return task_cgroup_devices_add_pid(job,
-						   job->task[node_tid]->pid,
-						   node_tid);
+		return task_cgroup_devices_constrain(job,
+						     job->task[node_tid]->pid,
+						     node_tid);
 	return SLURM_SUCCESS;
 }
 
@@ -260,7 +265,8 @@ extern int task_p_add_pid(pid_t pid)
 	if (use_cpuset && (task_cgroup_cpuset_add_pid(pid) != SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
-	if (use_memory && (task_cgroup_memory_add_pid(pid) != SLURM_SUCCESS))
+	if (use_memory && (task_cgroup_memory_add_extern_pid(pid) !=
+			   SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
 	if (use_devices &&

@@ -1,0 +1,2 @@
+usr/lib/*/slurm-wlm/acct_gather_energy_ipmi.so
+usr/lib/*/slurm-wlm/acct_gather_energy_xcc.so

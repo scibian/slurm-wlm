@@ -59,13 +59,30 @@ enum {
 typedef enum {
 	GRES_INTERNAL_FLAG_NONE = 0,
 	GRES_INTERNAL_FLAG_VERBOSE = 1 << 0,
+	/*
+	 * If a job/step/task has sharing GRES (GPU), don't let shared GRES
+	 * (MPS, Shard) clear that env.
+	 */
+	GRES_INTERNAL_FLAG_PROTECT_ENV = 2 << 0,
 } gres_internal_flags_t;
+
+typedef enum {
+	DEV_TYPE_NONE,
+	DEV_TYPE_BLOCK,
+	DEV_TYPE_CHAR,
+} gres_device_type_t;
+
+typedef struct {
+	uint32_t major;
+	uint32_t minor;
+	gres_device_type_t type;
+} gres_device_id_t;
 
 typedef struct {
 	int index; /* GRES bitmap index */
 	int alloc;
+	gres_device_id_t dev_desc;
 	int dev_num; /* Number at the end of the device filename */
-	char *major;
 	char *path;
 	char *unique_id; /* Used for GPU binding with MIGs */
 } gres_device_t;
@@ -81,7 +98,13 @@ typedef struct {
 #define GRES_CONF_ENV_OPENCL SLURM_BIT(7) /* Set GPU_DEVICE_ORDINAL */
 #define GRES_CONF_ENV_DEF    SLURM_BIT(8) /* Env flags were set to defaults */
 
-#define GRES_CONF_ENV_SET    0x000000E0   /* Easy check if any of
+#define GRES_CONF_SHARED     SLURM_BIT(9) /* Treat this as a shared GRES */
+#define GRES_CONF_ONE_SHARING SLURM_BIT(10) /* Only allow use of a shared GRES
+					     * on one of the sharing GRES */
+
+#define GRES_CONF_ENV_ONEAPI SLURM_BIT(11) /* Set ZE_AFFINITY_MASK */
+
+#define GRES_CONF_ENV_SET    0x000008E0   /* Easy check if any of
 					   * GRES_CONF_ENV_* are set. */
 
 #define GRES_NO_CONSUME		0x0001	/* Requesting no consume of resources */
@@ -91,11 +114,19 @@ typedef struct {
 #define GRES_AUTODETECT_GPU_NVML  0x00000001
 #define GRES_AUTODETECT_GPU_RSMI  0x00000002
 #define GRES_AUTODETECT_GPU_OFF   0x00000004 /* Do NOT use global */
+#define GRES_AUTODETECT_GPU_ONEAPI 0x00000008
 
 #define GRES_AUTODETECT_GPU_FLAGS 0x000000ff /* reserve first 8 bits for gpu
 					      * flags */
 
+typedef enum {
+	GRES_STATE_SRC_STATE_PTR,
+	GRES_STATE_SRC_CONTEXT_PTR,
+	GRES_STATE_SRC_KEY_PTR,
+} gres_state_src_t;
+
 typedef struct gres_search_key {
+	uint32_t config_flags;	/* See GRES_CONF_* values above */
 	int node_offset;
 	uint32_t plugin_id;
 	uint32_t type_id;
@@ -139,12 +170,15 @@ typedef struct gres_slurmd_conf {
 typedef struct {
 	/* How many CPUs there are configured on the node */
 	uint32_t cpu_cnt;
+	/* True if called in the slurmd */
+	bool in_slurmd;
 	/* A pointer to the mac_to_abs function */
 	int (*xcpuinfo_mac_to_abs) (char *mac, char **abs);
 } node_config_load_t;
 
 /* Current GRES state information managed by slurmctld daemon */
 typedef struct gres_node_state {
+	struct gres_node_state *alt_gres_ns;
 	/* Actual hardware found */
 	uint64_t gres_cnt_found;
 
@@ -202,7 +236,6 @@ typedef struct gres_node_state {
 
 /* Gres job state as used by slurmctld daemon */
 typedef struct gres_job_state {
-	char *gres_name;		/* GRES name (e.g. "gpu") */
 	uint32_t type_id;		/* GRES type (e.g. model ID) */
 	char *type_name;		/* GRES type (e.g. model name) */
 	uint16_t flags;			/* GRES_NO_CONSUME, etc. */
@@ -268,6 +301,7 @@ typedef enum {
  * context, gres_data points to gres_node_state_t, gres_job_state_t or
  * gres_step_state_t */
 typedef struct gres_state {
+	uint32_t config_flags;	/* See GRES_CONF_* values above */
 	uint32_t plugin_id;
 	void *gres_data;
 	char *gres_name;		/* GRES name (e.g. "gpu") */
@@ -314,7 +348,7 @@ typedef struct gres_step_state {
 					 * GRES that could be available for this
 					 * step if no other steps active */
 	uint64_t *gres_cnt_node_alloc;	/* Per node GRES allocated,
-					 * Used without GRES files */
+					 * Used with and without GRES files */
 	uint32_t node_cnt;
 	bitstr_t *node_in_use;
 	bitstr_t **gres_bit_alloc;	/* Used with GRES files */
@@ -326,16 +360,12 @@ typedef struct sock_gres {	/* GRES availability by socket */
 	bitstr_t **bits_by_sock;/* Per-socket GRES bitmap of this name & type */
 	uint64_t cnt_any_sock;	/* GRES count unconstrained by cores */
 	uint64_t *cnt_by_sock;	/* Per-socket GRES count of this name & type */
-	char *gres_name;	/* GRES name */
-	gres_job_state_t *job_specs;	/* Pointer to job info, for limits */
+	gres_state_t *gres_state_job; /* Pointer to job info, for limits */
+	gres_state_t *gres_state_node; /* Pointer to node info, for state */
 	uint64_t max_node_gres;	/* Maximum GRES permitted on this node */
-	gres_node_state_t *node_specs;	/* Pointer to node info, for state */
-	uint32_t plugin_id;	/* Plugin ID (for quick search) */
 	int sock_cnt;		/* Socket count, size of bits_by_sock and
 				 * cnt_by_sock arrays */
 	uint64_t total_cnt;	/* Total GRES count of this name & type */
-	uint32_t type_id;	/* GRES type (e.g. model ID) */
-	char *type_name;	/* GRES type (e.g. model name) */
 } sock_gres_t;
 
 /* Similar to multi_core_data_t in slurm_protocol_defs.h */
@@ -412,12 +442,18 @@ extern char *gres_name_filter(char *orig_gres, char *nodes);
  */
 /*
  * Load this node's configuration (how many resources it has, topology, etc.)
- * IN cpu_cnt - Number of CPUs configured on this node
- * IN node_name - Name of this node
+ * IN cpu_cnt - Number of CPUs configured for node node_name.
+ * IN node_name - Name of the node to load the GRES config for.
  * IN gres_list - Node's GRES information as loaded from slurm.conf by slurmd
- * IN xcpuinfo_abs_to_mac - Pointer to xcpuinfo_abs_to_mac() funct, if available
- * IN xcpuinfo_mac_to_abs - Pointer to xcpuinfo_mac_to_abs() funct, if available
- * NOTE: Called from slurmd and slurmstepd
+ * IN xcpuinfo_abs_to_mac - Pointer to xcpuinfo_abs_to_mac() funct. If
+ *	specified, Slurm will convert gres_slurmd_conf->cpus_bitmap (a bitmap
+ *	derived from gres.conf's "Cores" range string) into machine format
+ *	(normal slrumd/stepd operation). If not, it will remain unconverted (for
+ *	testing purposes or when unused).
+ * IN xcpuinfo_mac_to_abs - Pointer to xcpuinfo_mac_to_abs() funct. Used to
+ *	convert CPU affinities from machine format (as collected from NVML and
+ *	others) into abstract format, for sanity checking purposes.
+ * NOTE: Called from slurmd (and from slurmctld for each cloud node)
  */
 extern int gres_g_node_config_load(uint32_t cpu_cnt, char *node_name,
 				   List gres_list,
@@ -455,12 +491,10 @@ extern int gres_node_config_pack(buf_t *buffer);
 */
 /*
  * Build a node's gres record based only upon the slurm.conf contents
- * IN node_name - name of the node for which the gres information applies
  * IN orig_config - Gres information supplied from slurm.conf
  * IN/OUT gres_list - List of Gres records for this node to track usage
  */
-extern int gres_init_node_config(char *node_name, char *orig_config,
-				 List *gres_list);
+extern int gres_init_node_config(char *orig_config, List *gres_list);
 
 /*
  * Return how many gres Names are on the system.
@@ -538,6 +572,11 @@ extern int gres_node_reconfig(char *node_name,
 			      int sock_per_node);
 
 /*
+ * Remove the given node's gres from the associated context's total count.
+ */
+extern void gres_node_remove(node_record_t *node_ptr);
+
+/*
  * Pack a node's current gres status, called from slurmctld for save/restore
  * IN gres_list - generated by gres_node_config_validate()
  * IN/OUT buffer - location to write state to
@@ -560,7 +599,10 @@ extern int gres_node_state_unpack(List *gres_list, buf_t *buffer,
  * IN gres_list - node gres state information
  * RET a copy of gres_list or NULL on failure
  */
-extern List gres_node_state_dup(List gres_list);
+extern List gres_node_state_list_dup(List gres_list);
+
+/* Copy gres_job_state_t record for ALL nodes */
+extern void *gres_job_state_dup(gres_job_state_t *gres_js);
 
 /*
  * Deallocate all resources on this node previous allocated to any jobs.
@@ -733,7 +775,7 @@ extern int gres_job_revalidate2(uint32_t job_id, List job_gres_list,
  * NOTE: Only gres_cnt_alloc, node_cnt and gres_bit_alloc are copied
  *	 Job step details are NOT copied.
  */
-extern List gres_job_state_dup(List gres_list);
+extern List gres_job_state_list_dup(List gres_list);
 
 /*
  * Create a (partial) copy of a job's gres state for a particular node index
@@ -791,34 +833,6 @@ extern uint32_t gres_job_test(List job_gres_list, List node_gres_list,
 			      bool disable_binding);
 
 /*
- * Determine how many cores on each socket of a node can be used by this job
- * IN job_gres_list   - job's gres_list built by gres_job_state_validate()
- * IN node_gres_list  - node's gres_list built by gres_node_config_validate()
- * IN use_total_gres  - if set then consider all gres resources as available,
- *		        and none are commited to running jobs
- * IN/OUT core_bitmap - Identification of available cores on this node
- * IN sockets         - Count of sockets on the node
- * IN cores_per_sock  - Count of cores per socket on this node
- * IN job_id          - job's ID (for logging)
- * IN node_name       - name of the node (for logging)
- * IN enforce_binding - if true then only use GRES with direct access to cores
- * IN s_p_n           - Expected sockets_per_node (NO_VAL if not limited)
- * OUT req_sock_map   - bitmap of specific requires sockets
- * IN user_id         - job's user ID
- * IN node_inx        - index of node to be evaluated
- * RET: List of sock_gres_t entries identifying what resources are available on
- *	each core. Returns NULL if none available. Call FREE_NULL_LIST() to
- *	release memory.
- */
-extern List gres_job_test2(List job_gres_list, List node_gres_list,
-			   bool use_total_gres, bitstr_t *core_bitmap,
-			   uint16_t sockets, uint16_t cores_per_sock,
-			   uint32_t job_id, char *node_name,
-			   bool enforce_binding, uint32_t s_p_n,
-			   bitstr_t **req_sock_map, uint32_t user_id,
-			   const uint32_t node_inx);
-
-/*
  * Set environment variables as required for a batch job
  * IN/OUT job_env_ptr - environment variable array
  * IN gres_list - generated by gres_job_alloc()
@@ -861,7 +875,7 @@ extern int gres_step_state_validate(char *cpus_per_tres,
  * IN gres_list - List of Gres records for this step to track usage
  * RET The copy or NULL on failure
  */
-List gres_step_state_dup(List gres_list);
+List gres_step_state_list_dup(List gres_list);
 
 /*
  * Create a copy of a step's gres state for a particular node index
@@ -1030,8 +1044,8 @@ extern int gres_get_step_info(List step_gres_list, char *gres_name,
 
 extern uint32_t gres_get_autodetect_flags(void);
 
-/* return the major info from a given path of a device */
-extern char *gres_device_major(char *dev_path);
+/* Convert the major/minor info to a string */
+extern char *gres_device_id2str(gres_device_id_t *gres_dev);
 
 /* Free memory for gres_device_t record */
 extern void destroy_gres_device(void *gres_device_ptr);
@@ -1048,7 +1062,8 @@ extern char *gres_flags2str(uint32_t config_flags);
 /*
  * Parse a gres.conf Flags string
  */
-extern uint32_t gres_flags_parse(char *input, bool *no_gpu_env);
+extern uint32_t gres_flags_parse(char *input, bool *no_gpu_env,
+				 bool *sharing_mentioned);
 
 /*
  * Creates a gres_slurmd_conf_t record to add to a list of gres_slurmd_conf_t
@@ -1061,6 +1076,8 @@ extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 			     uint32_t flags);
 
 extern int gres_find_id(void *x, void *key);
+
+extern int gres_find_flags(void *x, void *key);
 
 /* Find job record with matching name and type */
 extern int gres_find_job_by_key_exact_type(void *x, void *key);
@@ -1091,6 +1108,12 @@ extern int gres_find_sock_by_job_state(void *x, void *key);
  */
 extern bool gres_use_local_device_index(void);
 
+/* create a gres_state_t */
+extern gres_state_t *gres_create_state(void *src_ptr,
+				       gres_state_src_t state_src,
+				       gres_state_type_enum_t state_type,
+				       void *gres_data);
+
 extern void gres_job_list_delete(void *list_element);
 
 extern void gres_step_list_delete(void *list_element);
@@ -1109,7 +1132,7 @@ extern void gres_clear_tres_cnt(uint64_t *tres_cnt, bool locked);
  * Return TRUE if this plugin ID consumes GRES count > 1 for a single device
  * file (e.g. MPS)
  */
-extern bool gres_id_shared(uint32_t plugin_id);
+extern bool gres_id_shared(uint32_t config_flags);
 
 /*
  * Return TRUE if this plugin ID shares resources with another GRES that
@@ -1117,10 +1140,10 @@ extern bool gres_id_shared(uint32_t plugin_id);
  */
 extern bool gres_id_sharing(uint32_t plugin_id);
 
-extern void gres_add_type(char *type, gres_node_state_t *gres_data,
+extern void gres_add_type(char *type, gres_node_state_t *gres_ns,
 			  uint64_t tmp_gres_cnt);
 
-extern void gres_validate_node_cores(gres_node_state_t *node_gres_ptr,
+extern void gres_validate_node_cores(gres_node_state_t *gres_ns,
 				     int cores_ctld, char *node_name);
 
 /*
@@ -1161,5 +1184,16 @@ extern char *gres_links_create_empty(unsigned int index,
  *     * there is more than one 'self' GPU identifier found
  */
 extern int gres_links_validate(char *links);
+
+/* Determine if the gres should only allow allocation on the busy one */
+extern bool gres_use_busy_dev(gres_state_t *gres_state_node,
+			      bool use_total_gres);
+
+/*
+ * Dummy reading of gres.conf without loading data.
+ * Meant to be used by slurmctld to discover Include files and append them
+ * to conf_includes_list for configless files push.
+ */
+extern void gres_parse_config_dummy(void);
 
 #endif /* !_GRES_H */

@@ -1,0 +1,2 @@
+usr/lib/*/slurm-wlm/accounting_storage_mysql.so
+usr/lib/*/slurm-wlm/jobcomp_mysql.so

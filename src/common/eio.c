@@ -90,6 +90,12 @@ struct eio_handle_components {
 	List new_objs;
 };
 
+typedef struct {
+	eio_obj_t **map;
+	unsigned int *nfds_ptr;
+	struct pollfd *pfds;
+} foreach_pollfd_t;
+
 /* Function prototypes */
 
 static int          _poll_internal(struct pollfd *pfds, unsigned int nfds,
@@ -106,15 +112,13 @@ eio_handle_t *eio_handle_create(uint16_t shutdown_wait)
 
 	eio->magic = EIO_MAGIC;
 
-	if (pipe(eio->fds) < 0) {
+	if (pipe2(eio->fds, O_CLOEXEC) < 0) {
 		error("%s: pipe: %m", __func__);
 		eio_handle_destroy(eio);
 		return (NULL);
 	}
 
 	fd_set_nonblocking(eio->fds[0]);
-	fd_set_close_on_exec(eio->fds[0]);
-	fd_set_close_on_exec(eio->fds[1]);
 
 	eio->obj_list = list_create(eio_obj_destroy);
 	eio->new_objs = list_create(eio_obj_destroy);
@@ -190,7 +194,6 @@ int eio_message_socket_accept(eio_obj_t *obj, List objs)
 	}
 
 	net_set_keep_alive(fd);
-	fd_set_close_on_exec(fd);
 	fd_set_blocking(fd);
 
 	debug2("%s: got message connection from %pA %d", __func__, &addr, fd);
@@ -236,16 +239,12 @@ int eio_signal_wakeup(eio_handle_t *eio)
 	return 0;
 }
 
-static void _mark_shutdown_true(List obj_list)
+static int _mark_shutdown_true(void *x, void *arg)
 {
-	ListIterator objs;
-	eio_obj_t *obj;
+	eio_obj_t *obj = x;
 
-	objs = list_iterator_create(obj_list);
-	while ((obj = list_next(objs))) {
-		obj->shutdown = true;
-	}
-	list_iterator_destroy(objs);
+	obj->shutdown = true;
+	return 0;
 }
 
 static int _eio_wakeup_handler(eio_handle_t *eio)
@@ -255,14 +254,14 @@ static int _eio_wakeup_handler(eio_handle_t *eio)
 
 	while ((rc = (read(eio->fds[0], &c, 1)) > 0)) {
 		if (c == 1)
-			_mark_shutdown_true(eio->obj_list);
+			list_for_each(eio->obj_list, _mark_shutdown_true, NULL);
 	}
 
 	/* move new eio objects from the new_objs to the obj_list */
 	list_transfer(eio->obj_list, eio->new_objs);
 
 	if (rc < 0)
-		return error("eio_clear: read: %m");
+		return error("%s: read: %m", __func__);
 
 	return 0;
 }
@@ -374,41 +373,54 @@ static bool _is_readable(eio_obj_t *obj)
 	return (obj->ops->readable && (*obj->ops->readable)(obj));
 }
 
+static int _foreach_helper_setup_pollfds(void *x, void *arg)
+{
+	eio_obj_t *obj = x;
+	foreach_pollfd_t *hargs = arg;
+	struct pollfd *pfds = hargs->pfds;
+	eio_obj_t **map = hargs->map;
+	unsigned int nfds = *hargs->nfds_ptr;
+	bool readable, writable;
+
+	writable = _is_writable(obj);
+	readable = _is_readable(obj);
+	if (writable && readable) {
+		pfds[nfds].fd     = obj->fd;
+		pfds[nfds].events = POLLOUT | POLLIN | POLLHUP | POLLRDHUP;
+		map[nfds]         = obj;
+	} else if (readable) {
+		pfds[nfds].fd     = obj->fd;
+		pfds[nfds].events = POLLIN | POLLRDHUP;
+		map[nfds]         = obj;
+	} else if (writable) {
+		pfds[nfds].fd     = obj->fd;
+		pfds[nfds].events = POLLOUT | POLLHUP;
+		map[nfds]         = obj;
+	}
+
+	if (writable || readable)
+		(*hargs->nfds_ptr)++;
+
+	return 0;
+}
+
 static unsigned int _poll_setup_pollfds(struct pollfd *pfds, eio_obj_t *map[],
 					List l)
 {
-	ListIterator  i    = list_iterator_create(l);
-	eio_obj_t    *obj  = NULL;
 	unsigned int  nfds = 0;
-	bool          readable, writable;
+	foreach_pollfd_t args = {
+		.pfds = pfds,
+		.map = map,
+		.nfds_ptr = &nfds
+	};
 
 	if (!pfds) {	/* Fix for CLANG false positive */
 		fatal("%s: pollfd data structure is null", __func__);
 		return nfds;
 	}
 
-	while ((obj = list_next(i))) {
-		writable = _is_writable(obj);
-		readable = _is_readable(obj);
-		if (writable && readable) {
-			pfds[nfds].fd     = obj->fd;
-			pfds[nfds].events = POLLOUT | POLLIN |
-					    POLLHUP | POLLRDHUP;
-			map[nfds]         = obj;
-			nfds++;
-		} else if (readable) {
-			pfds[nfds].fd     = obj->fd;
-			pfds[nfds].events = POLLIN | POLLRDHUP;
-			map[nfds]         = obj;
-			nfds++;
-		} else if (writable) {
-			pfds[nfds].fd     = obj->fd;
-			pfds[nfds].events = POLLOUT | POLLHUP;
-			map[nfds]         = obj;
-			nfds++;
-		}
-	}
-	list_iterator_destroy(i);
+	list_for_each(l, _foreach_helper_setup_pollfds, &args);
+
 	return nfds;
 }
 
@@ -552,20 +564,7 @@ void eio_new_obj(eio_handle_t *eio, eio_obj_t *obj)
 
 bool eio_remove_obj(eio_obj_t *obj, List objs)
 {
-	ListIterator i;
-	eio_obj_t *obj1;
-	bool ret = false;
-
 	xassert(obj != NULL);
 
-	i  = list_iterator_create(objs);
-	while ((obj1 = list_next(i))) {
-		if (obj1 == obj) {
-			list_delete_item(i);
-			ret = true;
-			break;
-		}
-	}
-	list_iterator_destroy(i);
-	return ret;
+	return list_delete_ptr(objs, obj);
 }

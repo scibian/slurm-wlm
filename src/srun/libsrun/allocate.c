@@ -73,7 +73,6 @@ pthread_mutex_t msg_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t msg_cond = PTHREAD_COND_INITIALIZER;
 allocation_msg_thread_t *msg_thr = NULL;
 struct pollfd global_fds[1];
-uint16_t slurmctld_comm_port = 0;
 
 extern char **environ;
 
@@ -88,6 +87,8 @@ static void _signal_while_allocating(int signo);
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc);
 
 static sig_atomic_t destroy_job = 0;
+static bool is_het_job = false;
+static bool revoke_job = false;
 
 static void _set_pending_job_id(uint32_t job_id)
 {
@@ -138,16 +139,16 @@ static void _signal_while_allocating(int signo)
 /* This typically signifies the job was cancelled by scancel */
 static void _job_complete_handler(srun_job_complete_msg_t *msg)
 {
-	if (pending_job_id && (pending_job_id != msg->job_id)) {
+	if (!is_het_job && pending_job_id && (pending_job_id != msg->job_id)) {
 		error("Ignoring job_complete for job %u because our job ID is %u",
 		      msg->job_id, pending_job_id);
 		return;
 	}
 
-	if (msg->step_id == NO_VAL)
-		info("Force Terminated job %u", msg->job_id);
-	else
+	/* Only print if we know we were signaled */
+	if (destroy_job)
 		info("Force Terminated %ps", msg);
+	revoke_job = true;
 }
 
 /*
@@ -261,6 +262,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		rc = slurm_job_node_ready(alloc->job_id);
 		if (rc == READY_JOB_FATAL)
 			break;				/* fatal error */
+		if (destroy_job || revoke_job)
+			break;
 		if ((rc == READY_JOB_ERROR) || (rc == EAGAIN))
 			continue;			/* retry */
 		if ((rc & READY_JOB_STATE) == 0) {	/* job killed */
@@ -272,8 +275,6 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			is_ready = 1;
 			break;
 		}
-		if (destroy_job)
-			break;
 	}
 	if (is_ready) {
 		resource_allocation_response_msg_t *resp;
@@ -451,7 +452,7 @@ extern resource_allocation_response_msg_t *
 				error("Something is wrong with the boot of the nodes.");
 			goto relinquish;
 		}
-	} else if (destroy_job) {
+	} else if (destroy_job || revoke_job) {
 		goto relinquish;
 	}
 
@@ -464,7 +465,7 @@ extern resource_allocation_response_msg_t *
 
 relinquish:
 	if (resp) {
-		if (destroy_job)
+		if (destroy_job || revoke_job)
 			slurm_complete_job(resp->job_id, 1);
 		slurm_free_resource_allocation_response_msg(resp);
 	}
@@ -556,6 +557,8 @@ List allocate_het_job_nodes(bool handle_signals)
 		for (i = 0; sig_array[i]; i++)
 			xsignal(sig_array[i], _signal_while_allocating);
 	}
+
+	is_het_job = true;
 
 	while (first_opt && !job_resp_list) {
 		job_resp_list = slurm_allocate_het_job_blocking(job_req_list,
@@ -700,37 +703,6 @@ extern List existing_allocation(void)
 	return job_resp_list;
 }
 
-/* Set up port to handle messages from slurmctld */
-int slurmctld_msg_init(void)
-{
-	slurm_addr_t slurm_address;
-	static int slurmctld_fd = -1;
-	uint16_t *ports;
-
-	if (slurmctld_fd >= 0)	/* May set early for queued job allocation */
-		return slurmctld_fd;
-
-	if ((ports = slurm_get_srun_port_range()))
-		slurmctld_fd = slurm_init_msg_engine_ports(ports);
-	else
-		slurmctld_fd = slurm_init_msg_engine_port(0);
-
-	if (slurmctld_fd < 0) {
-		error("slurm_init_msg_engine_port error %m");
-		exit(error_exit);
-	}
-
-	if (slurm_get_stream_addr(slurmctld_fd, &slurm_address) < 0) {
-		error("slurm_get_stream_addr error %m");
-		exit(error_exit);
-	}
-	fd_set_nonblocking(slurmctld_fd);
-	slurmctld_comm_port = slurm_get_port(&slurm_address);
-	debug2("srun PMI messages to port=%u", slurmctld_comm_port);
-
-	return slurmctld_fd;
-}
-
 /*
  * Create job description structure based off srun options
  * (see opt.h)
@@ -767,13 +739,6 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 		j->x11_target = xstrdup(opt.x11_target);
 		j->x11_target_port = opt.x11_target_port;
 	}
-
-	/*
-	 * srun uses the same listening port for the allocation response
-	 * message as all other messages
-	 */
-	j->alloc_resp_port = slurmctld_comm_port;
-	j->other_port = slurmctld_comm_port;
 
 	j->wait_all_nodes = 1;
 

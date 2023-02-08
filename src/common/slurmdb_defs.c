@@ -40,8 +40,8 @@
 
 #include "src/common/assoc_mgr.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/select.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -462,6 +462,9 @@ static uint32_t _str_2_job_flags(char *flags)
 	if (xstrcasestr(flags, "SchedBackfill"))
 		return SLURMDB_JOB_FLAG_BACKFILL;
 
+	if (xstrcasestr(flags, "StartRecieved"))
+		return SLURMDB_JOB_FLAG_START_R;
+
 	return SLURMDB_JOB_FLAG_NOTSET;
 }
 
@@ -643,7 +646,6 @@ static void _find_create_parent(slurmdb_assoc_rec_t *assoc_rec, List assoc_list,
 extern slurmdb_job_rec_t *slurmdb_create_job_rec()
 {
 	slurmdb_job_rec_t *job = xmalloc(sizeof(slurmdb_job_rec_t));
-	memset(&job->stats, 0, sizeof(slurmdb_stats_t));
 	job->array_task_id = NO_VAL;
 	job->derived_ec = NO_VAL;
 	job->state = JOB_PENDING;
@@ -683,7 +685,7 @@ extern slurmdb_assoc_usage_t *slurmdb_create_assoc_usage(int tres_cnt)
 	usage =	xmalloc(sizeof(slurmdb_assoc_usage_t));
 
 	usage->level_shares = NO_VAL;
-	usage->shares_norm = NO_VAL64;
+	usage->shares_norm = (double)NO_VAL64;
 	usage->usage_efctv = 0;
 	usage->usage_norm = (long double)NO_VAL;
 	usage->usage_raw = 0;
@@ -889,6 +891,15 @@ extern void slurmdb_free_assoc_rec_members(slurmdb_assoc_rec_t *assoc)
 		FREE_NULL_LIST(assoc->qos_list);
 		xfree(assoc->user);
 
+		/* Account with previously deleted users */
+		if (assoc->leaf_usage != assoc->usage)
+			slurmdb_destroy_assoc_usage(assoc->leaf_usage);
+		/*
+		 * Be crazy safe and set this to NULL as it should never be used
+		 * again!
+		 */
+		assoc->leaf_usage = NULL;
+
 		slurmdb_destroy_assoc_usage(assoc->usage);
 		/* NOTE assoc->user_rec is a soft reference, do not free here */
 		assoc->user_rec = NULL;
@@ -942,7 +953,6 @@ extern void slurmdb_destroy_job_rec(void *object)
 		xfree(job->nodes);
 		xfree(job->resv_name);
 		xfree(job->script);
-		slurmdb_free_slurmdb_stats_members(&job->stats);
 		FREE_NULL_LIST(job->steps);
 		xfree(job->submit_line);
 		xfree(job->system_comment);
@@ -1218,6 +1228,7 @@ extern void slurmdb_destroy_event_cond(void *object)
 
 	if (slurmdb_event) {
 		FREE_NULL_LIST(slurmdb_event->cluster_list);
+		FREE_NULL_LIST(slurmdb_event->format_list);
 		FREE_NULL_LIST(slurmdb_event->reason_list);
 		FREE_NULL_LIST(slurmdb_event->reason_uid_list);
 		FREE_NULL_LIST(slurmdb_event->state_list);
@@ -1591,6 +1602,8 @@ extern void slurmdb_init_qos_rec(slurmdb_qos_rec_t *qos, bool free_it,
 	qos->grp_submit_jobs = init_val;
 	qos->grp_wall = init_val;
 
+	qos->limit_factor = (double)init_val;
+
 	/* qos->max_tres_mins_pj = NULL; */
 	/* qos->max_tres_run_mins_pa = NULL; */
 	/* qos->max_tres_run_mins_pu = NULL; */
@@ -1610,7 +1623,6 @@ extern void slurmdb_init_qos_rec(slurmdb_qos_rec_t *qos, bool free_it,
 
 	qos->usage_factor = (double)init_val;
 	qos->usage_thres = (double)init_val;
-	qos->limit_factor = (double)init_val;
 }
 
 extern void slurmdb_init_res_rec(slurmdb_res_rec_t *res,
@@ -1851,22 +1863,16 @@ extern char *slurmdb_job_flags_str(uint32_t flags)
 		return xstrdup("None");
 
 	if (flags & SLURMDB_JOB_FLAG_NOTSET)
-		return xstrdup("NotSet");
-
-	if (flags & SLURMDB_JOB_FLAG_SUBMIT)
+		xstrcat(job_flags, "SchedNotSet");
+	else if (flags & SLURMDB_JOB_FLAG_SUBMIT)
 		xstrcat(job_flags, "SchedSubmit");
 	else if (flags & SLURMDB_JOB_FLAG_SCHED)
 		xstrcat(job_flags, "SchedMain");
 	else if (flags & SLURMDB_JOB_FLAG_BACKFILL)
 		xstrcat(job_flags, "SchedBackfill");
 
-	/*
-	 * In the future if there are more flags we will need to add comma's to
-	 * the end of Backfilled and NormalSched above and uncomment this code
-	 * below.
-	 */
-	/* if (job_flags) */
-	/* 	job_flags[strlen(job_flags)-1] = '\0'; */
+	if (flags & SLURMDB_JOB_FLAG_START_R)
+		xstrfmtcat(job_flags, "%sStartRecieved", job_flags ? "," : "");
 
 	return job_flags;
 }
@@ -2387,17 +2393,16 @@ extern char *get_qos_complete_str_bitstr(List qos_list, bitstr_t *valid_qos)
 	return print_this;
 }
 
-extern char *get_qos_complete_str(List qos_list, List num_qos_list)
+extern List get_qos_name_list(List qos_list, List num_qos_list)
 {
-	List temp_list = NULL;
-	char *temp_char = NULL;
-	char *print_this = NULL;
-	ListIterator itr = NULL;
-	int option = 0;
+	List temp_list;
+	char *temp_char;
+	ListIterator itr;
+	int option;
 
 	if (!qos_list || !list_count(qos_list)
 	    || !num_qos_list || !list_count(num_qos_list))
-		return xstrdup("");
+		return NULL;
 
 	temp_list = list_create(xfree_ptr);
 
@@ -2418,6 +2423,19 @@ extern char *get_qos_complete_str(List qos_list, List num_qos_list)
 		}
 	}
 	list_iterator_destroy(itr);
+	return temp_list;
+}
+
+extern char *get_qos_complete_str(List qos_list, List num_qos_list)
+{
+	List temp_list;
+	char *print_this;
+
+	if (!qos_list || !list_count(qos_list) || !num_qos_list ||
+	    !list_count(num_qos_list))
+		return xstrdup("");
+
+	temp_list = get_qos_name_list(qos_list, num_qos_list);
 
 	print_this = slurm_char_list_to_xstr(temp_list);
 	FREE_NULL_LIST(temp_list);
@@ -2825,189 +2843,87 @@ extern char *slurmdb_purge_string(uint32_t purge, char *string, int len,
 	return string;
 }
 
+typedef struct {
+	bool add_set;
+	bool equal_set;
+	int option;
+	List qos_list;
+} qos_char_list_args_t;
+
+static int _slurmdb_addto_qos_char_list_internal(List char_list, char *name,
+						 void *args_in)
+{
+	char *tmp_name;
+	uint32_t id;
+	qos_char_list_args_t *args = args_in;
+
+	int tmp_option = args->option;
+	if ((name[0] == '+') || (name[0] == '-')) {
+		tmp_option = name[0];
+		name++;
+	}
+
+	id = str_2_slurmdb_qos(args->qos_list, name);
+	if (id == NO_VAL) {
+		char *tmp = _get_qos_list_str(args->qos_list);
+		error("You gave a bad qos '%s'. Valid QOS's are %s", name, tmp);
+		xfree(tmp);
+		list_flush(char_list);
+		return SLURM_ERROR;
+	}
+
+	if (tmp_option) {
+		if (args->equal_set) {
+			error("You can't set qos equal to something and then add or subtract from it in the same line");
+			list_flush(char_list);
+			return SLURM_ERROR;
+		}
+		args->add_set = 1;
+		tmp_name = xstrdup_printf("%c%u", tmp_option, id);
+	} else {
+		if (args->add_set) {
+			error("You can't set qos equal to something and then add or subtract from it in the same line");
+			list_flush(char_list);
+			return SLURM_ERROR;
+		}
+		args->equal_set = 1;
+		tmp_name = xstrdup_printf("%u", id);
+	}
+
+	if (!list_find_first(char_list, slurm_find_char_in_list, tmp_name)) {
+		list_append(char_list, tmp_name);
+		return 1;
+	} else {
+		xfree(tmp_name);
+		return 0;
+	}
+}
+
 extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 				       char *names, int option)
 {
-	int i=0, start=0;
-	char *name = NULL, *tmp_char = NULL;
-	ListIterator itr = NULL;
-	char quote_c = '\0';
-	int quote = 0;
-	uint32_t id=0;
-	int count = 0;
-	int equal_set = 0;
-	int add_set = 0;
+	int count;
+	qos_char_list_args_t args = {0};
 
 	if (!char_list) {
 		error("No list was given to fill in");
 		return 0;
 	}
 
-	if (!qos_list || !list_count(qos_list)) {
-		debug2("No real qos_list");
-		return 0;
-	}
-
-	itr = list_iterator_create(char_list);
 	if (!xstrcmp(names, "")) {
 		list_append(char_list, xstrdup(""));
-		count = 1;
-	} else if (names) {
-		if (names[i] == '\"' || names[i] == '\'') {
-			quote_c = names[i];
-			quote = 1;
-			i++;
-		}
-		start = i;
-		while(names[i]) {
-			if (quote && names[i] == quote_c)
-				break;
-			else if (names[i] == '\"' || names[i] == '\'')
-				names[i] = '`';
-			else if (names[i] == ',') {
-				if ((i-start) > 0) {
-					int tmp_option = option;
-					if (names[start] == '+'
-					    || names[start] == '-') {
-						tmp_option = names[start];
-						start++;
-					}
-					name = xmalloc((i-start+1));
-					memcpy(name, names+start, (i-start));
-
-					id = str_2_slurmdb_qos(qos_list, name);
-					if (id == NO_VAL) {
-						char *tmp = _get_qos_list_str(
-							qos_list);
-						error("You gave a bad qos "
-						      "'%s'.  Valid QOS's are "
-						      "%s",
-						      name, tmp);
-						xfree(tmp);
-						xfree(name);
-						goto end_it;
-					}
-					xfree(name);
-
-					if (tmp_option) {
-						if (equal_set) {
-							error("You can't set "
-							      "qos equal to "
-							      "something and "
-							      "then add or "
-							      "subtract from "
-							      "it in the same "
-							      "line");
-							goto end_it;
-						}
-						add_set = 1;
-						name = xstrdup_printf(
-							"%c%u", tmp_option, id);
-					} else {
-						if (add_set) {
-							error("You can't set "
-							      "qos equal to "
-							      "something and "
-							      "then add or "
-							      "subtract from "
-							      "it in the same "
-							      "line");
-							goto end_it;
-						}
-						equal_set = 1;
-						name = xstrdup_printf("%u", id);
-					}
-					while((tmp_char = list_next(itr))) {
-						if (!xstrcasecmp(tmp_char,
-								 name))
-							break;
-					}
-
-					if (!tmp_char) {
-						list_append(char_list, name);
-						count++;
-					} else
-						xfree(name);
-
-					list_iterator_reset(itr);
-				}
-
-				i++;
-				start = i;
-				if (names[i] == ' ') {
-					error("There is a problem with "
-					      "your request.  It appears you "
-					      "have spaces inside your list.");
-					goto end_it;
-				}
-			}
-			i++;
-		}
-		if ((i-start) > 0) {
-			int tmp_option = option;
-			if (names[start] == '+' || names[start] == '-') {
-				tmp_option = names[start];
-				start++;
-			}
-			name = xmalloc((i-start)+1);
-			memcpy(name, names+start, (i-start));
-
-			id = str_2_slurmdb_qos(qos_list, name);
-			if (id == NO_VAL) {
-				char *tmp = _get_qos_list_str(qos_list);
-				error("You gave a bad qos "
-				      "'%s'.  Valid QOS's are "
-				      "%s",
-				      name, tmp);
-				xfree(tmp);
-				xfree(name);
-				goto end_it;
-			}
-			xfree(name);
-
-			if (tmp_option) {
-				if (equal_set) {
-					error("You can't set "
-					      "qos equal to "
-					      "something and "
-					      "then add or "
-					      "subtract from "
-					      "it in the same "
-					      "line");
-					goto end_it;
-				}
-				name = xstrdup_printf(
-					"%c%u", tmp_option, id);
-			} else {
-				if (add_set) {
-					error("You can't set "
-					      "qos equal to "
-					      "something and "
-					      "then add or "
-					      "subtract from "
-					      "it in the same "
-					      "line");
-					goto end_it;
-				}
-				name = xstrdup_printf("%u", id);
-			}
-			while((tmp_char = list_next(itr))) {
-				if (!xstrcasecmp(tmp_char, name))
-					break;
-			}
-			if (!tmp_char) {
-				list_append(char_list, name);
-				count++;
-			} else
-				xfree(name);
-		}
+		return 1;
 	}
+
+	args.option = option;
+	args.qos_list = qos_list;
+
+	count = slurm_parse_char_list(char_list, names, &args,
+				      _slurmdb_addto_qos_char_list_internal);
 	if (!count) {
 		error("You gave me an empty qos list");
 	}
 
-end_it:
-	list_iterator_destroy(itr);
 	return count;
 }
 
@@ -3472,6 +3388,8 @@ extern void slurmdb_copy_qos_rec_limits(slurmdb_qos_rec_t *out,
 	out->grp_tres_run_mins = xstrdup(in->grp_tres_run_mins);
 	out->grp_wall = in->grp_wall;
 
+	out->limit_factor = in->limit_factor;
+
 	out->max_jobs_pa = in->max_jobs_pa;
 	out->max_jobs_pu = in->max_jobs_pu;
 	out->max_jobs_accrue_pa = in->max_jobs_accrue_pa;
@@ -3507,8 +3425,6 @@ extern void slurmdb_copy_qos_rec_limits(slurmdb_qos_rec_t *out,
 
 	out->usage_factor = in->usage_factor;
 	out->usage_thres = in->usage_thres;
-	out->limit_factor = in->limit_factor;
-
 }
 
 extern slurmdb_tres_rec_t *slurmdb_copy_tres_rec(slurmdb_tres_rec_t *tres)
@@ -3777,16 +3693,17 @@ extern char *slurmdb_format_tres_str(
 		if (tmp_str[0] >= '0' && tmp_str[0] <= '9') {
 			int id = atoi(tmp_str);
 			if (id <= 0) {
-				error("slurmdb_format_tres_str: "
-				      "no id found at %s instead", tmp_str);
-				goto get_next;
+				error("%s: cannot convert %s to ID.",
+				      __func__, tmp_str);
+				return NULL;
 			}
+
 			if (!(tres_rec = list_find_first(
 				      full_tres_list, slurmdb_find_tres_in_list,
 				      &id))) {
-				debug("slurmdb_format_tres_str: "
-				      "No tres known by id %d", id);
-				goto get_next;
+				error("%s: no TRES known by id %d",
+				      __func__, id);
+				return NULL;
 			}
 		} else {
 			int end = 0;
@@ -3798,27 +3715,26 @@ extern char *slurmdb_format_tres_str(
 				end++;
 			}
 			if (!tmp_str[end]) {
-				error("slurmdb_format_tres_str: "
-				      "no id found at %s instead", tmp_str);
-				goto get_next;
+				error("%s: no TRES id found for %s",
+				      __func__, tmp_str);
+				return NULL;
 			}
 			tres_name = xstrndup(tmp_str, end);
 			if (!(tres_rec = list_find_first(
 				      full_tres_list,
 				      slurmdb_find_tres_in_list_by_type,
 				      tres_name))) {
-				debug("slurmdb_format_tres_str: "
-				      "No tres known by type %s", tres_name);
+				error("%s: no TRES known by type %s",
+				      __func__, tres_name);
 				xfree(tres_name);
-				goto get_next;
+				return NULL;
 			}
 			xfree(tres_name);
 		}
 
 		if (!(tmp_str = strchr(tmp_str, '='))) {
-			error("slurmdb_format_tres_str: "
-			      "no value found");
-			break;
+			error("%s: no value given as TRES type/id.", __func__);
+			return NULL;
 		}
 		count = strtoull(++tmp_str, &val_unit, 10);
 		if (val_unit && *val_unit != ',' && *val_unit != '\0' &&
@@ -3843,7 +3759,6 @@ extern char *slurmdb_format_tres_str(
 				   tres_rec->name ? "/" : "",
 				   tres_rec->name ? tres_rec->name : "",
 				   count);
-	get_next:
 		if (!(tmp_str = strchr(tmp_str, ',')))
 			break;
 		tmp_str++;

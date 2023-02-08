@@ -20,6 +20,8 @@ libcommon_la_SOURCES =				\
 	cgroup.h				\
 	cli_filter.c				\
 	cli_filter.h				\
+	conmgr.c				\
+	conmgr.h				\
 	cpu_frequency.c				\
 	cpu_frequency.h				\
 	cron.c					\
@@ -70,8 +72,6 @@ libcommon_la_SOURCES =				\
 	node_conf.h				\
 	node_features.c				\
 	node_features.h				\
-	node_select.c				\
-	node_select.h				\
 	openapi.c				\
 	openapi.h				\
 	optz.c					\
@@ -107,6 +107,8 @@ libcommon_la_SOURCES =				\
 	run_command.h				\
 	run_in_daemon.c				\
 	run_in_daemon.h				\
+	select.c				\
+	select.h				\
 	setproctitle.c				\
 	setproctitle.h				\
 	site_factor.c				\

@@ -172,12 +172,14 @@ enum cluster_fed_states {
  * slurmdb_job_[rec|cond]_t
  */
 #define SLURMDB_JOB_FLAG_NONE     0x00000000 /* No flags */
-#define SLURMDB_JOB_CLEAR_SCHED   0x0000000f /* clear scheduling bits */
-#define SLURMDB_JOB_FLAG_NOTSET   0x00000001 /* Not set */
-#define SLURMDB_JOB_FLAG_SUBMIT   0x00000002 /* Job was started on submit */
-#define SLURMDB_JOB_FLAG_SCHED    0x00000004 /* Job was started from main
-					      * scheduler */
-#define SLURMDB_JOB_FLAG_BACKFILL 0x00000008 /* Job was started from backfill */
+#define SLURMDB_JOB_CLEAR_SCHED   0x0000000f /* clear scheduling bits (0-3) */
+#define SLURMDB_JOB_FLAG_NOTSET   SLURM_BIT(0) /* Schedule bits not set */
+#define SLURMDB_JOB_FLAG_SUBMIT   SLURM_BIT(1) /* Job was started on submit */
+#define SLURMDB_JOB_FLAG_SCHED    SLURM_BIT(2) /* Job was started from main
+						* scheduler */
+#define SLURMDB_JOB_FLAG_BACKFILL SLURM_BIT(3) /* Job was started from
+						* backfill */
+#define SLURMDB_JOB_FLAG_START_R  SLURM_BIT(4) /* Job start rpc was recieved */
 
 /*
  * Slurm job condition flags
@@ -238,6 +240,10 @@ enum cluster_fed_states {
 
 /* Assoc flags */
 #define ASSOC_FLAG_DELETED  0x0001
+
+/* Event condition flags */
+#define SLURMDB_EVENT_COND_OPEN SLURM_BIT(0) /* Return only open events */
+
 /********************************************/
 
 /* Association conditions used for queries of the database */
@@ -506,6 +512,9 @@ typedef struct slurmdb_assoc_rec {
 
 	uint16_t is_def;           /* Is this the users default assoc/acct */
 
+	slurmdb_assoc_usage_t *leaf_usage; /* Points to usage for user assocs.
+					    * Holds usage of deleted users in
+					    * parent assocs (DON'T PACK) */
 	uint32_t lft;		   /* lft used for grouping sub
 				    * associations and jobs as a left
 				    * most container used with rgt */
@@ -727,6 +736,7 @@ typedef struct {
 
 typedef struct {
 	List cluster_list;	/* list of char * */
+	uint32_t cond_flags;    /* condition flags */
 	uint32_t cpus_max;      /* number of cpus high range */
 	uint32_t cpus_min;      /* number of cpus low range */
 	uint16_t event_type;    /* type of events (slurmdb_event_type_t),
@@ -820,7 +830,6 @@ typedef struct {
 	time_t start;
 	uint32_t state;
 	uint32_t state_reason_prev;
-	slurmdb_stats_t stats;
 	List    steps; /* list of slurmdb_step_rec_t *'s */
 	time_t submit;
 	char *submit_line;
@@ -831,7 +840,6 @@ typedef struct {
 	uint32_t timelimit;
 	uint64_t tot_cpu_sec;
 	uint64_t tot_cpu_usec;
-	uint16_t track_steps;
 	char *tres_alloc_str;
 	char *tres_req_str;
 	uint32_t uid;

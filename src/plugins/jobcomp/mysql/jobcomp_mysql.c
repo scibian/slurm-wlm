@@ -41,7 +41,7 @@
 #include <grp.h>
 #include <sys/types.h>
 #include "src/common/parse_time.h"
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/uid.h"
 
 /*
@@ -413,17 +413,4 @@ extern List jobcomp_p_get_jobs(slurmdb_job_cond_t *job_cond)
 	job_list = mysql_jobcomp_process_get_jobs(job_cond);
 
 	return job_list;
-}
-
-/*
- * expire old info from the storage
- */
-extern int jobcomp_p_archive(slurmdb_archive_cond_t *arch_cond)
-{
-	if (!jobcomp_mysql_conn || mysql_db_ping(jobcomp_mysql_conn) != 0) {
-		if (jobcomp_p_set_location(slurm_conf.job_comp_loc))
-			return SLURM_ERROR;
-	}
-
-	return mysql_jobcomp_process_archive(arch_cond);
 }

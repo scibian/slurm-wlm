@@ -45,7 +45,7 @@
 #include "src/common/list.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -53,7 +53,6 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/slurmctld/slurmctld.h"
 
-int with_slurmdbd = 0;
 uid_t db_api_uid = -1;
 /*
  * Local data
@@ -176,6 +175,7 @@ typedef struct slurm_acct_storage_ops {
 	int  (*node_down)          (void *db_conn, node_record_t *node_ptr,
 				    time_t event_time, char *reason,
 				    uint32_t reason_uid);
+	char *(*node_inx)          (void *db_conn, char *nodes);
 	int  (*node_up)            (void *db_conn, node_record_t *node_ptr,
 				    time_t event_time);
 	int  (*cluster_tres)       (void *db_conn, char *cluster_nodes,
@@ -186,6 +186,7 @@ typedef struct slurm_acct_storage_ops {
 	int  (*fini_ctld)          (void *db_conn,
 				    slurmdb_cluster_rec_t *cluster_rec);
 	int  (*job_start)          (void *db_conn, job_record_t *job_ptr);
+	int  (*job_heavy)          (void *db_conn, job_record_t *job_ptr);
 	int  (*job_complete)       (void *db_conn, job_record_t *job_ptr);
 	int  (*step_start)         (void *db_conn, step_record_t *step_ptr);
 	int  (*step_complete)      (void *db_conn, step_record_t *step_ptr);
@@ -207,6 +208,8 @@ typedef struct slurm_acct_storage_ops {
 	int (*clear_stats)         (void *db_conn);
 	int (*get_data)            (void *db_conn, acct_storage_info_t dinfo,
 				    void *data);
+	void (*send_all) (void *db_conn, time_t event_time,
+			  slurm_msg_type_t msg_type);
 	int (*shutdown)            (void *db_conn);
 } slurm_acct_storage_ops_t;
 /*
@@ -265,12 +268,14 @@ static const char *syms[] = {
 	"acct_storage_p_roll_usage",
 	"acct_storage_p_fix_runaway_jobs",
 	"clusteracct_storage_p_node_down",
+	"acct_storage_p_node_inx",
 	"clusteracct_storage_p_node_up",
 	"clusteracct_storage_p_cluster_tres",
 	"clusteracct_storage_p_register_ctld",
 	"clusteracct_storage_p_register_disconn_ctld",
 	"clusteracct_storage_p_fini_ctld",
 	"jobacct_storage_p_job_start",
+	"jobacct_storage_p_job_heavy",
 	"jobacct_storage_p_job_complete",
 	"jobacct_storage_p_step_start",
 	"jobacct_storage_p_step_complete",
@@ -285,6 +290,7 @@ static const char *syms[] = {
 	"acct_storage_p_get_stats",
 	"acct_storage_p_clear_stats",
 	"acct_storage_p_get_data",
+	"acct_storage_p_send_all",
 	"acct_storage_p_shutdown",
 };
 
@@ -300,7 +306,7 @@ static bool init_run = false;
 extern int jobacct_storage_job_start_direct(void *db_conn,
 					    job_record_t *job_ptr)
 {
-	if (with_slurmdbd && !job_ptr->db_index)
+	if (slurm_with_slurmdbd() && !job_ptr->db_index)
 		return SLURM_SUCCESS;
 
 	return jobacct_storage_g_job_start(db_conn, job_ptr);
@@ -795,6 +801,13 @@ extern int clusteracct_storage_g_node_down(void *db_conn,
 				  reason, reason_uid);
 }
 
+extern char *acct_storage_g_node_inx(void *db_conn, char *nodes)
+{
+	if (slurm_acct_storage_init() < 0)
+		return NULL;
+	return (*(ops.node_inx))(db_conn, nodes);
+}
+
 extern int clusteracct_storage_g_node_up(void *db_conn,
 					 node_record_t *node_ptr,
 					 time_t event_time)
@@ -876,6 +889,18 @@ extern int jobacct_storage_g_job_start(void *db_conn,
 	}
 
 	return (*(ops.job_start))(db_conn, job_ptr);
+}
+
+/*
+ * load into the storage heavy information of a job
+ */
+extern int jobacct_storage_g_job_heavy(void *db_conn, job_record_t *job_ptr)
+{
+	if (slurm_acct_storage_init() < 0)
+		return SLURM_ERROR;
+	if (slurm_conf.accounting_storage_enforce & ACCOUNTING_ENFORCE_NO_JOBS)
+		return SLURM_SUCCESS;
+	return (*(ops.job_heavy))(db_conn, job_ptr);
 }
 
 /*
@@ -1077,6 +1102,18 @@ extern int acct_storage_g_get_data(void *db_conn, acct_storage_info_t dinfo,
 	return (*(ops.get_data))(db_conn, dinfo, data);
 }
 
+
+/*
+ * Send all relavant information to the DBD.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern void acct_storage_g_send_all(void *db_conn, time_t event_time,
+				    slurm_msg_type_t msg_type)
+{
+	if (slurm_acct_storage_init() < 0)
+		return;
+	(*(ops.send_all))(db_conn, event_time, msg_type);
+}
 
 /*
  * Shutdown database server.

@@ -41,6 +41,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <time.h>
 #include <ctype.h>
 
@@ -71,11 +72,10 @@ char **assoc_mgr_tres_name_array;
 
 
 static int cpunfo_frequency = 0;
-static long hertz = 0;
+static long conv_units = 0;
 List prec_list = NULL;
 
 static int my_pagesize = 0;
-static DIR  *slash_proc = NULL;
 static int energy_profile = ENERGY_DATA_NODE_ENERGY_UP;
 
 static int _find_prec(void *x, void *key)
@@ -429,14 +429,11 @@ static int _get_process_memory_line(int in, jag_prec_t *prec)
 	return 1;
 }
 
-static int _remove_share_data(char *proc_stat_file, jag_prec_t *prec)
+static int _remove_share_data(char *proc_statm_file, jag_prec_t *prec)
 {
 	FILE *statm_fp = NULL;
-	char proc_statm_file[256];	/* Allow ~20x extra length */
 	int rc = 0, fd;
 
-	snprintf(proc_statm_file, sizeof(proc_statm_file), "%sm",
-		 proc_stat_file);
 	if (!(statm_fp = fopen(proc_statm_file, "r")))
 		return rc;  /* Assume the process went away */
 	fd = fileno(statm_fp);
@@ -499,12 +496,32 @@ static int _init_tres(jag_prec_t *prec, void *empty)
 	return SLURM_SUCCESS;
 }
 
-static void _handle_stats(char *proc_stat_file, char *proc_io_file,
-			  char *proc_smaps_file, jag_callbacks_t *callbacks,
-			  int tres_count)
+void _set_smaps_file(char **proc_smaps_file, pid_t pid)
+{
+	static int use_smaps_rollup = -1;
+
+	if (use_smaps_rollup == -1) {
+		xstrfmtcat(*proc_smaps_file, "/proc/%d/smaps_rollup", pid);
+		FILE *fd = fopen(*proc_smaps_file, "r");
+		if (fd) {
+			fclose(fd);
+			use_smaps_rollup = 1;
+			return;
+		}
+		use_smaps_rollup = 0;
+	}
+
+	if (use_smaps_rollup)
+		xstrfmtcat(*proc_smaps_file, "/proc/%d/smaps_rollup", pid);
+	else
+		xstrfmtcat(*proc_smaps_file, "/proc/%d/smaps", pid);
+}
+
+static void _handle_stats(pid_t pid, jag_callbacks_t *callbacks, int tres_count)
 {
 	static int no_share_data = -1;
 	static int use_pss = -1;
+	char *proc_file = NULL;
 	FILE *stat_fp = NULL;
 	FILE *io_fp = NULL;
 	int fd, fd2;
@@ -522,7 +539,8 @@ static void _handle_stats(char *proc_stat_file, char *proc_io_file,
 			use_pss = 0;
 	}
 
-	if (!(stat_fp = fopen(proc_stat_file, "r")))
+	xstrfmtcat(proc_file, "/proc/%u/stat", pid);
+	if (!(stat_fp = fopen(proc_file, "r")))
 		return;  /* Assume the process went away */
 	/*
 	 * Close the file on exec() of user tasks.
@@ -536,9 +554,9 @@ static void _handle_stats(char *proc_stat_file, char *proc_io_file,
 	 */
 	fd = fileno(stat_fp);
 	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1)
-		error("%s: fcntl(%s): %m", __func__, proc_stat_file);
+		error("%s: fcntl(%s): %m", __func__, proc_file);
 
-	prec = xmalloc(sizeof(jag_prec_t));
+	prec = xmalloc(sizeof(*prec));
 
 	if (!tres_count) {
 		assoc_mgr_lock_t locks = {
@@ -550,7 +568,7 @@ static void _handle_stats(char *proc_stat_file, char *proc_io_file,
 	}
 
 	prec->tres_count = tres_count;
-	prec->tres_data = xmalloc(prec->tres_count *
+	prec->tres_data = xcalloc(prec->tres_count,
 				  sizeof(acct_gather_data_t));
 
 	(void)_init_tres(prec, NULL);
@@ -571,14 +589,24 @@ static void _handle_stats(char *proc_stat_file, char *proc_io_file,
 	}
 
 	/* Remove shared data from rss */
-	if (no_share_data && !_remove_share_data(proc_stat_file, prec))
-		goto bail_out;
+	if (no_share_data) {
+		xfree(proc_file);
+		xstrfmtcat(proc_file, "/proc/%u/statm", pid);
+		if (!_remove_share_data(proc_file, prec))
+			goto bail_out;
+	}
 
 	/* Use PSS instead if RSS */
-	if (use_pss && _get_pss(proc_smaps_file, prec) == -1)
-		goto bail_out;
+	if (use_pss) {
+		xfree(proc_file);
+		_set_smaps_file(&proc_file, pid);
+		if (_get_pss(proc_file, prec) == -1)
+			goto bail_out;
+	}
 
-	if ((io_fp = fopen(proc_io_file, "r"))) {
+	xfree(proc_file);
+	xstrfmtcat(proc_file, "/proc/%u/io", pid);
+	if ((io_fp = fopen(proc_file, "r"))) {
 		fd2 = fileno(io_fp);
 		if (fcntl(fd2, F_SETFD, FD_CLOEXEC) == -1)
 			error("%s: fcntl: %m", __func__);
@@ -591,6 +619,7 @@ static void _handle_stats(char *proc_stat_file, char *proc_io_file,
 
 	destroy_jag_prec(list_remove_first(prec_list, _find_prec, &prec->pid));
 	list_append(prec_list, prec);
+	xfree(proc_file);
 	return;
 
 bail_out:
@@ -599,147 +628,40 @@ bail_out:
 	return;
 }
 
-static List _get_precs(List task_list, bool pgid_plugin, uint64_t cont_id,
+static List _get_precs(List task_list, uint64_t cont_id,
 		       jag_callbacks_t *callbacks)
 {
-	char	proc_stat_file[256];	/* Allow ~20x extra length */
-	char	proc_io_file[256];	/* Allow ~20x extra length */
-	char	proc_smaps_file[256];	/* Allow ~20x extra length */
-	static	int	slash_proc_open = 0;
-	int i;
+	int npids = 0;
 	struct jobacctinfo *jobacct = NULL;
+	pid_t *pids = NULL;
 
 	xassert(task_list);
 
 	jobacct = list_peek(task_list);
 
-	if (!pgid_plugin) {
-		pid_t *pids = NULL;
-		int npids = 0;
-		/* get only the processes in the proctrack container */
-		proctrack_g_get_pids(cont_id, &pids, &npids);
-		if (!npids) {
-			/* update consumed energy even if pids do not exist */
-			if (jobacct) {
-				acct_gather_energy_g_get_sum(
-					energy_profile,
-					&jobacct->energy);
-				jobacct->tres_usage_in_tot[TRES_ARRAY_ENERGY] =
-					jobacct->energy.consumed_energy;
-				jobacct->tres_usage_out_tot[TRES_ARRAY_ENERGY] =
-					jobacct->energy.current_watts;
-				log_flag(JAG, "energy = %"PRIu64" watts = %"PRIu64,
-					 jobacct->tres_usage_in_tot[
-						TRES_ARRAY_ENERGY],
-					 jobacct->tres_usage_out_tot[
-						TRES_ARRAY_ENERGY]);
-			}
-
-			log_flag(JAG, "no pids in this container %"PRIu64"",
-				 cont_id);
-			goto finished;
-		}
-		for (i = 0; i < npids; i++) {
-			snprintf(proc_stat_file, 256, "/proc/%d/stat", pids[i]);
-			snprintf(proc_io_file, 256, "/proc/%d/io", pids[i]);
-			snprintf(proc_smaps_file, 256, "/proc/%d/smaps", pids[i]);
-			_handle_stats(proc_stat_file, proc_io_file,
-				      proc_smaps_file, callbacks,
+	/* get only the processes in the proctrack container */
+	proctrack_g_get_pids(cont_id, &pids, &npids);
+	if (npids) {
+		for (int i = 0; i < npids; i++) {
+			_handle_stats(pids[i], callbacks,
 				      jobacct ? jobacct->tres_count : 0);
 		}
 		xfree(pids);
 	} else {
-		struct dirent *slash_proc_entry;
-		char  *iptr = NULL, *optr = NULL, *optr2 = NULL;
-
-		if (slash_proc_open) {
-			rewinddir(slash_proc);
-		} else {
-			slash_proc=opendir("/proc");
-			if (slash_proc == NULL) {
-				perror("opening /proc");
-				goto finished;
-			}
-			slash_proc_open=1;
+		/* update consumed energy even if pids do not exist */
+		if (jobacct) {
+			acct_gather_energy_g_get_sum(energy_profile,
+						     &jobacct->energy);
+			jobacct->tres_usage_in_tot[TRES_ARRAY_ENERGY] =
+				jobacct->energy.consumed_energy;
+			jobacct->tres_usage_out_tot[TRES_ARRAY_ENERGY] =
+				jobacct->energy.current_watts;
+			log_flag(JAG, "energy = %"PRIu64" watts = %u",
+				 jobacct->energy.consumed_energy,
+				 jobacct->energy.current_watts);
 		}
-		strcpy(proc_stat_file, "/proc/");
-		strcpy(proc_io_file, "/proc/");
-		strcpy(proc_smaps_file, "/proc/");
-
-		while ((slash_proc_entry = readdir(slash_proc))) {
-
-			/* Save a few cyles by simulating
-			 * strcat(statFileName, slash_proc_entry->d_name);
-			 * strcat(statFileName, "/stat");
-			 * while checking for a numeric filename (which really
-			 * should be a pid). Then do the same for the
-			 * /proc/<pid>/io file name.
-			 */
-			optr = proc_stat_file + sizeof("/proc");
-			iptr = slash_proc_entry->d_name;
-			i = 0;
-			do {
-				if ((*iptr < '0') ||
-				    ((*optr++ = *iptr++) > '9')) {
-					i = -1;
-					break;
-				}
-			} while (*iptr);
-
-			if (i == -1)
-				continue;
-			iptr = (char*)"/stat";
-
-			do {
-				*optr++ = *iptr++;
-			} while (*iptr);
-			*optr = 0;
-
-			optr2 = proc_io_file + sizeof("/proc");
-			iptr = slash_proc_entry->d_name;
-			i = 0;
-			do {
-				if ((*iptr < '0') ||
-				    ((*optr2++ = *iptr++) > '9')) {
-					i = -1;
-					break;
-				}
-			} while (*iptr);
-			if (i == -1)
-				continue;
-			iptr = (char*)"/io";
-
-			do {
-				*optr2++ = *iptr++;
-			} while (*iptr);
-			*optr2 = 0;
-
-			optr2 = proc_smaps_file + sizeof("/proc");
-			iptr = slash_proc_entry->d_name;
-			i = 0;
-			do {
-				if ((*iptr < '0') ||
-				    ((*optr2++ = *iptr++) > '9')) {
-					i = -1;
-					break;
-				}
-			} while (*iptr);
-			if (i == -1)
-				continue;
-			iptr = (char*)"/smaps";
-
-			do {
-				*optr2++ = *iptr++;
-			} while (*iptr);
-			*optr2 = 0;
-
-			_handle_stats(proc_stat_file, proc_io_file,
-				      proc_smaps_file, callbacks,
-				      jobacct ? jobacct->tres_count : 0);
-		}
+		log_flag(JAG, "no pids in this container %"PRIu64, cont_id);
 	}
-
-finished:
 
 	return prec_list;
 }
@@ -859,7 +781,7 @@ static void _record_profile(struct jobacctinfo *jobacct)
 	                                      (void *)data, jobacct->cur_time);
 }
 
-extern void jag_common_init(long in_hertz)
+extern void jag_common_init(long plugin_units)
 {
 	uint32_t profile_opt;
 
@@ -874,26 +796,17 @@ extern void jag_common_init(long in_hertz)
 	if (profile_opt & ACCT_GATHER_PROFILE_ENERGY)
 		energy_profile = ENERGY_DATA_NODE_ENERGY;
 
-	if (in_hertz) {
-		hertz = in_hertz;
-	} else {
-		hertz = sysconf(_SC_CLK_TCK);
+	if (plugin_units < 1)
+		fatal("Invalid units for statistics. Initialization failed.");
 
-		if (hertz < 1) {
-			error ("_get_process_data: unable to get clock rate");
-			hertz = 100;	/* default on many systems */
-		}
-	}
-
+	/* Dividing the gathered data by this unit will give seconds. */
+	conv_units = plugin_units;
 	my_pagesize = getpagesize();
 }
 
 extern void jag_common_fini(void)
 {
 	FREE_NULL_LIST(prec_list);
-
-	if (slash_proc)
-		(void) closedir(slash_proc);
 }
 
 extern void destroy_jag_prec(void *object)
@@ -936,9 +849,8 @@ static void _print_jag_prec(jag_prec_t *prec)
 	log_flag(JAG, "usec \t%f", prec->usec);
 }
 
-extern void jag_common_poll_data(
-	List task_list, bool pgid_plugin, uint64_t cont_id,
-	jag_callbacks_t *callbacks, bool profile)
+extern void jag_common_poll_data(List task_list, uint64_t cont_id,
+				 jag_callbacks_t *callbacks, bool profile)
 {
 	/* Update the data */
 	uint64_t total_job_mem = 0, total_job_vsize = 0;
@@ -954,7 +866,7 @@ extern void jag_common_poll_data(
 
 	xassert(callbacks);
 
-	if (!pgid_plugin && (cont_id == NO_VAL64)) {
+	if (cont_id == NO_VAL64) {
 		log_flag(JAG, "cont_id hasn't been set yet not running poll");
 		return;
 	}
@@ -971,7 +883,7 @@ extern void jag_common_poll_data(
 	ct = time(NULL);
 
 	(void)list_for_each(prec_list, (ListForF)_init_tres, NULL);
-	(*(callbacks->get_precs))(task_list, pgid_plugin, cont_id, callbacks);
+	(*(callbacks->get_precs))(task_list, cont_id, callbacks);
 
 	if (!list_count(prec_list) || !task_list || !list_count(task_list))
 		goto finished;	/* We have no business being here! */
@@ -1027,7 +939,7 @@ extern void jag_common_poll_data(
 		last_total_cputime =
 			(double)jobacct->tres_usage_in_tot[TRES_ARRAY_CPU];
 
-		cpu_calc = (prec->ssec + prec->usec) / (double)hertz;
+		cpu_calc = (prec->ssec + prec->usec) / (double) conv_units;
 
 		/*
 		 * Since we are not storing things as a double anymore make it
@@ -1100,8 +1012,10 @@ extern void jag_common_poll_data(
 		total_job_vsize += jobacct->tres_usage_in_tot[TRES_ARRAY_VMEM];
 
 		/* Update the cpu times */
-		jobacct->user_cpu_sec = (uint64_t)(prec->usec / (double)hertz);
-		jobacct->sys_cpu_sec = (uint64_t)(prec->ssec / (double)hertz);
+		jobacct->user_cpu_sec = (uint64_t)(prec->usec /
+						   (double)conv_units);
+		jobacct->sys_cpu_sec = (uint64_t)(prec->ssec /
+						  (double)conv_units);
 
 		/* compute frequency */
 		jobacct->this_sampled_cputime =

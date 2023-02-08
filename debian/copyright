@@ -6,7 +6,7 @@ Source: https://slurm.schedmd.com
 Files: *
 Copyright: 2001-2009 The Regents of the University of California
            2004,2008-2011 Lawrence Livermore National Security, LLC
-           2010-2020 SchedMD LLC
+           2010-2021 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: debian/*
@@ -16,6 +16,10 @@ Copyright: 2006-2017 Gennaro Oliva
            2014 Gregor Herrmann
            2014 Roland Fehrenbacher
            2016 Ana Guerrero Lopez
+License: GPL-2+
+
+Files: configure
+Copyright: 1992-1996, 1998-2017, 2020-2021 Free Software Foundation
 License: GPL-2+
 
 Files: src/api/pmi_server.c
@@ -51,13 +55,11 @@ Copyright: 2012,2014-2016 SchedMD LLC
 License: GPL-2+
 
 Files: contribs/perlapi/libslurmdb/perl/Slurmdb.pm
-       contribs/spank_direct_io.c
 Copyright: 2010 Lawrence Livermore National Security, LLC
 License: GPL-2+
 
 Files: contribs/pam/pam_slurm.c
        contribs/pam_slurm_adopt/helper.c
-       contribs/spank_core.c
        src/sattach/sattach.c
        src/sview/admin_info.c
        src/sview/common.c
@@ -90,7 +92,7 @@ Files: */Makefile.in
        auxdir/ltsugar.m4
        auxdir/ltversion.m4
        auxdir/lt~obsolete.m4
-Copyright: 1994-2020 Free Software Foundation, Inc
+Copyright: 1994-2021 Free Software Foundation, Inc
 License: FSF-unlimited
 
 Files: testsuite/expect/test1.102
@@ -150,6 +152,11 @@ Files: src/common/slurm_mcs.c
 Copyright: 2009,2012,2013,2015-2016 CEA/DAM/DIF
 License: GPL-2+ with OpenSSL exception
 
+Files: src/plugins/gpu/oneapi/gpu_oneapi.c
+Copyright: 2022 Intel Corporation
+           2019 SchedMD LLC
+License: GPL-2+ with OpenSSL exception
+
 Files: src/api/resource_functions.c
        src/common/cpu_frequency.c
        src/common/cpu_frequency.h
@@ -180,7 +187,6 @@ Files: src/plugins/mpi/pmix/mpi_pmix.c
        src/plugins/mpi/pmix/pmixp_agent.h
        src/plugins/mpi/pmix/pmixp_client.c
        src/plugins/mpi/pmix/pmixp_client.h
-       src/plugins/mpi/pmix/pmixp_client_v1.c
        src/plugins/mpi/pmix/pmixp_client_v2.c
        src/plugins/mpi/pmix/pmixp_coll.c
        src/plugins/mpi/pmix/pmixp_coll.h
@@ -320,6 +326,20 @@ Files: auxdir/x_ac_cray.m4
 Copyright: 2013,2015-2016 Cray Inc
 License: None
 
+Files: auxdir/x_ac_hpe_slingshot.m4
+Copyright: 2021 Hewlett Packard Enterprise Development LP
+License: None
+
+Files: src/plugins/switch/hpe_slingshot/config.c
+       src/plugins/switch/hpe_slingshot/setup_nic.c
+       src/plugins/switch/hpe_slingshot/switch_hpe_slingshot.?
+Copyright: 2021-2022 Hewlett Packard Enterprise Development LP
+License: GPL-2+ with OpenSSL exception
+
+Files: auxdir/ax_compare_version.m4
+Copyright: 2008 Tim Toolan <toolan@ele.uri.edu>
+License: FSF-all-permissive
+
 Files: contribs/pam_slurm_adopt/pam_slurm_adopt.c
        src/common/callerid.c
        src/common/callerid.h
@@ -404,7 +424,7 @@ Files: auxdir/compile
        auxdir/depcomp
        auxdir/missing
        auxdir/test-driver
-Copyright: 1996-2014 Free Software Foundation, Inc
+Copyright: 1996-2022 Free Software Foundation, Inc
 License: GPL-2+
 
 Files: src/common/slurm_protocol_api.h
@@ -531,7 +551,7 @@ License: GPL-2
 
 Files: auxdir/config.guess
        auxdir/config.sub
-Copyright: 1992-2018 Free Software Foundation, Inc
+Copyright: 1992-2022 Free Software Foundation, Inc
 License: GPL-3
 
 Files: aclocal.m4
@@ -733,7 +753,7 @@ Copyright: 2009 Timothy Brown
 License: FSF-all-permissive
 
 Files: auxdir/x_ac_curl.m4
-Copyright: 2006 David Shaw
+Copyright: 2006-2020 David Shaw <dshaw@jabberwocky.com>
 License: curl
 
 Files: auxdir/install-sh
@@ -747,6 +767,7 @@ License: FSF-all-permissive
 Files: auxdir/ax_pthread.m4
 Copyright: 2008 Steven G. Johnson
            2011 Daniel Richard G
+           2019 Marc Stevens <marc.stevens@cwi.nl>
 License: GPL-3+ with Autoconf exception
 
 Files: auxdir/ltmain.sh
@@ -765,6 +786,10 @@ License: None
 Files: src/plugins/openapi/*
 Copyright: Copyright (C) 2019-2020 SchedMD LLC
 License: GPL-2+ with OpenSSL exception or Apache-2.0
+
+Files: src/plugins/openapi/v0.0.38/reservations.c
+Copyright: 2020 UT-Battelle, LLC
+License: GPL-2+ with OpenSSL exception
 
 License: GPL-2+ with OpenSSL exception
  This file is part of SLURM, a resource management program.

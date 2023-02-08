@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  core_array.c - Handle functions dealing with core_arrays.
+ *  core_array.h - Handle functions dealing with core_arrays.
  *****************************************************************************
  *  Copyright (C) 2019 SchedMD LLC
  *
@@ -68,6 +68,11 @@ extern void core_array_and(bitstr_t **core_array1, bitstr_t **core_array2);
  * In other words, any bit set in row_bitmap2 is cleared from row_bitmap1
  */
 extern void core_array_and_not(bitstr_t **core_array1, bitstr_t **core_array2);
+
+/*
+ * Set core_array to ~core_array
+ */
+extern void core_array_not(bitstr_t **core_array);
 
 /*
  * Set row_bitmap1 to core_array1 | core_array2

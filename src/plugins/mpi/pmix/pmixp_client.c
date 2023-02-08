@@ -60,20 +60,8 @@
 #define PMIX_TDIR_RMCLEAN "pmix.tdir.rmclean"
 #endif
 
-#ifndef PMIX_VERSION_MAJOR
-#define PMIX_VERSION_MAJOR	1L
-#define PMIXP_PMIX_PRIOR_115	1
-#endif
-
-#if (HAVE_PMIX_VER == 1L)
-#if (PMIXP_PMIX_PRIOR_115 == 1)
-#define PMIXP_INFO_ARRAY_SET_ARRAY(kvp, _array) \
-	{ (kvp)->value.data.array.array = (struct pmix_info_t *)_array; }
-#else
 #define PMIXP_INFO_ARRAY_SET_ARRAY(kvp, _array) \
 	{ (kvp)->value.data.array.array = (pmix_info_t *)_array; }
-#endif
-#endif
 
 
 /* Check PMIx version */
@@ -83,19 +71,6 @@
 #pragma message "PMIx version mismatch: the major version seen during configuration was " VALUE(HAVE_PMIX_VER) "L but found " VALUE(PMIX_VERSION_MAJOR) " compilation will most likely fail.  Please reconfigure against the new version."
 #endif
 
-#if (HAVE_PMIX_VER == 1)
-#define PMIXP_INFO_ARRAY_CREATE(kvp, _array, _count)		\
-{								\
-	(kvp)->value.type = PMIX_INFO_ARRAY;			\
-	(kvp)->value.data.array.size = _count;			\
-	PMIXP_INFO_ARRAY_SET_ARRAY(kvp, _array);		\
-}
-
-#define PMIXP_VAL_SET_RANK(value, rank) {			\
-	PMIX_VAL_SET(value, int, rank);				\
-}
-
-#else
 #define PMIXP_INFO_ARRAY_CREATE(kvp, _array, _count)			\
 {									\
 	(kvp)->value.type = PMIX_DATA_ARRAY;				\
@@ -110,8 +85,6 @@
 	(value)->type = PMIX_PROC_RANK;				\
 	(value)->data.rank = _rank;				\
 }
-
-#endif
 
 static pthread_mutex_t _reg_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -570,13 +543,13 @@ extern void pmixp_lib_modex_invoke(void *mdx_fn, int status,
 		case SLURM_SUCCESS:
 			rc = PMIX_SUCCESS;
 			break;
-		case PMIXP_ERR_INVALID_NAMESPACE:
+		case PMIX_ERR_INVALID_NAMESPACE:
 			rc = PMIX_ERR_INVALID_NAMESPACE;
 			break;
-		case PMIXP_ERR_BAD_PARAM:
+		case PMIX_ERR_BAD_PARAM:
 			rc = PMIX_ERR_BAD_PARAM;
 			break;
-		case PMIXP_ERR_TIMEOUT:
+		case PMIX_ERR_TIMEOUT:
 			rc = PMIX_ERR_TIMEOUT;
 			break;
 		default:
@@ -593,14 +566,14 @@ extern void pmixp_lib_release_invoke(void *rel_fn, void *rel_data)
 }
 
 extern int pmixp_lib_dmodex_request(
-	pmixp_proc_t *proc, void *dmdx_fn, void *caddy)
+	pmix_proc_t *proc, void *dmdx_fn, void *caddy)
 {
 	pmix_status_t rc;
 	pmix_proc_t proc_v1;
 	pmix_dmodex_response_fn_t cbfunc = (pmix_dmodex_response_fn_t)dmdx_fn;
 
 	proc_v1.rank = (int)proc->rank;
-	strncpy(proc_v1.nspace, proc->nspace, PMIX_MAX_NSLEN);
+	strlcpy(proc_v1.nspace, proc->nspace, PMIX_MAX_NSLEN);
 
 	rc = PMIx_server_dmodex_request(&proc_v1, cbfunc, caddy);
 	if (PMIX_SUCCESS != rc) {
@@ -615,7 +588,7 @@ extern int pmixp_lib_setup_fork(uint32_t rank, const char *nspace, char ***env)
 	pmix_status_t rc;
 
 	proc.rank = rank;
-	strncpy(proc.nspace, nspace, PMIX_MAX_NSLEN);
+	strlcpy(proc.nspace, nspace, PMIX_MAX_NSLEN);
 	rc = PMIx_server_setup_fork(&proc, env);
 	if (PMIX_SUCCESS != rc) {
 		return SLURM_ERROR;
@@ -703,7 +676,7 @@ extern int pmixp_libpmix_job_set(void)
 	for (i = 0; i < pmixp_info_tasks_loc(); i++) {
 		pmix_proc_t proc;
 		register_caddy[i+1].active = 1;
-		strncpy(proc.nspace, pmixp_info_namespace(), PMIX_MAX_NSLEN);
+		strlcpy(proc.nspace, pmixp_info_namespace(), PMIX_MAX_NSLEN);
 		proc.rank = pmixp_info_taskid(i);
 		rc = PMIx_server_register_client(&proc, uid, gid, NULL,
 						 _release_cb,
@@ -756,7 +729,7 @@ extern int pmixp_libpmix_job_set(void)
 	return ret;
 }
 
-extern int pmixp_lib_fence(const pmixp_proc_t procs[], size_t nprocs,
+extern int pmixp_lib_fence(const pmix_proc_t procs[], size_t nprocs,
 			   bool collect, char *data, size_t ndata,
 			   void *cbfunc, void *cbdata)
 {

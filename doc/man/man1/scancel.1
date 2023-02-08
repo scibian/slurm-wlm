@@ -1,4 +1,4 @@
-.TH scancel "1" "Slurm Commands" "February 2022" "Slurm Commands"
+.TH scancel "1" "Slurm Commands" "August 2022" "Slurm Commands"
 
 .SH "NAME"
 scancel \- Used to signal jobs or job steps that are under the control of Slurm.
@@ -100,6 +100,10 @@ Restrict the scancel operation to jobs with this job name.
 .IP
 
 .TP
+\fB\-\-me\fR
+Restrict the scancel operation to jobs owned by the current user.
+
+.TP
 \fB\-w\fR, \fB\-\-nodelist=\fIhost1,host2,...\fR
 Cancel any jobs using any of the given hosts.  The list may be specified as
 a comma\-separated list of hosts, a range of hosts (host[1\-5,7,...] for
@@ -157,7 +161,7 @@ Print a brief help message listing the \fBscancel\fR options.
 
 .TP
 \fB\-u\fR, \fB\-\-user\fR=\fIuser_name\fR
-Restrict the scancel operation to jobs owned by this user.
+Restrict the scancel operation to jobs owned by the given user.
 .IP
 
 .TP
@@ -294,6 +298,13 @@ The location of the Slurm configuration file.
 .TP
 \fBSLURM_CLUSTERS\fR
 \fB\-M\fR, \fB\-\-clusters\fR
+.IP
+
+.TP
+\fBSLURM_DEBUG_FLAGS\fR
+Specify debug flags for scancel to use. See DebugFlags in the
+\fBslurm.conf\fR(5) man page for a full list of flags. The environment
+variable takes precedence over the setting in the slurm.conf.
 .IP
 
 .SH "NOTES"

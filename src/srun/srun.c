@@ -128,13 +128,12 @@ static void  _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc);
 static void *_launch_one_app(void *data);
 static void  _pty_restore(void);
 static void  _set_exit_code(void);
-static void  _set_node_alias(void);
+static void  _set_node_alias(srun_job_t *job, List srun_job_list);
 static void  _setup_env_working_cluster(void);
 static void  _setup_job_env(srun_job_t *job, List srun_job_list,
 			    bool got_alloc);
 static void  _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 				bool got_alloc);
-static int   _slurm_debug_env_val (void);
 static char *_uint16_array_to_str(int count, const uint16_t *array);
 
 /*
@@ -169,18 +168,15 @@ static bool _enable_het_job_steps(void)
 
 int srun(int ac, char **av)
 {
-	int debug_level;
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	bool got_alloc = false;
 	List srun_job_list = NULL;
 
 	slurm_conf_init(NULL);
-	debug_level = _slurm_debug_env_val();
-	logopt.stderr_level += debug_level;
 	log_init(xbasename(av[0]), logopt, 0, NULL);
 	_set_exit_code();
 
-	if (slurm_select_init(0) != SLURM_SUCCESS)
+	if (select_g_init(0) != SLURM_SUCCESS)
 		fatal( "failed to initialize node selection plugin" );
 
 	if (switch_init(0) != SLURM_SUCCESS )
@@ -188,7 +184,7 @@ int srun(int ac, char **av)
 
 	_setup_env_working_cluster();
 
-	init_srun(ac, av, &logopt, debug_level, 1);
+	init_srun(ac, av, &logopt, 1);
 	if (opt_list) {
 		if (!_enable_het_job_steps())
 			fatal("Job steps that span multiple components of a heterogeneous job are not currently supported");
@@ -196,6 +192,7 @@ int srun(int ac, char **av)
 	} else
 		create_srun_job((void **) &job, &got_alloc, 0, 1);
 
+	_set_node_alias(job, srun_job_list);
 	_setup_job_env(job, srun_job_list, got_alloc);
 
 	/*
@@ -213,7 +210,6 @@ int srun(int ac, char **av)
 		log_alter(logopt, 0, NULL);
 	}
 
-	_set_node_alias();
 	_launch_app(job, srun_job_list, got_alloc);
 
 	if ((global_rc & 0xff) == SIG_OOM)
@@ -232,7 +228,8 @@ int srun(int ac, char **av)
 
 
 #ifdef MEMORY_LEAK_DEBUG
-	slurm_select_fini();
+	mpi_fini();
+	select_g_fini();
 	switch_fini();
 	slurm_reset_all_options(&opt, false);
 	slurm_auth_fini();
@@ -633,7 +630,6 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	env->overcommit = opt_local->overcommit;
 	env->slurmd_debug = srun_opt->slurmd_debug;
 	env->labelio = srun_opt->labelio;
-	env->comm_port = slurmctld_comm_port;
 	if (opt_local->job_name)
 		env->job_name = opt_local->job_name;
 
@@ -801,21 +797,6 @@ static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	xfree(params);
 }
 
-static int _slurm_debug_env_val (void)
-{
-	long int level = 0;
-	const char *val;
-
-	if ((val = getenv ("SLURM_DEBUG"))) {
-		char *p;
-		if ((level = strtol (val, &p, 10)) < -LOG_LEVEL_INFO)
-			level = -LOG_LEVEL_INFO;
-		if (p && *p != '\0')
-			level = 0;
-	}
-	return ((int) level);
-}
-
 /*
  * Return a string representation of an array of uint32_t elements.
  * Each value in the array is printed in decimal notation and elements
@@ -881,33 +862,30 @@ static void _set_exit_code(void)
 	}
 }
 
-static void _set_node_alias(void)
+static int _foreach_set_node_alias(void *x, void *arg)
 {
-	char *aliases, *save_ptr = NULL, *tmp;
-	char *addr, *hostname, *slurm_name;
+	srun_job_t *job = x;
+	char *alias_list = NULL;
 
-	tmp = getenv("SLURM_NODE_ALIASES");
-	if (!tmp)
-		return;
-	aliases = xstrdup(tmp);
-	slurm_name = strtok_r(aliases, ":", &save_ptr);
-	while (slurm_name) {
-		/* Checking for [] around address */
-		if (save_ptr[0] == '[') {
-			save_ptr++;
-			addr = strtok_r(NULL, "]", &save_ptr);
-			save_ptr++;
-		} else
-			addr = strtok_r(NULL, ":", &save_ptr);
-		if (!addr)
-			break;
-		slurm_reset_alias(slurm_name, addr, addr);
-		hostname = strtok_r(NULL, ",", &save_ptr);
-		if (!hostname)
-			break;
-		slurm_name = strtok_r(NULL, ":", &save_ptr);
-	}
-	xfree(aliases);
+	xassert(job);
+
+	if (job &&
+	    job->step_ctx &&
+	    job->step_ctx->step_resp &&
+	    job->step_ctx->step_resp->cred &&
+	    (alias_list = slurm_cred_get_arg(job->step_ctx->step_resp->cred,
+					     CRED_ARG_JOB_ALIAS_LIST)))
+		set_nodes_alias(alias_list);
+
+	return SLURM_SUCCESS;
+}
+
+static void _set_node_alias(srun_job_t *job, List srun_job_list)
+{
+	if (srun_job_list)
+		list_for_each(srun_job_list, _foreach_set_node_alias, NULL);
+	else if (job)
+		_foreach_set_node_alias(job, NULL);
 }
 
 static void _pty_restore(void)
