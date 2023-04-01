@@ -1,26 +1,11 @@
-<<<<<<< HEAD
-slurm-wlm (21.08.8.2-1sci9u2) scibian9; urgency=medium
+slurm-wlm (22.05.8-3sci9u1) scibian9; urgency=medium
 
-  * Revert back support of slurmrestd
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
 
- -- KWAME AMEDODJI <kwame-externe.amedodji@edf.fr>  Wed, 29 Jun 2022 10:30:40 +0200
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Sat, 01 Apr 2023 18:34:40 +0200
 
-slurm-wlm (21.08.8.2-1sci9u1) scibian9; urgency=medium
-
-  * Import Upstream release fixes CVE-2022-29500,
-     CVE-2022-29501 and CVE-2022-29502
-     (Closes: #1010632, #1010633, #1010634)
-  * Update libslurm symbols file
-
- -- Thierno BALDE <thierno.balde@edf.fr>  Wed, 08 Jun 2022 14:51:57 +0200
-
-slurm-wlm (21.08.7-1sci9u1) scibian9; urgency=medium
-
-  * Backport to scibian9
-  * Update wait health check patch for slurm 21.08.7
-
- -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:03:06 +0200
-=======
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
   * Source only upload for testing
@@ -85,7 +70,28 @@ slurm-wlm (21.08.8.2-1.1) unstable; urgency=medium
   * tests: increase number of attempts in sbatch (Closes: #1014506)
 
  -- Paul Gevers <elbrus@debian.org>  Thu, 10 Nov 2022 13:28:47 +0100
->>>>>>> master
+
+slurm-wlm (21.08.8.2-1sci9u2) scibian9; urgency=medium
+
+  * Revert back support of slurmrestd
+
+ -- KWAME AMEDODJI <kwame-externe.amedodji@edf.fr>  Wed, 29 Jun 2022 10:30:40 +0200
+
+slurm-wlm (21.08.8.2-1sci9u1) scibian9; urgency=medium
+
+  * Import Upstream release fixes CVE-2022-29500,
+     CVE-2022-29501 and CVE-2022-29502
+     (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Thierno BALDE <thierno.balde@edf.fr>  Wed, 08 Jun 2022 14:51:57 +0200
+
+slurm-wlm (21.08.7-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Update wait health check patch for slurm 21.08.7
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:03:06 +0200
 
 slurm-wlm (21.08.8.2-1) unstable; urgency=medium
 
