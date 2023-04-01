@@ -1,4 +1,4 @@
-.TH sreport "1" "Slurm Commands" "July 2021" "Slurm Commands"
+.TH sreport "1" "Slurm Commands" "October 2022" "Slurm Commands"
 
 .SH "NAME"
 sreport \- Generate reports from the slurm accounting data.
@@ -304,11 +304,11 @@ This does not include reservations created with the MAINT or IGNORE_JOBS
 flags.
 .IP Down
 
-Time that nodes were marked as Down or time that slurmctld was not
-responding (assuming TrackSlurmctldDown is set in slurmdbd.conf).
+Time that nodes were marked as Down or fully Drained, or time that slurmctld was
+not responding (assuming TrackSlurmctldDown is set in slurmdbd.conf).
 .IP Idle
 
-Time where nodes had no active jobs or reservations.
+Time that nodes were not Allocated, Down, PlannedDown, or Planned.
 .IP OverCommitted
 
 Time of eligible jobs waiting in the queue over the Planned time. Unlike
@@ -317,12 +317,13 @@ system is overloaded and by how much.
 .IP PlannedDown
 
 Time that nodes were in use by a reservation created with the MAINT flag
-but not the IGNORE_JOBS flag.
+but not the IGNORE_JOBS flag. Also, time that nodes were in the FUTURE state or
+CLOUD nodes that were POWERED_DOWN.
 .IP Planned
 
-Time that a node spent idle with eligible jobs in the queue that were
-unable to start due to time or size constraints. The maximum time is limited
-to the amount of time possible on the system. If this value is
+Time that nodes were not Allocated, Down or PlannedDown with eligible jobs in
+the queue that were unable to start due to time or size constraints. The maximum
+time is limited to the amount of time possible on the system. If this value is
 not of importance for you then the number can be grouped with idle time.
 .IP TresCount
 
@@ -335,6 +336,9 @@ Note: Reservations created with the IGNORE_JOBS flag are not tracked
 in the Cluster Utilization report due to the fact that allowing any
 current/active jobs to continue to run in the reservation introduces the
 possibility for them to be accounted for incorrectly.
+The jobs in these reservations will be tracked as normal rather than
+being bundled in the reservation time, as they are with reservations that
+do not have the IGNORE_JOBS flag.
 .RE
 .RS
 

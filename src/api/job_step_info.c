@@ -44,8 +44,8 @@
 #include "slurm/slurm.h"
 
 #include "src/common/cpu_frequency.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -163,6 +163,7 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	char tmp_line[128];
 	char *out = NULL;
 	char *line_end = (one_liner) ? " " : "\n   ";
+	char *sorted_nodelist = NULL;
 	uint16_t flags = STEP_ID_FLAG_NONE;
 
 	/****** Line 1 ******/
@@ -191,9 +192,11 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 
 	/****** Line 2 ******/
 	xstrcat(out, line_end);
+	sorted_nodelist = slurm_sort_node_list_str(job_step_ptr->nodes);
 	xstrfmtcat(out, "State=%s Partition=%s NodeList=%s",
 		   job_state_string(job_step_ptr->state),
-		   job_step_ptr->partition, job_step_ptr->nodes);
+		   job_step_ptr->partition, sorted_nodelist);
+	xfree(sorted_nodelist);
 
 	/****** Line 3 ******/
 	convert_num_unit((float)_nodes_in_list(job_step_ptr->nodes),

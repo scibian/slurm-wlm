@@ -48,6 +48,7 @@
 #include "src/common/slurm_xlator.h"	/* Must be first */
 #include "src/common/macros.h"
 #include "src/common/pack.h"
+#include "src/common/select.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/locks.h"
@@ -125,7 +126,7 @@ typedef enum {
 extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
 extern slurm_conf_t slurm_conf __attribute__((weak_import));
 extern slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import));
-extern node_record_t *node_record_table_ptr __attribute__((weak_import));
+extern node_record_t **node_record_table_ptr __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
 extern time_t last_node_update __attribute__((weak_import));
 extern int slurmctld_primary __attribute__((weak_import));
@@ -135,7 +136,7 @@ extern bool ignore_state_errors __attribute__((weak_import));
 slurmctld_config_t slurmctld_config;
 slurm_conf_t slurm_conf;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
-node_record_t *node_record_table_ptr;
+node_record_t **node_record_table_ptr;
 int node_record_count;
 time_t last_node_update;
 int slurmctld_primary;
@@ -790,15 +791,15 @@ static void _set_job_running(job_record_t *job_ptr)
 		if (!bit_test(job_ptr->node_bitmap, i))
 			continue;
 
-		nodeinfo = node_record_table_ptr[i].select_nodeinfo->data;
+		nodeinfo = node_record_table_ptr[i]->select_nodeinfo->data;
 		if (!bit_test(jobinfo->blade_map, nodeinfo->blade_id)) {
 			bit_set(jobinfo->blade_map, nodeinfo->blade_id);
 
 			blade_array[nodeinfo->blade_id].job_cnt++;
 
 			if (jobinfo->npc == NPC_SYS) {
-				bit_nset(blade_nodes_running_npc, 0,
-					 node_record_count-1);
+				node_conf_set_all_active_bits(
+					blade_nodes_running_npc);
 			} else if (jobinfo->npc)
 				bit_or(blade_nodes_running_npc,
 				       blade_array[nodeinfo->blade_id].
@@ -825,8 +826,7 @@ static void _set_job_running_restore(select_jobinfo_t *jobinfo)
 		blade_array[i].job_cnt++;
 
 		if (jobinfo->npc == NPC_SYS) {
-			bit_nset(blade_nodes_running_npc, 0,
-				 node_record_count-1);
+			node_conf_set_all_active_bits(blade_nodes_running_npc);
 		} else if (jobinfo->npc)
 			bit_or(blade_nodes_running_npc,
 			       blade_array[i].node_bitmap);
@@ -1247,16 +1247,16 @@ extern int select_p_job_init(List job_list)
 	return other_job_init(job_list);
 }
 
-extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
+extern int select_p_node_init()
 {
 	select_nodeinfo_t *nodeinfo = NULL;
-	node_record_t *node_rec;
+	node_record_t *node_ptr;
 	int i, j, rc;
 	uint64_t blade_id = 0;
 	DEF_TIMERS;
 
 	if (scheduling_disabled)
-		return other_node_init(node_ptr, node_cnt);
+		return other_node_init();
 
 	START_TIMER;
 
@@ -1293,26 +1293,25 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 	slurm_mutex_lock(&blade_mutex);
 
 	if (!blade_array)
-		blade_array = xcalloc(node_cnt, sizeof(blade_info_t));
+		blade_array = xcalloc(node_record_count, sizeof(blade_info_t));
 
 	if (!blade_nodes_running_npc)
-		blade_nodes_running_npc = bit_alloc(node_cnt);
+		blade_nodes_running_npc = bit_alloc(node_record_count);
 
-	for (i = 0; i < node_cnt; i++) {
-		node_rec = &node_ptr[i];
-		if (!node_rec->select_nodeinfo)
-			node_rec->select_nodeinfo =
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
+		if (!node_ptr->select_nodeinfo)
+			node_ptr->select_nodeinfo =
 				select_g_select_nodeinfo_alloc();
-		nodeinfo = node_rec->select_nodeinfo->data;
+		nodeinfo = node_ptr->select_nodeinfo->data;
 		if (nodeinfo->nid == NO_VAL) {
 			char *nid_char;
 
-			if (!(nid_char = strpbrk(node_rec->name,
+			if (!(nid_char = strpbrk(node_ptr->name,
 						 "0123456789"))) {
 				error("(%s: %d: %s) Error: Node was not "
 				      "recognizable: %s",
 				      THIS_FILE, __LINE__, __func__,
-				      node_rec->name);
+				      node_ptr->name);
 				slurm_mutex_unlock(&blade_mutex);
 				return SLURM_ERROR;
 			}
@@ -1364,14 +1363,15 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 
 		if (j == blade_cnt) {
 			blade_cnt++;
-			blade_array[j].node_bitmap = bit_alloc(node_cnt);
+			blade_array[j].node_bitmap = bit_alloc(
+				node_record_count);
 		}
 
 		bit_set(blade_array[j].node_bitmap, i);
 		blade_array[j].id = blade_id;
 
 		debug2("got %s(%u) blade %u %"PRIu64" %"PRIu64" %d %d %d",
-		       node_rec->name, nodeinfo->nid, nodeinfo->blade_id,
+		       node_ptr->name, nodeinfo->nid, nodeinfo->blade_id,
 		       blade_id, blade_array[nodeinfo->blade_id].id,
 		       GET_BLADE_X(blade_array[nodeinfo->blade_id].id),
 		       GET_BLADE_Y(blade_array[nodeinfo->blade_id].id),
@@ -1385,7 +1385,7 @@ extern int select_p_node_init(node_record_t *node_ptr, int node_cnt)
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
-	rc = other_node_init(node_ptr, node_cnt);
+	rc = other_node_init();
 
 #ifdef HAVE_NATIVE_CRAY
 	if (!aeld_running)
@@ -1706,7 +1706,7 @@ extern int select_p_step_start(step_record_t *step_ptr)
 			if (!bit_test(step_ptr->step_node_bitmap, i))
 				continue;
 
-			nodeinfo = node_record_table_ptr[i].
+			nodeinfo = node_record_table_ptr[i]->
 				select_nodeinfo->data;
 			if (!bit_test(step_jobinfo->blade_map,
 				      nodeinfo->blade_id))
@@ -1817,6 +1817,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 {
 	int i;
 	static time_t last_set_all = 0;
+	node_record_t *node_ptr;
 
 	if (scheduling_disabled)
 		return other_select_nodeinfo_set_all();
@@ -1836,9 +1837,8 @@ extern int select_p_select_nodeinfo_set_all(void)
 
 	slurm_mutex_lock(&blade_mutex);
 	/* clear all marks */
-	for (i=0; i<node_record_count; i++) {
-		node_record_t *node_ptr = &(node_record_table_ptr[i]);
-		if (bit_test(blade_nodes_running_npc, i))
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
+		if (bit_test(blade_nodes_running_npc, node_ptr->index))
 			node_ptr->node_state |= NODE_STATE_NET;
 		else
 			node_ptr->node_state &= (~NODE_STATE_NET);

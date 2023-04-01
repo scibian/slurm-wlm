@@ -53,9 +53,9 @@
 #include "src/common/group_cache.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/common/select.h"
 #include "src/common/slurm_acct_gather_profile.h"
+#include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/uid.h"
 #include "src/common/xassert.h"
@@ -243,35 +243,29 @@ static void _task_info_array_destroy(stepd_step_rec_t *job)
 
 static void _slurm_cred_to_step_rec(slurm_cred_t *cred, stepd_step_rec_t *job)
 {
-	slurm_cred_arg_t cred_arg;
-	slurm_cred_get_args(cred, &cred_arg);
+	slurm_cred_arg_t *cred_arg = slurm_cred_get_args(cred);
 
 	/*
 	 * This may have been filed in already from batch_job_launch_msg_t
 	 * or launch_tasks_request_msg_t.
 	 */
-	if (!job->user_name) {
-		job->user_name = cred_arg.pw_name;
-		cred_arg.pw_name = NULL;
-	}
+	if (!job->user_name)
+		job->user_name = xstrdup(cred_arg->pw_name);
 
-	job->pw_gecos = cred_arg.pw_gecos;
-	cred_arg.pw_gecos = NULL;
-	job->pw_dir = cred_arg.pw_dir;
-	cred_arg.pw_dir = NULL;
-	job->pw_shell = cred_arg.pw_shell;
-	cred_arg.pw_shell = NULL;
+	job->pw_gecos = xstrdup(cred_arg->pw_gecos);
+	job->pw_dir = xstrdup(cred_arg->pw_dir);
+	job->pw_shell = xstrdup(cred_arg->pw_shell);
 
-	job->ngids = cred_arg.ngids;
-	job->gids = cred_arg.gids;
-	cred_arg.gids = NULL;
-	job->gr_names = cred_arg.gr_names;
-	cred_arg.gr_names = NULL;
+	job->ngids = cred_arg->ngids;
+	job->gids = cred_arg->gids;
+	cred_arg->gids = copy_gids(cred_arg->ngids, cred_arg->gids);
+	job->gr_names = copy_gr_names(cred_arg->ngids, cred_arg->gr_names);
 
-	job->selinux_context = cred_arg.selinux_context;
-	cred_arg.selinux_context = NULL;
+	job->selinux_context = xstrdup(cred_arg->selinux_context);
 
-	slurm_cred_free_args(&cred_arg);
+	job->alias_list = xstrdup(cred_arg->job_alias_list);
+
+	slurm_cred_unlock_args(cred);
 }
 
 /* create a slurmd job structure from a launch tasks message */
@@ -438,10 +432,9 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 	} else {
 		memset(&resp_addr, 0, sizeof(slurm_addr_t));
 	}
-	if (!msg->io_port)
-		msg->flags |= LAUNCH_USER_MANAGED_IO;
-	if ((msg->flags & LAUNCH_USER_MANAGED_IO) == 0) {
-		memcpy(&io_addr,   &msg->orig_addr, sizeof(slurm_addr_t));
+
+	if (msg->num_io_port) {
+		memcpy(&io_addr, &msg->orig_addr, sizeof(slurm_addr_t));
 		slurm_set_port(&io_addr,
 			       msg->io_port[nodeid % msg->num_io_port]);
 	} else {
@@ -659,8 +652,10 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 	job->argv = NULL;
 
 	_task_info_array_destroy(job);
-	if (job->eio)
+	if (job->eio) {
 		eio_handle_destroy(job->eio);
+		job->eio = NULL;
+	}
 	FREE_NULL_LIST(job->sruns);
 	FREE_NULL_LIST(job->clients);
 	FREE_NULL_LIST(job->stdout_eio_objs);
@@ -670,6 +665,7 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 	FREE_NULL_LIST(job->outgoing_cache);
 	FREE_NULL_LIST(job->job_gres_list);
 	FREE_NULL_LIST(job->step_gres_list);
+	xfree(job->alias_list);
 	xfree(job->container);
 	xfree(job->cpu_bind);
 	xfree(job->cwd);
@@ -679,8 +675,10 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 	xfree(job->pw_shell);
 	xfree(job->gids);
 	xfree(job->mem_bind);
-	if (job->msg_handle)
+	if (job->msg_handle) {
 		eio_handle_destroy(job->msg_handle);
+		job->msg_handle = NULL;
+	}
 	xfree(job->node_name);
 	mpmd_free(job);
 	xfree(job->het_job_task_cnts);
@@ -702,9 +700,10 @@ stepd_step_rec_destroy(stepd_step_rec_t *job)
 	xfree(job);
 }
 
-extern srun_info_t *
-srun_info_create(slurm_cred_t *cred, slurm_addr_t *resp_addr,
-		 slurm_addr_t *ioaddr, uid_t uid, uint16_t protocol_version)
+extern srun_info_t *srun_info_create(slurm_cred_t *cred,
+				     slurm_addr_t *resp_addr,
+				     slurm_addr_t *ioaddr, uid_t uid,
+				     uint16_t protocol_version)
 {
 	char             *data = NULL;
 	uint32_t          len  = 0;

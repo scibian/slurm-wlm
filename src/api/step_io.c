@@ -236,6 +236,7 @@ _create_server_eio_obj(int fd, client_io_t *cio, int nodeid,
 	info->out_remaining = 0;
 	info->out_eof = false;
 
+	net_set_keep_alive(fd);
 	eio = eio_obj_create(fd, &server_ops, (void *)info);
 
 	return eio;
@@ -603,6 +604,7 @@ static int _file_write(eio_obj_t *obj, List objs)
 					        info->cio->label,
 					        info->cio->taskid_width)) < 0) {
 			list_enqueue(info->cio->free_outgoing, info->out_msg);
+			info->out_msg = NULL;
 			info->eof = true;
 			return SLURM_ERROR;
 		}

@@ -109,7 +109,7 @@ extern void *slurm_rest_auth_p_get_db_conn(rest_auth_context_t *context)
 	errno = 0;
 	data->db_conn = slurmdb_connection_get(NULL);
 
-	if (!errno)
+	if (!errno && data->db_conn)
 		return data->db_conn;
 
 	error("%s: unable to connect to slurmdbd: %m",
@@ -144,9 +144,8 @@ static int _auth_socket(on_http_request_args_t *args,
 		return ESLURM_AUTH_CRED_INVALID;
 	} else if (cred.uid == 0) {
 		/* requesting socket is root */
-		error("%s: [%s] accepted root socket connection with uid:%u gid:%u pid:%ld",
-		      __func__, name, cred.uid, cred.gid,
-		      (long) cred.pid);
+		info("%s: [%s] accepted root socket connection with uid:%u gid:%u pid:%ld",
+		     __func__, name, cred.uid, cred.gid, (long) cred.pid);
 
 		/*
 		 * root can be any user if they want - default to
@@ -263,19 +262,7 @@ extern int slurm_rest_auth_p_apply(rest_auth_context_t *context)
 	xassert(((plugin_data_t *) context->plugin_data)->magic == MAGIC);
 	xassert(context->plugin_id == plugin_id);
 
-	/*
-	 * auth_munge does not support user aliasing: only allow same user
-	 * Always check for a NULL user and not rely on xstrcmp to do the
-	 * check. Neither user or context->user_name shoud never be NULL, but
-	 * just to be safe.
-	 */
-	if (!user || xstrcmp(context->user_name, user)) {
-		rc = ESLURM_AUTH_CRED_INVALID;
-		error("rejecting local auth for user %s", context->user_name);
-	} else {
-		rc = SLURM_SUCCESS;
-		info("apply local auth for user %s", context->user_name);
-	}
+	rc = auth_g_thread_config(NULL, context->user_name);
 
 	xfree(user);
 

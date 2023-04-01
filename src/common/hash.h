@@ -37,13 +37,9 @@
 #ifndef _COMMON_HASH_H_
 #define _COMMON_HASH_H_
 
-typedef struct {
-	unsigned char type;
-	unsigned char hash[32];
-} slurm_hash_t;
+#include "slurm/slurm.h"
 
 extern int hash_g_init(void);
-extern int hash_g_fini(void);
 
 extern int hash_g_compute(char *input, int len, char *custom_str, int cs_len,
 			  slurm_hash_t *hash);

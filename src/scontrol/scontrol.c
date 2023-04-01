@@ -45,6 +45,7 @@
 #include "src/common/proc_args.h"
 #include "src/common/strlcpy.h"
 #include "src/common/uid.h"
+#include "src/common/hash.h"
 
 #define OPT_LONG_HIDE    0x102
 #define OPT_LONG_LOCAL   0x103
@@ -932,6 +933,67 @@ static int _process_command (int argc, char **argv)
 				 tag);
 		}
 		exit_flag = 1;
+	} else if (!xstrncasecmp(tag, "gethost", MAX(tag_len, 7))) {
+		if (argc == 3)
+			scontrol_gethost(argv[1], argv[2]);
+		else {
+			exit_code = 1;
+			fprintf(stderr,
+				"two arguments required for keyword:%s\n",
+				tag);
+		}
+	} else if (!xstrncasecmp(tag, "hash_file", MAX(tag_len, 15))) {
+		if (argc > 3) {
+			exit_code = 1;
+			fprintf(stderr, "too many arguments for keyword:%s\n",
+				tag);
+		} else if (argc < 2) {
+			exit_code = 1;
+			fprintf(stderr, "missing argument for keyword:%s\n",
+				tag);
+		} else {
+			int hash_len;
+			buf_t *buf;
+			slurm_hash_t hash = { 0 };
+
+			if (argc > 2)
+				hash.type = atoi(argv[2]);
+
+			if (!(buf = create_mmap_buf(argv[1]))) {
+				exit_code = 1;
+				fprintf(stderr, "Can't open `%s`\n", argv[1]);
+			} else {
+				hash_len = hash_g_compute(buf->head, buf->size,
+							  NULL, 0, &hash);
+
+				free_buf(buf);
+				for (int i = 0; i < hash_len; i++)
+					printf("%02x", (int)hash.hash[i]);
+				printf("\n");
+			}
+		}
+	} else if (!xstrncasecmp(tag, "hash", MAX(tag_len, 9))) {
+		if (argc > 3) {
+			exit_code = 1;
+			fprintf(stderr, "too many arguments for keyword:%s\n",
+				tag);
+		} else if (argc < 2) {
+			exit_code = 1;
+			fprintf(stderr, "missing argument for keyword:%s\n",
+				tag);
+		} else {
+			int hash_len;
+			slurm_hash_t hash = { 0 };
+
+			if (argc > 2)
+				hash.type = atoi(argv[2]);
+
+			hash_len = hash_g_compute(argv[1], strlen(argv[1]),
+						  NULL, 0, &hash);
+			for (int i = 0; i < hash_len; i++)
+				printf("%02x", (int)hash.hash[i]);
+			printf("\n");
+		}
 	}
 	else if (xstrncasecmp(tag, "help", MAX(tag_len, 2)) == 0) {
 		if (argc > 1) {
@@ -1531,11 +1593,16 @@ static void _create_it(int argc, char **argv)
 		} else {
 			tag_len = strlen(tag);
 		}
-		if (!xstrncasecmp(tag, "ReservationName", MAX(tag_len, 3))) {
-			error_code = scontrol_create_res(argc, argv);
+		if (!xstrncasecmp(tag, "NodeName", MAX(tag_len, 3))) {
+			error_code = scontrol_create_node(argc, argv);
 			break;
-		} else if (!xstrncasecmp(tag, "PartitionName", MAX(tag_len, 3))) {
+		} else if (!xstrncasecmp(tag, "PartitionName",
+					 MAX(tag_len, 3))) {
 			error_code = scontrol_create_part(argc, argv);
+			break;
+		} else if (!xstrncasecmp(tag, "ReservationName",
+					 MAX(tag_len, 3))) {
+			error_code = scontrol_create_res(argc, argv);
 			break;
 		}
 	}
@@ -1560,26 +1627,39 @@ static void _delete_it(int argc, char **argv)
 	char *tag = NULL, *val = NULL;
 	int tag_len = 0;
 
-	if (argc != 1) {
-		error("Only one option follows delete.  %d given.", argc);
-		exit_code = 1;
-		return;
-	}
 
-	tag = argv[0];
-	val = strchr(argv[0], '=');
-	if (val) {
-		tag_len = val - argv[0];
-		val++;
+	if (argc == 1) {
+		tag = argv[0];
+		val = strchr(argv[0], '=');
+		if (val) {
+			tag_len = val - argv[0];
+			val++;
+		} else {
+			error("Proper format is 'delete <ENTITY>=<ID>' or 'delete <ENTITY> <ID>'");
+			exit_code = 1;
+			return;
+		}
+	} else if (argc == 2) {
+		tag = argv[0];
+		tag_len = strlen(argv[0]);
+		val = argv[1];
 	} else {
-		error("Proper format is 'delete Partition=p'"
-		      " or 'delete Reservation=r'");
+		error("Proper format is 'delete <ENTITY>=<ID>' or 'delete <ENTITY> <ID>'");
 		exit_code = 1;
 		return;
 	}
 
 	/* First identify the entity type to delete */
-	if (xstrncasecmp(tag, "PartitionName", MAX(tag_len, 3)) == 0) {
+	if (xstrncasecmp(tag, "NodeName", MAX(tag_len, 3)) == 0) {
+		update_node_msg_t node_msg = {0};
+		node_msg.node_names = val;
+		if (slurm_delete_node(&node_msg)) {
+			char errmsg[64];
+			snprintf(errmsg, 64, "delete_node %s", argv[0]);
+			slurm_perror(errmsg);
+			exit_code = 1;
+		}
+	} else if (xstrncasecmp(tag, "PartitionName", MAX(tag_len, 3)) == 0) {
 		delete_part_msg_t part_msg;
 		memset(&part_msg, 0, sizeof(part_msg));
 		part_msg.name = val;

@@ -98,47 +98,6 @@ struct hostent * get_host_by_name(const char *name,
 	return(hptr ? (struct hostent *) buf : NULL);
 }
 
-
-struct hostent * get_host_by_addr(const char *addr, int len, int type,
-				  void *buf, int buflen, int *h_err)
-{
-/*  gethostbyaddr() is not thread-safe, and there is no frelling standard
- *    for gethostbyaddr_r() -- the arg list varies from system to system!
- */
-	struct hostent *hptr;
-	int n = 0;
-
-	xassert(addr && buf);
-
-	slurm_mutex_lock(&hostentLock);
-	if ((hptr = gethostbyaddr(addr, len, type)))
-		n = copy_hostent(hptr, buf, buflen);
-	if (h_err)
-		*h_err = h_errno;
-	slurm_mutex_unlock(&hostentLock);
-
-	if (n < 0) {
-		errno = ERANGE;
-		return(NULL);
-	}
-	return(hptr ? (struct hostent *) buf : NULL);
-}
-
-
-const char * host_strerror(int h_err)
-{
-	if (h_err == HOST_NOT_FOUND)
-		return("Unknown host");
-	else if (h_err == TRY_AGAIN)
-		return("Transient host name lookup failure");
-	else if (h_err == NO_RECOVERY)
-		return("Unknown server error");
-	else if ((h_err == NO_ADDRESS) || (h_err == NO_DATA))
-		return("No address associated with name");
-	return("Unknown error");
-}
-
-
 static int copy_hostent(const struct hostent *src, char *buf, int len)
 {
 /*  Copies the (src) hostent struct (and all of its associated data)
@@ -326,11 +285,11 @@ struct addrinfo *get_addr_info(const char *hostname, uint16_t port)
  * NOTE: caller is responsible for freeing the resulting address.
  * Returns NULL on error.
  */
-char *get_name_info(struct sockaddr *addr, socklen_t addrlen, int flags)
+extern char *xgetnameinfo(struct sockaddr *addr, socklen_t addrlen)
 {
 	char hbuf[NI_MAXHOST];
 	int err = getnameinfo(addr, addrlen, hbuf, sizeof(hbuf), NULL, 0,
-			      (NI_NAMEREQD | flags));
+			      NI_NAMEREQD);
 
 	if (err == EAI_SYSTEM) {
 		error("%s: getnameinfo() failed: %s: %m",

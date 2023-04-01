@@ -67,6 +67,15 @@
 #define	_bit_mask(bit) ((bitstr_t)1 << ((bit)&BITSTR_MAXPOS))
 #endif
 
+/* mask for less significant bits within their word*/
+#ifdef SLURM_BIGENDIAN
+#define _bit_nmask(n) \
+	((~((bitstr_t) 0)) << ((BITSTR_MAXPOS + 1) - ((n) & BITSTR_MAXPOS)))
+#else
+#define _bit_nmask(n) \
+	(((bitstr_t) 1 << ((n) & BITSTR_MAXPOS)) - 1)
+#endif
+
 /* number of bits actually allocated to a bitstr */
 #define _bitstr_bits(name) 	((name)[1])
 
@@ -110,8 +119,6 @@ strong_alias(bit_set_all,	slurm_bit_set_all);
 strong_alias(bit_clear_all,	slurm_bit_clear_all);
 strong_alias(bit_ffc,		slurm_bit_ffc);
 strong_alias(bit_ffs,		slurm_bit_ffs);
-strong_alias(bit_free,		slurm_bit_free);
-strong_alias(bit_realloc,	slurm_bit_realloc);
 strong_alias(bit_size,		slurm_bit_size);
 strong_alias(bit_and,		slurm_bit_and);
 strong_alias(bit_not,		slurm_bit_not);
@@ -147,6 +154,78 @@ strong_alias(bit_copybits,	slurm_bit_copybits);
 strong_alias(bit_get_bit_num,	slurm_bit_get_bit_num);
 strong_alias(bit_get_pos_num,	slurm_bit_get_pos_num);
 
+#ifdef SLURM_BIGENDIAN
+static const char* hexmask_lookup[256] = {
+	"00",	"80",	"40",	"C0",	"20",	"A0",	"60",	"E0",
+	"10",	"90",	"50",	"D0",	"30",	"B0",	"70",	"F0",
+	"08",	"88",	"48",	"C8",	"28",	"A8",	"68",	"E8",
+	"18",	"98",	"58",	"D8",	"38",	"B8",	"78",	"F8",
+	"04",	"84",	"44",	"C4",	"24",	"A4",	"64",	"E4",
+	"14",	"94",	"54",	"D4",	"34",	"B4",	"74",	"F4",
+	"0C",	"8C",	"4C",	"CC",	"2C",	"AC",	"6C",	"EC",
+	"1C",	"9C",	"5C",	"DC",	"3C",	"BC",	"7C",	"FC",
+	"02",	"82",	"42",	"C2",	"22",	"A2",	"62",	"E2",
+	"12",	"92",	"52",	"D2",	"32",	"B2",	"72",	"F2",
+	"0A",	"8A",	"4A",	"CA",	"2A",	"AA",	"6A",	"EA",
+	"1A",	"9A",	"5A",	"DA",	"3A",	"BA",	"7A",	"FA",
+	"06",	"86",	"46",	"C6",	"26",	"A6",	"66",	"E6",
+	"16",	"96",	"56",	"D6",	"36",	"B6",	"76",	"F6",
+	"0E",	"8E",	"4E",	"CE",	"2E",	"AE",	"6E",	"EE",
+	"1E",	"9E",	"5E",	"DE",	"3E",	"BE",	"7E",	"FE",
+	"01",	"81",	"41",	"C1",	"21",	"A1",	"61",	"E1",
+	"11",	"91",	"51",	"D1",	"31",	"B1",	"71",	"F1",
+	"09",	"89",	"49",	"C9",	"29",	"A9",	"69",	"E9",
+	"19",	"99",	"59",	"D9",	"39",	"B9",	"79",	"F9",
+	"05",	"85",	"45",	"C5",	"25",	"A5",	"65",	"E5",
+	"15",	"95",	"55",	"D5",	"35",	"B5",	"75",	"F5",
+	"0D",	"8D",	"4D",	"CD",	"2D",	"AD",	"6D",	"ED",
+	"1D",	"9D",	"5D",	"DD",	"3D",	"BD",	"7D",	"FD",
+	"03",	"83",	"43",	"C3",	"23",	"A3",	"63",	"E3",
+	"13",	"93",	"53",	"D3",	"33",	"B3",	"73",	"F3",
+	"0B",	"8B",	"4B",	"CB",	"2B",	"AB",	"6B",	"EB",
+	"1B",	"9B",	"5B",	"DB",	"3B",	"BB",	"7B",	"FB",
+	"07",	"87",	"47",	"C7",	"27",	"A7",	"67",	"E7",
+	"17",	"97",	"57",	"D7",	"37",	"B7",	"77",	"F7",
+	"0F",	"8F",	"4F",	"CF",	"2F",	"AF",	"6F",	"EF",
+	"1F",	"9F",	"5F",	"DF",	"3F",	"BF",	"7F",	"FF",
+};
+#else
+static const char* hexmask_lookup[256] = {
+	"00",	"01",	"02",	"03",	"04",	"05",	"06",	"07",
+	"08",	"09",	"0A",	"0B",	"0C",	"0D",	"0E",	"0F",
+	"10",	"11",	"12",	"13",	"14",	"15",	"16",	"17",
+	"18",	"19",	"1A",	"1B",	"1C",	"1D",	"1E",	"1F",
+	"20",	"21",	"22",	"23",	"24",	"25",	"26",	"27",
+	"28",	"29",	"2A",	"2B",	"2C",	"2D",	"2E",	"2F",
+	"30",	"31",	"32",	"33",	"34",	"35",	"36",	"37",
+	"38",	"39",	"3A",	"3B",	"3C",	"3D",	"3E",	"3F",
+	"40",	"41",	"42",	"43",	"44",	"45",	"46",	"47",
+	"48",	"49",	"4A",	"4B",	"4C",	"4D",	"4E",	"4F",
+	"50",	"51",	"52",	"53",	"54",	"55",	"56",	"57",
+	"58",	"59",	"5A",	"5B",	"5C",	"5D",	"5E",	"5F",
+	"60",	"61",	"62",	"63",	"64",	"65",	"66",	"67",
+	"68",	"69",	"6A",	"6B",	"6C",	"6D",	"6E",	"6F",
+	"70",	"71",	"72",	"73",	"74",	"75",	"76",	"77",
+	"78",	"79",	"7A",	"7B",	"7C",	"7D",	"7E",	"7F",
+	"80",	"81",	"82",	"83",	"84",	"85",	"86",	"87",
+	"88",	"89",	"8A",	"8B",	"8C",	"8D",	"8E",	"8F",
+	"90",	"91",	"92",	"93",	"94",	"95",	"96",	"97",
+	"98",	"99",	"9A",	"9B",	"9C",	"9D",	"9E",	"9F",
+	"A0",	"A1",	"A2",	"A3",	"A4",	"A5",	"A6",	"A7",
+	"A8",	"A9",	"AA",	"AB",	"AC",	"AD",	"AE",	"AF",
+	"B0",	"B1",	"B2",	"B3",	"B4",	"B5",	"B6",	"B7",
+	"B8",	"B9",	"BA",	"BB",	"BC",	"BD",	"BE",	"BF",
+	"C0",	"C1",	"C2",	"C3",	"C4",	"C5",	"C6",	"C7",
+	"C8",	"C9",	"CA",	"CB",	"CC",	"CD",	"CE",	"CF",
+	"D0",	"D1",	"D2",	"D3",	"D4",	"D5",	"D6",	"D7",
+	"D8",	"D9",	"DA",	"DB",	"DC",	"DD",	"DE",	"DF",
+	"E0",	"E1",	"E2",	"E3",	"E4",	"E5",	"E6",	"E7",
+	"E8",	"E9",	"EA",	"EB",	"EC",	"ED",	"EE",	"EF",
+	"F0",	"F1",	"F2",	"F3",	"F4",	"F5",	"F6",	"F7",
+	"F8",	"F9",	"FA",	"FB",	"FC",	"FD",	"FE",	"FF",
+};
+#endif
+
 /*
  * Allocate a bitstring.
  *   nbits (IN)		valid bits in new bitstring, initialized to all clear
@@ -170,31 +249,29 @@ bitstr_t *bit_alloc(bitoff_t nbits)
  *   nbits (IN)		valid bits in new bitstr
  *   RETURN		new bitstring
  */
-bitstr_t *bit_realloc(bitstr_t *b, bitoff_t nbits)
+bitstr_t *slurm_bit_realloc(bitstr_t **b, bitoff_t nbits)
 {
-	bitstr_t *new = NULL;
-
-	_assert_bitstr_valid(b);
+	_assert_bitstr_valid(*b);
 	_assert_valid_size(nbits);
-	new = xrealloc(b, _bitstr_words(nbits) * sizeof(bitstr_t));
 
-	_assert_bitstr_valid(new);
-	_bitstr_bits(new) = nbits;
+	xrecalloc(*b, _bitstr_words(nbits), sizeof(bitstr_t));
 
-	return new;
+	_assert_bitstr_valid(*b);
+	_bitstr_bits(*b) = nbits;
+
+	return *b;
 }
 
 /*
  * Free a bitstr.
  *   b (IN/OUT)	bitstr to be freed
  */
-void
-bit_free(bitstr_t *b)
+void slurm_bit_free(bitstr_t **b)
 {
-	xassert(b);
-	xassert(_bitstr_magic(b) == BITSTR_MAGIC);
-	_bitstr_magic(b) = 0;
-	xfree(b);
+	xassert(*b);
+	xassert(_bitstr_magic(*b) == BITSTR_MAGIC);
+	_bitstr_magic(*b) = 0;
+	xfree(*b);
 }
 
 /*
@@ -576,10 +653,19 @@ bit_super_set(bitstr_t *b1, bitstr_t *b2)
 	_assert_bitstr_valid(b2);
 	xassert(_bitstr_bits(b1) == _bitstr_bits(b2));
 
-	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8) {
+	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t) * 8) {
 		if (b1[_bit_word(bit)] != (b1[_bit_word(bit)] &
-		                           b2[_bit_word(bit)]))
-			return 0;
+		                           b2[_bit_word(bit)])) {
+			bitstr_t mask;
+			if ((bit + sizeof(bitstr_t) * 8) <= _bitstr_bits(b1))
+				return 0;
+			mask = _bit_nmask(_bitstr_bits(b1));
+			if ((b1[_bit_word(bit)] & mask) != (b1[_bit_word(bit)] &
+							    b2[_bit_word(bit)] &
+							    mask))
+				return 0;
+		}
+
 	}
 
 	return 1;
@@ -763,9 +849,9 @@ bit_set_count(bitstr_t *b)
 	for (bit = 0; (bit + word_size) <= bit_cnt; bit += word_size) {
 		count += hweight(b[_bit_word(bit)]);
 	}
-	for ( ; bit < bit_cnt; bit++) {
-		if (bit_test(b, bit))
-			count++;
+	if (bit < bit_cnt) {
+		uint64_t mask = _bit_nmask(bit_cnt);
+		count += hweight(b[_bit_word(bit)] & mask);
 	}
 	return count;
 }
@@ -788,17 +874,26 @@ bit_set_count_range(bitstr_t *b, int32_t start, int32_t end)
 	_assert_bit_valid(b,start);
 
 	end = MIN(end, _bitstr_bits(b));
-	eow = ((start+word_size-1)/word_size) * word_size;  /* end of word */
-	for ( bit = start; bit < end && bit < eow; bit++) {
-		if (bit_test(b, bit))
-			count++;
+	/* end of word */
+	eow = (((start + BITSTR_MAXPOS) >> BITSTR_SHIFT) << BITSTR_SHIFT);
+
+	bit = start;
+	if ((start < eow) && (eow <= end)) {
+		uint64_t mask = ~_bit_nmask(start);
+		count += hweight(b[_bit_word(bit)] & mask);
+		bit = eow;
+	} else if (eow > start) {
+		uint64_t mask = ~_bit_nmask(start);
+		mask &= _bit_nmask(end);
+		count += hweight(b[_bit_word(bit)] & mask);
+		bit = eow;
 	}
 	for (; (bit + word_size) <= end ; bit += word_size) {
 		count += hweight(b[_bit_word(bit)]);
 	}
-	for ( ; bit < end; bit++) {
-		if (bit_test(b, bit))
-			count++;
+	if (bit < end) {
+		uint64_t mask = _bit_nmask(end);
+		count += hweight(b[_bit_word(bit)] & mask);
 	}
 
 	return count;
@@ -825,13 +920,14 @@ static int32_t _bit_overlap_internal(bitstr_t *b1, bitstr_t *b2, bool count_it)
 		else if (anded)
 			return 1;
 	}
-	for ( ; bit < bit_cnt; bit++) {
-		if (bit_test(b1, bit) && bit_test(b2, bit)) {
-			if (count_it)
-				count++;
-			else
-				return 1;
-		}
+
+	if (bit < bit_cnt) {
+		uint64_t mask = _bit_nmask(bit_cnt);
+		anded = b1[_bit_word(bit)] & b2[_bit_word(bit)] & mask;
+		if (count_it)
+			count += hweight(anded);
+		else if (anded)
+			return 1;
 	}
 
 	return count;
@@ -1043,7 +1139,8 @@ bit_pick_cnt(bitstr_t *b, bitoff_t nbits)
  */
 char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 {
-	int32_t count = 0, word;
+	int32_t word;
+	char *comma = "";
 	bitoff_t bit;
 
 	_assert_bitstr_valid(b);
@@ -1060,20 +1157,19 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 			int32_t ret, size;
 			bitoff_t start = bit;
 
-			count++;
 			while (bit+1 < _bitstr_bits(b) && bit_test(b, bit+1)) {
 				bit++;
-				count++;
 			}
 			size = strlen(str);
 			if (bit == start) {	/* add single bit position */
 				ret = snprintf(str + size, len - size,
-				               "%"BITSTR_FMT",", start);
+				               "%s%"BITSTR_FMT"", comma, start);
 			} else { 		/* add bit position range */
 				ret = snprintf(str + size, len - size,
-				               "%"BITSTR_FMT"-%"BITSTR_FMT",",
-					       start, bit);
+				               "%s%"BITSTR_FMT"-%"BITSTR_FMT"",
+					       comma, start, bit);
 			}
+			comma = ",";
 
 			xassert(ret != -1);
 			if (ret == -1)
@@ -1081,8 +1177,6 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 		}
 		bit++;
 	}
-	if (count > 0)
-		str[strlen(str) - 1] = '\0'; 	/* zap trailing comma */
 	return str;
 }
 
@@ -1092,7 +1186,7 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
  */
 char *bit_fmt_full(bitstr_t *b)
 {
-	int32_t count = 0, word;
+	int32_t word;
 	bitoff_t start, bit;
 	char *str = NULL, *comma = "";
 	_assert_bitstr_valid(b);
@@ -1105,11 +1199,9 @@ char *bit_fmt_full(bitstr_t *b)
 		}
 
 		if (bit_test(b, bit)) {
-			count++;
 			start = bit;
 			while (bit+1 < _bitstr_bits(b) && bit_test(b, bit+1)) {
 				bit++;
-				count++;
 			}
 			if (bit == start)	/* add single bit position */
 				xstrfmtcat(str, "%s%"BITSTR_FMT"",
@@ -1133,7 +1225,7 @@ char *bit_fmt_full(bitstr_t *b)
  */
 char *bit_fmt_range(bitstr_t *b, int offset, int len)
 {
-	int32_t count = 0, word;
+	int32_t word;
 	bitoff_t start, fini_bit, bit;
 	char *str = NULL, *comma = "";
 	_assert_bitstr_valid(b);
@@ -1147,11 +1239,9 @@ char *bit_fmt_range(bitstr_t *b, int offset, int len)
 		}
 
 		if (bit_test(b, bit)) {
-			count++;
 			start = bit;
 			while ((bit + 1 < fini_bit) && bit_test(b, bit + 1)) {
 				bit++;
-				count++;
 			}
 			if (bit == start) {	/* add single bit position */
 				xstrfmtcat(str, "%s%"BITSTR_FMT"",
@@ -1358,12 +1448,17 @@ static char *_bit_fmt_hexmask(bitstr_t *bitmap, bool trim_output)
 {
 	char *retstr, *ptr;
 	char current;
-	bitoff_t i;
+	const int32_t word_size = sizeof(bitstr_t) * 8;
+	bitoff_t i, j, word;
 	bitoff_t bitsize;
+
 	if (trim_output)
 		bitsize = bit_fls(bitmap) + 1;
 	else
 		bitsize = bit_size(bitmap);
+
+	if (!bitsize)
+		return xstrdup("0x0");
 
 	/* 4 bits per ASCII '0'-'F' */
 	bitoff_t charsize = (bitsize + 3) / 4;
@@ -1374,18 +1469,36 @@ static char *_bit_fmt_hexmask(bitstr_t *bitmap, bool trim_output)
 	retstr[1] = 'x';
 	retstr[charsize + 2] = '\0';
 	ptr = &retstr[charsize + 1];
-	for (i=0; i < bitsize;) {
-		current = 0;
-		if (                 bit_test(bitmap,i++)) current |= 0x1;
-		if ((i < bitsize) && bit_test(bitmap,i++)) current |= 0x2;
-		if ((i < bitsize) && bit_test(bitmap,i++)) current |= 0x4;
-		if ((i < bitsize) && bit_test(bitmap,i++)) current |= 0x8;
-		if (current <= 9) {
-			current += '0';
+
+	for (i = 0; i < bitsize;) {
+		if (i + word_size <= bitsize) {
+			word = _bit_word(i);
+			for (j = 0; j < sizeof(bitstr_t); j++) {
+				uint8_t idx = ((uint8_t *)(&(bitmap[word])))[j];
+				*ptr = hexmask_lookup[idx][1];
+				ptr--;
+				*ptr = hexmask_lookup[idx][0];
+				ptr--;
+			}
+			i += word_size;
 		} else {
-			current += 'A' - 10;
+			current = 0;
+			if (                 bit_test(bitmap,i++))
+				current |= 0x1;
+			if ((i < bitsize) && bit_test(bitmap,i++))
+				current |= 0x2;
+			if ((i < bitsize) && bit_test(bitmap,i++))
+				current |= 0x4;
+			if ((i < bitsize) && bit_test(bitmap,i++))
+				current |= 0x8;
+
+			if (current <= 9) {
+				current += '0';
+			} else {
+				current += 'A' - 10;
+			}
+			*ptr-- = current;
 		}
-		*ptr-- = current;
 	}
 
 	return retstr;
@@ -1430,7 +1543,7 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 	int32_t bit_index = 0, len;
 	int rc = 0;
 	const char *curpos;
-	int32_t current;
+	bitstr_t current;
 	bitoff_t bitsize;
 
 	if (!bitmap || !str)
@@ -1443,11 +1556,10 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 	bit_nclear(bitmap, 0, bitsize - 1);
 	if (xstrncmp(str, "0x", 2) == 0) {	/* Bypass 0x */
 		str += 2;
-		len -= 2;
 	}
 
 	while (curpos >= str) {
-		current = (int32_t) *curpos;
+		current = (bitoff_t) *curpos;
 		if (isxdigit(current)) {	/* valid hex digit */
 			if (isdigit(current)) {
 				current -= '0';
@@ -1461,6 +1573,24 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 			break;
 		}
 
+		if (bit_index + 3 < bitsize && !(bit_index % 4)) {
+#ifdef SLURM_BIGENDIAN
+			current = (((current & 1) << 3) |
+				   ((current & 2) << 1) |
+				   ((current & 4) >> 1) |
+				   ((current & 8) >> 3));
+			current = (current << ((BITSTR_MAXPOS -
+					        (bit_index & BITSTR_MAXPOS)) -
+					       3));
+			bitmap[_bit_word(bit_index)] |= current;
+#else
+			bitmap[_bit_word(bit_index)] |=
+				(current & 0xf) << (bit_index & BITSTR_MAXPOS);
+#endif
+			curpos--;
+			bit_index += 4;
+			continue;
+		}
 		if (current & 1) {
 			if (bit_index < bitsize)
 				bit_set(bitmap, bit_index);
@@ -1493,9 +1623,8 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 				break;
 			}
 		}
-		len--;
 		curpos--;
-		bit_index+=4;
+		bit_index += 4;
 	}
 	return rc;
 }
@@ -1556,7 +1685,6 @@ void bit_unfmt_binmask(bitstr_t * bitmap, const char* str)
 		current -= '0';
 		if ((current & 1) && (bit_index   < bitsize))
 			bit_set(bitmap, bit_index);
-		len--;
 		curpos--;
 		bit_index++;
 	}
@@ -1625,4 +1753,14 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 	}
 
 	return cnt;
+}
+
+void bit_consolidate(bitstr_t *b)
+{
+	int set_count = bit_set_count(b);
+
+	if (set_count && (set_count < bit_size(b))) {
+		bit_nclear(b, set_count, bit_size(b) - 1);
+		bit_nset(b, 0, set_count - 1);
+	}
 }

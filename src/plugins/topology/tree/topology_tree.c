@@ -56,13 +56,13 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-extern node_record_t *node_record_table_ptr __attribute__((weak_import));
+extern node_record_t **node_record_table_ptr __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
 extern switch_record_t *switch_record_table __attribute__((weak_import));
 extern int switch_record_cnt __attribute__((weak_import));
 extern int switch_levels __attribute__((weak_import));
 #else
-node_record_t *node_record_table_ptr;
+node_record_t **node_record_table_ptr;
 int node_record_count;
 switch_record_t *switch_record_table;
 int switch_record_cnt;
@@ -174,7 +174,6 @@ extern bool topo_generate_node_ranking(void)
 extern int topo_get_node_addr(char* node_name, char** paddr, char** ppattern)
 {
 	node_record_t *node_ptr;
-	int node_inx;
 	hostlist_t sl = NULL;
 
 	int s_max_level = 0;
@@ -191,7 +190,6 @@ extern int topo_get_node_addr(char* node_name, char** paddr, char** ppattern)
 	/* node not found in configuration */
 	if ( node_ptr == NULL )
 		return SLURM_ERROR;
-	node_inx = node_ptr - node_record_table_ptr;
 
 	/* look for switches max level */
 	for (i=0; i<switch_record_cnt; i++) {
@@ -209,7 +207,7 @@ extern int topo_get_node_addr(char* node_name, char** paddr, char** ppattern)
 			if (switch_record_table[i].level != j)
 				continue;
 			if (!bit_test(switch_record_table[i].node_bitmap,
-				      node_inx))
+				      node_ptr->index))
 				continue;
 			if (sl == NULL) {
 				sl = hostlist_create(switch_record_table[i].
@@ -261,7 +259,7 @@ static void _find_child_switches(int sw)
 	while ((swname = hostlist_next(hi))) {
 		/* Find switch whose name is the name of this child.
 		 * and add its index to child index array */
-		for (i=0; i<switch_record_cnt; i++) {
+		for (i = 0; i < switch_record_cnt; i++) {
 			if (xstrcmp(swname, switch_record_table[i].name) == 0) {
 				switch_record_table[sw].switch_index[cldx] = i;
 				switch_record_table[i].parent = sw;
@@ -275,6 +273,46 @@ static void _find_child_switches(int sw)
 	hostlist_destroy(swlist);
 }
 
+static void _merge_switches_array(uint16_t *switch_index1, uint16_t *cnt1,
+				  uint16_t *switch_index2, uint16_t cnt2)
+{
+	int i, j;
+	uint16_t init_cnt1 = *cnt1;
+
+	for (i = 0; i < cnt2; i++) {
+		for (j = 0; j < init_cnt1; j++) {
+			if (switch_index1[j] == switch_index2[i])
+				break;
+		}
+		if (j < init_cnt1)
+			continue;
+		switch_index1[*cnt1] = switch_index2[i];
+		(*cnt1)++;
+	}
+}
+
+/*
+ * _find_desc_switches creates an array of indexes to the
+ * all descendants of switch sw.
+ */
+static void _find_desc_switches(int sw)
+{
+	int k;
+	_merge_switches_array(switch_record_table[sw].switch_desc_index,
+			      &(switch_record_table[sw].num_desc_switches),
+			      switch_record_table[sw].switch_index,
+			      switch_record_table[sw].num_switches);
+
+	for (k = 0; k < switch_record_table[sw].num_switches; k++) {
+		int child_index = switch_record_table[sw].switch_index[k];
+		_merge_switches_array(
+			switch_record_table[sw].switch_desc_index,
+			&(switch_record_table[sw].num_desc_switches),
+			switch_record_table[child_index].switch_desc_index,
+			switch_record_table[child_index].num_desc_switches);
+	}
+
+}
 static void _validate_switches(void)
 {
 	slurm_conf_switches_t *ptr, **ptr_array;
@@ -305,7 +343,7 @@ static void _validate_switches(void)
 		switch_ptr->name = xstrdup(ptr->switch_name);
 		/* See if switch name has already been defined. */
 		prior_ptr = switch_record_table;
-		for (j=0; j<i; j++, prior_ptr++) {
+		for (j = 0; j < i; j++, prior_ptr++) {
 			if (xstrcmp(switch_ptr->name, prior_ptr->name) == 0) {
 				fatal("Switch (%s) has already been defined",
 				      prior_ptr->name);
@@ -345,7 +383,7 @@ static void _validate_switches(void)
 	for (depth = 1; ; depth++) {
 		bool resolved = true;
 		switch_ptr = switch_record_table;
-		for (i=0; i < switch_record_cnt; i++, switch_ptr++) {
+		for (i = 0; i < switch_record_cnt; i++, switch_ptr++) {
 			if (switch_ptr->level != -1)
 				continue;
 			hl = hostlist_create(switch_ptr->switches);
@@ -437,7 +475,7 @@ static void _validate_switches(void)
 	 * and see if any switch can reach all nodes */
 	for (i = 0; i < switch_record_cnt; i++) {
 		if (switch_record_table[i].level != 0) {
-			_find_child_switches (i);
+			_find_child_switches(i);
 		}
 		if (node_record_count ==
 			bit_set_count(switch_record_table[i].node_bitmap)) {
@@ -448,6 +486,9 @@ static void _validate_switches(void)
 	for (i = 0; i < switch_record_cnt; i++) {
 		switch_record_table[i].switches_dist = xcalloc(
 			switch_record_cnt, sizeof(uint32_t));
+		switch_record_table[i].switch_desc_index = xcalloc(
+			switch_record_cnt, sizeof(uint16_t));
+		switch_record_table[i].num_desc_switches = 0;
 	}
 	for (i = 0; i < switch_record_cnt; i++) {
 		for (j = i + 1; j < switch_record_cnt; j++) {
@@ -467,6 +508,13 @@ static void _validate_switches(void)
 			for (k = 0; k < switch_record_cnt; k++) {
 				_check_better_path(i, j ,k);
 			}
+		}
+	}
+	for (i = 1; i <= switch_levels; i++) {
+		for (j = 0; j < switch_record_cnt; j++) {
+			if (switch_record_table[j].level != i)
+				continue;
+			_find_desc_switches(j);
 		}
 	}
 	if (!have_root && running_in_daemon())
@@ -502,6 +550,16 @@ static void _log_switches(void)
 		debug("\tswitches_dist[%d]:\t%s", i, tmp_str);
 		xfree(tmp_str);
 	}
+	for (i = 0; i < switch_record_cnt; i++) {
+		sep = "";
+		for (j = 0; j < switch_record_table[i].num_desc_switches; j++) {
+			xstrfmtcat(tmp_str, "%s%u", sep,
+				   switch_record_table[i].switch_desc_index[j]);
+			sep = ", ";
+		}
+		debug("\tswitch_desc_index[%d]:\t%s", i, tmp_str);
+		xfree(tmp_str);
+	}
 }
 
 /* Return the index of a given switch name or -1 if not found */
@@ -530,6 +588,7 @@ static void _free_switch_record_table(void)
 			xfree(switch_record_table[i].nodes);
 			xfree(switch_record_table[i].switches);
 			xfree(switch_record_table[i].switches_dist);
+			xfree(switch_record_table[i].switch_desc_index);
 			xfree(switch_record_table[i].switch_index);
 			FREE_NULL_BITMAP(switch_record_table[i].node_bitmap);
 		}
@@ -554,7 +613,7 @@ extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 		topo_conf = get_extra_conf_path("topology.conf");
 
 	conf_hashtbl = s_p_hashtbl_create(switch_options);
-	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false) ==
+	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL) ==
 	    SLURM_ERROR) {
 		s_p_hashtbl_destroy(conf_hashtbl);
 		fatal("something wrong with opening/reading %s: %m",
@@ -657,8 +716,7 @@ static int _node_name2bitmap(char *node_names, bitstr_t **bitmap,
 		node_record_t *node_ptr;
 		node_ptr = find_node_record(this_node_name);
 		if (node_ptr) {
-			bit_set(my_bitmap,
-				(bitoff_t) (node_ptr - node_record_table_ptr));
+			bit_set(my_bitmap, node_ptr->index);
 		} else {
 			debug2("_node_name2bitmap: invalid node specified %s",
 			       this_node_name);

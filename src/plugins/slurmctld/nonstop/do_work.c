@@ -57,6 +57,7 @@
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
@@ -226,37 +227,9 @@ static int _unpack_job_state(job_failures_t **job_pptr, buf_t *buffer,
 
 	job_fail_ptr = xmalloc(sizeof(job_failures_t));
 
-	if (protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		if (slurm_unpack_addr_no_alloc(&job_fail_ptr->callback_addr,
 					       buffer))
-			goto unpack_error;
-		safe_unpack32(&job_fail_ptr->callback_flags, buffer);
-		safe_unpack16(&job_fail_ptr->callback_port, buffer);
-		safe_unpack32(&job_fail_ptr->job_id, buffer);
-		safe_unpack32(&job_fail_ptr->fail_node_cnt, buffer);
-		safe_xcalloc(job_fail_ptr->fail_node_cpus,
-			     job_fail_ptr->fail_node_cnt, sizeof(uint32_t));
-		safe_xcalloc(job_fail_ptr->fail_node_names,
-		             job_fail_ptr->fail_node_cnt, sizeof(char *));
-		for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
-			safe_unpack32(&job_fail_ptr->fail_node_cpus[i], buffer);
-			safe_unpackstr_xmalloc(
-				&job_fail_ptr->fail_node_names[i], &dummy32,
-				buffer);
-		}
-		job_fail_ptr->magic = FAILURE_MAGIC;
-		safe_unpack16(&job_fail_ptr->pending_job_delay, buffer);
-		safe_unpack32(&job_fail_ptr->pending_job_id, buffer);
-		safe_unpackstr_xmalloc(&job_fail_ptr->pending_node_name,
-				       &dummy32, buffer);
-		safe_unpack32(&job_fail_ptr->replace_node_cnt, buffer);
-		safe_unpack32(&job_fail_ptr->time_extend_avail, buffer);
-		safe_unpack32(&job_fail_ptr->user_id, buffer);
-		_job_fail_log(job_fail_ptr);
-		*job_pptr = job_fail_ptr;
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		if (slurm_unpack_slurm_addr_no_alloc(
-			&job_fail_ptr->callback_addr, buffer))
 			goto unpack_error;
 		safe_unpack32(&job_fail_ptr->callback_flags, buffer);
 		safe_unpack16(&job_fail_ptr->callback_port, buffer);
@@ -481,7 +454,7 @@ static uint32_t _get_job_cpus(job_record_t *job_ptr, int node_inx)
 	uint32_t cpus_alloc;
 	int i, j;
 
-	node_ptr = node_record_table_ptr + node_inx;
+	node_ptr = node_record_table_ptr[node_inx];
 	cpus_alloc =  node_ptr->cpus;
 	if (job_ptr->job_resrcs &&
 	    job_ptr->job_resrcs->cpus &&
@@ -508,7 +481,6 @@ static void _failing_node(node_record_t *node_ptr)
 	job_record_t *job_ptr;
 	time_t now = time(NULL);
 	uint32_t event_flag = 0;
-	int node_inx;
 
 	info("node_fail_callback for node:%s", node_ptr->name);
 	if (!job_fail_list)
@@ -517,7 +489,6 @@ static void _failing_node(node_record_t *node_ptr)
 		event_flag |= SMD_EVENT_NODE_FAILED;
 	if (IS_NODE_FAIL(node_ptr))
 		event_flag |= SMD_EVENT_NODE_FAILING;
-	node_inx = node_ptr - node_record_table_ptr;
 	slurm_mutex_lock(&job_fail_mutex);
 	job_iterator = list_iterator_create(job_fail_list);
 	while ((job_fail_ptr = (job_failures_t *) list_next(job_iterator))) {
@@ -525,7 +496,7 @@ static void _failing_node(node_record_t *node_ptr)
 			continue;
 		job_ptr = job_fail_ptr->job_ptr;
 		if (IS_JOB_FINISHED(job_ptr) || !job_ptr->node_bitmap ||
-		    !bit_test(job_ptr->node_bitmap, node_inx))
+		    !bit_test(job_ptr->node_bitmap, node_ptr->index))
 			continue;
 		job_fail_ptr->callback_flags |= event_flag;
 		job_fail_update_time = now;
@@ -538,7 +509,6 @@ extern void node_fail_callback(job_record_t *job_ptr, node_record_t *node_ptr)
 {
 	job_failures_t *job_fail_ptr;
 	uint32_t event_flag = 0;
-	int node_inx;
 
 	if (!job_ptr) {
 		_failing_node(node_ptr);
@@ -566,9 +536,8 @@ extern void node_fail_callback(job_record_t *job_ptr, node_record_t *node_ptr)
 	job_fail_ptr->fail_node_cnt++;
 	xrealloc(job_fail_ptr->fail_node_cpus,
 		 (sizeof(uint32_t) * job_fail_ptr->fail_node_cnt));
-	node_inx = node_ptr - node_record_table_ptr;
 	job_fail_ptr->fail_node_cpus[job_fail_ptr->fail_node_cnt - 1] =
-		_get_job_cpus(job_ptr, node_inx);
+		_get_job_cpus(job_ptr, node_ptr->index);
 	xrealloc(job_fail_ptr->fail_node_names,
 		 (sizeof(char *) * job_fail_ptr->fail_node_cnt));
 	job_fail_ptr->fail_node_names[job_fail_ptr->fail_node_cnt - 1] =
@@ -685,8 +654,7 @@ extern char *drain_nodes_user(char *cmd_ptr, uid_t cmd_uid,
 	update_node_msg.node_names = node_names;
 	update_node_msg.node_state = NODE_STATE_FAIL;
 	update_node_msg.reason = reason;
-	update_node_msg.reason_uid = cmd_uid;
-	rc = update_node(&update_node_msg);
+	rc = update_node(&update_node_msg, cmd_uid);
 	if (rc) {
 		/* Log it but send back only the error with the version.
 		 * xstrfmtcat(resp, "%s EUPDNODE %s", SLURM_VERSION_STRING,
@@ -759,7 +727,7 @@ extern char *fail_nodes(char *cmd_ptr, uid_t cmd_uid,
 		for (i = i_first; i <= i_last; i++) {
 			if (!bit_test(job_ptr->node_bitmap, i))
 				continue;
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			if (!IS_NODE_FAIL(node_ptr))
 				continue;
 			fail_cnt++;
@@ -872,13 +840,11 @@ static char *_job_node_features(job_record_t *job_ptr, node_record_t *node_ptr)
 	job_feature_t *job_feat_ptr;
 	ListIterator job_iter, node_iter;
 	char *req_feat = NULL;
-	int node_inx;
 
 	if (!job_ptr->details || !job_ptr->details->features ||
 	    !job_ptr->details->feature_list)
 		return req_feat;
 
-	node_inx = node_ptr - node_record_table_ptr;
 	job_iter = list_iterator_create(job_ptr->details->feature_list);
 	while ((job_feat_ptr = (job_feature_t *) list_next(job_iter))) {
 		node_iter = list_iterator_create(active_feature_list);
@@ -887,7 +853,8 @@ static char *_job_node_features(job_record_t *job_ptr, node_record_t *node_ptr)
 			if (!job_feat_ptr->name  ||
 			    !node_feat_ptr->name ||
 			    !node_feat_ptr->node_bitmap ||
-			    !bit_test(node_feat_ptr->node_bitmap, node_inx) ||
+			    !bit_test(node_feat_ptr->node_bitmap,
+				      node_ptr->index) ||
 			    xstrcmp(job_feat_ptr->name, node_feat_ptr->name))
 				continue;
 			if (req_feat)
@@ -982,7 +949,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 			goto fini;
 		}
 		if (IS_NODE_FAIL(node_ptr)) {
-			node_inx = node_ptr - node_record_table_ptr;
+			node_inx = node_ptr->index;
 			cpu_cnt = _get_job_cpus(job_ptr, node_inx);
 		} else {
 			node_ptr = NULL;
@@ -1179,7 +1146,7 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 			goto fini;
 		}
 		if (IS_NODE_FAIL(node_ptr)) {
-			node_inx = node_ptr - node_record_table_ptr;
+			node_inx = node_ptr->index;
 			cpu_cnt = _get_job_cpus(job_ptr, node_inx);
 		} else {
 			node_ptr = NULL;
@@ -1599,7 +1566,7 @@ extern char *show_job(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(job_ptr->node_bitmap, i))
 			continue;
-		node_ptr = node_record_table_ptr + i;
+		node_ptr = node_record_table_ptr[i];;
 		if (!IS_NODE_FAIL(node_ptr))
 			continue;
 		failing_cnt++;
@@ -1753,7 +1720,8 @@ static void _send_event_callbacks(void)
 			fd = slurm_open_msg_conn(&callback_addr);
 			sent = 0;
 			if (fd < 0) {
-				error("nonstop: socket open fail for job %u: %m",
+				error("nonstop: socket open to %pA fail for job %u: %m",
+				      &callback_addr,
 				      callback_jobid);
 				goto io_fini;
 			}

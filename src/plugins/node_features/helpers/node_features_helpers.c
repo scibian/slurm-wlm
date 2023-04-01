@@ -69,13 +69,13 @@ typedef struct {
 
 static int _cmp_str(void *x, void *key)
 {
-	return !strcmp(x, key);
+	return !xstrcmp(x, key);
 }
 
 static int _cmp_features(void *x, void *key)
 {
 	plugin_feature_t *feature = x;
-	return !strcmp(feature->name, key);
+	return !xstrcmp(feature->name, key);
 }
 
 static bool _is_feature_valid(const char *k)
@@ -155,6 +155,9 @@ static int _feature_set_state(const plugin_feature_t *feature)
 {
 	char *output, **argv = NULL;
 	int rc = 0;
+	run_command_args_t run_command_args = {
+		.max_wait = (exec_time * 1000),
+		.status = &rc };
 
 	if (!feature->helper)
 		return SLURM_ERROR;
@@ -162,38 +165,41 @@ static int _feature_set_state(const plugin_feature_t *feature)
 	argv = xcalloc(3, sizeof(char *));	/* NULL terminated */
 	argv[0] = xstrdup(feature->helper);
 	argv[1] = xstrdup(feature->name);
-	output = run_command("set_state", feature->helper,
-			     argv, NULL, (exec_time * 1000), 0, &rc);
+	run_command_args.script_argv = argv;
+	run_command_args.script_path = feature->helper;
+	run_command_args.script_type = "set_state";
+	output = run_command(&run_command_args);
 
 	if (rc != SLURM_SUCCESS) {
 		error("failed to set new value for feature: %s", feature->name);
 	}
 
-	free_command_argv(argv);
+	xfree_array(argv);
 	xfree(output);
 	return rc;
 }
 
 static List _feature_get_state(const plugin_feature_t *feature)
 {
-	char *tmp, *kv;
+	char *tmp, *saveptr;
 	char *output = NULL;
 	int rc = 0;
 	List result = list_create(xfree_ptr);
+	run_command_args_t run_command_args = {
+		.max_wait = (exec_time * 1000),
+		.script_path = feature->helper,
+		.script_type = "get_state",
+		.status = &rc };
 
-	output = run_command("get_state", feature->helper,
-			     NULL, NULL, (exec_time * 1000), 0, &rc);
+	output = run_command(&run_command_args);
 
 	if (rc != SLURM_SUCCESS) {
 		goto cleanup;
 	}
 
-	tmp = output;
-	while ((kv = strsep(&tmp, "\n"))) {
-		if (kv[0] == '\0')
-			break;
-
-		list_append(result, xstrdup(kv));
+	for (tmp = strtok_r(output, "\n", &saveptr); tmp;
+	     tmp = strtok_r(NULL, "\n", &saveptr)) {
+		list_append(result, xstrdup(tmp));
 	}
 
 cleanup:
@@ -226,10 +232,10 @@ static int _exclusive_register(const char *listp)
 {
 	List data_list = list_create(xfree_ptr);
 	char *input = xstrdup(listp);
-	char *tmp = input;
-	char *entry;
+	char *entry, *saveptr;
 
-	while ((entry = strsep(&tmp, ","))) {
+	for (entry = strtok_r(input, ",", &saveptr); entry;
+	     entry = strtok_r(NULL, ",", &saveptr)) {
 		if (list_find_first(data_list, _cmp_str, entry)) {
 			error("Feature \"%s\" already in exclusive list",
 			      entry);
@@ -321,7 +327,7 @@ static int _read_config_file(void)
 	tbl = s_p_hashtbl_create(conf_options);
 
 	confpath = get_extra_conf_path("helpers.conf");
-	if (s_p_parse_file(tbl, NULL, confpath, false) == SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, confpath, false, NULL) == SLURM_ERROR) {
 		error("could not parse configuration file: %s", confpath);
 		goto fail;
 	}
@@ -406,7 +412,7 @@ static int _get_list_excl_count(void *x, void *y)
 {
 	char *feature = (char *) x;
 	char *job_features = ((excl_count_t *) y)->job_features;
-	char *ptr = strstr(job_features, feature);
+	char *ptr = xstrstr(job_features, feature);
 	unsigned int len = strlen(feature);
 
 	/* check for every matching pattern */
@@ -414,18 +420,18 @@ static int _get_list_excl_count(void *x, void *y)
 		/* check word+1 to verify exact match */
 		if (isalnum(ptr[len]) || ptr[len] == '-' || ptr[len] == '.' ||
 			ptr[len] == '_' || ptr[len] == '=') {
-			ptr = strstr(&ptr[len], feature);
+			ptr = xstrstr(&ptr[len], feature);
 			continue;
 		}
 
 		/* check word-1 to verify exact match */
 		if ((ptr != job_features) && isalnum(ptr[-1])) {
-			ptr = strstr(&ptr[len], feature);
+			ptr = xstrstr(&ptr[len], feature);
 			continue;
 		}
 
 		((excl_count_t *) y)->count++;
-		ptr = strstr(&ptr[len], feature);
+		ptr = xstrstr(&ptr[len], feature);
 	}
 
 	return 0;
@@ -453,7 +459,7 @@ static int _foreach_feature(void *x, void *y)
 	char *job_features = (char *)y;
 	plugin_feature_t *feature = (plugin_feature_t *)x;
 
-	if (strstr(job_features, feature->name) != NULL) {
+	if (xstrstr(job_features, feature->name) != NULL) {
 		return -1;
 	}
 
@@ -489,18 +495,17 @@ extern int node_features_p_job_valid(char *job_features)
 
 extern int node_features_p_node_set(char *active_features)
 {
-	char *kv, *tmp;
+	char *tmp, *saveptr;
 	char *input = NULL;
 	const plugin_feature_t *feature = NULL;
 	int rc = SLURM_ERROR;
 
 	input = xstrdup(active_features);
-	tmp = input;
-	while ((kv = strsep(&tmp, ","))) {
-
-		feature = list_find_first(helper_features, _cmp_features, kv);
+	for (tmp = strtok_r(input, ",", &saveptr); tmp;
+	     tmp = strtok_r(NULL, ",", &saveptr)) {
+		feature = list_find_first(helper_features, _cmp_features, tmp);
 		if (!feature) {
-			info("skipping unregistered feature \"%s\"", kv);
+			info("skipping unregistered feature \"%s\"", tmp);
 			continue;
 		}
 
@@ -554,8 +559,10 @@ static int _foreach_helper_get_modes(void *x, void *y)
 
 	xstrfmtcat(*avail_modes, "%s%s", (*avail_modes ? "," : ""), feature->name);
 
-	if (!current || list_is_empty(current))
+	if (!current || list_is_empty(current)) {
+		FREE_NULL_LIST(current);
 		return 0;
+	}
 
 	/* filter out duplicates */
 	list_for_each(current, _foreach_check_duplicates, all_current);
@@ -574,8 +581,8 @@ extern void node_features_p_node_state(char **avail_modes, char **current_mode)
 	if (!avail_modes || !current_mode)
 		return;
 
-	verbose("original: avail=%s current=%s",
-		*avail_modes, *current_mode);
+	log_flag(NODE_FEATURES, "original: avail=%s current=%s",
+		 *avail_modes, *current_mode);
 
 	all_current = list_create(xfree_ptr);
 
@@ -597,7 +604,8 @@ extern void node_features_p_node_state(char **avail_modes, char **current_mode)
 	list_destroy(all_current);
 	list_destroy(filtered_modes);
 
-	verbose("new: avail=%s current=%s", *avail_modes, *current_mode);
+	log_flag(NODE_FEATURES, "new: avail=%s current=%s",
+		 *avail_modes, *current_mode);
 }
 
 extern char *node_features_p_node_xlate(char *new_features, char *orig_features,
@@ -606,12 +614,12 @@ extern char *node_features_p_node_xlate(char *new_features, char *orig_features,
 	List features = NULL;
 	char *feature = NULL;
 	char *input = NULL;
-	char *tmp = NULL;
 	char *merged = NULL;
+	char *saveptr = NULL;
 
-	verbose("new_features: %s", new_features);
-	verbose("orig_features: %s", orig_features);
-	verbose("avail_features: %s", avail_features);
+	log_flag(NODE_FEATURES, "new_features: %s", new_features);
+	log_flag(NODE_FEATURES, "orig_features: %s", orig_features);
+	log_flag(NODE_FEATURES, "avail_features: %s", avail_features);
 
 	if (!new_features || new_features[0] == '\0')
 		return xstrdup(orig_features);
@@ -624,14 +632,15 @@ extern char *node_features_p_node_xlate(char *new_features, char *orig_features,
 
 	/* Add all features in "new_features" */
 	input = xstrdup(new_features);
-	tmp = input;
-	while ((feature = strsep(&tmp, ",")))
+	for (feature = strtok_r(input, ",", &saveptr); feature;
+	     feature = strtok_r(NULL, ",", &saveptr)) {
 		list_append(features, xstrdup(feature));
+	}
 	xfree(input);
 
 	input = xstrdup(orig_features);
-	tmp = input;
-	while ((feature = strsep(&tmp, ","))) {
+	for (feature = strtok_r(input, ",", &saveptr); feature;
+	     feature = strtok_r(NULL, ",", &saveptr)) {
 		/* orig_features - plugin_changeable_features */
 		if (node_features_p_changeable_feature(feature))
 			continue;
@@ -645,7 +654,7 @@ extern char *node_features_p_node_xlate(char *new_features, char *orig_features,
 	list_for_each(features, _list_make_str, &merged);
 
 	list_destroy(features);
-	verbose("merged features: %s", merged);
+	log_flag(NODE_FEATURES, "merged features: %s", merged);
 
 	return merged;
 }
@@ -654,7 +663,7 @@ extern char *node_features_p_job_xlate(char *job_features)
 {
 	char *node_features = NULL;
 
-	if (!job_features || (job_features[0] == '\0'))
+	if (!job_features)
 		return NULL;
 
 	if (strpbrk(job_features, "[]()|*") != NULL) {
@@ -785,10 +794,7 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 
 extern bitstr_t *node_features_p_get_node_bitmap(void)
 {
-	bitstr_t *bitmap;
-	bitmap = bit_alloc(node_record_count);
-	bit_set_all(bitmap);
-	return bitmap;
+	return node_conf_get_active_bitmap();
 }
 
 extern char *node_features_p_node_xlate2(char *new_features)

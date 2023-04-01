@@ -46,6 +46,7 @@
 #include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 
+#define SLURM_20_02_PROTOCOL_VERSION ((35 << 8) | 0)
 #define SLURM_19_05_PROTOCOL_VERSION ((34 << 8) | 0)
 #define SLURM_18_08_PROTOCOL_VERSION ((33 << 8) | 0)
 #define SLURM_17_11_PROTOCOL_VERSION ((32 << 8) | 0)
@@ -110,10 +111,11 @@ typedef struct {
 	char *array_task_str;
 	char *blockid;
 	char *constraints;
+	char *container;
 	char *deleted;
 	char *derived_ec;
 	char *derived_es;
-	char *env;
+	char *env_hash_inx;
 	char *exit_code;
 	char *eligible;
 	char *end;
@@ -136,15 +138,15 @@ typedef struct {
 	char *req_cpus;
 	char *req_mem;
 	char *resvid;
-	char *script;
+	char *script_hash_inx;
 	char *start;
 	char *state;
 	char *state_reason_prev;
 	char *submit;
+	char *submit_line;
 	char *suspended;
 	char *system_comment;
 	char *timelimit;
-	char *track_steps;
 	char *tres_alloc_str;
 	char *tres_req_str;
 	char *uid;
@@ -181,10 +183,11 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->array_task_str);
 		xfree(object->blockid);
 		xfree(object->constraints);
+		xfree(object->container);
 		xfree(object->deleted);
 		xfree(object->derived_ec);
 		xfree(object->derived_es);
-		xfree(object->env);
+		xfree(object->env_hash_inx);
 		xfree(object->exit_code);
 		xfree(object->eligible);
 		xfree(object->end);
@@ -207,15 +210,15 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->req_cpus);
 		xfree(object->req_mem);
 		xfree(object->resvid);
-		xfree(object->script);
+		xfree(object->script_hash_inx);
 		xfree(object->start);
 		xfree(object->state);
 		xfree(object->state_reason_prev);
 		xfree(object->submit);
+		xfree(object->submit_line);
 		xfree(object->suspended);
 		xfree(object->system_comment);
 		xfree(object->timelimit);
-		xfree(object->track_steps);
 		xfree(object->tres_alloc_str);
 		xfree(object->tres_req_str);
 		xfree(object->uid);
@@ -261,6 +264,7 @@ typedef struct {
 	char *deleted;
 	char *exit_code;
 	char *consumed_energy;
+	char *container;
 	char *job_db_inx;
 	char *kill_requid;
 	char *name;
@@ -309,6 +313,7 @@ static void _free_local_step_members(local_step_t *object)
 		xfree(object->deleted);
 		xfree(object->exit_code);
 		xfree(object->consumed_energy);
+		xfree(object->container);
 		xfree(object->job_db_inx);
 		xfree(object->kill_requid);
 		xfree(object->name);
@@ -482,13 +487,14 @@ static char *job_req_inx[] = {
 	"id_assoc",
 	"id_array_job",
 	"id_array_task",
-	"batch_script",
+	"script_hash_inx",
 	"id_block",
 	"constraints",
+	"container",
 	"deleted",
 	"derived_ec",
 	"derived_es",
-	"env_vars",
+	"env_hash_inx",
 	"exit_code",
 	"flags",
 	"timelimit",
@@ -515,10 +521,10 @@ static char *job_req_inx[] = {
 	"time_start",
 	"state",
 	"state_reason_prev",
+	"submit_line",
 	"system_comment",
 	"time_submit",
 	"time_suspended",
-	"track_steps",
 	"id_user",
 	"wckey",
 	"id_wckey",
@@ -537,13 +543,14 @@ enum {
 	JOB_REQ_ASSOCID,
 	JOB_REQ_ARRAYJOBID,
 	JOB_REQ_ARRAYTASKID,
-	JOB_REQ_SCRIPT,
+	JOB_REQ_SCRIPT_HASH_INX,
 	JOB_REQ_BLOCKID,
 	JOB_REQ_CONSTRAINTS,
+	JOB_REQ_CONTAINER,
 	JOB_REQ_DELETED,
 	JOB_REQ_DERIVED_EC,
 	JOB_REQ_DERIVED_ES,
-	JOB_REQ_ENV,
+	JOB_REQ_ENV_HASH_INX,
 	JOB_REQ_EXIT_CODE,
 	JOB_REQ_FLAGS,
 	JOB_REQ_TIMELIMIT,
@@ -570,10 +577,10 @@ enum {
 	JOB_REQ_START,
 	JOB_REQ_STATE,
 	JOB_REQ_STATE_REASON,
+	JOB_REQ_SUBMIT_LINE,
 	JOB_REQ_SYSTEM_COMMENT,
 	JOB_REQ_SUBMIT,
 	JOB_REQ_SUSPENDED,
-	JOB_REQ_TRACKSTEPS,
 	JOB_REQ_UID,
 	JOB_REQ_WCKEY,
 	JOB_REQ_WCKEYID,
@@ -637,6 +644,7 @@ static char *step_req_inx[] = {
 	"sys_usec",
 	"act_cpufreq",
 	"consumed_energy",
+	"container",
 	"req_cpufreq_min",
 	"req_cpufreq",
 	"req_cpufreq_gov",
@@ -684,6 +692,7 @@ enum {
 	STEP_REQ_SYS_USEC,
 	STEP_REQ_ACT_CPUFREQ,
 	STEP_REQ_CONSUMED_ENERGY,
+	STEP_REQ_CONTAINER,
 	STEP_REQ_REQ_CPUFREQ_MIN,
 	STEP_REQ_REQ_CPUFREQ_MAX,
 	STEP_REQ_REQ_CPUFREQ_GOV,
@@ -880,13 +889,14 @@ static void _pack_local_job(local_job_t *object, uint16_t rpc_version,
 	packstr(object->array_taskid, buffer);
 	packstr(object->array_task_pending, buffer);
 	packstr(object->array_task_str, buffer);
-	packstr(object->script, buffer);
+	packstr(object->script_hash_inx, buffer);
 	packstr(object->blockid, buffer);
 	packstr(object->constraints, buffer);
+	packstr(object->container, buffer);
 	packstr(object->deleted, buffer);
 	packstr(object->derived_ec, buffer);
 	packstr(object->derived_es, buffer);
-	packstr(object->env, buffer);
+	packstr(object->env_hash_inx, buffer);
 	packstr(object->exit_code, buffer);
 	packstr(object->flags, buffer);
 	packstr(object->timelimit, buffer);
@@ -915,8 +925,8 @@ static void _pack_local_job(local_job_t *object, uint16_t rpc_version,
 	packstr(object->state_reason_prev, buffer);
 	packstr(object->submit, buffer);
 	packstr(object->suspended, buffer);
+	packstr(object->submit_line, buffer);
 	packstr(object->system_comment, buffer);
-	packstr(object->track_steps, buffer);
 	packstr(object->tres_alloc_str, buffer);
 	packstr(object->tres_req_str, buffer);
 	packstr(object->uid, buffer);
@@ -954,7 +964,7 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 	 * and it unpacks in the expected order.
 	 */
 
-	if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_22_05_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&object->account, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->admin_comment, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->alloc_nodes, &tmp32, buffer);
@@ -964,13 +974,14 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->array_taskid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->array_task_pending, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->array_task_str, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->script, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->script_hash_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->blockid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->constraints, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->container, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->derived_ec, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->derived_es, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->env, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->env_hash_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->flags, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->timelimit, &tmp32, buffer);
@@ -999,8 +1010,70 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state_reason_prev, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->submit_line, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->wckey, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->wckey_id, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->work_dir, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object->account, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->admin_comment, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->alloc_nodes, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->associd, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_jobid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_max_tasks, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_taskid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_task_pending, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_task_str, &tmp32, buffer);
+		/* job->script was removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
+		safe_unpackstr_xmalloc(&object->blockid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->constraints, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->derived_ec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->derived_es, &tmp32, buffer);
+		/* job->env was removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
+		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->flags, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->timelimit, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->eligible, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->end, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->gid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->gres_used, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
+		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->mod_time, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->het_job_id, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->het_job_offset, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->partition, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->priority, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->qos, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpus, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_mem, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->resvid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->start, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state_reason_prev, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1032,6 +1105,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->mod_time, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
@@ -1051,7 +1127,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1079,6 +1157,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
@@ -1097,7 +1178,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1123,6 +1206,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
@@ -1140,7 +1226,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1166,6 +1254,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
@@ -1182,7 +1273,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1208,6 +1301,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
@@ -1244,7 +1340,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1268,6 +1366,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
@@ -1304,7 +1405,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
@@ -1332,6 +1435,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
@@ -1368,7 +1474,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey_id, &tmp32, buffer);
@@ -1392,6 +1500,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
@@ -1428,7 +1539,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey_id, &tmp32, buffer);
@@ -1452,6 +1565,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
@@ -1466,7 +1582,9 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
-		safe_unpackstr_xmalloc(&object->track_steps, &tmp32, buffer);
+		/* job->track_steps removed in 22.05 */
+		safe_unpackstr_xmalloc(&tmp_char, &tmp32, buffer);
+		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->wckey_id, &tmp32, buffer);
@@ -1563,6 +1681,7 @@ static void _pack_local_step(local_step_t *object, uint16_t rpc_version,
 	packstr(object->deleted, buffer);
 	packstr(object->exit_code, buffer);
 	packstr(object->consumed_energy, buffer);
+	packstr(object->container, buffer);
 	packstr(object->job_db_inx, buffer);
 	packstr(object->kill_requid, buffer);
 	packstr(object->name, buffer);
@@ -1612,7 +1731,73 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 	uint32_t tmp32;
 	char *tmp_char;
 
-	if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_22_05_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object->act_cpufreq, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->consumed_energy,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->container, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_end, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_start, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->period_suspended,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpufreq_gov,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->stepid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->step_het_comp, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->submit_line, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->sys_sec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->sys_usec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tasks, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->task_dist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_ave,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_max_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_min_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_in_tot,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_ave,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_max_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min_nodeid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_min_taskid,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_usage_out_tot,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->user_sec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->user_usec, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_21_08_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&object->act_cpufreq, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
@@ -1620,6 +1805,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 				       &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
@@ -1685,6 +1873,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 				       &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
@@ -1748,6 +1939,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->consumed_energy, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
@@ -1798,6 +1992,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->consumed_energy, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
@@ -1879,6 +2076,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 		safe_unpackstr_xmalloc(&object->consumed_energy, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&max_disk_read, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&max_disk_read_node, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&max_disk_read_task, &tmp32, buffer);
@@ -2038,6 +2238,9 @@ static int _unpack_local_step(local_step_t *object, uint16_t rpc_version,
 		xfree(tmp_char);
 		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		/* kill_requid is NULL instead of -1 starting in 22.05 */
+		if (!xstrcmp(object->kill_requid, "-1"))
+			xfree(object->kill_requid);
 		safe_unpackstr_xmalloc(&max_disk_read, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&max_disk_read_node, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&max_disk_read_task, &tmp32, buffer);
@@ -2982,42 +3185,42 @@ static buf_t *_pack_archive_events(MYSQL_RES *result, char *cluster_name,
 static char *_load_events(uint16_t rpc_version, buf_t *buffer,
 			  char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
 	local_event_t object;
 	int i = 0;
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, event_table, event_req_inx[0]);
-	xstrcat(format, "('%s'");
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, event_table, event_req_inx[0]);
+	xstrcatat(format, &format_pos, "('%s'");
 	for(i=1; i<EVENT_REQ_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", event_req_inx[i]);
-		xstrcat(format, ", '%s'");
+		xstrfmtcatat(insert, &insert_pos, ", %s", event_req_inx[i]);
+		xstrcatat(format, &format_pos, ", '%s'");
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrcatat(insert, &insert_pos, ") values ");
+	xstrcatat(format, &format_pos, ")");
 
 	for (i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_event_t));
 		if (_unpack_local_event(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.period_start,
-			   object.period_end,
-			   object.node_name,
-			   object.cluster_nodes,
-			   object.reason,
-			   object.reason_uid,
-			   object.state,
-			   object.tres_str);
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.period_start,
+			     object.period_end,
+			     object.node_name,
+			     object.cluster_nodes,
+			     object.reason,
+			     object.reason_uid,
+			     object.state,
+			     object.tres_str);
 
 
 		_free_local_event_members(&object);
@@ -3059,13 +3262,14 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.array_taskid = row[JOB_REQ_ARRAYTASKID];
 		job.array_task_pending = row[JOB_REQ_ARRAY_TASK_PENDING];
 		job.array_task_str = row[JOB_REQ_ARRAY_TASK_STR];
-		job.script = row[JOB_REQ_SCRIPT];
+		job.script_hash_inx = row[JOB_REQ_SCRIPT_HASH_INX];
 		job.blockid = row[JOB_REQ_BLOCKID];
 		job.constraints = row[JOB_REQ_CONSTRAINTS];
+		job.container = row[JOB_REQ_CONTAINER];
 		job.deleted = row[JOB_REQ_DELETED];
 		job.derived_ec = row[JOB_REQ_DERIVED_EC];
 		job.derived_es = row[JOB_REQ_DERIVED_ES];
-		job.env = row[JOB_REQ_ENV];
+		job.env_hash_inx = row[JOB_REQ_ENV_HASH_INX];
 		job.exit_code = row[JOB_REQ_EXIT_CODE];
 		job.flags = row[JOB_REQ_FLAGS];
 		job.timelimit = row[JOB_REQ_TIMELIMIT];
@@ -3093,9 +3297,9 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.state = row[JOB_REQ_STATE];
 		job.state_reason_prev = row[JOB_REQ_STATE_REASON];
 		job.submit = row[JOB_REQ_SUBMIT];
+		job.submit_line = row[JOB_REQ_SUBMIT_LINE];
 		job.suspended = row[JOB_REQ_SUSPENDED];
 		job.system_comment = row[JOB_REQ_SYSTEM_COMMENT];
-		job.track_steps = row[JOB_REQ_TRACKSTEPS];
 		job.tres_alloc_str = row[JOB_REQ_TRESA];
 		job.tres_req_str = row[JOB_REQ_TRESR];
 		job.uid = row[JOB_REQ_UID];
@@ -3113,7 +3317,8 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 			char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
 	int safe_attributes[] = {
 		JOB_REQ_ARRAY_MAX,
 		JOB_REQ_ARRAY_TASK_PENDING,
@@ -3123,6 +3328,7 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_ARRAYTASKID,
 		JOB_REQ_DELETED,
 		JOB_REQ_DERIVED_EC,
+		JOB_REQ_ENV_HASH_INX,
 		JOB_REQ_EXIT_CODE,
 		JOB_REQ_FLAGS,
 		JOB_REQ_TIMELIMIT,
@@ -3134,7 +3340,6 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_HET_JOB_OFFSET,
 		JOB_REQ_DB_INX,
 		JOB_REQ_JOBID,
-		JOB_REQ_KILL_REQUID,
 		JOB_REQ_MOD_TIME,
 		JOB_REQ_NAME,
 		JOB_REQ_PARTITION,
@@ -3143,12 +3348,12 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_REQ_CPUS,
 		JOB_REQ_REQ_MEM,
 		JOB_REQ_RESVID,
+		JOB_REQ_SCRIPT_HASH_INX,
 		JOB_REQ_START,
 		JOB_REQ_STATE,
 		JOB_REQ_STATE_REASON,
 		JOB_REQ_SUBMIT,
 		JOB_REQ_SUSPENDED,
-		JOB_REQ_TRACKSTEPS,
 		JOB_REQ_UID,
 		JOB_REQ_WCKEY,
 		JOB_REQ_WCKEYID,
@@ -3162,28 +3367,31 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_ACCOUNT,
 		JOB_REQ_ADMIN_COMMENT,
 		JOB_REQ_ARRAY_TASK_STR,
-		JOB_REQ_SCRIPT,
 		JOB_REQ_BLOCKID,
 		JOB_REQ_CONSTRAINTS,
+		JOB_REQ_CONTAINER,
 		JOB_REQ_DERIVED_ES,
-		JOB_REQ_ENV,
+		JOB_REQ_KILL_REQUID,
 		JOB_REQ_MCS_LABEL,
 		JOB_REQ_NODELIST,
 		JOB_REQ_NODE_INX,
+		JOB_REQ_SUBMIT_LINE,
 		JOB_REQ_SYSTEM_COMMENT,
 		JOB_REQ_COUNT };
 
 	local_job_t object;
 	int i = 0;
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, job_table,job_req_inx[safe_attributes[0]]);
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, job_table,job_req_inx[safe_attributes[0]]);
 	for (i = 1; safe_attributes[i] < JOB_REQ_COUNT; i++)
-		xstrfmtcat(insert, ", %s", job_req_inx[safe_attributes[i]]);
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", job_req_inx[safe_attributes[i]]);
 	/* Some attributes that might be NULL require special handling */
 	for (i = 0; null_attributes[i] < JOB_REQ_COUNT; i++)
-		xstrfmtcat(insert, ", %s", job_req_inx[null_attributes[i]]);
-	xstrcat(insert, ") values ");
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", job_req_inx[null_attributes[i]]);
+	xstrcatat(insert, &insert_pos, ") values ");
 
 	for (i = 0; i < rec_cnt; i++) {
 
@@ -3195,132 +3403,139 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrcat(format, "('%s'");
+		xstrcatat(format, &format_pos, "('%s'");
 		for(int j = 1; safe_attributes[j] < JOB_REQ_COUNT; j++) {
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		}
 
 		/* special handling for NULL attributes */
 		if (object.account == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.admin_comment == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.array_task_str == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
-		if (object.script == NULL)
-			xstrcat(format, ", %s");
-		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.blockid == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.constraints == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.container == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.derived_es == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
-		if (object.env == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.kill_requid == NULL)
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.mcs_label == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.nodelist == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.node_inx == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.submit_line == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.system_comment == NULL)
-			xstrcat(format, ", %s");
+			xstrcatat(format, &format_pos, ", %s");
 		else
-			xstrcat(format, ", '%s'");
+			xstrcatat(format, &format_pos, ", '%s'");
 
-		xstrcat(format, ")");
+		xstrcatat(format, &format_pos, ")");
 
-		xstrfmtcat(insert, format,
-			   object.array_max_tasks,
-			   object.array_task_pending,
-			   object.alloc_nodes,
-			   object.associd,
-			   object.array_jobid,
-			   object.array_taskid,
-			   object.deleted,
-			   object.derived_ec,
-			   object.exit_code,
-			   object.flags,
-			   object.timelimit,
-			   object.eligible,
-			   object.end,
-			   object.gid,
-			   object.gres_used,
-			   object.het_job_id,
-			   object.het_job_offset,
-			   object.job_db_inx,
-			   object.jobid,
-			   object.kill_requid,
-			   object.mod_time,
-			   object.name,
-			   object.partition,
-			   object.priority,
-			   object.qos,
-			   object.req_cpus,
-			   object.req_mem,
-			   object.resvid,
-			   object.start,
-			   object.state,
-			   object.state_reason_prev,
-			   object.submit,
-			   object.suspended,
-			   object.track_steps,
-			   object.uid,
-			   object.wckey,
-			   object.wckey_id,
-			   object.work_dir,
-			   object.tres_alloc_str,
-			   object.tres_req_str,
-			   (object.account == NULL) ?
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.array_max_tasks,
+			     object.array_task_pending,
+			     object.alloc_nodes,
+			     object.associd,
+			     object.array_jobid,
+			     object.array_taskid,
+			     object.deleted,
+			     object.derived_ec,
+			     object.env_hash_inx,
+			     object.exit_code,
+			     object.flags,
+			     object.timelimit,
+			     object.eligible,
+			     object.end,
+			     object.gid,
+			     object.gres_used,
+			     object.het_job_id,
+			     object.het_job_offset,
+			     object.job_db_inx,
+			     object.jobid,
+			     object.mod_time,
+			     object.name,
+			     object.partition,
+			     object.priority,
+			     object.qos,
+			     object.req_cpus,
+			     object.req_mem,
+			     object.resvid,
+			     object.script_hash_inx,
+			     object.start,
+			     object.state,
+			     object.state_reason_prev,
+			     object.submit,
+			     object.suspended,
+			     object.uid,
+			     object.wckey,
+			     object.wckey_id,
+			     object.work_dir,
+			     object.tres_alloc_str,
+			     object.tres_req_str,
+			     (object.account == NULL) ?
 				"NULL" : object.account,
-			   (object.admin_comment == NULL) ?
+			     (object.admin_comment == NULL) ?
 				"NULL" : object.admin_comment,
-			   (object.array_task_str == NULL) ?
+			     (object.array_task_str == NULL) ?
 				"NULL" : object.array_task_str,
-			   (object.script == NULL) ?
-				"NULL" : object.script,
-			   (object.blockid == NULL) ?
+			     (object.blockid == NULL) ?
 				"NULL" : object.blockid,
-			   (object.constraints == NULL) ?
+			     (object.constraints == NULL) ?
 				"NULL" : object.constraints,
-			   (object.derived_es == NULL) ?
+			     (object.container == NULL) ?
+				"NULL" : object.container,
+			     (object.derived_es == NULL) ?
 				"NULL" : object.derived_es,
-			   (object.env == NULL) ?
-				"NULL" : object.env,
-			   (object.mcs_label == NULL) ?
+			     (object.kill_requid == NULL) ?
+				"NULL" : object.kill_requid,
+			     (object.mcs_label == NULL) ?
 				"NULL" : object.mcs_label,
-			   (object.nodelist == NULL) ?
+			     (object.nodelist == NULL) ?
 				"NULL" : object.nodelist,
-			   (object.node_inx == NULL) ?
+			     (object.node_inx == NULL) ?
 				"NULL" : object.node_inx,
-			   (object.system_comment == NULL) ?
+			     (object.submit_line == NULL) ?
+				"NULL" : object.submit_line,
+			     (object.system_comment == NULL) ?
 				"NULL" : object.system_comment);
 
 		_free_local_job_members(&object);
+		format_pos = NULL;
 		xfree(format);
 	}
 //	END_TIMER2("step query");
@@ -3372,44 +3587,45 @@ static buf_t *_pack_archive_resvs(MYSQL_RES *result, char *cluster_name,
 static char *_load_resvs(uint16_t rpc_version, buf_t *buffer,
 			 char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
 	local_resv_t object;
 	int i = 0;
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, resv_table, resv_req_inx[0]);
-	xstrcat(format, "('%s'");
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, resv_table, resv_req_inx[0]);
+	xstrcatat(format, &format_pos, "('%s'");
 	for(i=1; i<RESV_REQ_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", resv_req_inx[i]);
-		xstrcat(format, ", '%s'");
+		xstrfmtcatat(insert, &insert_pos, ", %s", resv_req_inx[i]);
+		xstrcatat(format, &format_pos, ", '%s'");
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrcatat(insert, &insert_pos, ") values ");
+	xstrcatat(format, &format_pos, ")");
+
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_resv_t));
 		if (_unpack_local_resv(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.id,
-			   object.deleted,
-			   object.assocs,
-			   object.flags,
-			   object.tres_str,
-			   object.nodes,
-			   object.node_inx,
-			   object.name,
-			   object.time_start,
-			   object.time_end,
-			   object.unused_wall);
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.id,
+			     object.deleted,
+			     object.assocs,
+			     object.flags,
+			     object.tres_str,
+			     object.nodes,
+			     object.node_inx,
+			     object.name,
+			     object.time_start,
+			     object.time_end,
+			     object.unused_wall);
 
 		_free_local_resv_members(&object);
 	}
@@ -3444,6 +3660,7 @@ static buf_t *_pack_archive_steps(MYSQL_RES *result, char *cluster_name,
 		step.act_cpufreq = row[STEP_REQ_ACT_CPUFREQ];
 		step.deleted = row[STEP_REQ_DELETED];
 		step.consumed_energy = row[STEP_REQ_CONSUMED_ENERGY];
+		step.container = row[STEP_REQ_CONTAINER];
 		step.exit_code = row[STEP_REQ_EXIT_CODE];
 		step.job_db_inx = row[STEP_REQ_DB_INX];
 		step.kill_requid = row[STEP_REQ_KILL_REQUID];
@@ -3503,85 +3720,169 @@ static buf_t *_pack_archive_steps(MYSQL_RES *result, char *cluster_name,
 static char *_load_steps(uint16_t rpc_version, buf_t *buffer,
 			 char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
 	local_step_t object;
 	int i;
+	int safe_attributes[] = {
+		STEP_REQ_DB_INX,
+		STEP_REQ_STEPID,
+		STEP_REQ_STEP_HET_COMP,
+		STEP_REQ_DELETED,
+		STEP_REQ_START,
+		STEP_REQ_END,
+		STEP_REQ_SUSPENDED,
+		STEP_REQ_NAME,
+		STEP_REQ_NODELIST,
+		STEP_REQ_STATE,
+		STEP_REQ_EXIT_CODE,
+		STEP_REQ_NODES,
+		STEP_REQ_TASKS,
+		STEP_REQ_TASKDIST,
+		STEP_REQ_USER_SEC,
+		STEP_REQ_USER_USEC,
+		STEP_REQ_SYS_SEC,
+		STEP_REQ_SYS_USEC,
+		STEP_REQ_ACT_CPUFREQ,
+		STEP_REQ_CONSUMED_ENERGY,
+		STEP_REQ_REQ_CPUFREQ_MIN,
+		STEP_REQ_REQ_CPUFREQ_MAX,
+		STEP_REQ_REQ_CPUFREQ_GOV,
+		STEP_REQ_TRES,
+		STEP_TRES_USAGE_IN_AVE,
+		STEP_TRES_USAGE_IN_MAX,
+		STEP_TRES_USAGE_IN_MAX_NODEID,
+		STEP_TRES_USAGE_IN_MAX_TASKID,
+		STEP_TRES_USAGE_IN_MIN,
+		STEP_TRES_USAGE_IN_MIN_NODEID,
+		STEP_TRES_USAGE_IN_MIN_TASKID,
+		STEP_TRES_USAGE_IN_TOT,
+		STEP_TRES_USAGE_OUT_AVE,
+		STEP_TRES_USAGE_OUT_MAX,
+		STEP_TRES_USAGE_OUT_MAX_NODEID,
+		STEP_TRES_USAGE_OUT_MAX_TASKID,
+		STEP_TRES_USAGE_OUT_MIN,
+		STEP_TRES_USAGE_OUT_MIN_NODEID,
+		STEP_TRES_USAGE_OUT_MIN_TASKID,
+		STEP_TRES_USAGE_OUT_TOT,
+		STEP_REQ_COUNT };
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, step_table, step_req_inx[0]);
-	xstrcat(format, "('%s'");
-	for (i=1; i<STEP_REQ_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", step_req_inx[i]);
-		xstrcat(format, ", '%s'");
+	/* Sync w/ step_table_fields where text/tinytext can be NULL */
+	int null_attributes[] = {
+		STEP_REQ_KILL_REQUID,
+		STEP_REQ_NODE_INX,
+		STEP_REQ_CONTAINER,
+		STEP_REQ_SUBMIT_LINE,
+		STEP_REQ_COUNT };
+
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, step_table, step_req_inx[0]);
+	for (i = 1; safe_attributes[i] < STEP_REQ_COUNT; i++) {
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", step_req_inx[safe_attributes[i]]);
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	/* Some attributes that might be NULL require special handling */
+	for (i = 0; null_attributes[i] < STEP_REQ_COUNT; i++) {
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", step_req_inx[null_attributes[i]]);
+	}
+	xstrcatat(insert, &insert_pos, ") values ");
+
 	for (i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_step_t));
 		if (_unpack_local_step(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
 		if (!object.step_het_comp)
 			object.step_het_comp = xstrdup_printf("%u", NO_VAL);
 
-		xstrfmtcat(insert, format,
-			   object.job_db_inx,
-			   object.stepid,
-			   object.step_het_comp,
-			   object.deleted,
-			   object.period_start,
-			   object.period_end,
-			   object.period_suspended,
-			   object.name,
-			   object.nodelist,
-			   object.node_inx,
-			   object.state,
-			   object.kill_requid,
-			   object.exit_code,
-			   object.nodes,
-			   object.tasks,
-			   object.task_dist,
-			   object.user_sec,
-			   object.user_usec,
-			   object.sys_sec,
-			   object.sys_usec,
-			   object.act_cpufreq,
-			   object.consumed_energy,
-			   object.req_cpufreq_max,
-			   object.req_cpufreq_min,
-			   object.req_cpufreq_gov,
-			   object.submit_line,
-			   object.tres_alloc_str,
-			   object.tres_usage_in_ave,
-			   object.tres_usage_in_max,
-			   object.tres_usage_in_max_nodeid,
-			   object.tres_usage_in_max_taskid,
-			   object.tres_usage_in_min,
-			   object.tres_usage_in_min_nodeid,
-			   object.tres_usage_in_min_taskid,
-			   object.tres_usage_in_tot,
-			   object.tres_usage_out_ave,
-			   object.tres_usage_out_max,
-			   object.tres_usage_out_max_nodeid,
-			   object.tres_usage_out_max_taskid,
-			   object.tres_usage_out_min,
-			   object.tres_usage_out_min_nodeid,
-			   object.tres_usage_out_min_taskid,
-			   object.tres_usage_out_tot);
+		xstrcatat(format, &format_pos, "('%s'");
+		for (int j = 1; safe_attributes[j] < STEP_REQ_COUNT; j++) {
+			xstrcatat(format, &format_pos, ", '%s'");
+		}
+		/* special handling for NULL attributes */
+		if (object.kill_requid == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.node_inx == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.container == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.submit_line == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+
+		xstrcatat(format, &format_pos, ")");
+
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.job_db_inx,
+			     object.stepid,
+			     object.step_het_comp,
+			     object.deleted,
+			     object.period_start,
+			     object.period_end,
+			     object.period_suspended,
+			     object.name,
+			     object.nodelist,
+			     object.state,
+			     object.exit_code,
+			     object.nodes,
+			     object.tasks,
+			     object.task_dist,
+			     object.user_sec,
+			     object.user_usec,
+			     object.sys_sec,
+			     object.sys_usec,
+			     object.act_cpufreq,
+			     object.consumed_energy,
+			     object.req_cpufreq_max,
+			     object.req_cpufreq_min,
+			     object.req_cpufreq_gov,
+			     object.tres_alloc_str,
+			     object.tres_usage_in_ave,
+			     object.tres_usage_in_max,
+			     object.tres_usage_in_max_nodeid,
+			     object.tres_usage_in_max_taskid,
+			     object.tres_usage_in_min,
+			     object.tres_usage_in_min_nodeid,
+			     object.tres_usage_in_min_taskid,
+			     object.tres_usage_in_tot,
+			     object.tres_usage_out_ave,
+			     object.tres_usage_out_max,
+			     object.tres_usage_out_max_nodeid,
+			     object.tres_usage_out_max_taskid,
+			     object.tres_usage_out_min,
+			     object.tres_usage_out_min_nodeid,
+			     object.tres_usage_out_min_taskid,
+			     object.tres_usage_out_tot,
+			     (object.kill_requid == NULL) ?
+				"NULL" : object.kill_requid,
+			     (object.node_inx == NULL) ?
+				"NULL" : object.node_inx,
+			     (object.container == NULL) ?
+				"NULL" : object.container,
+			     (object.submit_line == NULL) ?
+				"NULL" : object.submit_line);
 
 		_free_local_step_members(&object);
+		format_pos = NULL;
+		xfree(format);
 	}
 //	END_TIMER2("step query");
 //	info("step query took %s", TIME_STR);
-	xfree(format);
 
 	return insert;
 }
@@ -3623,37 +3924,38 @@ static buf_t *_pack_archive_suspends(MYSQL_RES *result, char *cluster_name,
 static char *_load_suspend(uint16_t rpc_version, buf_t *buffer,
 			   char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
 	local_suspend_t object;
 	int i = 0;
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, suspend_table, suspend_req_inx[0]);
-	xstrcat(format, "('%s'");
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		    cluster_name, suspend_table, suspend_req_inx[0]);
+	xstrcatat(format, &format_pos, "('%s'");
 	for(i=1; i<SUSPEND_REQ_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", suspend_req_inx[i]);
-		xstrcat(format, ", '%s'");
+		xstrfmtcatat(insert, &insert_pos, ", %s", suspend_req_inx[i]);
+		xstrcatat(format, &format_pos, ", '%s'");
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrcatat(insert, &insert_pos, ") values ");
+	xstrcatat(format, &format_pos, ")");
+
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_suspend_t));
 		if (_unpack_local_suspend(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.job_db_inx,
-			   object.associd,
-			   object.period_start,
-			   object.period_end);
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.job_db_inx,
+			     object.associd,
+			     object.period_start,
+			     object.period_end);
 
 		_free_local_suspend_members(&object);
 	}
@@ -3704,46 +4006,74 @@ static buf_t *_pack_archive_txns(MYSQL_RES *result, char *cluster_name,
 static char *_load_txn(uint16_t rpc_version, buf_t *buffer,
 		       char *cluster_name, uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
+	int safe_attributes[] = {
+		TXN_REQ_ID,
+		TXN_REQ_TS,
+		TXN_REQ_ACTION,
+		TXN_REQ_NAME,
+		TXN_REQ_ACTOR,
+		TXN_REQ_CLUSTER,
+		TXN_REQ_COUNT };
+	/* Sync w/ txn_table_fields where text/tinytext can be NULL */
+	int null_attributes[] = {
+		TXN_REQ_INFO,
+		TXN_REQ_COUNT };
 	local_txn_t object;
 	int i = 0;
 
-	xstrfmtcat(insert, "insert into \"%s\" (%s",
-		   txn_table, txn_req_inx[0]);
-	xstrcat(format, "('%s'");
-	for(i=1; i<TXN_REQ_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", txn_req_inx[i]);
-		xstrcat(format, ", '%s'");
-	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s\" (%s",
+		    txn_table, txn_req_inx[0]);
+	for (i = 1; safe_attributes[i] < TXN_REQ_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", txn_req_inx[safe_attributes[i]]);
+	/* Some attributes that might be NULL require special handling */
+	for (i = 0; null_attributes[i] < TXN_REQ_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", txn_req_inx[null_attributes[i]]);
+	xstrcatat(insert, &insert_pos, ") values ");
+
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_txn_t));
 		if (_unpack_local_txn(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.id,
-			   object.timestamp,
-			   object.action,
-			   object.name,
-			   object.actor,
-			   object.info,
-			   object.cluster);
+		xstrcatat(format, &format_pos, "('%s'");
+		for(int j = 1; safe_attributes[j] < TXN_REQ_COUNT; j++) {
+			xstrcatat(format, &format_pos, ", '%s'");
+		}
+
+		/* special handling for NULL attributes */
+		if (object.info == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+		xstrcatat(format, &format_pos, ")");
+
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.id,
+			     object.timestamp,
+			     object.action,
+			     object.name,
+			     object.actor,
+			     object.cluster,
+			     (object.info == NULL) ?
+				"NULL" : object.info);
 
 		_free_local_txn_members(&object);
+		format_pos = NULL;
+		xfree(format);
 	}
 //	END_TIMER2("txn query");
 //	info("txn query took %s", TIME_STR);
-	xfree(format);
 
 	return insert;
 }
@@ -3791,7 +4121,8 @@ static char *_load_usage(uint16_t rpc_version, buf_t *buffer,
 			 char *cluster_name, uint16_t type, uint16_t period,
 			 uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL, *my_usage_table = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL, *my_usage_table = NULL;
 	local_usage_t object;
 	int i = 0;
 
@@ -3836,36 +4167,35 @@ static char *_load_usage(uint16_t rpc_version, buf_t *buffer,
 		break;
 	}
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
 		   cluster_name, my_usage_table, usage_req_inx[0]);
-	xstrcat(format, "('%s'");
+	xstrcatat(format, &format_pos, "('%s'");
 	for(i=1; i<USAGE_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", usage_req_inx[i]);
-		xstrcat(format, ", '%s'");
+		xstrfmtcatat(insert, &insert_pos, ", %s", usage_req_inx[i]);
+		xstrcatat(format, &format_pos, ", '%s'");
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrcatat(insert, &insert_pos, ") values ");
+	xstrcatat(format, &format_pos, ")");
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_usage_t));
 		if (_unpack_local_usage(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.id,
-			   object.tres_id,
-			   object.time_start,
-			   object.alloc_secs,
-			   object.creation_time,
-			   object.mod_time,
-			   object.deleted);
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.id,
+			     object.tres_id,
+			     object.time_start,
+			     object.alloc_secs,
+			     object.creation_time,
+			     object.mod_time,
+			     object.deleted);
 
 		_free_local_usage_members(&object);
 	}
@@ -3924,7 +4254,8 @@ static char *_load_cluster_usage(uint16_t rpc_version, buf_t *buffer,
 				 char *cluster_name, uint16_t period,
 				 uint32_t rec_cnt)
 {
-	char *insert = NULL, *format = NULL, *my_usage_table = NULL;
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL, *my_usage_table = NULL;
 	local_cluster_usage_t object;
 	int i = 0;
 
@@ -3944,41 +4275,41 @@ static char *_load_cluster_usage(uint16_t rpc_version, buf_t *buffer,
 		break;
 	}
 
-	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
-		   cluster_name, my_usage_table, cluster_req_inx[0]);
-	xstrcat(format, "('%s'");
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, my_usage_table, cluster_req_inx[0]);
+	xstrcatat(format, &format_pos, "('%s'");
 	for(i=1; i<CLUSTER_COUNT; i++) {
-		xstrfmtcat(insert, ", %s", cluster_req_inx[i]);
-		xstrcat(format, ", '%s'");
+		xstrfmtcatat(insert, &insert_pos, ", %s", cluster_req_inx[i]);
+		xstrcatat(format, &format_pos, ", '%s'");
 	}
-	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
+	xstrcatat(insert, &insert_pos, ") values ");
+	xstrcatat(format, &format_pos, ")");
+
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_cluster_usage_t));
 		if (_unpack_local_cluster_usage(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
-			xfree(format);
 			xfree(insert);
 			break;
 		}
 
 		if (i)
-			xstrcat(insert, ", ");
+			xstrcatat(insert, &insert_pos, ", ");
 
-		xstrfmtcat(insert, format,
-			   object.tres_id,
-			   object.time_start,
-			   object.tres_cnt,
-			   object.alloc_secs,
-			   object.down_secs,
-			   object.pdown_secs,
-			   object.idle_secs,
-			   object.plan_secs,
-			   object.over_secs,
-			   object.creation_time,
-			   object.mod_time,
-			   object.deleted);
+		xstrfmtcatat(insert, &insert_pos, format,
+			     object.tres_id,
+			     object.time_start,
+			     object.tres_cnt,
+			     object.alloc_secs,
+			     object.down_secs,
+			     object.pdown_secs,
+			     object.idle_secs,
+			     object.plan_secs,
+			     object.over_secs,
+			     object.creation_time,
+			     object.mod_time,
+			     object.deleted);
 
 		_free_local_cluster_members(&object);
 	}
@@ -4533,16 +4864,147 @@ extern int as_mysql_jobacct_process_archive(mysql_conn_t *mysql_conn,
 	return rc;
 }
 
-extern int as_mysql_jobacct_process_archive_load(
-	mysql_conn_t *mysql_conn, slurmdb_archive_rec_t *arch_rec)
+static int _load_data(char **data, mysql_conn_t *mysql_conn)
 {
-	char *data = NULL, *cluster_name = NULL;
+	int rc;
+
+	xassert(data);
+
+	if (!*data) {
+		error("No data to load");
+		return SLURM_ERROR;
+	}
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", *data);
+
+	rc = mysql_db_query_check_after(mysql_conn, *data);
+	xfree(*data);
+
+	if (rc != SLURM_SUCCESS)
+		error("Couldn't load old data");
+
+	return rc;
+}
+
+static int _process_archive_data(char **data_in, uint32_t data_size,
+				 mysql_conn_t *mysql_conn)
+{
 	int error_code = SLURM_SUCCESS;
 	buf_t *buffer = NULL;
 	time_t buf_time;
 	uint16_t type = 0, ver = 0, period = 0;
-	uint32_t data_size = 0, rec_cnt = 0, tmp32 = 0;
+	uint32_t rec_cnt = 0, tmp32 = 0;
 	uint32_t rec_cnt_total = 0, rec_cnt_left = 0, pass_cnt = 0;
+	char *cluster_name = NULL;
+
+	xassert(data_in);
+
+	buffer = create_buf(*data_in, data_size);
+
+	safe_unpack16(&ver, buffer);
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
+	         "Version in archive header is %u", ver);
+	/*
+	 * Don't verify the lower limit as we should be keeping all
+	 * older versions around here just to support super old
+	 * archive files since they don't get regenerated all the time.
+	 */
+	if (ver > SLURM_PROTOCOL_VERSION) {
+		error("***********************************************");
+		error("Can not recover archive file, incompatible version, got %u need <= %u",
+		      ver, SLURM_PROTOCOL_VERSION);
+		error("***********************************************");
+		FREE_NULL_BUFFER(buffer);
+		return EFAULT;
+	}
+	safe_unpack_time(&buf_time, buffer);
+	safe_unpack16(&type, buffer);
+	safe_unpackstr_xmalloc(&cluster_name, &tmp32, buffer);
+	safe_unpack32(&rec_cnt, buffer);
+
+	if (!rec_cnt) {
+		error("we didn't get any records from this file of type '%s'",
+		      slurmdbd_msg_type_2_str(type, 0));
+		error_code = SLURM_ERROR;
+		goto cleanup;
+	}
+
+	rec_cnt_left = rec_cnt;
+	rec_cnt_total = rec_cnt;
+	while (rec_cnt_left) {
+		char *data = NULL;
+
+		rec_cnt = MIN(rec_cnt_left, RECORDS_PER_PASS);
+
+		DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
+			 "%s: Pass %u: loaded %u/%u records. Attempting partial load %u.",
+			 __func__, pass_cnt, rec_cnt_total - rec_cnt_left,
+			 rec_cnt_total, rec_cnt);
+
+		rec_cnt_left -= rec_cnt;
+
+		switch (type) {
+		case DBD_GOT_EVENTS:
+			data = _load_events(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_GOT_JOBS:
+			data = _load_jobs(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_GOT_RESVS:
+			data = _load_resvs(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_STEP_START:
+			data = _load_steps(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_JOB_SUSPEND:
+			data = _load_suspend(ver, buffer, cluster_name,
+					     rec_cnt);
+			break;
+		case DBD_GOT_TXN:
+			data = _load_txn(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_GOT_ASSOC_USAGE:
+		case DBD_GOT_WCKEY_USAGE:
+			if (pass_cnt == 0)
+				safe_unpack16(&period, buffer);
+			data = _load_usage(ver, buffer, cluster_name, type,
+					   period, rec_cnt);
+			break;
+		case DBD_GOT_CLUSTER_USAGE:
+			if (pass_cnt == 0)
+				safe_unpack16(&period, buffer);
+			data = _load_cluster_usage(ver, buffer, cluster_name,
+						   period, rec_cnt);
+			break;
+		default:
+			error("Unknown type '%u' to load from archive", type);
+			break;
+		}
+
+		if ((error_code = _load_data(&data, mysql_conn)))
+			break;
+
+		pass_cnt++;
+	}
+
+cleanup:
+	FREE_NULL_BUFFER(buffer);
+	xfree(cluster_name);
+	return error_code;
+
+unpack_error:
+	error("Error unpacking data");
+	error_code = SLURM_ERROR;
+	goto cleanup;
+}
+
+extern int as_mysql_jobacct_process_archive_load(
+	mysql_conn_t *mysql_conn, slurmdb_archive_rec_t *arch_rec)
+{
+	char *data = NULL;
+	int error_code = SLURM_SUCCESS;
+	uint32_t data_size = 0;
 
 	/* Ensure that the connection is not set in autocommit mode. */
 	xassert(mysql_conn->rollback);
@@ -4612,117 +5074,12 @@ extern int as_mysql_jobacct_process_archive_load(
 		|| !xstrncmp("drop table ", data, 11)
 		|| !xstrncmp("truncate table ", data, 15))) {
 		_process_old_sql(&data);
-		goto got_sql;
+		error_code = _load_data(&data, mysql_conn);
+	} else {
+		error_code = _process_archive_data(&data, data_size,
+						   mysql_conn);
 	}
-
-	buffer = create_buf(data, data_size);
-	data = NULL;	/* Moved to "buffer" */
-
-	safe_unpack16(&ver, buffer);
-	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
-	         "Version in archive header is %u", ver);
-	/*
-	 * Don't verify the lower limit as we should be keeping all
-	 * older versions around here just to support super old
-	 * archive files since they don't get regenerated all the time.
-	 */
-	if (ver > SLURM_PROTOCOL_VERSION) {
-		error("***********************************************");
-		error("Can not recover archive file, incompatible version, "
-		      "got %u need <= %u", ver,
-		      SLURM_PROTOCOL_VERSION);
-		error("***********************************************");
-		FREE_NULL_BUFFER(buffer);
-		return EFAULT;
-	}
-	safe_unpack_time(&buf_time, buffer);
-	safe_unpack16(&type, buffer);
-	safe_unpackstr_xmalloc(&cluster_name, &tmp32, buffer);
-	safe_unpack32(&rec_cnt, buffer);
-
-	if (!rec_cnt) {
-		error("we didn't get any records from this file of type '%s'",
-		      slurmdbd_msg_type_2_str(type, 0));
-		goto got_sql;
-	}
-
-	rec_cnt_left = rec_cnt;
-	rec_cnt_total = rec_cnt;
-pass:
-	rec_cnt = MIN(rec_cnt_left, RECORDS_PER_PASS);
-
-	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn,
-	         "%s: Pass %u: loaded %u/%u records. Attempting partial load %u.",
-	         __func__, pass_cnt, rec_cnt_total - rec_cnt_left,
-	         rec_cnt_total, rec_cnt);
-
-	rec_cnt_left -= rec_cnt;
-
-	switch (type) {
-	case DBD_GOT_EVENTS:
-		data = _load_events(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_GOT_JOBS:
-		data = _load_jobs(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_GOT_RESVS:
-		data = _load_resvs(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_STEP_START:
-		data = _load_steps(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_JOB_SUSPEND:
-		data = _load_suspend(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_GOT_TXN:
-		data = _load_txn(ver, buffer, cluster_name, rec_cnt);
-		break;
-	case DBD_GOT_ASSOC_USAGE:
-	case DBD_GOT_WCKEY_USAGE:
-		if (pass_cnt == 0)
-			safe_unpack16(&period, buffer);
-		data = _load_usage(ver, buffer, cluster_name, type, period,
-				   rec_cnt);
-		break;
-	case DBD_GOT_CLUSTER_USAGE:
-		if (pass_cnt == 0)
-			safe_unpack16(&period, buffer);
-		data = _load_cluster_usage(ver, buffer, cluster_name, period,
-					   rec_cnt);
-		break;
-	default:
-		error("Unknown type '%u' to load from archive", type);
-		break;
-	}
-
-got_sql:
-	if (!data) {
-		error("No data to load");
-		error_code = SLURM_ERROR;
-		goto cleanup;
-	}
-	if (slurm_conf.debug_flags & DEBUG_FLAG_DB_ARCHIVE)
-		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", data);
-	error_code = mysql_db_query_check_after(mysql_conn, data);
-	xfree(data);
-	if (error_code != SLURM_SUCCESS) {
-unpack_error:
-		error("Couldn't load old data");
-		if (error_code == SLURM_SUCCESS) {
-			/* This happens on unpack_error */
-			error_code = SLURM_ERROR;
-		}
-		goto cleanup;
-	}
-
-	if (rec_cnt_left) {
-		pass_cnt++;
-		goto pass;
-	}
-
-cleanup:
-	xfree(cluster_name);
-	FREE_NULL_BUFFER(buffer);
+	data = NULL; /* Free'd by above functions. */
 
 	if (error_code)
 		error("%s: failure loading archive: %s", __func__,

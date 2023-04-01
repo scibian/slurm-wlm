@@ -90,7 +90,7 @@ int pmixp_usock_create_srv(char *path)
 		return SLURM_ERROR;
 	}
 
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd < 0) {
 		PMIXP_ERROR_STD("Cannot create UNIX socket");
 		return SLURM_ERROR;
@@ -347,7 +347,7 @@ int pmixp_stepd_send(const char *nodelist, const char *address,
 		     unsigned int retry_cnt, int silent)
 {
 
-	int retry = 0, rc;
+	int retry = 0, rc = SLURM_SUCCESS;
 	unsigned int delay = start_delay; /* in milliseconds */
 	char *copy_of_nodelist = xstrdup(nodelist);
 
@@ -447,7 +447,7 @@ int pmixp_p2p_send(const char *nodename, const char *address, const char *data,
 		   uint32_t len, unsigned int start_delay,
 		   unsigned int retry_cnt, int silent)
 {
-	int retry = 0, rc;
+	int retry = 0, rc = SLURM_SUCCESS;
 	unsigned int delay = start_delay; /* in milliseconds */
 
 	pmixp_debug_hang(0);

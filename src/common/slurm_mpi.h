@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  src/common/slurm_mpi.h - Generic mpi selector for slurm
+ *  slurm_mpi.h - Generic MPI selector for Slurm
  *****************************************************************************
  *  Copyright (C) 2002-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -36,8 +36,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SRUN_MPI_H
-#define _SRUN_MPI_H
+#ifndef _SLURM_MPI_H
+#define _SLURM_MPI_H
 
 #include <stdbool.h>
 
@@ -45,28 +45,36 @@
 
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
+enum mpi_plugin_type {
+	MPI_PLUGIN_NONE = 101,
+	MPI_PLUGIN_PMI2 = 102,
+	MPI_PLUGIN_CRAY_SHASTA = 103,
+	MPI_PLUGIN_PMIX2 = 104,
+	MPI_PLUGIN_PMIX3 = 105,
+	MPI_PLUGIN_PMIX4 = 106,
+	MPI_PLUGIN_PMIX5 = 107,
+};
+
 typedef struct slurm_mpi_context *slurm_mpi_context_t;
 typedef void mpi_plugin_client_state_t;
 
 typedef struct {
-	uint32_t het_job_id;		/* Hetjob leader id or NO_VAL */
-	uint32_t het_job_task_offset;	/* Hetjob task offset or NO_VAL */
-	slurm_step_id_t step_id; /* Current step id (or NO_VAL)               */
+	uint32_t het_job_id; /* Hetjob leader id or NO_VAL */
+	uint32_t het_job_task_offset; /* Hetjob task offset or NO_VAL */
+	slurm_step_id_t step_id; /* Current step id (or NO_VAL) */
 	slurm_step_layout_t *step_layout;
 } mpi_plugin_client_info_t;
 
 typedef struct {
-	slurm_step_id_t step_id; /* Current step id (or NO_VAL)               */
-	uint32_t nnodes; /* number of nodes in current job step       */
-	uint32_t nodeid; /* relative position of this node in job     */
-	uint32_t ntasks; /* total number of tasks in current job      */
-	uint32_t ltasks; /* number of tasks on *this* (local) node    */
-
-	uint32_t gtaskid;/* global task rank within the job step      */
-	int      ltaskid;/* task rank within the local node           */
-
-	slurm_addr_t *self;
 	slurm_addr_t *client;
+	uint32_t gtaskid;/* global task rank within the job step */
+	int ltaskid; /* task rank within the local node */
+	uint32_t ltasks; /* number of tasks on *this* (local) node */
+	uint32_t nnodes; /* number of nodes in current job step */
+	uint32_t nodeid; /* relative position of this node in job */
+	uint32_t ntasks; /* total number of tasks in current job */
+	slurm_addr_t *self;
+	slurm_step_id_t step_id; /* Current step id (or NO_VAL) */
 } mpi_plugin_task_info_t;
 
 /**********************************************************************
@@ -74,19 +82,16 @@ typedef struct {
  **********************************************************************/
 
 /*
- * Just load the requested plugin.  No explicit calls into the plugin
- * once loaded (just the implicit call to the plugin's init() function).
- *
- * The MPI module type is passed through an environment variable
- * SLURM_MPI_TYPE from the client.  There is no more official protocol.
  * This function will remove SLURM_MPI_TYPE from the environment variable
- * array "env", if it exists.
+ * array "*env", if it exists and its value is "none".
  */
-int mpi_hook_slurmstepd_init (char ***env);
+extern int mpi_process_env(char ***env);
+
+extern int mpi_g_slurmstepd_prefork(const stepd_step_rec_t *job, char ***env);
 
 /*
  * Load the plugin (if not already loaded) and call the plugin
- * p_mpi_hook_slurmstepd_task() function.
+ * mpi_p_slurmstepd_task() function.
  *
  * This function is called from within each process that will exec() a
  * task.  The process will be running as the user of the job step at that
@@ -94,16 +99,14 @@ int mpi_hook_slurmstepd_init (char ***env);
  *
  * If the plugin wants to set environment variables for the task,
  * it will add the necessary variables the env array pointed
- * to be "env".  If "env" is NULL, a new array will be allocated
- * automaticallly.
+ * to be "env".  If "*env" is NULL, a new array will be allocated
+ * automatically.
  *
- * The returned "env" array may be manipulated (and freed) by using
+ * The returned "*env" array may be manipulated (and freed) by using
  * the src/common/env.c:env_array_* functions.
  */
-int mpi_hook_slurmstepd_task (const mpi_plugin_task_info_t *job, char ***env);
-
-
-int mpi_hook_slurmstepd_prefork (const stepd_step_rec_t *job, char ***env);
+extern int mpi_g_slurmstepd_task(const mpi_plugin_task_info_t *job,
+				 char ***env);
 
 /**********************************************************************
  * Hooks called by client applications.
@@ -114,35 +117,49 @@ int mpi_hook_slurmstepd_prefork (const stepd_step_rec_t *job, char ***env);
  * Just load the requested plugin.  No explicit calls into the plugin
  * once loaded (just the implicit call to the plugin's init() function).
  *
- * If "mpi_type" is NULL, the system-default mpi plugin
+ * If "*mpi_type" is NULL, the system-default mpi plugin
  * is initialized.
  */
-int mpi_hook_client_init (char *mpi_type);
+extern int mpi_g_client_init(char **mpi_type);
 
 /*
- * Call the plugin p_mpi_hook_client_prelaunch() function.
+ * Call the plugin mpi_p_client_prelaunch() function.
  *
  * If the plugin requires that environment variables be set in the
  * environment of every task, it will add the necessary variables
- * the env array pointed to be "env".  If "env" is NULL, a new
- * array will be allocated automaticallly.
+ * the env array pointed to be "env".  If "*env" is NULL, a new
+ * array will be allocated automatically.
  *
- * The returned "env" array may be manipulated (and freed) by using
+ * The returned "*env" array may be manipulated (and freed) by using
  * the src/common/env.c:env_array_* functions.
  *
  * Returns NULL on error.  On success returns an opaque pointer
  * to MPI state for this job step.  Free the state by calling
- * mpi_hook_client_fini().
+ * mpi_g_client_fini().
  */
-mpi_plugin_client_state_t *
-mpi_hook_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env);
+extern mpi_plugin_client_state_t *mpi_g_client_prelaunch(
+	const mpi_plugin_client_info_t *job, char ***env);
 
-/* Call the plugin p_mpi_hook_client_fini() function. */
-int mpi_hook_client_fini (mpi_plugin_client_state_t *state);
+/* Call the plugin mpi_p_client_fini() function. */
+extern int mpi_g_client_fini(mpi_plugin_client_state_t *state);
 
-/**********************************************************************
- * FIXME - Nobody calls the following function.  Perhaps someone should.
- **********************************************************************/
-int mpi_fini (void);
+/* Initialize all available plugins, read and set their config from mpi.conf. */
+extern int mpi_g_daemon_init(void);
 
-#endif /* !_SRUN_MPI_H */
+/* Fini and init in sequence */
+extern int mpi_g_daemon_reconfig(void);
+
+/* Deliver a printable list to the client with config from all loaded plugins */
+extern List mpi_g_conf_get_printable(void);
+
+/* Functions to send config from Slurmd to Slurstepd, peer to peer */
+extern int mpi_conf_send_stepd(int fd, uint32_t plugin_id);
+extern int mpi_conf_recv_stepd(int fd);
+
+/* given a mpi_type return the plugin_id see mpi_plugin_type above */
+extern int mpi_id_from_plugin_type(char *mpi_type);
+
+/* Tear down things in the MPI plugin */
+extern int mpi_fini(void);
+
+#endif /* !_SLURM_MPI_H */

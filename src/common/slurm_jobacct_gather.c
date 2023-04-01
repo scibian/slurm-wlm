@@ -68,6 +68,7 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_jobacct_gather.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -87,8 +88,7 @@ strong_alias(jobacctinfo_create, slurm_jobacctinfo_create);
 strong_alias(jobacctinfo_destroy, slurm_jobacctinfo_destroy);
 
 typedef struct slurm_jobacct_gather_ops {
-	void (*poll_data) (List task_list, bool pgid_plugin, uint64_t cont_id,
-			   bool profile);
+	void (*poll_data) (List task_list, uint64_t cont_id, bool profile);
 	int (*endpoll)    ();
 	int (*add_task)   (pid_t pid, jobacct_id_t *jobacct_id);
 } slurm_jobacct_gather_ops_t;
@@ -111,7 +111,6 @@ static pthread_mutex_t init_run_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t watch_tasks_thread_id = 0;
 
 static int freq = 0;
-static bool pgid_plugin = false;
 static List task_list = NULL;
 static uint64_t cont_id = NO_VAL64;
 static pthread_mutex_t task_list_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -321,7 +320,7 @@ static void _poll_data(bool profile)
 	/* Update the data */
 	slurm_mutex_lock(&task_list_lock);
 	if (task_list)
-		(*(ops.poll_data))(task_list, pgid_plugin, cont_id, profile);
+		(*(ops.poll_data))(task_list, cont_id, profile);
 	slurm_mutex_unlock(&task_list_lock);
 }
 
@@ -557,11 +556,9 @@ extern int jobacct_gather_init(void)
 	if (!running_in_slurmctld())
 		goto done;
 
-	if (!xstrcasecmp(slurm_conf.proctrack_type, "proctrack/pgid")) {
+	if (!xstrcasecmp(slurm_conf.proctrack_type, "proctrack/pgid"))
 		info("WARNING: We will use a much slower algorithm with proctrack/pgid, use Proctracktype=proctrack/linuxproc or some other proctrack when using %s",
 		     slurm_conf.job_acct_gather_type);
-		pgid_plugin = true;
-	}
 
 	if (!xstrcasecmp(slurm_conf.accounting_storage_type,
 	                 ACCOUNTING_STORAGE_TYPE_NONE)) {
@@ -781,7 +778,7 @@ error:
 
 extern int jobacct_gather_set_proctrack_container_id(uint64_t id)
 {
-	if (!plugin_polling || pgid_plugin)
+	if (!plugin_polling)
 		return SLURM_SUCCESS;
 
 	if (cont_id != NO_VAL64)
@@ -1309,4 +1306,17 @@ extern void jobacctinfo_2_stats(slurmdb_stats_t *stats, jobacctinfo_t *jobacct)
 			(double)jobacct->energy.consumed_energy;
 
 	_jobacctinfo_2_stats_tres_usage(stats, jobacct);
+}
+
+extern long jobacct_gather_get_clk_tck()
+{
+	long hertz = sysconf(_SC_CLK_TCK);
+
+	if (hertz < 1) {
+		error("unable to get clock rate");
+		/* 100 is default on many systems. */
+		hertz = 100;
+	}
+
+	return hertz;
 }

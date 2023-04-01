@@ -52,12 +52,14 @@ typedef struct avail_res {	/* Per-node resource availability */
 	uint16_t avail_gpus;	/* Count of available GPUs */
 	uint16_t avail_res_cnt;	/* Count of available CPUs + GPUs */
 	uint16_t *avail_cores_per_sock;	/* Per-socket available core count */
+	uint32_t gres_min_cores; /* Minimum number of cores to satisfy GRES
+				    constraints */
 	uint16_t max_cpus;	/* Maximum available CPUs on the node */
 	uint16_t min_cpus;	/* Minimum allocated CPUs */
 	uint16_t sock_cnt;	/* Number of sockets on this node */
 	List sock_gres_list;	/* Per-socket GRES availability, sock_gres_t */
 	uint16_t spec_threads;	/* Specialized threads to be reserved */
-	uint16_t vpus;		/* Virtual processors (CPUs) per core */
+	uint16_t tpc;		/* Threads/cpus per core */
 } avail_res_t;
 
 struct select_nodeinfo {
@@ -86,7 +88,8 @@ typedef struct {
 			    bool prefer_alloc_nodes,
 			    gres_mc_data_t *tres_mc_ptr);
 	int (*dist_tasks_compute_c_b)(job_record_t *job_ptr,
-				      uint32_t *gres_task_limit);
+				      uint32_t *gres_task_limit,
+				      uint32_t *gres_min_cpus);
 	bitstr_t **(*mark_avail_cores)(bitstr_t *node_map, uint16_t core_spec);
 	bitstr_t *(*pick_first_cores)(bitstr_t *avail_node_bitmap,
 				      uint32_t node_cnt,
@@ -113,7 +116,6 @@ extern const uint32_t plugin_id;
 extern bool     preempt_by_part;
 extern bool     preempt_by_qos;
 extern uint16_t priority_flags;
-extern int      select_node_cnt;
 extern bool     spec_cores_first;
 extern bool     topo_optional;
 

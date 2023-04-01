@@ -349,7 +349,11 @@ static int _set_job_env_field(lua_State *L)
 	if (job_desc == NULL) {
 		error("%s: job_desc is NULL", __func__);
 	} else if (job_desc->environment == NULL) {
-		error("%s: job_desc->environment is NULL", __func__);
+		if (job_desc->script)
+			error("%s: %s: job_desc->environment is NULL.",
+			      plugin_type, __func__);
+		else
+			info("job_desc->environment only accessible for batch jobs. ");
 		lua_pushnil(L);
 	} else {
 		value_str = luaL_checkstring(L, 3);
@@ -390,7 +394,11 @@ static int _job_env_field(const job_desc_msg_t *job_desc, const char *name)
 		error("%s: job_desc is NULL", __func__);
 		lua_pushnil(L);
 	} else if (job_desc->environment == NULL) {
-		error("%s: job_desc->environment is NULL", __func__);
+		if (job_desc->script)
+			error("%s: %s: job_desc->environment is NULL.",
+			      plugin_type, __func__);
+		else
+			info("job_desc->environment only accessible for batch jobs.");
 		lua_pushnil(L);
 	} else {
 		for (i = 0; job_desc->environment[i]; i++) {
@@ -589,6 +597,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushnumber(L, job_desc->het_job_offset);
 	} else if (!xstrcmp(name, "partition")) {
 		lua_pushstring(L, job_desc->partition);
+	} else if (!xstrcmp(name, "prefer")) {
+		lua_pushstring(L, job_desc->prefer);
 	} else if (!xstrcmp(name, "power_flags")) {
 		lua_pushnumber(L, job_desc->power_flags);
 	} else if (!xstrcmp(name, "pn_min_cpus")) {
@@ -879,6 +889,11 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->partition);
 		if (strlen(value_str))
 			job_desc->partition = xstrdup(value_str);
+	} else if (!xstrcmp(name, "prefer")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->prefer);
+		if (strlen(value_str))
+			job_desc->prefer = xstrdup(value_str);
 	} else if (!xstrcmp(name, "power_flags")) {
 		job_desc->power_flags = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "pn_min_cpus")) {
@@ -1114,6 +1129,10 @@ static int _part_rec_field(const part_record_t *part_ptr, const char *name)
 		lua_pushstring(L, part_ptr->qos_char);
 	} else if (!xstrcmp(name, "state_up")) {
 		lua_pushnumber(L, part_ptr->state_up);
+	} else if (!xstrcmp(name, "total_cpus")) {
+		lua_pushnumber(L, part_ptr->total_cpus);
+	} else if (!xstrcmp(name, "total_nodes")) {
+		lua_pushnumber(L, part_ptr->total_nodes);
 	} else {
 		lua_pushnil(L);
 	}

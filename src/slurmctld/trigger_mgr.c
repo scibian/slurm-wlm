@@ -40,6 +40,8 @@
 
 #include "config.h"
 
+#define _GNU_SOURCE	/* for setresuid() */
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -49,6 +51,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "src/common/bitstring.h"
 #include "src/common/fd.h"
@@ -529,53 +532,45 @@ extern void trigger_front_end_up(front_end_record_t *front_end_ptr)
 
 extern void trigger_node_down(node_record_t *node_ptr)
 {
-	int inx = node_ptr - node_record_table_ptr;
-
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 
 	slurm_mutex_lock(&trigger_mutex);
 	if (trigger_down_nodes_bitmap == NULL)
 		trigger_down_nodes_bitmap = bit_alloc(node_record_count);
-	bit_set(trigger_down_nodes_bitmap, inx);
+	bit_set(trigger_down_nodes_bitmap, node_ptr->index);
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
 extern void trigger_node_drained(node_record_t *node_ptr)
 {
-	int inx = node_ptr - node_record_table_ptr;
-
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 
 	slurm_mutex_lock(&trigger_mutex);
 	if (trigger_drained_nodes_bitmap == NULL)
 		trigger_drained_nodes_bitmap = bit_alloc(node_record_count);
-	bit_set(trigger_drained_nodes_bitmap, inx);
+	bit_set(trigger_drained_nodes_bitmap, node_ptr->index);
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
 extern void trigger_node_failing(node_record_t *node_ptr)
 {
-	int inx = node_ptr - node_record_table_ptr;
-
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 
 	slurm_mutex_lock(&trigger_mutex);
 	if (trigger_fail_nodes_bitmap == NULL)
 		trigger_fail_nodes_bitmap = bit_alloc(node_record_count);
-	bit_set(trigger_fail_nodes_bitmap, inx);
+	bit_set(trigger_fail_nodes_bitmap, node_ptr->index);
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
 extern void trigger_node_up(node_record_t *node_ptr)
 {
-	int inx = node_ptr - node_record_table_ptr;
-
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 
 	slurm_mutex_lock(&trigger_mutex);
 	if (trigger_up_nodes_bitmap == NULL)
 		trigger_up_nodes_bitmap = bit_alloc(node_record_count);
-	bit_set(trigger_up_nodes_bitmap, inx);
+	bit_set(trigger_up_nodes_bitmap, node_ptr->index);
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
@@ -587,23 +582,17 @@ extern void trigger_reconfig(void)
 	slurm_mutex_lock(&trigger_mutex);
 	trigger_node_reconfig = true;
 	if (trigger_down_front_end_bitmap)
-		trigger_down_front_end_bitmap = bit_realloc(
-			trigger_down_front_end_bitmap, node_record_count);
+		bit_realloc(trigger_down_front_end_bitmap, node_record_count);
 	if (trigger_up_front_end_bitmap)
-		trigger_up_front_end_bitmap = bit_realloc(
-			trigger_up_front_end_bitmap, node_record_count);
+		bit_realloc(trigger_up_front_end_bitmap, node_record_count);
 	if (trigger_down_nodes_bitmap)
-		trigger_down_nodes_bitmap = bit_realloc(
-			trigger_down_nodes_bitmap, node_record_count);
+		bit_realloc(trigger_down_nodes_bitmap, node_record_count);
 	if (trigger_drained_nodes_bitmap)
-		trigger_drained_nodes_bitmap = bit_realloc(
-			trigger_drained_nodes_bitmap, node_record_count);
+		bit_realloc(trigger_drained_nodes_bitmap, node_record_count);
 	if (trigger_fail_nodes_bitmap)
-		trigger_fail_nodes_bitmap = bit_realloc(
-			trigger_fail_nodes_bitmap, node_record_count);
+		bit_realloc(trigger_fail_nodes_bitmap, node_record_count);
 	if (trigger_up_nodes_bitmap)
-		trigger_up_nodes_bitmap = bit_realloc(
-			trigger_up_nodes_bitmap, node_record_count);
+		bit_realloc(trigger_up_nodes_bitmap, node_record_count);
 	slurm_mutex_unlock(&trigger_mutex);
 	unlock_slurmctld(node_read_lock);
 }
@@ -1226,15 +1215,15 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 		 * nodes have been idle for at least the offset time */
 		time_t min_idle = now - (trig_in->trig_time - 0x8000);
 		int i;
-		node_record_t *node_ptr = node_record_table_ptr;
+		node_record_t *node_ptr;
 		bitstr_t *trigger_idle_node_bitmap;
 
 		trigger_idle_node_bitmap = bit_alloc(node_record_count);
-		for (i = 0; i < node_record_count; i++, node_ptr++) {
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
 			if (!IS_NODE_IDLE(node_ptr) ||
 			    (node_ptr->last_busy > min_idle))
 				continue;
-			bit_set(trigger_idle_node_bitmap, i);
+			bit_set(trigger_idle_node_bitmap, node_ptr->index);
 		}
 		if (trig_in->nodes_bitmap == NULL) {    /* all nodes */
 			xfree(trig_in->res_id);
@@ -1470,7 +1459,6 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 		trig_in->child_pid = child_pid;
 	} else if (child_pid == 0) {
 		bool run_as_self = (uid == slurm_conf.slurm_user_id);
-
 		closeall(0);
 		setpgid(0, 0);
 		setsid();
@@ -1482,8 +1470,8 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 			error("trigger: setgid: %m");
 			exit(1);
 		}
-		if ((setuid(uid) == -1) && !run_as_self) {
-			error("trigger: setuid: %m");
+		if ((setresuid(uid, uid, -1) == -1) && !run_as_self) {
+			error("trigger: setresuid: %m");
 			exit(1);
 		}
 		execv(program, args);

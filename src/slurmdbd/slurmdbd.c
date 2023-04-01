@@ -150,6 +150,7 @@ int main(int argc, char **argv)
 	 * able to write a core dump.
 	 */
 	_init_pidfile();
+	_become_slurm_user();
 
 	/*
 	 * Do plugin init's after _init_pidfile so systemd is happy as
@@ -164,7 +165,6 @@ int main(int argc, char **argv)
 		      slurm_conf.accounting_storage_type);
 	}
 
-	_become_slurm_user();
 	if (foreground == 0 || setwd)
 		_set_work_dir();
 	log_config();
@@ -851,6 +851,8 @@ static int _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec)
 		       cluster_rec->control_host);
 	fd = slurm_open_msg_conn(&ctld_address);
 	if (fd < 0) {
+		log_flag(NET, "%s: slurm_open_msg_conn(%pA): %m",
+			 __func__, &ctld_address);
 		rc = SLURM_ERROR;
 	} else {
 		slurm_msg_t out_msg;
@@ -966,7 +968,7 @@ static void _become_slurm_user(void)
 	/* Set GID to GID of SlurmUser */
 	if ((slurm_user_gid != getegid()) &&
 	    (setgid(slurm_user_gid))) {
-		fatal("Failed to set GID to %d", slurm_user_gid);
+		fatal("Failed to set GID to %u", slurm_user_gid);
 	}
 
 	/* Set UID to UID of SlurmUser */

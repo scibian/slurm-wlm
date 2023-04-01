@@ -43,6 +43,8 @@ extern int slurmscriptd_fini(void);
 
 /*
  * slurmscriptd_flush - kill all running scripts.
+ *
+ * This function blocks until slurmscriptd responds that it is finished.
  */
 extern void slurmscriptd_flush(void);
 
@@ -50,6 +52,14 @@ extern void slurmscriptd_flush(void);
  * slurmscriptd_flush_job - kill all running script for a specific job
  */
 extern void slurmscriptd_flush_job(uint32_t job_id);
+
+/*
+ * slurmscriptd_reconfig - re-initialize slurmscriptd configuration
+ *
+ * This function acquires locks in slurmctld_lock_t, so none of those should be
+ * locked upon calling this function.
+ */
+extern void slurmscriptd_reconfig(void);
 
 /*
  * slurmscriptd_run_bb_lua
@@ -69,6 +79,9 @@ extern int slurmscriptd_run_bb_lua(uint32_t job_id, char *function,
 				   uint32_t argc, char **argv, uint32_t timeout,
 				   char **resp, bool *track_script_signalled);
 
+extern int slurmscriptd_run_mail(char *script_path, uint32_t argc, char **argv,
+				 char **env, uint32_t timeout, char **resp);
+
 /*
  * slurmscriptd_run_prepilog
  * Tell slurmscriptd to run PrologSlurmctld or EpilogSlurmctld for the job
@@ -80,5 +93,20 @@ extern int slurmscriptd_run_bb_lua(uint32_t job_id, char *function,
  */
 extern void slurmscriptd_run_prepilog(uint32_t job_id, bool is_epilog,
 				      char *script, char **env);
+
+/*
+ * slurmscriptd_update_debug_flags
+ * Update the debug flags for slurmscriptd.
+ */
+extern void slurmscriptd_update_debug_flags(uint64_t debug_flags);
+
+/*
+ * slurmscriptd_update_log_level
+ * Update the logging level for slurmscriptd.
+ *
+ * IN debug_level
+ * IN log_rotate - true if log_rotate (re-open log files)
+ */
+extern void slurmscriptd_update_log_level(int debug_level, bool log_rotate);
 
 #endif /* !_HAVE_SLURMSCRIPTD_H */

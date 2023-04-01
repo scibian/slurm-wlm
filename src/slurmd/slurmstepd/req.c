@@ -39,6 +39,7 @@
 
 #define _GNU_SOURCE	/* needed for struct ucred definition */
 
+#include <arpa/inet.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -94,6 +95,7 @@ static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_x11_display(int fd, stepd_step_rec_t *job);
 static int _handle_getpw(int fd, stepd_step_rec_t *job, pid_t remote_pid);
 static int _handle_getgr(int fd, stepd_step_rec_t *job, pid_t remote_pid);
+static int _handle_gethost(int fd, stepd_step_rec_t *job, pid_t remote_pid);
 static int _handle_daemon_pid(int fd, stepd_step_rec_t *job);
 static int _handle_notify_job(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid);
@@ -166,9 +168,8 @@ _create_socket(const char *name)
 	}
 
 	/* create a unix domain stream socket */
-	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+	if ((fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0)
 		return -1;
-	fd_set_close_on_exec(fd);
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
@@ -375,8 +376,8 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 
 	debug3("Called _msg_socket_accept");
 
-	while ((fd = accept(obj->fd, (struct sockaddr *)&addr,
-			    (socklen_t *)&len)) < 0) {
+	while ((fd = accept4(obj->fd, (struct sockaddr *) &addr,
+			    (socklen_t *) &len, SOCK_CLOEXEC)) < 0) {
 		if (errno == EINTR)
 			continue;
 		if ((errno == EAGAIN) ||
@@ -399,7 +400,6 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 	message_connections++;
 	slurm_mutex_unlock(&message_lock);
 
-	fd_set_close_on_exec(fd);
 	fd_set_blocking(fd);
 
 	param = xmalloc(sizeof(struct request_params));
@@ -584,6 +584,10 @@ int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 		debug("Handling REQUEST_GET_NS_FD");
 		rc = _handle_get_ns_fd(fd, job);
 		break;
+	case REQUEST_GETHOST:
+		debug("Handling REQUEST_GETHOST");
+		rc = _handle_gethost(fd, job, remote_pid);
+		break;
 	default:
 		error("Unrecognized request: %d", req);
 		rc = SLURM_ERROR;
@@ -640,7 +644,8 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 {
 	int rc = SLURM_SUCCESS;
 	int errnum = 0;
-	int sig, flag;
+	int sig, flag, details_len;
+	char *details = NULL;
 	uid_t req_uid;
 	static int msg_sent = 0;
 	stepd_step_task_info_t *task;
@@ -648,15 +653,18 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 
 	safe_read(fd, &sig, sizeof(int));
 	safe_read(fd, &flag, sizeof(int));
+	safe_read(fd, &details_len, sizeof(int));
+	if (details_len)
+		details = xmalloc(details_len + 1);
+	safe_read(fd, details, details_len);
 	safe_read(fd, &req_uid, sizeof(uid_t));
 
-	debug("_handle_signal_container for %ps uid=%d signal=%d",
-	      &job->step_id, (int) req_uid, sig);
+	debug("_handle_signal_container for %ps uid=%u signal=%d",
+	      &job->step_id, req_uid, sig);
 	/* verify uid off uid instead of req_uid as we can trust that one */
 	if ((uid != job->uid) && !_slurm_authorized_user(uid)) {
-		error("signal container req from uid %ld for %ps "
-		      "owned by uid %ld",
-		      (long)req_uid, &job->step_id, (long)job->uid);
+		error("signal container req from uid %u for %ps owned by uid %u",
+		      req_uid, &job->step_id, job->uid);
 		rc = -1;
 		errnum = EPERM;
 		goto done;
@@ -742,6 +750,9 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 			      entity, job->node_name, time_str);
 			msg_sent = 1;
 		}
+
+		if (details)
+			error("*** REASON: %s ***", details);
 	}
 	if ((sig == SIG_TIME_LIMIT) || (sig == SIG_NODE_FAIL) ||
 	    (sig == SIG_PREEMPTED)  || (sig == SIG_FAILURE) ||
@@ -817,11 +828,14 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 	slurm_mutex_unlock(&suspend_mutex);
 
 done:
+	xfree(details);
+
 	/* Send the return code and errnum */
 	safe_write(fd, &rc, sizeof(int));
 	safe_write(fd, &errnum, sizeof(int));
 	return SLURM_SUCCESS;
 rwfail:
+	xfree(details);
 	return SLURM_ERROR;
 }
 
@@ -840,11 +854,10 @@ _handle_notify_job(int fd, stepd_step_rec_t *job, uid_t uid)
 		safe_read(fd, message, len); /* '\0' terminated */
 	}
 
-	debug3("  uid = %d", uid);
+	debug3("  uid = %u", uid);
 	if ((uid != job->uid) && !_slurm_authorized_user(uid)) {
-		debug("notify req from uid %ld for %ps "
-		      "owned by uid %ld",
-		      (long)uid, &job->step_id, (long)job->uid);
+		debug("notify req from uid %u for %ps owned by uid %u",
+		      uid, &job->step_id, job->uid);
 		rc = EPERM;
 		goto done;
 	}
@@ -878,7 +891,7 @@ _handle_terminate(int fd, stepd_step_rec_t *job, uid_t uid)
 		errnum = EPERM;
 		goto done;
 	}
-	debug("_handle_terminate for %ps uid=%d", &job->step_id, uid);
+	debug("_handle_terminate for %ps uid=%u", &job->step_id, uid);
 	step_terminate_monitor_start(job);
 
 	/*
@@ -949,14 +962,14 @@ _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid)
 
 	srun       = xmalloc(sizeof(srun_info_t));
 	srun->key = xmalloc(sizeof(srun_key_t));
-	srun->key->len = SLURM_IO_KEY_SIZE;
-	srun->key->data = xmalloc(SLURM_IO_KEY_SIZE);
 
 	debug("sizeof(srun_info_t) = %d, sizeof(slurm_addr_t) = %d",
 	      (int) sizeof(srun_info_t), (int) sizeof(slurm_addr_t));
 	safe_read(fd, &srun->ioaddr, sizeof(slurm_addr_t));
 	safe_read(fd, &srun->resp_addr, sizeof(slurm_addr_t));
-	safe_read(fd, srun->key->data, SLURM_IO_KEY_SIZE);
+	safe_read(fd, &srun->key->len, sizeof(uint32_t));
+	srun->key->data = xmalloc(srun->key->len);
+	safe_read(fd, srun->key->data, srun->key->len);
 	safe_read(fd, &srun->uid, sizeof(uid_t));
 	safe_read(fd, &srun->protocol_version, sizeof(uint16_t));
 
@@ -1418,6 +1431,93 @@ rwfail:
 	return SLURM_ERROR;
 }
 
+static int _handle_gethost(int fd, stepd_step_rec_t *job, pid_t remote_pid)
+{
+	int mode = 0;
+	int len = 0;
+	char *nodename = NULL;
+	char *nodename_r = NULL;
+	char *hostname = NULL;
+	bool pid_match;
+	int found = 0;
+	unsigned char address[sizeof(struct in6_addr)];
+	char *address_str = NULL;
+	int af;
+
+	safe_read(fd, &mode, sizeof(int));
+	safe_read(fd, &len, sizeof(int));
+	if (len) {
+		nodename = xmalloc(len + 1); /* add room for NULL */
+		safe_read(fd, nodename, len);
+	}
+
+	pid_match = proctrack_g_has_pid(job->cont_id, remote_pid);
+
+	if (!(mode & GETHOST_NOT_MATCH_PID) && !pid_match)
+		debug("%s: no pid_match", __func__);
+	else if (nodename && (address_str = slurm_conf_get_address(nodename))) {
+		if ((mode & GETHOST_IPV6) &&
+		    (inet_pton(AF_INET6, address_str, &address) == 1)) {
+			found = 1;
+			af = AF_INET6;
+		} else if ((mode & GETHOST_IPV4) &&
+			   (inet_pton(AF_INET, address_str, &address) == 1)) {
+			found = 1;
+			af = AF_INET;
+		}
+		if (found) {
+			if (!(nodename_r = slurm_conf_get_nodename(nodename)) ||
+			    !(hostname = slurm_conf_get_hostname(nodename_r))) {
+				xfree(nodename_r);
+				xfree(hostname);
+				found = 0;
+			}
+		}
+	}
+	xfree(nodename);
+
+	safe_write(fd, &found, sizeof(int));
+
+	if (!found)
+		return SLURM_SUCCESS;
+
+	len = strlen(hostname);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, hostname, len);
+
+	len = 1;
+	safe_write(fd, &len, sizeof(int));
+	len = strlen(nodename_r);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, nodename_r, len);
+
+	safe_write(fd, &af, sizeof(int));
+
+	if (af == AF_INET6) {
+		len = 16;
+		safe_write(fd, &len, sizeof(int));
+		safe_write(fd, &address, len);
+
+	} else if (af == AF_INET) {
+		len = 4;
+		safe_write(fd, &len, sizeof(int));
+		safe_write(fd, &address, len);
+	} else {
+		error("Not supported address type: %u", af);
+		goto rwfail;
+	}
+
+	xfree(hostname);
+	xfree(nodename_r);
+	debug2("Leaving %s", __func__);
+	return SLURM_SUCCESS;
+
+rwfail:
+	xfree(hostname);
+	xfree(nodename_r);
+	return SLURM_ERROR;
+}
+
 static int
 _handle_daemon_pid(int fd, stepd_step_rec_t *job)
 {
@@ -1593,10 +1693,10 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 
 	debug("_handle_completion for %ps", &job->step_id);
 
-	debug3("  uid = %d", uid);
+	debug3("  uid = %u", uid);
 	if (!_slurm_authorized_user(uid)) {
-		debug("step completion message from uid %ld for %ps ",
-		      (long)uid, &job->step_id);
+		debug("step completion message from uid %u for %ps ",
+		      uid, &job->step_id);
 		rc = -1;
 		errnum = EPERM;
 		/* Send the return code and errno */
@@ -1717,11 +1817,10 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *job, uid_t uid)
 	int num_tasks = 0;
 	debug("_handle_stat_jobacct for %ps", &job->step_id);
 
-	debug3("  uid = %d", uid);
+	debug3("  uid = %u", uid);
 	if (uid != job->uid && !_slurm_authorized_user(uid)) {
-		debug("stat jobacct from uid %ld for %ps "
-		      "owned by uid %ld",
-		      (long)uid, &job->step_id, (long)job->uid);
+		debug("stat jobacct from uid %u for %ps owned by uid %u",
+		      uid, &job->step_id, job->uid);
 		/* Send NULL */
 		jobacctinfo_setinfo(jobacct, JOBACCT_DATA_PIPE, &fd,
 				    SLURM_PROTOCOL_VERSION);
@@ -1752,7 +1851,7 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *job, uid_t uid)
 				jobacctinfo_aggregate(jobacct, temp_jobacct);
 				jobacctinfo_destroy(temp_jobacct);
 			}
-			log_flag(JAG, "%s: step_extern cont_id=%lu includes pid=%lu",
+			log_flag(JAG, "%s: step_extern cont_id=%"PRIu64" includes pid=%"PRIu64,
 				 __func__, job->cont_id, (uint64_t) pids[i]);
 		}
 

@@ -52,6 +52,7 @@
 #include "src/common/slurm_route.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_interface.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -124,7 +125,7 @@ void *_forward_thread(void *arg)
 			goto cleanup;
 		}
 		if ((fd = slurm_open_msg_conn(&addr)) < 0) {
-			error("forward_thread to %s: %m", name);
+			error("forward_thread to %s (%pA): %m", name, &addr);
 
 			slurm_mutex_lock(&fwd_struct->forward_mutex);
 			mark_as_failed_forward(
@@ -296,19 +297,23 @@ void *_forward_thread(void *arg)
 				}
 				list_iterator_destroy(itr);
 				if (!node_found) {
+					slurm_mutex_lock(&fwd_struct->forward_mutex);
 					mark_as_failed_forward(
 						&fwd_struct->ret_list,
 						tmp,
 						SLURM_COMMUNICATIONS_CONNECTION_ERROR);
+					slurm_mutex_unlock(&fwd_struct->forward_mutex);
 				}
 				free(tmp);
 			}
 			hostlist_iterator_destroy(host_itr);
 			if (!first_node_found) {
+				slurm_mutex_lock(&fwd_struct->forward_mutex);
 				mark_as_failed_forward(
 					&fwd_struct->ret_list,
 					name,
 					SLURM_COMMUNICATIONS_CONNECTION_ERROR);
+				slurm_mutex_unlock(&fwd_struct->forward_mutex);
 			}
 		}
 		break;

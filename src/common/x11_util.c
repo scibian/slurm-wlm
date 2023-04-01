@@ -159,6 +159,13 @@ extern char *x11_get_xauth(void)
 	regex_t reg;
 	regmatch_t regmatch[2];
 	char *result, *cookie;
+	run_command_args_t run_command_args = {
+		.max_wait = 10000,
+		.script_path = XAUTH_PATH,
+		.script_type = "xauth",
+		.status = &status,
+	};
+
 	/*
 	 * Two real-world examples:
 	 * "zoidberg/unix:10  MIT-MAGIC-COOKIE-1  abcdef0123456789"
@@ -176,15 +183,31 @@ extern char *x11_get_xauth(void)
 				      "[[:space:]]+MIT-MAGIC-COOKIE-1"
 				      "[[:space:]]+([[:xdigit:]]+)$";
 
+	/*
+	 * In some cases the only xauth cookie available may be the wildcard
+	 * cookie. It is not included in the initial regex to make sure that
+	 * the wildcard is only used if nothing else is available.
+	 *
+	 * The format for this cookie is:
+	 * "#ffff#abcdef0123456789#:12345  MIT-MAGIC-COOKIE-1  abcdef0123456789"
+	 *
+	 * Definition of FamilyWild can be found in <X11/Xauth.h>
+	 * The output format can be interpreted from dump_entry() in the xauth
+	 * source code (process.c).
+	 */
+	static char *wildcard_pattern = "^#ffff#[[:xdigit:]./-]+#:[[:digit:]]+"
+					"[[:space:]]+MIT-MAGIC-COOKIE-1"
+					"[[:space:]]+([[:xdigit:]]+)$";
+
 	xauth_argv = xmalloc(sizeof(char *) * 10);
 	xauth_argv[0] = xstrdup("xauth");
 	xauth_argv[1] = xstrdup("list");
 	xauth_argv[2] = xstrdup(getenv("DISPLAY"));
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, NULL, 10000, 0,
-			     &status);
+	run_command_args.script_argv = xauth_argv;
+	result = run_command(&run_command_args);
 
-	free_command_argv(xauth_argv);
+	xfree_array(xauth_argv);
 
 	if (status) {
 		error("Problem running xauth command. "
@@ -195,9 +218,15 @@ extern char *x11_get_xauth(void)
 
 	regcomp(&reg, cookie_pattern, REG_EXTENDED|REG_NEWLINE);
 	if (regexec(&reg, result, 2, regmatch, 0) == REG_NOMATCH) {
-		error("%s: Could not retrieve magic cookie. "
-		      "Cannot use X11 forwarding.", __func__);
-		exit(-1);
+		debug2("%s: Could not retrieve magic cookie, checking for wildcard cookie.",
+		      __func__);
+
+		regcomp(&reg, wildcard_pattern, REG_EXTENDED|REG_NEWLINE);
+		if (regexec(&reg, result, 2, regmatch, 0) == REG_NOMATCH) {
+			error("%s: Could not retrieve magic cookie. Cannot use X11 forwarding.",
+			      __func__);
+			exit(-1);
+		}
 	}
 
 	matchlen = regmatch[1].rm_eo - regmatch[1].rm_so + 1;
@@ -208,15 +237,24 @@ extern char *x11_get_xauth(void)
 	return cookie;
 }
 
-extern int x11_set_xauth(char *xauthority, char *cookie,
-			 char *host, uint16_t display)
+extern int x11_set_xauth(char *xauthority, char *cookie, uint16_t display)
 {
 	int i=0, status;
 	char *result;
 	char **xauth_argv;
 	char template[] = "/tmp/xauth-source-XXXXXX";
 	char *contents = NULL;
+	char host[256];
 	int fd;
+	run_command_args_t run_command_args = {
+		.max_wait = 10000,
+		.script_path = XAUTH_PATH,
+		.script_type = "xauth",
+		.status = &status,
+	};
+
+	if (gethostname(host, sizeof(host)))
+		fatal("%s: gethostname() failed: %m", __func__);
 
 	/* protect against weak file permissions in old glibc */
 	umask(0077);
@@ -239,8 +277,8 @@ extern int x11_set_xauth(char *xauthority, char *cookie,
 	xauth_argv[i++] = NULL;
 	xassert(i < 10);
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, NULL, 10000, 0,
-			     &status);
+	run_command_args.script_argv = xauth_argv;
+	result = run_command(&run_command_args);
 
 	(void) unlink(template);
 	xfree(xauth_argv);
@@ -260,6 +298,12 @@ extern int x11_delete_xauth(char *xauthority, char *host, uint16_t display)
 	int i=0, status;
 	char *result;
 	char **xauth_argv;
+	run_command_args_t run_command_args = {
+		.max_wait = 10000,
+		.script_path = XAUTH_PATH,
+		.script_type = "xauth",
+		.status = &status,
+	};
 
 	xauth_argv = xmalloc(sizeof(char *) * 10);
 	xauth_argv[i++] = xstrdup("xauth");
@@ -271,10 +315,10 @@ extern int x11_delete_xauth(char *xauthority, char *host, uint16_t display)
 	xauth_argv[i++] = NULL;
 	xassert(i < 10);
 
-	result = run_command("xauth", XAUTH_PATH, xauth_argv, NULL, 10000, 0,
-			     &status);
+	run_command_args.script_argv = xauth_argv;
+	result = run_command(&run_command_args);
 
-	free_command_argv(xauth_argv);
+	xfree_array(xauth_argv);
 
 	debug2("%s: result from xauth: %s", __func__, result);
 	xfree(result);

@@ -95,8 +95,8 @@
 #include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/select.h"
 #include "src/common/slurm_jobcomp.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/uid.h"
@@ -668,13 +668,4 @@ extern List jobcomp_p_get_jobs(slurmdb_job_cond_t *job_cond)
 
 	info("This function is not implemented.");
 	return NULL;
-}
-
-/*
- * expire old info from the storage
- */
-extern int jobcomp_p_archive(slurmdb_archive_cond_t *archive_cond)
-{
-	info("This function is not implemented.");
-	return SLURM_SUCCESS;
 }

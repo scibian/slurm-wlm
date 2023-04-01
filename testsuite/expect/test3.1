@@ -59,4 +59,4 @@ wait_for_job -fail $job_id RUNNING
 #
 reconfigure -fail
 
-subtest {![wait_for_job $job_id RUNNING]} "Verify job is running after reconfiguration" "It may fail due Bug 12952"
+subtest {![wait_for_job $job_id RUNNING]} "Verify job is running after reconfiguration"
