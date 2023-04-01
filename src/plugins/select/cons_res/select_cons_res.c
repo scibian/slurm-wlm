@@ -150,7 +150,7 @@ static void _spec_core_filter(bitstr_t *node_bitmap, bitstr_t **core_bitmap)
 	xassert(core_bitmap);
 
 	if (*core_bitmap) {
-		core_array_and(core_bitmap, avail_core_map);
+		bit_or_not(*core_bitmap, *avail_core_map);
 	} else {
 		bit_not(*avail_core_map);
 		*core_bitmap = *avail_core_map;
@@ -556,8 +556,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 /* select_p_select_jobinfo_xstrdup() in cons_common */
 
 /* select_p_get_info_from_plugin() in cons_common */
-
-/* select_p_update_node_config() in cons_common */
 
 /* select_p_reconfigure() in cons_common */
 

@@ -322,7 +322,7 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 			fprintf(fp, " ExclusiveUser=YES");
 
 		if (p[i].grace_time)
-			fprintf(fp, " GraceTime=%"PRIu32"", p[i].grace_time);
+			fprintf(fp, " GraceTime=%u", p[i].grace_time);
 
 		if (p[i].flags & PART_FLAG_HIDDEN)
 			fprintf(fp, " Hidden=YES");
@@ -331,7 +331,7 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 	                fprintf(fp, " LLN=YES");
 
 		if (p[i].max_cpus_per_node != INFINITE)
-			fprintf(fp, " MaxCPUsPerNode=%"PRIu32"",
+			fprintf(fp, " MaxCPUsPerNode=%u",
 				p[i].max_cpus_per_node);
 
 		if (p[i].max_mem_per_cpu & MEM_PER_CPU) {
@@ -363,11 +363,11 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 				preempt_mode_string(p[i].preempt_mode));
 
 		if (p[i].priority_job_factor != 1)
-			fprintf(fp, " PriorityJobFactor=%"PRIu16,
+			fprintf(fp, " PriorityJobFactor=%u",
 				p[i].priority_job_factor);
 
 		if (p[i].priority_tier != 1)
-			fprintf(fp, " PriorityTier=%"PRIu16,
+			fprintf(fp, " PriorityTier=%u",
 				p[i].priority_tier);
 
 		if (p[i].qos_char != NULL)
@@ -492,6 +492,8 @@ void slurm_print_ctl_conf ( FILE* out,
 
 	slurm_print_key_pairs(out, slurm_ctl_conf_ptr->ext_sensors_conf,
 			      "\nExternal Sensors Configuration:\n");
+	slurm_print_key_pairs(out, slurm_ctl_conf_ptr->mpi_conf,
+			      "\nMPI Plugins Configuration:\n");
 
 	xstrcat(tmp2_str, "\nNode Features Configuration:");
 	_print_config_plugin_params_list(out,
@@ -976,17 +978,6 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->job_submit_plugins);
 	list_append(ret_list, key_pair);
 
-	if (slurm_ctl_conf_ptr->keep_alive_time == NO_VAL16)
-		snprintf(tmp_str, sizeof(tmp_str), "SYSTEM_DEFAULT");
-	else {
-		snprintf(tmp_str, sizeof(tmp_str), "%u sec",
-			 slurm_ctl_conf_ptr->keep_alive_time);
-	}
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("KeepAliveTime");
-	key_pair->value = xstrdup(tmp_str);
-	list_append(ret_list, key_pair);
-
 	snprintf(tmp_str, sizeof(tmp_str), "%u",
 		 slurm_ctl_conf_ptr->kill_on_bad_exit);
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1093,6 +1084,13 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 		key_pair->name = xstrdup("MaxMemPerNode");
 		key_pair->value = xstrdup("UNLIMITED");
 	}
+
+	snprintf(tmp_str, sizeof(tmp_str), "%u",
+		 slurm_ctl_conf_ptr->max_node_cnt);
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("MaxNodeCount");
+	key_pair->value = xstrdup(tmp_str);
+	list_append(ret_list, key_pair);
 
 	snprintf(tmp_str, sizeof(tmp_str), "%u",
 		 slurm_ctl_conf_ptr->max_step_cnt);
@@ -1940,7 +1938,7 @@ slurm_load_slurmd_status(slurmd_status_t **slurmd_status_ptr)
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
+		this_addr = slurm_conf_get_nodeaddr(this_host);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
 		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
@@ -2102,9 +2100,6 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 		    !xstrcasecmp(key_pair->value, "(null type)") ||
 		    !xstrcasecmp(key_pair->value, "(null)") ||
 		    !xstrcasecmp(key_pair->value, "N/A") ||
-		    (!xstrcasecmp(key_pair->name, "KeepAliveTime") &&
-		     !xstrcasecmp(key_pair->value, "SYSTEM_DEFAULT")) ||
-		    !xstrcasecmp(key_pair->name, "DynAllocPort") ||
 		    (!xstrcasecmp(key_pair->name, "DefMemPerNode") &&
 		     !xstrcasecmp(key_pair->value, "UNLIMITED")) ||
 		    ((!xstrcasecmp(key_pair->name, "SlurmctldSyslogDebug") ||

@@ -274,8 +274,8 @@ static int _plugrack_read_single_dir(plugrack_t *rack, char *dir)
 			continue;
 
 		/* Test the type. */
-		if (plugin_peek(fq_path, plugin_type, type_len, NULL) ==
-		    SLURM_ERROR) {
+		if (plugin_peek(fq_path, plugin_type, type_len, NULL) !=
+		    EPLUGIN_SUCCESS) {
 			continue;
 		}
 
@@ -403,12 +403,12 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 {
 	ListIterator itr;
 	plugrack_entry_t *e = NULL;
-	char *sep, tmp[64];
+	char *sep, tmp[64], *pmix_vers = NULL, *comma = "";
 	int i;
 
 	xassert(rack->entries);
 	itr = list_iterator_create(rack->entries);
-	info("MPI types are...");
+	printf("MPI plugin types are...\n");
 	while ((e = list_next(itr))) {
 		/*
 		 * Support symbolic links for various pmix plugins with names
@@ -424,11 +424,21 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 			if (sep)
 				sep[0] = '\0';
 			sep = tmp;
+
+			if (!xstrncmp(sep, "pmix_", 5)) {
+				xstrfmtcat(pmix_vers, "%s%s", comma, sep);
+				comma = ",";
+				continue;
+			}
 		} else
 			sep = (char *) e->full_type;	/* Remove "const" */
-		info("%s", sep);
+		printf("\t%s\n", sep);
 	}
 	list_iterator_destroy(itr);
+
+	if (pmix_vers)
+		printf("specific pmix plugin versions available: %s\n", pmix_vers);
+	xfree(pmix_vers);
 
 	return SLURM_SUCCESS;
 }

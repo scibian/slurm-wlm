@@ -844,6 +844,7 @@ static slurm_cli_opt_t slurm_opt_c_constraint = {
 
 static int arg_set_chdir(slurm_opt_t *opt, const char *arg)
 {
+	xfree(opt->chdir);
 	if (is_full_path(arg))
 		opt->chdir = xstrdup(arg);
 	else
@@ -857,6 +858,7 @@ static int arg_set_data_chdir(slurm_opt_t *opt, const data_t *arg,
 	int rc;
 	char *str = NULL;
 
+	xfree(opt->chdir);
 	if ((rc = data_get_string_converted(arg, &str)))
 		ADD_DATA_ERROR("Unable to read string", rc);
 	else if (is_full_path(str)) {
@@ -1090,43 +1092,7 @@ static slurm_cli_opt_t slurm_opt_cores_per_socket = {
 	.reset_each_pass = true,
 };
 
-static int arg_set_cpu_bind(slurm_opt_t *opt, const char *arg)
-{
-	if (!opt->srun_opt)
-		return SLURM_ERROR;
-
-	if (slurm_verify_cpu_bind(arg, &opt->srun_opt->cpu_bind,
-				  &opt->srun_opt->cpu_bind_type))
-		return SLURM_ERROR;
-
-	return SLURM_SUCCESS;
-}
-static char *arg_get_cpu_bind(slurm_opt_t *opt)
-{
-	char tmp[100];
-
-	if (!opt->srun_opt)
-		return xstrdup("invalid-context");
-
-	slurm_sprint_cpu_bind_type(tmp, opt->srun_opt->cpu_bind_type);
-
-	return xstrdup(tmp);
-}
-static void arg_reset_cpu_bind(slurm_opt_t *opt)
-{
-	if (opt->srun_opt) {
-		bool cpu_bind_verbose = false;
-		if (opt->srun_opt->cpu_bind_type & CPU_BIND_VERBOSE)
-			cpu_bind_verbose = true;
-
-		xfree(opt->srun_opt->cpu_bind);
-		opt->srun_opt->cpu_bind_type = 0;
-		if (cpu_bind_verbose)
-			slurm_verify_cpu_bind("verbose",
-					      &opt->srun_opt->cpu_bind,
-					      &opt->srun_opt->cpu_bind_type);
-	}
-}
+COMMON_SRUN_STRING_OPTION(cpu_bind);
 static slurm_cli_opt_t slurm_opt_cpu_bind = {
 	.name = "cpu-bind",
 	.has_arg = required_argument,
@@ -3439,8 +3405,17 @@ static slurm_cli_opt_t slurm_opt_overcommit = {
 
 static int arg_set_overlap(slurm_opt_t *opt, const char *arg)
 {
-	if (opt->srun_opt)
-		opt->srun_opt->exclusive = false;
+	/* --overlap is only valid for srun */
+	if (!opt->srun_opt)
+		return SLURM_SUCCESS;
+
+	/*
+	 * overlap_force means that the step will overlap all resources
+	 * (CPUs, memory, GRES).
+	 * Make this the only behavior for --overlap.
+	 */
+	opt->srun_opt->overlap_force = true;
+	opt->srun_opt->exclusive = false;
 
 	return SLURM_SUCCESS;
 }
@@ -3459,7 +3434,7 @@ static void arg_reset_overlap(slurm_opt_t *opt)
 
 static slurm_cli_opt_t slurm_opt_overlap = {
 	.name = "overlap",
-	.has_arg = no_argument,
+	.has_arg = optional_argument,
 	.val = LONG_OPT_OVERLAP,
 	.set_func_srun = arg_set_overlap,
 	.get_func = arg_get_overlap,
@@ -3626,6 +3601,19 @@ static slurm_cli_opt_t slurm_opt_power = {
 	.get_func = arg_get_power,
 	.reset_func = arg_reset_power,
 	.reset_each_pass = true,
+};
+
+COMMON_STRING_OPTION(prefer);
+static slurm_cli_opt_t slurm_opt_prefer = {
+	.name = "prefer",
+	.has_arg = required_argument,
+	.val = LONG_OPT_PREFER,
+	.set_func_salloc = arg_set_prefer,
+	.set_func_sbatch = arg_set_prefer,
+	.set_func_srun = arg_set_prefer,
+	.set_func_data = arg_set_data_prefer,
+	.get_func = arg_get_prefer,
+	.reset_func = arg_reset_prefer,
 };
 
 COMMON_SRUN_BOOL_OPTION(preserve_env);
@@ -5167,6 +5155,7 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_parsable,
 	&slurm_opt_partition,
 	&slurm_opt_power,
+	&slurm_opt_prefer,
 	&slurm_opt_preserve_env,
 	&slurm_opt_priority,
 	&slurm_opt_profile,
@@ -5782,20 +5771,22 @@ static void _validate_threads_per_core_option(slurm_opt_t *opt)
 		return;
 
 	if (!slurm_option_isset(opt, "cpu-bind")) {
-		verbose("Setting --cpu-bind=threads as a default of --threads-per-core use");
+		if (opt->verbose)
+			info("Setting --cpu-bind=threads as a default of --threads-per-core use");
 		if (opt->srun_opt)
 			slurm_verify_cpu_bind("threads",
 					      &opt->srun_opt->cpu_bind,
 					      &opt->srun_opt->cpu_bind_type);
 	} else if (opt->srun_opt &&
-		   (opt->srun_opt->cpu_bind_type == CPU_BIND_VERBOSE)) {
-		verbose("Setting --cpu-bind=threads,verbose as a default of --threads-per-core use");
+		   !xstrcmp(opt->srun_opt->cpu_bind, "verbose")) {
+		if (opt->verbose)
+			info("Setting --cpu-bind=threads,verbose as a default of --threads-per-core use");
 		if (opt->srun_opt)
 			slurm_verify_cpu_bind("threads,verbose",
 					      &opt->srun_opt->cpu_bind,
 					      &opt->srun_opt->cpu_bind_type);
-	} else {
-		debug3("Not setting --cpu-bind=threads because of --threads-per-core since --cpu-bind already set by cli option or environment variable");
+	} else if (opt->verbose > 1) {
+		info("Not setting --cpu-bind=threads because of --threads-per-core since --cpu-bind already set by cli option or environment variable");
 	}
 }
 
@@ -5846,7 +5837,7 @@ static void _validate_ntasks_per_gpu(slurm_opt_t *opt)
 	if (!any)
 		return;
 
-	/* Validate --ntasks-per-gpu and --ntasks-per-gpu */
+	/* Validate --ntasks-per-gpu and --ntasks-per-tres */
 	if (gpu && tres) {
 		if (opt->ntasks_per_gpu != opt->ntasks_per_tres)
 			fatal("Inconsistent values set to --ntasks-per-gpu=%d and --ntasks-per-tres=%d ",
@@ -5936,8 +5927,7 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 						 bool set_defaults)
 {
 	job_desc_msg_t *job_desc = xmalloc_nz(sizeof(*job_desc));
-	List tmp_gres_list = NULL;
-	int rc;
+	int rc = SLURM_SUCCESS;
 
 	slurm_init_job_desc_msg(job_desc);
 
@@ -5996,6 +5986,7 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	job_desc->extra = xstrdup(opt_local->extra);
 	job_desc->exc_nodes = xstrdup(opt_local->exclude);
 	job_desc->features = xstrdup(opt_local->constraint);
+	job_desc->prefer = xstrdup(opt_local->prefer);
 
 	/* fed_siblings_active not filled in here */
 	/* fed_siblings_viable not filled in here */
@@ -6232,23 +6223,32 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 		job_desc->x11_target_port = opt_local->x11_target_port;
 	}
 
-	rc = gres_job_state_validate(job_desc->cpus_per_tres,
-				     job_desc->tres_freq,
-				     job_desc->tres_per_job,
-				     job_desc->tres_per_node,
-				     job_desc->tres_per_socket,
-				     job_desc->tres_per_task,
-				     job_desc->mem_per_tres,
-				     &job_desc->num_tasks,
-				     &job_desc->min_nodes,
-				     &job_desc->max_nodes,
-				     &job_desc->ntasks_per_node,
-				     &job_desc->ntasks_per_socket,
-				     &job_desc->sockets_per_node,
-				     &job_desc->cpus_per_task,
-				     &job_desc->ntasks_per_tres,
-				     &tmp_gres_list);
-	FREE_NULL_LIST(tmp_gres_list);
+	/*
+	 * If clusters is used we can't validate GRES, since the running
+	 * configuration may be using different SelectType than destination
+	 * cluster. Validation is still performed on slurmctld.
+	 */
+	if (!opt_local->clusters) {
+		List tmp_gres_list = NULL;
+		rc = gres_job_state_validate(job_desc->cpus_per_tres,
+					     job_desc->tres_freq,
+					     job_desc->tres_per_job,
+					     job_desc->tres_per_node,
+					     job_desc->tres_per_socket,
+					     job_desc->tres_per_task,
+					     job_desc->mem_per_tres,
+					     &job_desc->num_tasks,
+					     &job_desc->min_nodes,
+					     &job_desc->max_nodes,
+					     &job_desc->ntasks_per_node,
+					     &job_desc->ntasks_per_socket,
+					     &job_desc->sockets_per_node,
+					     &job_desc->cpus_per_task,
+					     &job_desc->ntasks_per_tres,
+					     &tmp_gres_list);
+		FREE_NULL_LIST(tmp_gres_list);
+	}
+
 	if (rc) {
 		error("%s", slurm_strerror(rc));
 		return NULL;

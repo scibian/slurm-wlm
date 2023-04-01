@@ -64,6 +64,7 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 static uint32_t job_id = NO_VAL;
+static uid_t job_uid;
 
 static bool local_xauthority = false;
 static char hostname[256] = {0};
@@ -72,12 +73,11 @@ static eio_handle_t *eio_handle;
 
 /* Target salloc/srun host/port */
 static slurm_addr_t alloc_node;
-/* Target UID */
-static uid_t job_uid;
 /* X11 display hostname on target, or UNIX socket. */
 static char *x11_target = NULL;
 /* X11 display port on target (if not a UNIX socket). */
 static uint16_t x11_target_port = 0;
+static uint16_t protocol_version = SLURM_PROTOCOL_VERSION;
 
 static void *_eio_thread(void *arg)
 {
@@ -115,7 +115,8 @@ static int _x11_socket_read(eio_obj_t *obj, List objs)
 
 	*remote = slurm_open_msg_conn(&alloc_node);
 	if (*remote < 0) {
-		error("%s: slurm_open_msg_conn: %m", __func__);
+		error("%s: slurm_open_msg_conn(%pA): %m",
+		      __func__, &alloc_node);
 		goto shutdown;
 	}
 
@@ -128,6 +129,7 @@ static int _x11_socket_read(eio_obj_t *obj, List objs)
 	slurm_msg_t_init(&resp);
 
 	req.msg_type = SRUN_NET_FORWARD;
+	req.protocol_version = protocol_version;
 	slurm_msg_set_r_uid(&req, job_uid);
 	req.data = &rpc;
 
@@ -190,21 +192,25 @@ static char *_get_home(uid_t uid)
 
 extern int shutdown_x11_forward(stepd_step_rec_t *job)
 {
+	int rc = SLURM_SUCCESS;
+
 	debug("x11 forwarding shutdown in progress");
 	eio_signal_shutdown(eio_handle);
 
 	if (job->x11_xauthority) {
 		if (local_xauthority) {
-			if (unlink(job->x11_xauthority))
+			if (unlink(job->x11_xauthority)) {
 				error("%s: problem unlinking xauthority file %s: %m",
 				      __func__, job->x11_xauthority);
+				rc = SLURM_ERROR;
+			}
 		} else
-			x11_delete_xauth(job->x11_xauthority, hostname,
-					 job->x11_display);
+			rc = x11_delete_xauth(job->x11_xauthority, hostname,
+					      job->x11_display);
 	}
 
 	info("x11 forwarding shutdown complete");
-	_exit(0);
+	return rc;
 }
 
 /*
@@ -234,13 +240,17 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 		.readable = _x11_socket_readable,
 		.handle_read = _x11_socket_read,
 	};
+	srun_info_t *srun = list_peek(job->sruns);
+	/* This should always be set to something else we have a bug. */
+	xassert(srun && srun->protocol_version);
+	protocol_version = srun->protocol_version;
 
 	job_id = job->step_id.job_id;
+	job_uid = job->uid;
 	x11_target = xstrdup(job->x11_target);
 	x11_target_port = job->x11_target_port;
 
 	slurm_set_addr(&alloc_node, job->x11_alloc_port, job->x11_alloc_host);
-	job_uid = job->uid;
 
 	debug("X11Parameters: %s", slurm_conf.x11_params);
 
@@ -256,8 +266,8 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 		/* use a node-local XAUTHORITY file instead of ~/.Xauthority */
 		int fd;
 		local_xauthority = true;
-		job->x11_xauthority = xstrdup_printf("%s/.Xauthority-XXXXXX",
-						     slurm_conf.tmp_fs);
+		job->x11_xauthority = slurm_get_tmp_fs(conf->node_name);
+		xstrcat(job->x11_xauthority, "/.Xauthority-XXXXXX");
 
 		/* protect against weak file permissions in old glibc */
 		umask(0077);
@@ -283,11 +293,6 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 	}
 
 	job->x11_display = port - X11_TCP_PORT_OFFSET;
-	if (x11_set_xauth(job->x11_xauthority, job->x11_magic_cookie,
-			  hostname, job->x11_display)) {
-		error("%s: failed to run xauth", __func__);
-		goto shutdown;
-	}
 
 	info("X11 forwarding established on DISPLAY=%s:%d.0",
 	     hostname, job->x11_display);

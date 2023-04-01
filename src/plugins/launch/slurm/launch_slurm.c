@@ -274,7 +274,7 @@ _handle_openmpi_port_error(const char *tasks, const char *hosts,
 static char *_mpir_get_host_name(char *node_name)
 {
 	if ((xstrcasestr(slurm_conf.launch_params, "mpir_use_nodeaddr")))
-		return slurm_conf_get_nodeaddr(NULL, node_name);
+		return slurm_conf_get_nodeaddr(node_name);
 
 	return xstrdup(node_name);
 }
@@ -793,6 +793,7 @@ extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 	launch_params.ntasks_per_tres    = job->ntasks_per_tres;
 	launch_params.ntasks_per_socket  = job->ntasks_per_socket;
 	launch_params.no_alloc           = srun_opt->no_alloc;
+	launch_params.mpi_plugin_name = srun_opt->mpi_type;
 	launch_params.env = _build_user_env(job, opt_local);
 
 	memcpy(&launch_params.local_fds, cio_fds, sizeof(slurm_step_io_fds_t));

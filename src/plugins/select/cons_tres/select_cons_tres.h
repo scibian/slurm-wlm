@@ -49,8 +49,8 @@
 #include "src/common/gres.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/pack.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/slurm_topology.h"
@@ -64,6 +64,5 @@
 #include "../cons_common/cons_common.h"
 
 /* Global variables */
-extern bitstr_t **spec_core_res;
 
 #endif /* !_CONS_TRES_H */

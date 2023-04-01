@@ -81,8 +81,6 @@
 #define	bit_clear_all		slurm_bit_clear_all
 #define	bit_ffc			slurm_bit_ffc
 #define	bit_ffs			slurm_bit_ffs
-#define	bit_free		slurm_bit_free
-#define	bit_realloc		slurm_bit_realloc
 #define	bit_size		slurm_bit_size
 #define	bit_and			slurm_bit_and
 #define	bit_not			slurm_bit_not
@@ -180,6 +178,10 @@
 #define	hostset_destroy		slurm_hostset_destroy
 #define	hostset_find		slurm_hostset_find
 #define	hostset_insert		slurm_hostset_insert
+#define hostset_deranged_string_xmalloc \
+				slurm_hostset_deranged_string_xmalloc
+#define hostset_ranged_string_xmalloc \
+				slurm_hostset_ranged_string_xmalloc
 #define	hostset_shift		slurm_hostset_shift
 #define	hostset_shift_range	slurm_hostset_shift_range
 #define	hostset_within		slurm_hostset_within
@@ -193,8 +195,8 @@
 #define gres_get_value_by_type	slurm_gres_get_value_by_type
 #define gres_get_job_info	slurm_gres_get_job_info
 #define gres_get_step_info	slurm_gres_get_step_info
-#define gres_device_major	slurm_gres_device_major
 #define gres_sock_delete	slurm_gres_sock_delete
+#define gres_job_list_delete	slurm_gres_job_list_delete
 #define destroy_gres_device	slurm_destroy_gres_device
 #define destroy_gres_slurmd_conf slurm_destroy_gres_slurmd_conf
 
@@ -208,12 +210,15 @@
 #define	list_append_list	slurm_list_append_list
 #define	list_transfer		slurm_list_transfer
 #define	list_transfer_max	slurm_list_transfer_max
+#define	list_transfer_unique	slurm_list_transfer_unique
 #define	list_prepend		slurm_list_prepend
 #define	list_find_first		slurm_list_find_first
+#define	list_find_first_ro	slurm_list_find_first_ro
 #define	list_delete_all		slurm_list_delete_all
 #define	list_delete_first	slurm_list_delete_first
 #define	list_delete_ptr		slurm_list_delete_ptr
 #define	list_for_each		slurm_list_for_each
+#define	list_for_each_ro	slurm_list_for_each_ro
 #define	list_for_each_max	slurm_list_for_each_max
 #define	list_sort		slurm_list_sort
 #define	list_flip		slurm_list_flip
@@ -378,6 +383,7 @@
 
 /* xstring.[ch] functions */
 #define	_xstrcat		slurm_xstrcat
+#define	_xstrcatat		slurm_xstrcatat
 #define	_xstrncat		slurm_xstrncat
 #define	_xstrcatchar		slurm_xstrcatchar
 #define	_xstrftimecat		slurm_xstrftimecat
@@ -520,12 +526,14 @@
 #define xfree_struct_passwd		slurm_xfree_struct_passwd
 #define stepd_getgr			slurm_stepd_getgr
 #define xfree_struct_group_array	slurm_xfree_struct_group_array
+#define stepd_gethostbyname		slurm_stepd_gethostbyname
+#define xfree_struct_hostent		slurm_xfree_struct_hostent
 #define stepd_get_namespace_fd		slurm_stepd_get_namespace_fd
 
 /* cgroup.[ch] functions */
 #define cgroup_conf_init		slurm_cgroup_conf_init
 #define cgroup_conf_destroy		slurm_cgroup_conf_destroy
-
+#define autodetect_cgroup_version       slurm_autodetect_cgroup_version
 #endif /* USE_ALIAS */
 
 /* Include the function definitions after redefining their names. */
@@ -538,10 +546,10 @@
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/pack.h"
 #include "src/common/parse_config.h"
 #include "src/common/read_config.h"
+#include "src/common/select.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_route.h"

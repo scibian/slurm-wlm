@@ -61,10 +61,10 @@
 #include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
 #include "src/common/gres.h"
-#include "src/common/node_select.h"
 #include "src/common/plugstack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/select.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
@@ -177,7 +177,7 @@ int main(int argc, char **argv)
 	int retries = 0;
 	pid_t pid  = getpid();
 	pid_t tpgid = 0;
-	pid_t rc_pid = 0;
+	pid_t rc_pid = -1;
 	int i, j, rc = 0;
 	uint32_t num_tasks = 0;
 	bool het_job_fini = false;
@@ -694,7 +694,7 @@ relinquish:
 	}
 
 #ifdef MEMORY_LEAK_DEBUG
-	slurm_select_fini();
+	select_g_fini();
 	slurm_reset_all_options(&opt, false);
 	slurm_auth_fini();
 	slurm_conf_destroy();
@@ -928,7 +928,7 @@ static void _signal_while_allocating(int signo)
 /* This typically signifies the job was cancelled by scancel */
 static void _job_complete_handler(srun_job_complete_msg_t *comp)
 {
-	if (my_job_id && (my_job_id != comp->job_id)) {
+	if (!is_het_job && my_job_id && (my_job_id != comp->job_id)) {
 		error("Ignoring job_complete for job %u because our job ID is %u",
 		      comp->job_id, my_job_id);
 		return;
@@ -1114,6 +1114,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		rc = slurm_job_node_ready(alloc->job_id);
 		if (rc == READY_JOB_FATAL)
 			break;				/* fatal error */
+		if (allocation_interrupted || allocation_revoked)
+			break;
 		if ((rc == READY_JOB_ERROR) || (rc == EAGAIN))
 			continue;			/* retry */
 		if ((rc & READY_JOB_STATE) == 0) {	/* job killed */
@@ -1126,8 +1128,6 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			is_ready = 1;
 			break;
 		}
-		if (allocation_interrupted || allocation_revoked)
-			break;
 	}
 	if (is_ready) {
 		resource_allocation_response_msg_t *resp;
@@ -1143,7 +1143,7 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			slurm_free_resource_allocation_response_msg(resp);
 		}
 	} else if (!allocation_interrupted) {
-		if (job_killed) {
+		if (job_killed || allocation_revoked) {
 			error("Job allocation %u has been revoked",
 			      alloc->job_id);
 			allocation_interrupted = true;

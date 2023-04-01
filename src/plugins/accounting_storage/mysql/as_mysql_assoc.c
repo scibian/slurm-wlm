@@ -383,6 +383,10 @@ static int _make_sure_users_have_default(
 	char *query = NULL, *cluster = NULL, *user = NULL;
 	ListIterator itr = NULL, clus_itr = NULL;
 	int rc = SLURM_SUCCESS;
+	slurmdb_assoc_rec_t *mod_assoc;
+
+	if (slurmdbd_conf->flags & DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT)
+		return rc;
 
 	if (!user_list)
 		return SLURM_SUCCESS;
@@ -440,6 +444,51 @@ static int _make_sure_users_have_default(
 			xfree(query);
 			if (rc != SLURM_SUCCESS) {
 				error("problem with update query");
+				rc = SLURM_ERROR;
+				break;
+			}
+
+			/*
+			 * Now we need to add this association as the default to
+			 * the update_list.
+			 */
+			query = xstrdup_printf(
+				"select id_assoc from \"%s_%s\" where user='%s' and is_def=1 and deleted=0 LIMIT 1;",
+				cluster, assoc_table, user);
+			DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s",
+			         query);
+			if (!(result = mysql_db_query_ret(
+				      mysql_conn, query, 0))) {
+				xfree(query);
+				error("couldn't query the database");
+				rc = SLURM_ERROR;
+				break;
+			}
+			xfree(query);
+
+			/* check if the row is default */
+			row = mysql_fetch_row(result);
+			if (!row[0]) {
+				error("User '%s' doesn't have a default like you would expect on cluster '%s'.",
+				      user, cluster);
+				/* default found, continue */
+				mysql_free_result(result);
+				continue;
+			}
+
+			mod_assoc = xmalloc(sizeof(*mod_assoc));
+			slurmdb_init_assoc_rec(mod_assoc, 0);
+			mod_assoc->cluster = xstrdup(cluster);
+			mod_assoc->id = slurm_atoul(row[0]);
+			mod_assoc->is_def = 1;
+
+			mysql_free_result(result);
+
+			if (addto_update_list(mysql_conn->update_list,
+					      SLURMDB_MODIFY_ASSOC,
+					      mod_assoc) != SLURM_SUCCESS) {
+				slurmdb_destroy_assoc_rec(mod_assoc);
+				error("couldn't add to the update list");
 				rc = SLURM_ERROR;
 				break;
 			}
@@ -1785,7 +1834,8 @@ static int _process_remove_assoc_results(mysql_conn_t *mysql_conn,
 					 char *cluster_name,
 					 char *name_char,
 					 bool is_admin, List ret_list,
-					 bool *jobs_running)
+					 bool *jobs_running,
+					 bool *default_account)
 {
 	ListIterator itr = NULL;
 	MYSQL_ROW row;
@@ -1796,7 +1846,7 @@ static int _process_remove_assoc_results(mysql_conn_t *mysql_conn,
 	uint32_t smallest_lft = 0xFFFFFFFF;
 
 	xassert(result);
-	if (*jobs_running)
+	if (*jobs_running || *default_account)
 		goto skip_process;
 
 	while ((row = mysql_fetch_row(result))) {
@@ -1886,9 +1936,9 @@ static int _process_remove_assoc_results(mysql_conn_t *mysql_conn,
 skip_process:
 	user_name = uid_to_string((uid_t) user->uid);
 
-	rc = remove_common(mysql_conn, DBD_REMOVE_ASSOCS, now,
-			   user_name, assoc_table, name_char,
-			   assoc_char, cluster_name, ret_list, jobs_running);
+	rc = remove_common(mysql_conn, DBD_REMOVE_ASSOCS, now, user_name,
+			   assoc_table, name_char, assoc_char, cluster_name,
+			   ret_list, jobs_running, default_account);
 end_it:
 	xfree(user_name);
 	xfree(assoc_char);
@@ -2761,7 +2811,7 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 				   object->cluster, assoc_table, cols,
 				   vals, my_left+(incr-1), my_left+incr);
 
-			/* definantly works but slow */
+			/* definitely works but slow */
 /* 			xstrfmtcat(query, */
 /* 				   "SELECT @myLeft := lft FROM %s WHERE " */
 /* 				   "acct = '%s' " */
@@ -3267,7 +3317,7 @@ extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 	slurmdb_user_rec_t user;
 	char *prefix = "t1";
 	List use_cluster_list = NULL;
-	bool jobs_running = 0, locked = false;;
+	bool jobs_running = 0, default_account = false, locked = false;;
 
 	if (!assoc_cond) {
 		error("we need something to change");
@@ -3369,7 +3419,8 @@ extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 		rc = _process_remove_assoc_results(mysql_conn, result,
 						   &user, cluster_name,
 						   name_char, is_admin,
-						   ret_list, &jobs_running);
+						   ret_list, &jobs_running,
+						   &default_account);
 		xfree(name_char);
 		mysql_free_result(result);
 
@@ -3397,7 +3448,10 @@ extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "didn't affect anything");
 		return ret_list;
 	}
-	if (jobs_running)
+
+	if (default_account)
+		errno = ESLURM_NO_REMOVE_DEFAULT_ACCOUNT;
+	else if (jobs_running)
 		errno = ESLURM_JOBS_RUNNING_ON_ASSOC;
 	else
 		errno = SLURM_SUCCESS;
@@ -3699,6 +3753,69 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 
 	/* if (use_cluster_list == as_mysql_cluster_list) */
 	/* 	slurm_mutex_unlock(&as_mysql_cluster_list_lock); */
+
+	return rc;
+}
+
+extern int as_mysql_assoc_remove_default(mysql_conn_t *mysql_conn,
+					 List user_list, List cluster_list)
+{
+	char *query = NULL;
+	List use_cluster_list = NULL;
+	ListIterator itr, itr2;
+	slurmdb_assoc_rec_t assoc;
+	bool locked = false;
+	int rc = SLURM_SUCCESS;
+
+	xassert(user_list);
+
+	if (!(slurmdbd_conf->flags & DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT))
+		return ESLURM_NO_REMOVE_DEFAULT_ACCOUNT;
+
+	slurmdb_init_assoc_rec(&assoc, 0);
+	assoc.acct = "";
+	assoc.is_def = 1;
+
+	if (cluster_list && list_count(cluster_list))
+		use_cluster_list = cluster_list;
+	else {
+		slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+		use_cluster_list = list_shallow_copy(as_mysql_cluster_list);
+		locked = true;
+	}
+
+	itr = list_iterator_create(use_cluster_list);
+	itr2 = list_iterator_create(user_list);
+	while ((assoc.cluster = list_next(itr))) {
+		list_iterator_reset(itr2);
+		while ((assoc.user = list_next(itr2))) {
+			rc = _reset_default_assoc(
+				mysql_conn, &assoc, &query, true);
+
+			if (rc != SLURM_SUCCESS)
+				break;
+		}
+		if (rc != SLURM_SUCCESS)
+			break;
+	}
+	list_iterator_destroy(itr2);
+	list_iterator_destroy(itr);
+
+	if (locked) {
+		FREE_NULL_LIST(use_cluster_list);
+		slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
+	}
+
+	if (rc != SLURM_SUCCESS)
+		xfree(query);
+
+	if (query) {
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+		rc = mysql_db_query(mysql_conn, query);
+		xfree(query);
+		if (rc != SLURM_SUCCESS)
+			error("Couldn't remove default assocs");
+	}
 
 	return rc;
 }

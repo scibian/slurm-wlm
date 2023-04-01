@@ -57,16 +57,14 @@
  * Regex matches based on YAML 1.1 section 5.5.
  * Honors ~ as YAML 1.1 allows for null fields.
  */
-static const char *bool_pattern_null = "^(\\~|[Nn][uU][lL][lL])$";
-static regex_t bool_pattern_null_re;
 static const char *bool_pattern_true = "^([Yy](|[eE][sS])|[tT]([rR][uU][eE]|)|[Oo][nN])$";
 static regex_t bool_pattern_true_re;
 static const char *bool_pattern_false = "^([nN]([Oo]|)|[fF](|[aA][lL][sS][eE])|[oO][fF][fF])$";
 static regex_t bool_pattern_false_re;
-static const char *bool_pattern_int = "^([+-]?[0-9]+)$";
-static regex_t bool_pattern_int_re;
-static const char *bool_pattern_float = "^([+-]?[0-9]*[.][0-9]*(|[eE][+-]?[0-9]+))$";
-static regex_t bool_pattern_float_re;
+static const char *int_pattern = "^([+-]?[0-9]+)$";
+static regex_t int_pattern_re;
+static const char *float_pattern = "^([+-]?[0-9]*[.][0-9]*(|[eE][+-]?[0-9]+))$";
+static regex_t float_pattern_re;
 
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool initialized = false; /* protected by init_mutex */
@@ -184,11 +182,10 @@ extern void data_fini(void)
 	slurm_mutex_lock(&init_mutex);
 
 	if (initialized) {
-		regfree(&bool_pattern_null_re);
 		regfree(&bool_pattern_true_re);
 		regfree(&bool_pattern_false_re);
-		regfree(&bool_pattern_int_re);
-		regfree(&bool_pattern_float_re);
+		regfree(&int_pattern_re);
+		regfree(&float_pattern_re);
 	}
 	if (initialized && rack) {
 		/* cleanup plugins if any were loaded */
@@ -395,12 +392,6 @@ extern int data_init(const char *plugin_list, plugrack_foreach_t listf)
 		goto load_plugins;
 	initialized = true;
 
-	if (!rc && (reg_rc = regcomp(&bool_pattern_null_re, bool_pattern_null,
-			      REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &bool_pattern_null_re);
-		rc = ESLURM_DATA_REGEX_COMPILE;
-	}
-
 	if (!rc && (reg_rc = regcomp(&bool_pattern_true_re, bool_pattern_true,
 			      REG_EXTENDED)) != 0) {
 		_dump_regex_error(reg_rc, &bool_pattern_true_re);
@@ -413,15 +404,15 @@ extern int data_init(const char *plugin_list, plugrack_foreach_t listf)
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
-	if (!rc && (reg_rc = regcomp(&bool_pattern_int_re, bool_pattern_int,
-			      REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &bool_pattern_int_re);
+	if (!rc && (reg_rc = regcomp(&int_pattern_re, int_pattern,
+				     REG_EXTENDED)) != 0) {
+		_dump_regex_error(reg_rc, &int_pattern_re);
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
-	if (!rc && (reg_rc = regcomp(&bool_pattern_float_re, bool_pattern_float,
-			      REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &bool_pattern_float_re);
+	if (!rc && (reg_rc = regcomp(&float_pattern_re, float_pattern,
+				     REG_EXTENDED)) != 0) {
+		_dump_regex_error(reg_rc, &float_pattern_re);
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
@@ -814,8 +805,25 @@ extern data_t *data_set_string_own(data_t *data, char *value)
 {
 	_check_magic(data);
 
-	if (!data || !value)
+	if (!data)
 		return NULL;
+
+	if (!value)
+		return data_set_null(data);
+
+	/* check that the string was xmalloc()ed and actually has contents */
+	xassert(xsize(value));
+
+#ifndef NDEBUG
+	/*
+	 * catch use after free by the caller by using the existing xfree()
+	 * functionality
+	 */
+	char *nv = xstrdup(value);
+	xfree(value);
+	value = nv;
+#endif
+
 	_release(data);
 
 	log_flag(DATA, "%s: set data (0x%"PRIXPTR") to string: %s",
@@ -990,6 +998,16 @@ data_t *data_key_get(data_t *data, const char *key)
 		return i->data;
 	else
 		return NULL;
+}
+
+extern data_t *data_key_get_int(data_t *data, int64_t key)
+{
+	char *key_str = xstrdup_printf("%"PRId64, key);
+	data_t *node = data_key_get(data, key_str);
+
+	xfree(key_str);
+
+	return node;
 }
 
 data_t *data_key_set(data_t *data, const char *key)
@@ -1445,7 +1463,7 @@ static int _convert_data_string(data_t *data)
 		data_set_string(data, (data->data.bool_u ? "true" : "false"));
 		return SLURM_SUCCESS;
 	case DATA_TYPE_NULL:
-		data_set_string(data, "null");
+		data_set_string(data, "");
 		return SLURM_SUCCESS;
 	case DATA_TYPE_FLOAT:
 	{
@@ -1518,8 +1536,7 @@ static int _convert_data_null(data_t *data)
 
 	switch (data->type) {
 	case DATA_TYPE_STRING:
-		if (_regex_quick_match(data->data.string_u,
-				       &bool_pattern_null_re)) {
+		if (!data->data.string_u || !data->data.string_u[0]) {
 			log_flag(DATA, "%s: convert data (0x%"PRIXPTR") to null: %s->null",
 				 __func__, (uintptr_t) data,
 				 data->data.string_u);
@@ -1575,8 +1592,7 @@ static int _convert_data_int(data_t *data)
 
 	switch (data->type) {
 	case DATA_TYPE_STRING:
-		if (_regex_quick_match(data->data.string_u,
-				       &bool_pattern_int_re)) {
+		if (_regex_quick_match(data->data.string_u, &int_pattern_re)) {
 			int64_t x;
 			if (sscanf(data->data.string_u, "%"SCNd64, &x) == 1) {
 				log_flag(DATA, "%s: converted data (0x%"PRIXPTR") to int: %s->%"PRId64,
@@ -1611,7 +1627,7 @@ static int _convert_data_float(data_t *data)
 	switch (data->type) {
 	case DATA_TYPE_STRING:
 		if (_regex_quick_match(data->data.string_u,
-				       &bool_pattern_float_re)) {
+				       &float_pattern_re)) {
 			double x;
 			if (sscanf(data->data.string_u, "%lf", &x) == 1) {
 				log_flag(DATA, "%s: convert data (0x%"PRIXPTR") to float: %s->%lf",
@@ -1892,6 +1908,13 @@ extern data_t *data_resolve_dict_path(data_t *data, const char *path)
 	else
 		log_flag(DATA, "%s: data (0x%"PRIXPTR") failed to resolve dictionary path \"%s\"",
 			 __func__, (uintptr_t) data, path);
+
+	if ((data_get_type(found) == DATA_TYPE_LIST) &&
+	    (!found->data.list_u->count)) {
+		log_flag(DATA, "%s: Returning NULL for a 0 count list",
+			 __func__);
+		return NULL;
+	}
 
 	return found;
 }

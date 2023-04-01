@@ -18,15 +18,15 @@ Last-Update: 2022-01-21
  #include <arpa/inet.h>
  #include <errno.h>
  #include <limits.h>	/* for PATH_MAX */
-@@ -286,6 +287,7 @@
+@@ -245,6 +246,7 @@
  	struct addrinfo* result = NULL;
  	struct addrinfo hints;
  	int err;
-+	int retry = 5;
++	int retry = 10;
  	bool v4_enabled = slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED;
  	bool v6_enabled = slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED;
  	char serv[6];
-@@ -307,13 +309,19 @@
+@@ -266,13 +268,19 @@
  
  	snprintf(serv, sizeof(serv), "%u", port);
  

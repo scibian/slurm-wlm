@@ -166,7 +166,7 @@ static void _update_crontab_with_disabled_lines(char **crontab,
 
 	bit_unfmt(disabled, disabled_lines);
 
-	for (int i = 0; lines[i]; i++) {
+	for (int i = 1; lines[i]; i++) {
 		if (bit_test(disabled, i))
 			xstrfmtcat(new_crontab, "%s%s\n", prepend, lines[i]);
 		else
@@ -341,7 +341,7 @@ static job_desc_msg_t *_entry_to_job(cron_entry_t *entry, char *script)
 		struct passwd *pwd = NULL;
 
 		if (!(pwd = getpwuid(uid)))
-			fatal("getpwuid(%d) failed", uid);
+			fatal("getpwuid(%u) failed", uid);
 
 		job->work_dir = xstrdup(pwd->pw_dir);
 	}
@@ -488,8 +488,7 @@ edit:
 		setup_next_entry = true;
 		lineno++;
 	}
-
-	xfree(*lines);
+	xfree(*(lines + 1));
 	xfree(lines);
 	xfree(script);
 	FREE_NULL_LIST(env_vars);

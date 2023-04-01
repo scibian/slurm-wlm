@@ -81,8 +81,6 @@
 #include "multi_prog.h"
 #include "opt.h"
 
-extern char **environ;
-
 static void _help(void);
 static void _usage(void);
 
@@ -541,7 +539,7 @@ env_vars_t env_vars[] = {
   { "SLURM_COMPRESS", LONG_OPT_COMPRESS },
   { "SLURM_CONSTRAINT", 'C' },
   { "SLURM_CORE_SPEC", 'S' },
-  { "SLURM_CPUS_PER_TASK", 'c' },
+  { "SRUN_CPUS_PER_TASK", 'c' },
   { "SLURM_CPU_BIND", LONG_OPT_CPU_BIND },
   { "SLURM_CPU_FREQ_REQ", LONG_OPT_CPU_FREQ },
   { "SLURM_CPUS_PER_GPU", LONG_OPT_CPUS_PER_GPU },
@@ -617,6 +615,7 @@ env_vars_t env_vars[] = {
   { "SLURM_WORKING_DIR", 'D' },
   { "SLURMD_DEBUG", LONG_OPT_SLURMD_DEBUG },
   { "SRUN_CONTAINER", LONG_OPT_CONTAINER },
+  { "SLURM_DEBUG", 'v'},
   { NULL }
 };
 
@@ -744,6 +743,14 @@ static void _set_options(const int argc, char **argv)
 	xfree(opt_string);
 }
 
+static void _mpi_print_list(void)
+{
+	plugrack_t *mpi_rack = plugrack_create("mpi");
+	plugrack_read_dir(mpi_rack, slurm_conf.plugindir);
+	plugrack_print_mpi_plugins(mpi_rack);
+	plugrack_destroy(mpi_rack);
+}
+
 /*
  * _opt_args() : set options via commandline args and popt
  */
@@ -752,6 +759,11 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 	int i, command_pos = 0, command_args = 0;
 	char **rest = NULL;
 	char *fullpath;
+
+	static char *prev_mpi = NULL;
+	static int het_comp_number = -1;
+
+	het_comp_number++;
 
 	sropt.het_grp_bits = bit_alloc(MAX_HET_JOB_COMPONENTS);
 	bit_set(sropt.het_grp_bits, het_job_offset);
@@ -781,8 +793,16 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 
 	command_args = sropt.argc;
 
-	if (!xstrcmp(sropt.mpi_type, "list"))
-		(void) mpi_hook_client_init(sropt.mpi_type);
+	if (!prev_mpi && het_comp_number &&
+	    xstrcmp(sropt.mpi_type, slurm_conf.mpi_default)) {
+		error("--mpi is only supported in the first heterogeneous component");
+		exit(error_exit);
+	}
+	prev_mpi = sropt.mpi_type;
+	if (!xstrcmp(sropt.mpi_type, "list")) {
+		_mpi_print_list();
+		exit(0);
+	}
 	if (!rest && !sropt.test_only)
 		fatal("No command given to execute.");
 
@@ -966,6 +986,14 @@ static bool _opt_verify(void)
 			opt.nodes_set = false;
 	}
 
+	/* slurm_verify_cpu_bind has to be called before validate_hint_option */
+	if (opt.srun_opt->cpu_bind) {
+		if (slurm_verify_cpu_bind(opt.srun_opt->cpu_bind,
+					  &opt.srun_opt->cpu_bind,
+					  &opt.srun_opt->cpu_bind_type))
+			verified = false;
+	}
+
 	if (opt.hint &&
 	    !validate_hint_option(&opt)) {
 		xassert(opt.ntasks_per_core == NO_VAL);
@@ -1131,8 +1159,7 @@ static bool _opt_verify(void)
 		if (!(sropt.cpu_bind_type & (CPU_BIND_TO_SOCKETS |
 					   CPU_BIND_TO_CORES |
 					   CPU_BIND_TO_THREADS |
-					   CPU_BIND_TO_LDOMS |
-					   CPU_BIND_TO_BOARDS))) {
+					   CPU_BIND_TO_LDOMS))) {
 			sropt.cpu_bind_type |= CPU_BIND_TO_CORES;
 		}
 	}
@@ -1143,8 +1170,7 @@ static bool _opt_verify(void)
 		if (!(sropt.cpu_bind_type & (CPU_BIND_TO_SOCKETS |
 					   CPU_BIND_TO_CORES |
 					   CPU_BIND_TO_THREADS |
-					   CPU_BIND_TO_LDOMS |
-					   CPU_BIND_TO_BOARDS))) {
+					   CPU_BIND_TO_LDOMS))) {
 			sropt.cpu_bind_type |= CPU_BIND_TO_SOCKETS;
 		}
 	}
@@ -1179,6 +1205,9 @@ static bool _opt_verify(void)
 			opt.ntasks *= opt.cores_per_socket;
 			opt.ntasks *= opt.threads_per_core;
 			opt.ntasks_set = true;
+			if (opt.verbose)
+				info("Number of tasks implicitly set to %d",
+				     opt.ntasks);
 		} else if (opt.ntasks_per_node != NO_VAL) {
 			opt.ntasks *= opt.ntasks_per_node;
 			opt.ntasks_set = true;
@@ -1277,8 +1306,9 @@ static bool _opt_verify(void)
 
 	if (!sropt.mpi_type)
 		sropt.mpi_type = xstrdup(slurm_conf.mpi_default);
-	if (mpi_hook_client_init(sropt.mpi_type) == SLURM_ERROR) {
-		error("invalid MPI type '%s', --mpi=list for acceptable types",
+
+	if (!mpi_g_client_init(&sropt.mpi_type)) {
+		error("Invalid MPI type '%s', --mpi=list for acceptable types",
 		      sropt.mpi_type);
 		exit(error_exit);
 	}
@@ -1311,25 +1341,34 @@ static bool _opt_verify(void)
  *	via salloc or sbatch commands */
 extern void init_spank_env(void)
 {
-	int i;
-	char *name, *eq, *value;
+	extern char **environ;
 
-	if (environ == NULL)
+	if (environ == NULL) {
+		debug3("%s: environ is NULL", __func__);
 		return;
+	}
 
-	for (i = 0; environ[i]; i++) {
-		if (xstrncmp(environ[i], "SLURM_SPANK_", 12))
+	for (int i = 0; environ[i]; i++) {
+		char *name, *eq, *value;
+
+		if (xstrncmp(environ[i], "SLURM_SPANK_", 12)) {
+			debug3("%s: skipping environ[%d]: %s",
+			       __func__, i, environ[i]);
 			continue;
+		}
 		name = xstrdup(environ[i] + 12);
 		eq = strchr(name, (int)'=');
 		if (eq == NULL) {
-			xfree(name);
-			break;
+			fatal("Malformed SPANK environment entry: %s",
+			      environ[i]);
 		}
 		eq[0] = '\0';
 		value = eq + 1;
 		spank_set_job_env(name, value, 1);
 		xfree(name);
+
+		debug3("%s: adding SPANK environ[%d]: %s",
+		       __func__, i, environ[i]);
 	}
 
 }

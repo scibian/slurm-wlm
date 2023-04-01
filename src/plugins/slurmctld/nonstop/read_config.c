@@ -41,8 +41,10 @@
 #include <unistd.h>
 
 #include "src/common/slurm_xlator.h"	/* Must be first */
+
 #include "src/common/parse_config.h"
 #include "src/common/uid.h"
+#include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
@@ -274,7 +276,7 @@ extern void nonstop_read_config(void)
 	if (stat(nonstop_file, &config_stat) < 0)
 		fatal("Can't stat nonstop.conf %s: %m", nonstop_file);
 	tbl = s_p_hashtbl_create(nonstop_options);
-	if (s_p_parse_file(tbl, NULL, nonstop_file, false) == SLURM_ERROR)
+	if (s_p_parse_file(tbl, NULL, nonstop_file, false, NULL) == SLURM_ERROR)
 		fatal("Can't parse nonstop.conf %s: %m", nonstop_file);
 
 	s_p_get_string(&nonstop_backup_addr, "BackupAddr", tbl);

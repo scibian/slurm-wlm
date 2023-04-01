@@ -230,7 +230,7 @@ void *xfer_buf_data(buf_t *my_buf)
 	xassert(my_buf->magic == BUF_MAGIC);
 
 	if (my_buf->mmaped)
-		fatal_abort("attempt to grow mmap()'d buffer not supported");
+		fatal_abort("attempt to xfer mmap()'d buffer not supported");
 
 	data_ptr = (void *) my_buf->head;
 	xfree(my_buf);
@@ -765,6 +765,32 @@ int unpackbool(bool *valp, buf_t *buffer)
 }
 
 /*
+ * Append the contents of the source buffer into the target buffer while
+ * validating buffer size constraints.
+ */
+extern void packbuf(buf_t *source, buf_t *buffer)
+{
+	uint32_t size_val = get_buf_offset(source);
+
+	if (!size_val)
+		return;
+
+	if (remaining_buf(buffer) < size_val) {
+		if ((buffer->size + size_val) > MAX_BUF_SIZE) {
+			error("%s: Buffer size limit exceeded (%u > %u)",
+			      __func__, (buffer->size + size_val),
+			      MAX_BUF_SIZE);
+			return;
+		}
+		buffer->size += size_val;
+		xrealloc_nz(buffer->head, buffer->size);
+	}
+
+	memcpy(&buffer->head[buffer->processed], get_buf_data(source), size_val);
+	buffer->processed += size_val;
+}
+
+/*
  * Given a pointer to memory (valp) and a size (size_val), convert
  * size_val to network byte order and store at buffer followed by
  * the data at valp. Adjust buffer counters.
@@ -1015,12 +1041,12 @@ void packstr_array(char **valp, uint32_t size_val, buf_t *buffer)
 }
 
 /*
- * Given 'buffer' pointing to a network byte order 16-bit integer
- * (size) and a array of strings  store the number of strings in
- * 'size_valp' and the array of strings in valp
- * NOTE: valp is set to point into a newly created buffer,
- *	the caller is responsible for calling xfree on *valp
- *	if non-NULL (set to NULL on zero size buffer value)
+ * Unpack a NULL-terminated array of strings from buffer.
+ * These are stored as a 32-bit (network-byte order) number of elements,
+ * followed by the individual strings (packed with packstr()).
+ * OUT: valp - xmalloc()'d array or NULL. Free with xfree_array().
+ * OUT: size_valp - number of elements, not including the NULL-termination.
+ * IN/OUT: buffer
  */
 int unpackstr_array(char ***valp, uint32_t *size_valp, buf_t *buffer)
 {
@@ -1036,15 +1062,14 @@ int unpackstr_array(char ***valp, uint32_t *size_valp, buf_t *buffer)
 	buffer->processed += sizeof(ns);
 
 	if (*size_valp > 0) {
-		*valp = xmalloc_nz(sizeof(char *) * (*size_valp + 1));
+		*valp = xcalloc(*size_valp + 1, sizeof(char *));
 		for (i = 0; i < *size_valp; i++) {
-			if (unpackmem_xmalloc(&(*valp)[i], &uint32_tmp, buffer))
+			if (unpackmem_xmalloc(&(*valp)[i], &uint32_tmp, buffer)) {
+				*size_valp = 0;
+				xfree_array(*valp);
 				return SLURM_ERROR;
+			}
 		}
-		/*
-		 * NULL terminate array so execle() can detect end of array
-		 */
-		(*valp)[i] = NULL;
 	} else
 		*valp = NULL;
 	return SLURM_SUCCESS;

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 slurm-wlm (21.08.8.2-1sci9u2) scibian9; urgency=medium
 
   * Revert back support of slurmrestd
@@ -19,6 +20,72 @@ slurm-wlm (21.08.7-1sci9u1) scibian9; urgency=medium
   * Update wait health check patch for slurm 21.08.7
 
  -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:03:06 +0200
+=======
+slurm-wlm (22.05.8-3) unstable; urgency=medium
+
+  * Source only upload for testing
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 08 Feb 2023 07:50:18 +0100
+
+slurm-wlm (22.05.8-2) unstable; urgency=medium
+
+  * Fix pmix package for non amd64 architectures
+  * Add rsmi plugin
+  * Force nvml configuration
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 05 Feb 2023 11:12:16 +0100
+
+slurm-wlm (22.05.8-1) unstable; urgency=medium
+
+  * New upstream release
+  * Remove obsolete lsb-base dependency
+  * Use generic libncurses-dev dependency
+  * Restore pmix support
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 31 Jan 2023 22:12:49 +0100
+
+slurm-wlm (22.05.7-2) unstable; urgency=medium
+
+  * Source only upload for testing
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 25 Jan 2023 22:30:47 +0100
+
+slurm-wlm (22.05.7-1) experimental; urgency=medium
+
+  [ Gennaro Oliva ]
+  * New upstream major release
+  * Bump standard version to 4.6.1 (no changes)
+  * Remove hdf5 v18 api patch fixed upstream
+  * Refresh patches
+  * Update configurators
+  * Update d/copyright
+  * Add libdbus-1-dev dep for cgroup v2 plugin
+  * Bump libslurm to soname 38
+  * Create MySQL plugin packages
+  * Create free plugin metapackage
+  * Bump standard version to 4.6.2 (no changes)
+  * Add patch to set the default cgroup basedir
+
+  [ Tobias Pape ]
+  * Create ipmi plugin packages
+  * Create hdf5 plugin packages
+  * Create influxdb plugin packages
+  * Create rrd plugin packages
+  * Create elasticsearch plugin packages
+  * Create jwt plugin packages
+
+  [ Tim Wickberg ]
+  * Update slurm description
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 12 Jan 2023 01:20:28 +0100
+
+slurm-wlm (21.08.8.2-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload
+  * tests: increase number of attempts in sbatch (Closes: #1014506)
+
+ -- Paul Gevers <elbrus@debian.org>  Thu, 10 Nov 2022 13:28:47 +0100
+>>>>>>> master
 
 slurm-wlm (21.08.8.2-1) unstable; urgency=medium
 

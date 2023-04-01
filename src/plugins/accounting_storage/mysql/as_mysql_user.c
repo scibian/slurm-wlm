@@ -718,11 +718,10 @@ no_user_table:
 		FREE_NULL_LIST(ret_list);
 	}
 
-	if (user->default_acct) {
+	if (user->default_acct && user->default_acct[0]) {
 		slurmdb_assoc_cond_t assoc_cond;
 		slurmdb_assoc_rec_t assoc;
 		List tmp_list = NULL;
-
 		memset(&assoc_cond, 0, sizeof(slurmdb_assoc_cond_t));
 		slurmdb_init_assoc_rec(&assoc, 0);
 		assoc.is_def = 1;
@@ -748,6 +747,19 @@ no_user_table:
 		/* } */
 		/* list_iterator_destroy(itr); */
 		FREE_NULL_LIST(tmp_list);
+	} else if (user->default_acct) {
+		List cluster_list = NULL;
+		if (user_cond->assoc_cond
+		    && user_cond->assoc_cond->cluster_list)
+			cluster_list = user_cond->assoc_cond->cluster_list;
+
+		rc = as_mysql_assoc_remove_default(
+			mysql_conn, ret_list, cluster_list);
+		if (rc != SLURM_SUCCESS) {
+			FREE_NULL_LIST(ret_list);
+			errno = rc;
+			goto end_it;
+		}
 	}
 
 	if (user->default_wckey) {
@@ -1020,7 +1032,7 @@ no_user_table:
 		if ((rc = remove_common(mysql_conn, DBD_REMOVE_USERS, now,
 					user_name, user_table, name_char,
 					assoc_char, object, ret_list,
-					&jobs_running))
+					&jobs_running, NULL))
 		    != SLURM_SUCCESS)
 			break;
 	}
@@ -1201,7 +1213,7 @@ extern List as_mysql_remove_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 	user_name = uid_to_string((uid_t) uid);
 	rc = remove_common(mysql_conn, DBD_REMOVE_ACCOUNT_COORDS,
 			   now, user_name, acct_coord_table,
-			   extra, NULL, NULL, NULL, NULL);
+			   extra, NULL, NULL, NULL, NULL, NULL);
 	xfree(user_name);
 	xfree(extra);
 	if (rc == SLURM_ERROR) {

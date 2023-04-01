@@ -35,6 +35,7 @@
  *  Refer to "fd.h" for documentation on public functions.
 \*****************************************************************************/
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -70,7 +71,7 @@ strong_alias(receive_fd_over_pipe, slurm_receive_fd_over_pipe);
 static int fd_get_lock(int fd, int cmd, int type);
 static pid_t fd_test_lock(int fd, int type);
 
-extern void closeall(int fd)
+static void _slow_closeall(int fd)
 {
 	struct rlimit rlim;
 
@@ -81,6 +82,36 @@ extern void closeall(int fd)
 
 	while (fd < rlim.rlim_cur)
 		close(fd++);
+}
+
+extern void closeall(int fd)
+{
+	char *name = "/proc/self/fd";
+	DIR *d;
+	struct dirent *dir;
+
+	/*
+	 * Blindly closing all file descriptors is slow.
+	 *
+	 * Instead get all open file descriptors from /proc/self/fd, then
+	 * close each one of those that are greater than or equal to fd.
+	 */
+	if (!(d = opendir(name))) {
+		debug("Could not read open files from %s: %m, closing all potential file descriptors",
+		      name);
+		_slow_closeall(fd);
+		return;
+	}
+
+	while ((dir = readdir(d))) {
+		/* Ignore "." and ".." entries */
+		if (dir->d_type != DT_DIR) {
+			int open_fd = atoi(dir->d_name);
+			if (open_fd >= fd)
+				close(open_fd);
+		}
+	}
+	closedir(d);
 }
 
 void fd_set_close_on_exec(int fd)
@@ -155,17 +186,20 @@ int fd_get_socket_error(int fd, int *err)
 
 	xassert(fd >= 0);
 
-	/*
-	 * SOL_SOCKET/SO_ERROR may not find an error and will not set err.
-	 * This may happen if on duplicate calls or if something else has
-	 * cleared the error.
-	 */
-	*err = SLURM_COMMUNICATIONS_MISSING_SOCKET_ERROR;
+	*err = SLURM_SUCCESS;
 
 	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void *)err, &errlen))
 		return errno;
-	else
+	else {
+		/*
+		 * SOL_SOCKET/SO_ERROR may not find an error and will not set
+		 * errno. This may happen if on duplicate calls or if something
+		 * else has cleared the error.
+		 */
+		if (!(*err))
+			*err = SLURM_COMMUNICATIONS_MISSING_SOCKET_ERROR;
 		return SLURM_SUCCESS;
+	}
 }
 
 static int fd_get_lock(int fd, int cmd, int type)
@@ -354,7 +388,7 @@ extern char *poll_revents_to_str(const short revents)
 	if (!revents)
 		xstrfmtcat(txt, "0");
 	else
-		xstrfmtcat(txt, "(0x%04" PRIx16 ")", revents);
+		xstrfmtcat(txt, "(0x%04x)", revents);
 
 	return txt;
 }

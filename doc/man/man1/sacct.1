@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "February 2022" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "August 2022" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -19,6 +19,11 @@ analysis.  The \f3sacct\fP command displays information on jobs, job
 steps, status, and exitcodes by default.  You can tailor the output
 with the use of the \f3\-\-format=\fP option to specify the fields to
 be shown.
+.PP
+Job records consist of a primary entry for the job as a whole as well as
+entries for job steps. The Job Launch page has a more detailed description
+of each type of job step.
+<https://slurm.schedmd.com/job_launch.html#job_record>
 .PP
 For the root user, the \f3sacct\fP command displays job accounting
 data for all users, although there are options to filter the output to
@@ -200,7 +205,8 @@ Show jobs from the federation if a member of one.
 \fB\-f\fR, \fB\-\-file\fR=<\fIfile\fR>
 Causes the \f3sacct\fP command to read job accounting data from the
 named \f2file\fP instead of the current Slurm job accounting log
-file. Only applicable when running the jobcomp/filetxt plugin.
+file. Only applicable when running the jobcomp/filetxt plugin. Setting this flag
+implicitly enables the \-c flag.
 .IP
 
 .TP
@@ -255,7 +261,7 @@ Account             AdminComment        AllocCPUS           AllocNodes
 AllocTRES           AssocID             AveCPU              AveCPUFreq
 AveDiskRead         AveDiskWrite        AvePages            AveRSS
 AveVMSize           BlockID             Cluster             Comment
-Constraints         Container           ConsumedEnergy      ConsumedEnergyRaw
+Constraints         ConsumedEnergy      ConsumedEnergyRaw   Container
 CPUTime             CPUTimeRAW          DBIndex             DerivedExitCode
 Elapsed             ElapsedRaw          Eligible            End
 ExitCode            Flags               GID                 Group
@@ -265,13 +271,13 @@ MaxDiskWriteNode    MaxDiskWriteTask    MaxPages            MaxPagesNode
 MaxPagesTask        MaxRSS              MaxRSSNode          MaxRSSTask
 MaxVMSize           MaxVMSizeNode       MaxVMSizeTask       McsLabel
 MinCPU              MinCPUNode          MinCPUTask          NCPUS
-NNodes              NodeList            NTasks              Priority
-Partition           QOS                 QOSRAW              Reason
-ReqCPUFreq          ReqCPUFreqMin       ReqCPUFreqMax       ReqCPUFreqGov
+NNodes              NodeList            NTasks              Partition
+Priority            QOS                 QOSRAW              Reason
+ReqCPUFreq          ReqCPUFreqGov       ReqCPUFreqMax       ReqCPUFreqMin
 ReqCPUS             ReqMem              ReqNodes            ReqTRES
 Reservation         ReservationId       Reserved            ResvCPU
 ResvCPURAW          Start               State               Submit
-SubmitLine          Suspended           SystemCPU           SystemComment
+SubmitLine          Suspended           SystemComment       SystemCPU
 Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
 TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
 TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
@@ -352,6 +358,11 @@ Display jobs that have any of these name(s).
 .TP
 \fB\-i\fR, \fB\-\-nnodes\fR=<\fImin\fR[-\fImax\fR]>
 Return jobs that ran on the specified number of nodes.
+.IP
+
+.TP
+\fB\-I\fR, \fB\-\-ncpus\fR=<\fImin\fR[-\fImax\fR]>
+Return jobs that ran on the specified number of cpus.
 .IP
 
 .TP
@@ -546,6 +557,17 @@ Print all fields listed below.
 .IP
 
 .TP
+\f3Account\fP
+Account the job ran under.
+.IP
+
+.TP
+\fBAdminComment\fR
+A comment string on a job that must be set by an administrator, the SlurmUser
+or root.
+.IP
+
+.TP
 \f3AllocCPUs\fP
 Count of allocated CPUs. Equivalent to \f3NCPUS\fP.
 .IP
@@ -563,11 +585,6 @@ For more details see AccountingStorageTRES in slurm.conf.
 
 NOTE: When a generic resource is configured with the no_consume flag,
 the allocation will be printed with a zero.
-.IP
-
-.TP
-\f3Account\fP
-Account the job ran under.
 .IP
 
 .TP
@@ -611,6 +628,11 @@ Average Virtual Memory size of all tasks in job.
 .IP
 
 .TP
+\fBBlockID\fR
+The name of the block to be used (used with Blue Gene systems).
+.IP
+
+.TP
 \f3Cluster\fP
 Cluster name.
 .IP
@@ -624,10 +646,23 @@ specialized \f3sjobexitmod\fP command.
 .IP
 
 .TP
-\f3ConsumedEnergy\fP
-Total energy consumed by all tasks in job, in joules.
-Note: Only in case of exclusive job allocation this value
-reflects the jobs' real energy consumption.
+\fBConstraints\fR
+Feature(s) the job requested as a constraint.
+.IP
+
+.TP
+\fBConsumedEnergy\fR
+Total energy consumed by all tasks in a job, in joules.
+Value may include a unit prefix (K,M,G,T,P).
+Note: Only in the case of an exclusive job allocation does this value
+reflect the job's real energy consumption.
+.IP
+
+.TP
+\fBConsumedEnergyRaw\fR
+Total energy consumed by all tasks in a job, in joules.
+Note: Only in the case of an exclusive job allocation does this value
+reflect the job's real energy consumption.
 .IP
 
 .TP
@@ -643,6 +678,11 @@ Time used (Elapsed time * CPU count) by a job or step in HH:MM:SS format.
 .TP
 \f3CPUTimeRAW\fP
 Time used (Elapsed time * CPU count) by a job or step in cpu\-seconds.
+.IP
+
+.TP
+\fBDBIndex\fR
+Unique database index for entries in the job table.
 .IP
 
 .TP
@@ -691,6 +731,11 @@ seconds
 .IP
 
 .TP
+\fBElapsedRaw\fR
+The job's elapsed time in seconds.
+.IP
+
+.TP
 \f3Eligible\fP
 When the job became eligible to run. In the same format as \f3End\fP.
 .IP
@@ -706,6 +751,11 @@ unless changed through the SLURM_TIME_FORMAT environment variable.
 The exit code returned by the job script or salloc, typically as set
 by the exit() function.  Following the colon is the signal that caused
 the process to terminate if it was terminated by a signal.
+.IP
+
+.TP
+\fBFlags\fR
+Job flags. Current flags are SchedSubmit, SchedMain, SchedBackfill.
 .IP
 
 .TP
@@ -842,6 +892,12 @@ The task ID where the maxvmsize occurred.
 .IP
 
 .TP
+\fBMCSLabel\fR
+Multi-Category Security (MCS) label associated with the job.
+Added to a job when the MCSPlugin is enabled in the slurm.conf.
+.IP
+
+.TP
 \f3MinCPU\fP
 Minimum (system + user) CPU time of all tasks in job.
 .IP
@@ -862,14 +918,14 @@ Total number of CPUs allocated to the job.  Equivalent to \f3AllocCPUS\fP.
 .IP
 
 .TP
-\f3NodeList\fP
-List of nodes in job/step.
-.IP
-
-.TP
 \f3NNodes\fP
 Number of nodes in a job or step.  If the job is running, or ran, this count
 will be the number allocated, else the number will be the number requested.
+.IP
+
+.TP
+\f3NodeList\fP
+List of nodes in job/step.
 .IP
 
 .TP
@@ -878,13 +934,13 @@ Total number of tasks in a job or step.
 .IP
 
 .TP
-\f3Priority\fP
-Slurm priority.
+\f3Partition\fP
+Identifies the partition on which the job ran.
 .IP
 
 .TP
-\f3Partition\fP
-Identifies the partition on which the job ran.
+\f3Priority\fP
+Slurm priority.
 .IP
 
 .TP
@@ -895,6 +951,13 @@ Name of Quality of Service.
 .TP
 \f3QOSRAW\fP
 Numeric id of Quality of Service.
+.IP
+
+.TP
+\fBReason\fR
+The last reason a job was blocked from running for something other than
+Priority or Resources. This will be saved in the database even if the job
+ran to completion.
 .IP
 
 .TP
@@ -1020,6 +1083,12 @@ as \f2Elapsed\fP.
 .IP
 
 .TP
+\fBSystemComment\fR
+The job's comment string that is typically set by a plugin.
+Can only be modified by a Slurm administrator.
+.IP
+
+.TP
 \f3SystemCPU\fP
 The amount of system CPU time used by the job or job step. Format
 is the same as \f3Elapsed\fP.
@@ -1119,6 +1188,21 @@ Task for which each maximum TRES usage out occurred.
 .IP
 
 .TP
+\fBTresUsageOutMin\fR
+Tres minimum usage out by all tasks in job.
+.IP
+
+.TP
+\fBTresUsageOutMinNode\fR
+Node for which each minimum TRES usage out occurred.
+.IP
+
+.TP
+\fBTresUsageOutMinTask\fR
+Task for which each minimum TRES usage out occurred.
+.IP
+
+.TP
 \f3TresUsageOutTot\fP
 Tres total usage out by all tasks in job.
 .IP
@@ -1152,6 +1236,10 @@ Workload  Characterization  Key.   Arbitrary  string for grouping orthogonal acc
 Reference to the wckey.
 .IP
 
+.TP
+\fBWorkDir\fR
+The directory used by the job to execute commands.
+.IP
 
 .SH "JOB STATE CODES"
 
@@ -1316,6 +1404,13 @@ application performance.
 .TP
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.
+.IP
+
+.TP
+\fBSLURM_DEBUG_FLAGS\fR
+Specify debug flags for sacct to use. See DebugFlags in the
+\fBslurm.conf\fR(5) man page for a full list of flags. The environment
+variable takes precedence over the setting in the slurm.conf.
 .IP
 
 .TP

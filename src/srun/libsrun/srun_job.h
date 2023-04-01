@@ -46,7 +46,7 @@
 #include "src/common/eio.h"
 #include "src/common/cbuf.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_defs.h"
 
 #include "src/api/step_io.h"
@@ -152,8 +152,7 @@ extern srun_job_t *job_create_allocation(
 			resource_allocation_response_msg_t *resp,
 			slurm_opt_t *opt_local);
 
-extern void init_srun(int argc, char **argv,
-		      log_options_t *logopt, int debug_level,
+extern void init_srun(int argc, char **argv, log_options_t *logopt,
 		      bool handle_signals);
 
 extern void create_srun_job(void **p_job, bool *got_alloc,

@@ -39,6 +39,7 @@
 #define _GNU_SOURCE
 
 #include <search.h>
+#include <signal.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -48,10 +49,10 @@
 #include "src/common/env.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
 #include "src/common/ref.h"
+#include "src/common/select.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -318,7 +319,6 @@ static data_for_each_cmd_t _per_job_param(const char *key, const data_t *data,
 static int _fill_job_desc_from_opts(slurm_opt_t *opt, job_desc_msg_t *desc)
 {
 	const sbatch_opt_t *sbopt = opt->sbatch_opt;
-	extern char **environ;
 
 	if (!desc)
 		return -1;
@@ -602,8 +602,6 @@ static data_t *dump_job_info(slurm_job_info_t *job, data_t *jd)
 				"GRES_ENFORCE_BIND");
 	if (job->bitflags & TEST_NOW_ONLY)
 		data_set_string(data_list_append(bitflags), "TEST_NOW_ONLY");
-	if (job->bitflags & NODE_REBOOT)
-		data_set_string(data_list_append(bitflags), "NODE_REBOOT");
 	if (job->bitflags & SPREAD_JOB)
 		data_set_string(data_list_append(bitflags), "SPREAD_JOB");
 	if (job->bitflags & USE_MIN_NODES)

@@ -36,8 +36,8 @@
 
 #include <sys/stat.h>
 #include "src/common/gres.h"
-#include "src/common/node_select.h"
 #include "src/common/read_config.h"
+#include "src/common/select.h"
 #include "src/common/xstring.h"
 
 /*
@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
 	slurm_init(NULL);
 
 	// Initialize GRES info (from slurm.conf)
-	rc = gres_init_node_config(node_name, slurm_conf_gres_str, &gres_list);
+	rc = gres_init_node_config(slurm_conf_gres_str, &gres_list);
 	if (rc != SLURM_SUCCESS) {
 		slurm_perror("FAILURE: gres_init_node_config");
 		exit(1);
@@ -156,7 +156,7 @@ int main(int argc, char *argv[])
 	// Clean up for valgrind
 	slurm_conf_destroy();
 	gres_fini();
-	slurm_select_fini();
+	select_g_fini();
 	log_fini();
 	xfree(slurm_conf);
 	xfree(gres_conf);

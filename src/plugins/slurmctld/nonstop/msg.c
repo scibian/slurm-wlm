@@ -49,6 +49,7 @@
 #include "src/common/parse_time.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/slurmctld.h"
 #include "slurm/smd_ns.h"
@@ -58,7 +59,7 @@
 
 /* This version string is defined at configure time of libsmd. The
  * META of libsmd needs to reflect this version. */
-char *version_string = "VERSION:21.08";
+char *version_string = "VERSION:22.05";
 
 /* When a remote socket closes on AIX, we have seen poll() return EAGAIN
  * indefinitely for a pending write request. Rather than locking up
@@ -179,7 +180,11 @@ static void _send_reply(int new_fd, char *msg)
 
 	if (msg)
 		msg_size = strlen(msg) + 1;
-	(void) sprintf(header, "%08u\n", msg_size);
+	data_sent = snprintf(header, sizeof(header), "%08u\n", msg_size);
+	if (data_sent >= sizeof(header)) {
+		info("slurmctld/nonstop: not sending msg, msg is too large.");
+		return;
+	}
 	if (_write_bytes((int) new_fd, header, 9) != 9) {
 		info("slurmctld/nonstop: failed to write message header %m");
 		return;
@@ -194,6 +199,7 @@ static void _send_reply(int new_fd, char *msg)
 
 static char *_decrypt(char *msg, uid_t *uid)
 {
+	char *xbuf_out = NULL;
 	void *buf_out = NULL;
 	int buf_out_size = 0, err;
 	gid_t gid;
@@ -202,9 +208,12 @@ static char *_decrypt(char *msg, uid_t *uid)
 	if (err != EMUNGE_SUCCESS) {
 		info("slurmctld/nonstop: munge_decode error: %s",
 		     munge_strerror(err));
-		xfree(buf_out);
 	}
-	return (char *) buf_out;
+	if (buf_out) {
+		xbuf_out = xstrdup(buf_out);
+		free(buf_out);
+	}
+	return xbuf_out;
 }
 
 static void _proc_msg(int new_fd, char *msg, slurm_addr_t cli_addr)
@@ -292,8 +301,7 @@ static void _proc_msg(int new_fd, char *msg, slurm_addr_t cli_addr)
 		info("slurmctld/nonstop: msg send:%s", resp);
 	_send_reply(new_fd, resp);
 	xfree(resp);
-	if (msg_decrypted)
-		free(msg_decrypted);
+	xfree(msg_decrypted);
 	return;
 }
 

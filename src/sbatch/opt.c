@@ -231,6 +231,9 @@ env_vars_t env_vars[] = {
   { "SBATCH_WAIT_ALL_NODES", LONG_OPT_WAIT_ALL_NODES },
   { "SBATCH_WAIT4SWITCH", LONG_OPT_SWITCH_WAIT },
   { "SBATCH_WCKEY", LONG_OPT_WCKEY },
+  { "SBATCH_ERROR", 'e' },
+  { "SBATCH_INPUT", 'i' },
+  { "SBATCH_OUTPUT", 'o' },
   { NULL }
 };
 
@@ -856,7 +859,9 @@ static bool _opt_verify(void)
 			opt.ntasks *= opt.threads_per_core;
 			opt.ntasks_set = true;
 		}
-
+		if (opt.ntasks_set && opt.verbose)
+			info("Number of tasks implicitly set to %d.",
+			     opt.ntasks);
 	} else if (opt.nodes_set && opt.ntasks_set) {
 		/*
 		 * Make sure that the number of

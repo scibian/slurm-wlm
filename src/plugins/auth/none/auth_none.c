@@ -46,6 +46,11 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 
+#include "src/common/pack.h"
+#include "src/common/slurm_protocol_api.h"
+#include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
+
 /*
  * These variables are required by the generic plugin interface.  If they
  * are not found in the plugin, the plugin loader will ignore it.
@@ -75,7 +80,7 @@ const char plugin_name[] = "Null authentication plugin";
 const char plugin_type[] = "auth/none";
 const uint32_t plugin_id = AUTH_PLUGIN_NONE;
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
-bool hash_enable = false;
+const bool hash_enable = false;
 
 /*
  * An opaque type representing authentication credentials.  This type can be
@@ -219,7 +224,7 @@ char *auth_p_get_host(auth_credential_t *cred)
 	return xstrdup(cred->hostname);
 }
 
-int auth_p_get_data(auth_credential_t *cred, char **data, uint32_t *len)
+extern int auth_p_get_data(auth_credential_t *cred, char **data, uint32_t *len)
 {
 	if (!cred) {
 		slurm_seterrno(ESLURM_AUTH_BADARG);

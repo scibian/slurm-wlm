@@ -44,6 +44,7 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurm_resolv.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xstring.h"
@@ -111,8 +112,9 @@ static void _fetch_child(List controllers, uint32_t flags)
 	_init_minimal_conf_server_config(controllers);
 	config = fetch_config_from_controller(flags);
 
+
 	if (!config) {
-		error("%s: failed to fetch remote configs", __func__);
+		error("%s: failed to fetch remote configs: %m", __func__);
 		safe_write(to_parent[1], &len, sizeof(int));
 		_exit(1);
 	}
@@ -420,8 +422,6 @@ extern void load_config_response_msg(config_response_msg_t *msg, int flags)
 
 	_load_conf(dir, "acct_gather.conf", &msg->acct_gather_config);
 	_load_conf(dir, "cgroup.conf", &msg->cgroup_config);
-	_load_conf(dir, "cgroup_allowed_devices_file.conf",
-		   &msg->cgroup_allowed_devices_file_config);
 	_load_conf(dir, "ext_sensors.conf", &msg->ext_sensors_config);
 	_load_conf(dir, "gres.conf", &msg->gres_config);
 	_load_conf(dir, "job_container.conf", &msg->job_container_config);
@@ -469,14 +469,67 @@ static void _load_conf2list(config_response_msg_t *msg, char *file_name)
 	free_buf(config);
 }
 
+/*
+ * ListForF to load the config from includes_list into the response msg.
+ *
+ * IN: x, list data (char pointer with include filename).
+ * IN/OUT: key, config_response_msg_t to be updated.
+ *
+ * RET: SLURM_SUCCESS.
+ */
+static int _foreach_include_file(void *x, void *arg)
+{
+	char *file_name = x;
+	config_response_msg_t *msg = arg;
+
+	_load_conf2list(msg, file_name);
+
+	return SLURM_SUCCESS;
+}
+
+/*
+ * ListFindF for conf_file in conf_includes_list.
+ *
+ * IN: x, list data (conf_includes_map_t node).
+ * IN: key, conf filename to be found.
+ *
+ * RET: 1 if found, 0 otherwise.
+ */
+extern int find_map_conf_file(void *x, void *key)
+{
+	conf_includes_map_t *map = x;
+	char *conf_file = key;
+
+	xassert(map);
+	xassert(map->conf_file);
+	xassert(conf_file);
+
+	if (!xstrcmp(map->conf_file, conf_file))
+		return 1;
+
+	return 0;
+}
+
 extern void load_config_response_list(config_response_msg_t *msg, char *files[])
 {
+	conf_includes_map_t *map = NULL;
+
 	xassert(msg);
 	if (!msg->config_files)
 		msg->config_files = list_create(destroy_config_file);
 
-	for (int i = 0; files[i]; i++)
+	for (int i = 0; files[i]; i++) {
 		_load_conf2list(msg, files[i]);
+
+		if (conf_includes_list) {
+			map = list_find_first_ro(conf_includes_list,
+						 find_map_conf_file, files[i]);
+
+			if (map && map->include_list)
+				list_for_each_ro(map->include_list,
+						 _foreach_include_file, msg);
+		}
+	}
 }
 
 extern void destroy_config_file(void *object)

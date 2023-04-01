@@ -102,7 +102,6 @@ RunTimeDelete="runc --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
 <li>runc using run (suggested):
 <pre>
 RunTimeQuery="runc --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeQuery="runc --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
 RunTimeKill="runc --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
 RunTimeDelete="runc --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
 RunTimeRun="runc --rootless=true --root=/tmp/ run %n.%u.%j.%s.%t -b %b"
@@ -137,7 +136,6 @@ RunTimeDelete="nvidia-container-runtime --rootless=true --root=/tmp/ delete --fo
 <li>nvidia-container-runtime using run (suggested):
 <pre>
 RunTimeQuery="nvidia-container-runtime --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeQuery="nvidia-container-runtime --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
 RunTimeKill="nvidia-container-runtime --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
 RunTimeDelete="nvidia-container-runtime --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
 RunTimeRun="nvidia-container-runtime --rootless=true --root=/tmp/ run %n.%u.%j.%s.%t -b %b"
@@ -166,7 +164,8 @@ then the job will also fail.</p>
 <li>Go to the directory containing the OCI Container bundle:
 <pre>cd $ABS_PATH_TO_BUNDLE</pre></li>
 
-<li>Execute OCI Container runtime:
+<li>Execute OCI Container runtime (You can find a few examples on how to build
+a bundle <a href="#bundle">below</a>):
 <pre>$OCIRunTime $ARGS create test --bundle $PATH_TO_BUNDLE</pre>
 <pre>$OCIRunTime $ARGS start test</pre>
 <pre>$OCIRunTime $ARGS kill test</pre>
@@ -222,112 +221,60 @@ Filesystem Bundle</a>
 </p>
 
 <p>Here are instructions on how to generate a container using a few
-different container solutions:</p>
+alternative container solutions:</p>
 
 <ul>
-<li>Use an existing tool to create a filesystem image in /image/rootfs:
+    <li>Create an image and prepare it for use with runc:
+    <ol>
+	<li>
+	Use an existing tool to create a filesystem image in /image/rootfs:
 	<ul>
-	<li>
-	debootstrap:
-	<pre>sudo debootstrap stable /tmp/image/rootfs http://deb.debian.org/debian/</pre>
-	</li>
-
-	<li>
-	yum:
-	<pre>sudo yum --config /etc/yum.conf --installroot=/image/rootfs/ --nogpgcheck --releasever=${CENTOS_RELEASE} -y</pre>
-	</li>
-
-	<li>
-	docker:
-	<pre>docker pull alpine
+	    <li>
+		debootstrap:
+		<pre>sudo debootstrap stable /image/rootfs http://deb.debian.org/debian/</pre>
+	    </li>
+	    <li>
+		yum:
+		<pre>sudo yum --config /etc/yum.conf --installroot=/image/rootfs/ --nogpgcheck --releasever=${CENTOS_RELEASE} -y</pre>
+	    </li>
+	    <li>
+		docker:
+		<pre>docker pull alpine
 docker create --name alpine alpine
+mkdir -p /image/rootfs/
 docker export alpine | tar -C /image/rootfs/ -xf -
 docker rm alpine</pre>
-	</li>
+	    </li>
 	</ul>
-</li>
-
-<li>
-Configuring a Bundle for Runtime to execute:
-	<ul>
-	<li>Use <a href="https://github.com/opencontainers/runc">runc</a>
-	to generate a config.json:
-		<ul>
-		<li>
-		<pre>cd /tmp/image
-runc --rootless=true spec</pre>
-		</li>
-
-		<li>
-		The generated config.json from runc (currently) needs to be
-		modifed for rootless:
-		<pre>
-diff --git a/config.json.orig b/config.json
-index 14f7ad3..c48acb9 100644
---- a/config.json.orig
-+++ b/config.json
-@@ -81,8 +81,7 @@
-                                "noexec",
-                                "newinstance",
-                                "ptmxmode=0666",
--                               "mode=0620",
--                               "gid=5"
-+                               "mode=0620"
-                        ]
-                },
-                {
-@@ -132,6 +131,20 @@
-                }
-        ],
-        "linux": {
-+               "uidMappings": [
-+                       {
-+                               "containerID": 0,
-+                               "hostID": 1000,
-+                               "size": 1
-+                       }
-+               ],
-+               "gidMappings": [
-+                       {
-+                               "containerID": 0,
-+                               "hostID": 1000,
-+                               "size": 1
-+                       }
-+               ],
-                "resources": {
-                        "devices": [
-                                {
-@@ -155,6 +168,9 @@
-                        },
-                        {
-                                "type": "mount"
-+                       },
-+                       {
-+                               "type": "user"
-                        }
-                ],
-                "maskedPaths": [</pre>
-		</li>
-		</ul>
-	</li>
 
 	<li>
-	Use <a href="https://github.com/opencontainers/umoci">umoci</a> and
-	skopeo to generate a full image:
-	<pre>
-cd /tmp/
+	Configure a bundle for runtime to execute:
+	<ul>
+	    <li>Use <a href="https://github.com/opencontainers/runc">runc</a>
+	    to generate a config.json:
+	    <pre>
+cd /image
+runc --rootless=true spec --rootless</pre>
+	    </li>
+	</ul>
+    </ol>
+    </li>
+
+    <li>Use <a href="https://github.com/opencontainers/umoci">umoci</a>
+    and skopeo to generate a full image:
+    <pre>
+cd /image/
 skopeo copy docker://alpine:latest oci:alpine:latest
 umoci unpack --rootless --image alpine alpine</pre>
-	</li>
+    </li>
 
-	<li>
-	Use <a href="https://sylabs.io/guides/3.1/user-guide/oci_runtime.html">
-	singularity</a> to generate a full image:
-	<pre>
-sudo singularity sif dump alpine /tmp/alpine.sif
-sudo singularity oci mount /tmp/alpine.sif /tmp/image/</pre>
-	</li>
-	</ul>
+    <li>
+    Use <a href="https://sylabs.io/guides/3.1/user-guide/oci_runtime.html">
+    singularity</a> to generate a full image:
+    <pre>
+sudo singularity sif dump alpine /image/alpine.sif
+sudo singularity oci mount /image/alpine.sif /image/</pre>
+    </li>
 </ul>
 
 <h2 id="plugin">Container support via Plugin
@@ -536,6 +483,6 @@ Overview slides of Sarus are
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 5 August 2021</p>
+<p style="text-align:center;">Last modified 21 September 2022</p>
 
 <!--#include virtual="footer.txt"-->

@@ -55,7 +55,6 @@ typedef enum {
 	ACCT_STORAGE_INFO_AGENT_COUNT
 } acct_storage_info_t;
 
-extern int with_slurmdbd;
 extern uid_t db_api_uid;
 
 extern int slurm_acct_storage_init(void); /* load the plugin */
@@ -580,10 +579,22 @@ extern int acct_storage_g_shutdown(void *db_conn);
 
 /*********************** CLUSTER ACCOUNTING STORAGE **************************/
 
+/*
+ * Send all relavant information to the DBD.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern void acct_storage_g_send_all(void *db_conn, time_t event_time,
+				    slurm_msg_type_t msg_type);
+
 extern int clusteracct_storage_g_node_down(void *db_conn,
 					   node_record_t *node_ptr,
 					   time_t event_time,
 					   char *reason, uint32_t reason_uid);
+
+/*
+ * See slurmdbd acct_storage_p_node_inx().
+ */
+extern char *acct_storage_g_node_inx(void *db_conn, char *nodes);
 
 extern int clusteracct_storage_g_node_up(void *db_conn, node_record_t *node_ptr,
 					 time_t event_time);
@@ -611,6 +622,12 @@ extern int jobacct_storage_job_start_direct(void *db_conn,
  */
 extern int jobacct_storage_g_job_start(void *db_conn,
 				       job_record_t *job_ptr);
+
+/*
+ * load into the storage heavy information about a job,
+ * typically when it begins execution, but possibly earlier
+ */
+extern int jobacct_storage_g_job_heavy(void *db_conn, job_record_t *job_ptr);
 
 /*
  * load into the storage the end of a job

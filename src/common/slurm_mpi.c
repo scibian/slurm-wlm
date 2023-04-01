@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_mpi.c - Generic mpi selector for slurm
+ *  slurm_mpi.c - Generic MPI selector for Slurm
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -40,9 +40,13 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
+#include "src/common/slurm_xlator.h"
 #include "src/common/env.h"
 #include "src/common/macros.h"
+#include "src/common/pack.h"
+#include "src/common/parse_config.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
 #include "src/common/read_config.h"
@@ -50,17 +54,18 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#define _DEBUG 0
-
 typedef struct slurm_mpi_ops {
-	int          (*slurmstepd_prefork)(const stepd_step_rec_t *job,
-					   char ***env);
-	int          (*slurmstepd_init)   (const mpi_plugin_task_info_t *job,
-					   char ***env);
-	mpi_plugin_client_state_t *
-	             (*client_prelaunch)  (const mpi_plugin_client_info_t *job,
-					   char ***env);
-	int          (*client_fini)       (mpi_plugin_client_state_t *);
+	uint32_t (*plugin_id);
+	int (*client_fini)(mpi_plugin_client_state_t *state);
+	mpi_plugin_client_state_t *(*client_prelaunch)(
+		const mpi_plugin_client_info_t *job, char ***env);
+	s_p_hashtbl_t *(*conf_get)(void);
+	List (*conf_get_printable)(void);
+	void (*conf_options)(s_p_options_t **full_options,
+			     int *full_options_cnt);
+	void (*conf_set)(s_p_hashtbl_t *tbl);
+	int (*slurmstepd_prefork)(const stepd_step_rec_t *job, char ***env);
+	int (*slurmstepd_task)(const mpi_plugin_task_info_t *job, char ***env);
 } slurm_mpi_ops_t;
 
 /*
@@ -68,264 +73,667 @@ typedef struct slurm_mpi_ops {
  * declared for slurm_mpi_ops_t.
  */
 static const char *syms[] = {
-	"p_mpi_hook_slurmstepd_prefork",
-	"p_mpi_hook_slurmstepd_task",
-	"p_mpi_hook_client_prelaunch",
-	"p_mpi_hook_client_fini"
+	"plugin_id",
+	"mpi_p_client_fini",
+	"mpi_p_client_prelaunch",
+	"mpi_p_conf_get",
+	"mpi_p_conf_get_printable",
+	"mpi_p_conf_options",
+	"mpi_p_conf_set",
+	"mpi_p_slurmstepd_prefork",
+	"mpi_p_slurmstepd_task"
 };
 
-static slurm_mpi_ops_t ops;
-static plugin_context_t *g_context = NULL;
-static pthread_mutex_t      context_lock = PTHREAD_MUTEX_INITIALIZER;
+/*
+ * Can't be "static char *plugin_type". Conflicting declaration: log.h
+ * Can't be "#define PLUGIN_TYPE". Previous declaration: plugin.h
+ */
+static char *mpi_char = "mpi";
+static slurm_mpi_ops_t *ops = NULL;
+static plugin_context_t **g_context = NULL;
+static buf_t **mpi_confs = NULL;
+static int g_context_cnt = 0;
+static pthread_mutex_t context_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool init_run = false;
+static uint32_t client_plugin_id = 0;
 
-#if _DEBUG
-/* Debugging information is invaluable to debug heterogeneous step support */
-static inline void _log_env(char **env)
+static void _log_env(char **env)
 {
-#if _DEBUG > 1
-	int i;
-
-	if (!env)
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_MPI) || !env)
 		return;
 
-	for (i = 0; env[i]; i++)
-		info("%s", env[i]);
-#endif
+	log_flag(MPI, "ENVIRONMENT");
+	log_flag(MPI, "-----------");
+	for (int i = 0; env[i]; i++)
+		log_flag(MPI, "%s", env[i]);
+	log_flag(MPI, "-----------");
 }
 
 static void _log_step_rec(const stepd_step_rec_t *job)
 {
 	int i;
 
-	info("STEPD_STEP_REC");
-	info("%ps", &job->step_id);
-	info("ntasks:%u nnodes:%u node_id:%u", job->ntasks, job->nnodes,
-	     job->nodeid);
-	info("node_tasks:%u", job->node_tasks);
-	for (i = 0; i < job->node_tasks; i ++)
-		info("gtid[%d]:%u", i, job->task[i]->gtid);
+	xassert(job);
+
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_MPI))
+		return;
+
+	log_flag(MPI, "STEPD_STEP_REC");
+	log_flag(MPI, "--------------");
+	log_flag(MPI, "%ps", &job->step_id);
+	log_flag(MPI, "ntasks:%u nnodes:%u node_id:%u", job->ntasks,
+		 job->nnodes, job->nodeid);
+	log_flag(MPI, "node_tasks:%u", job->node_tasks);
+	for (i = 0; i < job->node_tasks; i++)
+		log_flag(MPI, "gtid[%d]:%u", i, job->task[i]->gtid);
 	for (i = 0; i < job->nnodes; i++)
-		info("task_cnts[%d]:%u", i, job->task_cnts[i]);
+		log_flag(MPI, "task_cnts[%d]:%u", i, job->task_cnts[i]);
 
 	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL))
-		info("het_job_id:%u", job->het_jobid);
+		log_flag(MPI, "het_job_id:%u", job->het_job_id);
 
-	if (job->het_job_offset != NO_VAL);
-		info("het_job_ntasks:%u het_job_nnodes:%u", job->het_job_ntasks,
-		     job->het_job_nnodes);
-		info("het_job_node_offset:%u het_job_task_offset:%u",
-		     job->het_job_offset, job->het_job_task_offset);
+	if (job->het_job_offset != NO_VAL) {
+		log_flag(MPI, "het_job_ntasks:%u het_job_nnodes:%u",
+			 job->het_job_ntasks, job->het_job_nnodes);
+		log_flag(MPI, "het_job_node_offset:%u het_job_task_offset:%u",
+			 job->het_job_offset, job->het_job_task_offset);
 		for (i = 0; i < job->het_job_nnodes; i++)
-			info("het_job_task_cnts[%d]:%u", i,
-			     job->het_job_task_cnts[i]);
-		info("het_job_node_list:%s", job->het_job_node_list);
+			log_flag(MPI, "het_job_task_cnts[%d]:%u", i,
+				 job->het_job_task_cnts[i]);
+		log_flag(MPI, "het_job_node_list:%s", job->het_job_node_list);
 	}
+	log_flag(MPI, "--------------");
 }
 
 static void _log_mpi_rec(const mpi_plugin_client_info_t *job)
 {
-	slurm_step_layout_t *layout = job->step_layout;
-	int i, j;
+	slurm_step_layout_t *layout;
 
-	info("MPI_PLUGIN_CLIENT_INFO");
-	info("%ps", &job->step_id);
+	xassert(job);
+
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_MPI))
+		return;
+
+	log_flag(MPI, "----------------------");
+	log_flag(MPI, "MPI_PLUGIN_CLIENT_INFO");
+	log_flag(MPI, "%ps", &job->step_id);
 	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL)) {
-		info("het_job_id:%u", job->het_job_id);
+		log_flag(MPI, "het_job_id:%u", job->het_job_id);
 	}
-	if (layout) {
-		info("node_cnt:%u task_cnt:%u", layout->node_cnt,
-		     layout->task_cnt);
-		info("node_list:%s", layout->node_list);
-		info("plane_size:%u task_dist:%u", layout->plane_size,
-		     layout->task_dist);
-		for (i = 0; i < layout->node_cnt; i++) {
-			info("tasks[%d]:%u", i, layout->tasks[i]);
-			for (j = 0; j < layout->tasks[i]; j++) {
-				info("tids[%d][%d]:%u", i, j,
-				     layout->tids[i][j]);
+	if ((layout = job->step_layout)) {
+		log_flag(MPI, "node_cnt:%u task_cnt:%u", layout->node_cnt,
+			 layout->task_cnt);
+		log_flag(MPI, "node_list:%s", layout->node_list);
+		log_flag(MPI, "plane_size:%u task_dist:%u", layout->plane_size,
+			 layout->task_dist);
+		for (int i = 0; i < layout->node_cnt; i++) {
+			log_flag(MPI, "tasks[%d]:%u", i, layout->tasks[i]);
+			for (int j = 0; j < layout->tasks[i]; j++) {
+				log_flag(MPI, "tids[%d][%d]:%u", i, j,
+					 layout->tids[i][j]);
 			}
 		}
 	}
+	log_flag(MPI, "----------------------");
 }
 
 static void _log_task_rec(const mpi_plugin_task_info_t *job)
 {
-	info("MPI_PLUGIN_TASK_INFO");
-	info("%ps", &job->step_id);
-	info("nnodes:%u node_id:%u", job->nnodes, job->nodeid);
-	info("ntasks:%u local_tasks:%u", job->ntasks, job->ltasks);
-	info("global_task_id:%u local_task_id:%u", job->gtaskid, job->ltaskid);
+	xassert(job);
+
+	if (!(slurm_conf.debug_flags & DEBUG_FLAG_MPI))
+		return;
+
+	log_flag(MPI, "MPI_PLUGIN_TASK_INFO");
+	log_flag(MPI, "--------------------");
+	log_flag(MPI, "%ps", &job->step_id);
+	log_flag(MPI, "nnodes:%u node_id:%u", job->nnodes, job->nodeid);
+	log_flag(MPI, "ntasks:%u local_tasks:%u", job->ntasks, job->ltasks);
+	log_flag(MPI, "global_task_id:%u local_task_id:%u", job->gtaskid,
+		 job->ltaskid);
+	log_flag(MPI, "--------------------");
 }
-#endif
 
-int _mpi_init (char *mpi_type)
+static int _match_keys(void *x, void *y)
 {
-	int retval = SLURM_SUCCESS;
-	char *plugin_type = "mpi";
-	char *type = NULL;
+	config_key_pair_t *key_pair1 = x, *key_pair2 = y;
 
-	if (init_run && g_context)
-		return retval;
+	xassert(key_pair1);
+	xassert(key_pair2);
 
-	slurm_mutex_lock( &context_lock );
+	return !xstrcmp(key_pair1->name, key_pair2->name);
+}
 
-	if ( g_context )
-		goto done;
+static char *_plugin_type(int index)
+{
+	xassert(index > -1);
+	xassert(index < g_context_cnt);
+	xassert(g_context);
 
-	if (mpi_type == NULL) {
-		mpi_type = slurm_conf.mpi_default;
-	} else if (!xstrcmp(mpi_type, "openmpi")) {
+	return &((xstrchr(g_context[index]->type, '/'))[1]);
+}
+
+extern int _plugin_idx(uint32_t plugin_id)
+{
+	xassert(g_context_cnt);
+
+	for (int i = 0; i < g_context_cnt; i++)
+		if (*(ops[i].plugin_id) == plugin_id)
+			return i;
+	return -1;
+}
+
+static int _load_plugin(void *x, void *arg)
+{
+	char *plugin_name = x;
+
+	xassert(plugin_name);
+	xassert(g_context);
+
+	g_context[g_context_cnt] = plugin_context_create(
+		mpi_char, plugin_name, (void **)&ops[g_context_cnt],
+		syms, sizeof(syms));
+
+	if (g_context[g_context_cnt])
+		g_context_cnt++;
+	else
+		error("MPI: Cannot create context for %s", plugin_name);
+
+	return SLURM_SUCCESS;
+}
+
+static int _mpi_fini_locked(void)
+{
+	int rc = SLURM_SUCCESS;
+
+	init_run = false;
+
+	/* Conf cleanup */
+	if (mpi_confs) {
+		for (int i = 0; i < g_context_cnt; i++)
+			FREE_NULL_BUFFER(mpi_confs[i]);
+
+		xfree(mpi_confs);
+	}
+
+	/* Plugin cleanup */
+	for (int i = 0; i < g_context_cnt; i++)
+		if ((rc =
+		     plugin_context_destroy(g_context[i])) != SLURM_SUCCESS)
+			error("MPI: Unable to destroy context plugin.");
+
+	xfree(g_context);
+	xfree(ops);
+	g_context_cnt = 0;
+
+	return rc;
+}
+
+static int _mpi_init_locked(char **mpi_type)
+{
+	int count = 0, *opts_cnt;
+	List plugin_names;
+	s_p_hashtbl_t **all_tbls, *tbl;
+	s_p_options_t **opts;
+	char *conf_path;
+	struct stat buf;
+
+	/* Plugin load */
+
+	/* NULL in the double pointer means load all, otherwise load just one */
+	if (mpi_type) {
+		debug("MPI: Type: %s", *mpi_type);
+
+		if (!slurm_conf.mpi_default) {
+			error("MPI: No default type set.");
+			return SLURM_ERROR;
+		} else if (!*mpi_type)
+			*mpi_type = xstrdup(slurm_conf.mpi_default);
 		/*
 		 * The openmpi plugin has been equivalent to none for a while.
 		 * Translate so we can discard that duplicated no-op plugin.
 		 */
-		mpi_type = "none";
+		if (!xstrcmp(*mpi_type, "openmpi")) {
+			xfree(*mpi_type);
+			*mpi_type = xstrdup("none");
+		}
+
+		plugin_names = list_create(xfree_ptr);
+		list_append(plugin_names,
+			    xstrdup_printf("%s/%s", mpi_char, *mpi_type));
+	} else {
+		debug("MPI: Loading all types");
+
+		plugin_names = plugin_get_plugins_of_type(mpi_char);
+
+		/*
+		 * 2 versions after 22.05 this running_in_slurmctld() check can
+		 * be removed. Until then we still need to have the double load
+		 * of the symlink just incase a 21.08 srun is talking to a
+		 * 22.05+ slurmd.
+		 */
+		if (running_in_slurmctld()) {
+			/* Remove the PMIx symlink, so we don't load it twice */
+			list_delete_first(plugin_names,
+					  slurm_find_char_exact_in_list,
+					  "mpi/pmix");
+		}
 	}
-	if (mpi_type == NULL) {
-		error("No MPI default set.");
-		retval = SLURM_ERROR;
-		goto done;
+
+	/* Iterate and load */
+	if (plugin_names && (count = list_count(plugin_names))) {
+		ops = xcalloc(count, sizeof(*ops));
+		g_context = xcalloc(count, sizeof(*g_context));
+
+		list_for_each(plugin_names, _load_plugin, NULL);
+	}
+	FREE_NULL_LIST(plugin_names);
+
+	if (!g_context_cnt) {
+		/* No plugin could load: clean */
+		_mpi_fini_locked();
+		error("MPI: Unable to load any plugin");
+		return SLURM_ERROR;
+	} else if (g_context_cnt < count) {
+		/* Some could load but not all: shrink */
+		xrecalloc(ops, g_context_cnt, sizeof(*ops));
+		xrecalloc(g_context, g_context_cnt, sizeof(*g_context));
+	} else if (mpi_type)
+		setenvf(NULL, "SLURM_MPI_TYPE", "%s", *mpi_type);
+
+	/* Conf load */
+
+	xassert(ops);
+	/* Stepd section, else daemons section */
+	if (mpi_type) {
+		/* Unpack & load the plugin with received config from slurmd */
+		if (mpi_confs) {
+			xassert(mpi_confs[0]);
+
+			if ((tbl = s_p_unpack_hashtbl(mpi_confs[0]))) {
+				(*(ops[0].conf_set))(tbl);
+				s_p_hashtbl_destroy(tbl);
+			} else {
+				s_p_hashtbl_destroy(tbl);
+				_mpi_fini_locked();
+				error("MPI: Unable to unpack config for %s.",
+				      *mpi_type);
+				return SLURM_ERROR;
+			}
+		}
+		client_plugin_id = *(ops[0].plugin_id);
+		/* If no config, continue with default values */
+	} else {
+		/* Read config from file and apply to all loaded plugin(s) */
+		opts = xcalloc(g_context_cnt, sizeof(*opts));
+		opts_cnt = xcalloc(g_context_cnt, sizeof(*opts_cnt));
+		all_tbls = xcalloc(g_context_cnt, sizeof(*all_tbls));
+
+		/* Get options from all plugins */
+		for (int i = 0; i < g_context_cnt; i++) {
+			(*(ops[i].conf_options))(&opts[i], &opts_cnt[i]);
+			if (!opts[i])
+				continue;
+
+			/*
+			 * For the NULL at the end. Just in case the plugin
+			 * forgot to add it.
+			 */
+			xrealloc(opts[i], ((opts_cnt[i] + 1) * sizeof(**opts)));
+
+			all_tbls[i] = s_p_hashtbl_create(opts[i]);
+		}
+
+		/* Read mpi.conf and fetch only values from plugins' options */
+		if (!(conf_path = get_extra_conf_path("mpi.conf")) ||
+		    stat(conf_path, &buf))
+			debug2("No mpi.conf file (%s)", conf_path);
+		else {
+			debug2("Reading mpi.conf file (%s)", conf_path);
+			for (int i = 0; i < g_context_cnt; i++) {
+				if (!all_tbls[i])
+					continue;
+				if (s_p_parse_file(all_tbls[i],
+						   NULL, conf_path,
+						   true, NULL) != SLURM_SUCCESS)
+					/*
+					 * conf_path can't be freed: It's needed
+					 * by fatal and fatal will exit
+					 */
+					fatal("Could not open/read/parse "
+					      "mpi.conf file %s. Many times "
+					      "this is because you have "
+					      "defined options for plugins "
+					      "that are not loaded. Please "
+					      "check your slurm.conf file and "
+					      "make sure the plugins for the "
+					      "options listed are loaded.",
+					      conf_path);
+			}
+		}
+
+		xfree(conf_path);
+
+		mpi_confs = xcalloc(g_context_cnt, sizeof(*mpi_confs));
+		count = 0;
+
+		/* Validate and set values for affected options */
+		for (int i = 0; i < g_context_cnt; i++) {
+			/* Check plugin accepts specified values for configs */
+			(*(ops[i].conf_set))(all_tbls[i]);
+
+			/*
+			 * Pack the config for later usage. If plugin config
+			 * table exists, pack it. If it doesn't exist,
+			 * mpi_confs[i] is NULL.
+			 */
+			if ((tbl = (*(ops[i].conf_get))())) {
+				mpi_confs[i] = s_p_pack_hashtbl(tbl, opts[i],
+								opts_cnt[i]);
+				if (mpi_confs[i]) {
+					if (get_buf_offset(mpi_confs[i]))
+						count++;
+					else
+						FREE_NULL_BUFFER(mpi_confs[i]);
+				}
+				s_p_hashtbl_destroy(tbl);
+			}
+		}
+		/* No plugin has config, clean it */
+		if (!count)
+			xfree(mpi_confs);
+
+		/* Cleanup for temporal variables */
+		for (int i = 0; i < g_context_cnt; i++) {
+			for (int j = 0; j < opts_cnt[i]; j++)
+				xfree(opts[i][j].key);
+			xfree(opts[i]);
+			s_p_hashtbl_destroy(all_tbls[i]);
+		}
+		xfree(opts);
+		xfree(opts_cnt);
+		xfree(all_tbls);
 	}
 
-	if (!xstrcmp(mpi_type, "list")) {
-		plugrack_t *mpi_rack = plugrack_create("mpi");
-		plugrack_read_dir(mpi_rack, slurm_conf.plugindir);
-		plugrack_print_mpi_plugins(mpi_rack);
-		exit(0);
-	}
-
-	setenvf(NULL, "SLURM_MPI_TYPE", "%s", mpi_type);
-
-	type = xstrdup_printf("mpi/%s", mpi_type);
-
-	g_context = plugin_context_create(
-		plugin_type, type, (void **)&ops, syms, sizeof(syms));
-
-	if (!g_context) {
-		error("cannot create %s context for %s", plugin_type, type);
-		retval = SLURM_ERROR;
-		goto done;
-	}
 	init_run = true;
 
-done:
-	xfree(type);
-	slurm_mutex_unlock( &context_lock );
-	return retval;
+	return SLURM_SUCCESS;
 }
 
-int mpi_hook_slurmstepd_init (char ***env)
+static int _mpi_init(char **mpi_type)
 {
-	char *mpi_type = getenvp (*env, "SLURM_MPI_TYPE");
+	int rc = SLURM_SUCCESS;
 
-#if _DEBUG
-	info("IN %s mpi_type:%s", __func__, mpi_type);
+	if (init_run && g_context)
+		return rc;
+
+	slurm_mutex_lock(&context_lock);
+
+	if (!g_context)
+		rc = _mpi_init_locked(mpi_type);
+
+	slurm_mutex_unlock(&context_lock);
+	return rc;
+}
+
+extern int mpi_process_env(char ***env)
+{
+	int rc = SLURM_SUCCESS;
+	char *mpi_type;
+
+	xassert(env);
+
+	if (!(mpi_type = getenvp(*env, "SLURM_MPI_TYPE"))) {
+		error("MPI: SLURM_MPI_TYPE environmental variable is not set.");
+		rc = SLURM_ERROR;
+		goto done;
+	}
+
+	log_flag(MPI, "%s: Environment before call:", __func__);
 	_log_env(*env);
-#else
-	debug("mpi type = %s", mpi_type);
-#endif
-
-	if (_mpi_init(mpi_type) == SLURM_ERROR)
-		return SLURM_ERROR;
 
 	/*
 	 * Unset env var so that "none" doesn't exist in salloc'ed env, but
 	 * still keep it in srun if not none.
 	 */
 	if (!xstrcmp(mpi_type, "none"))
-		unsetenvp (*env, "SLURM_MPI_TYPE");
+		unsetenvp(*env, "SLURM_MPI_TYPE");
 
-	return SLURM_SUCCESS;
-}
-
-int mpi_hook_slurmstepd_prefork (const stepd_step_rec_t *job, char ***env)
-{
-#if _DEBUG
-	info("IN %s", __func__);
-	_log_env(*env);
-	_log_step_rec(job);
-#endif
-
-	if (mpi_hook_slurmstepd_init(env) == SLURM_ERROR)
-		return SLURM_ERROR;
-
-	return (*(ops.slurmstepd_prefork))(job, env);
-}
-
-int mpi_hook_slurmstepd_task (const mpi_plugin_task_info_t *job, char ***env)
-{
-#if _DEBUG
-	info("IN %s", __func__);
-	_log_task_rec(job);
-	_log_env(*env);
-#endif
-
-	if (mpi_hook_slurmstepd_init(env) == SLURM_ERROR)
-		return SLURM_ERROR;
-
-	return (*(ops.slurmstepd_init))(job, env);
-}
-
-int mpi_hook_client_init (char *mpi_type)
-{
-#if _DEBUG
-	info("IN %s mpi_type:%s", __func__, mpi_type);
-#else
-	debug("mpi type = %s", mpi_type);
-#endif
-
-	if (_mpi_init(mpi_type) == SLURM_ERROR)
-		return SLURM_ERROR;
-
-	return SLURM_SUCCESS;
-}
-
-mpi_plugin_client_state_t *
-mpi_hook_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env)
-{
-	mpi_plugin_client_state_t *rc;
-#if _DEBUG
-	info("IN %s", __func__);
-	_log_env(*env);
-	_log_mpi_rec(job);
-#endif
-
-	if (_mpi_init(NULL) < 0)
-		return NULL;
-
-	rc = (*(ops.client_prelaunch))(job, env);
-#if _DEBUG
-	_log_env(*env);
-#endif
+done:
 	return rc;
 }
 
-int mpi_hook_client_fini (mpi_plugin_client_state_t *state)
+extern int mpi_g_slurmstepd_prefork(const stepd_step_rec_t *job, char ***env)
 {
-#if _DEBUG
-	info("IN %s", __func__);
-#endif
+	xassert(job);
+	xassert(env);
+	xassert(g_context);
+	xassert(ops);
 
-	if (_mpi_init(NULL) < 0)
-		return SLURM_ERROR;
+	log_flag(MPI, "%s: Details before call:", __func__);
+	_log_env(*env);
+	_log_step_rec(job);
 
-	return (*(ops.client_fini))(state);
+	return (*(ops[0].slurmstepd_prefork))(job, env);
 }
 
-int mpi_fini (void)
+extern int mpi_g_slurmstepd_task(const mpi_plugin_task_info_t *job, char ***env)
+{
+	xassert(job);
+	xassert(env);
+	xassert(g_context);
+	xassert(ops);
+
+	log_flag(MPI, "%s: Details before call:", __func__);
+	_log_env(*env);
+	_log_task_rec(job);
+
+	return (*(ops[0].slurmstepd_task))(job, env);
+}
+
+extern int mpi_g_client_init(char **mpi_type)
+{
+	_mpi_init(mpi_type);
+
+	return client_plugin_id;
+}
+
+extern mpi_plugin_client_state_t *mpi_g_client_prelaunch(
+	const mpi_plugin_client_info_t *job, char ***env)
+{
+	mpi_plugin_client_state_t *state;
+
+	xassert(job);
+	xassert(env);
+	xassert(g_context);
+	xassert(ops);
+
+	log_flag(MPI, "%s: Details before call:", __func__);
+	_log_env(*env);
+	_log_mpi_rec(job);
+
+	state = (*(ops[0].client_prelaunch))(job, env);
+
+	log_flag(MPI, "%s: Environment after call:", __func__);
+	_log_env(*env);
+
+	return state;
+}
+
+extern int mpi_g_client_fini(mpi_plugin_client_state_t *state)
+{
+	xassert(g_context);
+	xassert(ops);
+
+	log_flag(MPI, "%s called", __func__);
+
+	return (*(ops[0].client_fini))(state);
+}
+
+extern int mpi_g_daemon_init(void)
+{
+	return _mpi_init(NULL);
+}
+
+extern int mpi_g_daemon_reconfig(void)
 {
 	int rc;
 
 	slurm_mutex_lock(&context_lock);
-	if (!g_context) {
-		slurm_mutex_unlock(&context_lock);
-		return SLURM_SUCCESS;
+
+	if (g_context)
+		_mpi_fini_locked();
+
+	rc = _mpi_init_locked(NULL);
+
+	slurm_mutex_unlock(&context_lock);
+	return rc;
+}
+
+extern List mpi_g_conf_get_printable(void)
+{
+	List opts_list, opts;
+
+	slurm_mutex_lock(&context_lock);
+
+	xassert(g_context_cnt);
+	xassert(g_context);
+	xassert(ops);
+
+	opts_list = list_create(destroy_config_key_pair);
+
+	for (int i = 0; i < g_context_cnt; i++) {
+		opts = (*(ops[i].conf_get_printable))();
+
+		if (opts) {
+			list_transfer_unique(opts_list, _match_keys, opts);
+			FREE_NULL_LIST(opts);
+		}
 	}
 
-	init_run = false;
-	rc = plugin_context_destroy(g_context);
-	g_context = NULL;
+	if (!list_count(opts_list))
+		FREE_NULL_LIST(opts_list);
+	else
+		list_sort(opts_list, sort_key_pairs);
+
+	slurm_mutex_unlock(&context_lock);
+	return opts_list;
+}
+
+extern int mpi_conf_send_stepd(int fd, uint32_t plugin_id)
+{
+	int index;
+	bool have_conf;
+	uint32_t len = 0, ns;
+	char *mpi_type;
+
+	/* 0 shouldn't ever happen here. */
+	xassert(plugin_id);
+
+	slurm_mutex_lock(&context_lock);
+
+	if ((index = _plugin_idx(plugin_id)) < 0)
+		goto rwfail;
+
+	/* send the type over */
+	mpi_type = _plugin_type(index);
+	len = strlen(mpi_type);
+	safe_write(fd, &len, sizeof(len));
+	safe_write(fd, mpi_type, len);
+
+	if ((have_conf = (mpi_confs && mpi_confs[index])))
+		len = get_buf_offset(mpi_confs[index]);
+	else
+		len = 0;
+
+	ns = htonl(len);
+	safe_write(fd, &ns, sizeof(ns));
+	if (have_conf)
+		safe_write(fd, get_buf_data(mpi_confs[index]), len);
+
+	slurm_mutex_unlock(&context_lock);
+	return SLURM_SUCCESS;
+rwfail:
+	slurm_mutex_unlock(&context_lock);
+	return SLURM_ERROR;
+}
+
+extern int mpi_conf_recv_stepd(int fd)
+{
+	uint32_t len;
+	char *mpi_type = NULL;
+	buf_t *buf = NULL;
+	int rc;
+
+	safe_read(fd, &len, sizeof(len));
+	xassert(len);
+	mpi_type = xmalloc(len+1);
+	safe_read(fd, mpi_type, len);
+
+	safe_read(fd, &len, sizeof(len));
+	len = ntohl(len);
+
+	/* We have no conf for this specific plugin. Sender sent empty buffer */
+	if (len) {
+		buf = init_buf(len);
+		safe_read(fd, get_buf_data(buf), len);
+
+		slurm_mutex_lock(&context_lock);
+
+		/*
+		 * As we are in the stepd, only 1 plugin is loaded, and we
+		 * always receive this conf before the plugin gets loaded
+		 */
+		mpi_confs = xcalloc(1, sizeof(*mpi_confs));
+		mpi_confs[0] = buf;
+
+		rc = _mpi_init_locked(&mpi_type);
+
+		slurm_mutex_unlock(&context_lock);
+
+		if (rc != SLURM_SUCCESS)
+			goto rwfail;
+	} else if (_mpi_init(&mpi_type) != SLURM_SUCCESS)
+		goto rwfail;
+
+	xfree(mpi_type);
+
+	return SLURM_SUCCESS;
+rwfail:
+	xfree(mpi_type);
+	FREE_NULL_BUFFER(buf);
+	return SLURM_ERROR;
+}
+
+extern int mpi_id_from_plugin_type(char *mpi_type)
+{
+	int id = -1;
+	xassert(g_context_cnt);
+
+	slurm_mutex_lock(&context_lock);
+	for (int i = 0; i < g_context_cnt; i++) {
+		if (!xstrcmp(_plugin_type(i), mpi_type)) {
+			id = *(ops[i].plugin_id);
+			break;
+		}
+	}
+	slurm_mutex_unlock(&context_lock);
+
+	return id;
+}
+
+extern int mpi_fini(void)
+{
+	int rc = SLURM_SUCCESS;
+
+	if (!init_run || !g_context)
+		return rc;
+
+	slurm_mutex_lock(&context_lock);
+
+	if (g_context)
+		rc = _mpi_fini_locked();
+
 	slurm_mutex_unlock(&context_lock);
 	return rc;
 }

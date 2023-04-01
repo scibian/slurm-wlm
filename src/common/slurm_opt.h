@@ -150,6 +150,7 @@ enum {
 	LONG_OPT_HET_GROUP,
 	LONG_OPT_PARSABLE,
 	LONG_OPT_POWER,
+	LONG_OPT_PREFER,
 	LONG_OPT_PRIORITY,
 	LONG_OPT_PROFILE,
 	LONG_OPT_PROLOG,
@@ -261,6 +262,7 @@ typedef struct {
 	bool multi_prog;		/* multiple programs to execute */
 	int32_t multi_prog_cmds;	/* number of commands in multi prog file */
 	bool no_alloc;			/* --no-allocate		*/
+	bool overlap_force;		/* true if --overlap		*/
 	char *het_group;		/* --het-group			*/
 	bitstr_t *het_grp_bits;		/* --het-group in bitmap form	*/
 	int het_step_cnt;		/* Total count of het groups to launch */
@@ -370,6 +372,7 @@ typedef struct {
 	uint64_t mem_per_gpu;		/* --mem-per-gpu		*/
 	uint64_t pn_min_memory;		/* --mem			*/
 	uint64_t pn_min_tmp_disk;	/* --tmp			*/
+	char *prefer;			/* --prefer			*/
 	char *constraint;		/* --constraint			*/
 	char *c_constraint;		/* --cluster-constraint		*/
 	char *gres;			/* --gres			*/

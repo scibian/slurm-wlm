@@ -40,9 +40,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "src/common/list.h"
+#include "src/common/conmgr.h"
 #include "src/common/http.h"
-#include "src/slurmrestd/conmgr.h"
+#include "src/common/list.h"
 
 struct on_http_request_args_s;
 typedef struct on_http_request_args_s on_http_request_args_t;
@@ -141,24 +141,6 @@ extern int send_http_connection_close(http_context_t *ctxt);
  * RET SLURM_SUCCESS or error
  */
 extern int send_http_response(const send_http_response_args_t *args);
-
-typedef struct {
-	const char *host;
-	const char *port; /* port as string for later parsing */
-} parsed_host_port_t;
-
-/*
- * Parse a combined host:port string into host and port
- * IN str host:port string for parsing
- * OUT parsed will be populated with strings (must xfree())
- * RET SLURM_SUCCESS or error
- */
-extern parsed_host_port_t *parse_host_port(const char *str);
-
-/*
- * Free parsed_host_port_t returned from parse_host_port()
- */
-extern void free_parse_host_port(parsed_host_port_t *parsed);
 
 /*
  * setup http context against a given new socket

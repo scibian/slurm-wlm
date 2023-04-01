@@ -234,7 +234,7 @@ static s_p_hashtbl_t *_config_make_tbl(char *filename)
 		return tbl;
 	}
 
-	if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, filename, false, NULL) == SLURM_ERROR) {
 		error("knl.conf: %s: s_p_parse_file error: %m", __func__);
 		s_p_hashtbl_destroy(tbl);
 		tbl = NULL;
@@ -1333,7 +1333,7 @@ extern char *node_features_p_job_xlate(char *job_features)
 	char *tmp, *save_ptr = NULL, *mult, *sep = "", *tok;
 	bool has_numa = false, has_mcdram = false;
 
-	if ((job_features == NULL) || (job_features[0] ==  '\0'))
+	if (!job_features)
 		return node_features;
 
 	tmp = xstrdup(job_features);
@@ -1710,7 +1710,7 @@ extern int node_features_p_node_update(char *active_features,
 			rc = SLURM_ERROR;
 			break;
 		}
-		node_ptr = node_record_table_ptr + i;
+		node_ptr = node_record_table_ptr[i];
 		if ((numa_inx >= 0) && cpu_bind[numa_inx])
 			node_ptr->cpu_bind = cpu_bind[numa_inx];
 		if (mcdram_per_node && (mcdram_inx >= 0)) {

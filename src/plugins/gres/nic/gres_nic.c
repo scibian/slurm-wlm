@@ -117,9 +117,17 @@ static void _set_env(char ***env_ptr, bitstr_t *gres_bit_alloc,
 			    &local_list, &global_list, is_task, is_job, NULL,
 			    flags, true);
 
+	/*
+	 * Set environment variables if GRES is found. Otherwise, unset
+	 * environment variables, since this means GRES is not allocated.
+	 * This is useful for jobs and steps that request --gres=none within an
+	 * existing job allocation with GRES.
+	 */
 	if (global_list) {
 		env_array_overwrite(env_ptr, slurm_env_var, global_list);
 		xfree(global_list);
+	} else {
+		unsetenvp(*env_ptr, slurm_env_var);
 	}
 
 	if (local_list) {
@@ -127,6 +135,8 @@ static void _set_env(char ***env_ptr, bitstr_t *gres_bit_alloc,
 			env_ptr, "OMPI_MCA_btl_openib_if_include", local_list);
 		xfree(local_list);
 		*already_seen = true;
+	} else {
+		unsetenvp(*env_ptr, "OMPI_MCA_btl_openib_if_include");
 	}
 }
 
@@ -157,7 +167,8 @@ extern int gres_p_node_config_load(List gres_conf_list,
 	if (gres_devices)
 		return rc;
 
-	rc = common_node_config_load(gres_conf_list, gres_name, &gres_devices);
+	rc = common_node_config_load(gres_conf_list, gres_name, config,
+				     &gres_devices);
 
 	if (rc != SLURM_SUCCESS)
 		fatal("%s failed to load configuration", plugin_name);
@@ -244,7 +255,7 @@ extern void gres_p_recv_stepd(buf_t *buffer)
  *            DO NOT FREE: This is a pointer into the job's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int gres_p_get_job_info(gres_job_state_t *job_gres_data,
+extern int gres_p_get_job_info(gres_job_state_t *gres_js,
 			       uint32_t node_inx,
 			       enum gres_job_data_type data_type, void *data)
 {
@@ -253,7 +264,7 @@ extern int gres_p_get_job_info(gres_job_state_t *job_gres_data,
 
 /*
  * get data from a step's GRES data structure
- * IN step_gres_data  - step's GRES data structure
+ * IN gres_ss  - step's GRES data structure
  * IN node_inx - zero-origin index of the node within the job's allocation
  *	for which data is desired. Note this can differ from the step's
  *	node allocation index.
@@ -262,7 +273,7 @@ extern int gres_p_get_job_info(gres_job_state_t *job_gres_data,
  *            DO NOT FREE: This is a pointer into the step's data structure
  * RET - SLURM_SUCCESS or error code
  */
-extern int gres_p_get_step_info(gres_step_state_t *step_gres_data,
+extern int gres_p_get_step_info(gres_step_state_t *gres_ss,
 				uint32_t node_inx,
 				enum gres_step_data_type data_type, void *data)
 {
@@ -293,7 +304,7 @@ extern void gres_p_step_hardware_fini(void)
  * prolog or epilog based GRES allocated to the job.
  */
 extern gres_epilog_info_t *gres_p_epilog_build_env(
-	gres_job_state_t *gres_job_ptr)
+	gres_job_state_t *gres_js)
 {
 	return NULL;
 }
@@ -303,7 +314,7 @@ extern gres_epilog_info_t *gres_p_epilog_build_env(
  * GRES allocated to the job.
  */
 extern void gres_p_epilog_set_env(char ***epilog_env_ptr,
-				  gres_epilog_info_t *epilog_info, int node_inx)
+				  gres_epilog_info_t *gres_ei, int node_inx)
 {
 	return;
 }

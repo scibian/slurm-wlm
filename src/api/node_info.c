@@ -49,8 +49,8 @@
 
 #include "slurm/slurm.h"
 
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/select.h"
 #include "src/common/slurm_acct_gather_energy.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_ext_sensors.h"
@@ -190,9 +190,9 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 				  SELECT_NODEDATA_SUBCNT,
 				  NODE_STATE_ALLOCATED,
 				  &alloc_cpus);
-	idle_cpus = node_ptr->cpus - alloc_cpus;
+	idle_cpus = node_ptr->cpus_efctv - alloc_cpus;
 
-	if (idle_cpus  && (idle_cpus != node_ptr->cpus)) {
+	if (idle_cpus  && (idle_cpus != node_ptr->cpus_efctv)) {
 		my_state &= NODE_STATE_FLAGS;
 		my_state |= NODE_STATE_MIXED;
 	}
@@ -214,8 +214,8 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 	xstrcat(out, line_end);
 
 	/****** Line ******/
-	xstrfmtcat(out, "CPUAlloc=%u CPUTot=%u ",
-		   alloc_cpus, node_ptr->cpus);
+	xstrfmtcat(out, "CPUAlloc=%u CPUEfctv=%u CPUTot=%u ",
+		   alloc_cpus, node_ptr->cpus_efctv, node_ptr->cpus);
 
 	if (node_ptr->cpu_load == NO_VAL)
 		xstrcat(out, "CPULoad=N/A");
@@ -495,7 +495,7 @@ static void _set_node_mixed(node_info_msg_t *resp)
 		select_g_select_nodeinfo_get(node_ptr->select_nodeinfo,
 					     SELECT_NODEDATA_SUBCNT,
 					     NODE_STATE_ALLOCATED, &used_cpus);
-		if ((used_cpus != 0) && (used_cpus != node_ptr->cpus)) {
+		if (used_cpus && (used_cpus != node_ptr->cpus_efctv)) {
 			node_ptr->node_state &= NODE_STATE_FLAGS;
 			node_ptr->node_state |= NODE_STATE_MIXED;
 		}
@@ -841,7 +841,7 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
+		this_addr = slurm_conf_get_nodeaddr(this_host);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
 		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,

@@ -53,8 +53,6 @@
 
 #include "slurm/slurm_errno.h"
 
-#include "src/common/switch.h"
-
 /* Type for error string table entries */
 typedef struct {
 	int xe_number;
@@ -373,7 +371,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Immediate execution impossible. "
 	  "Individual job submission scheduling attempts deferred"},
 	{ ESLURM_CONFIGLESS_DISABLED,
-	  "ConfigLess mode is disabled"				},
+	  "ConfigLess mode is disabled in slurm configuration."	},
 	{ ESLURM_ENVIRONMENT_MISSING,
 	  "Environment is missing in job"			},
 	{ ESLURM_RESERVATION_NO_SKIP,
@@ -386,6 +384,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Controller is in standby mode, try a different controller"},
 	{ ESLURM_BAD_THREAD_PER_CORE,
 	  "Cannot request more threads per core than the job allocation" },
+	{ ESLURM_INVALID_PREFER,
+	  "Invalid preferred feature specification"		},
+	{ ESLURM_INSUFFICIENT_GRES,
+	  "Insufficient GRES available in allocation"		},
 
 	/* SPANK errors */
 	{ ESPANK_ERROR,
@@ -474,6 +476,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Unix socket name exceeded maximum length"		},
 	{ ESLURMD_CONTAINER_RUNTIME_INVALID,
 	  "Container runtime not configured or invalid"		},
+	{ ESLURMD_CPU_BIND_ERROR,
+	  "Unable to satisfy cpu bind request"			},
+	{ ESLURMD_CPU_LAYOUT_ERROR,
+	  "Unable to layout tasks on given cpus"		},
 
 	/* slurmd errors in user batch job */
 	{ ESCRIPT_CHDIR_FAILED,
@@ -537,6 +543,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Too wide of a date range in query"			},
 	{ ESLURM_DB_CONNECTION_INVALID,
 	  "Database connection reference is invalid"		},
+	{ ESLURM_NO_REMOVE_DEFAULT_ACCOUNT,
+	  "You can not remove the default account of a user"	},
 
 	/* Federation Errors */
 	{ ESLURM_FED_CLUSTER_MAX_CNT,
@@ -587,6 +595,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "MIME type is unknown to any loaded plugins"},
 	{ ESLURM_DATA_TOO_LARGE,
 	  "DATA too large to handle"},
+
+	/* container  errors */
+	{ ESLURM_CONTAINER_NOT_CONFIGURED,
+	  "Container support is not configured"},
 };
 
 /*

@@ -106,7 +106,8 @@ static void _prec_extra(jag_prec_t *prec, uint32_t taskid)
 	}
 
 	if (cgroup_acct_data->total_rss == NO_VAL64 &&
-	    cgroup_acct_data->total_pgmajfault == NO_VAL64) {
+	    cgroup_acct_data->total_pgmajfault == NO_VAL64 &&
+	    cgroup_acct_data->total_vmem == NO_VAL64) {
 		debug2("failed to collect cgroup memory stats pid %d ppid %d",
 		       prec->pid, prec->ppid);
 	} else {
@@ -125,6 +126,17 @@ static void _prec_extra(jag_prec_t *prec, uint32_t taskid)
 		 */
 		prec->tres_data[TRES_ARRAY_PAGES].size_read =
 			cgroup_acct_data->total_pgmajfault;
+
+		/*
+		 * The most important thing about getting the values from cgroup
+		 * is that it returns the amount of mem occupied by the whole
+		 * process tree, not only the stepd child like by default.
+		 * Adding vmem to cgroup as well, so the user doesn't see a
+		 * RSS>VMem in some cases.
+		 */
+		prec->tres_data[TRES_ARRAY_VMEM].size_read =
+			cgroup_acct_data->total_vmem;
+
 	}
 
 	xfree(cgroup_acct_data);
@@ -137,10 +149,17 @@ static void _prec_extra(jag_prec_t *prec, uint32_t taskid)
  */
 extern int init (void)
 {
-	if (running_in_slurmstepd()) {
-		jag_common_init(0);
+	if (running_in_slurmd() &&
+	    ((cgroup_g_initialize(CG_MEMORY) != SLURM_SUCCESS) ||
+	     (cgroup_g_initialize(CG_CPUACCT) != SLURM_SUCCESS))) {
+		error("There's an issue initializing memory or cpu controller");
+		return SLURM_ERROR;
+	}
 
-		if (xcpuinfo_init() != XCPUINFO_SUCCESS) {
+	if (running_in_slurmstepd()) {
+		jag_common_init(cgroup_g_get_acct_units());
+
+		if (xcpuinfo_init() != SLURM_SUCCESS) {
 			return SLURM_ERROR;
 		}
 
@@ -163,9 +182,12 @@ extern int init (void)
 extern int fini (void)
 {
 	if (running_in_slurmstepd()) {
-		/* Remove job/uid/step directories */
-		cgroup_g_step_destroy(CG_MEMORY);
-		cgroup_g_step_destroy(CG_CPUACCT);
+		/* Only destroy step if it has been previously created */
+		if (!is_first_task) {
+			/* Remove job/uid/step directories */
+			cgroup_g_step_destroy(CG_MEMORY);
+			cgroup_g_step_destroy(CG_CPUACCT);
+		}
 
 		acct_gather_energy_fini();
 	}
@@ -179,7 +201,6 @@ extern int fini (void)
  * jobacct_gather_p_poll_data() - Build a table of all current processes
  *
  * IN/OUT: task_list - list containing current processes.
- * IN: pgid_plugin - if we are running with the pgid plugin.
  * IN: cont_id - container id of processes if not running with pgid.
  *
  * OUT:	none
@@ -192,8 +213,8 @@ extern int fini (void)
  *    is a Linux-style stat entry. We disregard the data if they look
  *    wrong.
  */
-extern void jobacct_gather_p_poll_data(List task_list, bool pgid_plugin,
-				       uint64_t cont_id, bool profile)
+extern void jobacct_gather_p_poll_data(List task_list, uint64_t cont_id,
+				       bool profile)
 {
 	static jag_callbacks_t callbacks;
 	static bool first = 1;
@@ -204,8 +225,7 @@ extern void jobacct_gather_p_poll_data(List task_list, bool pgid_plugin,
 		callbacks.prec_extra = _prec_extra;
 	}
 
-	jag_common_poll_data(task_list, pgid_plugin, cont_id, &callbacks,
-			     profile);
+	jag_common_poll_data(task_list, cont_id, &callbacks, profile);
 
 	return;
 }

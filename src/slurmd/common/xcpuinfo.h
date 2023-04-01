@@ -37,8 +37,6 @@
 #ifndef _XCPUINFO_H_
 #define _XCPUINFO_H_
 
-#define XCPUINFO_ERROR    1
-#define XCPUINFO_SUCCESS  0
 
 extern int get_procs(uint16_t *procs);
 
@@ -70,8 +68,8 @@ extern int xcpuinfo_hwloc_topo_get(
  * Initialize xcpuinfo internal data
  *
  * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
+ *  - SLURM_ERROR
+ *  - SLURM_SUCCESS
  */
 int xcpuinfo_init(void);
 
@@ -79,8 +77,8 @@ int xcpuinfo_init(void);
  * Destroy xcpuinfo internal data
  *
  * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
+ *  - SLURM_ERROR
+ *  - SLURM_SUCCESS
  */
 int xcpuinfo_fini(void);
 
@@ -121,61 +119,9 @@ int xcpuinfo_mac_to_abs(char *in_range, char **out_range);
  * on success, the output map must be freed using xfree
  *
  * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
+ *  - SLURM_ERROR
+ *  - SLURM_SUCCESS
  */
 int xcpuinfo_abs_to_map(char* lrange,uint16_t **map,uint16_t *map_size);
-
-/*
- * Use xcpuinfo internal data to convert a machine range
- * of cores into the equivalent map of cores
- *
- * range is of the form 0-1,4-5
- *
- * on success, the output map must be freed using xfree
- *
- * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
- */
-int xcpuinfo_mac_to_map(char* lrange,uint16_t **map,uint16_t *map_size);
-
-/*
- * Use xcpuinfo internal data to convert a machine map
- * of cores into the equivalent machine range of cores
- *
- * on success, the output map must be freed using xfree
- *
- * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
- */
-int xcpuinfo_map_to_mac(uint16_t *map,uint16_t map_size,char** range);
-
-/*
- * Use xcpuinfo internal data to convert an abstract map of cores
- * into the equivalent machine map of cores
- *
- * on success, the output map must be freed using xfree
- *
- * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
- */
-int xcpuinfo_absmap_to_macmap(uint16_t *amap,uint16_t amap_size,
-			      uint16_t **bmap,uint16_t *bmap_size);
-
-/*
- * Use xcpuinfo internal data to convert a machine map of cores
- * into the equivalent abstract map of cores
- *
- * on success, the output map must be freed using xfree
- *
- * returned values:
- *  - XCPUINFO_ERROR
- *  - XCPUINFO_SUCCESS
- */
-int xcpuinfo_macmap_to_absmap(uint16_t *amap,uint16_t amap_size,
-			      uint16_t **bmap,uint16_t *bmap_size);
 
 #endif

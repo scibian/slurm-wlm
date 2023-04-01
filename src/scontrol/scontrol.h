@@ -63,15 +63,14 @@
 
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/slurmdb_defs.h"
 
-#define CKPT_WAIT	10
 #define	MAX_INPUT_FIELDS 128
 
 extern char *command_name;
@@ -103,6 +102,7 @@ extern int	scontrol_callerid(int argc, char **argv);
 extern int	scontrol_create_part(int argc, char **argv);
 extern int	scontrol_create_res(int argc, char **argv);
 extern int	scontrol_encode_hostlist(char *hostlist, bool sorted);
+extern void	scontrol_gethost(const char *stepd_node, const char *node_name);
 extern uint16_t	scontrol_get_job_state(uint32_t job_id);
 extern int	scontrol_hold(char *op, char *job_id_str);
 extern int	scontrol_job_notify(int argc, char **argv);
@@ -147,6 +147,7 @@ extern void	scontrol_suspend(char *op, char *job_id_str);
 extern void	scontrol_top_job(char *job_str);
 extern int	scontrol_update_front_end (int argc, char **argv);
 extern int	scontrol_update_job (int argc, char **argv);
+extern int 	scontrol_create_node(int argc, char **argv);
 extern int	scontrol_update_node (int argc, char **argv);
 extern int	scontrol_update_part (int argc, char **argv);
 extern int	scontrol_update_res (int argc, char **argv);

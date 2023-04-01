@@ -50,10 +50,11 @@
  * Common validation for what was read in from the gres.conf.
  * IN gres_conf_list
  * IN gres_name
+ * IN config
  * OUT gres_devices
  */
-extern int common_node_config_load(List gres_conf_list,
-				   char *gres_name,
+extern int common_node_config_load(List gres_conf_list, char *gres_name,
+				   node_config_load_t *config,
 				   List *gres_devices);
 
 /* set the environment for a job/step with the appropriate values */
@@ -85,4 +86,28 @@ extern void print_gres_list(List gres_list, log_level_t log_lvl);
  * test consumption
  */
 extern void print_gres_list_parsable(List gres_list);
+
+/*
+ * Set the appropriate env variables for all gpu like gres.
+ */
+extern void gres_common_gpu_set_env(char ***env_ptr, bitstr_t *gres_bit_alloc,
+				    bitstr_t *usable_gres, bool *already_seen,
+				    int *local_inx, bool is_task, bool is_job,
+				    gres_internal_flags_t flags,
+				    uint32_t gres_conf_flags,
+				    List gres_devices);
+
+/*
+ * Set environment variables as appropriate for a job's prolog or epilog based
+ * GRES allocated to the job.
+ *
+ * RETURN: 1 if nothing was done, 0 otherwise.
+ */
+extern bool gres_common_epilog_set_env(char ***epilog_env_ptr,
+				       gres_epilog_info_t *gres_ei,
+				       int node_inx, uint32_t gres_conf_flags,
+				       List gres_devices);
+
+extern int gres_common_set_env_types_on_node_flags(void *x, void *arg);
+
 #endif
