@@ -11,9 +11,9 @@ Upstream: https://github.com/SchedMD/slurm/commit/b31fa177c1ca26dcd2d5cd952e692e
 
 --- a/doc/man/man5/slurm.conf.5
 +++ b/doc/man/man5/slurm.conf.5
-@@ -1370,8 +1370,10 @@ Note that the \fBHealthCheckProgram\fR w
+@@ -1464,8 +1464,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
  on all nodes to minimize its impact upon parallel programs.
- This program is will be killed if it does not terminate normally within
+ This program will be killed if it does not terminate normally within
  60 seconds.
 -This program will also be executed when the slurmd daemon is first started and
 -before it registers with the slurmctld daemon.
