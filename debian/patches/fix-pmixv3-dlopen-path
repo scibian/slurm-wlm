@@ -7,9 +7,9 @@ diff --git a/src/plugins/mpi/pmix/mpi_pmix.c b/src/plugins/mpi/pmix/mpi_pmix.c
 index 69c5191..d7d4f49 100644
 --- a/src/plugins/mpi/pmix/mpi_pmix.c
 +++ b/src/plugins/mpi/pmix/mpi_pmix.c
-@@ -113,7 +113,7 @@ static void *_libpmix_open(void)
- #elif defined PMIXP_V3_LIBPATH
- 	xstrfmtcat(full_path, "%s/", PMIXP_V3_LIBPATH);
+@@ -137,7 +137,7 @@ static void *_libpmix_open(void)
+ #elif defined PMIXP_V4_LIBPATH
+ 	xstrfmtcat(full_path, "%s/", PMIXP_V4_LIBPATH);
  #endif
 -	xstrfmtcat(full_path, "libpmix.so");
 +	xstrfmtcat(full_path, "libpmix.so.2");
