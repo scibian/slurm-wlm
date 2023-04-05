@@ -79,6 +79,12 @@ typedef struct {
 #define remaining_buf(__buf)		(__buf->size - __buf->processed)
 #define size_buf(__buf)			(__buf->size)
 
+typedef struct {
+	buf_t *header;
+	buf_t *auth;
+	buf_t *body;
+} msg_bufs_t;
+
 extern buf_t *create_buf(char *data, uint32_t size);
 extern buf_t *create_mmap_buf(const char *file);
 extern void free_buf(buf_t *my_buf);
@@ -129,6 +135,8 @@ extern void packlongdouble_array(long double *valp, uint32_t size_val,
 				 buf_t *buffer);
 extern int unpacklongdouble_array(long double **valp, uint32_t *size_val,
 				  buf_t *buffer);
+
+extern void packbuf(buf_t *source, buf_t *buffer);
 
 extern void packmem(void *valp, uint32_t size_val, buf_t *buffer);
 extern int unpackmem_ptr(char **valp, uint32_t *size_valp, buf_t *buffer);

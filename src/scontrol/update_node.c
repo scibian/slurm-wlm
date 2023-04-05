@@ -43,6 +43,26 @@
 
 #include "src/scontrol/scontrol.h"
 
+extern int scontrol_create_node(int argc, char **argv)
+{
+	update_node_msg_t node_msg = {0};
+	char *node_line = NULL;
+
+	/* Reconstruct NodeName= line from cmd line */
+	for (int i = 0; i < argc; i++)
+		xstrfmtcat(node_line, "%s%s", i > 0 ? " " : "", argv[i]);
+
+	node_msg.extra = node_line;
+	if (slurm_create_node(&node_msg)) {
+		exit_code = 1;
+		slurm_perror("Error creating the node(s)");
+		return slurm_get_errno();
+	}
+	xfree(node_line);
+
+	return SLURM_SUCCESS;
+}
+
 /*
  * scontrol_update_node - update the slurm node configuration per the supplied
  *	arguments
@@ -157,11 +177,6 @@ scontrol_update_node (int argc, char **argv)
 				reason_str[len] = '\0';
 
 			node_msg.reason = reason_str;
-			if ((getlogin() == NULL) ||
-			    (uid_from_string(getlogin(),
-					     &node_msg.reason_uid) < 0)) {
-				node_msg.reason_uid = getuid();
-			}
 			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {
@@ -321,11 +336,6 @@ scontrol_update_front_end (int argc, char **argv)
 				reason_str[len] = '\0';
 
 			front_end_msg.reason = reason_str;
-			if ((getlogin() == NULL) ||
-			    (uid_from_string(getlogin(),
-					     &front_end_msg.reason_uid) < 0)) {
-				front_end_msg.reason_uid = getuid();
-			}
 			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {

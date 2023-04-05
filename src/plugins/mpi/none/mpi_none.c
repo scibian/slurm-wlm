@@ -41,9 +41,10 @@
 #include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
-
 #include "src/common/slurm_xlator.h"
+
 #include "src/common/env.h"
+#include "src/common/parse_config.h"
 #include "src/common/slurm_mpi.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
@@ -73,30 +74,48 @@
  */
 const char plugin_name[]        = "mpi none plugin";
 const char plugin_type[]        = "mpi/none";
+const uint32_t plugin_id = MPI_PLUGIN_NONE;
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
-int p_mpi_hook_slurmstepd_prefork(const stepd_step_rec_t *job, char ***env)
+extern int mpi_p_slurmstepd_prefork(const stepd_step_rec_t *job, char ***env)
 {
 	debug("mpi/none: slurmstepd prefork");
 	return SLURM_SUCCESS;
 }
 
-int p_mpi_hook_slurmstepd_task(const mpi_plugin_task_info_t*job,
-			       char ***env)
+extern int mpi_p_slurmstepd_task(const mpi_plugin_task_info_t*job, char ***env)
 {
 	debug("Using mpi/none");
 	return SLURM_SUCCESS;
 }
 
-mpi_plugin_client_state_t *
-p_mpi_hook_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env)
+extern mpi_plugin_client_state_t *
+mpi_p_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env)
 {
 	debug("Using mpi/none");
 	/* only return NULL on error */
 	return (void *)0xdeadbeef;
 }
 
-int p_mpi_hook_client_fini(mpi_plugin_client_state_t *state)
+extern int mpi_p_client_fini(mpi_plugin_client_state_t *state)
 {
 	return SLURM_SUCCESS;
+}
+
+extern void mpi_p_conf_options(s_p_options_t **full_options, int *full_opt_cnt)
+{
+}
+
+extern void mpi_p_conf_set(s_p_hashtbl_t *tbl)
+{
+}
+
+extern s_p_hashtbl_t *mpi_p_conf_get(void)
+{
+	return NULL;
+}
+
+extern List mpi_p_conf_get_printable(void)
+{
+	return NULL;
 }

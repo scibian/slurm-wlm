@@ -39,6 +39,7 @@
 
 #include "config.h"
 
+#include <limits.h>
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,7 +85,7 @@ extern void free_slurmdbd_conf(void)
 
 static void _clear_slurmdbd_conf(void)
 {
-	free_slurm_conf(&slurm_conf, 0);
+	init_slurm_conf(&slurm_conf);
 
 	if (slurmdbd_conf) {
 		xfree(slurmdbd_conf->archive_dir);
@@ -96,6 +97,7 @@ static void _clear_slurmdbd_conf(void)
 		slurmdbd_conf->dbd_port = 0;
 		slurmdbd_conf->debug_level = LOG_LEVEL_INFO;
 		xfree(slurmdbd_conf->default_qos);
+		slurmdbd_conf->flags = 0;
 		xfree(slurmdbd_conf->log_file);
 		slurmdbd_conf->syslog_debug = LOG_LEVEL_END;
 		xfree(slurmdbd_conf->parameters);
@@ -122,6 +124,7 @@ static void _clear_slurmdbd_conf(void)
 extern int read_slurmdbd_conf(void)
 {
 	s_p_options_t options[] = {
+		{"AllowNoDefAcct", S_P_BOOLEAN},
 		{"ArchiveDir", S_P_STRING},
 		{"ArchiveEvents", S_P_BOOLEAN},
 		{"ArchiveJobs", S_P_BOOLEAN},
@@ -194,6 +197,11 @@ extern int read_slurmdbd_conf(void)
 	}
 	_clear_slurmdbd_conf();
 
+	/* set slurmdbd specific defaults */
+	slurm_conf.keepalive_interval = DEFAULT_SLURMDBD_KEEPALIVE_INTERVAL;
+	slurm_conf.keepalive_probes = DEFAULT_SLURMDBD_KEEPALIVE_PROBES;
+	slurm_conf.keepalive_time = DEFAULT_SLURMDBD_KEEPALIVE_TIME;
+
 	/* Get the slurmdbd.conf path and validate the file */
 	conf_path = get_extra_conf_path("slurmdbd.conf");
 	if ((conf_path == NULL) || (stat(conf_path, &buf) == -1)) {
@@ -202,6 +210,7 @@ extern int read_slurmdbd_conf(void)
 		bool a_events = false, a_jobs = false, a_resv = false;
 		bool a_steps = false, a_suspend = false, a_txn = false;
 		bool a_usage = false;
+		bool tmp_bool = false;
 		uid_t conf_path_uid;
 		debug3("Checking slurmdbd.conf file:%s access permissions",
 		       conf_path);
@@ -213,7 +222,7 @@ extern int read_slurmdbd_conf(void)
 		debug("Reading slurmdbd.conf file %s", conf_path);
 
 		tbl = s_p_hashtbl_create(options);
-		if (s_p_parse_file(tbl, NULL, conf_path, false)
+		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL)
 		    == SLURM_ERROR) {
 			fatal("Could not open/read/parse slurmdbd.conf file %s",
 			      conf_path);
@@ -225,6 +234,12 @@ extern int read_slurmdbd_conf(void)
 				    tbl))
 			slurmdbd_conf->archive_dir =
 				xstrdup(DEFAULT_SLURMDBD_ARCHIVE_DIR);
+
+		tmp_bool = false;
+		s_p_get_boolean(&tmp_bool, "AllowNoDefAcct", tbl);
+		if (tmp_bool)
+			slurmdbd_conf->flags |= DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT;
+
 		s_p_get_boolean(&a_events, "ArchiveEvents", tbl);
 		s_p_get_boolean(&a_jobs, "ArchiveJobs", tbl);
 		s_p_get_boolean(&a_resv, "ArchiveResvs", tbl);
@@ -257,6 +272,36 @@ extern int read_slurmdbd_conf(void)
 		if (!(slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED) &&
 		    !(slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED))
 			fatal("Both IPv4 and IPv6 support disabled, cannot communicate");
+
+		if ((temp_str = xstrcasestr(slurm_conf.comm_params,
+					    "keepaliveinterval="))) {
+			long tmp_val = strtol(temp_str + 18, NULL, 10);
+			if (tmp_val >= 0 && tmp_val <= INT_MAX)
+				slurm_conf.keepalive_interval = tmp_val;
+			else
+				error("CommunicationParameters option keepaliveinterval=%ld is invalid, ignored",
+				      tmp_val);
+		}
+
+		if ((temp_str = xstrcasestr(slurm_conf.comm_params,
+					    "keepaliveprobes="))) {
+			long tmp_val = strtol(temp_str + 16, NULL, 10);
+			if (tmp_val >= 0 && tmp_val <= INT_MAX)
+				slurm_conf.keepalive_probes = tmp_val;
+			else
+				error("CommunicationParameters option keepaliveprobes=%ld is invalid, ignored",
+				      tmp_val);
+		}
+
+		if ((temp_str = xstrcasestr(slurm_conf.comm_params,
+					    "keepalivetime="))) {
+			long tmp_val = strtol(temp_str + 14, NULL, 10);
+			if (tmp_val >= 0 && tmp_val <= INT_MAX)
+				slurm_conf.keepalive_time = tmp_val;
+			else
+				error("CommunicationParameters option keepalivetime=%ld is invalid, ignored",
+				      tmp_val);
+		}
 
 		s_p_get_string(&slurmdbd_conf->dbd_backup,
 			       "DbdBackupHost", tbl);
@@ -500,9 +545,8 @@ extern int read_slurmdbd_conf(void)
 					      slurm_conf.slurm_user_name);
 				}
 			} else
-				fatal("No user entry for uid(%d) owning slurmdbd.conf file %s found",
-				      conf_path_uid,
-				      conf_path);
+				fatal("No user entry for uid(%u) owning slurmdbd.conf file %s found",
+				      conf_path_uid, conf_path);
 		}
 
 		if (s_p_get_uint32(&slurmdbd_conf->purge_step,
@@ -668,94 +712,39 @@ extern int read_slurmdbd_conf(void)
 /* Log the current configuration using verbose() */
 extern void log_config(void)
 {
-	char tmp_str[128];
-	char *tmp_ptr = NULL;
+	List dbd_config_list;
+	config_key_pair_t *key_pair;
+	ListIterator itr;
 
-	debug2("ArchiveDir        = %s", slurmdbd_conf->archive_dir);
-	debug2("ArchiveScript     = %s", slurmdbd_conf->archive_script);
-	debug2("AuthAltTypes      = %s", slurm_conf.authalttypes);
-	debug2("AuthAltParameters = %s", slurm_conf.authalt_params);
-	debug2("AuthInfo          = %s", slurm_conf.authinfo);
-	debug2("AuthType          = %s", slurm_conf.authtype);
-	debug2("CommitDelay       = %u", slurmdbd_conf->commit_delay);
-	debug2("CommunicationParameters	= %s", slurm_conf.comm_params);
-	debug2("DbdAddr           = %s", slurmdbd_conf->dbd_addr);
-	debug2("DbdBackupHost     = %s", slurmdbd_conf->dbd_backup);
-	debug2("DbdHost           = %s", slurmdbd_conf->dbd_host);
-	debug2("DbdPort           = %u", slurmdbd_conf->dbd_port);
-	tmp_ptr = debug_flags2str(slurm_conf.debug_flags);
-	debug2("DebugFlags        = %s", tmp_ptr);
-	xfree(tmp_ptr);
-	debug2("DebugLevel        = %u", slurmdbd_conf->debug_level);
-	debug2("DebugLevelSyslog  = %u", slurmdbd_conf->syslog_debug);
-	debug2("DefaultQOS        = %s", slurmdbd_conf->default_qos);
+	if (slurmdbd_conf->debug_level < LOG_LEVEL_DEBUG2)
+		return;
 
-	debug2("LogFile           = %s", slurmdbd_conf->log_file);
-	debug2("MessageTimeout    = %u", slurm_conf.msg_timeout);
-	debug2("Parameters        = %s", slurmdbd_conf->parameters);
-	debug2("PidFile           = %s", slurmdbd_conf->pid_file);
-	debug2("PluginDir         = %s", slurm_conf.plugindir);
+	dbd_config_list = dump_config();
 
-	private_data_string(slurm_conf.private_data,
-			    tmp_str, sizeof(tmp_str));
-	debug2("PrivateData       = %s", tmp_str);
+	itr = list_iterator_create(dbd_config_list);
+	while ((key_pair = list_next(itr)))
+		debug2("%-22s = %s", key_pair->name, key_pair->value);
+	list_iterator_destroy(itr);
 
-	slurmdb_purge_string(slurmdbd_conf->purge_event,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeEventAfter   = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_job,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeJobAfter     = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_resv,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeResvAfter    = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_step,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeStepAfter    = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_suspend,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeSuspendAfter = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_txn,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeTXNAfter = %s", tmp_str);
-
-	slurmdb_purge_string(slurmdbd_conf->purge_usage,
-			     tmp_str, sizeof(tmp_str), 1);
-	debug2("PurgeUsageAfter = %s", tmp_str);
-
-	debug2("SlurmUser         = %s(%u)",
-	       slurm_conf.slurm_user_name, slurm_conf.slurm_user_id);
-
-	debug2("StorageBackupHost = %s",
-	       slurm_conf.accounting_storage_backup_host);
-	debug2("StorageHost       = %s",
-	       slurm_conf.accounting_storage_host);
-	debug2("StorageLoc        = %s", slurmdbd_conf->storage_loc);
-	debug2("StorageParameters = %s", slurm_conf.accounting_storage_params);
-	/* debug2("StoragePass       = %s",
-	       slurm_conf.accounting_storage_pass); */
-	debug2("StoragePort       = %u", slurm_conf.accounting_storage_port);
-	debug2("StorageType       = %s", slurm_conf.accounting_storage_type);
-	debug2("StorageUser       = %s", slurm_conf.accounting_storage_user);
-
-	debug2("TCPTimeout        = %u", slurm_conf.tcp_timeout);
-
-	debug2("TrackWCKey        = %u", slurmdbd_conf->track_wckey);
-	debug2("TrackSlurmctldDown= %u", slurmdbd_conf->track_ctld);
+	FREE_NULL_LIST(dbd_config_list);
 }
 
-/* Dump the configuration in name,value pairs for output to
- *	"statsmgr show config", caller must call list_destroy() */
+/*
+ * Dump the configuration in name,value pairs for output to
+ * "sacctmgr show config", caller must call list_destroy()
+ */
 extern List dump_config(void)
 {
 	config_key_pair_t *key_pair;
 	char time_str[32];
 	List my_list = list_create(destroy_config_key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("AllowNoDefAcct");
+	key_pair->value = xstrdup(
+		(slurmdbd_conf->flags & DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT) ?
+		"Yes" : "No");
+	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("ArchiveDir");

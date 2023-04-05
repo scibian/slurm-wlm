@@ -49,6 +49,7 @@
 #include "src/common/slurm_acct_gather_energy.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
+#include "src/common/xstring.h"
 
 #include "src/slurmd/common/proctrack.h"
 
@@ -76,14 +77,16 @@ slurmd_conf_t *conf = NULL;
 
 #define IPMI_VERSION 2		/* Data structure version number */
 #define MAX_LOG_ERRORS 5	/* Max sensor reading errors log messages */
-#define XCC_MIN_RES 50        /* Minimum resolution for XCC readings, in ms */
+#define XCC_MIN_RES 50		/* Minimum resolution for XCC readings, in ms */
 #define IPMI_RAW_MAX_ARGS 256 /* Max XCC response length in bytes*/
 /*FIXME: Investigate which is the OVERFLOW limit for XCC*/
 #define IPMI_XCC_OVERFLOW INFINITE /* XCC overflows at X */
 
 #define XCC_FLAG_NONE 0x00000000
 #define XCC_FLAG_FAKE 0x00000001
-#define XCC_EXPECTED_RSPLEN 16 /* Must match cmd_rq[] response expectations */
+/* Match cmd_rq[] response expectations */
+#define XCC_SD650_RESPONSE_LEN 16
+#define XCC_SD650V2_RESPONSE_LEN 40
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -209,13 +212,21 @@ typedef struct slurm_ipmi_conf {
 	uint32_t workaround_flags;
 } slurm_ipmi_conf_t;
 
+typedef enum xcc_version {
+	XCC_SD650_VERSION = 0,
+	XCC_SD650V2_VERSION
+} xcc_version_t;
+
 /* Struct to store the raw single data command reading */
 typedef struct xcc_raw_single_data {
-	uint16_t fifo_inx;
-	uint32_t j;
-	uint16_t mj;
-	uint16_t ms;
-	uint32_t s;
+	uint16_t fifo_inx;	/* Not used. */
+	uint32_t j;		/* Joules. */
+	uint16_t mj;		/* Millijoules. */
+	uint16_t ms;		/* Milliseconds. */
+	uint16_t mw;		/* Milliwatts. */
+	uint32_t s;		/* Seconds. */
+	xcc_version_t version;	/* Version. */
+	uint32_t w;		/* Watts. */
 } xcc_raw_single_data_t;
 
 static acct_gather_energy_t xcc_energy;
@@ -293,7 +304,7 @@ static int _running_profile(void)
 /*
  * _init_ipmi_config initializes parameters for freeipmi library
  */
-static int _init_ipmi_config (void)
+static int _init_ipmi_config(void)
 {
 	int ret = 0;
 	unsigned int workaround_flags_mask =
@@ -301,18 +312,17 @@ static int _init_ipmi_config (void)
 		 | IPMI_WORKAROUND_FLAGS_INBAND_SPIN_POLL);
 
 	if (ipmi_ctx) {
-		debug("ipmi_ctx already initialized\n");
+		debug("ipmi_ctx already initialized");
 		return SLURM_SUCCESS;
 	}
 
 	if (!(ipmi_ctx = ipmi_ctx_create())) {
-		error("ipmi_ctx_create: %s\n", strerror(errno));
+		error("ipmi_ctx_create: %s", strerror(errno));
 		goto cleanup;
 	}
 
 	if (getuid() != 0) {
-		error ("%s: error : must be root to open ipmi devices\n",
-		       __func__);
+		error("%s: must be root to open IPMI devices", __func__);
 		goto cleanup;
 	}
 
@@ -325,8 +335,8 @@ static int _init_ipmi_config (void)
 	     (slurm_ipmi_conf.driver_type != IPMI_DEVICE_SUNBMC))
 	    || (slurm_ipmi_conf.workaround_flags & ~workaround_flags_mask)) {
 		/* IPMI ERROR PARAMETERS */
-		error ("%s: error: XCC Lenovo plugin only supports in-band communication, incorrect driver type or workaround flags",
-		       __func__);
+		error("%s: XCC Lenovo plugin only supports in-band communication, incorrect driver type or workaround flags",
+		      __func__);
 
 		debug("slurm_ipmi_conf.driver_type=%u slurm_ipmi_conf.workaround_flags=%u",
 		      slurm_ipmi_conf.driver_type,
@@ -374,8 +384,8 @@ static int _init_ipmi_config (void)
 					  slurm_ipmi_conf.driver_device,
 					  slurm_ipmi_conf.workaround_flags,
 					  slurm_ipmi_conf.ipmi_flags) < 0)) {
-			error ("%s: error on ipmi_ctx_open_inband: %s",
-			       __func__, ipmi_ctx_errormsg (ipmi_ctx));
+			error("%s: error on ipmi_ctx_open_inband: %s",
+			      __func__, ipmi_ctx_errormsg(ipmi_ctx));
 
 			debug("slurm_ipmi_conf.driver_type=%u\n"
 			      "slurm_ipmi_conf.disable_auto_probe=%u\n"
@@ -403,8 +413,8 @@ static int _init_ipmi_config (void)
 			    &slurm_ipmi_conf.target_channel_number : NULL,
 			    slurm_ipmi_conf.target_address_is_set ?
 			    &slurm_ipmi_conf.target_address : NULL) < 0) {
-			error ("%s: error on ipmi_ctx_set_target: %s",
-			       __func__, ipmi_ctx_errormsg (ipmi_ctx));
+			error("%s: error on ipmi_ctx_set_target: %s",
+			      __func__, ipmi_ctx_errormsg(ipmi_ctx));
 			goto cleanup;
 		}
 	}
@@ -427,24 +437,25 @@ static xcc_raw_single_data_t *_read_ipmi_values(void)
 	int rs_len = 0;
 
 	if (!IPMI_NET_FN_RQ_VALID(cmd_rq[1])) {
-                error("Invalid netfn value\n");
+		error("Invalid netfn value");
 		return NULL;
 	}
 
-        rs_len = ipmi_cmd_raw(ipmi_ctx,
-                              cmd_rq[0], // Lun (logical unit number)
-                              cmd_rq[1], // Net Function
-                              &cmd_rq[2], // Command number + request data
-                              cmd_rq_len - 2, // Length (in bytes)
-                              &buf_rs, // response buffer
-                              IPMI_RAW_MAX_ARGS // max response length
-                );
+	rs_len = ipmi_cmd_raw(ipmi_ctx,
+			      cmd_rq[0], // Lun (logical unit number)
+			      cmd_rq[1], // Net Function
+			      &cmd_rq[2], // Command number + request data
+			      cmd_rq_len - 2, // Length (in bytes)
+			      &buf_rs, // response buffer
+			      IPMI_RAW_MAX_ARGS // max response length
+		);
 
-        debug3("ipmi_cmd_raw: %s", ipmi_ctx_errormsg(ipmi_ctx));
+	debug3("ipmi_cmd_raw: %s", ipmi_ctx_errormsg(ipmi_ctx));
 
-        if (rs_len != XCC_EXPECTED_RSPLEN) {
-		error("Invalid ipmi response length for XCC raw command: "
-		      "%d bytes, expected %d", rs_len, XCC_EXPECTED_RSPLEN);
+	if ((rs_len != XCC_SD650_RESPONSE_LEN) &&
+	    (rs_len != XCC_SD650V2_RESPONSE_LEN)) {
+		error("Invalid ipmi response length for XCC raw command: %d bytes, expected %d (SD650) or %d (SD650V2)",
+		      rs_len, XCC_SD650_RESPONSE_LEN, XCC_SD650V2_RESPONSE_LEN);
 		return NULL;
 	}
 
@@ -459,41 +470,56 @@ static xcc_raw_single_data_t *_read_ipmi_values(void)
 			fake_inited = true;
 		}
 
+		xcc_reading->version = XCC_SD650_VERSION;
 		xcc_reading->fifo_inx = 0;
 		// Fake metric j
 		xcc_reading->j = fake_past_read + 550 + rand() % 200;
 		fake_past_read = xcc_reading->j;
 		xcc_reading->mj = 0;
+		xcc_reading->w = 0;
+		xcc_reading->mw = 0;
 		xcc_reading->s = time(NULL); //Fake metric timestamp
 		xcc_reading->ms = 0;
+	} else if (rs_len == XCC_SD650_RESPONSE_LEN) {
+		/*
+		 * Ignore response header first 2 bytes:
+		 * Byte 0: command number, cmd_rq[2]. Set by freeipmi.
+		 * Byte 1: command completion code. Set by XCC IPMI.
+		 */
+		xcc_reading->version = XCC_SD650_VERSION;
+		xcc_reading->w = 0;
+		xcc_reading->mw = 0;
+		memcpy(&xcc_reading->fifo_inx, buf_rs + 2, 2);
+		memcpy(&xcc_reading->j, buf_rs + 4, 4);
+		memcpy(&xcc_reading->mj, buf_rs + 8, 2);
+		memcpy(&xcc_reading->s, buf_rs + 10, 4);
+		memcpy(&xcc_reading->ms, buf_rs + 14, 2);
 	} else {
-		memcpy(&xcc_reading->fifo_inx, buf_rs+2, 2);
-		memcpy(&xcc_reading->j, buf_rs+4, 4);
-		memcpy(&xcc_reading->mj, buf_rs+8, 2);
-		memcpy(&xcc_reading->s, buf_rs+10, 4);
-		memcpy(&xcc_reading->ms, buf_rs+14, 2);
+		/* Ignore response header first 2 bytes like above. */
+		int count = 0;
+
+		xcc_reading->version = XCC_SD650V2_VERSION;
+		xcc_reading->fifo_inx = 0;
+		xcc_reading->j = 0;
+		xcc_reading->mj = 0;
+		memcpy(&count, buf_rs + 2, 2);
+		if (count) {
+			memcpy(&xcc_reading->w, buf_rs + 4, 4);
+			xcc_reading->w /= count;
+			memcpy(&xcc_reading->mw, buf_rs + 8, 2);
+		}
+		memcpy(&xcc_reading->s, buf_rs + 34, 4);
+		memcpy(&xcc_reading->ms, buf_rs + 38, 2);
 	}
 
 	return xcc_reading;
 }
 
-/*
- * _thread_update_node_energy calls _read_ipmi_values and updates all values
- * for node consumption
- */
-static int _thread_update_node_energy(void)
+static void _sd650_update_node_energy(xcc_raw_single_data_t *xcc_raw)
 {
-	xcc_raw_single_data_t *xcc_raw;
 	static uint16_t overflows = 0; /* Number of overflows of the counter */
-        int elapsed = 0;
+	int elapsed = 0;
 	static uint64_t first_consumed_energy = 0;
-
-	xcc_raw = _read_ipmi_values();
-
-	if (!xcc_raw) {
-		error("%s could not read XCC ipmi values", __func__);
-		return SLURM_ERROR;
-	}
 
 	if (!xcc_energy.poll_time) {
 		/*
@@ -512,8 +538,8 @@ static int _thread_update_node_energy(void)
 		/* Detect first overflow */
 		if (!overflows && xcc_raw->j < xcc_energy.consumed_energy) {
 			xcc_energy.consumed_energy = IPMI_XCC_OVERFLOW -
-				                     first_consumed_energy +
-				                     xcc_raw->j;
+						first_consumed_energy +
+						xcc_raw->j;
 			overflows++;
 		} else if (!overflows &&
 			   (xcc_raw->j >= xcc_energy.consumed_energy)) {
@@ -528,7 +554,7 @@ static int _thread_update_node_energy(void)
 			 */
 			uint64_t offset = IPMI_XCC_OVERFLOW -
 				first_consumed_energy +
-				(IPMI_XCC_OVERFLOW * (overflows-1));
+				(IPMI_XCC_OVERFLOW * (overflows - 1));
 
 			if ((offset + xcc_raw->j) <
 			    xcc_energy.consumed_energy) {
@@ -550,8 +576,6 @@ static int _thread_update_node_energy(void)
 
 	xcc_energy.poll_time = xcc_raw->s;
 
-	xfree(xcc_raw);
-
 	if (elapsed && xcc_energy.base_consumed_energy) {
 		static uint64_t readings = 0;
 		xcc_energy.current_watts =
@@ -565,11 +589,91 @@ static int _thread_update_node_energy(void)
 		readings++;
 	}
 
-	log_flag(ENERGY, "%s: XCC current_watts: %u consumed energy last interval: %"PRIu64"(current reading %"PRIu64") Joules, elapsed time: %u Seconds, first read energy counter val: %"PRIu64" ave watts: %u",
-		 __func__, xcc_energy.current_watts,
-		 xcc_energy.base_consumed_energy, xcc_energy.consumed_energy,
-		 elapsed, first_consumed_energy, xcc_energy.ave_watts);
-	return SLURM_SUCCESS;
+	log_flag(ENERGY, "current_watts: %u consumed energy last interval: %"PRIu64"(current reading %"PRIu64") Joules, elapsed time: %u seconds, first read energy counter val: %"PRIu64" ave watts: %u",
+		 xcc_energy.current_watts, xcc_energy.base_consumed_energy,
+		 xcc_energy.consumed_energy, elapsed, first_consumed_energy,
+		 xcc_energy.ave_watts);
+}
+
+static void _sd650v2_update_node_energy(xcc_raw_single_data_t *xcc_raw)
+{
+	static uint64_t readings = 0;
+	int elapsed = 0;
+
+	if (!xcc_energy.poll_time) {
+		/* First number from the slurmd. */
+		xcc_energy.consumed_energy = 0;
+		xcc_energy.base_consumed_energy = 0;
+		xcc_energy.previous_consumed_energy = 0;
+		xcc_energy.ave_watts = xcc_raw->w;
+		xcc_energy.current_watts = xcc_raw->w;
+		readings++;
+	} else {
+		elapsed = xcc_raw->s - xcc_energy.poll_time;
+		if (elapsed) {
+			xcc_energy.previous_consumed_energy =
+						xcc_energy.consumed_energy;
+
+			/*
+			 * We have no clue about the watt variation in between
+			 * the sampling interval. Best effort: mean value.
+			 */
+			xcc_energy.consumed_energy +=
+			round((double)elapsed * 0.5 *
+			      (double)(xcc_energy.current_watts + xcc_raw->w));
+
+			xcc_energy.base_consumed_energy =
+					xcc_energy.consumed_energy -
+					xcc_energy.previous_consumed_energy;
+
+			xcc_energy.current_watts = xcc_raw->w;
+			/* ave_watts is used as TresUsageOutAve (AvePower) */
+			xcc_energy.ave_watts =
+					((xcc_energy.ave_watts * readings) +
+					 xcc_energy.current_watts) /
+					 (readings + 1);
+			readings++;
+		}
+	}
+
+	xcc_energy.poll_time = xcc_raw->s;
+
+	log_flag(ENERGY, "XCC current_watts: %u consumed energy last interval: %"PRIu64"(current reading %"PRIu64") Joules, elapsed time: %u seconds, ave watts: %u",
+		 xcc_energy.current_watts, xcc_energy.base_consumed_energy,
+		 xcc_energy.consumed_energy, elapsed, xcc_energy.ave_watts);
+}
+
+/*
+ * _thread_update_node_energy calls _read_ipmi_values and updates all values
+ * for node consumption.
+ */
+static int _thread_update_node_energy(void)
+{
+	int rc = SLURM_SUCCESS;
+	xcc_raw_single_data_t *xcc_raw;
+
+	xcc_raw = _read_ipmi_values();
+
+	if (!xcc_raw) {
+		error("%s could not read XCC ipmi values", __func__);
+		return SLURM_ERROR;
+	}
+
+	switch(xcc_raw->version) {
+	case XCC_SD650_VERSION:
+		_sd650_update_node_energy(xcc_raw);
+		break;
+	case XCC_SD650V2_VERSION:
+		_sd650v2_update_node_energy(xcc_raw);
+		break;
+	default:
+		error("Unimplemented energy calculation for returned data");
+		rc = SLURM_ERROR;
+	}
+
+	xfree(xcc_raw);
+
+	return rc;
 }
 
 static int _ipmi_send_profile(void)
@@ -584,10 +688,7 @@ static int _ipmi_send_profile(void)
 		XCC_LABEL_CNT
 	};
 
-	static char *xcc_labels[] = { "Energy",
-				      "CurrPower",
-				      NULL };
-
+	static char *xcc_labels[] = { "Energy", "CurrPower", NULL };
 	uint16_t i;
 	uint64_t data[XCC_LABEL_CNT];
 
@@ -731,17 +832,18 @@ static int _get_joules_task(uint16_t delta)
 
 	xassert(context_id != -1);
 
-        /*
+	/*
 	 * 'delta' parameter means "use cache" if data is newer than delta
 	 * seconds ago, otherwise just inquiry ipmi again.
 	 */
-	if (slurm_get_node_energy(NULL, context_id, delta, &sensor_cnt, &new)) {
+	if (slurm_get_node_energy(conf->node_name, context_id, delta,
+				  &sensor_cnt, &new)) {
 		error("%s: can't get info from slurmd", __func__);
 		return SLURM_ERROR;
 	}
 
 	if (sensor_cnt != 1) {
-		error("%s: received %u xcc sensors expected 1",
+		error("%s: received %u XCC sensors expected 1",
 		      __func__, sensor_cnt);
 		acct_gather_energy_destroy(new);
 		return SLURM_ERROR;
@@ -768,9 +870,9 @@ static int _get_joules_task(uint16_t delta)
 
 	memcpy(&xcc_energy, new, sizeof(acct_gather_energy_t));
 
-	log_flag(ENERGY, "%s: consumed %"PRIu64" Joules (received %"PRIu64"(%u watts) from slurmd)",
-		 __func__, xcc_energy.consumed_energy,
-		 xcc_energy.base_consumed_energy, xcc_energy.current_watts);
+	log_flag(ENERGY, "consumed %"PRIu64" Joules (received %"PRIu64"(%u watts) from slurmd)",
+		 xcc_energy.consumed_energy, xcc_energy.base_consumed_energy,
+		 xcc_energy.current_watts);
 
 //	new->previous_consumed_energy = xcc_energy.consumed_energy;
 end_it:
@@ -947,8 +1049,7 @@ extern void acct_gather_energy_p_conf_options(s_p_options_t **full_options,
 	transfer_s_p_options(full_options, options, full_options_cnt);
 }
 
-extern void acct_gather_energy_p_conf_set(int context_id_in,
-					  s_p_hashtbl_t *tbl)
+extern void acct_gather_energy_p_conf_set(int context_id_in, s_p_hashtbl_t *tbl)
 {
 	bool tmp_bool;
 
@@ -1018,7 +1119,7 @@ extern void acct_gather_energy_p_conf_set(int context_id_in,
 		if (running_in_slurmd()) {
 			slurm_thread_create(&thread_ipmi_id_launcher,
 					    _thread_launcher, NULL);
-			log_flag(ENERGY, "%s thread launched", plugin_name);
+			log_flag(ENERGY, "thread launched");
 		} else
 			_get_joules_task(0);
 	}
@@ -1040,8 +1141,7 @@ extern void acct_gather_energy_p_conf_values(List *data)
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("EnergyIPMICalcAdjustment");
-	key_pair->value = xstrdup(slurm_ipmi_conf.adjustment
-				  ? "Yes" : "No");
+	key_pair->value = xstrdup(slurm_ipmi_conf.adjustment ? "Yes" : "No");
 	list_append(*data, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1079,7 +1179,7 @@ extern void acct_gather_energy_p_conf_values(List *data)
 	 * Don't give out the password
 	 * key_pair = xmalloc(sizeof(config_key_pair_t));
 	 * key_pair->name = xstrdup("EnergyIPMIPassword");
-         * key_pair->value = xstrdup(slurm_ipmi_conf.password);
+	 * key_pair->value = xstrdup(slurm_ipmi_conf.password);
 	 * list_append(*data, key_pair);
 	 */
 
@@ -1126,7 +1226,4 @@ extern void acct_gather_energy_p_conf_values(List *data)
 	key_pair->value = xstrdup_printf(
 		"%u", slurm_ipmi_conf.workaround_flags);
 	list_append(*data, key_pair);
-
-	return;
-
 }

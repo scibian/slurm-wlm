@@ -62,10 +62,17 @@ extern bool preempt_p_preemptable(
 
 static uint16_t _job_preempt_mode(job_record_t *job_ptr)
 {
-	if (job_ptr->qos_ptr && job_ptr->qos_ptr->preempt_mode)
-		return job_ptr->qos_ptr->preempt_mode;
+	uint16_t mode;
 
-	return (slurm_conf.preempt_mode & (~PREEMPT_MODE_GANG));
+	if (job_ptr->qos_ptr && job_ptr->qos_ptr->preempt_mode)
+		mode = job_ptr->qos_ptr->preempt_mode;
+	else
+		mode = slurm_conf.preempt_mode;
+
+	mode &= ~PREEMPT_MODE_GANG;
+	mode &= ~PREEMPT_MODE_WITHIN;
+
+	return mode;
 }
 
 /* Generate the job's priority. It is partly based upon the QOS priority
@@ -127,13 +134,20 @@ extern bool preempt_p_preemptable(
 	slurmdb_qos_rec_t *qos_ee = preemptee->qos_ptr;
 	slurmdb_qos_rec_t *qos_or = preemptor->qos_ptr;
 
-	if ((qos_ee == NULL) || (qos_or == NULL) ||
-	    (qos_or->id == qos_ee->id) ||
-	    (qos_or->preempt_bitstr == NULL) ||
-	    !bit_test(qos_or->preempt_bitstr, qos_ee->id))
+	if (!qos_ee || !qos_or) {
 		return false;
-	return true;
+	} else if (qos_or->id == qos_ee->id) {
+		if ((qos_or->preempt_mode & PREEMPT_MODE_WITHIN) ||
+		    (slurm_conf.preempt_mode & PREEMPT_MODE_WITHIN))
+			return (preemptor->priority > preemptee->priority);
 
+		return false;
+	} else if (!qos_or->preempt_bitstr ||
+		   !bit_test(qos_or->preempt_bitstr, qos_ee->id)) {
+		return false;
+	}
+
+	return true;
 }
 
 extern int preempt_p_get_data(job_record_t *job_ptr,

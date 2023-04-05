@@ -40,7 +40,8 @@
 #include "as_mysql_resource.h"
 #include "as_mysql_usage.h"
 #include "as_mysql_wckey.h"
-#include "src/common/node_select.h"
+
+#include "src/common/select.h"
 
 static void _setup_res_cond(slurmdb_res_cond_t *res_cond,
 			    char **extra)
@@ -977,14 +978,14 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (query_clusters) {
 		remove_common(mysql_conn, DBD_REMOVE_CLUS_RES,
 			      now, user_name, clus_res_table,
-			      clus_char, NULL, NULL, NULL, NULL);
+			      clus_char, NULL, NULL, NULL, NULL, NULL);
 	} else {
 		remove_common(mysql_conn, DBD_REMOVE_CLUS_RES,
 			      now, user_name, clus_res_table,
-			      clus_char, NULL, NULL, NULL, NULL);
+			      clus_char, NULL, NULL, NULL, NULL, NULL);
 		remove_common(mysql_conn, DBD_REMOVE_RES,
 			      now, user_name, res_table,
-			      name_char, NULL, NULL, NULL, NULL);
+			      name_char, NULL, NULL, NULL, NULL, NULL);
 	}
 
 	xfree(clus_char);

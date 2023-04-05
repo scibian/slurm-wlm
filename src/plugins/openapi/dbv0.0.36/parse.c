@@ -43,8 +43,8 @@
 
 #include "src/common/data.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/read_config.h"
+#include "src/common/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/uid.h"
@@ -804,7 +804,7 @@ static int _parse_to_int64(const parser_t *const parse, void *obj, data_t *str,
 	else
 		rc = ESLURM_DATA_CONV_FAILED;
 
-	log_flag(DATA, "%s: string %zd rc[%d]=%s", __func__, *dst, rc,
+	log_flag(DATA, "%s: string %"PRId64" rc[%d]=%s", __func__, *dst, rc,
 		 slurm_strerror(rc));
 
 	return rc;
@@ -848,7 +848,7 @@ static int _parse_to_uint16(const parser_t *const parse, void *obj, data_t *str,
 static int _dump_to_uint16(const parser_t *const parse, void *obj, data_t *dst,
 			   const parser_env_t *penv)
 {
-	int16_t *src = (((void *)obj) + parse->field_offset);
+	uint16_t *src = (((void *)obj) + parse->field_offset);
 
 	xassert(data_get_type(dst) == DATA_TYPE_NULL);
 
@@ -874,7 +874,7 @@ static int _parse_to_uint64(const parser_t *const parse, void *obj, data_t *str,
 	else
 		rc = ESLURM_DATA_CONV_FAILED;
 
-	log_flag(DATA, "%s: string %zu rc[%d]=%s", __func__, *dst, rc,
+	log_flag(DATA, "%s: string %"PRIu64" rc[%d]=%s", __func__, *dst, rc,
 		 slurm_strerror(rc));
 
 	return rc;
@@ -883,7 +883,7 @@ static int _parse_to_uint64(const parser_t *const parse, void *obj, data_t *str,
 static int _dump_to_uint64(const parser_t *const parse, void *obj, data_t *dst,
 			   const parser_env_t *penv)
 {
-	int64_t *src = (((void *)obj) + parse->field_offset);
+	uint64_t *src = (((void *)obj) + parse->field_offset);
 
 	xassert(data_get_type(dst) == DATA_TYPE_NULL);
 

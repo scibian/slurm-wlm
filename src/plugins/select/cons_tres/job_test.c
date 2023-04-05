@@ -159,11 +159,11 @@ static List _build_node_weight_list(bitstr_t *node_bitmap)
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(node_bitmap, i))
 			continue;
-		node_ptr = node_record_table_ptr + i;
+		node_ptr = node_record_table_ptr[i];
 		nwt = list_find_first(node_list, _node_weight_find, node_ptr);
 		if (!nwt) {
 			nwt = xmalloc(sizeof(node_weight_type));
-			nwt->node_bitmap = bit_alloc(select_node_cnt);
+			nwt->node_bitmap = bit_alloc(node_record_count);
 			nwt->weight = node_ptr->sched_weight;
 			list_append(node_list, nwt);
 		}
@@ -186,14 +186,14 @@ static void _avail_res_log(avail_res_t *avail_res, char *node_name)
 	    return;
 
 	if (!avail_res) {
-		info("Node:%s No resources", node_name);
+		log_flag(SELECT_TYPE, "Node:%s No resources", node_name);
 		return;
 	}
 
-	log_flag(SELECT_TYPE, "Node:%s Sockets:%u SpecThreads:%u CPUs:Min-Max,Avail:%u-%u,%u VPUs:%u",
+	log_flag(SELECT_TYPE, "Node:%s Sockets:%u SpecThreads:%u CPUs:Min-Max,Avail:%u-%u,%u ThreadsPerCore:%u",
 		 node_name, avail_res->sock_cnt, avail_res->spec_threads,
 		 avail_res->min_cpus, avail_res->max_cpus,
-		 avail_res->avail_cpus, avail_res->vpus);
+		 avail_res->avail_cpus, avail_res->tpc);
 	gres_info = gres_sock_str(avail_res->sock_gres_list, -1);
 	if (gres_info) {
 		log_flag(SELECT_TYPE, "  AnySocket %s", gres_info);
@@ -238,7 +238,7 @@ static void _cpus_to_use(uint16_t *avail_cpus, int64_t rem_max_cpus,
 	resv_cpus = MAX((rem_nodes - 1), 0);
 	resv_cpus *= common_cpus_per_core(details_ptr, node_inx);
 	if (cr_type & CR_SOCKET)
-		resv_cpus *= select_node_record[node_inx].cores;
+		resv_cpus *= node_record_table_ptr[node_inx]->cores;
 	rem_max_cpus -= resv_cpus;
 	if (*avail_cpus > rem_max_cpus) {
 		*avail_cpus = MAX(rem_max_cpus, (int)details_ptr->pn_min_cpus);
@@ -302,7 +302,9 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 {
 	int alloc_tasks = 0;
 	uint32_t min_tasks_this_node = 0, max_tasks_this_node = 0;
+	uint32_t min_cores_this_node = 0;
 	struct job_details *details_ptr = job_ptr->details;
+	node_record_t *node_ptr = node_record_table_ptr[node_inx];
 
 	rem_nodes = MIN(rem_nodes, 1);	/* If range of node counts */
 	if (mc_ptr->ntasks_per_node) {
@@ -311,15 +313,16 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 	} else if (mc_ptr->ntasks_per_board) {
 		min_tasks_this_node = mc_ptr->ntasks_per_board;
 		max_tasks_this_node = mc_ptr->ntasks_per_board *
-				      select_node_record[node_inx].boards;
+				      node_ptr->boards;
 	} else if (mc_ptr->ntasks_per_socket) {
 		min_tasks_this_node = mc_ptr->ntasks_per_socket;
 		max_tasks_this_node = mc_ptr->ntasks_per_socket *
-				      select_node_record[node_inx].tot_sockets;
+				      node_ptr->tot_sockets;
 	} else if (mc_ptr->ntasks_per_core) {
 		min_tasks_this_node = mc_ptr->ntasks_per_core;
 		max_tasks_this_node = mc_ptr->ntasks_per_core *
-				      select_node_record[node_inx].tot_cores;
+				      (node_ptr->tot_cores -
+				       node_ptr->core_spec_cnt);
 	} else if (details_ptr && details_ptr->ntasks_per_tres &&
 		   (details_ptr->ntasks_per_tres != NO_VAL16)) {
 		/* Node ranges not allowed with --ntasks-per-gpu */
@@ -361,7 +364,8 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 			      mc_ptr->cpus_per_task;
 		if (alloc_tasks < min_tasks_this_node)
 			max_tasks_this_node = 0;
-		else
+		else if ((max_tasks_this_node == NO_VAL) ||
+			 (alloc_tasks < max_tasks_this_node))
 			max_tasks_this_node = alloc_tasks;
 	}
 
@@ -371,9 +375,9 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 			mc_ptr,
 			avail_res_array[node_inx]->sock_gres_list,
 			avail_res_array[node_inx]->sock_cnt,
-			select_node_record[node_inx].cores,
-			select_node_record[node_inx].vpus, avail_cpus,
+			node_ptr->cores, node_ptr->tpc, avail_cpus,
 			&min_tasks_this_node, &max_tasks_this_node,
+			&min_cores_this_node,
 			rem_nodes, enforce_binding, first_pass,
 			avail_core[node_inx]);
 	}
@@ -385,6 +389,7 @@ static void _select_cores(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 		   details_ptr && (details_ptr->min_gres_cpu == 0)) {
 		*avail_cpus = bit_set_count(avail_core[node_inx]);
 	}
+	avail_res_array[node_inx]->gres_min_cores = min_cores_this_node;
 }
 
 /*
@@ -439,11 +444,6 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 	uint16_t *avail_cpu_per_node = NULL;
 
 	xassert(node_map);
-	if (select_node_cnt != node_record_count) {
-		error("node count inconsistent with slurmctld (%u != %u)",
-		      select_node_cnt, node_record_count);
-		return error_code;
-	}
 	if (bit_set_count(node_map) < min_nodes)
 		return error_code;
 
@@ -532,7 +532,7 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 	consec_req[consec_index] = -1;	/* no required nodes here by default */
 	consec_weight[consec_index] = NO_VAL64;
 
-	avail_cpu_per_node = xcalloc(select_node_cnt, sizeof(uint16_t));
+	avail_cpu_per_node = xcalloc(node_record_count, sizeof(uint16_t));
 	rem_cpus = details_ptr->min_cpus;
 	min_rem_nodes = min_nodes;
 	if ((gres_per_job = gres_sched_init(job_ptr->gres_list_req))) {
@@ -559,7 +559,7 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 		for (i = i_first; ((i <= i_last) && (max_nodes > 0)); i++) {
 			if (!bit_test(req_map, i))
 				continue;
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			_select_cores(job_ptr, mc_ptr, enforce_binding, i,
 				      &avail_cpus, max_nodes, min_rem_nodes,
 				      avail_core, avail_res_array, first_pass);
@@ -597,7 +597,9 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 		}
 	}
 
-	for (i = 0; i < select_node_cnt; i++) {		/* For each node */
+	for (i = 0; i < node_record_count; i++) { /* For each node */
+		if (!node_record_table_ptr[i])
+			continue;
 		if ((consec_index + 1) >= consec_size) {
 			consec_size *= 2;
 			xrecalloc(consec_cpus, consec_size, sizeof(int));
@@ -618,9 +620,9 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 		if (!bit_test(node_map, i)) {
 			node_ptr = NULL;    /* Use as flag, avoid second test */
 		} else if (required_node) {
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 		} else {
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			_select_cores(job_ptr, mc_ptr, enforce_binding, i,
 				      &avail_cpus, max_nodes, min_rem_nodes,
 				      avail_core, avail_res_array, first_pass);
@@ -697,16 +699,14 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 			bitstr_t *host_bitmap;
 			char *host_list;
 			if (gres_per_job) {
-				gres_str = gres_sched_str(
-					consec_gres[i],
-					job_ptr->gres_list_req);
+				gres_str = gres_sched_str(consec_gres[i]);
 				if (gres_str) {
 					xstrcat(gres_str, " ");
 					gres_print = gres_str;
 				}
 			}
 
-			host_bitmap = bit_alloc(select_node_cnt);
+			host_bitmap = bit_alloc(node_record_count);
 			bit_nset(host_bitmap, consec_start[i], consec_end[i]);
 			host_list = bitmap2node_name(host_bitmap);
 			info("set:%d consec "
@@ -908,11 +908,10 @@ static int _eval_nodes(job_record_t *job_ptr, gres_mc_data_t *mc_ptr,
 					if (avail_cpu_per_node[i] < rem_cpus)
 						continue;
 					if (gres_per_job &&
-					    !gres_sched_test2(
+					    !gres_sched_sufficient(
 						    job_ptr->gres_list_req,
 						    avail_res_array[i]->
-						    sock_gres_list,
-						    job_ptr->job_id)) {
+						    sock_gres_list)) {
 						continue;
 					}
 					if ((best_fit == -1) ||
@@ -1067,7 +1066,7 @@ static int _eval_nodes_spread(job_record_t *job_ptr,
 				bit_clear(node_map, i);
 				continue;
 			}
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			if (!avail_res_array[i] ||
 			    !avail_res_array[i]->avail_cpus) {
 				debug("%pJ required node %s lacks available resources",
@@ -1242,7 +1241,7 @@ static int _eval_nodes_busy(job_record_t *job_ptr,
 				bit_clear(node_map, i);
 				continue;
 			}
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			if (!avail_res_array[i] ||
 			    !avail_res_array[i]->avail_cpus) {
 				debug("%pJ required node %s lacks available resources",
@@ -1535,7 +1534,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 	int64_t rem_max_cpus;
 	int rem_cpus, rem_nodes; /* remaining resources desired */
 	int min_rem_nodes;	/* remaining resources desired */
-	int total_cpus = 0;	/* #CPUs allocated to job */
 	bool enforce_binding = false;
 	struct job_details *details_ptr = job_ptr->details;
 	bool gres_per_job, sufficient = false;
@@ -1608,7 +1606,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 		goto fini;
 	}
 	i_last = bit_fls(node_map);
-	avail_cpu_per_node = xcalloc(select_node_cnt, sizeof(uint16_t));
+	avail_cpu_per_node = xcalloc(node_record_count, sizeof(uint16_t));
 	node_weight_list = list_create(_topo_weight_free);
 	for (i = i_first; i <= i_last; i++) {
 		topo_weight_info_t nw_static;
@@ -1637,18 +1635,17 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 			rem_nodes--;
 			min_rem_nodes--;
 			max_nodes--;
-			total_cpus += avail_cpus;
 			rem_cpus   -= avail_cpus;
 			rem_max_cpus -= avail_cpus;
 		}
 
-		node_ptr = node_record_table_ptr + i;
+		node_ptr = node_record_table_ptr[i];
 		nw_static.weight = node_ptr->sched_weight;
 		nw = list_find_first(node_weight_list, _topo_weight_find,
 				     &nw_static);
 		if (!nw) {	/* New node weight to add */
 			nw = xmalloc(sizeof(topo_weight_info_t));
-			nw->node_bitmap = bit_alloc(select_node_cnt);
+			nw->node_bitmap = bit_alloc(node_record_count);
 			nw->weight = node_ptr->sched_weight;
 			list_append(node_weight_list, nw);
 		}
@@ -1757,7 +1754,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 	 * usually identify more nodes than required to satisfy the request.
 	 * Later logic selects from those nodes to get the best topology.
 	 */
-	best_nodes_bitmap = bit_alloc(select_node_cnt);
+	best_nodes_bitmap = bit_alloc(node_record_count);
 	iter = list_iterator_create(node_weight_list);
 	while (!sufficient && (nw = list_next(iter))) {
 		if (best_node_cnt > 0) {
@@ -1819,8 +1816,7 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 		}
 		node_names = bitmap2node_name(best_nodes_bitmap);
 		if (gres_per_job) {
-			gres_str = gres_sched_str(
-				best_gres, job_ptr->gres_list_req);
+			gres_str = gres_sched_str(best_gres);
 			if (gres_str)
 				gres_print = gres_str;
 		}
@@ -1862,7 +1858,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 			rem_nodes--;
 			min_rem_nodes--;
 			max_nodes--;
-			total_cpus += avail_cpus;
 			rem_cpus   -= avail_cpus;
 			rem_max_cpus -= avail_cpus;
 		}
@@ -2018,7 +2013,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 				rem_nodes--;
 				min_rem_nodes--;
 				max_nodes--;
-				total_cpus += avail_cpus;
 				rem_cpus   -= avail_cpus;
 				rem_max_cpus -= avail_cpus;
 				bit_set(node_map, j);
@@ -2076,7 +2070,6 @@ static int _eval_nodes_dfly(job_record_t *job_ptr,
 				rem_nodes--;
 				min_rem_nodes--;
 				max_nodes--;
-				total_cpus += avail_cpus;
 				rem_cpus   -= avail_cpus;
 				rem_max_cpus -= avail_cpus;
 				bit_set(node_map, j);
@@ -2185,7 +2178,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	int64_t rem_max_cpus;
 	int rem_cpus, rem_nodes; /* remaining resources desired */
 	int min_rem_nodes;	/* remaining resources desired */
-	int total_cpus = 0;	/* #CPUs allocated to job */
 	bool enforce_binding = false;
 	struct job_details *details_ptr = job_ptr->details;
 	bool gres_per_job, sufficient = false;
@@ -2254,7 +2246,7 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 		goto fini;
 	}
 	i_last = bit_fls(node_map);
-	avail_cpu_per_node = xcalloc(select_node_cnt, sizeof(uint16_t));
+	avail_cpu_per_node = xcalloc(node_record_count, sizeof(uint16_t));
 	node_weight_list = list_create(_topo_weight_free);
 	for (i = i_first; i <= i_last; i++) {
 		topo_weight_info_t nw_static;
@@ -2283,18 +2275,17 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 			rem_nodes--;
 			min_rem_nodes--;
 			max_nodes--;
-			total_cpus += avail_cpus;
 			rem_cpus   -= avail_cpus;
 			rem_max_cpus -= avail_cpus;
 		}
 
-		node_ptr = node_record_table_ptr + i;
+		node_ptr = node_record_table_ptr[i];
 		nw_static.weight = node_ptr->sched_weight;
 		nw = list_find_first(node_weight_list, _topo_weight_find,
 				     &nw_static);
 		if (!nw) {	/* New node weight to add */
 			nw = xmalloc(sizeof(topo_weight_info_t));
-			nw->node_bitmap = bit_alloc(select_node_cnt);
+			nw->node_bitmap = bit_alloc(node_record_count);
 			nw->weight = node_ptr->sched_weight;
 			list_append(node_weight_list, nw);
 		}
@@ -2408,7 +2399,7 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 	 * usually identify more nodes than required to satisfy the request.
 	 * Later logic selects from those nodes to get the best topology.
 	 */
-	best_nodes_bitmap = bit_alloc(select_node_cnt);
+	best_nodes_bitmap = bit_alloc(node_record_count);
 	iter = list_iterator_create(node_weight_list);
 	while (!sufficient && (nw = list_next(iter))) {
 		if (best_node_cnt > 0) {
@@ -2470,8 +2461,7 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 		}
 		node_names = bitmap2node_name(best_nodes_bitmap);
 		if (gres_per_job) {
-			gres_str = gres_sched_str(
-				best_gres, job_ptr->gres_list_req);
+			gres_str = gres_sched_str(best_gres);
 			if (gres_str)
 				gres_print = gres_str;
 		}
@@ -2513,7 +2503,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 			rem_nodes--;
 			min_rem_nodes--;
 			max_nodes--;
-			total_cpus += avail_cpus;
 			rem_cpus   -= avail_cpus;
 			rem_max_cpus -= avail_cpus;
 		}
@@ -2615,7 +2604,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 				rem_nodes--;
 				min_rem_nodes--;
 				max_nodes--;
-				total_cpus += avail_cpus;
 				rem_cpus   -= avail_cpus;
 				rem_max_cpus -= avail_cpus;
 				bit_set(node_map, j);
@@ -2684,7 +2672,6 @@ static int _eval_nodes_topo(job_record_t *job_ptr,
 			rem_nodes--;
 			min_rem_nodes--;
 			max_nodes--;
-			total_cpus += avail_cpus;
 			rem_cpus   -= avail_cpus;
 			rem_max_cpus -= avail_cpus;
 			bit_set(node_map, i);
@@ -2803,7 +2790,7 @@ static int _eval_nodes_lln(job_record_t *job_ptr,
 				bit_clear(node_map, i);
 				continue;
 			}
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			if (!avail_res_array[i] ||
 			    !avail_res_array[i]->avail_cpus) {
 				debug("%pJ required node %s lacks available resources",
@@ -2891,9 +2878,18 @@ static int _eval_nodes_lln(job_record_t *job_ptr,
 					     avail_res_array[i], i, cr_type);
 				if (avail_cpus == 0)
 					continue;
+				/*
+				 * Find the "least-loaded" node at the current
+				 * node-weight level. This is defined as the
+				 * node with the greatest ratio of available to
+				 * total cpus. (But shift the divisors around
+				 * to avoid any floating-point math.)
+				 */
 				if ((max_cpu_idx == -1) ||
-				    (avail_res_array[max_cpu_idx]->max_cpus <
-				     avail_res_array[i]->max_cpus)) {
+				    ((avail_res_array[max_cpu_idx]->max_cpus *
+				      node_record_table_ptr[i]->cpus) <
+				     (avail_res_array[i]->max_cpus *
+				      node_record_table_ptr[max_cpu_idx]->cpus))) {
 					max_cpu_idx = i;
 					max_cpu_avail_cpus = avail_cpus;
 					if (avail_res_array[max_cpu_idx]->
@@ -3003,7 +2999,7 @@ static int _eval_nodes_serial(job_record_t *job_ptr,
 				bit_clear(node_map, i);
 				continue;
 			}
-			node_ptr = node_record_table_ptr + i;
+			node_ptr = node_record_table_ptr[i];
 			if (!avail_res_array[i] ||
 			    !avail_res_array[i]->avail_cpus) {
 				debug("%pJ required node %s lacks available resources",
@@ -3179,7 +3175,7 @@ extern int choose_nodes(job_record_t *job_ptr, bitstr_t *node_map,
 		}
 	}
 
-	if ((job_ptr->details->num_tasks > 1) &&
+	if (job_ptr->details->num_tasks &&
 	    (max_nodes > job_ptr->details->num_tasks))
 		max_nodes = MAX(job_ptr->details->num_tasks, min_nodes);
 
@@ -3213,7 +3209,7 @@ extern int choose_nodes(job_record_t *job_ptr, bitstr_t *node_map,
 	 * incrementally remove nodes with low resource counts (sum of CPU and
 	 * GPU count if using GPUs, otherwise the CPU count) and retry
 	 */
-	for (i = 0; i < select_node_cnt; i++) {
+	for (i = 0; i < node_record_count; i++) {
 		if (avail_res_array[i]) {
 			most_res = MAX(most_res,
 				       avail_res_array[i]->avail_res_cnt);
@@ -3261,7 +3257,7 @@ fini:	if ((ec == SLURM_SUCCESS) && job_ptr->gres_list_req &&
 			    !orig_core_array[i] || !avail_core[i])
 				continue;
 			count = bit_set_count(avail_core[i]);
-			count *= select_node_record[i].vpus;
+			count *= node_record_table_ptr[i]->tpc;
 			avail_res_array[i]->avail_cpus =
 				MIN(count, avail_res_array[i]->avail_cpus);
 			if (avail_res_array[i]->avail_cpus == 0) {
@@ -3315,7 +3311,7 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	uint16_t cpus = 0;
 	uint64_t avail_mem = NO_VAL64, req_mem;
 	int cpu_alloc_size, i, rc;
-	node_record_t *node_ptr = node_record_table_ptr + node_i;
+	node_record_t *node_ptr = node_record_table_ptr[node_i];
 	List node_gres_list;
 	bitstr_t *part_core_map_ptr = NULL, *req_sock_map = NULL;
 	avail_res_t *avail_res = NULL;
@@ -3344,20 +3340,18 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 		if (job_ptr->bit_flags & GRES_ENFORCE_BIND)
 			enforce_binding = true;
 		if (!core_map[node_i]) {
-			core_map[node_i] = bit_alloc(
-					select_node_record[node_i].tot_cores);
+			core_map[node_i] = bit_alloc(node_ptr->tot_cores);
 			bit_set_all(core_map[node_i]);
 		}
-		sock_gres_list = gres_job_test2(
+		sock_gres_list = gres_sched_create_sock_gres_list(
 					job_ptr->gres_list_req, node_gres_list,
 					test_only, core_map[node_i],
-					select_node_record[node_i].tot_sockets,
-					select_node_record[node_i].cores,
+					node_ptr->tot_sockets, node_ptr->cores,
 					job_ptr->job_id, node_ptr->name,
 					enforce_binding, s_p_n, &req_sock_map,
 					job_ptr->user_id, node_i);
 		if (!sock_gres_list) {	/* GRES requirement fail */
-			log_flag(SELECT_TYPE, "Test fail on node %d: gres_job_test2",
+			log_flag(SELECT_TYPE, "Test fail on node %d: gres_sched_create_sock_gres_list",
 			     node_i);
 			return NULL;
 		}
@@ -3385,10 +3379,6 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	} else if ((job_ptr->details->max_nodes == 1) &&
 		   (job_ptr->details->num_tasks != 0)) {
 		ntasks_per_node = job_ptr->details->num_tasks;
-	} else if (job_ptr->details->max_nodes) {
-		ntasks_per_node = (job_ptr->details->num_tasks +
-				   job_ptr->details->max_nodes - 1) /
-				  job_ptr->details->max_nodes;
 	}
 	min_cpus_per_node = ntasks_per_node * job_ptr->details->cpus_per_task;
 	if (avail_res->avail_cpus < min_cpus_per_node) {
@@ -3400,8 +3390,7 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	}
 
 	if (cr_type & CR_MEMORY) {
-		avail_mem = select_node_record[node_i].real_memory -
-			    select_node_record[node_i].mem_spec_limit;
+		avail_mem = node_ptr->real_memory - node_ptr->mem_spec_limit;
 		if (!test_only)
 			avail_mem -= node_usage[node_i].alloc_memory;
 	}
@@ -3414,9 +3403,7 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 			sock_gres_list, avail_mem,
 			avail_res->avail_cpus,
 			enforce_binding, core_map[node_i],
-			select_node_record[node_i].tot_sockets,
-			select_node_record[node_i].cores,
-			select_node_record[node_i].vpus,
+			node_ptr->tot_sockets, node_ptr->cores, node_ptr->tpc,
 			s_p_n,
 			job_ptr->details->ntasks_per_node,
 			job_ptr->details->cpus_per_task,
@@ -3465,8 +3452,7 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 				while ((cpus > 0) &&
 				       ((req_mem *
 					 ((uint64_t)cpus *
-					  (uint64_t)select_node_record[node_i].
-					  vpus))
+					  (uint64_t)node_ptr->tpc))
 					 > avail_mem))
 					cpus -= 1;
 			} else {
@@ -3501,10 +3487,9 @@ extern avail_res_t *can_job_run_on_node(job_record_t *job_ptr,
 	}
 
 	log_flag(SELECT_TYPE, "%u CPUs on %s(state:%d), mem %"PRIu64"/%"PRIu64,
-	         cpus,
-	         select_node_record[node_i].node_ptr->name,
+	         cpus, node_ptr->name,
 	         node_usage[node_i].node_state, node_usage[node_i].alloc_memory,
-	         select_node_record[node_i].real_memory);
+	         node_ptr->real_memory);
 
 	avail_res->avail_cpus = cpus;
 	avail_res->avail_res_cnt = cpus + avail_res->avail_gpus;

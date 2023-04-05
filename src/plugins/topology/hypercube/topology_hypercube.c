@@ -375,7 +375,7 @@ extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 		topo_conf = get_extra_conf_path("topology.conf");
 
 	conf_hashtbl = s_p_hashtbl_create(switch_options);
-	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false) ==
+	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL) ==
 		SLURM_ERROR) {
 		fatal("something wrong with opening/reading %s: %m",
 			  topo_conf);
@@ -463,8 +463,7 @@ static int _node_name2bitmap(char *node_names, bitstr_t **bitmap,
 		node_record_t *node_ptr;
 		node_ptr = find_node_record(this_node_name);
 		if (node_ptr) {
-			bit_set(my_bitmap,
-				(bitoff_t) (node_ptr - node_record_table_ptr));
+			bit_set(my_bitmap, node_ptr->index);
 		} else {
 			fatal("Node \"%s\" specified in topology.conf but "
 			      "Slurm has no record of node. Verify that node "
@@ -502,8 +501,7 @@ static int _parse_connected_nodes(switch_data *sw_record)
 		node_record_t *node_ptr = find_node_record(node_name);
 		if (node_ptr) {
 			sw_record->node_conns[conn_count] = node_ptr;
-			sw_record->node_index[conn_count] = (int)
-				(node_ptr - node_record_table_ptr);
+			sw_record->node_index[conn_count] = node_ptr->index;
 			conn_count++;
 		} else {
 			fatal("Node \"%s\" connected to switch %s specified in "

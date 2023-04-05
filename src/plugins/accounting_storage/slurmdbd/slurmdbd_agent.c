@@ -41,7 +41,6 @@
 
 #include "src/common/fd.h"
 #include "src/common/slurmdbd_pack.h"
-#include "src/common/xsignal.h"
 #include "src/common/xstring.h"
 
 #include "slurmdbd_agent.h"
@@ -474,65 +473,43 @@ end_it:
 	xfree(dbd_fname);
 }
 
-/* Purge queued step records from the agent queue
- * RET number of records purged */
-static int _purge_step_req(void)
+/*
+ * Purge queued records from the agent queue
+ */
+static int _purge_agent_list_req(void *x, void *arg)
 {
-	int purged = 0;
-	ListIterator iter;
 	uint16_t msg_type;
 	uint32_t offset;
-	buf_t *buffer;
+	buf_t *buffer = x;
+	uint16_t purge_type = *(uint16_t *)arg;
 
-	iter = list_iterator_create(agent_list);
-	while ((buffer = list_next(iter))) {
-		offset = get_buf_offset(buffer);
-		if (offset < 2)
-			continue;
-		set_buf_offset(buffer, 0);
-		(void) unpack16(&msg_type, buffer);	/* checked by offset */
-		set_buf_offset(buffer, offset);
+	offset = get_buf_offset(buffer);
+	if (offset < 2)
+		return 0;
+	set_buf_offset(buffer, 0);
+	(void) unpack16(&msg_type, buffer);	/* checked by offset */
+	set_buf_offset(buffer, offset);
+	switch (purge_type) {
+	case DBD_STEP_START:
 		if ((msg_type == DBD_STEP_START) ||
-		    (msg_type == DBD_STEP_COMPLETE)) {
-			list_remove(iter);
-			purged++;
-		}
+		    (msg_type == DBD_STEP_COMPLETE))
+			return 1;
+		break;
+	case DBD_JOB_START:
+		if (msg_type == DBD_JOB_START)
+			return 1;
+		break;
+	default:
+		error("unknown purge type %d", purge_type);
+		break;
 	}
-	list_iterator_destroy(iter);
-	info("purge %d step records", purged);
-	return purged;
-}
 
-/* Purge queued job start records from the agent queue
- * RET number of records purged */
-static int _purge_job_start_req(void)
-{
-	int purged = 0;
-	ListIterator iter;
-	uint16_t msg_type;
-	uint32_t offset;
-	buf_t *buffer;
-
-	iter = list_iterator_create(agent_list);
-	while ((buffer = list_next(iter))) {
-		offset = get_buf_offset(buffer);
-		if (offset < 2)
-			continue;
-		set_buf_offset(buffer, 0);
-		(void) unpack16(&msg_type, buffer);	/* checked by offset */
-		set_buf_offset(buffer, offset);
-		if (msg_type == DBD_JOB_START) {
-			list_remove(iter);
-			purged++;
-		}
-	}
-	list_iterator_destroy(iter);
-	info("purge %d job start records", purged);
-	return purged;
+	return 0;
 }
 
 static void _max_dbd_msg_action(uint32_t *msg_cnt)
 {
+	int purged = 0;
 	if (max_dbd_msg_action == MAX_DBD_ACTION_EXIT) {
 		if (*msg_cnt < slurm_conf.max_dbd_msgs)
 			return;
@@ -543,14 +520,20 @@ static void _max_dbd_msg_action(uint32_t *msg_cnt)
 	}
 
 	/* MAX_DBD_ACTION_DISCARD */
-	if (*msg_cnt >= (slurm_conf.max_dbd_msgs - 1))
-		*msg_cnt -= _purge_step_req();
-	if (*msg_cnt >= (slurm_conf.max_dbd_msgs - 1))
-		*msg_cnt -= _purge_job_start_req();
-}
-
-static void _sig_handler(int signal)
-{
+	if (*msg_cnt >= (slurm_conf.max_dbd_msgs - 1)) {
+		uint16_t purge_type = DBD_STEP_START;
+		purged = list_delete_all(agent_list, _purge_agent_list_req,
+					 &purge_type);
+		*msg_cnt -= purged;
+		info("purge %d step records", purged);
+	}
+	if (*msg_cnt >= (slurm_conf.max_dbd_msgs - 1)) {
+		uint16_t purge_type = DBD_JOB_START;
+		purged = list_delete_all(agent_list, _purge_agent_list_req,
+					 &purge_type);
+		*msg_cnt -= purged;
+		info("purge %d job start records", purged);
+	}
 }
 
 static int _print_agent_list_msg_type(void *x, void *arg)
@@ -583,7 +566,7 @@ static void _print_agent_list_msg_types(void)
 
 	if ((processed = list_for_each_max(agent_list, &max_msgs,
 					   _print_agent_list_msg_type,
-					   mlist, true)) < 0) {
+					   mlist, true, true)) < 0) {
 		error("unable to create msg type list");
 		xfree(mlist);
 		return;
@@ -606,7 +589,6 @@ static void *_agent(void *x)
 	buf_t *buffer;
 	struct timespec abs_time;
 	static time_t fail_time = 0;
-	int sigarray[] = {SIGUSR1, 0};
 	persist_msg_t list_req = {0};
 	dbd_list_msg_t list_msg;
 	DEF_TIMERS;
@@ -619,11 +601,6 @@ static void *_agent(void *x)
 	list_req.conn = slurmdbd_conn;
 	list_req.data = &list_msg;
 	memset(&list_msg, 0, sizeof(dbd_list_msg_t));
-
-	/* Prepare to catch SIGUSR1 to interrupt pending
-	 * I/O and terminate in a timely fashion. */
-	xsignal(SIGUSR1, _sig_handler);
-	xsignal_unblock(sigarray);
 
 	log_flag(AGENT, "slurmdbd agent_count=%d with msg_type=%s",
 		 list_count(agent_list),
@@ -808,39 +785,35 @@ static void _create_agent(void)
 
 static void _shutdown_agent(void)
 {
-	int i;
+	if (!agent_tid)
+		return;
 
-	if (agent_tid) {
-		slurmdbd_shutdown = time(NULL);
-		for (i=0; i<50; i++) {	/* up to 5 secs total */
-			slurm_mutex_lock(&agent_lock);
-			if (!agent_running) {
-				slurm_mutex_unlock(&agent_lock);
-				goto fini;
-			}
-			slurm_cond_broadcast(&agent_cond);
+	slurmdbd_shutdown = time(NULL);
+	for (int i = 0; i < 50; i++) {	/* up to 5 secs total */
+		slurm_mutex_lock(&agent_lock);
+		if (!agent_running) {
 			slurm_mutex_unlock(&agent_lock);
-
-			usleep(100000);	/* 0.1 sec per try */
-			if (pthread_kill(agent_tid, SIGUSR1))
-				break;
-
+			goto fini;
 		}
+		slurm_cond_broadcast(&agent_cond);
+		slurm_mutex_unlock(&agent_lock);
 
-		/* On rare occasions agent thread may not end quickly,
-		 * perhaps due to communication problems with slurmdbd.
-		 * Cancel it and join before returning or we could remove
-		 * and leave the agent without valid data */
-		if (pthread_kill(agent_tid, 0) == 0) {
-			error("agent failed to shutdown gracefully");
-			error("unable to save pending requests");
-			pthread_cancel(agent_tid);
-		}
+		usleep(100000);	/* 0.1 sec per try */
+	}
+
+	/*
+	 * On rare occasions agent thread may not end quickly,
+	 * perhaps due to communication problems with slurmdbd.
+	 * Cancel it and join before returning or we could remove
+	 * and leave the agent without valid data.
+	 */
+	error("agent failed to shutdown gracefully");
+	error("unable to save pending requests");
+	pthread_cancel(agent_tid);
 
 fini:
-		pthread_join(agent_tid,  NULL);
-		agent_tid = 0;
-	}
+	pthread_join(agent_tid,  NULL);
+	agent_tid = 0;
 }
 
 /****************************************************************************

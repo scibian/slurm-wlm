@@ -121,6 +121,15 @@ static plugin_context_t **g_context = NULL;
 static int g_context_num = -1;
 static pthread_mutex_t context_lock = PTHREAD_MUTEX_INITIALIZER;
 
+extern const char *auth_get_plugin_name(int plugin_id)
+{
+	for (int i = 0; i < ARRAY_SIZE(auth_plugin_types); i++)
+		if (plugin_id == auth_plugin_types[i].plugin_id)
+			return auth_plugin_types[i].type;
+
+	return "unknown";
+}
+
 extern bool slurm_get_plugin_hash_enable(int index)
 {
 	if (slurm_auth_init(NULL) < 0)
@@ -148,7 +157,8 @@ extern int slurm_auth_init(char *auth_type)
 
 	if (getenv("SLURM_JWT")) {
 		xfree(slurm_conf.authtype);
-		slurm_conf.authtype = xstrdup("auth/jwt");
+		slurm_conf.authtype = xstrdup(
+			auth_get_plugin_name(AUTH_PLUGIN_JWT));
 	} else if (auth_type) {
 		xfree(slurm_conf.authtype);
 		slurm_conf.authtype = xstrdup(auth_type);
@@ -325,9 +335,9 @@ char *auth_g_get_host(void *cred)
 	return (*(ops[wrap->index].get_host))(cred);
 }
 
-int auth_g_get_data(void *cred, char **data, uint32_t *len)
+extern int auth_g_get_data(void *cred, char **data, uint32_t *len)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrap = cred;
 
 	if (!wrap || slurm_auth_init(NULL) < 0)
 		return SLURM_ERROR;
@@ -371,8 +381,8 @@ void *auth_g_unpack(buf_t *buf, uint16_t protocol_version)
 				return cred;
 			}
 		}
-		error("%s: remote plugin_id %u not found",
-		      __func__, plugin_id);
+		error("%s: authentication plugin %s(%u) not found",
+		      __func__, auth_get_plugin_name(plugin_id), plugin_id);
 		return NULL;
 	}  else {
 		error("%s: protocol_version %hu not supported",

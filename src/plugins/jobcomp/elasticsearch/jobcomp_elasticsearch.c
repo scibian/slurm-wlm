@@ -135,9 +135,6 @@ static pthread_t job_handler_thread;
 static List jobslist = NULL;
 static bool thread_shutdown = false;
 
-static long curl_timeout = 0;
-static long curl_connecttimeout = 0;
-
 /* Get the user name for the give user_id */
 static void _get_user_name(uint32_t user_id, char *user_name, int buf_size)
 {
@@ -287,8 +284,10 @@ static int _index_job(const char *jobcomp)
 	int rc = SLURM_SUCCESS;
 	char *token = NULL;
 
+	slurm_mutex_lock(&location_mutex);
 	if (log_url == NULL) {
 		error("%s: JobCompLoc parameter not configured", plugin_type);
+		slurm_mutex_unlock(&location_mutex);
 		return SLURM_ERROR;
 	}
 
@@ -313,14 +312,20 @@ static int _index_job(const char *jobcomp)
 	chunk.message = xmalloc(1);
 	chunk.size = 0;
 
-	curl_easy_setopt(curl_handle, CURLOPT_URL, log_url);
-	curl_easy_setopt(curl_handle, CURLOPT_POST, 1);
-	curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, jobcomp);
-	curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE, strlen(jobcomp));
-	curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, slist);
-	curl_easy_setopt(curl_handle, CURLOPT_HEADER, 1);
-	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, _write_callback);
-	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *) &chunk);
+	if (curl_easy_setopt(curl_handle, CURLOPT_URL, log_url) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_POST, 1) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, jobcomp) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDSIZE,
+			     strlen(jobcomp)) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, slist) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_HEADER, 1) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION,
+			     _write_callback) ||
+	    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *) &chunk)) {
+		error("%s: curl_easy_setopt() failed", plugin_type);
+		rc = SLURM_ERROR;
+		goto cleanup;
+	}
 
 	if ((res = curl_easy_perform(curl_handle)) != CURLE_OK) {
 		log_flag(ESEARCH, "%s: Could not connect to: %s , reason: %s",
@@ -369,6 +374,7 @@ cleanup_easy_init:
 	curl_easy_cleanup(curl_handle);
 cleanup_global_init:
 	curl_global_cleanup();
+	slurm_mutex_unlock(&location_mutex);
 	return rc;
 }
 
@@ -400,7 +406,8 @@ static int _save_state(void)
 	xstrcat(old_file, ".old");
 
 	slurm_mutex_lock(&save_lock);
-	fd = open(new_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+	fd = open(new_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR |
+		  O_CLOEXEC);
 	if (fd < 0) {
 		error("%s: Can't save jobcomp state, open file %s error %m",
 		      plugin_type, new_file);
@@ -408,7 +415,6 @@ static int _save_state(void)
 	} else {
 		int pos = 0, nwrite, amount, rc2;
 		char *data;
-		fd_set_close_on_exec(fd);
 		nwrite = get_buf_offset(buffer);
 		data = (char *) get_buf_data(buffer);
 		high_buffer_size = MAX(nwrite, high_buffer_size);
@@ -766,11 +772,12 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 	if ((rc = data_g_serialize(&jnode->serialized_job, record,
 				   MIME_TYPE_JSON, DATA_SER_FLAGS_COMPACT))) {
 		xfree(jnode);
-		return rc;
+	} else {
+		list_enqueue(jobslist, jnode);
 	}
-	list_enqueue(jobslist, jnode);
 
-	return SLURM_SUCCESS;
+	FREE_NULL_DATA(record);
+	return rc;
 }
 
 extern void *_process_jobs(void *x)
@@ -830,28 +837,11 @@ static void _jobslist_del(void *x)
 extern int init(void)
 {
 	int rc;
-	char *tmp_ptr = NULL;
 
 	if ((rc = data_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
 		error("%s: unable to load JSON serializer: %s", __func__,
 		      slurm_strerror(rc));
 		return rc;
-	}
-
-	/*                                                      12345678 */
-	if ((tmp_ptr = xstrcasestr(slurm_conf.job_comp_params, "timeout="))) {
-		curl_timeout = xstrntol(tmp_ptr + 8, NULL, 10, 10);
-
-		log_flag(ESEARCH, "%s: setting curl timeout: %lds",
-			 plugin_type, curl_timeout);
-	}
-	/*			    1234567890123456 */
-	if ((tmp_ptr = xstrcasestr(slurm_conf.job_comp_params,
-	                           "connect_timeout="))) {
-		curl_timeout = xstrntol(tmp_ptr + 16, NULL, 10, 10);
-
-		log_flag(ESEARCH, "%s: setting curl connect timeout: %lds",
-			 plugin_type, curl_timeout);
 	}
 
 	jobslist = list_create(_jobslist_del);
@@ -881,39 +871,16 @@ extern int fini(void)
 extern int jobcomp_p_set_location(char *location)
 {
 	int rc = SLURM_SUCCESS;
-	CURL *curl_handle;
-	CURLcode res;
 
 	if (location == NULL) {
 		error("%s: JobCompLoc parameter not configured", plugin_type);
 		return SLURM_ERROR;
 	}
 
-	log_url = xstrdup(location);
-
-	curl_global_init(CURL_GLOBAL_ALL);
-	curl_handle = curl_easy_init();
-	if (curl_handle) {
-		curl_easy_setopt(curl_handle, CURLOPT_URL, log_url);
-		curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 1);
-		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, curl_timeout);
-		curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT,
-				 curl_connecttimeout);
-
-		if ((curl_timeout > 0) || (curl_connecttimeout > 0))
-			curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1);
-
-		res = curl_easy_perform(curl_handle);
-		if (res != CURLE_OK) {
-			error("%s: Could not connect to: %s", plugin_type,
-			      log_url);
-			rc = SLURM_ERROR;
-		}
-		curl_easy_cleanup(curl_handle);
-	}
-	curl_global_cleanup();
-
 	slurm_mutex_lock(&location_mutex);
+	if (log_url)
+		xfree(log_url);
+	log_url = xstrdup(location);
 	slurm_cond_broadcast(&location_cond);
 	slurm_mutex_unlock(&location_mutex);
 
@@ -929,13 +896,4 @@ extern List jobcomp_p_get_jobs(slurmdb_job_cond_t *job_cond)
 {
 	debug("%s function is not implemented", __func__);
 	return NULL;
-}
-
-/*
- * expire old info from the database
- */
-extern int jobcomp_p_archive(slurmdb_archive_cond_t *arch_cond)
-{
-	debug("%s function is not implemented", __func__);
-	return SLURM_SUCCESS;
 }

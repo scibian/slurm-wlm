@@ -49,6 +49,7 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/pack.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_common.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_util.h"
@@ -122,12 +123,6 @@ extern uint16_t slurm_get_track_wckey(void);
  * returns true if operating with slurmdbd
  */
 bool slurm_with_slurmdbd(void);
-
-/* slurm_get_keep_alive_time
- * returns keep_alive_time slurm_conf object
- * RET uint16_t        - keep_alive_time
- */
-uint16_t slurm_get_keep_alive_time(void);
 
 /* slurm_get_preempt_type
  * get PreemptType from slurm_conf object
@@ -282,7 +277,7 @@ int slurm_receive_msg(int fd, slurm_msg_t *msg, int timeout);
  *                errno set.
  */
 List slurm_receive_msgs(int fd, int steps, int timeout);
-List slurm_receive_resp_msgs(int fd, int steps, int timeout);
+extern List slurm_receive_resp_msgs(int fd, int steps, int timeout);
 
 /*
  *  Receive a slurm message on the open slurm descriptor "fd". This will also
@@ -401,25 +396,6 @@ extern int slurm_get_peer_addr(int fd, slurm_addr_t * slurm_address);
 /**********************************************************************\
  * slurm_addr_t pack routines
 \**********************************************************************/
-
-/* slurm_pack_slurm_addr_array
- * packs an array of slurm_addrs into a buffer (pre-20.11 protocol)
- * OUT slurm_address	- slurm_addr_t to pack
- * IN size_val  	- how many to pack
- * IN/OUT buffer	- buffer to pack the slurm_addr_t from
- * returns		- Slurm error code
- */
-extern void slurm_pack_slurm_addr_array(slurm_addr_t *slurm_address,
-					uint32_t size_val, buf_t *buffer);
-/* slurm_unpack_slurm_addr_array
- * unpacks an array of slurm_addrs from a buffer (pre-20.11 protocol)
- * OUT slurm_address	- slurm_addr_t to unpack to
- * IN size_val  	- how many to unpack
- * IN/OUT buffer	- buffer to upack the slurm_addr_t from
- * returns		- Slurm error code
- */
-extern int slurm_unpack_slurm_addr_array(slurm_addr_t **slurm_address,
-					 uint32_t *size_val, buf_t *buffer);
 
 /* slurm_pack_addr_array
  * packs an array of slurm_addrs into a buffer

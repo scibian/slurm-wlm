@@ -51,10 +51,12 @@
 #include "src/common/slurm_xlator.h"
 #include "ext_sensors_rrd.h"
 #include "src/common/fd.h"
+#include "src/common/slurm_jobacct_gather.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_ext_sensors.h"
+#include "src/common/xstring.h"
 #include "src/slurmd/common/proctrack.h"
 
 #include <rrd.h>
@@ -163,8 +165,7 @@ static char* _get_node_rrd_path(char* component_name,
 	if (!component_name || !strlen(component_name) || !rrd_file)
 		return NULL;
 
-	p = xstrdup(rrd_file);
-	xstrsubstitute(p, "%n", component_name);
+	p = slurm_conf_expand_slurmd_path(rrd_file, component_name, NULL);
 
 	if (!xstrcmp(p, rrd_file)) {
 		xfree(p);
@@ -438,10 +439,11 @@ static int _update_node_data(void)
 	uint64_t tmp;
 	ext_sensors_data_t *ext_sensors;
 	time_t now = time(NULL);
+	node_record_t *node_ptr;
 
 	if (ext_sensors_cnf->dataopts & EXT_SENSORS_OPT_NODE_ENERGY) {
-		for (i=0; i < node_record_count; i++) {
-			ext_sensors = node_record_table_ptr[i].ext_sensors;
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
+			ext_sensors = node_ptr->ext_sensors;
 			if (ext_sensors->energy_update_time == 0) {
 				ext_sensors->energy_update_time = now;
 				ext_sensors->consumed_energy = 0;
@@ -449,7 +451,7 @@ static int _update_node_data(void)
 				continue;
 			}
 			if (!(path = _get_node_rrd_path(
-				      node_record_table_ptr[i].name,
+				      node_ptr->name,
 				      EXT_SENSORS_VALUE_ENERGY))) {
 				ext_sensors->consumed_energy = NO_VAL64;
 				ext_sensors->current_watts = NO_VAL;
@@ -480,10 +482,10 @@ static int _update_node_data(void)
 	}
 
 	if (ext_sensors_cnf->dataopts & EXT_SENSORS_OPT_NODE_TEMP) {
-		for (i=0; i < node_record_count; i++) {
-			ext_sensors = node_record_table_ptr[i].ext_sensors;
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
+			ext_sensors = node_ptr->ext_sensors;
 			if (!(path = _get_node_rrd_path(
-				      node_record_table_ptr[i].name,
+				      node_ptr->name,
 				      EXT_SENSORS_VALUE_TEMPERATURE))) {
 				ext_sensors->temperature = NO_VAL;
 				continue;
@@ -552,7 +554,7 @@ extern int _ext_sensors_read_conf(void)
 	} else {
 		debug2("ext_sensors: Reading ext_sensors file %s", conf_path);
 		tbl = s_p_hashtbl_create(options);
-		if (s_p_parse_file(tbl, NULL, conf_path, false) ==
+		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL) ==
 		    SLURM_ERROR) {
 			fatal("ext_sensors: Could not open/read/parse "
 			      "ext_sensors file %s", conf_path);

@@ -157,6 +157,16 @@ int list_append_list(List l, List sub);
 int list_transfer(List l, List sub);
 
 /*
+ *  Pop off elements in list [sub] to [l], unless already in [l].
+ *  Note: list [l] must have the same destroy function as list [sub].
+ *  Note: list [l] could contain repeated elements, but those aren't removed.
+ *  Note: list [sub] will be returned with repeated elements or empty,
+ *        but never destroyed.
+ *  Returns a count of the number of items added to list [l].
+ */
+int list_transfer_unique(List l, ListFindF f, List sub);
+
+/*
  *  Pops off list [sub] to [l] with maximum number of entries.
  *  Set max = -1 to transfer all entries.
  *  Note: list [l] must have the same destroy function as list [sub].
@@ -180,6 +190,12 @@ void *list_prepend(List l, void *x);
  *    to be unique (according to the function [f]).
  */
 void *list_find_first(List l, ListFindF f, void *key);
+
+/*
+ * Same as list_find_first, but use rdlock instead of wrlock
+ */
+void *list_find_first_ro(List l, ListFindF f, void *key);
+
 
 /*
  *  Traverses list [l] using [f] to match each item with [key].
@@ -229,12 +245,13 @@ int list_delete_ptr(List l, void *key);
  *    function returns the negative of that item's position in the list.
  */
 int list_for_each(List l, ListForF f, void *arg);
+int list_for_each_ro(List l, ListForF f, void *arg);
 
 /*
  *  For each item in list [l], invokes the function [f] with [arg].
  *  Returns a count of the number of items on which [f] was invoked.
  *  If [f] returns <0 for a given item, the iteration is NOT aborted but the
- *  function will return -1, else return 0.
+ *  return value (count of items processed) will be negated.
  */
 int list_for_each_nobreak(List l, ListForF f, void *arg);
 
@@ -242,12 +259,14 @@ int list_for_each_nobreak(List l, ListForF f, void *arg);
  *  For each item in list [l], invokes the function [f] with [arg].
  *  Will process up to [max] number of list items, or set [max] to -1 for all.
  *  [max] will be return to the number of unprocessed items remaining.
+ *  [write_lock] controls whether a read-lock or write-lock is used to access
+ *  the list.
  *  Returns a count of the number of items on which [f] was invoked.
  *  If [f] returns <0 for a given item, the iteration is aborted and the
  *    function returns the negative of that item's position in the list.
  */
 int list_for_each_max(List l, int *max, ListForF f, void *arg,
-		      int break_on_fail);
+		      int break_on_fail, int write_lock);
 
 /*
  *  Traverses list [l] and removes all items in list
@@ -301,13 +320,6 @@ void *list_pop(List l);
  *  Note: The item is not removed from the list.
  */
 void *list_peek(List l);
-
-/*
- *  Peeks at the data item at the end of the stack (or tail of the queue) [l].
- *  Returns the data's ptr, or NULL if the stack (or queue) is empty.
- *  Note: The item is not removed from the list.
- */
-void *list_peek_last(List l);
 
 /****************************
  *  Queue Access Functions  *

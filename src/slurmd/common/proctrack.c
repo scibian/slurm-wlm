@@ -380,8 +380,6 @@ extern int proctrack_g_signal(uint64_t cont_id, int signal)
 		char *stat_fname = NULL;
 		if (proctrack_g_get_pids(cont_id, &pids, &npids) ==
 		    SLURM_SUCCESS) {
-			/* NOTE: proctrack_g_get_pids() is not supported
-			 * by the proctrack/pgid plugin */
 			for (j = 0; j < 2; j++) {
 				if (j)
 					sleep(2);
@@ -459,11 +457,6 @@ extern bool proctrack_g_has_pid(uint64_t cont_id, pid_t pid)
 
 /*
  * Wait for all processes within a container to exit.
- *
- * When proctrack_g_wait returns SLURM_SUCCESS, the container is considered
- * destroyed.  There is no need to call proctrack_g_destroy after
- * a successful call to proctrack_g_wait, and in fact it will trigger
- * undefined behavior.
  *
  * Return SLURM_SUCCESS or SLURM_ERROR.
  */

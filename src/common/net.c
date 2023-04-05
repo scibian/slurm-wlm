@@ -40,6 +40,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -52,6 +53,8 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "src/common/read_config.h"
 
 #if defined(__FreeBSD__) || defined(__NetBSD__)
 #define	SOL_TCP		IPPROTO_TCP
@@ -114,33 +117,26 @@ cleanup:
 	return -1;
 }
 
-/* set keep alive time on socket */
+/* set keepalive time on socket */
 extern int net_set_keep_alive(int sock)
 {
 	int opt_int;
 	socklen_t opt_len;
 	struct linger opt_linger;
-	static bool keep_alive_set  = false;
-	static int  keep_alive_time = NO_VAL16;
 
-	if (!keep_alive_set) {
-		keep_alive_time = slurm_get_keep_alive_time();
-		keep_alive_set = true;
-	}
-
-	if (keep_alive_time == NO_VAL16)
+	if (slurm_conf.keepalive_time == NO_VAL)
 		return 0;
 
 	opt_len = sizeof(struct linger);
 	opt_linger.l_onoff = 1;
-	opt_linger.l_linger = keep_alive_time;
+	opt_linger.l_linger = slurm_conf.keepalive_time;
 	if (setsockopt(sock, SOL_SOCKET, SO_LINGER, &opt_linger, opt_len) < 0)
 		error("Unable to set linger socket option: %m");
 
-	opt_len = sizeof(int);
-	opt_int = 1;
+	opt_len = sizeof(opt_int);
+	opt_int = slurm_conf.keepalive_time;
 	if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &opt_int, opt_len) < 0) {
-		error("Unable to set keep alive socket option: %m");
+		error("Unable to set keepalive socket option: %m");
 		return -1;
 	}
 
@@ -152,9 +148,25 @@ extern int net_set_keep_alive(int sock)
  * but will probably have no noticable effect.
  */
 #if !defined (__APPLE__) && (! defined(__FreeBSD__) || (__FreeBSD_version > 900000))
-	opt_int = keep_alive_time;
+	if (slurm_conf.keepalive_interval != NO_VAL) {
+		opt_int = slurm_conf.keepalive_interval;
+		if (setsockopt(sock, SOL_TCP, TCP_KEEPINTVL,
+			       &opt_int, opt_len) < 0) {
+			error("Unable to set keepalive interval: %m");
+			return -1;
+		}
+	}
+	if (slurm_conf.keepalive_probes != NO_VAL) {
+		opt_int = (int) slurm_conf.keepalive_probes;
+		if (setsockopt(sock, SOL_TCP, TCP_KEEPCNT,
+			       &opt_int, opt_len) < 0) {
+			error("Unable to set keepalive probes: %m");
+			return -1;
+		}
+	}
+	opt_int = slurm_conf.keepalive_time;
 	if (setsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, opt_len) < 0) {
-		error("Unable to set keep alive socket time: %m");
+		error("Unable to set keepalive socket time: %m");
 		return -1;
 	}
 #endif
@@ -168,9 +180,13 @@ extern int net_set_keep_alive(int sock)
 	info("got linger time of %d:%d on fd %d", opt_linger.l_onoff,
 	     opt_linger.l_linger, sock);
 
-	opt_len = sizeof(int);
+	opt_len = sizeof(opt_len);
+	getsockopt(sock, SOL_TCP, TCP_KEEPINTVL, &opt_int, &opt_len);
+	info("got keepalive_interval is %d on fd %d", opt_int, sock);
+	getsockopt(sock, SOL_TCP, TCP_KEEPCNT, &opt_int, &opt_len);
+	info("got keepalive_probes is %d on fd %d", opt_int, sock);
 	getsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, &opt_len);
-	info("got keep_alive time is %d on fd %d", opt_int, sock);
+	info("got keepalive_time is %d on fd %d", opt_int, sock);
 #endif
 
 	return 0;

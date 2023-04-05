@@ -47,6 +47,7 @@
 #include "src/common/macros.h"
 #include "src/common/parse_time.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -248,8 +249,6 @@ static int _close_controller_conn(slurmdb_cluster_rec_t *cluster)
 	cluster->fed.recv = NULL;
 	slurm_persist_conn_destroy(cluster->fed.send);
 	cluster->fed.send = NULL;
-	xfree(cluster->control_host);
-	cluster->control_port = 0;
 
 	log_flag(FEDR, "closed sibling conn to %s", cluster->name);
 	slurm_mutex_unlock(&cluster->lock);
@@ -862,8 +861,6 @@ static void _persist_callback_fini(void *arg)
 			 cluster->name);
 		slurm_persist_conn_destroy(persist_conn);
 		cluster->fed.send = NULL;
-		xfree(cluster->control_host);
-		cluster->control_port = 0;
 	}
 	cluster->fed.sync_recvd = false;
 	cluster->fed.sync_sent  = false;
@@ -2777,7 +2774,7 @@ extern int fed_mgr_init(void *db_conn)
 		return SLURM_SUCCESS;
 	}
 
-	if (!association_based_accounting)
+	if (!slurm_with_slurmdbd())
 		goto end_it;
 
 	slurm_mutex_lock(&fed_job_list_mutex);

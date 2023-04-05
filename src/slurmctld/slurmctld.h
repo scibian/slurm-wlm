@@ -223,7 +223,6 @@ extern diag_stats_t slurmctld_diag_stats;
 extern slurmctld_config_t slurmctld_config;
 extern void *acct_db_conn;
 extern uint16_t accounting_enforce;
-extern int   association_based_accounting;
 extern int   backup_inx;		/* BackupController# index */
 extern int   batch_sched_delay;
 extern uint32_t   cluster_cpus;
@@ -242,6 +241,13 @@ extern bool   test_config;
 extern int    test_config_rc;
 
 /*****************************************************************************\
+ * Configless data structures, defined in src/slurmctld/proc_req.c
+\*****************************************************************************/
+extern char *slurmd_config_files[];
+
+extern config_response_msg_t *config_for_slurmd;
+
+/*****************************************************************************\
  *  NODE parameters and data structures, mostly in src/common/node_conf.h
 \*****************************************************************************/
 extern bool ping_nodes_now;		/* if set, ping nodes immediately */
@@ -256,6 +262,7 @@ typedef struct node_features {
 
 extern List active_feature_list;/* list of currently active node features */
 extern List avail_feature_list;	/* list of available node features */
+extern List conf_includes_list; /* list of conf_includes_map_t */
 
 /*****************************************************************************\
  *  NODE states and bitmaps
@@ -382,7 +389,9 @@ typedef struct {
 	uint32_t min_nodes_orig;/* unscaled value (c-nodes on BlueGene) */
 	char *name;		/* name of the partition */
 	bitstr_t *node_bitmap;	/* bitmap of nodes in partition */
-	char *nodes;		/* comma delimited list names of nodes */
+	char *nodes;		/* expanded nodelist from orig_nodes */
+	char *orig_nodes;	/* comma delimited list names of nodes */
+	char *nodesets;		/* store nodesets for display, NO PACK */
 	double   norm_priority;	/* normalized scheduling priority for
 				 * jobs (DON'T PACK) */
 	uint16_t over_time_limit; /* job's time limit can be exceeded by this
@@ -431,7 +440,7 @@ extern uint16_t part_max_priority;      /* max priority_job_factor in all parts 
 #define RESV_CTLD_EPILOG         0x00000010
 #define RESV_CTLD_PROLOG         0x00000020
 
-typedef struct slurmctld_resv {
+typedef struct {
 	uint16_t magic;		/* magic cookie, RESV_MAGIC		*/
 				/* DO NOT ALPHABETIZE			*/
 	char *accounts;		/* names of accounts permitted to use	*/
@@ -484,7 +493,7 @@ typedef struct slurmctld_resv {
 	uid_t *user_list;	/* array of users permitted to use	*/
 } slurmctld_resv_t;
 
-extern List resv_list;		/* list of slurmctld_resv entries */
+extern List resv_list;		/* list of slurmctld_resv_t entries */
 extern time_t last_resv_update;	/* time of last resv_list update */
 
 /*****************************************************************************\
@@ -553,13 +562,18 @@ struct job_details {
 	char *dependency;		/* wait for other jobs */
 	char *orig_dependency;		/* original value (for archiving) */
 	uint16_t env_cnt;		/* size of env_sup (see below) */
+	char *env_hash;			/* hash value of environment */
 	char **env_sup;			/* supplemental environment variables */
 	bitstr_t *exc_node_bitmap;	/* bitmap of excluded nodes */
 	char *exc_nodes;		/* excluded nodes */
 	uint32_t expanding_jobid;	/* ID of job to be expanded */
 	char *extra;			/* extra field, unused */
 	List feature_list;		/* required features with node counts */
+	List feature_list_use;		/* Use these features for scheduling,
+					 * DO NOT FREE or PACK */
 	char *features;			/* required features */
+	char *features_use;		/* Use these features for scheduling,
+					 * DO NOT FREE or PACK */
 	uint32_t max_cpus;		/* maximum number of cpus */
 	uint32_t orig_max_cpus;		/* requested value of max_cpus */
 	uint32_t max_nodes;		/* maximum number of nodes */
@@ -592,6 +606,8 @@ struct job_details {
 					 * CPU | MEM_PER_CPU */
 	uint64_t orig_pn_min_memory;	/* requested value of pn_min_memory */
 	uint32_t pn_min_tmp_disk;	/* minimum tempdisk per node, MB */
+	List prefer_list;		/* soft features with node counts */
+	char *prefer;			/* soft features */
 	uint8_t prolog_running;		/* set while prolog_slurmctld is
 					 * running */
 	uint32_t reserved_resources;	/* CPU minutes of resources reserved
@@ -606,6 +622,7 @@ struct job_details {
 					 * other jobs */
 	char *script;			/* DBD USE ONLY DON'T PACK:
 					 * job's script */
+	char *script_hash;              /* hash value of script NO NOT PACK */
 	char *std_err;			/* pathname of job's stderr file */
 	char *std_in;			/* pathname of job's stdin file */
 	char *std_out;			/* pathname of job's stdout file */
@@ -742,6 +759,11 @@ struct job_record {
 					 * this job */
 	List gres_list_req;		/* Requested generic resource allocation
 					   detail */
+	List gres_list_req_accum;	/* Requested generic resource allocation
+					   detail with accumulated subtypes (DO
+					   NOT SAVE OR PACK). Only needed during
+					   allocation selection time and will
+					   be rebuilt there if needed. */
 	List gres_list_alloc;		/* Allocated generic resource allocation
 					 * detail */
 	uint32_t gres_detail_cnt;	/* Count of gres_detail_str records,
@@ -781,10 +803,9 @@ struct job_record {
 	char *network;			/* network/switch requirement spec */
 	uint32_t next_step_id;		/* next step id to be used */
 	char *nodes;			/* list of nodes allocated to job */
-	slurm_addr_t *node_addr;	/* addresses of the nodes allocated to
-					 * job */
 	bitstr_t *node_bitmap;		/* bitmap of nodes allocated to job */
 	bitstr_t *node_bitmap_cg;	/* bitmap of nodes completing job */
+	bitstr_t *node_bitmap_pr;	/* bitmap of nodes with running prolog */
 	uint32_t node_cnt;		/* count of nodes currently
 					 * allocated to job */
 	uint32_t node_cnt_wag;		/* count of nodes Slurm thinks
@@ -798,7 +819,10 @@ struct job_record {
 					 * instead of total_nodes */
 	char *nodes_completing;		/* nodes still in completing state
 					 * for this job, used to ensure
-					 * epilog is not re-run for job */
+					 * epilog is not re-run for job
+					 * used only to dump/load nodes from/to dump file */
+	char *nodes_pr;			/* nodes with prolog running,
+					 * used only to dump/load nodes from/to dump file */
 	char *origin_cluster;		/* cluster name that the job was
 					 * submitted from */
 	uint16_t other_port;		/* port for client communications */
@@ -837,7 +861,7 @@ struct job_record {
 					 * more than one reservation,
 					 * DON'T PACK. */
 	char *resv_name;		/* reservation name */
-	struct slurmctld_resv *resv_ptr;/* reservation structure pointer */
+	slurmctld_resv_t *resv_ptr;	/* reservation structure pointer */
 	uint32_t requid;	    	/* requester user ID */
 	char *resp_host;		/* host for srun communications */
 	char *sched_nodes;		/* list of nodes scheduled for job */
@@ -946,6 +970,13 @@ typedef struct depend_spec {
 	uint64_t 	singleton_bits; /* which clusters have satisfied the
 					   singleton dependency */
 } depend_spec_t;
+
+/* Used as the mode for update_node_active_features() */
+typedef enum {
+	FEATURE_MODE_IND,  /* Print each node change indivually */
+	FEATURE_MODE_COMB, /* Try to combine like changes */
+	FEATURE_MODE_PEND, /* Print any pending change message */
+} feature_mode_t;
 
 #define STEP_FLAG 0xbbbb
 #define STEP_MAGIC 0xcafecafe
@@ -1407,7 +1438,8 @@ extern bool is_node_down (char *name);
 extern bool is_node_resp (char *name);
 
 /* Fail a job because the qos is no longer valid */
-extern int job_fail_qos(job_record_t *job_ptr, const char *func_name);
+extern int job_fail_qos(job_record_t *job_ptr, const char *func_name,
+			bool assoc_locked);
 
 /*
  * delete_job_desc_files - remove the state files and directory
@@ -2089,12 +2121,15 @@ extern void pack_one_node (char **buffer_ptr, int *buffer_size,
 			   uint16_t show_flags, uid_t uid, char *node_name,
 			   uint16_t protocol_version);
 
-/* part_is_visible - should user be able to see this partition */
-extern bool part_is_visible(part_record_t *part_ptr, uid_t uid);
 
-/* part_is_visible_user_rec - should user be able to see this partition */
-extern bool part_is_visible_user_rec(part_record_t *part_ptr,
-				     slurmdb_user_rec_t *user);
+/* part_not_on_list - helper function to check if array parts contains x */
+extern int part_not_on_list(part_record_t **parts, part_record_t *x);
+
+/*
+ * build_visible_parts - returns an array with pointers to partitions visible
+ * to user based on partition Hidden and AllowedGroups properties.
+ */
+extern part_record_t **build_visible_parts(uid_t uid, bool privileged);
 
 /* part_fini - free all memory associated with partition records */
 extern void part_fini (void);
@@ -2162,7 +2197,8 @@ extern int pick_batch_host(job_record_t *job_ptr);
  * global: job_list - pointer global job list
  *	last_job_update - time of last job table update
  */
-extern int prolog_complete(uint32_t job_id, uint32_t prolog_return_code);
+extern int prolog_complete(uint32_t job_id, uint32_t prolog_return_code,
+			   char *node_name);
 
 /*
  * If the job or slurm.conf requests to not kill on invalid dependency,
@@ -2213,15 +2249,6 @@ extern step_record_t *build_batch_step(job_record_t *job_ptr_in);
 /* update first assigned job id as needed on reconfigure */
 extern void reset_first_job_id(void);
 
-/*
- * reset_job_bitmaps - reestablish bitmaps for existing jobs.
- *	this should be called after rebuilding node information,
- *	but before using any job entries.
- * global: last_job_update - time of last job table update
- *	job_list - pointer to global job list
- */
-extern void reset_job_bitmaps (void);
-
 /* Reset a node's CPU load value */
 extern void reset_node_load(char *node_name, uint32_t cpu_load);
 
@@ -2264,9 +2291,6 @@ extern void save_all_state(void);
  * restored */
 extern void ctld_assoc_mgr_init(void);
 
-/* send all info for the controller to accounting */
-extern void send_all_to_accounting(time_t event_time, int db_rc);
-
 /* A slurmctld lock needs to at least have a node read lock set before
  * this is called */
 extern void set_cluster_tres(bool assoc_mgr_locked);
@@ -2289,6 +2313,9 @@ extern void server_thread_incr(void);
 
 /* Set a job's alias_list string */
 extern void set_job_alias_list(job_record_t *job_ptr);
+
+/* Set a job's features_use and feature_list_use pointers */
+extern void set_job_features_use(struct job_details *details_ptr);
 
 /*
  * set_job_prio - set a default job priority
@@ -2462,6 +2489,12 @@ extern int update_job(slurm_msg_t *msg, uid_t uid, bool send_msg);
 extern int update_job_str(slurm_msg_t *msg, uid_t uid);
 
 /*
+ * Allocate a kill_job_msg_t and populate most fields.
+ */
+extern kill_job_msg_t *create_kill_job_msg(job_record_t *job_ptr,
+					   uint16_t protocol_version);
+
+/*
  * Modify the wckey associated with a pending job
  * IN module - where this is called from
  * IN job_ptr - pointer to job which should be modified
@@ -2471,8 +2504,8 @@ extern int update_job_str(slurm_msg_t *msg, uid_t uid);
 extern int update_job_wckey(char *module, job_record_t *job_ptr,
 			    char *new_wckey);
 
-/* Reset nodes_completing field for all jobs */
-extern void update_job_nodes_completing(void);
+/* Reset nodes_completing, nodes_pr fields for all jobs */
+extern void update_job_nodes_strings(void);
 
 /*
  * Update log levels given requested levels
@@ -2489,10 +2522,11 @@ extern void update_logging(void);
 /*
  * update_node - update the configuration data for one or more nodes
  * IN update_node_msg - update node request
+ * IN auth_uid - UID that issued the update
  * RET 0 or error code
  * global: node_record_table_ptr - pointer to global node table
  */
-extern int update_node ( update_node_msg_t * update_node_msg )  ;
+extern int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid);
 
 /* Update nodes accounting usage data */
 extern void update_nodes_acct_gather_data(void);
@@ -2505,6 +2539,34 @@ extern void update_nodes_acct_gather_data(void);
  */
 extern int update_node_record_acct_gather_data(
 	acct_gather_node_resp_msg_t *msg);
+
+/*
+ * Create nodes from scontrol using slurm.conf nodeline syntax.
+ *
+ * IN nodeline - slurm.conf nodename description.
+ * OUT err_msg - pass error messages out.
+ * RET SLURM_SUCCESS on success, SLURM_ERROR otherwise.
+ */
+extern int create_nodes(char *nodeline, char **err_msg);
+
+/*
+ * Create and add dynamic node to system from registration.
+ *
+ * IN msg - slurm_msg_t containing slurm_node_registration_status_msg_t.
+ * RET SLURM_SUCCESS on success, SLURM_ERROR otherwise.
+ */
+extern int create_dynamic_reg_node(slurm_msg_t *msg);
+
+/*
+ * Delete node names from system from a slurmctld perspective.
+ *
+ * e.g. remove node from partitions, reconfig cons_tres, etc.
+ *
+ * IN names - node names to delete.
+ * OUT err_msg - pass error messages out.
+ * RET SLURM_SUCCESS on success, error code otherwise.
+ */
+extern int delete_nodes(char *names, char **err_msg);
 
 /*
  * Process string and set partition fields to appropriate values if valid
@@ -2641,6 +2703,8 @@ extern void cleanup_completing(job_record_t *job_ptr);
  * RPC.
  */
 extern void configless_setup(void);
+/* Reload the internal cached config values. */
+extern void configless_update(void);
 /* Free cached values to avoid memory leak. */
 extern void configless_clear(void);
 
@@ -2796,8 +2860,10 @@ extern void slurm_rpc_control_status(slurm_msg_t *msg);
 /*
  * Callbacks to let the PrEp plugins signal completion if running async.
  */
-extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id);
-extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id);
+extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id,
+					   bool timed_out);
+extern void prep_epilog_slurmctld_callback(int rc, uint32_t job_id,
+					   bool timed_out);
 
 /*
  * Set node's comm_name and hostname.
@@ -2839,6 +2905,53 @@ extern char **job_common_env_vars(job_record_t *job_ptr, bool is_complete);
  * where that node is represented in that array.
  */
 extern int job_get_node_inx(char *node_name, bitstr_t *node_bitmap);
+
+/*
+ * update_node_active_features - Update active features associated with nodes
+ * IN node_names - List of nodes to update
+ * IN active_features - New active features value
+ * IN mode - FEATURE_MODE_IND : Print each node change indivually
+ *           FEATURE_MODE_COMB: Try to combine like changes (SEE NOTE BELOW)
+ *           FEATURE_MODE_PEND: Print any pending change message
+ * RET: SLURM_SUCCESS or error code
+ * NOTE: Use mode=FEATURE_MODE_IND in a loop with node write lock set,
+ *	 then call with mode=FEATURE_MODE_PEND at the end of the loop
+ */
+extern int update_node_active_features(char *node_names, char *active_features,
+				       int mode);
+
+/*
+ * update_node_avail_features - Update available features associated with
+ *	nodes, build new config list records as needed
+ * IN node_names - List of nodes to update
+ * IN avail_features - New available features value
+ * IN mode - FEATURE_MODE_IND : Print each node change indivually
+ *           FEATURE_MODE_COMB: Try to combine like changes (SEE NOTE BELOW)
+ *           FEATURE_MODE_PEND: Print any pending change message
+ * RET: SLURM_SUCCESS or error code
+ * NOTE: Use mode=FEATURE_MODE_IND in a loop with node write lock set,
+ *	 then call with mode=FEATURE_MODE_PEND at the end of the loop
+ */
+extern int update_node_avail_features(char *node_names, char *avail_features,
+				      int mode);
+
+/*
+ * Return a hostlist with expanded node specification.
+ *
+ * Handles node range expressions, nodesets and ALL keyword.
+ *
+ * IN nodes - nodelist that can have nodesets or ALL in it.
+ * IN uniq - call hostlist_uniq() before returning the hostlist
+ * OUT nodesets (optional) - list of nodesets found in nodes string
+ *
+ * RET NULL on error, hostlist_t otherwise.
+ *
+ * NOTE: Caller must FREE_NULL_HOSTLIST() returned hostlist_t.
+ * NOTE: Caller should interpret a non-NULL but empty hostlist conveniently.
+ */
+extern hostlist_t nodespec_to_hostlist(const char *nodes,
+				       bool uniq,
+				       char **nodesets);
 
 /*
  * set_node_reboot_reason - appropriately set node reason with reboot message

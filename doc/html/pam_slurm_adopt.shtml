@@ -15,7 +15,7 @@ originated the ssh connection. The user's connection is "adopted" into the
 
 <h3 id="source">Source:<a class="slurm_link" href="#source"></a></h3>
 
-<p>In your Slurm build directory, navigate to slurm/contribs/pam_slurm_adopt/
+<p>In your Slurm source directory, navigate to ./contribs/pam_slurm_adopt/
 and run</p>
 
 <pre>make &amp;&amp; make install</pre>
@@ -65,8 +65,42 @@ locked out of a node while the shared filesystem is mounting or down.</p>
 proctrack/cgroup or the proctrack/cray_aries proctrack plugin.
 The pam_systemd module will conflict with pam_slurm_adopt, so you need to
 disable it in all files that are included in sshd or system-auth (e.g.
-password-auth, common-session, etc.). You should also stop and mask
-systemd-logind. You must also make sure a different PAM
+password-auth, common-session, etc.).</p>
+
+<p>If you need the user management features from pam_systemd, such as
+handling user runtime directory /run/user/$UID, you can have the prolog script
+run 'loginctl enable-linger $SLURM_JOB_USER' and the epilog script disable
+it again (after making sure there are no other jobs from this user on the node)
+by running 'loginctl disable-linger $SLURM_JOB_USER'. You will also need to
+export the XDG_* environment variables if your software requires them.
+You can see an example of prolog and epilog scripts here:</p>
+
+Prolog:
+<pre>
+loginctl enable-linger $SLURM_JOB_USER
+exit 0
+</pre>
+TaskProlog:
+<pre>
+echo "export XDG_RUNTIME_DIR=/run/user/$SLURM_JOB_UID"
+echo "export XDG_SESSION_ID=$(&lt;/proc/self/sessionid)"
+echo "export XDG_SESSION_TYPE=tty"
+echo "export XDG_SESSION_CLASS=user"
+</pre>
+Epilog:
+<pre>
+#Only disable linger if this is the last job running for this user.
+O_P=0
+for pid in $(scontrol listpids | awk -v jid=$SLURM_JOB_ID 'NR!=1 { if ($2 != jid && $1 != "-1"){print $1} }'); do
+        ps --noheader -o euser p $pid | grep -q $SLURM_JOB_USER || O_P=1
+done
+if [ $O_P -eq 0 ]; then
+        loginctl disable-linger $SLURM_JOB_USER
+fi
+exit 0
+</pre>
+
+<p>You must also make sure a different PAM
 module isn't short-circuiting the account stack before it gets to
 pam_slurm_adopt.so. From the example above, the following two lines have been
 commented out in the included password-auth file:</p>
@@ -173,16 +207,18 @@ connecting from a login node. Configurable values are:
   <b id="action_unknown_newest">newest</b> (default)
   <a class="slurm_link" href="#action_unknown_newest"></a>
 </dt>
-<dd>Pick the newest job on the node. The "newest" job is chosen based
-on the mtime of the job's step_extern cgroup; asking Slurm would
-require an RPC to the controller. Thus, the memory cgroup must be in
-use so that the code can check mtimes of cgroup directories. The user
+<dd>On systems with <i>cgroup/v1</i> pick the newest job on the node.
+The "newest" job is chosen based on the mtime of the job's step_extern cgroup;
+asking Slurm would require an RPC to the controller. Thus, the memory cgroup
+must be in use so that the code can check mtimes of cgroup directories. The user
 can ssh in but may be adopted into a job that exits earlier than the
 job they intended to check on. The ssh connection will at least be
 subject to appropriate limits and the user can be informed of better
 ways to accomplish their objectives if this becomes a problem.
 NOTE: If the module fails to retrieve the cgroup mtime, then the picked
 job may not be the newest one.
+On systems with <i>cgroup/v2</i> the newest is just the job with the greatest
+id, and thus this does not ensure that it is really the newest job.
 </dd>
 <dt>
   <b id="action_unknown_allow">allow</b>
@@ -296,7 +332,31 @@ DISPLAY variable.</dd>
 
 </dd>
 
+<dt>
+  <b id="join_container">join_container</b>
+  <a class="slurm_link" href="#join_container"></a>
+</dt>
+<dd>Control the interaction with the job_container/tmpfs plugin.
+Configurable values are:
 <dl>
+<dt></dt>
+<dd>
+<dl>
+<dt>
+  <b id="join_container_true">true</b> (default)
+  <a class="slurm_link" href="#join_container_true"></a>
+</dt>
+<dd>Attempt to join a container created by the job_container/tmpfs plugin.</dd>
+<dt>
+  <b id="join_container_false">false</b>
+  <a class="slurm_link" href="#join_container_false"></a>
+</dt>
+<dd>Do not attempt to join a container.</dd>
+</dl>
+</dd>
+</dl>
+</dd>
+
 <dt>
   <b id="log_level">log_level</b>
   <a class="slurm_link" href="#log_level"></a>
@@ -306,7 +366,6 @@ SlurmdDebug</a> in slurm.conf for available options.
 The default log_level is <b>info</b>.
 </dd>
 
-<dl>
 <dt>
   <b id="nodename">nodename</b>
   <a class="slurm_link" href="#nodename"></a>
@@ -316,7 +375,6 @@ hostname (as reported by <b>hostname -s</b>), then this must be set to the
 NodeName in <b>slurm.conf</b> that this host operates as.
 </dd>
 
-<dl>
 <dt>
   <b id="service">service</b>
   <a class="slurm_link" href="#service"></a>
@@ -444,6 +502,6 @@ break process adoption with pam_slurm_adopt.</p>
 <p>When using SELinux support in Slurm, the session started via pam_slurm_adopt
 won't necessarily be in the same context as the job it is associated with.</p>
 
-<p style="text-align:center;">Last modified 9 August 2021</p>
+<p style="text-align:center;">Last modified 29 November 2022</p>
 
 <!--#include virtual="footer.txt"-->

@@ -1,4 +1,4 @@
-.TH sinfo "1" "Slurm Commands" "March 2022" "Slurm Commands"
+.TH sinfo "1" "Slurm Commands" "August 2022" "Slurm Commands"
 
 .SH "NAME"
 sinfo \- View information about Slurm nodes and partitions.
@@ -178,7 +178,8 @@ Number of nodes.
 
 .TP
 \fB%e\fR
-Free memory of a node.
+The total memory, in MB, currently free on the node as reported by the OS. This
+value is for informational use only and is not used for scheduling.
 .IP
 
 .TP
@@ -261,7 +262,7 @@ List of node communication addresses.
 
 .TP
 \fB%O\fR
-CPU load of a node.
+CPU load of a node as reported by the OS.
 .IP
 
 .TP
@@ -425,7 +426,7 @@ Number of CPUs per node.
 
 .TP
 \fBCPUsLoad\fR
-CPU load of a node.
+CPU load of a node as reported by the OS.
 .IP
 
 .TP
@@ -463,7 +464,8 @@ Features currently active on the nodes. Also see \fBfeatures\fR.
 
 .TP
 \fBFreeMem\fR
-Free memory of a node.
+The total memory, in MB, currently free on the node as reported by the OS. This
+value is for informational use only and is not used for scheduling.
 .IP
 
 .TP
@@ -1199,6 +1201,13 @@ Same as \fB\-\-clusters\fR
 .TP
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.
+.IP
+
+.TP
+\fBSLURM_DEBUG_FLAGS\fR
+Specify debug flags for sinfo to use. See DebugFlags in the
+\fBslurm.conf\fR(5) man page for a full list of flags. The environment
+variable takes precedence over the setting in the slurm.conf.
 .IP
 
 .TP

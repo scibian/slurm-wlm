@@ -57,9 +57,9 @@
 #include "src/common/cpu_frequency.h"
 #include "src/common/forward.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
+#include "src/common/select.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/strlcpy.h"
@@ -95,22 +95,18 @@ static node_info_msg_t *job_node_ptr = NULL;
 
 /* This set of functions loads/free node information so that we can map a job's
  * core bitmap to it's CPU IDs based upon the thread count on each node. */
-static void _load_node_info(void)
-{
-	slurm_mutex_lock(&job_node_info_lock);
-	if (!job_node_ptr)
-		(void) slurm_load_node((time_t) NULL, &job_node_ptr, 0);
-	slurm_mutex_unlock(&job_node_info_lock);
-}
 
 static uint32_t _threads_per_core(char *host)
 {
 	uint32_t i, threads = 1;
 
-	if (!job_node_ptr || !host)
+	if (!host)
 		return threads;
 
 	slurm_mutex_lock(&job_node_info_lock);
+	if (!job_node_ptr)
+		slurm_load_node((time_t) NULL, &job_node_ptr, 0);
+
 	for (i = 0; i < job_node_ptr->record_count; i++) {
 		if (job_node_ptr->node_array[i].name &&
 		    !xstrcmp(host, job_node_ptr->node_array[i].name)) {
@@ -247,7 +243,9 @@ extern void slurm_get_job_stdout(char *buf, int buf_size, job_info_t * job_ptr)
 /*
  * slurm_xlate_job_id - Translate a Slurm job ID string into a slurm job ID
  *	number. If this job ID contains an array index, map this to the
- *	equivalent Slurm job ID number (e.g. "123_2" to 124)
+ *	equivalent Slurm job ID number (e.g. "123_2" to 124). If this job ID
+ *	contains an HetJob component, map this to the equivalent Slurm job ID
+ *	number (e.g. "123+2" to 125).
  *
  * IN job_id_str - String containing a single job ID number
  * RET - equivalent job ID number or 0 on error
@@ -255,31 +253,49 @@ extern void slurm_get_job_stdout(char *buf, int buf_size, job_info_t * job_ptr)
 extern uint32_t slurm_xlate_job_id(char *job_id_str)
 {
 	char *next_str;
-	uint32_t i, job_id;
-	uint16_t array_id;
-	job_info_msg_t *resp = NULL;
-	slurm_job_info_t *job_ptr;
+	uint32_t job_id;
 
 	job_id = (uint32_t) strtol(job_id_str, &next_str, 10);
 	if (next_str[0] == '\0')
 		return job_id;
-	if (next_str[0] != '_')
-		return (uint32_t) 0;
-	array_id = (uint16_t) strtol(next_str + 1, &next_str, 10);
-	if (next_str[0] != '\0')
-		return (uint32_t) 0;
-	if ((slurm_load_job(&resp, job_id, SHOW_ALL) != 0) || (resp == NULL))
-		return (uint32_t) 0;
-	job_id = 0;
-	for (i = 0, job_ptr = resp->job_array; i < resp->record_count;
-	     i++, job_ptr++) {
-		if (job_ptr->array_task_id == array_id) {
-			job_id = job_ptr->job_id;
-			break;
+
+	if (next_str[0] == '_') {
+		job_info_msg_t *resp = NULL;
+		slurm_job_info_t *job_ptr;
+		uint16_t array_id = (uint16_t) strtol(next_str + 1, &next_str,
+						      10);
+		if (next_str[0] != '\0')
+			return (uint32_t) 0;
+
+		if ((slurm_load_job(&resp, job_id, SHOW_ALL) != 0) ||
+		    (resp == NULL))
+			return (uint32_t) 0;
+
+		job_id = 0;
+		job_ptr = resp->job_array;
+		for (uint32_t i = 0; i < resp->record_count; i++, job_ptr++) {
+			if (job_ptr->array_task_id == array_id) {
+				job_id = job_ptr->job_id;
+				break;
+			}
 		}
+
+		slurm_free_job_info_msg(resp);
+		return job_id;
 	}
-	slurm_free_job_info_msg(resp);
-	return job_id;
+
+	if (next_str[0] == '+') {
+		uint16_t comp_offset =
+			(uint16_t) strtol(next_str + 1, &next_str, 10);
+
+		if (next_str[0] != '\0') {
+			return (uint32_t) 0;
+		}
+
+		return job_id + comp_offset;
+	}
+
+	return (uint32_t) 0;
 }
 
 /*
@@ -326,7 +342,6 @@ slurm_print_job_info ( FILE* out, job_info_t * job_ptr, int one_liner )
 {
 	char *print_this;
 
-	_load_node_info();
 	if ((print_this = slurm_sprint_job_info(job_ptr, one_liner))) {
 		fprintf(out, "%s", print_this);
 		xfree(print_this);
@@ -357,6 +372,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	time_t run_time;
 	uint32_t min_nodes, max_nodes = 0;
 	char *nodelist = "NodeList";
+	char *sorted_nodelist = NULL;
 	bitstr_t *cpu_bitmap;
 	char *host;
 	int sock_inx, sock_reps, last;
@@ -597,7 +613,9 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrcat(out, line_end);
 
 	/****** Line 13 ******/
-	xstrfmtcat(out, "%s=%s", nodelist, job_ptr->nodes);
+	sorted_nodelist = slurm_sort_node_list_str(job_ptr->nodes);
+	xstrfmtcat(out, "%s=%s", nodelist, sorted_nodelist);
+	xfree(sorted_nodelist);
 
 	if (job_ptr->sched_nodes)
 		xstrfmtcat(out, " Sched%s=%s", nodelist, job_ptr->sched_nodes);
@@ -865,6 +883,12 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	if (job_ptr->cluster_features) {
 		xstrfmtcat(out, "ClusterFeatures=%s",
 			   job_ptr->cluster_features);
+		xstrcat(out, line_end);
+	}
+
+	/****** Line (optional) ******/
+	if (job_ptr->prefer) {
+		xstrfmtcat(out, "Prefer=%s", job_ptr->prefer);
 		xstrcat(out, line_end);
 	}
 
@@ -1519,7 +1543,7 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 		 *  Set request message address to slurmd on localhost
 		 */
 		gethostname_short(this_host, sizeof(this_host));
-		this_addr = slurm_conf_get_nodeaddr(this_host, NULL);
+		this_addr = slurm_conf_get_nodeaddr(this_host);
 		if (this_addr == NULL)
 			this_addr = xstrdup("localhost");
 		slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,
