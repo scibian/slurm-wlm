@@ -241,7 +241,6 @@ Depends:
  slurm-wlm-jwt-plugin (= ${binary:Version}),
  slurm-wlm-rrd-plugin (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
- slurm-wlm-rsmi-plugin (= ${binary:Version}),
  ${misc:Depends},
 Description: Slurm free plugins (metapackage)
  The Slurm Workload Manager is an open-source cluster resource management and
@@ -260,7 +259,6 @@ Depends:
  slurm-wlm-jwt-plugin-dev (= ${binary:Version}),
  slurm-wlm-rrd-plugin-dev (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
- slurm-wlm-rsmi-plugin-dev (= ${binary:Version}),
  ${misc:Depends},
 Description: Slurm free plugins development files (metapackage)
  The Slurm Workload Manager is an open-source cluster resource management and
