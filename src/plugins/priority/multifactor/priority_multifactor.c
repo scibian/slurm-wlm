@@ -190,6 +190,14 @@ static int _apply_decay(double real_decay)
 		for (i=0; i<slurmctld_tres_cnt; i++)
 			assoc->usage->usage_tres_raw[i] *= real_decay;
 		assoc->usage->grp_used_wall *= real_decay;
+
+		if (assoc->leaf_usage && (assoc->leaf_usage != assoc->usage)) {
+			assoc->leaf_usage->usage_raw *= real_decay;
+			for (i = 0; i < slurmctld_tres_cnt; i++)
+				assoc->leaf_usage->usage_tres_raw[i] *=
+					real_decay;
+			assoc->leaf_usage->grp_used_wall *= real_decay;
+		}
 	}
 	list_iterator_destroy(itr);
 
@@ -238,6 +246,11 @@ static int _reset_usage(void)
 		for (i=0; i<slurmctld_tres_cnt; i++)
 			assoc->usage->usage_tres_raw[i] = 0;
 		assoc->usage->grp_used_wall = 0;
+
+		if (assoc->leaf_usage && (assoc->leaf_usage != assoc->usage)) {
+			slurmdb_destroy_assoc_usage(assoc->leaf_usage);
+			assoc->leaf_usage = NULL;
+		}
 	}
 	list_iterator_destroy(itr);
 
@@ -1726,10 +1739,6 @@ int init ( void )
 			&start_time);
 		unlock_slurmctld(job_write_lock);
 	} else if (assoc_mgr_root_assoc) {
-		if (!cluster_cpus)
-			fatal("We need to have a cluster cpu count "
-			      "before we can init the priority/multifactor "
-			      "plugin");
 		assoc_mgr_root_assoc->usage->usage_efctv = 1.0;
 
 		/* The decay_thread sets up some global variables that are
@@ -1962,8 +1971,8 @@ extern List priority_p_get_priority_factors_list(
 			      !assoc_mgr_is_user_acct_coord(acct_db_conn, uid,
 			                                    job_ptr->account))||
 			     ((slurm_mcs_get_privatedata() == 1) &&
-			      (mcs_g_check_mcs_label(uid, job_ptr->mcs_label)
-			       != 0))))
+			      (mcs_g_check_mcs_label(uid, job_ptr->mcs_label,
+						     false) != 0))))
 				continue;
 
 			_filter_job(job_ptr, req_msg, part_filter_list,

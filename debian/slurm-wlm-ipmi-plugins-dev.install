@@ -1,0 +1,4 @@
+usr/lib/*/slurm-wlm/acct_gather_energy_ipmi.a
+usr/lib/*/slurm-wlm/acct_gather_energy_ipmi.la
+usr/lib/*/slurm-wlm/acct_gather_energy_xcc.a
+usr/lib/*/slurm-wlm/acct_gather_energy_xcc.la

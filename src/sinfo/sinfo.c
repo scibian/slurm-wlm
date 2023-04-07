@@ -41,7 +41,7 @@
 #include "slurm/slurmdb.h"
 #include "src/common/xstring.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
+#include "src/common/select.h"
 #include "src/common/slurm_time.h"
 #include "src/sinfo/sinfo.h"
 #include "src/sinfo/print.h"
@@ -410,9 +410,9 @@ static List _query_server(bool clear_old)
 						     SELECT_NODEDATA_SUBCNT,
 						     NODE_STATE_ALLOCATED,
 						     &alloc_cpus);
-			idle_cpus = node_ptr->cpus - alloc_cpus;
+			idle_cpus = node_ptr->cpus_efctv - alloc_cpus;
 
-			if (idle_cpus && (idle_cpus != node_ptr->cpus)) {
+			if (idle_cpus && (idle_cpus != node_ptr->cpus_efctv)) {
 				node_ptr->node_state &= NODE_STATE_FLAGS;
 				node_ptr->node_state |= NODE_STATE_MIXED;
 			}
@@ -479,9 +479,9 @@ static void *_load_job_prio_thread(void *args)
 						     SELECT_NODEDATA_SUBCNT,
 						     NODE_STATE_ALLOCATED,
 						     &alloc_cpus);
-			idle_cpus = node_ptr->cpus - alloc_cpus;
+			idle_cpus = node_ptr->cpus_efctv - alloc_cpus;
 
-			if (idle_cpus && (idle_cpus != node_ptr->cpus)) {
+			if (idle_cpus && (idle_cpus != node_ptr->cpus_efctv)) {
 				node_ptr->node_state &= NODE_STATE_FLAGS;
 				node_ptr->node_state |= NODE_STATE_MIXED;
 			}

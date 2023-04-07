@@ -180,18 +180,21 @@ static int _mkpath(const char *path, uid_t uid, gid_t gid)
 	return SLURM_SUCCESS;
 }
 
-static data_t *_read_config(const char *jconfig)
+static int _read_config(const char *jconfig, data_t **config)
 {
 	int rc;
 	buf_t *buffer = NULL;
-	data_t *config = NULL;
 
+	xassert(config && !*config);
+
+	errno = SLURM_SUCCESS;
 	if (!(buffer = create_mmap_buf(jconfig))) {
+		rc = errno;
 		error("%s: unable to open: %s", __func__, jconfig);
 		goto cleanup;
 	}
 
-	if ((rc = data_g_deserialize(&config, get_buf_data(buffer),
+	if ((rc = data_g_deserialize(config, get_buf_data(buffer),
 				     remaining_buf(buffer), MIME_TYPE_JSON))) {
 		error("%s: unable to parse config.json: %s",
 		      __func__, slurm_strerror(rc));
@@ -201,7 +204,7 @@ cleanup:
 	free_buf(buffer);
 	buffer = NULL;
 
-	return config;
+	return rc;
 }
 
 static int _write_config(const stepd_step_rec_t *job, const char *jconfig,
@@ -486,7 +489,7 @@ static void _generate_bundle_path(stepd_step_rec_t *job, char *rootfs_path)
 	job->cwd = path;
 }
 
-extern void setup_container(stepd_step_rec_t *job)
+extern int setup_container(stepd_step_rec_t *job)
 {
 	int rc;
 	char *jconfig = NULL;
@@ -494,13 +497,16 @@ extern void setup_container(stepd_step_rec_t *job)
 	char *out = NULL;
 	char *rootfs_path = NULL;
 
-	if ((rc = get_oci_conf(&oci_conf)) && (rc != ENOENT))
-		fatal("Error loading oci.conf: %s", slurm_strerror(rc));
+	if ((rc = get_oci_conf(&oci_conf)) && (rc != ENOENT)) {
+		error("%s: error loading oci.conf: %s",
+		      __func__, slurm_strerror(rc));
+		return rc;
+	}
 
 	if (!oci_conf) {
 		debug("%s: OCI Container not configured. Ignoring %pS requested container: %s",
 		      __func__, job, job->container);
-		return;
+		return ESLURM_CONTAINER_NOT_CONFIGURED;
 	}
 
 	if ((rc = data_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
@@ -512,9 +518,10 @@ extern void setup_container(stepd_step_rec_t *job)
 	/* OCI runtime spec reqires config.json to be in root of bundle */
 	xstrfmtcat(jconfig, "%s/config.json", job->container);
 
-	config = _read_config(jconfig);
-	if (!config)
+	if ((rc = _read_config(jconfig, &config))) {
 		goto error;
+	}
+	xassert(config);
 
 	xfree(jconfig);
 
@@ -564,6 +571,8 @@ error:
 	xfree(jconfig);
 	FREE_NULL_DATA(config);
 	xfree(jconfig);
+
+	return rc;
 }
 
 static data_t *_get_container_state()
@@ -571,10 +580,16 @@ static data_t *_get_container_state()
 	int rc = SLURM_ERROR;
 	data_t *state = NULL;
 	char *out;
+	run_command_args_t run_command_args = {
+		.max_wait = -1,
+		.script_argv = query_argv,
+		.script_path = query_argv[0],
+		.script_type = "RunTimeQuery",
+		.status = &rc,
+	};
 
 	/* request container get deleted if known at all any more */
-	out = run_command("RunTimeQuery", query_argv[0], query_argv, NULL, -1,
-			  0, &rc);
+	out = run_command(&run_command_args);
 	debug("%s: RunTimeQuery rc:%u output:%s", __func__, rc, out);
 
 	if (!out || !out[0]) {
@@ -610,13 +625,21 @@ static void _kill_container()
 {
 	int stime = 2500;
 	char *status = _get_container_status();
+	run_command_args_t run_command_args = {
+		.max_wait = -1,
+	};
 
 	if (!status) {
 		debug("container already dead");
 	} else if (!xstrcasecmp(status, "running")) {
+		run_command_args.script_argv = kill_argv;
+		run_command_args.script_path = kill_argv[0];
+		run_command_args.script_type = "RunTimeKill";
+
 		for (int t = 0; t < 10; t++) {
 			char *out;
 			int kill_status = SLURM_ERROR;
+			run_command_args.status = &kill_status;
 
 			xfree(status);
 			status = _get_container_status();
@@ -624,8 +647,7 @@ static void _kill_container()
 			if (!status || !xstrcasecmp(status, "stopped"))
 				break;
 
-			out = run_command("RunTimeKill", kill_argv[0],
-					  kill_argv, NULL, -1, 0, &kill_status);
+			out = run_command(&run_command_args);
 			debug("%s: RunTimeKill rc:%u output:%s",
 			      __func__, kill_status, out);
 			xfree(out);
@@ -653,8 +675,11 @@ static void _kill_container()
 		char *out;
 
 		/* request container get deleted if known at all any more */
-		out = run_command("RunTimeDelete", delete_argv[0],
-				  delete_argv, NULL, -1, 0, &delete_status);
+		run_command_args.script_argv = delete_argv;
+		run_command_args.script_path = delete_argv[0];
+		run_command_args.script_type = "RunTimeDelete";
+		run_command_args.status = &delete_status;
+		out = run_command(&run_command_args);
 		debug("%s: RunTimeDelete rc:%u output:%s",
 		      __func__, delete_status, out);
 		xfree(out);
@@ -673,9 +698,15 @@ static void _create_start(stepd_step_rec_t *job,
 {
 	int stime = 250, rc = SLURM_ERROR;
 	char *out;
+	run_command_args_t run_command_args = {
+		.max_wait = -1,
+		.status = &rc,
+	};
 
-	out = run_command("RunTimeCreate", create_argv[0],
-			  create_argv, NULL, -1, 0, &rc);
+	run_command_args.script_argv = create_argv;
+	run_command_args.script_path = create_argv[0];
+	run_command_args.script_type = "RunTimeCreate";
+	out = run_command(&run_command_args);
 	debug("%s: RunTimeCreate rc:%u output:%s", __func__, rc, out);
 	xfree(out);
 
@@ -712,8 +743,10 @@ static void _create_start(stepd_step_rec_t *job,
 		}
 	}
 
-	out = run_command("RunTimeStart", start_argv[0], start_argv, NULL, -1,
-			  0, &rc);
+	run_command_args.script_argv = start_argv;
+	run_command_args.script_path = start_argv[0];
+	run_command_args.script_type = "RunTimeStart";
+	out = run_command(&run_command_args);
 	debug("%s: RunTimeStart rc:%u output:%s", __func__, rc, out);
 	xfree(out);
 

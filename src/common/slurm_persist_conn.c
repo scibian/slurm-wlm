@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_persist_conn.h - Definitions for communicating over a persistent
+ *  slurm_persist_conn.c - Definitions for communicating over a persistent
  *                         connection within Slurm.
  ******************************************************************************
  *  Copyright (C) 2016 SchedMD LLC
@@ -84,7 +84,7 @@ static int _tot_wait (struct timeval *start_time)
 	return msec_delay;
 }
 
-/* close and fd and replace it with a -1 */
+/* close an fd and replace it with a -1 */
 static void _close_fd(int *fd)
 {
 	if (*fd && *fd >= 0) {
@@ -240,15 +240,13 @@ static int _process_service_connection(
 		if (msg_read == 0)	/* EOF */
 			break;
 		if (msg_read != sizeof(nw_size)) {
-			error("Could not read msg_size from "
-			      "connection %d(%s) uid(%d)",
+			error("Could not read msg_size from connection %d(%s) uid(%u)",
 			      persist_conn->fd, persist_conn->rem_host, uid);
 			break;
 		}
 		msg_size = ntohl(nw_size);
 		if ((msg_size < 2) || (msg_size > MAX_MSG_SIZE)) {
-			error("Invalid msg_size (%u) from "
-			      "connection %d(%s) uid(%d)",
+			error("Invalid msg_size (%u) from connection %d(%s) uid(%u)",
 			      msg_size, persist_conn->fd,
 			      persist_conn->rem_host, uid);
 			break;
@@ -283,8 +281,7 @@ static int _process_service_connection(
 				    rc != ACCOUNTING_FIRST_REG &&
 				    rc != ACCOUNTING_TRES_CHANGE_DB &&
 				    rc != ACCOUNTING_NODES_CHANGE_DB) {
-					error("Processing last message from "
-					      "connection %d(%s) uid(%d)",
+					error("Processing last message from connection %d(%s) uid(%u)",
 					      persist_conn->fd,
 					      persist_conn->rem_host, uid);
 					if (rc == ESLURM_ACCESS_DENIED ||
@@ -308,7 +305,7 @@ static int _process_service_connection(
 				 * deal as the slurmctld will just send the
 				 * message again. */
 				if (persist_conn->rem_port)
-					log_flag(NET, "%s: Problem sending response to connection host:%s fd:%d uid:%d",
+					log_flag(NET, "%s: Problem sending response to connection host:%s fd:%d uid:%u",
 						 __func__,
 						 persist_conn->rem_host,
 						 persist_conn->fd, uid);
@@ -318,7 +315,7 @@ static int _process_service_connection(
 		}
 	}
 
-	log_flag(NET, "%s: Closed connection host:%s fd:%d uid:%d",
+	log_flag(NET, "%s: Closed connection host:%s fd:%d uid:%u",
 		 __func__, persist_conn->rem_host, persist_conn->fd, uid);
 
 	return rc;
@@ -572,7 +569,6 @@ extern int slurm_persist_conn_open_without_init(
 		return SLURM_ERROR;
 	}
 	fd_set_nonblocking(persist_conn->fd);
-	fd_set_close_on_exec(persist_conn->fd);
 
 	return SLURM_SUCCESS;
 }
@@ -831,12 +827,17 @@ extern int slurm_persist_conn_writeable(slurm_persist_conn_t *persist_conn)
 		}
 		if (ufds.revents & POLLERR) {
 			if (_comm_fail_log(persist_conn)) {
-				if (fd_get_socket_error(persist_conn->fd, &errno))
-					error("%s: unable to get error for persistent connection %d: %m",
-					      __func__, persist_conn->fd);
+				int rc, err;
+				if ((rc = fd_get_socket_error(persist_conn->fd,
+							      &err)))
+					error("%s: unable to get error for persistent connection %d: %s",
+					      __func__, persist_conn->fd,
+					      strerror(rc));
 				else
-					error("%s: persistent connection %d experienced an error: %m",
-					      __func__, persist_conn->fd);
+					error("%s: persistent connection %d experienced an error: %s",
+					      __func__, persist_conn->fd,
+					      strerror(err));
+				slurm_seterrno(err);
 			}
 			if (persist_conn->trigger_callbacks.dbd_fail)
 				(persist_conn->trigger_callbacks.dbd_fail)();
@@ -925,7 +926,7 @@ static buf_t *_slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn,
 
 	if (persist_conn->fd < 0) {
 		if (!persist_conn->shutdown || *persist_conn->shutdown)
-			log_flag(NET, "%s: Invalid file descriptor fd:%d host:%s port:%"PRIu16,
+			log_flag(NET, "%s: Invalid file descriptor fd:%d host:%s port:%u",
 				 __func__, persist_conn->fd,
 				 persist_conn->rem_host,
 				 persist_conn->rem_port);

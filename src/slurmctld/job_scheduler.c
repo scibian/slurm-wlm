@@ -61,9 +61,9 @@
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/node_features.h"
-#include "src/common/node_select.h"
 #include "src/common/prep.h"
 #include "src/common/power.h"
+#include "src/common/select.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_acct_gather.h"
 #include "src/common/strlcpy.h"
@@ -100,11 +100,6 @@
 #define BUILD_TIMEOUT 2000000	/* Max build_job_queue() run time in usec */
 #define MAX_FAILED_RESV 10
 
-typedef struct wait_boot_arg {
-	uint32_t job_id;
-	bitstr_t *node_bitmap;
-} wait_boot_arg_t;
-
 static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 						     uint16_t protocol_version);
 static void	_job_queue_append(List job_queue, job_record_t *job_ptr,
@@ -116,14 +111,11 @@ static bool	_scan_depend(List dependency_list, job_record_t *job_ptr);
 static void *	_sched_agent(void *args);
 static int	_schedule(bool full_queue);
 static int	_valid_batch_features(job_record_t *job_ptr, bool can_reboot);
-static int	_valid_feature_list(job_record_t *job_ptr, bool can_reboot);
+static int	_valid_feature_list(job_record_t *job_ptr, List feature_list,
+				    bool can_reboot);
 static int	_valid_node_feature(char *feature, bool can_reboot);
-#ifndef HAVE_FRONT_END
-static void *	_wait_boot(void *arg);
-#endif
 static int	build_queue_timeout = BUILD_TIMEOUT;
 static int	correspond_after_task_cnt = CORRESPOND_ARRAY_TASK_CNT;
-static int	save_last_part_update = 0;
 
 static pthread_mutex_t sched_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  sched_cond = PTHREAD_COND_INITIALIZER;
@@ -180,12 +172,11 @@ static double _get_system_usage(void)
 		int    i;
 		double alloc_tres = 0;
 		double tot_tres   = 0;
+		node_record_t *node_ptr;
 
 		select_g_select_nodeinfo_set_all();
 
-		for (i = 0; i < node_record_count; i++) {
-			node_record_t *node_ptr =
-				&node_record_table_ptr[i];
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
 			double node_alloc_tres = 0.0;
 			double node_tot_tres   = 0.0;
 
@@ -249,6 +240,20 @@ static void _job_queue_append(List job_queue, job_record_t *job_ptr,
 	 * ones
 	 */
 	if (job_ptr->resv_name)
+		return;
+
+	/*
+	 * For het jobs, backfill makes a plan for each component; however,
+	 * backfill doesn't track magnetic reservations in the plan, so backfill
+	 * can't start hetjobs in a magnetic reservation unless the het job
+	 * explicitly requests the magnetic reservation.
+	 *
+	 * Also, if there is a magnetic reservation that starts in the future,
+	 * backfill will not be able to start the het job if there is a separate
+	 * magnetic reservation queue record for the component. So, don't create
+	 * a separate magnetic reservation queue record for het jobs.
+	 */
+	if (job_ptr->het_job_id)
 		return;
 
 	job_resv_append_magnetic(&job_queue_req);
@@ -576,6 +581,15 @@ extern List build_job_queue(bool clear_start, bool backfill)
 			job_ptr->bit_flags &= ~BACKFILL_SCHED;
 			set_job_failed_assoc_qos_ptr(job_ptr);
 			acct_policy_handle_accrue_time(job_ptr, false);
+			if ((job_ptr->state_reason != WAIT_NO_REASON) &&
+			    (job_ptr->state_reason != WAIT_PRIORITY) &&
+			    (job_ptr->state_reason != WAIT_RESOURCES) &&
+			    (job_ptr->state_reason !=
+			     job_ptr->state_reason_prev_db)) {
+				job_ptr->state_reason_prev_db =
+					job_ptr->state_reason;
+				last_job_update = now;
+			}
 		}
 
 		if (((tested_jobs % 100) == 0) &&
@@ -595,13 +609,6 @@ extern List build_job_queue(bool clear_start, bool backfill)
 		job_ptr->preempt_in_progress = false;	/* initialize */
 		if (job_ptr->array_recs)
 			job_ptr->array_recs->pend_run_tasks = 0;
-		if (job_ptr->state_reason != WAIT_NO_REASON) {
-			if ((job_ptr->state_reason != WAIT_PRIORITY) &&
-			    (job_ptr->state_reason != WAIT_RESOURCES))
-				job_ptr->state_reason_prev_db =
-					job_ptr->state_reason;
-			last_job_update = now;
-		}
 		if (job_ptr->resv_list)
 			job_ptr->resv_ptr = NULL;
 		if (!_job_runnable_test1(job_ptr, clear_start))
@@ -966,6 +973,19 @@ extern void fill_array_reasons(job_record_t *job_ptr,
 	}
 }
 
+static job_queue_rec_t *_create_job_queue_rec(job_queue_req_t *job_queue_req)
+{
+	job_queue_rec_t *job_queue_rec = xmalloc(sizeof(*job_queue_rec));
+	job_queue_rec->array_task_id = job_queue_req->job_ptr->array_task_id;
+	job_queue_rec->job_id   = job_queue_req->job_ptr->job_id;
+	job_queue_rec->job_ptr  = job_queue_req->job_ptr;
+	job_queue_rec->part_ptr = job_queue_req->part_ptr;
+	job_queue_rec->priority = job_queue_req->prio;
+	job_queue_rec->resv_ptr = job_queue_req->resv_ptr;
+
+	return job_queue_rec;
+}
+
 extern void job_queue_append_internal(job_queue_req_t *job_queue_req)
 {
 	job_queue_rec_t *job_queue_rec;
@@ -975,13 +995,15 @@ extern void job_queue_append_internal(job_queue_req_t *job_queue_req)
 	xassert(job_queue_req->job_queue);
 	xassert(job_queue_req->part_ptr);
 
-	job_queue_rec = xmalloc(sizeof(job_queue_rec_t));
-	job_queue_rec->array_task_id = job_queue_req->job_ptr->array_task_id;
-	job_queue_rec->job_id   = job_queue_req->job_ptr->job_id;
-	job_queue_rec->job_ptr  = job_queue_req->job_ptr;
-	job_queue_rec->part_ptr = job_queue_req->part_ptr;
-	job_queue_rec->priority = job_queue_req->prio;
-	job_queue_rec->resv_ptr = job_queue_req->resv_ptr;
+	if (job_queue_req->job_ptr->details &&
+	    job_queue_req->job_ptr->details->prefer) {
+		job_queue_rec = _create_job_queue_rec(job_queue_req);
+		job_queue_rec->use_prefer = true;
+		list_append(job_queue_req->job_queue, job_queue_rec);
+	}
+
+	job_queue_rec = _create_job_queue_rec(job_queue_req);
+
 	list_append(job_queue_req->job_queue, job_queue_rec);
 }
 
@@ -995,7 +1017,7 @@ static int _schedule(bool full_queue)
 	job_queue_rec_t *job_queue_rec;
 	job_record_t *job_ptr = NULL;
 	part_record_t *part_ptr, **failed_parts = NULL, *skip_part_ptr = NULL;
-	struct slurmctld_resv **failed_resv = NULL;
+	slurmctld_resv_t **failed_resv = NULL;
 	bitstr_t *save_avail_node_bitmap;
 	part_record_t **sched_part_ptr = NULL;
 	int *sched_part_jobs = NULL, bb_wait_cnt = 0;
@@ -1010,6 +1032,7 @@ static int _schedule(bool full_queue)
 	static int sched_max_job_start = 0;
 	static int bf_min_age_reserve = 0;
 	static uint32_t bf_min_prio_reserve = 0;
+	static bool bf_licenses = false;
 	static int def_job_limit = 100;
 	static int max_jobs_per_part = 0;
 	static int defer_rpc_cnt = 0;
@@ -1074,6 +1097,14 @@ static int _schedule(bool full_queue)
 			int64_t min_prio = (int64_t) atoll(tmp_ptr + 20);
 			if (min_prio > 0)
 				bf_min_prio_reserve = (uint32_t) min_prio;
+		}
+
+		bf_licenses = false;
+		if (xstrcasestr(slurm_conf.sched_params, "bf_licenses")) {
+			if (!xstrcmp(slurm_conf.schedtype, "sched/builtin"))
+				error("Ignoring SchedulerParameters=bf_licenses, this option is incompatible with sched/builtin.");
+			else
+				bf_licenses = true;
 		}
 
 		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
@@ -1194,7 +1225,15 @@ static int _schedule(bool full_queue)
 		if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
 		                           "sched_interval="))) {
 			sched_interval = atoi(tmp_ptr + 15);
-			if (sched_interval < 0) {
+			if (sched_interval == -1) {
+				sched_debug("schedule() returning, sched_interval=-1");
+				/*
+				 * Exit without setting sched_update.  This gets
+				 * verbose, but makes this setting easy to
+				 * happen.
+				 */
+				goto out;
+			} else if (sched_interval < 0) {
 				error("Invalid sched_interval: %d",
 				      sched_interval);
 				sched_interval = 60;
@@ -1229,10 +1268,10 @@ static int _schedule(bool full_queue)
 		sched_update = slurm_conf.last_update;
 		info("SchedulerParameters=default_queue_depth=%d,"
 		     "max_rpc_cnt=%d,max_sched_time=%d,partition_job_depth=%d,"
-		     "sched_max_job_start=%d,sched_min_interval=%d",
+		     "sched_max_job_start=%d,sched_min_interval=%d%s",
 		     def_job_limit, defer_rpc_cnt, sched_timeout,
 		     max_jobs_per_part, sched_max_job_start,
-		     sched_min_interval);
+		     sched_min_interval, (bf_licenses ? ",bf_licenses" : ""));
 	}
 
 	slurm_mutex_lock(&slurmctld_config.thread_count_lock);
@@ -1282,7 +1321,7 @@ static int _schedule(bool full_queue)
 
 	part_cnt = list_count(part_list);
 	failed_parts = xcalloc(part_cnt, sizeof(part_record_t *));
-	failed_resv = xmalloc(sizeof(struct slurmctld_resv*) * MAX_FAILED_RESV);
+	failed_resv = xcalloc(MAX_FAILED_RESV, sizeof(slurmctld_resv_t *));
 	save_avail_node_bitmap = bit_copy(avail_node_bitmap);
 	bit_or(avail_node_bitmap, rs_node_bitmap);
 
@@ -1434,6 +1473,24 @@ next_part:
 			if (!job_ptr || !IS_JOB_PENDING(job_ptr)) {
 				xfree(job_queue_rec);
 				continue;	/* started in other partition */
+			}
+
+			/*
+			 * feature_list_use is a temporary variable and should
+			 * be reset before each use. Do this after the check for
+			 * pending because the job could have started with
+			 * "preferred" job_queue_rec.
+			 */
+			if (job_queue_rec->use_prefer) {
+				job_ptr->details->features_use =
+					job_ptr->details->prefer;
+				job_ptr->details->feature_list_use =
+					job_ptr->details->prefer_list;
+			} else {
+				job_ptr->details->features_use =
+					job_ptr->details->features;
+				job_ptr->details->feature_list_use =
+					job_ptr->details->feature_list;
 			}
 
 			if (job_ptr->resv_list)
@@ -1616,7 +1673,7 @@ next_task:
 			    && !job_ptr->limit_set.qos) {
 				assoc_mgr_unlock(&locks);
 				sched_debug("%pJ has invalid QOS", job_ptr);
-				job_fail_qos(job_ptr, __func__);
+				job_fail_qos(job_ptr, __func__, false);
 				last_job_update = now;
 				continue;
 			} else if (job_ptr->state_reason == FAIL_QOS) {
@@ -1698,6 +1755,11 @@ next_task:
 				     job_state_string(job_ptr->job_state),
 				     job_reason_string(job_ptr->state_reason),
 				     job_ptr->priority);
+			if (bf_licenses) {
+				sched_debug("%pJ is blocked on licenses. Stopping scheduling so license backfill can handle this",
+					    job_ptr);
+				break;
+			}
 			continue;
 		}
 
@@ -1936,7 +1998,6 @@ fail_this_part:	if (fail_by_part) {
 
 	if (job_ptr)
 		job_resv_clear_magnetic_flag(job_ptr);
-	save_last_part_update = last_part_update;
 	FREE_NULL_BITMAP(avail_node_bitmap);
 	avail_node_bitmap = save_avail_node_bitmap;
 	xfree(failed_parts);
@@ -2132,6 +2193,11 @@ extern int sort_job_queue2(void *x, void *y)
 	if (job_rec1->array_task_id > job_rec2->array_task_id)
 		return 1;
 
+	/* Magnetic or multi-reservation. */
+	if (job_rec1->resv_ptr && job_rec2->resv_ptr &&
+	    (job_rec1->resv_ptr->start_time > job_rec2->resv_ptr->start_time))
+		return 1;
+
 	return -1;
 }
 
@@ -2214,7 +2280,7 @@ static batch_job_launch_msg_t *_build_launch_job_msg(job_record_t *job_ptr,
 						  job_ptr->spank_job_env);
 	launch_msg_ptr->environment = get_job_env(job_ptr,
 						  &launch_msg_ptr->envc);
-	if (launch_msg_ptr->environment == NULL) {
+	if (!launch_msg_ptr->container && !launch_msg_ptr->environment) {
 		fail_why = "Unable to load job environment";
 		goto job_failed;
 	}
@@ -2610,20 +2676,11 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 		return SLURM_ERROR;
 	}
 
-	memset(&cred_arg, 0, sizeof(slurm_cred_arg_t));
+	setup_cred_arg(&cred_arg, job_ptr);
 
 	cred_arg.step_id.job_id = launch_msg_ptr->job_id;
 	cred_arg.step_id.step_id = SLURM_BATCH_SCRIPT;
 	cred_arg.step_id.step_het_comp = NO_VAL;
-	cred_arg.uid       = launch_msg_ptr->uid;
-	cred_arg.gid       = launch_msg_ptr->gid;
-	cred_arg.pw_name   = launch_msg_ptr->user_name;
-	cred_arg.x11       = job_ptr->details->x11;
-	cred_arg.job_constraints     = job_ptr->details->features;
-	cred_arg.job_hostlist        = job_resrcs_ptr->nodes;
-	cred_arg.job_core_bitmap     = job_resrcs_ptr->core_bitmap;
-	cred_arg.job_core_spec       = job_ptr->details->core_spec;
-	cred_arg.job_mem_limit       = job_ptr->details->pn_min_memory;
 	if (job_resrcs_ptr->memory_allocated) {
 		int batch_inx = job_get_node_inx(
 			job_ptr->batch_host, job_ptr->node_bitmap);
@@ -2640,8 +2697,6 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 		cred_arg.job_mem_alloc_rep_count[0] = 1;
 		cred_arg.job_mem_alloc_size = 1;
 	}
-	cred_arg.job_nhosts          = job_resrcs_ptr->nhosts;
-	cred_arg.job_gres_list       = job_ptr->gres_list_alloc;
 /*	cred_arg.step_gres_list      = NULL; */
 
 	xassert(job_ptr->batch_host);
@@ -2649,14 +2704,9 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 	cred_arg.step_core_bitmap    = job_resrcs_ptr->core_bitmap;
 	cred_arg.step_mem_limit      = job_ptr->details->pn_min_memory;
 
-	cred_arg.cores_per_socket    = job_resrcs_ptr->cores_per_socket;
-	cred_arg.sockets_per_node    = job_resrcs_ptr->sockets_per_node;
-	cred_arg.sock_core_rep_count = job_resrcs_ptr->sock_core_rep_count;
-
-	cred_arg.selinux_context = job_ptr->selinux_context;
-
 	launch_msg_ptr->cred = slurm_cred_create(slurmctld_config.cred_ctx,
-						 &cred_arg, protocol_version);
+						 &cred_arg, false,
+						 protocol_version);
 	xfree(cred_arg.job_mem_alloc);
 	xfree(cred_arg.job_mem_alloc_rep_count);
 
@@ -3959,15 +4009,13 @@ static int _part_weight_sort(void *x, void *y)
 }
 
 /*
- * Determine if a pending job will run using only the specified nodes
- * (in job_desc_msg->req_nodes), build response message and return
- * SLURM_SUCCESS on success. Otherwise return an error code. Caller
- * must free response message
+ * Determine if a pending job will run using only the specified nodes, build
+ * response message and return SLURM_SUCCESS on success. Otherwise return an
+ * error code. Caller must free response message.
  */
-extern int job_start_data(job_desc_msg_t *job_desc_msg,
+extern int job_start_data(job_record_t *job_ptr,
 			  will_run_response_msg_t **resp)
 {
-	job_record_t *job_ptr;
 	part_record_t *part_ptr;
 	bitstr_t *active_bitmap = NULL, *avail_bitmap = NULL;
 	bitstr_t *resv_bitmap = NULL;
@@ -3979,7 +4027,6 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	bool resv_overlap = false;
 	ListIterator iter = NULL;
 
-	job_ptr = find_job_record(job_desc_msg->job_id);
 	if (job_ptr == NULL)
 		return ESLURM_INVALID_JOB_ID;
 
@@ -4006,17 +4053,16 @@ next_part:
 		return ESLURM_INVALID_PARTITION_NAME;
 	}
 
-	if ((job_desc_msg->req_nodes == NULL) ||
-	    (job_desc_msg->req_nodes[0] == '\0')) {
+	if (job_ptr->details->req_nodes && job_ptr->details->req_nodes[0]) {
+		if (node_name2bitmap(job_ptr->details->req_nodes, false,
+				     &avail_bitmap) != 0) {
+			if (iter)
+				list_iterator_destroy(iter);
+			return ESLURM_INVALID_NODE_NAME;
+		}
+	} else {
 		/* assume all nodes available to job for testing */
-		avail_bitmap = bit_alloc(node_record_count);
-		bit_nset(avail_bitmap, 0, (node_record_count - 1));
-	} else if (node_name2bitmap(job_desc_msg->req_nodes, false,
-				    &avail_bitmap) != 0) {
-		/* Don't need to check for each partition */
-		if (iter)
-			list_iterator_destroy(iter);
-		return ESLURM_INVALID_NODE_NAME;
+		avail_bitmap = node_conf_get_active_bitmap();
 	}
 
 	/* Consider only nodes in this job's partition */
@@ -4218,7 +4264,8 @@ extern bitstr_t *node_features_reboot(job_record_t *job_ptr)
 	if (feature_node_bitmap == NULL) /* No nodes under NodeFeaturesPlugin */
 		return NULL;
 
-	reboot_features = node_features_g_job_xlate(job_ptr->details->features);
+	reboot_features = node_features_g_job_xlate(
+		job_ptr->details->features_use);
 	tmp_bitmap = build_active_feature_bitmap2(reboot_features);
 	xfree(reboot_features);
 	boot_node_bitmap = bit_copy(job_ptr->node_bitmap);
@@ -4234,39 +4281,6 @@ extern bitstr_t *node_features_reboot(job_record_t *job_ptr)
 	return boot_node_bitmap;
 }
 
-/* Determine if node boot required for this job
- * IN job_ptr - pointer to job that will be initiated
- * IN node_bitmap - nodes to be allocated
- * RET - true if reboot required
- */
-extern bool node_features_reboot_test(job_record_t *job_ptr,
-				      bitstr_t *node_bitmap)
-{
-	bitstr_t *active_bitmap = NULL, *boot_node_bitmap = NULL;
-	int node_cnt;
-
-	if (job_ptr->reboot)
-		return true;
-
-	if ((node_features_g_count() == 0) ||
-	    !node_features_g_user_update(job_ptr->user_id))
-		return false;
-
-	build_active_feature_bitmap(job_ptr, node_bitmap, &active_bitmap);
-	if (active_bitmap == NULL)	/* All have desired features */
-		return false;
-
-	boot_node_bitmap = bit_copy(node_bitmap);
-	bit_and_not(boot_node_bitmap, active_bitmap);
-	node_cnt = bit_set_count(boot_node_bitmap);
-	FREE_NULL_BITMAP(active_bitmap);
-	FREE_NULL_BITMAP(boot_node_bitmap);
-
-	if (node_cnt == 0)
-		return false;
-	return true;
-}
-
 /*
  * reboot_job_nodes - Reboot the compute nodes allocated to a job.
  * Also change the modes of KNL nodes for node_features/knl_generic plugin.
@@ -4274,25 +4288,102 @@ extern bool node_features_reboot_test(job_record_t *job_ptr,
  * RET SLURM_SUCCESS(0) or error code
  */
 #ifdef HAVE_FRONT_END
-extern int reboot_job_nodes(job_record_t *job_ptr)
+extern void reboot_job_nodes(job_record_t *job_ptr)
 {
-	return SLURM_SUCCESS;
+	return;
 }
 #else
-/* NOTE: See power_job_reboot() in power_save.c for similar logic */
-extern int reboot_job_nodes(job_record_t *job_ptr)
+static void _send_reboot_msg(bitstr_t *node_bitmap, char *features,
+			     uint16_t protocol_version)
 {
-	int rc = SLURM_SUCCESS;
-	int i, i_first, i_last;
 	agent_arg_t *reboot_agent_args = NULL;
 	reboot_msg_t *reboot_msg;
+	hostlist_t hostlist;
+
+	reboot_agent_args = xmalloc(sizeof(agent_arg_t));
+	reboot_agent_args->msg_type = REQUEST_REBOOT_NODES;
+	reboot_agent_args->retry = 0;
+	reboot_agent_args->node_count = 0;
+	reboot_agent_args->protocol_version = protocol_version;
+
+	if ((hostlist = bitmap2hostlist(node_bitmap))) {
+		reboot_agent_args->hostlist = hostlist;
+		reboot_agent_args->node_count = hostlist_count(hostlist);
+	}
+
+	reboot_msg = xmalloc(sizeof(reboot_msg_t));
+	slurm_init_reboot_msg(reboot_msg, false);
+	reboot_agent_args->msg_args = reboot_msg;
+	reboot_msg->features = xstrdup(features);
+
+	set_agent_arg_r_uid(reboot_agent_args, SLURM_AUTH_UID_ANY);
+	agent_queue_request(reboot_agent_args);
+}
+
+static void _do_reboot(bool power_save_on, bitstr_t *node_bitmap,
+		       job_record_t *job_ptr, char *reboot_features,
+		       uint16_t protocol_version)
+{
+	if (power_save_on)
+		power_job_reboot(node_bitmap, job_ptr, reboot_features);
+	else
+		_send_reboot_msg(node_bitmap, reboot_features,
+				 protocol_version);
+	if (get_log_level() >= LOG_LEVEL_DEBUG) {
+		char *nodes = bitmap2node_name(node_bitmap);
+		if (nodes) {
+			debug("%s: reboot nodes %s features %s",
+			      __func__, nodes,
+			      reboot_features ? "reboot_features" : "N/A");
+		} else {
+			error("%s: bitmap2nodename", __func__);
+		}
+		xfree(nodes);
+	}
+}
+
+static void _set_reboot_features_active(bitstr_t *node_bitmap,
+					char *reboot_features)
+{
+	int i, i_first, i_last;
+	node_record_t *node_ptr;
+
+	i_first = bit_ffs(node_bitmap);
+	if (i_first >= 0)
+		i_last = bit_fls(node_bitmap);
+	else
+		i_last = i_first - 1;
+
+	for (i = i_first; i <= i_last; i++) {
+		char *tmp_feature, *orig_features_act;
+
+		if (!bit_test(node_bitmap, i))
+			continue;
+		if (!(node_ptr = node_record_table_ptr[i]))
+			continue;
+		/* Point to node features, don't copy */
+		orig_features_act =
+			node_ptr->features_act ?
+			node_ptr->features_act : node_ptr->features;
+		tmp_feature = node_features_g_node_xlate(reboot_features,
+							 orig_features_act,
+							 node_ptr->features, i);
+		xfree(node_ptr->features_act);
+		node_ptr->features_act = tmp_feature;
+		(void) update_node_active_features(node_ptr->name,
+						   node_ptr->features_act,
+						   FEATURE_MODE_IND);
+	}
+}
+
+extern void reboot_job_nodes(job_record_t *job_ptr)
+{
+	int i, i_first, i_last;
 	node_record_t *node_ptr;
 	time_t now = time(NULL);
 	bitstr_t *boot_node_bitmap = NULL, *feature_node_bitmap = NULL;
-	char *nodes, *reboot_features = NULL;
+	char *reboot_features = NULL;
 	uint16_t protocol_version = SLURM_PROTOCOL_VERSION;
-	wait_boot_arg_t *wait_boot_arg;
-	pthread_t tid;
 	static bool power_save_on = false;
 	static time_t sched_update = 0;
 
@@ -4302,28 +4393,34 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 	}
 
 	if ((job_ptr->details == NULL) || (job_ptr->node_bitmap == NULL))
-		return SLURM_SUCCESS;
-	if (power_save_on)
-		return power_job_reboot(job_ptr);
-	if ((slurm_conf.reboot_program == NULL) ||
-	    (slurm_conf.reboot_program[0] == '\0'))
-		return SLURM_SUCCESS;
+		return;
+	if (!power_save_on &&
+	    ((slurm_conf.reboot_program == NULL) ||
+	     (slurm_conf.reboot_program[0] == '\0')))
+		return;
 
-/*
- *	See power_job_reboot() in power_save.c for similar logic used by
- *	node_features/knl_cray plugin.
- */
-	if (job_ptr->reboot) {
+	if (job_ptr->reboot)
 		boot_node_bitmap = bit_copy(job_ptr->node_bitmap);
-	} else {
+	else
 		boot_node_bitmap = node_features_reboot(job_ptr);
-		if (boot_node_bitmap == NULL)
-			return SLURM_SUCCESS;
+	if (boot_node_bitmap == NULL) {
+		/* launch_job() when all nodes have booted */
+		if (bit_overlap_any(power_node_bitmap, job_ptr->node_bitmap) ||
+		    bit_overlap_any(booting_node_bitmap,
+				    job_ptr->node_bitmap)) {
+			job_ptr->job_state |= JOB_CONFIGURING;
+			/* Reset job start time when nodes are booted */
+			job_ptr->job_state |= JOB_POWER_UP_NODE;
+			job_ptr->wait_all_nodes = 1;
+		}
+		return;
 	}
 
-	wait_boot_arg = xmalloc(sizeof(wait_boot_arg_t));
-	wait_boot_arg->job_id = job_ptr->job_id;
-	wait_boot_arg->node_bitmap = bit_alloc(node_record_count);
+	job_ptr->job_state |= JOB_CONFIGURING;
+	/* Reset job start time when nodes are booted */
+	job_ptr->job_state |= JOB_POWER_UP_NODE;
+	/* launch_job() when all nodes have booted */
+	job_ptr->wait_all_nodes = 1;
 
 	/* Modify state information for all nodes, KNL and others */
 	i_first = bit_ffs(boot_node_bitmap);
@@ -4334,21 +4431,28 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(boot_node_bitmap, i))
 			continue;
-		node_ptr = node_record_table_ptr + i;
+		if (!(node_ptr = node_record_table_ptr[i]))
+			continue;
 		if (protocol_version > node_ptr->protocol_version)
 			protocol_version = node_ptr->protocol_version;
+
+		if (IS_NODE_POWERED_DOWN(node_ptr)) {
+			node_ptr->node_state &= (~NODE_STATE_POWERED_DOWN);
+			clusteracct_storage_g_node_up(acct_db_conn, node_ptr,
+						      now);
+		}
 		node_ptr->node_state |= NODE_STATE_NO_RESPOND;
 		node_ptr->node_state |= NODE_STATE_POWERING_UP;
 		bit_clear(avail_node_bitmap, i);
+		bit_clear(power_node_bitmap, i);
 		bit_set(booting_node_bitmap, i);
-		bit_set(wait_boot_arg->node_bitmap, i);
 		node_ptr->boot_req_time = now;
 	}
 
-	if (job_ptr->details->features &&
+	if (job_ptr->details->features_use &&
 	    node_features_g_user_update(job_ptr->user_id)) {
 		reboot_features = node_features_g_job_xlate(
-			job_ptr->details->features);
+			job_ptr->details->features_use);
 		if (reboot_features)
 			feature_node_bitmap = node_features_g_get_node_bitmap();
 		if (feature_node_bitmap)
@@ -4368,159 +4472,37 @@ extern int reboot_job_nodes(job_record_t *job_ptr)
 
 	if (feature_node_bitmap) {
 		/* Reboot nodes to change KNL NUMA and/or MCDRAM mode */
-		reboot_agent_args = xmalloc(sizeof(agent_arg_t));
-		reboot_agent_args->msg_type = REQUEST_REBOOT_NODES;
-		reboot_agent_args->retry = 0;
-		reboot_agent_args->node_count = 0;
-		reboot_agent_args->protocol_version = protocol_version;
-		reboot_agent_args->hostlist = hostlist_create(NULL);
-		reboot_msg = xmalloc(sizeof(reboot_msg_t));
-		slurm_init_reboot_msg(reboot_msg, false);
-		reboot_agent_args->msg_args = reboot_msg;
-		reboot_msg->features = xstrdup(reboot_features);
-		for (i = i_first; i <= i_last; i++) {
-			if (!bit_test(feature_node_bitmap, i))
-				continue;
-			node_ptr = node_record_table_ptr + i;
-			hostlist_push_host(reboot_agent_args->hostlist,
-					   node_ptr->name);
-			reboot_agent_args->node_count++;
-		}
-		nodes = bitmap2node_name(feature_node_bitmap);
-		if (nodes) {
-			info("%s: reboot nodes %s features %s",
-			     __func__, nodes, reboot_features);
-		} else {
-			error("%s: bitmap2nodename", __func__);
-			rc = SLURM_ERROR;
-		}
-		xfree(nodes);
-		set_agent_arg_r_uid(reboot_agent_args, SLURM_AUTH_UID_ANY);
-		agent_queue_request(reboot_agent_args);
+		_do_reboot(power_save_on, feature_node_bitmap, job_ptr,
+			   reboot_features, protocol_version);
+
+		/*
+		 * Update node features now to avoid a race where a
+		 * second job may request that this node gets rebooted
+		 * (in order to get a new active feature) *after* the
+		 * first reboot request but *before* slurmd actually
+		 * starts up. If that would happen then the second job
+		 * would stay configuring forever, waiting for the node
+		 * to reboot even though the node already rebooted.
+		 *
+		 * By setting the node's active features right now, any
+		 * other job that wants that active feature can be
+		 * scheduled onto this node, which will also already be
+		 * rebooting, so those other jobs won't send additional
+		 * reboot requests to change the feature.
+		 */
+		_set_reboot_features_active(feature_node_bitmap,
+					    reboot_features);
 	}
 
 	if (boot_node_bitmap) {
 		/* Reboot nodes with no feature changes */
-		reboot_agent_args = xmalloc(sizeof(agent_arg_t));
-		reboot_agent_args->msg_type = REQUEST_REBOOT_NODES;
-		reboot_agent_args->retry = 0;
-		reboot_agent_args->node_count = 0;
-		reboot_agent_args->protocol_version = protocol_version;
-		reboot_agent_args->hostlist = hostlist_create(NULL);
-		reboot_msg = xmalloc(sizeof(reboot_msg_t));
-		slurm_init_reboot_msg(reboot_msg, false);
-		reboot_agent_args->msg_args = reboot_msg;
-		/* reboot_msg->features = NULL; */
-		for (i = i_first; i <= i_last; i++) {
-			if (!bit_test(boot_node_bitmap, i))
-				continue;
-			node_ptr = node_record_table_ptr + i;
-			hostlist_push_host(reboot_agent_args->hostlist,
-					   node_ptr->name);
-			reboot_agent_args->node_count++;
-		}
-		nodes = bitmap2node_name(boot_node_bitmap);
-		if (nodes) {
-			info("%s: reboot nodes %s", __func__, nodes);
-		} else {
-			error("%s: bitmap2nodename", __func__);
-			rc = SLURM_ERROR;
-		}
-		xfree(nodes);
-		set_agent_arg_r_uid(reboot_agent_args, SLURM_AUTH_UID_ANY);
-		agent_queue_request(reboot_agent_args);
+		_do_reboot(power_save_on, boot_node_bitmap, job_ptr, NULL,
+			   protocol_version);
 	}
 
-	job_ptr->details->prolog_running++;
-	slurm_thread_create(&tid, _wait_boot, wait_boot_arg);
+	xfree(reboot_features);
 	FREE_NULL_BITMAP(boot_node_bitmap);
 	FREE_NULL_BITMAP(feature_node_bitmap);
-	xfree(reboot_features);
-
-	return rc;
-}
-
-static void *_wait_boot(void *arg)
-{
-	wait_boot_arg_t *wait_boot_arg = (wait_boot_arg_t *) arg;
-	job_record_t *job_ptr;
-	bitstr_t *boot_node_bitmap = wait_boot_arg->node_bitmap;
-	/* Locks: Write jobs; read nodes */
-	slurmctld_lock_t job_write_lock = {
-		READ_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
-	/* Locks: Write jobs; write nodes */
-	slurmctld_lock_t node_write_lock = {
-		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
-	node_record_t *node_ptr;
-	time_t start_time = time(NULL);
-	int i, total_node_cnt, wait_node_cnt;
-	bool job_timeout = false;
-
-	/*
-	 * This adds the process to the list, we don't need the return pointer
-	 */
-	(void)track_script_rec_add(wait_boot_arg->job_id, 0, pthread_self());
-
-	do {
-		sleep(5);
-		total_node_cnt = wait_node_cnt = 0;
-		lock_slurmctld(job_write_lock);
-		if (!(job_ptr = find_job_record(wait_boot_arg->job_id))) {
-			error("%s: JobId=%u vanished while waiting for node boot",
-			      __func__, wait_boot_arg->job_id);
-			unlock_slurmctld(job_write_lock);
-			track_script_remove(pthread_self());
-			return NULL;
-		}
-		if (IS_JOB_PENDING(job_ptr) ||	/* Job requeued or killed */
-		    IS_JOB_FINISHED(job_ptr) ||
-		    !job_ptr->node_bitmap) {
-			verbose("%pJ no longer waiting for node boot",
-				job_ptr);
-			unlock_slurmctld(job_write_lock);
-			track_script_remove(pthread_self());
-			return NULL;
-		}
-		for (i = 0, node_ptr = node_record_table_ptr;
-		     i < node_record_count; i++, node_ptr++) {
-			if (!bit_test(boot_node_bitmap, i))
-				continue;
-			total_node_cnt++;
-			if (node_ptr->boot_time < start_time)
-				wait_node_cnt++;
-		}
-		if (wait_node_cnt) {
-			debug("%pJ still waiting for %d of %d nodes to boot",
-			      job_ptr, wait_node_cnt, total_node_cnt);
-		} else {
-			info("%pJ boot complete for all %d nodes",
-			     job_ptr, total_node_cnt);
-		}
-		i = (int) difftime(time(NULL), start_time);
-		if (i >= slurm_conf.resume_timeout) {
-			error("%pJ timeout waiting for node %d of %d boots",
-			      job_ptr, wait_node_cnt, total_node_cnt);
-			wait_node_cnt = 0;
-			job_timeout = true;
-		}
-		unlock_slurmctld(job_write_lock);
-	} while (wait_node_cnt);
-
-	lock_slurmctld(node_write_lock);
-	if (!(job_ptr = find_job_record(wait_boot_arg->job_id))) {
-		error("%s: missing JobId=%u after node_write_lock acquired",
-		      __func__, wait_boot_arg->job_id);
-	} else {
-		if (job_timeout)
-			(void) job_requeue(getuid(), job_ptr->job_id, NULL, false, 0);
-		prolog_running_decr(job_ptr);
-	}
-	unlock_slurmctld(node_write_lock);
-
-	FREE_NULL_BITMAP(wait_boot_arg->node_bitmap);
-	xfree(arg);
-	track_script_remove(pthread_self());
-	return NULL;
 }
 #endif
 
@@ -4652,31 +4634,49 @@ extern List feature_list_copy(List feature_list_src)
  * OUT details->feature_list
  * RET error code
  */
-extern int build_feature_list(job_record_t *job_ptr)
+extern int build_feature_list(job_record_t *job_ptr, bool prefer)
 {
 	struct job_details *detail_ptr = job_ptr->details;
 	char *tmp_requested, *str_ptr, *feature = NULL;
+	char *features;
+	List *feature_list;
+	int feature_err;
 	int bracket = 0, count = 0, i, paren = 0, rc;
 	int brack_set_count = 0;
 	bool fail = false;
 	job_feature_t *feat;
 	bool can_reboot;
 
-	if (!detail_ptr || !detail_ptr->features) {	/* no constraints */
+	/* no hard constraints */
+	if (!detail_ptr || (!detail_ptr->features && !detail_ptr->prefer)) {
 		if (job_ptr->batch_features)
 			return ESLURM_BATCH_CONSTRAINT;
 		return SLURM_SUCCESS;
 	}
-	if (detail_ptr->feature_list)		/* already processed */
+
+	if (prefer) {
+		features = detail_ptr->prefer;
+		feature_list = &detail_ptr->prefer_list;
+		feature_err = ESLURM_INVALID_PREFER;
+	} else {
+		features = detail_ptr->features;
+		feature_list = &detail_ptr->feature_list;
+		feature_err = ESLURM_INVALID_FEATURE;
+	}
+
+	if (!features) /* The other constraint is non NULL. */
+		return SLURM_SUCCESS;
+
+	if (*feature_list)		/* already processed */
 		return SLURM_SUCCESS;
 
 	/* Use of commas separator is a common error. Replace them with '&' */
-	while ((str_ptr = strstr(detail_ptr->features, ",")))
+	while ((str_ptr = strstr(features, ",")))
 		str_ptr[0] = '&';
 
 	can_reboot = node_features_g_user_update(job_ptr->user_id);
-	tmp_requested = xstrdup(detail_ptr->features);
-	detail_ptr->feature_list = list_create(feature_list_delete);
+	tmp_requested = xstrdup(features);
+	*feature_list = list_create(feature_list_delete);
 	for (i = 0; ; i++) {
 		if (tmp_requested[i] == '*') {
 			tmp_requested[i] = '\0';
@@ -4704,7 +4704,7 @@ extern int build_feature_list(job_record_t *job_ptr)
 				feat->op_code = FEATURE_OP_XAND;
 			else
 				feat->op_code = FEATURE_OP_AND;
-			list_append(detail_ptr->feature_list, feat);
+			list_append(*feature_list, feat);
 			feature = NULL;
 			count = 0;
 		} else if (tmp_requested[i] == '|') {
@@ -4738,7 +4738,7 @@ extern int build_feature_list(job_record_t *job_ptr)
 				feat->op_code = FEATURE_OP_XOR;
 			else
 				feat->op_code = FEATURE_OP_OR;
-			list_append(detail_ptr->feature_list, feat);
+			list_append(*feature_list, feat);
 			feature = NULL;
 			count = 0;
 		} else if (tmp_requested[i] == '[') {
@@ -4756,13 +4756,13 @@ extern int build_feature_list(job_record_t *job_ptr)
 			if ((feature == NULL) || (bracket == 0)) {
 				if (job_ptr->job_id) {
 					verbose("%pJ invalid constraint %s",
-						job_ptr, detail_ptr->features);
+						job_ptr, features);
 				} else {
 					verbose("Reservation invalid constraint %s",
-						detail_ptr->features);
+						features);
 				}
 				xfree(tmp_requested);
-				return ESLURM_INVALID_FEATURE;
+				return feature_err;
 			}
 			bracket--;
 		} else if (tmp_requested[i] == '(') {
@@ -4788,7 +4788,7 @@ extern int build_feature_list(job_record_t *job_ptr)
 				feat->count = count;
 				feat->paren = paren;
 				feat->op_code = FEATURE_OP_END;
-				list_append(detail_ptr->feature_list, feat);
+				list_append(*feature_list, feat);
 			}
 			break;
 		} else if (feature == NULL) {
@@ -4799,10 +4799,10 @@ extern int build_feature_list(job_record_t *job_ptr)
 	if (fail) {
 		if (job_ptr->job_id) {
 			verbose("%pJ invalid constraint %s",
-				job_ptr, detail_ptr->features);
+				job_ptr, features);
 		} else {
 			verbose("Reservation invalid constraint %s",
-				detail_ptr->features);
+				features);
 		}
 		return ESLURM_INVALID_FEATURE;
 	}
@@ -4819,31 +4819,38 @@ extern int build_feature_list(job_record_t *job_ptr)
 	if (bracket != 0) {
 		if (job_ptr->job_id) {
 			verbose("%pJ constraint has unbalanced brackets: %s",
-				job_ptr, detail_ptr->features);
+				job_ptr, features);
 		} else {
 			verbose("Reservation constraint has unbalanced brackets: %s",
-				detail_ptr->features);
+				features);
 		}
 		return ESLURM_INVALID_FEATURE;
 	}
 	if (paren != 0) {
 		if (job_ptr->job_id) {
 			verbose("%pJ constraint has unbalanced parenthesis: %s",
-				job_ptr, detail_ptr->features);
+				job_ptr, features);
 		} else {
 			verbose("Reservation constraint has unbalanced parenthesis: %s",
-				detail_ptr->features);
+				features);
 		}
-		return ESLURM_INVALID_FEATURE;
+		return feature_err;
 	}
 
 	if (job_ptr->batch_features) {
+		detail_ptr->feature_list_use = *feature_list;
+		detail_ptr->features_use = features;
 		rc = _valid_batch_features(job_ptr, can_reboot);
+		detail_ptr->feature_list_use = NULL;
+		detail_ptr->features_use = NULL;
 		if (rc != SLURM_SUCCESS)
 			return rc;
 	}
 
-	return _valid_feature_list(job_ptr, can_reboot);
+	rc = _valid_feature_list(job_ptr, *feature_list, can_reboot);
+	if (rc == ESLURM_INVALID_FEATURE)
+		return feature_err;
+	return rc;
 }
 
 /*
@@ -4876,7 +4883,7 @@ static int _valid_batch_features(job_record_t *job_ptr, bool can_reboot)
 
 	if (!job_ptr->batch_features)
 		return SLURM_SUCCESS;
-	if (!job_ptr->details || !job_ptr->details->feature_list)
+	if (!job_ptr->details || !job_ptr->details->feature_list_use)
 		return ESLURM_BATCH_CONSTRAINT;
 
 	if (strchr(job_ptr->batch_features, '|'))
@@ -4884,7 +4891,7 @@ static int _valid_batch_features(job_record_t *job_ptr, bool can_reboot)
 	tmp = xstrdup(job_ptr->batch_features);
 	tok = strtok_r(tmp, "&|", &save_ptr);
 	while (tok) {
-		if (!list_find_first(job_ptr->details->feature_list,
+		if (!list_find_first(job_ptr->details->feature_list_use,
 				     _match_job_feature, tok)) {
 			rc = ESLURM_BATCH_CONSTRAINT;
 			break;
@@ -4907,9 +4914,11 @@ static int _valid_batch_features(job_record_t *job_ptr, bool can_reboot)
 	return rc;
 }
 
-static int _valid_feature_list(job_record_t *job_ptr, bool can_reboot)
+static int _valid_feature_list(job_record_t *job_ptr, List feature_list,
+			       bool can_reboot)
 {
-	List feature_list = job_ptr->details->feature_list;
+	static time_t sched_update = 0;
+	static bool ignore_prefer_val = false;
 	ListIterator feat_iter;
 	job_feature_t *feat_ptr;
 	char *buf = NULL;
@@ -4923,6 +4932,15 @@ static int _valid_feature_list(job_record_t *job_ptr, bool can_reboot)
 		else
 			debug2("Reservation feature list is empty");
 		return rc;
+	}
+
+	if (sched_update != slurm_conf.last_update) {
+		sched_update = slurm_conf.last_update;
+		if (xstrcasestr(slurm_conf.sched_params,
+				"ignore_prefer_validation"))
+			ignore_prefer_val = true;
+		else
+			ignore_prefer_val = false;
 	}
 
 	feat_iter = list_iterator_create(feature_list);
@@ -4942,7 +4960,9 @@ static int _valid_feature_list(job_record_t *job_ptr, bool can_reboot)
 			xstrcat(buf, ")");
 			paren = feat_ptr->paren;
 		}
-		if (rc == SLURM_SUCCESS)
+		if (rc == SLURM_SUCCESS &&
+		    (!ignore_prefer_val ||
+		     (feature_list != job_ptr->details->prefer_list)))
 			rc = _valid_node_feature(feat_ptr->name, can_reboot);
 		if (feat_ptr->count)
 			xstrfmtcat(buf, "*%u", feat_ptr->count);
@@ -5085,49 +5105,6 @@ void cleanup_completing(job_record_t *job_ptr)
 	if (IS_JOB_COMPLETED(job_ptr))
 		fed_mgr_job_complete(job_ptr, job_ptr->exit_code,
 				     job_ptr->start_time);
-}
-
-/*
- * _waitpid_timeout()
- *
- *  Same as waitpid(2) but kill process group for pid after timeout secs.
- */
-int
-waitpid_timeout(const char *name, pid_t pid, int *pstatus, int timeout)
-{
-	int timeout_ms = 1000 * timeout; /* timeout in ms */
-	int max_delay = 1000;		 /* max delay between waitpid calls */
-	int delay = 10;			 /* initial delay */
-	int rc;
-	int options = WNOHANG;
-
-	if (timeout <= 0 || timeout == NO_VAL16)
-		options = 0;
-
-	while ((rc = waitpid (pid, pstatus, options)) <= 0) {
-		if (rc < 0) {
-			if (errno == EINTR)
-				continue;
-			error("waidpid: %m");
-			return -1;
-		}
-		else if (timeout_ms <= 0) {
-			info("%s%stimeout after %ds: killing pgid %d",
-			     name != NULL ? name : "",
-			     name != NULL ? ": " : "",
-			     timeout, pid);
-			killpg(pid, SIGKILL);
-			options = 0;
-		}
-		else {
-			(void) poll(NULL, 0, delay);
-			timeout_ms -= delay;
-			delay = MIN (timeout_ms, MIN(max_delay, delay*2));
-		}
-	}
-
-	killpg(pid, SIGKILL);  /* kill children too */
-	return pid;
 }
 
 void main_sched_init(void)

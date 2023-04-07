@@ -146,7 +146,9 @@ extern int bind_operation_handler(const char *str_path,
 		goto exists;
 
 	/* add new path */
-	debug4("%s: new path %s with tag %d", __func__, str_path, path_tag);
+	debug4("%s: new path %s with path_tag %d callback_tag %d",
+	       __func__, str_path, path_tag, callback_tag);
+	print_path_tag_methods(openapi_state, path_tag);
 
 	path = xmalloc(sizeof(*path));
 	path->magic = MAGIC;
@@ -244,8 +246,13 @@ static int _resolve_path(on_http_request_args_t *args, int *path_tag,
 			args,
 			"Unable find requested URL. Please view /openapi/v3 for API reference.",
 			HTTP_STATUS_CODE_ERROR_NOT_FOUND, NULL);
-
-	return SLURM_SUCCESS;
+	else if (*path_tag == -2)
+		return _operations_router_reject(
+			args,
+			"Requested REST method is not defined at URL. Please view /openapi/v3 for API reference.",
+			HTTP_STATUS_CODE_ERROR_METHOD_NOT_ALLOWED, NULL);
+	else
+		return SLURM_SUCCESS;
 }
 
 static int _get_query(on_http_request_args_t *args, data_t **query,
@@ -524,7 +531,7 @@ extern int operations_router(on_http_request_args_t *args)
 
 	params = data_set_dict(data_new());
 	if ((rc = _resolve_path(args, &path_tag, params)))
-	    return rc;
+		goto cleanup;
 
 	/*
 	 * Hold read lock while the callback is executing to avoid

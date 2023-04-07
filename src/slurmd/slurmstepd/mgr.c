@@ -85,9 +85,9 @@
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/plugstack.h"
 #include "src/common/reverse_tree.h"
+#include "src/common/select.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -99,6 +99,7 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+#include "src/common/x11_util.h"
 
 #include "src/slurmd/slurmd/slurmd.h"
 
@@ -106,7 +107,6 @@
 #include "src/slurmd/common/fname.h"
 #include "src/slurmd/common/job_container_plugin.h"
 #include "src/slurmd/common/proctrack.h"
-#include "src/slurmd/common/run_script.h"
 #include "src/slurmd/common/set_oomadj.h"
 #include "src/slurmd/common/slurmd_cgroup.h"
 #include "src/slurmd/common/task_plugin.h"
@@ -167,7 +167,7 @@ static int sig_array[] = {SIGTERM, 0};
 static bool _access(const char *path, int modes, uid_t uid,
 		    int ngids, gid_t *gids);
 static void _send_launch_failure(launch_tasks_request_msg_t *,
-				 slurm_addr_t *, uid_t, int, uint16_t);
+				 slurm_addr_t *, int, uint16_t);
 static int  _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized);
 static int  _become_user(stepd_step_rec_t *job, struct priv_state *ps);
 static void  _set_prio_process (stepd_step_rec_t *job);
@@ -205,8 +205,7 @@ static int    _send_complete_batch_script_msg(stepd_step_rec_t *job,
  */
 extern stepd_step_rec_t *
 mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
-		       uid_t cli_uid, slurm_addr_t *self,
-		       uint16_t protocol_version)
+		       slurm_addr_t *self, uint16_t protocol_version)
 {
 	stepd_step_rec_t *job = NULL;
 
@@ -217,8 +216,7 @@ mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
 		 * reset in _send_launch_failure.
 		 */
 		int fail = errno;
-		_send_launch_failure(msg, cli, cli_uid, errno,
-				     protocol_version);
+		_send_launch_failure(msg, cli, errno, protocol_version);
 		errno = fail;
 		return NULL;
 	}
@@ -259,8 +257,9 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 		if (!max_retry)
 			max_retry = (nnodes / 1024) + 5;
 
-		debug("%s: %d/%d failed to send msg type %u: %m",
-		      __func__, retry, max_retry, resp_msg->msg_type);
+		debug("%s: %d/%d failed to send msg type %s: %m",
+		      __func__, retry, max_retry,
+		      rpc_num2string(resp_msg->msg_type));
 
 		if (retry >= max_retry)
 			break;
@@ -583,19 +582,6 @@ claim:
 
 	debug2("Leaving  _setup_normal_io");
 	return rc;
-}
-
-static int
-_setup_user_managed_io(stepd_step_rec_t *job)
-{
-	srun_info_t *srun;
-
-	if ((srun = list_peek(job->sruns)) == NULL) {
-		error("_setup_user_managed_io: no clients!");
-		return SLURM_ERROR;
-	}
-
-	return user_managed_io_client_connect(job->node_tasks, srun, job->task);
 }
 
 static void
@@ -922,12 +908,43 @@ static void _set_job_state(stepd_step_rec_t *job, slurmstepd_state_t new_state)
 	slurm_mutex_unlock(&job->state_mutex);
 }
 
+static bool _need_join_container()
+{
+	/*
+	 * To avoid potential problems with the job_container/tmpfs and
+	 * home_xauthority, don't join the container to create the xauthority
+	 * file when it is set.
+	 */
+	if ((xstrcasestr(slurm_conf.job_container_plugin, "tmpfs")) &&
+	    (!xstrcasestr(slurm_conf.x11_params, "home_xauthority"))) {
+		return true;
+	}
+
+	return false;
+}
+
+static void _shutdown_x11_forward(stepd_step_rec_t *job)
+{
+	struct priv_state sprivs = { 0 };
+
+	if (_drop_privileges(job, true, &sprivs, false) < 0) {
+		error("%s: Unable to drop privileges", __func__);
+		return;
+	}
+
+	if (shutdown_x11_forward(job) != SLURM_SUCCESS)
+		error("%s: x11 forward shutdown failed", __func__);
+
+	if (_reclaim_privileges(&sprivs) < 0)
+		error("%s: Unable to reclaim privileges", __func__);
+}
+
 static void *_x11_signal_handler(void *arg)
 {
 	stepd_step_rec_t *job = (stepd_step_rec_t *) arg;
-	struct priv_state sprivs = { 0 };
-	int sig;
+	int sig, status;
 	sigset_t set;
+	pid_t cpid, pid;
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -940,19 +957,62 @@ static void *_x11_signal_handler(void *arg)
 		switch (sig) {
 		case SIGTERM:	/* kill -15 */
 			debug("Terminate signal (SIGTERM) received");
-			if (_drop_privileges(job, true, &sprivs, false) < 0) {
-				error("Unable to drop privileges");
+			if (!_need_join_container()) {
+				_shutdown_x11_forward(job);
 				return NULL;
 			}
-			shutdown_x11_forward(job);
-			if (_reclaim_privileges(&sprivs) < 0)
-				error("Unable to reclaim privileges");
-			return NULL;	/* Normal termination */
-			break;
+			if ((cpid = fork()) == 0) {
+				if (container_g_join(job->step_id.job_id,
+						     job->uid) !=
+				    SLURM_SUCCESS) {
+					error("%s: cannot join container",
+					      __func__);
+					_exit(1);
+				}
+				_shutdown_x11_forward(job);
+				_exit(0);
+			} else if (cpid < 0) {
+				error("%s: fork: %m", __func__);
+			} else {
+				pid = waitpid(cpid, &status, 0);
+				if (pid < 0)
+					error("%s: waitpid failed: %m",
+					      __func__);
+				else if (!WIFEXITED(status))
+					error("%s: child terminated abnormally",
+					      __func__);
+				else if (WEXITSTATUS(status))
+					error("%s: child returned non-zero",
+					      __func__);
+			}
+			return NULL;
 		default:
 			error("Invalid signal (%d) received", sig);
 		}
 	}
+}
+
+static int _set_xauthority(stepd_step_rec_t *job)
+{
+	struct priv_state sprivs = { 0 };
+
+	if (_drop_privileges(job, true, &sprivs, false) < 0) {
+		error("%s: Unable to drop privileges before xauth", __func__);
+		return SLURM_ERROR;
+	}
+
+	if (x11_set_xauth(job->x11_xauthority, job->x11_magic_cookie,
+			  job->x11_display)) {
+		error("%s: failed to run xauth", __func__);
+		return SLURM_ERROR;
+	}
+
+	if (_reclaim_privileges(&sprivs) < 0) {
+		error("%s: Unable to reclaim privileges after xauth", __func__);
+		return SLURM_ERROR;
+	}
+
+	return SLURM_SUCCESS;
 }
 
 static int _spawn_job_container(stepd_step_rec_t *job)
@@ -987,7 +1047,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	}
 	debug2("%s: After call to spank_init()", __func__);
 
-	set_oom_adj(0);	/* the tasks may be killed by OOM */
 	if (task_g_pre_setuid(job)) {
 		error("%s: Failed to invoke task plugins: one of "
 		      "task_p_pre_setuid functions returned error", __func__);
@@ -1022,12 +1081,54 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 		      job->x11_xauthority);
 	}
 
+	/*
+	 * When using job_container/tmpfs we need to get into
+	 * the correct namespace or .Xauthority won't be visible
+	 * in /tmp from inside the job.
+	 */
+	if (job->x11) {
+		if (_need_join_container()) {
+			/*
+			 * The fork is necessary because we cannot join a
+			 * namespace if we are multithreaded. Also we need to
+			 * wait for the child to end before proceeding or there
+			 * can be a timing race with srun starting X11 apps very
+			 * fast.
+			 */
+			pid = fork();
+			if (pid == 0) {
+				if (container_g_join(jobid, job->uid) !=
+				    SLURM_SUCCESS)
+					_exit(1);
+				_exit(_set_xauthority(job));
+			} else if (pid < 0) {
+				error("fork: %m");
+				rc = SLURM_ERROR;
+			}
+			if ((waitpid(pid, &status, 0) != pid) ||
+			    WEXITSTATUS(status)) {
+				error("%s: Xauthority setup failed", __func__);
+				rc = SLURM_ERROR;
+			}
+		} else {
+			rc = _set_xauthority(job);
+		}
+
+		if (rc != SLURM_SUCCESS) {
+			_set_job_state(job, SLURMSTEPD_STEP_ENDING);
+			close_slurmd_conn();
+			goto fail1;
+		}
+	}
+
 	pid = fork();
 	if (pid == 0) {
 		setpgid(0, 0);
 		setsid();
+		set_oom_adj(0);	/* the tasks may be killed by OOM */
 		acct_gather_profile_g_child_forked();
 		_unblock_signals();
+
 		/*
 		 * Need to exec() something for proctrack/linuxproc to
 		 * work, it will not keep a process named "slurmstepd"
@@ -1129,8 +1230,10 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	task_g_post_step(job);
 
 fail1:
-	if (x11_signal_handler_thread)
+	if (x11_signal_handler_thread) {
 		(void) pthread_kill(x11_signal_handler_thread, SIGTERM);
+		pthread_join(x11_signal_handler_thread, NULL);
+	}
 
 	debug2("%s: Before call to spank_fini()", __func__);
 	if (spank_fini(job) < 0)
@@ -1159,6 +1262,7 @@ job_manager(stepd_step_rec_t *job)
 {
 	int  rc = SLURM_SUCCESS;
 	bool io_initialized = false;
+	char *oom_val_str;
 
 	debug3("Entered job_manager for %ps pid=%d",
 	       &job->step_id, job->jmgr_pid);
@@ -1167,6 +1271,15 @@ job_manager(stepd_step_rec_t *job)
 	if (prctl(PR_SET_DUMPABLE, 1) < 0)
 		debug ("Unable to set dumpable to 1");
 #endif /* PR_SET_DUMPABLE */
+
+	/*
+	 * Set oom_score_adj of this slurmstepd to -1000 to avoid OOM killing
+	 * us. If we were killed at this pont due to other steps OOMing, no
+	 * cleanup would happen, leaving for example cgroup stray directories if
+	 * cgroup plugins were initialized.
+	 */
+	set_oom_adj(-1000);
+	debug("Setting slurmstepd(%d) oom_score_adj to -1000", getpid());
 
 	/*
 	 * Run acct_gather_conf_init() now so we don't drop permissions on any
@@ -1187,9 +1300,26 @@ job_manager(stepd_step_rec_t *job)
 		rc = SLURM_PLUGIN_NAME_INVALID;
 		goto fail1;
 	}
+
+	/*
+	 * Readjust this slurmstepd oom_score_adj now that we've loaded the
+	 * task plugin. If the environment variable SLURMSTEPD_OOM_ADJ is set
+	 * and is a valid number (from -1000 to 1000) set the score to that
+	 * value. Note that if the value is -1000 we will do nothing as that was
+	 * already done before.
+	 */
+	if ((oom_val_str = getenv("SLURMSTEPD_OOM_ADJ"))) {
+		int oom_val = atoi(oom_val_str);
+		if ((oom_val > -1000) && (oom_val <= 1000)) {
+			debug("Setting slurmstepd oom_score_adj from env to %d",
+			      oom_val);
+			set_oom_adj(oom_val);
+		}
+	}
+
 	if (!job->batch && (job->step_id.step_id != SLURM_EXTERN_CONT) &&
 	    (job->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
-	    (mpi_hook_slurmstepd_init(&job->env) != SLURM_SUCCESS)) {
+	    (mpi_process_env(&job->env) != SLURM_SUCCESS)) {
 		rc = SLURM_MPI_PLUGIN_NAME_INVALID;
 		goto fail1;
 	}
@@ -1229,8 +1359,8 @@ job_manager(stepd_step_rec_t *job)
 
 	/* fork necessary threads for MPI */
 	if (!job->batch && (job->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
-	    (mpi_hook_slurmstepd_prefork(job, &job->env) != SLURM_SUCCESS)) {
-		error("Failed mpi_hook_slurmstepd_prefork");
+	    (mpi_g_slurmstepd_prefork(job, &job->env) != SLURM_SUCCESS)) {
+		error("Failed mpi_g_slurmstepd_prefork");
 		rc = SLURM_ERROR;
 		goto fail3;
 	}
@@ -1347,8 +1477,7 @@ fail2:
 	/*
 	 * Wait for io thread to complete (if there is one)
 	 */
-	if (!job->batch && io_initialized &&
-	    ((job->flags & LAUNCH_USER_MANAGED_IO) == 0))
+	if (!job->batch && io_initialized)
 		_wait_for_io(job);
 
 	/*
@@ -1432,20 +1561,24 @@ static int _pre_task_child_privileged(
 	if (_reclaim_privileges(sp) < 0)
 		return SLURM_ERROR;
 
+	set_oom_adj(0); /* the tasks may be killed by OOM */
+
 #ifndef HAVE_NATIVE_CRAY
-	/* Add job's pid to job container */
+	if (!(job->flags & LAUNCH_NO_ALLOC)) {
+		/* Add job's pid to job container, if a normal job */
+		if (container_g_join(job->step_id.job_id, job->uid)) {
+			error("container_g_join failed: %u",
+			      job->step_id.job_id);
+			exit(1);
+		}
 
-	if (container_g_join(job->step_id.job_id, job->uid)) {
-		error("container_g_join failed: %u", job->step_id.job_id);
-		exit(1);
+		/*
+		 * tmpfs job container plugin changes the working directory
+		 * back to root working directory, so change it back to users
+		 * but after dropping privillege
+		 */
+		setwd = 1;
 	}
-
-	/*
-	 * tmpfs job container plugin changes the working directory
-	 * back to root working directory, so change it back to users
-	 * but after dropping privillege
-	 */
-	setwd = 1;
 #endif
 
 	if (spank_task_privileged(job, taskid) < 0)
@@ -1492,13 +1625,10 @@ static struct exec_wait_info * _exec_wait_info_create (int i)
 	int fdpair[2];
 	struct exec_wait_info * e;
 
-	if (pipe (fdpair) < 0) {
+	if (pipe2(fdpair, O_CLOEXEC) < 0) {
 		error ("_exec_wait_info_create: pipe: %m");
 		return NULL;
 	}
-
-	fd_set_close_on_exec(fdpair[0]);
-	fd_set_close_on_exec(fdpair[1]);
 
 	e = xmalloc (sizeof (*e));
 	e->childfd = fdpair[0];
@@ -1666,7 +1796,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	int i;
 	struct priv_state sprivs;
 	jobacct_id_t jobacct_id;
-	char *oom_value;
 	List exec_wait_list = NULL;
 	uint32_t jobid;
 	uint32_t node_offset = 0, task_offset = 0;
@@ -1681,7 +1810,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 
 	xassert(job != NULL);
 
-	set_oom_adj(0);	/* the tasks may be killed by OOM */
 	if (task_g_pre_setuid(job)) {
 		error("Failed to invoke task plugins: one of task_p_pre_setuid functions returned error");
 		return SLURM_ERROR;
@@ -1709,15 +1837,12 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	/*
 	 * Reclaim privileges to do the io setup
 	 */
-	_reclaim_privileges (&sprivs);
+	_reclaim_privileges(&sprivs);
 	if (rc)
 		goto fail1; /* pam_setup error */
 
 	set_umask(job);		/* set umask for stdout/err files */
-	if (job->flags & LAUNCH_USER_MANAGED_IO)
-		rc = _setup_user_managed_io(job);
-	else
-		rc = _setup_normal_io(job);
+	rc = _setup_normal_io(job);
 	/*
 	 * Initialize log facility to copy errors back to srun
 	 */
@@ -1725,9 +1850,13 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		rc = _slurmd_job_log_init(job);
 
 	if (rc) {
-		error("IO setup failed: %m");
-		job->task[0]->estatus = 0x0100;
-		step_complete.step_rc = 0x0100;
+		error("%s: IO setup failed: %s", __func__, slurm_strerror(rc));
+
+		job->task[0]->estatus = rc;
+		slurm_mutex_lock(&step_complete.lock);
+		step_complete.step_rc = rc;
+		slurm_mutex_unlock(&step_complete.lock);
+
 		if (job->batch)
 			rc = SLURM_SUCCESS;	/* drains node otherwise */
 		goto fail1;
@@ -1790,19 +1919,19 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		struct exec_wait_info *ei;
 
 		acct_gather_profile_g_task_start(i);
-		if ((ei = _fork_child_with_wait_info (i)) == NULL) {
+		if ((ei = _fork_child_with_wait_info(i)) == NULL) {
 			error("child fork: %m");
-			exec_wait_kill_children (exec_wait_list);
+			exec_wait_kill_children(exec_wait_list);
 			rc = SLURM_ERROR;
 			goto fail4;
-		} else if ((pid = _exec_wait_get_pid (ei)) == 0)  { /* child */
+		} else if ((pid = _exec_wait_get_pid(ei)) == 0) { /* child */
 			/*
 			 *  Destroy exec_wait_list in the child.
 			 *   Only exec_wait_info for previous tasks have been
 			 *   added to the list so far, so everything else
 			 *   can be discarded.
 			 */
-			FREE_NULL_LIST (exec_wait_list);
+			FREE_NULL_LIST(exec_wait_list);
 
 			/* jobacctinfo_endpoll();
 			 * closing jobacct files here causes deadlock */
@@ -1838,7 +1967,7 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			 *   must be called before setpgid() or it is
 			 *   effectively disabled).
 			 */
-			prepare_stdio (job, job->task[i]);
+			prepare_stdio(job, job->task[i]);
 
 			/* Close profiling file descriptors */
 			acct_gather_profile_g_child_forked();
@@ -1849,7 +1978,7 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			 *   children in any process groups or containers
 			 *   before they make a call to exec(2).
 			 */
-			if (_exec_wait_child_wait_for_parent (ei) < 0)
+			if (_exec_wait_child_wait_for_parent(ei) < 0)
 				_exit(1);
 
 			exec_task(job, i);
@@ -1859,7 +1988,7 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		 * Parent continues:
 		 */
 
-		list_append (exec_wait_list, ei);
+		list_append(exec_wait_list, ei);
 
 		log_timestamp(time_stamp, sizeof(time_stamp));
 		verbose("task %lu (%lu) started %s",
@@ -1879,18 +2008,12 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	/*
 	 * Reclaim privileges
 	 */
-	if (_reclaim_privileges (&sprivs) < 0) {
+	if (_reclaim_privileges(&sprivs) < 0) {
 		error ("Unable to reclaim privileges");
 		/* Don't bother erroring out here */
 	}
 
-	if ((oom_value = getenv("SLURMSTEPD_OOM_ADJ"))) {
-		int i = atoi(oom_value);
-		debug("Setting slurmstepd oom_adj to %d", i);
-		set_oom_adj(i);
-	}
-
-	if (chdir (sprivs.saved_cwd) < 0) {
+	if (chdir(sprivs.saved_cwd) < 0) {
 		error ("Unable to return to working directory");
 	}
 
@@ -1905,24 +2028,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		    (setpgid (job->task[i]->pid, job->pgid) < 0)) {
 			error("Unable to put task %d (pid %d) into pgrp %d: %m",
 			      i, job->task[i]->pid, job->pgid);
-		}
-
-		if (task_g_pre_set_affinity(job, i) < 0) {
-			error("task_g_pre_set_affinity: %m");
-			rc = SLURM_ERROR;
-			goto fail2;
-		}
-
-		if (task_g_set_affinity(job, i) < 0) {
-			error("task_g_set_affinity: %m");
-			rc = SLURM_ERROR;
-			goto fail2;
-		}
-
-		if (task_g_post_set_affinity(job, i) < 0) {
-			error("task_g_post_set_affinity: %m");
-			rc = SLURM_ERROR;
-			goto fail2;
 		}
 
 		if (proctrack_g_add(job, job->task[i]->pid)
@@ -1944,6 +2049,29 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			jobacct_gather_add_task(job->task[i]->pid, &jobacct_id,
 						0);
 		}
+
+		/*
+		 * Affinity must be set after cgroup is set, or moving pids from
+		 * one cgroup to another will reset affinity.
+		 */
+		if (task_g_pre_set_affinity(job, i) < 0) {
+			error("task_g_pre_set_affinity: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
+		if (task_g_set_affinity(job, i) < 0) {
+			error("task_g_set_affinity: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
+		if (task_g_post_set_affinity(job, i) < 0) {
+			error("task_g_post_set_affinity: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
 		if (spank_task_post_fork (job, i) < 0) {
 			error ("spank task %d post-fork failed", i);
 			rc = SLURM_ERROR;
@@ -2176,14 +2304,20 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 				conf->node_name);
 
 			if (job->task_epilog) {
-				_run_script_as_user("user task_epilog",
-						    job->task_epilog,
-						    job, 5, job->env);
+				rc = _run_script_as_user("user task_epilog",
+							 job->task_epilog, job,
+							 5, job->env);
+				if (rc)
+					error("TaskEpilog failed status=%d",
+					      rc);
 			}
 			if (slurm_conf.task_epilog) {
-				_run_script_as_user("slurm task_epilog",
-						    slurm_conf.task_epilog,
-						    job, -1, job->env);
+				rc = _run_script_as_user("slurm task_epilog",
+							 slurm_conf.task_epilog,
+							 job, -1, job->env);
+				if (rc)
+					error("--task-epilog failed status=%d",
+					      rc);
 			}
 
 			if (spank_task_exit (job, t->id) < 0) {
@@ -2393,7 +2527,6 @@ extern int stepd_drain_node(char *reason)
 	update_node_msg.node_names = conf->node_name;
 	update_node_msg.node_state = NODE_STATE_DRAIN;
 	update_node_msg.reason = reason;
-	update_node_msg.reason_uid = getuid();
 	update_node_msg.weight = NO_VAL;
 	slurm_msg_t_init(&req_msg);
 	req_msg.msg_type = REQUEST_UPDATE_NODE;
@@ -2406,8 +2539,8 @@ extern int stepd_drain_node(char *reason)
 }
 
 static void
-_send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
-		     uid_t cli_uid, int rc, uint16_t protocol_version)
+_send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
+		     uint16_t protocol_version)
 {
 	slurm_msg_t resp_msg;
 	launch_tasks_response_msg_t resp;
@@ -2442,7 +2575,7 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
 	resp_msg.data = &resp;
 	resp_msg.msg_type = RESPONSE_LAUNCH_TASKS;
 	resp_msg.protocol_version = protocol_version;
-	slurm_msg_set_r_uid(&resp_msg, cli_uid);
+	slurm_msg_set_r_uid(&resp_msg, msg->uid);
 
 	memcpy(&resp.step_id, &msg->step_id, sizeof(resp.step_id));
 
@@ -2523,8 +2656,8 @@ _send_complete_batch_script_msg(stepd_step_rec_t *job, int err, int status)
 	req_msg.msg_type= REQUEST_COMPLETE_BATCH_SCRIPT;
 	req_msg.data	= &req;
 
-	info("sending REQUEST_COMPLETE_BATCH_SCRIPT, error:%d status:%d",
-	     err, status);
+	log_flag(PROTOCOL, "sending REQUEST_COMPLETE_BATCH_SCRIPT slurm_rc:%s job_rc:%d",
+		 slurm_strerror(err), status);
 
 	/* Note: these log messages don't go to slurmd.log from here */
 	for (i = 0; i <= MAX_RETRY; i++) {
@@ -2666,7 +2799,7 @@ _slurmd_job_log_init(stepd_step_rec_t *job)
 	/*
 	 *  Connect slurmd stderr to stderr of job
 	 */
-	if ((job->flags & LAUNCH_USER_MANAGED_IO) || (job->flags & LAUNCH_PTY))
+	if (job->flags & LAUNCH_PTY)
 		fd_set_nonblocking(STDERR_FILENO);
 	if (job->task != NULL) {
 		if (dup2(job->task[0]->stderr_fd, STDERR_FILENO) < 0) {
@@ -2845,6 +2978,7 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 		   to the container in the parent of the fork.
 		*/
 		if ((jobid != 0) &&	/* Ignore system processes */
+		    !(job->flags & LAUNCH_NO_ALLOC) &&
 		    (container_g_join(jobid, job->uid) != SLURM_SUCCESS))
 			error("container_g_join(%u): %m", job->step_id.job_id);
 
@@ -2914,7 +3048,7 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 		if (rc < 0) {
 			if (errno == EINTR)
 				continue;
-			error("waidpid: %m");
+			error("waitpid: %m");
 			status = 0;
 			break;
 		} else if (rc == 0) {

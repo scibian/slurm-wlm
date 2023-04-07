@@ -31,10 +31,10 @@ source ./globals
 
 set matches     0
 
-# TODO: Remove this precondition check once 20.11 is no longer supported
+# TODO: Remove this precondition check once 22.05 is no longer supported
 regexp {(\d+).(\d+).(\S+)} [get_config_param SLURM_VERSION] - major minor release
-if {$major < 21} {
-	skip "This test is disabled in Slurm versions older than 21.08 (see bug 10314)"
+if {$major < 23} {
+	skip "This test is disabled in Slurm versions older than 23.02 (see bug 10314)"
 }
 
 #

@@ -55,7 +55,7 @@ typedef struct agent_arg {
 					 * with */
 	uint16_t	retry;		/* if set, keep trying */
 	uid_t r_uid;			/* receiver UID */
-	bool r_uid_set;			/* True if receiver UID set*/
+	bool r_uid_set;			/* true if receiver UID set */
 	slurm_addr_t    *addr;          /* if set will send to this
 					   addr not hostlist */
 	hostlist_t	hostlist;	/* hostlist containing the
@@ -76,7 +76,7 @@ extern void agent_init(void);
  *	hostlist and msg_args) upon completion if AGENT_IS_THREAD is set
  * RET always NULL (function format just for use as pthread)
  */
-extern void *agent (void *args);
+extern void *agent(void *args);
 
 /*
  * agent_queue_request - put a request on the queue for later execution or
@@ -91,11 +91,12 @@ extern void agent_queue_request(agent_arg_t *agent_arg_ptr);
  * IN mail_too - Send pending email too, note this performed using a
  *	fork/waitpid, so it can take longer than just creating a pthread
  *	to send RPCs
+ * IN check_defer - force defer_list check
  */
-extern void agent_trigger(int min_wait, bool mail_too);
+extern void agent_trigger(int min_wait, bool mail_too, bool check_defer);
 
 /* agent_purge - purge all pending RPC requests */
-extern void agent_purge (void);
+extern void agent_purge(void);
 
 /* get_agent_count - find out how many active agents we have */
 extern int get_agent_count(void);

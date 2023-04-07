@@ -805,7 +805,6 @@ static void *_window_manager(void *arg)
 	struct pollfd ufds;
 	char buf[4];
 
-	info("in _window_manager");
 	ufds.fd = win_info->pty_fd;
 	ufds.events = POLLIN;
 
@@ -959,8 +958,11 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		} else {
 			xfree(task->ifname);
 			task->ifname = xstrdup("/dev/null");
-			task->stdin_fd = open("/dev/null", O_RDWR);
-			fd_set_close_on_exec(task->stdin_fd);
+			task->stdin_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+			if (task->stdin_fd < 0) {
+				error("Unable to open /dev/null: %m");
+				return SLURM_ERROR;
+			}
 			task->to_stdin = dup(task->stdin_fd);
 			fd_set_nonblocking(task->to_stdin);
 			task->in = _create_task_in_eio(task->to_stdin, job);
@@ -974,28 +976,26 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		/* open file on task's stdin */
 		debug5("  stdin file name = %s", task->ifname);
 		do {
-			task->stdin_fd = open(task->ifname, O_RDONLY);
+			task->stdin_fd = open(task->ifname, (O_RDONLY |
+							     O_CLOEXEC));
 			++count;
 		} while (task->stdin_fd == -1 && errno == EINTR && count < 10);
 		if (task->stdin_fd == -1) {
 			error("Could not open stdin file %s: %m", task->ifname);
 			return SLURM_ERROR;
 		}
-		fd_set_close_on_exec(task->stdin_fd);
 		task->to_stdin = -1;  /* not used */
 	} else {
 		/* create pipe and eio object */
 		int pin[2];
 
 		debug5("  stdin uses an eio object");
-		if (pipe(pin) < 0) {
+		if (pipe2(pin, O_CLOEXEC) < 0) {
 			error("stdin pipe: %m");
 			return SLURM_ERROR;
 		}
 		task->stdin_fd = pin[0];
-		fd_set_close_on_exec(task->stdin_fd);
 		task->to_stdin = pin[1];
-		fd_set_close_on_exec(task->to_stdin);
 		fd_set_nonblocking(task->to_stdin);
 		task->in = _create_task_in_eio(task->to_stdin, job);
 		eio_new_initial_obj(job->eio, (void *)task->in);
@@ -1019,8 +1019,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		} else {
 			xfree(task->ofname);
 			task->ofname = xstrdup("/dev/null");
-			task->stdout_fd = open("/dev/null", O_RDWR);
-			fd_set_close_on_exec(task->stdout_fd);
+			task->stdout_fd = open("/dev/null", O_RDWR, O_CLOEXEC);
 			task->from_stdout = -1;  /* not used */
 		}
 	} else if ((task->ofname != NULL) &&
@@ -1035,7 +1034,8 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		/* open file on task's stdout */
 		debug5("  stdout file name = %s", task->ofname);
 		do {
-			task->stdout_fd = open(task->ofname, file_flags, 0666);
+			task->stdout_fd = open(task->ofname,
+					       file_flags | O_CLOEXEC, 0666);
 			++count;
 		} while (task->stdout_fd == -1 && errno == EINTR && count < 10);
 		if (task->stdout_fd == -1) {
@@ -1043,7 +1043,6 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 			      task->ofname);
 			return SLURM_ERROR;
 		}
-		fd_set_close_on_exec(task->stdout_fd);
 		task->from_stdout = -1; /* not used */
 	} else {
 		/* create pipe and eio object */
@@ -1053,7 +1052,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		if (!(job->flags & LAUNCH_BUFFERED_IO)) {
 #if HAVE_SETRESUID
 			if (setresuid(geteuid(), geteuid(), 0) < 0)
-				error("%s: %d setresuid() %m",
+				error("%s: %u setresuid() %m",
 				      __func__, geteuid());
 #endif
 			if (openpty(pout, pout + 1, NULL, NULL, NULL) < 0) {
@@ -1114,8 +1113,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		} else {
 			xfree(task->efname);
 			task->efname = xstrdup("/dev/null");
-			task->stderr_fd = open("/dev/null", O_RDWR);
-			fd_set_close_on_exec(task->stderr_fd);
+			task->stderr_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
 			task->from_stderr = -1;  /* not used */
 		}
 
@@ -1131,7 +1129,8 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		/* open file on task's stdout */
 		debug5("  stderr file name = %s", task->efname);
 		do {
-			task->stderr_fd = open(task->efname, file_flags, 0666);
+			task->stderr_fd = open(task->efname,
+					       file_flags | O_CLOEXEC, 0666);
 			++count;
 		} while (task->stderr_fd == -1 && errno == EINTR && count < 10);
 		if (task->stderr_fd == -1) {
@@ -1139,7 +1138,6 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 			      task->efname);
 			return SLURM_ERROR;
 		}
-		fd_set_close_on_exec(task->stderr_fd);
 		task->from_stderr = -1; /* not used */
 	} else {
 		/* create pipe and eio object */
@@ -1492,11 +1490,10 @@ io_create_local_client(const char *filename, int file_flags,
 	eio_obj_t *obj;
 	int tmp;
 
-	fd = open(filename, file_flags, 0666);
+	fd = open(filename, file_flags | O_CLOEXEC, 0666);
 	if (fd == -1) {
 		return ESLURMD_IO_ERROR;
 	}
-	fd_set_close_on_exec(fd);
 
 	/* Now set up the eio object */
 	client = xmalloc(sizeof(*client));
@@ -1564,7 +1561,6 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *job,
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
-	fd_set_close_on_exec(sock);
 
 	/* Now set up the eio object */
 	client = xmalloc(sizeof(*client));
@@ -1618,7 +1614,6 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *job)
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
-	fd_set_close_on_exec(sock);
 
 	/* Now set up the eio object */
 	client = xmalloc(sizeof(*client));
@@ -1915,64 +1910,6 @@ _outgoing_buf_free(stepd_step_rec_t *job)
 
 	return false;
 }
-
-/**********************************************************************
- * Functions specific to "user managed" IO
- **********************************************************************/
-static int
-_user_managed_io_connect(srun_info_t *srun, uint32_t gtid)
-{
-	int fd;
-	task_user_managed_io_msg_t user_io_msg;
-	slurm_msg_t msg;
-
-	slurm_msg_t_init(&msg);
-	msg.protocol_version = srun->protocol_version;
-	msg.msg_type = TASK_USER_MANAGED_IO_STREAM;
-	slurm_msg_set_r_uid(&msg, srun->uid);
-	msg.data = &user_io_msg;
-	user_io_msg.task_id = gtid;
-
-	fd = slurm_open_msg_conn(&srun->resp_addr);
-	if (fd == -1)
-		return -1;
-
-	net_set_keep_alive(fd);
-	if (slurm_send_node_msg(fd, &msg) == -1) {
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
-
-/*
- * This function sets the close-on-exec flag on the socket descriptor.
- * io_dup_stdio will will remove the close-on-exec flag for just one task's
- * file descriptors.
- */
-int
-user_managed_io_client_connect(int node_tasks, srun_info_t *srun,
-			       stepd_step_task_info_t **tasks)
-{
-	int fd;
-	int i;
-
-	for (i = 0; i < node_tasks; i++) {
-		fd = _user_managed_io_connect(srun, tasks[i]->gtid);
-		if (fd == -1)
-			return SLURM_ERROR;
-		fd_set_close_on_exec(fd);
-		tasks[i]->stdin_fd = fd;
-		tasks[i]->to_stdin = -1;
-		tasks[i]->stdout_fd = fd;
-		tasks[i]->from_stdout = -1;
-		tasks[i]->stderr_fd = fd;
-		tasks[i]->from_stderr = -1;
-	}
-
-	return SLURM_SUCCESS;
-}
-
 
 void
 io_find_filename_pattern( stepd_step_rec_t *job,

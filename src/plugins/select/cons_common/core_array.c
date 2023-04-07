@@ -96,6 +96,20 @@ extern int count_core_array_set(bitstr_t **core_array)
 }
 
 /*
+ * Set core_array to ~core_array
+ */
+extern void core_array_not(bitstr_t **core_array)
+{
+	if (!core_array)
+		return;
+	for (int n = 0; n < core_array_size; n++) {
+		if (core_array[n])
+			bit_not(core_array[n]);
+	}
+	return;
+}
+
+/*
  * Set row_bitmap1 to core_array1 & core_array2
  */
 extern void core_array_and(bitstr_t **core_array1, bitstr_t **core_array2)
@@ -106,9 +120,9 @@ extern void core_array_and(bitstr_t **core_array1, bitstr_t **core_array2)
 			s1 = bit_size(core_array1[n]);
 			s2 = bit_size(core_array2[n]);
 			if (s1 > s2)
-				core_array2[n] = bit_realloc(core_array2[n],s1);
+				bit_realloc(core_array2[n], s1);
 			else if (s1 < s2)
-				core_array1[n] = bit_realloc(core_array1[n],s2);
+				bit_realloc(core_array1[n], s2);
 			bit_and(core_array1[n], core_array2[n]);
 		} else if (core_array1[n])
 			bit_free(core_array1[n]);
@@ -127,9 +141,9 @@ extern void core_array_and_not(bitstr_t **core_array1, bitstr_t **core_array2)
 			s1 = bit_size(core_array1[n]);
 			s2 = bit_size(core_array2[n]);
 			if (s1 > s2)
-				core_array2[n] = bit_realloc(core_array2[n],s1);
+				bit_realloc(core_array2[n], s1);
 			else if (s1 < s2)
-				core_array1[n] = bit_realloc(core_array1[n],s2);
+				bit_realloc(core_array1[n], s2);
 			bit_and_not(core_array1[n], core_array2[n]);
 		}
 	}
@@ -146,9 +160,9 @@ extern void core_array_or(bitstr_t **core_array1, bitstr_t **core_array2)
 			s1 = bit_size(core_array1[n]);
 			s2 = bit_size(core_array2[n]);
 			if (s1 > s2)
-				core_array2[n] = bit_realloc(core_array2[n],s1);
+				bit_realloc(core_array2[n], s1);
 			else if (s1 < s2)
-				core_array1[n] = bit_realloc(core_array1[n],s2);
+				bit_realloc(core_array1[n], s2);
 			bit_or(core_array1[n], core_array2[n]);
 		} else if (core_array2[n])
 			core_array1[n] = bit_copy(core_array2[n]);
@@ -177,11 +191,11 @@ extern void core_array_log(char *loc, bitstr_t *node_map, bitstr_t **core_map)
 	if (!(slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE))
 		return;
 
-	info("%s", loc);
+	verbose("%s", loc);
 
 	if (node_map) {
 		char *node_list = bitmap2node_name(node_map);
-		info("node_list:%s", node_list);
+		verbose("node_list:%s", node_list);
 		xfree(node_list);
 	}
 
@@ -196,7 +210,7 @@ extern void core_array_log(char *loc, bitstr_t *node_map, bitstr_t **core_map)
 			xstrfmtcat(core_list, "%snode[%d]:%s", sep, i, tmp);
 			sep = ",";
 		}
-		info("core_list:%s", core_list);
+		verbose("core_list:%s", core_list);
 		xfree(core_list);
 	}
 }
@@ -230,14 +244,12 @@ extern bitstr_t *core_array_to_bitmap(bitstr_t **core_array)
 		return core_bitmap;
 	}
 
-	core_bitmap =
-		bit_alloc(select_node_record[select_node_cnt-1].cume_cores);
+	core_bitmap = bit_alloc(cr_get_coremap_offset(node_record_count));
 	for (i = 0; i < core_array_size; i++) {
 		if (!core_array[i])
 			continue;
-		core_offset = select_node_record[i].cume_cores -
-			      select_node_record[i].tot_cores;
-		for (c = 0; c < select_node_record[i].tot_cores; c++) {
+		core_offset = cr_get_coremap_offset(i);
+		for (c = 0; c < node_record_table_ptr[i]->tot_cores; c++) {
 			if (bit_test(core_array[i], c))
 				bit_set(core_bitmap, core_offset + c);
 		}
@@ -283,14 +295,14 @@ extern bitstr_t **core_bitmap_to_array(bitstr_t *core_bitmap)
 	for (i = i_first; i <= i_last; i++) {
 		if (!bit_test(core_bitmap, i))
 			continue;
-		for (j = node_inx; j < select_node_cnt; j++) {
-			if (i < select_node_record[j].cume_cores) {
+		for (j = node_inx; j < node_record_count; j++) {
+			if (i < cr_get_coremap_offset(j+1)) {
 				node_inx = j;
-				i = select_node_record[j].cume_cores - 1;
+				i = cr_get_coremap_offset(j+1) - 1;
 				break;
 			}
 		}
-		if (j >= select_node_cnt) {
+		if (j >= node_record_count) {
 			bit_fmt(tmp, sizeof(tmp), core_bitmap);
 			error("error translating core bitmap %s",
 			      tmp);
@@ -298,10 +310,10 @@ extern bitstr_t **core_bitmap_to_array(bitstr_t *core_bitmap)
 		}
 		/* Copy all core bitmaps for this node here */
 		core_array[node_inx] =
-			bit_alloc(select_node_record[node_inx].tot_cores);
-		core_offset = select_node_record[node_inx].cume_cores -
-			      select_node_record[node_inx].tot_cores;
-		for (c = 0; c < select_node_record[node_inx].tot_cores; c++) {
+			bit_alloc(node_record_table_ptr[node_inx]->tot_cores);
+		core_offset = cr_get_coremap_offset(node_inx);
+		for (c = 0; c < node_record_table_ptr[node_inx]->tot_cores;
+		     c++) {
 			if (bit_test(core_bitmap, core_offset + c))
 				bit_set(core_array[node_inx], c);
 		}

@@ -2,10 +2,8 @@
  *  burst_buffer_common.h - Common header for managing burst_buffers
  *
  *  NOTE: These functions are designed so they can be used by multiple burst
- *  buffer plugins at the same time (e.g. you might provide users access to
- *  both burst_buffer/datawarp and burst_buffer/generic on the same system),
- *  so the state information is largely in the individual plugin and passed
- *  as a pointer argument to these functions.
+ *  buffer plugins at the same time, so the state information is largely in the
+ *  individual plugin and passed as a pointer argument to these functions.
  *****************************************************************************
  *  Copyright (C) 2014-2015 SchedMD LLC.
  *  Written by Morris Jette <jette@schedmd.com>
@@ -180,8 +178,7 @@ typedef struct bb_job {
 
 /* Used for building queue of jobs records for various purposes */
 typedef struct bb_job_queue_rec {
-	uint64_t bb_size;	/* Used by generic plugin only */
-	bb_job_t *bb_job;	/* Used by cray plugin only */
+	bb_job_t *bb_job;
 	job_record_t *job_ptr;
 } bb_job_queue_rec_t;
 
@@ -227,10 +224,6 @@ enum {
 	BB_NOT_ENOUGH_RESOURCES,
 };
 
-/* Insert the contents of "burst_buffer_file" into "script_body" */
-extern void  bb_add_bb_to_script(char **script_body,
-				 const char *burst_buffer_file);
-
 /* Allocate burst buffer hash tables */
 extern void bb_alloc_cache(bb_state_t *state_ptr);
 
@@ -252,6 +245,13 @@ extern bb_alloc_t *bb_alloc_job(bb_state_t *state_ptr, job_record_t *job_ptr,
  * Use bb_free_alloc_buf() to purge the returned record. */
 extern bb_alloc_t *bb_alloc_name_rec(bb_state_t *state_ptr, char *name,
 				     uint32_t user_id);
+
+/*
+ * For interactive jobs, build a script containing the burst buffer commands.
+ *
+ * Return SLURM_SUCCESS if it succeeded or SLURM_ERROR if it failed.
+ */
+extern int bb_build_bb_script(job_record_t *job_ptr, char *script_file);
 
 /* Clear all cached burst buffer records, freeing all memory. */
 extern void bb_clear_cache(bb_state_t *state_ptr);

@@ -1043,6 +1043,10 @@ extern int scontrol_update_job(int argc, char **argv)
 			job_msg.features = val;
 			update_cnt++;
 		}
+		else if (xstrncasecmp(tag, "Prefer", MAX(taglen, 3)) == 0) {
+			job_msg.prefer = val;
+			update_cnt++;
+		}
 		else if (xstrncasecmp(tag, "Gres", MAX(taglen, 2)) == 0) {
 			/* "gres" replaced by "tres_per_node" in v18.08 */
 			if (!xstrcasecmp(val, "help") ||
@@ -1435,8 +1439,7 @@ static uint32_t _get_job_time(const char *job_id_str)
 			}
 			if (resp->job_array[i].array_job_id != job_id)
 				continue;
-			array_bitmap = (bitstr_t *)
-				       resp->job_array[i].array_bitmap;
+			array_bitmap = resp->job_array[i].array_bitmap;
 			if ((task_id == NO_VAL) ||
 			    (resp->job_array[i].array_task_id == task_id) ||
 			    (array_bitmap &&

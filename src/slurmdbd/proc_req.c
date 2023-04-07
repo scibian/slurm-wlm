@@ -1463,6 +1463,53 @@ static int _job_start(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	return SLURM_SUCCESS;
 }
 
+static int _job_heavy(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
+		      buf_t **out_buffer, uint32_t *uid)
+{
+	dbd_job_heavy_msg_t *job_heavy_msg = msg->data;
+	job_record_t job;
+	struct job_details details;
+	char *comment = NULL;
+	int rc;
+
+	if (!_validate_slurm_user(*uid)) {
+		comment = "DBD_JOB_HEAVY message from invalid uid";
+		error("CONN:%d %s %u",
+		      slurmdbd_conn->conn->fd, comment, *uid);
+		*out_buffer = slurm_persist_make_rc_msg(slurmdbd_conn->conn,
+							ESLURM_ACCESS_DENIED,
+							comment,
+							DBD_JOB_HEAVY);
+		return SLURM_ERROR;
+	}
+
+	debug2("DBD_JOB_HEAVY: SCRIPT:%s ENV:%s",
+	       job_heavy_msg->script ? "yes" : "no",
+	       job_heavy_msg->env ? "yes" : "no");
+
+	memset(&job, 0, sizeof(job_record_t));
+	memset(&details, 0, sizeof(struct job_details));
+
+	if (job_heavy_msg->env) {
+		details.env_sup = xmalloc(sizeof(*details.env_sup));
+		details.env_sup[0] = job_heavy_msg->env;
+	}
+	details.env_hash = job_heavy_msg->env_hash;
+	details.script = job_heavy_msg->script;
+	details.script_hash = job_heavy_msg->script_hash;
+
+	job.details = &details;
+
+	rc = jobacct_storage_g_job_heavy(slurmdbd_conn->db_conn, &job);
+
+	xfree(details.env_sup);
+
+	*out_buffer = slurm_persist_make_rc_msg(slurmdbd_conn->conn,
+						rc, comment,
+						DBD_JOB_HEAVY);
+	return SLURM_SUCCESS;
+}
+
 static int _job_suspend(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 			buf_t **out_buffer, uint32_t *uid)
 {
@@ -2119,13 +2166,10 @@ static void _process_job_start(slurmdbd_conn_t *slurmdbd_conn,
 	if (job_start_msg->db_index != NO_VAL64)
 		job.db_index = job_start_msg->db_index;
 	details.begin_time = job_start_msg->eligible_time;
-	if (job_start_msg->env) {
-		details.env_sup = xmalloc(sizeof(*details.env_sup));
-		details.env_sup[0] = job_start_msg->env;
-	}
+	details.env_hash = job_start_msg->env_hash;
 	job.user_id = job_start_msg->uid;
 	job.group_id = job_start_msg->gid;
-	job.container = xstrdup(job_start_msg->container);
+	job.container = _replace_double_quotes(job_start_msg->container);
 	job.het_job_id = job_start_msg->het_job_id;
 	job.het_job_offset = job_start_msg->het_job_offset;
 	job.job_id = job_start_msg->job_id;
@@ -2140,7 +2184,7 @@ static void _process_job_start(slurmdbd_conn_t *slurmdbd_conn,
 	job.qos_id = job_start_msg->qos_id;
 	job.resv_id = job_start_msg->resv_id;
 	job.priority = job_start_msg->priority;
-	details.script = job_start_msg->script;
+	details.script_hash = job_start_msg->script_hash;
 	job.start_protocol_ver = slurmdbd_conn->conn->version;
 	job.start_time = job_start_msg->start_time;
 	details.submit_line = job_start_msg->submit_line;
@@ -2175,6 +2219,7 @@ static void _process_job_start(slurmdbd_conn_t *slurmdbd_conn,
 	id_rc_msg->return_code = jobacct_storage_g_job_start(
 		slurmdbd_conn->db_conn, &job);
 	id_rc_msg->job_id = job.job_id;
+	id_rc_msg->flags = job.bit_flags;
 	id_rc_msg->db_index = job.db_index;
 
 	/* just in case job.wckey was set because we didn't send one */
@@ -3023,7 +3068,7 @@ static int _step_start(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	job.assoc_id = step_start_msg->assoc_id;
 	if (step_start_msg->db_index != NO_VAL64)
 		job.db_index = step_start_msg->db_index;
-	step.container = xstrdup(step_start_msg->container);
+	step.container = _replace_double_quotes(step_start_msg->container);
 	job.job_id = step_start_msg->step_id.job_id;
 	step.name = step_start_msg->name;
 	job.nodes = step_start_msg->nodes;
@@ -3282,6 +3327,9 @@ extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
 		break;
 	case DBD_JOB_START:
 		rc = _job_start(slurmdbd_conn, msg, out_buffer, uid);
+		break;
+	case DBD_JOB_HEAVY:
+		rc = _job_heavy(slurmdbd_conn, msg, out_buffer, uid);
 		break;
 	case DBD_JOB_SUSPEND:
 		rc = _job_suspend(slurmdbd_conn, msg, out_buffer, uid);

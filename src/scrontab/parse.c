@@ -122,6 +122,10 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 			bit_set(entry->month, 1);
 			bit_set_all(entry->day_of_week);
 			entry->flags |= CRON_WILD_DOW;
+			if (!strncasecmp(pos, "yearly", 6))
+				pos += 6;
+			else
+				pos += 8;
 		} else if (!strncasecmp(pos, "monthly", 7)) {
 			/* "0 0 1 * *" */
 			bit_set(entry->minute, 0);
@@ -131,6 +135,7 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 			entry->flags |= CRON_WILD_MONTH;
 			bit_set_all(entry->day_of_week);
 			entry->flags |= CRON_WILD_DOW;
+			pos += 7;
 		} else if (!strncasecmp(pos, "weekly", 6)) {
 			/* "0 0 * * 0" */
 			bit_set(entry->minute, 0);
@@ -140,6 +145,7 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 			bit_set_all(entry->month);
 			entry->flags |= CRON_WILD_MONTH;
 			bit_set(entry->day_of_week, 0);
+			pos += 6;
 		} else if (!strncasecmp(pos, "daily", 5) ||
 			   !strncasecmp(pos, "midnight", 8)) {
 			/* "0 0 * * *" */
@@ -151,6 +157,10 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 			entry->flags |= CRON_WILD_MONTH;
 			bit_set_all(entry->day_of_week);
 			entry->flags |= CRON_WILD_DOW;
+			if (!strncasecmp(pos, "daily", 5))
+				pos += 5;
+			else
+				pos += 8;
 		} else if (!strncasecmp(pos, "hourly", 6)) {
 			/* "0 * * * *" */
 			bit_set(entry->minute, 0);
@@ -161,12 +171,11 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 			entry->flags |= CRON_WILD_MONTH;
 			bit_set_all(entry->day_of_week);
 			entry->flags |= CRON_WILD_DOW;
+			pos += 6;
 		} else {
 			error("invalid @ line");
 			goto fail;
 		}
-		while (isalpha((int) *pos))
-			pos++;
 		goto command;
 	}
 
@@ -361,11 +370,12 @@ fail:
  */
 extern char **convert_file_to_line_array(char *file, int *line_count)
 {
-	int lines = 0;
-	char **line_array = xcalloc(2, sizeof(char *));
+	int lines = 1;
+	char **line_array = xcalloc(3, sizeof(char *));
 	char *ptr = file;
 
-	line_array[0] = ptr;
+	line_array[0] = "\0";
+	line_array[1] = ptr;
 	while (*ptr != '\0') {
 		if (*ptr == '\n') {
 			*ptr = '\0';

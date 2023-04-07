@@ -42,10 +42,13 @@
 #include <unistd.h>
 
 #include "slurm/slurm_errno.h"
-
 #include "src/common/slurm_xlator.h"
+
 #include "src/common/env.h"
+#include "src/common/parse_config.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_mpi.h"
+#include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "apinfo.h"
@@ -76,6 +79,7 @@
  */
 const char plugin_name[] = "mpi Cray Shasta plugin";
 const char plugin_type[] = "mpi/cray_shasta";
+const uint32_t plugin_id = MPI_PLUGIN_CRAY_SHASTA;
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /* Name of the directory to store Cray MPI data */
@@ -228,13 +232,12 @@ static int _rmdir_recursive(char *path)
 	return SLURM_SUCCESS;
 }
 
-extern int p_mpi_hook_slurmstepd_prefork(
-	const stepd_step_rec_t *job, char ***env)
+extern int mpi_p_slurmstepd_prefork(const stepd_step_rec_t *job, char ***env)
 {
 	/* do the node_name substitution once */
-	char *spool = xstrdup(slurm_conf.slurmd_spooldir);
-	xstrsubstitute(spool, "%n", job->node_name);
-	xstrsubstitute(spool, "%h", job->node_name);
+	char *spool = slurm_conf_expand_slurmd_path(slurm_conf.slurmd_spooldir,
+						    job->node_name,
+						    job->node_name);
 
 	// Set up spool directory and apinfo
 	if (_create_mpi_dir(spool) == SLURM_ERROR ||
@@ -249,8 +252,7 @@ extern int p_mpi_hook_slurmstepd_prefork(
 	return SLURM_SUCCESS;
 }
 
-extern int p_mpi_hook_slurmstepd_task(
-	const mpi_plugin_task_info_t *job, char ***env)
+extern int mpi_p_slurmstepd_task(const mpi_plugin_task_info_t *job, char ***env)
 {
 	// Set environment variables
 	env_array_overwrite_fmt(env, PALS_APID_ENV, "%u.%u",
@@ -265,14 +267,14 @@ extern int p_mpi_hook_slurmstepd_task(
 	return SLURM_SUCCESS;
 }
 
-extern mpi_plugin_client_state_t *p_mpi_hook_client_prelaunch(
-	const mpi_plugin_client_info_t *job, char ***env)
+extern mpi_plugin_client_state_t *
+mpi_p_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env)
 {
 	/* only return NULL on error */
 	return (void *)0xdeadbeef;
 }
 
-extern int p_mpi_hook_client_fini(mpi_plugin_client_state_t *state)
+extern int mpi_p_client_fini(mpi_plugin_client_state_t *state)
 {
 	return SLURM_SUCCESS;
 }
@@ -296,4 +298,22 @@ extern int fini(void)
 	xfree(apinfo);
 
 	return SLURM_SUCCESS;
+}
+
+extern void mpi_p_conf_options(s_p_options_t **full_options, int *full_opt_cnt)
+{
+}
+
+extern void mpi_p_conf_set(s_p_hashtbl_t *tbl)
+{
+}
+
+extern s_p_hashtbl_t *mpi_p_conf_get(void)
+{
+	return NULL;
+}
+
+extern List mpi_p_conf_get_printable(void)
+{
+	return NULL;
 }

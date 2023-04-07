@@ -1,0 +1,4 @@
+usr/lib/*/slurm-wlm/accounting_storage_mysql.a
+usr/lib/*/slurm-wlm/accounting_storage_mysql.la
+usr/lib/*/slurm-wlm/jobcomp_mysql.a
+usr/lib/*/slurm-wlm/jobcomp_mysql.la

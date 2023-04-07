@@ -50,6 +50,7 @@
 #include "src/common/tres_bind.h"
 #include "src/common/tres_frequency.h"
 #include "src/common/xsignal.h"
+#include "src/common/gres.h"
 
 typedef struct {
 	int (*setup_srun_opt)      (char **rest, slurm_opt_t *opt_local);
@@ -162,6 +163,8 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 	char *add_tres = NULL;
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	job_step_create_request_msg_t *step_req = xmalloc(sizeof(*step_req));
+	List tmp_gres_list = NULL;
+	int rc;
 
 	xassert(srun_opt);
 
@@ -180,10 +183,10 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 
 	if (srun_opt->exclusive)
 		step_req->flags |= SSF_EXCLUSIVE;
+	if (srun_opt->overlap_force)
+		step_req->flags |= SSF_OVERLAP_FORCE;
 	if (opt_local->overcommit)
 		step_req->flags |= SSF_OVERCOMMIT;
-	if (!srun_opt->exact)
-		step_req->flags |= SSF_WHOLE;
 	if (opt_local->no_kill)
 		step_req->flags |= SSF_NO_KILL;
 	if (srun_opt->interactive) {
@@ -233,20 +236,22 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 
 		tok = strtok_r(tmp_str, ",", &save_ptr);
 		while (tok) {
-			int tmp;
+			int tmp = 0;
 			sep = xstrchr(tok, ':');
 			if (sep)
-				tmp =+ atoi(sep + 1);
+				tmp += atoi(sep + 1);
 			else
-				tmp =+ atoi(tok);
+				tmp += atoi(tok);
 			if (tmp > 0)
-				gpus_per_task =+ tmp;
+				gpus_per_task += tmp;
 			tok = strtok_r(NULL, ",", &save_ptr);
 		}
 		xfree(tmp_str);
 		step_req->cpu_count = opt_local->ntasks * gpus_per_task *
 				      opt_local->cpus_per_gpu;
-	} else if (opt_local->ntasks_set) {
+	} else if (opt_local->ntasks_set ||
+		   (opt_local->ntasks_per_tres != NO_VAL) ||
+		   (opt_local->ntasks_per_gpu != NO_VAL)) {
 		step_req->cpu_count = opt_local->ntasks;
 	} else if (use_all_cpus) {	/* job allocation created by srun */
 		step_req->cpu_count = job->cpu_count;
@@ -272,46 +277,6 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 		step_req->ntasks_per_tres = NO_VAL16;
 
 	step_req->num_tasks = opt_local->ntasks;
-
-	step_req->plane_size = NO_VAL16;
-	switch (opt_local->distribution & SLURM_DIST_NODESOCKMASK) {
-	case SLURM_DIST_BLOCK:
-	case SLURM_DIST_ARBITRARY:
-	case SLURM_DIST_CYCLIC:
-	case SLURM_DIST_CYCLIC_CYCLIC:
-	case SLURM_DIST_CYCLIC_BLOCK:
-	case SLURM_DIST_BLOCK_CYCLIC:
-	case SLURM_DIST_BLOCK_BLOCK:
-	case SLURM_DIST_CYCLIC_CFULL:
-	case SLURM_DIST_BLOCK_CFULL:
-		step_req->task_dist = opt_local->distribution;
-		if (opt_local->ntasks_per_node != NO_VAL)
-			step_req->plane_size = opt_local->ntasks_per_node;
-		break;
-	case SLURM_DIST_PLANE:
-		step_req->task_dist = SLURM_DIST_PLANE;
-		step_req->plane_size = opt_local->plane_size;
-		break;
-	default:
-	{
-		uint16_t base_dist;
-		/* Leave distribution set to unknown if taskcount <= nodes and
-		 * memory is set to 0. step_mgr will handle the mem=0 case. */
-		if (!opt_local->mem_per_cpu || !opt_local->pn_min_memory ||
-		    srun_opt->interactive)
-			base_dist = SLURM_DIST_UNKNOWN;
-		else
-			base_dist = (step_req->num_tasks <=
-				     step_req->min_nodes) ?
-				SLURM_DIST_CYCLIC : SLURM_DIST_BLOCK;
-		opt_local->distribution &= SLURM_DIST_STATE_FLAGS;
-		opt_local->distribution |= base_dist;
-		step_req->task_dist = opt_local->distribution;
-		if (opt_local->ntasks_per_node != NO_VAL)
-			step_req->plane_size = opt_local->ntasks_per_node;
-		break;
-	}
-	}
 
 	if (opt_local->mem_per_cpu != NO_VAL64)
 		step_req->pn_min_memory = opt_local->mem_per_cpu | MEM_PER_CPU;
@@ -401,6 +366,72 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 	step_req->user_id = opt_local->uid;
 
 	step_req->container = xstrdup(opt_local->container);
+
+	rc = gres_step_state_validate(step_req->cpus_per_tres,
+				     step_req->tres_per_step,
+				     step_req->tres_per_node,
+				     step_req->tres_per_socket,
+				     step_req->tres_per_task,
+				     step_req->mem_per_tres,
+				     step_req->ntasks_per_tres,
+				     step_req->min_nodes,
+				     &tmp_gres_list,
+				     NULL, job->step_id.job_id,
+				     NO_VAL, &step_req->num_tasks,
+				     &step_req->cpu_count, NULL);
+	FREE_NULL_LIST(tmp_gres_list);
+	if (rc) {
+		error("%s", slurm_strerror(rc));
+		return NULL;
+	}
+
+	step_req->plane_size = NO_VAL16;
+
+	switch (opt_local->distribution & SLURM_DIST_NODESOCKMASK) {
+	case SLURM_DIST_BLOCK:
+	case SLURM_DIST_ARBITRARY:
+	case SLURM_DIST_CYCLIC:
+	case SLURM_DIST_CYCLIC_CYCLIC:
+	case SLURM_DIST_CYCLIC_BLOCK:
+	case SLURM_DIST_BLOCK_CYCLIC:
+	case SLURM_DIST_BLOCK_BLOCK:
+	case SLURM_DIST_CYCLIC_CFULL:
+	case SLURM_DIST_BLOCK_CFULL:
+		step_req->task_dist = opt_local->distribution;
+		if (opt_local->ntasks_per_node != NO_VAL)
+			step_req->plane_size = opt_local->ntasks_per_node;
+		break;
+	case SLURM_DIST_PLANE:
+		step_req->task_dist = SLURM_DIST_PLANE;
+		step_req->plane_size = opt_local->plane_size;
+		break;
+	default:
+	{
+		uint16_t base_dist;
+		/* Leave distribution set to unknown if taskcount <= nodes and
+		 * memory is set to 0. step_mgr will handle the mem=0 case. */
+		if (!opt_local->mem_per_cpu || !opt_local->pn_min_memory ||
+		    srun_opt->interactive)
+			base_dist = SLURM_DIST_UNKNOWN;
+		else
+			base_dist = (step_req->num_tasks <=
+				     step_req->min_nodes) ?
+				SLURM_DIST_CYCLIC : SLURM_DIST_BLOCK;
+		opt_local->distribution &= SLURM_DIST_STATE_FLAGS;
+		opt_local->distribution |= base_dist;
+		step_req->task_dist = opt_local->distribution;
+		if (opt_local->ntasks_per_node != NO_VAL)
+			step_req->plane_size = opt_local->ntasks_per_node;
+		break;
+	}
+	}
+
+	/*
+	 * This must be handled *after* we potentially set srun_opt->exact
+	 * above.
+	 */
+	if (!srun_opt->exact)
+		step_req->flags |= SSF_WHOLE;
 
 	return step_req;
 }

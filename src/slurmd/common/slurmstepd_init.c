@@ -39,15 +39,12 @@
 #include "src/slurmd/common/slurmstepd_init.h"
 #include "src/common/xstring.h"
 
-#define PROTOCOL_VERSION	"PROTOCOL_VERSION"
-
 /* Assume that the slurmd and slurmstepd are the same version level when slurmd
  * starts slurmstepd, so we do not need to support different protocol versions
  * for the different message formats. */
 extern void pack_slurmd_conf_lite(slurmd_conf_t *conf, buf_t *buffer)
 {
 	xassert(conf != NULL);
-	packstr(PROTOCOL_VERSION, buffer);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
 
 	packstr(conf->hostname, buffer);
@@ -72,18 +69,14 @@ extern void pack_slurmd_conf_lite(slurmd_conf_t *conf, buf_t *buffer)
 	packstr(conf->node_topo_addr, buffer);
 	packstr(conf->node_topo_pattern, buffer);
 	pack16(conf->port, buffer);
-	packstr(conf->gres, buffer);
 }
 
 extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, buf_t *buffer)
 {
 	uint32_t uint32_tmp;
 	uint16_t protocol_version;
-	char *ver_str = NULL;
 
-	safe_unpackstr_xmalloc(&ver_str, &uint32_tmp, buffer);
 	safe_unpack16(&protocol_version, buffer);
-	xfree(ver_str);
 
 	/*
 	 * No cross-version support is required here. slurmd and slurmstepd
@@ -114,7 +107,6 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, buf_t *buffer)
 		safe_unpackstr_xmalloc(&conf->node_topo_addr, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&conf->node_topo_pattern, &uint32_tmp, buffer);
 		safe_unpack16(&conf->port, buffer);
-		safe_unpackstr_xmalloc(&conf->gres, &uint32_tmp, buffer);
 	}
 
 	return SLURM_SUCCESS;
@@ -128,6 +120,5 @@ unpack_error:
 	xfree(conf->logfile);
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
-	xfree(conf->gres);
 	return SLURM_ERROR;
 }

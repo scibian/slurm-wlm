@@ -246,12 +246,16 @@ static int _foreach_user_coord_add(void *x, void *arg)
 	int rc = SLURM_SUCCESS;
 	add_user_coord_t *uc = x;
 	_foreach_user_coord_add_t *args = arg;
+	void *db_conn;
 
 	xassert(uc->magic == MAGIC_USER_COORD);
 	xassert(args->magic == MAGIC_USER_COORD_ADD);
 
-	if ((args->rc = slurmdb_coord_add(openapi_get_db_conn(args->auth),
-					  uc->acct_list, &uc->user_cond)))
+	if (!(db_conn = openapi_get_db_conn(args->auth)))
+		resp_error(args->errors, ESLURM_DB_CONNECTION_INVALID, NULL,
+			   "openapi_get_db_conn");
+	else if ((args->rc = slurmdb_coord_add(db_conn, uc->acct_list,
+					       &uc->user_cond)))
 		rc = resp_error(args->errors, args->rc, NULL,
 				"slurmdb_coord_add");
 
@@ -338,7 +342,7 @@ static int _delete_user(data_t *resp, void *auth,
 		.with_deleted = false,
 		.with_wckeys = true,
 	};
-	List user_list;
+	List user_list = NULL;
 
 	list_append(assoc_cond.user_list, user_name);
 

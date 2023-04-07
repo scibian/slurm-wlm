@@ -8,7 +8,7 @@ Uploaders: Rémi Palancher <remi@rezib.org>,
 Build-Depends:
  debhelper (>= 10),
  libmunge-dev,
- libncurses5-dev,
+ libncurses-dev,
  po-debconf,
  python3,
  libgtk2.0-dev,
@@ -27,13 +27,15 @@ Build-Depends:
  libhdf5-dev,
  man2html,
  libcurl4-openssl-dev,
- libhttp-parser-dev,
+ libpmix-dev,
+ libhttp-parser-dev (>= 2.9),
  libyaml-dev,
  libjson-c-dev,
  libjwt-dev,
  liblz4-dev,
- bash-completion
-Standards-Version: 4.6.0
+ bash-completion,
+ libdbus-1-dev,
+Standards-Version: 4.6.2
 Homepage: http://slurm.schedmd.com
 Vcs-Browser: https://github.com/scibian/slurm-wlm
 Vcs-Git: https://github.com/scibian/slurm-wlm.git
@@ -45,13 +47,12 @@ Depends:
  slurmd (= ${binary:Version}),
  slurmctld (= ${binary:Version}),
  slurm-client (= ${binary:Version})
-Description: Simple Linux Utility for Resource Management
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
- This metapackage contains all client side commands, the compute node
- daemon and the central management daemon.
+Description: Slurm Workload Manager
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This metapackage contains all client side commands, the compute node daemon
+ and the central management daemon.
 
 Package: slurm-client
 Architecture: any
@@ -62,11 +63,10 @@ Depends:
  munge,
  ucf
 Conflicts: sinfo (<< 0.0.47-4)
-Description: SLURM client side commands
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
+Description: Slurm client side commands
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains all client side commands.
 
 Package: slurmrestd
@@ -74,11 +74,10 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Description: SLURM REST API daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
+Description: Slurm REST API daemon
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains the REST API daemon slurmrestd.
 
 Package: slurmd
@@ -89,12 +88,10 @@ Depends:
  slurm-wlm-basic-plugins (= ${binary:Version}),
  ucf,
  munge,
- lsb-base (>= 3.2-12)
-Description: SLURM compute node daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
+Description: Slurm compute node daemon
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains the compute node daemon slurmd.
 
 Package: slurmctld
@@ -106,43 +103,44 @@ Depends:
  slurm-wlm-basic-plugins (= ${binary:Version}),
  ucf,
  munge,
- lsb-base (>= 3.2-12)
-Description: SLURM central management daemon
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
+Description: Slurm central management daemon
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains the central management daemon slurmctld.
 
-Package: libslurm37
+Package: libslurm38
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: Runtime library files for SLURM
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM runtime library.
+Description: Runtime library files for Slurm
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm runtime library.
 
 Package: libpmi0
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, slurm-wlm-basic-plugins (= ${binary:Version}),
-Description: SLURM PMI library implementation
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM PMI runtime implementation.
+Description: Slurm PMI library implementation
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm PMI runtime implementation.
 
 Package: libpmi2-0
 Section: libs
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: SLURM PMI2 library implementation
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM PMI2 runtime implementation.
+Description: Slurm PMI2 library implementation
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm PMI2 runtime implementation.
 
 Package: libslurm-dev
 Section: libdevel
@@ -150,14 +148,15 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libslurm37 (= ${binary:Version})
+ libslurm38 (= ${binary:Version})
 Conflicts: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev
 Breaks: libslurmdb-dev
 Replaces: libslurm10-dev, libslurm11-dev, libslurm12-dev, libslurm13-dev, libslurm20-dev, libslurm21-dev, libslurmdb-dev
-Description: SLURM development files
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains SLURM static library and header files.
+Description: Slurm development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains Slurm static library and header files.
 
 Package: libpmi0-dev
 Section: libdevel
@@ -166,11 +165,12 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi0 (= ${binary:Version}),
- libslurm37 (= ${binary:Version})
-Description: SLURM PMI library implementation development files
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM PMI implementation static library and header
+ libslurm38 (= ${binary:Version})
+Description: Slurm PMI library implementation development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm PMI implementation static library and header
  files
 
 Package: libpmi2-0-dev
@@ -180,11 +180,12 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  libpmi2-0 (= ${binary:Version}),
- libslurm37 (= ${binary:Version})
-Description: SLURM PMI2 library implementation development files
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM PMI2 implementation static library and header
+ libslurm38 (= ${binary:Version})
+Description: Slurm PMI2 library implementation development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm PMI2 implementation static library and header
  files
 
 Package: slurm-wlm-doc
@@ -194,10 +195,11 @@ Depends:
  libjs-jquery,
  ${shlibs:Depends},
  ${misc:Depends}
-Description: SLURM documentation
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM html documentation.
+Description: Slurm documentation
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm html documentation.
 
 Package: slurm-wlm-basic-plugins
 Architecture: any
@@ -207,22 +209,294 @@ Depends:
  libpmix2,
  adduser,
  ucf
-Description: SLURM basic plugins
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains the SLURM basic plugins
+Recommends: slurm-wlm-plugins (= ${binary:Version}),
+Description: Slurm basic plugins
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Slurm basic plugins
 
 Package: slurm-wlm-basic-plugins-dev
 Section: devel
+Architecture: any
+Recommends: slurm-wlm-plugins-dev (= ${binary:Version}),
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Description: Slurm basic plugins development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains development files for the Slurm basic plugins
+
+Package: slurm-wlm-plugins
+Architecture: any
+Depends:
+ slurm-wlm-basic-plugins (= ${binary:Version}),
+ slurm-wlm-elasticsearch-plugin (= ${binary:Version}),
+ slurm-wlm-hdf5-plugin (= ${binary:Version}),
+ slurm-wlm-influxdb-plugin (= ${binary:Version}),
+ slurm-wlm-ipmi-plugins (= ${binary:Version}),
+ slurm-wlm-jwt-plugin (= ${binary:Version}),
+ slurm-wlm-rrd-plugin (= ${binary:Version}),
+ slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
+ slurm-wlm-rsmi-plugin (= ${binary:Version}),
+ ${misc:Depends},
+Description: Slurm free plugins (metapackage)
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package provides all the free Slurm plugins.
+
+Package: slurm-wlm-plugins-dev
+Architecture: any
+Depends:
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-elasticsearch-plugin-dev (= ${binary:Version}),
+ slurm-wlm-hdf5-plugin-dev (= ${binary:Version}),
+ slurm-wlm-influxdb-plugin-dev (= ${binary:Version}),
+ slurm-wlm-ipmi-plugins-dev (= ${binary:Version}),
+ slurm-wlm-jwt-plugin-dev (= ${binary:Version}),
+ slurm-wlm-rrd-plugin-dev (= ${binary:Version}),
+ slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
+ slurm-wlm-rsmi-plugin-dev (= ${binary:Version}),
+ ${misc:Depends},
+Description: Slurm free plugins development files (metapackage)
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package provides development files for all the free SLURM plugins.
+
+Package: slurm-wlm-ipmi-plugins
 Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version})
-Description: SLURM basic plugins development files
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains development files for the SLURM basic plugins
+Breaks: slurm-wlm-basic-plugins (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins (<< 22.05.7-1)
+Description: Slurm IPMI plugins
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the IPMI-based Slurm accounting gathering
+ plugins.
+
+Package: slurm-wlm-ipmi-plugins-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-ipmi-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm IPMI plugins development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the IPMI-based Slurm
+ accounting gathering plugins.
+
+Package: slurm-wlm-hdf5-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Description: Slurm HDF5 plugin
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the HDF5-based Slurm job profiling plugin.
+
+Package: slurm-wlm-hdf5-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-hdf5-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm HDF5 plugin development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the HDF5-based Slurm
+ job profiling plugin.
+
+Package: slurm-wlm-influxdb-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm InfluxDB plugin
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the InfluxDB-based Slurm job profiling plugin.
+
+Package: slurm-wlm-influxdb-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-influxdb-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm InfluxDB plugin development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the InfluxDB-based Slurm
+ job profiling plugin.
+
+Package: slurm-wlm-rrd-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm RRD plugin
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the RRD-based Slurm sensor plugin.
+
+Package: slurm-wlm-rrd-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-rrd-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm RRD plugins development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the RRD-based Slurm
+ sensor plugin.
+
+Package: slurm-wlm-elasticsearch-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm Elasticsearch job-completion plugin
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the Elasticsearch Slurm job-completion plugin.
+
+Package: slurm-wlm-elasticsearch-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-elasticsearch-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm Elasticsearch job-completion plugin development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the Elasticsearch Slurm
+ job-completion plugin.
+
+Package: slurm-wlm-jwt-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm JWT authentication plugins
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the JSON Web Tokens (JWT) Slurm authentication
+ plugin.
+
+Package: slurm-wlm-jwt-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-jwt-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm JWT authentication plugin development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the JSON Web Tokens (JWT)
+ Slurm authentication plugin.
+
+Package: slurm-wlm-mysql-plugin
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins (<< 22.05.7-1)
+Description: Slurm MySQL plugins
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains the Slurm MySQL plugin.
+
+Package: slurm-wlm-mysql-plugin-dev
+Section: devel
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ slurm-wlm-basic-plugins-dev (= ${binary:Version}),
+ slurm-wlm-jwt-plugin (= ${binary:Version})
+Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
+Description: Slurm MySQL plugins development files
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ .
+ This package contains development files for the Slurm MySQL plugin.
 
 Package: sview
 Architecture: any
@@ -230,10 +504,11 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-client (= ${binary:Version})
-Description: GUI to view and modify SLURM state
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- This package contains sview a GUI that can be used to view SLURM
+Description: GUI to view and modify Slurm state
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains sview, a GUI that can be used to view Slurm
  configuration, job, step, node and partitions state information.
  Authorized users can also modify select information.
 
@@ -243,12 +518,13 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins (= ${binary:Version}),
+ slurm-wlm-mysql-plugin (= ${binary:Version}),
  munge,
- lsb-base (>= 3.2-12),
  ucf
-Description: Secure enterprise-wide interface to a database for SLURM
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
+Description: Secure enterprise-wide interface to a database for Slurm
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contain SlurmDBD (Slurm DataBase Daemon) that can be
  used to securely manage the accounting data for several Slurm
  clusters in a central location and sacctmgr a command for managing
@@ -261,10 +537,10 @@ Depends:
  ${perl:Depends},
  ${misc:Depends},
  ${shlibs:Depends}
-Description: Perl API for SLURM
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- .
+Description: Perl API for Slurm
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains the Perl module.
 
 Package: libslurmdb-perl
@@ -274,11 +550,11 @@ Depends:
  ${perl:Depends},
  ${misc:Depends},
  ${shlibs:Depends}
-Description: Perl API for the SLURM database
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- .
- This package contains the Perl module for the SLURM database.
+Description: Perl API for the Slurm database
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
+ This package contains the Perl module for the Slurm database.
 
 Package: slurm-wlm-torque
 Architecture: all
@@ -290,10 +566,10 @@ Depends:
  libswitch-perl,
  slurm-client (>= ${source:Version})
 Conflicts: gridengine-client, torque-client, torque-client-x11
-Description: Torque compatibility wrappers for SLURM
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- .
+Description: Torque compatibility wrappers for Slurm
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains the Torque compatibility wrappers.
 
 Package: libpam-slurm
@@ -303,9 +579,12 @@ Depends:
  libpam-runtime,
  ${shlibs:Depends},
  ${misc:Depends}
-Description: PAM module to authenticate using the SLURM resource manager
+Description: PAM module to authenticate using the Slurm resource manager
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  Pluggable Authentication Module (PAM) for restricting access to compute
- nodes where SLURM performs resource management. Access to the node is
+ nodes where Slurm performs resource management. Access to the node is
  restricted to user root and users who have been allocated resources on
  that node.
 
@@ -315,11 +594,14 @@ Pre-Depends: ${misc:Pre-Depends}
 Depends:
  ${shlibs:Depends},
  ${misc:Depends}
-Description: PAM module to authenticate users running a SLURM job and track their processes
+Description: PAM module to authenticate users running a Slurm job and track their processes
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  Pluggable Authentication Module (PAM) for restricting access to compute
- nodes where SLURM performs resource management to users who have a
+ nodes where Slurm performs resource management to users who have a
  running job. The user's connection is "adopted" into the "external"
- step of the job so that processes spawned are tracked and SLURM can
+ step of the job so that processes spawned are tracked and Slurm can
  perform a complete cleanup when the job is completed.
 
 Package: slurm-wlm-emulator
@@ -327,19 +609,18 @@ Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends},
  slurmctld (= ${binary:Version}),
  slurmd (= ${binary:Version})
-Description: SLURM emulator
- SLURM, the Simple Linux Utility for Resource Management,
- is an open-source cluster resource management and job scheduling.
- .
+Description: Slurm emulator
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package installs the emulator binaries: slurmd, slurmctld
  and slurmstepd.
 
 Package: slurm-client-emulator
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends},
-Description: SLURM client side commands for the emulator
- SLURM stands for Simple Linux Utility for Resource Management, it
- is an open-source cluster resource management and job scheduling system
- that strives to be simple, scalable, portable, fault-tolerant, and
- interconnect agnostic.
+Description: Slurm client side commands for the emulator
+ The Slurm Workload Manager is an open-source cluster resource management and
+ job scheduling system that strives to be simple, scalable, portable,
+ fault-tolerant, and interconnect agnostic.
  This package contains all client side commands for the emulator.

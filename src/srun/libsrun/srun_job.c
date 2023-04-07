@@ -661,8 +661,7 @@ static void _post_opts(List opt_list)
 		list_sort(opt_list, _sort_by_offset);
 }
 
-extern void init_srun(int argc, char **argv,
-		      log_options_t *logopt, int debug_level,
+extern void init_srun(int argc, char **argv, log_options_t *logopt,
 		      bool handle_signals)
 {
 	bool het_job_fini = false;
@@ -741,18 +740,12 @@ extern void init_srun(int argc, char **argv,
 		logopt->stderr_level -= opt.quiet;
 		logopt->prefix_level = 1;
 		log_alter(*logopt, 0, NULL);
-	} else
-		opt.verbose = debug_level;
+	}
 
 	(void) _set_rlimit_env();
 	_set_prio_process_env();
 	(void) _set_umask_env();
 	_set_submit_dir_env();
-
-	/*
-	 * Set up slurmctld message handler
-	 */
-	slurmctld_msg_init();
 
 	/*
 	 * save process startup time to be used with -I<timeout>
@@ -1894,7 +1887,9 @@ static void _run_srun_epilog (srun_job_t *job)
 		if (setenvf(NULL, "SLURM_SCRIPT_CONTEXT", "epilog_srun") < 0)
 			error("unable to set SLURM_SCRIPT_CONTEXT in environment");
 		rc = _run_srun_script(job, sropt.epilog);
-		debug("srun epilog rc = %d", rc);
+		if (rc) {
+			error("srun epilog failed status=%d", rc);
+		}
 	}
 }
 
@@ -1906,10 +1901,18 @@ static void _run_srun_prolog (srun_job_t *job)
 		if (setenvf(NULL, "SLURM_SCRIPT_CONTEXT", "prolog_srun") < 0)
 			error("unable to set SLURM_SCRIPT_CONTEXT in environment");
 		rc = _run_srun_script(job, sropt.prolog);
-		debug("srun prolog rc = %d", rc);
+		if (rc) {
+			error("srun prolog failed rc = %d. Aborting step.", rc);
+			slurm_step_launch_abort(job->step_ctx);
+		}
 	}
 }
 
+/*
+ * Run srun prolog/epilog script.
+ *
+ * RET the exit status of the script or 1 on generic error and 0 on success
+ */
 static int _run_srun_script (srun_job_t *job, char *script)
 {
 	int status;
@@ -1927,7 +1930,7 @@ static int _run_srun_script (srun_job_t *job, char *script)
 
 	if ((cpid = fork()) < 0) {
 		error ("run_srun_script: fork: %m");
-		return -1;
+		return 1;
 	}
 	if (cpid == 0) {
 		/*
@@ -1952,8 +1955,12 @@ static int _run_srun_script (srun_job_t *job, char *script)
 				continue;
 			error("waitpid: %m");
 			return 0;
-		} else
-			return status;
+		} else if (WIFEXITED(status)) {
+			return WEXITSTATUS(status);
+		} else {
+			error("script did not exit normally");
+			return 1;
+		}
 	} while(1);
 
 	/* NOTREACHED */

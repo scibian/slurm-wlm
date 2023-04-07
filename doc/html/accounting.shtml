@@ -148,7 +148,9 @@ If you plan to restrict access to accounting records (e.g.
 only permit a user to view records of his jobs), then all
 users should have consistent names and IDs.</p>
 
-<p><b>NOTE:</b> Only lowercase usernames are supported.
+<p><b>NOTE</b>: By default only lowercase usernames are supported, but you
+can configure <b>Parameters=PreserveCaseUser</b> in your slurmdbd.conf to
+allow usernames with uppercase characters.</p>
 
 <p>The best way to ensure security of the data is by authenticating
 communications to the SlurmDBD and we recommend
@@ -172,7 +174,7 @@ and SlurmDBD configuration files (slurm.conf and slurmdbd.conf
 respectively, more details are provided below).</p>
 
 <p>Whether you use any authentication module or not you will need to have
-a way for the SlurmDBD to get UID's for users and/or admins.  If using
+a way for the SlurmDBD to get UIDs for users and/or admins.  If using
 MUNGE, it is ideal for your users to have the same id on all your
 clusters.  If this is the case you should have a combination of every cluster's
 /etc/passwd file on the database server to allow the DBD to resolve
@@ -852,7 +854,7 @@ completely. This is meant to clean up after typographical errors.
 Removing user associations or accounts, however, will cause slurmctld to lose
 track of usage data for that user/account.</p>
 
-<p style="text-align:center;">Last modified 27 April 2022</p>
+<p style="text-align:center;">Last modified 26 December 2022</p>
 
 <!--#include virtual="footer.txt"-->
 

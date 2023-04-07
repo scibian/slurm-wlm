@@ -52,6 +52,7 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
+#include "src/common/xstring.h"
 #include "src/slurmd/common/proctrack.h"
 
 #include <stdio.h>
@@ -215,7 +216,11 @@ static int _open_msr(int core)
 	int fd;
 
 	sprintf(msr_filename, "/dev/cpu/%d/msr", core);
-	fd = open(msr_filename, O_RDONLY);
+	/*
+	 * If this is loaded in the slurmd we need to make sure it
+	 * gets closed when a slurmstepd launches.
+	 */
+	fd = open(msr_filename, (O_RDONLY | O_CLOEXEC));
 
 	if (fd < 0) {
 		if ( errno == ENXIO ) {
@@ -224,12 +229,6 @@ static int _open_msr(int core)
 			error("CPU %d doesn't support MSRs", core);
 		} else
 			error("MSR register problem (%s): %m", msr_filename);
-	} else {
-		/*
-		 * If this is loaded in the slurmd we need to make sure it
-		 * gets closed when a slurmstepd launches.
-		 */
-		fd_set_close_on_exec(fd);
 	}
 
 	return fd;

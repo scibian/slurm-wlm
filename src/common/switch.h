@@ -54,10 +54,6 @@
 #  define __switch_jobinfo_t_defined
    typedef struct switch_jobinfo   switch_jobinfo_t;
 #endif
-#ifndef __switch_node_info_t_defined
-#  define __switch_node_info_t_defined
-   typedef struct switch_node_info switch_node_info_t;
-#endif
 typedef struct slurm_switch_context slurm_switch_context_t;
 
 /*******************************************\
@@ -168,6 +164,11 @@ extern int  switch_g_get_jobinfo(dynamic_plugin_data_t *jobinfo,
  */
 extern int switch_g_job_step_complete(dynamic_plugin_data_t *jobinfo,
 	char *nodelist);
+
+/*
+ * End of job - free any slurmctld job-specific switch data
+ */
+extern void switch_g_job_complete(uint32_t job_id);
 
 /*
  * Restore the switch allocation information "jobinfo" for an already
@@ -309,41 +310,6 @@ extern int switch_g_job_postfini(stepd_step_rec_t *job);
 extern int switch_g_job_attach(dynamic_plugin_data_t *jobinfo, char ***env,
 			       uint32_t nodeid, uint32_t procid,
 			       uint32_t nnodes, uint32_t nprocs, uint32_t rank);
-
-/*
- * Clear switch state on this node
- */
-extern int switch_g_clear_node_state(void);
-
-/*
- * Allocate storage for a node's switch state record
- */
-extern int switch_g_alloc_node_info(switch_node_info_t **switch_node);
-
-/*
- * Fill in a previously allocated switch state record for the node on which
- * this function is executed.
- */
-extern int switch_g_build_node_info(switch_node_info_t *switch_node);
-
-/*
- * Pack the data associated with a node's switch state into a buffer
- * for network transmission.
- */
-extern int switch_g_pack_node_info(switch_node_info_t *switch_node,
-				   buf_t *buffer, uint16_t protocol_version);
-
-/*
- * Unpack the data associated with a node's switch state record
- * from a buffer.
- */
-extern int switch_g_unpack_node_info(switch_node_info_t **switch_node,
-				     buf_t *buffer, uint16_t protocol_version);
-
-/*
- * Release the storage associated with a node's switch state record.
- */
-extern int switch_g_free_node_info(switch_node_info_t **switch_node);
 
 /********************************************************************\
  * JOB STEP {PRE,POST}-SUSPEND and {PRE-POST}-RESUME FUNCTIONS      *

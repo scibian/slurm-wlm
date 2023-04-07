@@ -24,7 +24,7 @@ main(int argc, char *argv[])
 {
 	note("Testing basic vixie functions");
 	{
-		bitstr_t *bs = bit_alloc(16), *bs2;
+		bitstr_t *bs = bit_alloc(16), *bs2, *bs3 = bit_alloc(16);
 
 
 		/*bit_set(bs, 42);*/ 	/* triggers TEST in bit_set - OK */
@@ -42,6 +42,11 @@ main(int argc, char *argv[])
 		TEST(bit_test(bs2,12), "bitstring");
 		TEST(bit_super_set(bs,bs2) == 1, "bitstring");
 		TEST(bit_super_set(bs2,bs) == 0, "bitstring");
+		/* bs3 == bit_not(bs) */
+		bit_unfmt_hexmask(bs3, "0xBDFF");
+		bit_not(bs3);
+		TEST(bit_super_set(bs,bs3) == 1, "bit_super_set after bit_not");
+		TEST(bit_super_set(bs3,bs) == 1, "bit_super_set after bit_not");
 
 		bit_clear(bs,14);
 		TEST(!bit_test(bs,14), "bitstring");
@@ -62,6 +67,8 @@ main(int argc, char *argv[])
 		TEST(bit_ffc(bs) == 15, "ffc");
 
 		bit_free(bs);
+		bit_free(bs2);
+		bit_free(bs3);
 		/*bit_set(bs,9); */	/* triggers TEST in bit_set - OK */
 	}
 	note("Testing and/or/not");
@@ -191,6 +198,57 @@ main(int argc, char *argv[])
 		bit_fmt(tmpstr, sizeof(tmpstr), bs);
 		TEST(bit_unfmt(bs2, tmpstr) != -1, "bitstring");
 		TEST(bit_equal(bs, bs2), "bitstring");
+
+		bit_free(bs);
+		bit_free(bs2);
+	}
+
+	note("Testing bit_overlap");
+	{
+		bitstr_t *bs = bit_alloc(1000);
+		bitstr_t *bs2;
+
+		bit_set(bs,1);
+		bit_set(bs,3);
+		bit_set(bs,64);
+		bit_set(bs,998);
+		bit_set(bs,999);
+
+		bs2 = bit_copy(bs);
+		bit_not(bs2);
+		TEST(bit_overlap(bs, bs2) == 0, "bitstring");
+		TEST(bit_overlap_any(bs, bs2) == 0, "bitstring");
+		bit_set(bs2,3);
+		bit_set(bs2,64);
+		bit_set(bs2,999);
+		TEST(bit_overlap(bs, bs2) == 3, "bitstring");
+		TEST(bit_overlap_any(bs, bs2) == 1, "bitstring any");
+
+		bit_free(bs);
+		bit_free(bs2);
+	}
+
+	note("Testing bit_set_count_range");
+	{
+		bitstr_t *bs = bit_alloc(16);
+		bit_nset(bs,0,14);
+		TEST(bit_set_count_range(bs,0,14) == 14, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,2,14) == 12, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,2,15) == 13, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,2,16) == 13, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,0,15) == 15, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,0,16) == 15, "bit_set_count_range");
+		bit_set(bs,15);
+		TEST(bit_set_count_range(bs,0,16) == 16, "bit_set_count_range");
+		bs = bit_realloc(bs,128);
+		bit_nset(bs,0,127);
+		TEST(bit_set_count_range(bs,0,63) == 63, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,0,64) == 64, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,0,65) == 65, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,1,63) == 62, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,1,64) == 63, "bit_set_count_range");
+		TEST(bit_set_count_range(bs,1,65) == 64, "bit_set_count_range");
+		bit_free(bs);
 	}
 
 	totals();

@@ -6,6 +6,12 @@
 
 export PERL_ARCHLIB := $(shell perl -MConfig -e 'print substr($$Config{vendorarch}, 1)')
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-bindnow
+
+# Getting the list of the plugins packages excluding the basic package
+PLUGIN_PACKAGES_LIST := $(shell grep '^Package' debian/control | grep -o 'slurm-wlm-.*-plugin\(s\)\?$$')
+PLUGIN_PACKAGES_LIST := $(filter-out slurm-wlm-basic-plugins,$(PLUGIN_PACKAGES_LIST))
+
+
 # include defs of all DEB_HOST_*/DEB_BUILD_* vars
 include /usr/share/dpkg/architecture.mk
 
@@ -26,8 +32,8 @@ override_dh_auto_clean:
 # hardening-no-fortify-functions
 # Notice that -g in CFLAGS is still provided by dpkg-buildflags
 override_dh_auto_configure:
-	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
-	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
+	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2 $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
+	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2 $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
 override_dh_auto_build:
 	dh_auto_build
 	dh_auto_build --builddirectory build-emulator
@@ -113,11 +119,35 @@ override_dh_auto_install:
 	mv -v debian/tmp-emulator/usr/bin/scontrol debian/tmp-emulator/usr/bin/scontrol-emulator
 	mv -v debian/tmp-emulator/usr/bin/sstat	debian/tmp-emulator/usr/bin/sstat-emulator
 
+	ls debian/tmp/usr/lib/*/slurm-wlm/*.so | sort > debian/all_plugins_filelist
+
+	for f in $(PLUGIN_PACKAGES_LIST) ; do \
+		ls $$(cat debian/$$f.install | sed "s/^/debian\/tmp\//") ; \
+	done | sort >> debian/plugin_packages_filelist
+
+	comm -23 debian/all_plugins_filelist debian/plugin_packages_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins.install
+
+	ls debian/tmp/usr/lib/*/slurm-wlm/*.a debian/tmp/usr/lib/*/slurm-wlm/*.la | sort > debian/all_plugins_dev_filelist
+
+	for f in $(PLUGIN_PACKAGES_LIST) ; do \
+		ls $$(cat debian/$$f-dev.install | sed "s/^/debian\/tmp\//") ; \
+	done | sort >> debian/plugin_packages_dev_filelist
+
+	comm -23 debian/all_plugins_dev_filelist debian/plugin_packages_dev_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins-dev.install
+
 override_dh_strip:
-	dh_strip -plibslurm37
+	dh_strip -plibslurm38
 	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
 	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
+	dh_strip -pslurm-wlm-elasticsearch-plugin
+	dh_strip -pslurm-wlm-hdf5-plugin
+	dh_strip -pslurm-wlm-influxdb-plugin
+	dh_strip -pslurm-wlm-ipmi-plugins
+	dh_strip -pslurm-wlm-jwt-plugin
+	dh_strip -pslurm-wlm-rrd-plugin
+	dh_strip -pslurm-wlm-mysql-plugin
+	dh_strip -pslurm-wlm-rsmi-plugin
 	dh_strip -pslurm-client --dbgsym-migration='slurm-client-dbg (<< 17.02.6~)'
 	dh_strip -pslurmd --dbgsym-migration='slurmd-dbg (<< 17.02.6~)'
 	dh_strip -pslurmctld --dbgsym-migration='slurmctld-dbg (<< 17.02.6~)'
@@ -133,10 +163,9 @@ override_dh_strip:
 	dh_strip -plibpmi0-dev --no-automatic-dbgsym
 	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
-	dh_strip -pslurm-wlm-basic-plugins-dev --no-automatic-dbgsym
 	dh_strip -pslurmrestd --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \
-		--remove-section=.note debian/slurm-wlm-basic-plugins-dev/usr/lib/*/slurm-wlm/*.a
+		--remove-section=.note debian/slurm-*-plugin*-dev/usr/lib/*/slurm-wlm/*.a
 
 override_dh_auto_test:
 

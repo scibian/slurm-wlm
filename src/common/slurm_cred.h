@@ -74,6 +74,7 @@ typedef struct slurm_cred_context   * slurm_cred_ctx_t;
 
 /* Used by slurm_cred_get_arg() */
 #define CRED_ARG_JOB_GRES_LIST 1
+#define CRED_ARG_JOB_ALIAS_LIST 2
 
 /*
  * Initialize current process for slurm credential creation.
@@ -129,7 +130,7 @@ int slurm_cred_ctx_unpack(slurm_cred_ctx_t ctx, buf_t *buffer);
 
 
 /*
- * Container for Slurm credential create and verify arguments
+ * Container for Slurm credential create/fetch/verify arguments
  *
  * The core_bitmap, cores_per_socket, sockets_per_node, and
  * sock_core_rep_count is based upon the nodes allocated to the
@@ -140,24 +141,37 @@ int slurm_cred_ctx_unpack(slurm_cred_ctx_t ctx, buf_t *buffer);
  */
 typedef struct {
 	slurm_step_id_t step_id;
-	uid_t uid;
-	gid_t gid;
-	char *pw_name;
-	char *pw_gecos;
-	char *pw_dir;
-	char *pw_shell;
-	int ngids;
-	gid_t *gids;
-	char **gr_names;
+	uid_t uid; /* user for which the cred is valid */
+	gid_t gid; /* user's primary group id */
+	/*
+	 * These are only used in certain conditions and should not be supplied
+	 * when creating a new credential.  They are defined here so the values
+	 * can be fetched from the credential.
+	 */
+	char *pw_name; /* user_name as a string */
+	char *pw_gecos; /* user information */
+	char *pw_dir; /* home directory */
+	char *pw_shell; /* user program */
+	int ngids; /* number of extended group ids */
+	gid_t *gids; /* extended group ids for user */
+	char **gr_names; /* array of group names matching gids */
 
 	/* job_core_bitmap and step_core_bitmap cover the same set of nodes,
 	 * namely the set of nodes allocated to the job. The core and socket
 	 * information below applies to job_core_bitmap AND step_core_bitmap */
+	uint16_t core_array_size;	/* core/socket array size */
 	uint16_t *cores_per_socket;	/* Used for job/step_core_bitmaps */
 	uint16_t *sockets_per_node;	/* Used for job/step_core_bitmaps */
 	uint32_t *sock_core_rep_count;	/* Used for job/step_core_bitmaps */
 
+	uint32_t cpu_array_count;
+	uint16_t *cpu_array;
+	uint32_t *cpu_array_reps;
+
 	/* JOB specific info */
+	char *job_account;		/* account */
+	char *job_alias_list;		/* node name to address aliases */
+	char *job_comment;		/* comment */
 	char     *job_constraints;	/* constraints in job allocation */
 	bitstr_t *job_core_bitmap;	/* cores allocated to JOB */
 	uint16_t  job_core_spec;	/* count of specialized cores */
@@ -170,7 +184,14 @@ typedef struct {
 	uint32_t *job_mem_alloc_rep_count;
 	uint32_t job_mem_alloc_size;	/* Size of memory arrays above */
 	uint32_t  job_nhosts;		/* count of nodes allocated to JOB */
+	uint32_t job_ntasks;
 	List job_gres_list;		/* Generic resources allocated to JOB */
+	char *job_partition;		/* partition */
+	char *job_reservation;		/* Reservation, if applicable */
+	uint16_t job_restart_cnt;	/* restart count */
+	char *job_std_err;
+	char *job_std_in;
+	char *job_std_out;
 	uint16_t  x11;			/* x11 flag set on job */
 
 	char *selinux_context;
@@ -204,13 +225,7 @@ int slurm_cred_fini(void);
  * Returns NULL on failure.
  */
 slurm_cred_t *slurm_cred_create(slurm_cred_ctx_t ctx, slurm_cred_arg_t *arg,
-				uint16_t protocol_version);
-
-/*
- * Copy a slurm credential.
- * Returns NULL on failure.
- */
-slurm_cred_t *slurm_cred_copy(slurm_cred_t *cred);
+				bool sign_it, uint16_t protocol_version);
 
 /*
  * Create a "fake" credential with bogus data in the signature.
@@ -224,8 +239,17 @@ slurm_cred_t *slurm_cred_faker(slurm_cred_arg_t *arg);
  * slurm_cred_get_args() or slurm_cred_verify() */
 void slurm_cred_free_args(slurm_cred_arg_t *arg);
 
-/* Make a copy of the credential's arguments */
-int slurm_cred_get_args(slurm_cred_t *cred, slurm_cred_arg_t *arg);
+/*
+ * Release the internal lock acquired through slurm_cred_get_args()
+ * or slurm_cred_verify().
+ */
+extern void slurm_cred_unlock_args(slurm_cred_t *cred);
+
+/*
+ * Access the credential's arguments. NULL on error.
+ * *Must* release lock with slurm_cred_unlock_arg().
+ */
+extern slurm_cred_arg_t *slurm_cred_get_args(slurm_cred_t *cred);
 
 /*
  * Return a pointer specific field from a job credential
@@ -249,8 +273,8 @@ extern void slurm_cred_get_mem(slurm_cred_t *cred,
 			      uint64_t *job_mem_limit,
 			      uint64_t *step_mem_limit);
 /*
- * Verify the signed credential `cred,' and return cred contents in
- * the cred_arg structure. The credential is cached and cannot be reused.
+ * Verify the signed credential 'cred', and return cred contents.
+ * The credential is cached and cannot be reused.
  *
  * Will perform at least the following checks:
  *   - Credential signature is valid
@@ -258,9 +282,11 @@ extern void slurm_cred_get_mem(slurm_cred_t *cred,
  *   - If credential is reissue will purge the old credential
  *   - Credential has not been revoked
  *   - Credential has not been replayed
+ *
+ * *Must* release lock with slurm_cred_unlock_arg().
  */
-int slurm_cred_verify(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
-		      slurm_cred_arg_t *arg, uint16_t protocol_version);
+extern slurm_cred_arg_t *slurm_cred_verify(slurm_cred_ctx_t ctx,
+					   slurm_cred_t *cred);
 
 /*
  * Rewind the last play of credential cred. This allows the credential

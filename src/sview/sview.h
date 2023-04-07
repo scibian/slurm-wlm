@@ -50,8 +50,8 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/select.h"
 #include "src/common/slurmdb_defs.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -538,10 +538,9 @@ extern GtkWidget *create_entry(void);
 extern void create_page(GtkNotebook *notebook, display_data_t *display_data);
 extern GtkTreeView *create_treeview(display_data_t *local, List *button_list);
 extern GtkTreeView *create_treeview_2cols_attach_to_table(GtkTable *table);
-extern GtkTreeStore *create_treestore(GtkTreeView *tree_view,
-				      display_data_t *display_data,
-				      int count, int sort_column,
-				      int color_column);
+extern void create_treestore(GtkTreeView *tree_view,
+			     display_data_t *display_data, int count,
+			     int sort_column, int color_column);
 
 extern gboolean right_button_pressed(GtkTreeView *tree_view, GtkTreePath *path,
 				     GdkEventButton *event,

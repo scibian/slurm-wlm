@@ -1,4 +1,4 @@
-.TH "slurmdbd.conf" "5" "Slurm Configuration File" "April 2022" "Slurm Configuration File"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "October 2022" "Slurm Configuration File"
 
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
@@ -22,6 +22,12 @@ be read as the other user ID in response to a SIGHUP signal.
 This file should be protected from unauthorized access since it
 contains a database password.
 The overall configuration parameters available include:
+
+.TP
+\fBAllowNoDefAcct\fR
+Remove requirement for users to have a default account.  Boolean, yes to turn
+on, no (default) to enforce default accounts.
+.IP
 
 .TP
 \fBArchiveDir\fR
@@ -224,6 +230,27 @@ Disable IPv4 only operation for the slurmdbd. This should also be set in your
 Enable using IPv6 addresses for the slurmdbd. When using both IPv4 and IPv6,
 address family preferences will be based on your /etc/gai.conf file. This
 should also be set in your \fBslurm.conf\fR file.
+.IP
+
+.TP
+\fBkeepaliveinterval=#\fR
+Specifies the interval between keepalive probes on the socket communications
+between the backup and primary slurmdbd.
+The default value is 30 seconds.
+.IP
+
+.TP
+\fBkeepaliveprobes=#\fR
+Specifies the number of keepalive probes sent on the socket communications
+between the backup and primary slurmdbd.
+The default value is 3.
+.IP
+
+.TP
+\fBkeepalivetime=#\fR
+Specifies how long to wait before sending keepalive probes between the primary
+and backup slurmdbd processes.
+The default value is 30 seconds.
 .RE
 .IP
 
@@ -695,10 +722,10 @@ Daemon and have the same UID as the hosts on which \fBslurmctld\fR executes.
 For security purposes, a user other than "root" is recommended.
 The default value is "root".
 
-\fBNOTE\fR: If the SlurmUser defined for \fBslurmctld\fR is not root and is
-different than the SlurmUser defined for \fBslurmdbd\fR, the user used for
-\fBslurmctld\fR must be added to accounting with AdminLevel=Admin and
-\fBslurmctld\fR must be restarted.
+\fBNOTE\fR: If the SlurmUser for slurmctld is root you can still use a
+non-root SlurmUser for slurmdbd (in any other case, both SlurmUsers should
+match) by explicitly setting the user's AdminLevel to Admin. After adding a
+user in this way, you must restart slurmctld.
 .IP
 
 .TP

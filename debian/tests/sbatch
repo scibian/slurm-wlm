@@ -49,9 +49,10 @@ EOF
 
 sbatch /tmp/job.sh
 
-# Testing if the job is still in the queue every second, at most 5 times
-retry=5
+# Testing if the job is still in the queue every second, at most 60 times
+retry=60
 while [ "$retry" -gt 0 ] && [ -n "$(squeue --noheader)" ] ; do
+	echo Sleeping 1 second for retry number $retry
 	retry=$(($retry-1))
 	sleep 1
 done
