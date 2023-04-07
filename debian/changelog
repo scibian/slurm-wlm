@@ -1,3 +1,11 @@
+slurm-wlm (22.05.8-3sci11u1) scibian11; urgency=medium
+
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Thu, 06 Apr 2023 09:05:54 +0200
+
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
   * Source only upload for testing
