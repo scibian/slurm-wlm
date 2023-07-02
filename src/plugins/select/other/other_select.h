@@ -97,14 +97,6 @@ extern int other_get_info_from_plugin(enum select_plugindata_info dinfo,
 				      job_record_t *job_ptr, void *data);
 
 /*
- * Updated a node configuration. This happens when a node registers with
- *	more resources than originally configured(e.g. memory).
- * IN index  - index into the node record list
- * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
- */
-extern int other_update_node_config(int index);
-
-/*
  * Select the "best" nodes for given job from those available
  * IN/OUT job_ptr - pointer to job being considered for initiation,
  *                  set's start_time when job expected to start
@@ -159,13 +151,6 @@ extern int other_job_expand(job_record_t *from_job_ptr,
  * RET: 0 or an error code
  */
 extern int other_job_resized(job_record_t *job_ptr, node_record_t *node_ptr);
-
-/*
- * Pass job-step signal to other plugin.
- * IN job_ptr - job to be signaled
- * IN signal  - signal(7) number
- */
-extern int other_job_signal(job_record_t *job_ptr, int signal);
 
 /*
  * Note termination of job is starting. Executed from slurmctld.
@@ -242,7 +227,6 @@ extern int other_select_jobinfo_set(select_jobinfo_t *jobinfo,
  * IN jobinfo  - updated select job credential
  * IN data_type - type of data to enter into job credential
  * OUT data - the data to get from job credential, caller must xfree
- *	data for data_type == SELECT_JOBDATA_PART_ID
  */
 extern int other_select_jobinfo_get(select_jobinfo_t *jobinfo,
 				    enum select_jobdata_type data_type,
@@ -276,25 +260,6 @@ extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
 extern int other_select_jobinfo_unpack(select_jobinfo_t **jobinfo,
 				       buf_t *buffer,
 				       uint16_t protocol_version);
-
-/* write select job info to a string
- * IN jobinfo - a select job credential
- * OUT buf    - location to write job info contents
- * IN size    - byte size of buf
- * IN mode    - print mode, see enum select_print_mode
- * RET        - the string, same as buf
- */
-extern char *other_select_jobinfo_sprint(select_jobinfo_t *jobinfo,
-					 char *buf, size_t size, int mode);
-
-/* write select job info to a string
- * IN jobinfo - a select job credential
- * OUT buf    - location to write job info contents
- * IN mode    - print mode, see enum select_print_mode
- * RET        - the string, same as buf
- */
-extern char *other_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
-					  int mode);
 
 /*******************************************************\
  * NODE-SPECIFIC SELECT CREDENTIAL MANAGEMENT FUNCIONS *

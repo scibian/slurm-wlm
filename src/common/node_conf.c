@@ -57,17 +57,17 @@
 #include <time.h>
 
 #include "src/common/assoc_mgr.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/hostlist.h"
 #include "src/common/macros.h"
 #include "src/common/pack.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
-#include "src/common/select.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/slurm_acct_gather_energy.h"
-#include "src/common/slurm_ext_sensors.h"
-#include "src/common/slurm_topology.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/acct_gather_energy.h"
+#include "src/interfaces/ext_sensors.h"
+#include "src/interfaces/topology.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -78,6 +78,8 @@ strong_alias(init_node_conf, slurm_init_node_conf);
 strong_alias(build_all_nodeline_info, slurm_build_all_nodeline_info);
 strong_alias(rehash_node, slurm_rehash_node);
 strong_alias(hostlist2bitmap, slurm_hostlist2bitmap);
+strong_alias(bitmap2node_name, slurm_bitmap2node_name);
+strong_alias(find_node_record, slurm_find_node_record);
 
 /* Global variables */
 List config_list  = NULL;	/* list of config_record entries */
@@ -86,10 +88,14 @@ time_t last_node_update = (time_t) 0;	/* time of last update */
 node_record_t **node_record_table_ptr = NULL;	/* node records */
 xhash_t* node_hash_table = NULL;
 int node_record_table_size = 0;		/* size of node_record_table_ptr */
-int node_record_count = 0;		/* count in node_record_table_ptr */
+int node_record_count = 0;		/* number of node slots in
+					 * node_record_table_ptr */
+int active_node_record_count = 0;	/* non-null node count in
+					 * node_record_table_ptr */
 int last_node_index = -1;		/* index of last node in tabe */
 uint16_t *cr_node_num_cores = NULL;
 uint32_t *cr_node_cores_offset = NULL;
+bool spec_cores_first = false;
 
 /* Local function definitions */
 static void _delete_config_record(void);
@@ -184,24 +190,15 @@ static void _node_record_hash_identity (void* item, const char** key,
  */
 hostlist_t bitmap2hostlist (bitstr_t *bitmap)
 {
-	int i, first, last;
 	hostlist_t hl;
+	node_record_t *node_ptr;
 
 	if (bitmap == NULL)
 		return NULL;
 
-	first = bit_ffs(bitmap);
-	if (first == -1)
-		return NULL;
-
-	last  = bit_fls(bitmap);
 	hl = hostlist_create(NULL);
-	for (i = first; i <= last; i++) {
-		if (bit_test(bitmap, i) == 0)
-			continue;
-		if (!node_record_table_ptr[i])
-			continue;
-		hostlist_push_host(hl, node_record_table_ptr[i]->name);
+	for (int i = 0; (node_ptr = next_node_bitmap(bitmap, &i)); i++) {
+		hostlist_push_host(hl, node_ptr->name);
 	}
 	return hl;
 
@@ -432,6 +429,105 @@ extern void build_all_nodeline_info(bool set_bitmap, int tres_cnt)
 	}
 }
 
+extern int build_node_spec_bitmap(node_record_t *node_ptr)
+{
+	uint32_t size;
+	int *cpu_spec_array;
+	int i;
+
+	if (node_ptr->tpc == 0) {
+		error("Node %s has invalid thread per core count (%u)",
+		      node_ptr->name, node_ptr->tpc);
+		return SLURM_ERROR;
+	}
+
+	if (!node_ptr->cpu_spec_list)
+		return SLURM_SUCCESS;
+	size = node_ptr->tot_cores;
+	FREE_NULL_BITMAP(node_ptr->node_spec_bitmap);
+	node_ptr->node_spec_bitmap = bit_alloc(size);
+	bit_set_all(node_ptr->node_spec_bitmap);
+
+	/* remove node's specialized cpus now */
+	cpu_spec_array = bitfmt2int(node_ptr->cpu_spec_list);
+	i = 0;
+	while (cpu_spec_array[i] != -1) {
+		int start = (cpu_spec_array[i] / node_ptr->tpc);
+		int end = (cpu_spec_array[i + 1] / node_ptr->tpc);
+		if (start > size) {
+			error("%s: Specialized CPUs id start above the configured limit.",
+			      __func__);
+			break;
+		}
+
+		if (end > size) {
+			error("%s: Specialized CPUs id end above the configured limit",
+			      __func__);
+			end = size;
+		}
+		/*
+		 * We need to test to make sure we have these bits in this map.
+		 * If the node goes from 12 cpus to 6 like scenario.
+		 */
+		bit_nclear(node_ptr->node_spec_bitmap, start, end);
+		i += 2;
+	}
+	node_ptr->core_spec_cnt = bit_clear_count(node_ptr->node_spec_bitmap);
+	xfree(cpu_spec_array);
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Select cores and CPUs to be reserved for core specialization.
+ */
+static void _select_spec_cores(node_record_t *node_ptr)
+{
+	int spec_cores, res_core, res_sock, res_off;
+	int from_core, to_core, incr_core, from_sock, to_sock, incr_sock;
+	bitstr_t *cpu_spec_bitmap;
+
+	spec_cores = node_ptr->core_spec_cnt;
+
+	cpu_spec_bitmap = bit_alloc(node_ptr->cpus);
+	node_ptr->node_spec_bitmap = bit_alloc(node_ptr->tot_cores);
+	bit_set_all(node_ptr->node_spec_bitmap);
+
+	if (spec_cores_first) {
+		from_core = 0;
+		to_core   = node_ptr->cores;
+		incr_core = 1;
+		from_sock = 0;
+		to_sock   = node_ptr->tot_sockets;
+		incr_sock = 1;
+	} else {
+		from_core = node_ptr->cores - 1;
+		to_core   = -1;
+		incr_core = -1;
+		from_sock = node_ptr->tot_sockets - 1;
+		to_sock   = -1;
+		incr_sock = -1;
+	}
+	for (res_core = from_core;
+	     (spec_cores && (res_core != to_core)); res_core += incr_core) {
+		for (res_sock = from_sock;
+		     (spec_cores && (res_sock != to_sock));
+		      res_sock += incr_sock) {
+			int thread_off;
+			thread_off = ((res_sock * node_ptr->cores) + res_core) *
+				      node_ptr->tpc;
+			bit_nset(cpu_spec_bitmap, thread_off,
+				 thread_off + node_ptr->tpc - 1);
+			res_off = (res_sock * node_ptr->cores) + res_core;
+			bit_clear(node_ptr->node_spec_bitmap, res_off);
+			spec_cores--;
+		}
+	}
+
+	node_ptr->cpu_spec_list = bit_fmt_full(cpu_spec_bitmap);
+	FREE_NULL_BITMAP(cpu_spec_bitmap);
+
+	return;
+}
 /*
  * Expand a nodeline's node names, host names, addrs, ports into separate nodes.
  */
@@ -634,10 +730,9 @@ extern config_record_t *create_config_record(void)
 /*
  * Convert CPU list to reserve whole cores
  * OUT:
- *	node_ptr->node_spec_bitmap
  *	node_ptr->cpu_spec_list
  */
-static int _convert_cpu_spec_list(node_record_t *node_ptr, uint32_t tot_cores)
+static int _convert_cpu_spec_list(node_record_t *node_ptr)
 {
 	int i;
 	bitstr_t *cpu_spec_bitmap;
@@ -645,26 +740,13 @@ static int _convert_cpu_spec_list(node_record_t *node_ptr, uint32_t tot_cores)
 	/* create CPU bitmap from input CPU list */
 	cpu_spec_bitmap = bit_alloc(node_ptr->cpus);
 
-	if (bit_unfmt(cpu_spec_bitmap, node_ptr->cpu_spec_list)) {
-		error("CpuSpecList is invalid");
-	}
-
-	node_ptr->node_spec_bitmap = bit_alloc(tot_cores);
-
-	/* Create core spec bitmap from CPU bitmap */
-	for (i = 0; i < node_ptr->cpus; i++) {
-		if (bit_test(cpu_spec_bitmap, i))
-			bit_set(node_ptr->node_spec_bitmap,
-				(i / (node_ptr->tpc)));
-	}
-
 	/* Expand CPU bitmap to reserve whole cores */
-	for (i = 0; i < tot_cores; i++) {
-		if (bit_test(node_ptr->node_spec_bitmap, i)) {
+	for (i = 0; i < node_ptr->tot_cores; i++) {
+		if (!bit_test(node_ptr->node_spec_bitmap, i)) {
 			/* typecast to int to avoid coverity error */
 			bit_nset(cpu_spec_bitmap,
 				 (i * (int) node_ptr->tpc),
-				 ((i+1) * (int) node_ptr->tpc) - 1);
+				 ((i + 1) * (int) node_ptr->tpc) - 1);
 		}
 	}
 	xfree(node_ptr->cpu_spec_list);
@@ -720,19 +802,11 @@ static void _init_node_record(node_record_t *node_ptr,
 
 	node_ptr->cpu_spec_list = xstrdup(config_ptr->cpu_spec_list);
 	if (node_ptr->cpu_spec_list) {
-		if (node_ptr->tpc > 1) {
-			_convert_cpu_spec_list(node_ptr, node_ptr->tot_cores);
-		} else {
-			node_ptr->node_spec_bitmap = bit_alloc(node_ptr->cpus);
-			if (bit_unfmt(node_ptr->node_spec_bitmap,
-				      node_ptr->cpu_spec_list)) {
-				error("CpuSpecList is invalid");
-			}
-		}
-		node_ptr->core_spec_cnt = bit_set_count(
-			node_ptr->node_spec_bitmap);
-		/* node_spec_bitmap is not set on spec cores. */
-		bit_not(node_ptr->node_spec_bitmap);
+		build_node_spec_bitmap(node_ptr);
+		if (node_ptr->tpc > 1)
+			_convert_cpu_spec_list(node_ptr);
+	} else if (node_ptr->core_spec_cnt) {
+		_select_spec_cores(node_ptr);
 	}
 
 	node_ptr->cpus_efctv = node_ptr->cpus -
@@ -799,6 +873,7 @@ extern node_record_t *create_node_record_at(int index, char *node_name,
 	node_ptr->index = index;
 	node_ptr->name = xstrdup(node_name);
 	xhash_add(node_hash_table, node_ptr);
+	active_node_record_count++;
 
 	_init_node_record(node_ptr, config_ptr);
 
@@ -865,6 +940,7 @@ extern void insert_node_record(node_record_t *node_ptr)
 		node_ptr->index = i;
 		bit_set(node_ptr->config_ptr->node_bitmap, node_ptr->index);
 		xhash_add(node_hash_table, node_ptr);
+		active_node_record_count++;
 
 		/* re-add node to conf node hash tables */
 		slurm_reset_alias(node_ptr->name,
@@ -894,6 +970,7 @@ extern void delete_node_record(node_record_t *node_ptr)
 		if (i < 0)
 			last_node_index = -1;
 	}
+	active_node_record_count--;
 
 	_delete_node_config_ptr(node_ptr);
 
@@ -1013,6 +1090,10 @@ extern void init_node_conf(void)
 		config_list    = list_create (_list_delete_config);
 		front_end_list = list_create (destroy_frontend);
 	}
+	if (xstrcasestr(slurm_conf.sched_params, "spec_cores_first"))
+		spec_cores_first = true;
+	else
+		spec_cores_first = false;
 }
 
 
@@ -1180,6 +1261,7 @@ extern void purge_node_rec(node_record_t *node_ptr)
 	xfree(node_ptr->features_act);
 	xfree(node_ptr->gres);
 	FREE_NULL_LIST(node_ptr->gres_list);
+	xfree(node_ptr->mcs_label);
 	xfree(node_ptr->name);
 	xfree(node_ptr->node_hostname);
 	FREE_NULL_BITMAP(node_ptr->node_spec_bitmap);
@@ -1187,6 +1269,7 @@ extern void purge_node_rec(node_record_t *node_ptr)
 	xfree(node_ptr->part_pptr);
 	xfree(node_ptr->power);
 	xfree(node_ptr->reason);
+	xfree(node_ptr->resv_name);
 	xfree(node_ptr->version);
 	acct_gather_energy_destroy(node_ptr->energy);
 	ext_sensors_destroy(node_ptr->ext_sensors);
@@ -1383,6 +1466,30 @@ extern node_record_t *next_node(int *index)
 			return NULL;
 		if (*index > last_node_index)
 			return NULL;
+	}
+
+	xassert(node_record_table_ptr[*index]->index == *index);
+
+	return node_record_table_ptr[*index];
+}
+
+extern node_record_t *next_node_bitmap(bitstr_t *bitmap, int *index)
+{
+	xassert(index);
+
+	if (*index >= node_record_count)
+		return NULL;
+
+	xassert(bitmap);
+	xassert(bit_size(bitmap) == node_record_count);
+
+	while (true) {
+		*index = bit_ffs_from_bit(bitmap, *index);
+		if (*index == -1)
+			return NULL;
+		if (node_record_table_ptr[*index])
+			break;
+		(*index)++;  /* Skip blank entries */
 	}
 
 	xassert(node_record_table_ptr[*index]->index == *index);

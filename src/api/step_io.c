@@ -47,7 +47,7 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_pack.h"
-#include "src/common/slurm_cred.h"
+#include "src/interfaces/cred.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
@@ -744,7 +744,7 @@ again:
 	msg->ref_count = 0; /* make certain it is initialized */
 	/* free the packbuf structure, but not the memory to which it points */
 	packbuf->head = NULL;
-	free_buf(packbuf);
+	FREE_NULL_BUFFER(packbuf);
 	debug3("  msg->length = %d", msg->length);
 
 	/*
@@ -1006,7 +1006,7 @@ _init_stdio_eio_objs(slurm_step_io_fds_t fds, client_io_t *cio)
 	}
 
 	/*
-	 * build a seperate stderr eio_obj_t only if stderr is not sharing
+	 * build a separate stderr eio_obj_t only if stderr is not sharing
 	 * the stdout file descriptor and task filtering option.
 	 */
 	if (fds.err.fd == fds.out.fd
@@ -1034,11 +1034,9 @@ _incoming_buf_free(client_io_t *cio)
 		return true;
 	} else if (cio->incoming_count < STDIO_MAX_FREE_BUF) {
 		buf = _alloc_io_buf();
-		if (buf != NULL) {
-			list_enqueue(cio->free_incoming, buf);
-			cio->incoming_count++;
-			return true;
-		}
+		list_enqueue(cio->free_incoming, buf);
+		cio->incoming_count++;
+		return true;
 	}
 	return false;
 }
@@ -1052,11 +1050,9 @@ _outgoing_buf_free(client_io_t *cio)
 		return true;
 	} else if (cio->outgoing_count < STDIO_MAX_FREE_BUF) {
 		buf = _alloc_io_buf();
-		if (buf != NULL) {
-			list_enqueue(cio->free_outgoing, buf);
-			cio->outgoing_count++;
-			return true;
-		}
+		list_enqueue(cio->free_outgoing, buf);
+		cio->outgoing_count++;
+		return true;
 	}
 
 	return false;
@@ -1341,7 +1337,7 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 		io_hdr_pack(&header, packbuf);
 		/* free the packbuf, but not the memory to which it points */
 		packbuf->head = NULL;
-		free_buf(packbuf);
+		FREE_NULL_BUFFER(packbuf);
 
 		list_enqueue( server->msg_queue, msg );
 

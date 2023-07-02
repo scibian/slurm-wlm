@@ -112,7 +112,6 @@ static void _fetch_child(List controllers, uint32_t flags)
 	_init_minimal_conf_server_config(controllers);
 	config = fetch_config_from_controller(flags);
 
-
 	if (!config) {
 		error("%s: failed to fetch remote configs: %m", __func__);
 		safe_write(to_parent[1], &len, sizeof(int));
@@ -194,7 +193,7 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 		close(to_parent[1]);
 		return NULL;
 	} else if (pid > 0) {
-		list_destroy(controllers);
+		FREE_NULL_LIST(controllers);
 		return _fetch_parent(pid);
 	}
 
@@ -309,6 +308,10 @@ static void _init_minimal_conf_server_config(List controllers)
 	list_for_each(controllers, _print_controllers, &conf);
 	xstrfmtcat(conf, "ClusterName=CONFIGLESS\n");
 
+	/* Use for the --authinfo option in slurmd */
+	if (slurm_conf.authinfo)
+		xstrfmtcat(conf, "AuthInfo=%s\n", slurm_conf.authinfo);
+
 	if ((fd = dump_to_memfd("slurm.conf", conf, &filename)) < 0)
 		fatal("%s: could not write temporary config", __func__);
 	xfree(conf);
@@ -379,6 +382,18 @@ extern int write_one_config(void *x, void *arg)
 	return SLURM_SUCCESS;
 }
 
+extern int write_config_to_memfd(void *x, void *arg)
+{
+	config_file_t *config = x;
+
+	if (config->exists)
+		config->memfd_fd = dump_to_memfd(config->file_name,
+						 config->file_content,
+						 &config->memfd_path);
+
+	return SLURM_SUCCESS;
+}
+
 extern int write_configs_to_conf_cache(config_response_msg_t *msg,
 				       char *dir)
 {
@@ -387,52 +402,6 @@ extern int write_configs_to_conf_cache(config_response_msg_t *msg,
 	}
 
 	return SLURM_SUCCESS;
-}
-
-static void _load_conf(const char *dir, const char *name, char **target)
-{
-	char *file = NULL;
-	buf_t *config;
-
-	xstrfmtcat(file, "%s/%s", dir, name);
-	config = create_mmap_buf(file);
-	xfree(file);
-
-	/*
-	 * If we can't load a given config, then assume that one isn't required
-	 * on this system.
-	 */
-	if (config)
-		*target = xstrndup(config->head, config->size);
-
-	free_buf(config);
-}
-
-extern void load_config_response_msg(config_response_msg_t *msg, int flags)
-{
-	xassert(msg);
-	char *dir = get_extra_conf_path("");
-
-	_load_conf(dir, "slurm.conf", &msg->config);
-
-	if (!(flags & CONFIG_REQUEST_SLURMD)) {
-		xfree(dir);
-		return;
-	}
-
-	_load_conf(dir, "acct_gather.conf", &msg->acct_gather_config);
-	_load_conf(dir, "cgroup.conf", &msg->cgroup_config);
-	_load_conf(dir, "ext_sensors.conf", &msg->ext_sensors_config);
-	_load_conf(dir, "gres.conf", &msg->gres_config);
-	_load_conf(dir, "job_container.conf", &msg->job_container_config);
-	_load_conf(dir, "knl_cray.conf", &msg->knl_cray_config);
-	_load_conf(dir, "knl_generic.conf", &msg->knl_generic_config);
-	_load_conf(dir, "plugstack.conf", &msg->plugstack_config);
-	_load_conf(dir, "topology.conf", &msg->topology_config);
-
-	msg->slurmd_spooldir = xstrdup(slurm_conf.slurmd_spooldir);
-
-	xfree(dir);
 }
 
 static void _load_conf2list(config_response_msg_t *msg, char *file_name)
@@ -466,7 +435,7 @@ static void _load_conf2list(config_response_msg_t *msg, char *file_name)
 	       __func__, file_name,
 	       (config_exists ? "exists" : "does not exist"));
 
-	free_buf(config);
+	FREE_NULL_BUFFER(config);
 }
 
 /*
@@ -538,6 +507,10 @@ extern void destroy_config_file(void *object)
 
 	if (!conf_file)
 		return;
+
+	if (conf_file->memfd_path)
+		close(conf_file->memfd_fd);
+	xfree(conf_file->memfd_path);
 
 	xfree(conf_file->file_name);
 	xfree(conf_file->file_content);

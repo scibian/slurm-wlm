@@ -63,6 +63,8 @@ char *job_req_inx[] = {
 	"t1.derived_ec",
 	"t1.derived_es",
 	"t1.exit_code",
+	"t1.extra",
+	"t1.failed_node",
 	"t1.flags",
 	"t1.id_array_job",
 	"t1.id_array_task",
@@ -80,6 +82,7 @@ char *job_req_inx[] = {
 	"t1.job_db_inx",
 	"t1.job_name",
 	"t1.kill_requid",
+	"t1.licenses",
 	"t1.mem_req",
 	"t1.node_inx",
 	"t1.nodelist",
@@ -120,6 +123,8 @@ enum {
 	JOB_REQ_DERIVED_EC,
 	JOB_REQ_DERIVED_ES,
 	JOB_REQ_EXIT_CODE,
+	JOB_REQ_EXTRA,
+	JOB_REQ_FAILED_NODE,
 	JOB_REQ_FLAGS,
 	JOB_REQ_ARRAYJOBID,
 	JOB_REQ_ARRAYTASKID,
@@ -137,6 +142,7 @@ enum {
 	JOB_REQ_DB_INX,
 	JOB_REQ_NAME,
 	JOB_REQ_KILL_REQUID,
+	JOB_REQ_LICENSES,
 	JOB_REQ_REQ_MEM,
 	JOB_REQ_NODE_INX,
 	JOB_REQ_NODELIST,
@@ -842,12 +848,15 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->jobname = xstrdup(row[JOB_REQ_NAME]);
 		job->gid = slurm_atoul(row[JOB_REQ_GID]);
 		job->exitcode = slurm_atoul(row[JOB_REQ_EXIT_CODE]);
+		job->failed_node = xstrdup(row[JOB_REQ_FAILED_NODE]);
 		job->derived_ec = slurm_atoul(row[JOB_REQ_DERIVED_EC]);
 		job->derived_es = xstrdup(row[JOB_REQ_DERIVED_ES]);
 		job->admin_comment = xstrdup(row[JOB_REQ_ADMIN_COMMENT]);
 		job->system_comment = xstrdup(row[JOB_REQ_SYSTEM_COMMENT]);
 		job->constraints = xstrdup(row[JOB_REQ_CONSTRAINTS]);
 		job->container = xstrdup(row[JOB_REQ_CONTAINER]);
+		job->extra = xstrdup(row[JOB_REQ_EXTRA]);
+		job->licenses = xstrdup(row[JOB_REQ_LICENSES]);
 		job->flags = slurm_atoul(row[JOB_REQ_FLAGS]);
 
 		/*

@@ -49,11 +49,13 @@
 #include "src/common/bitstring.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/select.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/preempt.h"
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/locks.h"
-#include "src/slurmctld/preempt.h"
 #include "src/slurmctld/slurmctld.h"
 
 /* global timeslicer thread variables */
@@ -363,26 +365,23 @@ static int _find_job_index(struct gs_part *p_ptr, uint32_t job_id)
 /* Return 1 if job "cpu count" fits in this row, else return 0 */
 static int _can_cpus_fit(job_record_t *job_ptr, struct gs_part *p_ptr)
 {
-	int i, j, size;
 	uint16_t *p_cpus, *j_cpus;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 
 	if (gr_type != GS_CPU)
 		return 0;
 
-	size = bit_size(job_res->node_bitmap);
 	p_cpus = p_ptr->active_cpus;
 	j_cpus = job_res->cpus;
 
 	if (!p_cpus || !j_cpus)
 		return 0;
 
-	for (j = 0, i = 0; i < size; i++) {
-		if (bit_test(job_res->node_bitmap, i)) {
-			if (p_cpus[i]+j_cpus[j] > _get_phys_bit_cnt(i))
-				return 0;
-			j++;
-		}
+	for (int j = 0, i = 0; next_node_bitmap(job_res->node_bitmap, &i);
+	     i++) {
+		if (p_cpus[i] + j_cpus[j] > _get_phys_bit_cnt(i))
+			return 0;
+		j++;
 	}
 	return 1;
 }
@@ -478,10 +477,8 @@ static void _add_job_to_active(job_record_t *job_ptr, struct gs_part *p_ptr)
 	job_gr_type = _get_part_gr_type(job_ptr->part_ptr);
 	if ((job_gr_type == GS_CPU2) || (job_gr_type == GS_CORE) ||
 	    (job_gr_type == GS_SOCKET)) {
-		if (p_ptr->jobs_active == 0 && p_ptr->active_resmap) {
-			uint32_t size = bit_size(p_ptr->active_resmap);
-			bit_nclear(p_ptr->active_resmap, 0, size-1);
-		}
+		if (p_ptr->jobs_active == 0 && p_ptr->active_resmap)
+			bit_clear_all(p_ptr->active_resmap);
 		add_job_to_cores(job_res, &(p_ptr->active_resmap),
 				 gs_bits_per_node);
 		if (job_gr_type == GS_SOCKET)
@@ -1543,6 +1540,5 @@ static void *_timeslicer_thread(void *arg)
 	}
 
 	timeslicer_thread_id = (pthread_t) 0;
-	pthread_exit((void *) 0);
 	return NULL;
 }

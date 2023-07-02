@@ -396,4 +396,15 @@ do {									\
 /* Number of elements in an array */
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
+#define SWAP(x, y)		\
+do {				\
+	__typeof__(x) b = x;	\
+	x = y;			\
+	y = b;			\
+} while (0)
+
+/* macro to force stringification */
+#define XSTRINGIFY(s) XSTRINGIFY2(s)
+#define XSTRINGIFY2(s) #s
+
 #endif /* !_MACROS_H */

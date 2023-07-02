@@ -102,6 +102,7 @@
 #define	bit_fmt_binmask		slurm_bit_fmt_binmask
 #define bit_unfmt_binmask	slurm_bit_unfmt_binmask
 #define	bit_fls			slurm_bit_fls
+#define	bit_fls_from_bit	slurm_bit_fls_from_bit
 #define	bit_fill_gaps		slurm_bit_fill_gaps
 #define	bit_super_set		slurm_bit_super_set
 #define	bit_overlap		slurm_bit_overlap
@@ -114,7 +115,6 @@
 #define bit_nffs		slurm_bit_nffs
 #define bit_copybits		slurm_bit_copybits
 #define	bit_get_bit_num		slurm_bit_get_bit_num
-#define	bit_get_pos_num		slurm_bit_get_pos_num
 
 /* fd.[ch] functions */
 #define closeall		slurm_closeall
@@ -246,7 +246,7 @@
 #define	log_fini		slurm_log_fini
 #define	log_alter		slurm_log_alter
 #define	log_alter_with_fp	slurm_log_alter_with_fp
-#define	log_set_fpfx		slurm_log_set_fpfx
+#define	log_set_prefix		slurm_log_set_prefix
 #define	log_fp			slurm_log_fp
 #define	log_oom			slurm_log_oom
 #define	log_has_data		slurm_log_has_data
@@ -272,6 +272,8 @@
 #define build_all_nodeline_info slurm_build_all_nodeline_info
 #define rehash_node		slurm_rehash_node
 #define hostlist2bitmap		slurm_hostlist2bitmap
+#define bitmap2node_name	slurm_bitmap2node_name
+#define find_node_record	slurm_find_node_record
 
 /* pack.[ch] functions */
 #define	create_buf		slurm_create_buf
@@ -305,7 +307,7 @@
 #define	packmem			slurm_packmem
 #define	unpackmem_ptr		slurm_unpackmem_ptr
 #define	unpackmem_xmalloc	slurm_unpackmem_xmalloc
-#define	unpackmem_malloc	slurm_unpackmem_malloc
+#define	unpackstr_xmalloc	slurm_unpackstr_xmalloc
 #define	unpackstr_xmalloc_escaped slurm_unpackstr_xmalloc_escaped
 #define	unpackstr_xmalloc_chooser slurm_unpackstr_xmalloc_chooser
 #define	packstr_array		slurm_packstr_array
@@ -535,32 +537,5 @@
 #define cgroup_conf_destroy		slurm_cgroup_conf_destroy
 #define autodetect_cgroup_version       slurm_autodetect_cgroup_version
 #endif /* USE_ALIAS */
-
-/* Include the function definitions after redefining their names. */
-#include "src/common/bitstring.h"
-#include "src/common/callerid.h"
-#include "src/common/cgroup.h"
-#include "src/common/eio.h"
-#include "src/common/env.h"
-#include "src/common/hostlist.h"
-#include "src/common/list.h"
-#include "src/common/log.h"
-#include "src/common/macros.h"
-#include "src/common/pack.h"
-#include "src/common/parse_config.h"
-#include "src/common/read_config.h"
-#include "src/common/select.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_jobacct_gather.h"
-#include "src/common/slurm_route.h"
-#include "src/common/slurm_step_layout.h"
-#include "src/common/strlcpy.h"
-#include "src/common/stepd_api.h"
-#include "src/common/switch.h"
-#include "src/common/working_cluster.h"
-#include "src/common/xassert.h"
-#include "src/common/xmalloc.h"
-#include "src/common/xsignal.h"
-#include "src/common/xstring.h"
 
 #endif /*__SLURM_XLATOR_H__*/

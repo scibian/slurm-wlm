@@ -2,7 +2,7 @@
  *  gres_select_filter.h - filters used in the select plugin
  *****************************************************************************
  *  Copyright (C) 2020 SchedMD LLC.
- *  Derived in large part from code previously in common/gres.h
+ *  Derived in large part from code previously in interfaces/gres.h
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -37,7 +37,7 @@
 #ifndef _GRES_SELECT_FILTER_H
 #define _GRES_SELECT_FILTER_H
 
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 
 /*
  * Clear the core_bitmap for cores which are not usable by this job (i.e. for
@@ -47,7 +47,7 @@
  * IN node_gres_list - node's gres_list built by
  *                     gres_node_config_validate()
  * IN use_total_gres - if set then consider all GRES resources as available,
- *		       and none are commited to running jobs
+ *		       and none are committed to running jobs
  * IN/OUT core_bitmap - Identification of available cores
  *                      (NULL if no restriction)
  * IN core_start_bit - index into core_bitmap for this node's first cores
@@ -113,6 +113,7 @@ extern int gres_select_filter_remove_unusable(List sock_gres_list,
  * IN first_pass - set if first scheduling attempt for this job, use
  *		   co-located GRES and cores if possible
  * IN avail_core - cores available on this node, UPDATED
+ * IN node_name - name of the node
  */
 extern void gres_select_filter_sock_core(gres_mc_data_t *mc_ptr,
 					 List sock_gres_list,
@@ -126,7 +127,8 @@ extern void gres_select_filter_sock_core(gres_mc_data_t *mc_ptr,
 					 int rem_nodes,
 					 bool enforce_binding,
 					 bool first_pass,
-					 bitstr_t *avail_core);
+					 bitstr_t *avail_core,
+					 char *node_name);
 
 /*
  * Make final GRES selection for the job

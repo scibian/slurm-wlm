@@ -65,8 +65,10 @@
 #include "helper.h"
 #include "slurm/slurm.h"
 #include "src/common/slurm_xlator.h"
+
+#include "src/common/callerid.h"
+#include "src/interfaces/cgroup.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/cgroup.h"
 
 typedef enum {
 	CALLERID_ACTION_NEWEST,
@@ -120,8 +122,8 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	if (!stepd)
 		return -1;
-	debug("_adopt_process: trying to get %ps to adopt %d",
-	      &stepd->step_id, pid);
+	debug("%s: trying to get %ps to adopt %d",
+	      __func__, &stepd->step_id, pid);
 	fd = stepd_connect(stepd->directory, stepd->nodename,
 			   &stepd->step_id, &protocol_version);
 	if (fd < 0) {
@@ -133,14 +135,14 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	rc = stepd_add_extern_pid(fd, stepd->protocol_version, pid);
 
-	if (rc == PAM_SUCCESS) {
+	if (rc == SLURM_SUCCESS) {
 		char *env;
 		env = xstrdup_printf("SLURM_JOB_ID=%u", stepd->step_id.job_id);
 		pam_putenv(pamh, env);
 		xfree(env);
 	}
 
-	if ((rc == PAM_SUCCESS) && !opts.disable_x11) {
+	if ((rc == SLURM_SUCCESS) && !opts.disable_x11) {
 		int display;
 		char *xauthority;
 		display = stepd_get_x11_display(fd, stepd->protocol_version,
@@ -174,9 +176,8 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 			 * No need to specify the type of namespace, rely on
 			 * slurm to give us the right one
 			 */
-			rc = setns(ns_fd, 0);
-			if (rc) {
-				error("setns() failed: %s", strerror(errno));
+			if (setns(ns_fd, 0)) {
+				error("setns() failed: %m");
 				rc = SLURM_ERROR;
 			}
 		}
@@ -184,7 +185,7 @@ static int _adopt_process(pam_handle_t *pamh, pid_t pid, step_loc_t *stepd)
 
 	close(fd);
 
-	if (rc == PAM_SUCCESS)
+	if (rc == SLURM_SUCCESS)
 		info("Process %d adopted into job %u",
 		     pid, stepd->step_id.job_id);
 	else
@@ -686,6 +687,9 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
 			opts.pam_service = xstrdup(v);
 		} else if (!xstrncasecmp(*argv, "join_container=false", 19)) {
 			opts.join_container = false;
+		} else {
+			pam_syslog(pamh, LOG_ERR,
+				   "ignoring unrecognized option '%s'", *argv);
 		}
 	}
 
@@ -856,6 +860,7 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 	user_jobs = _user_job_count(steps, pwd.pw_uid, &stepd);
 	if (user_jobs == 0) {
 		if (opts.action_no_jobs == CALLERID_ACTION_DENY) {
+			debug("uid %u owns no jobs => deny", pwd.pw_uid);
 			send_user_msg(pamh, "Access denied by " PAM_MODULE_NAME
 				      ": you have no active jobs on this node");
 			rc = PAM_PERM_DENIED;

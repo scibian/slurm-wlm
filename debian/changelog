@@ -1,3 +1,36 @@
+slurm-wlm (23.02.3-2) unstable; urgency=medium
+
+  * Fix d/not-installed (Closes: #1040129)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 02 Jul 2023 22:55:27 +0200
+
+slurm-wlm (23.02.3-1) unstable; urgency=medium
+
+  * New upstream major release (Closes: #1036109)
+  * Remove default cgroup basedir patch now handled upstream
+  * Refresh patches
+  * Bump libslurm to soname 39
+  * Update configurators
+  * Update d/copyright
+  * Clean lintian warning for plugins packages
+  * Add libpam dev packages
+  * Add scrun and scrontab commands
+  * Add configuration manpages
+  * Update fix-spelling-error patch
+  * Bump debhelper compatibility level to 13
+  * Add kafka plugin
+  * Add debug packages for emulators
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 25 Jun 2023 17:56:03 +0200
+
+slurm-wlm (22.05.8-4) unstable; urgency=medium
+
+  * Fix Breaks/Replaces dependencies (Closes: #1034950,
+    #1034955, #1034978, #1034987, #1034992)
+  * Restore plugstack.conf (Closes: #1035562)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 10 May 2023 00:14:41 +0200
+
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
   * Source only upload for testing

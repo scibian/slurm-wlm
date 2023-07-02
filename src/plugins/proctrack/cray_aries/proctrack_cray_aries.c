@@ -49,7 +49,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef HAVE_NATIVE_CRAY
 #include <job.h>	/* Cray's job module component */
+#else
+#define jid_t int
+#endif
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -57,7 +61,7 @@
 #include "src/common/macros.h"
 #include "src/common/timers.h"
 
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/proctrack.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 /* These are defined here so when we link with something other than
@@ -74,10 +78,6 @@ const char plugin_name[]      = "Process tracking via Cray/Aries job module";
 const char plugin_type[]      = "proctrack/cray_aries";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
-/*
- *  Handle to libjob.so
- */
-static void *libjob_handle = NULL;
 static pthread_t threadid = 0;
 static pthread_cond_t notify = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t notify_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -87,10 +87,10 @@ extern bool proctrack_p_has_pid (uint64_t cont_id, pid_t pid);
 
 static void *_create_container_thread(void *args)
 {
-	stepd_step_rec_t *job = (stepd_step_rec_t *)args;
-
-	job->cont_id = (uint64_t)job_create(0, job->uid, 0);
-
+	stepd_step_rec_t *step = (stepd_step_rec_t *)args;
+#ifdef HAVE_NATIVE_CRAY
+	step->cont_id = (uint64_t)job_create(0, step->uid, 0);
+#endif
 	/* Signal the container_create we are done */
 	slurm_mutex_lock(&notify_mutex);
 
@@ -102,7 +102,7 @@ static void *_create_container_thread(void *args)
 	 * and can cause deadlock if done.
 	 */
 
-	if (job->cont_id == (jid_t)-1) {
+	if (step->cont_id == (jid_t) -1) {
 		error("Failed to create job container: %m");
 	} else {
 		/*
@@ -153,21 +153,20 @@ extern int fini(void)
 	return SLURM_SUCCESS;
 }
 
-extern int proctrack_p_create(stepd_step_rec_t *job)
+extern int proctrack_p_create(stepd_step_rec_t *step)
 {
 	DEF_TIMERS;
 	START_TIMER;
 
-	if (!libjob_handle)
-		init();
-
-	if (!job->cont_id) {
+	if (!step->cont_id) {
 		/*
 		 * If we are forked then we can just use the pid from the fork
 		 * instead of using the thread method below.
 		 */
 		if (proctrack_forked) {
-			job->cont_id = (uint64_t)job_create(0, job->uid, 0);
+#ifdef HAVE_NATIVE_CRAY
+			step->cont_id = (uint64_t) job_create(0, step->uid, 0);
+#endif
 			goto endit;
 		}
 
@@ -185,11 +184,11 @@ extern int proctrack_p_create(stepd_step_rec_t *job)
 		 */
 		slurm_mutex_lock(&thread_mutex);
 		if (threadid) {
-			debug("Had a thread already 0x%08lx", threadid);
+			debug("Had a thread already %p", (void *) threadid);
 			slurm_mutex_lock(&notify_mutex);
 			slurm_cond_wait(&notify, &notify_mutex);
 			slurm_mutex_unlock(&notify_mutex);
-			debug("Last thread done 0x%08lx", threadid);
+			debug("Last thread done %p", (void *) threadid);
 		}
 
 		/*
@@ -198,13 +197,13 @@ extern int proctrack_p_create(stepd_step_rec_t *job)
 		 * started waiting for it.
 		 */
 		slurm_mutex_lock(&notify_mutex);
-		slurm_thread_create(&threadid, _create_container_thread, job);
+		slurm_thread_create(&threadid, _create_container_thread, step);
 		slurm_cond_wait(&notify, &notify_mutex);
 		slurm_mutex_unlock(&notify_mutex);
 		slurm_mutex_unlock(&thread_mutex);
-		if (job->cont_id != (jid_t)-1)
-			debug("proctrack_p_create: created jid 0x%08lx thread 0x%08lx",
-			      job->cont_id, threadid);
+		if (step->cont_id != (jid_t) -1)
+			debug("%s: created jid 0x%08"PRIx64" thread %p",
+			      __func__, step->cont_id, (void *) threadid);
 	} else
 		error("proctrack_p_create: already have a cont_id");
 endit:
@@ -222,13 +221,12 @@ endit:
  * when forked, all we need to do is remove the slurmstepd from the container
  * (once) at this time.
  */
-int proctrack_p_add(stepd_step_rec_t *job, pid_t pid)
+int proctrack_p_add(stepd_step_rec_t *step, pid_t pid)
 {
 #ifdef HAVE_NATIVE_CRAY
 	char fname[64];
 	int fd;
 	uint32_t jobid;
-#endif
 	int count = 0;
 
 	DEF_TIMERS;
@@ -240,10 +238,10 @@ try_again:
 	 * the time to add the pid to the job container.
 	 */
 	if (!proctrack_forked &&
-	    job_attachpid(pid, job->cont_id) == (jid_t) -1) {
+	    job_attachpid(pid, step->cont_id) == (jid_t) -1) {
 		if (errno == EINVAL && (count < 1)) {
 			jid_t jid;
-			if (proctrack_p_has_pid(job->cont_id, pid)) {
+			if (proctrack_p_has_pid(step->cont_id, pid)) {
 				debug("%s: Trying to add pid (%d) again to the same container, ignoring.",
 				      __func__, pid);
 				return SLURM_SUCCESS;
@@ -251,7 +249,7 @@ try_again:
 
 			if ((jid = job_detachpid(pid)) != (jid_t) -1) {
 				error("%s: Pid %d was attached to container %"PRIu64" incorrectly.  Moving to correct (%"PRIu64").",
-				      __func__, pid, jid, job->cont_id);
+				      __func__, pid, jid, step->cont_id);
 				count++;
 				goto try_again;
 			} else {
@@ -267,14 +265,13 @@ try_again:
 	}
 	_end_container_thread();
 
-#ifdef HAVE_NATIVE_CRAY
 	// Set apid for this pid
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		jobid = step->het_job_id;
 	else
-		jobid = job->step_id.job_id;
+		jobid = step->step_id.job_id;
 	if (job_setapid(pid, SLURM_ID_HASH(jobid,
-					   job->step_id.step_id)) == -1) {
+					   step->step_id.step_id)) == -1) {
 		error("Failed to set pid %d apid: %m", pid);
 		return SLURM_ERROR;
 	}
@@ -292,16 +289,17 @@ try_again:
 		return SLURM_ERROR;
 	}
 	TEMP_FAILURE_RETRY(close(fd));
-#endif
 	END_TIMER;
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
+#endif
 
 	return SLURM_SUCCESS;
 }
 
 int proctrack_p_signal(uint64_t id, int sig)
 {
+#ifdef HAVE_NATIVE_CRAY
 	DEF_TIMERS;
 	START_TIMER;
 	if (!threadid) {
@@ -312,21 +310,23 @@ int proctrack_p_signal(uint64_t id, int sig)
 		/* job ended before it started */
 		_end_container_thread();
 	} else
-		error("Trying to send signal %d a container 0x%08lx "
+		error("Trying to send signal %d a container 0x%08"PRIx64" "
 		      "that hasn't had anything added to it yet", sig, id);
 	END_TIMER;
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
+#endif
 	return (SLURM_SUCCESS);
 }
 
 int proctrack_p_destroy(uint64_t id)
 {
+#ifdef HAVE_NATIVE_CRAY
 	int status;
 	DEF_TIMERS;
 	START_TIMER;
 
-	debug("destroying 0x%08lx 0x%08lx", id, threadid);
+	debug("destroying 0x%08"PRIx64" %p", id, (void *) threadid);
 
 	if (!threadid)
 		job_waitjid((jid_t) id, &status, 0);
@@ -338,12 +338,14 @@ int proctrack_p_destroy(uint64_t id)
 	END_TIMER;
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
+#endif
 	return SLURM_SUCCESS;
 }
 
 uint64_t proctrack_p_find(pid_t pid)
 {
-	jid_t jid;
+	jid_t jid = 0;
+#ifdef HAVE_NATIVE_CRAY
 	DEF_TIMERS;
 	START_TIMER;
 
@@ -353,33 +355,38 @@ uint64_t proctrack_p_find(pid_t pid)
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
+#endif
 	return ((uint64_t) jid);
 }
 
 bool proctrack_p_has_pid (uint64_t cont_id, pid_t pid)
 {
+#ifdef HAVE_NATIVE_CRAY
 	jid_t jid;
 
 	if ((jid = job_getjid(pid)) == (jid_t) -1)
 		return false;
 	if ((uint64_t)jid != cont_id)
 		return false;
-
+#endif
 	return true;
 }
 
 int proctrack_p_wait(uint64_t id)
 {
+#ifdef HAVE_NATIVE_CRAY
 	int status;
 
 	if (!threadid && job_waitjid((jid_t) id, &status, 0) == (jid_t)-1)
 		return SLURM_ERROR;
 
+#endif
 	return SLURM_SUCCESS;
 }
 
 int proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 {
+#ifdef HAVE_NATIVE_CRAY
 	int pidcnt, bufsize;
 	pid_t *p;
 	DEF_TIMERS;
@@ -424,5 +431,6 @@ int proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 	if (slurm_conf.debug_flags & DEBUG_FLAG_TIME_CRAY)
 		INFO_LINE("call took: %s", TIME_STR);
 
+#endif
 	return SLURM_SUCCESS;
 }

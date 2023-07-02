@@ -48,7 +48,7 @@
  * Returns 0 for off, 1 for on, 2 for not requested,
  * 3 for error.
  */
-static int _get_mps_request(stepd_step_rec_t *job)
+static int _get_mps_request(stepd_step_rec_t *step)
 {
 
         char *envval;
@@ -56,8 +56,8 @@ static int _get_mps_request(stepd_step_rec_t *job)
 	// Determine what user wants the mps to be set at by the
 	// CRAY_CUDA_MPS and CRAY_CUDA_PROXY variables. If not set,
 	// do nothing.
-	if (!(envval = getenvp(job->env, CRAY_CUDA_MPS_ENV)) &&
-	    !(envval = getenvp(job->env, CRAY_CUDA_PROXY_ENV))) {
+	if (!(envval = getenvp(step->env, CRAY_CUDA_MPS_ENV)) &&
+	    !(envval = getenvp(step->env, CRAY_CUDA_PROXY_ENV))) {
 		debug2("No GPU action requested");
 		return 2;
 	}
@@ -80,12 +80,12 @@ static int _get_mps_request(stepd_step_rec_t *job)
  * CRAY_CUDA_MPS or CRAY_CUDA_PROXY environment variables.
  * Returns SLURM_SUCCESS or SLURM_ERROR.
  */
-int setup_gpu(stepd_step_rec_t *job)
+int setup_gpu(stepd_step_rec_t *step)
 {
 	int rc, gpu_enable;
 	char *err_msg;
 
-	gpu_enable = _get_mps_request(job);
+	gpu_enable = _get_mps_request(step);
 	if (gpu_enable > 1) {
 		// No action required, just exit with success
 		return SLURM_SUCCESS;
@@ -116,12 +116,12 @@ int setup_gpu(stepd_step_rec_t *job)
  * Reset the gpu to its default state after the job completes.
  *
  */
-int reset_gpu(stepd_step_rec_t *job)
+int reset_gpu(stepd_step_rec_t *step)
 {
 	int rc, gpu_enable;
 	char *err_msg;
 
-	gpu_enable = _get_mps_request(job);
+	gpu_enable = _get_mps_request(step);
 	if (gpu_enable > 1) {
 		// No action required, return with success.
 		return SLURM_SUCCESS;

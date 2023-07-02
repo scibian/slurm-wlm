@@ -78,6 +78,8 @@ AC_SEARCH_LIBS([kstat_open],    [kstat])
 AC_SEARCH_LIBS([ns_initparse],  [resolv])
 AC_SEARCH_LIBS([log],		[m])
 AC_SEARCH_LIBS([lrint],		[m])
+AC_SEARCH_LIBS([timer_create],	[rt])
+AC_SEARCH_LIBS([dlopen],	[dl svdl])
 CFLAGS=$old_CFLAGS
 
 dnl Checks for header files.
@@ -101,10 +103,6 @@ old_CFLAGS=$CFLAGS
 CFLAGS="$CFLAGS -Werror"
 AC_HEADER_MAJOR
 CFLAGS=$old_CFLAGS
-
-dnl Check for dlfcn
-dnl
-X_AC_DLFCN
 
 dnl check to see if glibc's program_invocation_name is available:
 dnl
@@ -191,6 +189,7 @@ AC_CHECK_FUNCS( \
    statvfs \
    statfs \
    memfd_create \
+   getrandom \
 )
 
 AC_CHECK_DECLS([hstrerror, strsignal, sys_siglist])
@@ -234,6 +233,7 @@ X_AC_RRDTOOL
 X_AC_UCX
 X_AC_X11
 X_AC_SELINUX
+X_AC_RDKAFKA
 
 X_AC_CGROUP
 X_AC_BPF
@@ -428,6 +428,7 @@ AC_CONFIG_FILES([Makefile
 		 src/bcast/Makefile
 		 src/common/Makefile
 		 src/database/Makefile
+		 src/interfaces/Makefile
 		 src/lua/Makefile
 		 src/plugins/Makefile
 		 src/plugins/accounting_storage/Makefile
@@ -479,6 +480,8 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/cred/Makefile
 		 src/plugins/cred/munge/Makefile
 		 src/plugins/cred/none/Makefile
+		 src/plugins/data_parser/Makefile
+		 src/plugins/data_parser/v0.0.39/Makefile
 		 src/plugins/ext_sensors/Makefile
 		 src/plugins/ext_sensors/none/Makefile
 		 src/plugins/ext_sensors/rrd/Makefile
@@ -516,14 +519,14 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/jobacct_gather/linux/Makefile
 		 src/plugins/jobacct_gather/none/Makefile
 		 src/plugins/jobcomp/Makefile
+		 src/plugins/jobcomp/common/Makefile
 		 src/plugins/jobcomp/elasticsearch/Makefile
 		 src/plugins/jobcomp/filetxt/Makefile
+		 src/plugins/jobcomp/kafka/Makefile
 		 src/plugins/jobcomp/lua/Makefile
 		 src/plugins/jobcomp/mysql/Makefile
 		 src/plugins/jobcomp/none/Makefile
 		 src/plugins/jobcomp/script/Makefile
-		 src/plugins/launch/Makefile
-		 src/plugins/launch/slurm/Makefile
 		 src/plugins/mcs/Makefile
 		 src/plugins/mcs/account/Makefile
 		 src/plugins/mcs/group/Makefile
@@ -539,12 +542,12 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/node_features/knl_cray/Makefile
 		 src/plugins/node_features/knl_generic/Makefile
 		 src/plugins/openapi/Makefile
-		 src/plugins/openapi/dbv0.0.36/Makefile
 		 src/plugins/openapi/dbv0.0.37/Makefile
 		 src/plugins/openapi/dbv0.0.38/Makefile
-		 src/plugins/openapi/v0.0.36/Makefile
+		 src/plugins/openapi/dbv0.0.39/Makefile
 		 src/plugins/openapi/v0.0.37/Makefile
 		 src/plugins/openapi/v0.0.38/Makefile
+		 src/plugins/openapi/v0.0.39/Makefile
 		 src/plugins/power/Makefile
 		 src/plugins/power/common/Makefile
 		 src/plugins/power/cray_aries/Makefile
@@ -582,8 +585,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/serializer/yaml/Makefile
 		 src/plugins/site_factor/Makefile
 		 src/plugins/site_factor/none/Makefile
-		 src/plugins/slurmctld/Makefile
-		 src/plugins/slurmctld/nonstop/Makefile
 		 src/plugins/switch/Makefile
 		 src/plugins/switch/cray_aries/Makefile
 		 src/plugins/switch/hpe_slingshot/Makefile
@@ -602,6 +603,7 @@ AC_CONFIG_FILES([Makefile
 		 src/sacctmgr/Makefile
 		 src/salloc/Makefile
 		 src/sattach/Makefile
+		 src/scrun/Makefile
 		 src/sbatch/Makefile
 		 src/sbcast/Makefile
 		 src/scancel/Makefile
@@ -624,7 +626,6 @@ AC_CONFIG_FILES([Makefile
 		 src/squeue/Makefile
 		 src/sreport/Makefile
 		 src/srun/Makefile
-		 src/srun/libsrun/Makefile
 		 src/sshare/Makefile
 		 src/sstat/Makefile
 		 src/strigger/Makefile
@@ -633,8 +634,6 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/testsuite.conf.sample
 		 testsuite/expect/Makefile
 		 testsuite/slurm_unit/Makefile
-		 testsuite/slurm_unit/api/Makefile
-		 testsuite/slurm_unit/api/manual/Makefile
 		 testsuite/slurm_unit/common/Makefile
 		 testsuite/slurm_unit/common/bitstring/Makefile
 		 testsuite/slurm_unit/common/hostlist/Makefile

@@ -19,9 +19,9 @@ depend_ldflags = $(HWLOC_LDFLAGS)
 
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
 
-slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd) $(libselinux_LIBS)
+slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(depend_ldadd) $(libselinux_LIBS) $(SLURMD_INTERFACES)
 
-slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(depend_ldflags)
+slurmstepd_LDFLAGS = $(CMD_LDFLAGS) $(depend_ldflags)
 
 slurmstepd_SOURCES = 	        	\
 	container.c container.h	\
@@ -33,13 +33,12 @@ slurmstepd_SOURCES = 	        	\
 	ulimits.c ulimits.h     	\
 	pdebug.c pdebug.h		\
 	pam_ses.c pam_ses.h		\
-	read_oci_conf.h read_oci_conf.c \
 	req.c req.h			\
 	multi_prog.c multi_prog.h	\
 	step_terminate_monitor.c step_terminate_monitor.h \
 	x11_forwarding.c x11_forwarding.h
 
-slurmstepd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
+slurmstepd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD) $(SLURMD_INTERFACES)
 
 force:
 $(slurmstepd_DEPENDENCIES) : force

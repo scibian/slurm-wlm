@@ -97,6 +97,9 @@ int job_format_add_function(List list, int width, bool right_justify,
 	job_format_add_function(list,wid,right,suffix,_print_job_cluster_name)
 #define job_format_add_container(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_container)
+#define job_format_add_container_id(list, wid, right, suffix) \
+	job_format_add_function(list, wid, right, suffix,     \
+				_print_job_container_id)
 #define job_format_add_core_spec(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_core_spec)
 #define job_format_add_delay_boot(list,wid,right,suffix) \
@@ -219,8 +222,6 @@ int job_format_add_function(List list, int width, bool right_justify,
 	job_format_add_function(list,wid,right,suffix,_print_job_dependency)
 #define job_format_add_qos(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_qos)
-#define job_format_add_select_jobinfo(list,wid,right,suffix) \
-	job_format_add_function(list,wid,right,suffix,_print_job_select_jobinfo)
 #define job_format_add_admin_comment(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_admin_comment)
 #define job_format_add_system_comment(list,wid,right,suffix) \
@@ -361,6 +362,8 @@ int _print_job_burst_buffer_state(job_info_t * job, int width,
 int _print_job_cluster_name(job_info_t * job, int width, bool right,
 			    char* suffix);
 int _print_job_container(job_info_t *job, int width, bool right, char *suffix);
+int _print_job_container_id(job_info_t *job, int width, bool right,
+			    char *suffix);
 int _print_job_core_spec(job_info_t * job, int width, bool right_justify,
 			 char* suffix);
 int _print_job_delay_boot(job_info_t * job, int width, bool right_justify,
@@ -466,8 +469,6 @@ int _print_job_dependency(job_info_t * job, int width, bool right_justify,
 			  char* suffix);
 int _print_job_qos(job_info_t * job, int width, bool right_justify,
 		   char* suffix);
-int _print_job_select_jobinfo(job_info_t * job, int width, bool right_justify,
-			      char* suffix);
 int _print_job_admin_comment(job_info_t * job, int width, bool right_justify,
 			     char* suffix);
 int _print_job_system_comment(job_info_t * job, int width, bool right_justify,
@@ -597,6 +598,9 @@ int step_format_add_function(List list, int width, bool right_justify,
 	step_format_add_function(list,wid,right,suffix,_print_step_cluster_name)
 #define step_format_add_container(list,wid,right,suffix) \
 	step_format_add_function(list,wid,right,suffix,_print_step_container)
+#define step_format_add_container_id(list, wid, right, suffix) \
+	step_format_add_function(list, wid, right, suffix,     \
+				 _print_step_container_id)
 #define step_format_add_id(list,wid,right,suffix) \
 	step_format_add_function(list,wid,right,suffix,_print_step_id)
 #define step_format_add_partition(list,wid,right,suffix) \
@@ -667,6 +671,8 @@ int _print_step_cluster_name(job_step_info_t * step, int width,
 			     bool right_justify, char *suffix);
 int _print_step_container(job_step_info_t *step, int width, bool right_justify,
 			  char *suffix);
+int _print_step_container_id(job_step_info_t *step, int width,
+			     bool right_justify, char *suffix);
 int _print_step_id(job_step_info_t * step, int width, bool right_justify,
 		   char *suffix);
 int _print_step_partition(job_step_info_t * step, int width,

@@ -53,12 +53,13 @@
 #include "src/common/daemonize.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/select.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/switch.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/switch.h"
 
 #include "src/slurmctld/heartbeat.h"
 #include "src/slurmctld/locks.h"
@@ -389,6 +390,9 @@ static void *_background_rpc_mgr(void *no_data)
 			continue;
 		}
 
+		log_flag(PROTOCOL, "%s: accept() connection from %pA",
+			 __func__, &cli_addr);
+
 		slurm_msg_t_init(&msg);
 		if (slurm_receive_msg(newsockfd, &msg, 0) != 0)
 			error("slurm_receive_msg: %m");
@@ -402,7 +406,6 @@ static void *_background_rpc_mgr(void *no_data)
 
 	debug3("_background_rpc_mgr shutting down");
 	close(sockfd);	/* close the main socket */
-	pthread_exit((void *) 0);
 	return NULL;
 }
 
@@ -414,9 +417,25 @@ static int _background_process_msg(slurm_msg_t *msg)
 	int error_code = SLURM_SUCCESS;
 	bool send_rc = true;
 
-	if (!msg->auth_uid_set)
-		fatal("%s: received message without previously validated auth",
+	if (!msg->auth_uid_set) {
+		error("%s: received message without previously validated auth",
 		      __func__);
+		return SLURM_ERROR;
+	}
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_PROTOCOL) {
+		char *p = rpc_num2string(msg->msg_type);
+		if (msg->conn) {
+			info("%s: received opcode %s from persist conn on (%s)%s uid %u",
+			     __func__, p, msg->conn->cluster_name,
+			     msg->conn->rem_host, msg->auth_uid);
+		} else {
+			slurm_addr_t cli_addr;
+			(void) slurm_get_peer_addr(msg->conn_fd, &cli_addr);
+			info("%s: received opcode %s from %pA uid %u",
+			     __func__, p, &cli_addr, msg->auth_uid);
+		}
+	}
 
 	if (msg->msg_type != REQUEST_PING) {
 		bool super_user = false;

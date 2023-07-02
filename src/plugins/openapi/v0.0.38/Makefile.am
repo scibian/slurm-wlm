@@ -14,7 +14,7 @@ AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir) -I$(top_srcdir)/src/common $(
 BIN_REF = $(REF:.json=.bino)
 
 %.bino: %.json
-	$(AM_V_GEN)pushd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; popd
+	$(AM_V_GEN)curr_dir=$(shell pwd); cd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; cd $$curr_dir
 	$(AM_V_at)@OBJCOPY@ --rename-section .data=.rodata,alloc,load,readonly,data,contents "$*.bino"
 
 openapi_ref.lo: $(BIN_REF)
@@ -40,6 +40,5 @@ noinst_LTLIBRARIES = libopenapi_ref.la
 openapi_v0_0_38_la_SOURCES = \
 	api.c api.h diag.c jobs.c nodes.c partitions.c reservations.c
 
-openapi_v0_0_38_la_DEPENDENCIES = $(LIB_SLURM_BUILD)
 openapi_v0_0_38_la_LDFLAGS = $(PLUGIN_FLAGS)
-openapi_v0_0_38_la_LIBADD = $(libslurmfull_la_LIBADD) openapi_ref.lo
+openapi_v0_0_38_la_LIBADD = openapi_ref.lo

@@ -5,6 +5,6 @@ pidfile-path
 rpath
 miscellanea-manpages
 retry-getaddrinfo
-set_default_cgroup_basedir
 fix-spelling-error
 force-nvml
+remove-hashbang

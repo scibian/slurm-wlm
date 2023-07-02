@@ -64,7 +64,7 @@ void slurm_init_job_desc_msg(job_desc_msg_t * job_desc_msg)
 	job_desc_msg->cpu_freq_gov	= NO_VAL;
 	job_desc_msg->cpus_per_task	= NO_VAL16;
 	job_desc_msg->delay_boot	= NO_VAL;
-	job_desc_msg->group_id		= NO_VAL;
+	job_desc_msg->group_id = SLURM_AUTH_NOBODY;
 	job_desc_msg->job_id		= NO_VAL;
 	job_desc_msg->kill_on_node_fail = NO_VAL16;
 	job_desc_msg->max_cpus		= NO_VAL;
@@ -95,7 +95,7 @@ void slurm_init_job_desc_msg(job_desc_msg_t * job_desc_msg)
 	job_desc_msg->threads_per_core	= NO_VAL16;
 	job_desc_msg->time_limit	= NO_VAL;
 	job_desc_msg->time_min		= NO_VAL;
-	job_desc_msg->user_id		= NO_VAL;
+	job_desc_msg->user_id = SLURM_AUTH_NOBODY;
 	job_desc_msg->wait_all_nodes	= NO_VAL16;
 	job_desc_msg->wait4switch	= NO_VAL;
 }
@@ -125,6 +125,7 @@ void slurm_init_part_desc_msg (update_part_msg_t * update_part_msg)
 	update_part_msg->def_mem_per_cpu = NO_VAL64;
 	update_part_msg->grace_time     = NO_VAL;
 	update_part_msg->max_cpus_per_node = NO_VAL;
+	update_part_msg->max_cpus_per_socket = NO_VAL;
 	update_part_msg->max_mem_per_cpu = NO_VAL64;
 	update_part_msg->max_nodes 	= NO_VAL;
 	update_part_msg->max_share 	= NO_VAL16;
@@ -162,6 +163,7 @@ void slurm_init_update_node_msg (update_node_msg_t * update_node_msg)
 {
 	memset(update_node_msg, 0, sizeof(update_node_msg_t));
 	update_node_msg->node_state = NO_VAL;
+	update_node_msg->resume_after = NO_VAL;
 	update_node_msg->weight = NO_VAL;
 }
 

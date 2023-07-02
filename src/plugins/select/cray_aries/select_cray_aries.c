@@ -48,24 +48,19 @@
 #include "src/common/slurm_xlator.h"	/* Must be first */
 #include "src/common/macros.h"
 #include "src/common/pack.h"
-#include "src/common/select.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/slurmctld/burst_buffer.h"
+
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/burst_buffer.h"
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/locks.h"
 #include "other_select.h"
 #include "ccm.h"
 
 #ifdef HAVE_NATIVE_CRAY
 #include "alpscomm_sn.h"
+#include "alpscomm_cn.h"
 #endif
-
-#define CLEANING_INIT		0x0000
-#define CLEANING_STARTED	0x0001
-#define CLEANING_COMPLETE	0x0002
-
-#define IS_CLEANING_INIT(_X)		(_X->cleaning == CLEANING_INIT)
-#define IS_CLEANING_STARTED(_X)		(_X->cleaning & CLEANING_STARTED)
-#define IS_CLEANING_COMPLETE(_X)	(_X->cleaning & CLEANING_COMPLETE)
 
 /**
  * struct select_jobinfo - data specific to Cray node selection plugin
@@ -77,7 +72,6 @@ struct select_jobinfo {
 	bool                    killing; /* (NO NEED TO PACK) used on
 					    a step to signify it being killed */
 	uint16_t                released;
-	uint16_t                cleaning;
 	uint16_t		magic;
 	uint8_t                 npc;
 	select_jobinfo_t       *other_jobinfo;
@@ -719,8 +713,7 @@ static void _remove_job_from_blades(select_jobinfo_t *jobinfo)
 		}
 
 		if (jobinfo->npc == NPC_SYS) {
-			bit_nclear(blade_nodes_running_npc, 0,
-				   node_record_count-1);
+			bit_clear_all(blade_nodes_running_npc);
 		} else if (jobinfo->npc) {
 			bit_not(blade_nodes_running_npc);
 			bit_or(blade_nodes_running_npc,
@@ -783,15 +776,13 @@ unpack_error:
 /* job_write and blade_mutex must be locked before calling */
 static void _set_job_running(job_record_t *job_ptr)
 {
-	int i;
 	select_jobinfo_t *jobinfo = job_ptr->select_jobinfo->data;
 	select_nodeinfo_t *nodeinfo;
+	node_record_t * node_ptr;
 
-	for (i = 0; i < node_record_count; i++) {
-		if (!bit_test(job_ptr->node_bitmap, i))
-			continue;
-
-		nodeinfo = node_record_table_ptr[i]->select_nodeinfo->data;
+	for (int i = 0; (node_ptr = next_node_bitmap(job_ptr->node_bitmap, &i));
+	     i++) {
+		nodeinfo = node_ptr->select_nodeinfo->data;
 		if (!bit_test(jobinfo->blade_map, nodeinfo->blade_id)) {
 			bit_set(jobinfo->blade_map, nodeinfo->blade_id);
 
@@ -847,7 +838,7 @@ static void _select_jobinfo_pack(select_jobinfo_t *jobinfo, buf_t *buffer,
 			pack_bit_str_hex(NULL, buffer);
 		} else {
 			pack_bit_str_hex(jobinfo->blade_map, buffer);
-			pack16(jobinfo->cleaning, buffer);
+			pack16(0, buffer); /* was cleaning */
 			pack8(jobinfo->npc, buffer);
 			pack_bit_str_hex(jobinfo->used_blades, buffer);
 		}
@@ -864,8 +855,9 @@ static int _select_jobinfo_unpack(select_jobinfo_t **jobinfo_pptr,
 	jobinfo->magic = JOBINFO_MAGIC;
 
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		uint16_t uint16_tmp;
 		unpack_bit_str_hex(&jobinfo->blade_map, buffer);
-		safe_unpack16(&jobinfo->cleaning, buffer);
+		safe_unpack16(&uint16_tmp, buffer); /* was cleaning */
 		safe_unpack8(&jobinfo->npc, buffer);
 		unpack_bit_str_hex(&jobinfo->used_blades, buffer);
 	}
@@ -1033,7 +1025,7 @@ extern int select_p_state_save(char *dir_name)
 	xfree(reg_file);
 	xfree(new_file);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 #ifdef HAVE_NATIVE_CRAY
 	if (slurmctld_config.shutdown_time)
@@ -1084,7 +1076,7 @@ extern int select_p_state_restore(char *dir_name)
 		error("Can not recover blade state, "
 		      "data version incompatible");
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return EFAULT;
 	}
 
@@ -1166,7 +1158,7 @@ extern int select_p_state_restore(char *dir_name)
 	}
 	slurm_mutex_unlock(&blade_mutex);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return other_state_restore(dir_name);
 
@@ -1177,7 +1169,7 @@ unpack_error:
 		fatal("Incomplete blade data checkpoint file, you may get unexpected issues if jobs were running. Start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete blade data checkpoint file, you may get "
 	      "unexpected issues if jobs were running.");
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	/* Since this is more of a sanity check continue without FAILURE. */
 	return SLURM_SUCCESS;
 }
@@ -1217,9 +1209,7 @@ extern int select_p_job_init(List job_list)
 				jobinfo->used_blades = bit_realloc(
 					jobinfo->used_blades, blade_cnt);
 
-			if ((IS_CLEANING_STARTED(jobinfo) &&
-			     !IS_CLEANING_COMPLETE(jobinfo)) ||
-			    IS_JOB_RUNNING(job_ptr))
+			if (IS_JOB_RUNNING(job_ptr))
 				_set_job_running_restore(jobinfo);
 
 #if defined(HAVE_NATIVE_CRAY) && !defined(HAVE_CRAY_NETWORK)
@@ -1454,8 +1444,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 				 * NPC_SYS.
 				 */
 				if (bit_ffs(blade_nodes_running_npc) != -1)
-					bit_nclear(bitmap, 0,
-						   bit_size(bitmap) - 1);
+					bit_clear_all(bitmap);
 			} else {
 				bit_and_not(bitmap, blade_nodes_running_npc);
 			}
@@ -1484,7 +1473,6 @@ extern int select_p_job_begin(job_record_t *job_ptr)
 	xassert(job_ptr->select_jobinfo->data);
 
 	jobinfo = job_ptr->select_jobinfo->data;
-	jobinfo->cleaning = CLEANING_INIT;	/* Reset needed if requeued */
 	jobinfo->released = 0;
 
 	slurm_mutex_lock(&blade_mutex);
@@ -1492,8 +1480,7 @@ extern int select_p_job_begin(job_record_t *job_ptr)
 	if (!jobinfo->blade_map) {
 		jobinfo->blade_map = bit_alloc(blade_cnt);
 	} else {	/* Clear vestigial bitmap in case job requeued */
-		bit_nclear(jobinfo->blade_map, 0,
-			   bit_size(jobinfo->blade_map) - 1);
+		bit_clear_all(jobinfo->blade_map);
 	}
 	_set_job_running(job_ptr);
 
@@ -1561,13 +1548,6 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
 			       job_record_t *to_job_ptr)
 {
 	return other_job_expand(from_job_ptr, to_job_ptr);
-}
-
-extern int select_p_job_signal(job_record_t *job_ptr, int signal)
-{
-	xassert(job_ptr);
-
-	return other_job_signal(job_ptr, signal);
 }
 
 extern int select_p_job_fini(job_record_t *job_ptr)
@@ -1678,6 +1658,7 @@ extern bitstr_t *select_p_step_pick_nodes(job_record_t *job_ptr,
 extern int select_p_step_start(step_record_t *step_ptr)
 {
 	select_jobinfo_t *jobinfo;
+	node_record_t *node_ptr;
 	DEF_TIMERS;
 
 	START_TIMER;
@@ -1690,7 +1671,6 @@ extern int select_p_step_start(step_record_t *step_ptr)
 
 	jobinfo = step_ptr->job_ptr->select_jobinfo->data;
 	if (jobinfo->npc && (step_ptr->step_id.step_id != SLURM_EXTERN_CONT)) {
-		int i;
 		select_jobinfo_t *step_jobinfo = step_ptr->select_jobinfo->data;
 		select_nodeinfo_t *nodeinfo;
 
@@ -1702,12 +1682,11 @@ extern int select_p_step_start(step_record_t *step_ptr)
 		if (!step_jobinfo->blade_map)
 			step_jobinfo->blade_map = bit_alloc(blade_cnt);
 
-		for (i=0; i<node_record_count; i++) {
-			if (!bit_test(step_ptr->step_node_bitmap, i))
-				continue;
-
-			nodeinfo = node_record_table_ptr[i]->
-				select_nodeinfo->data;
+		for (int i = 0;
+		     (node_ptr = next_node_bitmap(step_ptr->step_node_bitmap,
+						  &i));
+		     i++) {
+			nodeinfo = node_ptr->select_nodeinfo->data;
 			if (!bit_test(step_jobinfo->blade_map,
 				      nodeinfo->blade_id))
 				bit_set(step_jobinfo->blade_map,
@@ -1903,7 +1882,6 @@ extern int select_p_select_jobinfo_set(select_jobinfo_t *jobinfo,
 				       void *data)
 {
 	int rc = SLURM_SUCCESS;
-	uint16_t *uint16 = (uint16_t *) data;
 	char *in_char = (char *) data;
 
 	if (jobinfo == NULL) {
@@ -1916,12 +1894,6 @@ extern int select_p_select_jobinfo_set(select_jobinfo_t *jobinfo,
 	}
 
 	switch (data_type) {
-	case SELECT_JOBDATA_CLEANING:
-		jobinfo->cleaning = *uint16;
-		break;
-	case SELECT_JOBDATA_RELEASED:
-		jobinfo->released = *uint16;
-		break;
 	case SELECT_JOBDATA_NETWORK:
 		if (!in_char || !strlen(in_char)
 		    || !xstrcmp(in_char, "none"))
@@ -1944,9 +1916,7 @@ extern int select_p_select_jobinfo_get(select_jobinfo_t *jobinfo,
 				       void *data)
 {
 	int rc = SLURM_SUCCESS;
-	uint16_t *uint16 = (uint16_t *) data;
-	char **in_char = (char **) data;
-	select_jobinfo_t **select_jobinfo = (select_jobinfo_t **) data;
+	uint16_t *in_int16 = data;
 
 	if (jobinfo == NULL) {
 		debug("select/cray jobinfo_get: jobinfo not set");
@@ -1958,30 +1928,22 @@ extern int select_p_select_jobinfo_get(select_jobinfo_t *jobinfo,
 	}
 
 	switch (data_type) {
-	case SELECT_JOBDATA_PTR:
-		*select_jobinfo = jobinfo->other_jobinfo;
-		break;
-	case SELECT_JOBDATA_CLEANING:
-		if (IS_CLEANING_STARTED(jobinfo) &&
-		    !IS_CLEANING_COMPLETE(jobinfo))
-			*uint16 = 1;
-		else
-			*uint16 = 0;
-		break;
 	case SELECT_JOBDATA_NETWORK:
-		xassert(in_char);
+		xassert(in_int16);
 		switch (jobinfo->npc) {
+#ifdef HAVE_NATIVE_CRAY
 		case NPC_NONE:
-			*in_char = "none";
+			*in_int16  = ALPSC_NET_PERF_CTR_NONE;
 			break;
 		case NPC_SYS:
-			*in_char = "system";
+			*in_int16 = ALPSC_NET_PERF_CTR_SYSTEM;
 			break;
 		case NPC_BLADE:
-			*in_char = "blade";
+			*in_int16 = ALPSC_NET_PERF_CTR_BLADE;
 			break;
+#endif
 		default:
-			*in_char = "unknown";
+			*in_int16 = NO_VAL16;
 			break;
 		}
 		break;
@@ -2072,63 +2034,11 @@ unpack_error:
 	return SLURM_ERROR;
 }
 
-extern char *select_p_select_jobinfo_sprint(select_jobinfo_t *jobinfo,
-					    char *buf, size_t size, int mode)
-{
-	/*
-	 * Skip call to other_select_jobinfo_sprint, all of the other select
-	 * plugins we can layer on top of do this same thing anyways:
-	 */
-	if (buf && size) {
-		buf[0] = '\0';
-		return buf;
-	} else
-		return NULL;
-}
-
-extern char *select_p_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
-					     int mode)
-{
-	char *buf = NULL;
-
-	if ((mode != SELECT_PRINT_DATA)
-	    && jobinfo && (jobinfo->magic != JOBINFO_MAGIC)) {
-		error("select/cray jobinfo_xstrdup: jobinfo magic bad");
-		return NULL;
-	}
-
-	if (jobinfo == NULL) {
-		if (mode != SELECT_PRINT_HEAD) {
-			error("select/cray jobinfo_xstrdup: jobinfo bad");
-			return NULL;
-		}
-		/* FIXME: in the future copy the header here (if needed) */
-		/* xstrcat(buf, header); */
-
-		return buf;
-	}
-
-	switch (mode) {
-		/* See comment in select_p_select_jobinfo_sprint() regarding format. */
-	default:
-		xstrcat(buf, other_select_jobinfo_xstrdup(
-				jobinfo->other_jobinfo, mode));
-		break;
-	}
-
-	return buf;
-}
-
 extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
 					 job_record_t *job_ptr,
 					 void *data)
 {
 	return other_get_info_from_plugin(dinfo, job_ptr, data);
-}
-
-extern int select_p_update_node_config(int index)
-{
-	return other_update_node_config(index);
 }
 
 extern int select_p_reconfigure(void)

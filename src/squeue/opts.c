@@ -52,6 +52,7 @@
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
 #include "src/common/uid.h"
+#include "src/interfaces/serializer.h"
 
 #include "src/squeue/squeue.h"
 
@@ -61,13 +62,13 @@
 #define OPT_LONG_HIDE         0x102
 #define OPT_LONG_START        0x103
 #define OPT_LONG_NOCONVERT    0x104
-#define OPT_LONG_ARRAY_UNIQUE 0x105
 #define OPT_LONG_LOCAL        0x106
 #define OPT_LONG_SIBLING      0x107
 #define OPT_LONG_FEDR         0x108
 #define OPT_LONG_ME           0x109
 #define OPT_LONG_JSON         0x110
 #define OPT_LONG_YAML         0x111
+#define OPT_LONG_AUTOCOMP     0x112
 
 /* FUNCTIONS */
 static List  _build_job_list( char* str );
@@ -100,10 +101,10 @@ parse_command_line( int argc, char* *argv )
 	int opt_char;
 	int option_index;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"accounts",   required_argument, 0, 'A'},
 		{"all",        no_argument,       0, 'a'},
 		{"array",      no_argument,       0, 'r'},
-		{"array-unique",no_argument,      0, OPT_LONG_ARRAY_UNIQUE},
 		{"Format",     required_argument, 0, 'O'},
 		{"format",     required_argument, 0, 'o'},
 		{"federation", no_argument,       0, OPT_LONG_FEDR},
@@ -154,8 +155,6 @@ parse_command_line( int argc, char* *argv )
 		params.array_flag = true;
 	if ( ( env_val = getenv("SQUEUE_SORT") ) )
 		params.sort = xstrdup(env_val);
-	if (getenv("SQUEUE_ARRAY_UNIQUE"))
-		params.array_unique_flag = true;
 	if ( ( env_val = getenv("SLURM_CLUSTERS") ) ) {
 		if (!(params.clusters = slurmdb_get_info_cluster(env_val))) {
 			print_db_notok(env_val, 1);
@@ -322,9 +321,6 @@ parse_command_line( int argc, char* *argv )
 				exit(1);
 			}
 			break;
-		case OPT_LONG_ARRAY_UNIQUE:
-			params.array_unique_flag = true;
-			break;
 		case OPT_LONG_HELP:
 			_help();
 			exit(0);
@@ -357,11 +353,19 @@ parse_command_line( int argc, char* *argv )
 			exit(0);
 		case OPT_LONG_JSON:
 			params.mimetype = MIME_TYPE_JSON;
-			data_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			params.detail_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL);
 			break;
 		case OPT_LONG_YAML:
 			params.mimetype = MIME_TYPE_YAML;
-			data_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			params.detail_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
 			break;
 		}
 	}
@@ -835,12 +839,6 @@ extern int parse_format( char* format )
 							    field_size,
 							    right_justify,
 							    suffix );
-			else if (field[0] == 's')
-				job_format_add_select_jobinfo(
-					params.format_list,
-					field_size,
-					right_justify,
-					suffix );
 			else if (field[0] == 'S')
 				job_format_add_time_start( params.format_list,
 							   field_size,
@@ -972,6 +970,12 @@ extern int parse_long_format( char* format_long )
 							  field_size,
 							  right_justify,
 							  suffix);
+			else if (!xstrncasecmp(token, "containerid",
+					       strlen("containerid")))
+				step_format_add_container_id(params.format_list,
+							     field_size,
+							     right_justify,
+							     suffix);
 			else if (!xstrncasecmp(token, "numtasks",
 					       strlen("numtask")))
 				step_format_add_num_tasks( params.format_list,
@@ -1165,6 +1169,15 @@ extern int parse_long_format( char* format_long )
 							suffix);
 			else if (!xstrcasecmp(token, "cluster"))
 				job_format_add_cluster_name(params.format_list,
+							    field_size,
+							    right_justify,
+							    suffix);
+			else if (!xstrcasecmp(token, "container"))
+				job_format_add_container(params.format_list,
+							 field_size,
+							 right_justify, suffix);
+			else if (!xstrcasecmp(token, "containerid"))
+				job_format_add_container_id(params.format_list,
 							    field_size,
 							    right_justify,
 							    suffix);
@@ -1364,12 +1377,6 @@ extern int parse_long_format( char* format_long )
 							    field_size,
 							    right_justify,
 							    suffix );
-			else if (!xstrcasecmp(token, "selectjobinfo"))
-				job_format_add_select_jobinfo(
-					params.format_list,
-					field_size,
-					right_justify,
-					suffix );
 			else if (!xstrcasecmp(token, "starttime"))
 				job_format_add_time_start( params.format_list,
 							   field_size,

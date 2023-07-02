@@ -38,6 +38,7 @@
 
 #define _GNU_SOURCE		/* needed for getline() */
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -48,7 +49,7 @@
 
 #include "src/common/env.h"
 #include "src/common/pack.h"
-#include "src/common/select.h"
+#include "src/interfaces/select.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
 

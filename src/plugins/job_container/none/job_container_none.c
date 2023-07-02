@@ -43,6 +43,7 @@
 #include "src/common/slurm_xlator.h"
 
 #include "src/common/log.h"
+#include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -130,12 +131,22 @@ extern int container_p_delete(uint32_t job_id)
 	return SLURM_SUCCESS;
 }
 
-extern int container_p_stepd_create(uint32_t job_id, uid_t uid)
+extern int container_p_stepd_create(uint32_t job_id, stepd_step_rec_t *step)
 {
 	return SLURM_SUCCESS;
 }
 
 extern int container_p_stepd_delete(uint32_t job_id)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int container_p_send_stepd(int fd)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int container_p_recv_stepd(int fd)
 {
 	return SLURM_SUCCESS;
 }

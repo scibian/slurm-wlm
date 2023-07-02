@@ -58,9 +58,11 @@
 #define OPT_LONG_LOCAL     0x102
 #define OPT_LONG_SIBLING   0x103
 #define OPT_LONG_FEDR      0x104
+#define OPT_LONG_AUTOCOMP  0x105
 
 /* FUNCTIONS */
 static List  _build_job_list( char* str );
+static List  _build_part_list( char* str );
 static List  _build_user_list( char* str );
 static char *_get_prefix(char *token);
 static void  _help( void );
@@ -102,6 +104,7 @@ parse_command_line( int argc, char* *argv )
 	bool override_format_env = false;
 
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"noheader",   no_argument,       0, 'h'},
 		{"jobs",       optional_argument, 0, 'j'},
 		{"long",       no_argument,       0, 'l'},
@@ -173,6 +176,7 @@ parse_command_line( int argc, char* *argv )
 		case (int) 'p':
 			xfree(params.parts);
 			params.parts = xstrdup(optarg);
+			params.part_list = _build_part_list(params.parts);
 			break;
 		case (int) 'u':
 			xfree(params.users);
@@ -203,6 +207,10 @@ parse_command_line( int argc, char* *argv )
 		case OPT_LONG_USAGE:
 			_usage();
 			exit(0);
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		}
 	}
 
@@ -326,6 +334,16 @@ extern int parse_format( char* format )
 						field_size,
 						right_justify,
 						suffix );
+		else if (field[0] == 'n')
+			job_format_add_qos_name(params.format_list,
+						field_size,
+						right_justify,
+						suffix );
+		else if (field[0] == 'o')
+			job_format_add_account(params.format_list,
+					       field_size,
+					       right_justify,
+					       suffix);
 		else if (field[0] == 'p')
 			job_format_add_part_priority_normalized(params.format_list,
 								field_size,
@@ -498,7 +516,7 @@ _build_job_list( char* str )
 	if ( str == NULL)
 		return NULL;
 
-	my_list = list_create(NULL);
+	my_list = list_create(xfree_ptr);
 	my_job_list = xstrdup(str);
 	job = strtok_r(my_job_list, ",", &tmp_char);
 	while (job) {
@@ -513,6 +531,32 @@ _build_job_list( char* str )
 		job = strtok_r(NULL, ",", &tmp_char);
 	}
 	xfree(my_job_list);
+	return my_list;
+}
+
+/*
+ * _build_part_list- build a list of partitions
+ * IN str - comma separated list of partition names
+ * RET List of partitions (char)
+ */
+static List _build_part_list(char *str)
+{
+	List my_list;
+	char *part = NULL;
+	char *tmp_char = NULL, *tok = NULL, *my_part_list = NULL;
+
+	if (str == NULL)
+		return NULL;
+
+	my_list = list_create(xfree_ptr);
+	my_part_list = xstrdup(str);
+	tok = strtok_r(my_part_list, ",", &tmp_char);
+	while (tok) {
+		part = xstrdup(tok);
+		list_append(my_list, part);
+		tok = strtok_r(NULL, ",", &tmp_char);
+	}
+	xfree(my_part_list);
 	return my_list;
 }
 

@@ -39,9 +39,10 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/assoc_mgr.h"
-#include "src/common/select.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/slurm_priority.h"
+
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/priority.h"
+#include "src/interfaces/select.h"
 
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/acct_policy.h"
@@ -200,8 +201,6 @@ static void _rm_usage_node_bitmap(job_record_t *job_ptr,
 				  uint16_t *grp_node_job_cnt,
 				  uint64_t *grp_used_tres)
 {
-	int i, i_first, i_last;
-
 	xassert(grp_used_tres);
 
 	if (!job_ptr->job_resrcs || !job_ptr->job_resrcs->node_bitmap) {
@@ -227,14 +226,9 @@ static void _rm_usage_node_bitmap(job_record_t *job_ptr,
 		error("%s: grp_node_job_cnt is NULL", __func__);
 		return;
 	}
-	i_first = bit_ffs(job_ptr->job_resrcs->node_bitmap);
-	if (i_first == -1)
-		i_last = -2;
-	else
-		i_last = bit_fls(job_ptr->job_resrcs->node_bitmap);
-	for (i = i_first; i <= i_last; i++) {
-		if (!bit_test(job_ptr->job_resrcs->node_bitmap, i))
-			continue;
+
+	for (int i = 0;
+	     next_node_bitmap(job_ptr->job_resrcs->node_bitmap, &i); i++) {
 		if (--grp_node_job_cnt[i] == 0)
 			bit_clear(grp_node_bitmap, i);
 	}
@@ -3412,7 +3406,7 @@ extern bool acct_policy_validate_het_job(List submit_job_list)
 						&reason,
 						&acct_policy_limit_set,
 						false);
-				bit_free(job_desc.array_bitmap);
+				FREE_NULL_BITMAP(job_desc.array_bitmap);
 				if (!rc)
 					break;
 			}
@@ -3421,7 +3415,7 @@ extern bool acct_policy_validate_het_job(List submit_job_list)
 	list_iterator_destroy(iter1);
 
 	xfree(job_desc.tres_req_cnt);
-	list_destroy(het_job_limit_list);
+	FREE_NULL_LIST(het_job_limit_list);
 	xfree(acct_policy_limit_set.tres);
 
 	return rc;
@@ -4195,7 +4189,7 @@ extern int acct_policy_update_pending_job(job_record_t *job_ptr)
 	job_desc_msg_t job_desc;
 	acct_policy_limit_set_t acct_policy_limit_set;
 	bool update_accounting = false;
-	struct job_details *details_ptr;
+	job_details_t *details_ptr;
 	int rc = SLURM_SUCCESS;
 	uint64_t tres_req_cnt[slurmctld_tres_cnt];
 
@@ -4509,7 +4503,7 @@ static void _handle_add_accrue(job_record_t *job_ptr,
 			       int create_cnt,
 			       time_t now)
 {
-	struct job_details *details_ptr = job_ptr->details;
+	job_details_t *details_ptr = job_ptr->details;
 	job_record_t *old_job_ptr;
 
 	/* No limit (or there is space to accrue) */
@@ -4596,7 +4590,7 @@ extern int acct_policy_handle_accrue_time(job_record_t *job_ptr,
 {
 	slurmdb_qos_rec_t *qos_ptr;
 	slurmdb_assoc_rec_t *assoc_ptr;
-	struct job_details *details_ptr;
+	job_details_t *details_ptr;
 	slurmdb_used_limits_t *used_limits_acct = NULL;
 	slurmdb_used_limits_t *used_limits_user = NULL;
 
@@ -4721,7 +4715,7 @@ extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 				   NO_LOCK, NO_LOCK, NO_LOCK };
 	int create_cnt = 0;
 	uint32_t max_jobs_accrue = INFINITE;
-	struct job_details *details_ptr = job_ptr->details;
+	job_details_t *details_ptr = job_ptr->details;
 	time_t now = time(NULL);
 
 	/*
@@ -4745,7 +4739,7 @@ extern void acct_policy_add_accrue_time(job_record_t *job_ptr,
 		/*
 		 * If the job was previously accruing time (for example,
 		 * ACCRUE_ALWAYS could have been on or not having
-		 * ACCOUTING_ENFORCE_LIMITS), we need to remove the accrue_time.
+		 * ACCOUNTING_ENFORCE_LIMITS), we need to remove the accrue_time.
 		 */
 		if (details_ptr)
 			details_ptr->accrue_time = 0;

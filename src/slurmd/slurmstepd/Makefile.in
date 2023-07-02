@@ -115,7 +115,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
 	$(top_srcdir)/auxdir/x_ac_deprecated.m4 \
-	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
 	$(top_srcdir)/auxdir/x_ac_env.m4 \
 	$(top_srcdir)/auxdir/x_ac_freeipmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_hpe_slingshot.m4 \
@@ -135,6 +134,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
+	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
@@ -158,9 +158,8 @@ PROGRAMS = $(sbin_PROGRAMS)
 am_slurmstepd_OBJECTS = container.$(OBJEXT) slurmstepd.$(OBJEXT) \
 	mgr.$(OBJEXT) task.$(OBJEXT) slurmstepd_job.$(OBJEXT) \
 	io.$(OBJEXT) ulimits.$(OBJEXT) pdebug.$(OBJEXT) \
-	pam_ses.$(OBJEXT) read_oci_conf.$(OBJEXT) req.$(OBJEXT) \
-	multi_prog.$(OBJEXT) step_terminate_monitor.$(OBJEXT) \
-	x11_forwarding.$(OBJEXT)
+	pam_ses.$(OBJEXT) req.$(OBJEXT) multi_prog.$(OBJEXT) \
+	step_terminate_monitor.$(OBJEXT) x11_forwarding.$(OBJEXT)
 slurmstepd_OBJECTS = $(am_slurmstepd_OBJECTS)
 am__DEPENDENCIES_1 =
 am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
@@ -190,8 +189,8 @@ am__maybe_remake_depfiles = depfiles
 am__depfiles_remade = ./$(DEPDIR)/container.Po ./$(DEPDIR)/io.Po \
 	./$(DEPDIR)/mgr.Po ./$(DEPDIR)/multi_prog.Po \
 	./$(DEPDIR)/pam_ses.Po ./$(DEPDIR)/pdebug.Po \
-	./$(DEPDIR)/read_oci_conf.Po ./$(DEPDIR)/req.Po \
-	./$(DEPDIR)/slurmstepd.Po ./$(DEPDIR)/slurmstepd_job.Po \
+	./$(DEPDIR)/req.Po ./$(DEPDIR)/slurmstepd.Po \
+	./$(DEPDIR)/slurmstepd_job.Po \
 	./$(DEPDIR)/step_terminate_monitor.Po ./$(DEPDIR)/task.Po \
 	./$(DEPDIR)/ulimits.Po ./$(DEPDIR)/x11_forwarding.Po
 am__mv = mv -f
@@ -273,7 +272,6 @@ DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
-DL_LIBS = @DL_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -310,7 +308,6 @@ HDF5_LIBS = @HDF5_LIBS@
 HDF5_TYPE = @HDF5_TYPE@
 HDF5_VERSION = @HDF5_VERSION@
 HPE_SLINGSHOT_CFLAGS = @HPE_SLINGSHOT_CFLAGS@
-HPE_SLINGSHOT_LIBS = @HPE_SLINGSHOT_LIBS@
 HTTP_PARSER_CPPFLAGS = @HTTP_PARSER_CPPFLAGS@
 HTTP_PARSER_LDFLAGS = @HTTP_PARSER_LDFLAGS@
 HWLOC_CPPFLAGS = @HWLOC_CPPFLAGS@
@@ -358,7 +355,6 @@ NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
 NVML_CPPFLAGS = @NVML_CPPFLAGS@
-NVML_LIBS = @NVML_LIBS@
 OBJCOPY = @OBJCOPY@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
@@ -366,7 +362,6 @@ OFED_CPPFLAGS = @OFED_CPPFLAGS@
 OFED_LDFLAGS = @OFED_LDFLAGS@
 OFED_LIBS = @OFED_LIBS@
 ONEAPI_CPPFLAGS = @ONEAPI_CPPFLAGS@
-ONEAPI_LIBS = @ONEAPI_LIBS@
 OTOOL = @OTOOL@
 OTOOL64 = @OTOOL64@
 PACKAGE = @PACKAGE@
@@ -396,21 +391,24 @@ PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
 PTHREAD_CXX = @PTHREAD_CXX@
 PTHREAD_LIBS = @PTHREAD_LIBS@
 RANLIB = @RANLIB@
+RDKAFKA_CPPFLAGS = @RDKAFKA_CPPFLAGS@
+RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
+RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
 RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
 RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
 RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
-RSMI_LDFLAGS = @RSMI_LDFLAGS@
-RSMI_LIBS = @RSMI_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 SLEEP_CMD = @SLEEP_CMD@
+SLURMCTLD_INTERFACES = @SLURMCTLD_INTERFACES@
 SLURMCTLD_PORT = @SLURMCTLD_PORT@
 SLURMCTLD_PORT_COUNT = @SLURMCTLD_PORT_COUNT@
 SLURMDBD_PORT = @SLURMDBD_PORT@
+SLURMD_INTERFACES = @SLURMD_INTERFACES@
 SLURMD_PORT = @SLURMD_PORT@
 SLURMRESTD_PORT = @SLURMRESTD_PORT@
 SLURM_API_AGE = @SLURM_API_AGE@
@@ -515,8 +513,8 @@ depend_libs = ../common/libslurmd_common.o
 depend_ldadd = $(HWLOC_LIBS) $(PAM_LIBS) $(UTIL_LIBS)
 depend_ldflags = $(HWLOC_LDFLAGS)
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
-slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS) $(depend_ldadd) $(libselinux_LIBS)
-slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(depend_ldflags)
+slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) $(depend_ldadd) $(libselinux_LIBS) $(SLURMD_INTERFACES)
+slurmstepd_LDFLAGS = $(CMD_LDFLAGS) $(depend_ldflags)
 slurmstepd_SOURCES = \
 	container.c container.h	\
 	slurmstepd.c slurmstepd.h	\
@@ -527,13 +525,12 @@ slurmstepd_SOURCES = \
 	ulimits.c ulimits.h     	\
 	pdebug.c pdebug.h		\
 	pam_ses.c pam_ses.h		\
-	read_oci_conf.h read_oci_conf.c \
 	req.c req.h			\
 	multi_prog.c multi_prog.h	\
 	step_terminate_monitor.c step_terminate_monitor.h \
 	x11_forwarding.c x11_forwarding.h
 
-slurmstepd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
+slurmstepd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD) $(SLURMD_INTERFACES)
 all: all-am
 
 .SUFFIXES:
@@ -633,7 +630,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/multi_prog.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pam_ses.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pdebug.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/read_oci_conf.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/req.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmstepd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmstepd_job.Po@am__quote@ # am--include-marker
@@ -775,7 +771,6 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/multi_prog.Po
 	-rm -f ./$(DEPDIR)/pam_ses.Po
 	-rm -f ./$(DEPDIR)/pdebug.Po
-	-rm -f ./$(DEPDIR)/read_oci_conf.Po
 	-rm -f ./$(DEPDIR)/req.Po
 	-rm -f ./$(DEPDIR)/slurmstepd.Po
 	-rm -f ./$(DEPDIR)/slurmstepd_job.Po
@@ -834,7 +829,6 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/multi_prog.Po
 	-rm -f ./$(DEPDIR)/pam_ses.Po
 	-rm -f ./$(DEPDIR)/pdebug.Po
-	-rm -f ./$(DEPDIR)/read_oci_conf.Po
 	-rm -f ./$(DEPDIR)/req.Po
 	-rm -f ./$(DEPDIR)/slurmstepd.Po
 	-rm -f ./$(DEPDIR)/slurmstepd_job.Po

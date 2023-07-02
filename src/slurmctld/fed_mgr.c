@@ -335,7 +335,8 @@ static int _open_controller_conn(slurmdb_cluster_rec_t *cluster, bool locked)
 		}
 	}
 
-	log_flag(FEDR, "opening sibling conn to %s", cluster->name);
+	log_flag(FEDR, "opening sibling conn to %s[%s:%u]",
+		 cluster->name, cluster->control_host, cluster->control_port);
 
 	if (!cluster->fed.send) {
 		persist_conn = xmalloc(sizeof(slurm_persist_conn_t));
@@ -403,8 +404,10 @@ static void _open_persist_sends(void)
 	slurmdb_cluster_rec_t *cluster = NULL;
 	slurm_persist_conn_t *send = NULL;
 
-	if (!fed_mgr_fed_rec || ! fed_mgr_fed_rec->cluster_list)
+	if (!fed_mgr_fed_rec || !fed_mgr_fed_rec->cluster_list) {
+		log_flag(FEDR, "bailing on empty cluster list");
 		return;
+	}
 
 	/* This open_send_mutex will make this like a write lock since at the
 	 * same time we are sending out these open requests the other slurmctlds
@@ -917,7 +920,7 @@ static int _persist_update_job(slurmdb_cluster_rec_t *conn, uint32_t job_id,
 
 	rc = _queue_rpc(conn, &req_msg, 0, false);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return rc;
 }
@@ -1168,7 +1171,7 @@ static int _persist_fed_job_cancel(slurmdb_cluster_rec_t *conn, uint32_t job_id,
 
 	rc = _queue_rpc(conn, &req_msg, job_id, false);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return rc;
 }
@@ -1218,7 +1221,7 @@ static int _persist_fed_job_requeue(slurmdb_cluster_rec_t *conn,
 
 	rc = _queue_rpc(conn, &req_msg, job_id, false);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return rc;
 }
@@ -1708,7 +1711,7 @@ static int _fed_mgr_job_allocate_sib(char *sib_name, job_desc_msg_t *job_desc,
 		error_code = ESLURM_CAN_NOT_START_IMMEDIATELY;
 
 send_msg:
-	/* Send response back about origin jobid if an error occured. */
+	/* Send response back about origin jobid if an error occurred. */
 	if (reject_job)
 		_persist_fed_job_response(sibling, job_desc->job_id, error_code);
 	else {
@@ -2076,7 +2079,7 @@ _handle_fed_job_update_response(fed_job_update_info_t *job_update_info)
 	unlock_slurmctld(fed_read_lock);
 }
 
-extern int _handle_fed_job_sync(fed_job_update_info_t *job_update_info)
+static int _handle_fed_job_sync(fed_job_update_info_t *job_update_info)
 {
 	int rc = SLURM_SUCCESS;
 
@@ -2096,7 +2099,7 @@ extern int _handle_fed_job_sync(fed_job_update_info_t *job_update_info)
 
 /* Have to send the job sync from the job_update thread so that it can
  * independently get the job read lock. */
-extern int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
+static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 {
         int rc = SLURM_SUCCESS;
 	List jobids;
@@ -2154,7 +2157,7 @@ extern int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 
 	rc = _queue_rpc(sibling, &req_msg, 0, false);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	xfree(dump);
 
 	return rc;
@@ -2673,7 +2676,7 @@ static void *_agent_thread(void *arg)
 			(void) slurm_free_msg_data(resp_msg.msg_type,
 						   resp_msg.data);
 
-			list_destroy(ctld_req_msg.my_list);
+			FREE_NULL_LIST(ctld_req_msg.my_list);
 		}
 		list_iterator_destroy(cluster_iter);
 
@@ -2812,7 +2815,6 @@ extern int fed_mgr_init(void *db_conn)
 		remote_dep_job_list = list_create(_destroy_dep_job);
 	slurm_mutex_unlock(&dep_job_list_mutex);
 
-	slurm_persist_conn_recv_server_init();
 	_spawn_threads();
 
 	if (running_cache) {
@@ -2933,8 +2935,6 @@ extern int fed_mgr_fini(void)
 	 * connection won't be pointing to bad memory. */
 	_leave_federation();
 	unlock_slurmctld(fed_write_lock);
-
-	slurm_persist_conn_recv_server_fini();
 
 	if (agent_thread_id)
 		pthread_join(agent_thread_id, NULL);
@@ -3383,9 +3383,9 @@ extern int fed_mgr_state_save(char *state_save_location)
 	xfree(reg_file);
 	xfree(new_file);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
-	END_TIMER2("fed_mgr_state_save");
+	END_TIMER2(__func__);
 
 	return error_code;
 }
@@ -3424,7 +3424,7 @@ static slurmdb_federation_rec_t *_state_load(char *state_save_location)
 		      "got %u need > %u <= %u", ver,
 		      SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return NULL;
 	}
 
@@ -3498,7 +3498,7 @@ static slurmdb_federation_rec_t *_state_load(char *state_save_location)
 	}
 	FREE_NULL_LIST(tmp_list);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return ret_fed;
 
@@ -3506,7 +3506,7 @@ unpack_error:
 	if (!ignore_state_errors)
 		fatal("Incomplete fed_mgr state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete fed_mgr state file");
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return NULL;
 }
@@ -3661,11 +3661,11 @@ end_it:
 /* Update remote sibling job's viable_siblings bitmaps.
  *
  * IN job_id      - job_id of job to update.
- * IN job_specs   - job_specs to update job_id with.
+ * IN job_desc   - job_desc to update job_id with.
  * IN viable_sibs - viable siblings bitmap to send to sibling jobs.
  * IN update_sibs - bitmap of siblings to update.
  */
-extern int fed_mgr_update_job(uint32_t job_id, job_desc_msg_t *job_specs,
+extern int fed_mgr_update_job(uint32_t job_id, job_desc_msg_t *job_desc,
 			      uint64_t update_sibs, uid_t uid)
 {
 	ListIterator sib_itr;
@@ -3688,7 +3688,7 @@ extern int fed_mgr_update_job(uint32_t job_id, job_desc_msg_t *job_specs,
 		if (!(update_sibs & FED_SIBLING_BIT(sibling->fed.id)))
 			continue;
 
-		if (_persist_update_job(sibling, job_id, job_specs, uid)) {
+		if (_persist_update_job(sibling, job_id, job_desc, uid)) {
 			error("failed to update sibling job on sibling %s",
 			      sibling->name);
 			continue;
@@ -3739,9 +3739,11 @@ static int _submit_sibling_jobs(job_desc_msg_t *job_desc, slurm_msg_t *msg,
 	sib_msg.data_type    = msg->msg_type;
 	sib_msg.data_version = msg->protocol_version;
 	sib_msg.fed_siblings = job_desc->fed_siblings_viable;
+	sib_msg.group_id = job_desc->group_id;
 	sib_msg.job_id       = job_desc->job_id;
 	sib_msg.resp_host    = job_desc->resp_host;
 	sib_msg.submit_host  = job_desc->alloc_node;
+	sib_msg.user_id = job_desc->user_id;
 
 	slurm_msg_t_init(&req_msg);
 	req_msg.msg_type = REQUEST_SIB_MSG;
@@ -3774,7 +3776,7 @@ static int _submit_sibling_jobs(job_desc_msg_t *job_desc, slurm_msg_t *msg,
 		 * packed according to each siblings rpc_version. */
 		if (!msg->buffer &&
 		    (last_rpc_version != sibling->rpc_version)) {
-			free_buf(buffer);
+			FREE_NULL_BUFFER(buffer);
 			msg->protocol_version = sibling->rpc_version;
 			buffer = init_buf(BUF_SIZE);
 			pack_msg(msg, buffer);
@@ -3793,7 +3795,7 @@ static int _submit_sibling_jobs(job_desc_msg_t *job_desc, slurm_msg_t *msg,
 	}
 	list_iterator_destroy(sib_itr);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	return ret_rc;
 }
@@ -4214,7 +4216,7 @@ extern int fed_mgr_submit_remote_dependencies(job_record_t *job_ptr,
 			continue;
 
 		req_msg.protocol_version = sibling->rpc_version;
-		rc |= _queue_rpc(sibling, &req_msg, 0, false);
+		rc |= _queue_rpc(sibling, &req_msg, job_ptr->job_id, false);
 	}
 	list_iterator_destroy(sib_itr);
 	return rc;
@@ -5783,6 +5785,19 @@ static int _q_sib_job_submission(slurm_msg_t *msg, bool interactive_job)
 	job_desc->job_id              = sib_msg->job_id;
 	job_desc->fed_siblings_viable = sib_msg->fed_siblings;
 	job_desc->alloc_node          = sib_msg->submit_host;
+	/*
+	 * Prior to 23.02, the uid and gid were in the client sent
+	 * job_desc_msg_t. In 23.02, the client sends SLURM_AUTH_NOBODY and the
+	 * origin cluster will set user_id and group_id from the auth. So the
+	 * origin cluster has to send them to the siblings since the
+	 * job_desc from the client isn't repacked when being sent to the
+	 * siblings.
+	 */
+	if (msg->protocol_version >= SLURM_23_02_PROTOCOL_VERSION) {
+		job_desc->user_id = sib_msg->user_id;
+		job_desc->group_id = sib_msg->group_id;
+	}
+
 	/*
 	 * If the job has a dependency, it won't be submitted to siblings
 	 * or it will be revoked from siblings if it became dependent.

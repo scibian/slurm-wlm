@@ -57,7 +57,7 @@
 #include "src/common/net.h"
 #include "src/common/proc_args.h"
 #include "src/common/reverse_tree.h"
-#include "src/common/slurm_mpi.h"
+#include "src/interfaces/mpi.h"
 #include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
@@ -99,42 +99,42 @@ _remove_tree_sock(void)
 }
 
 static int
-_setup_stepd_job_info(const stepd_step_rec_t *job, char ***env)
+_setup_stepd_job_info(const stepd_step_rec_t *step, char ***env)
 {
 	char *p;
 	int i;
 
 	memset(&job_info, 0, sizeof(job_info));
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		job_info.step_id.job_id  = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		job_info.step_id.job_id  = step->het_job_id;
 	else
-		job_info.step_id.job_id  = job->step_id.job_id;
+		job_info.step_id.job_id  = step->step_id.job_id;
 
-	job_info.uid = job->uid;
+	job_info.uid = step->uid;
 
-	if (job->het_job_offset != NO_VAL) {
-		job_info.step_id.step_id = job->step_id.step_id;
-		job_info.step_id.step_het_comp = job->step_id.step_het_comp;
-		job_info.nnodes = job->het_job_nnodes;
-		job_info.nodeid = job->nodeid + job->het_job_node_offset;
-		job_info.ntasks = job->het_job_ntasks;
-		job_info.ltasks = job->node_tasks;
+	if (step->het_job_offset != NO_VAL) {
+		job_info.step_id.step_id = step->step_id.step_id;
+		job_info.step_id.step_het_comp = step->step_id.step_het_comp;
+		job_info.nnodes = step->het_job_nnodes;
+		job_info.nodeid = step->nodeid + step->het_job_node_offset;
+		job_info.ntasks = step->het_job_ntasks;
+		job_info.ltasks = step->node_tasks;
 		job_info.gtids = xmalloc(job_info.ltasks * sizeof(uint32_t));
 		for (i = 0; i < job_info.ltasks; i ++) {
-			job_info.gtids[i] = job->task[i]->gtid +
-					    job->het_job_task_offset;
+			job_info.gtids[i] = step->task[i]->gtid +
+					    step->het_job_task_offset;
 		}
 	} else {
-		job_info.step_id.step_id = job->step_id.step_id;
-		job_info.step_id.step_het_comp = job->step_id.step_het_comp;
-		job_info.nnodes = job->nnodes;
-		job_info.nodeid = job->nodeid;
-		job_info.ntasks = job->ntasks;
-		job_info.ltasks = job->node_tasks;
+		job_info.step_id.step_id = step->step_id.step_id;
+		job_info.step_id.step_het_comp = step->step_id.step_het_comp;
+		job_info.nnodes = step->nnodes;
+		job_info.nodeid = step->nodeid;
+		job_info.ntasks = step->ntasks;
+		job_info.ltasks = step->node_tasks;
 		job_info.gtids = xmalloc(job_info.ltasks * sizeof(uint32_t));
 		for (i = 0; i < job_info.ltasks; i ++) {
-			job_info.gtids[i] = job->task[i]->gtid;
+			job_info.gtids[i] = step->task[i]->gtid;
 		}
 	}
 
@@ -283,7 +283,7 @@ _setup_stepd_tree_info(char ***env)
  * setup sockets for slurmstepd
  */
 static int
-_setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
+_setup_stepd_sockets(const stepd_step_rec_t *step, char ***env)
 {
 	struct sockaddr_un sa;
 	int i;
@@ -312,8 +312,8 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 	 * string to unlink.
 	 */
 	spool = slurm_conf_expand_slurmd_path(slurm_conf.slurmd_spooldir,
-					      job->node_name,
-					      job->node_name);
+					      step->node_name,
+					      step->node_name);
 	xstrfmtcat(fmt_tree_sock_addr, PMI2_SOCK_ADDR_FMT, spool,
 		   job_info.step_id.job_id, job_info.step_id.step_id);
 	xfree(spool);
@@ -339,7 +339,7 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 		unlink(sa.sun_path);
 		return SLURM_ERROR;
 	}
-	if (chown(sa.sun_path, job->uid, -1) < 0) {
+	if (chown(sa.sun_path, step->uid, -1) < 0) {
 		error("mpi/pmi2: failed to chown tree socket: %m");
 		unlink(sa.sun_path);
 		return SLURM_ERROR;
@@ -350,8 +350,8 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 		return SLURM_ERROR;
 	}
 
-	task_socks = xmalloc(2 * job->node_tasks * sizeof(int));
-	for (i = 0; i < job->node_tasks; i ++) {
+	task_socks = xmalloc(2 * step->node_tasks * sizeof(int));
+	for (i = 0; i < step->node_tasks; i ++) {
 		socketpair(AF_UNIX, SOCK_STREAM, 0, &task_socks[i * 2]);
 		/* this must be delayed after the tasks have been forked */
 /* 		close(TASK_PMI_SOCK(i)); */
@@ -404,14 +404,14 @@ _setup_stepd_kvs(char ***env)
 }
 
 extern int
-pmi2_setup_stepd(const stepd_step_rec_t *job, char ***env)
+pmi2_setup_stepd(const stepd_step_rec_t *step, char ***env)
 {
 	int rc;
 
 	run_in_stepd = true;
 
 	/* job info */
-	rc = _setup_stepd_job_info(job, env);
+	rc = _setup_stepd_job_info(step, env);
 	if (rc != SLURM_SUCCESS)
 		return rc;
 
@@ -421,7 +421,7 @@ pmi2_setup_stepd(const stepd_step_rec_t *job, char ***env)
 		return rc;
 
 	/* sockets */
-	rc = _setup_stepd_sockets(job, env);
+	rc = _setup_stepd_sockets(step, env);
 	if (rc != SLURM_SUCCESS)
 		return rc;
 
@@ -451,7 +451,7 @@ pmi2_cleanup_stepd(void)
 
 /* returned string should be xfree-ed by caller */
 static char *
-_get_proc_mapping(const mpi_plugin_client_info_t *job)
+_get_proc_mapping(const mpi_step_info_t *mpi_step)
 {
 	uint32_t node_cnt, task_cnt, task_mapped, node_task_cnt, **tids;
 	uint32_t task_dist, block;
@@ -459,11 +459,11 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 	int i, start_id, end_id;
 	char *mapping = NULL;
 
-	node_cnt = job->step_layout->node_cnt;
-	task_cnt = job->step_layout->task_cnt;
-	task_dist = job->step_layout->task_dist & SLURM_DIST_STATE_BASE;
-	tasks = job->step_layout->tasks;
-	tids = job->step_layout->tids;
+	node_cnt = mpi_step->step_layout->node_cnt;
+	task_cnt = mpi_step->step_layout->task_cnt;
+	task_dist = mpi_step->step_layout->task_dist & SLURM_DIST_STATE_BASE;
+	tasks = mpi_step->step_layout->tasks;
+	tids = mpi_step->step_layout->tids;
 
 	/* for now, PMI2 only supports vector processor mapping */
 
@@ -504,12 +504,13 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 		xstrcat(mapping, ")");
 	} else if (task_dist == SLURM_DIST_ARBITRARY) {
 		/*
-		 * MPICH2 will think that each task runs on a seperate node.
+		 * MPICH2 will think that each task runs on a separate node.
 		 * The program will run, but no SHM will be used for
 		 * communication.
 		 */
 		mapping = xstrdup("(vector");
-		xstrfmtcat(mapping, ",(0,%u,1)", job->step_layout->task_cnt);
+		xstrfmtcat(mapping, ",(0,%u,1)",
+			   mpi_step->step_layout->task_cnt);
 		xstrcat(mapping, ")");
 
 	} else if (task_dist == SLURM_DIST_PLANE) {
@@ -588,22 +589,22 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 }
 
 static int
-_setup_srun_job_info(const mpi_plugin_client_info_t *job)
+_setup_srun_job_info(const mpi_step_info_t *mpi_step)
 {
 	char *p;
 	void *handle = NULL, *sym = NULL;
 
 	memset(&job_info, 0, sizeof(job_info));
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		job_info.step_id.job_id  = job->het_job_id;
+	if (mpi_step->het_job_id && (mpi_step->het_job_id != NO_VAL))
+		job_info.step_id.job_id  = mpi_step->het_job_id;
 	else
-		job_info.step_id.job_id  = job->step_id.job_id;
+		job_info.step_id.job_id  = mpi_step->step_id.job_id;
 
-	job_info.step_id.step_id = job->step_id.step_id;
-	job_info.step_id.step_het_comp = job->step_id.step_het_comp;
-	job_info.nnodes = job->step_layout->node_cnt;
-	job_info.ntasks = job->step_layout->task_cnt;
+	job_info.step_id.step_id = mpi_step->step_id.step_id;
+	job_info.step_id.step_het_comp = mpi_step->step_id.step_het_comp;
+	job_info.nnodes = mpi_step->step_layout->node_cnt;
+	job_info.ntasks = mpi_step->step_layout->task_cnt;
 	job_info.nodeid = -1;	/* id in tree. not used. */
 	job_info.ltasks = 0;	/* not used */
 	job_info.gtids = NULL;	/* not used */
@@ -625,8 +626,8 @@ _setup_srun_job_info(const mpi_plugin_client_info_t *job)
 		job_info.spawner_jobid = NULL;
 	}
 
-	job_info.step_nodelist = xstrdup(job->step_layout->node_list);
-	job_info.proc_mapping = _get_proc_mapping(job);
+	job_info.step_nodelist = xstrdup(mpi_step->step_layout->node_list);
+	job_info.proc_mapping = _get_proc_mapping(mpi_step);
 	if (job_info.proc_mapping == NULL) {
 		return SLURM_ERROR;
 	}
@@ -706,7 +707,7 @@ _setup_srun_tree_info(void)
 }
 
 static int
-_setup_srun_socket(const mpi_plugin_client_info_t *job)
+_setup_srun_socket(const mpi_step_info_t *mpi_step)
 {
 	if (net_stream_listen(&tree_sock,
 			      &tree_info.pmi_port) < 0) {
@@ -729,7 +730,7 @@ _setup_srun_kvs(void)
 }
 
 static int
-_setup_srun_environ(const mpi_plugin_client_info_t *job, char ***env)
+_setup_srun_environ(const mpi_step_info_t *mpi_step, char ***env)
 {
 	/* ifhn will be set in SLURM_SRUN_COMM_HOST by slurmd */
 	env_array_overwrite_fmt(env, PMI2_SRUN_PORT_ENV, "%hu",
@@ -791,7 +792,7 @@ _task_launch_detection(void *unused)
 }
 
 extern int
-pmi2_setup_srun(const mpi_plugin_client_info_t *job, char ***env)
+pmi2_setup_srun(const mpi_step_info_t *mpi_step, char ***env)
 {
 	static pthread_mutex_t setup_mutex = PTHREAD_MUTEX_INITIALIZER;
 	static pthread_cond_t setup_cond  = PTHREAD_COND_INITIALIZER;
@@ -799,16 +800,17 @@ pmi2_setup_srun(const mpi_plugin_client_info_t *job, char ***env)
 	int rc = SLURM_SUCCESS;
 
 	run_in_stepd = false;
-	if ((job->het_job_id == NO_VAL) || (job->het_job_task_offset == 0)) {
-		rc = _setup_srun_job_info(job);
+	if ((mpi_step->het_job_id == NO_VAL) ||
+	    (mpi_step->het_job_task_offset == 0)) {
+		rc = _setup_srun_job_info(mpi_step);
 		if (rc == SLURM_SUCCESS)
 			rc = _setup_srun_tree_info();
 		if (rc == SLURM_SUCCESS)
-			rc = _setup_srun_socket(job);
+			rc = _setup_srun_socket(mpi_step);
 		if (rc == SLURM_SUCCESS)
 			rc = _setup_srun_kvs();
 		if (rc == SLURM_SUCCESS)
-			rc = _setup_srun_environ(job, env);
+			rc = _setup_srun_environ(mpi_step, env);
 		if ((rc == SLURM_SUCCESS) && job_info.spawn_seq) {
 			slurm_thread_create_detached(NULL,
 						     _task_launch_detection,
@@ -825,7 +827,7 @@ pmi2_setup_srun(const mpi_plugin_client_info_t *job, char ***env)
 		rc = global_rc;
 		slurm_mutex_unlock(&setup_mutex);
 		if (rc == SLURM_SUCCESS)
-			rc = _setup_srun_environ(job, env);
+			rc = _setup_srun_environ(mpi_step, env);
  	}
 
 	return rc;

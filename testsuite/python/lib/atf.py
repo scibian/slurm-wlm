@@ -26,6 +26,7 @@ import traceback
 
 default_command_timeout = 60
 default_polling_timeout = 15
+default_sql_cmd_timeout = 120
 
 
 def node_range_to_list(node_expression):
@@ -875,6 +876,58 @@ def remove_config_parameter_value(name, value, source='slurm'):
         set_config_parameter(name, None, source=source)
 
 
+def is_tool(tool):
+    """Returns True if the tool is found in PATH"""
+    from shutil import which
+    return which(tool) is not None
+
+
+def require_tool(tool):
+    """Skips if the supplied tool is not found"""
+    if not is_tool(tool):
+        msg = f"This test requires '{tool}' and it was not found"
+        pytest.skip(msg, allow_module_level=True)
+
+
+def require_whereami(is_cray=False):
+    """Compiles the whereami.c program to be used by tests
+
+    This function installs the whereami program.  To get the
+    correct output, TaskPlugin is required in the slurm.conf
+    file before slurm starts up.
+    ex: TaskPlugin=task/cray_aries,task/cgroup,task/affinity
+
+    The file will be installed in the testsuite/python/lib/scripts
+    directory where the whereami.c file is located
+
+    Examples:
+        >>> atf.require_whereami()
+        >>> print('\nwhereami is located at', atf.properties['whereami'])
+        >>> output = atf.run_command(f"srun {atf.properties['whereami']}",
+        >>>     user=atf.properties['slurm-user'])
+    """
+    require_config_parameter("TaskPlugin", "task/cgroup,task/affinity")
+
+    # Set requirement for cray systems
+    if is_cray:
+        require_config_parameter("TaskPlugin",
+            "task/cray_aries,task/cgroup,task/affinity")
+
+    # If the file already exists and we don't need to recompile
+    dest_file = f"{properties['testsuite_scripts_dir']}/whereami"
+    if os.path.isfile(dest_file):
+        properties['whereami'] = dest_file
+        return
+
+    source_file = f"{properties['testsuite_scripts_dir']}/whereami.c"
+    if not os.path.isfile(source_file):
+        pytest.skip("Could not find whereami.c!", allow_module_level=True)
+
+    run_command(f"gcc {source_file} -o {dest_file}", fatal=True,
+        user=properties['slurm-user'])
+    properties['whereami'] = dest_file
+
+
 def require_config_parameter(parameter_name, parameter_value, condition=None, source='slurm', skip_message=None):
     """Ensures that a configuration parameter has the required value.
 
@@ -884,11 +937,11 @@ def require_config_parameter(parameter_name, parameter_value, condition=None, so
     Args:
         parameter_name (string): The parameter name.
         parameter_value (string): The target parameter value.
-        source (string): Name of the config file without the .conf prefix.
         condition (callable): If there is a range of acceptable values, a
             condition can be specified to test whether the current parameter
             value is sufficient. If not, the target parameter_value will be
             used (or the test will be skipped in the case of local-config mode).
+        source (string): Name of the config file without the .conf prefix.
 
     Note:
         When requiring a complex parameter (one which may be repeated and has
@@ -1160,7 +1213,7 @@ def get_nodes(live=True, quiet=False, **run_command_kwargs):
         # Convert keys to lower case so we can do a case-insensitive search
         lower_config_dict = dict((key.lower(), value) for key, value in config_dict.items())
 
-        # DEFAULT will be included seperately
+        # DEFAULT will be included separately
         if 'nodename' in lower_config_dict:
             for node_expression, node_expression_dict in lower_config_dict['nodename'].items():
                 port_expression = node_expression_dict['Port'] if 'Port' in node_expression_dict else ''
@@ -1342,7 +1395,7 @@ def require_sudo_rights():
         pytest.skip("This test requires the test user to have unprompted sudo privileges", allow_module_level=True)
 
 
-def submit_job(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
+def submit_job_sbatch(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
     """Submits a job using sbatch and returns the job id.
 
     The submitted job will automatically be cancelled when the test ends.
@@ -1360,6 +1413,7 @@ def submit_job(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
 
     if match := re.search(r'Submitted \S+ job (\d+)', output):
         job_id = int(match.group(1))
+        properties['submitted-jobs'].append(job_id)
         return job_id
     else:
         return 0
@@ -1450,7 +1504,7 @@ def run_job_error(srun_args, **run_command_kwargs):
 
 
 # Return job id
-def run_job_id(srun_args, **run_command_kwargs):
+def submit_job_srun(srun_args, **run_command_kwargs):
     """Runs a job using srun and returns the job id.
 
     This function obtains the job id by adding the -v option to srun
@@ -1472,10 +1526,12 @@ def run_job_id(srun_args, **run_command_kwargs):
 
     if match := re.search(r"jobid (\d+)", results['stderr']):
         return int(match.group(1))
+    else:
+        return 0
 
 
 # Return job id (command should not be interactive/shell)
-def alloc_job_id(salloc_args, **run_command_kwargs):
+def submit_job_salloc(salloc_args, **run_command_kwargs):
     """Submits a job using salloc and returns the job id.
 
     The submitted job will automatically be cancelled when the test ends.
@@ -1492,9 +1548,41 @@ def alloc_job_id(salloc_args, **run_command_kwargs):
     results = run_command(f"salloc {salloc_args}", **run_command_kwargs)
     if match := re.search(r'Granted job allocation (\d+)', results['stderr']):
         job_id = int(match.group(1))
+        properties['submitted-jobs'].append(job_id)
         return job_id
     else:
         return 0
+
+
+# Return job id
+def submit_job(command, job_param, job, *, wrap_job=True, **run_command_kwargs):
+    """Submits a job using given command and returns the job id.
+
+    Args*:
+        command (string): The command to submit the job (salloc, srun, sbatch).
+        job_param (string): The arguments to the job.
+        job (string): The command or job file to be executed.
+        wrap_job (boolean): If job needs to be wrapped when command is sbatch.
+
+    * run_command arguments are also accepted (e.g. fatal) and will be supplied
+        to the underlying job_id and subsequent run_command call.
+
+    Returns: The job id.
+    """
+
+    # Make sure command is a legal command to run a job
+    assert command in ["salloc", "srun", "sbatch"], \
+        f"Invalid command '{command}'. Should be salloc, srun, or sbatch."
+
+    if command == "salloc":
+        return submit_job_salloc(f"{job_param} {job}", **run_command_kwargs)
+    elif command == "srun":
+        return submit_job_srun(f"{job_param} {job}", **run_command_kwargs)
+    elif command == "sbatch":
+        # If the job should be wrapped, do so before submitting
+        if wrap_job:
+            job = f"--wrap '{job}'"
+        return submit_job_sbatch(f"{job_param} {job}", **run_command_kwargs)
 
 
 def run_job_nodes(srun_args, **run_command_kwargs):
@@ -2084,7 +2172,7 @@ def backup_accounting_database():
     else:
 
         mysqldump_command = f"{mysqldump_path} {mysql_options} {database_name} > {sql_dump_file}"
-        run_command(mysqldump_command, fatal=True, quiet=True)
+        run_command(mysqldump_command, fatal=True, quiet=True, timeout=default_sql_cmd_timeout)
 
 
 def restore_accounting_database():
@@ -2128,11 +2216,11 @@ def restore_accounting_database():
     # If the sticky bit is set and the dump file is empty, remove the database.
     # Otherwise, restore the dump.
 
-    run_command(f"{base_command} -e \"drop database {database_name}\"", fatal=True, quiet=True)
+    run_command(f"{base_command} -e \"drop database {database_name}\"", fatal=True, quiet=False, timeout=default_sql_cmd_timeout)
     dump_stat = os.stat(sql_dump_file)
     if not (dump_stat.st_size == 0 and dump_stat.st_mode & stat.S_ISVTX):
         run_command(f"{base_command} -e \"create database {database_name}\"", fatal=True, quiet=True)
-        run_command(f"{base_command} {database_name} < {sql_dump_file}", fatal=True, quiet=True)
+        run_command(f"{base_command} {database_name} < {sql_dump_file}", fatal=True, quiet=True, timeout=default_sql_cmd_timeout)
 
     # In either case, remove the dump file
     run_command(f"rm -f {sql_dump_file}", fatal=True, quiet=True)
@@ -2403,16 +2491,18 @@ module_tmp_path = None
 properties = {}
 
 # Initialize directory properties
-testsuite_base_dir = str(pathlib.Path(__file__).resolve().parents[2])
+properties['testsuite_base_dir'] = str(pathlib.Path(__file__).resolve().parents[2])
+properties['testsuite_python_lib'] = properties['testsuite_base_dir'] + '/python/lib'
 properties['slurm-source-dir'] = str(pathlib.Path(__file__).resolve().parents[3])
 properties['slurm-build-dir'] = properties['slurm-source-dir']
 properties['slurm-prefix'] = '/usr/local'
+properties['testsuite_scripts_dir']  = properties['testsuite_base_dir'] + '/python/scripts'
 
 # Override directory properties with values from testsuite.conf file
 testsuite_config = {}
 # The default location for the testsuite.conf file (in SRCDIR/testsuite)
 # can be overridden with the SLURM_TESTSUITE_CONF environment variable.
-testsuite_config_file = os.getenv('SLURM_TESTSUITE_CONF', f"{testsuite_base_dir}/testsuite.conf")
+testsuite_config_file = os.getenv('SLURM_TESTSUITE_CONF', f"{properties['testsuite_base_dir']}/testsuite.conf")
 if not os.path.isfile(testsuite_config_file):
     pytest.fail(f"The unified testsuite configuration file (testsuite.conf) was not found. This file can be created from a copy of the autogenerated sample found in BUILDDIR/testsuite/testsuite.conf.sample. By default, this file is expected to be found in SRCDIR/testsuite ({testsuite_base_dir}). If placed elsewhere, set the SLURM_TESTSUITE_CONF environment variable to the full path of your testsuite.conf file.")
 with open(testsuite_config_file, 'r') as f:
@@ -2466,6 +2556,7 @@ else:
         if match := re.search(rf"^\s*(?i:SlurmUser)\s*=\s*(.*)$", line):
             properties['slurm-user'] = match.group(1)
 
+properties['submitted-jobs'] = []
 properties['test-user'] = pwd.getpwuid(os.getuid()).pw_name
 properties['auto-config'] = False
 

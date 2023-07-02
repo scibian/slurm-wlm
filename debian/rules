@@ -132,7 +132,7 @@ override_dh_auto_install:
 	comm -23 debian/all_plugins_dev_filelist debian/plugin_packages_dev_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins-dev.install
 
 override_dh_strip:
-	dh_strip -plibslurm38
+	dh_strip -plibslurm39
 	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
 	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
@@ -144,24 +144,27 @@ override_dh_strip:
 	dh_strip -pslurm-wlm-rrd-plugin
 	dh_strip -pslurm-wlm-mysql-plugin
 	dh_strip -pslurm-wlm-rsmi-plugin
+	dh_strip -pslurm-wlm-kafka-plugin
 	dh_strip -pslurm-client --dbgsym-migration='slurm-client-dbg (<< 17.02.6~)'
 	dh_strip -pslurmd --dbgsym-migration='slurmd-dbg (<< 17.02.6~)'
 	dh_strip -pslurmctld --dbgsym-migration='slurmctld-dbg (<< 17.02.6~)'
 	dh_strip -pslurmdbd --dbgsym-migration='slurmdbd-dbg (<< 17.02.6~)'
+	dh_strip -pslurm-client-emulator
+	dh_strip -pslurm-wlm-emulator
 	# we do not care about debug symbols for those pkgs
 	dh_strip -plibslurmdb-perl --no-automatic-dbgsym
 	dh_strip -plibslurm-perl --no-automatic-dbgsym
 	dh_strip -psview --no-automatic-dbgsym
 	dh_strip -plibpam-slurm --no-automatic-dbgsym
 	dh_strip -plibpam-slurm-adopt --no-automatic-dbgsym
-	dh_strip -pslurm-wlm-emulator --no-automatic-dbgsym
 	dh_strip -pslurm-client-emulator --no-automatic-dbgsym
 	dh_strip -plibpmi0-dev --no-automatic-dbgsym
 	dh_strip -plibpmi2-0-dev --no-automatic-dbgsym
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
 	dh_strip -pslurmrestd --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \
-		--remove-section=.note debian/slurm-*-plugin*-dev/usr/lib/*/slurm-wlm/*.a
+		--remove-section=.note debian/slurm-*-plugin*-dev/usr/lib/*/slurm-wlm/*.a \
+		debian/libpam-slurm*-dev/lib/security/*.a
 
 override_dh_auto_test:
 

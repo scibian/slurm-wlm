@@ -153,6 +153,18 @@ static void _set_tmpdirs(List lresp)
 	list_append(lresp, kvp);
 }
 
+static void _set_euid(list_t *lresp)
+{
+#if (HAVE_PMIX_VER >= 5)
+	pmix_info_t *kvp;
+
+	uid_t uid = pmixp_info_jobuid();
+
+	PMIXP_KVP_CREATE(kvp, PMIX_USERID, &uid, PMIX_UINT32);
+	list_append(lresp, kvp);
+#endif
+}
+
 /*
  * information about relative ranks as assigned by the RM
  */
@@ -238,13 +250,13 @@ static void _set_procdatas(List lresp)
 		j = 0;
 		while ((tkvp = list_next(it))) {
 			/* Just copy all the fields here. We will free
-			 * original kvp's using list_destroy without free'ing
+			 * original kvp's using FREE_NULL_LIST without free'ing
 			 * their fields so it is safe to do so.
 			 */
 			info[j] = *tkvp;
 			j++;
 		}
-		list_destroy(rankinfo);
+		FREE_NULL_LIST(rankinfo);
 		PMIXP_KVP_ALLOC(kvp, PMIX_PROC_DATA);
 		PMIXP_INFO_ARRAY_CREATE(kvp, info, count);
 		info = NULL;
@@ -497,7 +509,7 @@ extern int pmixp_libpmix_init(void)
 	}
 
 	/* TODO: must be deleted in future once info-key approach harden */
-	setenv(PMIXP_PMIXLIB_TMPDIR, pmixp_info_tmpdir_lib(), 1);
+	setenv(PMIXP_PMIXLIB_TMPDIR, _pmixp_info_client_tmpdir_lib(), 1);
 
 	/*
 	if( pmixp_fixrights(pmixp_info_tmpdir_lib(),
@@ -641,8 +653,10 @@ extern int pmixp_libpmix_job_set(void)
 
 	_set_topology(lresp);
 
+	_set_euid(lresp);
+
 	if (SLURM_SUCCESS != _set_mapsinfo(lresp)) {
-		list_destroy(lresp);
+		FREE_NULL_LIST(lresp);
 		PMIXP_ERROR("Can't build nodemap");
 		return SLURM_ERROR;
 	}
@@ -657,7 +671,7 @@ extern int pmixp_libpmix_job_set(void)
 		info[i] = *kvp;
 		i++;
 	}
-	list_destroy(lresp);
+	FREE_NULL_LIST(lresp);
 
 	register_caddy[0].active = 1;
 	rc = PMIx_server_register_nspace(pmixp_info_namespace(),

@@ -202,6 +202,8 @@ script for Slurm?</a></li>
 <li><a href="#json_serializer">Why am I getting the following error: "Unable to
     find plugin: serializer/json"?</a></li>
 <li><a href="#epel">Why am I being offered an automatic update for Slurm?</a></li>
+<li><a href="#cgroupv2">How to convert my nodes to Control Group v2?</a></li>
+<li><a href="#write_to_job_stdout">Is it possible to write to user stdout?</a></li>
 </ul>
 
 <h2>For Management</h2>
@@ -226,9 +228,9 @@ report higher scalability, better performance and lower costs.</p>
 
 <p><a id="acronym"><b>What does "Slurm" stand for?</b></a><br>
 Nothing.
-<p>Originally, "SLURM" (completely capitalized) was an acryonym for
+<p>Originally, "SLURM" (completely capitalized) was an acronym for
 "Simple Linux Utility for Resource Management". In 2012 the preferred
-capitalization was changed to Slurm, and the acroynm was dropped &mdash; the
+capitalization was changed to Slurm, and the acronym was dropped &mdash; the
 developers preferred to think of Slurm as "sophisticated" rather than "Simple"
 by this point. And, as Slurm continued to expand it's scheduling capabilities,
 the "Resource Management" label was also viewed as outdated.</p>
@@ -290,7 +292,8 @@ within a cluster to prevent this from occurring.</li>
 <li>PropagateResourceLimits or PropagateResourceLimitsExcept parameters are
 configured in slurm.conf and avoid propagation of specified limits.</li>
 </ul>
-<p>NOTE: This may produce the error message &quot;Can't propagate RLIMIT_...&quot;.
+<p><b>NOTE</b>: This may produce the error message
+&quot;Can't propagate RLIMIT_...&quot;.
 The error message is printed only if the user explicitly specifies that
 the resource limit should be propagated or the srun command is running
 with verbose logging of actions from the slurmd daemon (e.g. "srun -d6 ...").</p>
@@ -778,7 +781,7 @@ For example, a job requesting resources for three tasks on a node with
 ThreadsPerCore=2 will be allocated two full cores.
 Note that Slurm commands contain a multitude of options to control
 resource allocation with respect to base boards, sockets, cores and threads.</p>
-<p>(<b>NOTE:</b> An exception to this would be if the system administrator
+<p>(<b>NOTE</b>: An exception to this would be if the system administrator
 configured SelectTypeParameters=CR_CPU and each node's CPU count without its
 socket/core/thread specification. In that case, each thread would be
 independently scheduled as a CPU. This is not a typical configuration.)</p>
@@ -994,7 +997,7 @@ myadmin
 <pre>
 chmod 600 /etc/ssh/allowed_users
 </pre>
-<p><b>NOTE:</b> root is not necessarily listed on the allowed_users, but I
+<p><b>NOTE</b>: root is not necessarily listed on the allowed_users, but I
 feel somewhat safe if it's on the list.</p>
 
 <p><b>Step 3.</b> On /etc/pam.d/sshd, add pam_listfile.so with sufficient flag
@@ -1614,11 +1617,11 @@ soft limit.</p>
 <p>Be also sure to give SlurmUser the appropriate permissions to write in the
 core location directories.</p>
 
-<p> NOTE: On a diskless node depending on the core_pattern or if
+<p><b>NOTE</b>: On a diskless node depending on the core_pattern or if
 /var/spool/abrt is pointing to an in-memory filespace like tmpfs, if the job
 caused an OOM, then the generation of the core may fill up your machine's
 memory and hang it. It is encouraged then to make coredumps go to a persistent
-storage. Be careful of multiple nodes writting a core dump to a shared
+storage. Be careful of multiple nodes writing a core dump to a shared
 filesystem since it may significantly impact it.
 </p>
 
@@ -1721,9 +1724,9 @@ following procedure is recommended:</p>
 <li>Restart the slurmctld daemon (e.g. "systemctl start slurmctld" on the head node)</li>
 </ol>
 
-<p>NOTE: Jobs submitted with srun, and that are waiting for an allocation,
-prior to new nodes being added to the slurm.conf can fail if the job is
-allocated one of the new nodes.</p>
+<p><b>NOTE</b>: Jobs submitted with srun, and that are waiting for an
+allocation, prior to new nodes being added to the slurm.conf can fail if the
+job is allocated one of the new nodes.</p>
 
 <p><a id="rem_nodes"><b>What process should I follow to remove nodes from Slurm?</b></a><br>
 To safely remove a node from a system, it's best to drain the node of all jobs.
@@ -2289,8 +2292,8 @@ However, with each release, we have been adding more places that use the
 serializer plugins. Because the list is evolving we do not plan on listing all
 the commands that require the plugins but will instead provide the error
 (shown above). To correct the issue, please make sure that Slurm is configured,
-compiled and installed with the relavent JSON or YAML library (or preferably
-both). Configure can be made to explicity request these libraries:
+compiled and installed with the relevant JSON or YAML library (or preferably
+both). Configure can be made to explicitly request these libraries:
 </p>
 <pre>
 ./configure --with-json=PATH --with-yaml=PATH $@
@@ -2316,6 +2319,90 @@ to exclude all Slurm packages from automatic updates.</p>
 exclude=slurm*
 </pre>
 
-<p style="text-align:center;">Last modified 14 December 2022</p>
+<a id="cgroupv2"><b>How to convert my nodes to Control Group v2?</b></a>
+<br>
+<p>
+Most existing Slurm installations will be running Cgroup v1 and Slurm's
+cgroup/v1 plugin. Sites that wish to use the new features of cgroup/v2 can
+convert all of their nodes to running Cgroup v2. Slurm supports different nodes
+running Slurm's cgroup/v1 or cgroup/v2 plugins.
+</p>
+<p>Conversion procedure:
+<ol>
+<li>Reconfigure systemd (only required for versions &lt; 252):
+<ul>
+<li>Swap kernel commandline options for systemd to Cgroup v2 support:
+<pre>systemd.unified_cgroup_hierarchy=1 systemd.legacy_systemd_cgroup_controller=0 cgroup_no_v1=all</pre>
+Example commands for Debian based systems:
+<pre>sed -e 's@^GRUB_CMDLINE_LINUX=@#GRUB_CMDLINE_LINUX=@' -i /etc/default/grub
+echo 'GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1 systemd.legacy_systemd_cgroup_controller=0 cgroup_no_v1=all"' >> /etc/default/grub
+update-grub</pre>
+Example command for Redhat based systems:
+<pre>grubby --update-kernel=ALL --args="systemd.unified_cgroup_hierarchy=1 systemd.legacy_systemd_cgroup_controller=0 cgroup_no_v1=all"</pre>
+</li>
+<br>
+<li>Reboot to apply new kernel command line options.</li>
+<br>
+<li>Verify kernel has correct command line options:
+<pre>grep -o -e systemd.unified_cgroup_hierarchy=. -e systemd.legacy_systemd_cgroup_controller=. /proc/cmdline
+systemd.unified_cgroup_hierarchy=1
+systemd.legacy_systemd_cgroup_controller=0</pre>
+If the output does not match exactly, then repeat prior steps
+and verify kernel is given correct command line options.
+</li>
+<br>
+<li>Verify that there is not any <a href="https://docs.kernel.org/admin-guide/cgroup-v1/index.html">Cgroup v1</a>
+controller mounted and <a
+href="https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md#three-different-tree-setups-">
+that your system is not running in hybrid mode</a><br>Example of hybrid mode:
+<pre>$ grep -v ^0: /proc/self/cgroup
+8:net_cls,net_prio:/
+6:name=systemd:/</pre>
+If there are any entries, then a reboot is required. If there are entries after
+a reboot then there is a process actively mounting Cgroup v1 mounts that will
+need to be stopped.</li>
+</ul>
+</li>
+<br>
+<li>Modify Slurm configuration to allow cgroup/v2 plugin:<br>
+<b>/etc/slurm/cgroup.conf</b>:
+<ul>
+<li>Remove line starting with:<pre>CgroupAutomount=</pre></li>
+<li>Remove line starting with:<pre>CgroupMountpoint=</pre></li>
+<li>Remove line if present:<pre>CgroupPlugin=cgroup/v1</pre></li>
+<li>Add line:<pre>CgroupPlugin=autodetect</pre></li>
+<br>
+</ul>
+</li>
+<li>Restart Slurm daemons per normal startup procedure</li>
+</ol>
+<p>Read the Slurm <a href="cgroups.html">Cgroups documentation</a> for more details.</p>
+</p>
+
+<a id="write_to_job_stdout"><b>Is it possible to write to user stdout?</b></a>
+<br>
+<p>The way user I/O is handled by Slurm makes it impossible to write to the
+user process as an admin after the user process is executed (execve is called).
+This happens right after the call to
+<a href="prolog_epilog.html">TaskProlog</a>, which is the last moment we can
+write to the stdout of the user process. Slurm assumes that this file
+descriptor is only owned by the user process while running. The file descriptor
+is opened as specified and passed to the task so it makes use of the file
+descriptor directly. Slumstepd is able to log error messages to the error file
+by duplicating the standard error of the process.</p>
+
+<p>It is possible to write to standard error from SPANK plugins, but this
+can't be used to append a job summary, since the file descriptors are opened
+with a close-on-exec flag and are closed by the operating system right after
+the user process completes. In theory, a central place that could be used to
+prepare some kind of job summary is EpilogSlurmctld. However, using it to
+write to a file where user output is stored may be problematic. The script is
+running as SlurmUser, so intensive validation of the file name may be required
+(e.g. to prevent users from specifying something like /etc/passwd as the
+output file). It's also possible that a job could have multiple output files
+(see <a href=srun.html#OPT_filename-pattern>filename pattern</a> in the srun
+man page).</p>
+
+<p style="text-align:center;">Last modified 04 May 2023</p>
 
 <!--#include virtual="footer.txt"-->

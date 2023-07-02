@@ -35,7 +35,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 
 #include "sacct.h"
 
@@ -74,6 +74,8 @@ print_field_t fields[] = {
 	{19, "Eligible", print_fields_date, PRINT_ELIGIBLE},
 	{19, "End", print_fields_date, PRINT_END},
 	{8,  "ExitCode", print_fields_str, PRINT_EXITCODE},
+	{14, "Extra", print_fields_str, PRINT_EXTRA},
+	{8,  "FailedNode", print_fields_str, PRINT_FAILED_NODE},
 	{19, "Flags", print_fields_str, PRINT_FLAGS},
 	{6,  "GID", print_fields_uint, PRINT_GID},
 	{9,  "Group", print_fields_str, PRINT_GROUP},
@@ -81,6 +83,7 @@ print_field_t fields[] = {
 	{-12, "JobIDRaw", print_fields_str, PRINT_JOBIDRAW},
 	{10, "JobName", print_fields_str, PRINT_JOBNAME},
 	{9,  "Layout", print_fields_str, PRINT_LAYOUT},
+	{10, "Licenses", print_fields_str, PRINT_LICENSES},
 	{12, "MaxDiskRead", print_fields_str, PRINT_MAXDISKREAD},
 	{15, "MaxDiskReadNode", print_fields_str, PRINT_MAXDISKREADNODE},
 	{15, "MaxDiskReadTask", print_fields_uint, PRINT_MAXDISKREADTASK},
@@ -105,6 +108,9 @@ print_field_t fields[] = {
 	{15, "NodeList", print_fields_str, PRINT_NODELIST},
 	{8,  "NTasks", print_fields_uint, PRINT_NTASKS},
 	{10, "Partition", print_fields_str, PRINT_PARTITION},
+	{10, "Planned", print_fields_time_from_secs, PRINT_PLANNED},
+	{10, "PlannedCPU", print_fields_time_from_secs, PRINT_PLANNED_CPU},
+	{13, "PlannedCPURAW", print_fields_uint, PRINT_PLANNED_CPU_RAW},
 	{10, "Priority", print_fields_uint, PRINT_PRIO},
 	{10, "QOS", print_fields_str, PRINT_QOS},
 	{6,  "QOSRAW", print_fields_uint, PRINT_QOSRAW},
@@ -119,9 +125,6 @@ print_field_t fields[] = {
 	{10, "ReqTRES", print_fields_str, PRINT_TRESR},
 	{20, "Reservation",  print_fields_str, PRINT_RESERVATION},
 	{8,  "ReservationId",  print_fields_uint, PRINT_RESERVATION_ID},
-	{10, "Reserved", print_fields_time_from_secs, PRINT_RESV},
-	{10, "ResvCPU", print_fields_time_from_secs, PRINT_RESV_CPU},
-	{10, "ResvCPURAW", print_fields_uint, PRINT_RESV_CPU},
 	{19, "Start", print_fields_date, PRINT_START},
 	{10, "State", print_fields_str, PRINT_STATE},
 	{19, "Submit", print_fields_date, PRINT_SUBMIT},
@@ -163,13 +166,12 @@ int main(int argc, char **argv)
 {
 	enum {
 		SACCT_LIST,
-		SACCT_LIST_DATA,
 		SACCT_HELP,
 		SACCT_USAGE
 	} op;
 	int rc = 0;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	sacct_init();
 	parse_command_line(argc, argv);
 
@@ -179,15 +181,14 @@ int main(int argc, char **argv)
 
 	if (params.opt_help)
 		op = SACCT_HELP;
-	else if (params.mimetype)
-		op = SACCT_LIST_DATA;
 	else
 		op = SACCT_LIST;
 
 
 	switch (op) {
 	case SACCT_LIST:
-		if (!(params.job_cond->flags & JOBCOND_FLAG_SCRIPT) &&
+		if (!params.mimetype &&
+		    !(params.job_cond->flags & JOBCOND_FLAG_SCRIPT) &&
 		    !(params.job_cond->flags & JOBCOND_FLAG_ENV))
 			print_fields_header(print_fields_list);
 		if (get_data() == SLURM_ERROR)
@@ -195,10 +196,7 @@ int main(int argc, char **argv)
 		if (params.opt_completion)
 			do_list_completion();
 		else
-			do_list();
-		break;
-	case SACCT_LIST_DATA:
-		dump_data(argc, argv);
+			do_list(argc, argv);
 		break;
 	case SACCT_HELP:
 		do_help();

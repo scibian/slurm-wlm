@@ -74,7 +74,7 @@ ensure compatibility.
 <p>
 For <i>runc</i> and <i>crun</i>, there are two sets of examples provided.
 The OCI runtime specification only provides the <i>start</i> and <i>create</i>
-operations sequence, but these runtimes provides a much more efficent <i>run</i>
+operations sequence, but these runtimes provides a much more efficient <i>run</i>
 operation. Sites are strongly encouraged to use the <i>run</i> operation
 (if provided) as the <i>start</i> and <i>create</i> operations require that
 Slurm poll the OCI runtime to know when the containers have completed execution.
@@ -83,66 +83,81 @@ result in a thread using CPU time inside of the job and slower response of
 Slurm to catch when container execution is complete.
 </p>
 <p>
-The examples provided have been tested to work but are only suggestions.
-The "--root" directory is set as "/tmp/" to avoid certain permission issues
-but should be changed to a secured and dedicated directory for a production
-cluster.
+The examples provided have been tested to work but are only suggestions. Sites
+are expected to ensure that the resultant root directory used will be secure
+from cross user viewing and modifications. The examples provided point to
+"/run/user/%U" where %U will be replaced with the numeric user id which should
+be created and managed by systemd independently of Slurm.
 </p>
 
 <ul>
 <li>runc using create/start:
 <pre>
-RunTimeQuery="runc --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeCreate="runc --rootless=true --root=/tmp/ create %n.%u.%j.%s.%t -b %b"
-RunTimeStart="runc --rootless=true --root=/tmp/ start %n.%u.%j.%s.%t"
-RunTimeKill="runc --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="runc --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="runc --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeCreate="runc --rootless=true --root=/run/user/%U/ create %n.%u.%j.%s.%t -b %b"
+RunTimeStart="runc --rootless=true --root=/run/user/%U/ start %n.%u.%j.%s.%t"
+RunTimeKill="runc --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="runc --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
 </pre></li>
 
 <li>runc using run (suggested):
 <pre>
-RunTimeQuery="runc --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeKill="runc --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="runc --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
-RunTimeRun="runc --rootless=true --root=/tmp/ run %n.%u.%j.%s.%t -b %b"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="runc --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeKill="runc --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="runc --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
+RunTimeRun="runc --rootless=true --root=/run/user/%U/ run %n.%u.%j.%s.%t -b %b"
 </pre></li>
 
 <li>crun using create/start:
 <pre>
-RunTimeQuery="crun --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeKill="crun --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="crun --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
-RunTimeCreate="crun --rootless=true --root=/tmp/ create --bundle %b %n.%u.%j.%s.%t"
-RunTimeStart="crun --rootless=true --root=/tmp/ start %n.%u.%j.%s.%t"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="crun --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeKill="crun --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="crun --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
+RunTimeCreate="crun --rootless=true --root=/run/user/%U/ create --bundle %b %n.%u.%j.%s.%t"
+RunTimeStart="crun --rootless=true --root=/run/user/%U/ start %n.%u.%j.%s.%t"
 </pre></li>
 
 <li>crun using run (suggested):
 <pre>
-RunTimeQuery="crun --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeKill="crun --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="crun --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
-RunTimeRun="crun --rootless=true --root=/tmp/ run --bundle %b %n.%u.%j.%s.%t"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="crun --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeKill="crun --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="crun --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
+RunTimeRun="crun --rootless=true --root=/run/user/%U/ run --bundle %b %n.%u.%j.%s.%t"
 </pre></li>
 
 <li>nvidia-container-runtime using create/start:
 <pre>
-RunTimeQuery="nvidia-container-runtime --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeCreate="nvidia-container-runtime --rootless=true --root=/tmp/ create %n.%u.%j.%s.%t -b %b"
-RunTimeStart="nvidia-container-runtime --rootless=true --root=/tmp/ start %n.%u.%j.%s.%t"
-RunTimeKill="nvidia-container-runtime --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="nvidia-container-runtime --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="nvidia-container-runtime --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeCreate="nvidia-container-runtime --rootless=true --root=/run/user/%U/ create %n.%u.%j.%s.%t -b %b"
+RunTimeStart="nvidia-container-runtime --rootless=true --root=/run/user/%U/ start %n.%u.%j.%s.%t"
+RunTimeKill="nvidia-container-runtime --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="nvidia-container-runtime --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
 </pre></li>
 
 <li>nvidia-container-runtime using run (suggested):
 <pre>
-RunTimeQuery="nvidia-container-runtime --rootless=true --root=/tmp/ state %n.%u.%j.%s.%t"
-RunTimeKill="nvidia-container-runtime --rootless=true --root=/tmp/ kill -a %n.%u.%j.%s.%t"
-RunTimeDelete="nvidia-container-runtime --rootless=true --root=/tmp/ delete --force %n.%u.%j.%s.%t"
-RunTimeRun="nvidia-container-runtime --rootless=true --root=/tmp/ run %n.%u.%j.%s.%t -b %b"
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeQuery="nvidia-container-runtime --rootless=true --root=/run/user/%U/ state %n.%u.%j.%s.%t"
+RunTimeKill="nvidia-container-runtime --rootless=true --root=/run/user/%U/ kill -a %n.%u.%j.%s.%t"
+RunTimeDelete="nvidia-container-runtime --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j.%s.%t"
+RunTimeRun="nvidia-container-runtime --rootless=true --root=/run/user/%U/ run %n.%u.%j.%s.%t -b %b"
 </pre></li>
 
 <li>hpcng singularity v3.8.0:
 <pre>
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
 OCIRunTimeQuery="sudo singularity oci state %n.%u.%j.%s.%t"
 OCIRunTimeCreate="sudo singularity oci create --bundle %b %n.%u.%j.%s.%t"
 OCIRunTimeStart="sudo singularity oci start %n.%u.%j.%s.%t"
@@ -152,6 +167,73 @@ OCIRunTimeDelete="sudo singularity oci delete %n.%u.%j.%s.%t
 <b>WARNING</b>: Singuarity (v3.8.0) requires <i>sudo</i> for OCI support,
 which is a security risk since the user is able to modify these calls.
 This example is only provided for testing purposes.
+</li>
+
+<li><a href="https://github.com/hpc/charliecloud">Charliecloud</a> (v0.30)
+<pre>
+IgnoreFileConfigJson=true
+CreateEnvFile=newline
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeRun="env -i PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin/:/sbin/ USER=$(whoami) HOME=/home/$(whoami)/ ch-run -w --bind /etc/group:/etc/group --bind /etc/passwd:/etc/passwd --bind /etc/slurm:/etc/slurm --bind %m:/var/run/slurm/ --bind /var/run/munge/:/var/run/munge/ --set-env=%e --no-passwd %r -- %@"
+RunTimeKill="kill -s SIGTERM %p"
+RunTimeDelete="kill -s SIGKILL %p"
+</pre>
+</li>
+
+<li><a href="https://github.com/NVIDIA/enroot">Enroot</a> (3.3.0)
+<br>
+oci.conf:
+<pre>
+IgnoreFileConfigJson=true
+CreateEnvFile=newline
+EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
+RunTimeRun="/usr/local/bin/enroot-start-wrapper %b %m %e -- %@"
+RunTimeKill="kill -s SIGINT %p"
+RunTimeDelete="kill -s SIGTERM %p"
+</pre>
+/usr/local/bin/enroot-start-wrapper:
+<pre>
+#!/bin/bash
+BUNDLE="$1"
+SPOOLDIR="$2"
+ENVFILE="$3"
+shift 4
+IMAGE=
+
+export USER=$(whoami)
+export HOME="$BUNDLE/"
+export TERM
+export ENROOT_SQUASH_OPTIONS='-comp gzip -noD'
+export ENROOT_ALLOW_SUPERUSER=n
+export ENROOT_MOUNT_HOME=y
+export ENROOT_REMAP_ROOT=y
+export ENROOT_ROOTFS_WRITABLE=y
+export ENROOT_LOGIN_SHELL=n
+export ENROOT_TRANSFER_RETRIES=2
+export ENROOT_CACHE_PATH="$SPOOLDIR/"
+export ENROOT_DATA_PATH="$SPOOLDIR/"
+export ENROOT_TEMP_PATH="$SPOOLDIR/"
+export ENROOT_ENVIRON="$ENVFILE"
+
+if [ ! -f "$BUNDLE" ]
+then
+        IMAGE="$SPOOLDIR/container.sqsh"
+        enroot import -o "$IMAGE" -- "$BUNDLE" && \
+        enroot create "$IMAGE"
+        CONTAINER="container"
+else
+        CONTAINER="$BUNDLE"
+fi
+
+enroot start -- "$CONTAINER" "$@"
+rc=$?
+
+[ $IMAGE ] && unlink $IMAGE
+
+exit $rc
+</pre>
 </li>
 </ul>
 
@@ -210,6 +292,196 @@ sbatch --wrap 'srun bash -c "--container $ABS_PATH_TO_BUNDLE cat /etc/*rel*"'
 </pre></li>
 </ul>
 
+<h2 id="scrun">Integration with Rootless Docker (Docker Engine v20.10+ & Slurm-23.02+)
+<a class="slurm_link" href="#docker-scrun"></a>
+</h2>
+<p>Slurm's <a href="scrun.html">scrun</a> can be directly integrated with <a
+href="https://docs.docker.com/engine/security/rootless/">Rootless Docker</a> to
+run containers as jobs. No special user permissions are required and <b>should
+not</b> be granted to use this functionality.</p>
+<h3>Prerequisites</h3>
+<ol>
+<li><a href="slurm.conf.html">slurm.conf</a> must be configured to use Munge
+authentication.<pre>AuthType=auth/munge</pre></li>
+<li><a href="scrun.html">scrun.lua</a> must be configured for site storage
+configuration.</li>
+</ol>
+<h3>Limitations</h3>
+<ol>
+<li>JWT authentication is not supported.</li>
+<li>Docker container building is not currently functional pending merge of
+<a href="https://github.com/moby/moby/pull/41442"> Docker pull request</a>.</li>
+<li>Docker does <b>not</b> expose configuration options to disable security
+options needed to run jobs. This requires that all calls to docker provide the
+following command line arguments.  This can be done via shell variable, an
+alias, wrapper function, or wrapper script:
+<pre>--security-opt label:disable --security-opt seccomp=unconfined --security-opt apparmor=unconfined --net=none</pre>
+Docker's builtin security functionality is not required (or wanted) for
+containers being run by Slurm.  Docker is only acting as a container image
+lifecycle manager. The containers will be executed remotely via Slurm following
+the existing security configuration in Slurm outside of unprivileged user
+control.</li>
+<li>All containers must use <a href="https://docs.docker.com/network/host/">
+host networking</a></li>
+</ol>
+
+<h3>Setup procedure</h3>
+<ol>
+<li><a href="https://docs.docker.com/engine/security/rootless/"> Install and
+configure Rootless Docker</a><br> Rootless Docker must be fully operational and
+able to run containers before continuing.</li>
+<li>
+Setup environment for all docker calls:
+<pre>export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock</pre>
+All commands following this will expect this environment variable to be set.</li>
+<li>Stop rootless docker: <pre>systemctl --user stop docker</pre></li>
+<li>Configure Docker to call scrun instead of the default OCI runtime.
+<!-- Docker does not document: --runtime= argument -->
+<ul>
+<li>To configure for all users: <pre>/etc/docker/daemon.json</pre></li>
+<li>To configure per user: <pre>~/.config/docker/daemon.json</pre></li>
+</ul>
+Set the following fields to configure Docker:
+<pre>{
+  "default-runtime": "slurm",
+  "runtimes": {
+    "slurm": {
+      "path": "/usr/local/bin/scrun"
+    }
+  },
+  "experimental": true,
+  "iptables": false,
+  "bridge": "none",
+  "no-new-privileges": true,
+  "rootless": true,
+  "selinux-enabled": false,
+}</pre>
+Correct path to scrun as if installation prefix was configured.</li>
+<li>It is strongly suggested that sites consider using inter-node shared
+filesystems to store Docker's containers. While it is possible to have a
+scrun.lua script to push and pull images for each deployment, there can be a
+massive performance penalty.  Using a shared filesystem will avoid moving these
+files around.<br>Possible configuration additions to daemon.json to use a
+shared filesystem with <a
+href="https://docs.docker.com/storage/storagedriver/vfs-driver/"> vfs storage
+driver</a>:
+<pre>{
+  "storage-driver": "vfs",
+  "data-root": "/path/to/shared/filesystem/user_name/data/",
+  "exec-root": "/path/to/shared/filesystem/user_name/exec/",
+}</pre>
+Any node expected to be able to run containers from Docker must have ability to
+atleast read the filesystem used. Full write privileges are suggested and will
+be required if changes to the container filesystem are desired.</li>
+<li>Start rootless docker: <pre>systemctl --user start docker</pre></li>
+<li>Verify Docker is using scrun:
+<pre>export DOCKER_SECURITY="--security-opt label:disable --security-opt seccomp=unconfined  --security-opt apparmor=unconfined --net=none"
+docker run $DOCKER_SECURITY hello-world
+docker run $DOCKER_SECURITY alpine printenv SLURM_JOB_ID
+docker run $DOCKER_SECURITY alpine hostname
+docker run $DOCKER_SECURITY alpine -e SCRUN_JOB_NUM_NODES=10 hostname</pre>
+</li>
+</ol>
+
+<h2 id="scrun">Integration with Podman (Slurm-23.02+)
+<a class="slurm_link" href="#podman-scrun"></a>
+</h2>
+<p>
+Slurm's <a href="scrun.html">scrun</a> can be directly integrated with
+<a href="https://podman.io/">Podman</a>
+to run containers as jobs. No special user permissions are required and
+<b>should not</b> be granted to use this functionality.
+</p>
+<h3>Prerequisites</h3>
+<ol>
+<li>Slurm must be fully configured and running on host running dockerd.</li>
+<li><a href="slurm.conf.html">slurm.conf</a> must be configured to use Munge
+authentication.<pre>AuthType=auth/munge</pre></li>
+<li><a href="scrun.html">scrun.lua</a> must be configured for site storage
+configuration.</li>
+</ol>
+<h3>Limitations</h3>
+<ol>
+<li>JWT authentication is not supported.</li>
+<li>All containers must use
+<a href="https://github.com/containers/podman/blob/main/docs/tutorials/basic_networking.md">
+host networking</a></li>
+</ol>
+
+<h3>Setup procedure</h3>
+<ol>
+<li>
+<a href="https://podman.io/docs/installation"> Install and configure
+Podman</a><br>Podman must be fully operational and able to run containers
+before continuing.</li>
+<li>
+Configure Podman to call scrun instead of the <a
+href="https://github.com/opencontainers/runtime-spec"> default OCI runtime</a>.
+<ul>
+<li>To configure for all users: <pre>/etc/containers/containers.conf</pre></li>
+<li>To configure per user: <pre>~/.config/containers/containers.conf</pre></li>
+</ul>
+Set the following configuration parameters to configure Podman:
+<pre>[containers]
+apparmor_profile = "unconfined"
+cgroupns = "host"
+cgroups = "enabled"
+default_sysctls = []
+label = false
+netns = "host"
+no_hosts = true
+pidns = "host"
+utsns = "host"
+userns = "host"
+
+[engine]
+cgroup_manager = "systemd"
+runtime = "slurm"
+runtime_supports_nocgroups = [ "slurm" ]
+runtime_supports_json = [ "slurm" ]
+remote = false
+
+[engine.runtimes]
+slurm = [ "/usr/local/bin/scrun" ]</pre>
+Correct path to scrun as if installation prefix was configured.</li>
+<li>The "cgroup_manager" field will need to be swapped to "cgroupfs" on systems
+not running systemd.</li>
+<li>It is strongly suggested that sites consider using inter-node shared
+filesystems to store Podman's containers. While it is possible to have a
+scrun.lua script to push and pull images for each deployment, there can be a
+massive performance penalty. Using a shared filesystem will avoid moving these
+files around.<br>
+<ul>
+<li>To configure for all users: <pre>/etc/containers/storage.conf</pre></li>
+<li>To configure per user: <pre>~/.config/containers/storage.conf</pre></li>
+</ul>
+Possible configuration additions to storage.conf to use a shared filesystem with
+<a href="https://docs.podman.io/en/latest/markdown/podman.1.html#storage-driver-value">
+vfs storage driver</a>:
+<pre>[storage]
+driver = "vfs"
+runroot = "$HOME/containers"
+graphroot = "$HOME/containers"
+
+[storage.options]
+pull_options = {use_hard_links = "true", enable_partial_images = "true"}
+
+
+[storage.options.vfs]
+ignore_chown_errors = "true"</pre>
+Any node expected to be able to run containers from Podman must have ability to
+atleast read the filesystem used. Full write privileges are suggested and will
+be required if changes to the container filesystem are desired.</li>
+<li> Verify Podman is using scrun:
+<pre>podman run hello-world
+podman run alpine printenv SLURM_JOB_ID
+podman run alpine hostname
+podman run alpine -e SCRUN_JOB_NUM_NODES=10 hostname
+salloc podman run --env-host=true alpine hostname
+salloc sh -c 'podman run -e SLURM_JOB_ID=$SLURM_JOB_ID alpine hostname'</pre>
+</li>
+</ol>
+
 <h2 id="bundle">OCI Container bundle
 <a class="slurm_link" href="#bundle"></a>
 </h2>
@@ -239,10 +511,12 @@ alternative container solutions:</p>
 	    </li>
 	    <li>
 		docker:
-		<pre>docker pull alpine
+		<pre>
+mkdir -p ~/oci_images/alpine/rootfs
+cd ~/oci_images/
+docker pull alpine
 docker create --name alpine alpine
-mkdir -p /image/rootfs/
-docker export alpine | tar -C /image/rootfs/ -xf -
+docker export alpine | tar -C ~/oci_images/alpine/rootfs -xf -
 docker rm alpine</pre>
 	    </li>
 	</ul>
@@ -253,8 +527,12 @@ docker rm alpine</pre>
 	    <li>Use <a href="https://github.com/opencontainers/runc">runc</a>
 	    to generate a config.json:
 	    <pre>
-cd /image
+cd ~/oci_images/alpine
 runc --rootless=true spec --rootless</pre>
+	    </li>
+	    <li>Test running image:</li>
+	    <pre>
+srun --container ~/oci_images/alpine/ uptime</pre>
 	    </li>
 	</ul>
     </ol>
@@ -263,19 +541,50 @@ runc --rootless=true spec --rootless</pre>
     <li>Use <a href="https://github.com/opencontainers/umoci">umoci</a>
     and skopeo to generate a full image:
     <pre>
-cd /image/
+mkdir -p ~/oci_images/
+cd ~/oci_images/
 skopeo copy docker://alpine:latest oci:alpine:latest
-umoci unpack --rootless --image alpine alpine</pre>
+umoci unpack --rootless --image alpine ~/oci_images/alpine
+srun --container ~/oci_images/alpine uptime</pre>
     </li>
 
     <li>
     Use <a href="https://sylabs.io/guides/3.1/user-guide/oci_runtime.html">
     singularity</a> to generate a full image:
     <pre>
-sudo singularity sif dump alpine /image/alpine.sif
-sudo singularity oci mount /image/alpine.sif /image/</pre>
+mkdir -p ~/oci_images/alpine/
+cd ~/oci_images/alpine/
+singularity pull alpine
+sudo singularity oci mount ~/oci_images/alpine/alpine_latest.sif ~/oci_images/alpine
+mv config.json singularity_config.json
+runc spec --rootless
+srun --container ~/oci_images/alpine/ uptime</pre>
     </li>
 </ul>
+
+<h2 id="testing">Example OpenMPI v5 + PMIx v4 container<a class="slurm_link" href="#ex-ompi5-pmix4"></a></h2>
+
+Minimalist Dockerfile to generate a image with OpenMPI and PMIx to test basic MPI jobs.
+
+<h4>Dockerfile</h4>
+<pre>
+FROM almalinux:latest
+RUN dnf -y update && dnf -y upgrade && dnf install -y yum-utils && dnf config-manager --set-enabled powertools
+RUN dnf -y install make automake gcc gcc-c++ kernel-devel bzip2 python3 wget libevent-devel hwloc-devel munge-devel
+
+WORKDIR /usr/local/src/
+RUN wget 'https://github.com/openpmix/openpmix/releases/download/v4.2.2/pmix-4.2.2.tar.bz2' -O - | tar -xvjf -
+WORKDIR /usr/local/src/pmix-4.2.2/
+RUN ./configure && make -j && make install
+
+WORKDIR /usr/local/src/
+RUN wget --inet4-only 'https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.0rc9.tar.gz' -O - | tar -xvzf -
+WORKDIR /usr/local/src/openmpi-5.0.0rc9
+RUN ./configure --disable-pty-support --enable-ipv6 --without-slurm --with-pmix --enable-debug && make -j && make install
+
+WORKDIR /usr/local/src/openmpi-5.0.0rc9/examples
+RUN make && cp -v hello_c ring_c connectivity_c spc_example /usr/local/bin
+</pre>
 
 <h2 id="plugin">Container support via Plugin
 <a class="slurm_link" href="#plugin"></a>
@@ -286,10 +595,10 @@ Plugins</a> that can be called at various points of job execution to
 support containers. Slurm is generally agnostic to SPANK based containers and
 can be made to start most, if not all, types. Any site using a plugin to start
 containers should not create or configure the "oci.conf" configuration file to
-deactive the OCI container functionality.
+deactivate the OCI container functionality.
 </p>
 
-<p>Some container developers have choosen a command line interface only which
+<p>Some container developers have chosen a command line interface only which
 requires users to explicitly execute the container solution.</p>
 
 <p>Links to several third party container solutions are provided below:
@@ -383,8 +692,8 @@ generally a logical grouping of containers for singular purpose. </p>
 
 <p>There is currently no direct support for Kubernetes Pods in Slurm.  Sites
 are encouraged to extract the OCI image from Kubernetes and then run the
-containers using Slurm. Users can create create jobs that start together using
-the "--dependency=" agument in <i>sbatch</i> to mirror the functionality of
+containers using Slurm. Users can create jobs that start together using
+the "--dependency=" argument in <i>sbatch</i> to mirror the functionality of
 Pods. Users can also use a larger allocation and then start each pod as a
 parallel step using <i>srun</i>.</p>
 
@@ -483,6 +792,6 @@ Overview slides of Sarus are
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 21 September 2022</p>
+<p style="text-align:center;">Last modified 19 May 2023</p>
 
 <!--#include virtual="footer.txt"-->

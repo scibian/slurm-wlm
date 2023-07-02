@@ -1,4 +1,4 @@
-.TH "cgroup.conf" "5" "Slurm Configuration File" "April 2022" "Slurm Configuration File"
+.TH "cgroup.conf" "5" "Slurm Configuration File" "January 2023" "Slurm Configuration File"
 
 .SH "NAME"
 cgroup.conf \- Slurm configuration file for the cgroup support
@@ -28,9 +28,7 @@ of Slurm cgroup plugins.
 \fBCgroupAutomount\fR=<yes|no>
 In cgroup/v1 this parameter detects if /sys/fs/cgroup/<controller_name> is
 available, and if not it tries to mount the filesystem.
-In cgroup/v2 this parameter only takes effect if IgnoreSystemd is set, and
-enables the required controllers on slurmd and slurmstepd cgroup directories.
-This parameter is intended for development and testing with cgroup/v2.
+In cgroup/v2 this parameter is ignored.
 .IP
 
 .TP
@@ -63,21 +61,19 @@ Only for cgroup/v2 and for development and testing. It has similar functionality
 to \fBIgnoreSystemd\fR but only in the case that a dbus call does not succeed.
 .IP
 
+.TP
+\fBEnableControllers\fR=\fI<yes|no>\fR
+Only for cgroup/v2 and generally for development and testing. It gets the
+available controllers from the root (\fBCgroupMountPoint\fR, by default
+/sys/fs/cgroup/) and makes them available in all levels of the cgroup tree until
+it reaches Slurm's cgroup leaf.
+.IP
+
 .SH "TASK/CGROUP PLUGIN"
 
 .LP
 The following cgroup.conf parameters are defined to control the behavior
 of this particular plugin:
-
-.TP
-\fBAllowedKmemSpace\fR=<number>
-Only for cgroup/v1.
-Constrain the job cgroup kernel memory to this amount of the allocated memory,
-specified in bytes. The \fBAllowedKmemSpace\fR must be between the upper and
-lower memory limits, specified by \fBMaxKmemPercent\fR and \fBMinKmemSpace\fR,
-respectively. If \fBAllowedKmemSpace\fR goes beyond the upper or lower limit,
-it will be reset to that upper or lower limit, whichever has been exceeded.
-.IP
 
 .TP
 \fBAllowedRAMSpace\fR=<number>
@@ -105,8 +101,8 @@ to \fBAllowedRAMSpace\fR. The supplied percentage may be expressed as a
 floating point number, e.g. 50.5.  If the limit is exceeded, the job steps
 will be killed and a warning message will be written to standard error.
 Also see \fBConstrainSwapSpace\fR.
-NOTE: Setting AllowedSwapSpace to 0 does not restrict the Linux kernel from
-using swap space. To control how the kernel uses swap space, see
+\fBNOTE\fR: Setting AllowedSwapSpace to 0 does not restrict the Linux kernel
+from using swap space. To control how the kernel uses swap space, see
 \fBMemorySwappiness\fR.
 .IP
 
@@ -127,23 +123,13 @@ The default value is "no".
 .IP
 
 .TP
-\fBConstrainKmemSpace\fR=<yes|no>
-Only for cgroup/v1.
-If configured to "yes" then constrain the job's Kmem RAM usage in addition to
-RAM usage. Only takes effect if \fBConstrainRAMSpace\fR is set to "yes". If
-enabled, the job's Kmem limit will be assigned the value of
-\fBAllowedKmemSpace\fR or the value coming from \fBMaxKmemPercent\fR.
-The default value is "no" which will leave Kmem setting untouched by Slurm.
-Also see \fBAllowedKmemSpace\fR, \fBMaxKmemPercent\fR.
-.IP
-
-.TP
 \fBConstrainRAMSpace\fR=<yes|no>
 If configured to "yes" then constrain the job's RAM usage by setting
 the memory soft limit to the allocated memory and the hard limit to
 the allocated memory * \fBAllowedRAMSpace\fR.  The default value is "no", in
 which case the job's RAM limit will be set to its swap space limit if
-\fBConstrainSwapSpace\fR is set to "yes".
+\fBConstrainSwapSpace\fR is set to "yes". CR_*_Memory must be set in slurm.conf
+for this parameter to take any effect.
 Also see \fBAllowedSwapSpace\fR, \fBAllowedRAMSpace\fR and
 \fBConstrainSwapSpace\fR.
 
@@ -171,36 +157,27 @@ to 100% in order to limit the RAM+Swap amount to 100% of job's requirement
 plus the percent of allowed swap space. This amount is thus set to both
 RAM and RAM+Swap limits. This means that in that particular case,
 ConstrainRAMSpace is automatically enabled with the same limit as the one
-used to constrain swap space.
+used to constrain swap space. CR_*_Memory must be set in slurm.conf
+for this parameter to take any effect.
 Also see \fBAllowedSwapSpace\fR.
 .IP
 
 .TP
 \fBMaxRAMPercent\fR=\fIPERCENT\fR
-Set an upper bound in percent of total RAM on the RAM constraint for a job.
-This will be the memory constraint applied to jobs that are not explicitly
-allocated memory by Slurm (i.e. Slurm's select plugin is not configured to manage
-memory allocations). The \fIPERCENT\fR may be an arbitrary floating
-point number. The default value is 100.
+Set an upper bound in percent of total RAM (configured RealMemory of the node)
+on the RAM constraint for a job. This will be the memory constraint applied to
+jobs that are not explicitly allocated memory by Slurm (i.e. Slurm's select
+plugin is not configured to manage memory allocations). The \fIPERCENT\fR may
+be an arbitrary floating point number. The default value is 100.
 .IP
 
 .TP
 \fBMaxSwapPercent\fR=\fIPERCENT\fR
-Set an upper bound (in percent of total RAM) on the amount of RAM+Swap
-that may be used for a job. This will be the swap limit applied to jobs
-on systems where memory is not being explicitly allocated to job. The
-\fIPERCENT\fR may be an arbitrary floating point number between 0 and 100.
-The default value is 100.
-.IP
-
-.TP
-\fBMaxKmemPercent\fR=\fIPERCENT\fR
-Only for cgroup/v1.
-Set an upper bound in percent of total RAM as the maximum Kmem for a job. The
-\fIPERCENT\fR may be an arbitrary floating point number, however, the product
-of \fBMaxKmemPercent\fR and job requested memory has to fall between
-\fBMinKmemSpace\fR and job requested memory, otherwise the boundary value is
-used. The default value is 100.
+Set an upper bound (in percent of total RAM, configured RealMemory of the node)
+on the amount of RAM+Swap that may be used for a job. This will be the swap
+limit applied to jobs on systems where memory is not being explicitly allocated
+to job. The \fIPERCENT\fR may be an arbitrary floating point number between 0
+and 100. The default value is 100.
 .IP
 
 .TP
@@ -213,13 +190,6 @@ out program data. A value of 100 gives equal priority to swapping out file
 cache or anonymous pages. If not set, then the kernel's default swappiness
 value will be used. \fBConstrainSwapSpace\fR
 must be set to \fByes\fR in order for this parameter to be applied.
-.IP
-
-.TP
-\fBMinKmemSpace\fR=<number>
-Only for cgroup/v1.
-Set a lower bound (in MB) on the memory limits defined by
-\fBAllowedKmemSpace\fR. The default limit is 30M.
 .IP
 
 .TP
@@ -252,11 +222,8 @@ commonly used cgroup enforcement mechanisms.
 ###
 # Slurm cgroup support configuration file.
 ###
-CgroupAutomount=yes
-CgroupMountpoint=/sys/fs/cgroup
 ConstrainCores=yes
 ConstrainDevices=yes
-ConstrainKmemSpace=no        #avoid known Kernel issues
 ConstrainRAMSpace=yes
 ConstrainSwapSpace=yes
 .fi

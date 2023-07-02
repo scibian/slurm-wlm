@@ -49,9 +49,10 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_resource_info.h"
-#include "src/common/slurm_selecttype_info.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/select.h"
 
 /* Data structures for pthreads used to gather partition information from
  * multiple clusters in parallel */
@@ -80,7 +81,7 @@ void slurm_print_partition_info_msg ( FILE* out,
 {
 	int i ;
 	partition_info_t * part_ptr = part_info_ptr->partition_array ;
-	char time_str[32];
+	char time_str[256];
 
 	slurm_make_time_str ((time_t *)&part_info_ptr->last_update, time_str,
 		sizeof(time_str));
@@ -124,6 +125,14 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 	char *allow_deny, *value;
 	uint16_t force, preempt_mode, val;
 	char *line_end = (one_liner) ? " " : "\n   ";
+	bool power_save_on = false;
+
+	/*
+	 * This is a good enough to determine if power_save is enabled.
+	 * power_save_test() is better but makes more dependencies.
+	 */
+	if (slurm_conf.suspend_program && slurm_conf.resume_program)
+		power_save_on = true;
 
 	/****** Line 1 ******/
 
@@ -256,6 +265,12 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 			   part_ptr->max_cpus_per_node);
 	}
 
+	if (part_ptr->max_cpus_per_socket == INFINITE) {
+		xstrcat(out, " MaxCPUsPerSocket=UNLIMITED");
+	} else {
+		xstrfmtcat(out, " MaxCPUsPerSocket=%u",
+			   part_ptr->max_cpus_per_socket);
+	}
 	xstrcat(out, line_end);
 
 	/****** Line ******/
@@ -380,9 +395,7 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 	}
 
 	/****** Line ******/
-	if ((part_ptr->resume_timeout != NO_VAL16) ||
-	    (part_ptr->suspend_timeout != NO_VAL16) ||
-	    (part_ptr->suspend_time != NO_VAL)) {
+	if (power_save_on) {
 		xstrcat(out, line_end);
 
 		if (part_ptr->resume_timeout == NO_VAL16)
@@ -408,6 +421,11 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 		else
 			xstrfmtcat(out, " SuspendTime=%d",
 				part_ptr->suspend_time);
+		
+		if (part_ptr->flags & PART_FLAG_PDOI)
+			xstrcat(out, " PowerDownOnIdle=YES");
+		else
+			xstrcat(out, " PowerDownOnIdle=NO");
 	}
 
 	if (one_liner)

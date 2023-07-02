@@ -808,7 +808,7 @@ static void _save_bb_state(void)
 	xfree(old_file);
 	xfree(reg_file);
 	xfree(new_file);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 }
 
 /* Recover saved burst buffer state and use it to preserve account, partition,
@@ -923,7 +923,7 @@ static void _recover_bb_state(void)
 	}
 
 	info("Recovered state of %d burst buffers", rec_count);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return;
 
 unpack_error:
@@ -934,7 +934,7 @@ unpack_error:
 	xfree(name);
 	xfree(partition);
 	xfree(qos);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return;
 }
 
@@ -2739,6 +2739,22 @@ static void _purge_vestigial_bufs(void)
 	}
 }
 
+static bool _is_directive(char *tok)
+{
+	if ((tok[0] == '#') &&
+	    (((tok[1] == 'B') && (tok[2] == 'B')) ||
+	     ((tok[1] == 'D') && (tok[2] == 'W')))) {
+		return true;
+	}
+	return false;
+}
+
+extern char *bb_p_build_het_job_script(char *script, uint32_t het_job_offset)
+{
+	return bb_common_build_het_job_script(script, het_job_offset,
+					      _is_directive);
+}
+
 /*
  * Return the total burst buffer size in MB
  */
@@ -2784,9 +2800,12 @@ extern int bb_p_load_state(bool init_config)
  * Return string containing current burst buffer status
  * argc IN - count of status command arguments
  * argv IN - status command arguments
+ * uid - authenticated UID
+ * gid - authenticated GID
  * RET status string, release memory using xfree()
  */
-extern char *bb_p_get_status(uint32_t argc, char **argv)
+extern char *bb_p_get_status(uint32_t argc, char **argv, uint32_t uid,
+			     uint32_t gid)
 {
 	char *status_resp, **script_argv;
 	int i, status = 0;
@@ -5180,7 +5199,8 @@ _json_parse_sessions_object(json_object *jobj, bb_sessions_t *ent)
  * Returns the status of the script.
  */
 extern int bb_p_run_script(char *func, uint32_t job_id, uint32_t argc,
-			   char **argv, char **resp_msg)
+			   char **argv, job_info_msg_t *job_info,
+			   char **resp_msg)
 {
 	return 0;
 }

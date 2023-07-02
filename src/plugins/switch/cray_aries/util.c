@@ -71,8 +71,8 @@ int create_apid_dir(uint64_t apid, uid_t uid, gid_t gid)
 
 	rc = chown(apid_dir, uid, gid);
 	if (rc) {
-		CRAY_ERR("chown %s, %d, %d failed: %m",
-			 apid_dir, (int)uid, (int)gid);
+		CRAY_ERR("chown %s, %u, %u failed: %m",
+			 apid_dir, uid, gid);
 		xfree(apid_dir);
 		return SLURM_ERROR;
 	}
@@ -145,7 +145,7 @@ int remove_spool_files(uint64_t apid)
 /*
  * Set job environment variables used by LLI and PMI
  */
-int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
+int set_job_env(stepd_step_rec_t *step, slurm_cray_jobinfo_t *sw_job)
 {
 	int rc, i;
 	char *buff = NULL, *resv_ports = NULL, *tmp = NULL;
@@ -153,7 +153,7 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	/*
 	 * Write the CRAY_NUM_COOKIES and CRAY_COOKIES variables out
 	 */
-	rc = env_array_overwrite_fmt(&job->env, CRAY_NUM_COOKIES_ENV,
+	rc = env_array_overwrite_fmt(&step->env, CRAY_NUM_COOKIES_ENV,
 				     "%"PRIu32, sw_job->num_cookies);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var " CRAY_NUM_COOKIES_ENV);
@@ -172,7 +172,7 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 			xstrcat(buff, sw_job->cookies[i]);
 	}
 
-	rc = env_array_overwrite(&job->env, CRAY_COOKIES_ENV, buff);
+	rc = env_array_overwrite(&step->env, CRAY_COOKIES_ENV, buff);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var " CRAY_COOKIES_ENV);
 		xfree(buff);
@@ -185,14 +185,14 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	 * Cray's PMI uses this is the port to communicate its control tree
 	 * information.
 	 */
-	resv_ports = getenvp(job->env, "SLURM_STEP_RESV_PORTS");
+	resv_ports = getenvp(step->env, "SLURM_STEP_RESV_PORTS");
 	if (resv_ports != NULL) {
 		buff = xstrdup(resv_ports);
 		tmp = strchr(buff, '-');
 		if (tmp != NULL) {
 			*tmp = '\0';
 		}
-		rc = env_array_overwrite(&job->env, PMI_CONTROL_PORT_ENV,
+		rc = env_array_overwrite(&step->env, PMI_CONTROL_PORT_ENV,
 					 buff);
 		xfree(buff);
 		if (rc == 0) {
@@ -203,8 +203,8 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	}
 
 	/* Set if task IDs are not monotonically increasing across all nodes */
-	rc = env_array_overwrite_fmt(&job->env, PMI_CRAY_NO_SMP_ENV,
-				     "%d", job->non_smp);
+	rc = env_array_overwrite_fmt(&step->env, PMI_CRAY_NO_SMP_ENV,
+				     "%d", step->non_smp);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var "PMI_CRAY_NO_SMP_ENV);
 		return SLURM_ERROR;

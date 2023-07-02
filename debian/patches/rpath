@@ -18,12 +18,13 @@ Last-Update: 2018-01-12
  AC_CONFIG_AUX_DIR([auxdir])
 --- a/auxdir/slurm.m4
 +++ b/auxdir/slurm.m4
-@@ -117,7 +117,7 @@
+@@ -121,7 +121,7 @@
      # You will notice " or ' each does something different when resolving
      # variables.  Some need to be resolved now ($libdir) and others
      # ($(top_builddir)) need to be resolved when dealing with the Makefile.am's
 -    LIB_SLURM="-Wl,-rpath=$libdir/slurm"
 +    LIB_SLURM="-Wl,-rpath=$libdir/slurm-wlm"
      LIB_SLURM=$LIB_SLURM' -L$(top_builddir)/src/api/.libs -lslurmfull'
- 
      AC_MSG_RESULT([shared]);
+   fi
+

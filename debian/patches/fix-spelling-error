@@ -6,7 +6,7 @@ Last-Update: 2022-12-21
 
 --- a/src/plugins/accounting_storage/mysql/as_mysql_assoc.c
 +++ b/src/plugins/accounting_storage/mysql/as_mysql_assoc.c
-@@ -526,7 +526,7 @@
+@@ -528,7 +528,7 @@
  	}
  	xfree(query);
  	if (!(row = mysql_fetch_row(result))) {
@@ -15,3 +15,155 @@ Last-Update: 2022-12-21
  		mysql_free_result(result);
  		return ESLURM_INVALID_PARENT_ACCOUNT;
  	}
+
+--- a/NEWS
++++ b/NEWS
+@@ -9138,7 +9138,7 @@ documents those changes that are of interest to users and administrators.
+  -- Set the number of free licenses to be 0 if the global license count
+     decreases and total is less than in use.
+  -- Add DebugFlag of BackfillMap. Previously a DebugFlag value of Backfill
+-    logged information about what it was doing plus a map of expected resouce
++    logged information about what it was doing plus a map of expected resource
+     use in the future. Now that very verbose resource use map is only logged
+     with a DebugFlag value of BackfillMap
+  -- Fix slurmstepd core dump.
+
+--- a/doc/man/man5/slurmdbd.conf.5
++++ b/doc/man/man5/slurmdbd.conf.5
+@@ -25,7 +25,7 @@ The overall configuration parameters available include:
+ 
+ .TP
+ \fBAllResourcesAbsolute\fR
+-When adding a resouce (license) treat allocated/allowed counts as absolute
++When adding a resource (license) treat allocated/allowed counts as absolute
+ numbers instead of percentage numbers. Boolean, yes to turn on, no (default)
+ to use the numbers as percentages instead.
+ .IP
+
+--- a/src/common/env.c
++++ b/src/common/env.c
+@@ -1995,7 +1995,7 @@ int env_array_to_file(const char *filename, const char **env_array,
+ 		/* skip any env variables with a newline in newline mode */
+ 		if (newline && xstrstr(*p, "\n")) {
+ 			log_flag_hex(STEPS, *p, strlen(*p),
+-				     "%s: skiping environment variable with newline",
++				     "%s: skipping environment variable with newline",
+ 				     __func__);
+ 			continue;
+ 		}
+
+--- a/src/common/slurm_errno.c
++++ b/src/common/slurm_errno.c
+@@ -580,7 +580,7 @@ slurm_errtab_t slurm_errtab[] = {
+ 	{ ERRTAB_ENTRY(ESLURM_PLUGIN_INCOMPLETE),
+ 	  "Plugin missing required symbol or function"		},
+ 	{ ERRTAB_ENTRY(ESLURM_PLUGIN_NOT_LOADED),
+-	  "Required plugin type not loaded or initalized"	},
++	  "Required plugin type not loaded or initialized"	},
+ 
+ 	/* REST errors */
+ 	{ ERRTAB_ENTRY(ESLURM_REST_INVALID_QUERY),
+
+--- a/src/interfaces/auth.h
++++ b/src/interfaces/auth.h
+@@ -87,7 +87,7 @@ extern int slurm_auth_index(void *cred);
+ extern bool slurm_get_plugin_hash_enable(int index);
+ 
+ /*
+- * Check if specific plugin type has been initalized
++ * Check if specific plugin type has been initialized
+  */
+ extern bool auth_is_plugin_type_inited(int plugin_id);
+ 
+
+--- a/src/plugins/sched/backfill/backfill.c
++++ b/src/plugins/sched/backfill/backfill.c
+@@ -989,7 +989,7 @@ extern void backfill_reconfig(void)
+ /* Update backfill scheduling statistics
+  * IN tv1 - start time
+  * IN tv2 - end (current) time
+- * IN node_space_recs - count of records in resouces/time table being tested
++ * IN node_space_recs - count of records in resources/time table being tested
+  */
+ static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2,
+ 			   int node_space_recs)
+
+--- a/src/slurmctld/acct_policy.h
++++ b/src/slurmctld/acct_policy.h
+@@ -70,7 +70,7 @@ extern void acct_policy_job_fini(job_record_t *job_ptr);
+  * acct_policy_alter_job - if resources change on a job this needs to
+  * be called after they have been validated, but before they actually
+  * do.  Each of the resources can be changed one at a time.  If no
+- * change happens on a resouce just put old values in for the new.
++ * change happens on a resource just put old values in for the new.
+  * At the time of writing this function any node or cpu size change
+  * while running was already handled in the job_pre|post_resize_acctg functions.
+  */
+
+--- a/src/slurmctld/job_mgr.c
++++ b/src/slurmctld/job_mgr.c
+@@ -7187,7 +7187,7 @@ static int _valid_job_part(job_desc_msg_t *job_desc, uid_t submit_uid,
+ 		}
+ 		if ((job_desc->time_min) && (job_desc->time_min != NO_VAL) &&
+ 		    (job_desc->deadline < (earliest_start + min_in_sec))) {
+-			info("%s: job's min_time excedes the deadline (%s + %lu > %s)",
++			info("%s: job's min_time exceeds the deadline (%s + %lu > %s)",
+ 			     __func__, time_str_earliest, min_in_sec,
+ 			     time_str_deadline);
+ 			rc = ESLURM_INVALID_TIME_MIN_LIMIT;
+@@ -7197,7 +7197,7 @@ static int _valid_job_part(job_desc_msg_t *job_desc, uid_t submit_uid,
+ 		    (job_desc->time_limit) &&
+ 		    (job_desc->time_limit != NO_VAL) &&
+ 		    (job_desc->deadline < (earliest_start + limit_in_sec))) {
+-			info("%s: job's time_limit excedes the deadline (%s + %lu > %s)",
++			info("%s: job's time_limit exceeds the deadline (%s + %lu > %s)",
+ 			     __func__, time_str_earliest, limit_in_sec,
+ 			     time_str_deadline);
+ 			rc = ESLURM_INVALID_TIME_LIMIT;
+
+--- a/doc/man/man1/scrun.1
++++ b/doc/man/man1/scrun.1
+@@ -46,8 +46,8 @@ https://github.com/opencontainers/runtime-spec/blob/main/runtime.md
+ 
+ \fBscrun\fR attempts to mimic the commandline behavior as closely as possible
+ to \fBcrun\fR(1) and \fBrunc\fR(1) in order to maintain in place replacement
+-compatiblity with \fBDOCKER\fR(1) and \fBpodman\fR(1). All commandline
+-arguments for \fBcrun\fR(1) and \fBrunc\fR(1) will be accepted for compatiblity
++compatibility with \fBDOCKER\fR(1) and \fBpodman\fR(1). All commandline
++arguments for \fBcrun\fR(1) and \fBrunc\fR(1) will be accepted for compatibility
+ but may be ignored depending on their applicability.
+ 
+ .SH "DESCRIPTION"
+@@ -179,7 +179,7 @@ Set logging level.
+ 
+ .TP
+ \fBSCRUN_STDERR_DEBUG\fR=<quiet|fatal|error|info|verbose|debug|debug2|debug3|debug4|debug5>
+-Set logging level for standard error ouput only.
++Set logging level for standard error output only.
+ .IP
+ 
+ .TP
+
+--- a/doc/man/man5/burst_buffer.conf.5
++++ b/doc/man/man5/burst_buffer.conf.5
+@@ -62,7 +62,7 @@ By default all users are permitted to use burst buffers.
+ .TP
+ \fBDirective\fR
+ The string that must be used by a job to request a burst buffer. This string
+-must be immediately preceeded by a single '#' character. This is currently only
++must be immediately preceded by a single '#' character. This is currently only
+ used by the lua plugin. For the lua plugin, the default value is "BB_LUA".
+ See burst_buffer.html for more details.
+ .IP
+
+--- a/doc/man/man5/job_container.conf.5
++++ b/doc/man/man5/job_container.conf.5
+@@ -95,7 +95,7 @@ the example below. This parameter is optional.
+ 
+ .TP
+ \fBShared\fR
+-Specifiying Shared=true will propogate new mounts between the job specific
++Specifying Shared=true will propagate new mounts between the job specific
+ filesystem namespace and the root filesystem namespace, enable using autofs on
+ the node. This parmeter is optional.
+ .IP

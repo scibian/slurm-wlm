@@ -81,6 +81,8 @@ bitstr_t *trigger_down_nodes_bitmap = NULL;
 bitstr_t *trigger_drained_nodes_bitmap = NULL;
 bitstr_t *trigger_fail_nodes_bitmap = NULL;
 bitstr_t *trigger_up_nodes_bitmap   = NULL;
+bitstr_t *trigger_draining_nodes_bitmap = NULL;
+bitstr_t *trigger_resume_nodes_bitmap = NULL;
 static bool trigger_bb_error = false;
 static bool trigger_node_reconfig = false;
 static bool trigger_pri_ctld_fail = false;
@@ -574,6 +576,28 @@ extern void trigger_node_up(node_record_t *node_ptr)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
+extern void trigger_node_draining(node_record_t *node_ptr)
+{
+	xassert(verify_lock(NODE_LOCK, READ_LOCK));
+
+	slurm_mutex_lock(&trigger_mutex);
+	if (!trigger_draining_nodes_bitmap)
+		trigger_draining_nodes_bitmap = bit_alloc(node_record_count);
+	bit_set(trigger_draining_nodes_bitmap, node_ptr->index);
+	slurm_mutex_unlock(&trigger_mutex);
+}
+
+extern void trigger_node_resume(node_record_t *node_ptr)
+{
+	xassert(verify_lock(NODE_LOCK, READ_LOCK));
+
+	slurm_mutex_lock(&trigger_mutex);
+	if (!trigger_resume_nodes_bitmap)
+		trigger_resume_nodes_bitmap = bit_alloc(node_record_count);
+	bit_set(trigger_resume_nodes_bitmap, node_ptr->index);
+	slurm_mutex_unlock(&trigger_mutex);
+}
+
 extern void trigger_reconfig(void)
 {
 	slurmctld_lock_t node_read_lock = { .node = READ_LOCK };
@@ -593,6 +617,12 @@ extern void trigger_reconfig(void)
 		bit_realloc(trigger_fail_nodes_bitmap, node_record_count);
 	if (trigger_up_nodes_bitmap)
 		bit_realloc(trigger_up_nodes_bitmap, node_record_count);
+	if (trigger_draining_nodes_bitmap)
+		trigger_draining_nodes_bitmap = bit_realloc(
+			trigger_draining_nodes_bitmap, node_record_count);
+	if (trigger_resume_nodes_bitmap)
+		trigger_resume_nodes_bitmap = bit_realloc(
+			trigger_resume_nodes_bitmap, node_record_count);
 	slurm_mutex_unlock(&trigger_mutex);
 	unlock_slurmctld(node_read_lock);
 }
@@ -879,7 +909,7 @@ extern int trigger_state_save(void)
 	xfree(reg_file);
 	xfree(new_file);
 	unlock_state_files();
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return error_code;
 }
 
@@ -937,7 +967,7 @@ extern void trigger_state_restore(void)
 		error("Can't recover trigger state, data version "
 		      "incompatible");
 		xfree(ver_str);
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return;
 	}
 	xfree(ver_str);
@@ -958,7 +988,7 @@ unpack_error:
 		fatal("Incomplete trigger data checkpoint file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete trigger data checkpoint file");
 fini:	verbose("State of %d triggers recovered", trigger_cnt);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 }
 
 static bool _front_end_job_test(bitstr_t *front_end_bitmap,
@@ -1274,6 +1304,58 @@ static void _trigger_node_event(trig_mgr_info_t *trig_in, time_t now)
 		}
 	}
 
+	if ((trig_in->trig_type & TRIGGER_TYPE_DRAINING) &&
+	    trigger_draining_nodes_bitmap &&
+	    (bit_ffs(trigger_draining_nodes_bitmap) != -1)) {
+		if (!trig_in->nodes_bitmap) { /* all nodes */
+			xfree(trig_in->res_id);
+			trig_in->res_id =
+				bitmap2node_name(trigger_draining_nodes_bitmap);
+			trig_in->state = 1;
+		} else if (bit_overlap_any(trig_in->nodes_bitmap,
+					   trigger_draining_nodes_bitmap)) {
+			bit_and(trig_in->nodes_bitmap,
+				trigger_draining_nodes_bitmap);
+			xfree(trig_in->res_id);
+			trig_in->res_id =
+				bitmap2node_name(trig_in->nodes_bitmap);
+			trig_in->state = 1;
+		}
+		if (trig_in->state == 1) {
+			trig_in->trig_time =
+				now + (trig_in->trig_time - 0x8000);
+			log_flag(TRIGGERS, "trigger[%u] for node %s draining",
+				 trig_in->trig_id, trig_in->res_id);
+			return;
+		}
+	}
+
+	if ((trig_in->trig_type & TRIGGER_TYPE_RESUME) &&
+	    trigger_resume_nodes_bitmap &&
+	    (bit_ffs(trigger_resume_nodes_bitmap) != -1)) {
+		if (!trig_in->nodes_bitmap) { /* all nodes */
+			xfree(trig_in->res_id);
+			trig_in->res_id =
+				bitmap2node_name(trigger_resume_nodes_bitmap);
+			trig_in->state = 1;
+		} else if (bit_overlap_any(trig_in->nodes_bitmap,
+					   trigger_resume_nodes_bitmap)) {
+			bit_and(trig_in->nodes_bitmap,
+				trigger_resume_nodes_bitmap);
+			xfree(trig_in->res_id);
+			trig_in->res_id =
+				bitmap2node_name(trig_in->nodes_bitmap);
+			trig_in->state = 1;
+		}
+		if (trig_in->state == 1) {
+			trig_in->trig_time =
+				now + (trig_in->trig_time - 0x8000);
+			log_flag(TRIGGERS, "trigger[%u] for node %s resume",
+				 trig_in->trig_id, trig_in->res_id);
+			return;
+		}
+	}
+
 	if ((trig_in->trig_type & TRIGGER_TYPE_RECONFIG) &&
 	    trigger_node_reconfig) {
 		trig_in->state = 1;
@@ -1486,26 +1568,20 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 
 static void _clear_event_triggers(void)
 {
-	if (trigger_down_front_end_bitmap) {
-		bit_nclear(trigger_down_front_end_bitmap,
-			   0, (bit_size(trigger_down_front_end_bitmap) - 1));
-	}
-	if (trigger_up_front_end_bitmap) {
-		bit_nclear(trigger_up_front_end_bitmap,
-			   0, (bit_size(trigger_up_front_end_bitmap) - 1));
-	}
-	if (trigger_down_nodes_bitmap) {
-		bit_nclear(trigger_down_nodes_bitmap,
-			   0, (bit_size(trigger_down_nodes_bitmap) - 1));
-	}
-	if (trigger_drained_nodes_bitmap) {
-		bit_nclear(trigger_drained_nodes_bitmap,
-			   0, (bit_size(trigger_drained_nodes_bitmap) - 1));
-	}
-	if (trigger_up_nodes_bitmap) {
-		bit_nclear(trigger_up_nodes_bitmap,
-			   0, (bit_size(trigger_up_nodes_bitmap) - 1));
-	}
+	if (trigger_down_front_end_bitmap)
+		bit_clear_all(trigger_down_front_end_bitmap);
+	if (trigger_up_front_end_bitmap)
+		bit_clear_all(trigger_up_front_end_bitmap);
+	if (trigger_down_nodes_bitmap)
+		bit_clear_all(trigger_down_nodes_bitmap);
+	if (trigger_drained_nodes_bitmap)
+		bit_clear_all(trigger_drained_nodes_bitmap);
+	if (trigger_up_nodes_bitmap)
+		bit_clear_all(trigger_up_nodes_bitmap);
+	if (trigger_draining_nodes_bitmap)
+		bit_clear_all(trigger_draining_nodes_bitmap);
+	if (trigger_resume_nodes_bitmap)
+		bit_clear_all(trigger_resume_nodes_bitmap);
 	trigger_node_reconfig = false;
 	trigger_bb_error = false;
 	trigger_pri_ctld_fail = false;
@@ -1657,4 +1733,6 @@ extern void trigger_fini(void)
 	FREE_NULL_BITMAP(trigger_drained_nodes_bitmap);
 	FREE_NULL_BITMAP(trigger_fail_nodes_bitmap);
 	FREE_NULL_BITMAP(trigger_up_nodes_bitmap);
+	FREE_NULL_BITMAP(trigger_draining_nodes_bitmap);
+	FREE_NULL_BITMAP(trigger_resume_nodes_bitmap);
 }
