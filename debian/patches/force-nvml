@@ -6,14 +6,13 @@ Origin: vendor
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=15909
 Last-Update: 2023-01-31
 
---- slurm-wlm-22.05.8.orig/src/common/gpu.c
-+++ slurm-wlm-22.05.8/src/common/gpu.c
-@@ -84,14 +84,12 @@ static char *_get_gpu_type(void)
+--- a/src/interfaces/gpu.c
++++ b/src/interfaces/gpu.c
+@@ -96,14 +96,10 @@
  	uint32_t autodetect_flags = gres_get_autodetect_flags();
  
  	if (autodetect_flags & GRES_AUTODETECT_GPU_NVML) {
 -#ifdef HAVE_NVML
-+
  		if (!dlopen("libnvidia-ml.so", RTLD_NOW | RTLD_GLOBAL))
  			info("We were configured with nvml functionality, but that lib wasn't found on the system.");
  		else
@@ -21,7 +20,6 @@ Last-Update: 2023-01-31
 -#else
 -		info("We were configured to autodetect nvml functionality, but we weren't able to find that lib when Slurm was configured.");
 -#endif
-+
  	} else if (autodetect_flags & GRES_AUTODETECT_GPU_RSMI) {
  #ifdef HAVE_RSMI
  		if (!dlopen("librocm_smi64.so", RTLD_NOW | RTLD_GLOBAL))
