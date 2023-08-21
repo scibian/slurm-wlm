@@ -1,3 +1,11 @@
+slurm-wlm (23.02.3-2sci9u1) scibian9; urgency=medium
+
+  * Import Upstream version 23.02.3
+  * underlying patched source files no more exists!
+  * update patchs accordingly to new source code
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 21 Aug 2023 17:31:29 +0200
+
 slurm-wlm (22.05.8-3sci9u1) scibian9; urgency=medium
 
   * drop down support of ROCm System Management
