@@ -84,11 +84,15 @@ each association in the database.  By setting this option, the
 'associations' option is also set.
 </li>
 <li>safe - This will ensure a job will only be launched when using an
-  association or qos that has a GrpTRESMins limit set if the job will be
+  association or qos that has a TRES-minutes limit set if the job will be
   able to run to completion. Without this option set, jobs will be
-  launched as long as their usage hasn't reached the cpu-minutes limit
+  launched as long as their usage hasn't reached the TRES-minutes limit
   which can lead to jobs being launched but then killed when the limit is
-  reached. By setting this option, both the 'associations' option and the
+  reached.
+  With the 'safe' option set, a job won't be killed due to limits,
+  even if the limits are changed after the job was started and the
+  association or qos violates the updated limits.
+  By setting this option, both the 'associations' option and the
   'limits' option are set automatically.
 </li>
 <li>wckeys - This will prevent users from running jobs under a wckey
@@ -98,7 +102,7 @@ each association in the database.  By setting this option, the
 </li>
 </ul>
 
-<p>NOTE: The association is a combination of cluster, account,
+<p><b>NOTE</b>: The association is a combination of cluster, account,
 user names and optional partition name.
 <br>
 Without AccountingStorageEnforce being set (the default behavior)
@@ -300,7 +304,7 @@ sacctmgr</a> man page.</p>
 </dd>
 </dl>
 
-<p><b>NOTE:</b> When modifying a TRES field with <i>sacctmgr</i>, one must
+<p><b>NOTE</b>: When modifying a TRES field with <i>sacctmgr</i>, one must
 specify which TRES to modify (see <a href="tres.html">TRES</a> for complete
 list) as in the following examples: </p>
 <pre>
@@ -506,19 +510,19 @@ is treated as a Max limit.</p>
   A setting of 0 would add no timed usage from the job.
 
   The usage factor only applies to the job's QOS and not the partition QOS.
-
+  <br>
   If the UsageFactorSafe flag is set and AccountingStorageEnforce includes
   <i>Safe</i>, jobs will only be able to run if the job can run to completion
-  with the UsageFactor applied.
-
+  with the UsageFactor applied, and won't be killed due to limits.
+  <br>
   If the UsageFactorSafe flag is not set and AccountingStorageEnforce includes
   <i>Safe</i>, a job will be able to be scheduled without the UsageFactor
-  applied and will be able to run without being killed due to limits.
-
+  applied and won't be killed due to limits.
+  <br>
   If the UsageFactorSafe flag is not set and AccountingStorageEnforce does
-  not include <i>Safe</i>, a job will be able to be scheduled without the
-  UsageFactor applied and could be killed due to limits.
-
+  not include <i>Safe</i>, a job will be scheduled as long as the limits are
+  not reached, but could be killed due to limits.
+  <br>
   See <a href="slurm.conf.html#OPT_AccountingStorageEnforce">
   AccountingStorageEnforce</a> in the slurm.conf man page.
 </dd>
@@ -584,6 +588,12 @@ end
   specify a gpu with its type, thus enforcing the limits for each specific
   model.
 </p>
+
+<p>When <b>TRESBillingWeights</b> are defined for a partition, both typed and
+non-typed resources should be included. For example, if you have 'tesla' GPUs
+in one partition and you only define the billing weights for the 'tesla' typed
+GPU resource, then those weights will not be applied to the generic GPUs.</p>
+
 <p>It is also advisable to set <b>AccountingStorageTRES</b> for both generic
   and specific gres types, otherwise requests that ask for the generic instance
   of a gres won't be accounted for. For example, to track generic GPUs and
@@ -953,7 +963,7 @@ partition's current time limit.</p>
 when using the cray_aries power management plugin.</p>
 
 <p><b>PowerReserved</b> &mdash; The job's power request is for more than
-what is currently available when using the cray_aires power management plugin.
+what is currently available when using the cray_aries power management plugin.
 </p>
 
 <p><b>Priority</b> &mdash; One of more higher priority jobs exist for the
@@ -1268,6 +1278,6 @@ the network, etc.</p>
 
 <p><b>TimeLimit</b> &mdash; The job exhausted its time limit.</p>
 
-<p style="text-align: center;">Last modified 05 January 2023</p>
+<p style="text-align: center;">Last modified 09 June 2023</p>
 
 <!--#include virtual="footer.txt"-->

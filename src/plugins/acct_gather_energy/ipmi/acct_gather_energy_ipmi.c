@@ -55,12 +55,12 @@
 #include <signal.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_acct_gather_energy.h"
+#include "src/interfaces/acct_gather_energy.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
 #include "src/common/xstring.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/proctrack.h"
 
 #include "src/slurmd/slurmd/slurmd.h"
 #include "acct_gather_energy_ipmi_config.h"
@@ -68,6 +68,7 @@
 /*
  * freeipmi includes for the lib
  */
+#include <freeipmi/freeipmi.h>
 #include <ipmi_monitoring.h>
 #include <ipmi_monitoring_bitmasks.h>
 
@@ -85,6 +86,10 @@ slurmd_conf_t *conf = NULL;
 #define _DEBUG_ENERGY 1
 #define IPMI_VERSION 2		/* Data structure version number */
 #define MAX_LOG_ERRORS 5	/* Max sensor reading errors log messages */
+
+/* IPMI extended DCMI power modes will be identified by these invented ids. */
+#define DCMI_MODE 0xBEEF
+#define DCMI_ENH_MODE 0xBEAF
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -133,7 +138,7 @@ char *sensor_config_file = NULL;
  */
 static time_t last_update_time = 0;
 static time_t previous_update_time = 0;
-static stepd_step_rec_t *job = NULL;
+static stepd_step_rec_t *step = NULL;
 static int context_id = -1;
 
 /* array of struct to track the status of multiple sensors */
@@ -169,6 +174,16 @@ static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 pthread_t thread_ipmi_id_launcher = 0;
 pthread_t thread_ipmi_id_run = 0;
 
+/*
+ * DCMI context cannot be reused between threads and this plugin can be called
+ * from different slurmd threads, so we need the __thread specifier.
+ */
+__thread ipmi_ctx_t ipmi_dcmi_ctx = NULL;
+static int dcmi_cnt = 0;
+
+static int _read_ipmi_dcmi_values(void);
+static int _read_ipmi_non_dcmi_values(bool check_sensor_units_watts);
+
 static int _running_profile(void)
 {
 	static bool run = false;
@@ -192,6 +207,46 @@ static uint64_t _get_additional_consumption(time_t time0, time_t time1,
 					    uint32_t watt0, uint32_t watt1)
 {
 	return (uint64_t) ((time1 - time0)*(watt1 + watt0)/2);
+}
+
+/*
+ * _open_dcmi_context opens the inband ipmi device for DCMI power reading
+ */
+static int _open_dcmi_context(void)
+{
+	int ret;
+
+	if (!dcmi_cnt || ipmi_dcmi_ctx)
+		return SLURM_SUCCESS;
+
+	ipmi_dcmi_ctx = ipmi_ctx_create();
+	if (!ipmi_dcmi_ctx) {
+		error("Failed creating dcmi ipmi context");
+		return SLURM_ERROR;
+	}
+
+	ret = ipmi_ctx_find_inband(ipmi_dcmi_ctx,
+	                           NULL,
+	                           ipmi_config.disable_auto_probe,
+	                           ipmi_config.driver_address,
+	                           ipmi_config.register_spacing,
+	                           ipmi_config.driver_device,
+	                           ipmi_config.workaround_flags,
+	                           IPMI_FLAGS_DEFAULT);
+	if (ret < 0) {
+		error("Error finding inband dcmi ipmi device: %s",
+		      ipmi_ctx_errormsg(ipmi_dcmi_ctx));
+		ipmi_ctx_destroy(ipmi_dcmi_ctx);
+		ipmi_dcmi_ctx = NULL;
+		return SLURM_ERROR;
+	} else if (!ret) {
+		error("No inband dcmi ipmi device found");
+		ipmi_ctx_destroy(ipmi_dcmi_ctx);
+		ipmi_dcmi_ctx = NULL;
+		return SLURM_ERROR;
+	}
+
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -286,6 +341,9 @@ static int _init_ipmi_config (void)
 	/* 	sensor_reading_flags |= */
 	/* 		IPMI_MONITORING_SENSOR_READING_FLAGS_ENTITY_SENSOR_NAMES; */
 
+	if (_open_dcmi_context() != SLURM_SUCCESS)
+		return SLURM_ERROR;
+
 	return SLURM_SUCCESS;
 }
 
@@ -294,72 +352,19 @@ static int _init_ipmi_config (void)
  */
 static int _check_power_sensor(void)
 {
-	/* check the sensors list */
-	void *sensor_reading;
-	int rc;
-	int sensor_units;
-	uint16_t i;
-	unsigned int ids[sensors_len];
-	static uint8_t check_err_cnt = 0;
+	uint32_t non_dcmi_cnt = sensors_len - dcmi_cnt;
 
-	for (i = 0; i < sensors_len; ++i)
-		ids[i] = sensors[i].id;
-	rc = ipmi_monitoring_sensor_readings_by_record_id(ipmi_ctx,
-							  hostname,
-							  &ipmi_config,
-							  sensor_reading_flags,
-							  ids,
-							  sensors_len,
-							  NULL,
-							  NULL);
-	if (rc != sensors_len) {
-		if (check_err_cnt < MAX_LOG_ERRORS) {
-			error("ipmi_monitoring_sensor_readings_by_record_id: "
-			      "%s", ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			check_err_cnt++;
-		} else if (check_err_cnt == MAX_LOG_ERRORS) {
-			error("ipmi_monitoring_sensor_readings_by_record_id: "
-			      "%s. Stop logging these errors after %d attempts",
-			      ipmi_monitoring_ctx_errormsg(ipmi_ctx),
-			      MAX_LOG_ERRORS);
-			check_err_cnt++;
-		}
-		return SLURM_ERROR;
+	/*
+	 * Only check for non-DCMI sensors since DCMI ones are always in watts
+	 * in this plugin. Note that we do a sensor reading too so we update the
+	 * last_update_time.
+	 */
+	if (non_dcmi_cnt) {
+		if (_read_ipmi_non_dcmi_values(true) != SLURM_SUCCESS)
+			return SLURM_ERROR;
+		previous_update_time = last_update_time;
+		last_update_time = time(NULL);
 	}
-
-	check_err_cnt = 0;
-
-	i = 0;
-	do {
-		/* check if the sensor unit is watts */
-		sensor_units =
-		    ipmi_monitoring_sensor_read_sensor_units(ipmi_ctx);
-		if (sensor_units < 0) {
-			error("ipmi_monitoring_sensor_read_sensor_units: %s",
-			      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			return SLURM_ERROR;
-		}
-		if (sensor_units != slurm_ipmi_conf.variable) {
-			error("Configured sensor is not in Watt, "
-			      "please check ipmi.conf");
-			return SLURM_ERROR;
-		}
-
-		/* update current value of the sensor */
-		sensor_reading =
-		    ipmi_monitoring_sensor_read_sensor_reading(ipmi_ctx);
-		if (sensor_reading) {
-			sensors[i].last_update_watt =
-			    (uint32_t) (*((double *)sensor_reading));
-		} else {
-			error("ipmi read an empty value for power consumption");
-			return SLURM_ERROR;
-		}
-		++i;
-	} while (ipmi_monitoring_sensor_iterator_next(ipmi_ctx));
-
-	previous_update_time = last_update_time;
-	last_update_time = time(NULL);
 
 	return SLURM_SUCCESS;
 }
@@ -461,29 +466,133 @@ static int _find_power_sensor(void)
 }
 
 /*
- * _read_ipmi_values read the Power sensor and update last_update_watt and times
+ * _get_dcmi_power_reading reads current power in Watt from the ipmi context
+ * returns power in watts on success, a negative value on failure
  */
-static int _read_ipmi_values(void)
+static int _get_dcmi_power_reading(uint16_t dcmi_mode)
 {
-	/* read sensors list */
+	uint8_t mode;
+	uint8_t mode_attributes = 0;
+
+	uint64_t current_power;
+	fiid_obj_t dcmi_rs;
+	int ret;
+
+	if (!ipmi_dcmi_ctx) {
+		error("%s: IPMI DCMI context not initialized", __func__);
+		return SLURM_ERROR;
+	}
+
+	dcmi_rs = fiid_obj_create(tmpl_cmd_dcmi_get_power_reading_rs);
+	if (!dcmi_rs) {
+		error("%s: Failed creating DCMI fiid obj", __func__);
+		return SLURM_ERROR;
+	}
+
+	if (dcmi_mode == DCMI_MODE)
+		mode = IPMI_DCMI_POWER_READING_MODE_SYSTEM_POWER_STATISTICS;
+	else if (dcmi_mode == DCMI_ENH_MODE)
+		mode = IPMI_DCMI_POWER_READING_MODE_ENHANCED_SYSTEM_POWER_STATISTICS;
+	else {
+		error("%s: DCMI mode %d not supported: ", __func__, dcmi_mode);
+		return SLURM_ERROR;
+	}
+	ret = ipmi_cmd_dcmi_get_power_reading(ipmi_dcmi_ctx, mode,
+	                                      mode_attributes, dcmi_rs);
+	if (ret < 0) {
+		error("%s: get DCMI power reading failed", __func__);
+		fiid_obj_destroy(dcmi_rs);
+		return SLURM_ERROR;
+	}
+
+	ret = FIID_OBJ_GET(dcmi_rs, "current_power", &current_power);
+	fiid_obj_destroy(dcmi_rs);
+	if (ret < 0) {
+		error("%s: DCMI FIID_OBJ_GET failed", __func__);
+		return SLURM_ERROR;
+	}
+
+	return current_power;
+}
+
+static int _read_ipmi_dcmi_values(void)
+{
+	int i, dcmi_res;
+
+	for (i = 0; i < sensors_len; i++) {
+		if ((sensors[i].id != DCMI_MODE) &&
+		    (sensors[i].id != DCMI_ENH_MODE))
+			continue;
+		dcmi_res = _get_dcmi_power_reading(sensors[i].id);
+		if (dcmi_res < 0)
+			return SLURM_ERROR;
+		sensors[i].last_update_watt = dcmi_res;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+static int _ipmi_check_unit_watts()
+{
+	int sensor_units = ipmi_monitoring_sensor_read_sensor_units(ipmi_ctx);
+
+	if (sensor_units < 0) {
+		error("ipmi_monitoring_sensor_read_sensor_units: %s",
+		      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
+		return SLURM_ERROR;
+	}
+
+	if (sensor_units != slurm_ipmi_conf.variable) {
+		error("Configured sensor is not in Watt, please check ipmi.conf");
+		return SLURM_ERROR;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+static int _ipmi_read_sensor_readings(int id)
+{
 	void *sensor_reading;
-	int rc;
-	uint16_t i;
-	unsigned int ids[sensors_len];
+
+	sensor_reading = ipmi_monitoring_sensor_read_sensor_reading(ipmi_ctx);
+
+	if (sensor_reading) {
+		sensors[id].last_update_watt = (uint32_t) (*((double *)
+							    sensor_reading));
+	} else {
+		error("%s: ipmi read an empty value for power consumption",
+		      __func__);
+		return SLURM_ERROR;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+static int _read_ipmi_non_dcmi_values(bool check_sensor_units_watts)
+{
+	int i, j, rc;
+	uint32_t non_dcmi_cnt = sensors_len - dcmi_cnt;
+	unsigned int ids[non_dcmi_cnt];
 	static uint8_t read_err_cnt = 0;
 
-	for (i = 0; i < sensors_len; ++i)
-		ids[i] = sensors[i].id;
+	/* Next code is only for non-DCMI sensors. */
+	for (i = 0, j = 0; i < sensors_len; i++) {
+		if ((sensors[i].id != DCMI_MODE) &&
+		    (sensors[i].id != DCMI_ENH_MODE)) {
+			ids[j] = sensors[i].id;
+			j++;
+		}
+	}
+
 	rc = ipmi_monitoring_sensor_readings_by_record_id(ipmi_ctx,
 							  hostname,
 							  &ipmi_config,
 							  sensor_reading_flags,
 							  ids,
-							  sensors_len,
+							  non_dcmi_cnt,
 							  NULL,
 							  NULL);
-
-	if (rc != sensors_len) {
+	if (rc != non_dcmi_cnt) {
 		if (read_err_cnt < MAX_LOG_ERRORS) {
 			error("ipmi_monitoring_sensor_readings_by_record_id: "
 			      "%s", ipmi_monitoring_ctx_errormsg(ipmi_ctx));
@@ -498,21 +607,45 @@ static int _read_ipmi_values(void)
 		return SLURM_ERROR;
 	}
 
-	read_err_cnt = 0;
-
-	i = 0;
-	do {
-		sensor_reading =
-		    ipmi_monitoring_sensor_read_sensor_reading(ipmi_ctx);
-		if (sensor_reading) {
-			sensors[i].last_update_watt =
-			    (uint32_t) (*((double *)sensor_reading));
-		} else {
-			error("ipmi read an empty value for power consumption");
-			return SLURM_ERROR;
+	for (i = 0; i < sensors_len; i++) {
+		if ((sensors[i].id != DCMI_MODE) &&
+		    (sensors[i].id != DCMI_ENH_MODE)) {
+			/* Check sensor units are in watts if required. */
+			if (check_sensor_units_watts &&
+			    (_ipmi_check_unit_watts() != SLURM_SUCCESS))
+				return SLURM_ERROR;
 		}
-		++i;
-	} while (ipmi_monitoring_sensor_iterator_next(ipmi_ctx));
+
+		/* Read sensor readings. */
+		if (_ipmi_read_sensor_readings(i) != SLURM_SUCCESS)
+			return SLURM_ERROR;
+
+		if (ipmi_monitoring_sensor_iterator_next(ipmi_ctx) < 0) {
+			error("Cannot parse next sensor in ipmi ctx");
+		} else if (!ipmi_monitoring_sensor_iterator_next(ipmi_ctx))
+			break;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+/*
+ * _read_ipmi_values read the Power sensor and update last_update_watt and times
+ */
+static int _read_ipmi_values(void)
+{
+	uint32_t non_dcmi_cnt = sensors_len - dcmi_cnt;
+	int rc1 = 0, rc2 = 0;
+
+	/* Start by reading DCMI sensors */
+	if (dcmi_cnt)
+		rc1 = _read_ipmi_dcmi_values();
+
+	if (non_dcmi_cnt)
+		rc2 = _read_ipmi_non_dcmi_values(false);
+
+	if ((rc1 == SLURM_ERROR) && (rc2 == SLURM_ERROR))
+		return SLURM_ERROR;
 
 	previous_update_time = last_update_time;
 	last_update_time = time(NULL);
@@ -579,13 +712,25 @@ static int _thread_update_node_energy(void)
 	readings++;
 
 	if (slurm_conf.debug_flags & DEBUG_FLAG_ENERGY) {
-		for (i = 0; i < sensors_len; ++i)
-			info("ipmi-thread: sensor %u current_watts: %u, consumed %"PRIu64" Joules %"PRIu64" new, ave watts %u",
-			     sensors[i].id,
+		for (i = 0; i < sensors_len; ++i) {
+			char *log_str = NULL;
+
+			if (sensors[i].id == DCMI_MODE)
+				xstrcat(log_str, "DCMI");
+			else if (sensors[i].id == DCMI_ENH_MODE)
+				xstrcat(log_str, "DCMI Enhanced");
+			else
+				xstrfmtcat(log_str, "%u", sensors[i].id);
+
+			info("ipmi-thread: sensor %s current_watts: %u, consumed %"PRIu64" Joules %"PRIu64" new, ave watts %u",
+			     log_str,
 			     sensors[i].energy.current_watts,
 			     sensors[i].energy.consumed_energy,
 			     sensors[i].energy.base_consumed_energy,
 			     sensors[i].energy.ave_watts);
+
+			xfree(log_str);
+		}
 	}
 
 	return rc;
@@ -600,6 +745,11 @@ static int _thread_init(void)
 	static bool first_init = SLURM_ERROR;
 	int rc = SLURM_SUCCESS;
 	uint16_t i;
+
+	if (!first && (_open_dcmi_context() != SLURM_SUCCESS)) {
+		error("Cannot open dcmi context for this thread.");
+		return SLURM_ERROR;
+	}
 
 	if (!first && ipmi_ctx)
 		return first_init;
@@ -940,6 +1090,13 @@ extern int fini(void)
 		ipmi_monitoring_ctx_destroy(ipmi_ctx);
 		ipmi_ctx = NULL;
 	}
+
+	if (ipmi_dcmi_ctx) {
+		ipmi_ctx_close(ipmi_dcmi_ctx);
+		ipmi_ctx_destroy(ipmi_dcmi_ctx);
+		ipmi_dcmi_ctx = NULL;
+	}
+
 	reset_slurm_ipmi_conf(&slurm_ipmi_conf);
 
 	slurm_mutex_unlock(&ipmi_mutex);
@@ -1064,7 +1221,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 		break;
 	case ENERGY_DATA_STEP_PTR:
 		/* set global job if needed later */
-		job = (stepd_step_rec_t *)data;
+		step = (stepd_step_rec_t *)data;
 		break;
 	default:
 		error("acct_gather_energy_p_set_data: unknown enum %d",
@@ -1125,9 +1282,22 @@ static int _parse_sensor_descriptions(void)
 		str_id = strtok_r(mid, sep2, &saveptr2);
 		/* parse sensor ids of the current description */
 		while (str_id) {
-			id = strtol(str_id, &endptr, 10);
-			if (*endptr != '\0')
-				goto error;
+			/*
+			 * DCMI and DCMI_ENHANCED are special cases for
+			 * the IPMI extension commands. Actually we support
+			 * these ones and we convert them to numerical ids.
+			 */
+			if (!xstrcmp(str_id, "DCMI")) {
+				dcmi_cnt++;
+				id = DCMI_MODE;
+			} else if (!xstrcmp(str_id, "DCMI_ENHANCED")) {
+				dcmi_cnt++;
+				id = DCMI_ENH_MODE;
+			} else {
+				id = strtol(str_id, &endptr, 10);
+				if (*endptr != '\0')
+					goto error;
+			}
 			d->sensor_cnt++;
 			xrealloc(d->sensor_idxs,
 				 sizeof(uint16_t) * d->sensor_cnt);
@@ -1171,14 +1341,10 @@ static int _parse_sensor_descriptions(void)
 	return SLURM_SUCCESS;
 
 error:
-	error("Configuration of EnergyIPMIPowerSensors is malformed. "
+	fatal("Configuration of EnergyIPMIPowerSensors is malformed. "
 	      "Make sure that the expected format is respected and that "
 	      "the \"Node\" label is provided.");
-	for (i = 0; i < descriptions_len; ++i) {
-		xfree(descriptions[i].label);
-		xfree(descriptions[i].sensor_idxs);
-	}
-	xfree(descriptions); descriptions = NULL;
+
 	return SLURM_ERROR;
 }
 

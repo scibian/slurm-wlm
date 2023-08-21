@@ -50,7 +50,7 @@
 #include "src/common/strlcpy.h"
 #include "src/common/xmalloc.h"
 #include "src/common/fd.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 
 #define DEFAULT_PMI_TIME 500
 #define MAX_RETRIES      5
@@ -315,7 +315,7 @@ extern int slurm_pmi_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
 		return errno;
 	}
 	if (msg_rcv.auth_cred)
-		(void) auth_g_destroy(msg_rcv.auth_cred);
+		auth_g_destroy(msg_rcv.auth_cred);
 
 	if (msg_rcv.msg_type != PMI_KVS_GET_RESP) {
 		error("slurm_get_kvs_comm_set msg_type=%d", msg_rcv.msg_type);

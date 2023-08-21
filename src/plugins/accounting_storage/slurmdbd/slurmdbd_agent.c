@@ -148,7 +148,7 @@ static int _get_return_code(void)
 
 	rc = _unpack_return_code(slurmdbd_conn->version, buffer);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return rc;
 }
 
@@ -188,7 +188,7 @@ static int _handle_mult_rc_ret(void)
 					break;
 
 				if ((b = list_dequeue(agent_list))) {
-					free_buf(b);
+					FREE_NULL_BUFFER(b);
 				} else {
 					error("DBD_GOT_MULT_MSG "
 					      "unpack message error");
@@ -236,7 +236,7 @@ static int _handle_mult_rc_ret(void)
 	}
 
 unpack_error:
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return rc;
 }
 
@@ -276,7 +276,7 @@ static buf_t *_load_dbd_rec(int fd)
 			continue;
 		else {
 			error("state recover error: %m");
-			free_buf(buffer);
+			FREE_NULL_BUFFER(buffer);
 			return NULL;
 		}
 	}
@@ -285,7 +285,7 @@ static buf_t *_load_dbd_rec(int fd)
 	rd_size = read(fd, &magic, size);
 	if ((rd_size != size) || (magic != DBD_MAGIC)) {
 		error("state recover error");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return NULL;
 	}
 
@@ -322,7 +322,7 @@ static void _load_dbd_state(void)
 		safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
 		debug3("Version string in dbd_state header is %s", ver_str);
 	unpack_error:
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		buffer = NULL;
 		if (ver_str) {
 			/* get the version after VER */
@@ -349,7 +349,7 @@ static void _load_dbd_state(void)
 				set_buf_offset(buffer, 0);
 				rc = unpack_slurmdbd_msg(
 					&msg, rpc_version, buffer);
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 				if (rc == SLURM_SUCCESS)
 					buffer = pack_slurmdbd_msg(
 						&msg, SLURM_PROTOCOL_VERSION);
@@ -360,8 +360,7 @@ static void _load_dbd_state(void)
 				error("no buffer given");
 				continue;
 			}
-			if (!list_enqueue(agent_list, buffer))
-				fatal("list_enqueue, no memory");
+			list_enqueue(agent_list, buffer);
 			recovered++;
 			buffer = NULL;
 		}
@@ -431,7 +430,7 @@ static void _save_dbd_state(void)
 		buffer = init_buf(strlen(curr_ver_str));
 		packstr(curr_ver_str, buffer);
 		rc = _save_dbd_rec(fd, buffer);
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		if (rc != SLURM_SUCCESS)
 			goto end_it;
 
@@ -444,19 +443,19 @@ static void _save_dbd_state(void)
 			 */
 			offset = get_buf_offset(buffer);
 			if (offset < 2) {
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 				continue;
 			}
 			set_buf_offset(buffer, 0);
 			(void) unpack16(&msg_type, buffer);  /* checked by offset */
 			set_buf_offset(buffer, offset);
 			if (msg_type == DBD_REGISTER_CTLD) {
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 				continue;
 			}
 
 			rc = _save_dbd_rec(fd, buffer);
-			free_buf(buffer);
+			FREE_NULL_BUFFER(buffer);
 			if (rc != SLURM_SUCCESS)
 				break;
 			wrote++;
@@ -730,7 +729,7 @@ static void *_agent(void *x)
 			} else
 				buffer = list_dequeue(agent_list);
 
-			free_buf(buffer);
+			FREE_NULL_BUFFER(buffer);
 			fail_time = 0;
 		} else {
 			/* We need to free a mult_msg even on failure */
@@ -738,7 +737,7 @@ static void *_agent(void *x)
 				if (list_msg.my_list != agent_list)
 					FREE_NULL_LIST(list_msg.my_list);
 				list_msg.my_list = NULL;
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 			}
 
 			fail_time = time(NULL);
@@ -864,12 +863,6 @@ extern int slurmdbd_agent_send_recv(uint16_t rpc_version,
 
 	xassert(req);
 	xassert(resp);
-	xassert(slurmdbd_conn);
-
-	if (req->conn && (req->conn != slurmdbd_conn))
-		error("We are overriding the connection!!!!!");
-
-	req->conn = slurmdbd_conn;
 
 	/*
 	 * To make sure we can get this to send instead of the agent
@@ -878,7 +871,19 @@ extern int slurmdbd_agent_send_recv(uint16_t rpc_version,
 	 */
 	halt_agent = 1;
 	slurm_mutex_lock(&slurmdbd_lock);
+
 	halt_agent = 0;
+
+	if (!slurmdbd_conn) {
+		slurm_cond_signal(&slurmdbd_cond);
+		slurm_mutex_unlock(&slurmdbd_lock);
+		return ESLURM_DB_CONNECTION_INVALID;
+	}
+
+	if (req->conn && (req->conn != slurmdbd_conn))
+		error("We are overriding the connection!!!!!");
+
+	req->conn = slurmdbd_conn;
 
 	rc = dbd_conn_send_recv_direct(rpc_version, req, resp);
 
@@ -915,7 +920,7 @@ extern int slurmdbd_agent_send(uint16_t rpc_version, persist_msg_t *req)
 		_create_agent();
 		if ((agent_tid == 0) || (agent_list == NULL)) {
 			slurm_mutex_unlock(&agent_lock);
-			free_buf(buffer);
+			FREE_NULL_BUFFER(buffer);
 			return SLURM_ERROR;
 		}
 	}
@@ -934,15 +939,14 @@ extern int slurmdbd_agent_send(uint16_t rpc_version, persist_msg_t *req)
 	_max_dbd_msg_action(&cnt);
 
 	if (cnt < slurm_conf.max_dbd_msgs) {
-		if (list_enqueue(agent_list, buffer) == NULL)
-			fatal("list_enqueue: memory allocation failure");
+		list_enqueue(agent_list, buffer);
 	} else {
 		error("agent queue is full (%u), discarding %s:%u request",
 		      cnt,
 		      slurmdbd_msg_type_2_str(req->msg_type, 1),
 		      req->msg_type);
 		(slurmdbd_conn->trigger_callbacks.acct_full)();
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		rc = SLURM_ERROR;
 	}
 

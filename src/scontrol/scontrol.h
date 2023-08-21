@@ -65,7 +65,7 @@
 #include "src/common/log.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
-#include "src/common/select.h"
+#include "src/interfaces/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -88,6 +88,7 @@ extern int quiet_flag;	/* quiet=1, verbose=-1, normal=0 */
 extern int sibling_flag; /* show sibling jobs (if any fed job). */
 extern uint32_t cluster_flags; /* what type of cluster are we talking to */
 extern uint32_t euid; /* send request to the slurmctld in behave of this user */
+extern const char *mime_type; /* user requested JSON or YAML */
 
 extern front_end_info_msg_t *old_front_end_info_ptr;
 extern job_info_msg_t *old_job_info_ptr;
@@ -103,7 +104,6 @@ extern int	scontrol_create_part(int argc, char **argv);
 extern int	scontrol_create_res(int argc, char **argv);
 extern int	scontrol_encode_hostlist(char *hostlist, bool sorted);
 extern void	scontrol_gethost(const char *stepd_node, const char *node_name);
-extern uint16_t	scontrol_get_job_state(uint32_t job_id);
 extern int	scontrol_hold(char *op, char *job_id_str);
 extern int	scontrol_job_notify(int argc, char **argv);
 extern int	scontrol_job_ready(char *job_id_str);
@@ -131,15 +131,15 @@ extern void	scontrol_print_front_end_list(char *node_list);
 extern void	scontrol_print_front_end(char *node_name,
 					 front_end_info_msg_t  *
 					 front_end_buffer_ptr);
-extern void	scontrol_print_job (char * job_id_str);
+extern void scontrol_print_job(char *job_id_str, int argc, char **argv);
 extern void	scontrol_print_hosts (char * node_list);
-extern void	scontrol_print_licenses(const char *feature);
+extern void scontrol_print_licenses(const char *name, int argc, char **argv);
 extern void	scontrol_print_node (char *node_name,
 				     node_info_msg_t *node_info_ptr);
-extern void	scontrol_print_node_list (char *node_list);
-extern void	scontrol_print_part (char *partition_name);
-extern void	scontrol_print_res (char *reservation_name);
-extern void	scontrol_print_step (char *job_step_id_str);
+extern void scontrol_print_node_list(char *node_list, int argc, char **argv);
+extern void scontrol_print_part(char *partition_name, int argc, char **argv);
+extern void scontrol_print_res(char *reservation_name, int argc, char **argv);
+extern void scontrol_print_step(char *job_step_id_str, int argc, char **argv);
 extern void	scontrol_print_topo (char *node_list);
 extern void	scontrol_requeue(uint32_t flags, char *job_str);
 extern void	scontrol_requeue_hold(uint32_t flags, char *job_str);

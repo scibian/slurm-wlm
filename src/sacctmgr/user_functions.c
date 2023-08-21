@@ -41,6 +41,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
+#include "src/interfaces/data_parser.h"
 
 typedef struct {
 	char *cluster;
@@ -519,7 +520,7 @@ static int _check_default_wckeys(char *def_wckey,
 /*
  * IN: user_cond - used for the assoc_cond pointing to the user and
  *     account list
- * IN: check - whether or not to check if the existance of the above lists
+ * IN: check - whether or not to check if the existence of the above lists
  */
 static int _check_coord_request(slurmdb_user_cond_t *user_cond, bool check)
 {
@@ -1443,6 +1444,14 @@ extern int sacctmgr_list_user(int argc, char **argv)
 	user_list = slurmdb_users_get(db_conn, user_cond);
 	slurmdb_destroy_user_cond(user_cond);
 
+	if (mime_type) {
+		rc = DATA_DUMP_CLI(USER_LIST, user_list, "users", argc, argv,
+				   db_conn, mime_type);
+		FREE_NULL_LIST(print_fields_list);
+		FREE_NULL_LIST(user_list);
+		return rc;
+	}
+
 	if (!user_list) {
 		exit_code=1;
 		fprintf(stderr, " Problem with query.\n");
@@ -1457,6 +1466,8 @@ extern int sacctmgr_list_user(int argc, char **argv)
 	field_count = list_count(print_fields_list);
 
 	while((user = list_next(itr))) {
+		char *tmp_char = NULL;
+		uint32_t tmp_uint32;
 		if (user->assoc_list) {
 			char *curr_cluster = NULL;
 			ListIterator itr3 =
@@ -1529,18 +1540,20 @@ extern int sacctmgr_list_user(int argc, char **argv)
 				while((field = list_next(itr2))) {
 					switch(field->type) {
 					case PRINT_ADMIN:
-						field->print_routine(
-							field,
+						tmp_char =
 							slurmdb_admin_level_str(
 								user->
-								admin_level),
+								admin_level);
+						field->print_routine(
+							field,
+							tmp_char,
 							(curr_inx ==
 							 field_count));
 						break;
 					case PRINT_COORDS:
 						field->print_routine(
 							field,
-							user->coord_accts,
+							&user->coord_accts,
 							(curr_inx ==
 							 field_count));
 						break;
@@ -1549,16 +1562,12 @@ extern int sacctmgr_list_user(int argc, char **argv)
 							field,
 							user->default_acct,
 							(curr_inx ==
-							 field_count),
-							(curr_inx ==
 							 field_count));
 						break;
 					case PRINT_DWCKEY:
 						field->print_routine(
 							field,
 							user->default_wckey,
-							(curr_inx ==
-							 field_count),
 							(curr_inx ==
 							 field_count));
 						break;
@@ -1580,22 +1589,26 @@ extern int sacctmgr_list_user(int argc, char **argv)
 			while((field = list_next(itr2))) {
 				switch(field->type) {
 				case PRINT_QOS:
-					field->print_routine(
-						field, NULL,
-						NULL,
-						(curr_inx == field_count));
-					break;
-				case PRINT_ADMIN:
+					tmp_char = get_qos_complete_str(NULL,
+									NULL);
 					field->print_routine(
 						field,
-						slurmdb_admin_level_str(
-							user->admin_level),
+						tmp_char,
+						(curr_inx == field_count));
+					xfree(tmp_char);
+					break;
+				case PRINT_ADMIN:
+					tmp_char = slurmdb_admin_level_str(
+							user->admin_level);
+					field->print_routine(
+						field,
+						tmp_char,
 						(curr_inx == field_count));
 					break;
 				case PRINT_COORDS:
 					field->print_routine(
 						field,
-						user->coord_accts,
+						&user->coord_accts,
 						(curr_inx == field_count));
 					break;
 				case PRINT_DACCT:
@@ -1617,9 +1630,10 @@ extern int sacctmgr_list_user(int argc, char **argv)
 						(curr_inx == field_count));
 					break;
 				case PRINT_PRIO:
+					tmp_uint32 = INFINITE;
 					field->print_routine(
 						field,
-						INFINITE,
+						&tmp_uint32,
 						(curr_inx == field_count));
 					break;
 				default:

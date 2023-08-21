@@ -408,6 +408,18 @@ static int _mod_assoc(sacctmgr_file_opts_t *file_opts,
 	slurmdb_init_assoc_rec(&mod_assoc, 0);
 	memset(&assoc_cond, 0, sizeof(slurmdb_assoc_cond_t));
 
+	if (file_opts->assoc_rec.comment
+	    && xstrcmp(assoc->comment, file_opts->assoc_rec.comment)) {
+		mod_assoc.comment = file_opts->assoc_rec.comment;
+		changed = 1;
+		xstrfmtcat(my_info,
+			   "%-30.30s for %-7.7s %-10.10s "
+			   "%8s -> %s\n",
+			   " Changed Comment",
+			   type, name, assoc->comment,
+			   file_opts->assoc_rec.comment);
+	}
+
 	if ((file_opts->assoc_rec.shares_raw != NO_VAL)
 	    && (assoc->shares_raw != file_opts->assoc_rec.shares_raw)) {
 		mod_assoc.shares_raw = file_opts->assoc_rec.shares_raw;
@@ -1403,6 +1415,10 @@ static int _print_file_slurmdb_hierarchical_rec_children(
 					list_iterator_destroy(itr2);
 				}
 			}
+			if (slurmdb_hierarchical_rec->assoc->comment)
+				xstrfmtcat(line, ":Comment='%s'",
+					   slurmdb_hierarchical_rec->
+					   assoc->comment);
 		} else {
 			acct_rec = sacctmgr_find_account_from_list(
 				acct_list,
@@ -1873,7 +1889,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 					rc = SLURM_ERROR;
 					break;
 				}
-				/* This needs to be commited or
+				/* This needs to be committed or
 				   problems may arise */
 				slurmdb_connection_commit(db_conn, 1);
 			}
@@ -1928,7 +1944,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 					file_opts = NULL;
 					break;
 				}
-				/* This needs to be commited or
+				/* This needs to be committed or
 				   problems may arise */
 				slurmdb_connection_commit(db_conn, 1);
 				set = 1;
@@ -2235,19 +2251,18 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 				switch(field->type) {
 				case PRINT_DESC:
 					field->print_routine(
-						field, acct->description);
+						field, acct->description, 0);
 					break;
 				case PRINT_NAME:
 					field->print_routine(
-						field, acct->name);
+						field, acct->name, 0);
 					break;
 				case PRINT_ORG:
 					field->print_routine(
-						field, acct->organization);
+						field, acct->organization, 0);
 					break;
 				default:
-					field->print_routine(
-						field, NULL);
+					field->print_routine(field, NULL, 0);
 					break;
 				}
 			}
@@ -2287,34 +2302,37 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 					field->print_routine(
 						field,
 						slurmdb_admin_level_str(
-							user->admin_level));
+							user->admin_level),
+						0);
 					break;
 				case PRINT_COORDS:
 					field->print_routine(
 						field,
-						user->coord_accts);
+						&user->coord_accts,
+						0);
 					break;
 				case PRINT_DACCT:
 					field->print_routine(
 						field,
-						user->default_acct);
+						user->default_acct,
+						0);
 					break;
 				case PRINT_DWCKEY:
 					field->print_routine(
 						field,
-						user->default_wckey);
+						user->default_wckey,
+						0);
 					break;
 				case PRINT_NAME:
 					field->print_routine(
-						field, user->name);
+						field, user->name, 0);
 					break;
 				case PRINT_WCKEYS:
 					field->print_routine(
-						field, user->wckey_list);
+						field, &user->wckey_list, 0);
 					break;
 				default:
-					field->print_routine(
-						field, NULL);
+					field->print_routine(field, NULL, 0);
 					break;
 				}
 			}

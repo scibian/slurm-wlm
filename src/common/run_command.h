@@ -44,6 +44,7 @@ typedef struct {
 	char **env;
 	uint32_t job_id;
 	int max_wait;
+	bool orphan_on_shutdown;
 	char **script_argv;
 	const char *script_path;
 	const char *script_type;
@@ -90,6 +91,8 @@ extern int run_command_count(void);
  * env IN - environment for the command, if NULL execv is used
  * max_wait IN - Maximum time to wait in milliseconds,
  *		 -1 for no limit (asynchronous)
+ * orphan_on_shutdown IN - If true, then instead of killing the script on
+ *                         shutdown, orphan the script instead.
  * script_argv IN - Arguments to the script
  * script_path IN - Fully qualified pathname of the program to execute
  * script_type IN - Type of program being run (e.g. "StartStageIn")
@@ -100,6 +103,34 @@ extern int run_command_count(void);
  * Return stdout+stderr of spawned program, value must be xfreed.
  */
 extern char *run_command(run_command_args_t *run_command_args);
+
+/*
+ * Read stdout of a child process and wait for the child process to terminate.
+ * Kills the child's process group once the timeout is reached.
+ *
+ * IN cpid - child process id
+ * IN max_wait - timeout in milliseconds
+ * IN orphan_on_shutdown - if true, orphan instead of kill the child process
+ *                         group when the daemon is shutting down
+ * IN read_fd - file descriptor for reading stdout from the child process
+ * IN script_path - path to script
+ * IN script_type - description of script
+ * IN tid - thread id of the calling thread; zero if not using track_script.
+ * OUT status - exit status of the child process
+ * OUT timed_out - true if the child process' run time hit the timeout max_wait
+ *
+ * Return the output of the child process.
+ * Caller must xfree() returned value (even if no output was read).
+ */
+extern char *run_command_poll_child(int cpid,
+				    int max_wait,
+				    bool orphan_on_shutdown,
+				    int read_fd,
+				    const char *script_path,
+				    const char *script_type,
+				    pthread_t tid,
+				    int *status,
+				    bool *timed_out);
 
 /*
  * run_command_waitpid_timeout()

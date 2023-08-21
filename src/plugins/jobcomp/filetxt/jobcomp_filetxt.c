@@ -44,8 +44,9 @@
 #include <pwd.h>
 #include <unistd.h>
 
+#include "src/common/slurm_xlator.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/common/slurm_jobcomp.h"
+#include "src/interfaces/jobcomp.h"
 #include "src/common/parse_time.h"
 #include "src/common/slurm_time.h"
 #include "src/common/uid.h"
@@ -80,48 +81,18 @@ const char plugin_name[]       	= "Job completion text file logging plugin";
 const char plugin_type[]       	= "jobcomp/filetxt";
 const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
+const char default_job_comp_loc[] = "/var/log/slurm_jobcomp.log";
+
 #define JOB_FORMAT "JobId=%lu UserId=%s(%lu) GroupId=%s(%lu) Name=%s JobState=%s Partition=%s "\
 		"TimeLimit=%s StartTime=%s EndTime=%s NodeList=%s NodeCnt=%u ProcCnt=%u "\
 		"WorkDir=%s ReservationName=%s Tres=%s Account=%s QOS=%s "\
 		"WcKey=%s Cluster=%s SubmitTime=%s EligibleTime=%s%s%s "\
-		"DerivedExitCode=%s ExitCode=%s %s\n"
+		"DerivedExitCode=%s ExitCode=%s \n"
 
 /* File descriptor used for logging */
 static pthread_mutex_t  file_lock = PTHREAD_MUTEX_INITIALIZER;
 static char *           log_name  = NULL;
 static int              job_comp_fd = -1;
-
-/* get the user name for the give user_id */
-static void
-_get_user_name(uint32_t user_id, char *user_name, int buf_size)
-{
-	static uint32_t cache_uid      = 0;
-	static char     cache_name[32] = "root", *uname;
-
-	if (user_id != cache_uid) {
-		uname = uid_to_string((uid_t) user_id);
-		snprintf(cache_name, sizeof(cache_name), "%s", uname);
-		xfree(uname);
-		cache_uid = user_id;
-	}
-	snprintf(user_name, buf_size, "%s", cache_name);
-}
-
-/* get the group name for the give group_id */
-static void
-_get_group_name(uint32_t group_id, char *group_name, int buf_size)
-{
-	static uint32_t cache_gid      = 0;
-	static char     cache_name[32] = "root", *gname;
-
-	if (group_id != cache_gid) {
-		gname = gid_to_string((gid_t) group_id);
-		snprintf(cache_name, sizeof(cache_name), "%s", gname);
-		xfree(gname);
-		cache_gid = group_id;
-	}
-	snprintf(group_name, buf_size, "%s", cache_name);
-}
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -145,22 +116,22 @@ int fini ( void )
  * logging API.
  */
 
-extern int jobcomp_p_set_location(char *location)
+extern int jobcomp_p_set_location(void)
 {
 	int rc = SLURM_SUCCESS;
 
-	if (location == NULL) {
-		return SLURM_ERROR;
-	}
+	if (!slurm_conf.job_comp_loc)
+		slurm_conf.job_comp_loc = xstrdup(default_job_comp_loc);
+
 	xfree(log_name);
-	log_name = xstrdup(location);
+	log_name = xstrdup(slurm_conf.job_comp_loc);
 
 	slurm_mutex_lock( &file_lock );
 	if (job_comp_fd >= 0)
 		close(job_comp_fd);
-	job_comp_fd = open(location, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	job_comp_fd = open(log_name, O_WRONLY | O_CREAT | O_APPEND, 0644);
 	if (job_comp_fd == -1) {
-		fatal("open %s: %m", location);
+		fatal("open %s: %m", log_name);
 		rc = SLURM_ERROR;
 	} else
 		fchmod(job_comp_fd, 0644);
@@ -187,11 +158,12 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 {
 	int rc = SLURM_SUCCESS, tmp_int, tmp_int2;
 	char job_rec[1024];
-	char usr_str[32], grp_str[32], start_str[32], end_str[32], lim_str[32];
+	char start_str[32], end_str[32], lim_str[32];
+	char *usr_str = NULL, *grp_str = NULL;
 	char *resv_name, *tres, *account, *qos, *wckey, *cluster;
 	char *exit_code_str = NULL, *derived_ec_str = NULL;
 	char submit_time[32], eligible_time[32], array_id[64], het_id[64];
-	char select_buf[128], *state_string, *work_dir;
+	char *state_string, *work_dir;
 	size_t offset = 0, tot_size, wrote;
 	uint32_t job_state;
 	uint32_t time_limit;
@@ -202,8 +174,8 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 	}
 
 	slurm_mutex_lock( &file_lock );
-	_get_user_name(job_ptr->user_id, usr_str, sizeof(usr_str));
-	_get_group_name(job_ptr->group_id, grp_str, sizeof(grp_str));
+	usr_str = uid_to_string_or_null(job_ptr->user_id);
+	grp_str = gid_to_string_or_null(job_ptr->group_id);
 
 	if ((job_ptr->time_limit == NO_VAL) && job_ptr->part_ptr)
 		time_limit = job_ptr->part_ptr->max_time;
@@ -330,9 +302,6 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 		tmp_int = WEXITSTATUS(job_ptr->exit_code);
 	xstrfmtcat(exit_code_str, "%d:%d", tmp_int, tmp_int2);
 
-	select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
-		select_buf, sizeof(select_buf), SELECT_PRINT_MIXED);
-
 	snprintf(job_rec, sizeof(job_rec), JOB_FORMAT,
 		 (unsigned long) job_ptr->job_id, usr_str,
 		 (unsigned long) job_ptr->user_id, grp_str,
@@ -341,7 +310,7 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 		 end_str, job_ptr->nodes, job_ptr->node_cnt,
 		 job_ptr->total_cpus, work_dir, resv_name, tres, account, qos,
 		 wckey, cluster, submit_time, eligible_time, array_id, het_id,
-		 derived_ec_str, exit_code_str, select_buf);
+		 derived_ec_str, exit_code_str);
 	tot_size = strlen(job_rec);
 
 	while (offset < tot_size) {
@@ -357,6 +326,8 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 		}
 		offset += wrote;
 	}
+	xfree(usr_str);
+	xfree(grp_str);
 	xfree(derived_ec_str);
 	xfree(exit_code_str);
 	slurm_mutex_unlock( &file_lock );

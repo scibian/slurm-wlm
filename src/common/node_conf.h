@@ -158,8 +158,12 @@ struct node_record {
 					 * set, ignore if no reason is set. */
 	uint32_t reason_uid;		/* User that set the reason, ignore if
 					 * no reason is set. */
+	time_t resume_after;		/* automatically resume DOWN or DRAINED
+					 * node at this point in time */
 	uint16_t resume_timeout; 	/* time required in order to perform a
 					 * node resume operation */
+	char *resv_name;                /* If node is in a reservation this is
+					 * the name of the reservation */
 	uint16_t run_job_cnt;		/* count of jobs running on node */
 	uint64_t sched_weight;		/* Node's weight for scheduling
 					 * purposes. For cons_tres use */
@@ -188,7 +192,10 @@ struct node_record {
 					 * scheduling purposes. */
 };
 extern node_record_t **node_record_table_ptr;  /* ptr to node records */
-extern int node_record_count;		/* count in node_record_table_ptr */
+extern int node_record_count;		/* number of node slots
+					 * node_record_table_ptr */
+extern int active_node_record_count;	/* non-null node count in
+					 * node_record_table_ptr */
 extern xhash_t* node_hash_table;	/* hash table for node records */
 extern time_t last_node_update;		/* time of last node record update */
 
@@ -241,6 +248,11 @@ extern void build_all_nodeline_info(bool set_bitmap, int tres_cnt);
  * is_slurmd_context: set to true if run from slurmd
  */
 extern void build_all_frontend_info (bool is_slurmd_context);
+
+/*
+ * Build a node's node_spec_bitmap and core_spec_cnt from it's cpu_spec_list.
+ */
+extern int build_node_spec_bitmap(node_record_t *node_ptr);
 
 /*
  * Expand a nodeline's node names, host names, addrs, ports into separate nodes.
@@ -448,6 +460,17 @@ extern char *find_hostname(uint32_t pos, char *hosts);
  * RET - next non-null node_record_t * or NULL if finished iterating.
  */
 extern node_record_t *next_node(int *index);
+
+/*
+ * Return the next non-null node_record_t * in the node_record_table_ptr that
+ * is set in the given bitmap.
+ *
+ * IN bitmap - bitmap of available nodes in node_record_table_ptr. The bitmap
+ *	       must match size of node_record_table_ptr.
+ * IN/OUT index - index to start iterating node_record_table_ptr from.
+ * RET - next non-null node_record_t * or NULL if finished iterating.
+ */
+extern node_record_t *next_node_bitmap(bitstr_t *bitmap, int *index);
 
 /*
  * Return bitmap with all active nodes set.

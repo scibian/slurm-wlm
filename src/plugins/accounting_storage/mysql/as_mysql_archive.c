@@ -46,6 +46,7 @@
 #include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 
+#define SLURM_20_11_PROTOCOL_VERSION ((36 << 8) | 0)
 #define SLURM_20_02_PROTOCOL_VERSION ((35 << 8) | 0)
 #define SLURM_19_05_PROTOCOL_VERSION ((34 << 8) | 0)
 #define SLURM_18_08_PROTOCOL_VERSION ((33 << 8) | 0)
@@ -117,6 +118,7 @@ typedef struct {
 	char *derived_es;
 	char *env_hash_inx;
 	char *exit_code;
+	char *extra;
 	char *eligible;
 	char *end;
 	char *flags;
@@ -127,6 +129,7 @@ typedef struct {
 	char *job_db_inx;
 	char *jobid;
 	char *kill_requid;
+	char *licenses;
 	char *mcs_label;
 	char *mod_time;
 	char *name;
@@ -189,6 +192,7 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->derived_es);
 		xfree(object->env_hash_inx);
 		xfree(object->exit_code);
+		xfree(object->extra);
 		xfree(object->eligible);
 		xfree(object->end);
 		xfree(object->flags);
@@ -199,6 +203,7 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->job_db_inx);
 		xfree(object->jobid);
 		xfree(object->kill_requid);
+		xfree(object->licenses);
 		xfree(object->mcs_label);
 		xfree(object->mod_time);
 		xfree(object->name);
@@ -229,7 +234,42 @@ static void _free_local_job_members(local_job_t *object)
 }
 
 typedef struct {
+	char *hash_inx;
+	char *last_used;
+	char *env_hash;
+	char *env_vars;
+} local_job_env_t;
+
+static void _free_local_job_env_members(local_job_env_t *object)
+{
+	if (object) {
+		xfree(object->hash_inx);
+		xfree(object->last_used);
+		xfree(object->env_hash);
+		xfree(object->env_vars);
+	}
+}
+
+typedef struct {
+	char *hash_inx;
+	char *last_used;
+	char *script_hash;
+	char *batch_script;
+} local_job_script_t;
+
+static void _free_local_job_script_members(local_job_script_t *object)
+{
+	if (object) {
+		xfree(object->hash_inx);
+		xfree(object->last_used);
+		xfree(object->script_hash);
+		xfree(object->batch_script);
+	}
+}
+
+typedef struct {
 	char *assocs;
+	char *comment;
 	char *deleted;
 	char *flags;
 	char *id;
@@ -246,6 +286,7 @@ static void _free_local_resv_members(local_resv_t *object)
 {
 	if (object) {
 		xfree(object->assocs);
+		xfree(object->comment);
 		xfree(object->deleted);
 		xfree(object->flags);
 		xfree(object->id);
@@ -496,6 +537,7 @@ static char *job_req_inx[] = {
 	"derived_es",
 	"env_hash_inx",
 	"exit_code",
+	"extra",
 	"flags",
 	"timelimit",
 	"time_eligible",
@@ -507,6 +549,7 @@ static char *job_req_inx[] = {
 	"job_db_inx",
 	"id_job",
 	"kill_requid",
+	"licenses",
 	"mcs_label",
 	"mod_time",
 	"job_name",
@@ -552,6 +595,7 @@ enum {
 	JOB_REQ_DERIVED_ES,
 	JOB_REQ_ENV_HASH_INX,
 	JOB_REQ_EXIT_CODE,
+	JOB_REQ_EXTRA,
 	JOB_REQ_FLAGS,
 	JOB_REQ_TIMELIMIT,
 	JOB_REQ_ELIGIBLE,
@@ -563,6 +607,7 @@ enum {
 	JOB_REQ_DB_INX,
 	JOB_REQ_JOBID,
 	JOB_REQ_KILL_REQUID,
+	JOB_REQ_LICENSES,
 	JOB_REQ_MCS_LABEL,
 	JOB_REQ_MOD_TIME,
 	JOB_REQ_NAME,
@@ -590,6 +635,38 @@ enum {
 	JOB_REQ_COUNT
 };
 
+/* if this changes you will need to edit the corresponding enum below */
+static char *job_env_inx[] = {
+	"hash_inx",
+	"last_used",
+	"env_hash",
+	"env_vars",
+};
+
+enum {
+	JOB_ENV_HASH_INX,
+	JOB_ENV_LAST_USED,
+	JOB_ENV_ENV_HASH,
+	JOB_ENV_ENV_VARS,
+	JOB_ENV_COUNT
+};
+
+/* if this changes you will need to edit the corresponding enum below */
+static char *job_script_inx[] = {
+	"hash_inx",
+	"last_used",
+	"script_hash",
+	"batch_script",
+};
+
+enum {
+	JOB_SCRIPT_HASH_INX,
+	JOB_SCRIPT_LAST_USED,
+	JOB_SCRIPT_SCRIPT_HASH,
+	JOB_SCRIPT_BATCH_SCRIPT,
+	JOB_SCRIPT_COUNT
+};
+
 /* if this changes you will need to edit the corresponding enum */
 char *resv_req_inx[] = {
 	"id_resv",
@@ -603,6 +680,7 @@ char *resv_req_inx[] = {
 	"time_start",
 	"time_end",
 	"unused_wall",
+	"comment",
 };
 
 enum {
@@ -617,6 +695,7 @@ enum {
 	RESV_REQ_START,
 	RESV_REQ_END,
 	RESV_REQ_UNUSED,
+	RESV_REQ_COMMENT,
 	RESV_REQ_COUNT
 };
 
@@ -814,6 +893,8 @@ typedef enum {
 	PURGE_SUSPEND,
 	PURGE_RESV,
 	PURGE_JOB,
+	PURGE_JOB_ENV,
+	PURGE_JOB_SCRIPT,
 	PURGE_STEP,
 	PURGE_TXN,
 	PURGE_USAGE,
@@ -821,7 +902,8 @@ typedef enum {
 } purge_type_t;
 
 static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
-			       char *cluster_name, time_t period_end,
+			       char *cluster_name, char *col_name,
+			       time_t *period_start, time_t period_end,
 			       char *arch_dir, uint32_t archive_period,
 			       char *sql_table, uint32_t usage_info);
 
@@ -898,6 +980,7 @@ static void _pack_local_job(local_job_t *object, uint16_t rpc_version,
 	packstr(object->derived_es, buffer);
 	packstr(object->env_hash_inx, buffer);
 	packstr(object->exit_code, buffer);
+	packstr(object->extra, buffer);
 	packstr(object->flags, buffer);
 	packstr(object->timelimit, buffer);
 	packstr(object->eligible, buffer);
@@ -907,6 +990,7 @@ static void _pack_local_job(local_job_t *object, uint16_t rpc_version,
 	packstr(object->job_db_inx, buffer);
 	packstr(object->jobid, buffer);
 	packstr(object->kill_requid, buffer);
+	packstr(object->licenses, buffer);
 	packstr(object->mcs_label, buffer);
 	packstr(object->mod_time, buffer);
 	packstr(object->name, buffer);
@@ -964,7 +1048,67 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 	 * and it unpacks in the expected order.
 	 */
 
-	if (rpc_version >= SLURM_22_05_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object->account, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->admin_comment, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->alloc_nodes, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->associd, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_jobid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_max_tasks,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_taskid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_task_pending,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->array_task_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->script_hash_inx,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->blockid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->constraints, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->container, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->derived_ec, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->derived_es, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->env_hash_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->exit_code, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->extra, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->flags, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->timelimit, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->eligible, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->end, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->gid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->gres_used, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->job_db_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->jobid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->kill_requid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->licenses, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->mcs_label, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->mod_time, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodelist, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->het_job_id, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->het_job_offset, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->partition, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->priority, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->qos, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_cpus, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->req_mem, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->resvid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->start, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->state_reason_prev,
+				       &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->submit, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->suspended, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->submit_line, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->system_comment, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_alloc_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_req_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->uid, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->wckey, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->wckey_id, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->work_dir, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_22_05_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&object->account, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->admin_comment, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->alloc_nodes, &tmp32, buffer);
@@ -1596,10 +1740,67 @@ unpack_error:
 	return SLURM_ERROR;
 }
 
+static void _pack_local_job_env(local_job_env_t *object, uint16_t rpc_version,
+				buf_t *buffer)
+{
+	packstr(object->hash_inx, buffer);
+	packstr(object->last_used, buffer);
+	packstr(object->env_hash, buffer);
+	packstr(object->env_vars, buffer);
+}
+
+/* this needs to be allocated before calling, and since we aren't
+ * doing any copying it needs to be used before destroying buffer */
+static int _unpack_local_job_env(local_job_env_t *object, uint16_t rpc_version,
+				 buf_t *buffer)
+{
+	if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
+		safe_unpackstr(&object->hash_inx, buffer);
+		safe_unpackstr(&object->last_used, buffer);
+		safe_unpackstr(&object->env_hash, buffer);
+		safe_unpackstr(&object->env_vars, buffer);
+	}
+
+	return SLURM_SUCCESS;
+
+unpack_error:
+	_free_local_job_env_members(object);
+	return SLURM_ERROR;
+}
+
+static void _pack_local_job_script(local_job_script_t *object,
+				   uint16_t rpc_version, buf_t *buffer)
+{
+	packstr(object->hash_inx, buffer);
+	packstr(object->last_used, buffer);
+	packstr(object->script_hash, buffer);
+	packstr(object->batch_script, buffer);
+}
+
+/* this needs to be allocated before calling, and since we aren't
+ * doing any copying it needs to be used before destroying buffer */
+static int _unpack_local_job_script(local_job_script_t *object,
+				    uint16_t rpc_version, buf_t *buffer)
+{
+	if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
+		safe_unpackstr(&object->hash_inx, buffer);
+		safe_unpackstr(&object->last_used, buffer);
+		safe_unpackstr(&object->script_hash, buffer);
+		safe_unpackstr(&object->batch_script, buffer);
+	}
+
+	return SLURM_SUCCESS;
+
+unpack_error:
+	_free_local_job_script_members(object);
+	return SLURM_ERROR;
+}
+
 static void _pack_local_resv(local_resv_t *object, uint16_t rpc_version,
 			     buf_t *buffer)
 {
 	packstr(object->assocs, buffer);
+	packstr(object->comment, buffer);
 	packstr(object->deleted, buffer);
 	packstr(object->flags, buffer);
 	packstr(object->id, buffer);
@@ -1620,7 +1821,20 @@ static int _unpack_local_resv(local_resv_t *object, uint16_t rpc_version,
 	uint32_t tmp32;
 	char *tmp_char;
 
-	if (rpc_version >= SLURM_20_02_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object->assocs, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->comment, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->flags, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->id, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->name, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->nodes, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->node_inx, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->time_end, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->time_start, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->tres_str, &tmp32, buffer);
+		safe_unpackstr_xmalloc(&object->unused_wall, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_20_02_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&object->assocs, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->deleted, &tmp32, buffer);
 		safe_unpackstr_xmalloc(&object->flags, &tmp32, buffer);
@@ -3115,6 +3329,14 @@ static char *_get_archive_columns(purge_type_t type)
 		cols      = job_req_inx;
 		col_count = JOB_REQ_COUNT;
 		break;
+	case PURGE_JOB_ENV:
+		cols      = job_env_inx;
+		col_count = JOB_ENV_COUNT;
+		break;
+	case PURGE_JOB_SCRIPT:
+		cols      = job_script_inx;
+		col_count = JOB_SCRIPT_COUNT;
+		break;
 	case PURGE_STEP:
 		cols      = step_req_inx;
 		col_count = STEP_REQ_COUNT;
@@ -3271,6 +3493,7 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.derived_es = row[JOB_REQ_DERIVED_ES];
 		job.env_hash_inx = row[JOB_REQ_ENV_HASH_INX];
 		job.exit_code = row[JOB_REQ_EXIT_CODE];
+		job.extra = row[JOB_REQ_EXTRA];
 		job.flags = row[JOB_REQ_FLAGS];
 		job.timelimit = row[JOB_REQ_TIMELIMIT];
 		job.eligible = row[JOB_REQ_ELIGIBLE];
@@ -3282,6 +3505,7 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.job_db_inx = row[JOB_REQ_DB_INX];
 		job.jobid = row[JOB_REQ_JOBID];
 		job.kill_requid = row[JOB_REQ_KILL_REQUID];
+		job.licenses = row[JOB_REQ_LICENSES];
 		job.mcs_label = row[JOB_REQ_MCS_LABEL];
 		job.mod_time = row[JOB_REQ_MOD_TIME];
 		job.name = row[JOB_REQ_NAME];
@@ -3371,7 +3595,9 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_CONSTRAINTS,
 		JOB_REQ_CONTAINER,
 		JOB_REQ_DERIVED_ES,
+		JOB_REQ_EXTRA,
 		JOB_REQ_KILL_REQUID,
+		JOB_REQ_LICENSES,
 		JOB_REQ_MCS_LABEL,
 		JOB_REQ_NODELIST,
 		JOB_REQ_NODE_INX,
@@ -3439,7 +3665,15 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 			xstrcatat(format, &format_pos, ", %s");
 		else
 			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.extra == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
 		if (object.kill_requid == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+		if (object.licenses == NULL)
 			xstrcatat(format, &format_pos, ", %s");
 		else
 			xstrcatat(format, &format_pos, ", '%s'");
@@ -3521,8 +3755,12 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 				"NULL" : object.container,
 			     (object.derived_es == NULL) ?
 				"NULL" : object.derived_es,
+			     (object.extra == NULL) ?
+				"NULL" : object.extra,
 			     (object.kill_requid == NULL) ?
 				"NULL" : object.kill_requid,
+			     (object.licenses == NULL) ?
+				"NULL" : object.licenses,
 			     (object.mcs_label == NULL) ?
 				"NULL" : object.mcs_label,
 			     (object.nodelist == NULL) ?
@@ -3540,6 +3778,224 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 	}
 //	END_TIMER2("step query");
 //	info("job query took %s", TIME_STR);
+
+	return insert;
+}
+
+static buf_t *_pack_archive_job_env(MYSQL_RES *result, char *cluster_name,
+				    uint32_t cnt, uint32_t usage_info,
+				    time_t *period_start)
+{
+	MYSQL_ROW row;
+	buf_t *buffer;
+	local_job_env_t job;
+
+	buffer = init_buf(high_buffer_size);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
+	pack_time(time(NULL), buffer);
+	pack16(DBD_GOT_JOB_ENV, buffer); // FIXME
+	packstr(cluster_name, buffer);
+	pack32(cnt, buffer);
+
+	while ((row = mysql_fetch_row(result))) {
+		if (period_start && !*period_start)
+			error("period_start should already be set");
+
+		memset(&job, 0, sizeof(local_job_env_t));
+
+		job.hash_inx = row[JOB_ENV_HASH_INX];
+		job.last_used = row[JOB_ENV_LAST_USED];
+		job.env_hash = row[JOB_ENV_ENV_HASH];
+		job.env_vars = row[JOB_ENV_ENV_VARS];
+
+		_pack_local_job_env(&job, SLURM_PROTOCOL_VERSION, buffer);
+	}
+
+	return buffer;
+}
+
+/* returns sql statement from archived data or NULL on error */
+static char *_load_job_env(uint16_t rpc_version, buf_t *buffer,
+			   char *cluster_name, uint32_t rec_cnt)
+{
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
+	int safe_attributes[] = {
+		JOB_ENV_HASH_INX,
+		JOB_ENV_LAST_USED,
+		JOB_ENV_ENV_HASH,
+		JOB_ENV_COUNT
+	};
+
+	/* Sync w/ job_table_fields where text/tinytext can be NULL */
+	int null_attributes[] = {
+		JOB_ENV_ENV_VARS,
+		JOB_ENV_COUNT
+	};
+
+	local_job_env_t object;
+	int i = 0;
+
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, job_env_table,
+		     job_env_inx[safe_attributes[0]]);
+	for (i = 1; safe_attributes[i] < JOB_ENV_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos, ", %s",
+			     job_env_inx[safe_attributes[i]]);
+	/* Some attributes that might be NULL require special handling */
+	for (i = 0; null_attributes[i] < JOB_ENV_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos, ", %s",
+			     job_env_inx[null_attributes[i]]);
+	xstrcatat(insert, &insert_pos, ") values ");
+
+	for (i = 0; i < rec_cnt; i++) {
+		if (_unpack_local_job_env(&object, rpc_version, buffer) !=
+		    SLURM_SUCCESS) {
+			error("issue unpacking");
+			xfree(insert);
+			break;
+		}
+
+		if (i)
+			xstrcatat(insert, &insert_pos, ", ");
+
+		xstrcatat(format, &format_pos, "('%s'");
+		for (int j = 1; safe_attributes[j] < JOB_ENV_COUNT; j++) {
+			xstrcatat(format, &format_pos, ", '%s'");
+		}
+
+		/* special handling for NULL attributes */
+		if (object.env_vars == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+
+		xstrcatat(format, &format_pos, ")");
+
+		xstrfmtcatat(insert, &insert_pos, format, object.hash_inx,
+			     object.last_used, object.env_hash,
+			     (object.env_vars == NULL) ? "NULL" :
+							 object.env_vars);
+
+		_free_local_job_env_members(&object);
+		format_pos = NULL;
+		xfree(format);
+	}
+	xstrfmtcatat(insert, &insert_pos, " on duplicate key update %s=%s;",
+		     job_env_inx[JOB_ENV_HASH_INX],
+		     job_env_inx[JOB_ENV_HASH_INX]); /* Do nothing */
+	//	END_TIMER2("step query");
+	//	info("job query took %s", TIME_STR);
+
+	return insert;
+}
+
+static buf_t *_pack_archive_job_script(MYSQL_RES *result, char *cluster_name,
+				       uint32_t cnt, uint32_t usage_info,
+				       time_t *period_start)
+{
+	MYSQL_ROW row;
+	buf_t *buffer;
+	local_job_script_t job;
+
+	buffer = init_buf(high_buffer_size);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
+	pack_time(time(NULL), buffer);
+	pack16(DBD_GOT_JOB_SCRIPT, buffer); //FIXME
+	packstr(cluster_name, buffer);
+	pack32(cnt, buffer);
+
+	while ((row = mysql_fetch_row(result))) {
+		if (period_start && !*period_start)
+			error("period_start should already be set");
+
+		memset(&job, 0, sizeof(local_job_script_t));
+
+		job.hash_inx = row[JOB_SCRIPT_HASH_INX];
+		job.last_used = row[JOB_SCRIPT_LAST_USED];
+		job.script_hash = row[JOB_SCRIPT_SCRIPT_HASH];
+		job.batch_script = row[JOB_SCRIPT_BATCH_SCRIPT];
+
+		_pack_local_job_script(&job, SLURM_PROTOCOL_VERSION, buffer);
+	}
+
+	return buffer;
+}
+
+/* returns sql statement from archived data or NULL on error */
+static char *_load_job_script(uint16_t rpc_version, buf_t *buffer,
+			      char *cluster_name, uint32_t rec_cnt)
+{
+	char *insert = NULL, *insert_pos = NULL;
+	char *format = NULL, *format_pos = NULL;
+	int safe_attributes[] = {
+		JOB_SCRIPT_HASH_INX,
+		JOB_SCRIPT_LAST_USED,
+		JOB_SCRIPT_SCRIPT_HASH,
+		JOB_SCRIPT_COUNT
+	};
+
+	/* Sync w/ job_table_fields where text/tinytext can be NULL */
+	int null_attributes[] = {
+		JOB_SCRIPT_BATCH_SCRIPT,
+		JOB_SCRIPT_COUNT
+	};
+
+	local_job_script_t object;
+	int i = 0;
+
+	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
+		     cluster_name, job_script_table,
+		     job_script_inx[safe_attributes[0]]);
+	for (i = 1; safe_attributes[i] < JOB_SCRIPT_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos, ", %s",
+			     job_script_inx[safe_attributes[i]]);
+	/* Some attributes that might be NULL require special handling */
+	for (i = 0; null_attributes[i] < JOB_SCRIPT_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos, ", %s",
+			     job_script_inx[null_attributes[i]]);
+	xstrcatat(insert, &insert_pos, ") values ");
+
+	for (i = 0; i < rec_cnt; i++) {
+		if (_unpack_local_job_script(&object, rpc_version, buffer) !=
+		    SLURM_SUCCESS) {
+			error("issue unpacking");
+			xfree(insert);
+			break;
+		}
+
+		if (i)
+			xstrcatat(insert, &insert_pos, ", ");
+
+		xstrcatat(format, &format_pos, "('%s'");
+		for (int j = 1; safe_attributes[j] < JOB_SCRIPT_COUNT; j++) {
+			xstrcatat(format, &format_pos, ", '%s'");
+		}
+
+		/* special handling for NULL attributes */
+		if (object.batch_script == NULL)
+			xstrcatat(format, &format_pos, ", %s");
+		else
+			xstrcatat(format, &format_pos, ", '%s'");
+
+		xstrcatat(format, &format_pos, ")");
+
+		xstrfmtcatat(insert, &insert_pos, format, object.hash_inx,
+			     object.last_used, object.script_hash,
+			     (object.batch_script == NULL) ?
+				     "NULL" :
+				     object.batch_script);
+
+		_free_local_job_script_members(&object);
+		format_pos = NULL;
+		xfree(format);
+	}
+	xstrfmtcatat(insert, &insert_pos, " on duplicate key update %s=%s;",
+		     job_script_inx[JOB_SCRIPT_HASH_INX],
+		     job_script_inx[JOB_SCRIPT_HASH_INX]); /* Do nothing */
+
+	//	END_TIMER2("step query");
+	//	info("job query took %s", TIME_STR);
 
 	return insert;
 }
@@ -3576,6 +4032,7 @@ static buf_t *_pack_archive_resvs(MYSQL_RES *result, char *cluster_name,
 		resv.time_start = row[RESV_REQ_START];
 		resv.tres_str = row[RESV_REQ_TRES];
 		resv.unused_wall = row[RESV_REQ_UNUSED];
+		resv.comment = row[RESV_REQ_COMMENT];
 
 		_pack_local_resv(&resv, SLURM_PROTOCOL_VERSION, buffer);
 	}
@@ -3591,16 +4048,39 @@ static char *_load_resvs(uint16_t rpc_version, buf_t *buffer,
 	char *format = NULL, *format_pos = NULL;
 	local_resv_t object;
 	int i = 0;
+	int safe_attributes[] = {
+		RESV_REQ_ID,
+		RESV_REQ_ASSOCS,
+		RESV_REQ_DELETED,
+		RESV_REQ_FLAGS,
+		RESV_REQ_TRES,
+		RESV_REQ_NODES,
+		RESV_REQ_NODE_INX,
+		RESV_REQ_NAME,
+		RESV_REQ_START,
+		RESV_REQ_END,
+		RESV_REQ_UNUSED,
+		RESV_REQ_COUNT
+	};
+
+	/* Sync w/ job_table_fields where text/tinytext can be NULL */
+	int null_attributes[] = {
+		RESV_REQ_COMMENT,
+		RESV_REQ_COUNT
+	};
 
 	xstrfmtcatat(insert, &insert_pos, "insert into \"%s_%s\" (%s",
-		     cluster_name, resv_table, resv_req_inx[0]);
-	xstrcatat(format, &format_pos, "('%s'");
-	for(i=1; i<RESV_REQ_COUNT; i++) {
-		xstrfmtcatat(insert, &insert_pos, ", %s", resv_req_inx[i]);
-		xstrcatat(format, &format_pos, ", '%s'");
+		     cluster_name, resv_table,
+		     resv_req_inx[safe_attributes[0]]);
+	for (i = 1; safe_attributes[i] < RESV_REQ_COUNT; i++) {
+		xstrfmtcatat(insert, &insert_pos, ", %s",
+			     resv_req_inx[safe_attributes[1]]);
 	}
+	/* Some attributes that might be NULL require special handling */
+	for (i = 0; null_attributes[i] < RESV_REQ_COUNT; i++)
+		xstrfmtcatat(insert, &insert_pos,
+			     ", %s", resv_req_inx[null_attributes[i]]);
 	xstrcatat(insert, &insert_pos, ") values ");
-	xstrcatat(format, &format_pos, ")");
 
 	for(i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_resv_t));
@@ -3614,6 +4094,19 @@ static char *_load_resvs(uint16_t rpc_version, buf_t *buffer,
 		if (i)
 			xstrcatat(insert, &insert_pos, ", ");
 
+		xstrcatat(format, &format_pos, "('%s'");
+		for (int j = 1; safe_attributes[j] < RESV_REQ_COUNT; j++) {
+			xstrcatat(format, &format_pos, ", '%s'");
+		}
+
+		/* special handling for NULL attributes */
+		if (object.comment)
+			xstrcatat(format, &format_pos, ", '%s'");
+		else
+			xstrcatat(format, &format_pos, ", %s");
+
+		xstrcatat(format, &format_pos, ")");
+
 		xstrfmtcatat(insert, &insert_pos, format,
 			     object.id,
 			     object.deleted,
@@ -3625,9 +4118,13 @@ static char *_load_resvs(uint16_t rpc_version, buf_t *buffer,
 			     object.name,
 			     object.time_start,
 			     object.time_end,
-			     object.unused_wall);
+			     object.unused_wall,
+			     object.comment ? object.comment : "NULL");
 
 		_free_local_resv_members(&object);
+		format_pos = NULL;
+		xfree(format);
+
 	}
 //	END_TIMER2("step query");
 //	info("resv query took %s", TIME_STR);
@@ -4322,13 +4819,14 @@ static char *_load_cluster_usage(uint16_t rpc_version, buf_t *buffer,
 
 /* returns count of events archived or SLURM_ERROR on error */
 static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
-			       char *cluster_name, time_t period_end,
+			       char *cluster_name, char *col_name,
+			       time_t *period_start, time_t period_end,
 			       char *arch_dir, uint32_t archive_period,
 			       char *sql_table, uint32_t usage_info)
 {
 	MYSQL_RES *result = NULL;
-	char *cols = NULL, *query = NULL;
-	time_t period_start = 0;
+	char *cols = NULL, *query = NULL, *parent_table = NULL,
+		*hash_col = NULL;
 	uint32_t cnt = 0;
 	buf_t *buffer;
 	int error_code = 0;
@@ -4351,6 +4849,16 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 	case PURGE_JOB:
 		pack_func = &_pack_archive_jobs;
 		break;
+	case PURGE_JOB_ENV:
+		parent_table = job_table;
+		hash_col = "env_hash_inx";
+		pack_func = &_pack_archive_job_env;
+		break;
+	case PURGE_JOB_SCRIPT:
+		parent_table = job_table;
+		hash_col = "script_hash_inx";
+		pack_func = &_pack_archive_job_script;
+		break;
 	case PURGE_STEP:
 		pack_func = &_pack_archive_steps;
 		break;
@@ -4371,33 +4879,38 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 	switch (type) {
 	case PURGE_TXN:
 		query = xstrdup_printf("select %s from \"%s\" where "
-				       "timestamp <= %ld && cluster='%s' "
-				       "order by timestamp asc LIMIT %d",
-				       cols, sql_table,
-				       period_end, cluster_name,
-				       MAX_PURGE_LIMIT);
+				       "%s <= %ld && cluster='%s' "
+				       "order by %s asc LIMIT %d",
+				       cols, sql_table, col_name, period_end,
+				       cluster_name, col_name, MAX_PURGE_LIMIT);
 		break;
 	case PURGE_USAGE:
 	case PURGE_CLUSTER_USAGE:
 		query = xstrdup_printf("select %s from \"%s_%s\" where "
-				       "time_start <= %ld "
-				       "order by time_start asc LIMIT %d",
-				       cols, cluster_name, sql_table,
-				       period_end, MAX_PURGE_LIMIT);
+				       "%s <= %ld "
+				       "order by %s asc LIMIT %d",
+				       cols, cluster_name, sql_table, col_name,
+				       period_end, col_name, MAX_PURGE_LIMIT);
 		break;
-	case PURGE_JOB:
-		query = xstrdup_printf("select %s from \"%s_%s\" where "
-				       "time_submit <= %ld && time_end != 0 "
-				       "order by time_submit asc LIMIT %d",
-				       cols, cluster_name, job_table,
-				       period_end, MAX_PURGE_LIMIT);
+	case PURGE_JOB_ENV:
+	case PURGE_JOB_SCRIPT:
+		query = xstrdup_printf("select distinct %s from \"%s_%s\" "
+				       "inner join (select %s from \"%s_%s\" "
+				       "where %s <= %ld && time_end != 0 "
+				       "order by %s asc LIMIT %d) as j "
+				       "on hash_inx = j.%s "
+				       "order by hash_inx asc",
+				       cols, cluster_name, sql_table, hash_col,
+				       cluster_name, parent_table, col_name,
+				       period_end, col_name, MAX_PURGE_LIMIT,
+				       hash_col);
 		break;
 	default:
 		query = xstrdup_printf("select %s from \"%s_%s\" where "
-				       "time_start <= %ld && time_end != 0 "
-				       "order by time_start asc LIMIT %d",
-				       cols, cluster_name, sql_table,
-				       period_end, MAX_PURGE_LIMIT);
+				       "%s <= %ld && time_end != 0 "
+				       "order by %s asc LIMIT %d",
+				       cols, cluster_name, sql_table, col_name,
+				       period_end, col_name, MAX_PURGE_LIMIT);
 		break;
 	}
 
@@ -4416,14 +4929,14 @@ static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
 	}
 
 	buffer = (*pack_func)(result, cluster_name, cnt, usage_info,
-			      &period_start);
+			      period_start);
 	mysql_free_result(result);
 
 	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
+					*period_start, period_end,
 					arch_dir, sql_table,
 					archive_period);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	if (error_code != SLURM_SUCCESS)
 		return error_code;
@@ -4510,6 +5023,39 @@ static int _get_oldest_record(mysql_conn_t *mysql_conn, char *cluster,
 	return 1; /* found one record */
 }
 
+static int _purge_hash_table(mysql_conn_t *mysql_conn, char *cluster_name,
+			     char *hash_table, char *parent_table,
+			     char *col_name)
+{
+	int rc = SLURM_SUCCESS;
+	char *query = NULL;
+
+	query = xstrdup_printf("delete from \"%s_%s\" where hash_inx not in"
+			       "(select %s from \"%s_%s\") LIMIT %d",
+			       cluster_name, hash_table, col_name, cluster_name,
+			       parent_table, MAX_PURGE_LIMIT);
+
+	DB_DEBUG(DB_ARCHIVE, mysql_conn->conn, "query\n%s", query);
+
+	while ((rc = mysql_db_delete_affected_rows(mysql_conn, query)) > 0) {
+		/* Commit here every time since this could create a huge
+			* transaction.
+			*/
+		if ((rc = mysql_db_commit(mysql_conn)))
+			error("Couldn't commit cluster (%s) purge",
+			      cluster_name);
+	}
+
+	xfree(query);
+	if (rc != SLURM_SUCCESS) {
+		error("Couldn't remove old data from %s table", hash_table);
+		return SLURM_ERROR;
+	} else if (mysql_db_commit(mysql_conn)) {
+		error("Couldn't commit cluster (%s) purge", cluster_name);
+	}
+	return SLURM_SUCCESS;
+}
+
 /* Archive and purge a table.
  *
  * Returns SLURM_ERROR on error and SLURM_SUCCESS on success.
@@ -4531,27 +5077,27 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 	case PURGE_EVENT:
 		purge_attr = arch_cond->purge_event;
 		sql_table  = event_table;
-		col_name   = event_req_inx[EVENT_REQ_START];
+		col_name   = event_req_inx[EVENT_REQ_END];
 		break;
 	case PURGE_SUSPEND:
 		purge_attr = arch_cond->purge_suspend;
 		sql_table  = suspend_table;
-		col_name   = suspend_req_inx[SUSPEND_REQ_START];
+		col_name   = suspend_req_inx[SUSPEND_REQ_END];
 		break;
 	case PURGE_RESV:
 		purge_attr = arch_cond->purge_resv;
 		sql_table  = resv_table;
-		col_name   = step_req_inx[STEP_REQ_START];
+		col_name   = step_req_inx[STEP_REQ_END];
 		break;
 	case PURGE_JOB:
 		purge_attr = arch_cond->purge_job;
 		sql_table  = job_table;
-		col_name   = job_req_inx[JOB_REQ_SUBMIT];
+		col_name   = job_req_inx[JOB_REQ_END];
 		break;
 	case PURGE_STEP:
 		purge_attr = arch_cond->purge_step;
 		sql_table  = step_table;
-		col_name   = step_req_inx[STEP_REQ_START];
+		col_name   = step_req_inx[STEP_REQ_END];
 		break;
 	case PURGE_TXN:
 		purge_attr = arch_cond->purge_txn;
@@ -4604,7 +5150,7 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 		}
 
 		purge_attr = arch_cond->purge_usage;
-		col_name   = usage_req_inx[USAGE_START];
+		col_name   = usage_req_inx[USAGE_MOD_TIME];
 		break;
 	case PURGE_CLUSTER_USAGE:
 		period = usage_info >> 16;
@@ -4626,7 +5172,7 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 		}
 
 		purge_attr = arch_cond->purge_usage;
-		col_name   = cluster_req_inx[CLUSTER_START];
+		col_name   = cluster_req_inx[CLUSTER_MOD_TIME];
 		break;
 	default:
 		fatal("Unknown purge type: %d", purge_type);
@@ -4663,17 +5209,39 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 
 		/* Do archive */
 		if (SLURMDB_PURGE_ARCHIVE_SET(purge_attr)) {
+			time_t start = 0;
 			rc = _archive_table(purge_type, mysql_conn,
-					    cluster_name, tmp_end,
-					    arch_cond->archive_dir,
-					    tmp_archive_period,
-					    sql_table, usage_info);
+					    cluster_name, col_name, &start,
+					    tmp_end, arch_cond->archive_dir,
+					    tmp_archive_period, sql_table,
+					    usage_info);
 			if (!rc) { /* no records archived */
 				error("%s: No records archived for %s before %ld but we found some records",
 				      __func__, sql_table, tmp_end);
 				return SLURM_ERROR;
 			} else if (rc == SLURM_ERROR)
 				return rc;
+
+			if (purge_type == PURGE_JOB) {
+				/* Archive associated data from hash tables */
+				rc = _archive_table(PURGE_JOB_ENV,
+						    mysql_conn, cluster_name,
+						    col_name, &start, tmp_end,
+						    arch_cond->archive_dir,
+						    tmp_archive_period,
+						    job_env_table, usage_info);
+				if (rc == SLURM_ERROR)
+					return rc;
+				rc = _archive_table(PURGE_JOB_SCRIPT,
+						    mysql_conn, cluster_name,
+						    col_name, &start, tmp_end,
+						    arch_cond->archive_dir,
+						    tmp_archive_period,
+						    job_script_table,
+						    usage_info);
+				if (rc == SLURM_ERROR)
+					return rc;
+			}
 		}
 
 		/*
@@ -4775,6 +5343,18 @@ static int _execute_archive(mysql_conn_t *mysql_conn,
 	if (arch_cond->purge_job != NO_VAL) {
 		if ((rc = _archive_purge_table(PURGE_JOB, 0, mysql_conn,
 					       cluster_name, arch_cond)))
+			return rc;
+		/*
+		 * We archive the hash table data with the job table.
+		 * Now we just need to purge the hash tables.
+		 */
+		if ((rc = _purge_hash_table(mysql_conn, cluster_name,
+					    job_script_table, job_table,
+					    "script_hash_inx")))
+			return rc;
+		if ((rc = _purge_hash_table(mysql_conn, cluster_name,
+					    job_env_table, job_table,
+					    "env_hash_inx")))
 			return rc;
 	}
 
@@ -4951,6 +5531,12 @@ static int _process_archive_data(char **data_in, uint32_t data_size,
 		case DBD_GOT_JOBS:
 			data = _load_jobs(ver, buffer, cluster_name, rec_cnt);
 			break;
+		case DBD_GOT_JOB_ENV:
+			data = _load_job_env(ver, buffer, cluster_name, rec_cnt);
+			break;
+		case DBD_GOT_JOB_SCRIPT:
+			data = _load_job_script(ver, buffer, cluster_name, rec_cnt);
+			break;
 		case DBD_GOT_RESVS:
 			data = _load_resvs(ver, buffer, cluster_name, rec_cnt);
 			break;
@@ -5007,7 +5593,7 @@ extern int as_mysql_jobacct_process_archive_load(
 	uint32_t data_size = 0;
 
 	/* Ensure that the connection is not set in autocommit mode. */
-	xassert(mysql_conn->rollback);
+	xassert(mysql_conn->flags & DB_CONN_FLAG_ROLLBACK);
 
 	if (!arch_rec) {
 		error("We need a slurmdb_archive_rec to load anything.");

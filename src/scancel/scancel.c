@@ -107,7 +107,7 @@ main (int argc, char **argv)
 	log_options_t log_opts = LOG_OPTS_STDERR_ONLY ;
 	int rc = 0;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init (xbasename(argv[0]), log_opts, SYSLOG_FACILITY_DAEMON, NULL);
 	initialize_and_process_args(argc, argv);
 	if (opt.verbose) {
@@ -729,6 +729,18 @@ _cancel_job_id (void *ci)
 		flags |= KILL_JOB_BATCH;
 		job_type = "batch ";
 	}
+
+	/*
+	 * With the introduction of the ScronParameters=explicit_scancel option,
+	 * scancel requests for a cron job should be rejected unless the --cron
+	 * flag is specified.
+	 * To prevent introducing this option from influencing anything other
+	 * than user requests, it has been set up so that when KILL_NO_CRON is
+	 * set when explicit_scancel is also set, the request will be rejected.
+	 */
+	if (!opt.cron)
+		flags |= KILL_NO_CRON;
+
 	if (opt.full) {
 		flags |= KILL_FULL_JOB;
 		job_type = "full ";

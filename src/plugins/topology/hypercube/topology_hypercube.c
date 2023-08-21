@@ -47,7 +47,7 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/bitstring.h"
 #include "src/common/log.h"
-#include "src/common/slurm_topology.h"
+#include "src/interfaces/topology.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/slurmctld.h"
 
@@ -135,7 +135,7 @@ static int switch_data_cnt = 0; /* size of switch_data_table */
 //////////////////////////////////////////////////////////////////////////////
 //// Data Parsing and Switch Record Table Building Related Functions ////
 static void _validate_switches(void);
-extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[]);
+static int  _read_topo_file(slurm_conf_switches_t **ptr_array[]);
 static int  _parse_switches(void **dest, slurm_parser_enum_t type,
 				const char *key, const char *value,
 				const char *line, char **leftover);
@@ -361,7 +361,7 @@ static void _validate_switches(void)
 
 
 /* Return count of switch configuration entries read */
-extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
+static int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 {
 	static s_p_options_t switch_options[] = {
 		{"SwitchName", S_P_ARRAY, _parse_switches, _destroy_switches},
@@ -375,7 +375,7 @@ extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 		topo_conf = get_extra_conf_path("topology.conf");
 
 	conf_hashtbl = s_p_hashtbl_create(switch_options);
-	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL) ==
+	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL, false) ==
 		SLURM_ERROR) {
 		fatal("something wrong with opening/reading %s: %m",
 			  topo_conf);

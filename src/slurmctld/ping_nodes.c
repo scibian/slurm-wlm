@@ -45,7 +45,9 @@
 
 #include "src/common/hostlist.h"
 #include "src/common/read_config.h"
-#include "src/common/select.h"
+
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/ping_nodes.h"
@@ -430,14 +432,9 @@ extern void run_health_check(void)
 		cycle_start_time = now;
 		/* Determine how many nodes we want to test on each call of
 		 * run_health_check() to spread out the work. */
-		node_limit = (node_record_count * 2) /
+		node_limit = (active_node_record_count * 2) /
 		             slurm_conf.health_check_interval;
 		node_limit = MAX(node_limit, 10);
-	}
-	if ((node_states != HEALTH_CHECK_NODE_ANY) &&
-	    (node_states != HEALTH_CHECK_NODE_IDLE)) {
-		/* Update each node's alloc_cpus count */
-		select_g_select_nodeinfo_set_all();
 	}
 
 	check_agent_args = xmalloc (sizeof (agent_arg_t));
@@ -445,9 +442,7 @@ extern void run_health_check(void)
 	check_agent_args->retry = 0;
 	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
 	check_agent_args->hostlist = hostlist_create(NULL);
-	for (; base_node_loc < node_record_count; base_node_loc++) {
-		if (!(node_ptr = node_record_table_ptr[base_node_loc]))
-			continue;
+	for (; (node_ptr = next_node(&base_node_loc)); base_node_loc++) {
 		if (run_cyclic &&
 		    (node_test_cnt++ >= node_limit))
 				break;
@@ -476,8 +471,11 @@ extern void run_health_check(void)
 			 *       means the node is allocated
 			 */
 			if (cpus_used == 0) {
-				if (!(node_states & HEALTH_CHECK_NODE_IDLE))
+				if (!(node_states & HEALTH_CHECK_NODE_IDLE) &&
+				    (!(node_states & HEALTH_CHECK_NODE_NONDRAINED_IDLE) ||
+				     IS_NODE_DRAIN(node_ptr))) {
 					continue;
+				}
 				if (!IS_NODE_IDLE(node_ptr))
 					continue;
 			} else if (cpus_used < cpus_total) {

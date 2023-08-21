@@ -37,12 +37,13 @@
 #ifndef _CONS_COMMON_JOB_TEST_H
 #define _CONS_COMMON_JOB_TEST_H
 
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/slurmctld/slurmctld.h"
 
 extern uint64_t def_cpu_per_gpu;
 extern uint64_t def_mem_per_gpu;
 extern bool preempt_strict_order;
+extern bool preempt_for_licenses;
 extern int preempt_reorder_cnt;
 
 /*

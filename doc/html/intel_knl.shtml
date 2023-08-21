@@ -58,7 +58,7 @@ The HBM will always be known by Slurm GRES name of "hbm".
 Examples below demonstrate use of HBM.</p>
 
 <p>Sorting of the free cache pages at step startup using Intel's zonesort
-module can be configred as the default for all steps using the
+module can be configured as the default for all steps using the
 "LaunchParameters=mem_sort" option in the slurm.conf file.
 Individual job steps can enable or disable sorting using the "--mem-bind=sort"
 or "--mem-bind=nosort" command line options for srun.
@@ -192,11 +192,11 @@ copied from the node's "Features" configuration in "slurm.conf" to both the
 available and active feature fields and not modified by the NodeFeatures
 plugin.</p>
 
-<p>NOTE: For Dell KNL systems you must also include the <i>SystemType=Dell</i>
-option for successful operation and will likely need to increase the
-<i>SyscfgTimeout</i> to allow enough time for the command to successfully
-complete.  Experience at one site has shown that a 10 second timeout may
-be necessary, configured as <i>SyscfgTimeout=10000</i>.</p>
+<p><b>NOTE</b>: For Dell KNL systems you must also include the
+<i>SystemType=Dell</i> option for successful operation and will likely need to
+increase the <i>SyscfgTimeout</i> to allow enough time for the command to
+successfully complete.  Experience at one site has shown that a 10 second
+timeout may be necessary, configured as <i>SyscfgTimeout=10000</i>.</p>
 
 <p>Slurm does not support the concept of multiple NUMA nodes
 within a single socket. If a KNL node is booted with multiple NUMA, then each
@@ -306,7 +306,7 @@ SuspendProgram, SuspendTime, etc. in slurm.conf, however that limitation may
 be removed in the future (the ResumeProgram currently has no means of changing
 the node's MCDRAM and/or NUMA mode prior to reboot).</p>
 
-<p><b>NOTE:</b>The syscfg program reports the MCDRAM and NUMA mode to be used
+<p><b>NOTE</b>: The syscfg program reports the MCDRAM and NUMA mode to be used
 when the node is next booted. If the syscfg program is used to modify the MCDRAM
 or NUMA mode of a node, but it is not rebooted, then Slurm will be making
 scheduling decisions based upon incorrect state information. If you want to

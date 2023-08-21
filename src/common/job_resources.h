@@ -168,11 +168,6 @@ extern int build_job_resources(job_resources_t *job_resrcs_ptr);
  * Return total CPU count or -1 on error */
 extern int build_job_resources_cpu_array(job_resources_t *job_resrcs_ptr);
 
-/* Rebuild cpus array based upon the values of nhosts, cpu_array_value and
- * cpu_array_reps in an existing data structure
- * Return total CPU count or -1 on error */
-extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr);
-
 /* Validate a job_resources data structure originally built using
  * build_job_resources() is still valid based upon slurmctld state.
  * NOTE: Reset the node_bitmap field before calling this function.
@@ -181,10 +176,9 @@ extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr);
  * change in a node's socket or core count require that any job running on
  * that node be killed. Example of use:
  *
- * rc = valid_job_resources(job_resrcs_ptr, node_record_table_ptr);
+ * rc = valid_job_resources(job_resrcs_ptr);
  */
-extern int valid_job_resources(job_resources_t *job_resrcs_ptr,
-			       node_record_t **node_rec_table);
+extern int valid_job_resources(job_resources_t *job_resrcs_ptr);
 
 /* Make a copy of a job_resources data structure,
  * free using free_job_resources() */
@@ -303,17 +297,6 @@ extern int job_fits_into_cores(job_resources_t *job_resrcs_ptr,
 extern void add_job_to_cores(job_resources_t *job_resrcs_ptr,
 			     bitstr_t **full_core_bitmap,
 			     const uint16_t *bits_per_node);
-
-/*
- * Remove job from full-length core_bitmap
- * IN job_resrcs_ptr - resources allocated to a job
- * IN/OUT full_bitmap - bitmap of available CPUs, allocate as needed
- * IN bits_per_node - bits per node in the full_bitmap
- * RET 1 on success, 0 otherwise
- */
-extern void remove_job_from_cores(job_resources_t *job_resrcs_ptr,
-				  bitstr_t **full_core_bitmap,
-				  const uint16_t *bits_per_node);
 
 /* Given a job pointer and a global node index, return the index of that
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */

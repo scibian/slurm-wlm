@@ -1,6 +1,7 @@
 # Makefile for scontrol
 
 AUTOMAKE_OPTIONS = foreign
+CLEANFILES = core.*
 
 AM_CPPFLAGS = -I$(top_srcdir)
 
@@ -24,10 +25,16 @@ scontrol_SOURCES =	\
 	update_part.c	\
 	update_step.c
 
-scontrol_LDADD = $(LIB_SLURM) $(DL_LIBS) $(READLINE_LIBS)
+scontrol_LDADD = $(LIB_SLURM) $(READLINE_LIBS)
 scontrol_DEPENDENCIES = $(LIB_SLURM_BUILD)
 
 scontrol_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
+
+REF = usage.txt
+include $(top_srcdir)/make_ref.include
+noinst_LTLIBRARIES = $(LIB_REF)
+EXTRA_scontrol_DEPENDENCIES = $(LIB_REF)
+scontrol_LDADD += $(LIB_REF)
 
 force:
 $(scontrol_DEPENDENCIES) : force

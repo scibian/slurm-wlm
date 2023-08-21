@@ -14,7 +14,7 @@ AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/src/common $(JSON_CPPFLAGS)
 BIN_REF = $(REF:.json=.bino)
 
 %.bino: %.json
-	$(AM_V_GEN)pushd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; popd
+	$(AM_V_GEN)curr_dir=$(shell pwd); cd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; cd $$curr_dir
 	$(AM_V_at)@OBJCOPY@ --rename-section .data=.rodata,alloc,load,readonly,data,contents "$*.bino"
 
 openapi_ref.lo: $(BIN_REF)
@@ -42,6 +42,5 @@ openapi_dbv0_0_38_la_SOURCES = \
 	config.c diag.c jobs.c qos.c parse.c parse.h \
 	tres.c users.c wckeys.c
 
-openapi_dbv0_0_38_la_DEPENDENCIES = $(LIB_SLURM_BUILD)
 openapi_dbv0_0_38_la_LDFLAGS = $(PLUGIN_FLAGS)
-openapi_dbv0_0_38_la_LIBADD = $(libslurmfull_la_LIBADD) openapi_ref.lo
+openapi_dbv0_0_38_la_LIBADD = openapi_ref.lo

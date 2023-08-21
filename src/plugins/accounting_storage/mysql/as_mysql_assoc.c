@@ -50,6 +50,7 @@ char *assoc_req_inx[] = {
 	"user",
 	"acct",
 	"`partition`",
+	"comment",
 	"shares",
 	"grp_tres_mins",
 	"grp_tres_run_mins",
@@ -82,6 +83,7 @@ enum {
 	ASSOC_REQ_USER,
 	ASSOC_REQ_ACCT,
 	ASSOC_REQ_PART,
+	ASSOC_REQ_COMMENT,
 	ASSOC_REQ_FS,
 	ASSOC_REQ_GTM,
 	ASSOC_REQ_GTRM,
@@ -1147,72 +1149,105 @@ static int _modify_unset_users(mysql_conn_t *mysql_conn,
 	return SLURM_SUCCESS;
 }
 
-/* when doing a select on this all the select should have a prefix of
- * t1. Returns "where" clause which needs to be xfreed. */
-static char *_setup_assoc_cond_qos(slurmdb_assoc_cond_t *assoc_cond,
-				   char *cluster_name)
+/* sets fields for the assoc query when there is a qos condition*/
+static void _setup_assoc_cond_qos(slurmdb_assoc_cond_t *assoc_cond,
+				  char *cluster_name, char **more_fields,
+				  char **selection_target, char **qos_filter)
 {
 	int set = 0;
 	ListIterator itr = NULL;
 	char *object = NULL;
-	char *prefix = "t1";
-	char *extra = NULL;
 
-	/* Since this gets put in an SQL query we don't want it to be
-	 * NULL since it would print (null) instead of nothing.
+	xstrfmtcat(*more_fields,
+		   ", group_concat(inherited_qos_list) AS i_qos, "
+		   "group_concat(inherited_delta_qos_list) AS i_delta_qos");
+
+	xstrfmtcat(*selection_target,
+		   "(select t1.*, "
+		   "t2.qos as inherited_qos_list, "
+		   "t2.delta_qos as inherited_delta_qos_list "
+		   "from \"%s_%s\" as t1 "
+		   "join \"%s_%s\" as t2 on (t1.lft between t2.lft and t2.rgt) "
+		   "join \"%s_%s\" as t3 on (t1.lft between t3.lft and t3.rgt) "
+		   "and (t2.lft not between t3.lft+1 and t3.rgt-1) "
+		   "group by t1.lft, t2.lft "
+		   "having t2.qos=group_concat(t3.qos separator ''))",
+		   cluster_name, assoc_table, cluster_name, assoc_table,
+		   cluster_name, assoc_table);
+
+	xstrfmtcat(*qos_filter, " group by lft having ");
+
+	itr = list_iterator_create(assoc_cond->qos_list);
+	while ((object = list_next(itr))) {
+		if (set)
+			xstrcat(*qos_filter, "or ");
+		xstrfmtcat(*qos_filter,
+			   "((i_qos regexp ',%s,' or "
+			   "i_delta_qos regexp ',\\\\+%s,') and "
+			   "i_delta_qos not regexp ',-%s,(?!.*,\\\\+%s,)') ",
+			   object, object, object, object);
+		set = 1;
+	}
+	list_iterator_destroy(itr);
+}
+
+static char *_setup_assoc_table_query(slurmdb_assoc_cond_t *assoc_cond,
+				      char *cluster_name, char *fields,
+				      char *filters, char *end)
+{
+	char *query;
+	char *more_fields = NULL, *selection_target = NULL, *qos_filter = NULL,
+	     *with_sub_accts_str = NULL;
+
+	if (assoc_cond && assoc_cond->qos_list &&
+	    list_count(assoc_cond->qos_list))
+		_setup_assoc_cond_qos(assoc_cond, cluster_name, &more_fields,
+				      &selection_target, &qos_filter);
+	else {
+		xstrcat(more_fields, "");
+		xstrfmtcat(selection_target, "\"%s_%s\"", cluster_name,
+			   assoc_table);
+		xstrcat(qos_filter, "");
+	}
+
+	/*
+	 * If we are looking for with_sub_accts, another join after the qos
+	 * subquery is necessary, as filtering the parents during it would
+	 * remove some inherited qos values.
 	 */
-	if (!assoc_cond)
-		return xstrdup("");
+	if (assoc_cond && assoc_cond->with_sub_accts)
+		xstrfmtcat(with_sub_accts_str,
+			   " join \"%s_%s\" as t2 on "
+			   "(t1.lft between t2.lft and t2.rgt)",
+			   cluster_name, assoc_table);
+	else
+		xstrcat(with_sub_accts_str, "");
 
-	/* we need to check this first so we can update the
-	   with_sub_accts if needed since this the qos_list is a
-	   parent thing
-	*/
-	if (assoc_cond->qos_list && list_count(assoc_cond->qos_list)) {
-		/* we have to do the same thing as with_sub_accts does
-		   first since we are looking for something that is
-		   really most likely a parent thing */
-		assoc_cond->with_sub_accts = 1;
-		prefix = "t2";
-		xstrfmtcat(extra, ", \"%s_%s\" as t2 where "
-			   "(t1.lft between t2.lft and t2.rgt) && (",
-			   cluster_name, assoc_table);
-		set = 0;
-		itr = list_iterator_create(assoc_cond->qos_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra,
-				   "(%s.qos like '%%,%s' "
-				   "|| %s.qos like '%%,%s,%%' "
-				   "|| %s.delta_qos like '%%,+%s' "
-				   "|| %s.delta_qos like '%%,+%s,%%')",
-				   prefix, object, prefix, object,
-				   prefix, object, prefix, object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ") &&");
-	} else if (assoc_cond->with_sub_accts) {
-		xstrfmtcat(extra, ", \"%s_%s\" as t2 where "
-			   "(t1.lft between t2.lft and t2.rgt) &&",
-			   cluster_name, assoc_table);
-	} else
-		xstrcat(extra, " where");
-	return extra;
+	query = xstrdup_printf("select distinct %s%s from %s as t1"
+			       "%s where%s%s%s",
+			       fields, more_fields, selection_target,
+			       with_sub_accts_str, filters, qos_filter, end);
+
+	xfree(more_fields);
+	xfree(selection_target);
+	xfree(qos_filter);
+	xfree(with_sub_accts_str);
+
+	return query;
 }
 
 /* When doing a select on this all the select should have a prefix of t1. */
-static int _setup_assoc_cond_limits(
-	slurmdb_assoc_cond_t *assoc_cond,
-	const char *prefix, char **extra)
+static int _setup_assoc_cond_limits(slurmdb_assoc_cond_t *assoc_cond,
+				    const char *prefix, char **extra)
 {
 	int set = 0;
 	ListIterator itr = NULL;
 	char *object = NULL;
 
-	if (!assoc_cond)
+	if (!assoc_cond) {
+		xstrfmtcat(*extra, " TRUE");
 		return 0;
+	}
 
 	/*
 	 * Don't use prefix here, always use t1 or we could get extra "deleted"
@@ -1551,7 +1586,7 @@ static int _process_modify_assoc_results(mysql_conn_t *mysql_conn,
 						row2[ASSOC2_REQ_PRIO]);
 
 				/* We don't have to copy these strings
-				 * or check for there existance,
+				 * or check for their existence,
 				 * slurmdb_combine_tres_strings will
 				 * do this for us below.
 				 */
@@ -1578,6 +1613,8 @@ static int _process_modify_assoc_results(mysql_conn_t *mysql_conn,
 			mod_assoc->def_qos_id = alt_assoc.def_qos_id;
 		else
 			mod_assoc->def_qos_id = assoc->def_qos_id;
+
+		mod_assoc->comment = xstrdup(assoc->comment);
 
 		mod_assoc->is_def = assoc->is_def;
 
@@ -1844,10 +1881,13 @@ static int _process_remove_assoc_results(mysql_conn_t *mysql_conn,
 	time_t now = time(NULL);
 	char *user_name = NULL;
 	uint32_t smallest_lft = 0xFFFFFFFF;
+	bool process_skipped = false;
 
 	xassert(result);
-	if (*jobs_running || *default_account)
+	if (*jobs_running || *default_account) {
+		process_skipped = true;
 		goto skip_process;
+	}
 
 	while ((row = mysql_fetch_row(result))) {
 		slurmdb_assoc_rec_t *rem_assoc = NULL;
@@ -1928,17 +1968,20 @@ static int _process_remove_assoc_results(mysql_conn_t *mysql_conn,
 
 	}
 
-	if ((rc = as_mysql_get_modified_lfts(
-		     mysql_conn, cluster_name, smallest_lft)) != SLURM_SUCCESS)
-		goto end_it;
-
-
 skip_process:
 	user_name = uid_to_string((uid_t) user->uid);
 
 	rc = remove_common(mysql_conn, DBD_REMOVE_ASSOCS, now, user_name,
 			   assoc_table, name_char, assoc_char, cluster_name,
 			   ret_list, jobs_running, default_account);
+
+	/*
+	 * We need to check lfts after remove_common so we can avoid adding the
+	 * associations we just removed.
+	 */
+	if (!process_skipped && (rc == SLURM_SUCCESS))
+		rc = as_mysql_get_modified_lfts(
+			mysql_conn, cluster_name, smallest_lft);
 end_it:
 	xfree(user_name);
 	xfree(assoc_char);
@@ -1977,7 +2020,6 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 	uint32_t parent_id = 0;
 	char *query = NULL;
 	char *extra = xstrdup(sent_extra);
-	char *qos_extra = NULL;
 
 	/* needed if we don't have an assoc_cond */
 	uint16_t without_parent_info = 0;
@@ -2044,16 +2086,9 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 			return SLURM_SUCCESS;
 		}
 	}
-
-	qos_extra = _setup_assoc_cond_qos(assoc_cond, cluster_name);
-
-
 	//START_TIMER;
-	query = xstrdup_printf("select distinct %s from \"%s_%s\" as t1%s%s "
-			       "order by lft;",
-			       fields, cluster_name, assoc_table,
-			       qos_extra, extra);
-	xfree(qos_extra);
+	query = _setup_assoc_table_query(assoc_cond, cluster_name, fields,
+					 extra, " order by lft;");
 	xfree(extra);
 	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
@@ -2082,6 +2117,8 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 		list_append(assoc_list, assoc);
 		assoc->id = slurm_atoul(row[ASSOC_REQ_ID]);
 		assoc->is_def = slurm_atoul(row[ASSOC_REQ_DEFAULT]);
+
+		assoc->comment = xstrdup(row[ASSOC_REQ_COMMENT]);
 
 		if (deleted)
 			assoc->flags |= ASSOC_FLAG_DELETED;
@@ -2545,8 +2582,7 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 	while ((object = list_next(itr))) {
 		if (!object->cluster || !object->cluster[0]
 		    || !object->acct || !object->acct[0]) {
-			error("We need a association cluster and "
-			      "acct to add one.");
+			error("We need an association, cluster and acct to add one.");
 			rc = SLURM_ERROR;
 			continue;
 		}
@@ -2925,7 +2961,8 @@ extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 				_set_assoc_lft_rgt(mysql_conn, object);
 		}
 
-		if (addto_update_list(mysql_conn->update_list,
+		if ((object->flags & ASSOC_FLAG_NO_UPDATE) ||
+		    addto_update_list(mysql_conn->update_list,
 				      SLURMDB_ADD_ASSOC,
 				      object) == SLURM_SUCCESS) {
 			list_remove(itr);
@@ -3189,8 +3226,7 @@ extern List as_mysql_modify_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 	}
 is_same_user:
 
-	if ((assoc_cond->qos_list && list_count(assoc_cond->qos_list))
-	    || assoc_cond->with_sub_accts)
+	if (assoc_cond->with_sub_accts)
 		prefix = "t2";
 
 	(void) _setup_assoc_cond_limits(assoc_cond, prefix, &extra);
@@ -3244,15 +3280,9 @@ is_same_user:
 
 	itr = list_iterator_create(use_cluster_list);
 	while ((cluster_name = list_next(itr))) {
-		char *qos_extra = _setup_assoc_cond_qos(
-			assoc_cond, cluster_name);
-
-		xstrfmtcat(query, "select distinct %s "
-			   "from \"%s_%s\" as t1%s%s "
-			   "order by lft FOR UPDATE;",
-			   object, cluster_name,
-			   assoc_table, qos_extra, extra);
-		xfree(qos_extra);
+		query = _setup_assoc_table_query(assoc_cond, cluster_name,
+						 object, extra,
+						 " ORDER BY lft FOR UPDATE;");
 		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
@@ -3340,8 +3370,7 @@ extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 		}
 	}
 
-	if ((assoc_cond->qos_list && list_count(assoc_cond->qos_list))
-	    || assoc_cond->with_sub_accts)
+	if (assoc_cond->with_sub_accts)
 		prefix = "t2";
 
 	(void)_setup_assoc_cond_limits(assoc_cond, prefix, &extra);
@@ -3362,15 +3391,9 @@ extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	itr = list_iterator_create(use_cluster_list);
 	while ((cluster_name = list_next(itr))) {
-		char *qos_extra = _setup_assoc_cond_qos(
-			assoc_cond, cluster_name);
-
-		query = xstrdup_printf("select distinct t1.lft, t1.rgt from "
-				       "\"%s_%s\" as t1%s%s order by "
-				       "lft FOR UPDATE;",
-				       cluster_name, assoc_table,
-				       qos_extra, extra);
-		xfree(qos_extra);
+		query = _setup_assoc_table_query(assoc_cond, cluster_name,
+						 "t1.lft, t1.rgt", extra,
+						 " ORDER BY lft FOR UPDATE;");
 		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(
 			      mysql_conn, query, 0))) {
@@ -3501,8 +3524,7 @@ extern List as_mysql_get_assocs(mysql_conn_t *mysql_conn, uid_t uid,
 		}
 	}
 
-	if ((assoc_cond->qos_list && list_count(assoc_cond->qos_list))
-	    || assoc_cond->with_sub_accts)
+	if (assoc_cond->with_sub_accts)
 		prefix = "t2";
 
 	(void) _setup_assoc_cond_limits(assoc_cond, prefix, &extra);
@@ -3700,14 +3722,9 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 		 * lft's to the cluster.
 		 */
 		type = SLURMDB_ADD_ASSOC;
-		assoc_itr = list_iterator_create(mysql_conn->update_list);
-		while ((update_object = list_next(assoc_itr))) {
-			if (update_object->type == type) {
-				list_delete_item(assoc_itr);
-				break;
-			}
-		}
-		list_iterator_destroy(assoc_itr);
+		(void) list_delete_first(mysql_conn->update_list,
+					 slurmdb_find_update_object_in_list,
+					 &type);
 
 		/* Make the mod assoc update_object if it doesn't exist */
 		type = SLURMDB_MODIFY_ASSOC;

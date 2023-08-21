@@ -39,7 +39,7 @@
 
 #include "scontrol.h"
 #include "src/common/env.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/proc_args.h"
 #include "src/common/uid.h"
 
@@ -685,6 +685,9 @@ extern int scontrol_update_job(int argc, char **argv)
 			}
 			job_msg.delay_boot = time_sec;
 			update_cnt++;
+		} else if (!xstrncasecmp(tag, "Extra", MAX(taglen, 3))) {
+			job_msg.extra = val;
+			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "TimeLimit", MAX(taglen, 5)) == 0) {
 			uint32_t job_current_time, time_limit;
@@ -825,15 +828,17 @@ extern int scontrol_update_job(int argc, char **argv)
 			} else if (xstrcasecmp(val, "ALL") == 0) {
 				job_msg.min_nodes = INFINITE;
 			} else {
+				char *job_size_str = NULL;
 				min_nodes = (int) job_msg.min_nodes;
 				max_nodes = (int) job_msg.max_nodes;
-				rc = get_resource_arg_range(
-						val, "requested node count",
-						&min_nodes, &max_nodes, false);
+				rc = verify_node_count(val, &min_nodes,
+						       &max_nodes,
+						       &job_size_str);
 				if (!rc)
 					return rc;
 				job_msg.min_nodes = (uint32_t) min_nodes;
 				job_msg.max_nodes = (uint32_t) max_nodes;
+				job_msg.job_size_str = job_size_str;
 			}
 			update_size = true;
 			update_cnt++;
@@ -1105,7 +1110,7 @@ extern int scontrol_update_job(int argc, char **argv)
 			update_cnt++;
 		}
 		else if (!xstrncasecmp(tag, "UserID", MAX(taglen, 3))) {
-			uid_t user_id = 0;
+			uid_t user_id = SLURM_AUTH_NOBODY;
 			if (uid_from_string(val, &user_id) < 0) {
 				exit_code = 1;
 				fprintf (stderr, "Invalid UserID: %s\n", val);
@@ -1156,7 +1161,7 @@ extern int scontrol_update_job(int argc, char **argv)
 
 	/* If specified, override uid with effective uid provided by
 	 * -u <uid> or --uid=<uid> */
-	if (euid != NO_VAL)
+	if (euid != SLURM_AUTH_NOBODY)
 		job_msg.user_id = euid;
 
 	if (!job_msg.job_id_str && job_msg.name) {
@@ -1199,16 +1204,29 @@ extern int scontrol_update_job(int argc, char **argv)
 				}
 			} else if (resp) {
 				for (i = 0; i < resp->job_array_count; i++) {
-					if ((resp->error_code[i] == SLURM_SUCCESS)
-					    && (resp->job_array_count == 1))
+					if (!resp->error_code[i] &&
+					    !resp->err_msg[i])
 						continue;
+					else if (!resp->error_code[i] &&
+						 resp->err_msg[i] &&
+						 !quiet_flag) {
+						fprintf(stdout, "%s: %s\n",
+							resp->job_array_id[i],
+							resp->err_msg[i]);
+						continue;
+					}
 					exit_code = 1;
 					if (quiet_flag == 1)
 						continue;
-					fprintf(stderr, "%s: %s\n",
+					fprintf(stderr, "%s: %s",
 						resp->job_array_id[i],
 						slurm_strerror(resp->
 							       error_code[i]));
+					if (resp->err_msg[i])
+						fprintf(stderr, " (%s)\n",
+							resp->err_msg[i]);
+					else
+						fprintf(stderr, "\n");
 				}
 				slurm_free_job_array_resp(resp);
 				resp = NULL;

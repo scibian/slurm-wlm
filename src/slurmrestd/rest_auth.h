@@ -44,12 +44,14 @@
 #include "src/slurmrestd/http.h"
 
 #define HTTP_HEADER_USER_TOKEN "X-SLURM-USER-TOKEN"
+#define HTTP_HEADER_AUTH "Authorization"
+#define HTTP_HEADER_AUTH_BEARER "Bearer "
 #define HTTP_HEADER_USER_NAME "X-SLURM-USER-NAME"
 
 typedef struct {
 	int magic;
 	uint32_t plugin_id;
-	/* user supplied user name */
+	/* optional user supplied user name */
 	char *user_name;
 	void *plugin_data;
 } rest_auth_context_t;
@@ -84,23 +86,27 @@ extern int rest_auth_g_apply(rest_auth_context_t *context);
 
 /*
  * Retrieve db_conn for slurmdbd calls.
- * WARNING: pointer will be invalidated by next rest_auth_g_free()
+ * WARNING: pointer will be invalidated by next call to rest_auth_g_free()
  * RET NULL on error or db_conn pointer
  */
 extern void *rest_auth_g_get_db_conn(rest_auth_context_t *context);
 
-/*
- * Clear current auth context
- * will fatal on error
- */
-extern void rest_auth_g_clear(void);
+#define FREE_NULL_REST_AUTH(_X)			\
+	do {					\
+		if (_X)				\
+			rest_auth_g_free(_X);	\
+		_X = NULL;			\
+	} while (0)
 
 /*
  * Setup locks and register REST authentication plugins.
  * 	Only call once!
- * IN type auth type to enforce
+ * IN become_user - notify auth plugin user requests become user mode
+ * IN plugin_handles - array of rest_plugins to init
+ * IN plugin_count - number of plugins in plugin_handles array
  */
-extern int init_rest_auth(const plugin_handle_t *plugin_handles,
+extern int init_rest_auth(bool become_user,
+			  const plugin_handle_t *plugin_handles,
 			  const size_t plugin_count);
 
 /*

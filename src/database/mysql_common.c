@@ -776,7 +776,8 @@ extern mysql_conn_t *create_mysql_conn(int conn_num, bool rollback,
 {
 	mysql_conn_t *mysql_conn = xmalloc(sizeof(mysql_conn_t));
 
-	mysql_conn->rollback = rollback;
+	if (rollback)
+		mysql_conn->flags |= DB_CONN_FLAG_ROLLBACK;
 	mysql_conn->conn = conn_num;
 	mysql_conn->cluster_name = xstrdup(cluster_name);
 	slurm_mutex_init(&mysql_conn->lock);
@@ -916,7 +917,7 @@ extern int mysql_db_get_db_connection(mysql_conn_t *mysql_conn, char *db_name,
 		}
 
 		storage_init = true;
-		if (mysql_conn->rollback)
+		if (mysql_conn->flags & DB_CONN_FLAG_ROLLBACK)
 			mysql_autocommit(mysql_conn->db_conn, 0);
 		rc = _mysql_query_internal(mysql_conn->db_conn,
 					   "SET session sql_mode='ANSI_QUOTES,"
@@ -1120,7 +1121,7 @@ extern int mysql_db_create_table(mysql_conn_t *mysql_conn, char *table_name,
 				 storage_field_t *fields, char *ending)
 {
 	char *query = NULL;
-	int i = 0, rc;
+	int rc;
 	storage_field_t *first_field = fields;
 
 	if (!fields || !fields->name) {
@@ -1148,13 +1149,11 @@ extern int mysql_db_create_table(mysql_conn_t *mysql_conn, char *table_name,
 
 	query = xstrdup_printf("create table if not exists %s (`%s` %s",
 			       table_name, fields->name, fields->options);
-	i = 1;
 	fields++;
 
 	while (fields && fields->name) {
 		xstrfmtcat(query, ", `%s` %s", fields->name, fields->options);
 		fields++;
-		i++;
 	}
 	xstrcat(query, ending);
 

@@ -42,9 +42,17 @@
 #include "config.h"
 
 #include "src/sacctmgr/sacctmgr.h"
+#include "src/common/data.h"
+#include "src/common/ref.h"
 #include "src/common/xsignal.h"
 #include "src/common/proc_args.h"
 #include "src/common/strlcpy.h"
+
+#include "src/interfaces/serializer.h"
+
+#define OPT_LONG_AUTOCOMP 0x100
+#define OPT_LONG_JSON 0x101
+#define OPT_LONG_YAML 0x102
 
 char *command_name;
 int exit_code;		/* sacctmgr's exit code, =1 on any error at any time */
@@ -60,6 +68,7 @@ uint32_t my_uid = 0;
 List g_qos_list = NULL;
 List g_res_list = NULL;
 List g_tres_list = NULL;
+const char *mime_type = NULL; /* mimetype if we are using data_parser */
 
 /* by default, normalize all usernames to lower case */
 bool user_case_norm = true;
@@ -77,6 +86,8 @@ static void     _print_version(void);
 static int	_process_command(int argc, char **argv);
 static void	_usage(void);
 
+decl_static_data(usage_txt);
+
 int main(int argc, char **argv)
 {
 	int error_code = SLURM_SUCCESS, opt_char;
@@ -86,6 +97,7 @@ int main(int argc, char **argv)
 	uint16_t persist_conn_flags = 0;
 
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"help",     0, 0, 'h'},
 		{"usage",    0, 0, 'h'},
 		{"immediate",0, 0, 'i'},
@@ -98,6 +110,8 @@ int main(int argc, char **argv)
 		{"associations", 0, 0, 's'},
 		{"verbose",  0, 0, 'v'},
 		{"version",  0, 0, 'V'},
+		{"json", 0, 0, OPT_LONG_JSON},
+		{"yaml", 0, 0, OPT_LONG_YAML},
 		{NULL,       0, 0, 0}
 	};
 
@@ -108,7 +122,7 @@ int main(int argc, char **argv)
 	quiet_flag        = 0;
 	readonly_flag     = 0;
 	verbosity         = 0;
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init("sacctmgr", opts, SYSLOG_FACILITY_DAEMON, NULL);
 
 	while((opt_char = getopt_long(argc, argv, "hionpPQrsvV",
@@ -156,6 +170,24 @@ int main(int argc, char **argv)
 		case (int)'V':
 			_print_version();
 			exit(exit_code);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
+		case OPT_LONG_JSON :
+			mime_type = MIME_TYPE_JSON;
+			if (data_init())
+				fatal("data_init() failed");
+			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
+				fatal("JSON plugin load failure");
+			break;
+		case OPT_LONG_YAML :
+			mime_type = MIME_TYPE_YAML;
+			if (data_init())
+				fatal("data_init() failed");
+			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
+				fatal("YAML plugin load failure");
 			break;
 		default:
 			exit_code = 1;
@@ -875,269 +907,10 @@ static void _delete_it(int argc, char **argv)
 	}
 }
 
-/* _usage - show the valid sacctmgr commands */
-void _usage()
+static void _usage(void)
 {
-	printf ("\
-sacctmgr [<OPTION>] [<COMMAND>]                                            \n\
-    Valid <OPTION> values are:                                             \n\
-     -h or --help: equivalent to \"help\" command                          \n\
-     -i or --immediate: commit changes immediately                         \n\
-     -n or --noheader: no header will be added to the beginning of output  \n\
-     -o or --oneliner: equivalent to \"oneliner\" command                  \n\
-     -p or --parsable: output will be '|' delimited with a '|' at the end  \n\
-     -P or --parsable2: output will be '|' delimited without a '|' at the end\n\
-     -Q or --quiet: equivalent to \"quiet\" command                        \n\
-     -r or --readonly: equivalent to \"readonly\" command                  \n\
-     -s or --associations: equivalent to \"associations\" command          \n\
-     -v or --verbose: equivalent to \"verbose\" command                    \n\
-     -V or --version: equivalent to \"version\" command                    \n\
-                                                                           \n\
-  <keyword> may be omitted from the execute line and sacctmgr will execute \n\
-  in interactive mode. It will process commands as entered until explicitly\n\
-  terminated.                                                              \n\
-                                                                           \n\
-  Valid <COMMAND> values are:                                              \n\
-     add <ENTITY> <SPECS>     add entity                                   \n\
-     archive <DUMP/LOAD> <SPECS>                                           \n\
-                              Archive past jobs and/or steps, or load them \n\
-                              back into the databse.                       \n\
-     associations             when using show/list will list the           \n\
-                              associations associated with the entity.     \n\
-     clear stats              clear server statistics                      \n\
-     delete <ENTITY> <SPECS>  delete the specified entity(s)               \n\
-     dump <CLUSTER> [File=<FILENAME>]                                      \n\
-                              dump database information of the             \n\
-                              specified cluster to the flat file.          \n\
-                              Will default to clustername.cfg if no file   \n\
-                              is given.                                    \n\
-     exit                     terminate sacctmgr                           \n\
-     help                     print this description of use.               \n\
-     list <ENTITY> [<SPECS>]  display info of identified entity, default   \n\
-                              is display all.                              \n\
-     load <FILE> [<SPECS>]    read in the file to update the database      \n\
-                              with the file contents. <SPECS> here consist \n\
-                              of 'cluster=', and 'clean'.  The 'cluster='  \n\
-                              will override the cluster name given in the  \n\
-                              file.  The 'clean' option will remove what is\n\
-                              already in the system for this cluster and   \n\
-                              replace it with the file.  If the clean option\n\
-                              is not given only new additions or           \n\
-                              modifications will be done, no deletions.    \n\
-     modify <ENTITY> <SPECS>  modify entity                                \n\
-     oneliner                 report output one record per line.           \n\
-     parsable                 output will be | delimited with an ending '|'\n\
-     parsable2                output will be | delimited without an ending '|'\n\
-     quiet                    print no messages other than error messages. \n\
-     quit                     terminate this command.                      \n\
-     readonly                 makes it so no modification can happen.      \n\
-     reconfigure              reread the slurmdbd.conf on the DBD.         \n\
-     shutdown                 shutdown the server.                         \n\
-     show                     same as list                                 \n\
-     verbose                  enable detailed logging.                     \n\
-     version                  display tool version number.                 \n\
-     !!                       Repeat the last command entered.             \n\
-                                                                           \n\
-  <ENTITY> may be \"account\", \"association\", \"cluster\",               \n\
-                  \"configuration\", \"coordinator\", \"event\",           \n\
-                  \"federation\", \"job\", \"problem\", \"qos\",           \n\
-                  \"resource\", \"reservation\", \"runawayjobs\", \"stats\"\n\
-                  \"transaction\", \"tres\", \"user\" or \"wckey\"         \n\
-                                                                           \n\
-  <SPECS> are different for each command entity pair.                      \n\
-       list account       - Clusters=, Descriptions=, Format=,             \n\
-                            Names=, Organizations=, Parents=, WithAssoc,   \n\
-                            WithDeleted, WithCoordinators, WithRawQOS,     \n\
-                            and WOPLimits                                  \n\
-       add account        - Clusters=, DefaultQOS=, Description=, Fairshare=,\n\
-                            GrpTRESMins=, GrpTRES=, GrpJobs=, GrpMemory=,   \n\
-                            GrpNodes=, GrpSubmitJob=, GrpWall=, MaxTRESMins=,\n\
-                            MaxTRES=, MaxJobs=, MaxNodes=, MaxSubmitJobs=, \n\
-                            MaxWall=, Names=, Organization=, Parent=,      \n\
-                            Priority= and QosLevel=                        \n\
-       modify account     - (set options) DefaultQOS=, Description=,       \n\
-                            Fairshare=, GrpTRESMins=, GrpTRESRunMins=,       \n\
-                            GrpTRES=, GrpJobs=, GrpMemory=, GrpNodes=,     \n\
-                            GrpSubmitJob=, GrpWall=, MaxTRESMins=, MaxTRES=,\n\
-                            MaxJobs=, MaxNodes=, MaxSubmitJobs=, MaxWall=, \n\
-                            Names=, Organization=, Parent=, and QosLevel=  \n\
-                            RawUsage= (with admin privileges only)         \n\
-                            (where options) Clusters=, DefaultQOS=,        \n\
-                            Descriptions=, Names=, Organizations=,         \n\
-                            Parent=,Priority= and QosLevel=                \n\
-       delete account     - Clusters=, DefaultQOS=, Descriptions=, Names=, \n\
-                            Organizations=, and Parents=                   \n\
-                                                                           \n\
-       list associations  - Accounts=, Clusters=, Format=, ID=, OnlyDefaults,\n\
-                            Partitions=, Parent=, Tree, Users=,            \n\
-                            WithSubAccounts, WithDeleted, WOLimits,        \n\
-                            WOPInfo, and WOPLimits                         \n\
-                                                                           \n\
-       list cluster       - Classification=, DefaultQOS=, Federation=,     \n\
-                            Flags=, Format=, Names=, RPC= WithFed and      \n\
-                            WOLimits                                       \n\
-       add cluster        - DefaultQOS=, Fairshare=, Federation=, FedState=,\n\
-                            GrpTRES=, GrpJobs=, GrpMemory=, GrpNodes=,     \n\
-                            GrpSubmitJob=, MaxTRESMins=, MaxJobs=,         \n\
-                            MaxNodes=, MaxSubmitJobs=, MaxWall=, Name=,    \n\
-                            QosLevel= and Weight=                          \n\
-       modify cluster     - (set options) DefaultQOS=, Fairshare=,         \n\
-                            Federation=, FedState=, GrpTRES=, GrpJobs=,    \n\
-                            GrpMemory=, GrpNodes=, GrpSubmitJob=,          \n\
-                            MaxTRESMins=, MaxJobs=, MaxNodes=,             \n\
-                            MaxSubmitJobs=, MaxWall=, QosLevel= and Weight=\n\
-                            (where options) Classification=, Federation=,  \n\
-                            Flags=, and Names=                             \n\
-       delete cluster     - Classification=, DefaultQOS=, Flags=, and Names=\n\
-                                                                           \n\
-       add coordinator    - Accounts=, and Names=                          \n\
-       delete coordinator - Accounts=, and Names=                          \n\
-                                                                           \n\
-       list events        - All_Clusters, All_Time, Clusters=, CondFlags=, \n\
-                            End=, Events=, Format=, MaxCPUs=, MinCPUs=,    \n\
-                            Nodes=, Reason=, Start=, States=, and User=    \n\
-                                                                           \n\
-       list federation    - Names=, Format= and Tree                       \n\
-       add federation     - Flags=, Clusters= and Name=                    \n\
-       modify federation  - (set options) Clusters= and Flags=             \n\
-                            (where options) Names=                         \n\
-       delete federation  - Names=                                         \n\
-                                                                           \n\
-       modify job         - (set options) DerivedExitCode=, Comment=,      \n\
-                            NewWCKey=                                      \n\
-                            (where options) JobID=, Cluster=, EndTime=,    \n\
-                            StartTime=, WCKey=, User=                      \n\
-                                                                           \n\
-       list qos           - Descriptions=, Format=, Id=, Names=,           \n\
-                            PreemptMode=, and WithDeleted                  \n\
-       add qos            - Description=, Flags=, GraceTime=, GrpJobs=,    \n\
-                            GrpSubmitJob=, GrpTRES=, GrpTRESMins=, GrpWall=,\n\
-                            MaxJobs=, MaxSubmitJobsPerUser=, MaxTRESMins=, \n\
-                            MaxTRESPerJob=, MaxTRESPerNode=, MaxTRESPerUser=,\n\
-                            MaxWall=, Names=, Preempt=, PreemptMode=,      \n\
-                            Priority=, UsageFactor=, and UsageThreshold=   \n\
-       modify qos         - (set options) Description=, Flags=, GraceTime=,\n\
-                            GrpJobs=, GrpSubmitJob=, GrpTRES=, GrpTRESMins=,\n\
-                            GrpWall=,\n\
-                            MaxJobs=, MaxSubmitJobsPerUser=, MaxTRESMins=, \n\
-                            MaxTRESPerJob=, MaxTRESPerNode=, MaxTRESPerUser=,\n\
-                            MaxWall=, Names=, Preempt=, PreemptMode=,      \n\
-                            Priority=, RawUsage= (admin only),             \n\
-                            UsageFactor=, and UsageThreshold=              \n\
-                            (where options) Descriptions=, ID=, Names=     \n\
-                            and PreemptMode=                               \n\
-       delete qos         - Descriptions=, ID=, Names=, and PreemptMode=   \n\
-                                                                           \n\
-       list resource      - Clusters=, Descriptions=, Flags=, Format=, Ids=,\n\
-                            Names=, PercentAllowed=, ServerType=, Servers=,\n\
-                            and WithClusters                               \n\
-       add resource       - Clusters=, Count=, Descriptions=, Flags=,      \n\
-                            ServerType=, Names=, PercentAllowed=, Server=, \n\
-                            and Type=                                      \n\
-       modify resource    - (set options) Count=, Flags=, Manager=,        \n\
-                            PercentAllowed=,                               \n\
-                            (where options) Clusters=, Names=, Servers=,   \n\
-       delete resource    - Clusters=, Names=                              \n\
-                                                                           \n\
-       list reservation   - Clusters=, End=, ID=, Names=, Nodes=, Start=   \n\
-                                                                           \n\
-       list runawayjobs   - Cluster=, Format=                              \n\
-                                                                           \n\
-       clear stats                                                         \n\
-       list stats                                                          \n\
-                                                                           \n\
-       list transactions  - Accounts=, Action=, Actor=, Clusters=, End=,   \n\
-                            Format=, ID=, Start=, User=, and WithAssoc     \n\
-                                                                           \n\
-       list tres          - ID=, Name=, Type=, WithDeleted                 \n\
-                                                                           \n\
-       list user          - AdminLevel=, DefaultAccount=,                  \n\
-                            DefaultWCKey=, Format=, Names=,                \n\
-                            QosLevel=, WithAssoc, WithCoordinators,        \n\
-                            WithDeleted, WithRawQOS, and WOPLimits         \n\
-       add user           - Accounts=, AdminLevel=, Clusters=,             \n\
-                            DefaultAccount=, DefaultQOS=, DefaultWCKey=,   \n\
-                            Fairshare=, MaxTRESMins=, MaxTRES=,            \n\
-                            MaxJobs=, MaxNodes=, MaxSubmitJobs=, MaxWall=, \n\
-                            Names=, Partitions=, Priority= and QosLevel=   \n\
-       modify user        - (set options) AdminLevel=, DefaultAccount=,    \n\
-                            DefaultQOS=, DefaultWCKey=, Fairshare=,        \n\
-                            MaxTRESMins=, MaxTRES=, MaxJobs=, MaxNodes=,   \n\
-                            MaxSubmitJobs=, MaxWall=, NewName=,            \n\
-                            and QosLevel=,                                 \n\
-                            RawUsage= (with admin privileges only)         \n\
-                            (where options) Accounts=, AdminLevel=,        \n\
-                            Clusters=, DefaultAccount=, Names=,            \n\
-                            Partitions=, Priority= and QosLevel=           \n\
-       delete user        - Accounts=, AdminLevel=, Clusters=,             \n\
-                            DefaultAccount=, DefaultWCKey=, and Names=     \n\
-                                                                           \n\
-       list wckey         - Clusters=, End=, Format=, ID=, Names=,         \n\
-                            Start=, User=, and WithDeleted                 \n\
-                                                                           \n\
-       archive dump       - Directory=, Events, Jobs,                      \n\
-                            PurgeEventAfter=, PurgeJobAfter=,              \n\
-                            PurgeStepAfter=, PurgeSuspendAfter=,           \n\
-                            Script=, Steps, and Suspend                    \n\
-                                                                           \n\
-       archive load       - File=, or Insert=                              \n\
-                                                                           \n\
-  Format options are different for listing each entity pair.               \n\
-                                                                           \n\
-  One can get an number of characters by following the field option with   \n\
-  a %%NUMBER option.  i.e. format=name%%30 will print 30 chars of field name.\n\
-                                                                           \n\
-       Account            - Account, Coordinators, Description, Organization\n\
-                                                                           \n\
-       Association        - Account, Cluster, DefaultQOS, Fairshare,       \n\
-                            GrpTRESMins, GrpTRESRunMins, GrpTRES, GrpJobs, \n\
-                            GrpMemory, GrpNodes, GrpSubmitJob, GrpWall,    \n\
-                            ID, LFT, MaxTRESMins, MaxTRES,                 \n\
-                            MaxJobs, MaxNodes, MaxSubmitJobs, MaxWall, QOS,\n\
-                            ParentID, ParentName, Partition, RGT,          \n\
-                            User, WithRawQOS                               \n\
-                                                                           \n\
-       Cluster            - Classification, Cluster, ClusterNodes,         \n\
-                            ControlHost, ControlPort, DefaultQOS,          \n\
-                            Fairshare, Flags, GrpTRESMins, GrpTRES GrpJobs,\n\
-                            GrpMemory, GrpNodes, GrpSubmitJob, MaxTRESMins, \n\
-                            MaxTRES, MaxJobs, MaxNodes, MaxSubmitJobs,     \n\
-                            MaxWall, NodeCount, PluginIDSelect, RPC, TRES  \n\
-                                                                           \n\
-       Event              - Cluster, ClusterNodes, Duration, End,          \n\
-                            Event, EventRaw, NodeName, Reason, Start,      \n\
-                            State, StateRaw, TRES, User                    \n\
-                                                                           \n\
-       QOS                - Description, Flags, GraceTime, GrpJobs,        \n\
-                            GrpSubmitJob, GrpTRES, GrpTRESMins, GrpWall,   \n\
-                            MaxJobs, MaxSubmitJobsPerUser, MaxTRESMins,    \n\
-                            MaxTRESPerJob, MaxTRESPerNode, MaxTRESPerUser, \n\
-                            MaxWall, Name, Preempt, PreemptMode,           \n\
-                            Priority, UsageFactor, UsageThreshold          \n\
-                                                                           \n\
-       Resource           - Cluster, Count, CountAllowed, CountUsed,       \n\
-                            Description, Flags, Manager, Name,             \n\
-                            PercentAllowed, PercentUsed, Server, Type      \n\
-                                                                           \n\
-       Reservation        - Assoc, Cluster, End, Flags, ID, Name,          \n\
-                            NodeNames, Start, TRES, UnusedWall             \n\
-                                                                           \n\
-       RunAwayJobs        - Cluster, ID, Name, Partition, State,           \n\
-                            TimeStart, TimeEnd                             \n\
-                                                                           \n\
-       Transactions       - Action, Actor, Info, TimeStamp, Where          \n\
-                                                                           \n\
-       TRES               - ID, Name, Type                                 \n\
-                                                                           \n\
-       User               - AdminLevel, Coordinators, DefaultAccount,      \n\
-                            DefaultWCKey, User                             \n\
-                                                                           \n\
-       WCKey              - Cluster, ID, Name, User                        \n\
-                                                                           \n\
-       Account/User WithAssoc option will also honor                       \n\
-       all of the options for Association.                                 \n\
-                                                                           \n\
-                                                                           \n\
-  All commands entitys, and options are case-insensitive.               \n\n");
-
+        char *txt;
+        static_ref_to_cstring(txt, usage_txt);
+        printf("%s\n", txt);
+        xfree(txt);
 }

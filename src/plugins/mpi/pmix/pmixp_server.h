@@ -75,10 +75,10 @@ typedef void (*pmixp_server_sent_cb_t)(int rc, pmixp_p2p_ctx_t ctx,
  */
 void pmixp_server_sent_buf_cb(int rc, pmixp_p2p_ctx_t ctx, void *data);
 
-int pmixp_stepd_init(const stepd_step_rec_t *job, char ***env);
+int pmixp_stepd_init(const stepd_step_rec_t *step, char ***env);
 int pmixp_stepd_finalize(void);
 void pmixp_server_cleanup(void);
-int pmix_srun_init(const mpi_plugin_client_info_t *job, char ***env);
+int pmix_srun_init(const mpi_step_info_t *mpi_step, char ***env);
 void pmixp_server_slurm_conn(int fd);
 void pmixp_server_direct_conn(int fd);
 int pmixp_server_direct_conn_early(void);

@@ -37,10 +37,12 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <limits.h>
+#include <netdb.h>
 #include <nss.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -50,7 +52,9 @@
 #include "src/common/slurm_xlator.h"
 
 #include "src/common/parse_config.h"
+#include "src/common/read_config.h"
 #include "src/common/stepd_api.h"
+#include "src/common/xstring.h"
 
 /*
  * One important design note: we cannot load the slurm.conf file using the
@@ -81,7 +85,7 @@ static int _load_config(void)
 	tbl = s_p_hashtbl_create(options);
 	if (stat(conf, &statbuf) || !statbuf.st_size) {
 		/* No file, continue below to set defaults */
-	} else if (s_p_parse_file(tbl, NULL, conf, false, NULL)) {
+	} else if (s_p_parse_file(tbl, NULL, conf, false, NULL, false)) {
 		/* could not load or parse file */
 		return (config_loaded = SLURM_ERROR);
 	}

@@ -98,6 +98,7 @@ typedef struct bb_alloc {
 	bool cancelled;
 	time_t create_time;	/* Time of creation */
 	time_t end_time;	/* Expected time when use will end */
+	uint32_t group_id;
 	uint32_t id;		/* ID for reservation/accounting */
 	uint32_t job_id;
 	uint32_t magic;
@@ -252,6 +253,16 @@ extern bb_alloc_t *bb_alloc_name_rec(bb_state_t *state_ptr, char *name,
  * Return SLURM_SUCCESS if it succeeded or SLURM_ERROR if it failed.
  */
 extern int bb_build_bb_script(job_record_t *job_ptr, char *script_file);
+
+/*
+ * Create job script based on het job offsets
+ *
+ * Offset 0 - prepend burst buffer directives w/#EXCLUDED for offsets > 0
+ * Offset > 0 - remove all directives that are not current component
+ */
+extern char *bb_common_build_het_job_script(char *script,
+					    uint32_t het_job_offset,
+					    bool (*is_directive) (char *tok));
 
 /* Clear all cached burst buffer records, freeing all memory. */
 extern void bb_clear_cache(bb_state_t *state_ptr);

@@ -49,6 +49,7 @@
 #include "src/common/timers.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xregex.h"
 #include "src/common/xstring.h"
 
 #include "src/common/data.h"
@@ -68,42 +69,6 @@ static regex_t float_pattern_re;
 
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool initialized = false; /* protected by init_mutex */
-
-typedef struct {
-	int (*serialize)(char **dest, const data_t *src,
-			 data_serializer_flags_t flags);
-	int (*deserialize)(data_t **dest, const char *src, size_t length);
-} serializer_funcs_t;
-
-/*
- * Must be synchronized with serializer_funcs_t above.
- */
-static const char *syms[] = {
-	"serializer_p_serialize",
-	"serializer_p_deserialize",
-};
-
-#define SERIALIZER_MIME_TYPES_SYM "mime_types"
-/* serializer plugin state */
-static serializer_funcs_t *plugins = NULL;
-static int g_context_cnt = -1;
-static plugin_context_t **g_context = NULL;
-
-/* serializer plugrack state */
-static plugin_handle_t *plugin_handles = NULL;
-static char **plugin_types = NULL;
-static size_t plugin_count = 0;
-static plugrack_t *rack = NULL;
-
-#define PMT_MAGIC 0xaaaa8031
-typedef struct {
-	int magic;
-	const char *mime_type; /* never free - const data from plugins */
-	int index; /* plugin index in g_context[] */
-} plugin_mime_type_t;
-
-/* list of all of the known mime types */
-static List mime_types_list = NULL;
 
 #define DATA_MAGIC 0x1992189F
 #define DATA_LIST_MAGIC 0x1992F89F
@@ -127,58 +92,18 @@ struct data_list_s {
 	data_list_node_t *end;
 };
 
+typedef struct {
+	char *path;
+	char *at;
+	const char *token;
+} merge_path_strings_t;
+
 static void _check_magic(const data_t *data);
 static void _release(data_t *data);
 static void _release_data_list_node(data_list_t *dl, data_list_node_t *dn);
 
-static void _dump_regex_error(int rc, const regex_t *preg)
-{
-	char *buffer = NULL;
-	size_t len = regerror(rc, preg, NULL, 0);
-
-	if (len == 0) {
-		error("%s: unknown regex error code: %d", __func__, rc);
-		return;
-	}
-
-	buffer = xmalloc(len);
-	len = regerror(rc, preg, buffer, len);
-
-	if (len)
-		error("%s: regex error: %s", __func__, buffer);
-	else
-		error("%s: unexpected failure to get regex error", __func__);
-
-	xfree(buffer);
-}
-
-static bool _regex_quick_match(const char *str, const regex_t *preg)
-{
-	int rc;
-
-	// TODO: nmatch may safely be able to be 0 for this function
-	size_t nmatch = 1;
-	regmatch_t pmatch[nmatch];
-
-	/* not possible to match a NULL string */
-	if (!str)
-		return false;
-
-	rc = regexec(preg, str, nmatch, pmatch, 0);
-	if (!rc) { /* matched */
-		return true;
-	} else if (rc == REG_NOMATCH) {
-		return false;
-	} else { /* other error */
-		_dump_regex_error(rc, preg);
-		return false;
-	}
-}
-
 extern void data_fini(void)
 {
-	int rc;
-
 	slurm_mutex_lock(&init_mutex);
 
 	if (initialized) {
@@ -187,242 +112,49 @@ extern void data_fini(void)
 		regfree(&int_pattern_re);
 		regfree(&float_pattern_re);
 	}
-	if (initialized && rack) {
-		/* cleanup plugins if any were loaded */
-		FREE_NULL_LIST(mime_types_list);
-
-		for (int i = 0; (g_context_cnt > 0) && (i < g_context_cnt);
-		     i++) {
-			if (g_context[i] &&
-			    plugin_context_destroy(g_context[i]))
-				fatal_abort("%s: unable to unload plugin",
-					    __func__);
-		}
-
-		for (size_t i = 0; i < plugin_count; i++) {
-			plugrack_release_by_type(rack, plugin_types[i]);
-			xfree(plugin_types[i]);
-		}
-
-		if ((rc = plugrack_destroy(rack)))
-			fatal_abort("unable to clean up serializer plugrack: %s",
-				    slurm_strerror(rc));
-		rack = NULL;
-
-		xfree(plugin_handles);
-		xfree(plugin_types);
-		xfree(plugins);
-		xfree(g_context);
-		plugin_count = 0;
-		g_context_cnt = -1;
-	}
 
 	slurm_mutex_unlock(&init_mutex);
 }
 
-static bool _plugin_loaded(const char *plugin)
-{
-	if (plugin_count <= 0)
-		return false;
-
-	for (int i = 0; i < plugin_count; i++)
-		if (!xstrcasecmp(plugin, plugin_types[i]))
-			return true;
-
-	return false;
-}
-
-static void _plugrack_foreach(const char *full_type, const char *fq_path,
-			      const plugin_handle_t id, void *arg)
-{
-	if (_plugin_loaded(full_type)) {
-		log_flag(DATA, "%s: serializer plugin type %s already loaded",
-			 __func__, full_type);
-		/* effectively a no-op if already loaded */
-		return;
-	}
-
-	plugin_count++;
-	xrecalloc(plugin_handles, plugin_count, sizeof(*plugin_handles));
-	xrecalloc(plugin_types, plugin_count, sizeof(*plugin_types));
-
-	plugin_types[plugin_count - 1] = xstrdup(full_type);
-	plugin_handles[plugin_count - 1] = id;
-
-	log_flag(DATA, "%s: serializer plugin type:%s path:%s",
-		 __func__, full_type, fq_path);
-}
-
-static void _find_plugins(const char *plugin_list, plugrack_foreach_t listf)
-{
-	int rc;
-
-	if (!rack)
-		rack = plugrack_create("serializer");
-
-	if ((rc = plugrack_read_dir(rack, slurm_conf.plugindir)))
-		fatal("%s: plugrack_read_dir(%s) failed: %s",
-		      __func__, slurm_conf.plugindir, slurm_strerror(rc));
-
-	if (listf && !xstrcasecmp(plugin_list, "list")) {
-		/* call list function ptr and then load all */
-		plugrack_foreach(rack, listf, NULL);
-		plugin_list = NULL;
-	}
-
-	if (!plugin_list) {
-		/* no filter specified: load them all */
-		plugrack_foreach(rack, _plugrack_foreach, NULL);
-	} else if (plugin_list[0] == '\0') {
-		log_flag(DATA, "not loading any serializer plugins");
-	} else {
-		/* Caller provided which plugins they want */
-		char *type, *last = NULL, *pl;
-
-		pl = xstrdup(plugin_list);
-		type = strtok_r(pl, ",", &last);
-		while (type) {
-			/*
-			 * Permit both prefix and no-prefix for
-			 * plugin names.
-			 */
-			if (!xstrncmp(type, "serializer/", 11))
-				type += 11;
-			type = xstrdup_printf("serializer/%s", type);
-
-			_plugrack_foreach(type, NULL, PLUGIN_INVALID_HANDLE,
-					  NULL);
-
-			xfree(type);
-			type = strtok_r(NULL, ",", &last);
-		}
-
-		xfree(pl);
-	}
-
-	for (size_t i = 0; i < plugin_count; i++) {
-		if (plugin_handles[i] == PLUGIN_INVALID_HANDLE) {
-			plugin_handles[i] = plugrack_use_by_type(
-				rack, plugin_types[i]);
-
-			if (plugin_handles[i] == PLUGIN_INVALID_HANDLE)
-				fatal("Unable to find plugin: %s",
-				      plugin_types[i]);
-		}
-	}
-}
-
-static int _register_mime_types(List mime_types_list, size_t plugin_index,
-				const char **mime_type)
-{
-	while (*mime_type) {
-		plugin_mime_type_t *pmt = xmalloc(sizeof(*pmt));
-
-		pmt->index = plugin_index;
-		pmt->mime_type = *mime_type;
-		pmt->magic = PMT_MAGIC;
-
-		list_append(mime_types_list, pmt);
-
-		log_flag(DATA, "registered serializer plugin %s for %s",
-			 plugin_types[plugin_index], pmt->mime_type);
-
-		mime_type++;
-	}
-
-	return SLURM_SUCCESS;
-}
-
-static void _load_plugins(void)
-{
-	if (!mime_types_list) {
-		mime_types_list = list_create(xfree_ptr);
-
-		/* Load serializer plugins */
-		xassert(g_context_cnt == -1);
-		g_context_cnt = 0;
-
-		xrecalloc(plugins, (plugin_count + 1),
-			  sizeof(serializer_funcs_t));
-		xrecalloc(g_context, (plugin_count + 1),
-			  sizeof(plugin_context_t *));
-
-	}
-
-	for (size_t i = 0; (i < plugin_count); i++) {
-		const char **mime_types;
-
-		if (plugin_handles[i] == PLUGIN_INVALID_HANDLE)
-			fatal("Invalid plugin to load?");
-
-		if (plugins[i].serialize) {
-			log_flag(DATA, "%s: serializer plugin type %s already loaded",
-				 __func__, plugin_types[i]);
-			continue;
-		}
-
-		if (plugin_get_syms(plugin_handles[i], ARRAY_SIZE(syms),
-				    syms, (void **)&plugins[g_context_cnt])
-		    < ARRAY_SIZE(syms))
-			fatal("Incomplete plugin detected");
-
-		mime_types = plugin_get_sym(plugin_handles[i],
-					    SERIALIZER_MIME_TYPES_SYM);
-		if (!mime_types)
-			fatal_abort("%s: unable to load %s from plugin",
-				    __func__, SERIALIZER_MIME_TYPES_SYM);
-		_register_mime_types(mime_types_list, i, mime_types);
-
-		g_context_cnt++;
-
-		if (plugins[i].serialize)
-			log_flag(DATA, "%s: serializer plugin type %s loaded",
-				 __func__, plugin_types[i]);
-	}
-}
-
-extern int data_init(const char *plugin_list, plugrack_foreach_t listf)
+extern int data_init(void)
 {
 	int rc = SLURM_SUCCESS;
 	int reg_rc; /* regex rc */
 
 	slurm_mutex_lock(&init_mutex);
 
-	if (initialized)
-		goto load_plugins;
+	if (initialized) {
+		slurm_mutex_unlock(&init_mutex);
+		return SLURM_SUCCESS;
+	}
 	initialized = true;
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_true_re, bool_pattern_true,
 			      REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &bool_pattern_true_re);
+		dump_regex_error(reg_rc, &bool_pattern_true_re,
+				 "compile \"%s\"", bool_pattern_true);
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&bool_pattern_false_re, bool_pattern_false,
 			      REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &bool_pattern_false_re);
+		dump_regex_error(reg_rc, &bool_pattern_false_re,
+				 "compile \"%s\"", bool_pattern_false);
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&int_pattern_re, int_pattern,
 				     REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &int_pattern_re);
+		dump_regex_error(reg_rc, &int_pattern_re,
+				 "compile \"%s\"", int_pattern);
 		rc = ESLURM_DATA_REGEX_COMPILE;
 	}
 
 	if (!rc && (reg_rc = regcomp(&float_pattern_re, float_pattern,
 				     REG_EXTENDED)) != 0) {
-		_dump_regex_error(reg_rc, &float_pattern_re);
+		dump_regex_error(reg_rc, &float_pattern_re,
+				 "compile \"%s\"", float_pattern);
 		rc = ESLURM_DATA_REGEX_COMPILE;
-	}
-
-load_plugins:
-
-	if (!rc && (!plugin_list || plugin_list[0] != '\0')) {
-		_find_plugins(plugin_list, listf);
-
-		if (plugin_count > 0)
-			_load_plugins();
 	}
 
 	slurm_mutex_unlock(&init_mutex);
@@ -708,6 +440,7 @@ extern void data_free(data_t *data)
 	_release(data);
 
 	data->magic = ~DATA_MAGIC;
+	data->type = DATA_TYPE_NONE;
 	xfree(data);
 }
 
@@ -792,6 +525,14 @@ extern data_t *data_set_string(data_t *data, const char *value)
 		return NULL;
 	_release(data);
 
+	if (!value) {
+		log_flag(DATA, "%s: set data (0x%"PRIXPTR") to NULL string",
+		       __func__, (uintptr_t) data);
+
+		data->type = DATA_TYPE_NULL;
+		return data;
+	}
+
 	log_flag(DATA, "%s: set data (0x%"PRIXPTR") to string: %s",
 	       __func__, (uintptr_t) data, value);
 
@@ -808,8 +549,13 @@ extern data_t *data_set_string_own(data_t *data, char *value)
 	if (!data)
 		return NULL;
 
-	if (!value)
-		return data_set_null(data);
+	if (!value) {
+		log_flag(DATA, "%s: set data (0x%"PRIXPTR") to NULL string",
+		       __func__, (uintptr_t) data);
+
+		data->type = DATA_TYPE_NULL;
+		return data;
+	}
 
 	/* check that the string was xmalloc()ed and actually has contents */
 	xassert(xsize(value));
@@ -875,6 +621,7 @@ extern data_t *data_list_append(data_t *data)
 	data_t *ndata = NULL;
 	_check_magic(data);
 
+	xassert(data && (data->type == DATA_TYPE_LIST));
 	if (!data || data->type != DATA_TYPE_LIST)
 		return NULL;
 
@@ -902,6 +649,32 @@ extern data_t *data_list_prepend(data_t *data)
 		 __func__, (uintptr_t) ndata, (uintptr_t) data);
 
 	return ndata;
+}
+
+extern data_t *data_list_dequeue(data_t *data)
+{
+	data_list_node_t *n;
+	data_t *ret = NULL;
+	_check_magic(data);
+
+	if (!data || data->type != DATA_TYPE_LIST)
+		return NULL;
+
+	if (!(n = data->data.list_u->begin))
+		return NULL;
+
+	_check_data_list_node_magic(n);
+
+	/* extract out data for caller */
+	SWAP(ret, n->data);
+
+	/* remove node from list */
+	_release_data_list_node(data->data.list_u, n);
+
+	log_flag(DATA, "%s: list dequeue data (0x%"PRIXPTR") from (0x%"PRIXPTR")",
+		 __func__, (uintptr_t) ret, (uintptr_t) data);
+
+	return ret;
 }
 
 static data_for_each_cmd_t _data_list_join(const data_t *src, void *arg)
@@ -967,7 +740,31 @@ const data_t *data_key_get_const(const data_t *data, const char *key)
 		return NULL;
 }
 
+static bool _match_string(const char *key, data_t *data, void *needle_ptr)
+{
+	const char *needle = needle_ptr;
+	return !xstrcmp(key, needle);
+}
+
 data_t *data_key_get(data_t *data, const char *key)
+{
+	return data_dict_find_first(data, _match_string, (void *) key);
+}
+
+extern data_t *data_key_get_int(data_t *data, int64_t key)
+{
+	char *key_str = xstrdup_printf("%"PRId64, key);
+	data_t *node = data_key_get(data, key_str);
+
+	xfree(key_str);
+
+	return node;
+}
+
+extern data_t *data_list_find_first(
+	data_t *data,
+	bool (*match)(const data_t *data, void *needle),
+	void *needle)
 {
 	data_list_node_t *i;
 
@@ -975,20 +772,20 @@ data_t *data_key_get(data_t *data, const char *key)
 	if (!data)
 		return NULL;
 
-	xassert(data->type == DATA_TYPE_DICT);
-	if (!key || data->type != DATA_TYPE_DICT)
+	xassert(data->type == DATA_TYPE_LIST);
+	if (data->type != DATA_TYPE_LIST)
 		return NULL;
 
-	/* don't bother searching empty dictionary */
-	if (!data->data.dict_u->count)
+	/* don't bother searching empty list */
+	if (!data->data.list_u->count)
 		return NULL;
 
-	_check_data_list_magic(data->data.dict_u);
-	i = data->data.dict_u->begin;
+	_check_data_list_magic(data->data.list_u);
+	i = data->data.list_u->begin;
 	while (i) {
 		_check_data_list_node_magic(i);
 
-		if (!xstrcmp(key, i->key))
+		if (match(i->data, needle))
 			break;
 
 		i = i->next;
@@ -1000,14 +797,40 @@ data_t *data_key_get(data_t *data, const char *key)
 		return NULL;
 }
 
-extern data_t *data_key_get_int(data_t *data, int64_t key)
+extern data_t *data_dict_find_first(
+	data_t *data,
+	bool (*match)(const char *key, data_t *data, void *needle),
+	void *needle)
 {
-	char *key_str = xstrdup_printf("%"PRId64, key);
-	data_t *node = data_key_get(data, key_str);
+	data_list_node_t *i;
 
-	xfree(key_str);
+	_check_magic(data);
+	if (!data)
+		return NULL;
 
-	return node;
+	xassert(data->type == DATA_TYPE_DICT);
+	if (data->type != DATA_TYPE_DICT)
+		return NULL;
+
+	/* don't bother searching empty dictionary */
+	if (!data->data.dict_u->count)
+		return NULL;
+
+	_check_data_list_magic(data->data.dict_u);
+	i = data->data.dict_u->begin;
+	while (i) {
+		_check_data_list_node_magic(i);
+
+		if (match(i->key, i->data, needle))
+			break;
+
+		i = i->next;
+	}
+
+	if (i)
+		return i->data;
+	else
+		return NULL;
 }
 
 data_t *data_key_set(data_t *data, const char *key)
@@ -1258,6 +1081,96 @@ size_t data_get_list_length(const data_t *data)
 	return data->data.list_u->count;
 }
 
+extern data_t *data_get_list_last(data_t *data)
+{
+	data_list_node_t *i;
+	_check_magic(data);
+
+	if (!data)
+		return NULL;
+
+	xassert(data->type == DATA_TYPE_LIST);
+	if (data->type != DATA_TYPE_LIST)
+		return NULL;
+
+	if (!data->data.list_u->count)
+		return NULL;
+
+	i = data->data.list_u->begin;
+	_check_data_list_magic(data->data.list_u);
+	while (i) {
+		_check_data_list_node_magic(i);
+		xassert(!i->key);
+
+		if (!i->next)
+			return i->data;
+
+		i = i->next;
+	}
+
+	fatal_abort("%s: malformed data list", __func__);
+}
+
+extern int data_list_split_str(data_t *dst, const char *src, const char *token)
+{
+	char *save_ptr = NULL;
+	char *tok = NULL;
+	char *str = xstrdup(src);
+
+	if (data_get_type(dst) == DATA_TYPE_NULL)
+		data_set_list(dst);
+
+	xassert(data_get_type(dst) == DATA_TYPE_LIST);
+	if (data_get_type(dst) != DATA_TYPE_LIST)
+		return SLURM_ERROR;
+
+	tok = strtok_r(str, "/", &save_ptr);
+	while (tok) {
+		xstrtrim(tok);
+
+		data_set_string(data_list_append(dst), tok);
+
+		tok = strtok_r(NULL, "/", &save_ptr);
+	}
+	xfree(str);
+
+	return SLURM_SUCCESS;
+}
+
+static data_for_each_cmd_t _foreach_join_str(const data_t *data, void *arg)
+{
+	char *b = NULL;
+	merge_path_strings_t *args = arg;
+
+	data_get_string_converted(data, &b);
+
+	xstrfmtcatat(args->path, &args->at, "%s%s%s",
+		     (!args->path ? args->token : ""),
+		     (args->at ? args->token : ""), b);
+
+	xfree(b);
+
+	return DATA_FOR_EACH_CONT;
+}
+
+extern int data_list_join_str(char **dst, const data_t *src, const char *token)
+{
+	merge_path_strings_t args = {
+		.token = token,
+	};
+
+	xassert(!*dst);
+	xassert(data_get_type(src) == DATA_TYPE_LIST);
+
+	if (data_list_for_each_const(src, _foreach_join_str, &args) < 0) {
+		xfree(args.path);
+		return SLURM_ERROR;
+	}
+
+	*dst = args.path;
+	return SLURM_SUCCESS;
+}
+
 extern int data_list_for_each_const(const data_t *d, DataListForFConst f, void *arg)
 {
 	int count = 0;
@@ -1496,8 +1409,8 @@ static int _convert_data_force_bool(data_t *data)
 		if (data->data.string_u == NULL ||
 		    data->data.string_u[0] == '\0')
 			data_set_bool(data, false);
-		else if (_regex_quick_match(data->data.string_u,
-					    &bool_pattern_true_re))
+		else if (regex_quick_match(data->data.string_u,
+					   &bool_pattern_true_re))
 			data_set_bool(data, true);
 		else { /* try to auto detect the type and try again */
 			if (data_convert_type(data, DATA_TYPE_NONE)
@@ -1560,15 +1473,15 @@ static int _convert_data_bool(data_t *data)
 
 	switch (data->type) {
 	case DATA_TYPE_STRING:
-		if (_regex_quick_match(data->data.string_u,
-				       &bool_pattern_true_re)) {
+		if (regex_quick_match(data->data.string_u,
+				      &bool_pattern_true_re)) {
 			log_flag(DATA, "%s: convert data (0x%"PRIXPTR") to bool: %s->true",
 				 __func__, (uintptr_t) data,
 				 data->data.string_u);
 			data_set_bool(data, true);
 			return SLURM_SUCCESS;
-		} else if (_regex_quick_match(data->data.string_u,
-					      &bool_pattern_false_re)) {
+		} else if (regex_quick_match(data->data.string_u,
+					     &bool_pattern_false_re)) {
 			log_flag(DATA, "%s: convert data (0x%"PRIXPTR") to bool: %s->false",
 				 __func__, (uintptr_t) data,
 				 data->data.string_u);
@@ -1592,7 +1505,7 @@ static int _convert_data_int(data_t *data)
 
 	switch (data->type) {
 	case DATA_TYPE_STRING:
-		if (_regex_quick_match(data->data.string_u, &int_pattern_re)) {
+		if (regex_quick_match(data->data.string_u, &int_pattern_re)) {
 			int64_t x;
 			if (sscanf(data->data.string_u, "%"SCNd64, &x) == 1) {
 				log_flag(DATA, "%s: converted data (0x%"PRIXPTR") to int: %s->%"PRId64,
@@ -1626,8 +1539,7 @@ static int _convert_data_float(data_t *data)
 
 	switch (data->type) {
 	case DATA_TYPE_STRING:
-		if (_regex_quick_match(data->data.string_u,
-				       &float_pattern_re)) {
+		if (regex_quick_match(data->data.string_u, &float_pattern_re)) {
 			double x;
 			if (sscanf(data->data.string_u, "%lf", &x) == 1) {
 				log_flag(DATA, "%s: convert data (0x%"PRIXPTR") to float: %s->%lf",
@@ -2000,8 +1912,11 @@ extern data_t *data_define_dict_path(data_t *data, const char *path)
 
 data_t *data_copy(data_t *dest, const data_t *src)
 {
-	if (!src || !dest)
+	if (!src)
 		return NULL;
+
+	if (!dest)
+		dest = data_new();
 
 	_check_magic(src);
 	_check_magic(dest);
@@ -2130,103 +2045,4 @@ extern char *data_type_to_string(data_type_t type)
 		default:
 			return "INVALID";
 	}
-}
-
-static int _find_serializer_full_type(void *x, void *key)
-{
-	plugin_mime_type_t *pmt = x;
-	const char *mime_type = key;
-
-	xassert(pmt->magic == PMT_MAGIC);
-
-	if (!xstrcasecmp(mime_type, pmt->mime_type))
-		return 1;
-
-	return 0;
-}
-
-static plugin_mime_type_t *_find_serializer(const char *mime_type)
-{
-	if (!xstrcmp("*/*", mime_type)) {
-		/*
-		 * default to JSON if client will accept anything to avoid
-		 * finding url-encoded or any other less suitable plugin first.
-		 */
-		plugin_mime_type_t *pmt = _find_serializer(MIME_TYPE_JSON);
-
-		if (pmt) {
-			return pmt;
-		} else {
-			/* JSON must not be loaded - try first thing we find */
-			return list_peek(mime_types_list);
-		}
-
-	} else {
-		const int len = strlen(mime_type);
-
-		/* check if client gave {TYPE} / * */
-		if ((len > 3) && (mime_type[len] == '*') &&
-		    (mime_type[len - 1] == '*')) {
-			debug("%s: Partial mime_type globbing not supported", __func__);
-			return NULL;
-		}
-	}
-
-	return list_find_first(mime_types_list, _find_serializer_full_type,
-			       (void *) mime_type);
-}
-
-extern int data_g_serialize(char **dest, const data_t *src,
-			    const char *mime_type,
-			    data_serializer_flags_t flags)
-{
-	DEF_TIMERS;
-	int rc;
-	plugin_mime_type_t *pmt = NULL;
-
-	xassert(dest && (*dest == NULL));
-
-	pmt = _find_serializer(mime_type);
-	if (!pmt)
-		return ESLURM_DATA_UNKNOWN_MIME_TYPE;
-
-	xassert(pmt->magic == PMT_MAGIC);
-
-	START_TIMER;
-	rc = (*(plugins[pmt->index].serialize))(dest, src, flags);
-	END_TIMER2(__func__);
-
-	return rc;
-}
-
-extern int data_g_deserialize(data_t **dest, const char *src, size_t length,
-			      const char *mime_type)
-{
-	DEF_TIMERS;
-	int rc;
-	plugin_mime_type_t *pmt = NULL;
-
-	xassert(dest && (*dest == NULL));
-
-	pmt = _find_serializer(mime_type);
-	if (!pmt)
-		return ESLURM_DATA_UNKNOWN_MIME_TYPE;
-
-	xassert(pmt->magic == PMT_MAGIC);
-
-	START_TIMER;
-	rc = (*(plugins[pmt->index].deserialize))(dest, src, length);
-	END_TIMER2(__func__);
-
-	return rc;
-}
-
-extern const char *data_resolve_mime_type(const char *mime_type)
-{
-	plugin_mime_type_t *pmt = _find_serializer(mime_type);
-
-	if (!pmt)
-		return NULL;
-
-	return pmt->mime_type;
 }

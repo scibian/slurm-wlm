@@ -50,18 +50,18 @@
 
 #include "slurm/slurm.h"
 
-#include "src/common/cli_filter.h"
+#include "src/interfaces/cli_filter.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/pack.h"
-#include "src/common/plugstack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/run_command.h"
-#include "src/common/select.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
+#include "src/common/spank.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
 
@@ -102,8 +102,11 @@ int main(int argc, char **argv)
 	if (!isatty(STDERR_FILENO))
 		setvbuf(stderr, NULL, _IOLBF, 0);
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
+
+	if (cli_filter_init() != SLURM_SUCCESS)
+		fatal("failed to initialize cli_filter plugin");
 
 	_set_exit_code();
 	if (spank_init_allocator() < 0) {
@@ -137,7 +140,7 @@ int main(int argc, char **argv)
 	if (script_body == NULL)
 		exit(error_exit);
 
-	het_job_argc = argc - sbopt.script_argc;
+	het_job_argc = argc - opt.argc;
 	het_job_argv = argv;
 	for (het_job_inx = 0; !het_job_fini; het_job_inx++) {
 		bool more_het_comps = false;
@@ -171,7 +174,7 @@ int main(int argc, char **argv)
 			}
 			run_command_add_to_script(&script_body,
 						  get_buf_data(buf));
-			free_buf(buf);
+			FREE_NULL_BUFFER(buf);
 		}
 
 		if (spank_init_post_opt() < 0) {
@@ -344,6 +347,7 @@ int main(int argc, char **argv)
 		rc = _job_wait(resp->job_id);
 
 #ifdef MEMORY_LEAK_DEBUG
+	cli_filter_fini();
 	select_g_fini();
 	slurm_reset_all_options(&opt, false);
 	slurm_auth_fini();
@@ -423,6 +427,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->array_inx = sbopt.array_inx;
 	desc->batch_features = sbopt.batch_features;
 	desc->container = xstrdup(opt.container);
+	xfree(desc->container_id);
+	desc->container_id = xstrdup(opt.container_id);
 
 	desc->wait_all_nodes = sbopt.wait_all_nodes;
 
@@ -436,6 +442,10 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "ALL")) {
 		env_array_merge(&desc->environment, (const char **) environ);
+	} else if (!xstrcasecmp(opt.export_env, "NIL")) {
+		desc->environment = env_array_create();
+		env_array_merge_slurm(&desc->environment,
+				      (const char **)environ);
 	} else if (!xstrcasecmp(opt.export_env, "NONE")) {
 		desc->environment = env_array_create();
 		env_array_merge_slurm(&desc->environment,
@@ -458,8 +468,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	desc->env_size = envcount(desc->environment);
 
-	desc->argc     = sbopt.script_argc;
-	desc->argv     = sbopt.script_argv;
+	desc->argc     = opt.argc;
+	desc->argv     = opt.argv;
 	desc->std_err  = xstrdup(opt.efname);
 	desc->std_in   = xstrdup(opt.ifname);
 	desc->std_out  = xstrdup(opt.ofname);
@@ -643,10 +653,20 @@ static void *_get_script_buffer(const char *filename, int *size)
 			error("Unable to open file %s", filename);
 			goto fail;
 		}
+		/* Quick check against absurdly large file sizes */
+		if (fd != STDIN_FILENO) {
+			struct stat st;
+			if (fstat(fd, &st) == -1)
+				fatal("Cannot stat %s: %m", filename);
+			if (st.st_size > MAX_BATCH_SCRIPT_SIZE)
+				fatal("Script file %s is too large",
+				      filename);
+			buf_size = st.st_size + 1;
+		}
 	}
 
 	/*
-	 * Then read in the script.
+	 * Then read in the script, in chunks of BUFSIZE bytes.
 	 */
 	buf = ptr = xmalloc(buf_size);
 	buf_left = buf_size;
@@ -654,7 +674,24 @@ static void *_get_script_buffer(const char *filename, int *size)
 		buf_left -= tmp_size;
 		script_size += tmp_size;
 		if (buf_left == 0) {
-			buf_size += BUFSIZ;
+			if (buf_size >= MAX_BATCH_SCRIPT_SIZE) {
+				if (filename)
+					close(fd);
+				xfree(buf);
+				if (filename)
+					fatal("Script %s is too big, read %d > %d bytes.",
+					      filename, script_size,
+					      MAX_BATCH_SCRIPT_SIZE);
+				else
+					fatal("Script from STDIN is too big, read %d > %d bytes.",
+					      script_size,
+					      MAX_BATCH_SCRIPT_SIZE);
+			}
+
+			if (buf_size < (MAX_BATCH_SCRIPT_SIZE - BUFSIZ))
+				buf_size += BUFSIZ;
+			else
+				buf_size = MAX_BATCH_SCRIPT_SIZE;
 			xrealloc(buf, buf_size);
 		}
 		ptr = buf + script_size;

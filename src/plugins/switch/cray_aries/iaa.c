@@ -47,7 +47,7 @@
 /*
  * Write the IAA file and set the filename in the job's environment
  */
-int write_iaa_file(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job,
+int write_iaa_file(stepd_step_rec_t *step, slurm_cray_jobinfo_t *sw_job,
 		   int *ptags, int num_ptags, alpsc_peInfo_t *alpsc_pe_info)
 {
 	char *fname = xstrdup_printf(CRAY_IAA_FILE, sw_job->apid);
@@ -65,15 +65,15 @@ int write_iaa_file(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job,
 		}
 
 		// chown the file to the job user
-		rc = chown(fname, job->uid, job->gid);
+		rc = chown(fname, step->uid, step->gid);
 		if (rc == -1) {
-			CRAY_ERR("chown(%s, %d, %d) failed: %m",
-				 fname, (int)job->uid, (int)job->gid);
+			CRAY_ERR("chown(%s, %u, %u) failed: %m",
+				 fname, step->uid, step->gid);
 			break;
 		}
 
 		// Write the environment variable
-		rc = env_array_overwrite(&job->env, CRAY_IAA_INFO_FILE_ENV,
+		rc = env_array_overwrite(&step->env, CRAY_IAA_INFO_FILE_ENV,
 					 fname);
 		if (rc == 0) {
 			CRAY_ERR("Failed to set env variable %s",

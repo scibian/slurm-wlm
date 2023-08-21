@@ -48,6 +48,7 @@
 #include "src/common/read_config.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
+#include "src/interfaces/serializer.h"
 
 #include "src/sinfo/print.h"
 #include "src/sinfo/sinfo.h"
@@ -61,6 +62,7 @@
 #define OPT_LONG_FEDR      0x105
 #define OPT_LONG_JSON      0x106
 #define OPT_LONG_YAML      0x107
+#define OPT_LONG_AUTOCOMP  0x108
 
 /* FUNCTIONS */
 static List  _build_state_list( char* str );
@@ -93,10 +95,12 @@ extern void parse_command_line(int argc, char **argv)
 	bool opt_a_set = false, opt_p_set = false;
 	bool env_a_set = false, env_p_set = false;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"all",       no_argument,       0, 'a'},
 		{"dead",      no_argument,       0, 'd'},
 		{"exact",     no_argument,       0, 'e'},
 		{"federation",no_argument,       0, OPT_LONG_FEDR},
+		{"future",    no_argument,       0, 'F'},
 		{"help",      no_argument,       0, OPT_LONG_HELP},
 		{"hide",      no_argument,       0, OPT_LONG_HIDE},
 		{"iterate",   required_argument, 0, 'i'},
@@ -136,6 +140,8 @@ extern void parse_command_line(int argc, char **argv)
 	}
 	if (getenv("SINFO_FEDERATION"))
 		params.federation_flag = true;
+	if (getenv("SINFO_FUTURE"))
+		params.future_flag = true;
 	if (getenv("SINFO_LOCAL"))
 		params.local = true;
 	if ( ( env_val = getenv("SINFO_PARTITION") ) ) {
@@ -161,7 +167,7 @@ extern void parse_command_line(int argc, char **argv)
 	}
 
 	while ((opt_char = getopt_long(argc, argv,
-				       "adehi:lM:n:No:O:p:rRsS:t:TvV",
+				       "adeFhi:lM:n:No:O:p:rRsS:t:TvV",
 				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
@@ -180,6 +186,9 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case (int)'e':
 			params.exact_match = true;
+			break;
+		case (int)'F':
+			params.future_flag = true;
 			break;
 		case (int)'h':
 			params.no_header = true;
@@ -296,11 +305,19 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case OPT_LONG_JSON:
 			params.mimetype = MIME_TYPE_JSON;
-			data_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			params.match_flags.gres_used_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL);
 			break;
 		case OPT_LONG_YAML:
 			params.mimetype = MIME_TYPE_YAML;
-			data_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			params.match_flags.gres_used_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
 			break;
 		}
 	}
@@ -355,13 +372,13 @@ extern void parse_command_line(int argc, char **argv)
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,reservation:.11 ,nodelist:0") :
 				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		} else {
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-				xstrdup("partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,reservation:.11 ,nodelist:0") :
 				xstrdup("partition:9 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		}
 	}
@@ -747,6 +764,12 @@ _parse_format( char* format )
 					      field_size,
 					      right_justify,
 					      suffix );
+		} else if (field[0] == 'i') {
+			params.match_flags.resv_name_flag = true;
+			format_add_resv_name(params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix);
 		} else if (field[0] == 'I') {
 			params.match_flags.priority_job_factor_flag = true;
 			format_add_priority_job_factor(params.format_list,
@@ -1133,6 +1156,12 @@ static int _parse_long_format (char* format_long)
 					   field_size,
 					   right_justify,
 					   suffix );
+		} else if (!xstrcasecmp(token, "reservation")) {
+			params.match_flags.resv_name_flag = true;
+			format_add_resv_name(params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix);
 		} else if (!xstrcasecmp(token, "root")) {
 			params.match_flags.root_flag = true;
 			format_add_root( params.format_list,
@@ -1397,6 +1426,8 @@ void _print_options( void )
 			params.match_flags.reason_user_flag ?  "true" : "false");
 	printf("reservation_flag = %s\n", params.reservation_flag ?
 			"true" : "false");
+	printf("resv_name_flag   = %s\n", params.match_flags.resv_name_flag ?
+	       "true" : "false");
 	printf("root_flag       = %s\n", params.match_flags.root_flag ?
 			"true" : "false");
 	printf("oversubscribe_flag      = %s\n",
@@ -1427,6 +1458,7 @@ Usage: sinfo [OPTIONS]\n\
   -d, --dead                 show only non-responding nodes\n\
   -e, --exact                group nodes only on exact match of configuration\n\
       --federation           Report federated information if a member of one\n\
+  -F, --future               Report information about nodes in \"FUTURE\" state.    \n\
   -h, --noheader             no headers on output\n\
   --hide                     do not show hidden or non-accessible partitions\n\
   -i, --iterate=seconds      specify an iteration period\n\

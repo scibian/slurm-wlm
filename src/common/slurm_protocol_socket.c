@@ -322,7 +322,7 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 	return _send_timeout(fd, buf, size, flags, &timeout);
 }
 
-extern size_t slurm_bufs_sendto(int fd, msg_bufs_t buffer)
+extern size_t slurm_bufs_sendto(int fd, msg_bufs_t *buffers)
 {
 	int len;
 	int part_len;
@@ -331,15 +331,19 @@ extern size_t slurm_bufs_sendto(int fd, msg_bufs_t buffer)
 	SigFunc *ohandler;
 	int timeout = slurm_conf.msg_timeout * 1000;
 
+	xassert(buffers);
+
 	/*
 	 * Ignore SIGPIPE so that send can return a error code if the other
 	 * side closes the socket
 	 */
 	ohandler = xsignal(SIGPIPE, SIG_IGN);
 
-	size += get_buf_offset(buffer.header);
-	size += get_buf_offset(buffer.auth);
-	size += get_buf_offset(buffer.body);
+	/* auth portion is optional. header and body are mandatory. */
+	size += get_buf_offset(buffers->header);
+	if (buffers->auth)
+		size += get_buf_offset(buffers->auth);
+	size += get_buf_offset(buffers->body);
 
 	usize = htonl(size);
 
@@ -347,20 +351,22 @@ extern size_t slurm_bufs_sendto(int fd, msg_bufs_t buffer)
 				 &timeout)) < 0)
 		goto done;
 
-	if ((part_len = _send_timeout(fd, get_buf_data(buffer.header),
-				      get_buf_offset(buffer.header), 0,
+	if ((part_len = _send_timeout(fd, get_buf_data(buffers->header),
+				      get_buf_offset(buffers->header), 0,
 				      &timeout)) < 0)
 			goto done;
 	len += part_len;
 
-	if ((part_len = _send_timeout(fd, get_buf_data(buffer.auth),
-				      get_buf_offset(buffer.auth), 0,
-				      &timeout)) < 0)
-			goto done;
-	len += part_len;
+	if (buffers->auth) {
+		if ((part_len = _send_timeout(fd, get_buf_data(buffers->auth),
+					      get_buf_offset(buffers->auth), 0,
+					      &timeout)) < 0)
+				goto done;
+		len += part_len;
+	}
 
-	if ((part_len = _send_timeout(fd, get_buf_data(buffer.body),
-				      get_buf_offset(buffer.body), 0,
+	if ((part_len = _send_timeout(fd, get_buf_data(buffers->body),
+				      get_buf_offset(buffers->body), 0,
 				      &timeout)) < 0)
 			goto done;
 	len += part_len;
@@ -451,9 +457,11 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 
 		rc = recv(fd, &buffer[recvlen], (size - recvlen), flags);
 		if (rc < 0)  {
-			if (errno == EINTR)
+			if ((errno == EINTR) || (errno == EAGAIN)) {
+				log_flag(NET, "%s: recv(fd:%d) got %m. retrying.",
+					 __func__, fd);
 				continue;
-			else {
+			} else {
 				debug("%s at %d of %zu, recv error: %m",
 				      __func__, recvlen, size);
 				slurm_seterrno(
