@@ -120,8 +120,19 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 				return SLURM_ERROR;
 			}
 			(*update_cnt_ptr)++;
-		}
-		else if (xstrncasecmp(tag, "MaxNodes", MAX(taglen, 4)) == 0) {
+		} else if (!xstrncasecmp(tag, "MaxCPUsPerSocket",
+					 MAX(taglen, 4))) {
+			if (!xstrcasecmp(val, "UNLIMITED") ||
+			    !xstrcasecmp(val, "INFINITE")) {
+				part_msg_ptr->max_cpus_per_socket = INFINITE;
+			} else if (parse_uint32(val, &part_msg_ptr->
+						max_cpus_per_socket)) {
+				error("Invalid MaxCPUsPerSocket value: %s",
+				      val);
+				return SLURM_ERROR;
+			}
+			(*update_cnt_ptr)++;
+		} else if (xstrncasecmp(tag, "MaxNodes", MAX(taglen, 4)) == 0) {
 			min = 1;
 			if ((xstrcasecmp(val,"UNLIMITED") == 0) ||
 			    (xstrcasecmp(val,"INFINITE") == 0)) {
@@ -136,7 +147,7 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 		}
 		else if (xstrncasecmp(tag, "MinNodes", MAX(taglen, 2)) == 0) {
 			min = 1;
-			verify_node_count(val, &min, &max);
+			verify_node_count(val, &min, &max, NULL);
 			part_msg_ptr->min_nodes = min;
 			(*update_cnt_ptr)++;
 		}
@@ -282,6 +293,19 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 			} else if (parse_uint16(val, &part_msg_ptr->
 						      over_time_limit)) {
 				error("Invalid OverTimeLimit value: %s", val);
+				return SLURM_ERROR;
+			}
+			(*update_cnt_ptr)++;
+		}
+		else if (!xstrncasecmp(tag, "PowerDownOnIdle", MAX(taglen, 1))) {
+			if (!xstrncasecmp(val, "NO", MAX(vallen, 1)))
+				part_msg_ptr->flags |= PART_FLAG_PDOI_CLR;
+			else if (!xstrncasecmp(val, "YES", MAX(vallen, 1)))
+				part_msg_ptr->flags |= PART_FLAG_PDOI;
+			else {
+				exit_code = 1;
+				error("Invalid input: %s", argv[i]);
+				error("Acceptable PowerDownOnIdle values are YES and NO");
 				return SLURM_ERROR;
 			}
 			(*update_cnt_ptr)++;

@@ -1,4 +1,4 @@
-.TH slurmrestd "8" "Slurm REST Daemon" "December 2022" "Slurm REST Daemon"
+.TH slurmrestd "8" "Slurm REST Daemon" "March 2023" "Slurm REST Daemon"
 
 .SH "NAME"
 slurmrestd \- Interface to Slurm via REST API.
@@ -10,7 +10,7 @@ slurmrestd \- Interface to Slurm via REST API.
 .PP
 \fBInetd Mode\fR: slurmrestd will read and write to STDIO. If STDIN is a socket
 file descriptor, then slurmrestd will detect this and use relevant
-functionatlity. If a controlling TTY is detected, interactive mode will
+functionality. If a controlling TTY is detected, interactive mode will
 automatically activate to provide additional logging information. This mode is
 designed to work with piped input, inetd, xinetd or systemd socket activation.
 
@@ -87,6 +87,25 @@ Help; print a brief summary of command options.
 .IP
 
 .TP
+\fB\-\-max\-connections <count>\fR
+Set the maximum number of connections to process at any one time. This is
+independent of the number of connections that can connect to slurmrestd at any
+one time. The kernel allows any number of connections to be pending for
+processing at any one time when SYN cookies are active.
+.RS
+.TP
+\fBCaution\fR:
+Each connection could cause one RPC to the controller daemons, leading to
+potential overloading of the controller. Each connection can also hold memory
+for the duration of the life of the connection. Having too many connections
+processing at once could use considerably more memory. Process limits
+(\fBulimit\fR(3)) may require adjustment when this value is increased.
+.TP
+Default: 124
+.RE
+.IP
+
+.TP
 \fB\-s <OpenAPI plugins to load>\fR
 Comma\-delimited list of OpenAPI plugins.
 Set to "list" to dump a list of the possible plugins to load.
@@ -154,6 +173,12 @@ Comma\-delimited list of host:port pairs or unix sockets to listen on.
 .IP
 
 .TP
+\fBSLURMRESTD_MAX_CONNECTIONS\fR
+Set the maximum number of connections to process at any one time. See
+\fB\-\-max\-connections\fR
+.IP
+
+.TP
 \fBSLURMRESTD_OPENAPI_PLUGINS\fR
 Comma\-delimited list of OpenAPI plugins to load. See \fB\-s\fR
 .IP
@@ -164,6 +189,17 @@ Control slurmrestd security functionality using the following comma\-delimited
 values:
 .IP
 .RS
+.TP
+\fBbecome_user\fR
+Allows \fBslurmrestd\fR to be run as root in order to become the requesting
+user for all requests. When combined with \fBrest_auth/local\fB, when a user
+connects via a named UNIX socket, \fBslurmrestd\fR will setuid()/setgid() into
+that user/group and then complete all requests as the given user. This mode is
+only intended for inet mode as the user change is permanent for the life of the
+process. This mode is incompatible with \fBrest_auth/jwt\fR and it is suggested
+to start \fBslurmrestd\fR with "-a \fBrest_auth/local\fR" arguments.
+.IP
+
 .TP
 \fBdisable_unshare_files\fR
 Disables unsharing file descriptors with parent process.

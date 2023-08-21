@@ -265,6 +265,7 @@ extern void xcgroup_wait_pid_moved(xcgroup_t *cg, const char *cg_name)
 	int cnt = 0;
 	int i = 0;
 	pid_t pid = getpid();
+	bool found;
 
 	/*
 	 * There is a delay in the cgroup system when moving the pid from one
@@ -279,23 +280,30 @@ extern void xcgroup_wait_pid_moved(xcgroup_t *cg, const char *cg_name)
 	 * that case we will receive an -EBUSY when trying to delete later the
 	 * cgroup. This is explained here:
 	 * https://bugs.schedmd.com/show_bug.cgi?id=8911#c18
+	 *
+	 * So try to mitigate this issue in a best-effort by waiting
+	 * MAX_MOVE_WAIT/10 milis when we find the pid, and retry 10 times.
 	 */
 	do {
+		cnt++;
 		common_cgroup_get_pids(cg, &pids, &npids);
-		for (i = 0 ; i<npids ; i++)
+		found = false;
+		for (i = 0; i < npids; i++) {
 			if (pids[i] == pid) {
-				cnt++;
+				found = true;
+				poll(NULL, 0, MAX_MOVE_WAIT/10);
 				break;
 			}
+		}
 		xfree(pids);
-	} while ((i < npids) && (cnt < MAX_MOVE_WAIT));
+	}  while (found && (cnt < 10));
 
-	if (cnt < MAX_MOVE_WAIT)
+	if (!found)
 		log_flag(CGROUP, "Took %d checks before stepd pid %d was removed from the %s cgroup.",
 			 cnt, pid, cg_name);
 	else
-		error("Pid %d is still in the %s cgroup.  It might be left uncleaned after the job.",
-		      pid, cg_name);
+		error("Pid %d is still in the %s cgroup after %d tries and %d ms. It might be left uncleaned after the job.",
+		      pid, cg_name, cnt, MAX_MOVE_WAIT);
 }
 
 extern int xcgroup_get_uint32_param(xcgroup_t *cg, char *param, uint32_t *value)
@@ -454,7 +462,7 @@ extern int xcgroup_create_slurm_cg(xcgroup_ns_t *ns, xcgroup_t *slurm_cg)
 }
 
 extern int xcgroup_create_hierarchy(const char *calling_func,
-				    stepd_step_rec_t *job,
+				    stepd_step_rec_t *step,
 				    xcgroup_ns_t *ns,
 				    xcgroup_t int_cg[],
 				    char job_cgroup_path[],
@@ -470,9 +478,9 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	/* build user cgroup relative path if not set (should not be) */
 	if (*user_cgroup_path == '\0') {
 		if (snprintf(user_cgroup_path, PATH_MAX, "%s/uid_%u",
-			     slurm_cg->name, job->uid) >= PATH_MAX) {
+			     slurm_cg->name, step->uid) >= PATH_MAX) {
 			error("%s: unable to build uid %u cgroup relative path : %m",
-			      calling_func, job->uid);
+			      calling_func, step->uid);
 			return SLURM_ERROR;
 		}
 	}
@@ -480,10 +488,10 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	/* build job cgroup relative path if not set (may not be) */
 	if (*job_cgroup_path == '\0') {
 		if (snprintf(job_cgroup_path, PATH_MAX, "%s/job_%u",
-			     user_cgroup_path, job->step_id.job_id)
+			     user_cgroup_path, step->step_id.job_id)
 		    >= PATH_MAX) {
 			error("%s: unable to build job %u cg relative path : %m",
-			      calling_func, job->step_id.job_id);
+			      calling_func, step->step_id.job_id);
 			return SLURM_ERROR;
 		}
 	}
@@ -495,7 +503,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 
 		len = snprintf(step_cgroup_path, PATH_MAX,
 			       "%s/step_%s", job_cgroup_path,
-			       log_build_step_id_str(&job->step_id,
+			       log_build_step_id_str(&step->step_id,
 				      tmp_char,
 				      sizeof(tmp_char),
 				      STEP_ID_FLAG_NO_PREFIX |
@@ -503,7 +511,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 
 		if (len >= PATH_MAX) {
 			error("%s: unable to build %ps cg relative path : %m",
-			      calling_func, &job->step_id);
+			      calling_func, &step->step_id);
 			return SLURM_ERROR;
 		}
 	}
@@ -517,7 +525,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	if (common_cgroup_create(ns, user_cg, user_cgroup_path, 0, 0) !=
 	    SLURM_SUCCESS) {
 		error("%s: unable to create user %u cgroup",
-		      calling_func, job->uid);
+		      calling_func, step->uid);
 		rc = SLURM_ERROR;
 		goto endit;
 	}
@@ -525,7 +533,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	if (common_cgroup_instantiate(user_cg) != SLURM_SUCCESS) {
 		common_cgroup_destroy(user_cg);
 		error("%s: unable to instantiate user %u cgroup",
-		      calling_func, job->uid);
+		      calling_func, step->uid);
 		rc = SLURM_ERROR;
 		goto endit;
 	}
@@ -537,7 +545,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	    SLURM_SUCCESS) {
 		common_cgroup_destroy(user_cg);
 		error("%s: unable to create job %u cgroup",
-		      calling_func, job->step_id.job_id);
+		      calling_func, step->step_id.job_id);
 		rc = SLURM_ERROR;
 		goto endit;
 	}
@@ -546,7 +554,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 		common_cgroup_destroy(user_cg);
 		common_cgroup_destroy(job_cg);
 		error("%s: unable to instantiate job %u cgroup",
-		      calling_func, job->step_id.job_id);
+		      calling_func, step->step_id.job_id);
 		rc = SLURM_ERROR;
 		goto endit;
 	}
@@ -554,14 +562,14 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 	/*
 	 * Create step cgroup in the memory ns (it could already exist)
 	 */
-	if (common_cgroup_create(ns, step_cg, step_cgroup_path, job->uid,
-				 job->gid) != SLURM_SUCCESS) {
+	if (common_cgroup_create(ns, step_cg, step_cgroup_path, step->uid,
+				 step->gid) != SLURM_SUCCESS) {
 		/* do not delete user/job cgroup as they can exist for other
 		 * steps, but release cgroup structures */
 		common_cgroup_destroy(user_cg);
 		common_cgroup_destroy(job_cg);
 		error("%s: unable to create %ps cgroup",
-		      calling_func, &job->step_id);
+		      calling_func, &step->step_id);
 		rc = SLURM_ERROR;
 		goto endit;
 	}
@@ -571,7 +579,7 @@ extern int xcgroup_create_hierarchy(const char *calling_func,
 		common_cgroup_destroy(job_cg);
 		common_cgroup_destroy(step_cg);
 		error("%s: unable to instantiate %ps cgroup",
-		      calling_func, &job->step_id);
+		      calling_func, &step->step_id);
 		rc = SLURM_ERROR;
 		goto endit;
 	}

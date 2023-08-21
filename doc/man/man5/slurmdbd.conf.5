@@ -1,4 +1,4 @@
-.TH "slurmdbd.conf" "5" "Slurm Configuration File" "October 2022" "Slurm Configuration File"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "March 2023" "Slurm Configuration File"
 
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
@@ -22,6 +22,13 @@ be read as the other user ID in response to a SIGHUP signal.
 This file should be protected from unauthorized access since it
 contains a database password.
 The overall configuration parameters available include:
+
+.TP
+\fBAllResourcesAbsolute\fR
+When adding a resouce (license) treat allocated/allowed counts as absolute
+numbers instead of percentage numbers. Boolean, yes to turn on, no (default)
+to use the numbers as percentages instead.
+.IP
 
 .TP
 \fBAllowNoDefAcct\fR
@@ -207,7 +214,7 @@ speeds up inserts into the database dramatically.  If you are running a very
 high throughput of jobs you should consider setting this.  In testing, 1 second
 improves the slurmdbd performance dramatically and reduces overhead.  There is
 a small probability of data loss though since this creates a window in which
-if the slurmdbd seg faults or exits abnormally for any reason the data not
+if the slurmdbd exits abnormally for any reason the data not
 committed could be lost.  While this situation should be very rare,
 it does present an extremely small risk, but may be the only way to run in
 extremely heavy environments.  In all honesty, the risk is quite low, but still
@@ -508,7 +515,7 @@ if a pathname is specified.
 .TP
 \fBLogTimeFormat\fR
 Format of the timestamp in slurmdbd log files. Accepted values are
-"iso8601", "iso8601_ms", "rfc5424", "rfc5424_ms", "clock", and
+"iso8601", "iso8601_ms", "rfc5424", "rfc5424_ms", "rfc3339", "clock", and
 "short". The values ending in "_ms" differ from the ones without in
 that fractional seconds with millisecond precision are printed. The
 default value is "iso8601_ms". The "rfc5424" formats are the same as
@@ -617,7 +624,8 @@ coordinator of, but can only see themselves when listing users.
 
 .TP
 \fBPurgeEventAfter\fR
-Events happening on the cluster over this age are purged from the database.
+Events are purged from the database after this amount of time has passed since
+they ended.
 This includes node down times and such.
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
@@ -631,7 +639,8 @@ If not set (default), then event records are never purged.
 
 .TP
 \fBPurgeJobAfter\fR
-Individual job records over this age are purged from the database.
+Individual job records are purged from the database after this amount of time
+has passed since they ended.
 Aggregated information will be preserved to "PurgeUsageAfter".
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
@@ -645,7 +654,8 @@ If not set (default), then job records are never purged.
 
 .TP
 \fBPurgeResvAfter\fR
-Individual reservation records over this age are purged from the database.
+Individual reservation records are purged from the database after this amount
+of time has passed since they ended.
 Aggregated information will be preserved to "PurgeUsageAfter".
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
@@ -659,7 +669,8 @@ If not set (default), then reservation records are never purged.
 
 .TP
 \fBPurgeStepAfter\fR
-Individual job step records over this age are purged from the database.
+Individual job step records are purged from the database after this amount of
+time has passed since they ended.
 Aggregated information will be preserved to "PurgeUsageAfter".
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
@@ -673,8 +684,8 @@ If not set (default), then job step records are never purged.
 
 .TP
 \fBPurgeSuspendAfter\fR
-Records of individual suspend times for jobs over this age are purged from the
-database.
+Individual job suspend records are purged from the database after this amount
+of time has passed since they ended.
 Aggregated information will be preserved to "PurgeUsageAfter".
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
@@ -688,7 +699,8 @@ If not set (default), then suspend records are never purged.
 
 .TP
 \fBPurgeTXNAfter\fR
-Records of individual transaction times for transactions over this age are purged from the database.
+Individual transaction records are purged from the database after this amount
+of time has passed since they occurred.
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
 those more frequent purges (i.e. a value of "12hours" would purge
@@ -701,8 +713,8 @@ If not set (default), then transaction records are never purged.
 
 .TP
 \fBPurgeUsageAfter\fR
-Usage Records (Cluster, Association and WCKey) over this age are purged from the
-database.
+Usage records (Cluster, Association and WCKey) are purged from the database
+after this amount of time has passed since they were created or last modified.
 The time is a numeric value and is a number of months.  If you want to purge
 more often you can include "hours", or "days" behind the numeric value to get
 those more frequent purges (i.e. a value of "12hours" would purge
@@ -829,8 +841,8 @@ default is no.
 Boolean yes or no.  Used to set display and track of the Workload
 Characterization Key. Must be set to track wckey usage.  This must be set to
 generate rolled up usage tables from WCKeys.
-NOTE: If TrackWCKey is set here and not in your various slurm.conf files all
-jobs will be attributed to their default WCKey.
+\fBNOTE\fR: If TrackWCKey is set here and not in your various slurm.conf files
+all jobs will be attributed to their default WCKey.
 .IP
 
 .SH "EXAMPLE"

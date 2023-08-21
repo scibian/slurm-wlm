@@ -44,6 +44,8 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
+#include "src/interfaces/data_parser.h"
+#include "src/interfaces/serializer.h"
 #include "sacct.h"
 #include <time.h>
 
@@ -59,6 +61,8 @@
 #define OPT_LONG_ENV       0x108
 #define OPT_LONG_JSON      0x109
 #define OPT_LONG_YAML      0x110
+#define OPT_LONG_AUTOCOMP  0x111
+#define OPT_LONG_ARRAY     0x112
 
 #define JOB_HASH_SIZE 1000
 
@@ -212,6 +216,9 @@ sacct [<OPTION>]                                                            \n \
      -A, --accounts:                                                        \n\
 	           Use this comma separated list of accounts to select jobs \n\
                    to display.  By default, all accounts are selected.      \n\
+     --array:                                                               \n\
+                   Expand job arrays. Display array tasks on separate lines \n\
+                   instead of consolidating them to a single line.          \n\
      -b, --brief:                                                           \n\
 	           Equivalent to '--format=jobstep,state,error'.            \n\
      -B, --batch-script:                                                    \n\
@@ -578,9 +585,11 @@ extern void parse_command_line(int argc, char **argv)
 	bool set;
 
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
                 {"allusers",       no_argument,       0,    'a'},
                 {"accounts",       required_argument, 0,    'A'},
                 {"allocations",    no_argument,       0,    'X'},
+                {"array",          no_argument,       0,    OPT_LONG_ARRAY},
                 {"brief",          no_argument,       0,    'b'},
 		{"batch-script",   no_argument,       0,    'B'},
                 {"completion",     no_argument,       0,    'c'},
@@ -664,6 +673,9 @@ extern void parse_command_line(int argc, char **argv)
 			if (!job_cond->acct_list)
 				job_cond->acct_list = list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->acct_list, optarg);
+			break;
+		case OPT_LONG_ARRAY:
+			params.opt_array = true;
 			break;
 		case 'b':
 			brief_output = true;
@@ -925,11 +937,17 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case OPT_LONG_JSON:
 			params.mimetype = MIME_TYPE_JSON;
-			data_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			data_init();
+			serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL);
 			break;
 		case OPT_LONG_YAML:
 			params.mimetype = MIME_TYPE_YAML;
-			data_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			data_init();
+			serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
 			break;
 		case ':':
 		case '?':	/* getopt() has explained it */
@@ -967,7 +985,7 @@ extern void parse_command_line(int argc, char **argv)
 
 	if (job_cond->usage_end &&
 	    (job_cond->usage_start > job_cond->usage_end)) {
-		char start_str[32], end_str[32];
+		char start_str[256], end_str[256];
 		slurm_make_time_str(&job_cond->usage_start, start_str,
 				    sizeof(start_str));
 		slurm_make_time_str(&job_cond->usage_end, end_str,
@@ -1029,7 +1047,7 @@ extern void parse_command_line(int argc, char **argv)
 	      (job_cond->flags & JOBCOND_FLAG_NO_WHOLE_HETJOB ? "no" : 0));
 
 	if (params.opt_completion) {
-		slurmdb_jobcomp_init(slurm_conf.job_comp_loc);
+		slurmdb_jobcomp_init();
 
 		if (!xstrcmp(slurm_conf.job_comp_type, "jobcomp/none")) {
 			fprintf(stderr, "Slurm job completion is disabled\n");
@@ -1382,13 +1400,19 @@ static void _print_env(slurmdb_job_rec_t *job)
  * At this point, we have already selected the desired data,
  * so we just need to print it for the user.
  */
-extern void do_list(void)
+extern void do_list(int argc, char **argv)
 {
 	ListIterator itr = NULL;
 	ListIterator itr_step = NULL;
 	slurmdb_job_rec_t *job = NULL;
 	slurmdb_step_rec_t *step = NULL;
 	slurmdb_job_cond_t *job_cond = params.job_cond;
+
+	if (params.mimetype) {
+		errno = DATA_DUMP_CLI(JOB_LIST, jobs, "jobs", argc, argv,
+				      acct_db_conn, params.mimetype);
+		return;
+	}
 
 	if (!jobs)
 		return;

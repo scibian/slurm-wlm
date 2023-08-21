@@ -71,24 +71,25 @@
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/node_conf.h"
-#include "src/common/node_features.h"
+#include "src/interfaces/node_features.h"
 #include "src/common/parse_config.h"
 #include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/slurm_resolv.h"
 #include "src/common/slurm_rlimits_info.h"
-#include "src/common/slurm_selecttype_info.h"
 #include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 #include "src/common/util-net.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/hash.h"
 
 /*
 ** Define slurm-specific aliases for use by plugins, see slurm_xlator.h
@@ -112,6 +113,7 @@ uint16_t drop_priv_flag = 0;
 
 static pthread_mutex_t conf_lock = PTHREAD_MUTEX_INITIALIZER;
 static s_p_hashtbl_t *conf_hashtbl = NULL;
+static buf_t *conf_buf = NULL;
 static slurm_conf_t *conf_ptr = &slurm_conf;
 static bool conf_initialized = false;
 static s_p_hashtbl_t *default_frontend_tbl;
@@ -120,10 +122,7 @@ static s_p_hashtbl_t *default_partition_tbl;
 static log_level_t lvl = LOG_LEVEL_FATAL;
 static int	local_test_config_rc = SLURM_SUCCESS;
 static bool     no_addr_cache = false;
-static int plugstack_fd = -1;
-static char *plugstack_conf = NULL;
-static int topology_fd = -1;
-static char *topology_conf = NULL;
+static list_t *config_files = NULL;
 
 inline static void _normalize_debug_level(uint16_t *level);
 static int _init_slurm_conf(const char *file_name);
@@ -135,14 +134,6 @@ typedef struct names_ll_s {
 	char *address;	/* NodeAddr */
 	char *bcast_address; /* BcastAddress */
 	uint16_t port;
-	uint16_t cpus;
-	uint16_t boards;
-	uint16_t sockets;
-	uint16_t cores;
-	uint16_t threads;
-	char *cpu_spec_list;
-	uint16_t core_spec_cnt;
-	uint64_t mem_spec_limit;
 	slurm_addr_t addr;
 	slurm_addr_t bcast_addr;
 	bool addr_initialized;
@@ -160,6 +151,10 @@ typedef struct slurm_conf_server {
 } slurm_conf_server_t;
 
 static slurm_conf_node_t *_create_conf_node(void);
+static void _pack_node_conf_lite(void *n, buf_t *buffer);
+static void *_unpack_node_conf_lite(buf_t *buffer);
+static void _pack_frontend_conf_lite(void *n, buf_t *buffer);
+static void *_unpack_frontend_conf_lite(buf_t *buffer);
 static void _init_conf_node(slurm_conf_node_t *conf_node);
 static void _destroy_nodename(void *ptr);
 static int _parse_frontend(void **dest, slurm_parser_enum_t type,
@@ -201,12 +196,27 @@ static uint16_t *_parse_srun_ports(const char *);
 
 static void _push_to_hashtbls(char *alias, char *hostname, char *address,
 			      char *bcast_address, uint16_t port,
-			      uint16_t cpus, uint16_t boards,
-			      uint16_t sockets, uint16_t cores,
-			      uint16_t threads, bool front_end,
-			      char *cpu_spec_list, uint16_t core_spec_cnt,
-			      uint64_t mem_spec_limit, slurm_addr_t *addr,
+			      bool front_end, slurm_addr_t *addr,
 			      bool initialized);
+
+static s_p_options_t slurm_conf_stepd_options[] = {
+	{.key = "NodeName",
+	 .type = S_P_ARRAY,
+	 .handler = _parse_nodename,
+	 .destroy = _destroy_nodename,
+	 .pack = _pack_node_conf_lite,
+	 .unpack = _unpack_node_conf_lite,
+	},
+	{.key = "FrontendName",
+	 .type = S_P_ARRAY,
+	 .handler = _parse_frontend,
+	 .destroy = destroy_frontend,
+	 .pack = _pack_frontend_conf_lite,
+	 .unpack = _unpack_frontend_conf_lite,
+	},
+	{NULL}
+};
+static int slurm_conf_stepd_options_cnt = 2;
 
 s_p_options_t slurm_conf_options[] = {
 	{"AccountingStorageTRES", S_P_STRING},
@@ -305,6 +315,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"MailDomain", S_P_STRING},
 	{"MailProg", S_P_STRING},
 	{"MaxArraySize", S_P_UINT32},
+	{"MaxBatchRequeue", S_P_UINT32},
 	{"MaxDBDMsgs", S_P_UINT32},
 	{"MaxJobCount", S_P_UINT32},
 	{"MaxNodeCount", S_P_UINT32},
@@ -326,6 +337,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"PowerParameters", S_P_STRING},
 	{"PowerPlugin", S_P_STRING},
 	{"PreemptMode", S_P_STRING},
+	{"PreemptParameters", S_P_STRING},
 	{"PreemptType", S_P_STRING},
 	{"PreemptExemptTime", S_P_STRING},
 	{"PrEpParameters", S_P_STRING},
@@ -384,7 +396,6 @@ s_p_options_t slurm_conf_options[] = {
 	{"SlurmctldDebug", S_P_STRING},
 	{"SlurmctldLogFile", S_P_STRING},
 	{"SlurmctldPidFile", S_P_STRING},
-	{"SlurmctldPlugstack", S_P_STRING},
 	{"SlurmctldPort", S_P_STRING},
 	{"SlurmctldPrimaryOffProg", S_P_STRING},
 	{"SlurmctldPrimaryOnProg", S_P_STRING},
@@ -407,6 +418,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"StateSaveLocation", S_P_STRING},
 	{"SuspendExcNodes", S_P_STRING},
 	{"SuspendExcParts", S_P_STRING},
+	{"SuspendExcStates", S_P_STRING},
 	{"SuspendProgram", S_P_STRING},
 	{"SuspendRate", S_P_UINT16},
 	{"SuspendTime", S_P_STRING},
@@ -593,9 +605,10 @@ static int _parse_frontend(void **dest, slurm_parser_enum_t type,
 
 		if (!s_p_get_uint16(&n->port, "Port", tbl) &&
 		    !s_p_get_uint16(&n->port, "Port", dflt)) {
-			/* This gets resolved in slurm_conf_get_port()
-			 * and slurm_conf_get_addr(). For now just
-			 * leave with a value of zero */
+			/*
+			 * This gets resolved in slurm_conf_get_addr().
+			 * For now just leave with a value of zero.
+			 */
 			n->port = 0;
 		}
 
@@ -752,9 +765,10 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 
 		if (!s_p_get_string(&n->port_str, "Port", tbl) &&
 		    !s_p_get_string(&n->port_str, "Port", dflt)) {
-			/* This gets resolved in slurm_conf_get_port()
-			 * and slurm_conf_get_addr(). For now just
-			 * leave with a value of NULL */
+			/*
+			 * This gets resolved in slurm_conf_get_addr().
+			 * For now just leave with a value of NULL.
+			 */
 		}
 
 		if (!s_p_get_uint16(&n->cpus, "CPUs",  tbl)  &&
@@ -924,6 +938,64 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 	}
 
 	/* should not get here */
+}
+
+/* This should only be going to the stepd, no protocol version neede */
+static void _pack_node_conf_lite(void *ptr, buf_t *buffer)
+{
+	slurm_conf_node_t *n = ptr;
+
+	xassert(n);
+
+	packstr(n->nodenames, buffer);
+	packstr(n->addresses, buffer);
+	packstr(n->bcast_addresses, buffer);
+	packstr(n->hostnames, buffer);
+	packstr(n->port_str, buffer);
+}
+
+static void *_unpack_node_conf_lite(buf_t *buffer)
+{
+	slurm_conf_node_t *n = xmalloc(sizeof(*n));
+
+	safe_unpackstr(&n->nodenames, buffer);
+	safe_unpackstr(&n->addresses, buffer);
+	safe_unpackstr(&n->bcast_addresses, buffer);
+	safe_unpackstr(&n->hostnames, buffer);
+	safe_unpackstr(&n->port_str, buffer);
+
+	return n;
+
+unpack_error:
+	_destroy_nodename(n);
+	return NULL;
+}
+
+/* This should only be going to the stepd, no protocol version neede */
+static void _pack_frontend_conf_lite(void *ptr, buf_t *buffer)
+{
+	slurm_conf_frontend_t *n = ptr;
+
+	xassert(n);
+
+	packstr(n->frontends, buffer);
+	packstr(n->addresses, buffer);
+	pack16(n->port, buffer);
+}
+
+static void *_unpack_frontend_conf_lite(buf_t *buffer)
+{
+	slurm_conf_frontend_t *n = xmalloc(sizeof(*n));
+
+	safe_unpackstr(&n->frontends, buffer);
+	safe_unpackstr(&n->addresses, buffer);
+	safe_unpack16(&n->port, buffer);
+
+	return n;
+
+unpack_error:
+	_destroy_nodename(n);
+	return NULL;
 }
 
 /*
@@ -1305,6 +1377,7 @@ static int _parse_partitionname(void **dest, slurm_parser_enum_t type,
 		{"Hidden", S_P_BOOLEAN}, /* YES or NO */
 		{"LLN", S_P_BOOLEAN}, /* YES or NO */
 		{"MaxCPUsPerNode", S_P_UINT32},
+		{"MaxCPUsPerSocket", S_P_UINT32},
 		{"MaxMemPerCPU", S_P_UINT64},
 		{"MaxMemPerNode", S_P_UINT64},
 		{"MaxTime", S_P_STRING},
@@ -1313,6 +1386,7 @@ static int _parse_partitionname(void **dest, slurm_parser_enum_t type,
 		{"Nodes", S_P_STRING},
 		{"OverSubscribe", S_P_STRING}, /* YES, NO, or FORCE */
 		{"OverTimeLimit", S_P_STRING},
+		{"PowerDownOnIdle", S_P_BOOLEAN}, /* YES or NO */
 		{"PreemptMode", S_P_STRING},
 		{"Priority", S_P_UINT16},
 		{"PriorityJobFactor", S_P_UINT16},
@@ -1429,6 +1503,11 @@ static int _parse_partitionname(void **dest, slurm_parser_enum_t type,
 				    tbl))
 			s_p_get_uint32(&p->max_cpus_per_node, "MaxCPUsPerNode",
 				       dflt);
+
+		if (!s_p_get_uint32(&p->max_cpus_per_socket, "MaxCPUsPerSocket",
+				    tbl))
+			s_p_get_uint32(&p->max_cpus_per_socket,
+				       "MaxCPUsPerSocket", dflt);
 
 		if (s_p_get_uint64(&def_cpu_per_gpu, "DefCPUPerGPU", tbl) ||
 		    s_p_get_uint64(&def_cpu_per_gpu, "DefCPUPerGPU", dflt)) {
@@ -1562,6 +1641,8 @@ static int _parse_partitionname(void **dest, slurm_parser_enum_t type,
 			}
 			xfree(tmp);
 		}
+
+		s_p_get_boolean(&p->power_down_on_idle, "PowerDownOnIdle", tbl);
 
 		if (s_p_get_string(&tmp, "PreemptMode", tbl) ||
 		    s_p_get_string(&tmp, "PreemptMode", dflt)) {
@@ -1720,6 +1801,7 @@ static void _init_conf_part(slurm_conf_partition_t *conf_part)
 	/* sync with part_record_t */
 	conf_part->default_time = NO_VAL;
 	conf_part->max_cpus_per_node = INFINITE;
+	conf_part->max_cpus_per_socket = INFINITE;
 	conf_part->max_nodes = INFINITE;
 	conf_part->max_share = 1;
 	conf_part->max_time = INFINITE;
@@ -2068,7 +2150,6 @@ static void _free_single_names_ll_t(names_ll_t *p)
 {
 	xfree(p->address);
 	xfree(p->alias);
-	xfree(p->cpu_spec_list);
 	xfree(p->hostname);
 	xfree(p);
 }
@@ -2114,11 +2195,7 @@ static int _get_hash_idx(const char *name)
 
 static void _push_to_hashtbls(char *alias, char *hostname, char *address,
 			      char *bcast_address, uint16_t port,
-			      uint16_t cpus, uint16_t boards,
-			      uint16_t sockets, uint16_t cores,
-			      uint16_t threads, bool front_end,
-			      char *cpu_spec_list, uint16_t core_spec_cnt,
-			      uint64_t mem_spec_limit, slurm_addr_t *addr,
+			      bool front_end, slurm_addr_t *addr,
 			      bool initialized)
 {
 	int hostname_idx, alias_idx;
@@ -2162,15 +2239,7 @@ static void _push_to_hashtbls(char *alias, char *hostname, char *address,
 	new->address	= xstrdup(address);
 	new->bcast_address = xstrdup(bcast_address);
 	new->port	= port;
-	new->cpus	= cpus;
-	new->boards	= boards;
-	new->sockets	= sockets;
-	new->cores	= cores;
-	new->threads	= threads;
 	new->addr_initialized = initialized;
-	new->cpu_spec_list = xstrdup(cpu_spec_list);
-	new->core_spec_cnt = core_spec_cnt;
-	new->mem_spec_limit = mem_spec_limit;
 
 	if (addr)
 		memcpy(&new->addr, addr, sizeof(slurm_addr_t));
@@ -2232,8 +2301,7 @@ static int _register_front_ends(slurm_conf_frontend_t *front_end_ptr)
 	while ((hostname = hostlist_shift(hostname_list))) {
 		address = hostlist_shift(address_list);
 		_push_to_hashtbls(hostname, hostname, address, NULL,
-				  front_end_ptr->port, 1, 1, 1, 1, 1, 1,
-				  NULL, 0, 0, NULL, false);
+				  front_end_ptr->port, true, NULL, false);
 		free(hostname);
 		free(address);
 	}
@@ -2253,11 +2321,7 @@ static void _check_callback(char *alias, char *hostname, char *address,
 			    config_record_t *config_ptr)
 {
 	_push_to_hashtbls(alias, hostname, address, bcast_address, port,
-			  node_ptr->cpus, node_ptr->boards,
-			  node_ptr->tot_sockets, node_ptr->cores,
-			  node_ptr->threads, 0, node_ptr->cpu_spec_list,
-			  node_ptr->core_spec_cnt,
-			  node_ptr->mem_spec_limit, NULL, false);
+			  false, NULL, false);
 }
 
 static void _init_slurmd_nodehash(void)
@@ -2573,35 +2637,6 @@ extern char *slurm_conf_get_bcast_address(const char *node_name)
 }
 
 /*
- * slurm_conf_get_port - Return the port for a given NodeName
- */
-extern uint16_t slurm_conf_get_port(const char *node_name)
-{
-	int idx;
-	names_ll_t *p;
-
-	slurm_conf_lock();
-	_init_slurmd_nodehash();
-
-	idx = _get_hash_idx(node_name);
-	p = node_to_host_hashtbl[idx];
-	while (p) {
-		if (xstrcmp(p->alias, node_name) == 0) {
-			uint16_t port;
-			if (!p->port)
-				p->port = (uint16_t) conf_ptr->slurmd_port;
-			port = p->port;
-			slurm_conf_unlock();
-			return port;
-		}
-		p = p->next_alias;
-	}
-	slurm_conf_unlock();
-
-	return 0;
-}
-
-/*
  * Unlink names_ll_t from host_to_node_hashtbl without free'ing.
  */
 static void _remove_host_to_node_link(names_ll_t *p)
@@ -2688,8 +2723,7 @@ extern void slurm_reset_alias(char *node_name, char *node_addr,
 	}
 	if (!p) {
 		_push_to_hashtbls(node_name, node_hostname, node_addr,
-				  NULL, 0, 0, 0, 0, 0, 0, false, NULL, 0, 0,
-				  NULL, false);
+				  NULL, 0, false, NULL, false);
 	}
 	slurm_conf_unlock();
 
@@ -2755,85 +2789,6 @@ extern int slurm_conf_get_addr(const char *node_name, slurm_addr_t *address,
 	*address = p->addr;
 	slurm_conf_unlock();
 	return SLURM_SUCCESS;
-}
-
-/*
- * slurm_conf_get_cpus_bsct -
- * Return the cpus, boards, sockets, cores, and threads configured for a
- * given NodeName
- * Returns SLURM_SUCCESS on success, SLURM_ERROR on failure.
- */
-extern int slurm_conf_get_cpus_bsct(const char *node_name,
-				    uint16_t *cpus, uint16_t *boards,
-				    uint16_t *sockets, uint16_t *cores,
-				    uint16_t *threads)
-{
-	int idx;
-	names_ll_t *p;
-
-	slurm_conf_lock();
-	_init_slurmd_nodehash();
-
-	idx = _get_hash_idx(node_name);
-	p = node_to_host_hashtbl[idx];
-	while (p) {
-		if (xstrcmp(p->alias, node_name) == 0) {
-		    	if (cpus)
-				*cpus    = p->cpus;
-			if (boards)
-				*boards  = p->boards;
-			if (sockets)
-				*sockets = p->sockets;
-			if (cores)
-				*cores   = p->cores;
-			if (threads)
-				*threads = p->threads;
-			slurm_conf_unlock();
-			return SLURM_SUCCESS;
-		}
-		p = p->next_alias;
-	}
-	slurm_conf_unlock();
-
-	return SLURM_ERROR;
-}
-
-/*
- * slurm_conf_get_res_spec_info - Return resource specialization info
- * for a given NodeName
- * Returns SLURM_SUCCESS on success, SLURM_ERROR on failure.
- */
-extern int slurm_conf_get_res_spec_info(const char *node_name,
-					char **cpu_spec_list,
-					uint16_t *core_spec_cnt,
-					uint64_t *mem_spec_limit)
-{
-	int idx;
-	names_ll_t *p;
-
-	slurm_conf_lock();
-	_init_slurmd_nodehash();
-
-	idx = _get_hash_idx(node_name);
-	p = node_to_host_hashtbl[idx];
-	while (p) {
-		if (xstrcmp(p->alias, node_name) == 0) {
-			if (core_spec_cnt) {
-				xfree(*cpu_spec_list);
-				*cpu_spec_list = xstrdup(p->cpu_spec_list);
-			}
-			if (core_spec_cnt)
-				*core_spec_cnt  = p->core_spec_cnt;
-			if (mem_spec_limit)
-				*mem_spec_limit = p->mem_spec_limit;
-			slurm_conf_unlock();
-			return SLURM_SUCCESS;
-		}
-		p = p->next_alias;
-	}
-	slurm_conf_unlock();
-
-	return SLURM_ERROR;
 }
 
 /*
@@ -2923,7 +2878,6 @@ extern void free_slurm_conf(slurm_conf_t *ctl_conf_ptr, bool purge_node_hash)
 	FREE_NULL_LIST(ctl_conf_ptr->job_defaults_list);
 	xfree (ctl_conf_ptr->job_submit_plugins);
 	xfree (ctl_conf_ptr->launch_params);
-	xfree (ctl_conf_ptr->launch_type);
 	xfree (ctl_conf_ptr->licenses);
 	xfree (ctl_conf_ptr->mail_domain);
 	xfree (ctl_conf_ptr->mail_prog);
@@ -2937,9 +2891,9 @@ extern void free_slurm_conf(slurm_conf_t *ctl_conf_ptr, bool purge_node_hash)
 	xfree (ctl_conf_ptr->node_prefix);
 	xfree (ctl_conf_ptr->plugindir);
 	xfree (ctl_conf_ptr->plugstack);
-	FREE_NULL_LIST(ctl_conf_ptr->slurmctld_plugstack_conf);
 	xfree (ctl_conf_ptr->power_parameters);
 	xfree (ctl_conf_ptr->power_plugin);
+	xfree(ctl_conf_ptr->preempt_params);
 	xfree (ctl_conf_ptr->preempt_type);
 	xfree(ctl_conf_ptr->prep_params);
 	xfree(ctl_conf_ptr->prep_plugins);
@@ -2972,7 +2926,6 @@ extern void free_slurm_conf(slurm_conf_t *ctl_conf_ptr, bool purge_node_hash)
 	xfree (ctl_conf_ptr->slurmctld_addr);
 	xfree (ctl_conf_ptr->slurmctld_logfile);
 	xfree (ctl_conf_ptr->slurmctld_pidfile);
-	xfree (ctl_conf_ptr->slurmctld_plugstack);
 	xfree (ctl_conf_ptr->slurmctld_primary_off_prog);
 	xfree (ctl_conf_ptr->slurmctld_primary_on_prog);
 	xfree (ctl_conf_ptr->slurmd_logfile);
@@ -2987,6 +2940,7 @@ extern void free_slurm_conf(slurm_conf_t *ctl_conf_ptr, bool purge_node_hash)
 	xfree (ctl_conf_ptr->state_save_location);
 	xfree (ctl_conf_ptr->suspend_exc_nodes);
 	xfree (ctl_conf_ptr->suspend_exc_parts);
+	xfree (ctl_conf_ptr->suspend_exc_states);
 	xfree (ctl_conf_ptr->suspend_program);
 	xfree (ctl_conf_ptr->switch_param);
 	xfree (ctl_conf_ptr->switch_type);
@@ -3089,11 +3043,11 @@ void init_slurm_conf(slurm_conf_t *ctl_conf_ptr)
 	ctl_conf_ptr->kill_on_bad_exit		= 0;
 	ctl_conf_ptr->kill_wait			= NO_VAL16;
 	xfree (ctl_conf_ptr->launch_params);
-	xfree (ctl_conf_ptr->launch_type);
 	xfree (ctl_conf_ptr->licenses);
 	xfree (ctl_conf_ptr->mail_domain);
 	xfree (ctl_conf_ptr->mail_prog);
 	ctl_conf_ptr->max_array_sz		= NO_VAL;
+	ctl_conf_ptr->max_batch_requeue = NO_VAL;
 	ctl_conf_ptr->max_dbd_msgs		= 0;
 	ctl_conf_ptr->max_job_cnt		= NO_VAL;
 	ctl_conf_ptr->max_job_id		= NO_VAL;
@@ -3116,6 +3070,7 @@ void init_slurm_conf(slurm_conf_t *ctl_conf_ptr)
 	xfree (ctl_conf_ptr->power_parameters);
 	xfree (ctl_conf_ptr->power_plugin);
 	ctl_conf_ptr->preempt_mode              = 0;
+	xfree(ctl_conf_ptr->preempt_params);
 	xfree (ctl_conf_ptr->preempt_type);
 	xfree (ctl_conf_ptr->priority_params);
 	xfree (ctl_conf_ptr->priority_type);
@@ -3157,7 +3112,6 @@ void init_slurm_conf(slurm_conf_t *ctl_conf_ptr)
 	ctl_conf_ptr->sched_log_level		= NO_VAL16;
 	xfree (ctl_conf_ptr->slurmctld_addr);
 	xfree (ctl_conf_ptr->slurmctld_pidfile);
-	xfree (ctl_conf_ptr->slurmctld_plugstack);
 	ctl_conf_ptr->slurmctld_port		= NO_VAL;
 	ctl_conf_ptr->slurmctld_port_count	= 1;
 	xfree (ctl_conf_ptr->slurmctld_primary_off_prog);
@@ -3177,6 +3131,7 @@ void init_slurm_conf(slurm_conf_t *ctl_conf_ptr)
 	xfree (ctl_conf_ptr->state_save_location);
 	xfree (ctl_conf_ptr->suspend_exc_nodes);
 	xfree (ctl_conf_ptr->suspend_exc_parts);
+	xfree (ctl_conf_ptr->suspend_exc_states);
 	xfree (ctl_conf_ptr->suspend_program);
 	ctl_conf_ptr->suspend_rate		= NO_VAL16;
 	ctl_conf_ptr->suspend_time		= NO_VAL16;
@@ -3263,12 +3218,16 @@ static int _init_slurm_conf(const char *file_name)
 	/* init hash to 0 */
 	conf_ptr->hash_val = 0;
 	rc = s_p_parse_file(conf_hashtbl, &conf_ptr->hash_val, name, false,
-			    NULL);
+			    NULL, false);
 	/* s_p_dump_values(conf_hashtbl, slurm_conf_options); */
 
 	if (_validate_and_set_defaults(conf_ptr, conf_hashtbl) == SLURM_ERROR)
 		rc = SLURM_ERROR;
 	conf_ptr->slurm_conf = xstrdup(name);
+	if (running_in_slurmd())
+		conf_buf = s_p_pack_hashtbl(conf_hashtbl,
+					    slurm_conf_stepd_options,
+					    slurm_conf_stepd_options_cnt);
 
 	no_addr_cache = false;
 	if (xstrcasestr("NoAddrCache", conf_ptr->comm_params))
@@ -3283,17 +3242,10 @@ static int _init_slurm_conf(const char *file_name)
 static void
 _destroy_slurm_conf(void)
 {
-	if (plugstack_conf) {
-		xfree(plugstack_conf);
-		close(plugstack_fd);
-	}
-
-	if (topology_conf) {
-		xfree(topology_conf);
-		close(topology_fd);
-	}
+	FREE_NULL_LIST(config_files);
 
 	s_p_hashtbl_destroy(conf_hashtbl);
+	FREE_NULL_BUFFER(conf_buf);
 	if (default_frontend_tbl != NULL) {
 		s_p_hashtbl_destroy(default_frontend_tbl);
 		default_frontend_tbl = NULL;
@@ -3321,7 +3273,7 @@ _destroy_slurm_conf(void)
  *   b. SLURM_CONF if not NULL
  *   c. default_slurm_config_file if it exists.
  *   d. /run/slurm/conf/slurm.conf if it exists.
- * 2. SLURM_CONF_SERVER env var (not documented, meant for testing only)
+ * 2. SLURM_CONF_SERVER env var
  * 3. DNS SRV record
  */
 static int _establish_config_source(char **config_file, int *memfd)
@@ -3381,40 +3333,22 @@ static int _establish_config_source(char **config_file, int *memfd)
 		return SLURM_ERROR;
 	}
 
+	config_files = config->config_files;
+	config->config_files = NULL;
+	list_for_each(config_files, write_config_to_memfd, NULL);
+
 	/*
 	 * memfd is always created successfully as any failure causes the
 	 * process to die with a fatal() error.
 	 */
-	if (!(config_tmp = list_find_first(config->config_files,
-					   find_conf_by_name,
+	if (!(config_tmp = list_find_first(config_files, find_conf_by_name,
 					   "slurm.conf"))) {
 		error("%s: No slurm.conf found in configuration files received.",
 		      __func__);
 		return SLURM_ERROR;
 	}
-	*memfd = dump_to_memfd("slurm.conf", config_tmp->file_content,
-			       config_file);
-	/*
-	 * If we've been handed a plugstack.conf or topology.conf file then
-	 * slurmctld thinks we'll need it. Stash it in case of an eventual
-	 * spank_stack_init() / slurm_topo_init().
-	 */
-	if ((config_tmp = list_find_first(config->config_files,
-					  find_conf_by_name,
-					  "plugstack.conf"))) {
-		if (config_tmp->exists)
-			plugstack_fd = dump_to_memfd("plugstack.conf",
-						     config_tmp->file_content,
-						     &plugstack_conf);
-	}
-	if ((config_tmp = list_find_first(config->config_files,
-					  find_conf_by_name,
-					  "topology.conf"))) {
-		if (config_tmp->exists)
-			topology_fd = dump_to_memfd("topology.conf",
-						    config_tmp->file_content,
-						    &topology_conf);
-	}
+	*config_file = xstrdup(config_tmp->memfd_path);
+
 	slurm_free_config_response_msg(config);
 	debug2("%s: using config_file=%s (fetched)", __func__, *config_file);
 
@@ -3463,20 +3397,71 @@ extern int set_nodes_alias(const char *alias_list)
 	return rc;
 }
 
-/*
- * slurm_conf_init - load the slurm configuration from the a file.
- * IN file_name - name of the slurm configuration file to be read
- *	If file_name is NULL, then this routine tries to use
- *	the value in the SLURM_CONF env variable.  Failing that,
- *	it uses the compiled-in default file name.
- *	If the conf structures have already been initialized by a call to
- *	slurm_conf_init, any subsequent calls will do nothing until
- *	slurm_conf_destroy is called.
- * RET SLURM_SUCCESS if conf file is initialized.  If the slurm conf
- *       was already initialied, return SLURM_ERROR.
- */
-extern int
-slurm_conf_init(const char *file_name)
+extern int read_conf_send_stepd(int fd)
+{
+	int len;
+
+	xassert(running_in_slurmd());
+	xassert(conf_buf);
+
+	len = get_buf_offset(conf_buf);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, get_buf_data(conf_buf), len);
+
+	return SLURM_SUCCESS;
+rwfail:
+	error("%s: failed", __func__);
+	return SLURM_ERROR;
+}
+
+extern void read_conf_recv_stepd(int fd)
+{
+	int len;
+
+	xassert(running_in_slurmstepd());
+
+	safe_read(fd, &len, sizeof(int));
+
+	conf_buf = init_buf(len);
+	safe_read(fd, conf_buf->head, len);
+	conf_hashtbl = s_p_unpack_hashtbl_full(conf_buf,
+					       slurm_conf_stepd_options);
+rwfail:
+	FREE_NULL_BUFFER(conf_buf);
+}
+
+extern void read_config_add_key_pair(list_t *key_pair_list,
+				     char *key,
+				     char *value)
+{
+	xassert(key_pair_list);
+
+	config_key_pair_t *key_pair = xmalloc(sizeof(*key_pair));
+	key_pair->name = xstrdup(key);
+	key_pair->value = xstrdup(value);
+	list_append(key_pair_list, key_pair);
+}
+
+extern void slurm_conf_init_stepd(void)
+{
+	if (slurm_conf.propagate_rlimits_except) {
+		if ((parse_rlimits(slurm_conf.propagate_rlimits_except,
+				   NO_PROPAGATE_RLIMITS)) < 0) {
+			error("Bad PropagateResourceLimitsExcept: %s",
+			      slurm_conf.propagate_rlimits_except);
+			return;
+		}
+	} else if ((parse_rlimits(slurm_conf.propagate_rlimits,
+				  PROPAGATE_RLIMITS)) < 0) {
+		error("Bad PropagateResourceLimits: %s",
+		      slurm_conf.propagate_rlimits);
+		return;
+	}
+
+	conf_initialized = true;
+}
+
+extern int slurm_conf_init_load(const char *file_name, bool load_auth)
 {
 	char *config_file;
 	int memfd = -1;
@@ -3531,7 +3516,21 @@ slurm_conf_init(const char *file_name)
 	}
 	slurm_mutex_unlock(&conf_lock);
 	xfree(config_file);
+
+	if (load_auth) {
+		if (slurm_auth_init(NULL) != SLURM_SUCCESS)
+			fatal("failed to initialize auth plugin");
+
+		if (hash_g_init() != SLURM_SUCCESS)
+			fatal("failed to initialize hash plugin");
+	}
+
 	return SLURM_SUCCESS;
+}
+
+extern int slurm_conf_init(const char *file_name)
+{
+	return slurm_conf_init_load(file_name, true);
 }
 
 static int _internal_reinit(const char *file_name)
@@ -3608,6 +3607,9 @@ slurm_conf_destroy(void)
 
 	_destroy_slurm_conf();
 
+	hash_g_init();
+	slurm_auth_fini();
+
 	slurm_mutex_unlock(&conf_lock);
 
 	return SLURM_SUCCESS;
@@ -3674,6 +3676,9 @@ static uint16_t _health_node_state(char *state_str)
 			state_set = true;
 		} else if (!xstrcasecmp(token, "MIXED")) {
 			state_num |= HEALTH_CHECK_NODE_MIXED;
+			state_set = true;
+		} else if (!xstrcasecmp(token, "NONDRAINED_IDLE")) {
+			state_num |= HEALTH_CHECK_NODE_NONDRAINED_IDLE;
 			state_set = true;
 		} else {
 			error("Invalid HealthCheckNodeState value %s ignored",
@@ -3814,6 +3819,134 @@ static int _validate_bcast_exclude(slurm_conf_t *conf)
 }
 
 /*
+ * Parse a comma separated list of SelectType Parameters
+ *
+ * Return SLURM_SUCCESS on success, or SLURM_ERROR otherwise
+ */
+static int _parse_select_type_param(
+	char *select_type_parameters, uint16_t *param)
+{
+	int rc = SLURM_SUCCESS;
+	char *str_parameters, *st_str = NULL;
+	int param_cnt = 0;
+
+	*param = 0;
+	st_str = xstrdup(select_type_parameters);
+	str_parameters = strtok(st_str,",");
+	while (str_parameters) {
+		if (!xstrcasecmp(str_parameters, "CR_Socket")) {
+			*param |= CR_SOCKET;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_Socket_Memory")) {
+			*param |= CR_SOCKET;
+			*param |= CR_MEMORY;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_Core")) {
+			*param |= CR_CORE;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_Core_Memory")) {
+			*param |= CR_CORE;
+			*param |= CR_MEMORY;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_Memory")) {
+			*param |= CR_MEMORY;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_CPU")) {
+			*param |= CR_CPU;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "CR_CPU_Memory")) {
+			*param |= CR_CPU;
+			*param |= CR_MEMORY;
+			param_cnt++;
+		} else if (!xstrcasecmp(str_parameters, "other_cons_res")) {
+			*param |= CR_OTHER_CONS_RES;
+		} else if (!xstrcasecmp(str_parameters, "other_cons_tres")) {
+			*param |= CR_OTHER_CONS_TRES;
+		} else if (!xstrcasecmp(str_parameters,
+				       "CR_ONE_TASK_PER_CORE")) {
+			*param |= CR_ONE_TASK_PER_CORE;
+		} else if (!xstrcasecmp(str_parameters,
+				       "CR_CORE_DEFAULT_DIST_BLOCK")) {
+			*param |= CR_CORE_DEFAULT_DIST_BLOCK;
+		} else if (!xstrcasecmp(str_parameters, "CR_LLN")) {
+			*param |= CR_LLN;
+		} else if (!xstrcasecmp(str_parameters, "CR_PACK_NODES")) {
+			*param |= CR_PACK_NODES;
+		} else {
+			error("Bad SelectTypeParameter: %s", str_parameters);
+			rc = SLURM_ERROR;
+			xfree(st_str);
+			return rc;
+		}
+
+		if ((*param & CR_CPU) && (*param & CR_ONE_TASK_PER_CORE)) {
+			error("CR_ONE_TASK_PER_CORE is not compatible with CR_CPU*, please change to use CR_CORE* instead.");
+			rc = SLURM_ERROR;
+			xfree(st_str);
+			return rc;
+		}
+
+		str_parameters = strtok(NULL,",");
+	}
+	xfree(st_str);
+
+	if (param_cnt > 1)
+		rc = SLURM_ERROR;
+
+	return rc;
+}
+
+static int _add_to_str(void *x, void *arg)
+{
+	char *elem = x;
+	char **sorted_str = arg;
+
+	if (*sorted_str)
+		xstrcat(*sorted_str, ",");
+	xstrfmtcat(*sorted_str, "task/%s", elem);
+
+	return SLURM_SUCCESS;
+}
+
+/* reverse-alphabetical */
+static int _sort_plugins_by_name(void *x, void *y)
+{
+	char *s1 = *(char **) x;
+	char *s2 = *(char **) y;
+	return xstrcmp(s2, s1);
+}
+
+/*
+ * Sort the TaskPlugin= parameters in reverse alphabetical order.
+ * This provides a convenient shortcut to following these rules:
+ * a) task/cray_aries must be listed before task/cgroup
+ * b) task/cgroup must be listed before task/affinity.
+ *    (This is due to a bug in kernels < 6.2 with cgroup/v2.)
+ */
+static void _sort_task_plugin(char **task_plugin)
+{
+	char *str, *save_ptr = NULL, *sorted_list = NULL;
+	list_t *plugin_list;
+
+	if (!*task_plugin || !*task_plugin[0])
+		return;
+
+	plugin_list = list_create(NULL);
+	str = *task_plugin;
+	while ((str = strtok_r(str, ",", &save_ptr))) {
+		if (!xstrncmp(str, "task/", 5))
+			str += 5;
+		list_append(plugin_list, str);
+		str = NULL;
+	}
+	list_sort(plugin_list, _sort_plugins_by_name);
+	list_for_each(plugin_list, _add_to_str, &sorted_list);
+	list_destroy(plugin_list);
+	xfree(*task_plugin);
+	*task_plugin = sorted_list;
+}
+
+/*
  *
  * IN/OUT ctl_conf_ptr - a configuration as loaded by read_slurm_conf_ctl
  *
@@ -3942,6 +4075,14 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	    !(conf->conf_flags & CTL_CONF_IPV6_ENABLED))
 		fatal("Both IPv4 and IPv6 support disabled, cannot communicate");
 
+	if ((temp_str = xstrcasestr(conf->comm_params,
+				   "getnameinfo_cache_timeout="))) {
+		slurm_conf.getnameinfo_cache_timeout = atoi(temp_str + 26);
+	} else {
+		slurm_conf.getnameinfo_cache_timeout =
+			DEFAULT_GETNAMEINFO_CACHE_TIMEOUT;
+	}
+
 	if (!s_p_get_string(&conf->core_spec_plugin, "CoreSpecPlugin",
 	    hashtbl)) {
 		conf->core_spec_plugin =
@@ -4014,7 +4155,8 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 		list_append(conf->job_defaults_list, job_defaults);
 	}
 
-	if (s_p_get_string(&temp_str, "DebugFlags", hashtbl)) {
+	if ((temp_str = xstrdup(getenv("SLURM_DEBUG_FLAGS"))) ||
+	    s_p_get_string(&temp_str, "DebugFlags", hashtbl)) {
 		if (debug_str2flags(temp_str, &conf->debug_flags)
 		    != SLURM_SUCCESS) {
 			error("DebugFlags invalid: %s", temp_str);
@@ -4092,8 +4234,7 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (!s_p_get_uint16(&conf->group_time, "GroupUpdateTime", hashtbl))
 		conf->group_time = DEFAULT_GROUP_TIME;
 
-	if (!s_p_get_string(&conf->gpu_freq_def, "GpuFreqDef", hashtbl))
-		conf->gpu_freq_def = xstrdup("high,memory=high");
+	(void) s_p_get_string(&conf->gpu_freq_def, "GpuFreqDef", hashtbl);
 
 	if (!s_p_get_uint16(&conf->inactive_limit, "InactiveLimit", hashtbl))
 		conf->inactive_limit = DEFAULT_INACTIVE_LIMIT;
@@ -4138,12 +4279,7 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 
 	if (!s_p_get_string(&conf->job_comp_type, "JobCompType", hashtbl))
 		conf->job_comp_type = xstrdup(DEFAULT_JOB_COMP_TYPE);
-	if (!s_p_get_string(&conf->job_comp_loc, "JobCompLoc", hashtbl)) {
-		if (!xstrcmp(conf->job_comp_type, "jobcomp/mysql"))
-			conf->job_comp_loc = xstrdup(DEFAULT_JOB_COMP_DB);
-		else
-			conf->job_comp_loc = xstrdup(DEFAULT_JOB_COMP_LOC);
-	}
+	s_p_get_string(&conf->job_comp_loc, "JobCompLoc", hashtbl);
 
 	if (!s_p_get_string(&conf->job_comp_host, "JobCompHost",
 			    hashtbl))
@@ -4250,9 +4386,6 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	    xstrcasestr(conf->launch_params, "disable_send_gids"))
 		fatal("LaunchParameters options enable_nss_slurm and disable_send_gids are mutually exclusive.");
 
-	if (!s_p_get_string(&conf->launch_type, "LaunchType", hashtbl))
-		conf->launch_type = xstrdup(DEFAULT_LAUNCH_TYPE);
-
 	(void) s_p_get_string(&conf->licenses, "Licenses", hashtbl);
 
 	if (s_p_get_string(&temp_str, "LogTimeFormat", hashtbl)) {
@@ -4268,6 +4401,8 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 			conf->log_fmt = LOG_FMT_RFC5424_MS;
 		else if (xstrcasestr(temp_str, "rfc5424"))
 			conf->log_fmt = LOG_FMT_RFC5424;
+		else if (xstrcasestr(temp_str, "rfc3339"))
+			conf->log_fmt = LOG_FMT_RFC3339;
 		else if (xstrcasestr(temp_str, "clock"))
 			conf->log_fmt = LOG_FMT_CLOCK;
 		else if (xstrcasestr(temp_str, "short"))
@@ -4295,6 +4430,10 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 		error("MaxArraySize value (%u) is greater than 4000001",
 		      conf->max_array_sz);
 	}
+
+	if (!s_p_get_uint32(&conf->max_batch_requeue, "MaxBatchRequeue",
+			    hashtbl))
+		conf->max_batch_requeue = DEFAULT_MAX_BATCH_REQUEUE;
 
 	if (!s_p_get_uint32(&conf->max_dbd_msgs, "MaxDBDMsgs", hashtbl))
 		conf->max_dbd_msgs = 0;
@@ -4373,8 +4512,7 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (conf->mcs_plugin_params &&
 	    !xstrcmp(conf->mcs_plugin, "mcs/none")) {
 		/* plugin mcs none and a mcs plugin param */
-		info("WARNING: MCSParameters=%s can't be used with"
-			"MCSPlugin=mcs/none",
+		warning("MCSParameters=%s can't be used with MCSPlugin=mcs/none",
 			conf->mcs_plugin_params);
 	}
 	if (!conf->mcs_plugin_params &&
@@ -4445,6 +4583,14 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 		xstrfmtcat(conf->accounting_storage_tres,
 			   ",%s", DEFAULT_ACCOUNTING_TRES);
 
+	/*
+	 * If we are tracking gres/gpu also add the usage tres to the mix
+	 */
+	if (xstrcasestr(conf->accounting_storage_tres, "gres/gpu"))
+		xstrcat(conf->accounting_storage_tres,
+			",gres/gpuutil,gres/gpumem");
+
+
 	if (s_p_get_string(&temp_str, "AccountingStorageEnforce", hashtbl)) {
 		if (_validate_accounting_storage_enforce(temp_str, conf)) {
 			error("AccountingStorageEnforce invalid: %s",
@@ -4481,6 +4627,8 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 			conf->conf_flags |= CTL_CONF_SJC;
 		if (xstrcasestr(temp_str, "job_env"))
 			conf->conf_flags |= CTL_CONF_SJE;
+		if (xstrcasestr(temp_str, "job_extra"))
+			conf->conf_flags |= CTL_CONF_SJX;
 		if (xstrcasestr(temp_str, "job_script"))
 			conf->conf_flags |= CTL_CONF_SJS;
 		xfree(temp_str);
@@ -4553,6 +4701,10 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	} else {
 		conf->preempt_mode = PREEMPT_MODE_OFF;
 	}
+
+	(void) s_p_get_string(&conf->preempt_params, "PreemptParameters",
+			      hashtbl);
+
 	if (!s_p_get_string(&conf->preempt_type, "PreemptType", hashtbl))
 		conf->preempt_type = xstrdup(DEFAULT_PREEMPT_TYPE);
 	if (xstrcmp(conf->preempt_type, "preempt/qos") == 0) {
@@ -4764,8 +4916,6 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (s_p_get_string(&temp_str, "PrivateData", hashtbl)) {
 		if (xstrcasestr(temp_str, "account"))
 			conf->private_data |= PRIVATE_DATA_ACCOUNTS;
-		if (xstrcasestr(temp_str, "cloud"))
-			conf->private_data |= PRIVATE_CLOUD_NODES;
 		if (xstrcasestr(temp_str, "event"))
 			conf->private_data |= PRIVATE_DATA_EVENTS;
 		if (xstrcasestr(temp_str, "job"))
@@ -4899,8 +5049,9 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	(void) s_p_get_string(&conf->sched_params, "SchedulerParameters",
 			      hashtbl);
 	if ((temp_str = xstrcasestr(conf->sched_params, "max_script_size="))) {
-		if (atoi(temp_str + 16) > (512 * 1024 * 1024))
-			fatal("SchedulerParameters option max_script_size cannot exceed 512 MB");
+		if (atoi(temp_str + 16) > MAX_BATCH_SCRIPT_SIZE)
+			fatal("SchedulerParameters option max_script_size cannot exceed %d",
+			      MAX_BATCH_SCRIPT_SIZE);
 	}
 
 	if (!s_p_get_uint16(&conf->sched_time_slice, "SchedulerTimeSlice",
@@ -4929,7 +5080,7 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (s_p_get_string(&temp_str,
 			   "SelectTypeParameters", hashtbl)) {
 		uint16_t type_param;
-		if ((parse_select_type_param(temp_str, &type_param) < 0)) {
+		if ((_parse_select_type_param(temp_str, &type_param) < 0)) {
 			error("Bad SelectTypeParameter: %s", temp_str);
 			xfree(temp_str);
 			return SLURM_ERROR;
@@ -4997,9 +5148,6 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (!s_p_get_string(&conf->slurmctld_pidfile,
 			    "SlurmctldPidFile", hashtbl))
 		conf->slurmctld_pidfile = xstrdup(DEFAULT_SLURMCTLD_PIDFILE);
-
-	(void) s_p_get_string(&conf->slurmctld_plugstack, "SlurmctldPlugstack",
-			      hashtbl);
 
 	(void )s_p_get_string(&conf->slurmctld_logfile, "SlurmctldLogFile",
 			      hashtbl);
@@ -5127,6 +5275,8 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 			      hashtbl);
 	(void) s_p_get_string(&conf->suspend_exc_parts, "SuspendExcParts",
 			      hashtbl);
+	(void) s_p_get_string(&conf->suspend_exc_states, "SuspendExcStates",
+			      hashtbl);
 	(void) s_p_get_string(&conf->suspend_program, "SuspendProgram",
 			      hashtbl);
 	if (!s_p_get_uint16(&conf->suspend_rate, "SuspendRate", hashtbl))
@@ -5134,11 +5284,18 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 	if (s_p_get_string(&temp_str, "SuspendTime", hashtbl)) {
 		if (!xstrcasecmp(temp_str, "NONE") ||
 		    !xstrcasecmp(temp_str, "INFINITE") ||
-		    !xstrcasecmp(temp_str, "-1"))
+		    !xstrcasecmp(temp_str, "-1")) {
 			conf->suspend_time = INFINITE;
-		else
-			 /* -1 converts to INFINITE */
-			conf->suspend_time = atoi(temp_str);
+		} else {
+			uint64_tmp = slurm_atoul(temp_str);
+			if (uint64_tmp > UINT32_MAX) {
+				error("Bad value \"%s\" for SuspendTime",
+				      temp_str);
+				xfree(temp_str);
+				return SLURM_ERROR;
+			}
+			conf->suspend_time = (uint32_t) uint64_tmp;
+		}
 		xfree(temp_str);
 	} else {
 		conf->suspend_time = INFINITE;
@@ -5153,6 +5310,7 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 
 	if (!s_p_get_string(&conf->task_plugin, "TaskPlugin", hashtbl))
 		conf->task_plugin = xstrdup(DEFAULT_TASK_PLUGIN);
+	_sort_task_plugin(&conf->task_plugin);
 #ifdef HAVE_FRONT_END
 	if (xstrcmp(conf->task_plugin, "task/none")) {
 		error("On FrontEnd systems TaskPlugin=task/none is required");
@@ -5379,6 +5537,12 @@ extern char * prolog_flags2str(uint16_t prolog_flags)
 		xstrcat(rc, "NoHold");
 	}
 
+	if (prolog_flags & PROLOG_FLAG_FORCE_REQUEUE_ON_FAIL) {
+		if (rc)
+			xstrcat(rc, ",");
+		xstrcat(rc, "ForceRequeueOnFail");
+	}
+
 	if (prolog_flags & PROLOG_FLAG_SERIAL) {
 		if (rc)
 			xstrcat(rc, ",");
@@ -5418,6 +5582,9 @@ extern uint16_t prolog_str2flags(char *prolog_flags)
 			rc |= PROLOG_FLAG_DEFER_BATCH;
 		else if (xstrcasecmp(tok, "NoHold") == 0)
 			rc |= PROLOG_FLAG_NOHOLD;
+		else if (xstrcasecmp(tok, "ForceRequeueOnFail") == 0)
+			rc |= (PROLOG_FLAG_ALLOC |
+			       PROLOG_FLAG_FORCE_REQUEUE_ON_FAIL);
 		else if (xstrcasecmp(tok, "Serial") == 0)
 			rc |= PROLOG_FLAG_SERIAL;
 		else if (xstrcasecmp(tok, "X11") == 0) {
@@ -5568,11 +5735,6 @@ extern char * debug_flags2str(uint64_t debug_flags)
 			xstrcat(rc, ",");
 		xstrcat(rc, "Dependency");
 	}
-	if (debug_flags & DEBUG_FLAG_ESEARCH) {
-		if (rc)
-			xstrcat(rc, ",");
-		xstrcat(rc, "Elasticsearch");
-	}
 	if (debug_flags & DEBUG_FLAG_ENERGY) {
 		if (rc)
 			xstrcat(rc, ",");
@@ -5612,6 +5774,11 @@ extern char * debug_flags2str(uint64_t debug_flags)
 		if (rc)
 			xstrcat(rc, ",");
 		xstrcat(rc, "Interconnect");
+	}
+	if (debug_flags & DEBUG_FLAG_JOBCOMP) {
+		if (rc)
+			xstrcat(rc, ",");
+		xstrcat(rc, "JobComp");
 	}
 	if (debug_flags & DEBUG_FLAG_JOB_CONT) {
 		if (rc)
@@ -5784,8 +5951,6 @@ extern int debug_str2flags(char *debug_flags, uint64_t *flags_out)
 			(*flags_out) |= DEBUG_FLAG_DB_WCKEY;
 		else if (xstrcasecmp(tok, "Dependency") == 0)
 			(*flags_out) |= DEBUG_FLAG_DEPENDENCY;
-		else if (xstrcasecmp(tok, "Elasticsearch") == 0)
-			(*flags_out) |= DEBUG_FLAG_ESEARCH;
 		else if (xstrcasecmp(tok, "Energy") == 0)
 			(*flags_out) |= DEBUG_FLAG_ENERGY;
 		else if (xstrcasecmp(tok, "ExtSensors") == 0)
@@ -5807,6 +5972,9 @@ extern int debug_str2flags(char *debug_flags, uint64_t *flags_out)
 		else if (!xstrcasecmp(tok, "JobAccountGather") ||
 			 !xstrcasecmp(tok, "JAG"))
 			(*flags_out) |= DEBUG_FLAG_JAG;
+		else if (!xstrcasecmp(tok, "JobComp") ||
+			 !xstrcasecmp(tok, "Elasticsearch"))
+			(*flags_out) |= DEBUG_FLAG_JOBCOMP;
 		else if (xstrcasecmp(tok, "JobContainer") == 0)
 			(*flags_out) |= DEBUG_FLAG_JOB_CONT;
 		else if (xstrcasecmp(tok, "License") == 0)
@@ -5890,6 +6058,11 @@ extern char * reconfig_flags2str(uint16_t reconfig_flags)
 			xstrcat(rc, ",");
 		xstrcat(rc, "KeepPartState");
 	}
+	if (reconfig_flags & RECONFIG_KEEP_POWER_SAVE_SETTINGS) {
+		if (rc)
+			xstrcat(rc, ",");
+		xstrcat(rc, "KeepPowerSaveSettings");
+	}
 
 	return rc;
 }
@@ -5914,6 +6087,8 @@ extern uint16_t reconfig_str2flags(char *reconfig_flags)
 			rc |= RECONFIG_KEEP_PART_INFO;
 		else if (xstrcasecmp(tok, "KeepPartState") == 0)
 			rc |= RECONFIG_KEEP_PART_STAT;
+		else if (xstrcasecmp(tok, "KeepPowerSaveSettings") == 0)
+			rc |= RECONFIG_KEEP_POWER_SAVE_SETTINGS;
 		else {
 			error("Invalid ReconfigFlag: %s", tok);
 			rc = NO_VAL16;
@@ -6121,21 +6296,28 @@ extern int sort_key_pairs(void *v1, void *v2)
 extern char *get_extra_conf_path(char *conf_name)
 {
 	char *val = getenv("SLURM_CONF");
+	config_file_t *cached_config;
 	char *rc = NULL, *slash;
 
 	if (!val)
 		val = default_slurm_config_file;
 
 	/*
-	 * Both plugstack.conf and topology.conf need special handling in
-	 * "configless" operation as client commands will need to load them.
+	 * Absolute paths are preserved as-is.
 	 */
+	if (conf_name && conf_name[0] == '/')
+		return xstrdup(conf_name);
 
-	if (plugstack_conf && !xstrcmp(conf_name, "plugstack.conf"))
-		return xstrdup(plugstack_conf);
-
-	if (topology_conf && !xstrcmp(conf_name, "topology.conf"))
-		return xstrdup(topology_conf);
+	/*
+	 * Config files such as plugstack.conf, topology.conf, and any
+	 * non-absolute include files need special handling in "configless"
+	 * operation as client commands.
+	 */
+	if (config_files &&
+	    (cached_config = list_find_first(config_files, find_conf_by_name,
+					     conf_name)) &&
+	    cached_config->exists)
+		return xstrdup(cached_config->memfd_path);
 
 	/* Replace file name on end of path */
 	rc = xstrdup(val);
@@ -6178,10 +6360,8 @@ extern int add_remote_nodes_to_conf_tbls(char *node_list,
 
 	while ((hostname = hostlist_shift(host_list))) {
 		_internal_conf_remove_node(hostname);
-		_push_to_hashtbls(hostname, hostname,
-				  NULL, NULL, 0, 0,
-				  0, 0, 0, 0, false, NULL, 0,
-				  0, &node_addrs[i++], true);
+		_push_to_hashtbls(hostname, hostname, NULL, NULL, 0,
+				  false, &node_addrs[i++], true);
 		free(hostname);
 	}
 	slurm_conf_unlock();
@@ -6217,11 +6397,7 @@ extern void slurm_conf_add_node(node_record_t *node_ptr)
 
 	_push_to_hashtbls(node_ptr->name, node_ptr->node_hostname,
 			  node_ptr->comm_name, node_ptr->bcast_address,
-			  node_ptr->port, node_ptr->cpus, node_ptr->boards,
-			  node_ptr->tot_sockets, node_ptr->cores,
-			  node_ptr->threads, 0, node_ptr->cpu_spec_list,
-			  node_ptr->core_spec_cnt, node_ptr->mem_spec_limit,
-			  NULL, false);
+			  node_ptr->port, false, NULL, false);
 	slurm_conf_unlock();
 }
 
@@ -6262,3 +6438,28 @@ extern void slurm_conf_remove_node(char *node_name)
 	_internal_conf_remove_node(node_name);
 	slurm_conf_unlock();
 }
+
+#ifdef HAVE_FRONT_END
+extern uint16_t slurm_conf_get_frontend_port(char *node_hostname)
+{
+	uint16_t port = 0;
+	slurm_conf_frontend_t *front_end_ptr = NULL;
+
+	slurm_conf_lock();
+	_init_slurmd_nodehash();
+
+	if (!front_end_list) {
+		debug("front_end_list is NULL");
+	} else if ((front_end_ptr = list_find_first(front_end_list,
+						    _list_find_frontend,
+						    node_hostname))) {
+		if (front_end_ptr->port)
+			port = front_end_ptr->port;
+		else
+			port = conf_ptr->slurmd_port;
+	}
+	slurm_conf_unlock();
+
+	return port;
+}
+#endif

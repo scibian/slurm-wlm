@@ -89,44 +89,44 @@ static int _bind_ldom(uint32_t ldom, cpu_set_t *mask)
 #endif
 }
 
-int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
+int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *step, uint32_t node_tid)
 {
 	int nummasks, maskid, i, threads;
 	char *curstr, *selstr;
-	char mstr[1 + CPU_SETSIZE / 4];
+	char mstr[CPU_SET_HEX_STR_SIZE];
 	uint32_t local_id = node_tid;
 	char buftype[1024];
 
-	slurm_sprint_cpu_bind_type(buftype, job->cpu_bind_type);
-	debug3("get_cpuset (%s[%d]) %s", buftype, job->cpu_bind_type,
-		job->cpu_bind);
+	slurm_sprint_cpu_bind_type(buftype, step->cpu_bind_type);
+	debug3("get_cpuset (%s[%d]) %s", buftype, step->cpu_bind_type,
+		step->cpu_bind);
 	CPU_ZERO(mask);
 
-	if (job->cpu_bind_type & CPU_BIND_NONE) {
-		return true;
+	if (step->cpu_bind_type & CPU_BIND_NONE) {
+		return false;
 	}
 
-	if (job->cpu_bind_type & CPU_BIND_RANK) {
+	if (step->cpu_bind_type & CPU_BIND_RANK) {
 		threads = MAX(conf->threads, 1);
-		CPU_SET(node_tid % (job->cpus*threads), mask);
+		CPU_SET(node_tid % (step->cpus*threads), mask);
 		return true;
 	}
 
-	if (job->cpu_bind_type & CPU_BIND_LDRANK) {
+	if (step->cpu_bind_type & CPU_BIND_LDRANK) {
 		/* if HAVE_NUMA then bind this task ID to it's corresponding
 		 * locality domain ID. Otherwise, bind this task ID to it's
 		 * corresponding socket ID */
 		return _bind_ldom(local_id, mask);
 	}
 
-	if (!job->cpu_bind)
+	if (!step->cpu_bind)
 		return false;
 
 	nummasks = 1;
 	selstr = NULL;
 
 	/* get number of strings present in cpu_bind */
-	curstr = job->cpu_bind;
+	curstr = step->cpu_bind;
 	while (*curstr) {
 		if (nummasks == local_id+1) {
 			selstr = curstr;
@@ -142,7 +142,7 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
 		/* ...select mask string by wrapping task ID into list */
 		maskid = local_id % nummasks;
 		i = maskid;
-		curstr = job->cpu_bind;
+		curstr = step->cpu_bind;
 		while (*curstr && i) {
 			if (*curstr == ',')
 			    	i--;
@@ -157,11 +157,11 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
 	/* extract the selected mask from the list */
 	i = 0;
 	curstr = mstr;
-	while (*selstr && *selstr != ',' && i++ < (CPU_SETSIZE/4))
+	while (*selstr && (*selstr != ',') && (++i < CPU_SET_HEX_STR_SIZE))
 		*curstr++ = *selstr++;
 	*curstr = '\0';
 
-	if (job->cpu_bind_type & CPU_BIND_MASK) {
+	if (step->cpu_bind_type & CPU_BIND_MASK) {
 		/* convert mask string into cpu_set_t mask */
 		if (task_str_to_cpuset(mask, mstr) < 0) {
 			error("task_str_to_cpuset %s", mstr);
@@ -170,7 +170,7 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
 		return true;
 	}
 
-	if (job->cpu_bind_type & CPU_BIND_MAP) {
+	if (step->cpu_bind_type & CPU_BIND_MAP) {
 		unsigned int mycpu = 0;
 		if (xstrncmp(mstr, "0x", 2) == 0) {
 			mycpu = strtoul (&(mstr[2]), NULL, 16);
@@ -181,7 +181,7 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
 		return true;
 	}
 
-	if (job->cpu_bind_type & CPU_BIND_LDMASK) {
+	if (step->cpu_bind_type & CPU_BIND_LDMASK) {
 		/* if HAVE_NUMA bind this task to the locality domains
 		 * identified in mstr. Otherwise bind this task to the
 		 * sockets identified in mstr */
@@ -205,14 +205,13 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job, uint32_t node_tid)
 				_bind_ldom(base + 2, mask);
 			if (val & 8)
 				_bind_ldom(base + 3, mask);
-			len--;
 			ptr--;
 			base += 4;
 		}
 		return true;
 	}
 
-	if (job->cpu_bind_type & CPU_BIND_LDMAP) {
+	if (step->cpu_bind_type & CPU_BIND_LDMAP) {
 		/* if HAVE_NUMA bind this task to the given locality
 		 * domain. Otherwise bind this task to the given
 		 * socket */
@@ -286,21 +285,23 @@ static bool _is_power_cpu(void)
  * the CPU mask has gaps for the unused threads (different from Intel
  * processors) which need to be skipped over in the mask used in the
  * set system call. */
-void reset_cpuset(cpu_set_t *new_mask, cpu_set_t *cur_mask)
+void reset_cpuset(cpu_set_t *new_mask)
 {
-	cpu_set_t full_mask, newer_mask;
+	cpu_set_t full_mask, newer_mask, cur_mask;
 	int cur_offset, new_offset = 0, last_set = -1;
 
 	if (!_is_power_cpu())
 		return;
 
+	slurm_getaffinity(0, sizeof(cur_mask), &cur_mask);
+
 	if (slurm_getaffinity(1, sizeof(full_mask), &full_mask)) {
 		/* Try to get full CPU mask from process init */
 		CPU_ZERO(&full_mask);
-#ifdef __FreeBSD__
-		CPU_OR(&full_mask, cur_mask);
+#if defined(__FreeBSD__) && (__FreeBSD_version < 1300524)
+		CPU_OR(&full_mask, &cur_mask);
 #else
-		CPU_OR(&full_mask, &full_mask, cur_mask);
+		CPU_OR(&full_mask, &full_mask, &cur_mask);
 #endif
 	}
 	CPU_ZERO(&newer_mask);
@@ -324,7 +325,7 @@ void reset_cpuset(cpu_set_t *new_mask, cpu_set_t *cur_mask)
 int slurm_setaffinity(pid_t pid, size_t size, const cpu_set_t *mask)
 {
 	int rval;
-	char mstr[1 + CPU_SETSIZE / 4];
+	char mstr[CPU_SET_HEX_STR_SIZE];
 
 #ifdef __FreeBSD__
         rval = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID,
@@ -342,7 +343,7 @@ int slurm_setaffinity(pid_t pid, size_t size, const cpu_set_t *mask)
 int slurm_getaffinity(pid_t pid, size_t size, cpu_set_t *mask)
 {
 	int rval;
-	char mstr[1 + CPU_SETSIZE / 4];
+	char mstr[CPU_SET_HEX_STR_SIZE];
 
 	CPU_ZERO(mask);
 

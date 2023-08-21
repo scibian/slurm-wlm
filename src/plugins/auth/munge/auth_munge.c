@@ -105,6 +105,7 @@ typedef struct {
 	int index; /* MUST ALWAYS BE FIRST. DO NOT PACK. */
 	int magic;         /* magical munge validity magic                   */
 	char   *m_str;     /* munged string                                  */
+	bool m_xstr;       /* set if m_str allocated by xmalloc, not malloc  */
 	struct in_addr addr; /* IP addr where cred was encoded               */
 	bool    verified;  /* true if this cred has been verified            */
 	uid_t   uid;       /* UID. valid only if verified == true            */
@@ -115,7 +116,7 @@ typedef struct {
 
 extern auth_credential_t *auth_p_create(char *opts, uid_t r_uid, void *data,
 					int dlen);
-extern int auth_p_destroy(auth_credential_t *cred);
+extern void auth_p_destroy(auth_credential_t *cred);
 
 /* Static prototypes */
 
@@ -153,10 +154,14 @@ int init(void)
 		xfree(socket);
 		auth_p_destroy(cred);
 	}
-	debug("%s loaded", plugin_name);
+	debug("loaded");
 	return rc;
 }
 
+extern int fini(void)
+{
+	return SLURM_SUCCESS;
+}
 
 /*
  * Allocate a credential.  This function should return NULL if it cannot
@@ -203,6 +208,7 @@ auth_credential_t *auth_p_create(char *opts, uid_t r_uid, void *data, int dlen)
 	cred->magic = MUNGE_MAGIC;
 	cred->verified = false;
 	cred->m_str    = NULL;
+	cred->m_xstr = false;
 	cred->data = NULL;
 	cred->dlen = 0;
 
@@ -249,23 +255,23 @@ again:
 /*
  * Free a credential that was allocated with auth_p_create().
  */
-int auth_p_destroy(auth_credential_t *cred)
+extern void auth_p_destroy(auth_credential_t *cred)
 {
-	if (!cred) {
-		slurm_seterrno(ESLURM_AUTH_BADARG);
-		return SLURM_ERROR;
-	}
+	if (!cred)
+		return;
 
 	xassert(cred->magic == MUNGE_MAGIC);
 
 	/* Note: Munge cred string not encoded with xmalloc() */
-	if (cred->m_str)
+	if (cred->m_xstr)
+		xfree(cred->m_str);
+	else if (cred->m_str)
 		free(cred->m_str);
+
 	if (cred->data)
 		free(cred->data);
 
 	xfree(cred);
-	return SLURM_SUCCESS;
 }
 
 /*
@@ -463,9 +469,9 @@ auth_credential_t *auth_p_unpack(buf_t *buf, uint16_t protocol_version)
 		cred = xmalloc(sizeof(*cred));
 		cred->magic = MUNGE_MAGIC;
 		cred->verified = false;
-		cred->m_str = NULL;
+		cred->m_xstr = true;
 
-		safe_unpackstr_malloc(&cred->m_str, &size, buf);
+		safe_unpackstr_xmalloc(&cred->m_str, &size, buf);
 	} else {
 		error("%s: unknown protocol version %u",
 		      __func__, protocol_version);
@@ -555,7 +561,12 @@ again:
 		error("auth_munge: Unable to retrieve addr: %s",
 		      munge_ctx_strerror(ctx));
 
-	c->verified = true;
+	if (c->uid == SLURM_AUTH_NOBODY)
+		err = EMUNGE_CRED_INVALID;
+	else if (c->gid == SLURM_AUTH_NOBODY)
+		err = EMUNGE_CRED_INVALID;
+	else
+		c->verified = true;
 
 done:
 	munge_ctx_destroy(ctx);
@@ -573,15 +584,15 @@ static void _print_cred(munge_ctx_t ctx)
 
 	e = munge_ctx_get(ctx, MUNGE_OPT_ENCODE_TIME, &encoded);
 	if (e != EMUNGE_SUCCESS)
-		debug("%s: Unable to retrieve encode time: %s",
-		      plugin_type, munge_ctx_strerror(ctx));
+		debug("Unable to retrieve encode time: %s",
+		      munge_ctx_strerror(ctx));
 	else
 		info("ENCODED: %s", slurm_ctime2_r(&encoded, buf));
 
 	e = munge_ctx_get(ctx, MUNGE_OPT_DECODE_TIME, &decoded);
 	if (e != EMUNGE_SUCCESS)
-		debug("%s: Unable to retrieve decode time: %s",
-		      plugin_type, munge_ctx_strerror(ctx));
+		debug("Unable to retrieve decode time: %s",
+		      munge_ctx_strerror(ctx));
 	else
 		info("DECODED: %s", slurm_ctime2_r(&decoded, buf));
 }

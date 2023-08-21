@@ -90,6 +90,10 @@ typedef enum {
 	LOG_LEVEL_END
 }	log_level_t;
 
+typedef enum {
+	LOG_FILE_FMT_TIMESTAMP = 0,
+	LOG_FILE_FMT_JSON,
+} log_file_fmt_t;
 
 /*
  * log options: Each of stderr, syslog, and logfile can have a different level
@@ -101,6 +105,7 @@ typedef struct {
 	bool prefix_level;          /* prefix level (e.g. "debug: ") if true */
 	bool buffered;              /* use internal buffer to never block    */
 	bool raw;                   /* output is to a raw terminal           */
+	log_file_fmt_t logfile_fmt; /* format of logfile output */
 } 	log_options_t;
 
 extern char *slurm_prog_name;
@@ -108,16 +113,20 @@ extern char *slurm_prog_name;
 /* some useful initializers for log_options_t
  */
 #define LOG_OPTS_INITIALIZER	\
-	{ LOG_LEVEL_INFO, LOG_LEVEL_INFO, LOG_LEVEL_INFO, 1, 0 , 0}
+	{ LOG_LEVEL_INFO, LOG_LEVEL_INFO, LOG_LEVEL_INFO, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define LOG_OPTS_SYSLOG_DEFAULT	\
-	{ LOG_LEVEL_QUIET, LOG_LEVEL_INFO, LOG_LEVEL_QUIET, 1, 0, 0}
+	{ LOG_LEVEL_QUIET, LOG_LEVEL_INFO, LOG_LEVEL_QUIET, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define LOG_OPTS_STDERR_ONLY	\
-	{ LOG_LEVEL_INFO,  LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, 1, 0, 0}
+	{ LOG_LEVEL_INFO,  LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define SCHEDLOG_OPTS_INITIALIZER	\
-	{ LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, 0, 1, 0}
+	{ LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, \
+		0, 1, 0, LOG_FILE_FMT_TIMESTAMP }
 
 
 /* Functions for filling in a char buffer with a timestamp. */
@@ -189,10 +198,9 @@ int log_alter_with_fp(log_options_t opt, log_facility_t fac, FILE *fp_in);
 int sched_log_alter(log_options_t opts, log_facility_t fac, char *logfile);
 
 /* Set prefix for log file entries
- * (really only useful for slurmd at this point).
  * Note: will store pfx internally, do not use after this call.
  */
-void log_set_fpfx(char **pfx);
+void log_set_prefix(char **pfx);
 
 /*
  * (re)set argv0 string prepended to all log messages
@@ -300,6 +308,7 @@ extern void fatal_abort(const char *, ...)
 extern void fatal(const char *, ...)
 	__attribute__((format (printf, 1, 2))) __attribute__((noreturn));
 int	error(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	warning(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	slurm_info(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	slurm_verbose(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 

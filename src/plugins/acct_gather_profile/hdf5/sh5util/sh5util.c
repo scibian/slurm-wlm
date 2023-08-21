@@ -61,8 +61,8 @@
 #include "src/common/read_config.h"
 #include "src/common/proc_args.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_acct_gather_profile.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/acct_gather_profile.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "../hdf5_api.h"
 #include "sh5util.h"
 
@@ -200,7 +200,11 @@ main(int argc, char **argv)
 {
 	int cc;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
+
+	if (acct_gather_conf_init() != SLURM_SUCCESS)
+		fatal("Unable to initialize acct_gather_conf");
+
 	cc = _set_options(argc, argv);
 	if (cc < 0)
 		goto ouch;

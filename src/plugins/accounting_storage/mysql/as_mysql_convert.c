@@ -37,16 +37,18 @@
 
 #include "as_mysql_convert.h"
 #include "as_mysql_tres.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 
 /*
  * Any time you have to add to an existing convert update this number.
- * NOTE: 9 was the first version of 20.11.
  * NOTE: 10 was the first version of 21.08.
  * NOTE: 11 was the first version of 22.05.
  * NOTE: 12 was the second version of 22.05.
+ * NOTE: 13 was the first version of 23.02.
  */
-#define CONVERT_VERSION 12
+#define CONVERT_VERSION 13
+
+#define MIN_CONVERT_VERSION 10
 
 #define JOB_CONVERT_LIMIT_CNT 1000
 
@@ -62,31 +64,36 @@ typedef struct {
 
 static uint32_t db_curr_ver = NO_VAL;
 
-static int _convert_step_table_post(
-	mysql_conn_t *mysql_conn, char *cluster_name)
+static int _rename_clus_res_columns(mysql_conn_t *mysql_conn)
+{
+	char *query = NULL;
+	int rc = SLURM_SUCCESS;
+
+	/*
+	 * Change the name 'percent_allowed' to be 'allowed'
+	 */
+	query = xstrdup_printf(
+		"alter table %s change percent_allowed allowed "
+		"int unsigned default 0;",
+		clus_res_table);
+
+	DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
+	if ((rc = as_mysql_convert_alter_query(mysql_conn, query)) !=
+	    SLURM_SUCCESS)
+		error("Can't update %s %m", clus_res_table);
+	xfree(query);
+
+	return rc;
+}
+
+static int _convert_clus_res_table_pre(mysql_conn_t *mysql_conn)
 {
 	int rc = SLURM_SUCCESS;
-	char *query = NULL;
 
-	if (db_curr_ver < 9) {
-		/*
-		 * Change the names pack_job_id and pack_job_offset to be het_*
-		 */
-		query = xstrdup_printf(
-			"update \"%s_%s\" set id_step = %d where id_step = -2;"
-			"update \"%s_%s\" set id_step = %d where id_step = -1;",
-			cluster_name, step_table, SLURM_BATCH_SCRIPT,
-			cluster_name, step_table, SLURM_EXTERN_CONT);
-	}
-
-	if (query) {
-		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
-
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS)
-			error("%s: Can't convert %s_%s info: %m",
-			      __func__, cluster_name, step_table);
+	if (db_curr_ver < 13) {
+		if ((rc = _rename_clus_res_columns(mysql_conn)) !=
+		    SLURM_SUCCESS)
+			return rc;
 	}
 
 	return rc;
@@ -440,8 +447,7 @@ static int _set_db_curr_ver(mysql_conn_t *mysql_conn)
 		return SLURM_SUCCESS;
 
 	query = xstrdup_printf("select version from %s", convert_version_table);
-	debug4("%d(%s:%d) query\n%s", mysql_conn->conn,
-	       THIS_FILE, __LINE__, query);
+	DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return SLURM_ERROR;
@@ -453,17 +459,12 @@ static int _set_db_curr_ver(mysql_conn_t *mysql_conn)
 		db_curr_ver = slurm_atoul(row[0]);
 		mysql_free_result(result);
 	} else {
-		int tmp_ver = 0;
+		int tmp_ver = CONVERT_VERSION;
 		mysql_free_result(result);
-
-		/* no valid clusters, just return */
-		if (as_mysql_total_cluster_list &&
-		    !list_count(as_mysql_total_cluster_list))
-			tmp_ver = CONVERT_VERSION;
 
 		query = xstrdup_printf("insert into %s (version) values (%d);",
 				       convert_version_table, tmp_ver);
-		debug4("(%s:%d) query\n%s", THIS_FILE, __LINE__, query);
+		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS)
@@ -472,6 +473,51 @@ static int _set_db_curr_ver(mysql_conn_t *mysql_conn)
 	}
 
 	return rc;
+}
+
+extern void as_mysql_convert_possible(mysql_conn_t *mysql_conn)
+{
+	(void) _set_db_curr_ver(mysql_conn);
+
+	/*
+	 * Check to see if conversion is possible.
+	 */
+	if (db_curr_ver == NO_VAL) {
+		/*
+		 * Check if the cluster_table exists before deciding if this is
+		 * a new database or a database that predates the
+		 * convert_version_table.
+		 */
+		MYSQL_RES *result = NULL;
+		char *query = xstrdup_printf("select name from %s limit 1",
+					     cluster_table);
+		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
+		if ((result = mysql_db_query_ret(mysql_conn, query, 0))) {
+			/*
+			 * knowing that the table exists is enough to say this
+			 * is an old database.
+			 */
+			xfree(query);
+			mysql_free_result(result);
+			fatal("Database schema is too old for this version of Slurm to upgrade.");
+		}
+		xfree(query);
+		debug4("Database is new, conversion is not required");
+	} else if (db_curr_ver < MIN_CONVERT_VERSION) {
+		fatal("Database schema is too old for this version of Slurm to upgrade.");
+	} else if (db_curr_ver > CONVERT_VERSION) {
+		char *err_msg = "Database schema is from a newer version of Slurm, downgrading is not possible.";
+		/*
+		 * If we are configured --enable-debug only make this a
+		 * debug statement instead of fatal to allow developers
+		 * easier bisects.
+		 */
+#ifdef NDEBUG
+		fatal("%s", err_msg);
+#else
+		debug("%s", err_msg);
+#endif
+	}
 }
 
 extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
@@ -486,7 +532,7 @@ extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
 		return rc;
 
 	if (db_curr_ver == CONVERT_VERSION) {
-		debug4("%s: No conversion needed, Horray!", __func__);
+		debug4("No conversion needed, Horray!");
 		return SLURM_SUCCESS;
 	} else if (backup_dbd) {
 		/*
@@ -501,6 +547,10 @@ extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
 		fatal("Backup DBD can not convert database, please start the primary DBD before starting the backup.");
 		return SLURM_ERROR;
 	}
+
+	info("pre-converting cluster resource table");
+	if ((rc = _convert_clus_res_table_pre(mysql_conn)) != SLURM_SUCCESS)
+		return rc;
 
 	/* make it up to date */
 	itr = list_iterator_create(as_mysql_total_cluster_list);
@@ -531,8 +581,8 @@ extern int as_mysql_convert_tables_pre_create(mysql_conn_t *mysql_conn)
 extern int as_mysql_convert_tables_post_create(mysql_conn_t *mysql_conn)
 {
 	int rc = SLURM_SUCCESS;
-	ListIterator itr;
-	char *cluster_name;
+	/* ListIterator itr; */
+	/* char *cluster_name; */
 
 	xassert(as_mysql_total_cluster_list);
 
@@ -540,7 +590,7 @@ extern int as_mysql_convert_tables_post_create(mysql_conn_t *mysql_conn)
 		return rc;
 
 	if (db_curr_ver == CONVERT_VERSION) {
-		debug4("%s: No conversion needed, Horray!", __func__);
+		debug4("No conversion needed, Horray!");
 		return SLURM_SUCCESS;
 	} else if (backup_dbd) {
 		/*
@@ -557,14 +607,10 @@ extern int as_mysql_convert_tables_post_create(mysql_conn_t *mysql_conn)
 	}
 
 	/* make it up to date */
-	itr = list_iterator_create(as_mysql_total_cluster_list);
-	while ((cluster_name = list_next(itr))) {
-		info("post-converting step table for %s", cluster_name);
-		if ((rc = _convert_step_table_post(mysql_conn, cluster_name)
-		     != SLURM_SUCCESS))
-			break;
-	}
-	list_iterator_destroy(itr);
+	/* itr = list_iterator_create(as_mysql_total_cluster_list); */
+	/* while ((cluster_name = list_next(itr))) { */
+	/* } */
+	/* list_iterator_destroy(itr); */
 
 	return rc;
 }
@@ -578,7 +624,7 @@ extern int as_mysql_convert_non_cluster_tables_post_create(
 		return rc;
 
 	if (db_curr_ver == CONVERT_VERSION) {
-		debug4("%s: No conversion needed, Horray!", __func__);
+		debug4("No conversion needed, Horray!");
 		return SLURM_SUCCESS;
 	}
 
@@ -589,7 +635,7 @@ extern int as_mysql_convert_non_cluster_tables_post_create(
 
 		info("Conversion done: success!");
 
-		debug4("(%s:%d) query\n%s", THIS_FILE, __LINE__, query);
+		DB_DEBUG(DB_QUERY, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 	}

@@ -38,7 +38,7 @@
 \*****************************************************************************/
 
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 
 /*
  * Define slurm-specific aliases for use by plugins, see slurm_xlator.h
@@ -808,8 +808,7 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 extern void slurmdbd_free_buffer(void *x)
 {
 	buf_t *buffer = (buf_t *) x;
-	if (buffer)
-		free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 }
 
 extern void slurmdbd_free_acct_coord_msg(dbd_acct_coord_msg_t *msg)
@@ -1071,6 +1070,8 @@ extern void slurmdbd_free_job_complete_msg(dbd_job_comp_msg_t *msg)
 	if (msg) {
 		xfree(msg->admin_comment);
 		xfree(msg->comment);
+		xfree(msg->extra);
+		xfree(msg->failed_node);
 		xfree(msg->nodes);
 		xfree(msg->system_comment);
 		xfree(msg->tres_alloc_str);
@@ -1088,6 +1089,7 @@ extern void slurmdbd_free_job_start_msg(void *in)
 		xfree(msg->container);
 		xfree(msg->env_hash);
 		xfree(msg->gres_used);
+		xfree(msg->licenses);
 		xfree(msg->mcs_label);
 		xfree(msg->name);
 		xfree(msg->nodes);

@@ -322,7 +322,7 @@ static List _create_front_end_info_list(
 	front_end_info_msg_t *front_end_info_ptr, int changed)
 {
 	char *upper = NULL;
-	char user[32], time_str[32];
+	char user[32], time_str[256];
 	static List info_list = NULL;
 	List last_list = NULL;
 	ListIterator last_list_itr = NULL;
@@ -766,7 +766,6 @@ extern void specific_info_front_end(popup_info_t *popup_win)
 	List send_resv_list = NULL;
 	int changed = 1;
 	sview_front_end_info_t *sview_front_end_info_ptr = NULL;
-	int i = -1;
 	ListIterator itr = NULL;
 
 	if (!spec_info->display_widget) {
@@ -843,9 +842,7 @@ display_it:
 	   the list */
 	send_resv_list = list_create(NULL);
 	itr = list_iterator_create(resv_list);
-	i = -1;
 	while ((sview_front_end_info_ptr = list_next(itr))) {
-		i++;
 		front_end_ptr = sview_front_end_info_ptr->front_end_ptr;
 		switch (spec_info->type) {
 		case PART_PAGE:

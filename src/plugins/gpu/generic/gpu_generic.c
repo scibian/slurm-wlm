@@ -37,8 +37,8 @@
 #define _GNU_SOURCE
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/gpu.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gpu.h"
+#include "src/interfaces/gres.h"
 #include "src/common/log.h"
 
 /*
@@ -129,4 +129,9 @@ extern int gpu_p_energy_read(uint32_t dv_ind, gpu_status_t *gpu)
 extern void gpu_p_get_device_count(unsigned int *device_count)
 {
 	return;
+}
+
+extern int gpu_p_usage_read(pid_t pid, acct_gather_data_t *data)
+{
+	return SLURM_SUCCESS;
 }

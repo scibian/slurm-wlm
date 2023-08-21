@@ -56,7 +56,7 @@
 #include "src/common/parse_config.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -125,6 +125,7 @@ extern int read_slurmdbd_conf(void)
 {
 	s_p_options_t options[] = {
 		{"AllowNoDefAcct", S_P_BOOLEAN},
+		{"AllResourcesAbsolute", S_P_BOOLEAN},
 		{"ArchiveDir", S_P_STRING},
 		{"ArchiveEvents", S_P_BOOLEAN},
 		{"ArchiveJobs", S_P_BOOLEAN},
@@ -222,7 +223,7 @@ extern int read_slurmdbd_conf(void)
 		debug("Reading slurmdbd.conf file %s", conf_path);
 
 		tbl = s_p_hashtbl_create(options);
-		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL)
+		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL, true)
 		    == SLURM_ERROR) {
 			fatal("Could not open/read/parse slurmdbd.conf file %s",
 			      conf_path);
@@ -239,6 +240,9 @@ extern int read_slurmdbd_conf(void)
 		s_p_get_boolean(&tmp_bool, "AllowNoDefAcct", tbl);
 		if (tmp_bool)
 			slurmdbd_conf->flags |= DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT;
+		s_p_get_boolean(&tmp_bool, "AllResourcesAbsolute", tbl);
+		if (tmp_bool)
+			slurmdbd_conf->flags |= DBD_CONF_FLAG_ALL_RES_ABS;
 
 		s_p_get_boolean(&a_events, "ArchiveEvents", tbl);
 		s_p_get_boolean(&a_jobs, "ArchiveJobs", tbl);
@@ -352,6 +356,8 @@ extern int read_slurmdbd_conf(void)
 				slurm_conf.log_fmt = LOG_FMT_RFC5424_MS;
 			else if (xstrcasestr(temp_str, "rfc5424"))
 				slurm_conf.log_fmt = LOG_FMT_RFC5424;
+			else if (xstrcasestr(temp_str, "rfc3339"))
+				slurm_conf.log_fmt = LOG_FMT_RFC3339;
 			else if (xstrcasestr(temp_str, "clock"))
 				slurm_conf.log_fmt = LOG_FMT_CLOCK;
 			else if (xstrcasestr(temp_str, "short"))
@@ -373,7 +379,7 @@ extern int read_slurmdbd_conf(void)
 		                    tbl))
 			slurm_conf.msg_timeout = DEFAULT_MSG_TIMEOUT;
 		else if (slurm_conf.msg_timeout > 100)
-			info("WARNING: MessageTimeout is too high for effective fault-tolerance");
+			warning("MessageTimeout is too high for effective fault-tolerance");
 
 		s_p_get_string(&slurmdbd_conf->parameters, "Parameters", tbl);
 		if (slurmdbd_conf->parameters) {
@@ -827,8 +833,8 @@ extern List dump_config(void)
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("BOOT_TIME");
-	key_pair->value = xmalloc(128);
-	slurm_make_time_str ((time_t *)&boot_time, key_pair->value, 128);
+	key_pair->value = xmalloc(256);
+	slurm_make_time_str ((time_t *)&boot_time, key_pair->value, 256);
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));

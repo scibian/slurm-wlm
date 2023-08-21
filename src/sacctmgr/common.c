@@ -40,7 +40,7 @@
 
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_defs.h"
 
 #include <unistd.h>
@@ -192,9 +192,9 @@ static print_field_t *_get_print_field(char *object)
 		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("Allowed", object, MAX(command_len, 2))) {
 		field->type = PRINT_ALLOWED;
-		field->name = xstrdup("% Allowed");
-		field->len = 10;
-		field->print_routine = print_fields_uint16;
+		field->name = xstrdup("Allowed");
+		field->len = 8;
+		field->print_routine = print_fields_uint32;
 	} else if (!xstrncasecmp("Associations", object, MAX(command_len, 2))) {
 		field->type = PRINT_ASSOC_NAME;
 		field->name = xstrdup("Assocs");
@@ -221,11 +221,16 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Cluster");
 		field->len = 10;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("Coordinators", object, MAX(command_len, 2))) {
+	} else if (!xstrncasecmp("Coordinators", object, MAX(command_len, 3))) {
 		field->type = PRINT_COORDS;
 		field->name = xstrdup("Coord Accounts");
 		field->len = 20;
 		field->print_routine = sacctmgr_print_coord_list;
+	} else if (!xstrncasecmp("Comment", object, MAX(command_len, 3))) {
+		field->type = PRINT_COMMENT;
+		field->name = xstrdup("Comment");
+		field->len = 20;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("ControlHost", object, MAX(command_len, 8))) {
 		field->type = PRINT_CHOST;
 		field->name = xstrdup("ControlHost");
@@ -658,7 +663,7 @@ static print_field_t *_get_print_field(char *object)
 		field->type = PRINT_PREE;
 		field->name = xstrdup("Preempt");
 		field->len = 10;
-		field->print_routine = sacctmgr_print_qos_bitstr;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("PreemptExemptTime", object,
 				 MAX(command_len, 8))) {
 		field->type = PRINT_PRXMPT;
@@ -679,7 +684,7 @@ static print_field_t *_get_print_field(char *object)
 		field->type = PRINT_QOS;
 		field->name = xstrdup("QOS");
 		field->len = 20;
-		field->print_routine = sacctmgr_print_qos_list;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("QOSRAWLevel", object, MAX(command_len, 4))) {
 		field->type = PRINT_QOS_RAW;
 		field->name = xstrdup("QOS_RAW");
@@ -786,9 +791,14 @@ static print_field_t *_get_print_field(char *object)
 		field->print_routine = print_fields_double;
 	} else if (!xstrncasecmp("Allocated", object, MAX(command_len, 7))) {
 		field->type = PRINT_ALLOCATED;
-		field->name = xstrdup("% Allocated");
-		field->len = 11;
-		field->print_routine = print_fields_uint16;
+		field->name = xstrdup("Allocated");
+		field->len = 9;
+		field->print_routine = print_fields_uint32;
+	} else if (!xstrncasecmp("LastConsumed", object, MAX(command_len, 8))) {
+		field->type = PRINT_LAST_CONSUMED;
+		field->name = xstrdup("LastConsumed");
+		field->len = 12;
+		field->print_routine = print_fields_uint32;
 	} else if (!xstrncasecmp("User", object, MAX(command_len, 1))) {
 		field->type = PRINT_USER;
 		field->name = xstrdup("User");
@@ -1545,12 +1555,16 @@ extern int addto_action_char_list(List char_list, char *names)
 }
 
 extern void sacctmgr_print_coord_list(
-	print_field_t *field, List value, int last)
+	print_field_t *field, void *input, int last)
 {
 	int abs_len = abs(field->len);
 	ListIterator itr = NULL;
 	char *print_this = NULL;
+	List value = NULL;
 	slurmdb_coord_rec_t *object = NULL;
+
+	if (input)
+		value = *(List *)input;
 
 	if (!value || !list_count(value)) {
 		if (print_fields_parsable_print)
@@ -1587,68 +1601,19 @@ extern void sacctmgr_print_coord_list(
 	xfree(print_this);
 }
 
-extern void sacctmgr_print_qos_list(print_field_t *field, List qos_list,
-				    List value, int last)
-{
-	int abs_len = abs(field->len);
-	char *print_this = NULL;
-
-	print_this = get_qos_complete_str(qos_list, value);
-
-	if (print_fields_parsable_print == PRINT_FIELDS_PARSABLE_NO_ENDING
-	    && last)
-		printf("%s", print_this);
-	else if (print_fields_parsable_print)
-		printf("%s|", print_this);
-	else {
-		if (strlen(print_this) > abs_len)
-			print_this[abs_len-1] = '+';
-
-		if (field->len == abs_len)
-			printf("%*.*s ", abs_len, abs_len, print_this);
-		else
-			printf("%-*.*s ", abs_len, abs_len, print_this);
-	}
-	xfree(print_this);
-}
-
-extern void sacctmgr_print_qos_bitstr(print_field_t *field, List qos_list,
-				      bitstr_t *value, int last)
-{
-	int abs_len = abs(field->len);
-	char *print_this = NULL;
-
-	print_this = get_qos_complete_str_bitstr(qos_list, value);
-
-	if (print_fields_parsable_print == PRINT_FIELDS_PARSABLE_NO_ENDING
-	    && last)
-		printf("%s", print_this);
-	else if (print_fields_parsable_print)
-		printf("%s|", print_this);
-	else {
-		if (strlen(print_this) > abs_len)
-			print_this[abs_len-1] = '+';
-
-		if (field->len == abs_len)
-			printf("%*.*s ", abs_len, abs_len, print_this);
-		else
-			printf("%-*.*s ", abs_len, abs_len, print_this);
-	}
-	xfree(print_this);
-}
-
-extern void sacctmgr_print_tres(print_field_t *field, char *tres_simple_str,
-				int last)
+extern void sacctmgr_print_tres(print_field_t *field, void *input, int last)
 {
 	int abs_len = abs(field->len);
 	char *print_this;
+	char *value = NULL;
+
+	if (input)
+		value = *(char **) input;
 
 	sacctmgr_initialize_g_tres_list();
 
 	print_this = slurmdb_make_tres_string_from_simple(
-		tres_simple_str, g_tres_list, NO_VAL, CONVERT_NUM_UNIT_EXACT, 0,
-		NULL);
-
+		value, g_tres_list, NO_VAL, CONVERT_NUM_UNIT_EXACT, 0, NULL);
 
 	if (!print_this)
 		print_this = xstrdup("");
@@ -1825,6 +1790,10 @@ extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc)
 		printf("  DefQOS        = %s\n",
 		       slurmdb_qos_str(g_qos_list, assoc->def_qos_id));
 	}
+
+	/* This should be last because it might be long */
+	if (assoc->comment)
+		printf("  Comment       = %s\n", assoc->comment);
 
 }
 

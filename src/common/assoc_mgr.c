@@ -46,7 +46,7 @@
 
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_priority.h"
+#include "src/interfaces/priority.h"
 #include "src/common/slurmdbd_pack.h"
 #include "src/slurmdbd/read_config.h"
 
@@ -465,8 +465,7 @@ static void _clear_qos_used_limit_list(List used_limit_list, uint32_t tres_cnt)
 		used_limits->accrue_cnt = 0;
 		used_limits->jobs = 0;
 		if (used_limits->node_bitmap)
-			bit_nclear(used_limits->node_bitmap, 0,
-			         (node_record_count - 1));
+			bit_clear_all(used_limits->node_bitmap);
 		if (used_limits->node_job_cnt) {
 			memset(used_limits->node_job_cnt, 0,
 			       sizeof(uint16_t) * node_record_count);
@@ -505,8 +504,7 @@ static int _clear_used_qos_info(slurmdb_qos_rec_t *qos)
 	qos->usage->grp_used_jobs  = 0;
 	qos->usage->grp_used_submit_jobs = 0;
 	if (qos->usage->grp_node_bitmap)
-		bit_nclear(qos->usage->grp_node_bitmap, 0,
-		         (node_record_count - 1));
+		bit_clear_all(qos->usage->grp_node_bitmap);
 	if (qos->usage->grp_node_job_cnt) {
 		memset(qos->usage->grp_node_job_cnt, 0,
 		       sizeof(uint16_t) * node_record_count);
@@ -910,9 +908,7 @@ static int _set_assoc_parent_and_user(slurmdb_assoc_rec_t *assoc)
 				assoc->usage->valid_qos =
 					bit_alloc(g_qos_count);
 			} else
-				bit_nclear(assoc->usage->valid_qos, 0,
-					   (bit_size(assoc->usage->valid_qos)
-					    - 1));
+				bit_clear_all(assoc->usage->valid_qos);
 			set_qos_bitstr_from_list(assoc->usage->valid_qos,
 						 assoc->qos_list);
 			if (((int32_t)assoc->def_qos_id > 0)
@@ -2304,6 +2300,11 @@ extern int assoc_mgr_get_user_assocs(void *db_conn,
 			       assoc->uid, found_assoc->uid);
 			continue;
 		}
+		if (assoc->acct && xstrcmp(assoc->acct, found_assoc->acct)) {
+			debug4("not the right acct %s != %s",
+			       assoc->acct, found_assoc->acct);
+			continue;
+		}
 
 		list_append(assoc_list, found_assoc);
 		set = 1;
@@ -2311,7 +2312,12 @@ extern int assoc_mgr_get_user_assocs(void *db_conn,
 	list_iterator_destroy(itr);
 
 	if (!set) {
-		debug("UID %u has no associations", assoc->uid);
+		if (assoc->acct)
+			debug("UID %u Acct %s has no associations", assoc->uid,
+			      assoc->acct);
+		else
+			debug("UID %u has no associations", assoc->uid);
+
 		if (enforce & ACCOUNTING_ENFORCE_ASSOCS)
 			return SLURM_ERROR;
 	}
@@ -2546,6 +2552,7 @@ extern int assoc_mgr_fill_in_assoc(void *db_conn,
 	if (!assoc->cluster)
 		assoc->cluster = ret_assoc->cluster;
 
+	assoc->comment = ret_assoc->comment;
 	assoc->def_qos_id = ret_assoc->def_qos_id;
 
 	if (!assoc->grp_tres_mins)
@@ -2598,7 +2605,7 @@ extern int assoc_mgr_fill_in_assoc(void *db_conn,
 	assoc->uid              = ret_assoc->uid;
 
 	/* Don't send any usage info since we don't know if the usage
-	   is really in existance here, if they really want it they can
+	   is really in existence here, if they really want it they can
 	   use the pointer that is returned. */
 
 	/* if (!assoc->usage->children_list) */
@@ -2833,7 +2840,7 @@ extern int assoc_mgr_fill_in_qos(void *db_conn, slurmdb_qos_rec_t *qos,
 	qos->priority = found_qos->priority;
 
 	/* Don't send any usage info since we don't know if the usage
-	   is really in existance here, if they really want it they can
+	   is really in existence here, if they really want it they can
 	   use the pointer that is returned. */
 
 	/* if (!qos->usage->acct_limit_list) */
@@ -3616,6 +3623,69 @@ unpack_error:
 	return SLURM_ERROR;
 }
 
+extern int assoc_mgr_update_object(void *x, void *arg)
+{
+	slurmdb_update_object_t *object = x;
+	bool locked = *(bool *)arg;
+	int rc = SLURM_SUCCESS;
+
+	if (!object->objects || !list_count(object->objects))
+		return rc;
+
+	switch(object->type) {
+	case SLURMDB_MODIFY_USER:
+	case SLURMDB_ADD_USER:
+	case SLURMDB_REMOVE_USER:
+	case SLURMDB_ADD_COORD:
+	case SLURMDB_REMOVE_COORD:
+		rc = assoc_mgr_update_users(object, locked);
+		break;
+	case SLURMDB_ADD_ASSOC:
+	case SLURMDB_MODIFY_ASSOC:
+	case SLURMDB_REMOVE_ASSOC:
+	case SLURMDB_REMOVE_ASSOC_USAGE:
+		rc = assoc_mgr_update_assocs(object, locked);
+		break;
+	case SLURMDB_ADD_QOS:
+	case SLURMDB_MODIFY_QOS:
+	case SLURMDB_REMOVE_QOS:
+	case SLURMDB_REMOVE_QOS_USAGE:
+		rc = assoc_mgr_update_qos(object, locked);
+		break;
+	case SLURMDB_ADD_WCKEY:
+	case SLURMDB_MODIFY_WCKEY:
+	case SLURMDB_REMOVE_WCKEY:
+		rc = assoc_mgr_update_wckeys(object, locked);
+		break;
+	case SLURMDB_ADD_RES:
+	case SLURMDB_MODIFY_RES:
+	case SLURMDB_REMOVE_RES:
+		rc = assoc_mgr_update_res(object, locked);
+		break;
+	case SLURMDB_ADD_CLUSTER:
+	case SLURMDB_REMOVE_CLUSTER:
+		/*
+		 * These are used in the accounting_storage
+		 * plugins for rollback purposes, just skip here.
+		 */
+		break;
+	case SLURMDB_ADD_TRES:
+		rc = assoc_mgr_update_tres(object, locked);
+		break;
+	case SLURMDB_UPDATE_FEDS:
+		/* Only handled in the slurmctld. */
+		break;
+	case SLURMDB_UPDATE_NOTSET:
+	default:
+		error("unknown type set in update_object: %d",
+		      object->type);
+		rc = SLURM_ERROR;
+		break;
+	}
+
+	return rc;
+}
+
 /*
  * assoc_mgr_update - update the association manager
  * IN update_list: updates to perform
@@ -3625,66 +3695,11 @@ unpack_error:
 extern int assoc_mgr_update(List update_list, bool locked)
 {
 	int rc = SLURM_SUCCESS;
-	ListIterator itr = NULL;
-	slurmdb_update_object_t *object = NULL;
 
 	xassert(update_list);
-	itr = list_iterator_create(update_list);
-	while ((object = list_next(itr))) {
-		if (!object->objects || !list_count(object->objects))
-			continue;
-
-		switch(object->type) {
-		case SLURMDB_MODIFY_USER:
-		case SLURMDB_ADD_USER:
-		case SLURMDB_REMOVE_USER:
-		case SLURMDB_ADD_COORD:
-		case SLURMDB_REMOVE_COORD:
-			rc = assoc_mgr_update_users(object, locked);
-			break;
-		case SLURMDB_ADD_ASSOC:
-		case SLURMDB_MODIFY_ASSOC:
-		case SLURMDB_REMOVE_ASSOC:
-		case SLURMDB_REMOVE_ASSOC_USAGE:
-			rc = assoc_mgr_update_assocs(object, locked);
-			break;
-		case SLURMDB_ADD_QOS:
-		case SLURMDB_MODIFY_QOS:
-		case SLURMDB_REMOVE_QOS:
-		case SLURMDB_REMOVE_QOS_USAGE:
-			rc = assoc_mgr_update_qos(object, locked);
-			break;
-		case SLURMDB_ADD_WCKEY:
-		case SLURMDB_MODIFY_WCKEY:
-		case SLURMDB_REMOVE_WCKEY:
-			rc = assoc_mgr_update_wckeys(object, locked);
-			break;
-		case SLURMDB_ADD_RES:
-		case SLURMDB_MODIFY_RES:
-		case SLURMDB_REMOVE_RES:
-			rc = assoc_mgr_update_res(object, locked);
-			break;
-		case SLURMDB_ADD_CLUSTER:
-		case SLURMDB_REMOVE_CLUSTER:
-			/* These are used in the accounting_storage
-			   plugins for rollback purposes, just skip here.
-			*/
-			break;
-		case SLURMDB_ADD_TRES:
-			rc = assoc_mgr_update_tres(object, locked);
-			break;
-		case SLURMDB_UPDATE_FEDS:
-			/* Only handled in the slurmctld. */
-			break;
-		case SLURMDB_UPDATE_NOTSET:
-		default:
-			error("unknown type set in "
-			      "update_object: %d",
-			      object->type);
-			break;
-		}
-	}
-	list_iterator_destroy(itr);
+	(void) list_for_each(update_list,
+			     assoc_mgr_update_object,
+			     &locked);
 	return rc;
 }
 
@@ -3744,6 +3759,14 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 				     object->user, object->partition);
 				rc = SLURM_ERROR;
 				break;
+			}
+
+			if (object->comment) {
+				xfree(rec->comment);
+				if (object->comment[0]) {
+					rec->comment = object->comment;
+					object->comment = NULL;
+				}
 			}
 
 			if (object->shares_raw != NO_VAL) {
@@ -3916,12 +3939,8 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 						rec->usage->valid_qos =
 							bit_alloc(g_qos_count);
 					} else
-						bit_nclear(rec->usage->
-							   valid_qos, 0,
-							   (bit_size(rec->
-								     usage->
-								     valid_qos)
-							    - 1));
+						bit_clear_all(
+							rec->usage->valid_qos);
 					set_qos_bitstr_from_list(
 						rec->usage->valid_qos,
 						rec->qos_list);
@@ -5006,12 +5025,17 @@ extern int assoc_mgr_update_res(slurmdb_update_object_t *update, bool locked)
 			if (object->count != NO_VAL)
 				rec->count = object->count;
 
+			if (object->last_consumed != NO_VAL)
+				rec->last_consumed = object->last_consumed;
+
 			if (object->type != SLURMDB_RESOURCE_NOTSET)
 				rec->type = object->type;
 
-			if (object->clus_res_rec->percent_allowed != NO_VAL16)
-				rec->clus_res_rec->percent_allowed =
-					object->clus_res_rec->percent_allowed;
+			if (object->clus_res_rec->allowed != NO_VAL)
+				rec->clus_res_rec->allowed =
+					object->clus_res_rec->allowed;
+
+			rec->last_update = object->last_update;
 
 			switch (rec->type) {
 			case SLURMDB_RESOURCE_LICENSE:
@@ -5438,7 +5462,7 @@ extern int dump_assoc_mgr_state(void)
 	xfree(reg_file);
 	xfree(new_file);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	/* Now write the rest of the lists */
 	buffer = init_buf(high_buffer_size);
@@ -5538,7 +5562,7 @@ extern int dump_assoc_mgr_state(void)
 	xfree(reg_file);
 	xfree(new_file);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	/* now make a file for assoc_usage */
 
 	buffer = init_buf(high_buffer_size);
@@ -5609,7 +5633,7 @@ extern int dump_assoc_mgr_state(void)
 	xfree(reg_file);
 	xfree(new_file);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	/* now make a file for qos_usage */
 
 	buffer = init_buf(high_buffer_size);
@@ -5678,7 +5702,7 @@ extern int dump_assoc_mgr_state(void)
 	xfree(new_file);
 	assoc_mgr_unlock(&locks);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	END_TIMER2("dump_assoc_mgr_state");
 	return error_code;
 
@@ -5725,7 +5749,7 @@ extern int load_assoc_usage(void)
 		      "incompatible version, got %u need >= %u <= %u", ver,
 		      SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		assoc_mgr_unlock(&locks);
 		return EFAULT;
 	}
@@ -5749,7 +5773,7 @@ extern int load_assoc_usage(void)
 
 		/* We want to do this all the way up to and including
 		   root.  This way we can keep track of how much usage
-		   has occured on the entire system and use that to
+		   has occurred on the entire system and use that to
 		   normalize against.
 		*/
 		if (assoc) {
@@ -5779,7 +5803,7 @@ extern int load_assoc_usage(void)
 	}
 	assoc_mgr_unlock(&locks);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return SLURM_SUCCESS;
 
 unpack_error:
@@ -5787,7 +5811,7 @@ unpack_error:
 		fatal("Incomplete assoc usage state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete assoc usage state file");
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	xfree(tmp_str);
 	assoc_mgr_unlock(&locks);
@@ -5835,7 +5859,7 @@ extern int load_qos_usage(void)
 		      "incompatible version, got %u need > %u <= %u", ver,
 		      SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		assoc_mgr_unlock(&locks);
 		return EFAULT;
 	}
@@ -5871,7 +5895,7 @@ extern int load_qos_usage(void)
 	list_iterator_destroy(itr);
 	assoc_mgr_unlock(&locks);
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return SLURM_SUCCESS;
 
 unpack_error:
@@ -5879,7 +5903,7 @@ unpack_error:
 		fatal("Incomplete QOS usage state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete QOS usage state file");
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	if (itr)
 		list_iterator_destroy(itr);
@@ -5925,7 +5949,7 @@ extern int load_assoc_mgr_last_tres(void)
 		error("Can not recover last_tres state, incompatible version, got %u need > %u <= %u", ver,
 		      SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		assoc_mgr_unlock(&locks);
 		return EFAULT;
 	}
@@ -5946,7 +5970,7 @@ extern int load_assoc_mgr_last_tres(void)
 	}
 	slurmdbd_free_list_msg(msg);
 	assoc_mgr_unlock(&locks);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return SLURM_SUCCESS;
 
 unpack_error:
@@ -5954,7 +5978,7 @@ unpack_error:
 		fatal("Incomplete last_tres state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete last_tres state file");
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	assoc_mgr_unlock(&locks);
 	return SLURM_ERROR;
@@ -6003,7 +6027,7 @@ extern int load_assoc_mgr_state(bool only_tres)
 		      "got %u need > %u <= %u", ver,
 		      SLURM_MIN_PROTOCOL_VERSION, SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		assoc_mgr_unlock(&locks);
 		return EFAULT;
 	}
@@ -6120,7 +6144,7 @@ extern int load_assoc_mgr_state(bool only_tres)
 	if (!only_tres && init_setup.running_cache)
 		*init_setup.running_cache = RUNNING_CACHE_STATE_RUNNING;
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	assoc_mgr_unlock(&locks);
 	return SLURM_SUCCESS;
 
@@ -6129,7 +6153,7 @@ unpack_error:
 		fatal("Incomplete assoc mgr state file, start with '-i' to ignore this. Warning: using -i will lose the data that can't be recovered.");
 	error("Incomplete assoc mgr state file");
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	assoc_mgr_unlock(&locks);
 	return SLURM_ERROR;

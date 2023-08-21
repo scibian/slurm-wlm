@@ -43,9 +43,9 @@ process of the batch step), so the shell needs to wait until the command ends to
 then handle the signal.
 Children of the batch step are not signaled with this option. If this is
 desired, use \fB\-f\fR, \fB\-\-full\fR instead.
-NOTE: If used with \fB\-f\fR, \fB\-\-full\fR, this option ignored.
-NOTE: This option is not applicable if \fIstep_id\fR is specified.
-NOTE: The shell itself may exit upon receipt of many signals.
+\fBNOTE\fR: If used with \fB\-f\fR, \fB\-\-full\fR, this option ignored.
+\fBNOTE\fR: This option is not applicable if \fIstep_id\fR is specified.
+\fBNOTE\fR: The shell itself may exit upon receipt of many signals.
 You may avoid this by explicitly trap signals within the shell
 script (e.g. "trap <arg> <signals>"). See the shell documentation
 for details.
@@ -66,6 +66,12 @@ Cray ALPS computers) or when the \fB\-\-clusters\fR option is used.
 .IP
 
 .TP
+\fB\-c\fR, \fB\-\-cron\fR
+Confirm request to cancel a job submitted by scrontab.  This option only has
+effect with the "explicit_scancel" option is set in \fBScronParameters\fR.
+.IP
+
+.TP
 \fB\-f\fR, \fB\-\-full\fR
 By default, signals other than SIGKILL are not sent to the batch step (the shell
 script). With this option \fBscancel\fR also signals the batch script and its
@@ -75,8 +81,8 @@ process of the batch step), so the shell needs to wait until the command ends to
 then handle the signal.
 Unlike \fB\-b\fR, \fB\-\-batch\fR, children of the batch step
 are also signaled with this option.
-NOTE: srun steps are also children of the batch step, so steps are also signaled
-with this option.
+\fBNOTE\fR: srun steps are also children of the batch step, so steps are also
+signaled with this option.
 .IP
 
 .TP
@@ -238,6 +244,11 @@ environment variables, along with their corresponding options, are listed below.
 .TP
 \fBSCANCEL_CTLD\fR
 \fB\-\-ctld\fR
+.IP
+
+.TP
+\fBSCANCEL_CRON\fR
+\fB\-c, \-\-cron\fR
 .IP
 
 .TP

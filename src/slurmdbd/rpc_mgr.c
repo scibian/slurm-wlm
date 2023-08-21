@@ -49,7 +49,7 @@
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
@@ -120,7 +120,6 @@ extern void *rpc_mgr(void *no_data)
 
 	debug("rpc_mgr shutting down");
 	close(sockfd);
-	pthread_exit((void *) 0);
 	return NULL;
 }
 
@@ -137,6 +136,8 @@ static void _connection_fini_callback(void *arg)
 	slurmdbd_conn_t *conn = (slurmdbd_conn_t *) arg;
 	bool stay_locked = false;
 
+	slurm_persist_conn_destroy(conn->conn_send);
+	conn->conn_send = NULL;
 	if (conn->conn->rem_port) {
 		if (!shutdown_time) {
 			slurmdb_cluster_rec_t cluster_rec;

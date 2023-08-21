@@ -113,8 +113,8 @@ unsigned int numa_bitmask_weight(const struct bitmask *bmp);
 static void _alpsc_debug(const char *file, int line, const char *func,
 			 int rc, int expected_rc, const char *alpsc_func,
 			 char *err_msg);
-static int _make_status_file(stepd_step_rec_t *job);
-static int _check_status_file(stepd_step_rec_t *job,
+static int _make_status_file(stepd_step_rec_t *step);
+static int _check_status_file(stepd_step_rec_t *step,
 			      stepd_step_task_info_t *task);
 static int _get_numa_nodes(char *path, int *cnt, int **numa_array);
 static int _get_cpu_masks(int num_numa_nodes, int32_t *numa_array,
@@ -133,8 +133,8 @@ static int track_status = 1;
 #define LLI_SPOOL_DIR	    "/var/opt/cray/alps/spool"
 
 // Filename to write status information to
-// This file consists of job->node_tasks + 1 bytes. Each byte will
-// be either 1 or 0, indicating that that particular event has occured.
+// This file consists of step->node_tasks + 1 bytes. Each byte will
+// be either 1 or 0, indicating that that particular event has occurred.
 // The first byte indicates the starting LLI message, and the next bytes
 // indicate the exiting LLI messages for each task
 #define LLI_STATUS_FILE	    LLI_SPOOL_DIR"/status%"PRIu64
@@ -275,14 +275,14 @@ extern int task_p_slurmd_resume_job (uint32_t job_id)
  * user to launch his jobs. Use this to create the CPUSET directory
  * and set the owner appropriately.
  */
-extern int task_p_pre_setuid (stepd_step_rec_t *job)
+extern int task_p_pre_setuid (stepd_step_rec_t *step)
 {
 	DEF_TIMERS;
 	START_TIMER;
-	debug("%s: %ps",  __func__, &job->step_id);
+	debug("%s: %ps",  __func__, &step->step_id);
 
 #ifdef HAVE_NATIVE_CRAY
-	if (!job->batch)
+	if (!step->batch)
 		_step_prologue();
 #endif
 	END_TIMER;
@@ -297,7 +297,7 @@ extern int task_p_pre_setuid (stepd_step_rec_t *job)
  *	It is followed by TaskProlog program (from slurm.conf) and
  *	--task-prolog (from srun command line).
  */
-extern int task_p_pre_launch (stepd_step_rec_t *job)
+extern int task_p_pre_launch (stepd_step_rec_t *step)
 {
 #ifdef HAVE_NATIVE_CRAY
 	int rc;
@@ -308,25 +308,25 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 	DEF_TIMERS;
 
 	START_TIMER;
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		jobid = step->het_job_id;
 	else
-		jobid = job->step_id.job_id;
+		jobid = step->step_id.job_id;
 
-	if (job->het_job_task_offset != NO_VAL)
-		offset = job->het_job_task_offset;
+	if (step->het_job_task_offset != NO_VAL)
+		offset = step->het_job_task_offset;
 
-	taskid = offset + job->task[job->envtp->localid]->gtid;
+	taskid = offset + step->task[step->envtp->localid]->gtid;
 
-	apid = SLURM_ID_HASH(jobid, job->step_id.step_id);
-	debug2("%s: %ps, apid %"PRIu64", task %u", __func__, &job->step_id,
+	apid = SLURM_ID_HASH(jobid, step->step_id.step_id);
+	debug2("%s: %ps, apid %"PRIu64", task %u", __func__, &step->step_id,
 	       apid, taskid);
 
 	/*
 	 * Send the rank to the application's PMI layer via an environment
 	 * variable.
 	 */
-	rc = env_array_overwrite_fmt(&job->env, ALPS_APP_PE_ENV,
+	rc = env_array_overwrite_fmt(&step->env, ALPS_APP_PE_ENV,
 				     "%u", taskid);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env variable %s", ALPS_APP_PE_ENV);
@@ -336,7 +336,7 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 	/*
 	 * Set the PMI_NO_FORK environment variable.
 	 */
-	rc = env_array_overwrite(&job->env, PMI_NO_FORK_ENV, "1");
+	rc = env_array_overwrite(&step->env, PMI_NO_FORK_ENV, "1");
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env variable %s", PMI_NO_FORK_ENV);
 		return SLURM_ERROR;
@@ -345,8 +345,8 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 	/*
 	 *  Notify the task which offset to use
 	 */
-	rc = env_array_overwrite_fmt(&job->env, LLI_STATUS_OFFS_ENV,
-				     "%d", job->envtp->localid + 1);
+	rc = env_array_overwrite_fmt(&step->env, LLI_STATUS_OFFS_ENV,
+				     "%d", step->envtp->localid + 1);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env variable %s",
 			 LLI_STATUS_OFFS_ENV);
@@ -357,7 +357,7 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 	 * Set the ALPS_APP_ID environment variable for use by
 	 * Cray tools.
 	 */
-	rc = env_array_overwrite_fmt(&job->env, ALPS_APP_ID_ENV, "%"PRIu64,
+	rc = env_array_overwrite_fmt(&step->env, ALPS_APP_ID_ENV, "%"PRIu64,
 				     apid);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env variable %s",
@@ -371,10 +371,10 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 }
 
 /*
- * task_p_pre_set_affinity() is called prior to exec of application task.
+ * task_p_pre_launch_priv() is called prior to exec of application task.
  * Runs in privileged mode.
  */
-extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid)
 {
 	int rc = SLURM_SUCCESS;
 	DEF_TIMERS;
@@ -382,10 +382,10 @@ extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 	START_TIMER;
 
 #ifdef HAVE_NATIVE_CRAY
-	debug("%s: %ps", __func__, &job->step_id);
+	debug("%s: %ps", __func__, &step->step_id);
 
 	if (track_status) {
-		rc = _make_status_file(job);
+		rc = _make_status_file(step);
 	}
 #endif
 	END_TIMER;
@@ -395,28 +395,11 @@ extern int task_p_pre_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
 }
 
 /*
- * task_p_set_affinity is called prior to exec of application task.
- * Runs in privileged mode.
- */
-extern int task_p_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
-{
-	return SLURM_SUCCESS;
-}
-
-/*
- * task_p_post_set_affinity is called prior to exec of application task.
- * Runs in privileged mode.
- */
-extern int task_p_post_set_affinity(stepd_step_rec_t *job, uint32_t node_tid)
-{
-	return SLURM_SUCCESS;
-}
-/*
  * task_term() is called after termination of application task.
  *	It is preceded by --task-epilog (from srun command line)
  *	followed by TaskEpilog program (from slurm.conf).
  */
-extern int task_p_post_term (stepd_step_rec_t *job,
+extern int task_p_post_term (stepd_step_rec_t *step,
 			     stepd_step_task_info_t *task)
 {
 	int rc = SLURM_SUCCESS;
@@ -425,10 +408,10 @@ extern int task_p_post_term (stepd_step_rec_t *job,
 	START_TIMER;
 
 #ifdef HAVE_NATIVE_CRAY
-	debug("%s: %ps, task %d", __func__, &job->step_id, task->id);
+	debug("%s: %ps, task %d", __func__, &step->step_id, task->id);
 
 	if (track_status) {
-		rc = _check_status_file(job, task);
+		rc = _check_status_file(step, task);
 	}
 #endif
 	END_TIMER;
@@ -441,7 +424,7 @@ extern int task_p_post_term (stepd_step_rec_t *job,
  * task_p_post_step() is called after termination of the step
  * (all the tasks)
  */
-extern int task_p_post_step (stepd_step_rec_t *job)
+extern int task_p_post_step (stepd_step_rec_t *step)
 {
 #ifdef HAVE_NATIVE_CRAY
 	char llifile[LLI_STATUS_FILE_BUF_SIZE];
@@ -454,12 +437,12 @@ extern int task_p_post_step (stepd_step_rec_t *job)
 	DEF_TIMERS;
 
 	START_TIMER;
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		jobid = step->het_job_id;
 	else
-		jobid = job->step_id.job_id;
+		jobid = step->step_id.job_id;
 	if (track_status) {
-		apid = SLURM_ID_HASH(jobid, job->step_id.step_id);
+		apid = SLURM_ID_HASH(jobid, step->step_id.step_id);
 		// Get the lli file name
 		snprintf(llifile, sizeof(llifile), LLI_STATUS_FILE, apid);
 
@@ -500,29 +483,29 @@ extern int task_p_post_step (stepd_step_rec_t *job)
 	 *
 	 * NUMA node: mems (or cpuset.mems)
 	 */
-	if (job->step_id.step_id == SLURM_BATCH_SCRIPT) {
+	if (step->step_id.step_id == SLURM_BATCH_SCRIPT) {
 		// Batch Job Step
 		rc = snprintf(path, sizeof(path),
 			      "/dev/cpuset/slurm/uid_%u/job_%"
-			      PRIu32 "/step_batch", job->uid, jobid);
+			      PRIu32 "/step_batch", step->uid, jobid);
 		if (rc < 0) {
 			CRAY_ERR("snprintf failed. Return code: %d", rc);
 			return SLURM_ERROR;
 		}
-	} else if (job->step_id.step_id == SLURM_EXTERN_CONT) {
+	} else if (step->step_id.step_id == SLURM_EXTERN_CONT) {
 		// Container for PAM to use for externally launched processes
 		rc = snprintf(path, sizeof(path),
 			      "/dev/cpuset/slurm/uid_%u/job_%"
-			      PRIu32 "/step_extern", job->uid, jobid);
+			      PRIu32 "/step_extern", step->uid, jobid);
 		if (rc < 0) {
 			CRAY_ERR("snprintf failed. Return code: %d", rc);
 			return SLURM_ERROR;
 		}
-	} else if (job->step_id.step_id == SLURM_INTERACTIVE_STEP) {
+	} else if (step->step_id.step_id == SLURM_INTERACTIVE_STEP) {
 		/* Interactive Job Step */
 		rc = snprintf(path, sizeof(path),
 			      "/dev/cpuset/slurm/uid_%u/job_%u/step_interactive",
-			      job->uid, jobid);
+			      step->uid, jobid);
 		if (rc < 0) {
 			CRAY_ERR("snprintf failed. Return code: %d", rc);
 			return SLURM_ERROR;
@@ -536,7 +519,7 @@ extern int task_p_post_step (stepd_step_rec_t *job)
 		rc = snprintf(path, sizeof(path),
 			      "/dev/cpuset/slurm/uid_%u/job_%"
 			      PRIu32 "/step_%" PRIu32,
-			      job->uid, jobid, job->step_id.step_id);
+			      step->uid, jobid, step->step_id.step_id);
 		if (rc < 0) {
 			CRAY_ERR("snprintf failed. Return code: %d", rc);
 			return SLURM_ERROR;
@@ -603,7 +586,7 @@ static void _alpsc_debug(const char *file, int line, const char *func,
  * If it wasn't created already, make the LLI_STATUS_FILE with given owner
  * and group, permissions 644, with given size
  */
-static int _make_status_file(stepd_step_rec_t *job)
+static int _make_status_file(stepd_step_rec_t *step)
 {
 	char llifile[LLI_STATUS_FILE_BUF_SIZE];
 	char oldllifile[LLI_STATUS_FILE_BUF_SIZE];
@@ -611,11 +594,11 @@ static int _make_status_file(stepd_step_rec_t *job)
 	uint32_t jobid;
 	uint64_t apid;
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		jobid = step->het_job_id;
 	else
-		jobid = job->step_id.job_id;
-	apid = SLURM_ID_HASH(jobid, job->step_id.step_id);
+		jobid = step->step_id.job_id;
+	apid = SLURM_ID_HASH(jobid, step->step_id.step_id);
 
 	// Get the lli file name
 	snprintf(llifile, sizeof(llifile), LLI_STATUS_FILE, apid);
@@ -633,7 +616,7 @@ static int _make_status_file(stepd_step_rec_t *job)
 	}
 
 	// Resize it
-	rv = ftruncate(fd, job->node_tasks + 1);
+	rv = ftruncate(fd, step->node_tasks + 1);
 	if (rv == -1) {
 		CRAY_ERR("ftruncate(%s) failed: %m", llifile);
 		TEMP_FAILURE_RETRY(close(fd));
@@ -641,7 +624,7 @@ static int _make_status_file(stepd_step_rec_t *job)
 	}
 
 	// Change owner/group so app can write to it
-	rv = fchown(fd, job->uid, job->gid);
+	rv = fchown(fd, step->uid, step->gid);
 	if (rv == -1) {
 		CRAY_ERR("chown(%s) failed: %m", llifile);
 		TEMP_FAILURE_RETRY(close(fd));
@@ -669,7 +652,7 @@ static int _make_status_file(stepd_step_rec_t *job)
  * Check the status file for the exit of the given local task id
  * and terminate the job step if an improper exit is found
  */
-static int _check_status_file(stepd_step_rec_t *job,
+static int _check_status_file(stepd_step_rec_t *step,
 			      stepd_step_task_info_t *task)
 {
 	char llifile[LLI_STATUS_FILE_BUF_SIZE];
@@ -684,19 +667,19 @@ static int _check_status_file(stepd_step_rec_t *job,
 	if (!WIFEXITED(task->estatus) || (WEXITSTATUS(task->estatus) != 0))
 		return SLURM_SUCCESS;
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		jobid = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		jobid = step->het_job_id;
 	else
-		jobid = job->step_id.job_id;
+		jobid = step->step_id.job_id;
 
-	if (job->het_job_task_offset != NO_VAL)
-		offset = job->het_job_task_offset;
+	if (step->het_job_task_offset != NO_VAL)
+		offset = step->het_job_task_offset;
 
 	taskid = offset + task->gtid;
 
 	// Get the lli file name
 	snprintf(llifile, sizeof(llifile), LLI_STATUS_FILE,
-		 SLURM_ID_HASH(jobid, job->step_id.step_id));
+		 SLURM_ID_HASH(jobid, step->step_id.step_id));
 
 	// Open the lli file.
 	fd = open(llifile, O_RDONLY);
@@ -746,7 +729,7 @@ static int _check_status_file(stepd_step_rec_t *job,
 		}
 
 		verbose("%ps task %u exited without calling PMI_Finalize()",
-			&job->step_id, taskid);
+			&step->step_id, taskid);
 	}
 	return SLURM_SUCCESS;
 }

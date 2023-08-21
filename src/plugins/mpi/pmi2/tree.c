@@ -43,6 +43,7 @@
 \*****************************************************************************/
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -426,7 +427,7 @@ out:
 	pack32((uint32_t) rc, resp_buf);
 	rc = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			      get_buf_offset(resp_buf));
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 
 	debug3("mpi/pmi2: out _handle_name_publish");
 	return rc;
@@ -457,7 +458,7 @@ out:
 	pack32((uint32_t) rc, resp_buf);
 	rc = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			      get_buf_offset(resp_buf));
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 
 	debug3("mpi/pmi2: out _handle_name_unpublish");
 	return rc;
@@ -488,7 +489,7 @@ out:
 	rc2 = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			       get_buf_offset(resp_buf));
 	rc = MAX(rc, rc2);
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 	xfree(name);
 	xfree(port);
 
@@ -613,7 +614,7 @@ handle_tree_cmd(int fd)
 
 	debug3("mpi/pmi2: got tree cmd: %hu(%s)", cmd, tree_cmd_names[cmd]);
 	rc = tree_cmd_handlers[cmd](fd, buf);
-	free_buf (buf);
+	FREE_NULL_BUFFER(buf);
 	debug3("mpi/pmi2: out handle_tree_cmd");
 	return rc;
 

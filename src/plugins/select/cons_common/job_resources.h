@@ -73,7 +73,6 @@ extern void job_res_add_cores(job_resources_t *job_resrcs_ptr,
  * IN r_ptr - row we are trying to fit
  *            IN/OUT r_ptr->node_bitmap - bitmap array (one per node) of
  *                                        available cores, allocated as needed
- * NOTE: Patterned after remove_job_from_cores() in src/common/job_resources.c
  */
 extern void job_res_rm_cores(job_resources_t *job_resrcs_ptr,
 			     part_row_data_t *r_ptr);
@@ -116,16 +115,14 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action);
  *             (suspended job was terminated)
  * if action = JOB_RES_ACTION_RESUME then only subtract cores
  *             (job is suspended)
- * IN: job_fini - job fully terminating on this node (not just a test)
  *
  * RET SLURM_SUCCESS or error code
  *
  * See also: job_res_add_job()
  */
 extern int job_res_rm_job(part_res_record_t *part_record_ptr,
-			  node_use_record_t *node_usage,
+			  node_use_record_t *node_usage, list_t *license_list,
 			  job_record_t *job_ptr, job_res_job_action_t action,
-			  bool job_fini,
 			  bitstr_t *node_map);
 
 #endif /* _CONS_COMMON_JOB_RES_H */

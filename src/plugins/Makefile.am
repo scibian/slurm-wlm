@@ -10,6 +10,7 @@ SUBDIRS = \
 	cli_filter		\
 	core_spec		\
 	cred			\
+	data_parser		\
 	ext_sensors		\
 	gpu			\
 	gres			\
@@ -18,7 +19,6 @@ SUBDIRS = \
 	jobcomp			\
 	job_container		\
 	job_submit		\
-	launch			\
 	mcs			\
 	mpi			\
 	node_features		\
@@ -33,7 +33,6 @@ SUBDIRS = \
 	select			\
 	serializer		\
 	site_factor		\
-	slurmctld		\
 	switch			\
 	task			\
 	topology

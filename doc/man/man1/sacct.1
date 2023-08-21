@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "August 2022" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "May 2023" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -64,6 +64,12 @@ actually available on your system.
 \fB\-A\fR, \fB\-\-accounts\fR=<\fIaccount_list\fR>
 Displays jobs when a comma separated list of accounts are given as the
 argument.
+.IP
+
+.TP
+\fB\-\-array\fR
+Expand job arrays. Display all array tasks on separate lines instead of
+displaying groups of array tasks on single lines.
 .IP
 
 .TP
@@ -264,27 +270,27 @@ AveVMSize           BlockID             Cluster             Comment
 Constraints         ConsumedEnergy      ConsumedEnergyRaw   Container
 CPUTime             CPUTimeRAW          DBIndex             DerivedExitCode
 Elapsed             ElapsedRaw          Eligible            End
-ExitCode            Flags               GID                 Group
-JobID               JobIDRaw            JobName             Layout
-MaxDiskRead         MaxDiskReadNode     MaxDiskReadTask     MaxDiskWrite
-MaxDiskWriteNode    MaxDiskWriteTask    MaxPages            MaxPagesNode
-MaxPagesTask        MaxRSS              MaxRSSNode          MaxRSSTask
-MaxVMSize           MaxVMSizeNode       MaxVMSizeTask       McsLabel
-MinCPU              MinCPUNode          MinCPUTask          NCPUS
-NNodes              NodeList            NTasks              Partition
+ExitCode            FailedNode          Flags               GID
+Group               JobID               JobIDRaw            JobName
+Layout              MaxDiskRead         MaxDiskReadNode     MaxDiskReadTask
+MaxDiskWrite        MaxDiskWriteNode    MaxDiskWriteTask    MaxPages
+MaxPagesNode        MaxPagesTask        MaxRSS              MaxRSSNode
+MaxRSSTask          MaxVMSize           MaxVMSizeNode       MaxVMSizeTask
+McsLabel            MinCPU              MinCPUNode          MinCPUTask
+NCPUS               NNodes              NodeList            NTasks
+Partition           Planned             PlannedCPU          PlannedCPURAW
 Priority            QOS                 QOSRAW              Reason
 ReqCPUFreq          ReqCPUFreqGov       ReqCPUFreqMax       ReqCPUFreqMin
 ReqCPUS             ReqMem              ReqNodes            ReqTRES
-Reservation         ReservationId       Reserved            ResvCPU
-ResvCPURAW          Start               State               Submit
-SubmitLine          Suspended           SystemComment       SystemCPU
-Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
-TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
-TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
-TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin
-TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot     UID
-User                UserCPU             WCKey               WCKeyID
-WorkDir
+Reservation         ReservationId       Start               State
+Submit              SubmitLine          Suspended           SystemComment
+SystemCPU           Timelimit           TimelimitRaw        TotalCPU
+TRESUsageInAve      TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask
+TRESUsageInMin      TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot
+TRESUsageOutAve     TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask
+TRESUsageOutMin     TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot
+UID                 User                UserCPU             WCKey
+WCKeyID             WorkDir
 .ft 1
 .fi
 .RE
@@ -375,6 +381,10 @@ Don't convert units from their original type (e.g. 2048M won't be converted to
 \fB\-N\fR, \fB\-\-nodelist\fR=<\fInode_list\fR>
 Display jobs that ran on any of these node(s). \fInode_list\fR can be
 a ranged string.
+
+\fBNOTE\fR: This is not reliable when nodes are added or removed to Slurm
+while jobs are running. Only jobs that started in the specified time range
+(\-S, \-E) will be returned.
 .IP
 
 .TP
@@ -583,7 +593,7 @@ Trackable resources. These are the resources allocated to the job/step
 after the job started running.  For pending jobs this should be blank.
 For more details see AccountingStorageTRES in slurm.conf.
 
-NOTE: When a generic resource is configured with the no_consume flag,
+\fBNOTE\fR: When a generic resource is configured with the no_consume flag,
 the allocation will be printed with a zero.
 .IP
 
@@ -751,6 +761,18 @@ unless changed through the SLURM_TIME_FORMAT environment variable.
 The exit code returned by the job script or salloc, typically as set
 by the exit() function.  Following the colon is the signal that caused
 the process to terminate if it was terminated by a signal.
+.IP
+
+.TP
+\f3Extra\fP
+The job's extra string when the AccountingStoreFlags parameter in the slurm.conf
+file contains 'job_extra'. The Extra string can be modified by invoking
+\f3sacctmgr modify job\fP command.
+.IP
+
+.TP
+\f3FailedNode\fP
+The name of the node whose failure caused the job to be killed.
 .IP
 
 .TP
@@ -939,6 +961,25 @@ Identifies the partition on which the job ran.
 .IP
 
 .TP
+\f3Planned\fP
+How much wall clock time was used as planned time for this job.  This is
+derived from how long a job was waiting from eligible time to when it started or
+was cancelled.  Format is the same as \f3Elapsed\fP.
+.IP
+
+.TP
+\f3PlannedCPU\fP
+How many CPU seconds were used as planned time for this job.  Format is
+the same as \f3Elapsed\fP.
+.IP
+
+.TP
+\f3PlannedCPURAW\fP
+How many CPU seconds were used as planned time for this job.  Format is
+in processor seconds.
+.IP
+
+.TP
 \f3Priority\fP
 Slurm priority.
 .IP
@@ -1019,25 +1060,6 @@ Reservation Id.
 .IP
 
 .TP
-\f3Reserved\fP
-How much wall clock time was used as reserved time for this job.  This is
-derived from how long a job was waiting from eligible time to when it
-actually started.  Format is the same as \f3Elapsed\fP.
-.IP
-
-.TP
-\f3ResvCPU\fP
-How many CPU seconds were used as reserved time for this job.  Format is
-the same as \f3Elapsed\fP.
-.IP
-
-.TP
-\f3ResvCPURAW\fP
-How many CPU seconds were used as reserved time for this job.  Format is
-in processor seconds.
-.IP
-
-.TP
 \f3Start\fP
 Initiation time of the job. In the same format as \f3End\fP.
 .IP
@@ -1052,21 +1074,21 @@ than will fit into the current field width (for example, the UID that CANCELLED
 a job) the state will be followed by a "+".  You can increase the size of
 the displayed state using the "%NUMBER" format modifier described earlier.
 
-NOTE: The RUNNING state will return suspended jobs as well.  In order
+\fBNOTE\fR: The RUNNING state will return suspended jobs as well.  In order
 to print suspended jobs you must request SUSPENDED at a different call
 from RUNNING.
 
-NOTE: The RUNNING state will return any jobs completed (cancelled or otherwise)
-in the time period requested as the job was also RUNNING during that time.  If
-you are only looking for jobs that finished, please choose the appropriate
-state(s) without the RUNNING state.
+\fBNOTE\fR: The RUNNING state will return any jobs completed (cancelled or
+otherwise) in the time period requested as the job was also RUNNING during that
+time. If you are only looking for jobs that finished, please choose the
+appropriate state(s) without the RUNNING state.
 .IP
 
 .TP
 \f3Submit\fP
 The time the job was submitted. In the same format as \f3End\fP.
 
-NOTE: If a job is requeued, the submit time is reset.  To obtain the
+\fBNOTE\fR: If a job is requeued, the submit time is reset.  To obtain the
 original submit time it is necessary to use the \-D or \-\-duplicate option
 to display all duplicate entries for a job.
 .IP
@@ -1093,8 +1115,8 @@ Can only be modified by a Slurm administrator.
 The amount of system CPU time used by the job or job step. Format
 is the same as \f3Elapsed\fP.
 
-NOTE: SystemCPU provides a measure of the task's parent process and
-does not include CPU time of child processes.
+\fBNOTE\fR: See the note for TotalCPU for information about how canceled jobs
+are handled.
 .IP
 
 .TP
@@ -1113,22 +1135,29 @@ The sum of the SystemCPU and UserCPU time used by the job or job step.
 The total CPU time of the job may exceed the job's elapsed time for
 jobs that include multiple job steps. Format is the same as \f3Elapsed\fP.
 
-NOTE: TotalCPU provides a measure of the task's parent process and
-does not include CPU time of child processes.
+\fBNOTE\fR: For the steps interrupted by signal (e.g. scancel, job timeout)
+TotalCPU provides a measure of the task's parent process and may not include
+CPU time of child processes.
+This is a result of \f3wait3\fP resource usage (\f3getrusage\fP) internals.
+For processes completing in regular way all the descendant processes (forks and
+execs) resources are included. However, if the processes are killed the result
+may differ between proctrack plugins and end-user applications.
+\"Proctrack pgid is significantly different, since it makes use of killpg
+\"not kill, which seems to allow better resources usage gathering.
 .IP
 
 .TP
 \f3TresUsageInAve\fP
 Tres average usage in by all tasks in job.
-NOTE: If corresponding TresUsageInMaxTask is \-1 the metric is node centric
-instead of task.
+\fBNOTE\fR: If corresponding TresUsageInMaxTask is \-1 the metric is node
+centric instead of task.
 .IP
 
 .TP
 \f3TresUsageInMax\fP
 Tres maximum usage in by all tasks in job.
-NOTE: If corresponding TresUsageInMaxTask is \-1 the metric is node centric
-instead of task.
+\fBNOTE\fR: If corresponding TresUsageInMaxTask is \-1 the metric is node
+centric instead of task.
 .IP
 
 .TP
@@ -1144,8 +1173,8 @@ Task for which each maximum TRES usage out occurred.
 .TP
 \f3TresUsageInMin\fP
 Tres minimum usage in by all tasks in job.
-NOTE: If corresponding TresUsageInMinTask is \-1 the metric is node centric
-instead of task.
+\fBNOTE\fR: If corresponding TresUsageInMinTask is \-1 the metric is node
+centric instead of task.
 .IP
 
 .TP
@@ -1166,15 +1195,15 @@ Tres total usage in by all tasks in job.
 .TP
 \f3TresUsageOutAve\fP
 Tres average usage out by all tasks in job.
-NOTE: If corresponding TresUsageOutMaxTask is \-1 the metric is node centric
-instead of task.
+\fBNOTE\fR: If corresponding TresUsageOutMaxTask is \-1 the metric is node
+centric instead of task.
 .IP
 
 .TP
 \f3TresUsageOutMax\fP
 Tres maximum usage out by all tasks in job.
-NOTE: If corresponding TresUsageOutMaxTask is \-1 the metric is node centric
-instead of task.
+\fBNOTE\fR: If corresponding TresUsageOutMaxTask is \-1 the metric is node
+centric instead of task.
 .IP
 
 .TP
@@ -1222,8 +1251,8 @@ The user name of the user who ran the job.
 The amount of user CPU time used by the job or job step. Format is the same as
 \f3Elapsed\fP.
 
-NOTE: UserCPU provides a measure of the task's parent process and does
-not include CPU time of child processes.
+\fBNOTE\fR: See the note for TotalCPU for information about how canceled jobs
+are handled.
 .IP
 
 .TP

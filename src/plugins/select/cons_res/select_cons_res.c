@@ -99,7 +99,6 @@
 #include <string.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_selecttype_info.h"
 #include "src/common/assoc_mgr.h"
 #include "src/common/xstring.h"
 #include "select_cons_res.h"
@@ -509,8 +508,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 
 /* select_p_job_expand() in cons_common */
 
-/* select_p_job_signal() in cons_common */
-
 /* select_p_job_fini() in cons_common */
 
 /* select_p_job_suspend() in cons_common */
@@ -550,10 +547,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 /* select_p_select_jobinfo_pack() in cons_common */
 
 /* select_p_select_jobinfo_unpack() in cons_common */
-
-/* select_p_select_jobinfo_sprint() in cons_common */
-
-/* select_p_select_jobinfo_xstrdup() in cons_common */
 
 /* select_p_get_info_from_plugin() in cons_common */
 

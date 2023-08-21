@@ -68,6 +68,7 @@
 #define OPT_LONG_WCKEY   0x103
 #define OPT_LONG_SIBLING 0x104
 #define OPT_LONG_ME      0x105
+#define OPT_LONG_AUTOCOMP 0x106
 
 /* forward declarations of static functions
  *
@@ -184,12 +185,9 @@ static void _opt_default(void)
 #ifdef HAVE_FRONT_END
 	opt.ctld	= true;
 #else
-	/* do this for all but slurm (poe, aprun, etc...) */
-	if (xstrcmp(slurm_conf.launch_type, "launch/slurm"))
-		opt.ctld	= true;
-	else
-		opt.ctld	= false;
+	opt.ctld	= false;
 #endif
+	opt.cron = false;
 	opt.full	= false;
 	opt.hurry	= false;
 	opt.interactive	= false;
@@ -249,6 +247,9 @@ static void _opt_env(void)
 
 	if (getenv("SCANCEL_CTLD"))
 		opt.ctld = true;
+
+	if (getenv("SCANCEL_CRON"))
+		opt.cron = true;
 
 	if ( (val=getenv("SCANCEL_FULL")) ) {
 		if (xstrcasecmp(val, "true") == 0)
@@ -337,9 +338,11 @@ static void _opt_args(int argc, char **argv)
 	char **rest = NULL;
 	int opt_char, option_index;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"account",	required_argument, 0, 'A'},
 		{"batch",	no_argument,       0, 'b'},
 		{"ctld",	no_argument,	   0, OPT_LONG_CTLD},
+		{"cron",	no_argument,	   0, 'c'},
 		{"full",	no_argument,       0, 'f'},
 		{"help",        no_argument,       0, OPT_LONG_HELP},
 		{"hurry",       no_argument,       0, 'H'},
@@ -365,7 +368,8 @@ static void _opt_args(int argc, char **argv)
 		{NULL,          0,                 0, 0}
 	};
 
-	while ((opt_char = getopt_long(argc, argv, "A:bfHiM:n:p:Qq:R:s:t:u:vVw:",
+	while ((opt_char = getopt_long(argc, argv,
+				       "A:bcfHiM:n:p:Qq:R:s:t:u:vVw:",
 				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
@@ -382,6 +386,9 @@ static void _opt_args(int argc, char **argv)
 			break;
 		case OPT_LONG_CTLD:
 			opt.ctld = true;
+			break;
+		case (int)'c':
+			opt.cron = true;
 			break;
 		case (int)'f':
 			opt.full = true;
@@ -448,6 +455,10 @@ static void _opt_args(int argc, char **argv)
 		case OPT_LONG_USAGE:
 			_usage();
 			exit(0);
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		}
 	}
 
@@ -625,6 +636,7 @@ static void _opt_list(void)
 	info("account        : %s", opt.account);
 	info("batch          : %s", tf_(opt.batch));
 	info("ctld           : %s", tf_(opt.ctld));
+	info("cron           : %s", tf_(opt.cron));
 	info("full           : %s", tf_(opt.full));
 	info("hurry          : %s", tf_(opt.hurry));
 	info("interactive    : %s", tf_(opt.interactive));
@@ -695,6 +707,7 @@ static void _help(void)
 	printf("  -A, --account=account           act only on jobs charging this account\n");
 	printf("  -b, --batch                     signal batch shell for specified job\n");
 /*	printf("      --ctld                      send request directly to slurmctld\n"); */
+	printf("  -c, --cron                      cancel an scrontab job\n");
 	printf("  -f, --full                      signal batch shell and all steps for specified job\n");
 	printf("  -H, --hurry                     avoid burst buffer stage out\n");
 	printf("  -i, --interactive               require response from user for each job\n");

@@ -14,6 +14,24 @@
 
 @SET_MAKE@
 
+# This is common code for a Makefile.am and creates $(LIB_REF) to be used
+# afterwards in noinst_LTLIBRARIES and EXTRA_slurmrestd_DEPENDENCIES
+#
+# usage
+#
+# REF = usage.txt
+# include $(top_srcdir)/make_ref.include
+# noinst_LTLIBRARIES [+]= $(LIB_REF)
+# EXTRA_$PROGRAMNAME_DEPENDENCIES [+]= $(LIB_REF)
+# $PROGRAMNAME_LDADD += $(LIB_REF)
+#
+# What the above lines do is include this file in a Makefile.am
+# It will insert usage.txt as a variable that the calling program can access
+# with the calls in src/common/ref.h.
+#
+# If I where doing this for the slurmrestd I would put 'slurmrestd' in for
+# $PROGRAMNAME i.e. EXTRA_slurmrestd_DEPENDENCIES, slurmrestd_LDADD.
+
 
 VPATH = @srcdir@
 am__is_gnu_make = { \
@@ -113,7 +131,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
 	$(top_srcdir)/auxdir/x_ac_deprecated.m4 \
-	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
 	$(top_srcdir)/auxdir/x_ac_env.m4 \
 	$(top_srcdir)/auxdir/x_ac_freeipmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_hpe_slingshot.m4 \
@@ -133,6 +150,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
+	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
@@ -154,9 +172,9 @@ CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(bindir)"
 PROGRAMS = $(bin_PROGRAMS)
 LTLIBRARIES = $(noinst_LTLIBRARIES)
-libscrontab_ref_la_DEPENDENCIES = libscrontab_ref.lo
-am_libscrontab_ref_la_OBJECTS =
-libscrontab_ref_la_OBJECTS = $(am_libscrontab_ref_la_OBJECTS)
+lib_ref_la_DEPENDENCIES = lib_ref.lo
+am_lib_ref_la_OBJECTS =
+lib_ref_la_OBJECTS = $(am_lib_ref_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
@@ -166,7 +184,6 @@ am__objects_1 = env.$(OBJEXT) opt.$(OBJEXT) parse.$(OBJEXT) \
 am_scrontab_OBJECTS = $(am__objects_1)
 scrontab_OBJECTS = $(am_scrontab_OBJECTS)
 am__DEPENDENCIES_1 =
-am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1)
 scrontab_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
 	$(scrontab_LDFLAGS) $(LDFLAGS) -o $@
@@ -206,7 +223,7 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
-SOURCES = $(libscrontab_ref_la_SOURCES) $(scrontab_SOURCES)
+SOURCES = $(lib_ref_la_SOURCES) $(scrontab_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -266,7 +283,6 @@ DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
-DL_LIBS = @DL_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -303,7 +319,6 @@ HDF5_LIBS = @HDF5_LIBS@
 HDF5_TYPE = @HDF5_TYPE@
 HDF5_VERSION = @HDF5_VERSION@
 HPE_SLINGSHOT_CFLAGS = @HPE_SLINGSHOT_CFLAGS@
-HPE_SLINGSHOT_LIBS = @HPE_SLINGSHOT_LIBS@
 HTTP_PARSER_CPPFLAGS = @HTTP_PARSER_CPPFLAGS@
 HTTP_PARSER_LDFLAGS = @HTTP_PARSER_LDFLAGS@
 HWLOC_CPPFLAGS = @HWLOC_CPPFLAGS@
@@ -351,7 +366,6 @@ NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
 NVML_CPPFLAGS = @NVML_CPPFLAGS@
-NVML_LIBS = @NVML_LIBS@
 OBJCOPY = @OBJCOPY@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
@@ -359,7 +373,6 @@ OFED_CPPFLAGS = @OFED_CPPFLAGS@
 OFED_LDFLAGS = @OFED_LDFLAGS@
 OFED_LIBS = @OFED_LIBS@
 ONEAPI_CPPFLAGS = @ONEAPI_CPPFLAGS@
-ONEAPI_LIBS = @ONEAPI_LIBS@
 OTOOL = @OTOOL@
 OTOOL64 = @OTOOL64@
 PACKAGE = @PACKAGE@
@@ -389,21 +402,24 @@ PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
 PTHREAD_CXX = @PTHREAD_CXX@
 PTHREAD_LIBS = @PTHREAD_LIBS@
 RANLIB = @RANLIB@
+RDKAFKA_CPPFLAGS = @RDKAFKA_CPPFLAGS@
+RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
+RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
 RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
 RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
 RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
-RSMI_LDFLAGS = @RSMI_LDFLAGS@
-RSMI_LIBS = @RSMI_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 SLEEP_CMD = @SLEEP_CMD@
+SLURMCTLD_INTERFACES = @SLURMCTLD_INTERFACES@
 SLURMCTLD_PORT = @SLURMCTLD_PORT@
 SLURMCTLD_PORT_COUNT = @SLURMCTLD_PORT_COUNT@
 SLURMDBD_PORT = @SLURMDBD_PORT@
+SLURMD_INTERFACES = @SLURMD_INTERFACES@
 SLURMD_PORT = @SLURMD_PORT@
 SLURMRESTD_PORT = @SLURMRESTD_PORT@
 SLURM_API_AGE = @SLURM_API_AGE@
@@ -497,7 +513,6 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
 CLEANFILES = core.* *.bino
-REF = default_crontab.txt usage.txt
 SRCS = \
 	env.c \
 	opt.c \
@@ -506,23 +521,24 @@ SRCS = \
 	scrontab.h
 
 AM_CPPFLAGS = -I$(top_srcdir)
-BIN_REF = $(REF:.txt=.bino)
-noinst_LTLIBRARIES = libscrontab_ref.la
-libscrontab_ref_la_SOURCES = 
 scrontab_SOURCES = $(SRCS)
-convenience_libs = $(LIB_SLURM) $(DL_LIBS)
-scrontab_DEPENDENCIES = $(LIB_SLURM_BUILD) libscrontab_ref.la
-scrontab_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
-libscrontab_ref_la_LIBADD = libscrontab_ref.lo
-scrontab_LDADD = \
-	$(convenience_libs) \
-	libscrontab_ref.la
+scrontab_DEPENDENCIES = $(LIB_SLURM_BUILD)
+scrontab_LDFLAGS = $(CMD_LDFLAGS)
+scrontab_LDADD = $(LIB_SLURM) $(LIB_REF)
+REF = default_crontab.txt usage.txt
+BIN_REF = $(REF:.txt=.bino)
+LIB_REF = lib_ref.la
 
+# a blank lib_ref_la_SOURCES is needed for 'make cscope' to work correctly.
+lib_ref_la_SOURCES = 
+lib_ref_la_LIBADD = lib_ref.lo
+noinst_LTLIBRARIES = $(LIB_REF)
+EXTRA_scrontab_DEPENDENCIES = $(LIB_REF)
 all: all-am
 
 .SUFFIXES:
 .SUFFIXES: .c .lo .o .obj
-$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am  $(am__configure_deps)
+$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am $(top_srcdir)/make_ref.include $(am__configure_deps)
 	@for dep in $?; do \
 	  case '$(am__configure_deps)' in \
 	    *$$dep*) \
@@ -542,6 +558,7 @@ Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	    echo ' cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@ $(am__maybe_remake_depfiles)'; \
 	    cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@ $(am__maybe_remake_depfiles);; \
 	esac;
+$(top_srcdir)/make_ref.include $(am__empty):
 
 $(top_builddir)/config.status: $(top_srcdir)/configure $(CONFIG_STATUS_DEPENDENCIES)
 	cd $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) am--refresh
@@ -612,8 +629,8 @@ clean-noinstLTLIBRARIES:
 	  rm -f $${locs}; \
 	}
 
-libscrontab_ref.la: $(libscrontab_ref_la_OBJECTS) $(libscrontab_ref_la_DEPENDENCIES) $(EXTRA_libscrontab_ref_la_DEPENDENCIES) 
-	$(AM_V_CCLD)$(LINK)  $(libscrontab_ref_la_OBJECTS) $(libscrontab_ref_la_LIBADD) $(LIBS)
+lib_ref.la: $(lib_ref_la_OBJECTS) $(lib_ref_la_DEPENDENCIES) $(EXTRA_lib_ref_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(LINK)  $(lib_ref_la_OBJECTS) $(lib_ref_la_LIBADD) $(LIBS)
 
 scrontab$(EXEEXT): $(scrontab_OBJECTS) $(scrontab_DEPENDENCIES) $(EXTRA_scrontab_DEPENDENCIES) 
 	@rm -f scrontab$(EXEEXT)
@@ -850,10 +867,10 @@ uninstall-am: uninstall-binPROGRAMS
 
 
 %.bino: %.txt
-	$(AM_V_GEN)pushd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; popd
+	$(AM_V_GEN)curr_dir=$(shell pwd); cd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; cd $$curr_dir
 	$(AM_V_at)@OBJCOPY@ --rename-section .data=.rodata,alloc,load,readonly,data,contents "$*.bino"
 
-libscrontab_ref.lo: $(BIN_REF)
+lib_ref.lo: $(BIN_REF)
 	$(AM_V_at)echo "# $@ - a libtool object file" >"$@"
 	$(AM_V_at)echo "# Generated by $(shell @LIBTOOL@ --version | head -n 1)" >>"$@"
 	$(AM_V_at)echo "#" >>"$@"
@@ -868,7 +885,7 @@ libscrontab_ref.lo: $(BIN_REF)
 	$(AM_V_at)echo >>"$@"
 
 force:
-$(convenience_libs) : force
+$(scrontab_DEPENDENCIES) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.

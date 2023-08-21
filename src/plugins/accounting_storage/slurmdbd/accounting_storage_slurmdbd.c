@@ -51,8 +51,8 @@
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/read_config.h"
-#include "src/common/select.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/slurm_persist_conn.h"
 #include "src/common/uid.h"
@@ -142,6 +142,7 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->constraints);
 		xfree(req->container);
 		xfree(req->env_hash);
+		xfree(req->licenses);
 		xfree(req->mcs_label);
 		xfree(req->name);
 		xfree(req->nodes);
@@ -228,6 +229,7 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 		req->constraints   = xstrdup(job_ptr->details->features);
 
 	req->container     = xstrdup(job_ptr->container);
+	req->licenses = xstrdup(job_ptr->licenses);
 	req->job_state     = job_ptr->job_state;
 	req->state_reason_prev = job_ptr->state_reason_prev_db;
 	req->name          = xstrdup(job_ptr->name);
@@ -533,7 +535,7 @@ static int _send_cluster_tres(void *db_conn,
 	return rc;
 }
 
-extern void _update_cluster_nodes(void)
+static void _update_cluster_nodes(void)
 {
 	static int prev_node_record_count = -1;
 	static bitstr_t *total_node_bitmap = NULL;
@@ -2944,10 +2946,13 @@ extern int jobacct_storage_p_job_complete(void *db_conn, job_record_t *job_ptr)
 
 	if (slurm_conf.conf_flags & CTL_CONF_SJC)
 		req.comment = job_ptr->comment;
+	if (slurm_conf.conf_flags & CTL_CONF_SJX)
+		req.extra = job_ptr->extra;
 
 	req.db_index    = job_ptr->db_index;
 	req.derived_ec  = job_ptr->derived_ec;
 	req.exit_code   = job_ptr->exit_code;
+	req.failed_node = job_ptr->failed_node;
 	req.job_id      = job_ptr->job_id;
 	if (IS_JOB_RESIZING(job_ptr)) {
 		req.end_time    = job_ptr->resize_time;
@@ -3428,8 +3433,9 @@ extern void acct_storage_p_send_all(void *db_conn, time_t event_time,
 	debug2("called %s", rpc_num2string(msg_type));
 	switch (msg_type) {
 	case ACCOUNTING_FIRST_REG:
-	case ACCOUNTING_NODES_CHANGE_DB:
 		(void) send_jobs_to_accounting();
+		/* fall through */
+	case ACCOUNTING_NODES_CHANGE_DB:
 		(void) send_resvs_to_accounting(msg_type);
 		/* fall through */
 	case ACCOUNTING_TRES_CHANGE_DB:

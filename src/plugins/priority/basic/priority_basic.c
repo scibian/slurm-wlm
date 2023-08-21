@@ -42,7 +42,7 @@
 
 #include "slurm/slurm_errno.h"
 
-#include "src/common/slurm_priority.h"
+#include "src/interfaces/priority.h"
 #include "src/common/assoc_mgr.h"
 
 /* These are defined here so when we link with something other than
@@ -50,8 +50,10 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
+extern list_t *job_list  __attribute__((weak_import));
 extern int slurmctld_tres_cnt __attribute__((weak_import));
 #else
+list_t *job_list = NULL;
 int slurmctld_tres_cnt = 0;
 #endif
 
@@ -127,6 +129,27 @@ extern uint32_t priority_p_set(uint32_t last_prio, job_record_t *job_ptr)
 	return new_prio;
 }
 
+static int _foreach_job_boost_prio(void *x, void *arg)
+{
+	job_record_t *job_ptr = x;
+	uint32_t prio_boost = *(uint32_t *) arg;
+
+	if ((job_ptr->priority) && (job_ptr->direct_set_prio == 0))
+		job_ptr->priority += prio_boost;
+
+	return 0;
+}
+
+extern uint32_t priority_p_recover(uint32_t prio_boost)
+{
+	if (prio_boost < 1000000)
+		return 0;
+
+	list_for_each(job_list, _foreach_job_boost_prio, &prio_boost);
+
+	return prio_boost;
+}
+
 extern void priority_p_reconfig(bool assoc_clear)
 {
 	return;
@@ -156,6 +179,7 @@ extern double priority_p_calc_fs_factor(long double usage_efctv,
 	return priority_fs;
 }
 
+/* req_msg can be removed 2 versions after 23.02 */
 extern List priority_p_get_priority_factors_list(
 	priority_factors_request_msg_t *req_msg, uid_t uid)
 {

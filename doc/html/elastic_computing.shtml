@@ -45,6 +45,9 @@ establishing the node's network address. This option disables the cache and
 Slurm will look up the node's network address each time a connection is made.
 This is useful, for example, in a cloud environment where the node addresses
 come and go out of DNS.
+<dt><b>ReconfigFlags=KeepPowerSaveSettings</b>
+<dd>If set, an "scontrol reconfig" command will preserve the current state of
+SuspendExcNodes, SuspendExcParts and SuspendExcStates.
 <dt><b>ResumeFailProgram</b>
 <dd>The program that will be executed when nodes fail to resume by
 <b>ResumeTimeout</b>. The argument to the program will be the names of the
@@ -66,23 +69,45 @@ e.g.
 <pre>
 SLURM_RESUME_FILE=/proc/1647372/fd/7:
 {
-   "all_nodes" : "cloud[1-3]",
+   "all_nodes_resume" : "cloud[1-3,7-8]",
    "jobs" : [
       {
+         "extra" : "An arbitrary string from --extra",
+         "features" : "c1,c2",
          "job_id" : 140814,
-         "nodes" : "cloud[1-3]",
+         "nodes_alloc" : "cloud[1-4]",
+         "nodes_resume" : "cloud[1-3]",
+         "oversubscribe" : "OK",
+         "partition" : "cloud",
+	 "reservation" : "resv_1234"
       },
       {
+         "extra" : null,
+         "features" : "c1,c2",
          "job_id" : 140815,
-         "nodes" : "cloud[1-2]",
+         "nodes_alloc" : "cloud[1-2]",
+         "nodes_resume" : "cloud[1-2]",
+         "oversubscribe" : "OK",
+         "partition" : "cloud",
+	 "reservation" : null
+      }
+      {
+         "extra" : null,
+         "features" : null
+         "job_id" : 140816,
+         "nodes_alloc" : "cloud[7-8]",
+         "nodes_resume" : "cloud[7-8]",
+         "oversubscribe" : "NO",
+         "partition" : "cloud_exclusive",
+	 "reservation" : null
       }
    ]
 }
 </pre>
-<dt><b>PrivateData</b>
-<dd>Including the <i>cloud</i> flag with <b>PrivateData</b> will cause cloud
-nodes to be visible in the output of commands like <b>sinfo</b> at all times.
-Without this flag, nodes will only be visible when the they are powered on.
+
+See the <a href="squeue.html#OPT_OverSubscribe">squeue man page</a>
+for possible values for <b>oversubscribe</b>.
+
 <dt><b>ResumeTimeout</b>
 <dd>Maximum time permitted (in seconds) between when a node resume request
 is issued and when the node is actually available for use. Nodes which fail to
@@ -106,6 +131,29 @@ SuspendProgram so that nodes will be eligible to be resumed at a later time.
 suspending and resuming nodes which are not in the cloud. Alternately the
 suspend/resume programs can treat local nodes differently from nodes being
 provisioned from cloud.
+Use Slurm's hostlist expression to identify nodes with an optional ":"
+separator and count of nodes to exclude from the preceding range. For example
+"nid[10\-20]:4" will prevent 4 usable nodes (i.e IDLE and not DOWN, DRAINING or
+already powered down) in the set "nid[10\-20]" from being powered down.
+Multiple sets of nodes can be specified with or without counts in a comma
+separated list (e.g "nid[10\-20]:4,nid[80\-90]:2").
+By default, no nodes are excluded.
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
+<dt><b>SuspendExcParts</b>
+<dd>List of partitions with nodes to never place in power saving mode.
+Multiple partitions may be specified using a comma separator.
+By default, no nodes are excluded.
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
+<dt><b>SuspendExcStates</b>
+<dd>Specifies node states that are not to be powered down automatically.
+Valid states include CLOUD, DOWN, DRAIN, DYNAMIC_FUTURE, DYNAMIC_NORM, FAIL,
+INVALID_REG, MAINTENANCE, NOT_RESPONDING, PERFCTRS, PLANNED, and RESERVED.
+By default, any of these states, if idle for <b>SuspendTime</b>, would be
+powered down.
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
 <dt><b>SuspendProgram</b>
 <dd>The program executed when a node is no longer required and can be
 relinquished to the cloud.
@@ -151,6 +199,22 @@ weights.
 </dl>
 </p>
 
+<p>Some partition parameters that are of interest include:
+<dl>
+<dt><b>PowerDownOnIdle</b>
+<dd>If set to <b>YES</b>, then nodes allocated from this partition will
+immediately be requested to power down upon becoming IDLE. A power down request
+prevents further scheduling to the node until it has been put into power save
+mode by <b>SuspendProgram</b>.
+<dt><b>ResumeTimeout</b>, <b>SuspendTimeout</b> and <b>SuspendTime</b>
+<dd>These can be applied at the partition level. If a node is in multiple
+partitions and these options are configured on the partitions, the higher value
+will be used for the node. If the option is not set, it will use the global
+setting. Configuring <b>SuspendTime</b> on a partition will enable power save
+mode if the global <b>SuspendTime</b> is not set.
+</dl>
+</p>
+
 <p>Nodes to be acquired on demand can be placed into their own Slurm partition.
 This mode of operation can be used to use these nodes only if so requested by
 the user. Note that jobs can be submitted to multiple partitions and will use
@@ -177,14 +241,6 @@ NodeName=ec[0-127]  Weight=8 Feature=cloud State=CLOUD
 PartitionName=debug MaxTime=1:00:00 Nodes=tux[0-32] Default=yes
 PartitionName=batch MaxTime=8:00:00 Nodes=tux[0-127],ec[0-127] Default=no
 </pre>
-
-<p><b>ResumeTimeout</b>, <b>SuspendTimeout</b> and <b>SuspendTime</b> can be
-applied at the partition level. If a node is in multiple partitions and these
-options are configured on the partitions, the higher value will be used for the
-node. If the option is not set, it will use the global setting. Configuring
-<b>SuspendTime</b> on a partition will enable power save mode if the global
-SuspendTime is not set.
-</p>
 
 <p>By default, when power save mode is enabled Slurm attempts to "suspend" all
 nodes unless excluded by <b>SuspendExcNodes</b> or <b>SuspendExcParts</b>. For
@@ -488,6 +544,47 @@ debug*      up    infinite     1    drng!  c1-compute-0-0
 debug*      up    infinite    99    idle~  c1-compute-0-[1-99]
 </pre>
 
-<p style="text-align:center;">Last modified 14 June 2022</p>
+<h3 id="nodefeatures"><strong>NodeFeaturesPlugins and Cloud Nodes</strong>
+<a class="slurm_link" href="#nodefeatures"></a>
+</h3>
+<p>
+Features defined by
+<a href="slurm.conf.html#OPT_NodeFeaturesPlugins">NodeFeaturesPlugins</a>
+and attached to a cloud node in the <b>slurm.conf</b>, will be available but
+not active when the node is powered down. If a job requests NodeFeaturesPlugins
+features, the controller will allocate nodes that are powered down and have the
+features as available. At allocation, the features will be made active. A cloud
+node will remain with the active features until the node is powered down (i.e.
+the node can't be rebooted to get other features until the node is powered
+down). When the node is powered down, the active NodeFeaturesPlugins features
+are cleared. Any non-NodeFeaturesPlugins features are active by default and can
+be used as a label.
+</p>
+
+<p>
+Example:
+<pre>
+slurm.conf:
+NodeFeaturesPlugins=node_features/helpers
+
+NodeName=cloud[1-5] ... State=CLOUD Feature=f1,f2,l1
+NodeName=cloud[6-10] ... State=CLOUD Feature=f3,f4,l2
+
+helpers.conf:
+NodeName=cloud[1-5] Feature=f1,f2 Helper=/bin/true
+NodeName=cloud[6-10] Feature=f3,f4 Helper=/bin/true
+</pre>
+Features f1, f2, f3, and f4 are changeable features and are defined on the node
+lines in the slurm.conf because <b>CLOUD</b> nodes do not register before being
+allocated. By setting the <i>Helper</i> script to /bin/true, the slurmd's will
+not report any active features to the controller and the controller will manage
+all the active features. If the <i>Helper</i> is set to a script that reports
+the active features, the controller will validate that the reported active
+features are a super set of the node's active changeable features in the
+controller.
+Features l1 and l2 will always be active and can be used as selectable labels.
+</p>
+
+<p style="text-align:center;">Last modified 22 March 2023</p>
 
 <!--#include virtual="footer.txt"-->

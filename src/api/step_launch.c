@@ -67,14 +67,14 @@
 #include "src/common/job_options.h"
 #include "src/common/macros.h"
 #include "src/common/net.h"
-#include "src/common/plugstack.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_cred.h"
-#include "src/common/slurm_mpi.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/cred.h"
+#include "src/interfaces/mpi.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_time.h"
+#include "src/common/spank.h"
 #include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
@@ -83,7 +83,7 @@
 #include "src/api/step_launch.h"
 #include "src/api/pmi_server.h"
 
-#include "src/srun/libsrun/step_ctx.h"
+#include "src/srun/step_ctx.h"
 
 #define STEP_ABORT_TIME 2
 
@@ -137,7 +137,6 @@ extern void slurm_step_launch_params_t_init(slurm_step_launch_params_t *ptr)
 
 	ptr->buffered_stdio = true;
 	memcpy(&ptr->local_fds, &fds, sizeof(fds));
-	ptr->gid = getgid();
 	ptr->cpu_freq_min = NO_VAL;
 	ptr->cpu_freq_max = NO_VAL;
 	ptr->cpu_freq_gov = NO_VAL;
@@ -163,13 +162,13 @@ static void _rebuild_mpi_layout(slurm_step_ctx_t *ctx,
 		return;
 
 	if (params->het_job_id && (params->het_job_id != NO_VAL))
-		ctx->launch_state->mpi_info->het_job_id = params->het_job_id;
+		ctx->launch_state->mpi_step->het_job_id = params->het_job_id;
 
-	ctx->launch_state->mpi_info->het_job_task_offset =
+	ctx->launch_state->mpi_step->het_job_task_offset =
 		params->het_job_task_offset;
 	new_step_layout = xmalloc(sizeof(slurm_step_layout_t));
-	orig_step_layout = ctx->launch_state->mpi_info->step_layout;
-	ctx->launch_state->mpi_info->step_layout = new_step_layout;
+	orig_step_layout = ctx->launch_state->mpi_step->step_layout;
+	ctx->launch_state->mpi_step->step_layout = new_step_layout;
 	if (orig_step_layout->front_end) {
 		new_step_layout->front_end =
 			xstrdup(orig_step_layout->front_end);
@@ -233,7 +232,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 
 	mpi_env = xmalloc(sizeof(char *));  /* Needed for setenvf used by MPI */
 	if ((ctx->launch_state->mpi_state =
-	     mpi_g_client_prelaunch(ctx->launch_state->mpi_info, &mpi_env))
+	     mpi_g_client_prelaunch(ctx->launch_state->mpi_step, &mpi_env))
 	    == NULL) {
 		slurm_seterrno(SLURM_MPI_PLUGIN_PRELAUNCH_SETUP_FAILED);
 		return SLURM_ERROR;
@@ -248,8 +247,22 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	/* Start tasks on compute nodes */
 	memcpy(&launch.step_id, &ctx->step_req->step_id,
 	       sizeof(launch.step_id));
-	launch.uid = ctx->step_req->user_id;
-	launch.gid = params->gid;
+
+	if (ctx->step_resp->cred) {
+		slurm_cred_arg_t *args;
+
+		if ((args = slurm_cred_get_args(ctx->step_resp->cred))) {
+			launch.uid = args->uid;
+			launch.gid = args->gid;
+		} else {
+			/* fake cred */
+			launch.uid = getuid();
+			launch.gid = getgid();
+		}
+
+		slurm_cred_unlock_args(ctx->step_resp->cred);
+	}
+
 	launch.argc = params->argc;
 	launch.argv = params->argv;
 	launch.spank_job_env = params->spank_job_env;
@@ -427,7 +440,7 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 
 	debug("Entering %s", __func__);
 
-	if ((ctx == NULL) || (ctx->magic != STEP_CTX_MAGIC)) {
+	if (!ctx || (ctx->magic != STEP_CTX_MAGIC) || !ctx->step_resp) {
 		error("%s: Not a valid slurm_step_ctx_t", __func__);
 		slurm_seterrno(EINVAL);
 		return SLURM_ERROR;
@@ -444,8 +457,22 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	/* Start tasks on compute nodes */
 	memcpy(&launch.step_id, &ctx->step_req->step_id,
 	       sizeof(launch.step_id));
-	launch.uid = ctx->step_req->user_id;
-	launch.gid = params->gid;
+
+	if (ctx->step_resp->cred) {
+		slurm_cred_arg_t *args;
+
+		if ((args = slurm_cred_get_args(ctx->step_resp->cred))) {
+			launch.uid = args->uid;
+			launch.gid = args->gid;
+		} else {
+			/* fake cred */
+			launch.uid = getuid();
+			launch.gid = getgid();
+		}
+
+		slurm_cred_unlock_args(ctx->step_resp->cred);
+	}
+
 	launch.argc = params->argc;
 	launch.argv = params->argv;
 	launch.spank_job_env = params->spank_job_env;
@@ -650,7 +677,7 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 	struct step_launch_state *sls;
 	struct timespec ts = {0, 0};
 	bool time_set = false;
-	int errnum;
+	int errnum, ret_code;
 
 	if (!ctx || (ctx->magic != STEP_CTX_MAGIC))
 		return;
@@ -760,7 +787,12 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 	client_io_handler_destroy(sls->io);
 	sls->io = NULL;
 
-	sls->mpi_rc = mpi_g_client_fini(sls->mpi_state);
+	/*
+	 * Check for specific error, but keep node failure error if nothing else
+	 * happens.
+	 */
+	ret_code = mpi_g_client_fini(sls->mpi_state);
+	sls->ret_code = MAX(sls->ret_code, ret_code);
 	slurm_mutex_unlock(&sls->lock);
 }
 
@@ -925,12 +957,12 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 	sls->resp_port = NULL;
 	sls->abort = false;
 	sls->abort_action_taken = false;
-	/* NOTE: No malloc() of sls->mpi_info required */
-	memcpy(&sls->mpi_info->step_id, &ctx->step_req->step_id,
-	       sizeof(sls->mpi_info->step_id));
-	sls->mpi_info->het_job_id = NO_VAL;
-	sls->mpi_info->het_job_task_offset = NO_VAL;
-	sls->mpi_info->step_layout = layout;
+	/* NOTE: No malloc() of sls->mpi_step required */
+	memcpy(&sls->mpi_step->step_id, &ctx->step_req->step_id,
+	       sizeof(sls->mpi_step->step_id));
+	sls->mpi_step->het_job_id = NO_VAL;
+	sls->mpi_step->het_job_task_offset = NO_VAL;
+	sls->mpi_step->step_layout = layout;
 	sls->mpi_state = NULL;
 	slurm_mutex_init(&sls->lock);
 	slurm_cond_init(&sls->cond, NULL);
@@ -957,7 +989,7 @@ void step_launch_state_alter(slurm_step_ctx_t *ctx)
 	bit_realloc(sls->tasks_exited, layout->task_cnt);
 	bit_realloc(sls->node_io_error, layout->node_cnt);
 	xrealloc(sls->io_deadline, sizeof(time_t) * layout->node_cnt);
-	sls->layout = sls->mpi_info->step_layout = layout;
+	sls->layout = sls->mpi_step->step_layout = layout;
 
 	for (ii = 0; ii < layout->node_cnt; ii++) {
 		sls->io_deadline[ii] = (time_t)NO_VAL;
@@ -1179,8 +1211,8 @@ _exit_handler(struct step_launch_state *sls, slurm_msg_t *exit_msg)
 	void (*task_finish)(task_exit_msg_t *);
 	int i;
 
-	if ((msg->step_id.job_id != sls->mpi_info->step_id.job_id) ||
-	    (msg->step_id.step_id != sls->mpi_info->step_id.step_id)) {
+	if ((msg->step_id.job_id != sls->mpi_step->step_id.job_id) ||
+	    (msg->step_id.step_id != sls->mpi_step->step_id.step_id)) {
 		debug("Received MESSAGE_TASK_EXIT from wrong job: %ps",
 		      &msg->step_id);
 		return;
@@ -1303,6 +1335,13 @@ _node_fail_handler(struct step_launch_state *sls, slurm_msg_t *fail_msg)
 				sls->layout->tids[node_id][j]);
 		}
 	}
+
+	/*
+	 * Just mark the node failure to make srun exit code not 0 so the node
+	 * failure can be caught while executing an allocating script or a step
+	 * inside a batch job.
+	 */
+	sls->ret_code = 1;
 
 	client_io_handler_downnodes(sls->io, node_ids, num_node_ids);
 	slurm_cond_broadcast(&sls->cond);
@@ -1468,7 +1507,7 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
 		error ("Security violation, slurm message from uid %u",
-		       (unsigned int) req_uid);
+		       req_uid);
  		return;
 	}
 
@@ -1626,6 +1665,15 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 		msg.protocol_version = ctx->step_resp->use_protocol_ver;
 	else
 		msg.protocol_version = SLURM_PROTOCOL_VERSION;
+
+	/*
+	 * Prior to Slurm 23.02 --slurmd-debug was interpreted as offset to
+	 * LOG_LEVEL_ERROR, so we need to adjust the value.
+	 */
+	if (ctx->step_resp->use_protocol_ver <= SLURM_22_05_PROTOCOL_VERSION) {
+		launch_msg->slurmd_debug-= LOG_LEVEL_ERROR;
+	}
+
 
 #ifdef HAVE_FRONT_END
 	cred_args = slurm_cred_get_args(ctx->step_resp->cred);
