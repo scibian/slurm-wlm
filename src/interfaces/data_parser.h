@@ -236,6 +236,7 @@ typedef enum {
 	DATA_PARSER_OPEN_MODE, /* uint8_t - OPEN_MODE_* */
 	DATA_PARSER_WARN_FLAGS, /* uint16_t - KILL_*|WARN_SENT */
 	DATA_PARSER_X11_FLAGS, /* uint16_t - X11_FORWARD_* */
+	DATA_PARSER_HOLD, /* uint32_t (priority) --hold */
 	DATA_PARSER_TYPE_MAX
 } data_parser_type_t;
 
@@ -263,7 +264,7 @@ typedef struct data_parser_s data_parser_t;
 	 XSTRINGIFY(SLURM_API_CURRENT))
 
 /*
- * Initalize new data parser against given plugin
+ * Initialize new data parser against given plugin
  * IN on_parse_error - callback when an parsing error is encountered
  * 	ptr must remain valid until free called.
  * IN on_dump_error - callback when an parsing error is encountered

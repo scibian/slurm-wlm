@@ -5,6 +5,5 @@ pidfile-path
 rpath
 miscellanea-manpages
 retry-getaddrinfo
-fix-spelling-error
 force-nvml
 remove-hashbang

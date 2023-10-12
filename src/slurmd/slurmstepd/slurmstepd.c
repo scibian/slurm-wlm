@@ -51,7 +51,9 @@
 #include "src/interfaces/gres.h"
 #include "src/interfaces/hash.h"
 #include "src/common/run_command.h"
+#include "src/interfaces/route.h"
 #include "src/interfaces/select.h"
+#include "src/interfaces/topology.h"
 #include "src/common/setproctitle.h"
 #include "src/interfaces/auth.h"
 #include "src/interfaces/jobacct_gather.h"
@@ -708,7 +710,9 @@ _init_from_slurmd(int sock, char **argv,
 	    (jobacct_gather_init() != SLURM_SUCCESS) ||
 	    (acct_gather_profile_init() != SLURM_SUCCESS) ||
 	    (slurm_cred_init() != SLURM_SUCCESS) ||
-	    (job_container_init() != SLURM_SUCCESS))
+	    (job_container_init() != SLURM_SUCCESS) ||
+	    (route_init() != SLURM_SUCCESS) ||
+	    (slurm_topo_init() != SLURM_SUCCESS))
 		fatal("Couldn't load all plugins");
 
 	/*
@@ -793,7 +797,18 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 	}
 
 	if (step->container) {
-		int rc = setup_container(step);
+	        struct priv_state sprivs;
+		int rc;
+
+		if (drop_privileges(step, false, &sprivs, true) < 0) {
+			error("%s: drop_priviledges failed", __func__);
+			return NULL;
+		}
+		rc = setup_container(step);
+		if (reclaim_privileges(&sprivs) < 0) {
+			error("%s: reclaim_priviledges failed", __func__);
+			return NULL;
+		}
 
 		if (rc == ESLURM_CONTAINER_NOT_CONFIGURED) {
 			debug2("%s: container %s requested but containers are not configured on this node",

@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Debian HPC Team <debian-hpc@lists.debian.org>
 Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
-           Gennaro Oliva <oliva.g@na.icar.cnr.it>,
+           Gennaro Oliva <oliva@debian.org>,
 Build-Depends:
  debhelper (>= 13),
  libmunge-dev,

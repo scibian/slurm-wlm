@@ -913,7 +913,19 @@ extern int fmt_job_id_string(slurm_selected_step_t *id, char **dst)
 	}
 
 	if (id->step_id.step_id != NO_VAL) {
-		xstrfmtcatat(str, &pos, ".%u", id->step_id.step_id);
+		char *id_str = NULL;
+
+		for (int i = 0; i < ARRAY_SIZE(step_names); i++) {
+			if (step_names[i].step_id == id->step_id.step_id) {
+				id_str = step_names[i].name;
+				break;
+			}
+		}
+
+		if (id_str)
+			xstrfmtcatat(str, &pos, ".%s", id_str);
+		else
+			xstrfmtcatat(str, &pos, ".%u", id->step_id.step_id);
 
 		if (id->step_id.step_het_comp != NO_VAL)
 			xstrfmtcatat(str, &pos, "+%u",
@@ -946,6 +958,8 @@ extern slurm_selected_step_t *slurm_parse_step_str(char *name)
 			selected_step->step_id.step_id = SLURM_EXTERN_CONT;
 		else if (!xstrcmp(dot, "interactive"))
 			selected_step->step_id.step_id = SLURM_INTERACTIVE_STEP;
+		else if (!xstrcmp(dot, "TBD"))
+			selected_step->step_id.step_id = SLURM_PENDING_STEP;
 		else if (isdigit(*dot))
 			selected_step->step_id.step_id = atoi(dot);
 		else
@@ -1475,6 +1489,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 
 	if (job) {
 		xfree(job->account);
+		xfree(job->admin_comment);
 		xfree(job->alloc_node);
 		FREE_NULL_BITMAP(job->array_bitmap);
 		xfree(job->array_task_str);
@@ -1483,14 +1498,18 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->burst_buffer);
 		xfree(job->burst_buffer_state);
 		xfree(job->cluster);
+		xfree(job->cluster_features);
 		xfree(job->command);
 		xfree(job->comment);
 		xfree(job->container);
+		xfree(job->container_id);
 		xfree(job->cpus_per_tres);
+		xfree(job->cronspec);
 		xfree(job->dependency);
 		xfree(job->exc_nodes);
 		xfree(job->exc_node_inx);
 		xfree(job->extra);
+		xfree(job->failed_node);
 		xfree(job->features);
 		xfree(job->fed_origin_str);
 		xfree(job->fed_siblings_active_str);
@@ -1513,6 +1532,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->nodes);
 		xfree(job->sched_nodes);
 		xfree(job->partition);
+		xfree(job->prefer);
 		xfree(job->qos);
 		xfree(job->req_node_inx);
 		xfree(job->req_nodes);
@@ -1523,6 +1543,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->std_err);
 		xfree(job->std_in);
 		xfree(job->std_out);
+		xfree(job->system_comment);
 		xfree(job->tres_alloc_str);
 		xfree(job->tres_bind);
 		xfree(job->tres_freq);
@@ -4914,6 +4935,7 @@ extern void slurm_free_partition_info_members(partition_info_t * part)
 		xfree(part->job_defaults_str);
 		xfree(part->name);
 		xfree(part->nodes);
+		xfree(part->nodesets);
 		xfree(part->node_inx);
 		xfree(part->qos_char);
 		xfree(part->tres_fmt_str);

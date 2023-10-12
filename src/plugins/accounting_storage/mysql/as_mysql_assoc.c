@@ -528,7 +528,7 @@ static int _move_account(mysql_conn_t *mysql_conn, uint32_t *lft, uint32_t *rgt,
 	}
 	xfree(query);
 	if (!(row = mysql_fetch_row(result))) {
-		debug4("Can't move a none existent association");
+		debug4("Can't move a non-existent association");
 		mysql_free_result(result);
 		return ESLURM_INVALID_PARENT_ACCOUNT;
 	}
@@ -2204,6 +2204,14 @@ static int _cluster_get_assocs(mysql_conn_t *mysql_conn,
 				goto no_parent_limits;
 			}
 
+			if (!row2[ASSOC2_REQ_PARENT_ID]) {
+				error("Parent id for cluster %s assoc id %d (account %s) expected but not found.  The %s account may not exist.",
+				      assoc->cluster, assoc->id, assoc->acct,
+				      assoc->acct);
+				parent_id = 0;
+				goto no_parent_limits;
+			}
+
 			parent_id = slurm_atoul(row2[ASSOC2_REQ_PARENT_ID]);
 			if (!without_parent_limits) {
 				if (row2[ASSOC2_REQ_DEF_QOS])
@@ -3610,6 +3618,7 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 	itr = list_iterator_create(use_cluster_list);
 	while ((cluster_name = list_next(itr))) {
 		time_t now = time(NULL);
+		uint32_t root_assoc_id = 0;
 		DEF_TIMERS;
 		START_TIMER;
 		info("Resetting cluster %s", cluster_name);
@@ -3641,7 +3650,16 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 		/* Set the cluster name to the tmp name and remove qos */
 		assoc_itr = list_iterator_create(assoc_list);
 		while ((assoc_rec = list_next(assoc_itr))) {
-			if (assoc_rec->id == 1) {
+			if (!root_assoc_id) {
+				if (xstrcmp(assoc_rec->acct, "root") ||
+				    assoc_rec->user) {
+					error("first assoc rec for cluster %s is not for root acct",
+					      cluster_name);
+					rc = SLURM_ERROR;
+					goto endit;
+				}
+				root_assoc_id = assoc_rec->id;
+
 				/* Remove root association as we will make it
 				 * manually in the next step.
 				 */
@@ -3674,11 +3692,13 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 		 */
 		xstrfmtcat(query,
 			   "insert into \"%s_%s\" "
-			   "(creation_time, mod_time, acct, lft, rgt) "
-			   "values (%ld, %ld, 'root', 1, 2) "
+			   "(creation_time, mod_time, id_assoc, acct, lft, rgt) "
+			   "values (%ld, %ld, %u, 'root', %u, %u) "
 			   "on duplicate key update deleted=0, "
 			   "id_assoc=LAST_INSERT_ID(id_assoc), mod_time=%ld;",
-			   tmp_cluster_name, assoc_table, now, now, now);
+			   tmp_cluster_name, assoc_table, now, now,
+			   root_assoc_id, root_assoc_id, root_assoc_id + 1,
+			   now);
 
 		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
 
@@ -3691,7 +3711,7 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 		}
 
 		info("Redoing the hierarchy in a temporary table");
-		if (as_mysql_add_assocs(mysql_conn, uid, assoc_list) !=
+		if ((rc = as_mysql_add_assocs(mysql_conn, uid, assoc_list)) !=
 		    SLURM_SUCCESS)
 			goto endit;
 
@@ -3755,12 +3775,11 @@ extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
 		/* Get rid of the temporary table. */
 		query = xstrdup_printf("drop table \"%s_%s\";",
 				       tmp_cluster_name, assoc_table);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("problem with update query");
+		if (mysql_db_query(mysql_conn, query) != SLURM_SUCCESS) {
+			error("problem with drop table");
 			rc = SLURM_ERROR;
 		}
+		xfree(query);
 		END_TIMER;
 		info("resetting took %s", TIME_STR);
 	}

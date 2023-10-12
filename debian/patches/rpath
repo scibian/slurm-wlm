@@ -27,4 +27,3 @@ Last-Update: 2018-01-12
      LIB_SLURM=$LIB_SLURM' -L$(top_builddir)/src/api/.libs -lslurmfull'
      AC_MSG_RESULT([shared]);
    fi
-

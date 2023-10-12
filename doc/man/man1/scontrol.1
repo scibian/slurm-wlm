@@ -103,7 +103,7 @@ Attempt to update a job as user <uid> instead of the invoking user id.
 
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
-Print detailed event logging. Multiple \fB\-v\fR's will further increase
+Print detailed event logging. Multiple '\fB\-v\fR's will further increase
 the verbosity of logging. By default only errors will be displayed.
 .IP
 
@@ -1206,8 +1206,27 @@ Only privileged users can modify the value.
 .IP
 
 .TP
+\fBStdErr\fR=<\fIfilepath\fR>
+Set the batch job's stderr file path.
+Value may be reset to job default with blank data value, "StdErr=".
+
+\fBNOTE\fR: By default, StdErr will be merged into StdOut.
+.IP
+
+.TP
+\fBStdIn\fR=<\fIfilepath\fR>
+Set the batch job's stdin file path.
+Value may be reset to job default with blank data value, "StdIn=".
+
+\fBNOTE\fR: By default, StdIn will be '/dev/null'.
+.IP
+
+.TP
 \fBStdOut\fR=<\fIfilepath\fR>
 Set the batch job's stdout file path.
+Value may be reset to job default with blank data value, "StdOut=".
+
+\fBNOTE\fR: By default, StdOut will be based on the \fIJobId\fP.
 .IP
 
 .TP
@@ -2019,9 +2038,9 @@ To permit all groups to use the partition specify "AllowGroups=ALL".
 
 .TP
 \fBAllowQOS\fR=<\fIname\fR>
-Identify the QOS's which may use this partition.
-Multiple QOS's may be specified in a comma separated list.
-To permit all QOS's to use the partition specify "AllowQOS=ALL".
+Identify the QOSs which may use this partition.
+Multiple QOSs may be specified in a comma separated list.
+To permit all QOSs to use the partition specify "AllowQOS=ALL".
 .IP
 
 .TP
@@ -2074,8 +2093,8 @@ Multiple Accounts may be specified in a comma separated list.
 
 .TP
 \fBDenyQOS\fR=<\fIname\fR>
-Identify the QOS's which should be denied access to this partition.
-Multiple QOS's may be specified in a comma separated list.
+Identify the QOSs which should be denied access to this partition.
+Multiple QOSs may be specified in a comma separated list.
 .IP
 
 .TP
@@ -2503,10 +2522,11 @@ second values are rounded up to the next minute. Output format is always
 \fBPartitionName\fR=<\fIname\fR>
 Partition used to reserve nodes from. This will attempt to allocate all
 nodes in the specified partition unless you request fewer resources than
-are available with \fICoreCnt\fR, \fINodeCnt\fR or \fITRES\fR. Jobs will be
-allowed to use this reservation even if running in a different partition. There
-only needs to be overlapping nodes from that different partition and the nodes
-used in the reservation.
+are available with \fICoreCnt\fR, \fINodeCnt\fR or \fITRES\fR. If no partition
+is specified at submit time, this partition will override the job's default
+partition. Jobs explicitly requesting a different partition will still be
+allowed to use this reservation as long as there are enough overlapping nodes
+between both partitions to allocate the job.
 .IP
 
 .TP

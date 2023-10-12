@@ -3112,7 +3112,8 @@ extern int validate_node_specs(slurm_msg_t *slurm_msg, bool *newly_up)
 
 		if (build_node_spec_bitmap(node_ptr) != SLURM_SUCCESS)
 			error_code = EINVAL;
-		else if (!bit_equal(node_spec_bitmap_old,
+		else if (!node_spec_bitmap_old ||
+			 !bit_equal(node_spec_bitmap_old,
 				    node_ptr->node_spec_bitmap)) {
 			debug("Node %s has different spec CPUs than expected (%s, %s)",
 			      reg_msg->node_name, cpu_spec_list_old,
@@ -5235,11 +5236,14 @@ extern void set_node_reason(node_record_t *node_ptr,
 	xassert(node_ptr);
 
 	if (message && message[0]) {
-		if (node_ptr->reason &&
-		    !xstrstr(node_ptr->reason, message)) {
-			xstrfmtcat(node_ptr->reason, " : %s", message);
+		if (node_ptr->reason) {
+			char *tmp;
+			tmp = xstrdup(" : ");
+			xstrcat(tmp, message);
+			if (!xstrstr(node_ptr->reason, tmp))
+				xstrfmtcat(node_ptr->reason, " : %s", message);
+			xfree(tmp);
 		} else {
-			xfree(node_ptr->reason);
 			node_ptr->reason = xstrdup(message);
 		}
 		node_ptr->reason_time = time;

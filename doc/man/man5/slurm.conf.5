@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "May 2023" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "October 2023" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -501,7 +501,6 @@ Used by \fIauth/munge\fR and \fIcred/munge\fR.
 Credential lifetime, in seconds (e.g. "ttl=300").
 The default value is dependent upon the MUNGE installation, but is typically
 300 seconds.
-.RE
 .IP
 
 .TP
@@ -1541,25 +1540,46 @@ steps may run in parallel with the interactive step.
 
 .TP
 \fBJobAcctGatherType\fR
-The job accounting mechanism type.
-Acceptable values at present include "jobacct_gather/linux" (for Linux
-systems), "jobacct_gather/cgroup" and
-"jobacct_gather/none" (no accounting data collected).
-The default value is "jobacct_gather/none".
-"jobacct_gather/cgroup" is a plugin for the Linux operating system
-that uses cgroups to collect accounting statistics. The plugin collects the
-following statistics: From the cgroup memory subsystem: memory.usage_in_bytes
-(reported as 'pages') and rss from memory.stat (reported as 'rss'). From the
-cgroup cpuacct subsystem: user cpu time and system cpu time. No value
-is provided by cgroups for virtual memory size ('vsize').
-In order to use the \fBsstat\fR tool "jobacct_gather/linux",
-or "jobacct_gather/cgroup" must be configured.
-.br
-\fBNOTE\fR: Changing this configuration parameter changes the contents of
-the messages between Slurm daemons. Any previously running job steps are
-managed by a slurmstepd daemon that will persist through the lifetime of
-that job step and not change its communication protocol. Only change this
-configuration parameter when there are no running job steps.
+The JobAcctGather plugin collects memory, cpu, io, interconnect, energy and gpu
+usage information at the task level, depending on which plugins are configured
+in Slurm. This parameter will control how some of these metrics will be
+collected.
+
+Configurable values at present are:
+.IP
+.RS
+.TP 20
+\fBjobacct_gather/cgroup\fR (recommended)
+Collect cpu and memory statistics by reading the task's cgroup directory
+interfaces (e.g. memory.stat, cpu.stat) by issuing a call to the configured
+CgroupPlugin (see "man cgroup.conf").
+This mechanism ignores JobAcctGatherParams=UsePSS or NoShared since these are
+used only when reading memory usage from the proc filesystem.
+.IP
+
+.TP
+\fBjobacct_gather/linux\fR
+Collect cpu and memory statistics by reading procfs. The plugin will take all
+the pids of the task and for each of them will read /proc/<pid>/stats. If UsePSS
+is set it will also read /proc/<pid>/smaps, and if NoShare is set it will also
+read /proc/<pid>/statm (see \fBJobAcctGatherParams\fR for more information).
+
+This plugin carries a performance penalty on jobs with a large number of spawned
+processes since it needs to iterate over all the task pids and aggregate the
+stats into one single metric for the ppid, and then these values need to be
+aggregated to the task stats.
+.IP
+
+.TP
+\fBjobacct_gather/none\fR
+This is the default value. No accounting data is collected. \fBsstat\fR will
+not work.
+.RE
+.IP
+
+\fBNOTE\fR: Changing the plugin type when jobs are running in the cluster is
+possible. The already running steps will keep using the previous plugin
+mechanism, while new steps will use the new mechanism.
 .IP
 
 .TP
@@ -1603,10 +1623,8 @@ plugin.
 where \fI<interval>\fR is the sampling interval in seconds
 for filesystem profiling using the acct_gather_filesystem
 plugin.
-.TP
+
 .RE
-.RE
-.IP
 The default value for task sampling interval
 is 30 seconds. The default value for all other intervals is 0.
 An interval of 0 disables sampling of the specified type.
@@ -1973,6 +1991,10 @@ distribution, in the directory contribs/lua. Slurmctld will fatal on startup if
 the configured lua script is invalid. Slurm will try to load the script for each
 job submission. If the script is broken or removed while slurmctld is running,
 Slurm will fallback to the previous working version of the script.
+\fBWarning\fR: slurmctld runs this script while holding internal locks, and
+only a single copy of this script can run at a time. This blocks most
+concurrency in slurmctld. Therefore, this script should run to completion as
+quickly as possible.
 .IP
 
 .TP
@@ -2074,7 +2096,7 @@ resources one or more steps the sruns in the script will create.
 
 .TP 24
 \fBcray_net_exclusive\fR
-Allow jobs on a Cray Native cluster exclusive access to network resources.
+Allow jobs on a Cray XC cluster exclusive access to network resources.
 This should only be set on clusters providing exclusive access to each
 node to a single job at once, and not using parallel steps within the job,
 otherwise resources on the node can be oversubscribed.
@@ -2089,7 +2111,7 @@ https://slurm.schedmd.com/nss_slurm.html for more information.
 
 .TP 24
 \fBlustre_no_flush\fR
-If set on a Cray Native cluster, then do not flush the Lustre cache on job step
+If set on a Cray XC cluster, then do not flush the Lustre cache on job step
 completion. This setting will only take effect after reconfiguring, and will
 only take effect for newly launched jobs.
 .IP
@@ -2766,7 +2788,7 @@ lower than this value will be marked as preemptable.
 .TP
 \fBreclaim_licenses\fR
 If set, jobs may be preempted to reclaim licenses. Otherwise jobs requesting
-busy licenses will have to wait even if they have premption priority.
+busy licenses will have to wait even if they have preemption priority.
 The logic to support this option is only available in the select/cons_res and
 select/cons_tres plugins.
 .IP
@@ -2831,6 +2853,10 @@ This is not compatible with \fBPreemptMode=OFF\fR.
 \fBpreempt/qos\fR
 Job preemption rules are specified by Quality Of Service (QOS) specifications
 in the Slurm database.
+In the case of \fBPreemptMode=SUSPEND\fR, a preempting job has to be submitted
+to a partition with a higher PriorityTier or to the same partition. Submission
+to the same partition is also supported, which results in the preemptor QoS to
+gang schedule the preemptee QoS.
 This option is not compatible with \fBPreemptMode=OFF\fR.
 A configuration of \fBPreemptMode=SUSPEND\fR is only supported by the
 \fBSelectType=select/cons_res\fR and \fBSelectType=select/cons_tres\fR plugins.
@@ -2937,8 +2963,8 @@ decrease in value.
 .TP
 \fBMAX_TRES\fR
 If set, the weighted TRES value (e.g. TRESBillingWeights) is calculated as the
-MAX of individual TRES' on a node (e.g. cpus, mem, gres) plus the sum of all
-global TRES' (e.g. licenses).
+MAX of individual TRESs on a node (e.g. cpus, mem, gres) plus the sum of all
+global TRESs (e.g. licenses).
 .IP
 
 .TP
@@ -4708,7 +4734,7 @@ for all partitions.
 Setting a value for \fBDefMemPerCPU\fR is strongly recommended.
 .IP
 
-.TP
+.LP
 \fBNOTE\fR: If memory isn't configured as a consumable resource (CR_CPU,
 CR_Core or CR_Socket without _Memory) memory can be oversubscribed and will not
 be constrained by task/cgroup even if it is configured in cgroup.conf. In this
@@ -5406,20 +5432,24 @@ Configure SrunPortRange to use a range of ports above those used by RSIP,
 ideally 1000 or more ports, for example "SrunPortRange=60001\-63000".
 
 \fBNote\fR: \fBSrunPortRange\fR must be large enough to cover the expected
-number of srun ports created on a given submission node. A single srun opens
-3 listening ports plus 2 more for every 48 hosts. Example:
+number of srun ports created. A single srun opens 4 listening ports plus 2
+more for every 48 hosts beyond the first 48. Example:
 .IP
 .RS
-.TP 18
-\fBsrun \-N 48\fR will use 5 listening ports.
+.TP
+\fBsrun \-N 1\fR will use 4 listening ports.
 .IP
 
 .TP
-\fBsrun \-N 50\fR will use 7 listening ports.
+\fBsrun \-N 48\fR will use 4 listening ports.
 .IP
 
 .TP
-\fBsrun \-N 200\fR will use 13 listening ports.
+\fBsrun \-N 50\fR will use 6 listening ports.
+.IP
+
+.TP
+\fBsrun \-N 200\fR will use 12 listening ports.
 .RE
 .IP
 
@@ -5550,7 +5580,8 @@ This parameter is required.
 \fBtcs\fR=<\fIclass1\fR>[:<\fIclass2\fR>]...
 Set of traffic classes to configure for applications.
 Supported traffic classes are DEDICATED_ACCESS, LOW_LATENCY, BULK_DATA, and
-BEST_EFFORT.
+BEST_EFFORT. The traffic classes may also be specified as TC_DEDICATED_ACCESS,
+TC_LOW_LATENCY, TC_BULK_DATA, and TC_BEST_EFFORT.
 .IP
 
 .TP
@@ -5991,6 +6022,9 @@ SIGKILL) and execute \fBUnkillableStepProgram\fR.
 The default timeout value is 60 seconds.
 If exceeded, the compute node will be drained to prevent future jobs from being
 scheduled on the node.
+
+\fBNOTE\fR: Ensure that UnkillableStepTimeout is at least 5 times larger than
+MessageTimeout, otherwise it can lead to unexpected draining of nodes.
 .IP
 
 .TP
@@ -6151,7 +6185,7 @@ with that record will apply to subsequent node specifications
 unless explicitly set to other values in that node record or
 replaced with a different set of default values.
 Each line where \fBNodeName\fR is "DEFAULT" will replace or add to previous
-default values and not a reinitialize the default values.
+default values and not reinitialize the default values.
 For architectures in which the node order is significant,
 nodes will be considered consecutive in the order defined.
 For example, if the configuration for "NodeName=charlie" immediately
@@ -6618,7 +6652,7 @@ with that record will apply to subsequent node specifications
 unless explicitly set to other values in that frontend node record or
 replaced with a different set of default values.
 Each line where \fBFrontendName\fR is "DEFAULT" will replace or add to previous
-default values and not a reinitialize the default values.
+default values and not reinitialize the default values.
 .IP
 
 .TP
@@ -6721,7 +6755,7 @@ in the configuration file with multiple entries where "PartitionName=DEFAULT".
 The "PartitionName=" specification must be placed on every line
 describing the configuration of partitions.
 Each line where \fBPartitionName\fR is "DEFAULT" will replace or add to previous
-default values and not a reinitialize the default values.
+default values and not reinitialize the default values.
 A single partition name can not appear as a PartitionName value in more than
 one line (duplicate partition name records will be ignored).
 If a partition that is in use is deleted from the configuration and slurm
@@ -7067,8 +7101,9 @@ Recommended only for systems using \fBPreemptMode=suspend,gang\fR.
 \fBNOTE\fR: \fBOverSubscribe=FORCE:1\fR is a special case that is not exactly
 equivalent to \fBOverSubscribe=NO\fR. \fBOverSubscribe=FORCE:1\fR disables
 the regular oversubscription of resources in the same partition but it will
-still allow oversubscription due to preemption. Setting \fBOverSubscribe=NO\fR
-will prevent oversubscription from happening due to preemption as well.
+still allow oversubscription due to preemption or on overlapping partitions
+with the same PriorityTier. Setting \fBOverSubscribe=NO\fR
+will prevent oversubscription from happening in all cases.
 
 \fBNOTE\fR: If using \fBPreemptType=preempt/qos\fR you can specify a value for
 \fBFORCE\fR that is greater than 1. For example, \fBOverSubscribe=FORCE:2\fR
@@ -7134,7 +7169,7 @@ with that record will apply to subsequent partition specifications
 unless explicitly set to other values in that partition record or
 replaced with a different set of default values.
 Each line where \fBPartitionName\fR is "DEFAULT" will replace or add to previous
-default values and not a reinitialize the default values.
+default values and not reinitialize the default values.
 .IP
 
 .TP
@@ -7435,15 +7470,15 @@ TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0", the billable TRES will be:
 (1*1.0) + (8*0.25) + (0*2.0) = 3.0.
 
 If PriorityFlags=MAX_TRES is configured, the billable TRES is calculated as the
-MAX of individual TRES' on a node (e.g. cpus, mem, gres) plus the sum of all
-global TRES' (e.g. licenses). Using the same example above the billable TRES
+MAX of individual TRESs on a node (e.g. cpus, mem, gres) plus the sum of all
+global TRESs (e.g. licenses). Using the same example above the billable TRES
 will be MAX(1*1.0, 8*0.25) + (0*2.0) = 2.0.
 
 If TRESBillingWeights is not defined then the job is billed against the total
 number of allocated CPUs.
 
 \fBNOTE\fR: TRESBillingWeights doesn't affect job priority directly as it is
-currently not used for the size of the job. If you want TRES' to play a role in
+currently not used for the size of the job. If you want TRESs to play a role in
 the job's priority then refer to the PriorityWeightTRES option.
 .RE
 .IP
@@ -7732,15 +7767,19 @@ will be out of service for an extended period of time, it may be
 desirable to relocate them.
 In order to do so, follow this procedure:
 .LP
-1. Stop the Slurm daemons
+1. Stop the Slurm daemons on the old controller and nodes.
 .br
-2. Modify the slurm.conf file appropriately
+2. Modify the slurm.conf file appropriately.
 .br
-3. Distribute the updated slurm.conf file to all nodes
+3. Copy the files from the StateSaveLocation to the new controller or ensure
+that they are accessible to the new controller via a shared drive.
 .br
-4. Restart the Slurm daemons
+4. Distribute the updated slurm.conf file to all nodes.
+.br
+5. Restart the Slurm daemons on the new controller and nodes.
 .LP
-There should be no loss of any running or pending jobs.
+There should be no loss of any pending jobs but the cluster should be drained
+of running jobs before changing hosts for the controller.
 Ensure that any nodes added to the cluster have the current
 slurm.conf file installed.
 .LP

@@ -2351,6 +2351,41 @@ static void _slurm_rpc_dump_batch_script(slurm_msg_t *msg)
 	}
 }
 
+static void _kill_step_on_msg_fail(step_complete_msg_t *req, slurm_msg_t *msg)
+{
+	static int active_rpc_cnt = 0;
+	int rc, rem;
+	uint32_t step_rc;
+	DEF_TIMERS;
+	/* Same locks as _slurm_rpc_step_complete */
+	slurmctld_lock_t job_write_lock = {
+		.job = WRITE_LOCK,
+		.node = WRITE_LOCK,
+		.fed = READ_LOCK
+	};
+
+	/* init */
+	START_TIMER;
+	error("Step creation timed out: Deallocating %ps nodes %u-%u",
+	      &req->step_id, req->range_first, req->range_last);
+
+	if (!(msg->flags & CTLD_QUEUE_PROCESSING)) {
+		_throttle_start(&active_rpc_cnt);
+		lock_slurmctld(job_write_lock);
+	}
+
+	rc = step_partial_comp(req, msg->auth_uid, true, &rem, &step_rc);
+
+	if (!(msg->flags & CTLD_QUEUE_PROCESSING)) {
+		unlock_slurmctld(job_write_lock);
+		_throttle_fini(&active_rpc_cnt);
+	}
+
+	END_TIMER2(__func__);
+	log_flag(STEPS, "%s: %ps rc:%s %s",
+		 __func__, &req->step_id, slurm_strerror(rc), TIME_STR);
+}
+
 /* _slurm_rpc_job_step_create - process RPC to create/register a job step
  *	with the step_mgr */
 static void _slurm_rpc_job_step_create(slurm_msg_t *msg)
@@ -2506,7 +2541,17 @@ static void _slurm_rpc_job_step_create(slurm_msg_t *msg)
 			      &job_step_resp);
 		resp.protocol_version = step_rec->start_protocol_ver;
 
-		slurm_send_node_msg(msg->conn_fd, &resp);
+		if (slurm_send_node_msg(msg->conn_fd, &resp) < 0) {
+			step_complete_msg_t req;
+
+			memset(&req, 0, sizeof(req));
+			req.step_id = step_rec->step_id;
+			req.jobacct = step_rec->jobacct;
+			req.step_rc = SIGKILL;
+			req.range_first = 0;
+			req.range_last = step_layout->node_cnt - 1;
+			_kill_step_on_msg_fail(&req, msg);
+		}
 
 		slurm_cred_destroy(slurm_cred);
 		slurm_step_layout_destroy(step_layout);
@@ -5894,8 +5939,10 @@ static void _slurm_rpc_kill_job(slurm_msg_t *msg)
 	 * If the cluster is part of a federation and it isn't the origin of the
 	 * job then if it doesn't know about the federated job, then route the
 	 * request to the origin cluster via the client. If the cluster does
-	 * know about the job and it owns the job, the this cluster will cancel
-	 * the job and it will report the cancel back to the origin.
+	 * know about the job and it owns the job, then this cluster will cancel
+	 * the job and it will report the cancel back to the origin. If job does
+	 * reside on this cluster but doesn't own it (e.g. pending jobs), then
+	 * route the request back to the origin to handle it.
 	 */
 	lock_slurmctld(fed_job_read_lock);
 	if (fed_mgr_fed_rec) {
@@ -5915,7 +5962,9 @@ static void _slurm_rpc_kill_job(slurm_msg_t *msg)
 		    (((slurm_persist_conn_t *)origin->fed.send)->fd != -1) &&
 		    (origin != fed_mgr_cluster_rec) &&
 		    (!(job_ptr = find_job_record(job_id)) ||
-		     (job_ptr && fed_mgr_job_started_on_sib(job_ptr)))) {
+		     (job_ptr && job_ptr->fed_details &&
+		      (job_ptr->fed_details->cluster_lock !=
+		       fed_mgr_cluster_rec->fed.id)))) {
 
 			slurmdb_cluster_rec_t *dst =
 				fed_mgr_get_cluster_by_id(origin_id);

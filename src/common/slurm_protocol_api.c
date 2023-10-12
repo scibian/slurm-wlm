@@ -63,6 +63,7 @@
 #include "src/interfaces/hash.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/net.h"
 #include "src/common/pack.h"
 #include "src/common/read_config.h"
 #include "src/interfaces/accounting_storage.h"
@@ -104,7 +105,6 @@ static int message_timeout = -1;
 static char *_global_auth_key(void);
 static void  _remap_slurmctld_errno(void);
 static uid_t _unpack_msg_uid(buf_t *buffer, uint16_t protocol_version);
-static bool  _is_port_ok(int, uint16_t, bool);
 
 /* define slurmdbd_conf here so we can treat its existence as a flag */
 slurmdbd_conf_t *slurmdbd_conf = NULL;
@@ -815,29 +815,10 @@ int slurm_init_msg_engine_port(uint16_t port)
  */
 int slurm_init_msg_engine_ports(uint16_t *ports)
 {
-	slurm_addr_t addr;
-	int cc;
-	int val;
-	int s;
-	int port;
+	int fd;
+	uint16_t port;
 
-	slurm_setup_addr(&addr, 0);
-
-	s = socket(addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
-	if (s < 0)
-		return -1;
-
-	val = 1;
-	cc = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
-	if (cc < 0) {
-		close(s);
-		return -1;
-	}
-
-	if ((port = sock_bind_listen_range(s, ports, false)) < 0)
-		return -1;
-
-	return s;
+	return net_stream_listen_ports(&fd, &port, ports, false);
 }
 
 /**********************************************************************\
@@ -3286,85 +3267,6 @@ extern void slurm_setup_addr(slurm_addr_t *sin, uint16_t port)
 	memcpy(sin, &s_addr, sizeof(*sin));
 	slurm_set_port(sin, port);
 	log_flag(NET, "%s: update address to %pA", __func__, sin);
-}
-
-/*
- * bind() and then listen() to any port in a given range of ports
- *
- * IN: s - socket
- * IN: port - port number to attempt to bind
- * IN: local - only bind to localhost if true
- * OUT: port was bound successfully or -1 on failure
- */
-extern int sock_bind_listen_range(int s, uint16_t *range, bool local)
-{
-	uint32_t count;
-	uint32_t min;
-	uint32_t max;
-	uint32_t port;
-	uint32_t num;
-
-	min = range[0];
-	max = range[1];
-
-	srand(getpid());
-	num = max - min + 1;
-	port = min + (random() % num);
-	count = num;
-
-	do {
-		if ((_is_port_ok(s, port, local)) &&
-		    (!listen(s, SLURM_DEFAULT_LISTEN_BACKLOG)))
-			return port;
-
-		if (port == max)
-			port = min;
-		else
-			++port;
-		--count;
-	} while (count > 0);
-
-	close(s);
-	error("%s: all ports in range (%u, %u) exhausted, cannot establish listening port",
-	      __func__, min, max);
-
-	return -1;
-}
-
-/*
- * Check if we can bind() the socket s to port port.
- *
- * IN: s - socket
- * IN: port - port number to attempt to bind
- * IN: local - only bind to localhost if true
- * OUT: true/false if port was bound successfully
- */
-static bool _is_port_ok(int s, uint16_t port, bool local)
-{
-	slurm_addr_t addr;
-	slurm_setup_addr(&addr, port);
-
-	if (!local) {
-		debug3("%s: requesting non-local port", __func__);
-	} else if (addr.ss_family == AF_INET) {
-		struct sockaddr_in *sin = (struct sockaddr_in *) &addr;
-		sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	} else if (addr.ss_family == AF_INET6) {
-		struct sockaddr_in6 *sin = (struct sockaddr_in6 *) &addr;
-		sin->sin6_addr = in6addr_loopback;
-	} else {
-		error("%s: protocol family %u unsupported",
-		      __func__, addr.ss_family);
-		return false;
-	}
-
-	if (bind(s, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		log_flag(NET, "%s: bind() failed on port:%d fd:%d: %m",
-			 __func__, port, s);
-		return false;
-	}
-
-	return true;
 }
 
 extern int slurm_hex_to_char(int v)

@@ -1,3 +1,20 @@
+slurm-wlm (23.02.6-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2023-41914
+
+ -- Gennaro Oliva <oliva@debian.org>  Thu, 12 Oct 2023 18:45:16 +0200
+
+slurm-wlm (23.02.5-1) unstable; urgency=medium
+
+  [ Gennaro Oliva ]
+  * New upstream release
+  * Refresh patches
+
+  [ Tobias Pape ]
+  * Add pam-configs for the pam packages
+
+ -- Gennaro Oliva <oliva@debian.org>  Sun, 01 Oct 2023 23:41:22 +0200
+
 slurm-wlm (23.02.3-2) unstable; urgency=medium
 
   * Fix d/not-installed (Closes: #1040129)
