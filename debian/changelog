@@ -1,52 +1,30 @@
-slurm-wlm (23.02.6-1) unstable; urgency=medium
+slurm-wlm (23.02.6-1sci9u1) scibian9; urgency=medium
 
-  * New upstream release fixes CVE-2023-41914
+  * Import Upstream version 23.02.6
+  * add scibian specific patches
+  * update some packages dependencies
+  * suppress unneed rsmi & kafka related lugin packages
+  * fix liblua and libhttp-parser-dev versions
+  * Scibianization!
+  * set back compat debian file version to 10
 
- -- Gennaro Oliva <oliva@debian.org>  Thu, 12 Oct 2023 18:45:16 +0200
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 18 Oct 2023 09:00:00 +0100
 
-slurm-wlm (23.02.5-1) unstable; urgency=medium
+slurm-wlm (23.02.3-2sci9u1) scibian9; urgency=medium
 
-  [ Gennaro Oliva ]
-  * New upstream release
-  * Refresh patches
+  * Import Upstream version 23.02.3
+  * underlying patched source files no more exists!
+  * update patchs accordingly to new source code
 
-  [ Tobias Pape ]
-  * Add pam-configs for the pam packages
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 21 Aug 2023 17:31:29 +0200
 
- -- Gennaro Oliva <oliva@debian.org>  Sun, 01 Oct 2023 23:41:22 +0200
+slurm-wlm (22.05.8-3sci9u1) scibian9; urgency=medium
 
-slurm-wlm (23.02.3-2) unstable; urgency=medium
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
 
-  * Fix d/not-installed (Closes: #1040129)
-
- -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 02 Jul 2023 22:55:27 +0200
-
-slurm-wlm (23.02.3-1) unstable; urgency=medium
-
-  * New upstream major release (Closes: #1036109)
-  * Remove default cgroup basedir patch now handled upstream
-  * Refresh patches
-  * Bump libslurm to soname 39
-  * Update configurators
-  * Update d/copyright
-  * Clean lintian warning for plugins packages
-  * Add libpam dev packages
-  * Add scrun and scrontab commands
-  * Add configuration manpages
-  * Update fix-spelling-error patch
-  * Bump debhelper compatibility level to 13
-  * Add kafka plugin
-  * Add debug packages for emulators
-
- -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 25 Jun 2023 17:56:03 +0200
-
-slurm-wlm (22.05.8-4) unstable; urgency=medium
-
-  * Fix Breaks/Replaces dependencies (Closes: #1034950,
-    #1034955, #1034978, #1034987, #1034992)
-  * Restore plugstack.conf (Closes: #1035562)
-
- -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 10 May 2023 00:14:41 +0200
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Sat, 01 Apr 2023 18:34:40 +0200
 
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
@@ -113,6 +91,28 @@ slurm-wlm (21.08.8.2-1.1) unstable; urgency=medium
 
  -- Paul Gevers <elbrus@debian.org>  Thu, 10 Nov 2022 13:28:47 +0100
 
+slurm-wlm (21.08.8.2-1sci9u2) scibian9; urgency=medium
+
+  * Revert back support of slurmrestd
+
+ -- KWAME AMEDODJI <kwame-externe.amedodji@edf.fr>  Wed, 29 Jun 2022 10:30:40 +0200
+
+slurm-wlm (21.08.8.2-1sci9u1) scibian9; urgency=medium
+
+  * Import Upstream release fixes CVE-2022-29500,
+     CVE-2022-29501 and CVE-2022-29502
+     (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Thierno BALDE <thierno.balde@edf.fr>  Wed, 08 Jun 2022 14:51:57 +0200
+
+slurm-wlm (21.08.7-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Update wait health check patch for slurm 21.08.7
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:03:06 +0200
+
 slurm-wlm (21.08.8.2-1) unstable; urgency=medium
 
   * New upstream release fixes CVE-2022-29500,
@@ -128,6 +128,24 @@ slurm-wlm (21.08.7-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 21 Apr 2022 21:51:00 +0200
 
+slurm-wlm (21.08.4-1sci9u2) scibian9; urgency=medium
+
+  * Remove generated debian/files
+  * Restore pmix support
+  * Restore debian + scibian patches
+  * Backport manpage/typos patch to 21.08.4
+  * Update PMIx v3 dlopen patch for slurm 21.08
+  * Update wait health check patch for slurm 21.08
+  * Install new slurm_version.h in libslurm-dev
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 01 Feb 2022 11:06:47 +0100
+
+slurm-wlm (21.08.4-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 25 Jan 2022 15:58:00 +0100
+
 slurm-wlm (21.08.6-1) unstable; urgency=medium
 
   * New upstream release
@@ -142,6 +160,20 @@ slurm-wlm (21.08.5-2) unstable; urgency=medium
   * Update service files
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 28 Jan 2022 23:36:39 +0100
+
+slurm-wlm (21.08.5-1sci9u2) scibian9; urgency=medium
+
+  * Remove slurmrestd binary package dependencies
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 22:27:09 +0100
+
+slurm-wlm (21.08.5-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Remove no more need health_check_interval patch
+  * Remove pmix support as per uptream do!
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 21:49:12 +0100
 
 slurm-wlm (21.08.5-1) unstable; urgency=medium
 
@@ -164,6 +196,12 @@ slurm-wlm (21.08.5-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 13 Jan 2022 16:30:47 +0100
 
+slurm-wlm (20.11.8-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 01 Sep 2021 09:49:25 +0200
+
 slurm-wlm (20.11.8-1) unstable; urgency=medium
 
   * New upstream release
@@ -177,6 +215,15 @@ slurm-wlm (20.11.7-1) unstable; urgency=medium
   * Update miscellanea manpage patch
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 15 Jun 2021 17:49:41 +0200
+
+slurm-wlm (20.11.5-1sci9u1) scibian9; urgency=medium
+
+  * Import Upstream version 20.11.5
+  * Update Scibian patches to apply on new release
+  * Remove slurmrestd binary package
+  * Update health check patch after upstream cleanup
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Apr 2021 10:40:09 +0200
 
 slurm-wlm (20.11.5-1) unstable; urgency=medium
 
@@ -225,6 +272,21 @@ slurm-wlm (20.11.3-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 24 Jan 2021 18:29:47 +0100
 
+slurm-wlm (20.02.6-2sci9u2) scibian9; urgency=medium
+
+  * Update Vcs URL following rename
+  * Add patch to enforce cred cache clearing
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 23 Feb 2021 12:30:08 +0100
+
+slurm-wlm (20.02.6-2sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Update patch NHC before slurmd registering to apply on new upstream release
+  * Remove add-missing-locks-slurmd-creds patch applied in new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 15 Dec 2020 10:23:53 +0100
+
 slurm-wlm (20.02.6-2) unstable; urgency=medium
 
   * Fix pmix support (Closes: #954272)
@@ -252,6 +314,20 @@ slurm-wlm (20.02.6-1) unstable; urgency=medium
   * Update libslurm35.symbols
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 17 Nov 2020 00:11:42 +0100
+
+slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
+
+  * New upstream version 19.05.8
+  * 2 patches to fix creds handling for requeued jobs
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 04 Dec 2020 13:35:14 +0100
+
+slurm-llnl (19.05.7-0sci9u1) scibian9; urgency=medium
+
+  * New upstream release 19.05.7
+  * Adjust man patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 10:38:45 +0200
 
 slurm-llnl (19.05.5-2.1) unstable; urgency=medium
 
@@ -297,6 +373,20 @@ slurm-llnl (19.05.5-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 16 Jan 2020 22:46:11 +0100
 
+slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
+
+  * Add new missing symbol in libslurm34
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 03 Jan 2020 14:27:30 +0100
+
+slurm-llnl (19.05.5-0sci9u1) scibian9; urgency=medium
+
+  * New upstream release 19.05.5.
+  * Adapt pmix v3 patch to new upstream release
+  * Adapt b31fa17 patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 02 Jan 2020 15:05:59 +0100
+
 slurm-llnl (19.05.3.2-2) unstable; urgency=medium
 
   * Enable deprecated configure option on 32bit archs
@@ -315,6 +405,13 @@ slurm-llnl (19.05.3.2-1) unstable; urgency=medium
   * Update libslurm symbols file
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 08 Oct 2019 18:18:52 +0200
+
+slurm-llnl (18.08.8-0sci9u1) scibian9; urgency=medium
+
+  * Backport latest debian package on scibian9
+  * New upstream release 18.08.8
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 06 Aug 2019 16:18:12 +0200
 
 slurm-llnl (18.08.6.2-1) unstable; urgency=medium
 
@@ -349,6 +446,32 @@ slurm-llnl (18.08.5.2-1) unstable; urgency=medium
   * Remove old d/NEWS file
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 17 Feb 2019 13:32:52 +0100
+
+slurm-llnl (18.08.3-1sci9u3) scibian9; urgency=medium
+
+  * set TasksMax=infinity in systemd conf
+
+ -- Nicolas Meaux <nicolas-externe.meaux@edf.fr>  Thu, 14 Mar 2019 09:20:10 +0100
+
+slurm-llnl (18.08.3-1sci9u2) scibian9; urgency=medium
+
+  * Add support for pmix
+  * Add patch to fix dlopen of PMIx v3 library
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 21 Nov 2018 10:56:35 +0100
+
+slurm-llnl (18.08.3-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
+  * Remove patch applied upstream
+  * Minimize diff with debian package
+  * Remove implicit build-dep on dh-systemd
+  * Remove useless command in daemon postinst
+  * Fix package name in preinst/postrm headers
+  * Adapt wait health patch for new upstream release
+  * Remove useless mv in d/rules
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Nov 2018 17:29:17 +0100
 
 slurm-llnl (18.08.3-1) unstable; urgency=medium
 
@@ -435,6 +558,115 @@ slurm-llnl (17.11.5-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sat, 17 Mar 2018 08:50:51 +0100
 
+slurm-llnl (17.11.2-1sci9u3) scibian9; urgency=medium
+
+  * Patch to add user_name in Lua job submit interface
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Oct 2018 15:29:38 +0200
+
+slurm-llnl (17.11.2-1sci9u2) scibian9; urgency=medium
+
+  * Scibian9 rebuild.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 08 Jun 2018 09:52:10 +0200
+
+slurm-llnl (17.11.2-1sci8u3) scibian8; urgency=medium
+
+  * Add undisclosed security fix for CVE-2018-10995
+  * Add patch to fix removing array job in slurmctld
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 08 Jun 2018 09:49:56 +0200
+
+slurm-llnl (17.11.2-1sci9u1) scibian9; urgency=medium
+
+  * Rebuild for scibian9
+  * Update b-d with new mysql-dev meta-package
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 26 Apr 2018 13:45:41 +0200
+
+slurm-llnl (17.11.2-1sci8u2) scibian8; urgency=medium
+
+  [ Thomas HAMEL ]
+  * slurmctld: Check UID in pack_job before hiding
+
+ -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Thu, 26 Apr 2018 11:44:28 +0200
+
+slurm-llnl (17.11.2-1sci8u1) scibian8; urgency=medium
+
+  * Scibian8 rebuild
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 19 Mar 2018 15:10:14 +0100
+
+slurm-llnl (17.11.2-1~calibre9u10) calibre9; urgency=medium
+
+  * Update security patch to fix reg with shared libs
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 09 Mar 2018 09:39:16 +0100
+
+slurm-llnl (17.11.2-1~calibre9u9) calibre9; urgency=medium
+
+  * Update security patch with update from SchedMD
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 05 Mar 2018 15:48:49 +0100
+
+slurm-llnl (17.11.2-1~calibre9u8) calibre9; urgency=medium
+
+  * Add undisclosed security fix
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 05 Mar 2018 11:11:34 +0100
+
+slurm-llnl (17.11.2-1~calibre9u7) calibre9; urgency=medium
+
+  * upstream patch Avoid-node-hang-in-COMPLETING-state
+
+ -- Thomas Hamel <thomas-externe.hamel@edf.fr>  Tue, 30 Jan 2018 14:58:25 +0100
+
+slurm-llnl (17.11.2-1~calibre9u6) calibre9; urgency=medium
+
+  * Revert of upstream commit b31fa177c1ca26dcd2d5cd952e692ef87d95b528
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 25 Jan 2018 11:02:46 +0100
+
+slurm-llnl (17.11.2-1~calibre9u5) calibre9; urgency=medium
+
+  * Add patch to fix issues when starting the backup slurmdbd.
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 23 Jan 2018 18:31:20 +0100
+
+slurm-llnl (17.11.2-1~calibre9u4) calibre9; urgency=medium
+
+  * Rename include directory back to /usr/include/slurm for compatibility
+    reasons.
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 16 Jan 2018 11:43:58 +0100
+
+slurm-llnl (17.11.2-1~calibre9u3) calibre9; urgency=medium
+
+  * Add fixes for https://bugs.schedmd.com/show_bug.cgi?id=4621
+    - debian/patches/cwd-in-multi-prog
+    - debian/patches/test_exec-feature-to-multi-prog-option-of-srun
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Tue, 16 Jan 2018 10:29:50 +0100
+
+slurm-llnl (17.11.2-1~calibre9u2) calibre9; urgency=medium
+
+  * Add dh-systemd to build dependencies
+  * Lower minimal required version for debhelper to something suitable
+    on Debian 8.
+  * Use configure flag --localstatedir instead of --runstatedir since
+    the latter is not valid with Jessie's version of libtool.
+  * Do not use dh_strip's --no-automatic-dbgsym flag as it comes with
+    newer versions of debhelper.
+  * Add needed -dbg packages, as they are not auto-generated in Jessie
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Mon, 15 Jan 2018 09:02:00 +0100
+
+slurm-llnl (17.11.2-1~calibre9u1) calibre9; urgency=medium
+
+  * Backport to Calibre9
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Sun, 14 Jan 2018 14:51:26 +0100
+
 slurm-llnl (17.11.2-1) unstable; urgency=medium
 
   [ Mehdi Dogguy ]
@@ -492,6 +724,32 @@ slurm-llnl (17.02.5-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 03 Jul 2017 15:30:51 +0200
 
+slurm-llnl (17.02.2-1sci8u1) scibian8; urgency=medium
+
+  * Scibian8 rebuild.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 14 Dec 2017 15:51:55 +0100
+
+slurm-llnl (17.02.2-1~calibre9+2) calibre9; urgency=medium
+
+  * Add undisclosed security fix
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 19 Oct 2017 11:55:36 +0200
+
+slurm-llnl (17.02.2-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 27 Apr 2017 11:08:26 +0200
+
+slurm-llnl (17.02.1.2-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9
+  * Remove prolog fix patch as merged upstream
+  * Remove cgroup release agent everywhere
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 05 Apr 2017 13:29:57 +0200
+
 slurm-llnl (17.02.1.2-1) unstable; urgency=medium
 
   * New upstream major release
@@ -538,6 +796,26 @@ slurm-llnl (16.05.7-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 14 Dec 2016 11:01:06 +0100
 
+slurm-llnl (16.05.6-1~calibre9+3) calibre9; urgency=medium
+
+  * Use lua 5.2
+
+ -- Thomas Hamel <thomas-externe.hamel@edf.fr>  Fri, 17 Feb 2017 13:47:53 +0000
+
+slurm-llnl (16.05.6-1~calibre9+2) calibre9; urgency=medium
+
+  * Add patch to fix prolog handling.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 22 Dec 2016 15:12:18 +0100
+
+slurm-llnl (16.05.6-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9.
+  * Change back build-dep to libmysqlclient-dev since default is not available
+    in jessie.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 16 Nov 2016 16:27:29 +0100
+
 slurm-llnl (16.05.6-1) unstable; urgency=medium
 
   * Update libslurm{,db} symbols files
@@ -556,6 +834,21 @@ slurm-llnl (16.05.5-1) unstable; urgency=medium
   * Update symbol files
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 30 Sep 2016 16:08:43 +0200
+
+slurm-llnl (16.05.4-1~calibre9+2) calibre9; urgency=medium
+
+  * debconf to control PAM slurm module activation
+  * use upstream cgroup release agent example
+  * better defaults for cgroup.conf example
+  * set RSS/MEMLOCK limits unlimited for slurmd
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 11 Oct 2016 12:11:38 +0200
+
+slurm-llnl (16.05.4-1~calibre9+1) calibre9; urgency=medium
+
+  * Backport to Calibre9.
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 27 Sep 2016 15:09:16 +0200
 
 slurm-llnl (16.05.4-1) unstable; urgency=medium
 
@@ -601,6 +894,32 @@ slurm-llnl (15.08.10-1) unstable; urgency=medium
     by dh_makeshlibs
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 03 May 2016 17:19:24 +0200
+
+slurm-llnl (15.08.8-1~calibre9+4) calibre9; urgency=low
+
+  * Add patch to fix multiple/constraints support on heterogeneous nodes.
+  * Only include *.conf in plugstack.conf.d/
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 11 Apr 2016 10:10:42 +0200
+
+slurm-llnl (15.08.8-1~calibre9+3) calibre9; urgency=low
+
+  * Fix patch: faster shutdown when waiting for NHC
+
+ -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Wed, 16 Mar 2016 09:28:16 +0000
+
+slurm-llnl (15.08.8-1~calibre9+2) calibre9; urgency=low
+
+  * New patch: Slurmd waits for health check during start 
+
+ -- Thomas HAMEL <thomas-externe.hamel@edf.fr>  Fri, 04 Mar 2016 14:28:16 +0000
+
+slurm-llnl (15.08.8-1+c9+1) calibre9; urgency=low
+
+  * Backport to Calibre9
+  * Remove adduser from slurmdbd deps
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 26 Feb 2016 14:22:37 +0100
 
 slurm-llnl (15.08.8-1) unstable; urgency=medium
 
@@ -725,6 +1044,77 @@ slurm-llnl (14.11.6-1) unstable; urgency=medium
   * Add missing dep for -client on -basic-plugins (Closes: #783662)
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 20 May 2015 16:47:32 +0200
+
+slurm-llnl (14.11.4-1+c9+4) calibre9; urgency=medium
+
+  * Add slurm-client-emulator with all binaries built in emulator mode.
+    Binaries have appended suffix -emulator to avoid conflicts.
+
+ -- Ana Guerrero Lopez <ana-externe.guerrero@edf.fr>  Wed, 25 Nov 2015 10:51:41 +0100
+
+slurm-llnl (14.11.4-1+c9+3) calibre9; urgency=medium
+
+  * Add package slurm-wlm-emulator. This package provides binaries that are
+    already in the slurmd and slurmctld package. These packages binaries
+    have now the suffix -wlm and the binaries in slurm-wln-emulator got
+    the suffix -wlm-emulator.
+    The binaries are handled with alternatives, having the emulator package
+    a higher priority value.
+
+ -- Ana Guerrero Lopez <ana-externe.guerrero@edf.fr>  Fri, 06 Nov 2015 10:11:27 +0100
+
+slurm-llnl (14.11.4-1+c9+2) calibre8; urgency=low
+
+  * Move user slurm into slurm-wlm-basic-plugins pkg
+  * Use systemctl to send SIGHUP to daemons
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 09 Apr 2015 14:36:10 +0200
+
+slurm-llnl (14.11.4-1+c8+1) calibre8; urgency=low
+
+  * New upstream release.
+
+ -- Mehdi Dogguy <mehdi.dogguy@edf.fr>  Thu, 26 Feb 2015 15:32:05 +0100
+
+slurm-llnl (14.11.3-1+c8+1) calibre8; urgency=low
+
+  * Imported Upstream version 14.11.3
+  * Removed patch nowait-pmi-rank-0 since merged upstream
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Mon, 19 Jan 2015 09:35:31 +0100
+
+slurm-llnl (14.11.2-1+c8+2) calibre8; urgency=low
+
+  * Install plugstack.conf with plugins package
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 02 Jan 2015 15:08:55 +0100
+
+slurm-llnl (14.11.2-1+c8+1) calibre8; urgency=low
+
+  * New upstream version 14.11.2
+  * Bump SONAME to 28
+  * Updated d/libslurm[db]28.symbols
+  * Remove patch honor-without-rpath-hwloc since merged upstream
+  * Remove patch manpages since merged upstream
+  * Disable autoreconf since not needed anymore
+  * Updated patch nowait-pmi-rank-0 with upstream proposal
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 31 Dec 2014 09:47:31 +0100
+
+slurm-llnl (14.03.9-5+c8+1) calibre8; urgency=low
+
+  * Backport to calibre8
+  * Set memlock ulimit to infinity for slurmctld
+  * Remove useless init scripts
+  * Manually create tmpfiles in daemons postinst since debhelper
+    in wheezy does not do it by itself.
+  * Automatically configure PAM with libpam-slurm pkg
+  * Add new -dbg packages with debug symbols
+  * Add missing dep to plugins on slurm-client
+  * Fix typo in -doc pkg description
+  * Add patch to avoid delay on commit for PMI rank 0
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Thu, 18 Dec 2014 16:27:36 +0100
 
 slurm-llnl (14.03.9-5) unstable; urgency=medium
 
