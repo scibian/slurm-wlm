@@ -27,8 +27,11 @@ To run the testsuites using the unified test-runner:
   Review and edit testsuite.conf as necessary.
 * pytest (pytest-3) must be installed in order to run the python testsuite.
 * expect must be installed in order to run the expect testsuite.
-* If perldoc is installed, ./run-tests --man can be used to display a man page
-  for the test-runner.
+* Set the SLURM_CLUSTER environment variable to set up a custom directory
+  in the 'results' dir that will hold unique logs and test data.
+  You can name this whatever you'd like, it will be created if needed.
+  This is a useful way to archive results from run-tests with things like
+  different dates, commits, or configs.
 * Execute run-tests with the desired options to run the testsuites.
 
 testsuite.conf:
@@ -107,7 +110,6 @@ test1.36   Test parallel launch of srun (e.g. "srun srun hostname")
 test1.37   Test of srun --ntasks-per-node option.
 test1.38   Test srun handling of SIGINT to get task status or kill the job
 	   (--quit-on-interrupt option).
-test1.39   Test of linux light-weight core files.
 test1.40   Test of job account (--account option).
 test1.41   Validate Slurm debugger infrastructure (--debugger-test option).
 test1.43   Test of slurm_job_will_run API, (srun --test-only option).
@@ -169,7 +171,6 @@ test1.94   Test of PMI2 task spawn logic
 test1.95   Basic UPC (Unified Parallel C) test via srun.
 test1.96   Basic SHMEM test via srun.
 test1.97   Test that --ntask-per-node and -c options are enforced
-test1.99   Validate that SrunPortRange is enforced when using srun
 test1.100  Test of pack/nopack task distribution.
 test1.101  Test of --bcast option.
 test1.102  Test of --deadline option too late
@@ -787,11 +788,6 @@ test40.5   Increase size of job with allocated MPS
 test40.6   Decrease size of job with allocated MPS
 test40.8   Simple CUDA MPS test
 
-test41.#   Testing of slurmrestd
-=============================================================
-test41.1   Test slurmrestd plugins
-test41.2   Test slurmrestd OpenAPI generation and functionality
-
 
 A summary of each python test is shown below.
 ############################################################################
@@ -810,6 +806,7 @@ test_102_3   /commands/sacctmgr/test_--json.py
 test_103_#   Testing of salloc options.
 =======================================
 test_103_1   /commands/salloc/test_--usage.py
+test_103_2   Test salloc with default command
 
 test_104_#   Testing of sattach options.
 ========================================
@@ -924,6 +921,7 @@ test_116_44  /commands/srun/test_task-prolog_and_epilog.py
 test_116_45  /commands/srun/test_-t.py
 test_116_46  /commands/srun/test_--wait.py
 test_116_47  /commands/srun/test_identity.py
+test_116_48  Test SrunPortRange
 
 test_117_#   Testing of sstat options.
 ======================================
@@ -955,6 +953,8 @@ test_123_#   Testing of reservations.
 =====================================
 test_123_1   /features/reservations/test_flags.py
 test_123_2   Test RESV_DEL_HOLD
+test_123_3   Test overlapping reservations.
+test_123_4   Test reservation access
 
 test_124_#   Testing of AccountingStorageEnforce.
 =================================================
@@ -1014,10 +1014,15 @@ test_137_1   /plugins/node_features/helpers/test_plugin.py
 test_138_#   Testing stressing cases.
 =====================================
 test_138_1   /stress/test_stdin_broadcast.py
+test_138_2   Test parallel performance of squeue
 
 test_140_#   Testing --tres options.
 ====================================
 test_140_1   Test --tres-per-task option
+
+test_141_#   Testing PowerSave/Cloud operations.
+================================================
+test_141_1   Test state cycle, timeouts, scontrol commands, PowerDownOnIdle, and Node Features reboot
 
 test_143_#   Testing --switches.
 ================================
@@ -1027,5 +1032,6 @@ test_144_#   Testing of gres.
 ================================
 test_144_1   Test --exclusive allocation with gres flagged as explicit
 test_144_2   Test enforce-binding with GPUs that share cores
+test_144_3   Test --exact with GPUs and multiple steps
 test_144_4   Test gres with file or type and --overlap
 test_144_6   Test gres with no_consume flag

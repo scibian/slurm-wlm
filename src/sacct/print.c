@@ -303,8 +303,7 @@ extern void print_fields(type_t type, void *object)
 	case JOB:
 		job_comp = NULL;
 		cpu_tres_rec_count = slurmdb_find_tres_count_in_string(
-			(job->tres_alloc_str && job->tres_alloc_str[0]) ?
-			job->tres_alloc_str : job->tres_req_str,
+			job->tres_alloc_str,
 			TRES_CPU);
 		break;
 	case JOBSTEP:
@@ -315,9 +314,7 @@ extern void print_fields(type_t type, void *object)
 			     step->tres_alloc_str, TRES_CPU)) == INFINITE64)
 			step_cpu_tres_rec_count =
 				slurmdb_find_tres_count_in_string(
-					(job->tres_alloc_str &&
-					 job->tres_alloc_str[0]) ?
-					job->tres_alloc_str : job->tres_req_str,
+					job->tres_alloc_str,
 					TRES_CPU);
 
 		job_comp = NULL;
@@ -1638,6 +1635,9 @@ extern void print_fields(type_t type, void *object)
 			default:
 				break;
 			}
+
+			if (tmp_uint64 == INFINITE64)
+				tmp_uint64 = 0;
 
 			if (tmp_uint64 != NO_VAL64) {
 				convert_num_unit((double)tmp_uint64,

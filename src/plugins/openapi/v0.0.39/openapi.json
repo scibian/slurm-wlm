@@ -105,7 +105,19 @@
             }
           },
           "default": {
-            "description": "unable to request licenses"
+            "description": "unable to request licenses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status"
+                }
+              },
+              "application/x-yaml": {
+                "schema": {
+                  "$ref": "#/components/schemas/status"
+                }
+              }
+            }
           }
         }
       }
@@ -243,7 +255,19 @@
             }
           },
           "default": {
-            "description": "job matching JobId not found"
+            "description": "job matching JobId not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/status"
+                }
+              },
+              "application/x-yaml": {
+                "schema": {
+                  "$ref": "#/components/schemas/status"
+                }
+              }
+            }
           }
         }
       },
@@ -1137,7 +1161,7 @@
             "type": "string"
           },
           "description": {
-            "description": "Explaination of cause of error",
+            "description": "Explanation of cause of error",
             "type": "string"
           }
         },
@@ -1165,7 +1189,7 @@
             "type": "string"
           },
           "description": {
-            "description": "Explaination of cause of error",
+            "description": "Explanation of cause of error",
             "type": "string"
           }
         },
