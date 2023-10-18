@@ -208,7 +208,9 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- adduser
+ libpmix2,
+ adduser,
+ ucf
 Recommends: slurm-wlm-plugins (= ${binary:Version}),
 Description: Slurm basic plugins
  The Slurm Workload Manager is an open-source cluster resource management and
@@ -579,6 +581,7 @@ Package: libpam-slurm
 Architecture: any
 Pre-Depends: ${misc:Pre-Depends}
 Depends:
+ libpam-runtime,
  ${shlibs:Depends},
  ${misc:Depends}
 Description: PAM module to authenticate using the Slurm resource manager
