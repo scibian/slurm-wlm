@@ -22,7 +22,7 @@ Last-Update: 2021-05-17
 +SUBDIRS = man1 man5 man7 man8
 --- a/doc/man/man1/Makefile.am
 +++ b/doc/man/man1/Makefile.am
-@@ -12,7 +12,6 @@
+@@ -13,7 +13,6 @@
  	scrontab.1 \
  	sdiag.1	\
  	sinfo.1   \
@@ -58,7 +58,7 @@ Last-Update: 2021-05-17
 +
 --- a/doc/man/man5/slurm.conf.5
 +++ b/doc/man/man5/slurm.conf.5
-@@ -2319,7 +2319,7 @@
+@@ -2515,7 +2515,7 @@
  be called before and/or after execution of each task spawned as
  part of a user's job step.  Default location is "plugstack.conf"
  in the same directory as the system slurm.conf. For more information
@@ -67,7 +67,7 @@ Last-Update: 2021-05-17
  .IP
  
  .TP
-@@ -7613,4 +7613,4 @@
+@@ -8074,4 +8074,4 @@
  \fBgetrlimit\fR(2), \fBgres.conf\fR(5), \fBgroup\fR(5), \fBhostname\fR(1),
  \fBscontrol\fR(1), \fBslurmctld\fR(8), \fBslurmd\fR(8),
  \fBslurmdbd\fR(8), \fBslurmdbd.conf\fR(5), \fBsrun\fR(1),

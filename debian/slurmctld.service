@@ -11,7 +11,6 @@ EnvironmentFile=-/etc/default/slurmctld
 ExecStart=/usr/sbin/slurmctld -D -s $SLURMCTLD_OPTIONS
 ExecReload=/bin/kill -HUP $MAINPID
 PIDFile=/run/slurmctld.pid
-LimitMEMLOCK=infinity
 LimitNOFILE=65536
 TasksMax=infinity
 

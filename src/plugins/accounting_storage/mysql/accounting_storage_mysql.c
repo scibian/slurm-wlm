@@ -2821,7 +2821,8 @@ static int _send_ctld_update(void *x, void *arg)
 	slurmdbd_conn_t *db_conn = x;
 	List update_list = arg;
 
-	if (db_conn->conn->flags & PERSIST_FLAG_EXT_DBD)
+	if ((db_conn->conn->flags & PERSIST_FLAG_EXT_DBD) ||
+	    (db_conn->conn->flags & PERSIST_FLAG_DONT_UPDATE_CLUSTER))
 		return 0;
 
 	/* This check can be removed 2 versions after 23.02 */
@@ -2990,6 +2991,24 @@ extern int acct_storage_p_close_connection(mysql_conn_t **mysql_conn)
 	return rc;
 }
 
+extern int _add_feds_to_update_list(mysql_conn_t *mysql_conn, List update_list)
+{
+	int rc = SLURM_ERROR;
+	List feds = as_mysql_get_federations(mysql_conn, 0, NULL);
+
+	/*
+	 * Even if there are no feds, need to send an empty list for the case
+	 * that all feds were removed. The controller needs to know that it was
+	 * removed from a federation.
+	 */
+	if (feds &&
+	    ((rc = addto_update_list(update_list, SLURMDB_UPDATE_FEDS, feds))
+	     != SLURM_SUCCESS)) {
+			FREE_NULL_LIST(feds);
+	}
+	return rc;
+}
+
 extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 {
 	int rc = check_connection(mysql_conn);
@@ -3037,6 +3056,11 @@ extern int acct_storage_p_commit(mysql_conn_t *mysql_conn, bool commit)
 			} else {
 				if (mysql_db_commit(mysql_conn))
 					error("commit failed");
+				else if (mysql_conn->flags &
+					 DB_CONN_FLAG_FEDUPDATE)
+					_add_feds_to_update_list(mysql_conn,
+								 update_list);
+				mysql_conn->flags &= ~DB_CONN_FLAG_FEDUPDATE;
 			}
 		}
 	}

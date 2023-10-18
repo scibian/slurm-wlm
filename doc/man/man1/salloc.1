@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "May 2023" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "October 2023" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -251,9 +251,12 @@ For example, \fB\-\-constraint="intel"\fR
 \fBNode Count\fR
 A request can specify the number of nodes needed with some feature
 by appending an asterisk and count after the feature name.
-For example, \fB\-\-nodes=16 \-\-constraint="graphics*4 ..."\fR
+For example, \fB\-\-nodes=16 \-\-constraint="graphics*4"\fR
 indicates that the job requires 16 nodes and that at least four of those
 nodes must have the feature "graphics."
+If requesting more than one feature and using node counts, the request
+must have square brackets surrounding it.
+
 \fBNOTE\fR: This option is not supported by the helpers NodeFeatures plugin.
 Heterogeneous jobs can be used instead.
 .IP
@@ -320,8 +323,8 @@ Brackets can be used to indicate that you are looking for a set of nodes with
 the different requirements contained within the brackets. For example,
 \fB\-\-constraint="[(rack1|rack2)*1&(rack3)*2]"\fR will get you one node with
 either the "rack1" or "rack2" features and two nodes with the "rack3" feature.
-The same request without the brackets will try to find a single node that
-meets those requirements.
+If requesting more than one feature and using node counts, the request
+must have square brackets surrounding it.
 
 \fBNOTE\fR: Brackets are only reserved for \fBMultiple Counts\fR and
 \fBMatching OR\fR syntax.
@@ -1303,11 +1306,10 @@ take precedence over the environment.
 \fBNOTE\fR: A memory size specification of zero is treated as a special case and
 grants the job access to all of the memory on each node.
 
-\fBNOTE\fR: Enforcement of memory limits currently relies upon the task/cgroup
-plugin or enabling of accounting, which samples memory use on a periodic basis
-(data need not be stored, just collected). In both cases memory use is based
-upon the job's Resident Set Size (RSS). A task may exceed the memory limit until
-the next periodic accounting sample.
+\fBNOTE\fR: Memory requests will not be strictly enforced unless Slurm is
+configured to use an enforcement mechanism. See \fBConstrainRAMSpace\fR in
+the \fBcgroup.conf\fR(5) man page and \fBOverMemoryKill\fR in the
+\fBslurm.conf\fR(5) man page for more details.
 .IP
 
 .TP
@@ -1571,7 +1573,8 @@ in a comma-separated list.
 \fBtcs\fR=<\fIclass1\fR>[:<\fIclass2\fR>]...
 Set of traffic classes to configure for applications.
 Supported traffic classes are DEDICATED_ACCESS, LOW_LATENCY, BULK_DATA, and
-BEST_EFFORT.
+BEST_EFFORT. The traffic classes may also be specified as TC_DEDICATED_ACCESS,
+TC_LOW_LATENCY, TC_BULK_DATA, and TC_BEST_EFFORT.
 .IP
 
 .TP
@@ -2187,7 +2190,7 @@ If a range of node counts is given, prefer the smaller count.
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
 Increase the verbosity of salloc's informational messages.  Multiple
-\fB\-v\fR's will further increase salloc's verbosity.  By default only
+'\fB\-v\fR's will further increase salloc's verbosity.  By default only
 errors will be displayed.
 .IP
 
@@ -2751,8 +2754,18 @@ SLURM_NODE_ALIASES=ec0:1.2.3.4:foo,ec1:1.2.3.5:bar
 .IP
 
 .TP
+\fBSLURM_NPROCS\fR
+Set to value of the \fB\-\-ntasks\fR option, if specified. Or, if either of
+the \fB\-\-ntasks\-per\-node\fR or \fB\-\-ntasks\-per\-gpu\fR options are
+specified, set to the number of tasks in the job.
+See \fBSLURM_NTASKS\fR. Included for backwards compatibility.
+.IP
+
+.TP
 \fBSLURM_NTASKS\fR
-Same as \fB\-n\fR, \fB\-\-ntasks\fR
+Set to value of the \fB\-\-ntasks\fR option, if specified. Or, if either of
+the \fB\-\-ntasks\-per\-node\fR or \fB\-\-ntasks\-per\-gpu\fR options are
+specified, set to the number of tasks in the job.
 .IP
 
 .TP

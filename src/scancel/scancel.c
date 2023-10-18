@@ -178,12 +178,16 @@ static void
 _load_job_records (void)
 {
 	int error_code;
+	uint16_t show_flags = 0;
+
+	show_flags |= SHOW_ALL;
+	show_flags |= opt.clusters ? SHOW_LOCAL : SHOW_FEDERATION;
 
 	/* We need the fill job array string representation for identifying
 	 * and killing job arrays */
 	setenv("SLURM_BITSTR_LEN", "0", 1);
-	error_code = slurm_load_jobs ((time_t) NULL, &job_buffer_ptr,
-				      SHOW_ALL | SHOW_FEDERATION);
+	error_code = slurm_load_jobs((time_t) NULL, &job_buffer_ptr,
+				     show_flags);
 
 	if (error_code) {
 		slurm_perror ("slurm_load_jobs error");
@@ -747,8 +751,6 @@ _cancel_job_id (void *ci)
 	}
 	if (opt.hurry)
 		flags |= KILL_HURRY;
-	if (cancel_info->array_flag)
-		flags |= KILL_JOB_ARRAY;
 
 	if (!cancel_info->job_id_str) {
 		if (cancel_info->array_job_id &&

@@ -1932,7 +1932,7 @@ static slurm_cli_opt_t slurm_opt_gid = {
 	.name = "gid",
 	.has_arg = required_argument,
 	.val = LONG_OPT_GID,
-	.set_func = arg_set_gid,
+	.set_func_sbatch = arg_set_gid,
 	.set_func_data = arg_set_data_gid,
 	.get_func = arg_get_gid,
 	.reset_func = arg_reset_gid,
@@ -4757,7 +4757,7 @@ static slurm_cli_opt_t slurm_opt_uid = {
 	.name = "uid",
 	.has_arg = required_argument,
 	.val = LONG_OPT_UID,
-	.set_func = arg_set_uid,
+	.set_func_sbatch = arg_set_uid,
 	.set_func_data = arg_set_data_uid,
 	.get_func = arg_get_uid,
 	.reset_func = arg_reset_uid,
@@ -5910,7 +5910,8 @@ static void _validate_threads_per_core_option(slurm_opt_t *opt)
 					      &opt->srun_opt->cpu_bind,
 					      &opt->srun_opt->cpu_bind_type);
 	} else if (opt->srun_opt &&
-		   !xstrcmp(opt->srun_opt->cpu_bind, "verbose")) {
+		  (!xstrcasecmp(opt->srun_opt->cpu_bind, "verbose") ||
+		   !xstrcasecmp(opt->srun_opt->cpu_bind, "v"))) {
 		if (opt->verbose)
 			info("Setting --cpu-bind=threads,verbose as a default of --threads-per-core use");
 		if (opt->srun_opt)
@@ -6163,6 +6164,7 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 {
 	job_desc_msg_t *job_desc = xmalloc_nz(sizeof(*job_desc));
 	int rc = SLURM_SUCCESS;
+	int estimated_ntasks;
 
 	slurm_init_job_desc_msg(job_desc);
 
@@ -6277,17 +6279,28 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	/* origin_cluster is not filled in here */
 	/* other_port not filled in here */
 
+	/*
+	 * Estimate ntasks here for use in job_desc->min_cpu calculations
+	 * that follow.  ntasks will be filled in later.
+	 */
+	estimated_ntasks = opt_local->ntasks;
+	if ((opt_local->ntasks_per_node > 0) && (!opt_local->ntasks_set) &&
+            ((opt_local->min_nodes == opt_local->max_nodes) ||
+	     (opt_local->max_nodes == 0)))
+		estimated_ntasks =
+			opt_local->min_nodes * opt_local->ntasks_per_node;
+
 	if (opt_local->overcommit) {
 		if (set_defaults || (opt_local->min_nodes > 0))
 			job_desc->min_cpus = MAX(opt_local->min_nodes, 1);
 		job_desc->overcommit = opt_local->overcommit;
 	} else if (opt_local->cpus_set)
 		job_desc->min_cpus =
-			opt_local->ntasks * opt_local->cpus_per_task;
+			estimated_ntasks * opt_local->cpus_per_task;
 	else if (opt_local->nodes_set && (opt_local->min_nodes == 0))
 		job_desc->min_cpus = 0;
 	else if (set_defaults)
-		job_desc->min_cpus = opt_local->ntasks;
+		job_desc->min_cpus = estimated_ntasks;
 
 	job_desc->partition = xstrdup(opt_local->partition);
 

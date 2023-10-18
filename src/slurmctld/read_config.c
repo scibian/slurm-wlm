@@ -507,7 +507,8 @@ static void _validate_slurmd_addr(void)
 			continue;
 		if (IS_NODE_CLOUD(node_ptr) &&
 		    (IS_NODE_POWERING_DOWN(node_ptr) ||
-		     IS_NODE_POWERED_DOWN(node_ptr)))
+		     IS_NODE_POWERED_DOWN(node_ptr) ||
+		     IS_NODE_POWERING_UP(node_ptr)))
 				continue;
 		if (node_ptr->port == 0)
 			node_ptr->port = slurm_conf.slurmd_port;
@@ -943,8 +944,6 @@ static int _build_all_partitionline_info(void)
 	int i;
 
 	count = slurm_conf_partition_array(&ptr_array);
-	if (count == 0)
-		fatal("No PartitionName information available!");
 
 	for (i = 0; i < count; i++)
 		_build_single_partitionline_info(ptr_array[i]);
@@ -1636,13 +1635,23 @@ int read_slurm_conf(int recover, bool reconfig)
 	/* Build node and partition information based upon slurm.conf file */
 	build_all_nodeline_info(false, slurmctld_tres_cnt);
 	/* Increase node table to handle dyanmic nodes. */
-	if (node_record_count < slurm_conf.max_node_cnt) {
+	if ((slurm_conf.max_node_cnt != NO_VAL) &&
+	    node_record_count < slurm_conf.max_node_cnt) {
 		node_record_count = slurm_conf.max_node_cnt;
 		grow_node_record_table_ptr();
 	} else {
 		/* Lock node_record_table_ptr from growing */
 		slurm_conf.max_node_cnt = node_record_count;
 	}
+	if (slurm_conf.max_node_cnt == 0) {
+		/*
+		 * Set to 1 so bitmaps will be created but don't allow any nodes
+		 * to be created.
+		 */
+		node_record_count = 1;
+		grow_node_record_table_ptr();
+	}
+
 	if (reconfig &&
 	    old_max_node_cnt &&
 	    (old_max_node_cnt != slurm_conf.max_node_cnt)) {
@@ -1725,15 +1734,15 @@ int read_slurm_conf(int recover, bool reconfig)
 	if (reconfig) {		/* Preserve state from memory */
 		if (old_node_table_ptr) {
 			info("restoring original state of nodes");
+			_preserve_dynamic_nodes(old_node_table_ptr,
+						old_node_record_count,
+						old_config_list);
+
 			_set_features(old_node_table_ptr, old_node_record_count,
 				      recover);
 			rc = _restore_node_state(recover, old_node_table_ptr,
 						 old_node_record_count);
 			error_code = MAX(error_code, rc);  /* not fatal */
-
-			_preserve_dynamic_nodes(old_node_table_ptr,
-						old_node_record_count,
-						old_config_list);
 		}
 	} else if (recover == 0) {	/* Build everything from slurm.conf */
 		_set_features(node_record_table_ptr, node_record_count,
@@ -1817,6 +1826,13 @@ int read_slurm_conf(int recover, bool reconfig)
 		load_job_ret = load_all_job_state();
 	}
 
+	/*
+	 * _build_node_config_bitmaps() must be called before
+	 * build_features_list_*() and before restore_node_features()
+	 */
+	_build_node_config_bitmaps();
+	/* _gres_reconfig needs to happen before restore_node_features */
+	_gres_reconfig(reconfig);
 	/* NOTE: Run restore_node_features before _restore_job_accounting */
 	restore_node_features(recover);
 
@@ -1831,11 +1847,6 @@ int read_slurm_conf(int recover, bool reconfig)
 	 * precede build_features_list_*()
 	 */
 	_build_bitmaps();
-	/*
-	 * _build_node_config_bitmaps() must be called before
-	 * build_features_list_*()
-	 */
-	_build_node_config_bitmaps();
 
 	/* Active and available features can be different on -R */
 	if ((node_features_g_count() == 0) && (recover != 2))
@@ -1864,8 +1875,6 @@ int read_slurm_conf(int recover, bool reconfig)
 	 */
 	config_power_mgr();
 
-
-	_gres_reconfig(reconfig);
 	_sync_jobs_to_conf();		/* must follow select_g_job_init() */
 
 	/*
@@ -2532,8 +2541,18 @@ static int _restore_node_state(int recover,
 	if (slurm_conf.suspend_program && slurm_conf.resume_program)
 		power_save_mode = true;
 
-	for (i = 0; (node_ptr = next_node(&i)); i++)
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
+		if (IS_NODE_DYNAMIC_NORM(node_ptr)) {
+			/*
+			 * Dynamic norm nodes are moved from old_node_table_ptr
+			 * to the new node_record_table_ptr prior to this with
+			 * _preserve_dynamic_nodes(), so no need to check if
+			 * they've been added with a reconfig.
+			 */
+			continue;
+		}
 		node_ptr->not_responding = true;
+	}
 
 	for (i = 0; i < old_node_record_count; i++) {
 		bool cloud_flag = false, drain_flag = false, down_flag = false;
@@ -2686,7 +2705,8 @@ static int _restore_node_state(int recover,
 	}
 
 	for (i = 0; (node_ptr = next_node(&i)); i++) {
-		if (!node_ptr->not_responding)
+		if (!node_ptr->not_responding ||
+		    IS_NODE_DYNAMIC_NORM(node_ptr))
 			continue;
 		node_ptr->not_responding = false;
 		if (hs)

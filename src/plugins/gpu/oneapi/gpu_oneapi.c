@@ -848,7 +848,7 @@ static bool _oneapi_get_device_name(uint32_t domain, uint32_t bus,
 				    uint32_t device, uint32_t function,
 				    char *name, uint32_t len)
 {
-	static const char *card_reg_string = "card[0-9]+$";
+	static const char *card_reg_string = "renderD[0-9]+$";
 	const char *search_path = "/sys/class/drm";
 	char device_pattern[PATH_MAX] = {'\0'};
 	char path[PATH_MAX] = {'\0'};
@@ -868,7 +868,7 @@ static bool _oneapi_get_device_name(uint32_t domain, uint32_t bus,
 	 * /0000:8b:01.0/0000:8c:00.0/drm/card0"
 	 */
 	snprintf(device_pattern, sizeof(device_pattern),
-		 "/%04x:%02x:%02x.%0x/drm/card[0-9]+$", domain, bus,
+		 "/%04x:%02x:%02x.%0x/drm/renderD[0-9]+$", domain, bus,
 		 device, function);
 	if ((rc = regcomp(&search_reg, device_pattern, REG_EXTENDED))) {
 		dump_regex_error(rc, &search_reg,
@@ -1009,7 +1009,6 @@ static List _get_system_gpu_list_oneapi(node_config_load_t *node_config)
 	uint32_t gpu_num = MAX_GPU_NUM;
 	unsigned long cpu_set[CPU_SET_SIZE] = {0};
 	char *cpu_aff_mac_range = NULL;
-	char *cpu_aff_abs_range = NULL;
 	int i;
 
 	List gres_list_system = list_create(destroy_gres_slurmd_conf);
@@ -1071,7 +1070,7 @@ static List _get_system_gpu_list_oneapi(node_config_load_t *node_config)
 		 * Convert cpu range str from machine to abstract (slurm) format
 		 */
 		if (node_config->xcpuinfo_mac_to_abs(cpu_aff_mac_range,
-						     &cpu_aff_abs_range)) {
+						     &gres_slurmd_conf.cpus)) {
 			error("Conversion from machine to abstract failed");
 			FREE_NULL_BITMAP(gres_slurmd_conf.cpus_bitmap);
 			xfree(cpu_aff_mac_range);
@@ -1088,7 +1087,6 @@ static List _get_system_gpu_list_oneapi(node_config_load_t *node_config)
 			info("Failed to get device property: 0x%x", oneapi_rc);
 			FREE_NULL_BITMAP(gres_slurmd_conf.cpus_bitmap);
 			xfree(cpu_aff_mac_range);
-			xfree(cpu_aff_abs_range);
 			xfree(gres_slurmd_conf.links);
 			continue;
 		}
@@ -1104,7 +1102,7 @@ static List _get_system_gpu_list_oneapi(node_config_load_t *node_config)
 		debug2("    CPU Affinity Range - Machine: %s",
 			cpu_aff_mac_range);
 		debug2("    Core Affinity Range - Abstract: %s",
-			cpu_aff_abs_range);
+			gres_slurmd_conf.cpus);
 
 		/* Print out possible frequencies for this device */
 		_oneapi_print_freqs(all_devices[i], LOG_LEVEL_DEBUG2);

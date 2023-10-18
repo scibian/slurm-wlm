@@ -33,7 +33,6 @@ def no_kill_job():
     # Return the node to the idle state
     atf.run_command(f'scontrol update nodename={first_node} state=resume', user=slurm_user)
 
-
 def test_no_kill(no_kill_job):
     """Verify job with --no-kill option is not killed on node failure"""
 

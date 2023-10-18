@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "May 2023" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "August 2023" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -515,7 +515,7 @@ Display a command usage summary.
 When displaying UID, sacct uses the UID stored in Slurm's accounting database
 by default. Use this command to make Slurm use a system call to get the UID
 from the username. This option may be useful in an environment with multiple
-clusters and one database where the UID's aren't the same on all clusters.
+clusters and one database where the UIDs aren't the same on all clusters.
 .IP
 
 .TP
@@ -1415,6 +1415,12 @@ Command line options will always override these settings.)
 .TP 20
 \fBSACCT_FEDERATION\fR
 Same as \fB\-\-federation\fR
+.IP
+
+.TP
+\fBSACCT_FORMAT\fR
+Allows you to define the columns to display in the output.
+Same as \fB\-\-format\fR
 .IP
 
 .TP

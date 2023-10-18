@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	23.02.3
+Version:	23.02.6
 %define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager

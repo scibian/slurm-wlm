@@ -1885,7 +1885,7 @@ typedef struct job_info {
 	char *tres_per_node;	/* semicolon delimited list of TRES=# values */
 	char *tres_per_socket;	/* semicolon delimited list of TRES=# values */
 	char *tres_per_task;	/* semicolon delimited list of TRES=# values */
-	char *tres_req_str;	/* tres reqeusted in the job */
+	char *tres_req_str;	/* tres requested in the job */
 	char *tres_alloc_str;   /* tres used in the job */
 	uint32_t user_id;	/* user the job runs as */
 	char *user_name;	/* user_name or null. not always set, but
@@ -3589,7 +3589,7 @@ typedef struct job_step_kill_msg {
  * NOTE:  See _signal_batch_job() controller and _rpc_signal_tasks() in slurmd.
  */
 #define KILL_JOB_BATCH   SLURM_BIT(0) /* signal batch shell only */
-#define KILL_JOB_ARRAY   SLURM_BIT(1) /* kill all elements of a job array */
+#define KILL_ARRAY_TASK  SLURM_BIT(1) /* kill single task of a job array */
 #define KILL_STEPS_ONLY  SLURM_BIT(2) /* Do not signal batch script */
 #define KILL_FULL_JOB    SLURM_BIT(3) /* Signal all steps, including batch
 				       * script */

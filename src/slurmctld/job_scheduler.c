@@ -153,10 +153,13 @@ static int _find_singleton_job (void *x, void *key)
 	/*
 	 * already running/suspended job or previously
 	 * submitted pending job
+	 * and not a het job, or not part of the same het job
 	 */
-	if (IS_JOB_RUNNING(qjob_ptr) || IS_JOB_SUSPENDED(qjob_ptr) ||
-	    (IS_JOB_PENDING(qjob_ptr) &&
-	     (qjob_ptr->job_id < job_ptr->job_id))) {
+	if ((IS_JOB_RUNNING(qjob_ptr) || IS_JOB_SUSPENDED(qjob_ptr) ||
+	     (IS_JOB_PENDING(qjob_ptr) &&
+	      (qjob_ptr->job_id < job_ptr->job_id))) &&
+	    (!job_ptr->het_job_id ||
+	     (job_ptr->het_job_id != qjob_ptr->het_job_id))) {
 		return 1;
 	}
 
@@ -582,7 +585,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 		}
 		tested_jobs++;
 		job_ptr->preempt_in_progress = false;	/* initialize */
-		if (job_ptr->array_recs)
+		if (job_ptr->array_recs && backfill)
 			job_ptr->array_recs->pend_run_tasks = 0;
 		if (job_ptr->resv_list)
 			job_ptr->resv_ptr = NULL;
@@ -4639,6 +4642,22 @@ extern List feature_list_copy(List feature_list_src)
 	return feature_list_dest;
 }
 
+/*
+ * IN/OUT convert_to_matching_or -
+ * If at least one changeable feature is requested, then all the nodes
+ * in the job allocation need to match the same feature set.
+ *
+ * As an input: if true, then mark all '|' operators as matching OR, and also
+ * imply that it is surrounded by brackets by setting bracket=1 for all the
+ * features except the last one. The AND operators are still treated as normal
+ * AND (not XAND), as if they were surrounded by parentheses within the
+ * brackets.
+ *
+ * As an output: if mutiple changeable features are requested,
+ * and bar (OR) was requested, then set this to true.
+ *
+ * This is needed for the scheduling logic with parentheses and matching OR.
+ */
 static int _feature_string2list(char *features, char *debug_str,
 				list_t **feature_list,
 				bool *convert_to_matching_or)
@@ -4649,8 +4668,7 @@ static int _feature_string2list(char *features, char *debug_str,
 	char *tmp_requested;
 	char *str_ptr, *feature = NULL;
 	bool has_changeable = false;
-	bool has_static_or = false;
-	bool has_paren_or = false;
+	bool has_or = false;
 	bool has_asterisk = false;
 
 	xassert(feature_list);
@@ -4686,7 +4704,7 @@ static int _feature_string2list(char *features, char *debug_str,
 				goto fini;
 			}
 			feat = xmalloc(sizeof(job_feature_t));
-			feat->bracket = bracket;
+			feat->bracket = *convert_to_matching_or ? 1 : bracket;
 			feat->name = xstrdup(feature);
 			feat->changeable = node_features_g_changeable_feature(
 				feature);
@@ -4695,7 +4713,7 @@ static int _feature_string2list(char *features, char *debug_str,
 
 			has_changeable |= feat->changeable;
 
-			if (paren)
+			if (paren || *convert_to_matching_or)
 				feat->op_code = FEATURE_OP_AND;
 			else if (bracket)
 				feat->op_code = FEATURE_OP_XAND;
@@ -4717,15 +4735,14 @@ static int _feature_string2list(char *features, char *debug_str,
 			changeable = node_features_g_changeable_feature(
 				feature);
 			feat = xmalloc(sizeof(job_feature_t));
-			feat->bracket = bracket;
+			feat->bracket = *convert_to_matching_or ? 1 : bracket;
 			feat->name = xstrdup(feature);
 			feat->changeable = changeable;
 			feat->count = count;
 			feat->paren = paren;
 
 			has_changeable |= changeable;
-			has_static_or |= !changeable;
-			has_paren_or |= paren;
+			has_or = true;
 
 			/*
 			 * The if-else-if is like this for priority:
@@ -4825,30 +4842,7 @@ static int _feature_string2list(char *features, char *debug_str,
 		goto fini;
 	}
 
-	/*
-	 * If at least one changeable feature is requested, then all the nodes
-	 * in the job allocation need to match the same feature set. Changeable
-	 * feature that request OR are already automatically set to matching OR.
-	 * We need to convert the feature list if a changeable feature is
-	 * requested and:
-	 *
-	 * - Any feature requests OR inside a paren
-	 * - Or a static feature was requested with OR (regardless of paren)
-	 *
-	 * Examples:
-	 * s1 and s2 are static; c1 and c2 are changeable
-	 *
-	 * The following feature expressions do not need to be converted:
-	 * c1|c2
-	 * s1&c1|c2
-	 * c2|(s1&s2)
-	 *
-	 * The following feature expressions need to be converted:
-	 * s1&(c1|c2)
-	 * s1|c1
-	 */
-	*convert_to_matching_or = (has_changeable &&
-				   (has_paren_or || has_static_or));
+	*convert_to_matching_or = (has_changeable && has_or);
 
 fini:
 	if (rc != SLURM_SUCCESS) {

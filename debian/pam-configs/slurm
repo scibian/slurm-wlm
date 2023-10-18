@@ -1,0 +1,8 @@
+Name: Slurm-based access restrictions and resource control (legacy)
+Default: no
+Priority: 0
+Conflicts: slurm-adopt
+
+Account-Type: Additional
+Account:
+        required pam_slurm.so	

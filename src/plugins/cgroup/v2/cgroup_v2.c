@@ -1613,7 +1613,8 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t ctl, cgroup_level_t level,
 		    common_cgroup_set_uint64_param(
 			    &int_cg[level],
 			    "memory.swap.max",
-			    limits->memsw_limit_in_bytes) != SLURM_SUCCESS) {
+			    (limits->memsw_limit_in_bytes -
+			     limits->limit_in_bytes)) != SLURM_SUCCESS) {
 			rc = SLURM_ERROR;
 		}
 		break;
@@ -2106,7 +2107,8 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 	/*
 	 * In cgroup/v1, total_rss was the hierarchical sum of # of bytes of
 	 * anonymous and swap cache memory (including transparent huge pages),
-	 * so let's make the sum here to make the same thing.
+	 * so let's make the sum here to make the same thing. In v2 anon_thp
+	 * are included in anon.
 	 *
 	 * In cgroup/v2 we could use memory.current, but that includes all the
 	 * memory the app has touched. We opt here to do a more fine-grain
@@ -2121,12 +2123,6 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 		if (ptr &&
 		    (sscanf(ptr, "anon %"PRIu64, &stats->total_rss) != 1))
 			error("Cannot parse anon field in memory.stat file");
-
-		ptr = xstrstr(memory_stat, "anon_thp");
-		if (ptr && (sscanf(ptr, "anon_thp %"PRIu64, &tmp) != 1))
-			log_flag(CGROUP, "Cannot parse anon_thp field in memory.stat file");
-		else
-			stats->total_rss += tmp;
 
 		ptr = xstrstr(memory_stat, "swapcached");
 		if (ptr && (sscanf(ptr, "swapcached %"PRIu64, &tmp) != 1))
