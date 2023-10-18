@@ -6,7 +6,7 @@ Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
            Gennaro Oliva <oliva@debian.org>,
 Build-Depends:
- debhelper (>= 13),
+ debhelper (>= 10),
  libmunge-dev,
  libncurses-dev,
  po-debconf,
