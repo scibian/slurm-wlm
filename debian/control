@@ -1,10 +1,10 @@
 Source: slurm-wlm
 Section: admin
 Priority: optional
-Maintainer: Debian HPC Team <debian-hpc@lists.debian.org>
+Maintainer: Scibian Project <packaging@scibian.org>
 Uploaders: Rémi Palancher <remi@rezib.org>,
            Mehdi Dogguy <mehdi@debian.org>,
-           Gennaro Oliva <oliva@debian.org>,
+           Gennaro Oliva <oliva.g@na.icar.cnr.it>,
 Build-Depends:
  debhelper (>= 10),
  libmunge-dev,
@@ -39,8 +39,8 @@ Build-Depends:
  librocm-smi-dev
 Standards-Version: 4.6.2
 Homepage: http://slurm.schedmd.com
-Vcs-Browser: https://salsa.debian.org/hpc-team/slurm-wlm
-Vcs-Git: https://salsa.debian.org/hpc-team/slurm-wlm.git
+Vcs-Browser: https://github.com/scibian/slurm-wlm
+Vcs-Git: https://github.com/scibian/slurm-wlm.git
 
 Package: slurm-wlm
 Architecture: any
