@@ -1,0 +1,8 @@
+Name: Slurm-based access restrictions and resource control
+Default: no
+Priority: 0
+Conflicts: systemd slurm
+
+Account-Type: Additional
+Account:
+        required pam_slurm_adopt.so	action_adopt_failure=deny action_generic_failure=deny

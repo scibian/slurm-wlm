@@ -47,6 +47,9 @@
 #define PERSIST_FLAG_P_USER_CASE    0x0008
 #define PERSIST_FLAG_SUPPRESS_ERR   0x0010
 #define PERSIST_FLAG_EXT_DBD        0x0020
+#define PERSIST_FLAG_DONT_UPDATE_CLUSTER 0x0040
+
+#define PERSIST_CONN_NOT_INITED -2
 
 typedef enum {
 	PERSIST_TYPE_NONE = 0,
@@ -54,6 +57,7 @@ typedef enum {
 	PERSIST_TYPE_FED,
 	PERSIST_TYPE_HA_CTL,
 	PERSIST_TYPE_HA_DBD,
+	PERSIST_TYPE_ACCT_UPDATE,
 } persist_conn_type_t;
 
 typedef struct {

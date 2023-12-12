@@ -47,14 +47,15 @@
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/assoc_mgr.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/gpu.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/common/slurm_acct_gather_energy.h"
-#include "src/common/slurm_acct_gather_filesystem.h"
-#include "src/common/slurm_acct_gather_interconnect.h"
+#include "src/interfaces/acct_gather_energy.h"
+#include "src/interfaces/acct_gather_filesystem.h"
+#include "src/interfaces/acct_gather_interconnect.h"
 #include "src/common/xstring.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/proctrack.h"
 
 #include "common_jag.h"
 
@@ -487,6 +488,7 @@ static int _init_tres(jag_prec_t *prec, void *empty)
 {
 	/* Initialize read/writes */
 	for (int i = 0; i < prec->tres_count; i++) {
+		prec->tres_data[i].last_time = 0;
 		prec->tres_data[i].num_reads = INFINITE64;
 		prec->tres_data[i].num_writes = INFINITE64;
 		prec->tres_data[i].size_read = INFINITE64;
@@ -580,13 +582,7 @@ static void _handle_stats(pid_t pid, jag_callbacks_t *callbacks, int tres_count)
 
 	fclose(stat_fp);
 
-	if (acct_gather_filesystem_g_get_data(prec->tres_data) < 0) {
-		log_flag(JAG, "problem retrieving filesystem data");
-	}
-
-	if (acct_gather_interconnect_g_get_data(prec->tres_data) < 0) {
-		log_flag(JAG, "problem retrieving interconnect data");
-	}
+	gpu_g_usage_read(pid, prec->tres_data);
 
 	/* Remove shared data from rss */
 	if (no_share_data) {
@@ -672,6 +668,8 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		FIELD_CPUFREQ,
 		FIELD_CPUTIME,
 		FIELD_CPUUTIL,
+		FIELD_GPUMEM,
+		FIELD_GPUUTIL,
 		FIELD_RSS,
 		FIELD_VMSIZE,
 		FIELD_PAGES,
@@ -684,6 +682,8 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		{ "CPUFrequency", PROFILE_FIELD_UINT64 },
 		{ "CPUTime", PROFILE_FIELD_DOUBLE },
 		{ "CPUUtilization", PROFILE_FIELD_DOUBLE },
+		{ "GPUMemMB", PROFILE_FIELD_UINT64 },
+		{ "GPUUtilization", PROFILE_FIELD_DOUBLE },
 		{ "RSS", PROFILE_FIELD_UINT64 },
 		{ "VMSize", PROFILE_FIELD_UINT64 },
 		{ "Pages", PROFILE_FIELD_UINT64 },
@@ -693,6 +693,8 @@ static void _record_profile(struct jobacctinfo *jobacct)
 	};
 
 	static int64_t profile_gid = -1;
+	static int gpumem_pos = -1;
+	static int gpuutil_pos = -1;
 	double et;
 	union {
 		double d;
@@ -700,8 +702,10 @@ static void _record_profile(struct jobacctinfo *jobacct)
 	} data[FIELD_CNT];
 	char str[256];
 
-	if (profile_gid == -1)
+	if (profile_gid == -1) {
 		profile_gid = acct_gather_profile_g_create_group("Tasks");
+		gpu_get_tres_pos(&gpumem_pos, &gpuutil_pos);
+	}
 
 	/* Create the dataset first */
 	if (jobacct->dataset_id < 0) {
@@ -733,6 +737,7 @@ static void _record_profile(struct jobacctinfo *jobacct)
 	if (!jobacct->last_time) {
 		data[FIELD_CPUTIME].d = 0;
 		data[FIELD_CPUUTIL].d = 0.0;
+		data[FIELD_GPUUTIL].d = 0.0;
 		data[FIELD_READ].d = 0.0;
 		data[FIELD_WRITE].d = 0.0;
 	} else {
@@ -772,6 +777,16 @@ static void _record_profile(struct jobacctinfo *jobacct)
 		/* Profile disk as MB */
 		data[FIELD_READ].d /= 1048576.0;
 		data[FIELD_WRITE].d /= 1048576.0;
+
+		if (gpumem_pos != -1) {
+			/* Profile gpumem as MB */
+			data[FIELD_GPUMEM].u64 =
+				jobacct->tres_usage_in_tot[gpumem_pos] /
+				1048576;
+			data[FIELD_GPUUTIL].d =
+				jobacct->tres_usage_in_tot[gpuutil_pos];
+;
+		}
 	}
 
 	log_flag(PROFILE, "PROFILE-Task: %s",
@@ -849,6 +864,136 @@ static void _print_jag_prec(jag_prec_t *prec)
 	log_flag(JAG, "usec \t%f", prec->usec);
 }
 
+static int _list_find_prec_by_pid(void *x, void *key)
+{
+        jag_prec_t *j = (jag_prec_t *) x;
+        pid_t pid = *(pid_t *) key;
+
+        if (!j->visited && (j->pid == pid))
+                return 1;
+        return 0;
+}
+
+static int _list_find_prec_by_ppid(void *x, void *key)
+{
+        jag_prec_t *j = (jag_prec_t *) x;
+        pid_t pid = *(pid_t *) key;
+
+        if (!j->visited && (j->ppid == pid))
+                return 1;
+        return 0;
+}
+
+static int _reset_visited(jag_prec_t *prec, void *empty)
+{
+	prec->visited = false;
+
+	return SLURM_SUCCESS;
+}
+
+static void _aggregate_prec(jag_prec_t *prec, jag_prec_t *ancestor)
+{
+	int i;
+#if _DEBUG
+	info("pid:%u ppid:%u rss:%"PRIu64" B",
+	     prec->pid, prec->ppid,
+	     prec->tres_data[TRES_ARRAY_MEM].size_read);
+#endif
+	ancestor->usec += prec->usec;
+	ancestor->ssec += prec->ssec;
+
+	for (i = 0; i < prec->tres_count; i++) {
+		if (prec->tres_data[i].num_reads != INFINITE64) {
+			if (ancestor->tres_data[i].num_reads == INFINITE64)
+				ancestor->tres_data[i].num_reads =
+					prec->tres_data[i].num_reads;
+			else
+				ancestor->tres_data[i].num_reads +=
+					prec->tres_data[i].num_reads;
+		}
+
+		if (prec->tres_data[i].num_writes != INFINITE64) {
+			if (ancestor->tres_data[i].num_writes == INFINITE64)
+				ancestor->tres_data[i].num_writes =
+					prec->tres_data[i].num_writes;
+			else
+				ancestor->tres_data[i].num_writes +=
+					prec->tres_data[i].num_writes;
+		}
+
+		if (prec->tres_data[i].size_read != INFINITE64) {
+			if (ancestor->tres_data[i].size_read == INFINITE64)
+				ancestor->tres_data[i].size_read =
+					prec->tres_data[i].size_read;
+			else
+				ancestor->tres_data[i].size_read +=
+					prec->tres_data[i].size_read;
+		}
+
+		if (prec->tres_data[i].size_write != INFINITE64) {
+			if (ancestor->tres_data[i].size_write == INFINITE64)
+				ancestor->tres_data[i].size_write =
+					prec->tres_data[i].size_write;
+			else
+				ancestor->tres_data[i].size_write +=
+					prec->tres_data[i].size_write;
+		}
+	}
+	prec->visited = true;
+}
+
+/*
+ * _get_offspring_data() -- collect memory usage data for the offspring
+ *
+ * For each process that lists <pid> as its parent, add its memory
+ * usage data to the ancestor's <prec> record. Recurse to gather data
+ * for *all* subsequent generations.
+ *
+ * IN:	prec_list       list of prec's
+ *      ancestor	The entry in precTable[] to which the data
+ *			should be added. Even as we recurse, this will
+ *			always be the prec for the base of the family
+ *			tree.
+ *	pid		The process for which we are currently looking
+ *			for offspring.
+ *
+ * OUT:	none.
+ *
+ * RETVAL:	none.
+ *
+ * THREADSAFE! Only one thread ever gets here.
+ */
+static void _get_offspring_data(List prec_list, jag_prec_t *ancestor, pid_t pid)
+{
+	jag_prec_t *prec = NULL;
+	jag_prec_t *prec_tmp = NULL;
+	List tmp_list = NULL;
+
+	/* reset all precs to be not visited */
+	(void)list_for_each(prec_list, (ListForF)_reset_visited, NULL);
+
+	/* See if we can find a prec from the given pid */
+	if (!(prec = list_find_first(prec_list, _list_find_prec_by_pid, &pid)))
+		return;
+
+	prec->visited = true;
+
+	tmp_list = list_create(NULL);
+	list_append(tmp_list, prec);
+
+	while ((prec_tmp = list_dequeue(tmp_list))) {
+		while ((prec = list_find_first(prec_list,
+					      _list_find_prec_by_ppid,
+					       &(prec_tmp->pid)))) {
+			_aggregate_prec(prec, ancestor);
+			list_append(tmp_list, prec);
+		}
+	}
+	FREE_NULL_LIST(tmp_list);
+
+	return;
+}
+
 extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 				 jag_callbacks_t *callbacks, bool profile)
 {
@@ -877,6 +1022,9 @@ extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 	}
 	processing = 1;
 
+	if (!callbacks->get_offspring_data)
+		callbacks->get_offspring_data = _get_offspring_data;
+
 	if (!callbacks->get_precs)
 		callbacks->get_precs = _get_precs;
 
@@ -903,6 +1051,18 @@ extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 		memcpy(&tmp_prec, prec, sizeof(*prec));
 		prec = &tmp_prec;
 
+		if (acct_gather_filesystem_g_get_data(prec->tres_data) < 0) {
+			log_flag(JAG, "problem retrieving filesystem data");
+		}
+
+		if (acct_gather_interconnect_g_get_data(prec->tres_data) < 0) {
+			log_flag(JAG, "problem retrieving interconnect data");
+		}
+		/* find all my descendents */
+		if (callbacks->get_offspring_data)
+			(*(callbacks->get_offspring_data))
+				(prec_list, prec, prec->pid);
+
 		/*
 		 * Only jobacct_gather/cgroup uses prec_extra, and we want to
 		 * make sure we call it once per task, so call it here as we
@@ -922,7 +1082,6 @@ extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 
 			last_taskid = jobacct->id.taskid;
 			(*(callbacks->prec_extra))(prec, jobacct->id.taskid);
-			_print_jag_prec(prec);
 		}
 
 		log_flag(JAG, "pid:%u ppid:%u %s:%" PRIu64 " B",
@@ -931,10 +1090,6 @@ extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 				      "UsePss") ?  "pss" : "rss"),
 			 prec->tres_data[TRES_ARRAY_MEM].size_read);
 
-		/* find all my descendents */
-		if (callbacks->get_offspring_data)
-			(*(callbacks->get_offspring_data))
-				(prec_list, prec, prec->pid);
 
 		last_total_cputime =
 			(double)jobacct->tres_usage_in_tot[TRES_ARRAY_CPU];
@@ -969,6 +1124,8 @@ extern void jag_common_poll_data(List task_list, uint64_t cont_id,
 				 jobacct->energy.ave_watts);
 			energy_counted = 1;
 		}
+
+		_print_jag_prec(prec);
 
 		/* tally their usage */
 		for (i = 0; i < jobacct->tres_count; i++) {

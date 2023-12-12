@@ -254,6 +254,29 @@ static void _print_tres_field(char *tres_in, char *nodes, bool convert,
 	return;
 }
 
+static void _print_expanded_array_job(slurmdb_job_rec_t *job)
+{
+	int i_first, i_last;
+	bitstr_t *bitmap;
+
+	bitmap = bit_alloc(slurm_conf.max_array_sz);
+	(void) bit_unfmt_hexmask(bitmap, job->array_task_str);
+	xfree(job->array_task_str);
+
+	i_first = bit_ffs(bitmap);
+	if (i_first == -1)
+		i_last = -2;
+	else
+		i_last = bit_fls(bitmap);
+	for (int i = i_first; i <= i_last; i++) {
+		if (!bit_test(bitmap, i))
+			continue;
+		job->array_task_id = i;
+		print_fields(JOB, job);
+	}
+	FREE_NULL_BITMAP(bitmap);
+}
+
 extern void print_fields(type_t type, void *object)
 {
 	slurmdb_job_rec_t *job = (slurmdb_job_rec_t *)object;
@@ -271,12 +294,16 @@ extern void print_fields(type_t type, void *object)
 		return;
 	}
 
+	if (params.opt_array && job->array_task_str && (type == JOB)) {
+		_print_expanded_array_job(job);
+		return;
+	}
+
 	switch (type) {
 	case JOB:
 		job_comp = NULL;
 		cpu_tres_rec_count = slurmdb_find_tres_count_in_string(
-			(job->tres_alloc_str && job->tres_alloc_str[0]) ?
-			job->tres_alloc_str : job->tres_req_str,
+			job->tres_alloc_str,
 			TRES_CPU);
 		break;
 	case JOBSTEP:
@@ -287,9 +314,7 @@ extern void print_fields(type_t type, void *object)
 			     step->tres_alloc_str, TRES_CPU)) == INFINITE64)
 			step_cpu_tres_rec_count =
 				slurmdb_find_tres_count_in_string(
-					(job->tres_alloc_str &&
-					 job->tres_alloc_str[0]) ?
-					job->tres_alloc_str : job->tres_req_str,
+					job->tres_alloc_str,
 					TRES_CPU);
 
 		job_comp = NULL;
@@ -339,7 +364,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_int,
+					     &tmp_int,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_ALLOC_NODES:
@@ -436,7 +461,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_AVECPU:
@@ -642,7 +667,7 @@ extern void print_fields(type_t type, void *object)
 			}
 
 			field->print_routine(field,
-					     tmp_uint64,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_CPU_TIME:
@@ -659,7 +684,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint64,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_CPU_TIME_RAW:
@@ -676,7 +701,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint64,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_DB_INX:
@@ -691,7 +716,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint64,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_DERIVED_EC:
@@ -736,7 +761,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint64,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_ELAPSED_RAW:
@@ -754,7 +779,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_ELIGIBLE:
@@ -773,7 +798,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_time,
+					     &tmp_time,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_END:
@@ -791,7 +816,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_time,
+					     &tmp_time,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_EXITCODE:
@@ -826,6 +851,30 @@ extern void print_fields(type_t type, void *object)
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
+		case PRINT_EXTRA:
+			switch(type) {
+			case JOB:
+				tmp_char = job->extra;
+				break;
+			default:
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_FAILED_NODE:
+			switch (type) {
+			case JOB:
+				tmp_char = job->failed_node;
+				break;
+			default:
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
 		case PRINT_FLAGS:
 			switch(type) {
 			case JOB:
@@ -854,7 +903,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_GROUP:
@@ -977,6 +1026,22 @@ extern void print_fields(type_t type, void *object)
 			xfree(name);
 			break;
 		}
+		case PRINT_LICENSES:
+			switch(type) {
+			case JOB:
+				tmp_char = job->licenses;
+				break;
+			case JOBSTEP:
+				break;
+			case JOBCOMP:
+				break;
+			default:
+				break;
+			}
+			field->print_routine(field,
+					     tmp_char,
+					     (curr_inx == field_count));
+			break;
 		case PRINT_MAXDISKREAD:
 			tmp_uint64 = _get_tres_cnt(
 				type, object, TRES_FS_DISK, 0);
@@ -1005,7 +1070,7 @@ extern void print_fields(type_t type, void *object)
 				type, object, TRES_FS_DISK, 0);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXDISKWRITE:
@@ -1036,7 +1101,7 @@ extern void print_fields(type_t type, void *object)
 						    SACCT_TRES_OUT);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXPAGES:
@@ -1066,7 +1131,7 @@ extern void print_fields(type_t type, void *object)
 				type, object, TRES_PAGES, 0);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXRSS:
@@ -1094,7 +1159,7 @@ extern void print_fields(type_t type, void *object)
 			tmp_uint32 = _get_tres_task(type, object, TRES_MEM, 0);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXVSIZE:
@@ -1315,7 +1380,7 @@ extern void print_fields(type_t type, void *object)
 			tmp_uint32 = _get_tres_task(type, object, TRES_VMEM, 0);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MCS_LABEL:
@@ -1364,7 +1429,7 @@ extern void print_fields(type_t type, void *object)
 						    SACCT_TRES_MIN);
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_NODELIST:
@@ -1413,7 +1478,7 @@ extern void print_fields(type_t type, void *object)
 					tmp_uint32 = tmp_uint64;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_NTASKS:
@@ -1425,7 +1490,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_PRIO:
@@ -1437,7 +1502,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_PARTITION:
@@ -1490,7 +1555,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_REASON:
@@ -1558,7 +1623,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_REQ_MEM:
@@ -1570,6 +1635,9 @@ extern void print_fields(type_t type, void *object)
 			default:
 				break;
 			}
+
+			if (tmp_uint64 == INFINITE64)
+				tmp_uint64 = 0;
 
 			if (tmp_uint64 != NO_VAL64) {
 				convert_num_unit((double)tmp_uint64,
@@ -1639,63 +1707,70 @@ extern void print_fields(type_t type, void *object)
 			default:
 				break;
 			}
-			if (tmp_uint32 == NO_VAL)
-				tmp_uint32 = NO_VAL;
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
-		case PRINT_RESV:
+		case PRINT_PLANNED:
 			/*
 			 * If eligible is 0 or -1, then the job was never
-			 * eligible to run, so reserved time is 0.
+			 * eligible to run, so planned time is 0.
+			 *
+			 * If the job hasn't started yet and has an end time,
+			 * presume the job was cancelled and use end time
+			 * instead of start time.
 			 */
 			switch(type) {
 			case JOB:
 				if (!job->eligible ||
 				    (job->eligible == INFINITE))
-					tmp_int = 0;
+					tmp_uint64 = 0;
+				else if ((job->start == NO_VAL) && job->end)
+					tmp_uint64 = job->end - job->eligible;
 				else if (job->start)
-					tmp_int = job->start - job->eligible;
+					tmp_uint64 = job->start - job->eligible;
 				else
-					tmp_int = time(NULL) - job->eligible;
+					tmp_uint64 = time(NULL) - job->eligible;
 				break;
 			default:
 				break;
 			}
 			field->print_routine(field,
-					     (uint64_t)tmp_int,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
-		case PRINT_RESV_CPU:
+		case PRINT_PLANNED_CPU:
 			/*
 			 * If eligible is 0 or -1, then the job was never
-			 * eligible to run, so reserved time is 0.
+			 * eligible to run, so planned time is 0.
 			 */
 			switch(type) {
 			case JOB:
 				if (!job->eligible ||
-				    (job->eligible == INFINITE))
-					tmp_int = 0;
-				else if (job->start)
-					tmp_int = (job->start - job->eligible)
-						* job->req_cpus;
-				else
-					tmp_int = (time(NULL) - job->eligible)
-						* job->req_cpus;
+				    (job->eligible == INFINITE)) {
+					tmp_uint64 = 0;
+				} else if (job->start) {
+					tmp_uint64 = job->start -
+							job->eligible;
+					tmp_uint64 *= job->req_cpus;
+				} else {
+					tmp_uint64 = time(NULL) -
+							job->eligible;
+					tmp_uint64 *= job->req_cpus;
+				}
 				break;
 			default:
 
 				break;
 			}
 			field->print_routine(field,
-					     (uint64_t)tmp_int,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
-		case PRINT_RESV_CPU_RAW:
+		case PRINT_PLANNED_CPU_RAW:
 			/*
 			 * If eligible is 0 or -1, then the job was never
-			 * eligible to run, so reserved time is 0.
+			 * eligible to run, so planned time is 0.
 			 */
 			switch(type) {
 			case JOB:
@@ -1713,7 +1788,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_int,
+					     &tmp_int,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_START:
@@ -1731,7 +1806,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_time,
+					     &tmp_time,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_STATE:
@@ -1785,7 +1860,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_time,
+					     &tmp_time,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_SUBMIT_LINE:
@@ -1806,16 +1881,16 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_SUSPENDED:
 			switch(type) {
 			case JOB:
-				tmp_uint32 = job->suspended;
+				tmp_uint64 = job->suspended;
 				break;
 			case JOBSTEP:
-				tmp_uint32 = step->suspended;
+				tmp_uint64 = step->suspended;
 				break;
 			default:
 				break;
 			}
 			field->print_routine(field,
-					     (uint64_t)tmp_uint32,
+					     &tmp_uint64,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_SYSTEMCPU:
@@ -1960,7 +2035,7 @@ extern void print_fields(type_t type, void *object)
 			}
 
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_USER:
@@ -2027,7 +2102,7 @@ extern void print_fields(type_t type, void *object)
 				break;
 			}
 			field->print_routine(field,
-					     tmp_uint32,
+					     &tmp_uint32,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_WORK_DIR:

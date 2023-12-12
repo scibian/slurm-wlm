@@ -92,12 +92,13 @@
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 
+#include "src/common/slurm_xlator.h"
 #include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/parse_time.h"
-#include "src/common/select.h"
-#include "src/common/slurm_jobcomp.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/jobcomp.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
@@ -133,7 +134,7 @@ const char plugin_name[]       	= "Job completion logging script plugin";
 const char plugin_type[]       	= "jobcomp/script";
 const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
-static char * script = NULL;
+static char *jobcomp_script = NULL;
 static List comp_list = NULL;
 
 static pthread_t script_thread = 0;
@@ -196,9 +197,9 @@ static struct jobcomp_info *_jobcomp_info_create(job_record_t *job)
 	j->state_reason_prev = job->state_reason_prev_db;
 	j->derived_ec = job->derived_ec;
 	j->uid = job->user_id;
-	j->user_name = xstrdup(uid_to_string_cached((uid_t)job->user_id));
+	j->user_name = uid_to_string_or_null(job->user_id);
 	j->gid = job->group_id;
-	j->group_name = gid_to_string((gid_t)job->group_id);
+	j->group_name = gid_to_string_or_null(job->group_id);
 	j->name = xstrdup (job->name);
 	if (job->assoc_ptr && job->assoc_ptr->cluster &&
 	    job->assoc_ptr->cluster[0])
@@ -464,12 +465,19 @@ static int _redirect_stdio (void)
 	int devnull;
 	if ((devnull = open ("/dev/null", O_RDWR)) < 0)
 		return error ("jobcomp/script: Failed to open /dev/null: %m");
-	if (dup2 (devnull, STDIN_FILENO) < 0)
+	if (dup2(devnull, STDIN_FILENO) < 0) {
+		close(devnull);
 		return error ("jobcomp/script: Failed to redirect stdin: %m");
-	if (dup2 (devnull, STDOUT_FILENO) < 0)
+	}
+	if (dup2(devnull, STDOUT_FILENO) < 0) {
+		close(devnull);
 		return error ("jobcomp/script: Failed to redirect stdout: %m");
-	if (dup2 (devnull, STDERR_FILENO) < 0)
+	}
+	if (dup2(devnull, STDERR_FILENO) < 0) {
+		close(devnull);
 		return error ("jobcomp/script: Failed to redirect stderr: %m");
+	}
+	(void) close(devnull);
 	closeall(3);
 	return (0);
 }
@@ -564,7 +572,7 @@ static void * _script_agent (void *args)
 		slurm_mutex_unlock(&comp_list_mutex);
 
 		if ((job = list_pop(comp_list))) {
-			_jobcomp_exec_child (script, job);
+			_jobcomp_exec_child(jobcomp_script, job);
 			_jobcomp_info_destroy (job);
 		}
 
@@ -603,8 +611,9 @@ extern int init(void)
 }
 
 /* Set the location of the script to run*/
-extern int jobcomp_p_set_location(char *location)
+extern int jobcomp_p_set_location(void)
 {
+	char *location = slurm_conf.job_comp_loc;
 	if (location == NULL) {
 		return error("jobcomp/script JobCompLoc needs to be set");
 	}
@@ -612,8 +621,8 @@ extern int jobcomp_p_set_location(char *location)
 	if (_check_script_permissions(location) != SLURM_SUCCESS)
 		return SLURM_ERROR;
 
-	xfree(script);
-	script = xstrdup(location);
+	xfree(jobcomp_script);
+	jobcomp_script = xstrdup(location);
 
 	return SLURM_SUCCESS;
 }
@@ -650,7 +659,7 @@ extern int fini ( void )
 	}
 	slurm_mutex_unlock(&thread_flag_mutex);
 
-	xfree(script);
+	xfree(jobcomp_script);
 	slurm_mutex_lock(&comp_list_mutex);
 	FREE_NULL_LIST(comp_list);
 	slurm_mutex_unlock(&comp_list_mutex);

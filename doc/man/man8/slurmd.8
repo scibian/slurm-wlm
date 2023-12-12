@@ -1,4 +1,4 @@
-.TH slurmd "8" "Slurm Daemon" "August 2022" "Slurm Daemon"
+.TH slurmd "8" "Slurm Daemon" "December 2022" "Slurm Daemon"
 
 .SH "NAME"
 slurmd \- The compute node daemon for Slurm.
@@ -12,6 +12,13 @@ running on the compute node , accepts work (tasks), launches tasks, and kills
 running tasks upon request.
 
 .SH "OPTIONS"
+
+.TP
+\fB\--authinfo\fR
+Used with configless to set an alternate AuthInfo parameter to be used to
+establish communication with slurmctld before the configuration file has been
+retrieved. (E.g., to specify an alternate MUNGE socket location.)
+.IP
 
 .TP
 \fB\-b\fR
@@ -209,7 +216,7 @@ written to the current working directory.
 Otherwise if \fBSlurmdLogFile\fR is a fully qualified path name
 (starting with a slash), the core file will be written to the same
 directory as the log file.  Otherwise the core file will be written to
-the \fBSlurmSpoolDir\fR directory, or "/var/tmp/" as a last resort. If
+the \fBSlurmdSpoolDir\fR directory, or "/var/tmp/" as a last resort. If
 none of the above directories can be written, no core file will be
 produced.
 

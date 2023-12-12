@@ -42,10 +42,10 @@
 #include "as_mysql_wckey.h"
 
 #include "src/common/assoc_mgr.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/parse_time.h"
-#include "src/common/select.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_time.h"
 
 #define MAX_FLUSH_JOBS 500
@@ -284,21 +284,18 @@ static uint64_t _get_hash_inx(mysql_conn_t *mysql_conn,
 			      uint64_t flag)
 {
 	char *query, *hash;
-	char *hash_col = NULL, *type_col = NULL, *type_table = NULL;
+	char *hash_col = NULL, *type_table = NULL;
 	MYSQL_RES *result = NULL;
-	MYSQL_ROW row;
 	uint64_t hash_inx = 0;
 
 	switch (flag) {
 	case JOB_SEND_ENV:
 		hash_col = "env_hash";
-		type_col = "env_vars";
 		type_table = job_env_table;
 		hash = job_ptr->details->env_hash;
 		break;
 	case JOB_SEND_SCRIPT:
 		hash_col = "script_hash";
-		type_col = "batch_script";
 		type_table = job_script_table;
 		hash = job_ptr->details->script_hash;
 		break;
@@ -312,36 +309,19 @@ static uint64_t _get_hash_inx(mysql_conn_t *mysql_conn,
 		return 0;
 
 	query = xstrdup_printf(
-		"select hash_inx from \"%s_%s\" where %s = '%s';",
+		"insert into \"%s_%s\" (%s) values ('%s') "
+		"on duplicate key update last_used=VALUES(last_used), "
+		"hash_inx=LAST_INSERT_ID(hash_inx);",
 		mysql_conn->cluster_name, type_table,
 		hash_col, hash);
 
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return NO_VAL64;
-	}
-
+	hash_inx = mysql_db_insert_ret_id(mysql_conn, query);
+	if (!hash_inx)
+		hash_inx = NO_VAL64;
+	else
+		job_ptr->bit_flags |= flag;
 	xfree(query);
 
-	if ((row = mysql_fetch_row(result))) {
-		debug3("%u has an %s we have already seen, no need to add again",
-		       job_ptr->job_id, type_col);
-		hash_inx = slurm_atoull(row[0]);
-	} else {
-		query = xstrdup_printf(
-			"insert into \"%s_%s\" (%s) values ('%s') "
-			"on duplicate key update last_used=VALUES(last_used), "
-			"hash_inx=LAST_INSERT_ID(hash_inx);",
-			mysql_conn->cluster_name, type_table,
-			hash_col, hash);
-
-		hash_inx = mysql_db_insert_ret_id(mysql_conn, query);
-		if (!hash_inx)
-			hash_inx = NO_VAL64;
-		else
-			job_ptr->bit_flags |= flag;
-		xfree(query);
-	}
 	mysql_free_result(result);
 
 	return hash_inx;
@@ -378,7 +358,7 @@ extern int as_mysql_job_start(mysql_conn_t *mysql_conn, job_record_t *job_ptr)
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
 
-	debug2("%s: called", __func__);
+	debug2("called");
 
 	job_state = job_ptr->job_state;
 
@@ -525,7 +505,7 @@ no_rollup_change:
 	else if (job_ptr->partition)
 		partition = job_ptr->partition;
 
-	/* Mark the database so we know we have recieved the start record. */
+	/* Mark the database so we know we have received the start record. */
 	job_ptr->db_flags |= SLURMDB_JOB_FLAG_START_R;
 
 	if (!job_ptr->db_index) {
@@ -600,6 +580,8 @@ no_rollup_change:
 			xstrcat(query, ", submit_line");
 		if (job_ptr->container)
 			xstrcat(query, ", container");
+		if (job_ptr->licenses)
+			xstrcat(query, ", licenses");
 
 		xstrfmtcat(query,
 			   ") values (%u, UNIX_TIMESTAMP(), "
@@ -658,6 +640,9 @@ no_rollup_change:
 		if (job_ptr->container)
 			xstrfmtcat(query, ", '%s'",
 				   job_ptr->container);
+		if (job_ptr->licenses)
+			xstrfmtcat(query, ", '%s'",
+				   job_ptr->licenses);
 
 		xstrfmtcat(query,
 			   ") on duplicate key update "
@@ -729,6 +714,9 @@ no_rollup_change:
 		if (job_ptr->container)
 			xstrfmtcat(query, ", container='%s'",
 				   job_ptr->container);
+		if (job_ptr->licenses)
+			xstrfmtcat(query, ", licenses='%s'",
+				   job_ptr->licenses);
 
 		DB_DEBUG(DB_JOB, mysql_conn->conn, "query\n%s", query);
 	try_again:
@@ -792,6 +780,9 @@ no_rollup_change:
 		if (job_ptr->container)
 			xstrfmtcat(query, "container='%s', ",
 				   job_ptr->container);
+		if (job_ptr->licenses)
+			xstrfmtcat(query, "licenses='%s', ",
+				   job_ptr->licenses);
 
 		xstrfmtcat(query, "time_start=%ld, job_name='%s', "
 			   "state=greatest(state, %u), "
@@ -838,14 +829,14 @@ extern int as_mysql_job_heavy(mysql_conn_t *mysql_conn, job_record_t *job_ptr)
 {
 	char *query = NULL, *pos = NULL;
 	int rc = SLURM_SUCCESS;
-	struct job_details *details = job_ptr->details;
+	job_details_t *details = job_ptr->details;
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
 
 	xassert(details);
 
-	debug2("%s() called", __func__);
+	debug2("called");
 
 	/*
 	 * make sure we handle any quotes that may be in the comment
@@ -918,6 +909,9 @@ extern List as_mysql_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (job->system_comment)
 		xstrfmtcat(vals, ", system_comment='%s'", job->system_comment);
 
+	if (job->extra)
+		xstrfmtcat(vals, ", extra='%s'", job->extra);
+
 	if (job->wckey)
 		xstrfmtcat(vals, ", wckey='%s'", job->wckey);
 
@@ -944,7 +938,7 @@ extern List as_mysql_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	itr = list_iterator_create(job_list);
 	while ((job_rec = list_next(itr))) {
-		char tmp_char[25];
+		char tmp_char[256];
 		char *vals_mod = NULL;
 
 		if ((uid != job_rec->uid) && !is_admin) {
@@ -1144,7 +1138,7 @@ extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
 
-	debug2("%s() called", __func__);
+	debug2("called");
 
 	if (job_ptr->resize_time)
 		submit_time = job_ptr->resize_time;
@@ -1237,6 +1231,12 @@ extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 	if (job_ptr->system_comment)
 		xstrfmtcat(query, ", system_comment='%s'",
 			   job_ptr->system_comment);
+
+	if (job_ptr->extra)
+		xstrfmtcat(query, ", extra='%s'", job_ptr->extra);
+
+	if (job_ptr->failed_node)
+		xstrfmtcat(query, ", failed_node='%s'", job_ptr->failed_node);
 
 	exit_code = job_ptr->exit_code;
 	if (exit_code == 1) {

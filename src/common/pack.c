@@ -98,7 +98,7 @@ strong_alias(unpack32_array,	slurm_unpack32_array);
 strong_alias(packmem,		slurm_packmem);
 strong_alias(unpackmem_ptr,	slurm_unpackmem_ptr);
 strong_alias(unpackmem_xmalloc,	slurm_unpackmem_xmalloc);
-strong_alias(unpackmem_malloc,	slurm_unpackmem_malloc);
+strong_alias(unpackstr_xmalloc, slurm_unpackstr_xmalloc);
 strong_alias(unpackstr_xmalloc_escaped, slurm_unpackstr_xmalloc_escaped);
 strong_alias(unpackstr_xmalloc_chooser, slurm_unpackstr_xmalloc_chooser);
 strong_alias(packstr_array,	slurm_packstr_array);
@@ -902,10 +902,10 @@ int unpackmem_xmalloc(char **valp, uint32_t *size_valp, buf_t *buffer)
  * specified by valp.  Also return the sizes of 'valp' in bytes.
  * Adjust buffer counters.
  * NOTE: valp is set to point into a newly created buffer,
- *	the caller is responsible for calling free() on *valp
+ *	the caller is responsible for calling xfree() on *valp
  *	if non-NULL (set to NULL on zero size buffer value)
  */
-int unpackmem_malloc(char **valp, uint32_t *size_valp, buf_t *buffer)
+int unpackstr_xmalloc(char **valp, uint32_t *size_valp, buf_t *buffer)
 {
 	uint32_t ns;
 
@@ -920,20 +920,18 @@ int unpackmem_malloc(char **valp, uint32_t *size_valp, buf_t *buffer)
 		error("%s: Buffer to be unpacked is too large (%u > %u)",
 		      __func__, *size_valp, MAX_PACK_MEM_LEN);
 		return SLURM_ERROR;
-	}
-	else if (*size_valp > 0) {
+	} else if (*size_valp > 0) {
 		if (remaining_buf(buffer) < *size_valp)
 			return SLURM_ERROR;
-		*valp = malloc(*size_valp);
-		if (*valp == NULL) {
-			log_oom(__FILE__, __LINE__, __func__);
-			abort();
-		}
+		if (buffer->head[buffer->processed + *size_valp - 1] != '\0')
+			return SLURM_ERROR;
+		*valp = xmalloc_nz(*size_valp);
 		memcpy(*valp, &buffer->head[buffer->processed],
 		       *size_valp);
 		buffer->processed += *size_valp;
 	} else
 		*valp = NULL;
+
 	return SLURM_SUCCESS;
 }
 
@@ -1006,7 +1004,7 @@ int unpackstr_xmalloc_chooser(char **valp, uint32_t *size_valp, buf_t *buf)
 	if (slurmdbd_conf)
 		return unpackstr_xmalloc_escaped(valp, size_valp, buf);
 	else
-		return unpackmem_xmalloc(valp, size_valp, buf);
+		return unpackstr_xmalloc(valp, size_valp, buf);
 }
 
 
@@ -1064,7 +1062,7 @@ int unpackstr_array(char ***valp, uint32_t *size_valp, buf_t *buffer)
 	if (*size_valp > 0) {
 		*valp = xcalloc(*size_valp + 1, sizeof(char *));
 		for (i = 0; i < *size_valp; i++) {
-			if (unpackmem_xmalloc(&(*valp)[i], &uint32_tmp, buffer)) {
+			if (unpackstr_xmalloc(&(*valp)[i], &uint32_tmp, buffer)) {
 				*size_valp = 0;
 				xfree_array(*valp);
 				return SLURM_ERROR;

@@ -1,0 +1,2 @@
+lib/security/pam_slurm_adopt.a
+lib/security/pam_slurm_adopt.la

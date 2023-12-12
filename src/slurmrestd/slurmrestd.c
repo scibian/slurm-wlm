@@ -38,6 +38,7 @@
 
 #define _GNU_SOURCE
 
+#include <getopt.h>
 #include <grp.h>
 #include <limits.h>
 #include <netdb.h>
@@ -55,21 +56,26 @@
 #include "src/common/data.h"
 #include "src/common/fd.h"
 #include "src/common/log.h"
-#include "src/common/openapi.h"
 #include "src/common/plugrack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/ref.h"
-#include "src/common/select.h"
-#include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/openapi.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/serializer.h"
+
 #include "src/slurmrestd/http.h"
 #include "src/slurmrestd/operations.h"
 #include "src/slurmrestd/rest_auth.h"
+
+#define OPT_LONG_MAX_CON 0x100
 
 decl_static_data(usage_txt);
 
@@ -91,6 +97,8 @@ static List socket_listen = NULL;
 static char *slurm_conf_filename = NULL;
 /* Number of requested threads */
 static int thread_count = 20;
+/* Max number of connections */
+static int max_connections = 124;
 /* User to become once loaded */
 static uid_t uid = 0;
 static gid_t gid = 0;
@@ -105,6 +113,7 @@ static char *oas_specs = NULL;
 bool unshare_sysv = true;
 bool unshare_files = true;
 bool check_user = true;
+bool become_user = false;
 
 extern parsed_host_port_t *parse_host_port(const char *str);
 extern void free_parse_host_port(parsed_host_port_t *parsed);
@@ -115,12 +124,22 @@ static void _sigpipe_handler(int signum)
 	debug5("%s: received SIGPIPE", __func__);
 }
 
+static void _set_max_connections(const char *buffer)
+{
+	max_connections = slurm_atoul(buffer);
+
+	if (max_connections < 1)
+		fatal("Invalid max connection count: %s", buffer);
+
+	debug3("%s: setting max_connections=%d", __func__, max_connections);
+}
+
 static void _parse_env(void)
 {
 	char *buffer = NULL;
 
 	if ((buffer = getenv("SLURMRESTD_DEBUG")) != NULL) {
-		debug_level = atoi(buffer);
+		debug_level = log_string2num(buffer);
 
 		if (debug_level <= 0)
 			fatal("Invalid env SLURMRESTD_DEBUG: %s", buffer);
@@ -144,6 +163,9 @@ static void _parse_env(void)
 		rest_auth = xstrdup(buffer);
 	}
 
+	if ((buffer = getenv("SLURMRESTD_MAX_CONNECTIONS")))
+		_set_max_connections(buffer);
+
 	if ((buffer = getenv("SLURMRESTD_OPENAPI_PLUGINS")) != NULL) {
 		xfree(oas_specs);
 		oas_specs = xstrdup(buffer);
@@ -162,6 +184,8 @@ static void _parse_env(void)
 				unshare_files = false;
 			} else if (!xstrcasecmp(token, "disable_user_check")) {
 				check_user = false;
+			} else if (!xstrcasecmp(token, "become_user")) {
+				become_user = true;
 			} else {
 				fatal("Unexpected value in SLURMRESTD_SECURITY=%s",
 				      token);
@@ -250,10 +274,17 @@ static void _usage(void)
  */
 static void _parse_commandline(int argc, char **argv)
 {
-	int c = 0;
+	static const struct option long_options[] = {
+		{ "help", no_argument, NULL, 'h' },
+		{ "max-connections", required_argument, NULL, OPT_LONG_MAX_CON },
+		{ NULL, 0, NULL, 0 }
+	};
+	int c = 0, option_index = 0;
 
 	opterr = 0;
-	while ((c = getopt(argc, argv, "a:f:g:hs:t:u:vV")) != -1) {
+
+	while ((c = getopt_long(argc, argv, "a:f:g:hs:t:u:vV", long_options,
+				&option_index)) != -1) {
 		switch (c) {
 		case 'a':
 			xfree(rest_auth);
@@ -289,6 +320,9 @@ static void _parse_commandline(int argc, char **argv)
 			print_slurm_version();
 			exit(0);
 			break;
+		case OPT_LONG_MAX_CON:
+			_set_max_connections(optarg);
+			break;
 		default:
 			_usage();
 			exit(1);
@@ -307,6 +341,9 @@ static void _parse_commandline(int argc, char **argv)
  */
 static void _lock_down(void)
 {
+	if ((getuid() == SLURM_AUTH_NOBODY) || (getgid() == SLURM_AUTH_NOBODY))
+		fatal("slurmrestd must not be run as nobody");
+
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1)
 		fatal("Unable to disable new privileges: %m");
 	if (unshare_sysv && unshare(CLONE_SYSVSEM))
@@ -321,19 +358,27 @@ static void _lock_down(void)
 		fatal("Unable to setgid: %m");
 	if (uid != 0 && setuid(uid))
 		fatal("Unable to setuid: %m");
-	if (check_user && (getuid() == 0))
+	if (check_user && !become_user && (getuid() == 0))
 		fatal("slurmrestd should not be run as the root user.");
-	if (check_user && (getgid() == 0))
+	if (check_user && !become_user && (getgid() == 0))
 		fatal("slurmrestd should not be run with the root goup.");
-	if (check_user && (slurm_conf.slurm_user_id == getuid()))
+
+	if (become_user && getuid())
+		fatal("slurmrestd must run as root in become_user mode");
+	else if (check_user && (slurm_conf.slurm_user_id == getuid()))
 		fatal("slurmrestd should not be run as SlurmUser");
-	if (check_user && (gid_from_uid(slurm_conf.slurm_user_id) == getgid()))
+
+	if (become_user && getgid())
+		fatal("slurmrestd must run as root in become_user mode");
+	else if (check_user &&
+		 (gid_from_uid(slurm_conf.slurm_user_id) == getgid()))
 		fatal("slurmrestd should not be run with SlurmUser's group.");
 }
 
 /* simple wrapper to hand over operations router in http context */
-static void *_setup_http_context(con_mgr_fd_t *con)
+static void *_setup_http_context(con_mgr_fd_t *con, void *arg)
 {
+	xassert(operations_router == arg);
 	return setup_http_context(con, operations_router);
 }
 
@@ -398,19 +443,21 @@ int main(int argc, char **argv)
 
 	run_mode.listen = !list_is_empty(socket_listen);
 
-	if (slurm_conf_init(slurm_conf_filename))
-		fatal("Unable to load Slurm configuration");
+	slurm_init(slurm_conf_filename);
 
 	if (thread_count < 2)
 		fatal("Request at least 2 threads for processing");
 	if (thread_count > 1024)
 		fatal("Excessive thread count");
 
-	if (data_init(NULL, NULL))
+	if (data_init())
 		fatal("Unable to initialize data static structures");
 
+	if (serializer_g_init(NULL, NULL))
+		fatal("Unable to initialize serializers");
+
 	if (!(conmgr = init_con_mgr((run_mode.listen ? thread_count : 1),
-				    callbacks)))
+				    max_connections, callbacks)))
 		fatal("Unable to initialize connection manager");
 
 	if (init_operations())
@@ -460,7 +507,7 @@ int main(int argc, char **argv)
 				      auth_plugin_types[i]);
 	}
 
-	if (init_rest_auth(auth_plugin_handles, auth_plugin_count))
+	if (init_rest_auth(become_user, auth_plugin_handles, auth_plugin_count))
 		fatal("Unable to initialize rest authentication");
 
 	if (oas_specs && !xstrcasecmp(oas_specs, "list")) {
@@ -492,9 +539,9 @@ int main(int argc, char **argv)
 		debug("Interactive mode activated (TTY detected on STDIN)");
 
 	if (!run_mode.listen) {
-		if ((rc = con_mgr_process_fd(conmgr, STDIN_FILENO,
+		if ((rc = con_mgr_process_fd(conmgr, CON_TYPE_RAW, STDIN_FILENO,
 					     STDOUT_FILENO, conmgr_events, NULL,
-					     0)))
+					     0, operations_router)))
 			fatal("%s: unable to process stdin: %s",
 			      __func__, slurm_strerror(rc));
 
@@ -503,8 +550,8 @@ int main(int argc, char **argv)
 	} else if (run_mode.listen) {
 		mode_t mask = umask(0);
 
-		if (con_mgr_create_sockets(conmgr, socket_listen,
-					   conmgr_events))
+		if (con_mgr_create_sockets(conmgr, CON_TYPE_RAW, socket_listen,
+					   conmgr_events, operations_router))
 			fatal("Unable to create sockets");
 
 		umask(mask);
@@ -532,6 +579,7 @@ int main(int argc, char **argv)
 	openapi_state = NULL;
 	free_con_mgr(conmgr);
 
+	serializer_g_fini();
 	data_fini();
 	for (size_t i = 0; i < auth_plugin_count; i++) {
 		plugrack_release_by_type(auth_rack, auth_plugin_types[i]);
@@ -544,9 +592,7 @@ int main(int argc, char **argv)
 	auth_rack = NULL;
 
 	xfree(auth_plugin_handles);
-	select_g_fini();
-	slurm_auth_fini();
-	slurm_conf_destroy();
+	slurm_fini();
 	log_fini();
 
 	/* send parsing RC if there were no higher level errors */

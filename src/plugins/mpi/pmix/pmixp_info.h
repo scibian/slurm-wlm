@@ -73,6 +73,7 @@ typedef struct {
 	int timeout;
 	char *cli_tmpdir, *cli_tmpdir_base;
 	char *lib_tmpdir;
+	char *client_lib_tmpdir; /* path to lib_tmpdir on client */
 	char *server_addr_unfmt;
 	char *spool_dir;
 	uid_t uid;
@@ -124,12 +125,21 @@ static inline char *pmixp_info_tmpdir_lib(void)
 	return _pmixp_job_info.lib_tmpdir;
 }
 
+/* client Lib tempdir */
+static inline char *_pmixp_info_client_tmpdir_lib(void)
+{
+	if (_pmixp_job_info.client_lib_tmpdir)
+		return _pmixp_job_info.client_lib_tmpdir;
+	else
+		return pmixp_info_tmpdir_lib();
+}
+
 /* Dealing with I/O */
 void pmixp_info_io_set(eio_handle_t *h);
 eio_handle_t *pmixp_info_io(void);
 
 /* Job information */
-int pmixp_info_set(const stepd_step_rec_t *job, char ***env);
+int pmixp_info_set(const stepd_step_rec_t *step, char ***env);
 int pmixp_info_free(void);
 
 static inline uint32_t pmixp_info_jobuid(void)

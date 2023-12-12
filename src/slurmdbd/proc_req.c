@@ -44,14 +44,14 @@
   #include <sys/prctl.h>
 #endif
 
-#include "src/common/slurm_auth.h"
-#include "src/common/gres.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/gres.h"
 #include "src/common/macros.h"
 #include "src/common/pack.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/slurmdbd_pack.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/timers.h"
@@ -163,8 +163,41 @@ static void _add_registered_cluster(slurmdbd_conn_t *db_conn)
 		}
 	}
 	list_iterator_destroy(itr);
-	if (!slurmdbd_conn)
+	if (!slurmdbd_conn) {
+		/* This version check can go away 2 versions after 23.02 */
+		if (db_conn->conn->version >= SLURM_23_02_PROTOCOL_VERSION) {
+			db_conn->conn_send =
+				xmalloc(sizeof(slurm_persist_conn_t));
+			db_conn->conn_send->cluster_name =
+				xstrdup(db_conn->conn->cluster_name);
+			db_conn->conn_send->fd = PERSIST_CONN_NOT_INITED;
+			db_conn->conn_send->persist_type =
+				PERSIST_TYPE_ACCT_UPDATE;
+			db_conn->conn_send->my_port = slurmdbd_conf->dbd_port;
+			db_conn->conn_send->rem_host =
+				xstrdup(db_conn->conn->rem_host);
+			db_conn->conn_send->rem_port = db_conn->conn->rem_port;
+			db_conn->conn_send->version = db_conn->conn->version;
+			db_conn->conn_send->shutdown = &shutdown_time;
+			/* we want timeout to be zero */
+			db_conn->conn_send->timeout = 0;
+			db_conn->conn_send->r_uid = SLURM_AUTH_UID_ANY;
+			db_conn->conn_send->flags |= PERSIST_FLAG_RECONNECT;
+			/*
+			 * We can't open a pipe back to the slurmctld right
+			 * now, the slurmctld might just be starting up and the
+			 * rpc_mgr might not be listening yet, so we will handle
+			 * this in the mysql plugin on the first commit.
+			 */
+			/* if (slurm_persist_conn_open(db_conn->conn_send) != */
+			/*     SLURM_SUCCESS) { */
+			/* 	error("persist_conn_send: Unable to open connection to cluster %s who is actively talking to us.", */
+			/* 	      db_conn->conn->cluster_name); */
+			/* } */
+		}
+
 		list_append(registered_clusters, db_conn);
+	}
 	slurm_mutex_unlock(&registered_lock);
 }
 
@@ -1371,7 +1404,7 @@ static int _job_complete(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 {
 	dbd_job_comp_msg_t *job_comp_msg = msg->data;
 	job_record_t job;
-	struct job_details details;
+	job_details_t details;
 	int rc = SLURM_SUCCESS;
 	char *comment = NULL;
 
@@ -1384,7 +1417,7 @@ static int _job_complete(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	}
 
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 
 	job.admin_comment = job_comp_msg->admin_comment;
 	job.assoc_id = job_comp_msg->assoc_id;
@@ -1394,6 +1427,8 @@ static int _job_complete(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	job.derived_ec = job_comp_msg->derived_ec;
 	job.end_time = job_comp_msg->end_time;
 	job.exit_code = job_comp_msg->exit_code;
+	job.extra = job_comp_msg->extra;
+	job.failed_node = job_comp_msg->failed_node;
 	job.job_id = job_comp_msg->job_id;
 	job.job_state = job_comp_msg->job_state;
 	job.requid = job_comp_msg->req_uid;
@@ -1468,7 +1503,7 @@ static int _job_heavy(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 {
 	dbd_job_heavy_msg_t *job_heavy_msg = msg->data;
 	job_record_t job;
-	struct job_details details;
+	job_details_t details;
 	char *comment = NULL;
 	int rc;
 
@@ -1488,7 +1523,7 @@ static int _job_heavy(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	       job_heavy_msg->env ? "yes" : "no");
 
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 
 	if (job_heavy_msg->env) {
 		details.env_sup = xmalloc(sizeof(*details.env_sup));
@@ -1515,7 +1550,7 @@ static int _job_suspend(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 {
 	dbd_job_suspend_msg_t *job_suspend_msg = msg->data;
 	job_record_t job;
-	struct job_details details;
+	job_details_t details;
 	int rc = SLURM_SUCCESS;
 	char *comment = NULL;
 
@@ -1532,7 +1567,7 @@ static int _job_suspend(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	       job_state_string(job_suspend_msg->job_state));
 
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 
 	job.assoc_id = job_suspend_msg->assoc_id;
 	if (job_suspend_msg->db_index != NO_VAL64)
@@ -2147,11 +2182,11 @@ static void _process_job_start(slurmdbd_conn_t *slurmdbd_conn,
 			       dbd_id_rc_msg_t *id_rc_msg)
 {
 	job_record_t job, *job_ptr;
-	struct job_details details;
+	job_details_t details;
 	job_array_struct_t array_recs;
 
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 	memset(&array_recs, 0, sizeof(job_array_struct_t));
 	memset(id_rc_msg, 0, sizeof(dbd_id_rc_msg_t));
 
@@ -2174,6 +2209,7 @@ static void _process_job_start(slurmdbd_conn_t *slurmdbd_conn,
 	job.het_job_offset = job_start_msg->het_job_offset;
 	job.job_id = job_start_msg->job_id;
 	job.job_state = job_start_msg->job_state;
+	job.licenses = _replace_double_quotes(job_start_msg->licenses);
 	job.mcs_label = _replace_double_quotes(job_start_msg->mcs_label);
 	job.name = _replace_double_quotes(job_start_msg->name);
 	job.nodes = job_start_msg->nodes;
@@ -2331,6 +2367,7 @@ static int _register_ctld(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 		slurmdb_init_assoc_rec(&root_assoc, 0);
 		cluster.root_assoc = &root_assoc;
 		cluster.name = slurmdbd_conn->conn->cluster_name;
+		cluster.flags |= CLUSTER_FLAG_REGISTER;
 		rc = acct_storage_g_add_clusters(slurmdbd_conn->db_conn, *uid,
 						 add_list);
 		if (rc == ESLURM_ACCESS_DENIED)
@@ -2974,7 +3011,7 @@ static int _step_complete(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	dbd_step_comp_msg_t *step_comp_msg = msg->data;
 	step_record_t step;
 	job_record_t job;
-	struct job_details details;
+	job_details_t details;
 	int rc = SLURM_SUCCESS;
 	char *comment = NULL;
 
@@ -2991,7 +3028,7 @@ static int _step_complete(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 
 	memset(&step, 0, sizeof(step_record_t));
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 
 	job.assoc_id = step_comp_msg->assoc_id;
 	if (step_comp_msg->db_index != NO_VAL64)
@@ -3043,7 +3080,7 @@ static int _step_start(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 	dbd_step_start_msg_t *step_start_msg = msg->data;
 	step_record_t step;
 	job_record_t job;
-	struct job_details details;
+	job_details_t details;
 	slurm_step_layout_t layout;
 	int rc = SLURM_SUCCESS;
 	char *comment = NULL;
@@ -3062,7 +3099,7 @@ static int _step_start(slurmdbd_conn_t *slurmdbd_conn, persist_msg_t *msg,
 
 	memset(&step, 0, sizeof(step_record_t));
 	memset(&job, 0, sizeof(job_record_t));
-	memset(&details, 0, sizeof(struct job_details));
+	memset(&details, 0, sizeof(job_details_t));
 	memset(&layout, 0, sizeof(slurm_step_layout_t));
 
 	job.assoc_id = step_start_msg->assoc_id;
@@ -3220,6 +3257,18 @@ extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
 	DEF_TIMERS;
 	START_TIMER;
 
+	if (slurm_conf.debug_flags & DEBUG_FLAG_PROTOCOL) {
+		char *p = slurmdbd_msg_type_2_str(msg->msg_type, 1);
+		if (slurmdbd_conn->conn->cluster_name) {
+			info("%s: received opcode %s from persist conn on (%s)%s uid %u",
+			     __func__, p, slurmdbd_conn->conn->cluster_name,
+			     slurmdbd_conn->conn->rem_host, *uid);
+		} else {
+			info("%s: received opcode %s from %s uid %u",
+			     __func__, p, slurmdbd_conn->conn->rem_host, *uid);
+		}
+	}
+
 	switch (msg->msg_type) {
 	case REQUEST_PERSIST_INIT:
 		rc = _unpack_persist_init(slurmdbd_conn, msg, out_buffer, uid);
@@ -3373,6 +3422,11 @@ extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
 		break;
 	case DBD_REGISTER_CTLD:
 		rc = _register_ctld(slurmdbd_conn, msg, out_buffer, uid);
+		/*
+		 * We don't want/need to send updates to this cluster that just
+		 * registered since it's rpc manager might not be up yet.
+		 */
+		slurmdbd_conn->conn->flags |= PERSIST_FLAG_DONT_UPDATE_CLUSTER;
 		break;
 	case DBD_REMOVE_ACCOUNTS:
 		rc = _remove_accounts(slurmdbd_conn, msg, out_buffer, uid);
@@ -3445,8 +3499,9 @@ extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
 		error("CONN:%d Security violation, %s",
 		      slurmdbd_conn->conn->fd,
 		      slurmdbd_msg_type_2_str(msg->msg_type, 1));
-	else if (slurmdbd_conn->conn->rem_port
-		 && !slurmdbd_conf->commit_delay) {
+	else if (slurmdbd_conn->conn->rem_port &&
+		 (!slurmdbd_conf->commit_delay ||
+		  (msg->msg_type == DBD_REGISTER_CTLD))) {
 		/* If we are dealing with the slurmctld do the
 		   commit (SUCCESS or NOT) afterwards since we
 		   do transactions for performance reasons.
@@ -3454,6 +3509,12 @@ extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
 		*/
 		acct_storage_g_commit(slurmdbd_conn->db_conn, 1);
 	}
+	/*
+	 * Clear DONT_UPDATE flag now so that it's tied to this transaction
+	 * only. Can't clear in p_commit() because if CommitDelay is set, we may
+	 * not send needed updates later.
+	 */
+	slurmdbd_conn->conn->flags &= ~PERSIST_FLAG_DONT_UPDATE_CLUSTER;
 
 	END_TIMER;
 

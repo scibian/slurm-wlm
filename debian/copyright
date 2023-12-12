@@ -6,7 +6,7 @@ Source: https://slurm.schedmd.com
 Files: *
 Copyright: 2001-2009 The Regents of the University of California
            2004,2008-2011 Lawrence Livermore National Security, LLC
-           2010-2021 SchedMD LLC
+           2010-2023 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
 
 Files: debian/*
@@ -32,18 +32,10 @@ Files: src/api/pmi_server.c
        src/sattach/opt.h
        src/slurmd/slurmstepd/step_terminate_monitor.c
        src/slurmd/slurmstepd/step_terminate_monitor.h
-       src/srun/libsrun/step_ctx.h
+       src/srun/step_ctx.h
        src/sview/submit_info.c
        src/sview/sview.h
        testsuite/expect/regression.py
-       testsuite/slurm_unit/api/manual/cancel-tst.c
-       testsuite/slurm_unit/api/manual/complete-tst.c
-       testsuite/slurm_unit/api/manual/job_info-tst.c
-       testsuite/slurm_unit/api/manual/node_info-tst.c
-       testsuite/slurm_unit/api/manual/partition_info-tst.c
-       testsuite/slurm_unit/api/manual/reconfigure-tst.c
-       testsuite/slurm_unit/api/manual/submit-tst.c
-       testsuite/slurm_unit/api/manual/update_config-tst.c
 Copyright: 2002-2007 The Regents of the University of California
 License: GPL-2+
 
@@ -130,8 +122,7 @@ Files: testsuite/expect/test1.102
 Copyright: 2015-2016 CEA/DAM/DIF
 License: GPL-2+
 
-Files: src/common/slurm_mcs.c
-       src/common/slurm_mcs.h
+Files: src/interfaces/mcs.?
        src/common/xhash.c
        src/common/xhash.h
        src/plugins/mcs/account/mcs_account.c
@@ -160,14 +151,10 @@ License: GPL-2+ with OpenSSL exception
 Files: src/api/resource_functions.c
        src/common/cpu_frequency.c
        src/common/cpu_frequency.h
-       src/common/slurm_acct_gather_filesystem.c
-       src/common/slurm_acct_gather_filesystem.h
-       src/common/slurm_acct_gather_interconnect.c
-       src/common/slurm_acct_gather_interconnect.h
-       src/common/slurm_acct_gather_profile.c
-       src/common/slurm_acct_gather_profile.h
-       src/common/slurm_route.c
-       src/common/slurm_route.h
+       src/interfaces/acct_gather_filesystem.?
+       src/interfaces/acct_gather_interconnect.?
+       src/interfaces/acct_gather_profile.?
+       src/interfaces/route.?
        src/plugins/accounting_storage/mysql/as_mysql_resource.c
        src/plugins/accounting_storage/mysql/as_mysql_resource.h
        src/plugins/acct_gather_profile/hdf5/hdf5_api.c
@@ -233,8 +220,6 @@ Files: src/common/proc_args.h
        src/common/slurm_resource_info.h
        src/common/slurm_rlimits_info.c
        src/common/slurm_rlimits_info.h
-       src/common/slurm_selecttype_info.c
-       src/common/slurm_selecttype_info.h
        src/plugins/select/cons_res/dist_tasks.h
        src/plugins/select/cons_res/job_test.h
        src/plugins/select/cons_res/select_cons_res.c
@@ -281,19 +266,7 @@ Copyright: 2013,2014,2016 SchedMD LLC
            2013,2014,2016 Cray Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: testsuite/expect/test29.1
-       testsuite/expect/test29.2
-       testsuite/expect/test29.3
-       testsuite/expect/test29.4
-       testsuite/expect/test29.5
-       testsuite/expect/test29.6
-       testsuite/expect/test29.7
-       testsuite/expect/test29.8
-Copyright: 2011-2014 SchedMD LLC
-License: None
-
-Files: src/common/slurm_jobacct_gather.c
-       src/common/slurm_jobacct_gather.h
+Files: src/interfaces/jobacct_gather.?
        src/plugins/acct_gather_energy/none/acct_gather_energy_none.c
        src/plugins/jobacct_gather/linux/jobacct_gather_linux.c
        src/plugins/jobacct_gather/none/jobacct_gather_none.c
@@ -330,9 +303,7 @@ Files: auxdir/x_ac_hpe_slingshot.m4
 Copyright: 2021 Hewlett Packard Enterprise Development LP
 License: None
 
-Files: src/plugins/switch/hpe_slingshot/config.c
-       src/plugins/switch/hpe_slingshot/setup_nic.c
-       src/plugins/switch/hpe_slingshot/switch_hpe_slingshot.?
+Files: src/plugins/switch/hpe_slingshot/*.?
 Copyright: 2021-2022 Hewlett Packard Enterprise Development LP
 License: GPL-2+ with OpenSSL exception
 
@@ -396,10 +367,8 @@ Files: src/plugins/acct_gather_energy/ipmi/acct_gather_energy_ipmi_config.c
 Copyright: 2012,2015 Bull - Thomas Cadeau
 License: GPL-2+ with OpenSSL exception
 
-Files: src/common/slurm_acct_gather_energy.c
-       src/common/slurm_acct_gather_energy.h
-       src/common/slurm_ext_sensors.c
-       src/common/slurm_ext_sensors.h
+Files: src/interfaces/acct_gather_energy.?
+       src/interfaces/ext_sensors.?
 Copyright: 2012-2013 Bull-HN-PHX
 License: GPL-2+ with OpenSSL exception
 
@@ -441,8 +410,7 @@ Files: src/plugins/ext_sensors/none/ext_sensors_none.c
 Copyright: 2013 Bull - Thomas Cadeau/Martin Perry/Yiannis Georgiou
 License: GPL-2+ with OpenSSL exception
 
-Files: src/common/slurm_topology.c
-       src/common/slurm_topology.h
+Files: src/interfaces/topology.?
        src/plugins/topology/hypercube/topology_hypercube.c
 Copyright: 2009-2010 Lawrence Livermore National Security, LLC
            2014 Silicon Graphics, Inc
@@ -734,10 +702,6 @@ Files: contribs/slurm_completion_help/slurm_completion.sh
 Copyright: 2012 Damien François
 License: GPL-2+ with OpenSSL exception
 
-Files: testsuite/dejagnu.h
-Copyright: 2000-2002,2004,2006 Free Software Foundation, Inc
-License: GPL-3+
-
 Files: testsuite/expect/inc3.11.9
 Copyright: 2013 Barcelona Supercomputing Center
 License: GPL-2+
@@ -787,8 +751,9 @@ Files: src/plugins/openapi/*
 Copyright: Copyright (C) 2019-2020 SchedMD LLC
 License: GPL-2+ with OpenSSL exception or Apache-2.0
 
-Files: src/plugins/openapi/v0.0.38/reservations.c
-Copyright: 2020 UT-Battelle, LLC
+Files: src/plugins/openapi/v0.0.3?/reservations.c
+       src/sdiag/sdiag.h
+Copyright: 2019,2020 UT-Battelle, LLC
 License: GPL-2+ with OpenSSL exception
 
 License: GPL-2+ with OpenSSL exception

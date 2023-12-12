@@ -1,4 +1,4 @@
-.TH scontrol "1" "Slurm Commands" "January 2023" "Slurm Commands"
+.TH scontrol "1" "Slurm Commands" "June 2023" "Slurm Commands"
 
 .SH "NAME"
 scontrol \- view or modify Slurm configuration and state.
@@ -69,6 +69,13 @@ unavailable to user's group will be displayed (i.e. this is the default behavior
 .IP
 
 .TP
+\fB\-\-json\fR
+Formats information from the \fIshow\fR command as JSON. All information is
+dumped, even if it would normally not be. Filtering arguments are still used.
+This option implicitly sets the \fB\-\-details\fR option.
+.IP
+
+.TP
 \fB\-\-local\fR
 Show only information local to this cluster. Ignore other clusters in the
 federated if a member of one. Overrides \-\-federation.
@@ -96,13 +103,20 @@ Attempt to update a job as user <uid> instead of the invoking user id.
 
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
-Print detailed event logging. Multiple \fB\-v\fR's will further increase
+Print detailed event logging. Multiple '\fB\-v\fR's will further increase
 the verbosity of logging. By default only errors will be displayed.
 .IP
 
 .TP
 \fB\-V\fR , \fB\-\-version\fR
 Print version information and exit.
+.IP
+
+.TP
+\fB\-\-yaml\fR
+Formats information from the \fIshow\fR command as YAML. All information is
+dumped, even if it would normally not be. Filtering arguments are still used.
+This option implicitly sets the \fB\-\-details\fR option.
 .IP
 
 .SH "COMMANDS"
@@ -243,7 +257,7 @@ The reason will be appended with: "reboot issued" when the reboot is issued;
 "reboot complete" when the node registers and has a "nextstate" of "DOWN"; or
 "reboot timed out" when the node fails to register within \fBResumeTimeout\fR.
 You must specify either a list of nodes or that ALL nodes are to be rebooted.
-NOTE: By default, this command does not prevent additional jobs from being
+\fBNOTE\fR: By default, this command does not prevent additional jobs from being
 scheduled on any nodes before reboot.
 To do this, you can either use the "ASAP" option or explicitly drain the nodes
 beforehand.
@@ -324,7 +338,7 @@ Resume a previously suspended job.
 The job_list argument is a comma separated list of job IDs.
 Also see \fBsuspend\fR.
 
-\fBNOTE:\fR A suspended job releases its CPUs for allocation to other jobs.
+\fBNOTE\fR: A suspended job releases its CPUs for allocation to other jobs.
 Resuming a previously suspended job may result in multiple jobs being
 allocated the same CPUs, which could trigger gang scheduling with some
 configurations or severe degradation in performance with other configurations.
@@ -351,7 +365,7 @@ SlurmSchedLogLevel parameter is present.
 .IP
 
 .TP
-\fBsetdebug\fR <\fILEVEL\fR>
+\fBsetdebug\fR <\fILEVEL\fR> [nodes=<\fINODES\fR>]
 Change the debug level of the slurmctld daemon for all active logging channels
 not originally configured off (quiet).
 \fILEVEL\fP may be an integer value between zero and nine (using the
@@ -359,13 +373,21 @@ same values as \fISlurmctldDebug\fP in the \fIslurm.conf\fP file) or
 the name of the most detailed message type to be printed:
 "quiet", "fatal", "error", "info", "verbose", "debug", "debug2", "debug3",
 "debug4", or "debug5".
-This value is temporary and will be overwritten whenever the slurmctld
-daemon reads the slurm.conf configuration file (e.g. when the daemon
-is restarted or \fBscontrol reconfigure\fR is executed).
+This value is temporary, and will be overwritten whenever the daemon reads the
+slurm.conf configuration file. (Such as when the daemon is restarted or
+\fBscontrol reconfigure\fR is executed).
+.IP
+.RS
+.TP
+\fBnodes\fR=<\fINodeName\fR>
+If set, the request to change debug level is sent to the slurmd processes on
+the nodes instead of to the slurmctld. A node range expression may be used for
+NodeName.
+.RE
 .IP
 
 .TP
-\fBsetdebugflags\fR [+|\-]<\fIFLAG\fR>
+\fBsetdebugflags\fR {+|\-}<\fIFLAG\fR> [{+|\-}<\fIFLAG\fR>] [nodes=<\fINODES\fR>]
 Add or remove DebugFlags of the slurmctld daemon.
 See "man slurm.conf" for a list of supported DebugFlags.
 
@@ -374,6 +396,14 @@ restarting the slurmctld daemon, which would set DebugFlags based upon the
 contents of the slurm.conf configuration file or the \fBSLURM_DEBUG_FLAGS\fR
 environment variable. The environment variable takes precedence over the
 setting in the slurm.conf.
+.IP
+.RS
+.TP
+\fBnodes\fR=<\fINodeName\fR>
+The argument is optional and if used the request to change debug level
+is sent to slurmd instead of slurmctld. A node range expression may be
+used for NodeName.
+.RE
 .IP
 
 .TP
@@ -465,7 +495,8 @@ Shows configured frontend nodes.
 \fBhostlist\fR
 Takes a list of host names and prints the hostlist expression for them (the
 inverse of \fBhostnames\fR). \fBhostlist\fR can also take the absolute pathname
-of a file (beginning with the character '/') containing a list of hostnames.
+of a file (beginning with the character '/') containing a list of hostnames,
+or a single '-' to have it read from stdin directly.
 Multiple node names may be specified using simple node range expressions (e.g.
 "lx[10\-20]"). By default \fBhostlist\fR does not sort the node list or make it
 unique (e.g. tux2,tux1,tux2 = tux[2,1\-2]). If you wanted a sorted list use
@@ -530,6 +561,8 @@ Displays statistics for the slurmd running on the current node.
 Displays statistics about all job steps by default. If an optional jobid
 is specified, details about steps for just that job will be displayed.
 If a jobid.stepid is specified, details for just that step will be displayed.
+If a container-id=<\fIid\fR> is specified, then the first matching step with
+the given container-id will be displayed.
 .IP
 
 .TP
@@ -629,6 +662,18 @@ the \fIreconfigure\fP command (described above).
 .IP
 
 .TP
+\fBupdate\fR <SuspendExc*>[=|+=|\-=]<\fILIST\fR>
+Update \fISuspendExcNodes\fP, \fISuspendExcParts\fP, or \fISuspendExcStates\fP.
+<\fILIST\fR> is either a NodeList, list of partitions, or list of node states
+respectively. Use +=/\-= to add/remove nodes, partitions, or states to/from the
+currently configured list. Use = to replace the current list.
+SuspendExcNodes does not support "+="/"\-=" when the ":" option is used,
+however, direct assignment "=" is always supported.
+Consider using "scontrol show config | grep SuspendExc" to see current state of
+these settings.
+.IP
+
+.TP
 \fBversion\fR
 Display the version number of scontrol being executed.
 .IP
@@ -666,7 +711,7 @@ created.
 .IP
 
 .SH "INTERACTIVE COMMANDS"
-\fBNOTE:\fP
+\fBNOTE\fR:
 All commands listed below can be used in the interactive mode, but \fINOT\fP
 on the initial command line.
 
@@ -888,6 +933,12 @@ actual end time.
 Set the job's list of excluded node. Multiple node names may be
 specified using simple node range expressions (e.g. "lx[10\-20]").
 Value may be cleared with blank data value, "ExcNodeList=".
+.IP
+
+.TP
+\fBExtra\fR=<\fIspec\fR>
+An arbitrary string enclosed in double quotes if using spaces or some
+special characters.
 .IP
 
 .TP
@@ -1129,7 +1180,7 @@ Change the job's requested threads count.
 .IP
 
 .TP
-\fBIRequeue\fR={0|1}
+\fBRequeue\fR={0|1}
 Stipulates whether a job should be requeued after a node failure: 0
 for no, 1 for yes.
 .IP
@@ -1155,8 +1206,27 @@ Only privileged users can modify the value.
 .IP
 
 .TP
+\fBStdErr\fR=<\fIfilepath\fR>
+Set the batch job's stderr file path.
+Value may be reset to job default with blank data value, "StdErr=".
+
+\fBNOTE\fR: By default, StdErr will be merged into StdOut.
+.IP
+
+.TP
+\fBStdIn\fR=<\fIfilepath\fR>
+Set the batch job's stdin file path.
+Value may be reset to job default with blank data value, "StdIn=".
+
+\fBNOTE\fR: By default, StdIn will be '/dev/null'.
+.IP
+
+.TP
 \fBStdOut\fR=<\fIfilepath\fR>
 Set the batch job's stdout file path.
+Value may be reset to job default with blank data value, "StdOut=".
+
+\fBNOTE\fR: By default, StdOut will be based on the \fIJobId\fP.
 .IP
 
 .TP
@@ -1363,7 +1433,7 @@ Count of desired sockets per node
 The time  and  date stamp (in localtime) the job was submitted.
 The format of the output is identical to that of the EndTime field.
 
-NOTE: If a job is requeued, the submit time is reset.
+\fBNOTE\fR: If a job is requeued, the submit time is reset.
 To obtain the original submit time it is necessary
 to use the "sacct \-j <job_id[.<step_id>]" command also
 designating the \-D or \-\-duplicate option to display all
@@ -1537,6 +1607,18 @@ Use quotes to enclose a reason having more than one word.
 .IP
 
 .TP
+\fBResumeAfter\fR=<\fIseconds\fR>
+Schedule a node state resume after this amount of seconds, when its state is
+updated to "DOWN" or "DRAIN".
+Upon state resume, the node's state will be changed from \fBDRAIN\fR,
+\fBDRAINING\fR, \fBDOWN\fR or \fBREBOOT\fR to \fBIDLE\fR and \fBNoResp\fR.
+slurmctld will then attempt to contact slurmd to request that the node
+register itself.
+
+\fBNOTE\fR: A value of \-1 will unschedule the node state resume.
+.IP
+
+.TP
 \fBState\fR=<\fIstate\fR>
 Assign one of the following states/actions to the node(s) specified by the
 update command.
@@ -1619,7 +1701,7 @@ Not an actual node state, but will change a node state from \fBDRAIN\fR,
 slurmctld will then attempt to contact slurmd to request that the node
 register itself. Once registered, the node state will then remove the
 \fBNoResp\fR flag and will resume normal operations. It will also clear the
-\fBPOWERING_DOWN\fR state of a node and make it eligible to be allocted.
+\fBPOWERING_DOWN\fR state of a node and make it eligible to be allocated.
 .IP
 
 .TP
@@ -1956,9 +2038,9 @@ To permit all groups to use the partition specify "AllowGroups=ALL".
 
 .TP
 \fBAllowQOS\fR=<\fIname\fR>
-Identify the QOS's which may use this partition.
-Multiple QOS's may be specified in a comma separated list.
-To permit all QOS's to use the partition specify "AllowQOS=ALL".
+Identify the QOSs which may use this partition.
+Multiple QOSs may be specified in a comma separated list.
+To permit all QOSs to use the partition specify "AllowQOS=ALL".
 .IP
 
 .TP
@@ -2011,8 +2093,8 @@ Multiple Accounts may be specified in a comma separated list.
 
 .TP
 \fBDenyQOS\fR=<\fIname\fR>
-Identify the QOS's which should be denied access to this partition.
-Multiple QOS's may be specified in a comma separated list.
+Identify the QOSs which should be denied access to this partition.
+Multiple QOSs may be specified in a comma separated list.
 .IP
 
 .TP
@@ -2117,6 +2199,12 @@ pending job using the scontrol command will allow that job to be scheduled.
 .IP
 
 .TP
+\fBMaxCPUsPerSocket\fR=<\fIcount\fR>
+Set the maximum number of CPUs that can be allocated per socket to all jobs
+in this partition.
+.IP
+
+.TP
 \fBNodes\fR=<\fIname\fR>
 Identify the node(s) to be associated with this partition. Multiple node names
 may be specified using simple node range expressions (e.g. "lx[10\-20]").
@@ -2155,6 +2243,16 @@ partition\-specific \fIOverTimeLimit\fP value.
 .TP
 \fBPartitionName\fR=<\fIname\fR>
 Identify the partition to be updated. This specification is required.
+.IP
+
+.TP
+\fBPowerDownOnIdle\fR
+If set to "YES", then nodes allocated from this partition will immediately be
+requested to power down upon becoming IDLE. A power down request prevents
+further scheduling to the node until it has been put into power save mode by
+\fBSuspendProgram\fR.
+
+Also see \fBSuspendTime\fR.
 .IP
 
 .TP
@@ -2311,7 +2409,7 @@ For example "BurstBuffer=datawarp:2TB" (reserve 2TB of storage plus
 plugins).
 Jobs using this reservation are not restricted to these burst buffer resources,
 but may use these reserved resources plus any which are generally available.
-NOTE: Usually Slurm interprets KB, MB, GB, TB, PB, TB units as powers of 1024,
+\fBNOTE\fR: Usually Slurm interprets KB, MB, GB, TB, PB units as powers of 1024,
 but for Burst Buffers size specifications Slurm supports both IEC/SI formats.
 This is because the CRAY API for managing DataWarps supports both formats.
 .IP
@@ -2373,7 +2471,10 @@ A new reservation must specify one or more resource to be included: NodeCnt,
 Nodes and/or Licenses. A specification of "ALL" will reserve all nodes. Set
 \fIFlags=PART_NODES\fP and \fIPartitionName=\fP in order for changes in the
 nodes associated with a partition to also be reflected in the nodes associated
-with a reservation.
+with a reservation. You can add or remove nodes from an existing reservation by
+adding a '+' or '\-' sign before the '=' sign. It also works to do
+nodes=+lx0,\-lx[2\-4] if you want to remove lx[2\-4] and add lx0 at the same
+time.
 
 \fBNOTE\fR: When updating a reservation, if Nodes and Nodecnt are set
 simultaneously, nodecnt will always be honored. The reservation will get a
@@ -2421,10 +2522,11 @@ second values are rounded up to the next minute. Output format is always
 \fBPartitionName\fR=<\fIname\fR>
 Partition used to reserve nodes from. This will attempt to allocate all
 nodes in the specified partition unless you request fewer resources than
-are available with \fICoreCnt\fR, \fINodeCnt\fR or \fITRES\fR. Jobs will be
-allowed to use this reservation even if running in a different partition. There
-only needs to be overlapping nodes from that different partition and the nodes
-used in the reservation.
+are available with \fICoreCnt\fR, \fINodeCnt\fR or \fITRES\fR. If no partition
+is specified at submit time, this partition will override the job's default
+partition. Jobs explicitly requesting a different partition will still be
+allowed to use this reservation as long as there are enough overlapping nodes
+between both partitions to allocate the job.
 .IP
 
 .TP
@@ -2432,7 +2534,7 @@ used in the reservation.
 Flags associated with the reservation.
 You can add or remove individual flags from an existing reservation by
 adding a '+' or '\-' sign before the '=' sign.  For example:
-Flags\-=DAILY (NOTE: this shortcut is not supported for all flags).
+Flags\-=DAILY (\fBNOTE\fR: This shortcut is not supported for all flags).
 Currently supported flags include:
 .IP
 .RS
@@ -2491,7 +2593,8 @@ See \fIANY_NODES\fR.
 \fBMAINT\fR
 Maintenance mode, receives special accounting treatment.
 This reservation is permitted to use resources that are already in another
-reservation.
+reservation. The MAINT flag behaves similar to STATIC_ALLOC (see below) in
+that it will not replace nodes once they are set.
 .IP
 
 .TP
@@ -2620,9 +2723,9 @@ to use the reservation.
 Unlike users groups do not allow denied access to reservations.
 You can add or remove individual groups from an existing reservation by
 using the update command and adding a '+' or '\-' sign before the '=' sign.
-NOTE: Groups and Users are mutually exclusive in reservations, if you want to
-switch between the 2 you must update the reservation with a group='' or user=''
-and fill in the opposite with the appropriate setting.
+\fBNOTE\fR: Groups and Users are mutually exclusive in reservations, if you
+want to switch between the 2 you must update the reservation with a group=''
+or user='' and fill in the opposite with the appropriate setting.
 .IP
 
 .TP
@@ -2647,9 +2750,9 @@ using the update command and adding a '+' or '\-' sign before the '=' sign.
 If users are denied access to a reservation (user name preceded by a '\-'),
 then all other users are implicitly allowed to use the reservation and it is
 not possible to also explicitly specify allowed users.
-NOTE: Groups and Users are mutually exclusive in reservations, if you want to
-switch between the 2 you must update the reservation with a group='' or user=''
-and fill in the opposite with the appropriate setting.
+\fBNOTE\fR: Groups and Users are mutually exclusive in reservations, if you
+want to switch between the 2 you must update the reservation with a group=''
+or user='' and fill in the opposite with the appropriate setting.
 .IP
 
 .TP

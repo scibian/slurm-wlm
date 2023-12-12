@@ -86,7 +86,6 @@
 #include "src/common/macros.h"
 #include "src/common/parse_time.h"
 #include "src/common/run_command.h"
-#include "src/common/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/uid.h"
@@ -94,6 +93,9 @@
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/job_scheduler.h"
@@ -501,10 +503,10 @@ static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr)
 			log_flag(AGENT, "%s: sending msg_type %s to node %s",
 				 __func__,
 				 rpc_num2string(agent_arg_ptr->msg_type),
-				 thread_ptr[thr_count].nodename);
+				 thread_ptr[0].nodename);
 		} else {
 			thread_ptr[0].nodelist = agent_arg_ptr->hostlist;
-			thread_ptr[thr_count].addr = NULL;
+			thread_ptr[0].addr = NULL;
 			if (slurm_conf.debug_flags & DEBUG_FLAG_AGENT) {
 				char *buf;
 				buf = hostlist_ranged_string_xmalloc(
@@ -1213,7 +1215,6 @@ static void *_thread_per_group_rpc(void *args)
 	list_iterator_destroy(itr);
 
 cleanup:
-	xfree(args);
 	if (!ret_list && (msg_type == REQUEST_SIGNAL_TASKS)) {
 		job_record_t *job_ptr;
 		signal_tasks_msg_t *msg_ptr =
@@ -1228,6 +1229,7 @@ cleanup:
 			unlock_slurmctld(job_write_lock);
 		}
 	}
+	xfree(args);
 	/* handled at end of thread just in case resend is needed */
 	destroy_forward(&msg.forward);
 	slurm_mutex_lock(thread_mutex_ptr);
@@ -1385,7 +1387,7 @@ static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count)
 	slurm_mutex_lock(&retry_mutex);
 	if (retry_list == NULL)
 		retry_list = list_create(_list_delete_retry);
-	(void) list_append(retry_list, (void *) queued_req_ptr);
+	list_append(retry_list, queued_req_ptr);
 	slurm_mutex_unlock(&retry_mutex);
 }
 
@@ -2183,7 +2185,7 @@ extern void mail_job_info(job_record_t *job_ptr, uint16_t mail_type)
 	slurm_mutex_lock(&mail_mutex);
 	if (!mail_list)
 		mail_list = list_create(_mail_free);
-	(void) list_enqueue(mail_list, (void *) mi);
+	list_enqueue(mail_list, mi);
 	slurm_mutex_unlock(&mail_mutex);
 	return;
 }
@@ -2349,7 +2351,7 @@ extern int retry_list_size(void)
 static void _reboot_from_ctld(agent_arg_t *agent_arg_ptr)
 {
 	char *argv[4], *pname;
-	pid_t child;
+	uint32_t argc;
 	int rc, status = 0;
 	reboot_msg_t *reboot_msg = agent_arg_ptr->msg_args;
 
@@ -2369,32 +2371,26 @@ static void _reboot_from_ctld(agent_arg_t *agent_arg_ptr)
 		argv[0] = slurm_conf.reboot_program;
 	argv[1] = hostlist_deranged_string_xmalloc(agent_arg_ptr->hostlist);
 	if (reboot_msg && reboot_msg->features) {
+		argc = 4;
 		argv[2] = reboot_msg->features;
 		argv[3] = NULL;
-	} else
-		argv[2] = NULL;
-
-	child = fork();
-	if (child == 0) {
-		closeall(0);
-		(void) setpgid(0, 0);
-		(void) execv(slurm_conf.reboot_program, argv);
-		_exit(1);
-	} else if (child < 0) {
-		error("fork: %m");
 	} else {
-		(void) waitpid(child, &status, 0);
-		if (WIFEXITED(status)) {
-			rc = WEXITSTATUS(status);
-			if (rc != 0) {
-				error("RebootProgram exit status of %d",
-				      rc);
-			}
-		} else if (WIFSIGNALED(status)) {
-			error("RebootProgram signaled: %s",
-			      strsignal(WTERMSIG(status)));
-		}
+		argc = 3;
+		argv[2] = NULL;
 	}
+
+	status = slurmscriptd_run_reboot(slurm_conf.reboot_program, argc, argv);
+	if (WIFEXITED(status)) {
+		rc = WEXITSTATUS(status);
+		if (rc != 0) {
+			error("RebootProgram exit status of %d",
+			      rc);
+		}
+	} else if (WIFSIGNALED(status)) {
+		error("RebootProgram signaled: %s",
+		      strsignal(WTERMSIG(status)));
+	}
+
 	xfree(argv[1]);
 }
 

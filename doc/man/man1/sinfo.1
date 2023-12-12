@@ -1,4 +1,4 @@
-.TH sinfo "1" "Slurm Commands" "August 2022" "Slurm Commands"
+.TH sinfo "1" "Slurm Commands" "June 2023" "Slurm Commands"
 
 .SH "NAME"
 sinfo \- View information about Slurm nodes and partitions.
@@ -46,6 +46,11 @@ Show all partitions from the federation if a member of one.
 .IP
 
 .TP
+\fB\-F\fR, \fB\-\-future\fR
+Report nodes in FUTURE state.
+.IP
+
+.TP
 \fB\-o\fR, \fB\-\-format\fR=<\fIoutput_format\fR>
 Specify the information to be displayed using an \fBsinfo\fR
 format string.
@@ -69,7 +74,7 @@ options are:
 
 .TP
 .I "\-\-long"
-"%#P %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N"
+"%#P %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %.11i %N"
 .IP
 
 .TP
@@ -99,7 +104,7 @@ A pass is made over the records to be printed to establish the size in order
 to align the sinfo output, then a second pass is made over the records to
 print them.
 Note that the literal character "#" itself is not a valid field length
-specification, but is only used to document this behaviour.
+specification, but is only used to document this behavior.
 
 The format of each field is "%[[.]size]type[suffix]"
 .IP
@@ -218,6 +223,11 @@ Print the OverSubscribe setting for the partition.
 .TP
 \fB%H\fR
 Print the timestamp of the reason a node is unavailable.
+.IP
+
+.TP
+\fB%i\fR
+If a node is in an advanced reservation print the name of that reservation.
 .IP
 
 .TP
@@ -364,7 +374,7 @@ The format of each field is "type[:[.][size][suffix]]"
 .RS 10
 .TP
 \fIsize\fR
-The minimum field size.
+The maximum field size.
 If no size is specified, 20 characters will be allocated to print the information.
 .IP
 
@@ -600,7 +610,7 @@ State of nodes, extended form.
 
 .TP
 \fBStateComplete\fR
-State of nodes, including all node state flags. eg. "idle+cloud+power"
+State of nodes, including all node state flags. e.g. "idle+cloud+power"
 .IP
 
 .TP
@@ -660,8 +670,9 @@ By default prints a time stamp with the header.
 
 .TP
 \f3\-\-json\fP
-Dump node information as JSON. All other formatting and filtering arguments will
-be ignored.
+Dump all node information as JSON. All information is dumped, even if it would
+normally not be. Formatting options are ignored; however, filtering arguments
+are still used.
 .IP
 
 .TP
@@ -726,8 +737,8 @@ Do not print a header on the output.
 
 .TP
 \fB\-p\fR, \fB\-\-partition\fR=<\fIpartition\fR>
-Print information only about the specified partition(s). Multiple partitions
-are separated by commas.
+Print information about the node(s) in the specified partition(s).
+Multiple partitions are separated by commas.
 .IP
 
 .TP
@@ -801,8 +812,9 @@ Print version information and exit.
 
 .TP
 \f3\-\-yaml\fP
-Dump node information as YAML. All other formatting and filtering arguments will
-be ignored.
+Dump all node information as YAML. All information is dumped, even if it would
+normally not be. Formatting options are ignored; however, filtering arguments
+are still used.
 .IP
 
 .SH "OUTPUT FIELD DESCRIPTIONS"
@@ -1171,6 +1183,11 @@ Same as \fB\-a, \-\-all\fR
 .TP
 \fBSINFO_FEDERATION\fR
 Same as \fB\-\-federation\fR
+.IP
+
+.TP
+\fBSCONTROL_FUTURE\fR
+\fB\-F, \-\-future\fR
 .IP
 
 .TP

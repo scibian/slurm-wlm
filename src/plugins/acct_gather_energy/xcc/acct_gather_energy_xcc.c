@@ -46,12 +46,12 @@
 #include <math.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_acct_gather_energy.h"
+#include "src/interfaces/acct_gather_energy.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
 #include "src/common/xstring.h"
 
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/proctrack.h"
 
 #include "src/slurmd/slurmd/slurmd.h"
 
@@ -249,7 +249,7 @@ static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 static pthread_t thread_ipmi_id_launcher = 0;
 static pthread_t thread_ipmi_id_run = 0;
-static stepd_step_rec_t *job = NULL;
+static stepd_step_rec_t *step = NULL;
 static int context_id = -1;
 
 /* Thread scope global vars */
@@ -424,6 +424,7 @@ static int _init_ipmi_config(void)
 cleanup:
 	ipmi_ctx_close(ipmi_ctx);
 	ipmi_ctx_destroy(ipmi_ctx);
+	ipmi_ctx = NULL;
 	return SLURM_ERROR;
 }
 
@@ -849,32 +850,41 @@ static int _get_joules_task(uint16_t delta)
 		return SLURM_ERROR;
 	}
 
-	if (first) {
+	new->previous_consumed_energy = xcc_energy.consumed_energy;
+
+	if (!first) {
+		/* if slurmd is reloaded while the step is alive */
+		if (xcc_energy.consumed_energy > new->consumed_energy)
+			new->base_consumed_energy = new->consumed_energy;
+		else {
+			new->consumed_energy -= first_consumed_energy;
+			new->base_consumed_energy =
+				new->consumed_energy -
+				new->previous_consumed_energy;
+		}
+	} else {
 		if (!new->consumed_energy) {
 			info("we got a blank");
 			goto end_it;
 		}
 
 		/*
-		 * First number from the slurmd.  We will figure out the usage
-		 * by subtracting this each time.
+		 * This is just for the step, so take all the previous
+		 * consumption out of the mix.
 		 */
 		first_consumed_energy = new->consumed_energy;
+		new->base_consumed_energy = 0;
 		first = false;
 	}
 
-	new->consumed_energy -= first_consumed_energy;
-	new->previous_consumed_energy = xcc_energy.consumed_energy;
-	new->base_consumed_energy =
-		new->consumed_energy - new->previous_consumed_energy;
-
+	new->consumed_energy = new->previous_consumed_energy
+		+ new->base_consumed_energy;
 	memcpy(&xcc_energy, new, sizeof(acct_gather_energy_t));
 
 	log_flag(ENERGY, "consumed %"PRIu64" Joules (received %"PRIu64"(%u watts) from slurmd)",
 		 xcc_energy.consumed_energy, xcc_energy.base_consumed_energy,
 		 xcc_energy.current_watts);
 
-//	new->previous_consumed_energy = xcc_energy.consumed_energy;
 end_it:
 	acct_gather_energy_destroy(new);
 
@@ -887,8 +897,6 @@ end_it:
  */
 extern int init(void)
 {
-	memset(&xcc_energy, 0, sizeof(acct_gather_energy_t));
-
 	return SLURM_SUCCESS;
 }
 
@@ -913,6 +921,7 @@ extern int fini(void)
 	if (ipmi_ctx) {
 		ipmi_ctx_close(ipmi_ctx);
 		ipmi_ctx_destroy(ipmi_ctx);
+		ipmi_ctx = NULL;
 	}
 	_reset_slurm_ipmi_conf(&slurm_ipmi_conf);
 
@@ -1010,7 +1019,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 		break;
 	case ENERGY_DATA_STEP_PTR:
 		/* set global job if needed later */
-		job = (stepd_step_rec_t *)data;
+		step = (stepd_step_rec_t *)data;
 		break;
 	default:
 		error("acct_gather_energy_p_set_data: unknown enum %d",
@@ -1116,6 +1125,7 @@ extern void acct_gather_energy_p_conf_set(int context_id_in, s_p_hashtbl_t *tbl)
 
 	if (!flag_init) {
 		flag_init = true;
+		memset(&xcc_energy, 0, sizeof(acct_gather_energy_t));
 		if (running_in_slurmd()) {
 			slurm_thread_create(&thread_ipmi_id_launcher,
 					    _thread_launcher, NULL);

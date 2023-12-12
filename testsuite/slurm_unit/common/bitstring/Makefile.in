@@ -88,10 +88,9 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
-check_PROGRAMS = $(am__EXEEXT_2)
-TESTS = bitstring-test$(EXEEXT) $(am__EXEEXT_1)
-#MYCFLAGS += -D_ISO99_SOURCE -Wunused-but-set-variable
-@HAVE_CHECK_TRUE@am__append_1 = bit_unfmt_hexmask-test
+@HAVE_CHECK_TRUE@check_PROGRAMS = $(am__EXEEXT_1)
+@HAVE_CHECK_TRUE@TESTS = bit_unfmt_hexmask-test$(EXEEXT) \
+@HAVE_CHECK_TRUE@	bitstring-test$(EXEEXT)
 subdir = testsuite/slurm_unit/common/bitstring
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
@@ -114,7 +113,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
 	$(top_srcdir)/auxdir/x_ac_deprecated.m4 \
-	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
 	$(top_srcdir)/auxdir/x_ac_env.m4 \
 	$(top_srcdir)/auxdir/x_ac_freeipmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_hpe_slingshot.m4 \
@@ -134,6 +132,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
+	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
@@ -152,14 +151,13 @@ CONFIG_HEADER = $(top_builddir)/config.h \
 	$(top_builddir)/slurm/slurm_version.h
 CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
-@HAVE_CHECK_TRUE@am__EXEEXT_1 = bit_unfmt_hexmask-test$(EXEEXT)
-am__EXEEXT_2 = bitstring-test$(EXEEXT) $(am__EXEEXT_1)
+@HAVE_CHECK_TRUE@am__EXEEXT_1 = bit_unfmt_hexmask-test$(EXEEXT) \
+@HAVE_CHECK_TRUE@	bitstring-test$(EXEEXT)
 bit_unfmt_hexmask_test_SOURCES = bit_unfmt_hexmask-test.c
 bit_unfmt_hexmask_test_OBJECTS =  \
 	bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.$(OBJEXT)
 am__DEPENDENCIES_1 =
-am__DEPENDENCIES_2 = $(top_builddir)/src/api/libslurm.o \
-	$(am__DEPENDENCIES_1)
+am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1)
 @HAVE_CHECK_TRUE@bit_unfmt_hexmask_test_DEPENDENCIES =  \
 @HAVE_CHECK_TRUE@	$(am__DEPENDENCIES_2)
 AM_V_lt = $(am__v_lt_@AM_V@)
@@ -171,10 +169,12 @@ bit_unfmt_hexmask_test_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(bit_unfmt_hexmask_test_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) \
 	$(LDFLAGS) -o $@
 bitstring_test_SOURCES = bitstring-test.c
-bitstring_test_OBJECTS = bitstring-test.$(OBJEXT)
-bitstring_test_LDADD = $(LDADD)
-bitstring_test_DEPENDENCIES = $(top_builddir)/src/api/libslurm.o \
-	$(am__DEPENDENCIES_1)
+bitstring_test_OBJECTS = bitstring_test-bitstring-test.$(OBJEXT)
+@HAVE_CHECK_TRUE@bitstring_test_DEPENDENCIES = $(am__DEPENDENCIES_2)
+bitstring_test_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+	$(bitstring_test_CFLAGS) $(CFLAGS) $(AM_LDFLAGS) $(LDFLAGS) -o \
+	$@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -192,7 +192,7 @@ depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
 am__maybe_remake_depfiles = depfiles
 am__depfiles_remade =  \
 	./$(DEPDIR)/bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.Po \
-	./$(DEPDIR)/bitstring-test.Po
+	./$(DEPDIR)/bitstring_test-bitstring-test.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -477,7 +477,6 @@ DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
-DL_LIBS = @DL_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -514,7 +513,6 @@ HDF5_LIBS = @HDF5_LIBS@
 HDF5_TYPE = @HDF5_TYPE@
 HDF5_VERSION = @HDF5_VERSION@
 HPE_SLINGSHOT_CFLAGS = @HPE_SLINGSHOT_CFLAGS@
-HPE_SLINGSHOT_LIBS = @HPE_SLINGSHOT_LIBS@
 HTTP_PARSER_CPPFLAGS = @HTTP_PARSER_CPPFLAGS@
 HTTP_PARSER_LDFLAGS = @HTTP_PARSER_LDFLAGS@
 HWLOC_CPPFLAGS = @HWLOC_CPPFLAGS@
@@ -562,7 +560,6 @@ NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
 NVML_CPPFLAGS = @NVML_CPPFLAGS@
-NVML_LIBS = @NVML_LIBS@
 OBJCOPY = @OBJCOPY@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
@@ -570,7 +567,6 @@ OFED_CPPFLAGS = @OFED_CPPFLAGS@
 OFED_LDFLAGS = @OFED_LDFLAGS@
 OFED_LIBS = @OFED_LIBS@
 ONEAPI_CPPFLAGS = @ONEAPI_CPPFLAGS@
-ONEAPI_LIBS = @ONEAPI_LIBS@
 OTOOL = @OTOOL@
 OTOOL64 = @OTOOL64@
 PACKAGE = @PACKAGE@
@@ -600,21 +596,24 @@ PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
 PTHREAD_CXX = @PTHREAD_CXX@
 PTHREAD_LIBS = @PTHREAD_LIBS@
 RANLIB = @RANLIB@
+RDKAFKA_CPPFLAGS = @RDKAFKA_CPPFLAGS@
+RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
+RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
 RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
 RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
 RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
-RSMI_LDFLAGS = @RSMI_LDFLAGS@
-RSMI_LIBS = @RSMI_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 SLEEP_CMD = @SLEEP_CMD@
+SLURMCTLD_INTERFACES = @SLURMCTLD_INTERFACES@
 SLURMCTLD_PORT = @SLURMCTLD_PORT@
 SLURMCTLD_PORT_COUNT = @SLURMCTLD_PORT_COUNT@
 SLURMDBD_PORT = @SLURMDBD_PORT@
+SLURMD_INTERFACES = @SLURMD_INTERFACES@
 SLURMD_PORT = @SLURMD_PORT@
 SLURMRESTD_PORT = @SLURMRESTD_PORT@
 SLURM_API_AGE = @SLURM_API_AGE@
@@ -708,10 +707,12 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
 AM_CPPFLAGS = -I$(top_srcdir) -ldl -lpthread
-LDADD = $(top_builddir)/src/api/libslurm.o $(DL_LIBS)
+LDADD = $(LIB_SLURM)
 @HAVE_CHECK_TRUE@MYCFLAGS = @CHECK_CFLAGS@  #-Wall -ansi -pedantic -std=c99
 @HAVE_CHECK_TRUE@bit_unfmt_hexmask_test_CFLAGS = $(MYCFLAGS)
 @HAVE_CHECK_TRUE@bit_unfmt_hexmask_test_LDADD = $(LDADD) @CHECK_LIBS@
+@HAVE_CHECK_TRUE@bitstring_test_CFLAGS = $(MYCFLAGS)
+@HAVE_CHECK_TRUE@bitstring_test_LDADD = $(LDADD) @CHECK_LIBS@
 all: all-am
 
 .SUFFIXES:
@@ -761,7 +762,7 @@ bit_unfmt_hexmask-test$(EXEEXT): $(bit_unfmt_hexmask_test_OBJECTS) $(bit_unfmt_h
 
 bitstring-test$(EXEEXT): $(bitstring_test_OBJECTS) $(bitstring_test_DEPENDENCIES) $(EXTRA_bitstring_test_DEPENDENCIES) 
 	@rm -f bitstring-test$(EXEEXT)
-	$(AM_V_CCLD)$(LINK) $(bitstring_test_OBJECTS) $(bitstring_test_LDADD) $(LIBS)
+	$(AM_V_CCLD)$(bitstring_test_LINK) $(bitstring_test_OBJECTS) $(bitstring_test_LDADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -770,7 +771,7 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.Po@am__quote@ # am--include-marker
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bitstring-test.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/bitstring_test-bitstring-test.Po@am__quote@ # am--include-marker
 
 $(am__depfiles_remade):
 	@$(MKDIR_P) $(@D)
@@ -812,6 +813,20 @@ bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.obj: bit_unfmt_hexmask-test.c
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='bit_unfmt_hexmask-test.c' object='bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.obj' libtool=no @AMDEPBACKSLASH@
 @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
 @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(bit_unfmt_hexmask_test_CFLAGS) $(CFLAGS) -c -o bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.obj `if test -f 'bit_unfmt_hexmask-test.c'; then $(CYGPATH_W) 'bit_unfmt_hexmask-test.c'; else $(CYGPATH_W) '$(srcdir)/bit_unfmt_hexmask-test.c'; fi`
+
+bitstring_test-bitstring-test.o: bitstring-test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(bitstring_test_CFLAGS) $(CFLAGS) -MT bitstring_test-bitstring-test.o -MD -MP -MF $(DEPDIR)/bitstring_test-bitstring-test.Tpo -c -o bitstring_test-bitstring-test.o `test -f 'bitstring-test.c' || echo '$(srcdir)/'`bitstring-test.c
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/bitstring_test-bitstring-test.Tpo $(DEPDIR)/bitstring_test-bitstring-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='bitstring-test.c' object='bitstring_test-bitstring-test.o' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(bitstring_test_CFLAGS) $(CFLAGS) -c -o bitstring_test-bitstring-test.o `test -f 'bitstring-test.c' || echo '$(srcdir)/'`bitstring-test.c
+
+bitstring_test-bitstring-test.obj: bitstring-test.c
+@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(bitstring_test_CFLAGS) $(CFLAGS) -MT bitstring_test-bitstring-test.obj -MD -MP -MF $(DEPDIR)/bitstring_test-bitstring-test.Tpo -c -o bitstring_test-bitstring-test.obj `if test -f 'bitstring-test.c'; then $(CYGPATH_W) 'bitstring-test.c'; else $(CYGPATH_W) '$(srcdir)/bitstring-test.c'; fi`
+@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/bitstring_test-bitstring-test.Tpo $(DEPDIR)/bitstring_test-bitstring-test.Po
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='bitstring-test.c' object='bitstring_test-bitstring-test.obj' libtool=no @AMDEPBACKSLASH@
+@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) $(bitstring_test_CFLAGS) $(CFLAGS) -c -o bitstring_test-bitstring-test.obj `if test -f 'bitstring-test.c'; then $(CYGPATH_W) 'bitstring-test.c'; else $(CYGPATH_W) '$(srcdir)/bitstring-test.c'; fi`
 
 mostlyclean-libtool:
 	-rm -f *.lo
@@ -1012,16 +1027,16 @@ recheck: all $(check_PROGRAMS)
 	        am__force_recheck=am--force-recheck \
 	        TEST_LOGS="$$log_list"; \
 	exit $$?
-bitstring-test.log: bitstring-test$(EXEEXT)
-	@p='bitstring-test$(EXEEXT)'; \
-	b='bitstring-test'; \
+bit_unfmt_hexmask-test.log: bit_unfmt_hexmask-test$(EXEEXT)
+	@p='bit_unfmt_hexmask-test$(EXEEXT)'; \
+	b='bit_unfmt_hexmask-test'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
 	"$$tst" $(AM_TESTS_FD_REDIRECT)
-bit_unfmt_hexmask-test.log: bit_unfmt_hexmask-test$(EXEEXT)
-	@p='bit_unfmt_hexmask-test$(EXEEXT)'; \
-	b='bit_unfmt_hexmask-test'; \
+bitstring-test.log: bitstring-test$(EXEEXT)
+	@p='bitstring-test$(EXEEXT)'; \
+	b='bitstring-test'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
@@ -1086,7 +1101,7 @@ clean-am: clean-checkPROGRAMS clean-generic clean-libtool \
 
 distclean: distclean-am
 		-rm -f ./$(DEPDIR)/bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.Po
-	-rm -f ./$(DEPDIR)/bitstring-test.Po
+	-rm -f ./$(DEPDIR)/bitstring_test-bitstring-test.Po
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-tags
@@ -1133,7 +1148,7 @@ installcheck-am:
 
 maintainer-clean: maintainer-clean-am
 		-rm -f ./$(DEPDIR)/bit_unfmt_hexmask_test-bit_unfmt_hexmask-test.Po
-	-rm -f ./$(DEPDIR)/bitstring-test.Po
+	-rm -f ./$(DEPDIR)/bitstring_test-bitstring-test.Po
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

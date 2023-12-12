@@ -40,12 +40,11 @@
 #ifndef _HAVE_READ_CONFIG_H
 #define _HAVE_READ_CONFIG_H
 
-/* Convert a comma delimited list of account names into a NULL terminated
- * array of pointers to strings. Call accounts_list_free() to release memory */
-extern void accounts_list_build(char *accounts, char ***accounts_array);
-
-/* Free memory allocated for an account array by accounts_list_build() */
-extern void accounts_list_free(char ***accounts_array);
+/*
+ * Convert a comma delimited list of account names into a list of
+ * slurmd_assoc_rec_t pointers from the assoc_mgr.
+ */
+extern list_t *accounts_list_build(char *accounts, bool locked);
 
 /*
  * Free the global response_cluster_rec

@@ -165,6 +165,68 @@ static inline int _internal_hwloc_topology_export_xml(
 #endif
 }
 
+static void _remove_ecores(hwloc_topology_t *topology)
+{
+#if HWLOC_API_VERSION > 0x00020401
+	int type_cnt;
+	hwloc_bitmap_t cpuset, cpuset_tot = NULL;
+
+	if (xstrcasestr(slurm_conf.slurmd_params, "allow_ecores"))
+		return;
+
+	if (!(type_cnt = hwloc_cpukinds_get_nr(*topology, 0)))
+		return;
+
+	/*
+	 * Handle the removal of Intel E-Cores here.
+	 *
+	 * At the time of writing this Intel Gen 12+ procs have introduced what
+	 * are known as 'P' (performance) and 'E' (efficiency) cores. The
+	 * former can have hyperthreads, where the latter are only single
+	 * threaded, thus creating a situation where we could get a
+	 * heterogeneous socket (which Slurm doesn't like). Here we can restrict
+	 * to only  "IntelCore" (P-Cores) and disregard the "IntelAtom"
+	 * (E-Cores).
+	 *
+	 * In the future, if desired, we should probably figure out a way to
+	 * handle these E-Cores through a core spec instead.
+	 *
+	 * This logic should do nothing on any other existing processor.
+	 */
+	cpuset = hwloc_bitmap_alloc();
+	for (int i = 0; i < type_cnt; i++) {
+		unsigned nr_infos = 0;
+		struct hwloc_info_s *infos;
+		if (hwloc_cpukinds_get_info(
+			    *topology, i, cpuset, NULL, &nr_infos, &infos, 0))
+			fatal("Error getting info from hwloc_cpukinds_get_info() %m");
+
+		for (int j = 0; j < nr_infos; j++) {
+			if (!xstrcasecmp(infos[j].name, "CoreType") &&
+			    !xstrcasecmp(infos[j].value, "IntelCore")) {
+				/* Restrict the node to only IntelCores */
+				if (!cpuset_tot)
+					cpuset_tot = hwloc_bitmap_alloc();
+				hwloc_bitmap_or(cpuset_tot, cpuset_tot, cpuset);
+			}
+		}
+
+		/*
+		 * If we have a cpuset_tot it means we are on a system with
+		 * IntelCore cpus. We will restrict to only those and be done
+		 * here.
+		 */
+		if (cpuset_tot) {
+			hwloc_topology_restrict(*topology, cpuset_tot, 0);
+			hwloc_bitmap_free(cpuset_tot);
+			break;
+		}
+	}
+	hwloc_bitmap_free(cpuset);
+
+#endif
+}
+
 /* read or load topology and write if needed
  * init and destroy topology must be outside this function */
 extern int xcpuinfo_hwloc_topo_load(
@@ -239,7 +301,12 @@ handle_write:
 		/* error in load hardware topology */
 		debug("hwloc_topology_load() failed.");
 		ret = SLURM_ERROR;
-	} else if (!conf->def_config) {
+		goto end_it;
+	}
+
+	_remove_ecores(topology);
+
+	if (!conf->def_config) {
 		debug2("hwloc_topology_export_xml");
 		if (_internal_hwloc_topology_export_xml(*topology, topo_file)) {
 			/* error in export hardware topology */
@@ -247,6 +314,7 @@ handle_write:
 		}
 	}
 
+end_it:
 	if (!topology_in)
 		hwloc_topology_destroy(tmp_topo);
 
@@ -703,8 +771,7 @@ extern int xcpuinfo_hwloc_topo_get(
 		if (cores == 0) {
 			cores = numcpu / sockets;	/* assume multi-core */
 			if (cores > 1) {
-				debug3("Warning: cpuinfo missing 'core id' or "
-				       "'cpu cores' but assuming multi-core");
+				debug3("cpuinfo missing 'core id' or 'cpu cores' but assuming multi-core");
 			}
 		}
 		if (cores == 0)

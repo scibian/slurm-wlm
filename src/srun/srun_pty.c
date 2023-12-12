@@ -70,11 +70,11 @@ static void * _pty_thread(void *arg);
 
 /* Set pty window size in job structure
  * RET 0 on success, -1 on error */
-int set_winsize(srun_job_t *job)
+int set_winsize(int fd, srun_job_t *job)
 {
 	struct winsize ws;
 
-	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)) {
+	if (ioctl(fd, TIOCGWINSZ, &ws)) {
 		error("ioctl(TIOCGWINSZ): %m");
 		return -1;
 	}
@@ -85,7 +85,7 @@ int set_winsize(srun_job_t *job)
 	return 0;
 }
 
-/* SIGWINCH should already be blocked by srun/libsrun/srun_job.c */
+/* SIGWINCH should already be blocked by srun/srun_job.c */
 void block_sigwinch(void)
 {
 	xsignal_block(pty_sigarray);
@@ -163,7 +163,7 @@ static void *_pty_thread(void *arg)
 			continue;
 		}
 		if (winch) {
-			set_winsize(job);
+			set_winsize(STDOUT_FILENO, job);
 			_notify_winsize_change(fd, job);
 		}
 		winch = 0;

@@ -86,7 +86,7 @@ const char *g_cg_name[CG_CTL_CNT] = {
 };
 
 /* Cgroup v1 control items for the oom monitor */
-#define STOP_OOM 0x987987987
+#define STOP_OOM 1
 
 typedef enum {
 	OOM_KILL_NONE,		/* Don't account for oom_kill events. */
@@ -152,7 +152,7 @@ static int _cgroup_init(cgroup_ctl_type_t sub)
 	return SLURM_SUCCESS;
 }
 
-static int _cpuset_create(stepd_step_rec_t *job)
+static int _cpuset_create(stepd_step_rec_t *step)
 {
 	int rc;
 	char *sys_cgpath = NULL;
@@ -166,6 +166,7 @@ static int _cpuset_create(stepd_step_rec_t *job)
 		/* initialize the cpusets as it was non-existent */
 		if (xcgroup_cpuset_init(&int_cg[CG_CPUS][CG_LEVEL_SLURM]) !=
 		    SLURM_SUCCESS) {
+			xfree(value);
 			return SLURM_ERROR;
 		}
 	}
@@ -174,7 +175,7 @@ static int _cpuset_create(stepd_step_rec_t *job)
 	common_cgroup_set_param(&int_cg[CG_CPUS][CG_LEVEL_SLURM],
 				"cgroup.clone_children", "0");
 
-	if (job == NULL) {
+	if (step == NULL) {
 		/* This is a request to create a cpuset for slurmd daemon */
 		xstrfmtcat(sys_cgpath, "%s/system",
 			   int_cg[CG_CPUS][CG_LEVEL_SLURM].name);
@@ -220,7 +221,7 @@ static int _cpuset_create(stepd_step_rec_t *job)
 		 * locked from the caller.
 		 */
 		rc = xcgroup_create_hierarchy(__func__,
-					      job,
+					      step,
 					      &g_cg_ns[CG_CPUS],
 					      int_cg[CG_CPUS],
 					      g_job_cgpath[CG_CPUS],
@@ -246,6 +247,15 @@ static int _remove_cg_subsystem(xcgroup_t int_cg[], const char *log_str,
 	int rc = SLURM_SUCCESS;
 
 	/*
+	 * Lock the root cgroup so we don't race with other steps that are being
+	 * started.
+	 */
+	if (!root_locked && (common_cgroup_lock(root_cg) != SLURM_SUCCESS)) {
+		error("common_cgroup_lock error (%s)", log_str);
+		return SLURM_ERROR;
+	}
+
+	/*
 	 * Always try to move slurmstepd process to the root cgroup, otherwise
 	 * the rmdir(2) triggered by the calls below will always fail if the pid
 	 * of stepd is in the cgroup. We don't know what other plugins will do
@@ -257,15 +267,6 @@ static int _remove_cg_subsystem(xcgroup_t int_cg[], const char *log_str,
 		goto end;
 	}
 	xcgroup_wait_pid_moved(step_cg, log_str);
-
-	/*
-	 * Lock the root cgroup so we don't race with other steps that are being
-	 * started.
-	 */
-	if (!root_locked && (common_cgroup_lock(root_cg) != SLURM_SUCCESS)) {
-		error("common_cgroup_lock error (%s)", log_str);
-		return SLURM_ERROR;
-	}
 
 	/* Delete step cgroup. */
 	if ((rc = common_cgroup_delete(step_cg)) != SLURM_SUCCESS)
@@ -347,14 +348,14 @@ static void _free_task_cg_info(void *object)
 	}
 }
 
-static int _handle_task_cgroup(cgroup_ctl_type_t sub, stepd_step_rec_t *job,
+static int _handle_task_cgroup(cgroup_ctl_type_t sub, stepd_step_rec_t *step,
 			       pid_t pid, uint32_t taskid)
 {
 	int rc = SLURM_SUCCESS;
 	bool need_to_add = false;
 	task_cg_info_t *task_cg_info;
-	uid_t uid = job->uid;
-	gid_t gid = job->gid;
+	uid_t uid = step->uid;
+	gid_t gid = step->gid;
 	char *task_cgroup_path = NULL;
 
 	/* build task cgroup relative path */
@@ -622,12 +623,9 @@ end:
  * so the number of calls to this function must mach the number of calls of
  * cgroup_p_step_destroy in each plugin.
  */
-extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *job)
+extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *step)
 {
 	int rc = SLURM_SUCCESS;
-
-	/* Don't let other plugins destroy our structs. */
-	g_step_active_cnt[sub]++;
 
 	/*
 	 * Lock the root cgroup so we don't race with other steps that are being
@@ -639,11 +637,14 @@ extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *job)
 		return SLURM_ERROR;
 	}
 
+	/* Don't let other plugins destroy our structs. */
+	g_step_active_cnt[sub]++;
+
 	switch (sub) {
 	case CG_TRACK:
 		/* create a new cgroup for that container */
 		if ((rc = xcgroup_create_hierarchy(__func__,
-						   job,
+						   step,
 						   &g_cg_ns[sub],
 						   int_cg[sub],
 						   g_job_cgpath[sub],
@@ -653,12 +654,12 @@ extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *job)
 			goto step_c_err;
 		break;
 	case CG_CPUS:
-		if ((rc = _cpuset_create(job))!= SLURM_SUCCESS)
+		if ((rc = _cpuset_create(step))!= SLURM_SUCCESS)
 			goto step_c_err;
 		break;
 	case CG_MEMORY:
 		if ((rc = xcgroup_create_hierarchy(__func__,
-						   job,
+						   step,
 						   &g_cg_ns[sub],
 						   int_cg[sub],
 						   g_job_cgpath[sub],
@@ -695,7 +696,7 @@ extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *job)
 	case CG_DEVICES:
 		/* create a new cgroup for that container */
 		if ((rc = xcgroup_create_hierarchy(__func__,
-						   job,
+						   step,
 						   &g_cg_ns[sub],
 						   int_cg[sub],
 						   g_job_cgpath[sub],
@@ -706,7 +707,7 @@ extern int cgroup_p_step_create(cgroup_ctl_type_t sub, stepd_step_rec_t *job)
 		break;
 	case CG_CPUACCT:
 		if ((rc = xcgroup_create_hierarchy(__func__,
-						   job,
+						   step,
 						   &g_cg_ns[sub],
 						   int_cg[sub],
 						   g_job_cgpath[sub],
@@ -1089,7 +1090,7 @@ extern int cgroup_p_step_start_oom_mgr(void)
 	return SLURM_SUCCESS;
 }
 
-extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
+extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *step)
 {
 	log_flag(CGROUP, "OOM not available on FreeBSD, NetBSD, or macOS");
 	return NULL;
@@ -1205,19 +1206,15 @@ static void *_oom_event_monitor(void *x)
 		debug("No oom events detected.");
 	slurm_mutex_unlock(&oom_mutex);
 
-	if ((args->event_fd != -1) && (close(args->event_fd) == -1))
-		error("close(event_fd): %m");
-	if ((args->efd != -1) && (close(args->efd) == -1))
-		error("close(efd): %m");
-	if ((args->cfd != -1) && (close(args->cfd) == -1))
-		error("close(cfd): %m");
-	if ((oom_pipe[0] >= 0) && (close(oom_pipe[0]) == -1))
-		error("close(oom_pipe[0]): %m");
+	close(args->event_fd);
+	close(args->efd);
+	close(args->cfd);
+	close(oom_pipe[0]);
 	xfree(args);
 
 	debug("stopping.");
 
-	pthread_exit((void *) 0);
+	return NULL;
 }
 
 extern int cgroup_p_step_start_oom_mgr(void)
@@ -1282,11 +1279,7 @@ extern int cgroup_p_step_start_oom_mgr(void)
 
 	oom_kill_count = 0;
 
-	if (write(efd, line, strlen(line) + 1) == -1) {
-		error("Cannot write to %s", event_file);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	safe_write(efd, line, strlen(line) + 1);
 
 	if (pipe2(oom_pipe, O_CLOEXEC) == -1) {
 		error("pipe(): %m");
@@ -1310,16 +1303,11 @@ extern int cgroup_p_step_start_oom_mgr(void)
 fini:
 	xfree(line);
 	if (oom_kill_type != OOM_KILL_MON) {
-		if ((event_fd != -1) && (close(event_fd) == -1))
-			error("close: %m");
-		if ((efd != -1) && (close(efd) == -1))
-			error("close: %m");
-		if ((cfd != -1) && (close(cfd) == -1))
-			error("close: %m");
-		if ((oom_pipe[0] != -1) && (close(oom_pipe[0]) == -1))
-			error("close oom_pipe[0]: %m");
-		if ((oom_pipe[1] != -1) && (close(oom_pipe[1]) == -1))
-			error("close oom_pipe[1]: %m");
+		close(event_fd);
+		close(efd);
+		close(cfd);
+		close(oom_pipe[0]);
+		close(oom_pipe[1]);
 	}
 	xfree(event_file);
 	xfree(control_file);
@@ -1328,6 +1316,11 @@ fini:
 		error("Unable to register OOM notifications for %s",
 		      int_cg[CG_MEMORY][CG_LEVEL_STEP].path);
 	return rc;
+
+rwfail:
+	error("Cannot write to %s", event_file);
+	rc = SLURM_ERROR;
+	goto fini;
 }
 
 static uint64_t _failcnt(xcgroup_t *cg, char *param)
@@ -1369,14 +1362,14 @@ static int _get_oom_kill_from_file(xcgroup_t *cg)
 	return SLURM_SUCCESS;
 }
 
-extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
+extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *step)
 {
 	cgroup_oom_t *results = NULL;
 	uint64_t stop_msg;
-	ssize_t ret;
 
 	if (oom_kill_type == OOM_KILL_NONE) {
-		error("OOM events were not monitored: couldn't read memory.oom_control or subscribe to its events.");
+		error("OOM events were not monitored for %ps: couldn't read memory.oom_control or subscribe to its events.",
+		      &step->step_id);
 		return results;
 	}
 
@@ -1415,7 +1408,7 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 		    SLURM_SUCCESS) {
 			log_flag(CGROUP,
 				 "OOM events were not monitored for %ps",
-				 &job->step_id);
+				 &step->step_id);
 		}
 		results->oom_kill_cnt = oom_kill_count;
 		common_cgroup_unlock(&int_cg[CG_MEMORY][CG_LEVEL_STEP]);
@@ -1429,21 +1422,9 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 	 * closed the read endpoint of oom_pipe.
 	 */
 	stop_msg = STOP_OOM;
-	while (1) {
-		ret = write(oom_pipe[1], &stop_msg, sizeof(stop_msg));
-		if (ret == -1) {
-			if (errno == EINTR)
-				continue;
-			log_flag(CGROUP, "oom stop msg write() failed: %m");
-		} else if (ret == 0)
-			log_flag(CGROUP, "oom stop msg nothing written: %m");
-		else if (ret == sizeof(stop_msg))
-			log_flag(CGROUP, "oom stop msg write success.");
-		else
-			log_flag(CGROUP, "oom stop msg not fully written.");
-		break;
-	}
+	safe_write(oom_pipe[1], &stop_msg, sizeof(stop_msg));
 
+rwfail: /* Ignore safe_write issues. */
 	log_flag(CGROUP, "attempt to join oom_thread.");
 	if (oom_thread && pthread_join(oom_thread, NULL) != 0)
 		error("pthread_join(): %m");
@@ -1453,10 +1434,7 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 	slurm_mutex_unlock(&oom_mutex);
 
 fail_oom_results:
-	if ((oom_pipe[1] != -1) && (close(oom_pipe[1]) == -1)) {
-		error("close() failed on oom_pipe[1] fd, %ps: %m",
-		      &job->step_id);
-	}
+	close(oom_pipe[1]);
 	slurm_mutex_destroy(&oom_mutex);
 
 	return results;
@@ -1466,16 +1444,16 @@ fail_oom_results:
 /***************************************
  ***** CGROUP TASK FUNCTIONS *****
  **************************************/
-extern int cgroup_p_task_addto(cgroup_ctl_type_t sub, stepd_step_rec_t *job,
+extern int cgroup_p_task_addto(cgroup_ctl_type_t sub, stepd_step_rec_t *step,
 			       pid_t pid, uint32_t task_id)
 {
 	if (task_id > g_max_task_id)
 		g_max_task_id = task_id;
 
-	log_flag(CGROUP, "%ps taskid %u max_task_id %u", &job->step_id, task_id,
-		 g_max_task_id);
+	log_flag(CGROUP, "%ps taskid %u max_task_id %u",
+		 &step->step_id, task_id, g_max_task_id);
 
-	return _handle_task_cgroup(sub, job, pid, task_id);
+	return _handle_task_cgroup(sub, step, pid, task_id);
 }
 
 extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t taskid)
@@ -1508,11 +1486,6 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t taskid)
 		return NULL;
 	}
 
-	common_cgroup_get_param(task_cpuacct_cg, "cpuacct.stat", &cpu_time,
-				&cpu_time_sz);
-	common_cgroup_get_param(task_memory_cg, "memory.stat", &memory_stat,
-				&memory_stat_sz);
-
 	/*
 	 * Initialize values, a NO_VAL64 will indicate to the caller that
 	 * something happened here.
@@ -1524,13 +1497,20 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t taskid)
 	stats->total_pgmajfault = NO_VAL64;
 	stats->total_vmem = NO_VAL64;
 
-	if (cpu_time != NULL)
-		sscanf(cpu_time, "%*s %"PRIu64" %*s %"PRIu64, &stats->usec, &stats->ssec);
+	if (common_cgroup_get_param(task_cpuacct_cg, "cpuacct.stat", &cpu_time,
+				    &cpu_time_sz) == SLURM_SUCCESS) {
+		sscanf(cpu_time, "%*s %"PRIu64" %*s %"PRIu64,
+		       &stats->usec, &stats->ssec);
+	}
 
-	if ((ptr = xstrstr(memory_stat, "total_rss")))
-		sscanf(ptr, "total_rss %"PRIu64, &stats->total_rss);
-	if ((ptr = xstrstr(memory_stat, "total_pgmajfault")))
-		sscanf(ptr, "total_pgmajfault %"PRIu64, &stats->total_pgmajfault);
+	if (common_cgroup_get_param(task_memory_cg, "memory.stat", &memory_stat,
+				    &memory_stat_sz) == SLURM_SUCCESS) {
+		if ((ptr = xstrstr(memory_stat, "total_rss")))
+			sscanf(ptr, "total_rss %"PRIu64, &stats->total_rss);
+		if ((ptr = xstrstr(memory_stat, "total_pgmajfault")))
+			sscanf(ptr, "total_pgmajfault %"PRIu64,
+			       &stats->total_pgmajfault);
+	}
 
 	if (stats->total_rss != NO_VAL64) {
 		uint64_t total_cache = NO_VAL64, total_swap = NO_VAL64;

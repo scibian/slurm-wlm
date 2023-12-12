@@ -41,6 +41,12 @@
 
 #include "../common/gpu_common.h"
 
+#if defined (__APPLE__)
+extern slurmd_conf_t *conf __attribute__((weak_import));
+#else
+slurmd_conf_t *conf = NULL;
+#endif
+
 /*
  * #defines needed to test nvml.
  */
@@ -97,6 +103,10 @@ static bitstr_t	*saved_gpus = NULL;
 const char plugin_name[] = "GPU NVML plugin";
 const char	plugin_type[]		= "gpu/nvml";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
+
+static int gpumem_pos = -1;
+static int gpuutil_pos = -1;
+static pid_t init_pid = 0;
 
 /*
  * Converts a cpu_set returned from the NVML API into a Slurm bitstr_t
@@ -165,7 +175,14 @@ static void _set_cpu_set_bitstr(bitstr_t *cpu_set_bitstr,
  */
 static void _nvml_init(void)
 {
+	pid_t my_pid = conf->pid ? conf->pid : getpid();
 	nvmlReturn_t nvml_rc;
+
+	if (init_pid == my_pid)
+		return;
+
+	init_pid = my_pid;
+
 	DEF_TIMERS;
 	START_TIMER;
 	nvml_rc = nvmlInit();
@@ -187,6 +204,7 @@ static void _nvml_shutdown(void)
 	DEF_TIMERS;
 	START_TIMER;
 	nvml_rc = nvmlShutdown();
+	init_pid = 0;
 	END_TIMER;
 	debug3("nvmlShutdown() took %ld microseconds", DELTA_TIMER);
 	if (nvml_rc != NVML_SUCCESS)
@@ -610,7 +628,7 @@ static void _set_freq(bitstr_t *gpus, char *gpu_freq)
 	debug2("Requested GPU graphics frequency: %s", tmp);
 	xfree(tmp);
 
-	if (!mem_freq_num || !gpu_freq_num) {
+	if (!mem_freq_num && !gpu_freq_num) {
 		debug2("%s: No frequencies to set", __func__);
 		return;
 	}
@@ -876,7 +894,7 @@ static char *_nvml_get_nvlink_info(nvmlDevice_t *device, int index,
 	unsigned int i;
 	nvmlReturn_t nvml_rc;
 	nvmlEnableState_t is_active;
-	int *links = xmalloc(sizeof(int) * device_count);
+	int *links = xcalloc(device_count, sizeof(int));
 	char *links_str = NULL, *sep = "";
 
 	// Initialize links, xmalloc() initialized the array to 0 or NVLINK_NONE
@@ -1088,7 +1106,7 @@ static int _nvml_get_mig_minor_numbers(unsigned int gpu_minor,
 		int count = 0;
 
 		i++;
-		count = fscanf(fp, "%s%u", tmp_str, &tmp_val);
+		count = fscanf(fp, "%127s%u", tmp_str, &tmp_val);
 		if (count == EOF) {
 			error("mig-minors: %d: Reached end of file. Could not find GPU=%u|GI=%u|CI=%u",
 			      i, gpu_minor, gi_id, ci_id);
@@ -1208,10 +1226,10 @@ static int _handle_mig(nvmlDevice_t *device, unsigned int gpu_minor,
 		       nvml_mig_t *nvml_mig)
 {
 	nvmlDevice_t mig;
-	nvmlDeviceAttributes_t attributes;
-	nvmlReturn_t nvml_rc;
 	/* Use the V2 size so it can fit extra MIG info */
 	char mig_uuid[NVML_DEVICE_UUID_V2_BUFFER_SIZE] = {0};
+	char device_name[NVML_DEVICE_NAME_BUFFER_SIZE] = {0};
+	char *str;
 	unsigned int gi_id;
 	unsigned int ci_id;
 	unsigned int gi_minor;
@@ -1231,18 +1249,33 @@ static int _handle_mig(nvmlDevice_t *device, unsigned int gpu_minor,
 					&ci_minor) != SLURM_SUCCESS)
 		return SLURM_ERROR;
 
-	nvml_rc = nvmlDeviceGetAttributes(mig, &attributes);
-	if (nvml_rc != NVML_SUCCESS) {
-		error("Failed to get MIG attributes: %s",
-		      nvmlErrorString(nvml_rc));
-		return SLURM_ERROR;
-	}
+	_nvml_get_device_name(&mig, device_name,
+			      NVML_DEVICE_NAME_BUFFER_SIZE);
+	if (device_name[0] && (str = strstr(device_name, "mig_"))) {
+		/* Adding 3 to skip "mig" but keep "_" */
+		xstrfmtcat(nvml_mig->profile_name, "%s", str + 3);
+	} else { /* Backup: generate name from attributes */
+		nvmlDeviceAttributes_t attributes;
+		nvmlReturn_t nvml_rc;
+		nvml_rc = nvmlDeviceGetAttributes(mig, &attributes);
+		if (nvml_rc != NVML_SUCCESS) {
+			error("Failed to get MIG attributes: %s",
+			      nvmlErrorString(nvml_rc));
+			return SLURM_ERROR;
+		}
+		xstrfmtcat(nvml_mig->profile_name, "_");
 
-	/* Divide MB by 1024 (2^10) to get GB, and then round */
-	xstrfmtcat(nvml_mig->profile_name, "_%ug.%lugb",
-		   attributes.gpuInstanceSliceCount,
-		   (unsigned long)roundl((long double)attributes.memorySizeMB /
-					 (long double)1024));
+		if (attributes.computeInstanceSliceCount !=
+		    attributes.gpuInstanceSliceCount)
+			xstrfmtcat(nvml_mig->profile_name, "%uc.",
+				   attributes.computeInstanceSliceCount);
+
+		/* Divide MB by 1024 (2^10) to get GB, and then round */
+		xstrfmtcat(nvml_mig->profile_name, "%ug.%lugb",
+			   attributes.gpuInstanceSliceCount,
+			   (unsigned long)((attributes.memorySizeMB + 1023) /
+					   1024));
+	}
 
 	if (_nvml_use_mig_uuid())
 		xstrfmtcat(nvml_mig->unique_id, "%s", mig_uuid);
@@ -1279,6 +1312,7 @@ static int _handle_mig(nvmlDevice_t *device, unsigned int gpu_minor,
  */
 static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 {
+	bitstr_t *enabled_cpus_bits = NULL;
 	unsigned int i;
 	unsigned int device_count = 0;
 	List gres_list_system = list_create(destroy_gres_slurmd_conf);
@@ -1305,7 +1339,7 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 	debug2("Device count: %d", device_count);
 
 	// Create a device index --> PCI Bus ID lookup table
-	device_lut = xmalloc(sizeof(char *) * device_count);
+	device_lut = xcalloc(device_count, sizeof(char *));
 
 	/*
 	 * Loop through to create device to PCI busId lookup table
@@ -1321,6 +1355,13 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 		device_lut[i] = xstrdup(pci_info.busId);
 	}
 
+	if (!xstrcasestr(slurm_conf.slurmd_params, "allow_ecores")) {
+		enabled_cpus_bits = bit_alloc(MAX_CPUS);
+		for (i = 0; i < conf->block_map_size; i++) {
+			bit_set(enabled_cpus_bits, conf->block_map[i]);
+		}
+	}
+
 	/*
 	 * Loop through all the GPUs on the system and add to gres_list_system
 	 */
@@ -1329,20 +1370,21 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 		char uuid[NVML_DEVICE_UUID_BUFFER_SIZE] = {0};
 		unsigned int minor_number = 0;
 		unsigned long cpu_set[CPU_SET_SIZE] = {0};
-		bitstr_t *cpu_aff_mac_bitstr = NULL;
 		char *cpu_aff_mac_range = NULL;
-		char *cpu_aff_abs_range = NULL;
 		char *device_file = NULL;
 		char *nvlinks = NULL;
 		char device_name[NVML_DEVICE_NAME_BUFFER_SIZE] = {0};
 		bool mig_mode = false;
+		gres_slurmd_conf_t gres_slurmd_conf = {
+			.config_flags = GRES_CONF_ENV_NVML,
+			.count = 1,
+			.cpu_cnt = node_config->cpu_cnt,
+			.name = "gpu",
+		};
 
 		if (!_nvml_get_handle(i, &device)) {
 			error("Creating null GRES GPU record");
-			add_gres_to_list(gres_list_system, "gpu", 1,
-					 node_config->cpu_cnt, NULL, NULL,
-					 NULL, NULL, NULL, NULL,
-					 GRES_CONF_ENV_NVML);
+			add_gres_to_list(gres_list_system, &gres_slurmd_conf);
 			continue;
 		}
 
@@ -1363,17 +1405,27 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 		_nvml_get_device_affinity(&device, CPU_SET_SIZE, cpu_set);
 
 		// Convert from nvml cpu bitmask to slurm bitstr_t (machine fmt)
-		cpu_aff_mac_bitstr = bit_alloc(MAX_CPUS);
-		_set_cpu_set_bitstr(cpu_aff_mac_bitstr, cpu_set, CPU_SET_SIZE);
+		gres_slurmd_conf.cpus_bitmap = bit_alloc(MAX_CPUS);
+		_set_cpu_set_bitstr(gres_slurmd_conf.cpus_bitmap,
+				    cpu_set, CPU_SET_SIZE);
+
+		if (enabled_cpus_bits) {
+			/*
+			 * Mask out E-cores that may be included from nvml's cpu
+			 * affinity bitstring.
+			 */
+			bit_and(gres_slurmd_conf.cpus_bitmap,
+				enabled_cpus_bits);
+		}
 
 		// Convert from bitstr_t to cpu range str
-		cpu_aff_mac_range = bit_fmt_full(cpu_aff_mac_bitstr);
+		cpu_aff_mac_range = bit_fmt_full(gres_slurmd_conf.cpus_bitmap);
 
 		// Convert cpu range str from machine to abstract(slurm) format
 		if (node_config->xcpuinfo_mac_to_abs(cpu_aff_mac_range,
-						     &cpu_aff_abs_range)) {
+						     &gres_slurmd_conf.cpus)) {
 			error("    Conversion from machine to abstract failed");
-			FREE_NULL_BITMAP(cpu_aff_mac_bitstr);
+			FREE_NULL_BITMAP(gres_slurmd_conf.cpus_bitmap);
 			xfree(cpu_aff_mac_range);
 			continue;
 		}
@@ -1396,7 +1448,7 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 		debug2("    CPU Affinity Range - Machine: %s",
 		       cpu_aff_mac_range);
 		debug2("    Core Affinity Range - Abstract: %s",
-		       cpu_aff_abs_range);
+		       gres_slurmd_conf.cpus);
 		debug2("    MIG mode: %s", mig_mode ? "enabled" : "disabled");
 
 		if (mig_mode) {
@@ -1455,37 +1507,36 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 				 * support NVLinks. CPU affinity, CPU count, and
 				 * device name will be the same as non-MIG GPU.
 				 */
-				add_gres_to_list(gres_list_system, "gpu", 1,
-						 node_config->cpu_cnt,
-						 cpu_aff_abs_range,
-						 cpu_aff_mac_bitstr,
-						 nvml_mig.files,
-						 nvml_mig.profile_name,
-						 nvml_mig.links,
-						 nvml_mig.unique_id,
-						 GRES_CONF_ENV_NVML);
+				gres_slurmd_conf.file = nvml_mig.files;
+				gres_slurmd_conf.links = nvml_mig.links;
+				gres_slurmd_conf.type_name =
+					nvml_mig.profile_name;
+				gres_slurmd_conf.unique_id = nvml_mig.unique_id;
+
+				add_gres_to_list(gres_list_system,
+						 &gres_slurmd_conf);
 				_free_nvml_mig_members(&nvml_mig);
 			}
 			xfree(tmp_device_name);
 #endif
 		} else {
-			add_gres_to_list(gres_list_system, "gpu", 1,
-					 node_config->cpu_cnt,
-					 cpu_aff_abs_range,
-					 cpu_aff_mac_bitstr, device_file,
-					 device_name, nvlinks, NULL,
-					 GRES_CONF_ENV_NVML);
+			gres_slurmd_conf.file = device_file;
+			gres_slurmd_conf.links = nvlinks;
+			gres_slurmd_conf.type_name = device_name;
+
+			add_gres_to_list(gres_list_system, &gres_slurmd_conf);
 		}
 
 		// Print out possible memory frequencies for this device
 		_nvml_print_freqs(&device, LOG_LEVEL_DEBUG2);
 
-		FREE_NULL_BITMAP(cpu_aff_mac_bitstr);
+		FREE_NULL_BITMAP(gres_slurmd_conf.cpus_bitmap);
 		xfree(cpu_aff_mac_range);
-		xfree(cpu_aff_abs_range);
-		xfree(nvlinks);
 		xfree(device_file);
+		xfree(nvlinks);
 	}
+
+	FREE_NULL_BITMAP(enabled_cpus_bits);
 
 	/*
 	 * Free lookup table
@@ -1493,7 +1544,6 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 	for (i = 0; i < device_count; ++i)
 		xfree(device_lut[i]);
 	xfree(device_lut);
-	_nvml_shutdown();
 
 	info("%u GPU system device(s) detected", device_count);
 	return gres_list_system;
@@ -1501,6 +1551,10 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 
 extern int init(void)
 {
+	if (running_in_slurmstepd()) {
+		gpu_get_tres_pos(&gpumem_pos, &gpuutil_pos);
+	}
+
 	debug("%s: %s loaded", __func__, plugin_name);
 
 	return SLURM_SUCCESS;
@@ -1508,6 +1562,8 @@ extern int init(void)
 
 extern int fini(void)
 {
+	_nvml_shutdown();
+
 	debug("%s: unloading %s", __func__, plugin_name);
 
 	return SLURM_SUCCESS;
@@ -1642,11 +1698,145 @@ extern char *gpu_p_test_cpu_conv(char *cpu_range)
 	// Convert from bitstr_t to cpu range str
 	result = bit_fmt_full(cpu_aff_mac_bitstr);
 
-	bit_free(cpu_aff_mac_bitstr);
+	FREE_NULL_BITMAP(cpu_aff_mac_bitstr);
 	return result;
 }
 
 extern int gpu_p_energy_read(uint32_t dv_ind, gpu_status_t *gpu)
 {
+	return SLURM_SUCCESS;
+}
+
+extern int gpu_p_usage_read(pid_t pid, acct_gather_data_t *data)
+{
+	nvmlReturn_t rc;
+	unsigned int device_count = 0;
+
+	if ((gpuutil_pos == -1) || (gpumem_pos == -1)) {
+		debug2("%s: We are not tracking TRES gpuutil/gpumem", __func__);
+		return SLURM_SUCCESS;
+	}
+	_nvml_init();
+	gpu_p_get_device_count(&device_count);
+
+	data[gpuutil_pos].size_read = 0;
+	data[gpumem_pos].size_read = 0;
+	for (int i = 0; i < device_count; i++) {
+		nvmlDevice_t device;
+		nvmlProcessUtilizationSample_t *proc_util;
+		unsigned int cnt = 0, gcnt = 0, ccnt = 0;
+		nvmlProcessInfo_t *proc_info;
+
+		if (!_nvml_get_handle(i, &device))
+			continue;
+
+		/*
+		 * Sending NULL will fill in cnt with the number of processes
+		 * so we can use that to allocate the array correctly
+		 * afterwards. A rc of NVML_SUCCESS means no processes yet.
+		 */
+		rc = nvmlDeviceGetProcessUtilization(
+			device, NULL, &cnt, data[gpuutil_pos].last_time);
+		if (rc == NVML_SUCCESS || !cnt)
+			continue;
+
+		if (rc != NVML_ERROR_INSUFFICIENT_SIZE)
+			return SLURM_ERROR;
+
+		proc_util = xcalloc(cnt, sizeof(*proc_util));
+		rc = nvmlDeviceGetProcessUtilization(
+			device, proc_util, &cnt, data[gpuutil_pos].last_time);
+
+		if (rc == NVML_ERROR_NOT_FOUND) {
+			debug2("Couldn't find pid %d, probably hasn't started yet or has already finished",
+			       pid);
+			xfree(proc_util);
+			continue;
+#if HAVE_MIG_SUPPORT
+		} else if ((rc == NVML_ERROR_NOT_SUPPORTED) &&
+			   _nvml_is_device_mig(&device)) {
+			/*
+			 * NOTE: At the moment you can not query MIGs for
+			 * utilization. This will probably be fixed in the
+			 * future and hopefully this will start working.
+			 */
+			debug2("On MIG-enabled GPUs, querying process utilization is not currently supported.");
+#endif
+		} else if (rc != NVML_SUCCESS) {
+			error("NVML: Failed to get usage(%d): %s",
+			      rc, nvmlErrorString(rc));
+			xfree(proc_util);
+			return SLURM_ERROR;
+		}
+
+		for (int j = 0; j < cnt; j++) {
+			if (proc_util[j].pid != pid)
+				continue;
+			data[gpuutil_pos].last_time = proc_util[j].timeStamp;
+			data[gpuutil_pos].size_read += proc_util[j].smUtil;
+			break;
+		}
+		xfree(proc_util);
+
+		/*
+		 * Get the number of Graphics and Compute processes. If there
+		 * are no processes *cnt will be 0 and rc == NVML_SUCCESS, if
+		 * there are processes *cnt will be set and rc ==
+		 * NVML_ERROR_INSUFFICIENT_SIZE
+		 */
+		rc = nvmlDeviceGetGraphicsRunningProcesses(
+			device, &gcnt, NULL);
+		if ((rc != NVML_SUCCESS) &&
+		    (rc != NVML_ERROR_INSUFFICIENT_SIZE))
+			return SLURM_ERROR;
+
+		rc = nvmlDeviceGetComputeRunningProcesses(
+			device, &ccnt, NULL);
+		if ((rc != NVML_SUCCESS) &&
+		    (rc != NVML_ERROR_INSUFFICIENT_SIZE))
+			return SLURM_ERROR;
+
+		/*
+		 * This is how we get the memory in bytes instead of precentage
+		 */
+		proc_info = xcalloc(gcnt+ccnt, sizeof(*proc_info));
+		if (gcnt) {
+			rc = nvmlDeviceGetGraphicsRunningProcesses(
+				device, &gcnt, proc_info);
+			if (rc != NVML_SUCCESS) {
+				error("NVML: Failed to get Graphics running procs(%d): %s",
+				      rc, nvmlErrorString(rc));
+				xfree(proc_info);
+				return SLURM_ERROR;
+			}
+		}
+
+		if (ccnt) {
+			rc = nvmlDeviceGetComputeRunningProcesses(
+				device, &ccnt, proc_info + gcnt);
+			if (rc != NVML_SUCCESS) {
+				error("NVML: Failed to get Compute running procs(%d): %s",
+				      rc, nvmlErrorString(rc));
+				xfree(proc_info);
+				return SLURM_ERROR;
+			}
+		}
+
+		for (int j = 0; j < (gcnt + ccnt); j++) {
+			if (proc_info[j].pid != pid)
+				continue;
+			/* Store MB usedGpuMemory is in bytes */
+			data[gpumem_pos].size_read +=
+				proc_info[j].usedGpuMemory;
+			break;
+		}
+		xfree(proc_info);
+
+		log_flag(JAG, "pid %d has GPUUtil=%lu and MemMB=%lu",
+			 pid,
+			 data[gpuutil_pos].size_read,
+			 data[gpumem_pos].size_read / 1048576);
+	}
+
 	return SLURM_SUCCESS;
 }

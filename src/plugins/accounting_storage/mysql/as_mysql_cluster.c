@@ -43,7 +43,7 @@
 #include "as_mysql_usage.h"
 #include "as_mysql_wckey.h"
 
-#include "src/common/select.h"
+#include "src/interfaces/select.h"
 #include "src/common/slurm_time.h"
 
 extern int as_mysql_get_fed_cluster_id(mysql_conn_t *mysql_conn,
@@ -450,7 +450,12 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			assoc->user = xstrdup("root");
 			assoc->acct = xstrdup("root");
 			assoc->is_def = 1;
-
+			/*
+			 * If the cluster is registering then don't add to the
+			 * update_list.
+			 */
+			if (object->flags & CLUSTER_FLAG_REGISTER)
+				assoc->flags |= ASSOC_FLAG_NO_UPDATE;
 			if (as_mysql_add_assocs(mysql_conn, uid, assoc_list)
 			    == SLURM_ERROR) {
 				error("Problem adding root user association");
@@ -537,6 +542,7 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 		xstrfmtcat(vals, ", control_host='%s'", cluster->control_host);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->control_port) {
@@ -544,12 +550,14 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			   cluster->control_port, cluster->control_port);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->rpc_version) {
 		xstrfmtcat(vals, ", rpc_version=%u", cluster->rpc_version);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->dimensions) {

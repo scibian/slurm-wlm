@@ -49,6 +49,9 @@
 #include "src/common/slurm_time.h"
 #include "src/common/stepd_api.h"
 
+#include "src/interfaces/data_parser.h"
+
+#define CONTAINER_ID_TAG "containerid="
 #define POLL_SLEEP	3	/* retry interval in seconds  */
 
 /* Load current job table information into *job_buffer_pptr */
@@ -188,7 +191,6 @@ scontrol_print_completing (void)
 			scontrol_print_completing_job(&job_info[i],
 						      node_info_msg);
 	}
-	slurm_free_node_info_msg(node_info_msg);
 }
 
 extern void
@@ -199,7 +201,7 @@ scontrol_print_completing_job(job_info_t *job_ptr,
 	node_info_t *node_info;
 	hostlist_t comp_nodes, down_nodes;
 	char *node_buf;
-	char time_str[32];
+	char time_str[256];
 	time_t completing_time = 0;
 
 	comp_nodes = hostlist_create(NULL);
@@ -250,38 +252,6 @@ scontrol_print_completing_job(job_info_t *job_ptr,
 	hostlist_destroy(down_nodes);
 }
 
-extern uint16_t
-scontrol_get_job_state(uint32_t job_id)
-{
-	job_info_msg_t * job_buffer_ptr = NULL;
-	int error_code = SLURM_SUCCESS, i;
-	job_info_t *job_ptr = NULL;
-
-	error_code = scontrol_load_job(&job_buffer_ptr, job_id);
-	if (error_code) {
-		exit_code = 1;
-		if (quiet_flag == -1)
-			slurm_perror ("slurm_load_job error");
-		return NO_VAL16;
-	}
-	if (quiet_flag == -1) {
-		char time_str[32];
-		slurm_make_time_str((time_t *)&job_buffer_ptr->last_update,
-				    time_str, sizeof(time_str));
-		printf("last_update_time=%s, records=%d\n",
-		       time_str, job_buffer_ptr->record_count);
-	}
-
-	job_ptr = job_buffer_ptr->job_array ;
-	for (i = 0; i < job_buffer_ptr->record_count; i++) {
-		if (job_ptr->job_id == job_id)
-			return job_ptr->job_state;
-	}
-	if (quiet_flag == -1)
-		printf("Could not find job %u", job_id);
-	return NO_VAL16;
-}
-
 static bool _het_job_offset_match(job_info_t *job_ptr, uint32_t het_job_offset)
 {
 	if ((het_job_offset == NO_VAL) ||
@@ -312,7 +282,7 @@ static bool _task_id_in_job(job_info_t *job_ptr, uint32_t array_id)
  * scontrol_print_job - print the specified job's information
  * IN job_id - job's id or NULL to print information about all jobs
  */
-extern void scontrol_print_job(char * job_id_str)
+extern void scontrol_print_job(char *job_id_str, int argc, char **argv)
 {
 	int error_code = SLURM_SUCCESS, i, print_cnt = 0;
 	uint32_t job_id = 0;
@@ -345,14 +315,24 @@ extern void scontrol_print_job(char * job_id_str)
 	}
 
 	error_code = scontrol_load_job(&job_buffer_ptr, job_id);
+
+	if (mime_type) {
+		if ((error_code = DATA_DUMP_CLI(JOB_INFO_MSG, *job_buffer_ptr,
+						"jobs", argc, argv, NULL,
+						mime_type)))
+			exit_code =1;
+		return;
+	}
+
 	if (error_code) {
 		exit_code = 1;
 		if (quiet_flag != 1)
-			slurm_perror ("slurm_load_jobs error");
+			slurm_perror("slurm_load_jobs error");
 		return;
 	}
+
 	if (quiet_flag == -1) {
-		char time_str[32];
+		char time_str[256];
 		slurm_make_time_str ((time_t *)&job_buffer_ptr->last_update,
 				     time_str, sizeof(time_str));
 		printf ("last_update_time=%s, records=%d\n",
@@ -405,32 +385,50 @@ extern void scontrol_print_job(char * job_id_str)
  * IN job_step_id_str - job step's id or NULL to print information
  *	about all job steps
  */
-extern void
-scontrol_print_step (char *job_step_id_str)
+extern void scontrol_print_step(char *job_step_id_str, int argc, char **argv)
 {
-	int error_code, i, print_cnt = 0;
+	int error_code = 0, print_cnt = 0;
 	slurm_step_id_t step_id = {
-		.job_id = 0,
+		.job_id = NO_VAL,
 		.step_het_comp = NO_VAL,
 		.step_id = NO_VAL,
 	};
 	uint32_t array_id = NO_VAL;
-	char *next_str;
-	job_step_info_response_msg_t *job_step_info_ptr;
-	job_step_info_t * job_step_ptr;
+	job_step_info_response_msg_t *job_step_info_ptr = NULL;
 	static uint32_t last_job_id = 0, last_array_id, last_step_id = 0;
 	static job_step_info_response_msg_t *old_job_step_info_ptr = NULL;
 	static uint16_t last_show_flags = 0xffff;
 	uint16_t show_flags = 0;
+	job_step_info_t **steps = NULL;
 
-	if (job_step_id_str) {
-		step_id.job_id = (uint32_t)strtol(job_step_id_str, &next_str,
-						  10);
-		if (next_str[0] == '_')
-			array_id = (uint32_t) strtol(next_str+1, &next_str, 10);
-		else if (next_str[0] == '.')
-			step_id.step_id = (uint32_t)strtol(next_str + 1, NULL,
-							   10);
+	if (!job_step_id_str) {
+		/* do nothing */
+	} else if (!xstrncasecmp(job_step_id_str, CONTAINER_ID_TAG,
+				 strlen(CONTAINER_ID_TAG))) {
+		uid_t uid = SLURM_AUTH_NOBODY;
+		list_t *step_list = list_create((ListDelF) slurm_free_step_id);
+		char *cid = job_step_id_str + strlen(CONTAINER_ID_TAG);
+
+		error_code = slurm_find_step_ids_by_container_id(
+			SHOW_ALL, uid, cid, step_list);
+
+		if (error_code || list_is_empty(step_list)) {
+			step_id.job_id = 0;
+		} else {
+			/* just clone out the first step id details */
+			step_id = *(slurm_step_id_t *) list_peek(step_list);
+			job_step_id_str = NULL;
+		}
+
+		FREE_NULL_LIST(step_list);
+	} else {
+		slurm_selected_step_t id = {0};
+		if (!(error_code = unfmt_job_id_string(job_step_id_str, &id))) {
+			if (id.array_task_id != NO_VAL)
+				array_id = id.array_task_id;
+
+			step_id = id.step_id;
+		}
 	}
 
 	if (all_flag)
@@ -438,7 +436,9 @@ scontrol_print_step (char *job_step_id_str)
 	if (local_flag)
 		show_flags |= SHOW_LOCAL;
 
-	if ((old_job_step_info_ptr) && (last_job_id == step_id.job_id) &&
+	if (!step_id.job_id || error_code) {
+		/* step lookup failed already - skip trying again */
+	} else if ((old_job_step_info_ptr) && (last_job_id == step_id.job_id) &&
 	    (last_array_id == array_id) && (last_step_id == step_id.step_id)) {
 		if (last_show_flags != show_flags)
 			old_job_step_info_ptr->last_update = (time_t) 0;
@@ -454,6 +454,8 @@ scontrol_print_step (char *job_step_id_str)
 			error_code = SLURM_SUCCESS;
 			if (quiet_flag == -1)
 				printf("slurm_get_job_steps no change in data\n");
+		} else {
+			error_code = errno;
 		}
 	} else {
 		if (old_job_step_info_ptr) {
@@ -465,12 +467,29 @@ scontrol_print_step (char *job_step_id_str)
 						   step_id.step_id,
 						   &job_step_info_ptr,
 						   show_flags);
+		if ((error_code == SLURM_ERROR) && errno)
+			error_code = errno;
 	}
 
-	if (error_code) {
+	if (error_code || !job_step_info_ptr) {
+		if (mime_type) {
+			DATA_DUMP_CLI(STEP_INFO_MSG, job_step_info_ptr, "steps",
+				      argc, argv, NULL, mime_type);
+			exit_code = SLURM_ERROR;
+			slurm_free_job_step_info_response_msg(
+				job_step_info_ptr);
+			return;
+		}
+
 		exit_code = 1;
-		if (quiet_flag != 1)
-			slurm_perror ("slurm_get_job_steps error");
+		if (quiet_flag != 1) {
+			if (!step_id.job_id)
+				printf("No job steps found\n");
+			else
+				error("%s: slurm_get_job_steps(%s) failed: %s",
+				      __func__, job_step_id_str,
+				      slurm_strerror(error_code));
+		}
 		return;
 	}
 
@@ -479,24 +498,46 @@ scontrol_print_step (char *job_step_id_str)
 	last_job_id = step_id.job_id;
 	last_step_id = step_id.step_id;
 
-	if (quiet_flag == -1) {
-		char time_str[32];
+	if (!mime_type && (quiet_flag == -1)) {
+		char time_str[256];
 		slurm_make_time_str ((time_t *)&job_step_info_ptr->last_update,
 			             time_str, sizeof(time_str));
 		printf ("last_update_time=%s, records=%d\n",
 			time_str, job_step_info_ptr->job_step_count);
 	}
 
-	for (i = 0, job_step_ptr = job_step_info_ptr->job_steps;
-	     i < job_step_info_ptr->job_step_count; i++, job_step_ptr++) {
-		if ((array_id != NO_VAL) &&
-		    (array_id != job_step_ptr->array_task_id))
-			continue;
-		slurm_print_job_step_info(stdout, job_step_ptr, one_liner);
-		print_cnt++;
+	if (job_step_info_ptr->job_step_count) {
+		int s = 0;
+		steps = xcalloc(job_step_info_ptr->job_step_count + 1,
+				sizeof(*steps));
+
+		for (int i = 0; i < job_step_info_ptr->job_step_count; i++) {
+			job_step_info_t *step =
+				&job_step_info_ptr->job_steps[i];
+
+			if ((array_id != NO_VAL) &&
+			    (array_id != step->array_task_id))
+				continue;
+
+			steps[s] = step;
+			s++;
+		}
 	}
 
-	if (print_cnt == 0) {
+	if (mime_type) {
+		if (DATA_DUMP_CLI(STEP_INFO_ARRAY, steps, "steps", argc, argv,
+				  NULL, mime_type))
+			exit_code = SLURM_ERROR;
+	} else if (steps) {
+		int i = 0;
+
+		for (; steps[i]; i++)
+			slurm_print_job_step_info(stdout, steps[i], one_liner);
+
+		print_cnt = i;
+	}
+
+	if (!mime_type && !print_cnt) {
 		if (job_step_id_str) {
 			exit_code = 1;
 			if (quiet_flag != 1) {
@@ -517,6 +558,8 @@ scontrol_print_step (char *job_step_id_str)
 		} else if (quiet_flag != 1)
 			printf ("No job steps in the system\n");
 	}
+
+	xfree(steps);
 }
 
 /* Return 1 on success, 0 on failure to find a jobid in the string */
@@ -925,18 +968,22 @@ _reformat_hostlist(char *hostlist)
  *	of a file containing hostnames, translate them into a hostlist
  *	expression
  */
-extern int
-scontrol_encode_hostlist(char *hostlist, bool sorted)
+extern int scontrol_encode_hostlist(char *arg_hostlist, bool sorted)
 {
-	char *io_buf = NULL, *tmp_list, *ranged_string;
+	char *io_buf = NULL, *tmp_list, *ranged_string, *hostlist;
 	int buf_size = 1024 * 1024;
 	int data_read = 0;
 	hostlist_t hl;
 
-	if (!hostlist) {
+	if (!arg_hostlist) {
 		fprintf(stderr, "Hostlist is NULL\n");
 		return SLURM_ERROR;
 	}
+
+	if (!xstrcmp(arg_hostlist, "-"))
+		hostlist = "/dev/stdin";
+	else
+		hostlist = arg_hostlist;
 
 	if (hostlist[0] == '/') {
 		ssize_t buf_read;
@@ -951,13 +998,15 @@ scontrol_encode_hostlist(char *hostlist, bool sorted)
 			data_read += buf_read;
 		}
 
+		close(fd);
+
 		if (buf_read < 0) {
+			xfree(io_buf);
 			fprintf(stderr, "Error reading %s\n", hostlist);
 			return SLURM_ERROR;
 		}
 
-		close(fd);
-		if (buf_read >= buf_size) {
+		if (data_read >= buf_size) {
 			/* If over 1MB, the file is almost certainly invalid */
 			fprintf(stderr, "File %s is too large\n", hostlist);
 			xfree(io_buf);

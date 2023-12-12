@@ -40,11 +40,11 @@
 #include <dlfcn.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/cgroup.h"
-#include "src/common/slurm_acct_gather_energy.h"
-#include "src/common/slurm_acct_gather_profile.h"
-#include "src/common/gpu.h"
-#include "src/common/gres.h"
+#include "src/interfaces/cgroup.h"
+#include "src/interfaces/acct_gather_energy.h"
+#include "src/interfaces/acct_gather_profile.h"
+#include "src/interfaces/gpu.h"
+#include "src/interfaces/gres.h"
 
 #define DEFAULT_GPU_TIMEOUT 10
 #define DEFAULT_GPU_FREQ 30
@@ -98,7 +98,7 @@ static pthread_cond_t gpu_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 
-static stepd_step_rec_t *job = NULL;
+static stepd_step_rec_t *step = NULL;
 
 pthread_t thread_gpu_id_launcher = 0;
 pthread_t thread_gpu_id_run = 0;
@@ -500,9 +500,18 @@ static int _get_joules_task(uint16_t delta)
 			new->current_watts);
 
 		if (!stepd_first) {
-			new->consumed_energy -= start_current_energies[i];
-			new->base_consumed_energy = adjustment +
-				(new->consumed_energy - old->consumed_energy);
+			/* if slurmd is reloaded while the step is alive */
+			if (old->consumed_energy > new->consumed_energy)
+				new->base_consumed_energy =
+					new->consumed_energy + adjustment;
+			else {
+				new->consumed_energy -=
+					start_current_energies[i];
+				new->base_consumed_energy =
+					adjustment +
+					(new->consumed_energy -
+					 old->consumed_energy);
+			}
 		} else {
 			/*
 			 * This is just for the step, so take all the pervious
@@ -568,9 +577,15 @@ extern int fini(void)
 	if (thread_gpu_id_run)
 		pthread_join(thread_gpu_id_run, NULL);
 
-	xfree(gpus);
-	xfree(start_current_energies);
-	saved_usable_gpus = NULL;
+	/*
+	 * We don't really want to destroy the the state, so those values
+	 * persist a reconfig. And if the process dies, this will be lost
+	 * anyway. So not freeing these variables is not really a leak.
+	 *
+	 * xfree(gpus);
+	 * xfree(start_current_energies);
+	 * saved_usable_gpus = NULL;
+	 */
 
 	return SLURM_SUCCESS;
 }
@@ -674,13 +689,13 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 	case ENERGY_DATA_STEP_PTR:
 	{
 		/* set global job if needed later */
-		job = (stepd_step_rec_t *)data;
+		step = (stepd_step_rec_t *)data;
 
 		/*
 		 * Get the GPUs used in the step so we only poll those when
 		 * looking at them
 		 */
-		rc = gres_get_step_info(job->step_gres_list, "gpu", 0,
+		rc = gres_get_step_info(step->step_gres_list, "gpu", 0,
 					GRES_STEP_DATA_BITMAP,
 					&saved_usable_gpus);
 		/*

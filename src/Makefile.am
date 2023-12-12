@@ -3,6 +3,7 @@ SUBDIRS =		\
 	bcast		\
 	common		\
 	database	\
+	interfaces	\
 	lua		\
 	plugins		\
 	sacct		\
@@ -14,6 +15,7 @@ SUBDIRS =		\
 	scancel		\
 	scontrol	\
 	scrontab	\
+	scrun		\
 	sdiag		\
 	sinfo		\
 	slurmctld	\

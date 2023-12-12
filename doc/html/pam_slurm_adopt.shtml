@@ -92,7 +92,7 @@ Epilog:
 #Only disable linger if this is the last job running for this user.
 O_P=0
 for pid in $(scontrol listpids | awk -v jid=$SLURM_JOB_ID 'NR!=1 { if ($2 != jid && $1 != "-1"){print $1} }'); do
-        ps --noheader -o euser p $pid | grep -q $SLURM_JOB_USER || O_P=1
+        ps --noheader -o euser p $pid | grep -q $SLURM_JOB_USER && O_P=1
 done
 if [ $O_P -eq 0 ]; then
         loginctl disable-linger $SLURM_JOB_USER
@@ -215,7 +215,7 @@ can ssh in but may be adopted into a job that exits earlier than the
 job they intended to check on. The ssh connection will at least be
 subject to appropriate limits and the user can be informed of better
 ways to accomplish their objectives if this becomes a problem.
-NOTE: If the module fails to retrieve the cgroup mtime, then the picked
+<b>NOTE</b>: If the module fails to retrieve the cgroup mtime, then the picked
 job may not be the newest one.
 On systems with <i>cgroup/v2</i> the newest is just the job with the greatest
 id, and thus this does not ensure that it is really the newest job.
@@ -383,7 +383,7 @@ NodeName in <b>slurm.conf</b> that this host operates as.
 it only runs for sshd for which it was designed for. A
 different service name can be specified like "login" or "*" to
 allow the module to in any service context. For local pam logins
-this module could cause unexpected behaviour or even security
+this module could cause unexpected behavior or even security
 issues. Therefore if the service name does not match then this
 module will not perform the adoption logic and returns
 PAM_IGNORE immediately.
@@ -420,6 +420,10 @@ attempts without <b>PrologFlags=contain.</b></p>
 
 <p>Verify that <b>UsePAM</b> is set to <b>On</b> in /etc/ssh/sshd_config (it
 should be on by default).</p>
+
+<p>By setting <b>LaunchParameters=ulimit_pam_adopt</b>, processes adopted by
+the external step can have RLIMIT_RSS set, similar to tasks running in regular
+steps.</p>
 
 <h3 id="firewall">Firewalls, IP Addresses, etc.
 <a class="slurm_link" href="#firewall"></a>
@@ -502,6 +506,6 @@ break process adoption with pam_slurm_adopt.</p>
 <p>When using SELinux support in Slurm, the session started via pam_slurm_adopt
 won't necessarily be in the same context as the job it is associated with.</p>
 
-<p style="text-align:center;">Last modified 29 November 2022</p>
+<p style="text-align:center;">Last modified 22 September 2023</p>
 
 <!--#include virtual="footer.txt"-->

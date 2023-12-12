@@ -65,7 +65,7 @@
 #include "src/common/pack.h"
 #include "src/common/parse_config.h"
 #include "src/common/run_command.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/timers.h"
 #include "src/common/uid.h"
@@ -577,7 +577,7 @@ extern void bb_load_config(bb_state_t *state_ptr, char *plugin_type)
 	}
 
 	bb_hashtbl = s_p_hashtbl_create(bb_options);
-	if (s_p_parse_file(bb_hashtbl, NULL, bb_conf, false, NULL)
+	if (s_p_parse_file(bb_hashtbl, NULL, bb_conf, false, NULL, false)
 	    == SLURM_ERROR) {
 		fatal("%s: something wrong with opening/reading %s: %m",
 		      __func__, bb_conf);
@@ -763,6 +763,18 @@ static void _pack_alloc(struct bb_alloc *bb_alloc, buf_t *buffer,
 		pack16(bb_alloc->state,         buffer);
 		pack32(bb_alloc->user_id,       buffer);
 	}
+}
+
+/* Return true if hetjob separator in the script */
+static bool _hetjob_check(char *tok)
+{
+	if (xstrncmp(tok + 1, "SLURM",  5) &&
+	    xstrncmp(tok + 1, "SBATCH", 6))
+		return false;
+	if (!xstrstr(tok + 6, "packjob") &&
+	    !xstrstr(tok + 6, "hetjob"))
+		return false;
+	return true;
 }
 
 /* Pack individual burst buffer records into a buffer */
@@ -1151,6 +1163,7 @@ extern bb_alloc_t *bb_alloc_job_rec(bb_state_t *state_ptr,
 	bb_alloc->state_time = time(NULL);
 	bb_alloc->seen_time = time(NULL);
 	bb_alloc->user_id = job_ptr->user_id;
+	bb_alloc->group_id = job_ptr->group_id;
 
 	return bb_alloc;
 }
@@ -1179,6 +1192,52 @@ extern int bb_build_bb_script(job_record_t *job_ptr, char *script_file)
 	xfree(out_buf);
 
 	return rc;
+}
+
+extern char *bb_common_build_het_job_script(char *script,
+					    uint32_t het_job_offset,
+					    bool (*is_directive) (char *tok))
+{
+	char *result = NULL, *tmp = NULL;
+	char *tok, *save_ptr = NULL;
+	bool fini = false;
+	int cur_offset = 0;
+
+	tmp = xstrdup(script);
+	tok = strtok_r(tmp, "\n", &save_ptr);
+	while (tok) {
+		if (!result) {
+			xstrfmtcat(result, "%s\n", tok);
+		} else if (tok[0] != '#') {
+			fini = true;
+		} else if (_hetjob_check(tok)) {
+			cur_offset++;
+			if (cur_offset > het_job_offset)
+				fini = true;
+		} else if (cur_offset == het_job_offset) {
+			xstrfmtcat(result, "%s\n", tok);
+		}
+		if (fini)
+			break;
+		tok = strtok_r(NULL, "\n", &save_ptr);
+	}
+
+	if (het_job_offset == 0) {
+		while (tok) {
+			char *sep = "";
+			if (is_directive(tok)) {
+				sep = "#EXCLUDED ";
+				tok++;
+			}
+			xstrfmtcat(result, "%s%s\n", sep, tok);
+			tok = strtok_r(NULL, "\n", &save_ptr);
+		}
+	} else if (result) {
+		xstrcat(result, "exit 0\n");
+	}
+	xfree(tmp);
+
+	return result;
 }
 
 /* Free memory associated with allocated bb record, caller is responsible for

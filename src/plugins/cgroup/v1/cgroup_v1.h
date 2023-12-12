@@ -44,10 +44,9 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/bitstring.h"
-#include "src/common/cgroup.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -68,6 +67,6 @@
 #include <sys/eventfd.h>
 #endif
 
-#define MAX_MOVE_WAIT 5000
+#define MAX_MOVE_WAIT 1000 /* Miliseconds */
 
 #endif /* !_CGROUP_V1_H */

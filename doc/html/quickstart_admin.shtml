@@ -103,20 +103,28 @@ Optional Slurm plugins will be built automatically when the
 present. Build dependencies for various plugins and commands are denoted below:
 </p>
 <ul>
+<li> <b>AMD GPU Support</b> Autodetection of AMD GPUs will be available
+		if the <i>ROCm</i> development library is installed.
+		</li>
 <li> <b>cgroup Task Constraining</b> The <i>task/cgroup</i> plugin will be built
-		if the <i>hwloc</i> development library is present.</li>
+		if the <i>hwloc</i> development library is present. cgroup/v2
+		support also requires the <i>bpf</i> and <i>dbus</i> development
+		libraries.</li>
 <li> <b>HDF5 Job Profiling</b> The <i>acct_gather_profile/hdf5</i> job profiling
 		plugin will be built if the <i>hdf5</i> development library is
 		present.</li>
 <li> <b>HTML Man Pages</b> HTML versions of the man pages will be generated if
 		the <i>man2html</i> command is present.</li>
-<li> <b>IPMI Energy Consumption</b> The <i>acct_gather_energy/ipmi</i>
-		accouting plugin will be built if the <i>freeipmi</i>
-		development library is present.</li>
 <li> <b>InfiniBand Accounting</b> The <i>acct_gather_interconnect/ofed</i>
 		InfiniBand accounting plugin will be built if the
 		<i>libibmad</i> and <i>libibumad</i> development libraries are
 		present.</li>
+<li> <b>Intel GPU Support</b> Autodetection of Intel GPUs will be available
+		if the <i>libvpl</i> development library is installed.
+		</li>
+<li> <b>IPMI Energy Consumption</b> The <i>acct_gather_energy/ipmi</i>
+		accounting plugin will be built if the <i>freeipmi</i>
+		development library is present.</li>
 <li> <b>Lua Support</b> The lua API will be available in various plugins if the
 		<i>lua</i> development library is present.</li>
 <li> <b>MUNGE</b> The auth/munge plugin will be built if the MUNGE
@@ -126,14 +134,24 @@ present. Build dependencies for various plugins and commands are denoted below:
 		<i>mysql</i> development library (preferably version 5.5 or
 		later), or if the <i>MariaDB</i> development library is
 		present.</li>
-<li> <b>PAM Support</b> PAM support will be added if the <i>PAM</i> development
-		library is installed.</li>
 <li> <b>NUMA Affinity</b> NUMA support in the task/affinity plugin will be
 		available if the <i>numa</i> development library is installed.
 		</li>
+<li> <b>NVIDIA GPU Support</b> Autodetection of NVIDIA GPUs will be available
+		if the <i>libnvidia-ml</i> development library is installed.
+		</li>
+<li> <b>PAM Support</b> PAM support will be added if the <i>PAM</i> development
+		library is installed.</li>
+<li> <b>PMIx</b> PMIx support will be added if the <i>pmix</i> development
+		library is installed.</li>
 <li> <b>Readline Support</b> Readline support in scontrol and sacctmgr's
 		interactive modes will be available if the <i>readline</i>
 		development library is present.</li>
+<li> <b>REST API</b> Support for Slurm's REST API will be built if the
+		<i>http-parser</i> and <i>json-c</i> development libraries
+		are installed. Additional functionality will be included
+		if the optional <i>yaml</i> and <i>jwt</i> development
+		libraries are installed.</li>
 <li> <b>RRD External Sensor Data Collection </b> The <i>ext_sensors/rrd</i>
 		plugin will be built if the <i>rrdtool</i> development library
 		is present.</li>
@@ -267,7 +285,7 @@ responsiveness, the transition back and forth should go undetected.</p>
 <p>Note that with an already running cluster, changing the order of the
 SlurmctldHost entries via <code>scontrol reconfigure</code> is not supported.
 The supported method is to drain and restart the cluster since running jobs
-may still go the prevous primary controller when completing and delay
+may still go the previous primary controller when completing and delay
 scheduling.</p>
 
 <p>Prior to 18.08, Slurm used the <a href="slurm.conf.html#OPT_BackupAddr">
@@ -650,9 +668,9 @@ Changes in the RPCs (remote procedure calls) and state files will only be made
 if the major release number changes, which typically happens about every nine
 months. A list of most recent major Slurm releases is shown below.</p>
 <ul>
-<li>20.11.x (Released November 2020)</li>
 <li>21.08.x (Released August 2021)</li>
 <li>22.05.x (Released May 2022)</li>
+<li>23.02.x (Released February 2023)</li>
 </ul>
 
 <p>If the SlurmDBD daemon is used, it must be at the same or higher major
@@ -660,7 +678,8 @@ release number as the Slurmctld daemons.
 In other words, when changing the version to a higher release number (e.g
 from 21.08.x to 22.05.x) <b>always upgrade the SlurmDBD daemon first</b>.
 Database table changes may be required for the upgrade, for example
-adding new fields to existing tables.
+adding new fields to existing tables. This must complete <b>before</b>
+upgrading slurmctld.
 If the database contains a large number of entries, <b>the SlurmDBD daemon
 may require tens of minutes to update the database and be unresponsive
 during this time interval</b>.</p>
@@ -692,20 +711,20 @@ pre-10.2.1 version or from any version of MySQL, please contact SchedMD
 for assistance.</p>
 
 <p>The slurmctld daemon must also be upgraded before or at the same time as
-the slurmd daemons on the compute nodes.
+the client commands and slurmd daemons on the compute nodes.
 Generally, upgrading Slurm on all of the login and compute nodes is recommended,
 although rolling upgrades are also possible (i.e. upgrading the head node(s)
 first then upgrading the compute and login nodes later at various times).
 Also see the note above about reverse compatibility.</p>
 
-<p>Almost every new major release of Slurm (e.g. 20.11.x to 21.08.x)
+<p>Almost every new major release of Slurm (e.g. 22.05.x to 23.02.x)
 involves changes to the state files with new data structures, new options, etc.
 Slurm permits upgrades to a new major release from the past two major releases,
-which happen every nine months (e.g. 20.11.x or 21.08.x to 22.05.x) without loss of
+which happen every nine months (e.g. 21.08.x or 22.05.x to 23.02.x) without loss of
 jobs or other state information.
 State information from older versions will not be recognized and will be
 discarded, resulting in loss of all running and pending jobs.
-State files are <b>not</b> recognized when downgrading (e.g. from 21.08.x to 20.11.x)
+State files are <b>not</b> recognized when downgrading (e.g. from 23.02.x to 22.05.x)
 and will be discarded, resulting in loss of all running and pending jobs.
 For this reason, creating backup copies of state files (as described below)
 can be of value.
@@ -750,7 +769,7 @@ a major release.</p>
 
 <p>As an example, MPI stacks like OpenMPI and MVAPICH2 link against Slurm's
 PMI-1 and/or PMI-2 API, but not against our main public API. This means that at
-the time of writting this documentation, you don't need to recompile these
+the time of writing this documentation, you don't need to recompile these
 stacks after a Slurm upgrade. One known exception is MPICH. When MPICH is
 compiled with Slurm support and with the Hydra Process Manager, it will use
 the Slurm API to obtain job information. This link means you will need to
@@ -762,11 +781,11 @@ of its ELF files with 'ldd' and grep for 'slurm'. If you see a versioned
 recompiled.</p>
 
 <p>Slurm daemons will support RPCs and state files from the two previous major
-releases (e.g. a version 22.05.x SlurmDBD will support slurmctld daemons and
-commands with a version of 22.05.x, 21.08.x or 20.11.x).
+releases (e.g. a version 23.02.x SlurmDBD will support slurmctld daemons and
+commands with a version of 23.02.x, 22.05.x or 21.08.x).
 This means that upgrading at least once each year is recommended.
 Otherwise, intermediate upgrades will be required to preserve state information.
-Changes in the mainenance release number generally only include bug fixes,
+Changes in the maintenance release number generally only include bug fixes,
 but may also include other minor enhancements.</p>
 
 <p><b>Be mindful of your configured SlurmdTimeout and SlurmctldTimeout values</b>.
@@ -841,6 +860,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 14 Jul 2022</p>
+<p style="text-align:center;">Last modified 05 October 2023</p>
 
 <!--#include virtual="footer.txt"-->

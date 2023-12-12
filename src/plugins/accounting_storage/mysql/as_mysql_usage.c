@@ -96,7 +96,7 @@ static void *_cluster_rollup_usage(void *arg)
 	xassert(rollup_stats);
 
 	memset(&mysql_conn, 0, sizeof(mysql_conn_t));
-	mysql_conn.rollback = 1;
+	mysql_conn.flags |= DB_CONN_FLAG_ROLLBACK;
 	mysql_conn.conn = local_rollup->mysql_conn->conn;
 	slurm_mutex_init(&mysql_conn.lock);
 
@@ -850,7 +850,7 @@ extern int as_mysql_get_usage(mysql_conn_t *mysql_conn, uid_t uid,
 				goto bad_user;
 			}
 
-			/* Existance of user.coord_accts is checked in
+			/* Existence of user.coord_accts is checked in
 			   is_user_any_coord.
 			*/
 			itr = list_iterator_create(user.coord_accts);

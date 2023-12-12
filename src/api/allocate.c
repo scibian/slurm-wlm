@@ -58,7 +58,7 @@ extern pid_t getsid(pid_t pid);		/* missing from <unistd.h> */
 #include "src/common/hostlist.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xmalloc.h"
@@ -543,7 +543,7 @@ List slurm_allocate_het_job_blocking(List job_req_list, time_t timeout,
 int slurm_job_will_run(job_desc_msg_t *req)
 {
 	will_run_response_msg_t *will_run_resp = NULL;
-	char buf[64];
+	char buf[256];
 	int rc;
 	char *cluster_name = NULL;
 	void *ptr = NULL;
@@ -607,7 +607,7 @@ extern int slurm_het_job_will_run(List job_req_list)
 {
 	job_desc_msg_t *req;
 	will_run_response_msg_t *will_run_resp;
-	char buf[64], *sep = "";
+	char buf[256], *sep = "";
 	int rc = SLURM_SUCCESS, inx = 0;
 	ListIterator iter, itr;
 	time_t first_start = (time_t) 0;
@@ -664,15 +664,17 @@ extern int slurm_het_job_will_run(List job_req_list)
 
 
 	if (rc == SLURM_SUCCESS) {
-		char node_list[1028] = "";
+		char *node_list = NULL;
 
 		if (hs)
-			hostset_ranged_string(hs, sizeof(node_list), node_list);
+			node_list = hostset_ranged_string_xmalloc(hs);
 		slurm_make_time_str(&first_start, buf, sizeof(buf));
 		info("Job %u to start at %s using %u processors on %s",
 		     first_job_id, buf, tot_proc_count, node_list);
 		if (job_list)
 			info("  Preempts: %s", job_list);
+
+		xfree(node_list);
 	}
 
 	if (hs)
@@ -1172,7 +1174,7 @@ _handle_msg(slurm_msg_t *msg, uint16_t msg_type, void **resp)
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
 		error ("Security violation, slurm message from uid %u",
-			(unsigned int) req_uid);
+		       req_uid);
 		return 0;
 	}
 
@@ -1237,7 +1239,7 @@ _accept_msg_connection(int listen_fd, uint16_t msg_type, void **resp)
 }
 
 /* Wait up to sleep_time for RPC from slurmctld indicating resource allocation
- * has occured.
+ * has occurred.
  * IN sleep_time: delay in seconds (0 means unbounded wait)
  * RET -1: error, 0: timeout, 1:ready to read */
 static int _wait_for_alloc_rpc(const listen_t *listen, int sleep_time)

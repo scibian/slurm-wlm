@@ -50,7 +50,6 @@
 
 
 #if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
-static void _recursive_rmdir(const char *dirnm);
 
 /*
  * Create APID directory with given uid/gid as the owner.
@@ -69,10 +68,10 @@ int create_apid_dir(uint64_t apid, uid_t uid, gid_t gid)
 		return SLURM_ERROR;
 	}
 
-	rc = chown(apid_dir, uid, gid);
+	rc = lchown(apid_dir, uid, gid);
 	if (rc) {
-		CRAY_ERR("chown %s, %d, %d failed: %m",
-			 apid_dir, (int)uid, (int)gid);
+		CRAY_ERR("chown %s, %u, %u failed: %m",
+			 apid_dir, uid, gid);
 		xfree(apid_dir);
 		return SLURM_ERROR;
 	}
@@ -116,7 +115,7 @@ int remove_spool_files(uint64_t apid)
 
 	// Remove the apid directory LEGACY_SPOOL_DIR/<APID>
 	path_name = xstrdup_printf(LEGACY_SPOOL_DIR "%" PRIu64, apid);
-	_recursive_rmdir(path_name);
+	rmdir_recursive(path_name, true);
 	xfree(path_name);
 
 	// Remove the backwards compatibility ALPS placement file
@@ -145,7 +144,7 @@ int remove_spool_files(uint64_t apid)
 /*
  * Set job environment variables used by LLI and PMI
  */
-int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
+int set_job_env(stepd_step_rec_t *step, slurm_cray_jobinfo_t *sw_job)
 {
 	int rc, i;
 	char *buff = NULL, *resv_ports = NULL, *tmp = NULL;
@@ -153,7 +152,7 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	/*
 	 * Write the CRAY_NUM_COOKIES and CRAY_COOKIES variables out
 	 */
-	rc = env_array_overwrite_fmt(&job->env, CRAY_NUM_COOKIES_ENV,
+	rc = env_array_overwrite_fmt(&step->env, CRAY_NUM_COOKIES_ENV,
 				     "%"PRIu32, sw_job->num_cookies);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var " CRAY_NUM_COOKIES_ENV);
@@ -172,7 +171,7 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 			xstrcat(buff, sw_job->cookies[i]);
 	}
 
-	rc = env_array_overwrite(&job->env, CRAY_COOKIES_ENV, buff);
+	rc = env_array_overwrite(&step->env, CRAY_COOKIES_ENV, buff);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var " CRAY_COOKIES_ENV);
 		xfree(buff);
@@ -185,14 +184,14 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	 * Cray's PMI uses this is the port to communicate its control tree
 	 * information.
 	 */
-	resv_ports = getenvp(job->env, "SLURM_STEP_RESV_PORTS");
+	resv_ports = getenvp(step->env, "SLURM_STEP_RESV_PORTS");
 	if (resv_ports != NULL) {
 		buff = xstrdup(resv_ports);
 		tmp = strchr(buff, '-');
 		if (tmp != NULL) {
 			*tmp = '\0';
 		}
-		rc = env_array_overwrite(&job->env, PMI_CONTROL_PORT_ENV,
+		rc = env_array_overwrite(&step->env, PMI_CONTROL_PORT_ENV,
 					 buff);
 		xfree(buff);
 		if (rc == 0) {
@@ -203,8 +202,8 @@ int set_job_env(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job)
 	}
 
 	/* Set if task IDs are not monotonically increasing across all nodes */
-	rc = env_array_overwrite_fmt(&job->env, PMI_CRAY_NO_SMP_ENV,
-				     "%d", job->non_smp);
+	rc = env_array_overwrite_fmt(&step->env, PMI_CRAY_NO_SMP_ENV,
+				     "%d", step->non_smp);
 	if (rc == 0) {
 		CRAY_ERR("Failed to set env var "PMI_CRAY_NO_SMP_ENV);
 		return SLURM_ERROR;
@@ -297,75 +296,6 @@ int list_str_to_array(char *list, int *cnt, int32_t **numbers)
 	hostlist_destroy(hl);
 
 	return ret;
-}
-
-/*
- * Recursive directory delete
- *
- * Call with a directory name and this function will delete
- * all files and directories rooted in this name. Finally
- * the named directory will be deleted.
- * If called with a file name, only that file will be deleted.
- */
-static void _recursive_rmdir(const char *dirnm)
-{
-	int st;
-	size_t dirnm_len, fnm_len, name_len;
-	char *fnm = 0;
-	DIR *dirp;
-	struct dirent *dir;
-	struct stat st_buf;
-
-	/* Don't do anything if there is no directory name */
-	if (!dirnm) {
-		return;
-	}
-	dirp = opendir(dirnm);
-	if (!dirp) {
-		if (errno == ENOTDIR)
-			goto fileDel;
-		CRAY_ERR("Error opening directory %s", dirnm);
-		return;
-	}
-
-	dirnm_len = strlen(dirnm);
-	if (dirnm_len == 0)
-		return;
-	while ((dir = readdir(dirp))) {
-		name_len = strlen(dir->d_name);
-		if (name_len == 1 && dir->d_name[0] == '.')
-			continue;
-		if (name_len == 2 && xstrcmp(dir->d_name, "..") == 0)
-			continue;
-		fnm_len = dirnm_len + name_len + 2;
-		free(fnm);
-		fnm = malloc(fnm_len);
-		snprintf(fnm, fnm_len, "%s/%s", dirnm, dir->d_name);
-		st = stat(fnm, &st_buf);
-		if (st < 0) {
-			CRAY_ERR("stat of %s", fnm);
-			continue;
-		}
-		if (st_buf.st_mode & S_IFDIR) {
-			_recursive_rmdir(fnm);
-		} else {
-
-			st = unlink(fnm);
-			if (st < 0 && errno == EISDIR)
-				st = rmdir(fnm);
-			if (st < 0 && errno != ENOENT) {
-				CRAY_ERR("Error removing %s", fnm);
-			}
-		}
-	}
-	free(fnm);
-	closedir(dirp);
-fileDel: st = unlink(dirnm);
-	if (st < 0 && errno == EISDIR)
-		st = rmdir(dirnm);
-	if (st < 0 && errno != ENOENT) {
-		CRAY_ERR("Error removing %s", dirnm);
-	}
 }
 
 void print_jobinfo(slurm_cray_jobinfo_t *job)

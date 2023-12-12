@@ -44,7 +44,7 @@
 #include "slurm/slurm.h"
 
 #include "src/common/list.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 
 /* Slurm DBD message types */
 /* ANY TIME YOU ADD TO THIS LIST UPDATE THE CONVERSION FUNCTIONS! */
@@ -153,6 +153,8 @@ typedef enum {
 	DBD_MODIFY_FEDERATIONS, /* Modify existing federation 		*/
 	DBD_REMOVE_FEDERATIONS, /* Removing existing federation 	*/
 	DBD_JOB_HEAVY,         /* Send job script/env  		*/
+	DBD_GOT_JOB_ENV,	/* Loading env hash table*/
+	DBD_GOT_JOB_SCRIPT,	/* Loadung bash script hash table*/
 
 	SLURM_PERSIST_INIT = 6500, /* So we don't use the
 				    * REQUEST_PERSIST_INIT also used here.
@@ -230,7 +232,11 @@ typedef struct dbd_job_comp_msg {
 	uint64_t db_index;	/* index into the db for this job */
 	uint32_t derived_ec;	/* derived job exit code or signal */
 	time_t   end_time;	/* job termintation time */
+	char *failed_node;	/* Name of node that failed which caused
+				 * this job to be killed.
+				 * NULL in all other situations */
 	uint32_t exit_code;	/* job exit code or signal */
+	char *extra;		/* job extra field */
 	uint32_t job_id;	/* job ID */
 	uint32_t job_state;	/* job state */
 	char *   nodes;		/* hosts allocated to the job */
@@ -264,6 +270,7 @@ typedef struct dbd_job_start_msg {
 	uint32_t het_job_offset; /* Hetjob component ID, zero-origin */
 	uint32_t job_id;	/* job ID */
 	uint32_t job_state;	/* job state */
+	char *licenses; 	/* job licenses */
 	char *   mcs_label;	/* job mcs_label */
 	char *   name;		/* job name */
 	char *   nodes;		/* hosts allocated to the job */

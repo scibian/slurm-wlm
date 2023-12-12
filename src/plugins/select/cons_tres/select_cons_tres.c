@@ -44,7 +44,6 @@
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/assoc_mgr.h"
-#include "src/common/slurm_selecttype_info.h"
 #include "src/common/xstring.h"
 #include "select_cons_tres.h"
 #include "job_test.h"
@@ -142,7 +141,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 			bit_fmt(tmp, sizeof(tmp), avail_node_bitmap);
 			log_flag(RESERVATION, "avail_nodes:%s",
 				 tmp);
-			for (i = 0; i < node_record_count; i++) {
+			for (i = 0; next_node(&i); i++) {
 				if (!tmp_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), tmp_cores[i]);
@@ -165,7 +164,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 	xassert(avail_cores);
 
 	picked_node_bitmap = bit_alloc(node_record_count);
-	for (i = 0; i < node_record_count; i++) {
+	for (i = 0; next_node(&i); i++) {
 		if (fini ||
 		    !avail_cores[i] ||
 		    !bit_test(avail_node_bitmap, i) ||
@@ -196,7 +195,7 @@ static bitstr_t *_pick_first_cores(bitstr_t *avail_node_bitmap,
 		*exc_cores = avail_cores;
 
 		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
-			for (i = 0; i < node_record_count; i++) {
+			for (i = 0; next_node(&i); i++) {
 				if (!avail_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), avail_cores[i]);
@@ -294,7 +293,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 			tmp_cores = *exc_cores;
 			bit_fmt(tmp, sizeof(tmp), avail_node_bitmap);
 			info("avail_nodes:%s", tmp);
-			for (i = 0; i < node_record_count; i++) {
+			for (i = 0; next_node(&i); i++) {
 				if (!tmp_cores[i])
 					continue;
 				bit_fmt(tmp, sizeof(tmp), tmp_cores[i]);
@@ -314,7 +313,7 @@ static bitstr_t *_sequential_pick(bitstr_t *avail_node_bitmap,
 		}
 		xassert(avail_cores);
 
-		for (i = 0; i < node_record_count; i++) {
+		for (i = 0; next_node(&i); i++) {
 			if (fini || !avail_cores[i] ||
 			    !bit_test(avail_node_bitmap, i)) {
 				FREE_NULL_BITMAP(avail_cores[i]);
@@ -489,7 +488,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	if (exc_cores) {
 		int i;
 		char tmp[128];
-		for (i = 0; i < node_record_count; i++) {
+		for (i = 0; i < next_node(&i); i++) {
 			if (!exc_cores[i])
 				continue;
 			bit_fmt(tmp, sizeof(tmp), exc_cores[i]);
@@ -514,8 +513,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 /* select_p_job_resized() in cons_common */
 
 /* select_p_job_expand() in cons_common */
-
-/* select_p_job_signal() in cons_common */
 
 /* select_p_job_fini() in cons_common */
 
@@ -550,8 +547,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 /* select_p_job_resized() in cons_common */
 
 /* select_p_job_expand() in cons_common */
-
-/* select_p_job_signal() in cons_common */
 
 /* select_p_job_fini() in cons_common */
 
@@ -593,13 +588,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 
 /* select_p_select_jobinfo_unpack() in cons_common */
 
-/* select_p_select_jobinfo_sprint() in cons_common */
-
-/* select_p_select_jobinfo_xstrdup() in cons_common */
-
 /* select_p_get_info_from_plugin() in cons_common */
-
-/* select_p_update_node_config() in cons_common */
 
 /* select_p_reconfigure() in cons_common */
 
