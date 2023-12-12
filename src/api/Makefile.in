@@ -116,7 +116,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
 	$(top_srcdir)/auxdir/x_ac_deprecated.m4 \
-	$(top_srcdir)/auxdir/x_ac_dlfcn.m4 \
 	$(top_srcdir)/auxdir/x_ac_env.m4 \
 	$(top_srcdir)/auxdir/x_ac_freeipmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_hpe_slingshot.m4 \
@@ -136,6 +135,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
+	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
 	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
@@ -209,7 +209,8 @@ libslurmfull_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
 	$(AM_CFLAGS) $(CFLAGS) $(libslurmfull_la_LDFLAGS) $(LDFLAGS) \
 	-o $@
-am__DEPENDENCIES_1 = $(common_dir)/libcommon.la
+am__DEPENDENCIES_1 = $(common_dir)/libcommon.la \
+	$(top_builddir)/src/interfaces/libcommon_interfaces.la
 libslurmhelper_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__objects_1 = account_functions.lo archive_functions.lo \
 	assoc_functions.lo cluster_functions.lo \
@@ -236,7 +237,8 @@ libslurmhelper_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
 	-o $@
 am_libslurm_o_OBJECTS =
 libslurm_o_OBJECTS = $(am_libslurm_o_OBJECTS)
-libslurm_o_DEPENDENCIES = $(top_builddir)/src/common/libcommon.o
+libslurm_o_DEPENDENCIES = $(top_builddir)/src/common/libcommon.o \
+	$(top_builddir)/src/interfaces/libcommon_interfaces.o
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -363,7 +365,6 @@ DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
-DL_LIBS = @DL_LIBS@
 DSYMUTIL = @DSYMUTIL@
 DUMPBIN = @DUMPBIN@
 ECHO_C = @ECHO_C@
@@ -400,7 +401,6 @@ HDF5_LIBS = @HDF5_LIBS@
 HDF5_TYPE = @HDF5_TYPE@
 HDF5_VERSION = @HDF5_VERSION@
 HPE_SLINGSHOT_CFLAGS = @HPE_SLINGSHOT_CFLAGS@
-HPE_SLINGSHOT_LIBS = @HPE_SLINGSHOT_LIBS@
 HTTP_PARSER_CPPFLAGS = @HTTP_PARSER_CPPFLAGS@
 HTTP_PARSER_LDFLAGS = @HTTP_PARSER_LDFLAGS@
 HWLOC_CPPFLAGS = @HWLOC_CPPFLAGS@
@@ -448,7 +448,6 @@ NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
 NVML_CPPFLAGS = @NVML_CPPFLAGS@
-NVML_LIBS = @NVML_LIBS@
 OBJCOPY = @OBJCOPY@
 OBJDUMP = @OBJDUMP@
 OBJEXT = @OBJEXT@
@@ -456,7 +455,6 @@ OFED_CPPFLAGS = @OFED_CPPFLAGS@
 OFED_LDFLAGS = @OFED_LDFLAGS@
 OFED_LIBS = @OFED_LIBS@
 ONEAPI_CPPFLAGS = @ONEAPI_CPPFLAGS@
-ONEAPI_LIBS = @ONEAPI_LIBS@
 OTOOL = @OTOOL@
 OTOOL64 = @OTOOL64@
 PACKAGE = @PACKAGE@
@@ -486,21 +484,24 @@ PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
 PTHREAD_CXX = @PTHREAD_CXX@
 PTHREAD_LIBS = @PTHREAD_LIBS@
 RANLIB = @RANLIB@
+RDKAFKA_CPPFLAGS = @RDKAFKA_CPPFLAGS@
+RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
+RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
 RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
 RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
 RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
-RSMI_LDFLAGS = @RSMI_LDFLAGS@
-RSMI_LIBS = @RSMI_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
 SLEEP_CMD = @SLEEP_CMD@
+SLURMCTLD_INTERFACES = @SLURMCTLD_INTERFACES@
 SLURMCTLD_PORT = @SLURMCTLD_PORT@
 SLURMCTLD_PORT_COUNT = @SLURMCTLD_PORT_COUNT@
 SLURMDBD_PORT = @SLURMDBD_PORT@
+SLURMD_INTERFACES = @SLURMD_INTERFACES@
 SLURMD_PORT = @SLURMD_PORT@
 SLURMRESTD_PORT = @SLURMRESTD_PORT@
 SLURM_API_AGE = @SLURM_API_AGE@
@@ -721,6 +722,7 @@ slurmapi_src = \
 common_dir = $(top_builddir)/src/common
 slurmapi_add = \
 	$(common_dir)/libcommon.la	\
+	$(top_builddir)/src/interfaces/libcommon_interfaces.la \
 	-lpthread
 
 libslurmhelper_la_SOURCES = $(slurmapi_src)
@@ -755,7 +757,8 @@ libslurm_pmi_la_LDFLAGS = \
 # on multiple platforms
 libslurm_o_SOURCES = 
 libslurm_o_LDADD = \
-	$(top_builddir)/src/common/libcommon.o
+	$(top_builddir)/src/common/libcommon.o \
+	$(top_builddir)/src/interfaces/libcommon_interfaces.o
 
 CLEANFILES = \
 	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT)
@@ -1293,6 +1296,12 @@ $(VERSION_SCRIPT) :
 	 echo "   slurmdb_*;"; \
 	 echo "   plugin_context_*;"; \
 	 echo "   working_cluster_rec;"; \
+	 echo "   node_record_count;"; \
+	 echo "   active_node_record_count;"; \
+	 echo "   node_record_table_ptr;"; \
+	 echo "   switch_record_cnt;"; \
+	 echo "   switch_levels;"; \
+	 echo "   switch_record_table;"; \
 	 echo "  local: *;"; \
 	 echo "};") > $(VERSION_SCRIPT)
 

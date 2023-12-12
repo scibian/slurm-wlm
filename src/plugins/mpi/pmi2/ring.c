@@ -105,6 +105,7 @@
  *   right - right value for rightmost app process in subtree
  */
 
+#include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -436,7 +437,7 @@ int pmix_ring_out(int count, char* left, char* right)
 		/* TODO: use tmp_rc here to catch any failure */
 
 		/* free message */
-		free_buf(buf);
+		FREE_NULL_BUFFER(buf);
 	}
 
 	/* now send messages to children app procs,
@@ -567,7 +568,7 @@ int pmix_ring_in(int ring_id, int count, char* left, char* right)
 			/* TODO: use tmp_rc here to catch any failure */
 
 			/* free message */
-			free_buf(buf);
+			FREE_NULL_BUFFER(buf);
 		} else {
 			/* we're the root of the tree, send values back down */
 

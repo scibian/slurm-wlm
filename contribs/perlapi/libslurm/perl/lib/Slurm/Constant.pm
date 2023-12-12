@@ -278,19 +278,19 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * PRIORITY_RESET_NONE       0x0000        
+=item * PRIORITY_RESET_NONE       0x0000
 
-=item * PRIORITY_RESET_NOW        0x0001        
+=item * PRIORITY_RESET_NOW        0x0001
 
-=item * PRIORITY_RESET_DAILY      0x0002        
+=item * PRIORITY_RESET_DAILY      0x0002
 
-=item * PRIORITY_RESET_WEEKLY     0x0003        
+=item * PRIORITY_RESET_WEEKLY     0x0003
 
-=item * PRIORITY_RESET_MONTHLY    0x0004        
+=item * PRIORITY_RESET_MONTHLY    0x0004
 
-=item * PRIORITY_RESET_QUARTERLY  0x0005        
+=item * PRIORITY_RESET_QUARTERLY  0x0005
 
-=item * PRIORITY_RESET_YEARLY     0x0006        
+=item * PRIORITY_RESET_YEARLY     0x0006
 
 =back
 
@@ -298,11 +298,11 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * PROP_PRIO_OFF             0x0000        
+=item * PROP_PRIO_OFF             0x0000
 
-=item * PROP_PRIO_ON              0x0001        
+=item * PROP_PRIO_ON              0x0001
 
-=item * PROP_PRIO_NICER           0x0002        
+=item * PROP_PRIO_NICER           0x0002
 
 =back
 
@@ -464,6 +464,12 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * TRIGGER_TYPE_PRI_DB_RES_OP      0x00080000
 
+=item * TRIGGER_TYPE_BURST_BUFFER       0x00100000
+
+=item * TRIGGER_TYPE_DRAINING           0x00200000
+
+=item * TRIGGER_TYPE_RESUME             0x00400000
+
 =back
 
 
@@ -473,21 +479,21 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * JOB_PENDING        0        
+=item * JOB_PENDING        0
 
-=item * JOB_RUNNING        1        
+=item * JOB_RUNNING        1
 
-=item * JOB_SUSPENDED      2        
+=item * JOB_SUSPENDED      2
 
-=item * JOB_COMPLETE       3        
+=item * JOB_COMPLETE       3
 
-=item * JOB_CANCELLED      4        
+=item * JOB_CANCELLED      4
 
-=item * JOB_FAILED         5        
+=item * JOB_FAILED         5
 
-=item * JOB_TIMEOUT        6        
+=item * JOB_TIMEOUT        6
 
-=item * JOB_NODE_FAIL      7        
+=item * JOB_NODE_FAIL      7
 
 =item * JOB_PREEMPTED      8
 
@@ -501,13 +507,13 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * WAIT_NO_REASON               0        
+=item * WAIT_NO_REASON               0
 
-=item * WAIT_PRIORITY                1        
+=item * WAIT_PRIORITY                1
 
 =item * WAIT_DEPENDENCY              2
 
-=item * WAIT_RESOURCES               3        
+=item * WAIT_RESOURCES               3
 
 =item * WAIT_PART_NODE_LIMIT         4
 
@@ -590,42 +596,6 @@ This package export constants for use with Slurm. This includes enumerations and
 =item * JOBCOND_FLAG_WHOLE_HETJOB 0x00000010
 
 =item * JOBCOND_FLAG_NO_WHOLE_HETJOB 0x00000020
-
-=back
-
-=head3 Select jobdata type
-
-=over 2
-
-=item * SELECT_JOBDATA_GEOMETRY           0
-
-=item * SELECT_JOBDATA_ROTATE             1
-
-=item * SELECT_JOBDATA_CONN_TYPE          2
-
-=item * SELECT_JOBDATA_BLOCK_ID           3
-
-=item * SELECT_JOBDATA_NODES              4
-
-=item * SELECT_JOBDATA_IONODES            5
-
-=item * SELECT_JOBDATA_NODE_CNT           6
-
-=item * SELECT_JOBDATA_ALTERED            7
-
-=item * SELECT_JOBDATA_BLRTS_IMAGE        8
-
-=item * SELECT_JOBDATA_LINUX_IMAGE        9
-
-=item * SELECT_JOBDATA_MLOADER_IMAGE      10
-
-=item * SELECT_JOBDATA_RAMDISK_IMAGE      11
-
-=item * SELECT_JOBDATA_REBOOT             12
-
-=item * SELECT_JOBDATA_RESV_ID            13
-
-=item * SELECT_JOBDATA_PTR                14
 
 =back
 
@@ -759,7 +729,7 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * SLURM_DIST_CYCLIC               1        
+=item * SLURM_DIST_CYCLIC               1
 
 =item * SLURM_DIST_BLOCK                2
 
@@ -785,21 +755,21 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * CPU_BIND_VERBOSE            0x01 
+=item * CPU_BIND_VERBOSE            0x01
 
-=item * CPU_BIND_TO_THREADS         0x02 
+=item * CPU_BIND_TO_THREADS         0x02
 
-=item * CPU_BIND_TO_CORES           0x04 
+=item * CPU_BIND_TO_CORES           0x04
 
-=item * CPU_BIND_TO_SOCKETS         0x08 
+=item * CPU_BIND_TO_SOCKETS         0x08
 
-=item * CPU_BIND_TO_LDOMS           0x10 
+=item * CPU_BIND_TO_LDOMS           0x10
 
-=item * CPU_BIND_NONE               0x20 
+=item * CPU_BIND_NONE               0x20
 
-=item * CPU_BIND_RANK               0x40 
+=item * CPU_BIND_RANK               0x40
 
-=item * CPU_BIND_MAP                0x80 
+=item * CPU_BIND_MAP                0x80
 
 =item * CPU_BIND_MASK               0x100
 
@@ -1026,10 +996,6 @@ head2 SLURM ERRNO
 
 =item * ESLURM_BATCH_ONLY                               2039
 
-=item * ESLURM_TASKDIST_ARBITRARY_UNSUPPORTED           2040
-
-=item * ESLURM_TASKDIST_REQUIRES_OVERCOMMIT             2041
-
 =item * ESLURM_JOB_HELD                                 2042
 
 =item * ESLURM_INVALID_CRED_TYPE_CHANGE                 2043
@@ -1072,12 +1038,6 @@ head2 SLURM ERRNO
 
 =item * ESLURM_NO_STEPS                                 2062
 
-=item * ESLURM_INVALID_BLOCK_STATE                      2063
-
-=item * ESLURM_INVALID_BLOCK_LAYOUT                     2064
-
-=item * ESLURM_INVALID_BLOCK_NAME                       2065
-
 =item * ESLURM_INVALID_QOS                              2066
 
 =item * ESLURM_QOS_PREEMPTION_LOOP                      2067
@@ -1118,8 +1078,6 @@ head2 SLURM ERRNO
 
 =over 2
 
-=item * ESLURMD_PIPE_ERROR_ON_TASK_SPAWN        4000
-
 =item * ESLURMD_KILL_TASK_FAILED                4001
 
 =item * ESLURMD_KILL_JOB_ALREADY_COMPLETE       4002
@@ -1127,10 +1085,6 @@ head2 SLURM ERRNO
 =item * ESLURMD_INVALID_ACCT_FREQ               4003
 
 =item * ESLURMD_INVALID_JOB_CREDENTIAL          4004
-
-=item * ESLURMD_UID_NOT_FOUND                   4005
-
-=item * ESLURMD_GID_NOT_FOUND                   4006
 
 =item * ESLURMD_CREDENTIAL_EXPIRED              4007
 
@@ -1140,23 +1094,9 @@ head2 SLURM ERRNO
 
 =item * ESLURMD_CREATE_BATCH_DIR_ERROR          4010
 
-=item * ESLURMD_MODIFY_BATCH_DIR_ERROR          4011
-
-=item * ESLURMD_CREATE_BATCH_SCRIPT_ERROR       4012
-
-=item * ESLURMD_MODIFY_BATCH_SCRIPT_ERROR       4013
-
 =item * ESLURMD_SETUP_ENVIRONMENT_ERROR         4014
 
-=item * ESLURMD_SHARED_MEMORY_ERROR             4015
-
 =item * ESLURMD_SET_UID_OR_GID_ERROR            4016
-
-=item * ESLURMD_SET_SID_ERROR                   4017
-
-=item * ESLURMD_CANNOT_SPAWN_IO_THREAD          4018
-
-=item * ESLURMD_FORK_FAILED                     4019
 
 =item * ESLURMD_EXECVE_FAILED                   4020
 
@@ -1165,8 +1105,6 @@ head2 SLURM ERRNO
 =item * ESLURMD_PROLOG_FAILED                   4022
 
 =item * ESLURMD_EPILOG_FAILED                   4023
-
-=item * ESLURMD_SESSION_KILLED                  4024
 
 =item * ESLURMD_TOOMANYSTEPS                    4025
 
@@ -1182,27 +1120,9 @@ head2 SLURM ERRNO
 
 =back
 
-=head3 slurmd errors in user batch job
-
-=over 2
-
-=item * ESCRIPT_CHDIR_FAILED              4100
-
-=item * ESCRIPT_OPEN_OUTPUT_FAILED        4101
-
-=item * ESCRIPT_NON_ZERO_RETURN           4102
-
-=back
-
 =head3 socket specific Slurm communications error
 
 =over 2
-
-=item * SLURM_PROTOCOL_SOCKET_IMPL_ZERO_RECV_LENGTH        5000
-
-=item * SLURM_PROTOCOL_SOCKET_IMPL_NEGATIVE_RECV_LENGTH    5001
-
-=item * SLURM_PROTOCOL_SOCKET_IMPL_NOT_ALL_DATA_SENT       5002
 
 =item * ESLURM_PROTOCOL_INCOMPLETE_PACKET                  5003
 
@@ -1218,11 +1138,11 @@ head2 SLURM ERRNO
 
 =item * ESLURM_AUTH_CRED_INVALID        6000
 
-=item * ESLURM_AUTH_FOPEN_ERROR         6001
+=item * ESLURM_AUTH_BADARG              6004
 
-=item * ESLURM_AUTH_NET_ERROR           6002
+=item * ESLURM_AUTH_UNPACK              6007
 
-=item * ESLURM_AUTH_UNABLE_TO_SIGN      6003
+=item * ESLURM_AUTH_SKIP                6008
 
 =back
 
@@ -1240,7 +1160,7 @@ head2 SLURM ERRNO
 
 =back
 
-=head2 
+=head2
 
 =head1 SEE ALSO
 

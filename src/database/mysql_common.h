@@ -59,12 +59,11 @@ typedef enum {
 } slurm_mysql_plugin_type_t;
 
 typedef struct {
-	bool cluster_deleted;
 	char *cluster_name;
 	MYSQL *db_conn;
+	uint32_t flags;
 	pthread_mutex_t lock;
 	char *pre_commit_query;
-	bool rollback;
 	List update_list;
 	int conn;
 } mysql_conn_t;

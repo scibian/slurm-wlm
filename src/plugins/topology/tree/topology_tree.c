@@ -3,6 +3,7 @@
  *	switch topology
  *****************************************************************************
  *  Copyright (C) 2009 Lawrence Livermore National Security.
+ *  Copyright (C) 2023 NVIDIA CORPORATION.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -47,7 +48,7 @@
 #include "src/common/bitstring.h"
 #include "src/common/log.h"
 #include "src/common/node_conf.h"
-#include "src/common/slurm_topology.h"
+#include "src/interfaces/topology.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/slurmctld.h"
 
@@ -61,12 +62,14 @@ extern int node_record_count __attribute__((weak_import));
 extern switch_record_t *switch_record_table __attribute__((weak_import));
 extern int switch_record_cnt __attribute__((weak_import));
 extern int switch_levels __attribute__((weak_import));
+extern int active_node_record_count __attribute__((weak_import));
 #else
 node_record_t **node_record_table_ptr;
 int node_record_count;
 switch_record_t *switch_record_table;
 int switch_record_cnt;
 int switch_levels;
+int active_node_record_count;
 #endif
 
 /*
@@ -118,7 +121,7 @@ static int  _node_name2bitmap(char *node_names, bitstr_t **bitmap,
 static int  _parse_switches(void **dest, slurm_parser_enum_t type,
 			    const char *key, const char *value,
 			    const char *line, char **leftover);
-extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[]);
+static int  _read_topo_file(slurm_conf_switches_t **ptr_array[]);
 static void _find_child_switches(int sw);
 static void _validate_switches(void);
 
@@ -156,11 +159,43 @@ extern int topo_build_config(void)
 }
 
 /*
- * topo_generate_node_ranking  -  this plugin does not set any node_rank fields
+ * When TopologyParam=SwitchAsNodeRank is set, this plugin assigns a unique
+ * node_rank for all nodes belonging to the same leaf switch.
  */
 extern bool topo_generate_node_ranking(void)
 {
-	return false;
+	/* By default, node_rank is 0, so start at 1 */
+	int switch_rank = 1;
+
+	if (!xstrcasestr(slurm_conf.topology_param, "SwitchAsNodeRank"))
+		return false;
+
+	/* Build a temporary topology to be able to find the leaf switches. */
+	_validate_switches();
+
+	if (switch_record_cnt == 0)
+		return false;
+
+	for (int sw = 0; sw < switch_record_cnt; sw++) {
+		/* skip if not a leaf switch */
+		if (switch_record_table[sw].level != 0)
+			continue;
+
+		for (int n = 0; n < node_record_count; n++) {
+			if (!bit_test(switch_record_table[sw].node_bitmap, n))
+				continue;
+			node_record_table_ptr[n]->node_rank = switch_rank;
+			debug("node=%s rank=%d",
+			      node_record_table_ptr[n]->name, switch_rank);
+		}
+
+		switch_rank++;
+	}
+
+	/* Discard the temporary topology since it is using node bitmaps */
+	_free_switch_record_table();
+
+	return true;
 }
 
 /*
@@ -316,7 +351,7 @@ static void _find_desc_switches(int sw)
 static void _validate_switches(void)
 {
 	slurm_conf_switches_t *ptr, **ptr_array;
-	int depth, i, j;
+	int depth, i, j, node_count;
 	switch_record_t *switch_ptr, *prior_ptr;
 	hostlist_t hl, invalid_hl = NULL;
 	char *child, *buf;
@@ -444,8 +479,8 @@ static void _validate_switches(void)
 		i = bit_set_count(switches_bitmap);
 		if (i > 0) {
 			child = bitmap2node_name(switches_bitmap);
-			error("WARNING: switches lack access to %d nodes: %s",
-			      i, child);
+			warning("switches lack access to %d nodes: %s",
+				i, child);
 			xfree(child);
 		}
 		FREE_NULL_BITMAP(switches_bitmap);
@@ -454,8 +489,7 @@ static void _validate_switches(void)
 
 	if (invalid_hl) {
 		buf = hostlist_ranged_string_xmalloc(invalid_hl);
-		error("WARNING: Invalid hostnames in switch configuration: %s",
-		      buf);
+		warning("Invalid hostnames in switch configuration: %s", buf);
 		xfree(buf);
 		hostlist_destroy(invalid_hl);
 	}
@@ -465,19 +499,19 @@ static void _validate_switches(void)
 	i = bit_set_count(multi_homed_bitmap);
 	if (i > 0) {
 		child = bitmap2node_name(multi_homed_bitmap);
-		error("WARNING: Multiple leaf switches contain nodes: %s",
-		      child);
+		warning("Multiple leaf switches contain nodes: %s", child);
 		xfree(child);
 	}
 	FREE_NULL_BITMAP(multi_homed_bitmap);
 
+	node_count = active_node_record_count;
 	/* Create array of indexes of children of each switch,
 	 * and see if any switch can reach all nodes */
 	for (i = 0; i < switch_record_cnt; i++) {
 		if (switch_record_table[i].level != 0) {
 			_find_child_switches(i);
 		}
-		if (node_record_count ==
+		if (node_count ==
 			bit_set_count(switch_record_table[i].node_bitmap)) {
 			have_root = true;
 		}
@@ -518,7 +552,7 @@ static void _validate_switches(void)
 		}
 	}
 	if (!have_root && running_in_daemon())
-		info("TOPOLOGY: warning -- no switch can reach all nodes through its descendants. If this is not intentional, fix the topology.conf file.");
+		warning("TOPOLOGY: no switch can reach all nodes through its descendants. If this is not intentional, fix the topology.conf file.");
 
 	s_p_hashtbl_destroy(conf_hashtbl);
 	_log_switches();
@@ -599,7 +633,7 @@ static void _free_switch_record_table(void)
 }
 
 /* Return count of switch configuration entries read */
-extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
+static int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 {
 	static s_p_options_t switch_options[] = {
 		{"SwitchName", S_P_ARRAY, _parse_switches, _destroy_switches},
@@ -613,7 +647,7 @@ extern int  _read_topo_file(slurm_conf_switches_t **ptr_array[])
 		topo_conf = get_extra_conf_path("topology.conf");
 
 	conf_hashtbl = s_p_hashtbl_create(switch_options);
-	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL) ==
+	if (s_p_parse_file(conf_hashtbl, NULL, topo_conf, false, NULL, false) ==
 	    SLURM_ERROR) {
 		s_p_hashtbl_destroy(conf_hashtbl);
 		fatal("something wrong with opening/reading %s: %m",

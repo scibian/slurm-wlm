@@ -1,4 +1,4 @@
-.TH strigger "1" "Slurm Commands" "August 2022" "Slurm Commands"
+.TH strigger "1" "Slurm Commands" "July 2023" "Slurm Commands"
 
 .SH "NAME"
 strigger \- Used to set, get or clear Slurm trigger information.
@@ -34,7 +34,7 @@ interval to ensure that no trigger events are missed OR the trigger must be
 created with an argument of "\-\-flags=PERM".
 If desired, multiple trigger programs can be set for the same event.
 
-\fBIMPORTANT NOTE:\fR This command can only set triggers if run by the
+\fBNOTE\fR: This command can only set triggers if run by the
 user \fISlurmUser\fR unless \fISlurmUser\fR is configured as user root.
 This is required for the \fIslurmctld\fR daemon to set the appropriate
 user and group IDs for the executed program.
@@ -94,6 +94,12 @@ Trigger an event if the specified node goes into a DRAINED state.
 .IP
 
 .TP
+\fB\-\-draining\fR
+Trigger an event if the specified node goes into a DRAINING state,
+before it is DRAINED.
+.IP
+
+.TP
 \fB\-F\fR, \fB\-\-fail\fR
 Trigger an event if the specified node goes into a FAILING state.
 .IP
@@ -145,7 +151,7 @@ thus reducing power consumption.
 .TP
 \fB\-j\fR, \fB\-\-jobid\fR=<\fIid\fR>
 Job ID of interest.
-\fBNOTE:\fR The \fB\-\-jobid\fR option can not be used in conjunction
+\fBNOTE\fR: The \fB\-\-jobid\fR option can not be used in conjunction
 with the \fB\-\-node\fR option. When the \fB\-\-jobid\fR option is
 used in conjunction with the \fB\-\-up\fR or \fB\-\-down\fR option,
 all nodes allocated to that job will considered the nodes used as a
@@ -157,7 +163,7 @@ trigger event.
 Host name(s) of interest.
 By default, all nodes associated with the job (if \fB\-\-jobid\fR
 is specified) or on the system are considered for event triggers.
-\fBNOTE:\fR The \fB\-\-node\fR option can not be used in conjunction
+\fBNOTE\fR: The \fB\-\-node\fR option can not be used in conjunction
 with the \fB\-\-jobid\fR option. When the \fB\-\-jobid\fR option is
 used in conjunction with the \fB\-\-up\fR, \fB\-\-down\fR or
 \fB\-\-drained\fR option,
@@ -256,9 +262,14 @@ when a node state changes.
 .IP
 
 .TP
+\fB\-R\fR, \fB\-\-resume\fR
+Trigger an event if the specified node is set to the RESUME state.
+.IP
+
+.TP
 \fB\-\-set\fP
 Register an event trigger based upon the supplied options.
-NOTE: An event is only triggered once. A new event trigger
+\fBNOTE\fR: An event is only triggered once. A new event trigger
 must be set established for future events of the same type
 to be processed.
 Triggers can only be set if the command is run by the user

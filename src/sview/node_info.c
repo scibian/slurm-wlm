@@ -66,6 +66,7 @@ enum {
 	SORTID_PORT,
 	SORTID_REAL_MEMORY,
 	SORTID_REASON,
+	SORTID_RESV_NAME,
 	SORTID_SLURMD_START_TIME,
 	SORTID_SOCKETS,
 	SORTID_STATE,
@@ -164,6 +165,8 @@ static display_data_t display_data_node[] = {
 	{G_TYPE_STRING, SORTID_GRES, "Gres", false,
 	 EDIT_TEXTBOX, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_REASON, "Reason", false,
+	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
+	{G_TYPE_STRING, SORTID_RESV_NAME, "ReservationName", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_SLURMD_START_TIME, "SlurmdStartTime", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
@@ -435,6 +438,10 @@ static void _layout_node_record(GtkTreeView *treeview,
 				   find_col_name(display_data_node,
 						 SORTID_REASON),
 				   sview_node_info_ptr->reason);
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_node,
+						 SORTID_RESV_NAME),
+				   node_ptr->resv_name);
 
 	if (node_ptr->energy->current_watts == NO_VAL) {
 		snprintf(tmp_current_watts, sizeof(tmp_current_watts),
@@ -637,6 +644,7 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			   SORTID_NODE_HOSTNAME, node_ptr->node_hostname,
 			   SORTID_OWNER,     tmp_owner,
 			   SORTID_REASON,    sview_node_info_ptr->reason,
+			   SORTID_RESV_NAME, node_ptr->resv_name,
 			   SORTID_SLURMD_START_TIME,
 				sview_node_info_ptr->slurmd_start_time,
 			   SORTID_SOCKETS,   node_ptr->sockets,
@@ -857,7 +865,7 @@ extern List create_node_info_list(node_info_msg_t *node_info_ptr,
 	int i = 0;
 	sview_node_info_t *sview_node_info_ptr = NULL;
 	node_info_t *node_ptr = NULL;
-	char user[32], time_str[32];
+	char user[32], time_str[256];
 
 	if (!by_partition) {
 		if (!node_info_ptr

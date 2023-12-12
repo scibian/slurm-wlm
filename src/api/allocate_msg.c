@@ -54,7 +54,7 @@
 #include "src/common/net.h"
 #include "src/common/macros.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_common.h"
@@ -301,7 +301,7 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
 		error ("Security violation, slurm message from uid %u",
-		       (unsigned int) req_uid);
+		       req_uid);
 		return;
 	}
 

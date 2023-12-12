@@ -50,8 +50,8 @@
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/parse_time.h"
-#include "src/common/select.h"
-#include "src/common/slurm_acct_gather_profile.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/acct_gather_profile.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -225,9 +225,6 @@ static void _combine_pending_array_tasks(List job_list)
 			if (xstrcmp(task_rec_ptr->job_ptr->partition,
 				    job_rec_ptr->job_ptr->partition))
 				continue;	/* Different partition */
-			/* Want to see each reason separately */
-			if (params.array_unique_flag)
-				continue;
 			/* Combine this task into master job array record */
 			update_cnt++;
 			_merge_job_reason(job_rec_ptr->job_ptr,
@@ -391,7 +388,7 @@ int _print_secs(long time, int width, bool right, bool cut_output)
 int _print_time(time_t t, int level, int width, bool right)
 {
 	if (t) {
-		char time_str[32];
+		char time_str[256];
 		slurm_make_time_str(&t, time_str, sizeof(time_str));
 		_print_str(time_str, width, right, true);
 	} else
@@ -576,6 +573,19 @@ int _print_job_container(job_info_t *job, int width, bool right, char *suffix)
 		_print_str("CONTAINER", width, right, true);
 	else
 		_print_str(job->container, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_job_container_id(job_info_t *job, int width, bool right,
+			    char *suffix)
+{
+	if (!job) /* Print the Header instead */
+		_print_str("CONTAINERID", width, right, true);
+	else
+		_print_str(job->container_id, width, right, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -1525,24 +1535,6 @@ int _print_job_qos(job_info_t * job, int width, bool right_justify,
 	return SLURM_SUCCESS;
 }
 
-int _print_job_select_jobinfo(job_info_t * job, int width, bool right_justify,
-			char* suffix)
-{
-	char select_buf[100];
-
-	if (job == NULL)	/* Print the Header instead */
-		select_g_select_jobinfo_sprint(NULL,
-			select_buf, sizeof(select_buf), SELECT_PRINT_HEAD);
-	else
-		select_g_select_jobinfo_sprint(job->select_jobinfo,
-			select_buf, sizeof(select_buf), SELECT_PRINT_DATA);
-	_print_str(select_buf, width, right_justify, true);
-
-	if (suffix)
-		printf("%s", suffix);
-	return SLURM_SUCCESS;
-}
-
 int _print_job_reservation(job_info_t * job, int width, bool right_justify,
 			char* suffix)
 {
@@ -1692,12 +1684,23 @@ int _print_job_cpus_per_task(job_info_t * job, int width, bool right_justify,
 }
 
 int _print_job_derived_ec(job_info_t * job, int width, bool right_justify,
-		    char* suffix)
+			  char* suffix)
 {
-	if (job == NULL)
+	uint16_t exit_status = 0, term_sig = 0;
+	char *out = NULL;
+
+	if (!job)
 		_print_str("DERIVED_EC", width, right_justify, true);
-	else
-		_print_int(job->derived_ec, width, right_justify, true);
+	else if (job->derived_ec != NO_VAL) {
+		if (WIFSIGNALED(job->derived_ec))
+			term_sig = WTERMSIG(job->derived_ec);
+		else if (WIFEXITED(job->derived_ec))
+			exit_status = WEXITSTATUS(job->derived_ec);
+
+		xstrfmtcat(out, "%u:%u", exit_status, term_sig);
+		_print_str(out, width, right_justify, true);
+		xfree(out);
+	}
 
 	if (suffix)
 		printf("%s",suffix);
@@ -1720,12 +1723,23 @@ int _print_job_eligible_time(job_info_t * job, int width, bool right_justify,
 }
 
 int _print_job_exit_code(job_info_t * job, int width, bool right_justify,
-		    char* suffix)
+			 char* suffix)
 {
-	if (job == NULL)
+	uint16_t exit_status = 0, term_sig = 0;
+	char *out = NULL;
+
+	if (!job)
 		_print_str("EXIT_CODE", width, right_justify, true);
-	else
-		_print_int(job->exit_code, width, right_justify, true);
+	else if (job->exit_code != NO_VAL) {
+		if (WIFSIGNALED(job->exit_code))
+			term_sig = WTERMSIG(job->exit_code);
+		else if (WIFEXITED(job->exit_code))
+			exit_status = WEXITSTATUS(job->exit_code);
+
+		xstrfmtcat(out, "%u:%u", exit_status, term_sig);
+		_print_str(out, width, right_justify, true);
+		xfree(out);
+	}
 
 	if (suffix)
 		printf("%s",suffix);
@@ -2418,6 +2432,19 @@ int _print_step_container(job_step_info_t *step, int width, bool right,
 	return SLURM_SUCCESS;
 }
 
+int _print_step_container_id(job_step_info_t *step, int width, bool right,
+			     char *suffix)
+{
+	if (!step) /* Print the Header instead */
+		_print_str("CONTAINERID", width, right, true);
+	else
+		_print_str(step->container_id, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_step_id(job_step_info_t * step, int width, bool right, char* suffix)
 {
 	char id[FORMAT_STRING_SIZE];
@@ -3015,12 +3042,12 @@ static int _filter_job(job_info_t * job)
 		}
 		list_iterator_destroy(iterator);
 		bit_and(job->array_bitmap, new_array_bitmap);
-		bit_free(new_array_bitmap);
+		FREE_NULL_BITMAP(new_array_bitmap);
 		xfree(job->array_task_str);
 		i = bit_set_count(job->array_bitmap);
 		if (i == 1) {
 			job->array_task_id = bit_ffs(job->array_bitmap);
-			bit_free(job->array_bitmap);
+			FREE_NULL_BITMAP(job->array_bitmap);
 		} else {
 			i = i * 16 + 10;
 			job->array_task_str = xmalloc(i);

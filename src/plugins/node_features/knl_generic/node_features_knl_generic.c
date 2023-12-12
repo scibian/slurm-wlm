@@ -64,7 +64,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/bitstring.h"
 #include "src/common/fd.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/pack.h"
@@ -170,7 +170,6 @@ static uint32_t cpu_bind[KNL_NUMA_CNT];	/* Derived from numa_cpu_bind */
 static uint16_t default_mcdram = KNL_CACHE;
 static uint16_t default_numa = KNL_ALL2ALL;
 static char *mc_path = NULL;
-static uint32_t node_reboot_weight = (INFINITE - 1);
 static char *numa_cpu_bind = NULL;
 static uint32_t syscfg_timeout = 0;
 static bool reconfig = false;
@@ -199,7 +198,6 @@ static s_p_options_t knl_conf_file_options[] = {
 	{"Force", S_P_UINT32},
 	{"LogFile", S_P_STRING},
 	{"McPath", S_P_STRING},
-	{"NodeRebootWeight", S_P_UINT32},
 	{"NumaCpuBind", S_P_STRING},
 	{"SyscfgPath", S_P_STRING},
 	{"SyscfgTimeout", S_P_UINT32},
@@ -234,7 +232,8 @@ static s_p_hashtbl_t *_config_make_tbl(char *filename)
 		return tbl;
 	}
 
-	if (s_p_parse_file(tbl, NULL, filename, false, NULL) == SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, filename, false, NULL, false) ==
+	    SLURM_ERROR) {
 		error("knl.conf: %s: s_p_parse_file error: %m", __func__);
 		s_p_hashtbl_destroy(tbl);
 		tbl = NULL;
@@ -707,7 +706,8 @@ static void _make_uid_array(char *uid_str)
 	tok = strtok_r(tmp_str, ",", &save_ptr);
 	while (tok) {
 		if (uid_from_string(tok, &allowed_uid[allowed_uid_cnt++]) < 0)
-			error("knl_generic.conf: Invalid AllowUserBoot: %s", tok);
+			fatal("knl_generic.conf: Invalid AllowUserBoot: %s",
+			      tok);
 		tok = strtok_r(NULL, ",", &save_ptr);
 	}
 	xfree(tmp_str);
@@ -878,8 +878,6 @@ extern int init(void)
 		}
 		(void) s_p_get_uint32(&force_load, "Force", tbl);
 		(void) s_p_get_string(&mc_path, "McPath", tbl);
-		(void) s_p_get_uint32(&node_reboot_weight, "NodeRebootWeight",
-				      tbl);
 		if (s_p_get_string(&numa_cpu_bind, "NumaCpuBind", tbl))
 			_update_cpu_bind();
 		(void) s_p_get_string(&syscfg_path, "SyscfgPath", tbl);
@@ -943,7 +941,6 @@ extern int init(void)
 		     default_mcdram_str, default_numa_str);
 		info("Force=%u", force_load);
 		info("McPath=%s", mc_path);
-		info("NodeRebootWeight=%u", node_reboot_weight);
 		info("NumaCpuBind=%s", numa_cpu_bind);
 		info("SyscfgPath=%s (Found=%d)", syscfg_path, syscfg_found);
 		info("SyscfgTimeout=%u msec", syscfg_timeout);
@@ -1276,7 +1273,7 @@ extern void node_features_p_node_state(char **avail_modes, char **current_mode)
 }
 
 /* Test if a job's feature specification is valid */
-extern int node_features_p_job_valid(char *job_features)
+extern int node_features_p_job_valid(char *job_features, list_t *feature_list)
 {
 	uint16_t job_mcdram, job_numa;
 	int mcdram_cnt, numa_cnt;
@@ -1327,7 +1324,9 @@ extern int node_features_p_job_valid(char *job_features)
  * RET comma-delimited features required on node reboot. Must xfree to release
  *     memory
  */
-extern char *node_features_p_job_xlate(char *job_features)
+extern char *node_features_p_job_xlate(char *job_features,
+				       list_t *feature_list,
+				       bitstr_t *job_node_bitmap)
 {
 	char *node_features = NULL;
 	char *tmp, *save_ptr = NULL, *mult, *sep = "", *tok;
@@ -1655,8 +1654,7 @@ extern bool node_features_p_node_power(void)
 extern int node_features_p_node_update(char *active_features,
 				       bitstr_t *node_bitmap)
 {
-	int i, i_first, i_last;
-	int rc = SLURM_SUCCESS, numa_inx = -1;
+	int i, rc = SLURM_SUCCESS, numa_inx = -1;
 	int mcdram_inx = 0;
 	uint64_t mcdram_size;
 	node_record_t *node_ptr;
@@ -1695,22 +1693,7 @@ extern int node_features_p_node_update(char *active_features,
 		mcdram_inx = -1;
 	}
 
-	xassert(node_bitmap);
-	i_first = bit_ffs(node_bitmap);
-	if (i_first >= 0)
-		i_last = bit_fls(node_bitmap);
-	else
-		i_last = i_first - 1;
-	for (i = i_first; i <= i_last; i++) {
-		if (!bit_test(node_bitmap, i))
-			continue;
-		if (i >= node_record_count) {
-			error("%s: Invalid node index (%d >= %d)",
-			      __func__, i, node_record_count);
-			rc = SLURM_ERROR;
-			break;
-		}
-		node_ptr = node_record_table_ptr[i];
+	for (i = 0; (node_ptr = next_node_bitmap(node_bitmap, &i)); i++) {
 		if ((numa_inx >= 0) && cpu_bind[numa_inx])
 			node_ptr->cpu_bind = cpu_bind[numa_inx];
 		if (mcdram_per_node && (mcdram_inx >= 0)) {
@@ -2034,6 +2017,8 @@ extern bool node_features_p_user_update(uid_t uid)
 		if (allowed_uid[i] == uid)
 			return true;
 	}
+	log_flag(NODE_FEATURES, "UID %u is not allowed to update node features",
+		 uid);
 
 	return false;
 }
@@ -2095,11 +2080,6 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 	list_append(data, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("NodeRebootWeight");
-	key_pair->value = xstrdup_printf("%u", node_reboot_weight);
-	list_append(data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SyscfgPath");
 	key_pair->value = xstrdup(syscfg_path);
 	list_append(data, key_pair);
@@ -2122,12 +2102,4 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 	list_sort(data, (ListCmpF) sort_key_pairs);
 
 	return;
-}
-
-/*
- * Return node "weight" field if reboot required to change mode
- */
-extern uint32_t node_features_p_reboot_weight(void)
-{
-	return node_reboot_weight;
 }

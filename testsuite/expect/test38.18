@@ -232,10 +232,10 @@ proc test_cpus_per_gpu {} {
 	log_info "Testing --cpus-per-gpu"
 
 	set tests [list \
-		"--cpus-per-gpu=1 : --cpus-per-gpu=2" \
-		"--cpus-per-gpu=2 : --cpus-per-gpu=1" \
-		"--cpus-per-gpu=2 : -n1" \
-		"-n1 : --cpus-per-gpu=2" \
+		"--gpus=1 --cpus-per-gpu=1 : --gpus=1 --cpus-per-gpu=2" \
+		"--gpus=1 --cpus-per-gpu=2 : --gpus=1 --cpus-per-gpu=1" \
+		"--gpus=1 --cpus-per-gpu=2 : -n1" \
+		"-n1 : --gpus=1 --cpus-per-gpu=2" \
 	]
 
 	set regexes [list \
@@ -486,9 +486,9 @@ proc test_mem_per_gpu {} {
 
 test_gpu_bind
 test_gpu_freq
-test_gpus_per_node
 
 if {[check_config_select "cons_tres"]} {
+    test_gpus_per_node
 	test_cpus_per_gpu
 	test_gpus_per_job
 	test_gpus_per_socket

@@ -83,9 +83,11 @@ enum {
 	LONG_OPT_BURST_BUFFER_SPEC,
 	LONG_OPT_CLUSTER,
 	LONG_OPT_CLUSTER_CONSTRAINT,
+	LONG_OPT_COMPLETE_FLAG,
 	LONG_OPT_COMMENT,
 	LONG_OPT_COMPRESS,
 	LONG_OPT_CONTAINER,
+	LONG_OPT_CONTAINER_ID,
 	LONG_OPT_CONTEXT,
 	LONG_OPT_CONTIGUOUS,
 	LONG_OPT_CORE,
@@ -102,6 +104,7 @@ enum {
 	LONG_OPT_EXCLUSIVE,
 	LONG_OPT_EXPORT,
 	LONG_OPT_EXPORT_FILE,
+	LONG_OPT_EXTRA,
 	LONG_OPT_GET_USER_ENV,
 	LONG_OPT_GID,
 	LONG_OPT_GPU_BIND,
@@ -178,6 +181,7 @@ enum {
 	LONG_OPT_TIME_MIN,
 	LONG_OPT_TMP,
 	LONG_OPT_TRES_PER_JOB,
+	LONG_OPT_TRES_PER_TASK,
 	LONG_OPT_UID,
 	LONG_OPT_UMASK,
 	LONG_OPT_USAGE,
@@ -204,10 +208,6 @@ typedef struct {
  * options only processed by sbatch
  */
 typedef struct {
-	/* batch script argv and argc, if provided on the command line */
-	int script_argc;
-	char **script_argv;
-
 	char *array_inx;		/* --array			*/
 	char *batch_features;		/* --batch			*/
 	char *export_file;		/* --export-file=file		*/
@@ -233,9 +233,6 @@ typedef struct {
  * options only processed by srun
  */
 typedef struct {
-	int argc;			/* length of argv array		*/
-	char **argv;			/* left over on command line	*/
-
 	uint16_t accel_bind_type;	/* --accel-bind			*/
 	char *alloc_nodelist;		/* grabbed from the environment	*/
 	char *bcast_exclude;		/* --bcast-exclude */
@@ -253,6 +250,7 @@ typedef struct {
 	bool exclusive;			/* --exclusive			*/
 	bool interactive;		/* --interactive		*/
 	uint32_t jobid;			/* --jobid			*/
+	uint32_t array_task_id;		/* --jobid			*/
 	int32_t kill_bad_exit;		/* --kill-on-bad-exit		*/
 	bool labelio;			/* --label-output		*/
 	int32_t max_threads;		/* --threads			*/
@@ -270,7 +268,7 @@ typedef struct {
 	bool preserve_env;		/* --preserve-env		*/
 	char *prolog;			/* --prolog			*/
 	char *propagate;		/* --propagate[=RLIMIT_CORE,...]*/
-	bool pty;			/* --pty			*/
+	char *pty;			/* --pty[=fd]			*/
 	bool quit_on_intr;		/* --quit-on-interrupt		*/
 	int relative;			/* --relative			*/
 	int resv_port_cnt;		/* --resv_ports			*/
@@ -300,7 +298,10 @@ typedef struct {
 
 	void (*help_func)(void);	/* Print --help info		*/
 	void (*usage_func)(void);	/* Print --usage info		*/
+	void (*autocomplete_func)(const char *); /* Print --autocomplete= info*/
 
+	int argc;			/* command/script argc		*/
+	char **argv;			/* command/script argv		*/
 	char *burst_buffer;		/* --bb				*/
 	char *burst_buffer_file;	/* --bbf			*/
 	char *clusters;			/* cluster to run this on. */
@@ -313,6 +314,7 @@ typedef struct {
 	bool cpus_set;			/* cpus_per_task explicitly set	*/
 	int min_nodes;			/* --nodes=n			*/
 	int max_nodes;			/* --nodes=x-n			*/
+	char *job_size_str;		/* --nodes			*/
 	bool nodes_set;			/* nodes explicitly set		*/
 	int sockets_per_node;		/* --sockets-per-node=n		*/
 	int cores_per_socket;		/* --cores-per-socket=n		*/
@@ -377,6 +379,7 @@ typedef struct {
 	char *c_constraint;		/* --cluster-constraint		*/
 	char *gres;			/* --gres			*/
 	char *container;		/* --container			*/
+	char *container_id;		/* --container-id		*/
 	char *context;			/* --context			*/
 	bool contiguous;		/* --contiguous			*/
 	char *nodefile;			/* --nodefile			*/
@@ -387,7 +390,7 @@ typedef struct {
 	bool reboot;			/* --reboot			*/
 
 	time_t begin;			/* --begin			*/
-	char *extra;			/* unused			*/
+	char *extra;			/* --extra			*/
 	uint16_t mail_type;		/* --mail-type			*/
 	char *mail_user;		/* --mail-user			*/
 	int get_user_env_time;		/* --get-user-env[=timeout]	*/
@@ -413,6 +416,8 @@ typedef struct {
 	char *submit_line;		/* submit line of the caller	*/
 	char *tres_bind;		/* derived from gpu_bind	*/
 	char *tres_freq;		/* derived from gpu_freq	*/
+	char *tres_per_task;		/* --tres_per_task		*/
+
 	uint16_t x11;			/* --x11			*/
 	char *x11_magic_cookie;		/* cookie retrieved from xauth	*/
 	char *x11_target;		/* target host, or unix socket	*/
@@ -567,5 +572,10 @@ extern char *slurm_option_get_argv_str(const int argc, char **argv);
  */
 extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 						 bool set_defaults);
+
+/*
+ * Compatible with shell/bash completions.
+ */
+extern void suggest_completion(struct option *opts, const char *query);
 
 #endif	/* _SLURM_OPT_H_ */

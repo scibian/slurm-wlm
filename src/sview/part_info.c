@@ -99,6 +99,7 @@ enum {
 	SORTID_JOB_DEFAULTS,
 	SORTID_JOB_SIZE,
 	SORTID_MAX_CPUS_PER_NODE,
+	SORTID_MAX_CPUS_PER_SOCKET,
 	SORTID_MEM,
 	SORTID_NAME,
 	SORTID_NODELIST,
@@ -113,6 +114,7 @@ enum {
 	SORTID_OVER_SUBSCRIBE,
 	SORTID_OVER_TIME_LIMIT,
 	SORTID_PART_STATE,
+	SORTID_POWER_DOWN_ON_IDLE,
 	SORTID_PREEMPT_MODE,
 	SORTID_PRIORITY_JOB_FACTOR,
 	SORTID_PRIORITY_TIER,
@@ -165,6 +167,8 @@ static display_data_t display_data_part[] = {
 	 EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_JOB_SIZE, "Job Size", false,
 	 EDIT_NONE, refresh_part, create_model_part, admin_edit_part},
+	{G_TYPE_STRING, SORTID_POWER_DOWN_ON_IDLE, "PowerDownOnIdle", false,
+	 EDIT_MODEL, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_PREEMPT_MODE, "PreemptMode", false,
 	 EDIT_MODEL, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_PRIORITY_JOB_FACTOR, "PriorityJobFactor", false,
@@ -177,12 +181,14 @@ static display_data_t display_data_part[] = {
 	 EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_MAX_CPUS_PER_NODE, "Max CPUs Per Node", false,
 	 EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
+	{G_TYPE_STRING, SORTID_MAX_CPUS_PER_SOCKET, "Max CPUs Per Socket",
+	 false, EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_OVER_SUBSCRIBE, "OverSubscribe", false,
 	 EDIT_MODEL, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_OVER_TIME_LIMIT, "OverTimeLimit", false,
 	 EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
-	{G_TYPE_STRING, SORTID_ROOT, "Root", false, EDIT_MODEL, refresh_part,
-	 create_model_part, admin_edit_part},
+	{G_TYPE_STRING, SORTID_ROOT, "RootOnly", false, EDIT_MODEL,
+	 refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_QOS_CHAR, "Qos", false,
 	 EDIT_TEXTBOX, refresh_part, create_model_part, admin_edit_part},
 	{G_TYPE_STRING, SORTID_ALLOW_ACCOUNTS, "Allowed Accounts", false,
@@ -244,6 +250,8 @@ static display_data_t create_data_part[] = {
 	 EDIT_MODEL, refresh_part, _create_model_part2, admin_edit_part},
 	{G_TYPE_STRING, SORTID_TIMELIMIT, "Time Limit", false,
 	 EDIT_TEXTBOX, refresh_part, _create_model_part2, admin_edit_part},
+	{G_TYPE_STRING, SORTID_POWER_DOWN_ON_IDLE, "PowerDownOnIdle", false,
+	 EDIT_MODEL, refresh_part, _create_model_part2, admin_edit_part},
 	{G_TYPE_STRING, SORTID_PREEMPT_MODE, "PreemptMode", false,
 	 EDIT_MODEL, refresh_part, _create_model_part2, admin_edit_part},
 	{G_TYPE_STRING, SORTID_PRIORITY_JOB_FACTOR, "PriorityJobFactor", false,
@@ -256,7 +264,10 @@ static display_data_t create_data_part[] = {
 	 EDIT_TEXTBOX, refresh_part, _create_model_part2, admin_edit_part},
 	{G_TYPE_STRING, SORTID_MAX_CPUS_PER_NODE, "Max CPUs Per Node", false,
 	 EDIT_TEXTBOX, refresh_part, _create_model_part2, admin_edit_part},
-	{G_TYPE_STRING, SORTID_ROOT, "Root", false,
+	{G_TYPE_STRING, SORTID_MAX_CPUS_PER_SOCKET, "Max CPUs Per Socket",
+	 false, EDIT_TEXTBOX, refresh_part,
+	 _create_model_part2, admin_edit_part},
+	{G_TYPE_STRING, SORTID_ROOT, "RootOnly", false,
 	 EDIT_MODEL, refresh_part, _create_model_part2, admin_edit_part},
 	{G_TYPE_STRING, SORTID_OVER_SUBSCRIBE, "OverSubscribe", false,
 	 EDIT_MODEL, refresh_part, _create_model_part2, admin_edit_part},
@@ -361,6 +372,7 @@ static void _set_active_combo_part(GtkComboBox *combo,
 	case SORTID_DEFAULT:
 	case SORTID_EXCLUSIVE_USER:
 	case SORTID_HIDDEN:
+	case SORTID_POWER_DOWN_ON_IDLE:
 	case SORTID_ROOT:
 		if (!xstrcmp(temp_char, "yes"))
 			action = 0;
@@ -502,20 +514,20 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 		part_msg->alternate = xstrdup(new_text);
 		break;
 	case SORTID_DEFAULT:
-		if (!xstrcasecmp(new_text, "yes")) {
+		if (!xstrncasecmp(new_text, "yes", 3)) {
 			part_msg->flags |= PART_FLAG_DEFAULT;
 			part_msg->flags &= (~PART_FLAG_DEFAULT_CLR);
-		} else if (!xstrcasecmp(new_text, "no")) {
+		} else if (!xstrncasecmp(new_text, "no", 2)) {
 			part_msg->flags &= (~PART_FLAG_DEFAULT);
 			part_msg->flags |= PART_FLAG_DEFAULT_CLR;
 		}
 		type = "default";
 		break;
 	case SORTID_EXCLUSIVE_USER:
-		if (!xstrcasecmp(new_text, "yes")) {
+		if (!xstrncasecmp(new_text, "yes", 3)) {
 			part_msg->flags |= PART_FLAG_EXCLUSIVE_USER;
 			part_msg->flags &= (~PART_FLAG_EXC_USER_CLR);
-		} else if (!xstrcasecmp(new_text, "no")) {
+		} else if (!xstrncasecmp(new_text, "no", 2)) {
 			part_msg->flags &= (~PART_FLAG_EXCLUSIVE_USER);
 			part_msg->flags |= PART_FLAG_EXC_USER_CLR;
 		}
@@ -530,10 +542,10 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 		part_msg->grace_time = (uint32_t)(temp_int * 60);
 		break;
 	case SORTID_HIDDEN:
-		if (!xstrcasecmp(new_text, "yes")) {
+		if (!xstrncasecmp(new_text, "yes", 3)) {
 			part_msg->flags |= PART_FLAG_HIDDEN;
 			part_msg->flags &= (~PART_FLAG_HIDDEN_CLR);
-		} else if (!xstrcasecmp(new_text, "no")) {
+		} else if (!xstrncasecmp(new_text, "no", 2)) {
 			part_msg->flags &= (~PART_FLAG_HIDDEN);
 			part_msg->flags |= PART_FLAG_HIDDEN_CLR;
 		}
@@ -553,6 +565,16 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 		if ((temp_int <= 0) && (temp_int != INFINITE))
 			goto return_error;
 		part_msg->max_time = (uint32_t)temp_int;
+		break;
+	case SORTID_POWER_DOWN_ON_IDLE:
+		if (!xstrncasecmp(new_text, "yes", 3)) {
+			part_msg->flags |= PART_FLAG_PDOI;
+			part_msg->flags &= (~PART_FLAG_PDOI_CLR);
+		} else if (!xstrncasecmp(new_text, "no", 2)) {
+			part_msg->flags &= (~PART_FLAG_PDOI);
+			part_msg->flags |= PART_FLAG_PDOI_CLR;
+		}
+		type = "power_down_on_idle";
 		break;
 	case SORTID_PREEMPT_MODE:
 		if (!xstrcasecmp(new_text, "cancel"))
@@ -587,6 +609,14 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 			goto return_error;
 		part_msg->max_cpus_per_node = temp_int;
 		break;
+	case SORTID_MAX_CPUS_PER_SOCKET:
+		temp_int = strtol(new_text, (char **)NULL, 10);
+		type = "max_cpus_per_socket";
+
+		if (temp_int <= 0)
+			goto return_error;
+		part_msg->max_cpus_per_socket = temp_int;
+		break;
 	case SORTID_NODES_MIN:
 		temp_int = strtol(new_text, (char **)NULL, 10);
 		type = "min_nodes";
@@ -612,25 +642,25 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 		part_msg->max_nodes = (uint32_t)temp_int;
 		break;
 	case SORTID_ROOT:
-		if (!xstrcasecmp(new_text, "yes")) {
+		if (!xstrncasecmp(new_text, "yes", 3)) {
 			part_msg->flags |= PART_FLAG_ROOT_ONLY;
 			part_msg->flags &= (~PART_FLAG_ROOT_ONLY_CLR);
-		} else if (!xstrcasecmp(new_text, "no")) {
+		} else if (!xstrncasecmp(new_text, "no", 2)) {
 			part_msg->flags &= (~PART_FLAG_ROOT_ONLY);
 			part_msg->flags |= PART_FLAG_ROOT_ONLY_CLR;
 		}
 
-		type = "root";
+		type = "rootonly";
 		break;
 	case SORTID_OVER_SUBSCRIBE:
-		if (!xstrcasecmp(new_text, "yes")) {
+		if (!xstrncasecmp(new_text, "yes", 3)) {
 			part_msg->max_share = _set_part_over_subscribe_popup();
 		} else if (!xstrcasecmp(new_text, "exclusive")) {
 			part_msg->max_share = 0;
 		} else if (!xstrcasecmp(new_text, "force")) {
 			part_msg->max_share = _set_part_over_subscribe_popup()
 					      | SHARED_FORCE;
-		} else if (!xstrcasecmp(new_text, "no"))
+		} else if (!xstrncasecmp(new_text, "no", 2))
 			part_msg->max_share = 1;
 		else
 			goto return_error;
@@ -675,13 +705,13 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 		type = "nodelist";
 		break;
 	case SORTID_PART_STATE:
-		if (!xstrcasecmp(new_text, "up"))
+		if (!xstrncasecmp(new_text, "up", 2))
 			part_msg->state_up = PARTITION_UP;
-		else if (!xstrcasecmp(new_text, "down"))
+		else if (!xstrncasecmp(new_text, "down", 4))
 			part_msg->state_up = PARTITION_DOWN;
-		else if (!xstrcasecmp(new_text, "inactive"))
+		else if (!xstrncasecmp(new_text, "inactive", 8))
 			part_msg->state_up = PARTITION_INACTIVE;
-		else if (!xstrcasecmp(new_text, "drain"))
+		else if (!xstrncasecmp(new_text, "drain", 5))
 			part_msg->state_up = PARTITION_DRAIN;
 		else
 			goto return_error;
@@ -1084,9 +1114,18 @@ static void _layout_part_record(GtkTreeView *treeview,
 		case SORTID_MAX_CPUS_PER_NODE:
 			limit_set = part_ptr->max_cpus_per_node;
 			break;
+		case SORTID_MAX_CPUS_PER_SOCKET:
+			limit_set = part_ptr->max_cpus_per_socket;
+			break;
 		case SORTID_NODE_INX:
 			break;
 		case SORTID_ONLY_LINE:
+			break;
+		case SORTID_POWER_DOWN_ON_IDLE:
+			if (part_ptr->flags & PART_FLAG_PDOI)
+				yes_no = 1;
+			else
+				yes_no = 0;
 			break;
 		case SORTID_PREEMPT_MODE:
 			temp_uint16 = part_ptr->preempt_mode;
@@ -1213,8 +1252,9 @@ static void _update_part_record(sview_part_info_t *sview_part_info,
 	char tmp_max_nodes[40], tmp_min_nodes[40], tmp_grace[40];
 	char tmp_over_time_limit_buf[40];
 	char tmp_cpu_cnt[40], tmp_node_cnt[40], tmp_max_cpus_per_node[40];
+	char tmp_max_cpus_per_socket[40];
 	char *tmp_alt, *tmp_default, *tmp_accounts, *tmp_groups, *tmp_hidden;
-	char *tmp_deny_accounts, *tmp_qos_char, *tmp_exc_user;
+	char *tmp_deny_accounts, *tmp_qos_char, *tmp_pdoi, *tmp_exc_user;
 	char *tmp_qos, *tmp_deny_qos, *job_def_str = NULL;
 	char *tmp_root, *tmp_over_subscribe, *tmp_over_time_limit, *tmp_state;
 	uint16_t tmp_preempt;
@@ -1258,6 +1298,11 @@ static void _update_part_record(sview_part_info_t *sview_part_info,
 	else
 		tmp_deny_qos = "none";
 
+	if (part_ptr->flags & PART_FLAG_PDOI)
+		tmp_pdoi = "yes";
+	else
+		tmp_pdoi = "no";
+
 	if (part_ptr->flags & PART_FLAG_EXCLUSIVE_USER)
 		tmp_exc_user = "yes";
 	else
@@ -1298,6 +1343,13 @@ static void _update_part_record(sview_part_info_t *sview_part_info,
 	} else {
 		sprintf(tmp_max_cpus_per_node, "%u",
 			part_ptr->max_cpus_per_node);
+	}
+
+	if (part_ptr->max_cpus_per_socket == INFINITE) {
+		sprintf(tmp_max_cpus_per_socket, "UNLIMITED");
+	} else {
+		sprintf(tmp_max_cpus_per_socket, "%u",
+			part_ptr->max_cpus_per_socket);
 	}
 
 	sprintf(tmp_node_cnt, "%u", part_ptr->total_nodes);
@@ -1396,6 +1448,7 @@ static void _update_part_record(sview_part_info_t *sview_part_info,
 			   SORTID_JOB_DEFAULTS, job_def_str,
 			   SORTID_JOB_SIZE,   tmp_size,
 			   SORTID_MAX_CPUS_PER_NODE, tmp_max_cpus_per_node,
+			   SORTID_MAX_CPUS_PER_SOCKET, tmp_max_cpus_per_socket,
 			   SORTID_MEM,        "",
 			   SORTID_NAME,       part_ptr->name,
 			   SORTID_NODE_INX,   part_ptr->node_inx,
@@ -1409,6 +1462,7 @@ static void _update_part_record(sview_part_info_t *sview_part_info,
 			   SORTID_OVER_SUBSCRIBE, tmp_over_subscribe,
 			   SORTID_OVER_TIME_LIMIT, tmp_over_time_limit,
 			   SORTID_PART_STATE, tmp_state,
+			   SORTID_POWER_DOWN_ON_IDLE, tmp_pdoi,
 			   SORTID_PREEMPT_MODE,
 				preempt_mode_string(tmp_preempt),
 			   SORTID_PRIORITY_JOB_FACTOR, tmp_prio_job_factor,
@@ -2170,22 +2224,15 @@ static GtkListStore *_create_model_part2(int type)
 	case SORTID_DEFAULT:
 	case SORTID_EXCLUSIVE_USER:
 	case SORTID_HIDDEN:
-		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
-		gtk_list_store_append(model, &iter);
-		gtk_list_store_set(model, &iter,
-				   0, "no (default)", 1, SORTID_DEFAULT, -1);
-		gtk_list_store_append(model, &iter);
-		gtk_list_store_set(model, &iter,
-				   0, "yes", 1, SORTID_DEFAULT, -1);
-		break;
+	case SORTID_POWER_DOWN_ON_IDLE:
 	case SORTID_ROOT:
 		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
-				   0, "yes (default)", 1, SORTID_DEFAULT, -1);
+				   0, "no (default)", 1, type, -1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
-				   0, "no", 1, SORTID_DEFAULT, -1);
+				   0, "yes", 1, type, -1);
 		break;
 	case SORTID_OVER_SUBSCRIBE:
 		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
@@ -2254,6 +2301,7 @@ extern GtkListStore *create_model_part(int type)
 	case SORTID_EXCLUSIVE_USER:
 	case SORTID_HIDDEN:
 	case SORTID_ROOT:
+	case SORTID_POWER_DOWN_ON_IDLE:
 		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
@@ -2285,6 +2333,7 @@ extern GtkListStore *create_model_part(int type)
 	case SORTID_NODES_MIN:
 	case SORTID_NODES_MAX:
 	case SORTID_MAX_CPUS_PER_NODE:
+	case SORTID_MAX_CPUS_PER_SOCKET:
 	case SORTID_OVER_TIME_LIMIT:
 		break;
 	case SORTID_OVER_SUBSCRIBE:
@@ -2620,7 +2669,7 @@ extern void specific_info_part(popup_info_t *popup_win)
 	GtkTreeView *tree_view = NULL;
 	List info_list = NULL;
 	List send_info_list = NULL;
-	int j=0, i=-1;
+	int j=0;
 	sview_part_info_t *sview_part_info_ptr = NULL;
 	partition_info_t *part_ptr = NULL;
 	ListIterator itr = NULL;
@@ -2724,9 +2773,7 @@ display_it:
 	send_info_list = list_create(NULL);
 
 	itr = list_iterator_create(info_list);
-	i = -1;
 	while ((sview_part_info_ptr = list_next(itr))) {
-		i++;
 		part_ptr = sview_part_info_ptr->part_ptr;
 		switch (spec_info->type) {
 		case RESV_PAGE:

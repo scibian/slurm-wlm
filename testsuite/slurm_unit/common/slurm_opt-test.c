@@ -757,7 +757,7 @@ int main(void)
 	log_opts.stderr_level = LOG_LEVEL_DEBUG5;
 	log_init("slurm_opt-test", log_opts, 0, NULL);
 
-	/* Call slurm_conf_init() with a mock slurm.conf*/
+	/* Call slurm_init() with a mock slurm.conf*/
 	int fd;
 	char *slurm_unit_conf_filename = xstrdup("slurm_unit.conf-XXXXXX");
 	if ((fd = mkstemp(slurm_unit_conf_filename)) == -1) {
@@ -767,18 +767,27 @@ int main(void)
 	} else
 		debug("fake slurm.conf created: %s", slurm_unit_conf_filename);
 
+	/*
+	 * PluginDir=. is needed as loading the slurm.conf will check for the
+	 * existence of the dir. As 'make check' doesn't install anything the
+	 * normal PluginDir might not exist. As we don't load any plugins for
+	 * these test this should be ok.
+	 */
 	char slurm_unit_conf_content[] = "ClusterName=slurm_unit\n"
-					 "PluginDir=.\n"
+		                         "PluginDir=.\n"
 					 "SlurmctldHost=slurm_unit\n";
 	size_t csize = sizeof(slurm_unit_conf_content);
 	ssize_t rc = write(fd, slurm_unit_conf_content, csize);
 	if (rc < csize) {
-		error("error writting slurm_unit.conf (%s)",
+		error("error writing slurm_unit.conf (%s)",
 		      slurm_unit_conf_filename);
 		return EXIT_FAILURE;
 	}
-	if (slurm_conf_init(slurm_unit_conf_filename)) {
-		error("slurm_conf_init() failed");
+
+	/* Do not load any plugins, we are only testing slurm_opt */
+	if (slurm_conf_init_load(slurm_unit_conf_filename, false) !=
+	    SLURM_SUCCESS) {
+		error("slurm_conf_init_load() failed");
 		return EXIT_FAILURE;
 	}
 
@@ -787,7 +796,7 @@ int main(void)
 	close(fd);
 
 	/* data_init() is necessary on this test */
-	if (data_init(NULL, NULL)) {
+	if (data_init()) {
 		error("data_init_static() failed");
 		return EXIT_FAILURE;
 	}

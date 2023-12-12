@@ -5,7 +5,6 @@ import inspect
 import logging
 import os
 import pathlib
-from py.io import TerminalWriter
 import pwd
 import pytest
 import _pytest
@@ -15,6 +14,7 @@ import sys
 
 sys.path.append(sys.path[0] + '/lib')
 import atf
+
 
 # Add test description (docstring) as a junit property
 def pytest_itemcollected(item):
@@ -31,6 +31,14 @@ def pytest_addoption(parser):
 
 
 def color_log_level(level, **color_kwargs):
+    # Adapted from depricated py.io TerminalWriter source
+    # https://py.readthedocs.io/en/latest/_modules/py/_io/terminalwriter.html
+    _esctable = dict(black=30, red=31, green=32, yellow=33,
+        blue=34, purple=35, cyan=36, white=37,
+        Black=40, Red=41, Green=42, Yellow=43,
+        Blue=44, Purple=45, Cyan=46, White=47,
+        bold=1, light=2, blink=5, invert=7)
+
     for handler in logging.getLogger().handlers:
         if isinstance(handler, _pytest.logging.LogCaptureHandler):
             formatter = handler.formatter
@@ -39,9 +47,17 @@ def color_log_level(level, **color_kwargs):
                 formatted_levelname = levelname_fmt % {
                     'levelname': logging.getLevelName(level)
                 }
-                colorized_formatted_levelname = TerminalWriter().markup(
-                    formatted_levelname, **color_kwargs
+
+                esc = []
+                for option in color_kwargs:
+                    esc.append(_esctable[option])
+
+                colorized_formatted_levelname = (
+                    ''.join(['\x1b[%sm' % cod for cod in esc])
+                    + formatted_levelname
+                    + '\x1b[0m'
                 )
+
                 formatter._level_to_fmt_mapping[level] = formatter.LEVELNAME_FMT_REGEX.sub(
                     colorized_formatted_levelname, formatter._fmt
                 )
@@ -63,20 +79,49 @@ def session_setup(request):
     color_log_level(logging.TRACE, purple=True, bold=True)
 
 
+def update_tmp_path_exec_permissions():
+    """
+    For pytest versions 6+  the tmp path it uses no longer has
+    public exec permissions for dynamically created directories by default.
+
+    This causes problems when trying to read temp files during tests as
+    users other than atf (ie slurm).  The tests will fail with permission denied.
+
+    To fix this we check and add the x bit to the public group on tmp
+    directories so the files inside can be read. Adding just 'read' is
+    not enough
+
+    Bug 16568
+    """
+
+    user_name = atf.get_user_name()
+    path = f"/tmp/pytest-of-{user_name}"
+
+    if os.path.isdir(path):
+        os.chmod(path, 0o777)
+        for root, dirs, files in os.walk(path):
+            for d in dirs :
+                os.chmod(os.path.join(root, d), 0o777)
+
+
+@pytest.fixture(scope="function", autouse=True)
+def tmp_path_setup(request):
+    update_tmp_path_exec_permissions()
+
+
 @pytest.fixture(scope="module", autouse=True)
 def module_setup(request, tmp_path_factory):
-
     atf.properties['slurm-started'] = False
     atf.properties['configurations-modified'] = set()
     atf.properties['accounting-database-modified'] = False
     atf.properties['orig-environment'] = dict(os.environ)
-    #print(f"properties = {atf.properties}")
 
     # Creating a module level tmp_path mimicing what tmp_path does
     name = request.node.name
     name = re.sub(r'[\W]', '_', name)
     name = name[:30]
     atf.module_tmp_path = tmp_path_factory.mktemp(name, numbered=True)
+    update_tmp_path_exec_permissions()
 
     # Module-level fixtures should run from within the module_tmp_path
     os.chdir(atf.module_tmp_path)
@@ -96,11 +141,9 @@ def module_setup(request, tmp_path_factory):
 
 
 def module_teardown():
-
     failures = []
 
     if atf.properties['auto-config']:
-
         if atf.properties['slurm-started'] == True:
 
             # Cancel all jobs
@@ -118,6 +161,9 @@ def module_teardown():
         # Restore the Slurm database if modified
         if atf.properties['accounting-database-modified']:
             atf.restore_accounting_database()
+
+    else:
+        atf.cancel_jobs(atf.properties['submitted-jobs'])
 
     # Restore the prior environment
     os.environ.clear()

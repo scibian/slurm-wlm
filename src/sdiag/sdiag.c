@@ -1,5 +1,5 @@
 /****************************************************************************\
- *  sdiag.c - Utility for getting information about slurmctld behaviour
+ *  sdiag.c - Utility for getting information about slurmctld behavior
  *****************************************************************************
  *  Produced at Barcelona Supercomputing Center, December 2011
  *  Written by Alejandro Lucero <alucero@bsc.es>
@@ -48,12 +48,14 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/interfaces/data_parser.h"
+
 #include "sdiag.h"
 
 /********************
  * Global Variables *
  ********************/
-struct sdiag_parameters params;
+struct sdiag_parameters params = {0};
 
 stats_info_response_msg_t *buf;
 uint32_t *rpc_type_ave_time = NULL, *rpc_user_ave_time = NULL;
@@ -69,7 +71,7 @@ int main(int argc, char **argv)
 {
 	int rc = 0;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	parse_command_line(argc, argv);
 
 	if (params.mode == STAT_COMMAND_RESET) {
@@ -81,16 +83,20 @@ int main(int argc, char **argv)
 			slurm_perror("slurm_reset_statistics");
 	} else {
 		req.command_id = STAT_COMMAND_GET;
-		rc = slurm_get_statistics(&buf,
-					  (stats_info_request_msg_t *)&req);
+		rc = slurm_get_statistics(&buf, &req);
 		if (rc == SLURM_SUCCESS) {
 			_sort_rpc();
-			rc = _print_stats();
-#ifdef MEMORY_LEAK_DEBUG
+
+			if (params.mimetype) {
+				rc = DATA_DUMP_CLI(STATS_MSG, *buf,
+						   "statistics", argc, argv,
+						   NULL, params.mimetype);
+			} else {
+				rc = _print_stats();
+			}
 			slurm_free_stats_response_msg(buf);
 			xfree(rpc_type_ave_time);
 			xfree(rpc_user_ave_time);
-#endif
 		} else
 			slurm_perror("slurm_get_statistics");
 	}

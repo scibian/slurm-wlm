@@ -68,14 +68,14 @@ ReservationName=root_3 StartTime=2009-02-06T16:00:00
 <p>A variation of this would be to configure licenses to represent system
 resources, such as a global file system.
 The system resource may not require an actual license for use, but
-Slurm licenses can be used to prevent jobs needed the resource from being
+Slurm licenses can be used to prevent jobs needing the resource from being
 started when that resource is unavailable.
 One could create a reservation for all of those licenses in order to perform
 maintenance on that resource.
 In the example below, we create a reservation for 1000 licenses with the name
 of "lustre". 
 If there are a total of 1000 lustre licenses configured in this cluster,
-this reservation will prevent any job specifying the need for needed a lustre
+this reservation will prevent any job specifying the need for a lustre
 license from being scheduled on this cluster during this reservation.</p>
 <pre>
 $ scontrol create reservation starttime=2009-04-06T16:00:00 \
@@ -159,7 +159,7 @@ feature that every selected node must contain.</p>
 whole nodes.
 This capability permits the administrator to identify the core count to be
 reserved on each node as shown in the examples below.<br>
-<b>NOTE:</b> Core reservations are not available when the system is configured
+<b>NOTE</b>: Core reservations are not available when the system is configured
 to use the select/linear plugin.</p>
 <pre>
 # Create a two core reservation for user alan
@@ -278,7 +278,7 @@ $ scontrol delete ReservationName=alan_6
 </pre>
 <p>
 
-<b>NOTE:</b> By default, when a reservation ends the reservation request will be
+<b>NOTE</b>: By default, when a reservation ends the reservation request will be
 removed from any pending jobs submitted to the reservation and will be put into
 a held state.  Use the NO_HOLD_JOBS_AFTER_END reservation flag to let jobs run
 outside of the reservation after the reservation is gone.

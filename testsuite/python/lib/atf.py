@@ -26,7 +26,9 @@ import traceback
 
 default_command_timeout = 60
 default_polling_timeout = 15
+default_sql_cmd_timeout = 120
 
+PERIODIC_TIMEOUT = 30
 
 def node_range_to_list(node_expression):
     """Converts a node range expression into a list of node names.
@@ -140,8 +142,9 @@ def run_command(command, fatal=False, timeout=default_command_timeout, quiet=Fal
     except subprocess.TimeoutExpired as e:
         duration = e.timeout
         exit_code = errno.ETIMEDOUT
-        stdout = e.stdout if e.stdout else ''
-        stderr = e.stderr if e.stderr else ''
+        # These are byte objects, not strings
+        stdout = e.stdout.decode('utf-8') if e.stdout else ''
+        stderr = e.stderr.decode('utf-8') if e.stderr else ''
 
     if input is not None:
         logging.log(log_details_level, f"Command input: {input}")
@@ -875,6 +878,58 @@ def remove_config_parameter_value(name, value, source='slurm'):
         set_config_parameter(name, None, source=source)
 
 
+def is_tool(tool):
+    """Returns True if the tool is found in PATH"""
+    from shutil import which
+    return which(tool) is not None
+
+
+def require_tool(tool):
+    """Skips if the supplied tool is not found"""
+    if not is_tool(tool):
+        msg = f"This test requires '{tool}' and it was not found"
+        pytest.skip(msg, allow_module_level=True)
+
+
+def require_whereami(is_cray=False):
+    """Compiles the whereami.c program to be used by tests
+
+    This function installs the whereami program.  To get the
+    correct output, TaskPlugin is required in the slurm.conf
+    file before slurm starts up.
+    ex: TaskPlugin=task/cray_aries,task/cgroup,task/affinity
+
+    The file will be installed in the testsuite/python/lib/scripts
+    directory where the whereami.c file is located
+
+    Examples:
+        >>> atf.require_whereami()
+        >>> print('\nwhereami is located at', atf.properties['whereami'])
+        >>> output = atf.run_command(f"srun {atf.properties['whereami']}",
+        >>>     user=atf.properties['slurm-user'])
+    """
+    require_config_parameter("TaskPlugin", "task/cgroup,task/affinity")
+
+    # Set requirement for cray systems
+    if is_cray:
+        require_config_parameter("TaskPlugin",
+            "task/cray_aries,task/cgroup,task/affinity")
+
+    # If the file already exists and we don't need to recompile
+    dest_file = f"{properties['testsuite_scripts_dir']}/whereami"
+    if os.path.isfile(dest_file):
+        properties['whereami'] = dest_file
+        return
+
+    source_file = f"{properties['testsuite_scripts_dir']}/whereami.c"
+    if not os.path.isfile(source_file):
+        pytest.skip("Could not find whereami.c!", allow_module_level=True)
+
+    run_command(f"gcc {source_file} -o {dest_file}", fatal=True,
+        user=properties['slurm-user'])
+    properties['whereami'] = dest_file
+
+
 def require_config_parameter(parameter_name, parameter_value, condition=None, source='slurm', skip_message=None):
     """Ensures that a configuration parameter has the required value.
 
@@ -884,21 +939,23 @@ def require_config_parameter(parameter_name, parameter_value, condition=None, so
     Args:
         parameter_name (string): The parameter name.
         parameter_value (string): The target parameter value.
-        source (string): Name of the config file without the .conf prefix.
         condition (callable): If there is a range of acceptable values, a
             condition can be specified to test whether the current parameter
             value is sufficient. If not, the target parameter_value will be
             used (or the test will be skipped in the case of local-config mode).
+        source (string): Name of the config file without the .conf prefix.
 
     Note:
         When requiring a complex parameter (one which may be repeated and has
         its own subparameters, such as with nodes, partitions and gres),
-        the parameter_value should be a dictionary of dictionaries.
+        the parameter_value should be a dictionary of dictionaries. See the
+        fourth example for multi-line parameters.
 
     Examples:
         >>> require_config_parameter('SelectType', 'select/cons_tres')
         >>> require_config_parameter('SlurmdTimeout', 5, lambda v: v <= 5)
         >>> require_config_parameter('Name', {'gpu': {'File': '/dev/tty0'}, 'mps': {'Count': 100}}, source='gres')
+        >>> require_config_parameter("PartitionName", {"primary": {"Nodes": "ALL"}, "dynamic1": {"Nodes": "ns1"}, "dynamic2": {"Nodes": "ns2"}, "dynamic3": {"Nodes": "ns1,ns2"}})
     """
 
     observed_value = get_config_parameter(parameter_name, live=False, source=source, quiet=True)
@@ -1160,7 +1217,7 @@ def get_nodes(live=True, quiet=False, **run_command_kwargs):
         # Convert keys to lower case so we can do a case-insensitive search
         lower_config_dict = dict((key.lower(), value) for key, value in config_dict.items())
 
-        # DEFAULT will be included seperately
+        # DEFAULT will be included separately
         if 'nodename' in lower_config_dict:
             for node_expression, node_expression_dict in lower_config_dict['nodename'].items():
                 port_expression = node_expression_dict['Port'] if 'Port' in node_expression_dict else ''
@@ -1323,6 +1380,75 @@ def set_node_parameter(node_name, new_parameter_name, new_parameter_value):
     if is_slurmctld_running(quiet=True):
         restart_slurm(quiet=True)
 
+def get_reservations(quiet=False, **run_command_kwargs):
+    """Returns the reservations as a dictionary of dictionaries.
+
+    Args:
+        quiet (boolean): If True, logging is performed at the TRACE log level.
+
+    Returns: A dictionary of dictionaries where the first level keys are the
+        reservation names and with the their values being a dictionary of
+        configuration parameters for the respective reservation.
+    """
+
+    resvs_dict = {}
+    resv_dict = {}
+
+    output = run_command_output("scontrol show reservations -o", fatal=True, quiet=quiet, **run_command_kwargs)
+    for line in output.splitlines():
+        if line == '':
+            continue
+
+        while match := re.search(r'^ *([^ =]+)=(.*?)(?= +[^ =]+=| *$)', line):
+            parameter_name, parameter_value = match.group(1), match.group(2)
+
+            # Remove the consumed parameter from the line
+            line = re.sub(r'^ *([^ =]+)=(.*?)(?= +[^ =]+=| *$)', '', line)
+
+            # Reformat the value if necessary
+            if is_integer(parameter_value):
+                parameter_value = int(parameter_value)
+            elif is_float(parameter_value):
+                parameter_value = float(parameter_value)
+            elif parameter_value == '(null)':
+                parameter_value = None
+
+            # Add it to the temporary resv dictionary
+            resv_dict[parameter_name] = parameter_value
+
+        # Add the redv dictionary to the resv dictionary
+        resvs_dict[resv_dict['ReservationName']] = resv_dict
+
+        # Clear the resv dictionary for use by the next resv
+        resv_dict = {}
+
+    return resvs_dict
+
+
+def get_reservation_parameter(resv_name, parameter_name, default=None):
+    """Obtains the value for a reservation configuration parameter.
+
+    Args:
+        resv_name (string): The reservation name.
+        parameter_name (string): The parameter name.
+        default (string or None): This value is returned if the parameter
+            is not found.
+
+    Returns: The value of the specified reservation parameter, or the default if not
+        found.
+    """
+
+    resvs_dict = get_reservations()
+
+    if resv_name in resvs_dict:
+        resv_dict = resvs_dict[resv_name]
+    else:
+        pytest.fail(f"reservation ({resv_name}) was not found")
+
+    if parameter_name in resv_dict:
+        return resv_dict[parameter_name]
+    else:
+        return default
 
 def is_super_user():
     uid = os.getuid()
@@ -1342,7 +1468,7 @@ def require_sudo_rights():
         pytest.skip("This test requires the test user to have unprompted sudo privileges", allow_module_level=True)
 
 
-def submit_job(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
+def submit_job_sbatch(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
     """Submits a job using sbatch and returns the job id.
 
     The submitted job will automatically be cancelled when the test ends.
@@ -1360,6 +1486,7 @@ def submit_job(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
 
     if match := re.search(r'Submitted \S+ job (\d+)', output):
         job_id = int(match.group(1))
+        properties['submitted-jobs'].append(job_id)
         return job_id
     else:
         return 0
@@ -1450,7 +1577,7 @@ def run_job_error(srun_args, **run_command_kwargs):
 
 
 # Return job id
-def run_job_id(srun_args, **run_command_kwargs):
+def submit_job_srun(srun_args, **run_command_kwargs):
     """Runs a job using srun and returns the job id.
 
     This function obtains the job id by adding the -v option to srun
@@ -1472,10 +1599,12 @@ def run_job_id(srun_args, **run_command_kwargs):
 
     if match := re.search(r"jobid (\d+)", results['stderr']):
         return int(match.group(1))
+    else:
+        return 0
 
 
 # Return job id (command should not be interactive/shell)
-def alloc_job_id(salloc_args, **run_command_kwargs):
+def submit_job_salloc(salloc_args, **run_command_kwargs):
     """Submits a job using salloc and returns the job id.
 
     The submitted job will automatically be cancelled when the test ends.
@@ -1492,9 +1621,41 @@ def alloc_job_id(salloc_args, **run_command_kwargs):
     results = run_command(f"salloc {salloc_args}", **run_command_kwargs)
     if match := re.search(r'Granted job allocation (\d+)', results['stderr']):
         job_id = int(match.group(1))
+        properties['submitted-jobs'].append(job_id)
         return job_id
     else:
         return 0
+
+
+# Return job id
+def submit_job(command, job_param, job, *, wrap_job=True, **run_command_kwargs):
+    """Submits a job using given command and returns the job id.
+
+    Args*:
+        command (string): The command to submit the job (salloc, srun, sbatch).
+        job_param (string): The arguments to the job.
+        job (string): The command or job file to be executed.
+        wrap_job (boolean): If job needs to be wrapped when command is sbatch.
+
+    * run_command arguments are also accepted (e.g. fatal) and will be supplied
+        to the underlying job_id and subsequent run_command call.
+
+    Returns: The job id.
+    """
+
+    # Make sure command is a legal command to run a job
+    assert command in ["salloc", "srun", "sbatch"], \
+        f"Invalid command '{command}'. Should be salloc, srun, or sbatch."
+
+    if command == "salloc":
+        return submit_job_salloc(f"{job_param} {job}", **run_command_kwargs)
+    elif command == "srun":
+        return submit_job_srun(f"{job_param} {job}", **run_command_kwargs)
+    elif command == "sbatch":
+        # If the job should be wrapped, do so before submitting
+        if wrap_job:
+            job = f"--wrap '{job}'"
+        return submit_job_sbatch(f"{job_param} {job}", **run_command_kwargs)
 
 
 def run_job_nodes(srun_args, **run_command_kwargs):
@@ -1617,18 +1778,67 @@ def get_job_parameter(job_id, parameter_name, default=None, quiet=False):
         return default
 
 
+def wait_for_node_state(nodename, desired_node_state, timeout=default_polling_timeout, poll_interval=None, fatal=False, reverse=False):
+    """Waits for the specified node state to be reached.
+
+    This function polls the node state every poll interval seconds, waiting up
+    to the timeout for the specified node state to be reached.
+
+    Args:
+        nodename (string): The name of the node.
+        desired_node_state (string): The desired node state.
+        timeout (integer): Number of seconds to poll before timing out.
+        poll_interval (float): Number of seconds to wait between node state
+            polls.
+        fatal (boolean): If True, a timeout will result in the test failing.
+        reverse (boolean): If True, wait for the node to lose the desired_node_state.
+    """
+
+    # Figure out if we're waiting for the desired_node_state to be present or to be gone
+    if reverse:
+        condition = lambda state : desired_node_state not in state.split("+")
+    else:
+        condition = lambda state : desired_node_state in state.split("+")
+
+    # Wrapper for the repeat_until command to do all our state checking for us
+    repeat_until(lambda : get_node_parameter(nodename, "State"),
+        condition, timeout=timeout, poll_interval=poll_interval, fatal=fatal)
+
+    return (desired_node_state in get_node_parameter(nodename, "State").split("+")) != reverse
+
+
+def wait_for_step(job_id, step_id, **repeat_until_kwargs):
+    """Waits for the specified step to be running.
+
+    Args:
+        job_id (integer): The job id.
+        step_id (integer): The step id (eg, 0, 1..).
+
+    * This function also accepts auxilliary arguments from repeat_until, viz.:
+        timeout (integer): Number of seconds to poll before timing out.
+        poll_interval (float): Number of seconds to wait between polls
+        fatal (boolean): If True, a timeout will result in the test failing.
+    """
+
+    step_str = f"{job_id}.{step_id}"
+    return repeat_until(
+            lambda : run_command_output(f"scontrol -o show step {step_str}"),
+            lambda out : re.search(f"StepId={step_str}", out) is not None,
+            **repeat_until_kwargs)
+
+
 def wait_for_job_state(job_id, desired_job_state, timeout=default_polling_timeout, poll_interval=None, fatal=False, quiet=False):
     """Waits for the specified job state to be reached.
 
     This function polls the job state every poll interval seconds, waiting up
     to the timeout for the specified job state to be reached.
 
-    Supported target states include:
-        COMPLETING, DONE, PENDING, PREEMPTED, RUNNING, SPECIAL_EXIT, SUSPENDED
-
     Some of the supported job states are aggregate states, and may be satisfied
     by multiple discrete states. Some logic is built-in to fail if a job
     reaches a state that makes the desired job state impossible to reach.
+
+    Current supported aggregate states:
+        DONE
 
     Args:
         job_id (integer): The job id.
@@ -1639,23 +1849,6 @@ def wait_for_job_state(job_id, desired_job_state, timeout=default_polling_timeou
         fatal (boolean): If True, a timeout will result in the test failing.
         quiet (boolean): If True, logging is performed at the TRACE log level.
     """
-
-    # Verify the desired state is supported
-    if desired_job_state not in [
-        'COMPLETING',
-        'DONE',
-        'PENDING',
-        'PREEMPTED',
-        'RUNNING',
-        'SPECIAL_EXIT',
-        'SUSPENDED',
-    ]:
-        message = f"The specified desired job state ({desired_job_state}) is not supported"
-        if fatal:
-            pytest.fail(message)
-        else:
-            logging.warning(message)
-            return False
 
     if poll_interval is None:
         if timeout <= 5:
@@ -1688,8 +1881,9 @@ def wait_for_job_state(job_id, desired_job_state, timeout=default_polling_timeou
             'NODE_FAIL',
             'OUT_OF_MEMORY',
             'TIMEOUT',
+            'PREEMPTED',
         ]:
-            if desired_job_state == 'DONE':
+            if desired_job_state == 'DONE' or job_state == desired_job_state:
                 logging.log(log_level, f"Job ({job_id}) is in desired state {desired_job_state}")
                 return True
             else:
@@ -1699,19 +1893,9 @@ def wait_for_job_state(job_id, desired_job_state, timeout=default_polling_timeou
                 else:
                     logging.warning(message)
                     return False
-        elif job_state in [
-            'COMPLETING',
-            'PENDING',
-            'PREEMPTED',
-            'RUNNING',
-            'SPECIAL_EXIT',
-            'SUSPENDED',
-        ]:
-            if job_state == desired_job_state or (job_state == 'PREEMPTED' and desired_job_state == 'DONE'):
-                logging.log(log_level, f"Job ({job_id}) is in desired state {desired_job_state}")
-                return True
-            else:
-                logging.log(log_level, f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}")
+        elif job_state == desired_job_state:
+            logging.log(log_level, f"Job ({job_id}) is in desired state {desired_job_state}")
+            return True
         else:
                 logging.log(log_level, f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}")
 
@@ -2084,7 +2268,7 @@ def backup_accounting_database():
     else:
 
         mysqldump_command = f"{mysqldump_path} {mysql_options} {database_name} > {sql_dump_file}"
-        run_command(mysqldump_command, fatal=True, quiet=True)
+        run_command(mysqldump_command, fatal=True, quiet=True, timeout=default_sql_cmd_timeout)
 
 
 def restore_accounting_database():
@@ -2128,11 +2312,11 @@ def restore_accounting_database():
     # If the sticky bit is set and the dump file is empty, remove the database.
     # Otherwise, restore the dump.
 
-    run_command(f"{base_command} -e \"drop database {database_name}\"", fatal=True, quiet=True)
+    run_command(f"{base_command} -e \"drop database {database_name}\"", fatal=True, quiet=False, timeout=default_sql_cmd_timeout)
     dump_stat = os.stat(sql_dump_file)
     if not (dump_stat.st_size == 0 and dump_stat.st_mode & stat.S_ISVTX):
         run_command(f"{base_command} -e \"create database {database_name}\"", fatal=True, quiet=True)
-        run_command(f"{base_command} {database_name} < {sql_dump_file}", fatal=True, quiet=True)
+        run_command(f"{base_command} {database_name} < {sql_dump_file}", fatal=True, quiet=True, timeout=default_sql_cmd_timeout)
 
     # In either case, remove the dump file
     run_command(f"rm -f {sql_dump_file}", fatal=True, quiet=True)
@@ -2403,16 +2587,18 @@ module_tmp_path = None
 properties = {}
 
 # Initialize directory properties
-testsuite_base_dir = str(pathlib.Path(__file__).resolve().parents[2])
+properties['testsuite_base_dir'] = str(pathlib.Path(__file__).resolve().parents[2])
+properties['testsuite_python_lib'] = properties['testsuite_base_dir'] + '/python/lib'
 properties['slurm-source-dir'] = str(pathlib.Path(__file__).resolve().parents[3])
 properties['slurm-build-dir'] = properties['slurm-source-dir']
 properties['slurm-prefix'] = '/usr/local'
+properties['testsuite_scripts_dir']  = properties['testsuite_base_dir'] + '/python/scripts'
 
 # Override directory properties with values from testsuite.conf file
 testsuite_config = {}
 # The default location for the testsuite.conf file (in SRCDIR/testsuite)
 # can be overridden with the SLURM_TESTSUITE_CONF environment variable.
-testsuite_config_file = os.getenv('SLURM_TESTSUITE_CONF', f"{testsuite_base_dir}/testsuite.conf")
+testsuite_config_file = os.getenv('SLURM_TESTSUITE_CONF', f"{properties['testsuite_base_dir']}/testsuite.conf")
 if not os.path.isfile(testsuite_config_file):
     pytest.fail(f"The unified testsuite configuration file (testsuite.conf) was not found. This file can be created from a copy of the autogenerated sample found in BUILDDIR/testsuite/testsuite.conf.sample. By default, this file is expected to be found in SRCDIR/testsuite ({testsuite_base_dir}). If placed elsewhere, set the SLURM_TESTSUITE_CONF environment variable to the full path of your testsuite.conf file.")
 with open(testsuite_config_file, 'r') as f:
@@ -2466,6 +2652,7 @@ else:
         if match := re.search(rf"^\s*(?i:SlurmUser)\s*=\s*(.*)$", line):
             properties['slurm-user'] = match.group(1)
 
+properties['submitted-jobs'] = []
 properties['test-user'] = pwd.getpwuid(os.getuid()).pw_name
 properties['auto-config'] = False
 

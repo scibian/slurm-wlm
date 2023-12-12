@@ -52,8 +52,8 @@
 #include "src/common/macros.h"
 #include "src/common/net.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_cred.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/cred.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xsignal.h"
@@ -124,7 +124,7 @@ int sattach(int argc, char **argv)
 	client_io_t *io;
 	char *hosts;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
 	_set_exit_code();
 	if (initialize_and_process_args(argc, argv) < 0) {
@@ -139,12 +139,11 @@ int sattach(int argc, char **argv)
 		log_alter(logopt, 0, NULL);
 	}
 
-
-	if (xstrcmp(slurm_conf.launch_type, "launch/slurm")) {
-		error("sattach does not support LaunchType=%s",
-		      slurm_conf.launch_type);
+	if (slurm_cred_init() != SLURM_SUCCESS) {
+		error("failed to initialize cred plugin");
 		exit(error_exit);
 	}
+
 	/* FIXME: this does not work with hetsteps */
 
 	layout = slurm_job_step_layout_get(&opt.selected_step->step_id);
@@ -299,9 +298,9 @@ static slurm_cred_t *_generate_fake_cred(slurm_step_id_t stepid,
 	arg->step_hostlist = nodelist;
 
 	arg->job_core_bitmap = bit_alloc(node_cnt);
-	bit_nset(arg->job_core_bitmap, 0, node_cnt - 1);
+	bit_set_all(arg->job_core_bitmap);
 	arg->step_core_bitmap = bit_alloc(node_cnt);
-	bit_nset(arg->step_core_bitmap, 0, node_cnt - 1);
+	bit_set_all(arg->step_core_bitmap);
 
 	arg->cores_per_socket = xmalloc(sizeof(uint16_t));
 	arg->cores_per_socket[0] = 1;
@@ -580,7 +579,7 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
 		error ("Security violation, slurm message from uid %u",
-		       (unsigned int) req_uid);
+		       req_uid);
 		return;
 	}
 

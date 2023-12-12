@@ -121,7 +121,7 @@ allocated by <i>slurm_load_partitions</i>.</li>
 <li><b>slurm_get_errno</b> &mdash; Return the error code set by the
 last Slurm API function executed.</li>
 
-<li><b>slurm_perror</b> &mdash; Prin. Slurm error information to
+<li><b>slurm_perror</b> &mdash; Print Slurm error information to
 standard output.</li>
 
 <li><b>slurm_strerror</b> &mdash; Return a string describing a specific
@@ -256,7 +256,7 @@ ensure that it takes effect.</li>
 information associated with a given job.</li>
 
 <li><b>slurm_update_node</b> &mdash; Update state
-information associated with a given node. NOTE: Most
+information associated with a given node. <b>NOTE</b>: Most
 of a node's characteristics can not be modified.</li>
 
 <li><b>slurm_init_part_desc_msg</b> &mdash; Initialize a

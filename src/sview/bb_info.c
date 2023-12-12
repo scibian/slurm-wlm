@@ -194,7 +194,7 @@ static void _layout_bb_record(GtkTreeView *treeview,
 			      sview_bb_info_t *sview_bb_info, int update)
 {
 	GtkTreeIter iter;
-	char time_buf[20], tmp_user_id[60], tmp_size[20];
+	char time_buf[256], tmp_user_id[60], tmp_size[20];
 	char bb_name_id[32];
 	char *tmp_state, *tmp_user_name;
 	burst_buffer_resv_t *bb_ptr = sview_bb_info->bb_ptr;
@@ -315,7 +315,7 @@ static void _get_size_str(char *buf, size_t buf_size, uint64_t num)
 static void _update_bb_record(sview_bb_info_t *sview_bb_info_ptr,
 			      GtkTreeStore *treestore)
 {
-	char tmp_create_time[40];
+	char tmp_create_time[256];
 	char tmp_size[20], tmp_user_id[60], bb_name_id[32];
 	char *tmp_state, *tmp_user_name;
 	burst_buffer_resv_t *bb_ptr = sview_bb_info_ptr->bb_ptr;
@@ -790,7 +790,6 @@ extern void specific_info_bb(popup_info_t *popup_win)
 	List bb_list = NULL;
 	List send_bb_list = NULL;
 	sview_bb_info_t *sview_bb_info_ptr = NULL;
-	int i = -1;
 	ListIterator itr = NULL;
 
 	if (!spec_info->display_widget) {
@@ -868,12 +867,10 @@ display_it:
 	 */
 	send_bb_list = list_create(NULL);
 	itr = list_iterator_create(bb_list);
-	i = -1;
 	/*
 	 * Set up additional menu options(ie the right click menu stuff)
 	 */
 	while ((sview_bb_info_ptr = list_next(itr))) {
-		i++;
 		switch (spec_info->type) {
 		case BB_PAGE:
 			list_push(send_bb_list, sview_bb_info_ptr);

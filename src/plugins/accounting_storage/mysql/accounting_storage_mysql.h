@@ -67,7 +67,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/macros.h"
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/uid.h"
 
 #include "src/database/mysql_common.h"
@@ -167,7 +167,7 @@ extern void mod_tres_str(char **out, char *mod, char *cur,
  *
  * IN mysql_conn - mysql connection
  * IN cluster_name - name of cluster to get dimensions for
- * OUT dims - dimenions of cluster
+ * OUT dims - dimensions of cluster
  *
  * RET return SLURM_SUCCESS on success, SLURM_FAILURE otherwise.
  */

@@ -16,10 +16,6 @@ libcommon_la_SOURCES =				\
 	callerid.h				\
 	cbuf.c					\
 	cbuf.h					\
-	cgroup.c				\
-	cgroup.h				\
-	cli_filter.c				\
-	cli_filter.h				\
 	conmgr.c				\
 	conmgr.h				\
 	cpu_frequency.c				\
@@ -40,15 +36,9 @@ libcommon_la_SOURCES =				\
 	fetch_config.h				\
 	forward.c				\
 	forward.h				\
-	gpu.c					\
-	gpu.h					\
 	global_defaults.c			\
-	gres.c					\
-	gres.h					\
 	group_cache.c				\
 	group_cache.h				\
-	hash.c					\
-	hash.h					\
 	half_duplex.c				\
 	half_duplex.h				\
 	hostlist.c				\
@@ -57,6 +47,8 @@ libcommon_la_SOURCES =				\
 	http.c					\
 	io_hdr.c				\
 	io_hdr.h				\
+	job_features.c				\
+	job_features.h				\
 	job_options.c				\
 	job_options.h				\
 	job_resources.c				\
@@ -70,10 +62,8 @@ libcommon_la_SOURCES =				\
 	net.h					\
 	node_conf.c				\
 	node_conf.h				\
-	node_features.c				\
-	node_features.h				\
-	openapi.c				\
-	openapi.h				\
+	oci_config.c				\
+	oci_config.h				\
 	optz.c					\
 	optz.h					\
 	pack.c					\
@@ -88,12 +78,6 @@ libcommon_la_SOURCES =				\
 	plugin.h				\
 	plugrack.c				\
 	plugrack.h				\
-	plugstack.c				\
-	plugstack.h				\
-	power.c					\
-	power.h					\
-	prep.c					\
-	prep.h					\
 	print_fields.c				\
 	print_fields.h				\
 	proc_args.c				\
@@ -107,45 +91,13 @@ libcommon_la_SOURCES =				\
 	run_command.h				\
 	run_in_daemon.c				\
 	run_in_daemon.h				\
-	select.c				\
-	select.h				\
 	setproctitle.c				\
 	setproctitle.h				\
-	site_factor.c				\
-	site_factor.h				\
-	slurm_accounting_storage.c		\
-	slurm_accounting_storage.h		\
-	slurm_acct_gather.c			\
-	slurm_acct_gather.h			\
-	slurm_acct_gather_energy.c		\
-	slurm_acct_gather_energy.h		\
-	slurm_acct_gather_filesystem.c		\
-	slurm_acct_gather_filesystem.h		\
-	slurm_acct_gather_interconnect.c	\
-	slurm_acct_gather_interconnect.h	\
-	slurm_acct_gather_profile.c		\
-	slurm_acct_gather_profile.h		\
-	slurm_auth.c				\
-	slurm_auth.h				\
-	slurm_cred.h				\
-	slurm_cred.c				\
 	slurm_errno.c				\
-	slurm_ext_sensors.c			\
-	slurm_ext_sensors.h			\
-	slurm_jobacct_gather.c			\
-	slurm_jobacct_gather.h			\
-	slurm_jobcomp.c				\
-	slurm_jobcomp.h				\
-	slurm_mcs.c				\
-	slurm_mcs.h				\
-	slurm_mpi.c				\
-	slurm_mpi.h				\
 	slurm_opt.c				\
 	slurm_opt.h				\
 	slurm_persist_conn.c			\
 	slurm_persist_conn.h			\
-	slurm_priority.c			\
-	slurm_priority.h			\
 	slurm_protocol_api.c			\
 	slurm_protocol_api.h			\
 	slurm_protocol_common.h			\
@@ -161,18 +113,12 @@ libcommon_la_SOURCES =				\
 	slurm_resolv.h				\
 	slurm_resource_info.c			\
 	slurm_resource_info.h			\
-	slurm_route.c				\
-	slurm_route.h				\
 	slurm_rlimits_info.c			\
 	slurm_rlimits_info.h			\
-	slurm_selecttype_info.c			\
-	slurm_selecttype_info.h			\
 	slurm_step_layout.c			\
 	slurm_step_layout.h			\
 	slurm_time.c				\
 	slurm_time.h				\
-	slurm_topology.c			\
-	slurm_topology.h			\
 	slurm_xlator.h				\
 	slurmdb_defs.c				\
 	slurmdb_defs.h				\
@@ -182,6 +128,8 @@ libcommon_la_SOURCES =				\
 	slurmdbd_defs.h				\
 	slurmdbd_pack.c				\
 	slurmdbd_pack.h				\
+	spank.c					\
+	spank.h					\
 	state_control.c				\
 	state_control.h				\
 	stepd_api.c				\
@@ -190,8 +138,6 @@ libcommon_la_SOURCES =				\
 	strlcpy.h				\
 	strnatcmp.c				\
 	strnatcmp.h				\
-	switch.c				\
-	switch.h				\
 	timers.c				\
 	timers.h				\
 	track_script.c				\
@@ -219,12 +165,14 @@ libcommon_la_SOURCES =				\
 	xhash.h					\
 	xmalloc.c				\
 	xmalloc.h				\
+	xregex.c				\
+	xregex.h				\
 	xsignal.c				\
 	xsignal.h				\
 	xstring.c				\
 	xstring.h
 
-libcommon_la_LIBADD   = $(DL_LIBS) $(libselinux_LIBS)
+libcommon_la_LIBADD   = $(libselinux_LIBS)
 
 libcommon_la_LDFLAGS  = $(LIB_LDFLAGS) -module --export-dynamic
 
@@ -240,3 +188,7 @@ global_defaults.c : $(top_builddir)/config.h Makefile
 	   echo \
 	   "char *default_slurm_config_file = \"$(sysconfdir)/slurm.conf\";"; \
 	 ) > global_defaults.c
+
+force:
+$(libcommon_la_LIBADD) : force
+	@cd `dirname $@` && $(MAKE) `basename $@`

@@ -50,7 +50,7 @@
 #include "pmixp_conn.h"
 #include "pmixp_dconn.h"
 
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 
 #define PMIXP_DEBUG_SERVER 1
 
@@ -366,13 +366,13 @@ pmixp_p2p_data_t _direct_proto = {
 
 static volatile int _was_initialized = 0;
 
-int pmixp_stepd_init(const stepd_step_rec_t *job, char ***env)
+int pmixp_stepd_init(const stepd_step_rec_t *step, char ***env)
 {
 	char *path;
 	int fd, rc;
 
-	if (SLURM_SUCCESS != (rc = pmixp_info_set(job, env))) {
-		PMIXP_ERROR("pmixp_info_set(job, env) failed");
+	if (SLURM_SUCCESS != (rc = pmixp_info_set(step, env))) {
+		PMIXP_ERROR("pmixp_info_set(step, env) failed");
 		goto err_info;
 	}
 
@@ -739,7 +739,7 @@ static int _process_extended_hdr(pmixp_base_hdr_t *hdr, buf_t *buf)
 		goto unlock;
 	}
 
-	switch (pmixp_dconn_progress_type(dconn)) {
+	switch (pmixp_dconn_progress_type()) {
 	case PMIXP_DCONN_PROGRESS_SW:{
 		/* this direct connection has fd that needs to be
 		 * polled to progress, use connection interface for that
@@ -769,7 +769,7 @@ static int _process_extended_hdr(pmixp_base_hdr_t *hdr, buf_t *buf)
 	}
 	default:
 		/* Should not happen */
-		xassert(0 && pmixp_dconn_progress_type(dconn));
+		xassert(0 && pmixp_dconn_progress_type());
 		/* TODO: handle this error */
 	}
 unlock:
@@ -1291,7 +1291,7 @@ _direct_conn_establish(pmixp_conn_t *conn, void *_hdr, void *msg)
 	if (!dconn) {
 		/* connection was refused because we already
 		 * have established connection
-		 * It seems that some sort of race condition occured
+		 * It seems that some sort of race condition occurred
 		 */
 		close(fd);
 		nodename = pmixp_info_job_host(hdr->nodeid);

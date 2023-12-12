@@ -52,6 +52,7 @@
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+#include "src/interfaces/serializer.h"
 
 #include "auth_jwt.h"
 
@@ -105,6 +106,7 @@ typedef struct {
 data_t *jwks = NULL;
 buf_t *key = NULL;
 char *token = NULL;
+static char *claim_field = NULL;
 __thread char *thread_token = NULL;
 __thread char *thread_username = NULL;
 
@@ -131,13 +133,14 @@ static data_for_each_cmd_t _build_jwks_keys(data_t *d, void *arg)
 {
 	char *alg, *kid, *n, *e, *key;
 
-	/* Ignore non-RS256 keys in the JWKS */
-	alg = data_get_string(data_key_get(d, "alg"));
-	if (xstrcasecmp(alg, "RS256"))
-		return DATA_FOR_EACH_CONT;
-
 	if (!(kid = data_get_string(data_key_get(d, "kid"))))
 		fatal("%s: failed to load kid field", __func__);
+
+	/* Ignore non-RS256 keys in the JWKS if algorthim is provided */
+	if ((alg = data_get_string(data_key_get(d, "alg"))) &&
+	    xstrcasecmp(alg, "RS256"))
+		return DATA_FOR_EACH_CONT;
+
 	if (!(e = data_get_string(data_key_get(d, "e"))))
 		fatal("%s: failed to load e field", __func__);
 	if (!(n = data_get_string(data_key_get(d, "n"))))
@@ -160,8 +163,11 @@ static void _init_jwks(void)
 	if (!(begin = xstrstr(slurm_conf.authalt_params, jwks_key_field)))
 		return;
 
-	if (data_init(MIME_TYPE_JSON_PLUGIN, NULL))
+	if (data_init())
 		fatal("%s: data_init() failed", __func__);
+
+	if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
+		fatal("%s: serializer_g_init() failed", __func__);
 
 	start = begin + strlen(jwks_key_field);
 	if ((end = xstrstr(start, ",")))
@@ -175,10 +181,11 @@ static void _init_jwks(void)
 		      plugin_type, key_file);
 	}
 
-	if (data_g_deserialize(&jwks, buf->head, buf->size, MIME_TYPE_JSON))
+	if (serialize_g_string_to_data(&jwks, buf->head, buf->size,
+				       MIME_TYPE_JSON))
 		fatal("%s: failed to deserialize jwks file `%s`",
 		      __func__, key_file);
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 
 	/* force everything to be a string */
 	(void) data_convert_tree(jwks, DATA_TYPE_STRING);
@@ -230,8 +237,24 @@ static void _init_hs256(void)
 extern int init(void)
 {
 	if (running_in_slurmctld() || running_in_slurmdbd()) {
+		char *claim;
+
 		_init_jwks();
 		_init_hs256();
+
+		/*
+		 * Support an optional custom username claim field in addition
+		 * to 'sun' and 'username'.
+		 */
+		if ((claim = xstrstr(slurm_conf.authalt_params, "userclaimfield="))) {
+			char *end;
+
+			claim_field = xstrdup(claim + 15);
+			if ((end = xstrstr(claim_field, ",")))
+				*end = '\0';
+
+			info("Custom user claim field: %s", claim_field);
+		}
 	} else {
 		/* we must be in a client command */
 		token = getenv("SLURM_JWT");
@@ -250,6 +273,7 @@ extern int init(void)
 
 extern int fini(void)
 {
+	xfree(claim_field);
 	FREE_NULL_DATA(jwks);
 	FREE_NULL_BUFFER(key);
 
@@ -261,17 +285,14 @@ auth_token_t *auth_p_create(char *auth_info, uid_t r_uid, void *data, int dlen)
 	return xmalloc(sizeof(auth_token_t));
 }
 
-int auth_p_destroy(auth_token_t *cred)
+extern void auth_p_destroy(auth_token_t *cred)
 {
-	if (cred == NULL) {
-		slurm_seterrno(ESLURM_AUTH_MEMORY);
-		return SLURM_ERROR;
-	}
+	if (!cred)
+		return;
 
 	xfree(cred->token);
 	xfree(cred->username);
 	xfree(cred);
-	return SLURM_SUCCESS;
 }
 
 typedef struct {
@@ -415,10 +436,16 @@ int auth_p_verify(auth_token_t *cred, char *auth_info)
 	 * 'username' is used otherwise
 	 */
 	if (!(username = xstrdup(jwt_get_grant(jwt, "sun"))) &&
-	    !(username = xstrdup(jwt_get_grant(jwt, "username")))) {
+	    !(username = xstrdup(jwt_get_grant(jwt, "username"))) &&
+	    (!claim_field ||
+	     !(username = xstrdup(jwt_get_grant(jwt, claim_field)))))
+	{
 		error("%s: jwt_get_grant failure", __func__);
 		goto fail;
 	}
+
+	jwt_free(jwt);
+	jwt = NULL;
 
 	if (!cred->username)
 		cred->username = username;
@@ -604,9 +631,16 @@ char *auth_p_token_generate(const char *username, int lifespan)
 	time_t now = time(NULL);
 	jwt_t *jwt;
 	char *token, *xtoken;
+	long grant_time = now + lifespan;
 
 	if (!key) {
 		error("%s: cannot issue tokens, no key loaded", __func__);
+		return NULL;
+	}
+
+	if ((lifespan >= NO_VAL) || (lifespan <= 0) || (grant_time <= 0)) {
+		error("%s: cannot issue token: requested lifespan %ds not supported",
+		      __func__, lifespan);
 		return NULL;
 	}
 
@@ -619,7 +653,7 @@ char *auth_p_token_generate(const char *username, int lifespan)
 		error("%s: jwt_add_grant_int failure", __func__);
 		goto fail;
 	}
-	if (jwt_add_grant_int(jwt, "exp", now + lifespan)) {
+	if (jwt_add_grant_int(jwt, "exp", grant_time)) {
 		error("%s: jwt_add_grant_int failure", __func__);
 		goto fail;
 	}
@@ -639,6 +673,11 @@ char *auth_p_token_generate(const char *username, int lifespan)
 		goto fail;
 	}
 	xtoken = xstrdup(token);
+	/*
+	 * Ideally this would be jwt_free_str() instead of free(),
+	 * but that function doesn't exist in older versions of libjwt.
+	 */
+	free(token);
 
 	jwt_free(jwt);
 

@@ -59,9 +59,9 @@
 
 #include "slurm/slurm.h"
 
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/parse_time.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/xstring.h"
 #include "src/common/print_fields.h"
 
@@ -135,6 +135,7 @@ typedef enum {
 	PRINT_PID,
 	PRINT_PNAME,
 	PRINT_RGT,
+	PRINT_COMMENT,
 
 	/* CLUSTER */
 	PRINT_CHOST = 3000,
@@ -201,6 +202,7 @@ typedef enum {
 	PRINT_ALLOWED,
 	PRINT_ALLOCATED,
 	PRINT_USED,
+	PRINT_LAST_CONSUMED,
 
 	/* RESERVATION */
 	PRINT_ASSOC_NAME = 10000,
@@ -223,6 +225,7 @@ extern uint32_t my_uid;
 extern List g_qos_list;
 extern List g_res_list;
 extern List g_tres_list;
+extern const char *mime_type; /* user requested JSON or YAML */
 
 extern bool user_case_norm;
 extern bool tree_display;
@@ -300,14 +303,9 @@ extern int addto_qos_char_list(List char_list, List qos_list, char *names,
 			       int option);
 extern int addto_action_char_list(List char_list, char *names);
 extern void sacctmgr_print_coord_list(
-	print_field_t *field, List value, int last);
-extern void sacctmgr_print_qos_list(print_field_t *field, List qos_list,
-				    List value, int last);
-extern void sacctmgr_print_qos_bitstr(print_field_t *field, List qos_list,
-				      bitstr_t *value, int last);
+	print_field_t *field, void *input, int last);
 
-extern void sacctmgr_print_tres(print_field_t *field, char *tres_simple_str,
-				int last);
+extern void sacctmgr_print_tres(print_field_t *field, void *input, int last);
 extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc);
 extern void sacctmgr_print_cluster(slurmdb_cluster_rec_t *cluster);
 extern void sacctmgr_print_federation(slurmdb_federation_rec_t *fed);

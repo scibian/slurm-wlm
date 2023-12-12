@@ -36,6 +36,7 @@
 
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/assoc_mgr.h"
+#include "src/interfaces/data_parser.h"
 
 static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_tres_cond_t *tres_cond,
@@ -157,6 +158,14 @@ int sacctmgr_list_tres(int argc, char **argv)
 	tres_list = slurmdb_tres_get(db_conn, tres_cond);
 	slurmdb_destroy_tres_cond(tres_cond);
 
+	if (mime_type) {
+		int rc = DATA_DUMP_CLI(TRES_LIST, tres_list, "tres", argc, argv,
+				       db_conn, mime_type);
+		FREE_NULL_LIST(format_list);
+		FREE_NULL_LIST(tres_list);
+		return rc;
+	}
+
 	if (!tres_list) {
 		exit_code=1;
 		fprintf(stderr, " Problem with query.\n");
@@ -190,7 +199,7 @@ int sacctmgr_list_tres(int argc, char **argv)
 					break;
 				case PRINT_ID:
 					field->print_routine(field,
-							     tres->id,
+							     &tres->id,
 							     (curr_inx ==
 							      field_count));
 					break;

@@ -45,7 +45,7 @@
 #define _SLURM_ASSOC_MGR_H
 
 #include "src/common/list.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/locks.h"
@@ -321,6 +321,15 @@ extern void assoc_mgr_info_get_pack_msg(
  */
 extern int assoc_mgr_info_unpack_msg(assoc_mgr_info_msg_t **object,
 				     buf_t *buffer, uint16_t protocol_version);
+
+
+/*
+ * assoc_mgr_update_object - update the association manager object
+ * IN x: slurmdb_update_object_t update to perform
+ * In arg: boolean if we are locked appropriately in the assoc_mgr.
+ * RET: error code
+ */
+extern int assoc_mgr_update_object(void *x, void *arg);
 
 /*
  * assoc_mgr_update - update the association manager

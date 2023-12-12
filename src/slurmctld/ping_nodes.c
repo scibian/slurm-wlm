@@ -45,7 +45,9 @@
 
 #include "src/common/hostlist.h"
 #include "src/common/read_config.h"
-#include "src/common/select.h"
+
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/ping_nodes.h"
@@ -130,7 +132,7 @@ void ping_end (void)
 void ping_nodes (void)
 {
 	static bool restart_flag = true;	/* system just restarted */
-	static int offset = 0;	/* mutex via node table write lock on entry */
+	static int reg_offset = 0;	/* mutex via node table write lock on entry */
 	static int max_reg_threads = 0;	/* max node registration threads
 					 * this can include DOWN nodes, so
 					 * limit the number to avoid huge
@@ -149,6 +151,7 @@ void ping_nodes (void)
 	node_record_t *node_ptr = NULL;
 	time_t old_cpu_load_time = now - slurm_conf.slurmd_timeout;
 	time_t old_free_mem_time = now - slurm_conf.slurmd_timeout;
+	int node_offset = 0;
 #endif
 
 	ping_agent_args = xmalloc (sizeof (agent_arg_t));
@@ -184,11 +187,12 @@ void ping_nodes (void)
 
 	if (max_reg_threads == 0) {
 		max_reg_threads = MAX(slurm_conf.tree_width, 1);
+		max_reg_threads = MIN(max_reg_threads, 50);
 	}
-	offset += max_reg_threads;
-	if ((offset > node_record_count) &&
-	    (offset >= (max_reg_threads * MAX_REG_FREQUENCY)))
-		offset = 0;
+	reg_offset += max_reg_threads;
+	if ((reg_offset > active_node_record_count) &&
+	    (reg_offset >= (max_reg_threads * MAX_REG_FREQUENCY)))
+		reg_offset = 0;
 
 #ifdef HAVE_FRONT_END
 	for (i = 0, front_end_ptr = front_end_nodes;
@@ -228,7 +232,7 @@ void ping_nodes (void)
 		 * once in a while). We limit these requests since they
 		 * can generate a flood of incoming RPCs. */
 		if (IS_NODE_UNKNOWN(front_end_ptr) || restart_flag ||
-		    ((i >= offset) && (i < (offset + max_reg_threads)))) {
+		    ((i >= reg_offset) && (i < (reg_offset + max_reg_threads)))) {
 			if (reg_agent_args->protocol_version >
 			    front_end_ptr->protocol_version)
 				reg_agent_args->protocol_version =
@@ -261,6 +265,7 @@ void ping_nodes (void)
 	}
 #else
 	for (i = 0; (node_ptr = next_node(&i)); i++) {
+		node_offset++;
 		if (IS_NODE_FUTURE(node_ptr) ||
 		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_DOWN(node_ptr) ||
@@ -299,8 +304,8 @@ void ping_nodes (void)
 		 * once in a while). We limit these requests since they
 		 * can generate a flood of incoming RPCs. */
 		if (IS_NODE_UNKNOWN(node_ptr) || (node_ptr->boot_time == 0) ||
-		    ((node_ptr->index >= offset) &&
-		     (node_ptr->index < (offset + max_reg_threads)))) {
+		    ((node_offset >= reg_offset) &&
+		     (node_offset < (reg_offset + max_reg_threads)))) {
 			if (reg_agent_args->protocol_version >
 			    node_ptr->protocol_version)
 				reg_agent_args->protocol_version =
@@ -430,14 +435,9 @@ extern void run_health_check(void)
 		cycle_start_time = now;
 		/* Determine how many nodes we want to test on each call of
 		 * run_health_check() to spread out the work. */
-		node_limit = (node_record_count * 2) /
+		node_limit = (active_node_record_count * 2) /
 		             slurm_conf.health_check_interval;
 		node_limit = MAX(node_limit, 10);
-	}
-	if ((node_states != HEALTH_CHECK_NODE_ANY) &&
-	    (node_states != HEALTH_CHECK_NODE_IDLE)) {
-		/* Update each node's alloc_cpus count */
-		select_g_select_nodeinfo_set_all();
 	}
 
 	check_agent_args = xmalloc (sizeof (agent_arg_t));
@@ -445,9 +445,7 @@ extern void run_health_check(void)
 	check_agent_args->retry = 0;
 	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
 	check_agent_args->hostlist = hostlist_create(NULL);
-	for (; base_node_loc < node_record_count; base_node_loc++) {
-		if (!(node_ptr = node_record_table_ptr[base_node_loc]))
-			continue;
+	for (; (node_ptr = next_node(&base_node_loc)); base_node_loc++) {
 		if (run_cyclic &&
 		    (node_test_cnt++ >= node_limit))
 				break;
@@ -476,8 +474,11 @@ extern void run_health_check(void)
 			 *       means the node is allocated
 			 */
 			if (cpus_used == 0) {
-				if (!(node_states & HEALTH_CHECK_NODE_IDLE))
+				if (!(node_states & HEALTH_CHECK_NODE_IDLE) &&
+				    (!(node_states & HEALTH_CHECK_NODE_NONDRAINED_IDLE) ||
+				     IS_NODE_DRAIN(node_ptr))) {
 					continue;
+				}
 				if (!IS_NODE_IDLE(node_ptr))
 					continue;
 			} else if (cpus_used < cpus_total) {

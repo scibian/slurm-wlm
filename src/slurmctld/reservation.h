@@ -48,10 +48,10 @@
 #include "src/slurmctld/slurmctld.h"
 
 /* Create a resource reservation */
-extern int create_resv(resv_desc_msg_t *resv_desc_ptr);
+extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg);
 
 /* Update an existing resource reservation */
-extern int update_resv(resv_desc_msg_t *resv_desc_ptr);
+extern int update_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg);
 
 /* Delete an existing resource reservation */
 extern int delete_resv(reservation_name_msg_t *resv_desc_ptr);
