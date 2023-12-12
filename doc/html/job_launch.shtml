@@ -2,7 +2,7 @@
 
 <h1><a name="top">Job Launch Design Guide</a></h1>
 
-<h2>Overview</h2>
+<h2 id="overview">Overview<a class="slurm_link" href="#overview"></a></h2>
 
 <p>This guide describes at a high level the processes which occur in order
 to initiate a job including the daemons and plugins involved in the process.
@@ -11,7 +11,9 @@ job termination. The functionality of tens of thousands of lines of code
 has been distilled here to a couple of pages of text, so much detail is
 missing.</p>
 
-<h2>Job Allocation</h2>
+<h2 id="job_allocation">Job Allocation
+<a class="slurm_link" href="#job_allocation"></a>
+</h2>
 
 <p>The first step of the process is to create a job allocation, which is
 a claim on compute resources. A job allocation can be created using the
@@ -59,7 +61,9 @@ can be initiated after preempting lower priority jobs. If so then initiate
 preemption as needed to start the job</li>
 </ol>
 
-<h2>Step Allocation</h2>
+<h2 id="step_allocation">Step Allocation
+<a class="slurm_link" href="#step_allocation"></a>
+</h2>
 
 <p>The <b>srun</b> command is always used for job step creation. It fills in
 a job step request RPC using information from the command line and environment
@@ -76,13 +80,15 @@ the <b>slurmctld</b> daemon code (the <b>select</b> plugin is not used for job
 steps). If the request can not be immediately satisfied due to a request for
 exclusive access to resources, the appropriate error message will be sent and
 the <b>srun</b> command will retry the request on a periodic basis.
-(NOTE: It would be desirable to queue the job step requests to support job step 
-dependencies and better performance in the initiation of job steps, but that 
-is not currently supported.)
+(<b>NOTE</b>: It would be desirable to queue the job step requests to support
+job step dependencies and better performance in the initiation of job steps,
+but that is not currently supported.)
 If the request can be satisfied, the response contains a digitally signed
 credential (by the <b>cred</b> plugin) identifying the resources to be used.</p>
 
-<h2>Task Launch</h2>
+<h2 id="task_launch">Task Launch
+<a class="slurm_link" href="#task_launch"></a>
+</h2>
 
 <p>The <b>srun</b> command builds a task launch request data structure
 including the credential, executable name, file names, etc. and sends it to
@@ -111,7 +117,9 @@ environment variables</li>
 <li>Fork/exec the tasks</li>
 </ol>
 
-<h2>Job Step Termination</h2>
+<h2 id="step_termination">Job Step Termination
+<a class="slurm_link" href="#step_termination"></a>
+</h2>
 
 <p>There are several ways in which a job step or job can terminate, each with
 slight variation in the logic executed. The simplest case is if the tasks run
@@ -122,7 +130,9 @@ also be explicitly cancelled by a user, reach the end of its time limit, etc.
 and those follow a sequence of steps very similar to that for job termination,
 which is described below.</p>
 
-<h2>Job Termination</h2>
+<h2 id="job_termination">Job Termination
+<a class="slurm_link" href="#job_termination"></a>
+</h2>
 
 <p>Job termination can either be user initiated (e.g. <b>scancel</b> command) or system
 initiated (e.g. time limit reached). The termination ultimately requires
@@ -130,14 +140,44 @@ the <b>slurmctld</b> daemon to notify the <b>slurmd</b> daemons on allocated
 nodes that the job is to be ended. The <b>slurmd</b> daemon does the following:
 <ol>
 <li>Send a SIGCONT and SIGTERM signal to any user tasks</li> 
-<li>Wait <b>KilLWait</b> seconds if there are any user tasks</li>
+<li>Wait <b>KillWait</b> seconds if there are any user tasks</li>
 <li>Send a SIGKILL signal to any user tasks</li>
 <li>Wait for all tasks to complete</li>
 <li>Execute any <b>Epilog</b> program</li>
 <li>Send an epilog_complete RPC to the <b>slurmctld</b> daemon</li>
 </ol>
 
+<h2 id="job_record">Job Accounting Records
+<a class="slurm_link" href="#job_record"></a>
+</h2>
 
-<p style="text-align:center;">Last modified 17 June 2020</p>
+<p>When Slurm is configured to use SlurmDBD to store job records (i.e.
+<i>AccountingStorageType=accounting_storage=slurmdbd</i>), there are multiple
+records that get stored for each job. There is a record for the job as a
+whole as well as entries for the following types of job steps:
+<ul>
+<li><b>extern step</b> &mdash; A step created for each job as long as you have
+<i>PrologFlags=contain</i> in your slurm.conf. Each node in the job will
+have a slurmstepd process created for the extern step.
+<a href=pam_slurm_adopt.html>pam_slurm_adopt</a> uses this step to contain
+external connections.</li>
+<li><b>batch step</b> &mdash; A step created for jobs that were submitted with
+sbatch. The batch host, or the primary node for the job, will run an instance
+of slurmstepd for the batch step, which is used to run the script provided
+to sbatch.</li>
+<li><b>interactive step</b> &mdash; A step created for jobs that were
+submitted with salloc when <i>LaunchParameters=use_interactive_step</i> is
+configured in your slurm.conf. The node on which you have the interactive
+shell will run an instance of slurmstepd to run the shell or the command
+provided to salloc.</li>
+<li><b>normal step</b> &mdash; A job can have multiple normal steps, which will
+appear in sacct as &lt;<b>job_id</b>&gt;.&lt;<b>step_id</b>&gt;. These steps
+are created when srun is called from inside the job and the slurmstepd created
+will run the command passed to srun. Each step will have one instance of
+slurmstepd created per node in the step and each instance of slurmstepd can
+run multiple tasks in the same step.</li>
+</ul>
+
+<p style="text-align:center;">Last modified 1 August 2022</p>
 
 <!--#include virtual="footer.txt"-->

@@ -25,18 +25,15 @@
 ############################################################################
 source ./globals
 
-set file_in	"test$test_id.bash"
-set file_out	"test$test_id.out"
-set timeout	60
+set file_in     "$test_dir/job_script"
+set file_out    "$test_dir/output"
 set het_job_id  0
+set timeout     60
 
 proc cleanup {} {
-	global het_job_id scancel bin_rm file_in file_out
+	global het_job_id
 
-	if {$het_job_id > 0} {
-		exec $scancel $het_job_id
-	}
-	exec $bin_rm -f $file_in $file_out
+	cancel_job $het_job_id
 }
 
 if {[get_config_param "FrontendName"] ne "MISSING"} {
@@ -57,28 +54,22 @@ if {$nb_nodes < 2} {
 make_bash_script $file_in "
   $bin_env | grep SLURM_NODELIST
 "
-exec $bin_rm -f $file_out
 
 set component(0) 0
 set matches 0
-set index 0
 set timeout $max_job_delay
 spawn $salloc -t2 -N1 : -N1 $bin_bash
 expect {
 	-re "job ($number) has been allocated resources" {
 		set het_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
-		exp_continue
-	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
+		reset_bash_prompt
 		exp_continue
 	}
 	-re "$test_prompt" {
 		#log_debug "Job initiated"
 	}
 	timeout {
-		fail "salloc : allocation not granted in $timeout seconds"
+		fail "salloc: allocation not granted in $timeout seconds"
 	}
 	eof {
 		wait
@@ -90,14 +81,15 @@ if {$het_job_id == 0} {
 
 log_debug "Collect Nodename for each job component"
 
-send "$squeue -j $het_job_id -o\"NAME=%N\" --noheader\r"
+send "$squeue -j $het_job_id -o\"%N,%i\" --noheader\r"
 expect {
 	-re "--noheader" {
 		exp_continue
 	}
-	-re "NAME=($re_word_str)" {
-		set component($index) $expect_out(1,string)
-		incr index
+	-re "($re_word_str),$het_job_id\\+($number)" {
+		set node_name $expect_out(1,string)
+		set index $expect_out(2,string)
+		set component($index) $node_name
 		exp_continue
 	}
 	-re "$test_prompt" {
@@ -107,8 +99,8 @@ expect {
 		fail "squeue not responding"
 	}
 }
-if {$index != 2} {
-	fail "squeue failure ($index != 2)"
+if {[array size component] != 2} {
+	fail "squeue failure ([array size component] != 2)"
 }
 
 log_info "Test environment variables needed by MPI"
@@ -126,9 +118,7 @@ expect {
 		wait
 	}
 }
-if {[wait_for_file $file_out] != 0} {
-	fail "srun output file not found"
-}
+wait_for_file -fail $file_out
 
 set het_nodelist ""
 send "$bin_sort -d $file_out\r"

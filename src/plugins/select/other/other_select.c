@@ -51,14 +51,14 @@
 #include "other_select.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
+#include "src/interfaces/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xstring.h"
-#include "src/common/node_select.h"
 
 uint16_t other_select_type_param = 0;
 
 /*
- * Must be synchronized with slurm_select_ops_t in node_select.h.
+ * Must be synchronized with slurm_select_ops_t in select.h.
  */
 const char *node_select_syms[] = {
 	"plugin_id",
@@ -71,8 +71,6 @@ const char *node_select_syms[] = {
 	"select_p_job_ready",
 	"select_p_job_expand",
 	"select_p_job_resized",
-	"select_p_job_signal",
-	"select_p_job_mem_confirm",
 	"select_p_job_fini",
 	"select_p_job_suspend",
 	"select_p_job_resume",
@@ -93,10 +91,7 @@ const char *node_select_syms[] = {
 	"select_p_select_jobinfo_copy",
 	"select_p_select_jobinfo_pack",
 	"select_p_select_jobinfo_unpack",
-	"select_p_select_jobinfo_sprint",
-	"select_p_select_jobinfo_xstrdup",
 	"select_p_get_info_from_plugin",
-	"select_p_update_node_config",
 	"select_p_reconfigure",
 	"select_p_resv_test",
 };
@@ -138,7 +133,7 @@ extern int other_select_init(void)
 	if (n_syms != sizeof(ops))
 		fatal("For some reason node_select_syms in "
 		      "src/plugins/select/other/other_select.c differs from "
-		      "slurm_select_ops_t found in src/common/node_select.h.  "
+		      "slurm_select_ops_t found in src/interfaces/select.h.  "
 		      "node_select_syms should match what is in "
 		      "src/common/node_select.c");
 
@@ -214,12 +209,12 @@ extern int other_job_init(List job_list)
  * IN node_ptr - current node data
  * IN node_count - number of node entries
  */
-extern int other_node_init(node_record_t *node_ptr, int node_cnt)
+extern int other_node_init()
 {
 	if (other_select_init() < 0)
 		return SLURM_ERROR;
 
-	return (*(ops.node_init))(node_ptr, node_cnt);
+	return (*(ops.node_init))();
 }
 
 /*
@@ -315,31 +310,6 @@ extern int other_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
 }
 
 /*
- * Pass job-step signal to other plugin.
- * IN job_ptr - job to be signaled
- * IN signal  - signal(7) number
- */
-extern int other_job_signal(job_record_t *job_ptr, int signal)
-{
-	if (other_select_init() < 0)
-		return SLURM_ERROR;
-
-	return (*(ops.job_signal))(job_ptr, signal);
-}
-
-/*
- * Pass job memory allocation confirmation request to other plugin.
- * IN job_ptr - job to be signaled
- */
-extern int other_job_mem_confirm(job_record_t *job_ptr)
-{
-	if (other_select_init() < 0)
-		return SLURM_ERROR;
-
-	return (*(ops.job_mem_confirm))(job_ptr);
-}
-
-/*
  * Note termination of job is starting. Executed from slurmctld.
  * IN job_ptr - pointer to job being terminated
  */
@@ -432,7 +402,7 @@ extern int other_step_finish(step_record_t *step_ptr, bool killing_step)
 }
 
 extern int other_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
-				      Buf buffer,
+				      buf_t *buffer,
 				      uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -442,7 +412,7 @@ extern int other_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
 }
 
 extern int other_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo,
-					Buf buffer,
+					buf_t *buffer,
 					uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -557,7 +527,7 @@ extern select_jobinfo_t *other_select_jobinfo_copy(
  * RET         - slurm error code
  */
 extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
-				     Buf buffer,
+				     buf_t *buffer,
 				     uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
@@ -573,42 +543,13 @@ extern int other_select_jobinfo_pack(select_jobinfo_t *jobinfo,
  * NOTE: returned value must be freed using other_free_jobinfo
  */
 extern int other_select_jobinfo_unpack(select_jobinfo_t **jobinfo,
-				       Buf buffer,
+				       buf_t *buffer,
 				       uint16_t protocol_version)
 {
 	if (other_select_init() < 0)
 		return SLURM_ERROR;
 
 	return (*(ops.jobinfo_unpack))(jobinfo, buffer, protocol_version);
-}
-
-/* write select job credential to a string
- * IN jobinfo - a select job credential
- * OUT buf    - location to write job credential contents
- * IN size    - byte size of buf
- * IN mode    - print mode, see enum select_print_mode
- * RET        - the string, same as buf
- */
-extern char *other_select_jobinfo_sprint(select_jobinfo_t *jobinfo,
-					    char *buf, size_t size, int mode)
-{
-	if (other_select_init() < 0)
-		return NULL;
-
-	return (*(ops.jobinfo_sprint))(jobinfo, buf, size, mode);
-}
-/* write select job info to a string
- * IN jobinfo - a select job credential
- * IN mode    - print mode, see enum select_print_mode
- * RET        - char * containing string of request
- */
-extern char *other_select_jobinfo_xstrdup(
-	select_jobinfo_t *jobinfo, int mode)
-{
-	if (other_select_init() < 0)
-		return NULL;
-
-	return (*(ops.jobinfo_xstrdup))(jobinfo, mode);
 }
 
 /*
@@ -624,21 +565,6 @@ extern int other_get_info_from_plugin(enum select_plugindata_info dinfo,
 		return SLURM_ERROR;
 
 	return (*(ops.get_info_from_plugin))(dinfo, job_ptr, data);
-}
-
-/*
- * Updated a node configuration. This happens when a node registers with
- *     more resources than originally configured (e.g. memory).
- * IN index  - index into the node record list
- * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
- */
-extern int other_update_node_config (int index)
-{
-	if (other_select_init() < 0)
-		return SLURM_ERROR;
-
-	return (*(ops.
-		  update_node_config))(index);
 }
 
 /*

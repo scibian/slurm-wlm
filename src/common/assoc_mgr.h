@@ -45,7 +45,7 @@
 #define _SLURM_ASSOC_MGR_H
 
 #include "src/common/list.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/locks.h"
@@ -279,6 +279,16 @@ extern bool assoc_mgr_is_user_acct_coord(void *db_conn, uint32_t uid,
 					char *acct);
 
 /*
+ * see if user is coordinator of given acct
+ * IN: user - slurmdb_user_rec_t of user to check.
+ * IN: acct - name of account
+ * RET: true or false
+ */
+extern bool assoc_mgr_is_user_acct_coord_user_rec(void *db_conn,
+                                                 slurmdb_user_rec_t *user,
+                                                 char *acct_name);
+
+/*
  * get the share information from the association list
  * IN: uid: uid_t of user issuing the request
  * IN: req_msg: info about request
@@ -309,8 +319,17 @@ extern void assoc_mgr_info_get_pack_msg(
  * IN: version of Slurm this is packed in
  * RET: SLURM_SUCCESS on SUCCESS, SLURM_ERROR else
  */
-extern int assoc_mgr_info_unpack_msg(
-	assoc_mgr_info_msg_t **object, Buf buffer, uint16_t protocol_version);
+extern int assoc_mgr_info_unpack_msg(assoc_mgr_info_msg_t **object,
+				     buf_t *buffer, uint16_t protocol_version);
+
+
+/*
+ * assoc_mgr_update_object - update the association manager object
+ * IN x: slurmdb_update_object_t update to perform
+ * In arg: boolean if we are locked appropriately in the assoc_mgr.
+ * RET: error code
+ */
+extern int assoc_mgr_update_object(void *x, void *arg);
 
 /*
  * assoc_mgr_update - update the association manager
@@ -472,15 +491,6 @@ extern int assoc_mgr_find_tres_pos2(slurmdb_tres_rec_t *tres_rec, bool locked);
  */
 extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec(
 	slurmdb_tres_rec_t *tres_rec);
-
-/*
- * Calls assoc_mgr_find_tres_pos and returns the pointer in the
- * assoc_mgr_tres_array. Ignores GRES "type" option.
- * NOTE: The assoc_mgr tres read lock needs to be locked before calling this
- * function and while using the returned record.
- */
-extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec2(
-		slurmdb_tres_rec_t *tres_rec);
 
 /* fills in allocates and sets tres_cnt based off tres_str
  * OUT tres_cnt - array to be filled in g_tres_cnt in length

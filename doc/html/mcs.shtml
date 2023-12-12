@@ -2,9 +2,9 @@
 
 <h1>Multi-Category Security (MCS) Guide</h1>
 
-<h2>Overview</h2>
+<h2 id="overview">Overview<a class="slurm_link" href="#overview"></a></h2>
 <p>The MCS Plugin is meant to extend the current Slurm functionality related to
-job nodes <b>exclusivity</b> and job/node information display <b>privacy</b>.
+job node <b>exclusivity</b> and job/node information display <b>privacy</b>.
 
 <p>Slurm's <b>OverSubscribe</b> option controls the ability of a partition to
 execute more than one job at a time on each resource, no matter "what type"
@@ -31,7 +31,7 @@ is now less restrictive, and information is not just hidden or not to regular
 users, but now it is filtered <b>depending</b> on these configurable/requestable
 labels in coordination with the PrivateData option.
 
-<h2>Configuration</h2>
+<h2 id="config">Configuration<a class="slurm_link" href="#config"></a></h2>
 <p>Two parameters are currently available to configure MCS: <b>MCSPlugin</b>
 and <b>MCSParameters</b>.
 
@@ -43,7 +43,7 @@ on the loaded plugin.</li><br>
 <li><b>mcs/none</b> is the default and disables MCS labels and functionality.
 </li><br>
 <li><b>mcs/account</b> MCS labels can only take a value equal to the job's
---account. NOTE: this option requires enabling of accounting.
+--account. <b>NOTE</b>: this option requires enabling of accounting.
 </li><br>
 <li><b>mcs/group</b> MCS labels can only take a value equal to the job's user
 group.
@@ -65,7 +65,7 @@ see these MCS_labels.</p>
 MCS plugin implementation. So labels can be configured to be enforced or set
 on demand, and the specific MCS Plugin is responsible for checking the validity
 of these labels. When enforced, the MCS Plugin implementation will always
-associate a MCS label to a submited job, either the default value or the one
+associate a MCS label to a submitted job, either the default value or the one
 requested by the user (if it's considered correct).</p>
 
 <p>The selection (exclusivity) of nodes can be filtered on MCS labels either
@@ -94,12 +94,12 @@ label: never, always or on demand (using --exclusive=mcs option)</li>
 <li><b>privatedata</b> accordingly with PrivateData specific option:<br>
 <ul>
 <li>
-if MCS' privatedata and PrivateData's privatedata=jobs, jobs information is
-filtered based on their MCS labels<br>
+If configured with <i>privatedata</i> and <i>PrivateData=jobs</i>, job
+information is filtered based on their MCS labels.<br>
 </li>
 <li>
-if MCS' privatedata and PrivateData's privatedata=nodes, nodes informations is
-filtered based on their MCS labels<br>
+If configured with <i>privatedata</i> and <i>PrivateData=nodes</i>, node
+information is filtered based on their MCS labels.<br>
 </li>
 </ul>
 <li><b>mcs_plugin_parameters</b> Only mcs/group is currently supporting this
@@ -110,6 +110,11 @@ mcs/group plugin.</li>
 </ul>
 </li>
 </ul>
+
+<p>When enforcing privatedata with mcs/account, users will need to have an
+association with just the relevant Account to see other jobs in that Account.
+If a Partition is included in the association, it will be over-constrained
+and will not allow them to view other jobs in the Account.</p>
 
 Different requests and configurations lead to different combinations of
 use-cases. The following table is intended to help understand the end user
@@ -166,7 +171,7 @@ the expected behavior (related to exclusivity) for a subset of these use-cases:
 	</tr>
 </table>
 
-<h2>Some examples</h2>
+<h2 id="examples">Some examples<a class="slurm_link" href="#examples"></a></h2>
 
 <p>slurm.conf:
 <pre>
@@ -191,7 +196,9 @@ MCSParameters=enforced,select,privatedata
 </pre>
 
 
-<h2>View MCS parameters</h2>
+<h2 id="view_params">View MCS parameters
+<a class="slurm_link" href="#view_params"></a>
+</h2>
 
 <p>Configured MCS parameters can be viewed using the <i>scontrol</i> command.
 <pre>
@@ -200,22 +207,31 @@ MCSPlugin          = mcs/group
 MCSParameters      = ondemand,noselect:groupA|groupB|groupC
 </pre>
 
-<h2>Put a mcs_label in job using salloc, sbatch or srun command</h2>
+<h3 id="add_label">Put an mcs_label on a job using salloc, sbatch or srun
+<a class="slurm_link" href="#add_label"></a>
+</h3>
 <pre>
 srun -n10 -t 1000 --mcs-label=groupB ./job &
 </pre>
 
-<h2>Put a mcs_label in job with exclusivity</h2>
+<h3 id="exclusive">Put an mcs_label on a job with exclusivity
+<a class="slurm_link" href="#exclusive"></a>
+</h3>
 <pre>
 srun -n10 -t 1000 --mcs-label=groupB --exclusive=mcs ./job &
 </pre>
 
-<h2>With mcs/account plugin : put a different account/mcs-label in job </h2>
+<h3 id="change_label">
+Put a different mcs_label on a job with the mcs/account plugin
+<a class="slurm_link" href="#change_label"></a>
+</h3>
 <pre>
 srun -n10 -t 1000 -A another_account_than_default ./job &
 </pre>
 
-<h2>View MCS parameters in usage</h2>
+<h2 id="view_usage">View MCS parameters in usage
+<a class="slurm_link" href="#view_usage"></a>
+</h2>
 
 <p>The <i>squeue</i> command can also display the MCS with mcslabel
 format option
@@ -241,12 +257,6 @@ NodeName=node0001 Arch=x86_64 CoresPerSocket=4
    ExtSensorsJoules=n/s ExtSensorsWatts=0 ExtSensorsTemp=n/s
 </pre>
 
-<h2>MCS Plugin development</h2>
-
-<p>Please see the <a href="mcs_plugins.html">MCS Plugin Programmer Guide</a>
-for details on developing additional MCS plugins.</p>
-
-
-<p style="text-align:center;">Last modified 10 October 2019</p>
+<p style="text-align:center;">Last modified 6 June 2022</p>
 
 <!--#include virtual="footer.txt"-->

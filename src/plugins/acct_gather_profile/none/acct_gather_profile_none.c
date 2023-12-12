@@ -43,11 +43,11 @@
  */
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/slurmd/common/proctrack.h"
-#include "src/common/slurm_acct_gather_profile.h"
+#include "src/interfaces/proctrack.h"
+#include "src/interfaces/acct_gather_profile.h"
 
 #include <fcntl.h>
 #include <signal.h>
@@ -80,7 +80,7 @@
  * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "AcctGatherProfile NONE plugin";
-const char plugin_type[] = "acct_gather_Profile/none";
+const char plugin_type[] = "acct_gather_profile/none";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /*

@@ -119,8 +119,8 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 1))) {
 			if (!job_cond->userid_list)
 				job_cond->userid_list = list_create(xfree_ptr);
-			if (!slurm_addto_id_char_list(job_cond->userid_list,
-			                              argv[i]+end, 0))
+			if (slurm_addto_id_char_list(job_cond->userid_list,
+						     argv[i]+end, 0) < 1)
 				exit(1);
 			set = 1;
 		} else {
@@ -186,14 +186,30 @@ static int _set_rec(int *start, int argc, char **argv,
 					  MAX(command_len, 12))) ||
 			   (!xstrncasecmp(argv[i], "DerivedES",
 					  MAX(command_len, 9)))) {
-			if (job->derived_es)
-				xfree(job->derived_es);
-			job->derived_es = strip_quotes(argv[i]+end, NULL, 1);
+			xfree(job->derived_es);
+			job->derived_es =
+				strip_quotes(argv[i] + end, NULL, false);
+			set = 1;
+		} else if (!xstrncasecmp(argv[i], "Extra",
+					 MAX(command_len, 5))) {
+			xfree(job->extra);
+			job->extra = strip_quotes(argv[i] + end, NULL, false);
+			set = 1;
+		} else if (!xstrncasecmp(argv[i], "AdminComment",
+					 MAX(command_len, 12))) {
+			xfree(job->admin_comment);
+			job->admin_comment =
+				strip_quotes(argv[i] + end, NULL, false);
+			set = 1;
+		} else if (!xstrncasecmp(argv[i], "SystemComment",
+					 MAX(command_len, 13))) {
+			xfree(job->system_comment);
+			job->system_comment =
+				strip_quotes(argv[i] + end, NULL, false);
 			set = 1;
 		} else if (!xstrncasecmp(argv[i], "NewWCKey",
 					 MAX(command_len, 1))) {
-			if (job->wckey)
-				xfree(job->wckey);
+			xfree(job->wckey);
 			job->wckey = strip_quotes(argv[i]+end, NULL, 1);
 			set = 1;
 		} else {

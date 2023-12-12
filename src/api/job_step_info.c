@@ -44,8 +44,8 @@
 #include "slurm/slurm.h"
 
 #include "src/common/cpu_frequency.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/interfaces/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -115,7 +115,7 @@ slurm_print_job_step_info_msg ( FILE* out,
 {
 	int i;
 	job_step_info_t *job_step_ptr = job_step_info_msg_ptr->job_steps ;
-	char time_str[32];
+	char time_str[256];
 
 	slurm_make_time_str ((time_t *)&job_step_info_msg_ptr->last_update,
 			time_str, sizeof(time_str));
@@ -158,11 +158,12 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 			    int one_liner )
 {
 	char tmp_node_cnt[40];
-	char time_str[32];
+	char time_str[256];
 	char limit_str[32];
 	char tmp_line[128];
 	char *out = NULL;
 	char *line_end = (one_liner) ? " " : "\n   ";
+	char *sorted_nodelist = NULL;
 	uint16_t flags = STEP_ID_FLAG_NONE;
 
 	/****** Line 1 ******/
@@ -191,9 +192,11 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 
 	/****** Line 2 ******/
 	xstrcat(out, line_end);
+	sorted_nodelist = slurm_sort_node_list_str(job_step_ptr->nodes);
 	xstrfmtcat(out, "State=%s Partition=%s NodeList=%s",
 		   job_state_string(job_step_ptr->state),
-		   job_step_ptr->partition, job_step_ptr->nodes);
+		   job_step_ptr->partition, sorted_nodelist);
+	xfree(sorted_nodelist);
 
 	/****** Line 3 ******/
 	convert_num_unit((float)_nodes_in_list(job_step_ptr->nodes),
@@ -283,6 +286,13 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 	if (job_step_ptr->tres_per_task) {
 		xstrcat(out, line_end);
 		xstrfmtcat(out, "TresPerTask=%s", job_step_ptr->tres_per_task);
+	}
+
+	/****** Line (optional) ******/
+	if (job_step_ptr->container || job_step_ptr->container_id) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "Container=%s ContainerID=%s",
+			   job_step_ptr->container, job_step_ptr->container_id);
 	}
 
 	/****** END OF JOB RECORD ******/
@@ -504,6 +514,47 @@ slurm_get_job_steps (time_t update_time, uint32_t job_id, uint32_t step_id,
 	return rc;
 }
 
+extern int slurm_find_step_ids_by_container_id(uint16_t show_flags, uid_t uid,
+					       const char *container_id,
+					       list_t *steps)
+{
+	int rc;
+	slurm_msg_t req_msg, resp_msg;
+	container_id_request_msg_t req = { 0 };
+	container_id_response_msg_t *resp;
+
+	slurm_msg_t_init(&req_msg);
+	slurm_msg_t_init(&resp_msg);
+
+	req.uid = uid;
+	req.container_id = xstrdup(container_id);
+	req.show_flags = show_flags;
+	req_msg.msg_type = REQUEST_STEP_BY_CONTAINER_ID;
+	req_msg.data = &req;
+
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec))
+		return errno;
+
+	switch (resp_msg.msg_type) {
+	case RESPONSE_STEP_BY_CONTAINER_ID:
+		if ((resp = resp_msg.data) && resp->steps)
+			list_transfer(steps, resp->steps);
+		rc = SLURM_SUCCESS;
+		break;
+	case RESPONSE_SLURM_RC:
+		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+		break;
+	default:
+		rc = SLURM_UNEXPECTED_MSG_ERROR;
+		break;
+	}
+
+	slurm_free_msg_data(resp_msg.msg_type, resp_msg.data);
+
+	return rc;
+}
+
 extern slurm_step_layout_t *slurm_job_step_layout_get(slurm_step_id_t *step_id)
 {
 	slurm_step_id_t data;
@@ -584,6 +635,7 @@ extern int slurm_job_step_stat(slurm_step_id_t *step_id,
 	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
 
 	memcpy(&req, step_id, sizeof(req));
 	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));
@@ -695,6 +747,7 @@ extern int slurm_job_step_get_pids(slurm_step_id_t *step_id,
 	      __func__, step_id, node_list);
 
 	slurm_msg_t_init(&req_msg);
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
 
 	memcpy(&req, step_id, sizeof(req));
 	memcpy(&resp_out->step_id, step_id, sizeof(resp_out->step_id));

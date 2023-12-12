@@ -1,3 +1,183 @@
+slurm-wlm (23.02.6-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2023-41914
+
+ -- Gennaro Oliva <oliva@debian.org>  Thu, 12 Oct 2023 18:45:16 +0200
+
+slurm-wlm (23.02.5-1) unstable; urgency=medium
+
+  [ Gennaro Oliva ]
+  * New upstream release
+  * Refresh patches
+
+  [ Tobias Pape ]
+  * Add pam-configs for the pam packages
+
+ -- Gennaro Oliva <oliva@debian.org>  Sun, 01 Oct 2023 23:41:22 +0200
+
+slurm-wlm (23.02.3-2) unstable; urgency=medium
+
+  * Fix d/not-installed (Closes: #1040129)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 02 Jul 2023 22:55:27 +0200
+
+slurm-wlm (23.02.3-1) unstable; urgency=medium
+
+  * New upstream major release (Closes: #1036109)
+  * Remove default cgroup basedir patch now handled upstream
+  * Refresh patches
+  * Bump libslurm to soname 39
+  * Update configurators
+  * Update d/copyright
+  * Clean lintian warning for plugins packages
+  * Add libpam dev packages
+  * Add scrun and scrontab commands
+  * Add configuration manpages
+  * Update fix-spelling-error patch
+  * Bump debhelper compatibility level to 13
+  * Add kafka plugin
+  * Add debug packages for emulators
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 25 Jun 2023 17:56:03 +0200
+
+slurm-wlm (22.05.8-4) unstable; urgency=medium
+
+  * Fix Breaks/Replaces dependencies (Closes: #1034950,
+    #1034955, #1034978, #1034987, #1034992)
+  * Restore plugstack.conf (Closes: #1035562)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 10 May 2023 00:14:41 +0200
+
+slurm-wlm (22.05.8-3) unstable; urgency=medium
+
+  * Source only upload for testing
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 08 Feb 2023 07:50:18 +0100
+
+slurm-wlm (22.05.8-2) unstable; urgency=medium
+
+  * Fix pmix package for non amd64 architectures
+  * Add rsmi plugin
+  * Force nvml configuration
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 05 Feb 2023 11:12:16 +0100
+
+slurm-wlm (22.05.8-1) unstable; urgency=medium
+
+  * New upstream release
+  * Remove obsolete lsb-base dependency
+  * Use generic libncurses-dev dependency
+  * Restore pmix support
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 31 Jan 2023 22:12:49 +0100
+
+slurm-wlm (22.05.7-2) unstable; urgency=medium
+
+  * Source only upload for testing
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Wed, 25 Jan 2023 22:30:47 +0100
+
+slurm-wlm (22.05.7-1) experimental; urgency=medium
+
+  [ Gennaro Oliva ]
+  * New upstream major release
+  * Bump standard version to 4.6.1 (no changes)
+  * Remove hdf5 v18 api patch fixed upstream
+  * Refresh patches
+  * Update configurators
+  * Update d/copyright
+  * Add libdbus-1-dev dep for cgroup v2 plugin
+  * Bump libslurm to soname 38
+  * Create MySQL plugin packages
+  * Create free plugin metapackage
+  * Bump standard version to 4.6.2 (no changes)
+  * Add patch to set the default cgroup basedir
+
+  [ Tobias Pape ]
+  * Create ipmi plugin packages
+  * Create hdf5 plugin packages
+  * Create influxdb plugin packages
+  * Create rrd plugin packages
+  * Create elasticsearch plugin packages
+  * Create jwt plugin packages
+
+  [ Tim Wickberg ]
+  * Update slurm description
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 12 Jan 2023 01:20:28 +0100
+
+slurm-wlm (21.08.8.2-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload
+  * tests: increase number of attempts in sbatch (Closes: #1014506)
+
+ -- Paul Gevers <elbrus@debian.org>  Thu, 10 Nov 2022 13:28:47 +0100
+
+slurm-wlm (21.08.8.2-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2022-29500,
+    CVE-2022-29501 and CVE-2022-29502
+    (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 06 May 2022 21:14:09 +0200
+
+slurm-wlm (21.08.7-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 21 Apr 2022 21:51:00 +0200
+
+slurm-wlm (21.08.6-1) unstable; urgency=medium
+
+  * New upstream release
+  * Remove fix-typos patch included upstream
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 22 Mar 2022 21:59:40 +0100
+
+slurm-wlm (21.08.5-2) unstable; urgency=medium
+
+  * Add slurm_version.h to libslurm-dev (Closes: #1004409)
+  * Add retry-getaddrinfo patch (Closes: #984928)
+  * Update service files
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 28 Jan 2022 23:36:39 +0100
+
+slurm-wlm (21.08.5-1) unstable; urgency=medium
+
+  * New upstream major release
+  * Refresh patches and drop changes included upstream
+  * Bump libslurm to soname 37
+  * Update d/copyright
+  * Remove man3 section dropped upstream
+  * Remove pmix support
+  * Remove defaults and old parameters in tests configuration files
+  * Explicitly use the 1.8 HDF5 API
+  * Update configurators
+  * Update simple and cgroup example
+  * Add slurm.conf with cgroup example
+  * Change AccountingStoreJobComment into AccountingStoreFlags in
+    slurm-wlm-basic-plugins postinst
+  * Add example files to slurmctld, slurmd, slurm-client and slurmdbd
+  * Add bash completion
+  * Bump standard version to 4.6.0 (no changes)
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 13 Jan 2022 16:30:47 +0100
+
+slurm-wlm (20.11.8-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Mon, 23 Aug 2021 15:53:23 +0200
+
+slurm-wlm (20.11.7-1) unstable; urgency=medium
+
+  * New upstream release fixes CVE-2021-31215 (Closes: #988439)
+  * Add typo patch for acct_gather.conf man page
+  * Update miscellanea manpage patch
+
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 15 Jun 2021 17:49:41 +0200
+
 slurm-wlm (20.11.5-1sci8u1) scibian8; urgency=medium
 
   * Import Upstream version 20.11.5

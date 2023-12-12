@@ -40,6 +40,7 @@
 
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/uid.h"
+#include "src/interfaces/data_parser.h"
 
 static bool with_deleted = 0;
 static bool with_fed = 0;
@@ -198,8 +199,9 @@ static int _set_rec(int *start, int argc, char **argv,
 					MAX(command_len, 2))) {
 			if (*(argv[i]+end) == '\0' &&
 			    (option == '+' || option == '-')) {
-				printf(" You didn't specify any features to %s\n",
-				       (option == '-') ? "remove" : "add");
+				fprintf(stderr,
+					" You didn't specify any features to %s\n",
+					(option == '-') ? "remove" : "add");
 				exit_code = 1;
 				break;
 			}
@@ -504,6 +506,14 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 	cluster_list = slurmdb_clusters_get(db_conn, cluster_cond);
 	slurmdb_destroy_cluster_cond(cluster_cond);
 
+	if (mime_type) {
+		rc = DATA_DUMP_CLI(CLUSTER_REC_LIST, cluster_list, "clusters",
+				   argc, argv, db_conn, mime_type);
+		FREE_NULL_LIST(print_fields_list);
+		FREE_NULL_LIST(cluster_list);
+		return rc;
+	}
+
 	if (!cluster_list) {
 		exit_code=1;
 		fprintf(stderr, " Problem with query.\n");
@@ -536,18 +546,20 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 				break;
 			case PRINT_CPORT:
 				field->print_routine(field,
-						     cluster->control_port,
+						     &cluster->control_port,
 						     (curr_inx == field_count));
 				break;
 			case PRINT_CLASS:
+				tmp_char = get_classification_str(
+						cluster->classification);
 				field->print_routine(field,
-						     get_classification_str(
-						     cluster->classification),
+						     tmp_char,
 						     (curr_inx == field_count));
+				tmp_char = NULL;
 				break;
 			case PRINT_FEATURES:
 				field->print_routine(field,
-						     cluster->fed.feature_list,
+						     &cluster->fed.feature_list,
 						     (curr_inx == field_count));
 				break;
 			case PRINT_FEDERATION:
@@ -563,11 +575,11 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 				break;
 			}
 			case PRINT_FEDSTATERAW:
-				field->print_routine(field, cluster->fed.state,
+				field->print_routine(field, &cluster->fed.state,
 						     (curr_inx == field_count));
 				break;
 			case PRINT_ID:
-				field->print_routine(field, cluster->fed.id,
+				field->print_routine(field, &cluster->fed.id,
 						     (curr_inx == field_count));
 				break;
 			case PRINT_TRES:
@@ -581,14 +593,12 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 				xfree(tmp_char);
 				break;
 			case PRINT_FLAGS:
-			{
-				char *tmp_char = slurmdb_cluster_flags_2_str(
-							     cluster->flags);
+				tmp_char = slurmdb_cluster_flags_2_str(
+							cluster->flags);
 				field->print_routine(field, tmp_char,
 						     (curr_inx == field_count));
 				xfree(tmp_char);
 				break;
-			}
 			case PRINT_NODECNT:
 			{
 				hostlist_t hl = hostlist_create(cluster->nodes);
@@ -599,7 +609,7 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 				}
 				field->print_routine(
 					field,
-					cnt,
+					&cnt,
 					(curr_inx == field_count));
 				break;
 			}
@@ -612,13 +622,13 @@ extern int sacctmgr_list_cluster(int argc, char **argv)
 			case PRINT_RPC_VERSION:
 				field->print_routine(
 					field,
-					cluster->rpc_version,
+					&cluster->rpc_version,
 					(curr_inx == field_count));
 				break;
 			case PRINT_SELECT:
 				field->print_routine(
 					field,
-					cluster->plugin_id_select,
+					&cluster->plugin_id_select,
 					(curr_inx == field_count));
 				break;
 			default:

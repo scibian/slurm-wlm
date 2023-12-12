@@ -8,9 +8,7 @@ AM_CPPFLAGS = -I$(top_srcdir)
 
 sbin_PROGRAMS = slurmdbd
 
-depend_libs = $(top_builddir)/src/common/libdaemonize.la
-slurmdbd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS)
-
+slurmdbd_LDADD = $(LIB_SLURM)
 
 slurmdbd_SOURCES = 		\
 	backup.c		\
@@ -24,9 +22,9 @@ slurmdbd_SOURCES = 		\
 	slurmdbd.c  		\
 	slurmdbd.h
 
-slurmdbd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
+slurmdbd_LDFLAGS = $(CMD_LDFLAGS)
 
-slurmdbd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
+slurmdbd_DEPENDENCIES = $(LIB_SLURM_BUILD)
 
 force:
 $(slurmdbd_DEPENDENCIES) : force

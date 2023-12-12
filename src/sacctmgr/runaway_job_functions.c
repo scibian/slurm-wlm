@@ -110,7 +110,7 @@ static void _print_runaway_jobs(List format_list, List jobs)
 			case PRINT_ID:
 				field->print_routine(
 					field,
-					job->jobid,
+					&job->jobid,
 					(curr_inx == field_count));
 				break;
 			case PRINT_NAME:
@@ -142,25 +142,25 @@ static void _print_runaway_jobs(List format_list, List jobs)
 			case PRINT_TIMESTART:
 				field->print_routine(
 					field,
-					job->start,
+					&job->start,
 					(curr_inx == field_count));
 				break;
 			case PRINT_TIMEEND:
 				field->print_routine(
 					field,
-					job->end,
+					&job->end,
 					(curr_inx == field_count));
 				break;
 			case PRINT_TIMESUBMIT:
 				field->print_routine(
 					field,
-					job->submit,
+					&job->submit,
 					(curr_inx == field_count));
 				break;
 			case PRINT_TIMEELIGIBLE:
 				field->print_routine(
 					field,
-					job->eligible,
+					&job->eligible,
 					(curr_inx == field_count));
 				break;
 			default:
@@ -187,7 +187,8 @@ static int _purge_known_jobs(void *x, void *key)
 		job_info_t *clus_job  = clus_jobs->job_array;
 		for (int i = 0; i < clus_jobs->record_count; i++, clus_job++) {
 			if ((db_job->jobid == clus_job->job_id) &&
-			    (db_job->submit == clus_job->submit_time)) {
+			    ((db_job->submit == clus_job->submit_time) ||
+			     (db_job->submit == clus_job->resize_time))) {
 				debug5("%s: matched known JobId=%u SubmitTime=%"PRIu64,
 				       __func__, db_job->jobid,
 				       (uint64_t)db_job->submit);

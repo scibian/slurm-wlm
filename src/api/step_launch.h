@@ -47,15 +47,10 @@
 
 #include "src/common/bitstring.h"
 #include "src/common/eio.h"
-#include "src/common/slurm_mpi.h"
+#include "src/interfaces/mpi.h"
 #include "src/common/slurm_step_layout.h"
 
 #include "src/api/step_io.h"
-
-typedef struct {
-	int connected;
-	int *sockets; /* array of socket file descriptors */
-} user_managed_io_t;
 
 struct step_launch_state {
 	/* This lock protects tasks_started, tasks_exited, node_io_error,
@@ -90,17 +85,13 @@ struct step_launch_state {
 	uint16_t *resp_port; /* array of message response ports */
 
 	/* io variables */
-	bool user_managed_io;
-	union {
-		client_io_t *normal;
-		user_managed_io_t *user;
-	} io;
+	client_io_t *io;
 
 	slurm_step_layout_t *layout; /* a pointer into the ctx
 					step_resp, do not free */
-	mpi_plugin_client_info_t mpi_info[1];
+	mpi_step_info_t mpi_step[1];
 	mpi_plugin_client_state_t *mpi_state;
-	int mpi_rc;
+	int ret_code;
 
 	/* user registered callbacks */
 	slurm_step_launch_callbacks_t callback;
@@ -135,7 +126,7 @@ int step_launch_notify_io_failure(step_launch_state_t *sls, int node_id);
  * job step setup, clear this flag when the node makes its initial
  * connection.
  */
-int step_launch_clear_questionable_state(step_launch_state_t *sls, 
+int step_launch_clear_questionable_state(step_launch_state_t *sls,
 					 int node_id);
 
 

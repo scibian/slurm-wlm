@@ -303,8 +303,8 @@ static int _assign_clusters_to_federation(mysql_conn_t *mysql_conn,
 		goto end_it;
 
 end_it:
-	list_destroy(add_list);
-	list_destroy(rem_list);
+	FREE_NULL_LIST(add_list);
+	FREE_NULL_LIST(rem_list);
 
 	return rc;
 }
@@ -695,7 +695,7 @@ extern List as_mysql_remove_federations(mysql_conn_t *mysql_conn, uint32_t uid,
 
 		if ((rc = remove_common(mysql_conn, DBD_REMOVE_FEDERATIONS, now,
 					user_name, federation_table, name_char,
-					NULL, NULL, ret_list, NULL)))
+					NULL, NULL, ret_list, NULL, NULL)))
 			break;
 	}
 	mysql_free_result(result);
@@ -713,17 +713,7 @@ extern List as_mysql_remove_federations(mysql_conn_t *mysql_conn, uint32_t uid,
 
 extern int as_mysql_add_feds_to_update_list(mysql_conn_t *mysql_conn)
 {
-	int rc = SLURM_ERROR;
-	List feds = as_mysql_get_federations(mysql_conn, 0, NULL);
-
-	/* Even if there are no feds, need to send an empty list for the case
-	 * that all feds were removed. The controller needs to know that it was
-	 * removed from a federation. */
-	if (feds &&
-	    ((rc = addto_update_list(mysql_conn->update_list,
-				     SLURMDB_UPDATE_FEDS, feds))
-	     != SLURM_SUCCESS)) {
-			FREE_NULL_LIST(feds);
-	}
-	return rc;
+	/* Set the flag to get federation changes after commit has been made. */
+	mysql_conn->flags |= DB_CONN_FLAG_FEDUPDATE;
+	return SLURM_SUCCESS;
 }

@@ -50,7 +50,14 @@
 //#define DEFAULT_SLURMDBD_JOB_PURGE	12
 #define DEFAULT_SLURMDBD_PIDFILE	"/var/run/slurmdbd.pid"
 #define DEFAULT_SLURMDBD_ARCHIVE_DIR	"/tmp"
+#define DEFAULT_SLURMDBD_KEEPALIVE_INTERVAL 30
+#define DEFAULT_SLURMDBD_KEEPALIVE_PROBES 3
+#define DEFAULT_SLURMDBD_KEEPALIVE_TIME 30
 //#define DEFAULT_SLURMDBD_STEP_PURGE	1
+
+/* Define slurmdbd_conf_t flags */
+#define DBD_CONF_FLAG_ALLOW_NO_DEF_ACCT SLURM_BIT(0)
+#define DBD_CONF_FLAG_ALL_RES_ABS SLURM_BIT(1)
 
 /* SlurmDBD configuration parameters */
 typedef struct {
@@ -67,6 +74,7 @@ typedef struct {
 	uint16_t	debug_level;	/* Debug level, default=3	*/
 	char *	 	default_qos;	/* default qos setting when
 					 * adding clusters              */
+	uint32_t flags;			/* Various flags see DBD_CONF_FLAG_* */
 	char *		log_file;	/* Log file			*/
 	uint32_t	max_time_range;	/* max time range for user queries */
 	char *		parameters;	/* parameters to change behavior with

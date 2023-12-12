@@ -132,6 +132,12 @@ static int _setup_resv_limits(slurmdb_reservation_rec_t *resv,
 		xstrfmtcat(*extra, ", tres='%s'", resv->tres_str);
 	}
 
+	if (resv->comment) {
+		xstrcat(*cols, ", comment");
+		xstrfmtcat(*vals, ", '%s'", resv->comment);
+		xstrfmtcat(*extra, ", comment='%s'", resv->comment);
+	}
+
 	return SLURM_SUCCESS;
 }
 static int _setup_resv_cond_limits(slurmdb_reservation_cond_t *resv_cond,
@@ -334,7 +340,8 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 		"nodelist",
 		"node_inx",
 		"flags",
-		"tres"
+		"tres",
+		"comment",
 	};
 	enum {
 		RESV_ASSOCS,
@@ -346,6 +353,7 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 		RESV_NODE_INX,
 		RESV_FLAGS,
 		RESV_TRES,
+		RESV_COMMENT,
 		RESV_COUNT
 	};
 
@@ -470,7 +478,8 @@ extern int as_mysql_modify_resv(mysql_conn_t *mysql_conn,
 	if (xstrcmp(resv->assocs, row[RESV_ASSOCS]) ||
 	    (resv->flags != slurm_atoul(row[RESV_FLAGS])) ||
 	    xstrcmp(resv->nodes, row[RESV_NODE_INX]) ||
-	    xstrcmp(resv->tres_str, row[RESV_TRES]))
+	    xstrcmp(resv->tres_str, row[RESV_TRES]) ||
+	    xstrcmp(resv->comment, row[RESV_COMMENT]))
 		set = 1;
 
 	if (!resv->time_end)
@@ -591,11 +600,12 @@ extern List as_mysql_get_resvs(mysql_conn_t *mysql_conn, uid_t uid,
 	MYSQL_ROW row;
 	void *curr_cluster = NULL;
 	List local_cluster_list = NULL;
-	List use_cluster_list = as_mysql_cluster_list;
+	List use_cluster_list = NULL;
 	ListIterator itr = NULL;
 	char *cluster_name = NULL;
 	/* needed if we don't have an resv_cond */
 	uint16_t with_usage = 0;
+	bool locked = false;
 
 	/* if this changes you will need to edit the corresponding enum */
 	char *resv_req_inx[] = {
@@ -608,7 +618,8 @@ extern List as_mysql_get_resvs(mysql_conn_t *mysql_conn, uid_t uid,
 		"time_start",
 		"time_end",
 		"tres",
-		"unused_wall"
+		"unused_wall",
+		"comment",
 	};
 
 	enum {
@@ -622,6 +633,7 @@ extern List as_mysql_get_resvs(mysql_conn_t *mysql_conn, uid_t uid,
 		RESV_REQ_END,
 		RESV_REQ_TRES,
 		RESV_REQ_UNUSED,
+		RESV_REQ_COMMENT,
 		RESV_REQ_COUNT
 	};
 
@@ -667,8 +679,6 @@ extern List as_mysql_get_resvs(mysql_conn_t *mysql_conn, uid_t uid,
 
 	(void) _setup_resv_cond_limits(resv_cond, &extra);
 
-	if (resv_cond->cluster_list && list_count(resv_cond->cluster_list))
-		use_cluster_list = resv_cond->cluster_list;
 empty:
 	xfree(tmp);
 	xstrfmtcat(tmp, "t1.%s", resv_req_inx[i]);
@@ -676,8 +686,14 @@ empty:
 		xstrfmtcat(tmp, ", t1.%s", resv_req_inx[i]);
 	}
 
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_lock(&as_mysql_cluster_list_lock);
+	if (resv_cond && resv_cond->cluster_list &&
+	    list_count(resv_cond->cluster_list)) {
+		use_cluster_list = resv_cond->cluster_list;
+	} else {
+		slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+		use_cluster_list = as_mysql_cluster_list;
+		locked = true;
+	}
 
 	itr = list_iterator_create(use_cluster_list);
 	while ((cluster_name = list_next(itr))) {
@@ -690,8 +706,8 @@ empty:
 			   extra ? extra : "");
 	}
 	list_iterator_destroy(itr);
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	if (locked)
+		slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
 
 	if (query)
 		xstrcat(query, " order by cluster, time_start, resv_name;");
@@ -729,6 +745,7 @@ empty:
 		resv->flags = slurm_atoull(row[RESV_REQ_FLAGS]);
 		resv->tres_str = xstrdup(row[RESV_REQ_TRES]);
 		resv->unused_wall = atof(row[RESV_REQ_UNUSED]);
+		resv->comment = xstrdup(row[RESV_REQ_COMMENT]);
 		if (with_usage)
 			_get_usage_for_resv(
 				mysql_conn, uid, resv, row[RESV_REQ_ID]);

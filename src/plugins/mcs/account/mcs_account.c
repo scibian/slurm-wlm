@@ -36,7 +36,7 @@
 
 #include "slurm/slurm_errno.h"
 #include "src/common/assoc_mgr.h"
-#include "src/common/slurm_mcs.h"
+#include "src/interfaces/mcs.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/slurmctld.h"
@@ -119,7 +119,8 @@ extern int mcs_p_set_mcs_label(job_record_t *job_ptr, char *label)
 /*
  * mcs_p_check_mcs_label() is called to check mcs_label.
  */
-extern int mcs_p_check_mcs_label(uint32_t user_id, char *mcs_label)
+extern int mcs_p_check_mcs_label(uint32_t user_id, char *mcs_label,
+				 bool assoc_locked)
 {
 	slurmdb_assoc_rec_t assoc_rec;
 	int rc = SLURM_SUCCESS;
@@ -132,7 +133,7 @@ extern int mcs_p_check_mcs_label(uint32_t user_id, char *mcs_label)
 		if (!assoc_mgr_fill_in_assoc(acct_db_conn, &assoc_rec,
 					     accounting_enforce,
 					     (slurmdb_assoc_rec_t **) NULL,
-					     false))
+					     assoc_locked))
 			rc = SLURM_SUCCESS;
 		else
 			rc = SLURM_ERROR;

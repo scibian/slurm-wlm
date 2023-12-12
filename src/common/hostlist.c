@@ -143,12 +143,6 @@ do {						\
 /* max number of ranges that will be processed between brackets */
 #define MAX_RANGES   (256*1024)    /* 256K ranks */
 
-/* size of internal hostname buffer (+ some slop), hostnames will probably
- * be truncated if longer than MAXHOSTNAMELEN */
-#ifndef MAXHOSTNAMELEN
-#define MAXHOSTNAMELEN    64
-#endif
-
 /* ----[ Internal Data Structures ]---- */
 
 /* hostname type: A convenience structure used in parsing single hostnames */
@@ -174,7 +168,7 @@ typedef struct {
 	int width;
 
 	/* If singlehost is 1, `lo' and `hi' are invalid */
-	unsigned singlehost:1;
+	bool singlehost;
 } hostrange_t;
 
 /* The hostlist type: An array based list of hostrange_t's */
@@ -1452,7 +1446,7 @@ hostlist_t _hostlist_create(const char *hostlist, char *sep, char *r_op,
 			/* push pointer past prefix */
 			tok += pos;
 
-			/* count number of digits for ouput fmt */
+			/* count number of digits for output fmt */
 			for (fmt = 0; isdigit(tok[fmt]); ++fmt) {;}
 
 			if (fmt == 0)
@@ -1622,6 +1616,7 @@ static int _parse_single_range(const char *str, struct _range *range, int dims)
 	/* do NOT allow boxes here */
 	if ((p = strchr(str, 'x'))) {
 		error("%s: Invalid range: `%s'", __func__, orig);
+		free(orig);
 		return 0;
 	}
 
@@ -1629,6 +1624,7 @@ static int _parse_single_range(const char *str, struct _range *range, int dims)
 		*p++ = '\0';
 		if (*p == '-') {   /* do NOT allow negative numbers */
 			error("%s: Invalid range: `%s'", __func__, orig);
+			free(orig);
 			return 0;
 		}
 	}
@@ -1647,6 +1643,7 @@ static int _parse_single_range(const char *str, struct _range *range, int dims)
 
 	if (q == str) {
 		error("%s: Invalid range: `%s'", __func__, orig);
+		free(orig);
 		return 0;
 	}
 
@@ -1654,16 +1651,19 @@ static int _parse_single_range(const char *str, struct _range *range, int dims)
 
 	if (q == p || *q != '\0') {
 		error("%s: Invalid range: `%s'", __func__, orig);
+		free(orig);
 		return 0;
 	}
 
 	if (range->lo > range->hi) {
 		error("%s: Invalid range: `%s'", __func__, orig);
+		free(orig);
 		return 0;
 	}
 
 	if (range->hi - range->lo + 1 > MAX_RANGE) {
 		error("%s: Too many hosts in range `%s'", __func__, orig);
+		free(orig);
 		return 0;
 	}
 
@@ -1795,7 +1795,7 @@ _hostlist_create_bracketed(const char *hostlist, char *sep,
 	struct _range *ranges = NULL;
 	int capacity = 0;
 	int nr, err;
-	char *cur_tok = NULL, *p, *tok, *str, *orig;
+	char *p, *tok, *str, *orig;
 
 	if (hostlist == NULL)
 		return new;
@@ -1824,22 +1824,9 @@ _hostlist_create_bracketed(const char *hostlist, char *sep,
 					    new, prefix, ranges, nr, dims))
 					goto error;
 			} else {
-				/* The hostname itself contains a '['
-				 * (no ']' found).
-				 * Not likely what the user
-				 * wanted. We will just tack one on
-				 * the end. */
-				if (prefix && prefix[0]) {
-					xstrfmtcat(cur_tok, "%s]", tok);
-					hostlist_push_host_dims(
-						new, cur_tok, dims);
-					xfree(cur_tok);
-				} else {
-					hostlist_push_host_dims(new, p, dims);
-				}
-
+				/* Found '[' but ']' is missing. */
+				goto error;
 			}
-
 		} else {
 			hostlist_push_host_dims(new, tok, dims);
 		}
@@ -1883,7 +1870,7 @@ hostlist_t hostlist_create_dims(const char *str, int dims)
 {
 	if (!dims)
 		dims = slurmdb_setup_cluster_name_dims();
-	return _hostlist_create(str, "\t, ", "-", dims);
+	return _hostlist_create(str, "\t, \n", "-", dims);
 }
 
 hostlist_t hostlist_create(const char *str)
@@ -2239,7 +2226,7 @@ int hostlist_delete_host(hostlist_t hl, const char *hostname)
 
 static char *_hostrange_string(hostrange_t *hr, int depth)
 {
-	char buf[MAXHOSTNAMELEN + 16];
+	char buf[HOST_NAME_MAX + 16];
 	const int size = sizeof(buf);
 	int  len = snprintf(buf, size, "%s", hr->prefix);
 	int dims = slurmdb_setup_cluster_name_dims();
@@ -2276,6 +2263,8 @@ char * hostlist_nth(hostlist_t hl, int n)
 	if (!hl)
 		return NULL;
 	LOCK_HOSTLIST(hl);
+	xassert(n >= 0);
+
 	count = 0;
 	for (i = 0; i < hl->nranges; i++) {
 		int num_in_range = hostrange_count(hl->hr[i]);
@@ -2300,7 +2289,7 @@ int hostlist_delete_nth(hostlist_t hl, int n)
 	if (!hl)
 		return -1;
 	LOCK_HOSTLIST(hl);
-	xassert(n >= 0 && n <= hl->nhosts);
+	xassert(n >= 0 && n < hl->nhosts);
 
 	count = 0;
 
@@ -2494,7 +2483,7 @@ static void hostlist_coalesce(hostlist_t hl)
 /* attempt to join ranges at loc and loc-1 in a hostlist  */
 /* delete duplicates, return the number of hosts deleted  */
 /* assumes that the hostlist hl has been locked by caller */
-/* returns -1 if no range join occured */
+/* returns -1 if no range join occurred */
 static int _attempt_range_join(hostlist_t hl, int loc)
 {
 	int ndup;
@@ -3145,7 +3134,7 @@ ssize_t hostlist_ranged_string_dims(hostlist_t hl, size_t n,
 			FREE_NULL_BITMAP(bit_grid);
 			bit_grid = bit_alloc(grid_size);
 		} else
-			bit_nclear(bit_grid, 0, grid_size - 1);
+			bit_clear_all(bit_grid);
 
 		memset(grid_start, hostlist_base, dim_grid_size);
 		memset(grid_end, -1, dim_grid_size);
@@ -3344,7 +3333,7 @@ static void _iterator_advance_range(hostlist_iterator_t i)
 
 char *hostlist_next_dims(hostlist_iterator_t i, int dims)
 {
-	char buf[MAXHOSTNAMELEN + 16];
+	char buf[HOST_NAME_MAX + 16];
 	const int size = sizeof(buf);
 	int len = 0;
 
@@ -3682,6 +3671,16 @@ ssize_t hostset_ranged_string(hostset_t set, size_t n, char *buf)
 ssize_t hostset_deranged_string(hostset_t set, size_t n, char *buf)
 {
 	return hostlist_deranged_string(set->hl, n, buf);
+}
+
+char *hostset_deranged_string_xmalloc(hostset_t set)
+{
+	return hostlist_deranged_string_xmalloc(set->hl);
+}
+
+char *hostset_ranged_string_xmalloc(hostset_t set)
+{
+	return hostlist_ranged_string_xmalloc(set->hl);
 }
 
 char * hostset_nth(hostset_t set, int n)

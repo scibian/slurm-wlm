@@ -3,16 +3,12 @@ htmldir = ${datadir}/doc/${PACKAGE}-${SLURM_VERSION_STRING}/html
 
 generated_html = \
 	accounting.html \
-	accounting_storageplugins.html \
-	acct_gather_energy_plugins.html \
-	acct_gather_profile_plugins.html \
 	add.html \
 	api.html \
-	authplugins.html \
-	bb_plugins.html \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
+	cgroup_v2.html \
 	classic_fair_share.html \
 	cli_filter_plugins.html \
 	configless_slurm.html \
@@ -21,65 +17,54 @@ generated_html = \
 	containers.html \
 	contributor.html \
 	core_spec.html \
-	core_spec_plugins.html \
 	cpu_management.html \
 	cray.html \
-	cred_plugins.html \
 	disclaimer.html \
 	dist_plane.html \
 	documentation.html \
 	download.html \
+	dynamic_nodes.html \
 	elasticsearch.html \
 	elastic_computing.html \
-	ext_sensorsplugins.html \
 	faq.html \
 	federation.html \
 	gang_scheduling.html \
 	gres.html \
 	gres_design.html \
-	gres_plugins.html \
 	hdf5_profile_user_guide.html \
 	heterogeneous_jobs.html \
 	high_throughput.html \
 	intel_knl.html \
-	jobacct_gatherplugins.html \
+	jobcomp_kafka.html \
 	job_array.html \
-	job_container_plugins.html \
+	job_container_tmpfs.html \
 	job_exit_code.html \
 	job_launch.html \
 	job_submit_plugins.html \
-	jobcompplugins.html \
 	jwt.html \
-	launch_plugins.html \
 	licenses.html \
 	fair_tree.html \
 	mail.html \
 	man_index.html \
 	mc_support.html \
 	mcs.html \
-	mcs_plugins.html \
 	meetings.html \
 	mpi_guide.html \
-	mpiplugins.html \
 	multi_cluster.html \
 	network.html \
 	news.html \
 	nss_slurm.html \
-	node_features_plugins.html \
+	openapi_release_notes.html \
 	overview.html \
 	pam_slurm_adopt.html \
 	platforms.html \
 	plugins.html \
 	power_mgmt.html \
 	power_save.html \
-	power_plugins.html \
 	preempt.html \
 	prep_plugins.html \
-	preemption_plugins.html \
 	priority_multifactor.html \
 	priority_multifactor3.html \
-	priority_plugins.html \
-	proctrack_plugins.html \
 	programmer_guide.html \
 	prolog_epilog.html \
 	publications.html \
@@ -92,21 +77,15 @@ generated_html = \
 	rest.html \
 	rest_api.html \
 	rosetta.html \
-	route_plugin.html \
 	sched_config.html \
-	schedplugins.html \
 	select_design.html \
-	selectplugins.html \
+	selinux.html \
 	site_factor.html \
 	slurm.html \
-	slurmctld_plugstack.html \
 	slurm_ug_agenda.html \
-	switchplugins.html \
-	taskplugins.html \
 	team.html \
 	testimonials.html \
 	topology.html \
-	topology_plugin.html \
 	tres.html \
 	troubleshoot.html \
 	tutorials.html \
@@ -120,6 +99,7 @@ html_DATA = \
 	coding_style.pdf \
 	configurator.html \
 	configurator.easy.html \
+	cg_hierarchy.jpg \
 	entities.gif \
 	example_usage.gif \
 	fonts.css \
@@ -128,6 +108,7 @@ html_DATA = \
 	hdf5_job_outline.png \
 	ibm_pe_fig1.png \
 	ibm_pe_fig2.png \
+	jobcomp_kafka_fig1.png \
 	jquery.min.js \
 	k_function.gif \
 	mc_support.gif \
@@ -136,6 +117,7 @@ html_DATA = \
 	network_multi_cluster.gif \
 	network_srun.gif \
 	network_standard.gif \
+	node_lifecycle.png \
 	plane_ex1.gif \
 	plane_ex2.gif \
 	plane_ex3.gif \

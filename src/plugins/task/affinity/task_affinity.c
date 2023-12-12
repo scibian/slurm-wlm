@@ -52,7 +52,7 @@
 #include "affinity.h"
 #include "dist_tasks.h"
 
-#include "src/slurmd/common/task_plugin.h"
+#include "src/interfaces/task.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -89,7 +89,7 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 extern int init (void)
 {
 	cpu_set_t cur_mask;
-	char mstr[1 + CPU_SETSIZE / 4];
+	char mstr[CPU_SET_HEX_STR_SIZE];
 
 	slurm_getaffinity(0, sizeof(cur_mask), &cur_mask);
 	task_cpuset_to_str(&cur_mask, mstr);
@@ -108,66 +108,6 @@ extern int fini (void)
 	return SLURM_SUCCESS;
 }
 
-/* cpu bind enforcement, update binding type based upon the
- *	TaskPluginParam configuration parameter */
-static void _update_bind_type(launch_tasks_request_msg_t *req)
-{
-	bool set_bind = false;
-
-	if (req->step_id.step_id == SLURM_INTERACTIVE_STEP)
-		return;
-
-	if ((req->cpu_bind_type & (~CPU_BIND_VERBOSE)) == 0) {
-		if (slurm_conf.task_plugin_param & CPU_BIND_NONE) {
-			req->cpu_bind_type |= CPU_BIND_NONE;
-			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-			set_bind = true;
-		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_SOCKETS) {
-			req->cpu_bind_type &= (~CPU_BIND_NONE);
-			req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
-			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-			set_bind = true;
-		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_CORES) {
-			req->cpu_bind_type &= (~CPU_BIND_NONE);
-			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-			req->cpu_bind_type |= CPU_BIND_TO_CORES;
-			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-			set_bind = true;
-		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_THREADS) {
-			req->cpu_bind_type &= (~CPU_BIND_NONE);
-			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-			req->cpu_bind_type |= CPU_BIND_TO_THREADS;
-			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-			set_bind = true;
-		} else if (slurm_conf.task_plugin_param & CPU_BIND_TO_LDOMS) {
-			req->cpu_bind_type &= (~CPU_BIND_NONE);
-			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-			req->cpu_bind_type &= CPU_BIND_TO_LDOMS;
-			set_bind = true;
-		}
-	}
-	if (slurm_conf.task_plugin_param & CPU_BIND_VERBOSE) {
-		req->cpu_bind_type |= CPU_BIND_VERBOSE;
-		set_bind = true;
-	}
-
-	if (set_bind) {
-		char bind_str[128];
-		slurm_sprint_cpu_bind_type(bind_str, req->cpu_bind_type);
-		info("task affinity : enforcing '%s' cpu bind method",
-		     bind_str);
-	}
-}
-
 /*
  * task_p_slurmd_batch_request()
  */
@@ -182,27 +122,27 @@ extern int task_p_slurmd_batch_request (batch_job_launch_msg_t *req)
  * task_p_slurmd_launch_request()
  */
 extern int task_p_slurmd_launch_request (launch_tasks_request_msg_t *req,
-					 uint32_t node_id)
+					 uint32_t node_id, char **err_msg)
 {
 	char buf_type[100];
+	bool have_debug_flag = slurm_conf.debug_flags & DEBUG_FLAG_CPU_BIND;
+	int rc;
 
-	if (((conf->sockets >= 1)
-	     && ((conf->cores > 1) || (conf->threads > 1)))
-	    || (!(req->cpu_bind_type & CPU_BIND_NONE))) {
-		_update_bind_type(req);
-
+	if (have_debug_flag) {
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
-		debug("task affinity : before lllp distribution cpu bind "
-		      "method is '%s' (%s)", buf_type, req->cpu_bind);
-
-		lllp_distribution(req, node_id);
-
-		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
-		debug("task affinity : after lllp distribution cpu bind "
-		      "method is '%s' (%s)", buf_type, req->cpu_bind);
+		log_flag(CPU_BIND, "task affinity : before lllp distribution cpu bind method is '%s' (%s)",
+			 buf_type, req->cpu_bind);
 	}
 
-	return SLURM_SUCCESS;
+	rc = lllp_distribution(req, node_id, err_msg);
+
+	if (have_debug_flag) {
+		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
+		log_flag(CPU_BIND, "task affinity : after lllp distribution cpu bind method is '%s' (%s)",
+			 buf_type, req->cpu_bind);
+	}
+
+	return rc;
 }
 
 /*
@@ -223,15 +163,29 @@ extern int task_p_slurmd_resume_job (uint32_t job_id)
 	return SLURM_SUCCESS;
 }
 
+static void _calc_cpu_affinity(stepd_step_rec_t *step)
+{
+	if (!step->cpu_bind_type)
+		return;
+
+	for (int i = 0; i < step->node_tasks; i++) {
+		step->task[i]->cpu_set = xmalloc(sizeof(cpu_set_t));
+		if (!get_cpuset(step->task[i]->cpu_set, step, i))
+			xfree(step->task[i]->cpu_set);
+		else
+			reset_cpuset(step->task[i]->cpu_set);
+	}
+}
+
 /*
  * task_p_pre_setuid() is called before setting the UID for the
  * user to launch his jobs.
  */
-extern int task_p_pre_setuid (stepd_step_rec_t *job)
+extern int task_p_pre_setuid (stepd_step_rec_t *step)
 {
 	int rc = SLURM_SUCCESS;
-
-	cpu_freq_cpuset_validate(job);
+	_calc_cpu_affinity(step);
+	cpu_freq_cpuset_validate(step);
 
 	return rc;
 }
@@ -255,44 +209,36 @@ static void _numa_set_preferred(nodemask_t *new_mask)
  *	It is followed by TaskProlog program (from slurm.conf) and
  *	--task-prolog (from srun command line).
  */
-extern int task_p_pre_launch (stepd_step_rec_t *job)
+extern int task_p_pre_launch (stepd_step_rec_t *step)
 {
 	int rc = SLURM_SUCCESS;
+	char tmp_str[128];
 
-	debug("affinity %ps, task:%u bind:%u",
-	      &job->step_id, job->envtp->procid, job->cpu_bind_type);
+	if (get_log_level() >= LOG_LEVEL_DEBUG) {
+		slurm_sprint_cpu_bind_type(tmp_str, step->cpu_bind_type);
 
-	/*** CPU binding support ***/
-	if (job->cpu_bind_type) {
-		cpu_set_t new_mask, cur_mask;
-		pid_t mypid  = job->envtp->task_pid;
-
-		slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
-		if (get_cpuset(&new_mask, job) &&
-		    (!(job->cpu_bind_type & CPU_BIND_NONE))) {
-			reset_cpuset(&new_mask, &cur_mask);
-			rc = slurm_setaffinity(mypid, sizeof(new_mask),
-					       &new_mask);
-			slurm_getaffinity(mypid, sizeof(cur_mask), &cur_mask);
-		}
-		task_slurm_chkaffinity(rc ? &cur_mask : &new_mask,
-				       job, rc);
+		debug("affinity %ps, task:%u bind:%s",
+		      &step->step_id, step->envtp->procid, tmp_str);
 	}
 
 #ifdef HAVE_NUMA
-	if (job->mem_bind_type && (numa_available() >= 0)) {
+	if (step->mem_bind_type && (numa_available() >= 0)) {
 		nodemask_t new_mask, cur_mask;
 
 		cur_mask = numa_get_membind();
-		if (get_memset(&new_mask, job)
-		    &&  (!(job->mem_bind_type & MEM_BIND_NONE))) {
-			if (job->mem_bind_type & MEM_BIND_PREFER)
+		if ((step->mem_bind_type & MEM_BIND_NONE) ||
+		    (step->mem_bind_type == MEM_BIND_SORT) ||
+		    (step->mem_bind_type == MEM_BIND_VERBOSE)) {
+			/* Do nothing */
+		} else if (get_memset(&new_mask, step)) {
+			if (step->mem_bind_type & MEM_BIND_PREFER)
 				_numa_set_preferred(&new_mask);
 			else
 				numa_set_membind(&new_mask);
 			cur_mask = new_mask;
-		}
-		slurm_chk_memset(&cur_mask, job);
+		} else
+			rc = SLURM_ERROR;
+		slurm_chk_memset(&cur_mask, step);
 	}
 #endif
 
@@ -301,11 +247,27 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 
 /*
  * task_p_pre_launch_priv() is called prior to exec of application task.
- * in privileged mode, just after slurm_spank_task_init_privileged
+ * Runs in privileged mode.
  */
-extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid)
 {
-	return SLURM_SUCCESS;
+	int rc = SLURM_SUCCESS;
+	cpu_set_t *new_mask = step->task[node_tid]->cpu_set;
+	cpu_set_t current_cpus;
+	pid_t mypid  = step->task[node_tid]->pid;
+
+	if (new_mask)
+		rc = slurm_setaffinity(mypid, sizeof(*new_mask), new_mask);
+
+	/* Log affinity status to stderr */
+	if (!new_mask || (rc != SLURM_SUCCESS)) {
+		slurm_getaffinity(mypid, sizeof(current_cpus), &current_cpus);
+		task_slurm_chkaffinity(&current_cpus, step, rc, node_tid);
+	} else {
+		task_slurm_chkaffinity(new_mask, step, rc, node_tid);
+	}
+
+	return rc;
 }
 
 /*
@@ -313,9 +275,10 @@ extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
  *	It is preceded by --task-epilog (from srun command line)
  *	followed by TaskEpilog program (from slurm.conf).
  */
-extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task)
+extern int task_p_post_term (stepd_step_rec_t *step,
+			     stepd_step_task_info_t *task)
 {
-	debug("affinity %ps, task %d", &job->step_id, task->id);
+	debug("affinity %ps, task %d", &step->step_id, task->id);
 
 	return SLURM_SUCCESS;
 }
@@ -324,7 +287,7 @@ extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task
  * task_p_post_step() is called after termination of the step
  * (all the task)
  */
-extern int task_p_post_step (stepd_step_rec_t *job)
+extern int task_p_post_step (stepd_step_rec_t *step)
 {
 	return SLURM_SUCCESS;
 }

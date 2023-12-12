@@ -46,10 +46,11 @@
 #include <unistd.h>
 
 #include "src/common/macros.h"
+#include "src/common/plugrack.h"
+#include "src/common/read_config.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/plugrack.h"
 
 strong_alias(plugrack_create,         slurm_plugrack_create);
 strong_alias(plugrack_destroy,        slurm_plugrack_destroy);
@@ -142,8 +143,8 @@ int plugrack_destroy(plugrack_t *rack)
 	it = list_iterator_create(rack->entries);
 	while ((e = list_next(it))) {
 		if (e->refcount > 0) {
-			debug2("%s: attempt to destroy plugin rack that is still in use",
-			       __func__);
+			debug2("%s: attempt to destroy %s plugin rack that is still in use",
+			       __func__, rack->major_type);
 			list_iterator_destroy(it);
 			return SLURM_ERROR; /* plugins still in use. */
 		}
@@ -274,8 +275,8 @@ static int _plugrack_read_single_dir(plugrack_t *rack, char *dir)
 			continue;
 
 		/* Test the type. */
-		if (plugin_peek(fq_path, plugin_type, type_len, NULL) ==
-		    SLURM_ERROR) {
+		if (plugin_peek(fq_path, plugin_type, type_len, NULL) !=
+		    EPLUGIN_SUCCESS) {
 			continue;
 		}
 
@@ -348,8 +349,11 @@ plugin_handle_t plugrack_use_by_type(plugrack_t *rack, const char *full_type)
 			error("%s: %s", e->fq_path, plugin_strerror(err));
 
 		/* If load was successful, increment the reference count. */
-		if (e->plug != PLUGIN_INVALID_HANDLE)
+		if (e->plug != PLUGIN_INVALID_HANDLE) {
 			e->refcount++;
+			debug3("%s: loaded plugin %s for type:%s",
+			       __func__, e->fq_path, full_type);
+		}
 
 		/*
 		 * Return the plugin, even if it failed to load -- this serves
@@ -394,16 +398,21 @@ void plugrack_release_by_type(plugrack_t *rack, const char *type)
 			     (void *) type);
 }
 
+typedef struct {
+	plugrack_foreach_t f;
+	void *arg;
+} plugrack_foreach_args_t;
+
 extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 {
 	ListIterator itr;
 	plugrack_entry_t *e = NULL;
-	char *sep, tmp[64];
+	char *sep, tmp[64], *pmix_vers = NULL, *comma = "";
 	int i;
 
 	xassert(rack->entries);
 	itr = list_iterator_create(rack->entries);
-	info("MPI types are...");
+	printf("MPI plugin types are...\n");
 	while ((e = list_next(itr))) {
 		/*
 		 * Support symbolic links for various pmix plugins with names
@@ -419,11 +428,21 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 			if (sep)
 				sep[0] = '\0';
 			sep = tmp;
+
+			if (!xstrncmp(sep, "pmix_", 5)) {
+				xstrfmtcat(pmix_vers, "%s%s", comma, sep);
+				comma = ",";
+				continue;
+			}
 		} else
 			sep = (char *) e->full_type;	/* Remove "const" */
-		info("%s", sep);
+		printf("\t%s\n", sep);
 	}
 	list_iterator_destroy(itr);
+
+	if (pmix_vers)
+		printf("specific pmix plugin versions available: %s\n", pmix_vers);
+	xfree(pmix_vers);
 
 	return SLURM_SUCCESS;
 }
@@ -431,14 +450,197 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 static int _foreach_plugin(void *x, void *arg)
 {
 	plugrack_entry_t *entry = (plugrack_entry_t *) x;
-	plugrack_foreach_t f = (plugrack_foreach_t) arg;
+	plugrack_foreach_args_t *args = arg;
 
-	f(entry->full_type, entry->fq_path, entry->plug);
+	args->f(entry->full_type, entry->fq_path, entry->plug, args->arg);
 
 	return 0;
 }
 
-extern void plugrack_foreach(plugrack_t *rack, plugrack_foreach_t f)
+extern void plugrack_foreach(plugrack_t *rack, plugrack_foreach_t f, void *arg)
 {
-	(void) list_for_each(rack->entries, _foreach_plugin, f);
+	plugrack_foreach_args_t args = {
+		.f = f,
+		.arg = arg,
+	};
+
+	(void) list_for_each(rack->entries, _foreach_plugin, &args);
+}
+
+static bool _plugin_loaded(plugins_t *plugins, const char *plugin)
+{
+	xassert(plugins->magic == PLUGINS_MAGIC);
+
+	if (plugins->count <= 0)
+		return false;
+
+	for (int i = 0; i < plugins->count; i++)
+		if (!xstrcasecmp(plugin, plugins->types[i]))
+			return true;
+
+	return false;
+}
+
+static void _plugrack_foreach(const char *full_type, const char *fq_path,
+			      const plugin_handle_t id, void *arg)
+{
+	plugins_t *plugins = arg;
+	size_t i = plugins->count;
+
+	xassert(plugins->magic == PLUGINS_MAGIC);
+
+	if (_plugin_loaded(plugins, full_type)) {
+		debug("%s: %s plugin type %s already loaded",
+			 __func__, plugins->rack->major_type, full_type);
+		/* effectively a no-op if already loaded */
+		return;
+	}
+
+	plugins->count++;
+	xrecalloc(plugins->handles, plugins->count, sizeof(*plugins->handles));
+	xrecalloc(plugins->types, plugins->count, sizeof(*plugins->types));
+
+	plugins->types[i] = xstrdup(full_type);
+	plugins->handles[i] = id;
+
+	debug("%s: %s plugin type:%s path:%s",
+	      __func__, plugins->rack->major_type, full_type, fq_path);
+}
+
+extern int load_plugins(plugins_t **plugins_ptr, const char *major_type,
+			const char *plugin_list, plugrack_foreach_t listf,
+			const char **syms, size_t syms_count)
+{
+	int rc = SLURM_SUCCESS;
+	plugins_t *plugins;
+
+	xassert(plugins_ptr);
+	if (!*plugins_ptr) {
+		plugins = xmalloc(sizeof(*plugins));
+		plugins->magic = PLUGINS_MAGIC;
+		plugins->rack = plugrack_create(major_type);
+
+		if ((rc = plugrack_read_dir(plugins->rack, slurm_conf.plugindir))) {
+			error("%s: plugrack_read_dir(%s) failed: %s",
+			      __func__, slurm_conf.plugindir, slurm_strerror(rc));
+			goto cleanup;
+		}
+	} else {
+		plugins = *plugins_ptr;
+		xassert(plugins->magic == PLUGINS_MAGIC);
+	}
+
+	if (listf && !xstrcasecmp(plugin_list, "list")) {
+		/* call list function ptr and then load all */
+		plugrack_foreach(plugins->rack, listf, NULL);
+		rc = SLURM_SUCCESS;
+		/* reusing plugins on a list request makes no sense */
+		xassert(!*plugins_ptr);
+		goto cleanup;
+	}
+
+	if (!plugin_list) {
+		/* no filter specified: load them all */
+		plugrack_foreach(plugins->rack, _plugrack_foreach, plugins);
+	} else if (plugin_list[0] == '\0') {
+		debug("%s: not loading any %s plugins", __func__, major_type);
+	} else {
+		/* Caller provided which plugins they want */
+		char *type, *last = NULL, *pl;
+		char *typeslash = xstrdup_printf("%s/", major_type);
+
+		pl = xstrdup(plugin_list);
+		type = strtok_r(pl, ",", &last);
+		while (type) {
+			char *ntype, *otype;
+			const size_t offset = strlen(typeslash);
+
+			/*
+			 * Permit both prefix and no-prefix for
+			 * plugin names.
+			 */
+			if (!xstrncmp(type, typeslash, offset))
+				otype = type + offset;
+			else
+				otype = type;
+
+			ntype = xstrdup_printf("%s/%s", major_type, otype);
+			_plugrack_foreach(type, NULL, PLUGIN_INVALID_HANDLE,
+					  plugins);
+			xfree(ntype);
+
+			type = strtok_r(NULL, ",", &last);
+		}
+
+		xfree(pl);
+		xfree(typeslash);
+	}
+
+	for (size_t i = 0; i < plugins->count; i++) {
+		if (plugins->handles[i] == PLUGIN_INVALID_HANDLE) {
+			plugins->handles[i] = plugrack_use_by_type(
+				plugins->rack, plugins->types[i]);
+
+			if (plugins->handles[i] == PLUGIN_INVALID_HANDLE) {
+				error("%s: unable to find plugin: %s",
+				      __func__, plugins->types[i]);
+				rc = ESLURM_PLUGIN_INVALID;
+				break;
+			}
+		}
+	}
+
+	xrecalloc(plugins->functions, plugins->count,
+		  sizeof(*plugins->functions));
+
+	if (!plugins->count || rc)
+		goto cleanup;
+
+	for (size_t i = 0; (i < plugins->count); i++) {
+		if (plugins->functions[i]) {
+			/* already resolved symbols */
+			continue;
+		}
+
+		if (plugins->handles[i] == PLUGIN_INVALID_HANDLE)
+			fatal("Invalid plugin to load?");
+
+		xrecalloc(plugins->functions[i], syms_count + 1, sizeof(void *));
+
+		if (plugin_get_syms(plugins->handles[i], syms_count,
+				    syms, plugins->functions[i])
+		    < syms_count) {
+			rc = ESLURM_PLUGIN_INCOMPLETE;
+			break;
+		}
+	}
+
+cleanup:
+	if (!rc)
+		*plugins_ptr = plugins;
+	else
+		unload_plugins(plugins);
+
+	return rc;
+}
+
+extern void unload_plugins(plugins_t *plugins)
+{
+	if (plugins->rack) {
+		for (size_t i = 0; i < plugins->count; i++)
+			plugrack_release_by_type(plugins->rack,
+						 plugins->types[i]);
+
+		(void) plugrack_destroy(plugins->rack);
+	}
+
+	for (size_t i = 0; i < plugins->count; i++) {
+		xfree(plugins->functions[i]);
+		xfree(plugins->types[i]);
+	}
+
+	xfree(plugins->functions);
+	xfree(plugins->handles);
+	xfree(plugins->types);
+	xfree(plugins);
 }

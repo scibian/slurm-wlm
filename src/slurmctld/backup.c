@@ -53,12 +53,13 @@
 #include "src/common/daemonize.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/switch.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/switch.h"
 
 #include "src/slurmctld/heartbeat.h"
 #include "src/slurmctld/locks.h"
@@ -254,11 +255,11 @@ void run_backup(void)
 		error("failed to restore switch state");
 		abort();
 	}
+	slurmctld_config.shutdown_time = (time_t) 0;
 	if (read_slurm_conf(2, false)) {	/* Recover all state */
 		error("Unable to recover slurm state");
 		abort();
 	}
-	slurmctld_config.shutdown_time = (time_t) 0;
 	unlock_slurmctld(config_write_lock);
 	select_g_select_nodeinfo_set_all();
 
@@ -389,11 +390,14 @@ static void *_background_rpc_mgr(void *no_data)
 			continue;
 		}
 
+		log_flag(PROTOCOL, "%s: accept() connection from %pA",
+			 __func__, &cli_addr);
+
 		slurm_msg_t_init(&msg);
 		if (slurm_receive_msg(newsockfd, &msg, 0) != 0)
 			error("slurm_receive_msg: %m");
-
-		_background_process_msg(&msg);
+		else
+			_background_process_msg(&msg);
 
 		slurm_free_msg_members(&msg);
 
@@ -402,7 +406,6 @@ static void *_background_rpc_mgr(void *no_data)
 
 	debug3("_background_rpc_mgr shutting down");
 	close(sockfd);	/* close the main socket */
-	pthread_exit((void *) 0);
 	return NULL;
 }
 
@@ -414,9 +417,29 @@ static int _background_process_msg(slurm_msg_t *msg)
 	int error_code = SLURM_SUCCESS;
 	bool send_rc = true;
 
+	if (!msg->auth_uid_set) {
+		error("%s: received message without previously validated auth",
+		      __func__);
+		return SLURM_ERROR;
+	}
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_PROTOCOL) {
+		char *p = rpc_num2string(msg->msg_type);
+		if (msg->conn) {
+			info("%s: received opcode %s from persist conn on (%s)%s uid %u",
+			     __func__, p, msg->conn->cluster_name,
+			     msg->conn->rem_host, msg->auth_uid);
+		} else {
+			slurm_addr_t cli_addr;
+			(void) slurm_get_peer_addr(msg->conn_fd, &cli_addr);
+			info("%s: received opcode %s from %pA uid %u",
+			     __func__, p, &cli_addr, msg->auth_uid);
+		}
+	}
+
 	if (msg->msg_type != REQUEST_PING) {
 		bool super_user = false;
-		uid_t uid = g_slurm_auth_get_uid(msg->auth_cred);
+		uid_t uid = auth_g_get_uid(msg->auth_cred);
 
 		if (validate_slurm_user(uid))
 			super_user = true;
@@ -438,9 +461,18 @@ static int _background_process_msg(slurm_msg_t *msg)
 		} else if (msg->msg_type == REQUEST_CONTROL_STATUS) {
 			slurm_rpc_control_status(msg);
 			send_rc = false;
+		} else if (msg->msg_type == REQUEST_CONFIG) {
+			/*
+			 * Config was asked for from the wrong controller
+			 * Assume there was a misconfiguration and redirect
+			 * to the correct controller.  This usually indicates a
+			 * configuration issue.
+			 */
+			error("REQUEST_CONFIG received while in standby.");
+			error_code = ESLURM_IN_STANDBY_USE_BACKUP;
 		} else {
-			error("Invalid RPC received %d while in standby mode",
-			      msg->msg_type);
+			error("Invalid RPC received %s while in standby mode",
+			      rpc_num2string(msg->msg_type));
 			error_code = ESLURM_IN_STANDBY_MODE;
 		}
 	}
@@ -460,6 +492,7 @@ static void *_ping_ctld_thread(void *arg)
 	slurm_msg_t_init(&req);
 	slurm_set_addr(&req.address, ping->slurmctld_port, ping->control_addr);
 	req.msg_type = REQUEST_CONTROL_STATUS;
+	slurm_msg_set_r_uid(&req, SLURM_AUTH_UID_ANY);
 	if (slurm_send_recv_node_msg(&req, &resp, 0) == SLURM_SUCCESS) {
 		switch (resp.msg_type) {
 		case RESPONSE_CONTROL_STATUS:
@@ -480,7 +513,7 @@ static void *_ping_ctld_thread(void *arg)
 		}
 		slurm_free_msg_data(resp.msg_type, resp.data);
 		if (resp.auth_cred)
-			g_slurm_auth_destroy(resp.auth_cred);
+			auth_g_destroy(resp.auth_cred);
 	}
 
 	slurm_mutex_lock(&ping_mutex);
@@ -601,11 +634,12 @@ static void *_shutdown_controller(void *arg)
 	xfree(arg);
 
 	slurm_msg_t_init(&req);
+	slurm_msg_set_r_uid(&req, slurm_conf.slurm_user_id);
 	slurm_set_addr(&req.address, slurm_conf.slurmctld_port,
 	               slurm_conf.control_addr[shutdown_inx]);
 	if (do_shutdown) {
 		req.msg_type = REQUEST_SHUTDOWN;
-		shutdown_msg.options = 2;
+		shutdown_msg.options = SLURMCTLD_SHUTDOWN_CTLD;
 		req.data = &shutdown_msg;
 	} else {
 		req.msg_type = REQUEST_CONTROL;

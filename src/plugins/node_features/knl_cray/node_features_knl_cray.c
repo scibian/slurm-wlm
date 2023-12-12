@@ -68,7 +68,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/bitstring.h"
 #include "src/common/fd.h"
-#include "src/common/gres.h"
+#include "src/interfaces/gres.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/pack.h"
@@ -175,7 +175,6 @@ static uint32_t cpu_bind[KNL_NUMA_CNT];	/* Derived from numa_cpu_bind */
 static uint16_t default_mcdram = KNL_CACHE;
 static uint16_t default_numa = KNL_ALL2ALL;
 static char *mc_path = NULL;
-static uint32_t node_reboot_weight = (INFINITE - 1);
 static char *numa_cpu_bind = NULL;
 static char *syscfg_path = NULL;
 static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -215,7 +214,6 @@ static s_p_options_t knl_conf_file_options[] = {
 	{"McPath", S_P_STRING},
 	{"NumaCpuBind", S_P_STRING},
 	{"SyscfgPath", S_P_STRING},
-	{"NodeRebootWeight", S_P_UINT32},
 	{"UmeCheckInterval", S_P_UINT32},
 	{"ValidateMode", S_P_UINT32},
 	{NULL}
@@ -337,7 +335,8 @@ static s_p_hashtbl_t *_config_make_tbl(char *filename)
 		return tbl;
 	}
 
-	if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, filename, false, NULL, false) ==
+	    SLURM_ERROR) {
 		error("knl.conf: %s: s_p_parse_file error: %m", __func__);
 		s_p_hashtbl_destroy(tbl);
 		tbl = NULL;
@@ -1487,11 +1486,12 @@ static void _update_all_node_features(
 	int i, node_inx, numa_inx, width = 5;
 	uint64_t mcdram_size;
 
-	if ((node_record_table_ptr == NULL) ||
-	    (node_record_table_ptr->name == NULL)) {
+	if (!node_record_table_ptr ||
+	    !node_record_table_ptr[0] ||
+	    !node_record_table_ptr[0]->name) {
 		prefix = xstrdup("nid");
 	} else {
-		prefix = xstrdup(node_record_table_ptr->name);
+		prefix = xstrdup(node_record_table_ptr[0]->name);
 		for (i = 0; prefix[i]; i++) {
 			if ((prefix[i] >= '0') && (prefix[i] <= '9')) {
 				prefix[i] = '\0';
@@ -1510,8 +1510,7 @@ static void _update_all_node_features(
 				 "%s%.*d", prefix, width, mcdram_cap[i].nid);
 			node_ptr = find_node_record(node_name);
 			if (node_ptr) {
-				node_inx = node_ptr - node_record_table_ptr;
-				bit_set(knl_node_bitmap, node_inx);
+				bit_set(knl_node_bitmap, node_ptr->index);
 				if (validate_mode == 0) {
 					_merge_strings(&node_ptr->features,
 						       mcdram_cap[i].mcdram_cfg,
@@ -1526,7 +1525,7 @@ static void _update_all_node_features(
 				 "%s%.*d", prefix, width, mcdram_cfg[i].nid);
 			if (!(node_ptr = find_node_record(node_name)))
 				continue;
-			mcdram_per_node[node_ptr - node_record_table_ptr] =
+			mcdram_per_node[node_ptr->index] =
 				mcdram_cfg[i].mcdram_size;
 			_merge_strings(&node_ptr->features_act,
 				       mcdram_cfg[i].mcdram_cfg,
@@ -1537,9 +1536,9 @@ static void _update_all_node_features(
 				node_ptr->gres =
 					xstrdup(node_ptr->config_ptr->gres);
 			}
-			gres_plugin_node_feature(node_ptr->name, "hbm",
-						 mcdram_size, &node_ptr->gres,
-						 &node_ptr->gres_list);
+			gres_node_feature(node_ptr->name, "hbm",
+					  mcdram_size, &node_ptr->gres,
+					  &node_ptr->gres_list);
 		}
 	}
 	if (numa_cap && (validate_mode == 0)) {
@@ -1574,9 +1573,9 @@ static void _update_all_node_features(
 	 * Make sure that only nodes reported by "capmc get_mcdram_capabilities"
 	 * contain KNL features
 	 */
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
-		if (knl_node_bitmap && bit_test(knl_node_bitmap, i)) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
+		if (knl_node_bitmap && bit_test(knl_node_bitmap,
+						node_ptr->index)) {
 			if (validate_mode)
 				_validate_node_features(node_ptr);
 			continue;
@@ -1589,8 +1588,8 @@ static void _update_all_node_features(
 		}
 		if (!node_ptr->gres)
 			node_ptr->gres = xstrdup(node_ptr->config_ptr->gres);
-		gres_plugin_node_feature(node_ptr->name, "hbm", 0,
-					 &node_ptr->gres, &node_ptr->gres_list);
+		gres_node_feature(node_ptr->name, "hbm", 0,
+				  &node_ptr->gres, &node_ptr->gres_list);
 	}
 
 	xfree(prefix);
@@ -1643,7 +1642,7 @@ static void _update_node_features(node_record_t *node_ptr,
 			_merge_strings(&node_ptr->features_act,
 				       mcdram_cfg[i].mcdram_cfg, allow_mcdram);
 
-			mcdram_per_node[node_ptr - node_record_table_ptr] =
+			mcdram_per_node[node_ptr->index] =
 				mcdram_cfg[i].mcdram_size;
 			mcdram_size = mcdram_cfg[i].mcdram_size *
 				      (100 - mcdram_cfg[i].mcdram_pct) / 100;
@@ -1655,9 +1654,9 @@ static void _update_node_features(node_record_t *node_ptr,
 				node_ptr->gres =
 					xstrdup(node_ptr->config_ptr->gres);
 			}
-			gres_plugin_node_feature(node_ptr->name, "hbm",
-						 mcdram_size, &node_ptr->gres,
-						 &node_ptr->gres_list);
+			gres_node_feature(node_ptr->name, "hbm",
+					  mcdram_size, &node_ptr->gres,
+					  &node_ptr->gres_list);
 			break;
 		}
 	}
@@ -1701,13 +1700,13 @@ static void _update_node_features(node_record_t *node_ptr,
 			node_ptr->gres =
 				xstrdup(node_ptr->config_ptr->gres);
 		}
-		gres_plugin_node_feature(node_ptr->name, "hbm", 0,
-					 &node_ptr->gres, &node_ptr->gres_list);
+		gres_node_feature(node_ptr->name, "hbm", 0,
+				  &node_ptr->gres, &node_ptr->gres_list);
 	}
 
 	/* Update bitmaps and lists used by slurmctld for scheduling */
 	node_bitmap = bit_alloc(node_record_count);
-	bit_set(node_bitmap, (node_ptr - node_record_table_ptr));
+	bit_set(node_bitmap, node_ptr->index);
 	update_feature_list(active_feature_list, node_ptr->features_act,
 			    node_bitmap);
 	(void) node_features_p_node_update(node_ptr->features_act, node_bitmap);
@@ -1735,7 +1734,7 @@ static void _make_uid_array(char *uid_str)
 	tok = strtok_r(tmp_str, ",", &save_ptr);
 	while (tok) {
 		if (uid_from_string(tok, &allowed_uid[allowed_uid_cnt++]) < 0)
-			error("knl_cray.conf: Invalid AllowUserBoot: %s", tok);
+			fatal("knl_cray.conf: Invalid AllowUserBoot: %s", tok);
 		tok = strtok_r(NULL, ",", &save_ptr);
 	}
 	xfree(tmp_str);
@@ -1905,8 +1904,6 @@ extern int init(void)
 			xfree(tmp_str);
 		}
 		(void) s_p_get_string(&mc_path, "McPath", tbl);
-		(void) s_p_get_uint32(&node_reboot_weight, "NodeRebootWeight",
-				      tbl);
 		if (s_p_get_string(&numa_cpu_bind, "NumaCpuBind", tbl))
 			_update_cpu_bind();
 		(void) s_p_get_string(&syscfg_path, "SyscfgPath", tbl);
@@ -1946,7 +1943,6 @@ extern int init(void)
 		info("DefaultMCDRAM=%s DefaultNUMA=%s",
 		     default_mcdram_str, default_numa_str);
 		info("McPath=%s", mc_path);
-		info("NodeRebootWeight=%u", node_reboot_weight);
 		info("NumaCpuBind=%s", numa_cpu_bind);
 		info("SyscfgPath=%s", syscfg_path);
 		info("UmeCheckInterval=%u", ume_check_interval);
@@ -1957,7 +1953,7 @@ extern int init(void)
 		xfree(default_mcdram_str);
 		xfree(default_numa_str);
 	}
-	gres_plugin_add("hbm");
+	gres_add("hbm");
 
 	if (ume_check_interval && running_in_slurmd()) {
 		slurm_mutex_lock(&ume_mutex);
@@ -2101,8 +2097,7 @@ static void _check_node_status(void)
 	}
 	json_object_put(j_obj);	/* Frees json memory */
 
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		nid = atoi(node_ptr->name + 3);	/* Skip "nid" */
 		if ((nid < 0) || (nid >= 100000) ||
 		    bit_test(capmc_node_bitmap, nid))
@@ -2117,7 +2112,7 @@ static void _check_node_status(void)
 		node_ptr->reason_time = time(NULL);
 		node_ptr->reason_uid = slurm_conf.slurm_user_id;
 		if (avail_node_bitmap)
-			bit_clear(avail_node_bitmap, i);
+			bit_clear(avail_node_bitmap, node_ptr->index);
 	}
 	FREE_NULL_BITMAP(capmc_node_bitmap);
 }
@@ -2549,8 +2544,7 @@ static int _update_node_state(char *node_list, bool set_locks)
 			unlock_slurmctld(write_nodes_lock);
 		hostlist_destroy(host_list);
 	} else {
-		for (i = 0, node_ptr = node_record_table_ptr;
-		     i < node_record_count; i++, node_ptr++) {
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
 			if (waiting_for_node_boot(node_ptr)) {
 				/*
 				 * Reboot likely in progress.
@@ -2616,7 +2610,7 @@ extern void node_features_p_node_state(char **avail_modes, char **current_mode)
 }
 
 /* Test if a job's feature specification is valid */
-extern int node_features_p_job_valid(char *job_features)
+extern int node_features_p_job_valid(char *job_features, list_t *feature_list)
 {
 	uint16_t job_mcdram, job_numa;
 	int mcdram_cnt, numa_cnt;
@@ -2664,16 +2658,19 @@ extern int node_features_p_job_valid(char *job_features)
  * Translate a job's feature request to the node features needed at boot time.
  *	If multiple MCDRAM or NUMA values are ORed, pick the first ones.
  * IN job_features - job's --constraint specification
- * RET features required on node reboot. Must xfree to release memory
+ * RET comma-delimited features required on node reboot. Must xfree to release
+ *     memory
  */
-extern char *node_features_p_job_xlate(char *job_features)
+extern char *node_features_p_job_xlate(char *job_features,
+				       list_t *feature_list,
+				       bitstr_t *job_node_bitmap)
 {
 	char *node_features = NULL;
 	char *tmp, *save_ptr = NULL, *mult, *sep = "", *tok;
 	bool has_numa = false, has_mcdram = false;
 
-	if ((job_features == NULL) || (job_features[0] ==  '\0'))
-		return node_features;
+	if (!job_features)
+		return NULL;
 
 	tmp = xstrdup(job_features);
 	tok = strtok_r(tmp, "[]()|&", &save_ptr);
@@ -2750,8 +2747,7 @@ extern int node_features_p_node_set(char *active_features)
 extern int node_features_p_node_update(char *active_features,
 				       bitstr_t *node_bitmap)
 {
-	int i, i_first, i_last;
-	int rc = SLURM_SUCCESS, numa_inx = -1;
+	int i, rc = SLURM_SUCCESS, numa_inx = -1;
 	int mcdram_inx = 0;
 	uint64_t mcdram_size;
 	node_record_t *node_ptr;
@@ -2785,30 +2781,15 @@ extern int node_features_p_node_update(char *active_features,
 		mcdram_inx = -1;
 	}
 
-	xassert(node_bitmap);
-	i_first = bit_ffs(node_bitmap);
-	if (i_first >= 0)
-		i_last = bit_fls(node_bitmap);
-	else
-		i_last = i_first - 1;
-	for (i = i_first; i <= i_last; i++) {
-		if (!bit_test(node_bitmap, i))
-			continue;
-		if (i >= node_record_count) {
-			error("%s: Invalid node index (%d >= %d)",
-			      __func__, i, node_record_count);
-			rc = SLURM_ERROR;
-			break;
-		}
-		node_ptr = node_record_table_ptr + i;
+	for (i = 0; (node_ptr = next_node_bitmap(node_bitmap, &i)); i++) {
 		if ((numa_inx >= 0) && cpu_bind[numa_inx])
 			node_ptr->cpu_bind = cpu_bind[numa_inx];
 		if (mcdram_per_node && (mcdram_inx >= 0)) {
 			mcdram_size = mcdram_per_node[i] *
 				      (100 - mcdram_pct[mcdram_inx]) / 100;
-			gres_plugin_node_feature(node_ptr->name, "hbm",
-						 mcdram_size, &node_ptr->gres,
-						 &node_ptr->gres_list);
+			gres_node_feature(node_ptr->name, "hbm",
+					  mcdram_size, &node_ptr->gres,
+					  &node_ptr->gres_list);
 		}
 	}
 
@@ -3111,6 +3092,8 @@ extern bool node_features_p_user_update(uid_t uid)
 		if (allowed_uid[i] == uid)
 			return true;
 	}
+	log_flag(NODE_FEATURES, "UID %u is not allowed to update node features",
+		 uid);
 
 	return false;
 }
@@ -3192,11 +3175,6 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 	list_append(data, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("NodeRebootWeight");
-	key_pair->value = xstrdup_printf("%u", node_reboot_weight);
-	list_append(data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SyscfgPath");
 	key_pair->value = xstrdup(syscfg_path);
 	list_append(data, key_pair);
@@ -3209,12 +3187,4 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 	list_sort(data, (ListCmpF) sort_key_pairs);
 
 	return;
-}
-
-/*
- * Return node "weight" field if reboot required to change mode
- */
-extern uint32_t node_features_p_reboot_weight(void)
-{
-	return node_reboot_weight;
 }

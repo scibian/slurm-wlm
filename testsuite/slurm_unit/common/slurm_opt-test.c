@@ -86,7 +86,7 @@ START_TEST(test_data_job_macros)
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_CONTIGUOUS, arg,
 						errors) == 0,
 		      "LONG_OPT_CONTIGUOUS=true");
-	ck_assert_msg(opt.contiguous, true, "contiguous=true");
+	ck_assert_msg(opt.contiguous == true, "contiguous=true");
 	data_set_bool(arg, false);
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_CONTIGUOUS, arg,
 						errors) == 0,
@@ -97,7 +97,7 @@ START_TEST(test_data_job_macros)
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_CPUS_PER_GPU,
 						arg, errors) == 0,
 		      "LONG_OPT_CPUS_PER_GPU");
-	ck_assert_msg(opt.cpus_per_gpu, 12345, "cpus_per_gpu");
+	ck_assert_msg(opt.cpus_per_gpu == 12345, "cpus_per_gpu");
 	data_set_string(arg, "0");
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_CPUS_PER_GPU,
 						arg, errors) == 0,
@@ -263,8 +263,7 @@ START_TEST(test_data_job)
 	data_set_string(arg, "invalid");
 	ck_assert_msg(slurm_process_option_data(&opt, 'm', arg, errors) != 0,
 		      "distribution");
-	ck_assert_msg(opt.distribution == SLURM_DIST_UNKNOWN,
-		      "distribution value");
+	ck_assert_msg(opt.distribution == SLURM_ERROR, "distribution value");
 	ck_assert_msg(opt.plane_size == NO_VAL, "distribution value");
 
 	data_set_string(arg, "cyclic:block:fcyclic");
@@ -340,7 +339,7 @@ START_TEST(test_data_job)
 	data_set_string(arg, "gpu:10");
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_GRES, arg,
 						errors) == 0, "gres");
-	ck_assert_msg(!xstrcmp(opt.gres, "gpu:10"), "gres value");
+	ck_assert_msg(!xstrcmp(opt.gres, "gres:gpu:10"), "gres value");
 
 	data_set_string(arg, "invalid");
 	ck_assert_msg(slurm_process_option_data(&opt, LONG_OPT_GRES_FLAGS, arg,
@@ -651,7 +650,7 @@ START_TEST(test_data_job)
 						errors) != 0, "thread-spec");
 
 	data_set_string(arg, "invalid");
-	ck_assert_msg(slurm_process_option_data(&opt, 't', arg, errors), 0,
+	ck_assert_msg(slurm_process_option_data(&opt, 't', arg, errors) != 0,
 		      "time-limit");
 	data_set_string(arg, "0");
 	ck_assert_msg(slurm_process_option_data(&opt, 't', arg, errors) == 0,
@@ -758,7 +757,7 @@ int main(void)
 	log_opts.stderr_level = LOG_LEVEL_DEBUG5;
 	log_init("slurm_opt-test", log_opts, 0, NULL);
 
-	/* Call slurm_conf_init() with a mock slurm.conf*/
+	/* Call slurm_init() with a mock slurm.conf*/
 	int fd;
 	char *slurm_unit_conf_filename = xstrdup("slurm_unit.conf-XXXXXX");
 	if ((fd = mkstemp(slurm_unit_conf_filename)) == -1) {
@@ -768,18 +767,27 @@ int main(void)
 	} else
 		debug("fake slurm.conf created: %s", slurm_unit_conf_filename);
 
+	/*
+	 * PluginDir=. is needed as loading the slurm.conf will check for the
+	 * existence of the dir. As 'make check' doesn't install anything the
+	 * normal PluginDir might not exist. As we don't load any plugins for
+	 * these test this should be ok.
+	 */
 	char slurm_unit_conf_content[] = "ClusterName=slurm_unit\n"
-					 "PluginDir=.\n"
+		                         "PluginDir=.\n"
 					 "SlurmctldHost=slurm_unit\n";
 	size_t csize = sizeof(slurm_unit_conf_content);
 	ssize_t rc = write(fd, slurm_unit_conf_content, csize);
 	if (rc < csize) {
-		error("error writting slurm_unit.conf (%s)",
+		error("error writing slurm_unit.conf (%s)",
 		      slurm_unit_conf_filename);
 		return EXIT_FAILURE;
 	}
-	if (slurm_conf_init(slurm_unit_conf_filename)) {
-		error("slurm_conf_init() failed");
+
+	/* Do not load any plugins, we are only testing slurm_opt */
+	if (slurm_conf_init_load(slurm_unit_conf_filename, false) !=
+	    SLURM_SUCCESS) {
+		error("slurm_conf_init_load() failed");
 		return EXIT_FAILURE;
 	}
 
@@ -787,8 +795,8 @@ int main(void)
 	xfree(slurm_unit_conf_filename);
 	close(fd);
 
-	/* data_init_static() is necessary on this test */
-	if(data_init_static()) {
+	/* data_init() is necessary on this test */
+	if (data_init()) {
 		error("data_init_static() failed");
 		return EXIT_FAILURE;
 	}
@@ -802,7 +810,7 @@ int main(void)
 	srunner_free(sr);
 
 	/* Cleanup */
-	data_destroy_static();
+	data_fini();
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

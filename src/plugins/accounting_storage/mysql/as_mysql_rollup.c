@@ -285,7 +285,7 @@ static int _update_unused_wall(local_resv_usage_t *r_usage, List job_tres,
 		 * With a Flex reservation you can easily have more time than is
 		 * possible.  Just print this debug3 warning if it happens.
 		 */
-		debug3("WARNING: Unused wall is less than zero; this should never happen outside a Flex reservation. Setting it to zero for resv id = %d, start = %ld.",
+		debug3("Unused wall is less than zero; this should never happen outside a Flex reservation. Setting it to zero for resv id = %d, start = %ld.",
 		       r_usage->id, r_usage->orig_start);
 		r_usage->unused_wall = 0;
 	}
@@ -537,7 +537,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 				      local_tres_usage_t *loc_tres,
 				      char **query)
 {
-	char start_char[20], end_char[20];
+	char start_char[256], end_char[256];
 	uint64_t total_used;
 
 	if (!loc_tres)
@@ -553,9 +553,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 				    sizeof(start_char));
 		slurm_make_time_str(&curr_end, end_char,
 				    sizeof(end_char));
-		error("We have more allocated time than is "
-		      "possible (%"PRIu64" > %"PRIu64") for "
-		      "cluster %s(%"PRIu64") from %s - %s tres %u",
+		error("We have more allocated time than is possible (%"PRIu64" > %"PRIu64") for cluster %s(%"PRIu64") from %s - %s tres %u (this may happen if oversubscription of resources is allowed without Gang)",
 		      loc_tres->time_alloc, loc_tres->total_time,
 		      cluster_name, loc_tres->count,
 		      start_char, end_char, loc_tres->id);
@@ -574,10 +572,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 				    sizeof(start_char));
 		slurm_make_time_str(&curr_end, end_char,
 				    sizeof(end_char));
-		error("We have more time than is "
-		      "possible (%"PRIu64"+%"PRIu64"+%"
-		      PRIu64")(%"PRIu64") > %"PRIu64" for "
-		      "cluster %s(%"PRIu64") from %s - %s tres %u",
+		error("We have more time than is possible (%"PRIu64"+%"PRIu64"+%"PRIu64")(%"PRIu64") > %"PRIu64" for cluster %s(%"PRIu64") from %s - %s tres %u (this may happen if oversubscription of resources is allowed without Gang)",
 		      loc_tres->time_alloc, loc_tres->time_down,
 		      loc_tres->time_pd, total_used,
 		      loc_tres->total_time,
@@ -671,7 +666,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 			   "(creation_time, mod_time, "
 			   "time_start, id_tres, count, "
 			   "alloc_secs, down_secs, pdown_secs, "
-			   "idle_secs, over_secs, resv_secs) "
+			   "idle_secs, over_secs, plan_secs) "
 			   "values (%ld, %ld, %ld, %u, %"PRIu64", "
 			   "%"PRIu64", %"PRIu64", %"PRIu64", "
 			   "%"PRIu64", %"PRIu64", %"PRIu64")",
@@ -723,7 +718,7 @@ static int _process_cluster_usage(mysql_conn_t *mysql_conn,
 		   "pdown_secs=VALUES(pdown_secs), "
 		   "idle_secs=VALUES(idle_secs), "
 		   "over_secs=VALUES(over_secs), "
-		   "resv_secs=VALUES(resv_secs)",
+		   "plan_secs=VALUES(plan_secs)",
 		   now);
 
 	/* Spacing out the inserts here instead of doing them
@@ -889,7 +884,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 	 * state.  We handle those later with the reservations.
 	 */
 	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "!(state & %d) && (time_start < %ld "
+			       "!(state & %"PRIu64") && (time_start < %ld "
 			       "&& (time_end >= %ld "
 			       "|| time_end = 0)) "
 			       "order by node_name, time_start",
@@ -1037,11 +1032,20 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 			continue;
 
 		seconds -= resv_seconds;
-		if (seconds > 0)
-			_add_tres_time_2_list(c_usage->loc_tres,
-					      row[EVENT_REQ_TRES],
-					      TIME_DOWN,
-					      seconds, 0, 0);
+		if (seconds > 0) {
+			if (((state & NODE_STATE_BASE) == NODE_STATE_FUTURE) ||
+			    ((state & NODE_STATE_CLOUD) &&
+			     (state & NODE_STATE_POWERED_DOWN)))
+				_add_tres_time_2_list(c_usage->loc_tres,
+						      row[EVENT_REQ_TRES],
+						      TIME_PDOWN,
+						      seconds, 0, 0);
+			else
+				_add_tres_time_2_list(c_usage->loc_tres,
+						      row[EVENT_REQ_TRES],
+						      TIME_DOWN,
+						      seconds, 0, 0);
+		}
 
 		/*
 		 * Now remove this time if there was a
@@ -1081,7 +1085,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 	return c_usage;
 }
 
-extern int _setup_resv_usage(mysql_conn_t *mysql_conn,
+static int _setup_resv_usage(mysql_conn_t *mysql_conn,
 			     char *cluster_name,
 			     time_t curr_start,
 			     time_t curr_end,
@@ -1214,6 +1218,35 @@ extern int _setup_resv_usage(mysql_conn_t *mysql_conn,
 	mysql_free_result(result);
 
 	return SLURM_SUCCESS;
+}
+
+static void _add_planned_time(local_cluster_usage_t *c_usage, time_t job_start,
+			      time_t job_eligible, uint32_t array_pending,
+			      uint32_t row_rcpu)
+{
+	int eligible_start, eligible_end, loc_seconds = 0;
+
+	if (!c_usage || (job_start && (job_start < c_usage->start)))
+		return;
+
+	eligible_start = MAX(job_eligible, c_usage->start);
+	eligible_end = job_start ? MIN(job_start, c_usage->end) : c_usage->end;
+	loc_seconds = (eligible_end - eligible_start);
+
+	if (loc_seconds <= 0)
+		return;
+
+	/*
+	* If we have pending jobs in an array
+	* they haven't been inserted into the
+	* database yet as proper job records,
+	* so handle them here.
+	*/
+	if (array_pending)
+		loc_seconds *= array_pending;
+
+	_add_time_tres(c_usage->loc_tres, TIME_RESV, TRES_CPU,
+		       loc_seconds * (uint64_t) row_rcpu, 0);
 }
 
 extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
@@ -1531,10 +1564,6 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 
 			/* first figure out the reservation */
 			if (resv_id) {
-				if (seconds <= 0) {
-					_transfer_loc_tres(&loc_tres, a_usage);
-					continue;
-				}
 				/*
 				 * Since we have already added the entire
 				 * reservation as used time on the cluster we
@@ -1560,6 +1589,19 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 					 */
 					if (r_usage->id != resv_id)
 						continue;
+
+					if (r_usage->flags &
+					    RESERVE_FLAG_IGN_JOBS) {
+						_add_planned_time(
+							c_usage,
+							MIN(row_start,
+							    r_usage->end),
+							MAX(row_eligible,
+							    r_usage->start),
+							array_pending,
+							row_rcpu);
+					}
+
 					temp_end = row_end;
 					temp_start = row_start;
 					if (r_usage->start > temp_start)
@@ -1606,17 +1648,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 				continue;
 			}
 
-			/*
-			 * only record time for the clusters that have
-			 * registered.  This continue should rarely if
-			 * ever happen.
-			 */
-			if (!c_usage) {
-				_transfer_loc_tres(&loc_tres, a_usage);
-				continue;
-			}
-
-			if (row_start && (seconds > 0)) {
+			if (c_usage && row_start && (seconds > 0)) {
 				/* info("%d assoc %d adds " */
 				/*      "(%d)(%d-%d) * %d = %d " */
 				/*      "to %d", */
@@ -1639,44 +1671,8 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 			 */
 			_transfer_loc_tres(&loc_tres, a_usage);
 
-			/* now reserved time */
-			if (!row_start || (row_start >= c_usage->start)) {
-				int temp_end = row_start;
-				int temp_start = row_eligible;
-				if (c_usage->start > temp_start)
-					temp_start = c_usage->start;
-				if (c_usage->end < temp_end)
-					temp_end = c_usage->end;
-				loc_seconds = (temp_end - temp_start);
-				if (loc_seconds > 0) {
-					/*
-					 * If we have pending jobs in an array
-					 * they haven't been inserted into the
-					 * database yet as proper job records,
-					 * so handle them here.
-					 */
-					if (array_pending)
-						loc_seconds *= array_pending;
-
-					/* info("%d assoc %d reserved " */
-					/*      "(%d)(%d-%d) * %d * %d = %d " */
-					/*      "to %d", */
-					/*      job_id, */
-					/*      assoc_id, */
-					/*      temp_end - temp_start, */
-					/*      temp_end, temp_start, */
-					/*      row_rcpu, */
-					/*      array_pending, */
-					/*      loc_seconds, */
-					/*      row_rcpu); */
-
-					_add_time_tres(c_usage->loc_tres,
-						       TIME_RESV, TRES_CPU,
-						       loc_seconds *
-						       (uint64_t) row_rcpu,
-						       0);
-				}
-			}
+			_add_planned_time(c_usage, row_start, row_eligible,
+					  array_pending, row_rcpu);
 		}
 		mysql_free_result(result);
 
@@ -1736,10 +1732,10 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 						a_usage->id = associd;
 						list_append(assoc_usage_list,
 							    a_usage);
-						last_id = associd;
 						a_usage->loc_tres = list_create(
 							_destroy_local_tres_usage);
 					}
+					last_id = associd;
 
 					_add_time_tres(a_usage->loc_tres,
 						       TIME_ALLOC, loc_tres->id,
@@ -1942,7 +1938,7 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 			   "insert into \"%s_%s\" (creation_time, "
 			   "mod_time, time_start, id_tres, count, "
 			   "alloc_secs, down_secs, pdown_secs, "
-			   "idle_secs, over_secs, resv_secs) "
+			   "idle_secs, over_secs, plan_secs) "
 			   "select %ld, %ld, "
 			   "%ld, id_tres, @CPU:=MAX(count), "
 			   "@ASUM:=SUM(alloc_secs), "
@@ -1950,14 +1946,14 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 			   "@PDSUM:=SUM(pdown_secs), "
 			   "@ISUM:=SUM(idle_secs), "
 			   "@OSUM:=SUM(over_secs), "
-			   "@RSUM:=SUM(resv_secs) from \"%s_%s\" where "
+			   "@PSUM:=SUM(plan_secs) from \"%s_%s\" where "
 			   "(time_start < %ld && time_start >= %ld) "
 			   "group by deleted, id_tres "
 			   "on duplicate key update "
 			   "mod_time=%ld, count=@CPU, "
 			   "alloc_secs=@ASUM, down_secs=@DSUM, "
 			   "pdown_secs=@PDSUM, idle_secs=@ISUM, "
-			   "over_secs=@OSUM, resv_secs=@RSUM;",
+			   "over_secs=@OSUM, plan_secs=@PSUM;",
 			   cluster_name,
 			   run_month ? cluster_month_table : cluster_day_table,
 			   now, now, curr_start,

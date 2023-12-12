@@ -64,6 +64,7 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 static uint32_t job_id = NO_VAL;
+static uid_t job_uid;
 
 static bool local_xauthority = false;
 static char hostname[256] = {0};
@@ -76,6 +77,7 @@ static slurm_addr_t alloc_node;
 static char *x11_target = NULL;
 /* X11 display port on target (if not a UNIX socket). */
 static uint16_t x11_target_port = 0;
+static uint16_t protocol_version = SLURM_PROTOCOL_VERSION;
 
 static void *_eio_thread(void *arg)
 {
@@ -113,7 +115,8 @@ static int _x11_socket_read(eio_obj_t *obj, List objs)
 
 	*remote = slurm_open_msg_conn(&alloc_node);
 	if (*remote < 0) {
-		error("%s: slurm_open_msg_conn: %m", __func__);
+		error("%s: slurm_open_msg_conn(%pA): %m",
+		      __func__, &alloc_node);
 		goto shutdown;
 	}
 
@@ -126,6 +129,8 @@ static int _x11_socket_read(eio_obj_t *obj, List objs)
 	slurm_msg_t_init(&resp);
 
 	req.msg_type = SRUN_NET_FORWARD;
+	req.protocol_version = protocol_version;
+	slurm_msg_set_r_uid(&req, job_uid);
 	req.data = &rpc;
 
 	slurm_send_recv_msg(*remote, &req, &resp, 0);
@@ -175,33 +180,42 @@ static char *_get_home(uid_t uid)
 {
 	struct passwd pwd, *pwd_ptr = NULL;
 	char pwd_buf[PW_BUF_SIZE];
+	int rc;
 
-	if (slurm_getpwuid_r(uid, &pwd, pwd_buf, PW_BUF_SIZE, &pwd_ptr)
-	    || (pwd_ptr == NULL)) {
-		error("%s: getpwuid_r(%u):%m", __func__, uid);
+	rc = slurm_getpwuid_r(uid, &pwd, pwd_buf, PW_BUF_SIZE, &pwd_ptr);
+	if (rc || !pwd_ptr) {
+		if (!pwd_ptr && !rc)
+			error("%s: getpwuid_r(%u): no record found",
+			      __func__, uid);
+		else
+			error("%s: getpwuid_r(%u): %m", __func__, uid);
 		return NULL;
 	}
 
 	return xstrdup(pwd.pw_dir);
 }
 
-extern int shutdown_x11_forward(stepd_step_rec_t *job)
+extern int shutdown_x11_forward(stepd_step_rec_t *step)
 {
+	int rc = SLURM_SUCCESS;
+
 	debug("x11 forwarding shutdown in progress");
 	eio_signal_shutdown(eio_handle);
 
-	if (job->x11_xauthority) {
+	if (step->x11_xauthority) {
 		if (local_xauthority) {
-			if (unlink(job->x11_xauthority))
+			if (unlink(step->x11_xauthority)) {
 				error("%s: problem unlinking xauthority file %s: %m",
-				      __func__, job->x11_xauthority);
+				      __func__, step->x11_xauthority);
+				rc = SLURM_ERROR;
+			}
 		} else
-			x11_delete_xauth(job->x11_xauthority, hostname,
-					 job->x11_display);
+			rc = x11_delete_xauth(step->x11_xauthority, hostname,
+					      step->x11_display);
 	}
 
 	info("x11 forwarding shutdown complete");
-	_exit(0);
+	return rc;
 }
 
 /*
@@ -211,7 +225,7 @@ extern int shutdown_x11_forward(stepd_step_rec_t *job)
  * IN: job
  * OUT: SLURM_SUCCESS or SLURM_ERROR
  */
-extern int setup_x11_forward(stepd_step_rec_t *job)
+extern int setup_x11_forward(stepd_step_rec_t *step)
 {
 	int listen_socket = -1;
 	uint16_t port;
@@ -231,33 +245,38 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 		.readable = _x11_socket_readable,
 		.handle_read = _x11_socket_read,
 	};
+	srun_info_t *srun = list_peek(step->sruns);
+	/* This should always be set to something else we have a bug. */
+	xassert(srun && srun->protocol_version);
+	protocol_version = srun->protocol_version;
 
-	job_id = job->step_id.job_id;
-	x11_target = xstrdup(job->x11_target);
-	x11_target_port = job->x11_target_port;
+	job_id = step->step_id.job_id;
+	job_uid = step->uid;
+	x11_target = xstrdup(step->x11_target);
+	x11_target_port = step->x11_target_port;
 
-	slurm_set_addr(&alloc_node, job->x11_alloc_port, job->x11_alloc_host);
+	slurm_set_addr(&alloc_node, step->x11_alloc_port, step->x11_alloc_host);
 
 	debug("X11Parameters: %s", slurm_conf.x11_params);
 
 	if (xstrcasestr(slurm_conf.x11_params, "home_xauthority")) {
 		char *home = NULL;
-		if (!(home = _get_home(job->uid))) {
+		if (!(home = _get_home(step->uid))) {
 			error("could not find HOME in environment");
 			goto shutdown;
 		}
-		job->x11_xauthority = xstrdup_printf("%s/.Xauthority", home);
+		step->x11_xauthority = xstrdup_printf("%s/.Xauthority", home);
 		xfree(home);
 	} else {
 		/* use a node-local XAUTHORITY file instead of ~/.Xauthority */
 		int fd;
 		local_xauthority = true;
-		job->x11_xauthority = xstrdup_printf("%s/.Xauthority-XXXXXX",
-						     slurm_conf.tmp_fs);
+		step->x11_xauthority = slurm_get_tmp_fs(conf->node_name);
+		xstrcat(step->x11_xauthority, "/.Xauthority-XXXXXX");
 
 		/* protect against weak file permissions in old glibc */
 		umask(0077);
-		if ((fd = mkstemp(job->x11_xauthority)) == -1) {
+		if ((fd = mkstemp(step->x11_xauthority)) == -1) {
 			error("%s: failed to create temporary XAUTHORITY file: %m",
 			      __func__);
 			goto shutdown;
@@ -278,15 +297,10 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 		goto shutdown;
 	}
 
-	job->x11_display = port - X11_TCP_PORT_OFFSET;
-	if (x11_set_xauth(job->x11_xauthority, job->x11_magic_cookie,
-			  hostname, job->x11_display)) {
-		error("%s: failed to run xauth", __func__);
-		goto shutdown;
-	}
+	step->x11_display = port - X11_TCP_PORT_OFFSET;
 
 	info("X11 forwarding established on DISPLAY=%s:%d.0",
-	     hostname, job->x11_display);
+	     hostname, step->x11_display);
 
 	eio_handle = eio_handle_create(0);
 	obj = eio_obj_create(listen_socket, &x11_socket_ops, NULL);
@@ -297,8 +311,8 @@ extern int setup_x11_forward(stepd_step_rec_t *job)
 
 shutdown:
 	xfree(x11_target);
-	job->x11_display = 0;
-	xfree(job->x11_xauthority);
+	step->x11_display = 0;
+	xfree(step->x11_xauthority);
 	if (listen_socket != -1)
 		close(listen_socket);
 

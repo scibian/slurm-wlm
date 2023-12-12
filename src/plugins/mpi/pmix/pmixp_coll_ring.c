@@ -45,7 +45,7 @@
 typedef struct {
 	pmixp_coll_t *coll;
 	pmixp_coll_ring_ctx_t *coll_ctx;
-	Buf buf;
+	buf_t *buf;
 	uint32_t seq;
 } pmixp_coll_ring_cbdata_t;
 
@@ -88,7 +88,7 @@ static void _ring_sent_cb(int rc, pmixp_p2p_ctx_t ctx, void *_cbdata)
 	pmixp_coll_ring_cbdata_t *cbdata = (pmixp_coll_ring_cbdata_t*)_cbdata;
 	pmixp_coll_ring_ctx_t *coll_ctx = cbdata->coll_ctx;
 	pmixp_coll_t *coll = cbdata->coll;
-	Buf buf = cbdata->buf;
+	buf_t *buf = cbdata->buf;
 
 	pmixp_coll_sanity_check(coll);
 
@@ -140,11 +140,11 @@ pmixp_coll_t *pmixp_coll_ring_from_cbdata(void *cbdata)
 	return ptr->coll;
 }
 
-int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
+int pmixp_coll_ring_unpack(buf_t *buf, pmixp_coll_type_t *type,
 			   pmixp_coll_ring_msg_hdr_t *ring_hdr,
-			   pmixp_proc_t **r, size_t *nr)
+			   pmix_proc_t **r, size_t *nr)
 {
-	pmixp_proc_t *procs = NULL;
+	pmix_proc_t *procs = NULL;
 	uint32_t nprocs = 0;
 	uint32_t tmp;
 	int rc, i;
@@ -164,14 +164,14 @@ int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
 	}
 	*nr = nprocs;
 
-	procs = xmalloc(sizeof(pmixp_proc_t) * nprocs);
+	procs = xmalloc(sizeof(pmix_proc_t) * nprocs);
 	*r = procs;
 
 	/* 3. get namespace/rank of particular process */
 	for (i = 0; i < (int)nprocs; i++) {
 		if ((rc = unpackmem_ptr(&temp_ptr, &tmp, buf)) ||
 		    (strlcpy(procs[i].nspace, temp_ptr,
-			     PMIXP_MAX_NSLEN + 1) > PMIXP_MAX_NSLEN)) {
+			     sizeof(procs[i].nspace)) > PMIX_MAX_NSLEN)) {
 			PMIXP_ERROR("Cannot unpack namespace for process #%d",
 				    i);
 			return rc;
@@ -200,9 +200,9 @@ int pmixp_coll_ring_unpack(Buf buf, pmixp_coll_type_t *type,
 
 static int _pack_coll_ring_info(pmixp_coll_t *coll,
 				pmixp_coll_ring_msg_hdr_t *ring_hdr,
-				Buf buf)
+				buf_t *buf)
 {
-	pmixp_proc_t *procs = coll->pset.procs;
+	pmix_proc_t *procs = coll->pset.procs;
 	size_t nprocs = coll->pset.nprocs;
 	uint32_t type = PMIXP_COLL_TYPE_FENCE_RING;
 	int i;
@@ -224,20 +224,20 @@ static int _pack_coll_ring_info(pmixp_coll_t *coll,
 	return SLURM_SUCCESS;
 }
 
-static Buf _get_fwd_buf(pmixp_coll_ring_ctx_t *coll_ctx)
+static buf_t *_get_fwd_buf(pmixp_coll_ring_ctx_t *coll_ctx)
 {
 	pmixp_coll_ring_t *ring = _ctx_get_coll_ring(coll_ctx);
-	Buf buf = list_pop(ring->fwrd_buf_pool);
+	buf_t *buf = list_pop(ring->fwrd_buf_pool);
 	if (!buf) {
 		buf = pmixp_server_buf_new();
 	}
 	return buf;
 }
 
-static Buf _get_contrib_buf(pmixp_coll_ring_ctx_t *coll_ctx)
+static buf_t *_get_contrib_buf(pmixp_coll_ring_ctx_t *coll_ctx)
 {
 	pmixp_coll_ring_t *ring = _ctx_get_coll_ring(coll_ctx);
-	Buf ring_buf = list_pop(ring->ring_buf_pool);
+	buf_t *ring_buf = list_pop(ring->ring_buf_pool);
 	if (!ring_buf) {
 		ring_buf = create_buf(NULL, 0);
 	}
@@ -258,7 +258,7 @@ static int _ring_forward_data(pmixp_coll_ring_ctx_t *coll_ctx, uint32_t contrib_
 	pmixp_ep_t *ep = (pmixp_ep_t*)xmalloc(sizeof(*ep));
 	pmixp_coll_ring_cbdata_t *cbdata = NULL;
 	uint32_t offset = 0;
-	Buf buf = _get_fwd_buf(coll_ctx);
+	buf_t *buf = _get_fwd_buf(coll_ctx);
 	int rc = SLURM_SUCCESS;
 
 
@@ -317,7 +317,7 @@ static void _libpmix_cb(void *_vcbdata)
 {
 	pmixp_coll_ring_cbdata_t *cbdata = (pmixp_coll_ring_cbdata_t*)_vcbdata;
 	pmixp_coll_t *coll = cbdata->coll;
-	Buf buf = cbdata->buf;
+	buf_t *buf = cbdata->buf;
 
 	pmixp_coll_sanity_check(coll);
 
@@ -519,8 +519,8 @@ void pmixp_coll_ring_free(pmixp_coll_ring_t *ring)
 		FREE_NULL_BUFFER(coll_ctx->ring_buf);
 		xfree(coll_ctx->contrib_map);
 	}
-	list_destroy(ring->fwrd_buf_pool);
-	list_destroy(ring->ring_buf_pool);
+	FREE_NULL_LIST(ring->fwrd_buf_pool);
+	FREE_NULL_LIST(ring->ring_buf_pool);
 }
 
 inline static int _pmixp_coll_contrib(pmixp_coll_ring_ctx_t *coll_ctx,
@@ -644,7 +644,7 @@ int pmixp_coll_ring_check(pmixp_coll_t *coll, pmixp_coll_ring_msg_hdr_t *hdr)
 }
 
 int pmixp_coll_ring_neighbor(pmixp_coll_t *coll, pmixp_coll_ring_msg_hdr_t *hdr,
-			     Buf buf)
+			     buf_t *buf)
 {
 	int ret = SLURM_SUCCESS;
 	char *data_ptr = NULL;
@@ -735,7 +735,7 @@ void pmixp_coll_ring_reset_if_to(pmixp_coll_t *coll, time_t ts) {
 		}
 		if (ts - coll->ts > pmixp_info_timeout()) {
 			/* respond to the libpmix */
-			pmixp_coll_localcb_nodata(coll, PMIXP_ERR_TIMEOUT);
+			pmixp_coll_localcb_nodata(coll, PMIX_ERR_TIMEOUT);
 
 			/* report the timeout event */
 			PMIXP_ERROR("%p: collective timeout seq=%d",

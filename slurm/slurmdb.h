@@ -126,22 +126,24 @@ typedef enum {
 #define	QOS_FLAG_ADD                 0x20000000
 #define	QOS_FLAG_REMOVE              0x40000000
 
-#define	QOS_FLAG_PART_MIN_NODE       0x00000001
-#define	QOS_FLAG_PART_MAX_NODE       0x00000002
-#define	QOS_FLAG_PART_TIME_LIMIT     0x00000004
-#define	QOS_FLAG_ENFORCE_USAGE_THRES 0x00000008
-#define	QOS_FLAG_NO_RESERVE          0x00000010
-#define	QOS_FLAG_REQ_RESV            0x00000020
-#define	QOS_FLAG_DENY_LIMIT          0x00000040
-#define	QOS_FLAG_OVER_PART_QOS       0x00000080
-#define	QOS_FLAG_NO_DECAY            0x00000100
-#define	QOS_FLAG_USAGE_FACTOR_SAFE   0x00000200
+#define	QOS_FLAG_PART_MIN_NODE       SLURM_BIT(0)
+#define	QOS_FLAG_PART_MAX_NODE       SLURM_BIT(1)
+#define	QOS_FLAG_PART_TIME_LIMIT     SLURM_BIT(2)
+#define	QOS_FLAG_ENFORCE_USAGE_THRES SLURM_BIT(3)
+#define	QOS_FLAG_NO_RESERVE          SLURM_BIT(4)
+#define	QOS_FLAG_REQ_RESV            SLURM_BIT(5)
+#define	QOS_FLAG_DENY_LIMIT          SLURM_BIT(6)
+#define	QOS_FLAG_OVER_PART_QOS       SLURM_BIT(7)
+#define	QOS_FLAG_NO_DECAY            SLURM_BIT(8)
+#define	QOS_FLAG_USAGE_FACTOR_SAFE   SLURM_BIT(9)
 
 /* Define Server Resource flags */
 #define	SLURMDB_RES_FLAG_BASE        0x0fffffff /* apply to get real flags */
 #define	SLURMDB_RES_FLAG_NOTSET      0x10000000
 #define	SLURMDB_RES_FLAG_ADD         0x20000000
 #define	SLURMDB_RES_FLAG_REMOVE      0x40000000
+
+#define	SLURMDB_RES_FLAG_ABSOLUTE    SLURM_BIT(0)
 
 /* Define Federation flags */
 #define	FEDERATION_FLAG_BASE           0x0fffffff
@@ -172,35 +174,40 @@ enum cluster_fed_states {
  * slurmdb_job_[rec|cond]_t
  */
 #define SLURMDB_JOB_FLAG_NONE     0x00000000 /* No flags */
-#define SLURMDB_JOB_CLEAR_SCHED   0x0000000f /* clear scheduling bits */
-#define SLURMDB_JOB_FLAG_NOTSET   0x00000001 /* Not set */
-#define SLURMDB_JOB_FLAG_SUBMIT   0x00000002 /* Job was started on submit */
-#define SLURMDB_JOB_FLAG_SCHED    0x00000004 /* Job was started from main
-					      * scheduler */
-#define SLURMDB_JOB_FLAG_BACKFILL 0x00000008 /* Job was started from backfill */
+#define SLURMDB_JOB_CLEAR_SCHED   0x0000000f /* clear scheduling bits (0-3) */
+#define SLURMDB_JOB_FLAG_NOTSET   SLURM_BIT(0) /* Schedule bits not set */
+#define SLURMDB_JOB_FLAG_SUBMIT   SLURM_BIT(1) /* Job was started on submit */
+#define SLURMDB_JOB_FLAG_SCHED    SLURM_BIT(2) /* Job was started from main
+						* scheduler */
+#define SLURMDB_JOB_FLAG_BACKFILL SLURM_BIT(3) /* Job was started from
+						* backfill */
+#define SLURMDB_JOB_FLAG_START_R  SLURM_BIT(4) /* Job start rpc was received */
 
 /*
  * Slurm job condition flags
  * slurmdb_job_cond_t
  */
-#define JOBCOND_FLAG_DUP      0x00000001 /* Report duplicate job entries */
-#define JOBCOND_FLAG_NO_STEP  0x00000002 /* Don't report job step info */
-#define JOBCOND_FLAG_NO_TRUNC 0x00000004 /* Report info. without truncating
-					  * the time to the usage_start and
-					  * usage_end */
-#define JOBCOND_FLAG_RUNAWAY  0x00000008 /* Report runaway jobs only */
-#define JOBCOND_FLAG_WHOLE_HETJOB    0x00000010 /* Report info about all hetjob
-						 * components
-						 */
-#define JOBCOND_FLAG_NO_WHOLE_HETJOB 0x00000020 /* Only report info about
-						 * requested hetjob components
-						 */
-#define JOBCOND_FLAG_NO_WAIT          0x00000040 /* Tell dbd plugin not to wait
-						  * around for result.
-						  */
-#define JOBCOND_FLAG_NO_DEFAULT_USAGE 0x00000080 /* Use usage_time as the
-						  * submit_time of the job.
-						  */
+#define JOBCOND_FLAG_DUP              SLURM_BIT(0) /* Report duplicate job
+						    * entries */
+#define JOBCOND_FLAG_NO_STEP          SLURM_BIT(1) /* Don't report job step
+						    * info */
+#define JOBCOND_FLAG_NO_TRUNC         SLURM_BIT(2) /* Report info. without
+						    * truncating the time to the
+						    * usage_start and
+						    * usage_end */
+#define JOBCOND_FLAG_RUNAWAY          SLURM_BIT(3) /* Report runaway jobs onl */
+#define JOBCOND_FLAG_WHOLE_HETJOB     SLURM_BIT(4) /* Report info about all
+						    * hetjob components */
+#define JOBCOND_FLAG_NO_WHOLE_HETJOB  SLURM_BIT(5) /* Only report info about
+						    * requested hetjob
+						    * components */
+#define JOBCOND_FLAG_NO_WAIT          SLURM_BIT(6) /* Tell dbd plugin not to
+						    * wait around for result. */
+#define JOBCOND_FLAG_NO_DEFAULT_USAGE SLURM_BIT(7) /* Use usage_time as the
+						    * submit_time of the job.
+						    */
+#define JOBCOND_FLAG_SCRIPT           SLURM_BIT(8) /* Get batch script only */
+#define JOBCOND_FLAG_ENV              SLURM_BIT(9) /* Get job's env only */
 
 /* Archive / Purge time flags */
 #define SLURMDB_PURGE_BASE    0x0000ffff   /* Apply to get the number
@@ -219,29 +226,33 @@ enum cluster_fed_states {
 #define SLURMDB_CLASS_BASE      0x00ff
 
 /* Cluster flags */
-#define CLUSTER_FLAG_A1     0x00000001 /* UNUSED */
-#define CLUSTER_FLAG_A2     0x00000002 /* UNUSED */
-#define CLUSTER_FLAG_A3     0x00000004 /* UNUSED */
-#define CLUSTER_FLAG_A4     0x00000008 /* UNUSED */
-#define CLUSTER_FLAG_A5     0x00000010 /* UNUSED */
-#define CLUSTER_FLAG_A6     0x00000020 /* UNUSED */
-#define CLUSTER_FLAG_A7     0x00000040 /* UNUSED */
-#define CLUSTER_FLAG_MULTSD 0x00000080 /* This cluster is multiple slurmd */
-#define CLUSTER_FLAG_A9     0x00000100 /* UNUSED */
-#define CLUSTER_FLAG_A10    0x00000100 /* UNUSED */
-#define CLUSTER_FLAG_FE     0x00000200 /* This cluster is a front end system */
-#define CLUSTER_FLAG_CRAY_N 0x00000400 /* This cluster is a Native cray */
-#define CLUSTER_FLAG_FED    0x00000800 /* This cluster is in a federation. */
-#define CLUSTER_FLAG_EXT    0x00001000 /* This cluster is external */
-
-
-/* Cluster Combo flags */
-#define CLUSTER_FLAG_CRAY   0x00000500 /* This cluster is a cray.
-					  Combo of CRAY_A | CRAY_N */
-
+#define CLUSTER_FLAG_REGISTER SLURM_BIT(0) /* If the cluster is registering
+					    * right now or not */
+#define CLUSTER_FLAG_A2     SLURM_BIT(1) /* UNUSED */
+#define CLUSTER_FLAG_A3     SLURM_BIT(2) /* UNUSED */
+#define CLUSTER_FLAG_A4     SLURM_BIT(3) /* UNUSED */
+#define CLUSTER_FLAG_A5     SLURM_BIT(4) /* UNUSED */
+#define CLUSTER_FLAG_A6     SLURM_BIT(5) /* UNUSED */
+#define CLUSTER_FLAG_A7     SLURM_BIT(6) /* UNUSED */
+#define CLUSTER_FLAG_MULTSD SLURM_BIT(7) /* This cluster is multiple slurmd */
+#define CLUSTER_FLAG_A9     SLURM_BIT(8) /* UNUSED */
+#define CLUSTER_FLAG_FE     SLURM_BIT(9) /* This cluster is a front end system*/
+#define CLUSTER_FLAG_CRAY   SLURM_BIT(10) /* This cluster is a Native cray */
+#define CLUSTER_FLAG_FED    SLURM_BIT(11) /* This cluster is in a federation. */
+#define CLUSTER_FLAG_EXT    SLURM_BIT(12) /* This cluster is external */
 
 /* Assoc flags */
-#define ASSOC_FLAG_DELETED  0x0001
+#define ASSOC_FLAG_DELETED  SLURM_BIT(0)
+#define ASSOC_FLAG_NO_UPDATE SLURM_BIT(1)
+
+/* Event condition flags */
+#define SLURMDB_EVENT_COND_OPEN SLURM_BIT(0) /* Return only open events */
+
+/* Flags for slurmdbd_conn->db_conn */
+#define DB_CONN_FLAG_CLUSTER_DEL SLURM_BIT(0)
+#define DB_CONN_FLAG_ROLLBACK SLURM_BIT(1)
+#define DB_CONN_FLAG_FEDUPDATE SLURM_BIT(2)
+
 /********************************************/
 
 /* Association conditions used for queries of the database */
@@ -464,6 +475,8 @@ typedef struct slurmdb_assoc_rec {
 				       * (DON'T PACK) */
 	char *cluster;		   /* cluster associated to association */
 
+	char *comment;		   /* comment for the association */
+
 	uint32_t def_qos_id;       /* Which QOS id is this
 				    * associations default */
 	uint16_t flags;            /* various flags see ASSOC_FLAG_* */
@@ -506,10 +519,13 @@ typedef struct slurmdb_assoc_rec {
 				    * associations can run for */
 
 	uint32_t id;		   /* id identifing a combination of
-				    * user-account-cluster(-partition) */
+				    * user-account(-partition) */
 
 	uint16_t is_def;           /* Is this the users default assoc/acct */
 
+	slurmdb_assoc_usage_t *leaf_usage; /* Points to usage for user assocs.
+					    * Holds usage of deleted users in
+					    * parent assocs (DON'T PACK) */
 	uint32_t lft;		   /* lft used for grouping sub
 				    * associations and jobs as a left
 				    * most container used with rgt */
@@ -714,14 +730,14 @@ typedef struct {
 	uint64_t over_secs; /* number of cpu seconds overcommitted */
 	uint64_t pdown_secs; /* number of cpu seconds planned down */
 	time_t period_start; /* when this record was started */
-	uint64_t resv_secs; /* number of cpu seconds reserved */
+	uint64_t plan_secs; /* number of cpu seconds planned */
 	slurmdb_tres_rec_t tres_rec;
 } slurmdb_cluster_accounting_rec_t;
 
 typedef struct {
 	char *cluster; /* name of cluster */
-	uint16_t percent_allowed; /* percentage of total resources
-				   * allowed for this cluster */
+	uint32_t allowed; /* percentage/count of total resources
+			   * allowed for this cluster */
 } slurmdb_clus_res_rec_t;
 
 typedef struct {
@@ -731,6 +747,7 @@ typedef struct {
 
 typedef struct {
 	List cluster_list;	/* list of char * */
+	uint32_t cond_flags;    /* condition flags */
 	uint32_t cpus_max;      /* number of cpus high range */
 	uint32_t cpus_min;      /* number of cpus low range */
 	uint16_t event_type;    /* type of events (slurmdb_event_type_t),
@@ -792,13 +809,17 @@ typedef struct {
 	char	*blockid;
 	char    *cluster;
 	char    *constraints;
+	char *container; /* OCI Container Bundle path */
 	uint64_t db_index; /* index in the table */
 	uint32_t derived_ec;
 	char	*derived_es; /* aka "comment" */
 	uint32_t elapsed;
 	time_t eligible;
 	time_t end;
+	char *env;
 	uint32_t exitcode;
+	char *extra; /* Extra - arbitrary string */
+	char *failed_node;
 	uint32_t flags;
 	void *first_step_ptr;
 	uint32_t gid;
@@ -807,6 +828,7 @@ typedef struct {
 	uint32_t jobid;
 	char	*jobname;
 	uint32_t lft;
+	char *licenses;
 	char 	*mcs_label;
 	char	*nodes;
 	char	*partition;
@@ -817,28 +839,28 @@ typedef struct {
 	uint32_t requid;
 	uint32_t resvid;
 	char *resv_name;
+	char *script;
 	uint32_t show_full;
 	time_t start;
 	uint32_t state;
 	uint32_t state_reason_prev;
-	slurmdb_stats_t stats;
 	List    steps; /* list of slurmdb_step_rec_t *'s */
 	time_t submit;
+	char *submit_line;
 	uint32_t suspended;
 	char	*system_comment;
-	uint32_t sys_cpu_sec;
-	uint32_t sys_cpu_usec;
+	uint64_t sys_cpu_sec;
+	uint64_t sys_cpu_usec;
 	uint32_t timelimit;
-	uint32_t tot_cpu_sec;
-	uint32_t tot_cpu_usec;
-	uint16_t track_steps;
+	uint64_t tot_cpu_sec;
+	uint64_t tot_cpu_usec;
 	char *tres_alloc_str;
 	char *tres_req_str;
 	uint32_t uid;
 	char 	*used_gres;
 	char    *user;
-	uint32_t user_cpu_sec;
-	uint32_t user_cpu_usec;
+	uint64_t user_cpu_sec;
+	uint64_t user_cpu_usec;
 	char    *wckey;
 	uint32_t wckeyid;
 	char    *work_dir;
@@ -911,6 +933,8 @@ typedef struct {
 					   * (DON'T PACK) */
 	uint32_t grp_wall; /* total time in hours this qos can run for */
 
+	double limit_factor; /* factor to apply to tres_cnt for associations
+			      * using this qos */
 	uint32_t max_jobs_pa;	/* max number of jobs an account can
 				 * run with this qos at one time */
 	uint32_t max_jobs_pu;	/* max number of jobs a user can
@@ -1034,6 +1058,7 @@ typedef struct {
 typedef struct {
 	char *assocs; /* comma separated list of associations */
 	char *cluster; /* cluster reservation is for */
+	char *comment; /* arbitrary comment assigned to reservation */
 	uint64_t flags; /* flags for reservation. */
 	uint32_t id;   /* id of reservation. */
 	char *name; /* name of reservation */
@@ -1052,6 +1077,7 @@ typedef struct {
 } slurmdb_reservation_rec_t;
 
 typedef struct {
+	char *container;
 	uint32_t elapsed;
 	time_t end;
 	int32_t exitcode;
@@ -1069,20 +1095,22 @@ typedef struct {
 	slurmdb_stats_t stats;
 	slurm_step_id_t step_id;	/* job's step number */
 	char *stepname;
+	char *submit_line;
 	uint32_t suspended;
-	uint32_t sys_cpu_sec;
+	uint64_t sys_cpu_sec;
 	uint32_t sys_cpu_usec;
 	uint32_t task_dist;
-	uint32_t tot_cpu_sec;
+	uint64_t tot_cpu_sec;
 	uint32_t tot_cpu_usec;
 	char *tres_alloc_str;
-	uint32_t user_cpu_sec;
+	uint64_t user_cpu_sec;
 	uint32_t user_cpu_usec;
 } slurmdb_step_rec_t;
 
 /* slurmdb_stats_t defined above alphabetical */
 
 typedef struct {
+	list_t *allowed_list; /* list of char * */
 	List cluster_list; /* list of char * */
 	List description_list; /* list of char * */
 	uint32_t flags;
@@ -1090,7 +1118,6 @@ typedef struct {
 	List id_list; /* list of char * */
 	List manager_list; /* list of char * */
 	List name_list; /* list of char * */
-	List percent_list; /* list of char * */
 	List server_list; /* list of char * */
 	List type_list; /* list of char * */
 	uint16_t with_deleted;
@@ -1098,6 +1125,9 @@ typedef struct {
 } slurmdb_res_cond_t;
 
 typedef struct {
+	uint32_t allocated; /* count allocated to the clus_res_list */
+	uint32_t last_consumed; /* number from the server saying how many it
+				 * currently has consumed */
 	List clus_res_list; /* list of slurmdb_clus_res_rec_t *'s */
 	slurmdb_clus_res_rec_t *clus_res_rec; /* if only one cluster
 						 being represented */
@@ -1105,9 +1135,9 @@ typedef struct {
 	char *description;
 	uint32_t flags; /* resource attribute flags */
 	uint32_t id;
+	time_t last_update;
 	char *manager;  /* resource manager name */
 	char *name;
-	uint16_t percent_used;
 	char *server;  /* resource server name */
 	uint32_t type; /* resource type */
 } slurmdb_res_rec_t;
@@ -1250,6 +1280,7 @@ typedef struct {
 
 typedef struct {
 	slurmdb_assoc_rec_t *assoc;
+	char *key;
 	char *sort_name;
 	List children;
 } slurmdb_hierarchical_rec_t;
@@ -1655,7 +1686,7 @@ extern List slurmdb_jobs_get(void *db_conn, slurmdb_job_cond_t *job_cond);
 extern int slurmdb_jobs_fix_runaway(void *db_conn, List jobs);
 
 /* initialization of job completion logging */
-extern int slurmdb_jobcomp_init(char *jobcomp_loc);
+extern int slurmdb_jobcomp_init(void);
 
 /* terminate pthreads and free, general clean-up for termination */
 extern int slurmdb_jobcomp_fini(void);

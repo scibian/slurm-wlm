@@ -26,96 +26,40 @@
 ############################################################################
 source ./globals
 
-set exit_code     0
 set array_size    4
-set file_script   "test$test_id.sh"
 set job_id        0
 set task_limit    1
-
-proc cleanup {} {
-	global bin_rm file_script
-
-	exec $bin_rm -f $file_script
-}
 
 if {[get_config_param "MaxArraySize"] < [expr $array_size + 1]} {
 	skip "MaxArraySize is too small"
 }
 
-# Submit a job array with 4 elements
-make_bash_script $file_script "sleep 20"
+proc cleanup {} {
+	global job_id
 
-spawn $sbatch -n1 --array=0-[expr $array_size -1]%$task_limit --output=/dev/null -t1 $file_script
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	-re "error" {
-		log_error "sbatch did not submit jobs"
-		set exit_code 1
-	}
-	timeout {
-		fail "sbatch not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	fail "sbatch did not submit jobs"
-}
-
-if {[wait_for_job ${job_id}_0 "RUNNING"] != 0} {
 	cancel_job $job_id
-	fail "Waiting for job to start"
 }
 
-set inx 0
+# Submit a job array with 4 elements
+set job_id [submit_job -fail "-n1 --array=0-[expr $array_size -1]%$task_limit --output=/dev/null -t1 --wrap 'sleep 60'"]
 
-while { $inx < 10 } {
-	$bin_sleep 6
-	set run_count 0
-	spawn $scontrol show job $job_id
-	expect {
-		-re "RUNNING" {
-			incr run_count
-			exp_continue
-		}
-		timeout {
-			fail "scontrol not responding"
-		}
-		eof {
-			wait
-		}
-	}
+wait_for_job -fail ${job_id}_0 "RUNNING"
+
+# We want to see the array task limit increased up to the array size
+# and the running array elements increase to match until all are running.
+wait_for -subtest -timeout 60 {$task_limit == $array_size && $run_count == $array_size} {
+	set output [run_command_output -fail "$squeue --state=RUNNING --job $job_id --format %i --noheader"]
+	set run_count [regexp -all -line "^${job_id}_\\d+" $output]
+	log_debug "Array task limit: $task_limit, running job array elements: $run_count"
+
+	# Make sure we aren't running more elements than our current limit
 	if {$run_count > $task_limit} {
-		log_error "Too many tasks in the job array are running ($run_count > $task_limit)"
-		set exit_code 1
+		fail "More job array elements are running ($run_count) than the current limit ($task_limit) allows"
 	}
-	log_debug "+++ $run_count running tasks +++"
-	if {$run_count == 0} {
-		break
-	}
-	if {$run_count == $task_limit} {
+
+	# If we have reached our previous limit, increase it incrementally up to the array size
+	if {$run_count == $task_limit && $task_limit < $array_size} {
 		incr task_limit
-		spawn $scontrol update jobid=$job_id arraytaskthrottle $task_limit
-		expect {
-			timeout {
-				fail "scontrol not responding"
-			}
-			eof {
-				wait
-			}
-		}
+		run_command -fail "$scontrol update jobid=$job_id arraytaskthrottle $task_limit"
 	}
-	incr inx
-}
-
-if {[cancel_job $job_id] != 0} {
-	fail "Unable to cancel job ($job_id)"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

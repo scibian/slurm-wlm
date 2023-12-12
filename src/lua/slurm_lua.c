@@ -163,6 +163,16 @@ static const struct luaL_Reg slurm_functions [] = {
 	{ NULL, NULL }
 };
 
+static void _register_slurm_output_errtab(lua_State *L)
+{
+	int i;
+
+	for (i = 0; i < slurm_errtab_size; i++) {
+		lua_pushnumber(L, slurm_errtab[i].xe_number);
+		lua_setfield(L, -2, slurm_errtab[i].xe_name);
+	}
+}
+
 static void _register_slurm_output_functions(lua_State *L)
 {
 	char *unpack_str;
@@ -227,22 +237,7 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "FAILURE");
 	lua_pushnumber(L, SLURM_SUCCESS);
 	lua_setfield(L, -2, "SUCCESS");
-	lua_pushnumber(L, ESLURM_ACCESS_DENIED);
-	lua_setfield(L, -2, "ESLURM_ACCESS_DENIED");
-	lua_pushnumber(L, ESLURM_ACCOUNTING_POLICY);
-	lua_setfield(L, -2, "ESLURM_ACCOUNTING_POLICY");
-	lua_pushnumber(L, ESLURM_INVALID_ACCOUNT);
-	lua_setfield(L, -2, "ESLURM_INVALID_ACCOUNT");
-	lua_pushnumber(L, ESLURM_INVALID_LICENSES);
-	lua_setfield(L, -2, "ESLURM_INVALID_LICENSES");
-	lua_pushnumber(L, ESLURM_INVALID_NODE_COUNT);
-	lua_setfield(L, -2, "ESLURM_INVALID_NODE_COUNT");
-	lua_pushnumber(L, ESLURM_INVALID_TIME_LIMIT);
-	lua_setfield(L, -2, "ESLURM_INVALID_TIME_LIMIT");
-	lua_pushnumber(L, ESLURM_JOB_MISSING_SIZE_SPECIFICATION);
-	lua_setfield(L, -2, "ESLURM_JOB_MISSING_SIZE_SPECIFICATION");
-	lua_pushnumber(L, ESLURM_MISSING_TIME_LIMIT);
-	lua_setfield(L, -2, "ESLURM_MISSING_TIME_LIMIT");
+	_register_slurm_output_errtab(L);
 
 	/*
 	 * Other definitions needed to interpret data
@@ -254,7 +249,7 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "ALLOC_SID_USER_HOLD");
 	lua_pushnumber(L, INFINITE);
 	lua_setfield(L, -2, "INFINITE");
-	lua_pushnumber(L, INFINITE64);
+	lua_pushnumber(L, (double) INFINITE64);
 	lua_setfield(L, -2, "INFINITE64");
 	lua_pushnumber(L, MAIL_INVALID_DEPEND);
 	lua_setfield(L, -2, "MAIL_INVALID_DEPEND");
@@ -288,7 +283,7 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "JOB_SHARED_USER");
 	lua_pushnumber(L, JOB_SHARED_MCS);
 	lua_setfield(L, -2, "JOB_SHARED_MCS");
-	lua_pushnumber(L, NO_VAL64);
+	lua_pushnumber(L, (double) NO_VAL64);
 	lua_setfield(L, -2, "NO_VAL64");
 	lua_pushnumber(L, NO_VAL);
 	lua_setfield(L, -2, "NO_VAL");
@@ -376,6 +371,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->burst_buffer);
 	} else if (!xstrcmp(name, "comment")) {
 		lua_pushstring(L, job_ptr->comment);
+	} else if (!xstrcmp(name, "container")) {
+		lua_pushstring(L, job_ptr->container);
 	} else if (!xstrcmp(name, "cpus_per_tres")) {
 		lua_pushstring(L, job_ptr->cpus_per_tres);
 	} else if (!xstrcmp(name, "delay_boot")) {
@@ -388,6 +385,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushnumber(L, job_ptr->end_time);
 	} else if (!xstrcmp(name, "exit_code")) {
 		lua_pushnumber(L, job_ptr->exit_code);
+	} else if (!xstrcmp(name, "extra")) {
+		lua_pushstring(L, job_ptr->extra);
 	} else if (!xstrcmp(name, "features")) {
 		if (job_ptr->details)
 			lua_pushstring(L, job_ptr->details->features);
@@ -481,7 +480,7 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		if (job_ptr->details)
 			lua_pushnumber(L, job_ptr->details->pn_min_memory);
 		else
-			lua_pushnumber(L, NO_VAL64);
+			lua_pushnumber(L, (double) NO_VAL64);
 	} else if (!xstrcmp(name, "priority")) {
 		lua_pushnumber(L, job_ptr->priority);
 	} else if (!xstrcmp(name, "qos")) {
@@ -502,7 +501,7 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 	} else if (!xstrcmp(name, "resv_name")) {
 		lua_pushstring(L, job_ptr->resv_name);
 	} else if (!xstrcmp(name, "script")) {
-		Buf bscript = get_job_script(job_ptr);
+		buf_t *bscript = get_job_script(job_ptr);
 		if (bscript) {
 			char *script = bscript->head;
 			if (script && script[0] != '\0')
@@ -511,7 +510,9 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 				lua_pushnil(L);
 		} else
 			lua_pushnil(L);
-		free_buf(bscript);
+		FREE_NULL_BUFFER(bscript);
+	} else if (!xstrcmp(name, "selinux_context")) {
+		lua_pushstring(L, job_ptr->selinux_context);
  	} else if (!xstrcmp(name, "site_factor")) {
 		if (job_ptr->site_factor == NO_VAL)
 			lua_pushnumber(L, job_ptr->site_factor);
@@ -678,9 +679,7 @@ extern int slurm_lua_loadscript(lua_State **L, const char *plugin,
 	}
 	debug3("%s: %s: loading Lua script: %s", __func__, plugin, script_path);
 
-	/*
-	 *  Initilize lua
-	 */
+	/* Initialize lua */
 	if (!(new = luaL_newstate())) {
 		error("%s: %s: luaL_newstate() failed to allocate.",
 		      plugin, __func__);
@@ -784,7 +783,12 @@ extern int slurm_lua_init(void)
 
 	char *const lua_libs[] = {
 		"liblua.so",
-#if LUA_VERSION_NUM == 503
+#if LUA_VERSION_NUM == 504
+		"liblua-5.4.so",
+		"liblua5.4.so",
+		"liblua5.4.so.0",
+		"liblua.so.5.4",
+#elif LUA_VERSION_NUM == 503
 		"liblua-5.3.so",
 		"liblua5.3.so",
 		"liblua5.3.so.0",

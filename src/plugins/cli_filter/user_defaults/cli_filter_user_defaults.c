@@ -6,7 +6,7 @@
  *  Written by Douglas Jacobsen <dmjacobsen@lbl.gov>
  *  All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
@@ -48,9 +48,13 @@
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
-#include "src/common/uid.h"
+
+#include "src/interfaces/cli_filter.h"
+#include "src/common/read_config.h"
 #include "src/common/slurm_opt.h"
-#include "src/common/cli_filter.h"
+#include "src/common/uid.h"
+#include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
 #include "src/plugins/cli_filter/common/cli_filter_common.h"
 
 #define USER_DEFAULTS_FILE ".slurm/defaults"

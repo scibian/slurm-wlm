@@ -44,7 +44,7 @@
 
 #include "src/common/env.h"
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 #include "src/slurmdbd/read_config.h"
@@ -98,7 +98,7 @@ static void _dump_slurmdb_assoc_records(List assoc_list)
 static void _dump_slurmdb_clus_res_record(slurmdb_clus_res_rec_t *clus_res)
 {
 	debug("\t\t\tname=%s", clus_res->cluster);
-	debug("\t\t\tpercent_allowed=%u", clus_res->percent_allowed);
+	debug("\t\t\tallowed=%u", clus_res->allowed);
 }
 
 static void _dump_slurmdb_clus_res_records(List clus_res_list)
@@ -153,19 +153,14 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 	slurmdb_res_rec_t *res = object;
 	slurmdb_wckey_rec_t *wckey = object;
 #endif
-	ListIterator itr = NULL;
 
 	if (!update_list) {
 		error("no update list given");
 		return SLURM_ERROR;
 	}
 
-	itr = list_iterator_create(update_list);
-	while((update_object = list_next(itr))) {
-		if (update_object->type == type)
-			break;
-	}
-	list_iterator_destroy(itr);
+	update_object = list_find_first(
+		update_list, slurmdb_find_update_object_in_list, &type);
 
 	if (update_object) {
 		/* here we prepend primarly for remove association
@@ -397,9 +392,10 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
 		out_msg.msg_type = ACCOUNTING_FIRST_REG;
 		out_msg.flags = SLURM_GLOBAL_AUTH_KEY;
 		out_msg.data = &update;
+		slurm_msg_set_r_uid(&out_msg, SLURM_AUTH_UID_ANY);
 		slurm_send_node_msg(fd, &out_msg);
 		/* We probably need to add matching recv_msg function
-		 * for an arbitray fd or should these be fire
+		 * for an arbitrary fd or should these be fire
 		 * and forget?  For this, that we can probably
 		 * forget about it */
 		close(fd);
@@ -613,7 +609,7 @@ extern bool is_user_any_coord(void *db_conn, slurmdb_user_rec_t *user)
 }
 
 /*
- * acct_get_db_name - get database name of accouting storage
+ * acct_get_db_name - get database name of accounting storage
  * RET: database name, should be free-ed by caller
  */
 extern char *acct_get_db_name(void)
@@ -879,7 +875,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 	return fullname;
 }
 
-extern int archive_write_file(Buf buffer, char *cluster_name,
+extern int archive_write_file(buf_t *buffer, char *cluster_name,
 			      time_t period_start, time_t period_end,
 			      char *arch_dir, char *arch_type,
 			      uint32_t archive_period)
@@ -897,10 +893,6 @@ extern int archive_write_file(Buf buffer, char *cluster_name,
 	new_file = _make_archive_name(period_start, period_end,
 				      cluster_name, arch_dir,
 				      arch_type, archive_period);
-	if (!new_file) {
-		error("%s: Unable to make archive file name.", __func__);
-		return SLURM_ERROR;
-	}
 
 	debug("Storing %s archive for %s at %s",
 	      arch_type, cluster_name, new_file);
@@ -910,19 +902,7 @@ extern int archive_write_file(Buf buffer, char *cluster_name,
 		error("Can't save archive, create file %s error %m", new_file);
 		rc = SLURM_ERROR;
 	} else {
-		int amount;
-		uint32_t pos = 0, nwrite = get_buf_offset(buffer);
-		char *data = (char *)get_buf_data(buffer);
-		while (nwrite > 0) {
-			amount = write(fd, &data[pos], nwrite);
-			if ((amount < 0) && (errno != EINTR)) {
-				error("Error writing file %s, %m", new_file);
-				rc = SLURM_ERROR;
-				break;
-			}
-			nwrite -= amount;
-			pos    += amount;
-		}
+		safe_write(fd, get_buf_data(buffer), get_buf_offset(buffer));
 		fsync(fd);
 		close(fd);
 	}
@@ -931,4 +911,12 @@ extern int archive_write_file(Buf buffer, char *cluster_name,
 	slurm_mutex_unlock(&local_file_lock);
 
 	return rc;
+
+rwfail:
+	error("Error writing file %s, %m", new_file);
+	close(fd);
+	xfree(new_file);
+	slurm_mutex_unlock(&local_file_lock);
+
+	return SLURM_ERROR;
 }

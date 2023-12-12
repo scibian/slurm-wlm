@@ -39,6 +39,7 @@
 \*****************************************************************************/
 
 #include "src/sacctmgr/sacctmgr.h"
+#include "src/interfaces/data_parser.h"
 
 static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_assoc_cond_t *assoc_cond,
@@ -278,7 +279,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 				db_conn, NULL);
 
 		if (slurmdb_addto_qos_char_list(assoc_cond->def_qos_id_list,
-						g_qos_list, value, 0))
+						g_qos_list, value, 0) > 0)
 			set = 1;
 		else
 			exit_code = 1;
@@ -301,7 +302,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 				db_conn, NULL);
 
 		if (slurmdb_addto_qos_char_list(assoc_cond->qos_list,
-						g_qos_list, value, option))
+						g_qos_list, value, option) > 0)
 			set = 1;
 	} else if (!xstrncasecmp(type, "Users", MAX(command_len, 1))) {
 		if (!assoc_cond->user_list)
@@ -327,7 +328,10 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	if (!assoc)
 		return set;
 
-	if (!xstrncasecmp(type, "DefaultQOS", MAX(command_len, 8))) {
+	if (!xstrncasecmp(type, "Comment", MAX(command_len, 2))) {
+		assoc->comment = strip_quotes(value, NULL, 1);
+		set = 1;
+	} else if (!xstrncasecmp(type, "DefaultQOS", MAX(command_len, 8))) {
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
 				db_conn, NULL);
@@ -435,7 +439,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "GrpTRESMins", MAX(command_len, 8))) {
 		sacctmgr_initialize_g_tres_list();
 
@@ -446,7 +451,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "GrpTRESRunMins", MAX(command_len, 8))) {
 		sacctmgr_initialize_g_tres_list();
 
@@ -457,7 +463,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "GrpWall", MAX(command_len, 4))) {
 		mins = time_str2mins(value);
 		if (mins != NO_VAL) {
@@ -540,7 +547,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxTRESPerNode", MAX(command_len, 11))) {
 		sacctmgr_initialize_g_tres_list();
 
@@ -551,7 +559,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxTRESMinsPerJob",
 				MAX(command_len, 8))) {
 		sacctmgr_initialize_g_tres_list();
@@ -563,7 +572,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxTRESRunMins", MAX(command_len, 8))) {
 		sacctmgr_initialize_g_tres_list();
 
@@ -574,7 +584,8 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				tres_flags);
 			set = 1;
 			xfree(tmp_char);
-		}
+		} else
+			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxWallDurationPerJob",
 				MAX(command_len, 4))) {
 		mins = time_str2mins(value);
@@ -604,7 +615,7 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 
 		if (slurmdb_addto_qos_char_list(assoc->qos_list,
 						g_qos_list, value,
-						option))
+						option) > 0)
 			set = 1;
 	}
 
@@ -617,6 +628,7 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 {
 	char *print_acct = NULL;
 	char *tmp_char = NULL;
+	uint64_t tmp_uint64 = NO_VAL64;
 
 	xassert(field);
 
@@ -650,132 +662,150 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	case PRINT_CLUSTER:
 		field->print_routine(field, assoc->cluster, last);
 		break;
+	case PRINT_COMMENT:
+		field->print_routine(field, assoc->comment, last);
+		break;
 	case PRINT_DQOS:
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
 				db_conn, NULL);
-		tmp_char = slurmdb_qos_str(g_qos_list, assoc->def_qos_id);
+		if (assoc->def_qos_id != NO_VAL) {
+			tmp_char = slurmdb_qos_str(g_qos_list,
+						   assoc->def_qos_id);
+			if (!tmp_char)
+				tmp_char = print_acct =
+					xstrdup_printf("UNKN-%u",
+						       assoc->def_qos_id);
+		} else
+			tmp_char = print_acct = xstrdup("");
 		field->print_routine(field, tmp_char, last);
+		xfree(print_acct);
 		break;
 	case PRINT_FAIRSHARE:
 		if (assoc->shares_raw == SLURMDB_FS_USE_PARENT)
 			print_fields_str(field, "parent", last);
 		else
-			field->print_routine(field, assoc->shares_raw, last);
+			field->print_routine(field, &assoc->shares_raw, last);
 		break;
 	case PRINT_GRPCM:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->grp_tres_mins, TRES_CPU),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->grp_tres_mins, TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_GRPCRM:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->grp_tres_run_mins, TRES_CPU),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->grp_tres_run_mins,
-					     TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_GRPC:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->grp_tres, TRES_CPU),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->grp_tres,
-					     TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_GRPTM:
-		field->print_routine(field, assoc->grp_tres_mins, last);
+		field->print_routine(field, &assoc->grp_tres_mins, last);
 		break;
 	case PRINT_GRPTRM:
-		field->print_routine(field, assoc->grp_tres_run_mins, last);
+		field->print_routine(field, &assoc->grp_tres_run_mins, last);
 		break;
 	case PRINT_GRPT:
-		field->print_routine(field, assoc->grp_tres, last);
+		field->print_routine(field, &assoc->grp_tres, last);
 		break;
 	case PRINT_GRPJ:
-		field->print_routine(field, assoc->grp_jobs, last);
+		field->print_routine(field, &assoc->grp_jobs, last);
 		break;
 	case PRINT_GRPJA:
-		field->print_routine(field, assoc->grp_jobs_accrue, last);
+		field->print_routine(field, &assoc->grp_jobs_accrue, last);
 		break;
 	case PRINT_GRPMEM:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->grp_tres, TRES_MEM),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->grp_tres, TRES_MEM),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_GRPN:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->grp_tres, TRES_NODE),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->grp_tres, TRES_NODE),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_GRPS:
-		field->print_routine(field, assoc->grp_submit_jobs, last);
+		field->print_routine(field, &assoc->grp_submit_jobs, last);
 		break;
 	case PRINT_GRPW:
-		field->print_routine(field, assoc->grp_wall, last);
+		field->print_routine(field, &assoc->grp_wall, last);
 		break;
 	case PRINT_ID:
-		field->print_routine(field, assoc->id, last);
+		field->print_routine(field, &assoc->id, last);
 		break;
 	case PRINT_LFT:
-		field->print_routine(field, assoc->lft, last);
+		field->print_routine(field, &assoc->lft, last);
 		break;
 	case PRINT_MAXCM:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->max_tres_mins_pj, TRES_CPU),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->max_tres_mins_pj, TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_MAXCRM:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->max_tres_run_mins, TRES_CPU);
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->max_tres_run_mins,
-					     TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_MAXC:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->max_tres_pj, TRES_CPU);
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->max_tres_pj, TRES_CPU),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_MAXTM:
-		field->print_routine(field, assoc->max_tres_mins_pj, last);
+		field->print_routine(field, &assoc->max_tres_mins_pj, last);
 		break;
 	case PRINT_MAXTRM:
-		field->print_routine(field, assoc->max_tres_run_mins, last);
+		field->print_routine(field, &assoc->max_tres_run_mins, last);
 		break;
 	case PRINT_MAXT:
-		field->print_routine(field, assoc->max_tres_pj, last);
+		field->print_routine(field, &assoc->max_tres_pj, last);
 		break;
 	case PRINT_MAXTN:
-		field->print_routine(field, assoc->max_tres_pn, last);
+		field->print_routine(field, &assoc->max_tres_pn, last);
 		break;
 	case PRINT_MAXJ:
-		field->print_routine(field, assoc->max_jobs, last);
+		field->print_routine(field, &assoc->max_jobs, last);
 		break;
 	case PRINT_MAXJA:
-		field->print_routine(field, assoc->max_jobs_accrue, last);
+		field->print_routine(field, &assoc->max_jobs_accrue, last);
 		break;
 	case PRINT_MINPT:
-		field->print_routine(field, assoc->min_prio_thresh, last);
+		field->print_routine(field, &assoc->min_prio_thresh, last);
 		break;
 	case PRINT_MAXN:
+		tmp_uint64 = slurmdb_find_tres_count_in_string(
+					assoc->max_tres_pj, TRES_NODE),
 		field->print_routine(field,
-				     slurmdb_find_tres_count_in_string(
-					     assoc->max_tres_pj, TRES_NODE),
+				     &tmp_uint64,
 				     last);
 		break;
 	case PRINT_MAXS:
-		field->print_routine(field, assoc->max_submit_jobs, last);
+		field->print_routine(field, &assoc->max_submit_jobs, last);
 		break;
 	case PRINT_MAXW:
-		field->print_routine(field, assoc->max_wall_pj,	last);
+		field->print_routine(field, &assoc->max_wall_pj, last);
 		break;
 	case PRINT_PID:
-		field->print_routine(field, assoc->parent_id, last);
+		field->print_routine(field, &assoc->parent_id, last);
 		break;
 	case PRINT_PNAME:
 		field->print_routine(field, assoc->parent_acct, last);
@@ -784,20 +814,21 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		field->print_routine(field, assoc->partition, last);
 		break;
 	case PRINT_PRIO:
-		field->print_routine(field, assoc->priority, last);
+		field->print_routine(field, &assoc->priority, last);
 		break;
 	case PRINT_QOS:
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
 				db_conn, NULL);
-
-		field->print_routine(field, g_qos_list, assoc->qos_list, last);
+		tmp_char = get_qos_complete_str(g_qos_list, assoc->qos_list);
+		field->print_routine(field, tmp_char, last);
+		xfree(tmp_char);
 		break;
 	case PRINT_QOS_RAW:
-		field->print_routine(field, assoc->qos_list, last);
+		field->print_routine(field, &assoc->qos_list, last);
 		break;
 	case PRINT_RGT:
-		field->print_routine(field, assoc->rgt, last);
+		field->print_routine(field, &assoc->rgt, last);
 		break;
 	case PRINT_USER:
 		field->print_routine(field, assoc->user, last);
@@ -862,6 +893,14 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	assoc_list = slurmdb_associations_get(db_conn, assoc_cond);
 	slurmdb_destroy_assoc_cond(assoc_cond);
 
+	if (mime_type) {
+		rc = DATA_DUMP_CLI(ASSOC_LIST, assoc_list, "associations", argc,
+				   argv, db_conn, mime_type);
+		FREE_NULL_LIST(print_fields_list);
+		FREE_NULL_LIST(assoc_list);
+		return rc;
+	}
+
 	if (!assoc_list) {
 		exit_code=1;
 		fprintf(stderr, " Error with request: %s\n",
@@ -908,15 +947,3 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	tree_display = 0;
 	return rc;
 }
-
-/* extern int sacctmgr_modify_assoc(int argc, char **argv) */
-/* { */
-/* 	int rc = SLURM_SUCCESS; */
-/* 	return rc; */
-/* } */
-
-/* extern int sacctmgr_delete_assoc(int argc, char **argv) */
-/* { */
-/* 	int rc = SLURM_SUCCESS; */
-/* 	return rc; */
-/* } */

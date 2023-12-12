@@ -37,7 +37,9 @@
 #define _GNU_SOURCE
 
 #include "src/common/slurm_xlator.h"
+
 #include "src/common/log.h"
+#include "src/slurmctld/slurmctld.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -64,20 +66,20 @@
  * plugin_version - an unsigned 32-bit integer containing the Slurm version
  * (major.minor.micro combined into a single number).
  */
-const char	*plugin_name		= "NULL site_factor plugin";
+const char plugin_name[] = "NULL site_factor plugin";
 const char	plugin_type[]		= "site_factor/none";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 
 extern int init(void)
 {
-	debug("%s: %s loaded", __func__, plugin_name);
+	debug("loaded");
 
 	return SLURM_SUCCESS;
 }
 
 extern int fini(void)
 {
-	debug("%s: unloading %s", __func__, plugin_name);
+	debug("unloaded");
 
 	return SLURM_SUCCESS;
 }

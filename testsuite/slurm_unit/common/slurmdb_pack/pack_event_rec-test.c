@@ -14,7 +14,7 @@ START_TEST(invalid_protocol)
 	uint32_t x;
 
 	slurmdb_event_rec_t *event_rec = xmalloc(sizeof(slurmdb_event_rec_t));
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 
 	pack32(22, buf);
 	set_buf_offset(buf, 0);
@@ -45,10 +45,10 @@ END_TEST
 //				   period (only set in a node event) */
 //	char *tres_str;         /* TRES touched by this event */
 
-START_TEST(pack_1702_null_event_rec)
+START_TEST(pack_min_proto_null_event_rec)
 {
 	int rc;
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 	slurmdb_event_rec_t pack_er = {0};
 
 	slurmdb_pack_event_rec(NULL, SLURM_MIN_PROTOCOL_VERSION, buf);
@@ -66,7 +66,7 @@ START_TEST(pack_1702_null_event_rec)
 	ck_assert(pack_er.period_start  == unpack_er->period_start);
 	ck_assert(pack_er.reason        == unpack_er->reason);
 	ck_assert(NO_VAL                == unpack_er->reason_uid);
-	ck_assert(NO_VAL16              == unpack_er->state);
+	ck_assert(NO_VAL                == unpack_er->state);
 	ck_assert(pack_er.tres_str      == unpack_er->tres_str);
 
 	free_buf(buf);
@@ -74,7 +74,7 @@ START_TEST(pack_1702_null_event_rec)
 }
 END_TEST
 
-START_TEST(pack_1702_event_rec)
+START_TEST(pack_min_proto_event_rec)
 {
 	int rc;
 
@@ -90,7 +90,7 @@ START_TEST(pack_1702_event_rec)
 	pack_er->state               = 33;
 	pack_er->tres_str            = xstrdup("Karl Marx");
 
-	Buf buf = init_buf(1024);
+	buf_t *buf = init_buf(1024);
 	slurmdb_pack_event_rec(pack_er, SLURM_MIN_PROTOCOL_VERSION, buf);
 
 	set_buf_offset(buf, 0);
@@ -125,8 +125,8 @@ Suite *suite(void)
 	Suite *s = suite_create("Pack slurmdb_event_rec_t");
 	TCase *tc_core = tcase_create("Pack slurmdb_event_rec_t");
 	tcase_add_test(tc_core, invalid_protocol);
-	tcase_add_test(tc_core, pack_1702_event_rec);
-	tcase_add_test(tc_core, pack_1702_null_event_rec);
+	tcase_add_test(tc_core, pack_min_proto_event_rec);
+	tcase_add_test(tc_core, pack_min_proto_null_event_rec);
 	suite_add_tcase(s, tc_core);
 	return s;
 }

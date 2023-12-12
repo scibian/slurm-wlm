@@ -58,10 +58,17 @@ extern void fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.nodes_set) {
 		desc->min_nodes = opt.min_nodes;
-		if (opt.max_nodes)
+		if (opt.max_nodes) {
 			desc->max_nodes = opt.max_nodes;
-	} else if (opt.ntasks_set && (opt.ntasks == 0))
+			if (opt.job_size_str)
+				desc->job_size_str = xstrdup(opt.job_size_str);
+			else
+				desc->job_size_str = NULL;
+		}
+	} else if (opt.ntasks_set && (opt.ntasks == 0)) {
 		desc->min_nodes = 0;
+		desc->job_size_str = NULL;
+	}
 	if (opt.ntasks_per_node)
 		desc->ntasks_per_node = opt.ntasks_per_node;
 	desc->user_id = opt.uid;
@@ -168,19 +175,20 @@ extern void fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->mcs_label = xstrdup(opt.mcs_label);
 
 	if (opt.cpus_per_gpu)
-		xstrfmtcat(desc->cpus_per_tres, "gpu:%d", opt.cpus_per_gpu);
+		xstrfmtcat(desc->cpus_per_tres, "gres:gpu:%d", opt.cpus_per_gpu);
 	desc->tres_bind = xstrdup(opt.tres_bind);
 	desc->tres_freq = xstrdup(opt.tres_freq);
-	xfmt_tres(&desc->tres_per_job, "gpu", opt.gpus);
-	xfmt_tres(&desc->tres_per_node, "gpu", opt.gpus_per_node);
-	if (opt.gres) {
+	xfmt_tres(&desc->tres_per_job, "gres:gpu", opt.gpus);
+	xfmt_tres(&desc->tres_per_node, "gres:gpu", opt.gpus_per_node);
+	/* --gres=none for jobs means no GRES, so don't send it to slurmctld */
+	if (opt.gres && xstrcasecmp(opt.gres, "NONE")) {
 		if (desc->tres_per_node)
 			xstrfmtcat(desc->tres_per_node, ",%s", opt.gres);
 		else
 			desc->tres_per_node = xstrdup(opt.gres);
 	}
-	xfmt_tres(&desc->tres_per_socket, "gpu", opt.gpus_per_socket);
-	xfmt_tres(&desc->tres_per_task, "gpu", opt.gpus_per_task);
+	xfmt_tres(&desc->tres_per_socket, "gres:gpu", opt.gpus_per_socket);
+	xfmt_tres(&desc->tres_per_task, "gres:gpu", opt.gpus_per_task);
 	if (opt.mem_per_gpu != NO_VAL64)
-		xstrfmtcat(desc->mem_per_tres, "gpu:%"PRIu64, opt.mem_per_gpu);
+		xstrfmtcat(desc->mem_per_tres, "gres:gpu:%"PRIu64, opt.mem_per_gpu);
 }

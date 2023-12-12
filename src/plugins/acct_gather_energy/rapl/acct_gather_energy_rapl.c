@@ -48,11 +48,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_acct_gather_energy.h"
+#include "src/interfaces/acct_gather_energy.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/common/xstring.h"
+#include "src/interfaces/proctrack.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,11 +130,11 @@ static int dataset_id = -1; /* id of the dataset for profile data */
 /* one cpu in the package */
 static int pkg2cpu[MAX_PKGS] = {[0 ... MAX_PKGS-1] = -1};
 static int pkg_fd[MAX_PKGS] = {[0 ... MAX_PKGS-1] = -1};
-static char hostname[MAXHOSTNAMELEN];
+static char hostname[HOST_NAME_MAX];
 
 static int nb_pkg = 0;
 
-static stepd_step_rec_t *job = NULL;
+static stepd_step_rec_t *step = NULL;
 
 extern void acct_gather_energy_p_conf_set(
 	int context_id_in, s_p_hashtbl_t *tbl);
@@ -215,7 +216,11 @@ static int _open_msr(int core)
 	int fd;
 
 	sprintf(msr_filename, "/dev/cpu/%d/msr", core);
-	fd = open(msr_filename, O_RDONLY);
+	/*
+	 * If this is loaded in the slurmd we need to make sure it
+	 * gets closed when a slurmstepd launches.
+	 */
+	fd = open(msr_filename, (O_RDONLY | O_CLOEXEC));
 
 	if (fd < 0) {
 		if ( errno == ENXIO ) {
@@ -224,12 +229,6 @@ static int _open_msr(int core)
 			error("CPU %d doesn't support MSRs", core);
 		} else
 			error("MSR register problem (%s): %m", msr_filename);
-	} else {
-		/*
-		 * If this is loaded in the slurmd we need to make sure it
-		 * gets closed when a slurmstepd launches.
-		 */
-		fd_set_close_on_exec(fd);
 	}
 
 	return fd;
@@ -360,12 +359,13 @@ static void _get_joules_task(acct_gather_energy_t *energy)
 			(uint64_t)ret - energy->base_consumed_energy;
 		energy->current_watts =
 			(uint32_t)ret - energy->previous_consumed_energy;
-		energy->ave_watts =  ((energy->ave_watts * readings) +
-				       energy->current_watts) / (readings + 1);
 
 		interval = time(NULL) - energy->poll_time;
 		if (interval)	/* Prevent divide by zero */
 			energy->current_watts /= (float)interval;
+
+		energy->ave_watts =  ((energy->ave_watts * readings) +
+				      energy->current_watts) / (readings + 1);
 	} else {
 		energy->consumed_energy = 1;
 		energy->base_consumed_energy = (uint64_t)ret;
@@ -375,8 +375,11 @@ static void _get_joules_task(acct_gather_energy_t *energy)
 	energy->previous_consumed_energy = (uint64_t)ret;
 	energy->poll_time = time(NULL);
 
-	log_flag(ENERGY, "%s: current %.6f Joules, consumed %"PRIu64"",
-		 __func__, ret, energy->consumed_energy);
+	log_flag(ENERGY, "PollTime = %ld, ConsumedEnergy = %"PRIu64"J, CurrentWatts = %uW, AveWatts = %uW",
+		 energy->poll_time,
+		 energy->consumed_energy,
+		 energy->current_watts,
+		 energy->ave_watts);
 }
 
 static int _running_profile(void)
@@ -454,7 +457,7 @@ extern int acct_gather_energy_p_update_node_energy(void)
  */
 extern int init(void)
 {
-	gethostname(hostname, MAXHOSTNAMELEN);
+	gethostname(hostname, HOST_NAME_MAX);
 
 	/* put anything that requires the .conf being read in
 	   acct_gather_energy_p_conf_parse
@@ -465,20 +468,25 @@ extern int init(void)
 
 extern int fini(void)
 {
-	int i;
+	/*
+	 * We don't really want to destroy the the state, so those values
+	 * persist a reconfig. And if the process dies, this will be lost
+	 * anyway. So not freeing these variables is not really a leak.
+	 *
+	 * if (!running_in_slurmd_stepd())
+	 * 	return SLURM_SUCCESS;
+	 *
+	 * for (int i = 0; i < nb_pkg; i++) {
+	 * 	if (pkg_fd[i] != -1) {
+	 * 		close(pkg_fd[i]);
+	 * 		pkg_fd[i] = -1;
+	 * 	}
+	 * }
+	 *
+	 * acct_gather_energy_destroy(local_energy);
+	 * local_energy = NULL;
+	 */
 
-	if (!running_in_slurmd_stepd())
-		return SLURM_SUCCESS;
-
-	for (i = 0; i < nb_pkg; i++) {
-		if (pkg_fd[i] != -1) {
-			close(pkg_fd[i]);
-			pkg_fd[i] = -1;
-		}
-	}
-
-	acct_gather_energy_destroy(local_energy);
-	local_energy = NULL;
 	return SLURM_SUCCESS;
 }
 
@@ -541,7 +549,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 		break;
 	case ENERGY_DATA_STEP_PTR:
 		/* set global job if needed later */
-		job = (stepd_step_rec_t *)data;
+		step = (stepd_step_rec_t *)data;
 		break;
 	default:
 		error("acct_gather_energy_p_set_data: unknown enum %d",

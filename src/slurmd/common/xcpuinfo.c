@@ -77,7 +77,6 @@ static int _chk_cpuinfo_uint32(char *buffer, char *keyword, uint32_t *val);
 
 static int _range_to_map(char* range, uint16_t *map, uint16_t map_size,
 			 int add_threads);
-static int _map_to_range(uint16_t *map, uint16_t map_size, char** prange);
 
 bool     initialized = false;
 uint16_t procs, boards, sockets, cores, threads=1;
@@ -166,6 +165,68 @@ static inline int _internal_hwloc_topology_export_xml(
 #endif
 }
 
+static void _remove_ecores(hwloc_topology_t *topology)
+{
+#if HWLOC_API_VERSION > 0x00020401
+	int type_cnt;
+	hwloc_bitmap_t cpuset, cpuset_tot = NULL;
+
+	if (xstrcasestr(slurm_conf.slurmd_params, "allow_ecores"))
+		return;
+
+	if (!(type_cnt = hwloc_cpukinds_get_nr(*topology, 0)))
+		return;
+
+	/*
+	 * Handle the removal of Intel E-Cores here.
+	 *
+	 * At the time of writing this Intel Gen 12+ procs have introduced what
+	 * are known as 'P' (performance) and 'E' (efficiency) cores. The
+	 * former can have hyperthreads, where the latter are only single
+	 * threaded, thus creating a situation where we could get a
+	 * heterogeneous socket (which Slurm doesn't like). Here we can restrict
+	 * to only  "IntelCore" (P-Cores) and disregard the "IntelAtom"
+	 * (E-Cores).
+	 *
+	 * In the future, if desired, we should probably figure out a way to
+	 * handle these E-Cores through a core spec instead.
+	 *
+	 * This logic should do nothing on any other existing processor.
+	 */
+	cpuset = hwloc_bitmap_alloc();
+	for (int i = 0; i < type_cnt; i++) {
+		unsigned nr_infos = 0;
+		struct hwloc_info_s *infos;
+		if (hwloc_cpukinds_get_info(
+			    *topology, i, cpuset, NULL, &nr_infos, &infos, 0))
+			fatal("Error getting info from hwloc_cpukinds_get_info() %m");
+
+		for (int j = 0; j < nr_infos; j++) {
+			if (!xstrcasecmp(infos[j].name, "CoreType") &&
+			    !xstrcasecmp(infos[j].value, "IntelCore")) {
+				/* Restrict the node to only IntelCores */
+				if (!cpuset_tot)
+					cpuset_tot = hwloc_bitmap_alloc();
+				hwloc_bitmap_or(cpuset_tot, cpuset_tot, cpuset);
+			}
+		}
+
+		/*
+		 * If we have a cpuset_tot it means we are on a system with
+		 * IntelCore cpus. We will restrict to only those and be done
+		 * here.
+		 */
+		if (cpuset_tot) {
+			hwloc_topology_restrict(*topology, cpuset_tot, 0);
+			hwloc_bitmap_free(cpuset_tot);
+			break;
+		}
+	}
+	hwloc_bitmap_free(cpuset);
+
+#endif
+}
+
 /* read or load topology and write if needed
  * init and destroy topology must be outside this function */
 extern int xcpuinfo_hwloc_topo_load(
@@ -224,8 +285,7 @@ handle_write:
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L2CACHE,
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
-		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L3CACHE,
-					       HWLOC_TYPE_FILTER_KEEP_NONE);
+		/* need to preserve HWLOC_OBJ_L3CACHE for l3cache_as_socket */
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L4CACHE,
 					       HWLOC_TYPE_FILTER_KEEP_NONE);
 		hwloc_topology_set_type_filter(*topology, HWLOC_OBJ_L5CACHE,
@@ -241,7 +301,12 @@ handle_write:
 		/* error in load hardware topology */
 		debug("hwloc_topology_load() failed.");
 		ret = SLURM_ERROR;
-	} else if (!conf->def_config) {
+		goto end_it;
+	}
+
+	_remove_ecores(topology);
+
+	if (!conf->def_config) {
 		debug2("hwloc_topology_export_xml");
 		if (_internal_hwloc_topology_export_xml(*topology, topo_file)) {
 			/* error in export hardware topology */
@@ -249,6 +314,7 @@ handle_write:
 		}
 	}
 
+end_it:
 	if (!topology_in)
 		hwloc_topology_destroy(tmp_topo);
 
@@ -320,16 +386,47 @@ extern int xcpuinfo_hwloc_topo_get(
 	objtype[SOCKET] = HWLOC_OBJ_SOCKET;
 	objtype[CORE]   = HWLOC_OBJ_CORE;
 	objtype[PU]     = HWLOC_OBJ_PU;
+#if HWLOC_API_VERSION >= 0x00020000
+	if (xstrcasestr(slurm_conf.sched_params, "Ignore_NUMA")) {
+		info("SchedulerParamaters=Ignore_NUMA not supported by hwloc v2");
+	}
+#else
 	if (hwloc_get_type_depth(topology, HWLOC_OBJ_NODE) >
 	    hwloc_get_type_depth(topology, HWLOC_OBJ_SOCKET)) {
-		char *sched_params = slurm_get_sched_params();
-		if (xstrcasestr(sched_params, "Ignore_NUMA")) {
+		if (xstrcasestr(slurm_conf.sched_params, "Ignore_NUMA")) {
 			info("Ignoring NUMA nodes within a socket");
 		} else {
 			info("Considering each NUMA node as a socket");
 			objtype[SOCKET] = HWLOC_OBJ_NODE;
 		}
-		xfree(sched_params);
+	}
+#endif
+
+	if (xstrcasestr(slurm_conf.slurmd_params, "l3cache_as_socket")) {
+#if HWLOC_API_VERSION >= 0x00020000
+		objtype[SOCKET] = HWLOC_OBJ_L3CACHE;
+#else
+		error("SlurmdParameters=l3cache_as_socket requires hwloc v2");
+#endif
+	} else if (xstrcasestr(slurm_conf.slurmd_params,
+			       "numa_node_as_socket")) {
+#if HWLOC_API_VERSION >= 0x00020000
+		hwloc_obj_t numa_obj = hwloc_get_next_obj_by_type(
+			topology, HWLOC_OBJ_NODE, NULL);
+
+		if (numa_obj && numa_obj->parent) {
+			objtype[SOCKET] = numa_obj->parent->type;
+			if (get_log_level() >= LOG_LEVEL_DEBUG2) {
+				char tmp[128];
+				hwloc_obj_type_snprintf(tmp, sizeof(tmp),
+							numa_obj->parent, 0);
+				debug2("%s: numa_node_as_socket mapped to '%s'",
+				       __func__, tmp);
+			}
+		}
+#else
+		error("SlurmdParameters=numa_node_as_socket requires hwloc v2");
+#endif
 	}
 
 	/* Groups below root obj are interpreted as boards */
@@ -674,8 +771,7 @@ extern int xcpuinfo_hwloc_topo_get(
 		if (cores == 0) {
 			cores = numcpu / sockets;	/* assume multi-core */
 			if (cores > 1) {
-				debug3("Warning: cpuinfo missing 'core id' or "
-				       "'cpu cores' but assuming multi-core");
+				debug3("cpuinfo missing 'core id' or 'cpu cores' but assuming multi-core");
 			}
 		}
 		if (cores == 0)
@@ -944,22 +1040,22 @@ int
 xcpuinfo_init(void)
 {
 	if ( initialized )
-		return XCPUINFO_SUCCESS;
+		return SLURM_SUCCESS;
 
 	if (xcpuinfo_hwloc_topo_get(&procs,&boards,&sockets,&cores,&threads,
 				    &block_map_size,&block_map,&block_map_inv))
-		return XCPUINFO_ERROR;
+		return SLURM_ERROR;
 
 	initialized = true ;
 
-	return XCPUINFO_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 int
 xcpuinfo_fini(void)
 {
 	if ( ! initialized )
-		return XCPUINFO_SUCCESS;
+		return SLURM_SUCCESS;
 
 	initialized = false ;
 	procs = sockets = cores = threads = 0;
@@ -979,7 +1075,7 @@ xcpuinfo_fini(void)
 		xfree(hwloc_xml_whole);
 	}
 #endif
-	return XCPUINFO_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -1149,57 +1245,6 @@ xcpuinfo_abs_to_map(char* lrange,uint16_t **map,uint16_t *map_size)
 	return _range_to_map(lrange,*map,*map_size,1);
 }
 
-int
-xcpuinfo_map_to_mac(uint16_t *map,uint16_t map_size,char** range)
-{
-	return _map_to_range(map,map_size,range);
-}
-
-int
-xcpuinfo_mac_to_map(char* lrange,uint16_t **map,uint16_t *map_size)
-{
-	*map_size = block_map_size;
-	*map = (uint16_t*) xmalloc(block_map_size*sizeof(uint16_t));
-	/* machine range already includes the hyperthreads */
-	return _range_to_map(lrange,*map,*map_size,0);
-}
-
-int
-xcpuinfo_absmap_to_macmap(uint16_t *amap,uint16_t amap_size,
-			  uint16_t **bmap,uint16_t *bmap_size)
-{
-	/* int i; */
-
-	/* abstract to machine conversion using block map */
-	uint16_t *map_out;
-
-	*bmap_size = amap_size;
-	map_out = (uint16_t*) xmalloc(amap_size*sizeof(uint16_t));
-	*bmap = map_out;
-
-	return XCPUINFO_SUCCESS;
-}
-
-int
-xcpuinfo_macmap_to_absmap(uint16_t *amap,uint16_t amap_size,
-			  uint16_t **bmap,uint16_t *bmap_size)
-{
-	int i;
-
-	/* machine to abstract conversion using inverted block map */
-	uint16_t *cmap;
-	cmap = block_map_inv;
-	*bmap_size = amap_size;
-	*bmap = (uint16_t*) xmalloc(amap_size*sizeof(uint16_t));
-	for( i = 0 ; i < amap_size ; i++) {
-		if ( amap[i] )
-			(*bmap)[cmap[i]]=1;
-		else
-			(*bmap)[cmap[i]]=0;
-	}
-	return XCPUINFO_SUCCESS;
-}
-
 /*
  * set to 1 each element of already allocated map of size
  * map_size if they are present in the input range
@@ -1274,71 +1319,8 @@ _range_to_map(char* range,uint16_t *map,uint16_t map_size,int add_threads)
 
 	if ( bad_nb > 0 ) {
 		/* bad format for input range */
-		return XCPUINFO_ERROR;
+		return SLURM_ERROR;
 	}
 
-	return XCPUINFO_SUCCESS;
-}
-
-
-/*
- * allocate and build a range of ids using an input map
- * having printable element set to 1
- */
-static int
-_map_to_range(uint16_t *map,uint16_t map_size,char** prange)
-{
-	size_t len;
-	int num_fl=0;
-	int con_fl=0;
-
-	char *str;
-
-	uint16_t start=0,end=0,i;
-
-	str = xstrdup("");
-	for ( i = 0 ; i < map_size ; i++ ) {
-
-		if ( map[i] ) {
-			num_fl=1;
-			end=i;
-			if ( !con_fl ) {
-				start=end;
-				con_fl=1;
-			}
-		}
-		else if ( num_fl ) {
-			if ( start < end ) {
-				xstrfmtcat(str, "%u-%u,", start, end);
-			}
-			else {
-				xstrfmtcat(str, "%u,", start);
-			}
-			con_fl = num_fl = 0;
-		}
-	}
-	if ( num_fl ) {
-		if ( start < end ) {
-			xstrfmtcat(str, "%u-%u,", start, end);
-		}
-		else {
-			xstrfmtcat(str, "%u,", start);
-		}
-	}
-
-	len = strlen(str);
-	if ( len > 0 ) {
-		str[len-1]='\0';
-	}
-	else {
-		xfree(str);
-		return XCPUINFO_ERROR;
-	}
-
-	if ( prange != NULL )
-		*prange = str;
-	else
-		xfree(str);
-
-	return XCPUINFO_SUCCESS;
+	return SLURM_SUCCESS;
 }

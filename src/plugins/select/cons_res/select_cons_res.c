@@ -99,7 +99,6 @@
 #include <string.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_selecttype_info.h"
 #include "src/common/assoc_mgr.h"
 #include "src/common/xstring.h"
 #include "select_cons_res.h"
@@ -144,20 +143,20 @@ const uint16_t nodeinfo_magic = 0x82aa;
  * core_bitmap IN/OUT - Cores currently NOT available for use */
 static void _spec_core_filter(bitstr_t *node_bitmap, bitstr_t **core_bitmap)
 {
-	bitstr_t **p_spec_core_map =
+	bitstr_t **avail_core_map =
 		common_mark_avail_cores(node_bitmap, NO_VAL16);
 
 	xassert(core_bitmap);
 
 	if (*core_bitmap) {
-		core_array_and_not(core_bitmap, p_spec_core_map);
+		bit_or_not(*core_bitmap, *avail_core_map);
 	} else {
-		bit_not(*p_spec_core_map);
-		*core_bitmap = *p_spec_core_map;
-		*p_spec_core_map = NULL;
+		bit_not(*avail_core_map);
+		*core_bitmap = *avail_core_map;
+		*avail_core_map = NULL;
 	}
 
-	free_core_array(&p_spec_core_map);
+	free_core_array(&avail_core_map);
 }
 
 /* Once here, if core_cnt is NULL, avail_bitmap has nodes not used by any job or
@@ -194,35 +193,42 @@ bitstr_t *_sequential_pick(bitstr_t *avail_bitmap, uint32_t node_cnt,
 	if ((!node_cnt) && (core_cnt)) {
 		int num_nodes = bit_set_count(avail_bitmap);
 		int i;
-		bit_fmt(str, (sizeof(str) - 1), avail_bitmap);
-		log_flag(RESERVATION, "Reserving cores from nodes: %s",
-			 str);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
+			bit_fmt(str, (sizeof(str) - 1), avail_bitmap);
+			log_flag(RESERVATION, "Reserving cores from nodes: %s",
+				 str);
+		}
 		for (i = 0; (i < num_nodes) && core_cnt[i]; i++)
 			total_core_cnt += core_cnt[i];
 	}
 
-	log_flag(RESERVATION, "Reservations requires %d cores (%u each on %d nodes, plus %u)",
-		 total_core_cnt,
-		 cores_per_node,
-		 node_cnt,
-		 extra_cores_needed);
 
 	sp_avail_bitmap = bit_alloc(bit_size(avail_bitmap));
-	bit_fmt(str, (sizeof(str) - 1), avail_bitmap);
-	bit_fmt(str, (sizeof(str) - 1), sp_avail_bitmap);
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
+		bit_fmt(str, (sizeof(str) - 1), avail_bitmap);
+		log_flag(RESERVATION, "Reservations requires %d cores (%u each on %d nodes, plus %u), avail bitmap:%s ",
+			 total_core_cnt,
+			 cores_per_node,
+			 node_cnt,
+			 extra_cores_needed,
+			 str);
+
+	}
 
 	if (core_cnt) { /* Reservation is using partial nodes */
 		int node_list_inx = 0;
-
-		log_flag(RESERVATION, "Reservation is using partial nodes");
 
 		xassert(core_bitmap);
 
 		tmpcore = bit_copy(*core_bitmap);
 
 		bit_not(tmpcore); /* tmpcore contains now current free cores */
-		bit_fmt(str, (sizeof(str) - 1), tmpcore);
-		debug2("tmpcore contains just current free cores: %s", str);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
+			bit_fmt(str, (sizeof(str) - 1), tmpcore);
+			log_flag(RESERVATION,"Reservation is using partial nodes. Free cores (whole cluster) are: %s",
+				 str);
+		}
 		bit_and(*core_bitmap, tmpcore);	/* clear core_bitmap */
 
 		while (total_core_cnt) {
@@ -307,8 +313,12 @@ bitstr_t *_sequential_pick(bitstr_t *avail_bitmap, uint32_t node_cnt,
 			return NULL;
 		}
 
-		bit_fmt(str, (sizeof(str) - 1), *core_bitmap);
-		debug2("sequential pick using coremap: %s", str);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
+                       bit_fmt(str, (sizeof(str) - 1), *core_bitmap);
+                       log_flag(RESERVATION,
+				"sequential pick using coremap: %s", str);
+		}
+
 
 	} else { /* Reservation is using full nodes */
 		while (node_cnt) {
@@ -332,8 +342,11 @@ bitstr_t *_sequential_pick(bitstr_t *avail_bitmap, uint32_t node_cnt,
 			return NULL;
 		}
 
-		bit_fmt(str, (sizeof(str) - 1), sp_avail_bitmap);
-		log_flag(RESERVATION, "sequential pick using nodemap: %s", str);
+		if (slurm_conf.debug_flags & DEBUG_FLAG_RESERVATION) {
+			bit_fmt(str, (sizeof(str) - 1), sp_avail_bitmap);
+			log_flag(RESERVATION, "sequential pick using nodemap: %s",
+				 str);
+		}
 	}
 
 	return sp_avail_bitmap;
@@ -495,10 +508,6 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 
 /* select_p_job_expand() in cons_common */
 
-/* select_p_job_signal() in cons_common */
-
-/* select_p_job_mem_confirm() in cons_common */
-
 /* select_p_job_fini() in cons_common */
 
 /* select_p_job_suspend() in cons_common */
@@ -539,13 +548,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 
 /* select_p_select_jobinfo_unpack() in cons_common */
 
-/* select_p_select_jobinfo_sprint() in cons_common */
-
-/* select_p_select_jobinfo_xstrdup() in cons_common */
-
 /* select_p_get_info_from_plugin() in cons_common */
-
-/* select_p_update_node_config() in cons_common */
 
 /* select_p_reconfigure() in cons_common */
 

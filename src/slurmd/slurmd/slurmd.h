@@ -46,7 +46,7 @@
 #include "src/common/log.h"
 #include "src/common/list.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/slurm_cred.h"
+#include "src/interfaces/cred.h"
 
 #ifndef __USE_XOPEN_EXTENDED
 extern pid_t getsid(pid_t pid);		/* missing from <unistd.h> */
@@ -57,18 +57,22 @@ extern int devnull;
 extern bool get_reg_resp;
 
 typedef struct {
+	int (*container_join)(uint32_t job_id, uid_t uid);
+	uint32_t derived_ec;
+	uint32_t exit_code;
 	char **gres_job_env;
 	uint32_t het_job_id;
 	uint32_t jobid;
 	uint32_t step_id;
+	char *node_aliases;
 	char *node_list;
 	char *partition;
-	char *resv_id;
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
 	uid_t uid;
 	gid_t gid;
 	char *user_name;
+	char *work_dir;
 } job_env_t;
 
 /*
@@ -78,7 +82,7 @@ typedef struct slurmd_config {
 	char         *prog;		/* Program basename		   */
 	char         ***argv;           /* pointer to argument vector      */
 	int          *argc;             /* pointer to argument count       */
-	Buf          buf;               /* packed version of this lite config */
+	buf_t        *buf;              /* packed version of this lite config */
 	char         *hostname;	 	/* local hostname		   */
 	char         *conf_server;	/* slurmctld to fetch config from  */
 	char         *conf_cache;	/* cache of slurm configs          */
@@ -101,7 +105,10 @@ typedef struct slurmd_config {
 	uint16_t     actual_sockets;    /* actual sockets count            */
 	uint16_t     actual_cores;      /* actual core count               */
 	uint16_t     actual_threads;    /* actual thread per core count    */
-	uint64_t     real_memory_size;  /* amount of real memory	   */
+	uint64_t     conf_memory_size;  /* amount of configured memory from
+					 * slurm.conf */
+	uint64_t     physical_memory_size; /* amount of physical memory
+					    * on the node */
 	uint32_t     tmp_disk_space;    /* size of temporary disk	   */
 	uint32_t     up_time;		/* seconds since last boot time    */
 	uint16_t     block_map_size;	/* size of block map               */
@@ -114,6 +121,8 @@ typedef struct slurmd_config {
 	char         *node_topo_pattern;/* node's topology address pattern */
 	char         *conffile;		/* config filename                 */
 	char         *logfile;		/* slurmd logfile, if any          */
+	char         *pidfile;		/* slurmd pidfile, if any          */
+	char         *tmp_fs;		/* TmpFS                           */
 	uint32_t     syslog_debug;	/* send output to both logfile and
 					 * syslog */
 	char         *spooldir;		/* SlurmdSpoolDir		   */
@@ -125,11 +134,12 @@ typedef struct slurmd_config {
 	log_options_t log_opts;         /* current logging options         */
 	uint32_t      debug_level;	/* logging detail level            */
 	uint16_t      debug_level_set;	/* debug_level set on command line */
-	int	      boot_time:1;      /* Report node boot time now (-b)  */
-	int           daemonize:1;	/* daemonize flag (-D)		   */
+	bool	      boot_time;	/* Report node boot time now (-b)  */
+	bool	      daemonize;	/* daemonize flag (-D)		   */
+	bool          setwd;		/* setwd flag (-s)		   */
 	bool          def_config;       /* We haven't read in the config yet */
-	int	      cleanstart:1;     /* clean start requested (-c)      */
-	int           mlock_pages:1;	/* mlock() slurmd  */
+	bool	      cleanstart;	/* clean start requested (-c)      */
+	bool	      mlock_pages;	/* mlock() slurmd  */
 
 	slurm_cred_ctx_t vctx;          /* slurm_cred_t verifier context   */
 
@@ -141,10 +151,10 @@ typedef struct slurmd_config {
 	pthread_cond_t	starting_steps_cond;
 	List		prolog_running_jobs;
 	pthread_cond_t	prolog_running_cond;
-	char		*gres;		/* The node's slurm.conf GRES */
 	bool		print_gres;	/* Print gres info (-G) and exit */
 
-	bool dynamic;			/* Dynamic future node */
+	uint8_t dynamic_type;		/* Dynamic node type */
+	char *dynamic_conf;		/* Dynamic configuration */
 	char *dynamic_feature;		/* Dynamic feature to register with */
 } slurmd_conf_t;
 
@@ -158,9 +168,8 @@ extern bool tres_packed;
 
 /* Send node registration message with status to controller
  * IN status - same values slurm error codes (for node shutdown)
- * IN startup - non-zero if slurmd just restarted
  */
-int send_registration_msg(uint32_t status, bool startup);
+int send_registration_msg(uint32_t status);
 
 /*
  * save_cred_state - save the current credential list to a file
@@ -174,5 +183,14 @@ int run_script_health_check(void);
 
 /* Handler for SIGTERM; can also be called to shutdown the slurmd. */
 void slurmd_shutdown(int signum);
+
+/* Handler for debug level update */
+extern void update_slurmd_logging(log_level_t log_lvl);
+
+/*
+ * Build a slurmd configuration buffer _once_ for sending to slurmstepd
+ * This must happen after all configuration is available, including topology
+ */
+extern void build_conf_buf(void);
 
 #endif /* !_SLURMD_H */

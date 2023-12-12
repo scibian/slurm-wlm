@@ -26,15 +26,20 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set job_id      0
+
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
 
 #
 # Spawn a job with a deadline and no time limit and a time-min too long
 #
 set timeout [expr $max_job_delay + 1]
 set invalid_tl 0
-set srun_pid [spawn $srun -v --begin now+5 --deadline now+600 --time-min 11 $bin_sleep 1]
+spawn $srun -v --begin now+5 --deadline now+600 --time-min 11 $bin_sleep 1
 expect {
 	-re "Invalid time-min specification" {
 		set invalid_tl 1
@@ -48,21 +53,11 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if {$job_id != 0} {
-	cancel_job $job_id
-	fail "Job submitted with a deadline too short"
-}
-if {$invalid_tl == 0} {
-	fail "Failed to generate deadline error"
-}
-
-if {$exit_code != 0} {
-	fail "Job not with DEADLINE status"
-}
+subtest {$job_id == 0} "Job with a deadline too short should not be submitted"
+subtest {$invalid_tl != 0} "Job submitted with a deadline too short should generate a deadline error"

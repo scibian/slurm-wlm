@@ -1,2 +1,1 @@
 debian/plugstack.conf etc/slurm
-usr/lib/*/slurm-wlm/*.so

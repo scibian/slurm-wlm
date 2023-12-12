@@ -45,6 +45,8 @@
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
+
+#include "src/common/xstring.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/slurmctld.h"
 
@@ -103,7 +105,7 @@ extern int job_submit(job_desc_msg_t *job_desc, uint32_t submit_uid,
 }
 
 extern int job_modify(job_desc_msg_t *job_desc, job_record_t *job_ptr,
-		      uint32_t submit_uid)
+		      uint32_t submit_uid, char **err_msg)
 {
 	return SLURM_SUCCESS;
 }

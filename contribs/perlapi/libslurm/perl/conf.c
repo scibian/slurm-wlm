@@ -163,14 +163,11 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 	if (conf->job_submit_plugins)
 		STORE_FIELD(hv, conf, job_submit_plugins, charp);
 
-	STORE_FIELD(hv, conf, keep_alive_time, uint16_t);
+	STORE_FIELD(hv, conf, keepalive_time, uint16_t);
 
 	STORE_FIELD(hv, conf, kill_on_bad_exit, uint16_t);
 
 	STORE_FIELD(hv, conf, kill_wait, uint16_t);
-
-	if (conf->launch_type)
-		STORE_FIELD(hv, conf, launch_type, charp);
 
 	if (conf->licenses)
 		STORE_FIELD(hv, conf, licenses, charp);
@@ -181,6 +178,7 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 		STORE_FIELD(hv, conf, mail_prog, charp);
 
 	STORE_FIELD(hv, conf, max_array_sz, uint32_t);
+	STORE_FIELD(hv, conf, max_batch_requeue, uint32_t);
 	STORE_FIELD(hv, conf, max_dbd_msgs, uint32_t);
 
 	STORE_FIELD(hv, conf, max_job_cnt, uint32_t);
@@ -219,6 +217,9 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 		STORE_FIELD(hv, conf, power_parameters, charp);
 
 	STORE_FIELD(hv, conf, preempt_mode, uint16_t);
+
+	if (conf->preempt_params)
+		STORE_FIELD(hv, conf, preempt_params, charp);
 
 	if (conf->preempt_type)
 		STORE_FIELD(hv, conf, preempt_type, charp);
@@ -318,8 +319,6 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 		STORE_FIELD(hv, conf, slurmctld_logfile, charp);
 	if (conf->slurmctld_pidfile)
 		STORE_FIELD(hv, conf, slurmctld_pidfile, charp);
-	if (conf->slurmctld_plugstack)
-		STORE_FIELD(hv, conf, slurmctld_plugstack, charp);
 	STORE_FIELD(hv, conf, slurmctld_port, uint32_t);
 	STORE_FIELD(hv, conf, slurmctld_port_count, uint16_t);
 	STORE_FIELD(hv, conf, slurmctld_timeout, uint16_t);
@@ -493,14 +492,14 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, job_requeue, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, job_submit_plugins, charp, FALSE);
 
-	FETCH_FIELD(hv, conf, keep_alive_time, uint16_t, TRUE);
+	FETCH_FIELD(hv, conf, keepalive_time, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, kill_on_bad_exit, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, kill_wait, uint16_t, TRUE);
-	FETCH_FIELD(hv, conf, launch_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, licenses, charp, FALSE);
 	FETCH_FIELD(hv, conf, log_fmt, uint16_t, FALSE);
 	FETCH_FIELD(hv, conf, mail_prog, charp, FALSE);
 	FETCH_FIELD(hv, conf, max_array_sz, uint32_t, TRUE);
+	FETCH_FIELD(hv, conf, max_batch_requeue, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, max_dbd_msgs, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, max_job_cnt, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, max_job_id, uint32_t, FALSE);
@@ -533,8 +532,8 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, priority_weight_fs, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, priority_weight_js, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, priority_weight_part, uint32_t, TRUE);
-	FETCH_FIELD(hv, conf, priority_weight_qos, uint32_t, TRUE);
-	FETCH_FIELD(hv, conf, priority_weight_tres, charp, TRUE);
+	FETCH_FIELD(hv, conf, priority_weight_qos, uint32_t, FALSE);
+	FETCH_FIELD(hv, conf, priority_weight_tres, charp, FALSE);
 	FETCH_FIELD(hv, conf, private_data, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, proctrack_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, prolog, charp, FALSE);
@@ -575,7 +574,6 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, slurmctld_debug, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, slurmctld_logfile, charp, FALSE);
 	FETCH_FIELD(hv, conf, slurmctld_pidfile, charp, FALSE);
-	FETCH_FIELD(hv, conf, slurmctld_plugstack, charp, FALSE);
 	FETCH_FIELD(hv, conf, slurmctld_port, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, slurmctld_port_count, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, slurmctld_timeout, uint16_t, TRUE);
@@ -676,11 +674,7 @@ hv_to_step_update_request_msg(HV *hv, step_update_request_msg_t *update_msg)
 {
 	slurm_init_update_step_msg(update_msg);
 
-	FETCH_FIELD(hv, update_msg, end_time, time_t, TRUE);
-	FETCH_FIELD(hv, update_msg, exit_code, uint32_t, TRUE);
 	FETCH_FIELD(hv, update_msg, job_id, uint32_t, TRUE);
-	FETCH_FIELD(hv, update_msg, name, charp, FALSE);
-	FETCH_FIELD(hv, update_msg, start_time, time_t, TRUE);
 	FETCH_FIELD(hv, update_msg, step_id, uint32_t, TRUE);
 	FETCH_FIELD(hv, update_msg, time_limit, uint32_t, TRUE);
 

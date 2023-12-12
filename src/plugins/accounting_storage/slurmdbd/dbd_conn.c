@@ -94,6 +94,8 @@ again:
 	else
 		pc->flags &= (~PERSIST_FLAG_SUPPRESS_ERR);
 
+	pc->r_uid = SLURM_AUTH_UID_ANY;
+
 	if (((rc = slurm_persist_conn_open(pc)) != SLURM_SUCCESS) &&
 	    backup_host) {
 		xfree(pc->rem_host);
@@ -199,7 +201,7 @@ extern int dbd_conn_check_and_reopen(slurm_persist_conn_t *pc)
 extern void dbd_conn_close(slurm_persist_conn_t **pc)
 {
 	int rc;
-	Buf buffer;
+	buf_t *buffer;
 	dbd_fini_msg_t req;
 
 	if (!pc)
@@ -213,7 +215,7 @@ extern void dbd_conn_close(slurm_persist_conn_t **pc)
 		log_flag(NET, "We are shutdown, not sending DB_FINI to %s:%u",
 			 (*pc)->rem_host,
 			 (*pc)->rem_port);
-		return;
+		goto destroy_conn;
 	}
 
 	/* If the connection is already gone, we don't need to send a fini. */
@@ -221,7 +223,7 @@ extern void dbd_conn_close(slurm_persist_conn_t **pc)
 		log_flag(NET, "unable to send DB_FINI msg to %s:%u",
 			 (*pc)->rem_host,
 			 (*pc)->rem_port);
-		return;
+		goto destroy_conn;
 	}
 
 	buffer = init_buf(1024);
@@ -231,12 +233,13 @@ extern void dbd_conn_close(slurm_persist_conn_t **pc)
 	slurmdbd_pack_fini_msg(&req, SLURM_PROTOCOL_VERSION, buffer);
 
 	rc = slurm_persist_send_msg(*pc, buffer);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	log_flag(NET, "sent DB_FINI msg to %s:%u rc(%d):%s",
 		 (*pc)->rem_host, (*pc)->rem_port,
 		 rc, slurm_strerror(rc));
 
+destroy_conn:
 	slurm_persist_conn_destroy(*pc);
 	*pc = NULL;
 }
@@ -252,7 +255,7 @@ extern int dbd_conn_send_recv_direct(uint16_t rpc_version,
 				     persist_msg_t *resp)
 {
 	int rc = SLURM_SUCCESS;
-	Buf buffer;
+	buf_t *buffer;
 	slurm_persist_conn_t *use_conn = req->conn;
 
 	xassert(req);
@@ -275,7 +278,7 @@ extern int dbd_conn_send_recv_direct(uint16_t rpc_version,
 	}
 
 	rc = slurm_persist_send_msg(use_conn, buffer);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	if (rc != SLURM_SUCCESS) {
 		error("Sending message type %s: %d: %s",
 		      slurmdbd_msg_type_2_str(req->msg_type, 1), rc,
@@ -296,7 +299,7 @@ extern int dbd_conn_send_recv_direct(uint16_t rpc_version,
 	if (rc == SLURM_SUCCESS && resp->msg_type == DBD_ID_RC)
 		rc = ((dbd_id_rc_msg_t *)resp->data)->return_code;
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 end_it:
 
 	log_flag(PROTOCOL, "msg_type:%s protocol_version:%hu return_code:%d response_msg_type:%s",

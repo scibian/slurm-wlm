@@ -55,6 +55,7 @@ typedef struct {
 	uid_t uid;
 	gid_t gid;
 	char **err_msg;
+	char **job_submit_user_msg;
 	char **failed_lines;
 	List new_jobs;
 	uint16_t protocol_version;
@@ -66,13 +67,14 @@ static int _handle_job(void *x, void *y)
 	job_desc_msg_t *job = (job_desc_msg_t *) x;
 	foreach_cron_job_args_t *args = (foreach_cron_job_args_t *) y;
 	job_record_t *job_ptr = NULL;
+	char *err_msg = NULL;
 
 	dump_job_desc(job);
 
 	if (!job->crontab_entry || !valid_cron_entry(job->crontab_entry)) {
 		error("crontab submission failed due to missing or invalid cron_entry_t");
 		args->return_code = SLURM_ERROR;
-		return 1;
+		return -1;
 	}
 
 	/*
@@ -80,7 +82,7 @@ static int _handle_job(void *x, void *y)
 	 * next run. On requeue, the job will need to recalculate this to
 	 * determine the next valid interval.
 	 */
-	job->begin_time = calc_next_cron_start(job->crontab_entry);
+	job->begin_time = calc_next_cron_start(job->crontab_entry, 0);
 
 	/*
 	 * always use the authenticated values from crontab_update_request_msg_t
@@ -94,15 +96,22 @@ static int _handle_job(void *x, void *y)
 	/* enforce this flag so the job submit plugin can differentiate */
 	job->bitflags |= CRON_JOB;
 
+	/* always enable requeue to allow scontrol requeue to work */
+	job->requeue = 1;
+
 	/* give job_submit a chance to play with it first */
-	args->return_code = validate_job_create_req(job, args->uid,
-						    args->err_msg);
+	args->return_code = validate_job_create_req(job, args->uid, &err_msg);
+
+	if (err_msg) {
+		xstrfmtcat(*args->job_submit_user_msg, "%s\n", err_msg);
+		xfree(err_msg);
+	}
 
 	if (args->return_code) {
 		xstrfmtcat(*args->failed_lines, "%u-%u",
 			   ((cron_entry_t *) job->crontab_entry)->line_start,
 			   ((cron_entry_t *) job->crontab_entry)->line_end);
-		return 1;
+		return -1;
 	}
 
 	args->return_code = job_allocate(job, 0, false, NULL, 0, args->uid,
@@ -122,7 +131,7 @@ static int _handle_job(void *x, void *y)
 		xstrfmtcat(*args->failed_lines, "%u-%u",
 			   ((cron_entry_t *) job->crontab_entry)->line_start,
 			   ((cron_entry_t *) job->crontab_entry)->line_end);
-		return 1;
+		return -1;
 	} else {
 		xassert(job_ptr->details);
 		job_ptr->details->crontab_entry = job->crontab_entry;
@@ -138,7 +147,7 @@ static int _handle_job(void *x, void *y)
 			cronspec_from_cron_entry(
 				job_ptr->details->crontab_entry);
 
-		info("Added JobId=%pJ from crontab entry from uid=%u, next start is %lu",
+		info("Added %pJ from crontab entry from uid=%u, next start is %lu",
 		     job_ptr, job->user_id, job->begin_time);
 	}
 
@@ -153,7 +162,7 @@ static int _purge_job(void *x, void *ignored)
 }
 
 /*
- * Clear the JOB_REQUEUE_CRON for all jobs by a given user.
+ * Clear the CRON_JOB flag for all jobs by a given user.
  */
 static int _clear_requeue_cron(void *x, void *y)
 {
@@ -238,6 +247,7 @@ extern void crontab_submit(crontab_update_request_msg_t *request,
 		args.uid = request->uid;
 		args.gid = request->gid;
 		args.err_msg = &response->err_msg;
+		args.job_submit_user_msg = &response->job_submit_user_msg;
 		args.failed_lines = &response->failed_lines;
 		args.new_jobs = list_create(NULL);
 		args.protocol_version = protocol_version;

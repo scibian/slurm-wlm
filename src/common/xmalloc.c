@@ -165,7 +165,7 @@ extern void * slurm_xrecalloc(void **item, size_t count, size_t size,
 		}
 		xassert(p[0] == XMALLOC_MAGIC);
 	} else {
-		/* Initalize new memory */
+		/* Initialize new memory */
 		if (clear)
 			p = calloc(1, total_size);
 		else
@@ -213,6 +213,20 @@ void slurm_xfree(void **item)
 		free(p);
 		*item = NULL;
 	}
+}
+
+/*
+ * Free a NULL-terminated xmalloc()'d array of pointers to further xmalloc()'d
+ * elements, and NULL the original pointer to prevent accidental re-use.
+ */
+void slurm_xfree_array(void ***array)
+{
+	if (!*array || !**array)
+		return;
+
+        for (int i = 0; (*array)[i]; i++)
+		xfree((*array)[i]);
+	xfree(*array);
 }
 
 /*

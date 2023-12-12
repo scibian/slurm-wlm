@@ -47,7 +47,7 @@
 #include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h" /* contains getnodename() */
-#include "src/common/slurm_mpi.h"
+#include "src/interfaces/mpi.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/uid.h"
@@ -63,6 +63,7 @@
 #define LONG_OPT_OUT_FILTER    0x103
 #define LONG_OPT_ERR_FILTER    0x104
 #define LONG_OPT_PTY           0x105
+#define OPT_LONG_AUTOCOMP      0x106
 
 /*---- global variables, defined in opt.h ----*/
 opt_t opt;
@@ -156,14 +157,11 @@ static void _opt_default()
 
 	opt.progname = NULL;
 
-	opt.jobid = NO_VAL;
-	opt.jobid_set = false;
-
 	opt.quiet = 0;
 	opt.verbose = 0;
 
-	opt.euid = (uid_t) -1;
-	opt.egid = (gid_t) -1;
+	opt.euid = SLURM_AUTH_NOBODY;
+	opt.egid = SLURM_AUTH_NOBODY;
 
 	opt.labelio = false;
 	opt.ctrl_comm_ifhn  = xshort_hostname();
@@ -240,6 +238,7 @@ void set_options(const int argc, char **argv)
 {
 	int opt_char, option_index = 0;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"help", 	no_argument,       0, 'h'},
 		{"label",       no_argument,       0, 'l'},
 		{"quiet",       no_argument,       0, 'Q'},
@@ -321,52 +320,16 @@ void set_options(const int argc, char **argv)
 			      "type");
 #endif
 			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		default:
 			error("Unrecognized command line parameter %c",
 			      opt_char);
 			exit(error_exit);
 		}
 	}
-}
-
-static void _parse_jobid_stepid(char *jobid_str)
-{
-	char *ptr, *job, *step;
-	long jobid, stepid;
-
-	verbose("jobid/stepid string = %s\n", jobid_str);
-	job = xstrdup(jobid_str);
-	ptr = xstrchr(job, '.');
-	if (ptr == NULL) {
-		error("Did not find a period in the step ID string");
-		_usage();
-		xfree(job);
-		exit(error_exit);
-	} else {
-		*ptr = '\0';
-		step = ptr + 1;
-	}
-
-	jobid = slurm_xlate_job_id(job);
-	if (jobid == 0) {
-		error("\"%s\" does not look like a jobid", job);
-		_usage();
-		xfree(job);
-		exit(error_exit);
-	}
-
-	stepid = strtol(step, &ptr, 10);
-	if (!xstring_is_whitespace(ptr)) {
-		error("\"%s\" does not look like a stepid", step);
-		_usage();
-		xfree(job);
-		exit(error_exit);
-	}
-
-	opt.jobid = (uint32_t) jobid;
-	opt.stepid = (uint32_t) stepid;
-
-	xfree(job);
 }
 
 /*
@@ -391,7 +354,12 @@ static void _opt_args(int argc, char **argv)
 		exit(error_exit);
 	}
 
-	_parse_jobid_stepid(*(argv + optind));
+	opt.selected_step = slurm_parse_step_str(*(argv + optind));
+	if (opt.selected_step->step_id.step_id == NO_VAL) {
+		error("Failed to parse stepid from command line options");
+		_usage();
+		exit(error_exit);
+	}
 
 	if (!_opt_verify())
 		exit(error_exit);
@@ -407,6 +375,12 @@ static bool _opt_verify(void)
 
 	if (opt.quiet && opt.verbose) {
 		error ("don't specify both --verbose (-v) and --quiet (-Q)");
+		verified = false;
+	}
+
+	if ((opt.selected_step->step_id.step_id == SLURM_EXTERN_CONT) ||
+	    (opt.selected_step->step_id.step_id == SLURM_BATCH_SCRIPT)) {
+		error("Cannot be used with extern or batch steps");
 		verified = false;
 	}
 
@@ -438,11 +412,11 @@ static void _opt_list()
 {
 	info("defined options for program `%s'", opt.progname);
 	info("--------------- ---------------------");
-	info("job ID         : %u", opt.jobid);
-	info("step ID        : %u", opt.stepid);
+	info("job ID         : %u", opt.selected_step->step_id.job_id);
+	info("step ID        : %u", opt.selected_step->step_id.step_id);
 	info("user           : `%s'", opt.user);
-	info("uid            : %ld", (long) opt.uid);
-	info("gid            : %ld", (long) opt.gid);
+	info("uid            : %u", opt.uid);
+	info("gid            : %u", opt.gid);
 	info("verbose        : %d", opt.verbose);
 }
 

@@ -44,7 +44,7 @@
 #include <ctype.h>
 #include <sys/stat.h>
 
-#include "src/common/slurm_jobcomp.h"
+#include "src/interfaces/jobcomp.h"
 #include "src/common/xmalloc.h"
 #include "src/common/parse_time.h"
 #include "filetxt_jobcomp_process.h"
@@ -182,7 +182,6 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	int jobid = 0;
 	char *partition = NULL;
 	FILE *fd = NULL;
-	int lc = 0;
 	jobcomp_job_rec_t *job = NULL;
 	slurm_selected_step_t *selected_step = NULL;
 	char *selected_part = NULL;
@@ -194,7 +193,6 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	fd = _open_log_file(slurm_conf.job_comp_loc);
 
 	while (fgets(line, BUFFER_SIZE, fd)) {
-		lc++;
 		fptr = line;	/* break the record into NULL-
 				   terminated strings */
 		FREE_NULL_LIST(job_info_list);
@@ -237,7 +235,7 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 				continue;
 			itr = list_iterator_create(job_cond->step_list);
 			while ((selected_step = list_next(itr))) {
-				if (selected_step->step_id.job_id == jobid)
+				if (selected_step->step_id.job_id != jobid)
 					continue;
 				/* job matches */
 				list_iterator_destroy(itr);
@@ -278,10 +276,4 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	fclose(fd);
 
 	return job_list;
-}
-
-extern int filetxt_jobcomp_process_archive(slurmdb_archive_cond_t *arch_cond)
-{
-	info("No code to archive jobcomp.");
-	return SLURM_SUCCESS;
 }

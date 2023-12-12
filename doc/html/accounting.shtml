@@ -10,7 +10,9 @@
 <a href="#slurm-accounting-configuration-before-build">Slurm Accounting Configuration Before Build</a><br>
 <a href="#slurm-accounting-configuration-after-build">Slurm Accounting Configuration After Build</a><br>
 <a href="#slurmdbd-configuration">SlurmDBD Configuration</a><br>
+<a style="margin-left: 20px" href="#slurmdbd-archive-purge">  SlurmDBD Archive and Purge</a><br>
 <a href="#mysql-configuration">MySQL Configuration</a><br>
+<a href="#archive">Archive Server</a><br>
 <a href="#tools">Tools</a><br>
 <a href="#database-configuration">Database Configuration</a><br>
 <a href="#cluster-options">Cluster Options</a><br>
@@ -20,8 +22,7 @@
 <a href="#modifying-entities">Modifying Entities</a><br>
 <a href="#removing-entities">Removing Entities</a><br>
 
-<a id="Overview"></a>
-<h2>Overview</h2>
+<h2 id="Overview">Overview<a class="slurm_link" href="#Overview"></a></h2>
 
 <p>Slurm can be configured to collect accounting information for every
 job and job step executed.
@@ -45,7 +46,7 @@ step information is recorded. You can store this information in a
 text file or into SlurmDBD.</li>
 <li><b>JobAcctGatherType</b> is operating system dependent and
 controls what mechanism is used to collect accounting information.
-Supported values are <i>jobacct_gather/linux</i> (recommended),
+Supported values are <i>jobacct_gather/linux</i>,
 <i>jobacct_gather/cgroup</i> and <i>jobacct_gather/none</i>
 (no information collected).</li>
 <li><b>JobCompType</b> controls how job completion information is
@@ -91,7 +92,7 @@ The configuration required to use SlurmDBD will be described below.
 Storing information directly into a database would be similar.</p>
 
 <p>Note that SlurmDBD relies upon existing Slurm plugins
-for authentication and Slurm sql for database use, but the other Slurm
+for authentication and Slurm SQL for database use, but the other Slurm
 commands and daemons are not required on the host where
 SlurmDBD is installed. Install the <i>slurm</i> and <i>slurm-slurmdbd</i>
 RPMs on the server where SlurmDBD is to run.</p>
@@ -99,15 +100,16 @@ RPMs on the server where SlurmDBD is to run.</p>
 <p>Note if you switch from using the MySQL plugin to use the SlurmDBD plugin
   you must make sure the cluster has been added to the database.  The MySQL
   plugin doesn't require this, but also will not hurt things if you have it
-  there when using the MySQL plugin.  You can verify with
+  there when using the MySQL plugin. You can verify with</p>
 <pre>
 sacctmgr list cluster
 </pre>
-If the cluster isn't there add it (where my cluster's name was snowflake):
+<p>If the cluster isn't there, add it (where my cluster's name was
+snowflake):</p>
 <pre>
 sacctmgr add cluster snowflake
 </pre>
-Failure to do so will result in the slurmctld failing to talk to the slurmdbd
+<p>Failure to do so will result in the slurmctld failing to talk to the slurmdbd
 after the switch.  If you plan to upgrade to a new version of Slurm don't switch
 plugins at the same time or you may get unexpected results.  Do one then the
 other.</p>
@@ -127,8 +129,9 @@ service. Note that if SlurmDBD is down long enough for the number of queued
 records to exceed the maximum queue size then messages will begin to be
 dropped.</p>
 
-<a id="infrastructure"></a>
-<h2>Infrastructure</h2>
+<h2 id="infrastructure">Infrastructure
+<a class="slurm_link" href="#infrastructure"></a>
+</h2>
 
 <p>With the SlurmDBD, we are able to collect data from multiple
 clusters in a single location.
@@ -148,7 +151,9 @@ If you plan to restrict access to accounting records (e.g.
 only permit a user to view records of his jobs), then all
 users should have consistent names and IDs.</p>
 
-<p><b>NOTE:</b> Only lowercase usernames are supported.
+<p><b>NOTE</b>: By default only lowercase usernames are supported, but you
+can configure <b>Parameters=PreserveCaseUser</b> in your slurmdbd.conf to
+allow usernames with uppercase characters.</p>
 
 <p>The best way to ensure security of the data is by authenticating
 communications to the SlurmDBD and we recommend
@@ -172,7 +177,7 @@ and SlurmDBD configuration files (slurm.conf and slurmdbd.conf
 respectively, more details are provided below).</p>
 
 <p>Whether you use any authentication module or not you will need to have
-a way for the SlurmDBD to get UID's for users and/or admins.  If using
+a way for the SlurmDBD to get UIDs for users and/or admins.  If using
 MUNGE, it is ideal for your users to have the same id on all your
 clusters.  If this is the case you should have a combination of every cluster's
 /etc/passwd file on the database server to allow the DBD to resolve
@@ -183,8 +188,9 @@ If they plan on running sacctmgr or any of the accounting tools they
 should have the same UID, or they will not authenticate correctly.  An
 LDAP server could also serve as a way to gather this information.</p>
 
-<a id="slurm-jobcomp-configuration"></a>
-<h2>Slurm JobComp Configuration</h2>
+<h2 id="slurm-jobcomp-configuration">Slurm JobComp Configuration
+<a class="slurm_link" href="#slurm-jobcomp-configuration"></a>
+</h2>
 
 <p>Presently job completion is not supported with the SlurmDBD, but can be
 written directly to a database, script or flat file. If you are
@@ -221,21 +227,30 @@ the database with.</li>
 Pass arbitrary text string to job completion plugin.</li>
 </ul>
 
-<a id="slurm-accounting-configuration-before-build"></a>
-<h2>Slurm Accounting Configuration Before Build</h2>
+<h2 id="slurm-accounting-configuration-before-build">
+Slurm Accounting Configuration Before Build
+<a class="slurm_link" href="#slurm-accounting-configuration-before-build"></a>
+</h2>
 
-<p>While the SlurmDBD will work with a flat text file for recording
-job completions and similar data, this configuration will not allow for
-"associations" between a user and account. A database allows such
-a configuration.
+<p>You can configure SlurmDBD to communicate with a database by using
+<b>AccountingStorageType=accounting_storage/slurmdbd</b>. This allows
+the creation of user entities called "associations", which consist of the
+cluster, a user, account and optionally a partition.</p>
 
 <p><b>MySQL or MariaDB is the preferred database.</b>
-To enable this database support
+
+<p><b>NOTE</b>: If you have an existing Slurm accounting database and
+plan to upgrade your database server to MariaDB 10.2.1 (or newer) from a
+pre-10.2.1 version or from any version of MySQL, please contact SchedMD
+for assistance.</p>
+
+<p>To enable this database support
 one only needs to have the development package for the database they
 wish to use on the system. <b>Slurm uses the InnoDB storage
 engine in MySQL to make rollback possible.  This must be available on your
 MySQL installation or rollback will not work.</b>
-</p><p>The slurm configure
+</p>
+<p>The slurm configure
 script uses mysql_config to find out the information it needs
 about installed libraries and headers. You can specify where your
 mysql_config script is with the
@@ -247,41 +262,52 @@ checking for mysql_config... /usr/bin/mysql_config
 MySQL test program built properly.
 </pre>
 
-<p><b>NOTE:</b> Before running the slurmdbd for the first time, review the
+<p><b>NOTE</b>: Before running the slurmdbd for the first time, review the
 current setting for MySQL's <i>innodb_buffer_pool_size</i>.
 Consider setting this
-value large enough to handle the size of the database. This helps when
-converting large tables over to the new database schema and when purging
-old records. Setting <i>innodb_lock_wait_timeout</i> and
+value large enough to handle the size of the database. Having this value
+too small can be problematic when converting large tables over to the new
+database schema or when purging old records. We recommend assigning a
+significant portion of the system memory to this, keeping in mind the other
+resource requirements on the machine running MySQL/MariaDB, somewhere between
+5 and 50 percent of the available memory.
+When using <b>AccountingStoreFlags=job_env,job_script</b> or older SQL servers,
+it is also important to check the value of <i>max_allowed_packet</i>.  When the
+packet size is too small and a large job script is used, the SQL server may
+reject the sql query as being too large.  This value should be at least 16MB,
+and must be larger than the value of <b>max_script_size</b>.
+Setting <i>innodb_lock_wait_timeout</i> and
 <i>innodb_log_file_size</i> to
 larger values than the default is also recommended.</p>
 
 <p>
 See the following example:
+</p>
 <pre>
 mysql> SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
-+-------------------------+-----------+
-| Variable_name           | Value     |
-+-------------------------+-----------+
-| innodb_buffer_pool_size | 134217728 |
-+-------------------------+-----------+
-1 row in set (0.00 sec)
++-------------------------+------------+
+| Variable_name           | Value      |
++-------------------------+------------+
+| innodb_buffer_pool_size | 4294967296 |
++-------------------------+------------+
+1 row in set (0.001 sec)
+
 
 $cat my.cnf
 ...
 [mysqld]
-<i>innodb_buffer_pool_size=1024M</i>
+<i>innodb_buffer_pool_size=4096M</i>
 <i>innodb_log_file_size=64M</i>
 <i>innodb_lock_wait_timeout=900</i>
+<i>max_allowed_packet=16M</i>
 ...
 </pre>
-</p>
 
 <p>Also, in MySQL versions prior to 5.7 the default row format was set to
 <i>COMPACT</i> which could cause some issues during an upgrade when creating
 tables. In more recent versions it was changed to <i>DYNAMIC</i>. The row
 format of a table determines how its rows are physically stored in pages and
-directly affects the performane of queries and DML operations. In very specific
+directly affects the performance of queries and DML operations. In very specific
 situations using a format other than DYNAMIC can lead to rows not fitting into
 pages and MySQL can throw an error during the creation of the table because of
 that. Therefore it is recommended to read carefully about the row format before
@@ -289,22 +315,34 @@ creating your database tables if you are not using DYNAMIC by default, and
 consider setting that if your database version supports it. If the
 following InnoDB error shows up during an upgrade, the table can then be
 altered (may take some time) to set the row format to DYNAMIC in order to
-allow the conversion to proceed:
+allow the conversion to proceed:</p>
 <pre>
 <i>[Warning] InnoDB: Cannot add field ... in table ... because after adding it, the row size is Y which is greater than maximum allowed size (X) for a record on index leaf page.</i>
 </pre>
 
-You can check your default row format value by showing the
-<i>innodb_default_row_format</i> variable, and how the tables are created
-by running:
-
+<p>You can see what the default row format is by showing the
+<i>innodb_default_row_format</i> variable:</p>
 <pre>
-mysql> SHOW TABLE STATUS IN table_name;
+mysql> SHOW VARIABLES LIKE 'innodb_default_row_format';
++---------------------------+---------+
+| Variable_name             | Value   |
++---------------------------+---------+
+| innodb_default_row_format | dynamic |
++---------------------------+---------+
+1 row in set (0.001 sec)
 </pre>
-</p>
 
-<a id="slurm-accounting-configuration-after-build"></a>
-<h2>Slurm Accounting Configuration After Build</h2>
+<p>You can also see how the tables are created by running the following command,
+where <i>db_name</i> is the name of your Slurm database (StorageLoc) set in
+your slurmdbd.conf:</p>
+<pre>
+mysql> SHOW TABLE STATUS IN db_name;
+</pre>
+
+<h2 id="slurm-accounting-configuration-after-build">
+Slurm Accounting Configuration After Build
+<a class="slurm_link" href="#slurm-accounting-configuration-after-build"></a>
+</h2>
 
 <p>For simplicity's sake, we are going to proceed under the assumption that you
 are running with the SlurmDBD. You can communicate with a storage plugin
@@ -350,11 +388,15 @@ prevent users from accessing invalid accounts.
   enforced you need to use the 'limits' option.
 </li>
 <li>safe - This will ensure a job will only be launched when using an
-  association or qos that has a GrpTRESMins limit set if the job will be
+  association or qos that has a TRES-minutes limit set if the job will be
   able to run to completion. Without this option set, jobs will be
   launched as long as their usage hasn't reached the TRES-minutes limit
   which can lead to jobs being launched but then killed when the limit is
-  reached. By setting this option, both the 'associations' option and the
+  reached.
+  With the 'safe' option set, a job won't be killed due to limits,
+  even if the limits are changed after a job was started and the
+  association or qos violates the updated limits.
+  By setting this option, both the 'associations' option and the
   'limits' option are set automatically.
 </li>
 <li>wckeys - This will prevent users from running jobs under a wckey
@@ -363,8 +405,8 @@ prevent users from accessing invalid accounts.
   set to true.
 </li>
 </ul>
-(NOTE: The association is a combination of cluster, account,
-user names and optional partition name.)
+<b>NOTE</b>: The association is a combination of cluster, account,
+user names and optional partition name.
 <br>
 <b>Without AccountingStorageEnforce being set (the default behavior)
 jobs will be executed based upon policies configured in Slurm on each
@@ -407,16 +449,17 @@ Boolean.  If you want to track wckeys (Workload Characterization Key)
 </li>
 </ul>
 
-<a id="slurmdbd-configuration"></a>
-<h2>SlurmDBD Configuration</h2>
+<h2 id="slurmdbd-configuration">SlurmDBD Configuration
+<a class="slurm_link" href="#slurmdbd-configuration"></a>
+</h2>
 
 <p>SlurmDBD requires its own configuration file called "slurmdbd.conf".
 This file should be only on the computer where SlurmDBD executes and
 should only be readable by the user which executes SlurmDBD (e.g. "slurm").
 This file should be protected from unauthorized access since it
 contains a database login name and password.
-See "man slurmdbd.conf" for a more complete description of the
-configuration parameters.
+See <a href="slurmdbd.conf.html">slurmdbd.conf</a>(5) for a more complete
+description of the configuration parameters.
 Some of the more important parameters include:</p>
 
 <ul>
@@ -460,9 +503,9 @@ and have the same UID as the hosts on which <i>slurmctld</i> execute.
 For security purposes, a user other than "root" is recommended.
 The default value is "root". This name should also be the same SlurmUser
 on all clusters reporting to the SlurmDBD.
-NOTE: If this user is different from the one set for <b>slurmctld</b> and is not
-root, it must be added to accounting with AdminLevel=Admin and <b>slurmctld</b>
-must be restarted.
+<b>NOTE</b>: If this user is different from the one set for <b>slurmctld</b>
+and is not root, it must be added to accounting with AdminLevel=Admin and
+<b>slurmctld</b> must be restarted.
 </li>
 
 <li><b>StorageHost</b>:
@@ -497,8 +540,36 @@ Define the name of the user we are going to connect to the database
 with to store the job accounting data.</li>
 </ul>
 
-<a id="mysql-configuration"></a>
-<h2>MySQL Configuration</h2>
+<h3 id="slurmdbd-archive-purge">SlurmDBD Archive and Purge
+<a class="slurm_link" href="#slurmdbd-archive-purge"></a>
+</h3>
+
+<p>As time goes on, the slurm database can grow large enough that it is hard to
+manage. To maintain the database at a reasonable size, slurmdbd supports
+archiving and purging data based on its age. Purged data will be deleted from
+the database, but you can choose to archive the data as it is being purged.
+Archived data will be placed in flat files that can later be loaded into a
+slurmdbd by sacctmgr.</p>
+
+<p>Archive and Purge options come in the form of <b>Archive${*}</b> and
+<b>Purge${*}After</b>. See <a href="slurmdbd.conf.html">slurmdbd.conf</a>(5)
+for more details on the available configuration parameters.</p>
+
+<p>The units for the purge options are important. For example:
+<i>PurgeJobsAfter=12months</i> will purge jobs more than 12 months old at the
+beginning of each month, while <i>PurgeJobsAfter=365days</i> will purge jobs
+older than 365 days old at the beginning of each day. This distinction can be
+useful for very active clusters, reducing the amount of data that needs to be
+purged at one time.</p>
+
+<h2 id="mysql-configuration">MySQL Configuration
+<a class="slurm_link" href="#mysql-configuration"></a>
+</h2>
+
+<p><b>NOTE</b>: If you have an existing Slurm accounting database and
+plan to upgrade your database server to MariaDB 10.2.1 (or newer) from a
+pre-10.2.1 version or from any version of MySQL, please contact SchedMD
+for assistance.</p>
 
 <p>While Slurm will create the database tables automatically you will need to
 make sure the StorageUser is given permissions in the MySQL or MariaDB database
@@ -587,8 +658,38 @@ information.  Starting the SlurmDBD in daemon mode with the '-D' option can
 also help in debugging so you don't have to go to the log to find the
 problem.</p>
 
-<a id="tools"></a>
-<h2>Tools</h2>
+<h2 id="archive">Archive Server<a class="slurm_link" href="#archive"></a></h2>
+
+<p>If ongoing access to Archived/Purged data is required at your site, it is
+possible to create an archive instance of slurmdbd.  Data previously archived
+and purged from the production database can be loaded into the archive server,
+keeping the production database at a manageable size while making sure old
+records are still accessible.</p>
+
+<p>The archive instance of slurmdbd should not be able to communicate with the
+production server. Ideally they would have separate instances of MySQL/MariaDB
+that they use to store their data. The Slurm controller (slurmctld) should
+never communicate with the archive slurmdbd.</p>
+
+<p>When configuring an archive server, there are certain database entries
+that need to match the production server in order for the archived information
+to show up correctly. In order to make sure the unique identifiers match,
+mysqldump should be used to export the Association, QOS and TRES information.
+The command to export these tables should look like this, with the appropriate
+values substituted for &lt;slurm_user&gt;, &lt;db_name&gt;, and
+&lt;cluster&gt;:</p>
+<pre>
+mysqldump -u &lt;slurm_user&gt; -p &lt;db_name&gt; &lt;cluster&gt;_assoc_table qos_table tres_table &gt; slurm.sql
+</pre>
+
+<p>While mysqldump should be used to transfer the information from these tables,
+it should not be used to transfer information that will be generated with the
+Archive/Purge process. If mysqldump is used to try to get the desired
+information, there will likely be a slight difference and when trying to load
+archive files later there will either be a gap in records or duplicate
+records that prevent the archive file from loading correctly.</p>
+
+<h2 id="tools">Tools<a class="slurm_link" href="#tools"></a></h2>
 
 <p>There are a few tools available to work with accounting data,
 <b>sacct</b>, <b>sacctmgr</b>, and <b>sreport</b>.
@@ -603,8 +704,9 @@ given time period.</li>
 </ul>
 <p>See the man pages for each command for more information.</p>
 
-<a id="database-configuration"></a>
-<h2>Database Configuration</h2>
+<h2 id="database-configuration">Database Configuration
+<a class="slurm_link" href="#database-configuration"></a>
+</h2>
 
 <p>Accounting records are maintained based upon what we refer
 to as an <i>Association</i>,
@@ -612,13 +714,13 @@ which consists of four elements: cluster, account, user names and
 an optional partition name. Use the <i>sacctmgr</i>
 command to create and manage these records.</p>
 
-<p><b>NOTE:</b> There is an order to set up accounting associations.
+<p><b>NOTE</b>: There is an order to set up accounting associations.
 You must define clusters before you add accounts and you must add accounts
 before you can add users.</p>
 
 <p>For example, to add a cluster named "snowflake" to the database
 execute this line
-(<b>NOTE:</b> as of 20.02, slurmctld will add the cluster to the database upon
+(<b>NOTE</b>: as of 20.02, slurmctld will add the cluster to the database upon
 start if it doesn't exist. Associations still need to be created after
 addition):
 </p>
@@ -677,8 +779,9 @@ When using the "add user" command of <b>sacctmgr</b> you can include the
 <i>Partition=&lt;PartitionName&gt;</i> option to create an association that
 is unique to other associations with the same Account and User.</p>
 
-<a id="cluster-options"></a>
-<h2>Cluster Options</h2>
+<h2 id="cluster-options">Cluster Options
+<a class="slurm_link" href="#cluster-options"></a>
+</h2>
 
 <p>When either adding or modifying a cluster, these are the options
 available with sacctmgr:
@@ -687,8 +790,9 @@ available with sacctmgr:
 
 </ul>
 
-<a id="account-options"></a>
-<h2>Account Options</h2>
+<h2 id="account-options">Account Options
+<a class="slurm_link" href="#account-options"></a>
+</h2>
 
 <p>When either adding or modifying an account, the following sacctmgr
 options are available:
@@ -712,8 +816,9 @@ hierarchy</li>
 
 </ul>
 
-<a id="user-options"></a>
-<h2>User Options</h2>
+<h2 id="user-options">User Options
+<a class="slurm_link" href="#user-options"></a>
+</h2>
 
 <p>When either adding or modifying a user, the following sacctmgr
 options are available:
@@ -755,8 +860,9 @@ is specified when a job is submitted. (Only used when tracking wckeys.)</li>
 
 </ul>
 
-<a id="limit-enforcement"></a>
-<h2>Limit Enforcement</h2>
+<h2 id="limit-enforcement">Limit Enforcement
+<a class="slurm_link" href="#limit-enforcement"></a>
+</h2>
 
 <p>Various limits and limit enforcement are described in
   the <a href="resource_limits.html">Resource Limits</a> web page.</p>
@@ -768,8 +874,9 @@ Other options for AccountingStorageEnforce and the explanation for
 each are found on the <a href="resource_limits.html">Resource
 Limits</a> document.</p>
 
-<a id="modifying-entities"></a>
-<h2>Modifying Entities</h2>
+<h2 id="modifying-entities">Modifying Entities
+<a class="slurm_link" href="#modifying-entities"></a>
+</h2>
 
 <p>When modifying entities, you can specify many different options in
 SQL-like fashion, using key words like <i>where</i> and <i>set</i>.
@@ -787,8 +894,9 @@ Once an entity has been added, modified or removed, the change is
 sent to the appropriate Slurm daemons and will be available for use
 instantly.</p>
 
-<a id="removing-entities"></a>
-<h2>Removing Entities</h2>
+<h2 id="removing-entities">Removing Entities
+<a class="slurm_link" href="#removing-entities"></a>
+</h2>
 
 <p>Removing entities using an execute line similar to the modify example above,
 but without the set options.
@@ -812,7 +920,7 @@ completely. This is meant to clean up after typographical errors.
 Removing user associations or accounts, however, will cause slurmctld to lose
 track of usage data for that user/account.</p>
 
-<p style="text-align:center;">Last modified 12 May 2020</p>
+<p style="text-align:center;">Last modified 28 June 2023</p>
 
 <!--#include virtual="footer.txt"-->
 

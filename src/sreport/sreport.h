@@ -61,14 +61,13 @@
 #include "slurm/slurm.h"
 #include "slurm/slurmdb.h"
 
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/parse_time.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
 #include "src/common/print_fields.h"
 
-#define CKPT_WAIT	10
 #define	MAX_INPUT_FIELDS 128
 
 typedef enum {
@@ -89,6 +88,7 @@ extern int exit_flag;	/* program to terminate if =1 */
 extern char *fed_name;	/* Set if operating in federation mode */
 extern int input_words;	/* number of words of input permitted */
 extern int quiet_flag;	/* quiet=1, verbose=-1, normal=0 */
+extern int sort_user_tres_id; /* controls sorting users (eg sort_user_dec) */
 extern char *tres_str;	/* --tres= value */
 extern List g_tres_list;/* tres list from database - unaltered */
 extern List tres_list;	/* TRES list based of tres_str (--tres=str) */
@@ -99,8 +99,7 @@ extern char *cluster_flag;
 extern char *tres_usage_str;
 extern bool user_case_norm;
 
-extern void slurmdb_report_print_time(print_field_t *field,
-			       uint64_t value, uint64_t total_time, int last);
+extern char *sreport_get_time_str(uint64_t value, uint64_t total_time);
 extern int parse_option_end(char *option);
 extern time_t sanity_check_endtime(time_t endtime);
 extern char *strip_quotes(char *option, int *increased);

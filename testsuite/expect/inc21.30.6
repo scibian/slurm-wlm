@@ -28,63 +28,31 @@
 
 # Test MaxNode limit
 proc inc21_30_6 { wait_reason } {
+	global acct srun bin_sleep maxnode_num
 
-	global salloc acct number srun job_id1 bin_sleep maxnode_num exit_code
-
-	log_info "Starting MaxNode limit test (Within: inc21.30.6)"
+	log_info "Starting $wait_reason test"
 	set job_id1 0
+	set job_id2 0
 
-	spawn $salloc --account=$acct -N$maxnode_num --exclusive -t1 $srun $bin_sleep 2
-	expect {
-		-re "Granted job allocation ($number)" {
-			set job_id1 $expect_out(1,string)
-			log_debug "Job $job_id1 has been submitted (Within: inc21.30.6)"
-		}
-		-re "Pending job allocation ($number)" {
-			set job_id1 $expect_out(1,string)
-			log_error "This should have run but did not. (Within: inc21.30.6)"
-			set exit_code 1
-		}
-		-re "error" {
-			log_error "Job allocation should not have failed. (Within: inc21.30.6)"
-			set exit_code 1
-		}
-		timeout {
-			log_error "salloc not responding. (Within: inc21.30.6)"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
+	# Raise an error to abort the catch block
+	set exception_code [catch {
+
+		set job_id1 [submit_job -fail "--account=$acct -N$maxnode_num --exclusive -t1 -o none --wrap '$srun $bin_sleep 1'"]
+		subtest {![wait_for_job $job_id1 "DONE"]} "Job should run $wait_reason"
+		cancel_job $job_id1
+
+		set job_id2 [submit_job -fail "--account=$acct -N[expr $maxnode_num + 1] --exclusive -t1 -o none --wrap '$srun $bin_sleep 1'"]
+		subtest {![wait_job_reason -timeout 30 $job_id2 "PENDING" $wait_reason]} "Job should have pending reason $wait_reason"
+		cancel_job $job_id2
+
+	} message] ; # Store the error message in $message
 
 	# Cancels remaining jobs
 	cancel_job $job_id1
+	cancel_job $job_id2
 
-	spawn $salloc --account=$acct -N[expr $maxnode_num + 1] --exclusive -t1 $srun $bin_sleep 2
-	expect {
-		-re "job ($number) queued and waiting for resources" {
-			set job_id1 $expect_out(1,string)
-			log_debug "Job $job_id1 is waiting for resources. This is expected. (Within: inc21.30.6)"
-		}
-		-re "Granted job allocation ($number)" {
-			log_error "This should have pended but did not. (Within: inc21.30.6)"
-			set exit_code 1
-		}
-		timeout {
-			log_error "salloc not responding. (Within: inc21.30.6)"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
+	# Convert any errors into failures (after cleaning up)
+	if {$exception_code == 1} { ; # errors only
+		fail "Failure testing $wait_reason: $message"
 	}
-
-	if {![check_reason $job_id1 $wait_reason]} {
-		log_error "Bad job wait reason. (Within: inc21.30.6)"
-		set exit_code 1
-	}
-
-	# Cancels remaining jobs
-	cancel_job $job_id1
 }

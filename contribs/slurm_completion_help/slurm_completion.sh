@@ -1,10 +1,32 @@
-###############################################################################
+#!/usr/bin/env bash
+################################################################################
+# slurm_completion.sh - bash completion script for Slurm client commands.
 #
-# Bash completion for Slurm
-#
-###############################################################################
-#  Copyright (C) 2012 Damien François. <damien.francois@uclouvain.Be>
-#  Written by Damien François. <damien.francois@uclouvain.Be>.
+# Setting environment variables can control additional behaviors:
+# - SLURM_COMP_VALUE=[0-1]
+#   - Description: Toggles value completion from slurmctld, slurmdbd.
+#   - Accepted values:
+#     - 0 = Disabled -- no call to slurm{ctl,db}d for value completion.
+#     - 1 = Enabled -- will make call to slurm{ctl,db}d. (default)
+# - SLURM_COMP_HOSTLIST=[0-1]
+#   - Description: Alter slurm hostlist comprehension completion behavior.
+#   - Accepted values:
+#     - 0 = Disabled -- will not convert to hostlist notation.
+#     - 1 = Enabled -- will convert to hostlist notation. (default)
+# - SLURM_COMPLOG_FILE=</path/to/file.log>
+#   - Description: File for script logging to write to.
+# - SLURM_COMPLOG_LEVEL=[0-5]
+#   - Description: Script will log at this level of detail to specified file.
+#   - Accepted values:
+#     - 0 = QUIET
+#     - 1 = ERROR
+#     - 2 = WARN
+#     - 3 = INFO (default)
+#     - 4 = DEBUG
+#     - 5 = TRACE
+################################################################################
+#  Copyright (C) SchedMD LLC.
+#  Written by Skyler Malinowski <skyler@schedmd.com>
 #
 #  This file is part of Slurm, a resource management program.
 #  For details, see <https://slurm.schedmd.com/>.
@@ -34,1548 +56,5091 @@
 #  You should have received a copy of the GNU General Public License along
 #  with Slurm; if not, write to the Free Software Foundation, Inc.,
 #  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
+################################################################################
+
+# Source guard
+(return 0 2>/dev/null) && SOURCED=1 || SOURCED=0
+if [ $SOURCED -eq 0 ]; then
+	echo "FATAL: this script (slurm_completion.sh) is meant to be sourced." 1>&2
+	exit 1
+elif [[ -z $BASH_VERSION ]] && [[ -z ${BASH_SOURCE[-1]} ]]; then
+	echo "FATAL: this script (slurm_completion.sh) only supports bash." 1>&2
+	return
+elif ! [[ -f "/usr/share/bash-completion/bash_completion" ]] ||
+	! declare -F _completion_loader >/dev/null 2>&1; then
+	cat <<-EOF 1>&2
+		FATAL: Missing required source file.
+		  (1) Install package 'bash-completion'
+		  (2) $ source /usr/share/bash-completion/bash_completion
+		  (3) $ source slurm_completion.sh
+	EOF
+	return
+fi
+
+# Enable shell options
+shopt -s extglob
+
+################################################################################
+#			Slurm Completion Logger Functions
+################################################################################
+
+# Log at trace level
+function __slurm_log_trace() {
+	local message="$1"
+	local level="5"
+
+	__slurm_comp_logger "${level}" "${message}"
+}
+
+# Log at debug level
+function __slurm_log_debug() {
+	local message="$1"
+	local level="4"
+
+	__slurm_comp_logger "${level}" "${message}"
+}
+
+# Log at info level
+function __slurm_log_info() {
+	local message="$1"
+	local level="3"
+
+	__slurm_comp_logger "${level}" "${message}"
+}
+
+# Log at warn level
+function __slurm_log_warn() {
+	local message="$1"
+	local level="2"
+
+	__slurm_comp_logger "${level}" "${message}"
+}
+
+# Log at error level
+function __slurm_log_error() {
+	local message="$1"
+	local level="1"
+
+	__slurm_comp_logger "${level}" "${message}"
+}
+
+# Logger function for debugging script
 #
-###############################################################################
+# $1: log level
+# $2: message
+function __slurm_comp_logger() {
+	local level="${1-1}"
+	local message="$2"
+	local loglevels=(
+		"QUIET"
+		"ERROR"
+		" WARN"
+		" INFO"
+		"DEBUG"
+		"TRACE"
+	)
+	local logfile="${SLURM_COMPLOG_FILE:-}"
+	local loglevel="${SLURM_COMPLOG_LEVEL:-1}"
 
-function compute_set_diff(){
-    res=""
-    for i in $1; do
-	[[ "$2" =~ ${i%%=*} ]] && continue
-	res="$i $res"
-    done
-    echo $res
-}
-
-_split_long_opt() {
-    [[ $cur == = || $cur == : ]] && cur=""
-    [[ $prev == = ]] && prev=${COMP_WORDS[$cword-2]}
-}
-
-function find_first_partial_occurence(){
-    res=""
-    for item1 in $1; do
-	for item2 in $2; do
-	    if [[ $item2 == "$item1=" ]]; then
-		res="$item1"
-		break
-	    fi
-	done
-	if [[ $res != "" ]]; then
-	    break
+	if [[ -n $logfile ]] && ((level <= loglevel)); then
+		local fmt
+		fmt="[$(date)][${loglevels[level]}]"
+		printf '%s %s\n' "${fmt}" "${message}" >>"${SLURM_COMPLOG_FILE}"
 	fi
-    done
-    echo $res
 }
 
-function find_first_occurence(){
-    res=""
-    for item1 in $1; do
-	for item2 in $2; do
-	    if [[ $item1 = $item2 ]]; then
-		res="$item1"
-		break
-	    fi
-	done
-	if [[ $res != "" ]]; then
-	    break
+# Get the name of the current function
+function __func__() {
+	if [[ -n ${FUNCNAME[1]} ]]; then
+		echo "${FUNCNAME[1]}"
+	else
+		echo "unknown"
 	fi
-    done
-    echo $res
 }
 
-function offer (){
-    remainings=$(compute_set_diff "$1" "${COMP_WORDS[*]}")
-    COMPREPLY=( $( compgen -W "$remainings" -- $cur ) )
-    if [[ "$1" == *=* || "$1" == *%* || "$1" == *:* ]];
-    then
-	#echo "NO SPACE $1" >> loglog
-	compopt -o nospace
-    fi
-}
+################################################################################
+#			Slurm Shell Completion Functions
+################################################################################
 
-function offer_list () {
-    curlist=${cur%,*}
-    curitem=${cur##*,}
+# Generate completion reply. Appends a space to completion word if necessary.
+# Based on __gitcomp().
+#
+# $1: List of completion words.
+# $2: Prefix to be pre-appended to each completion word (optional).
+# $3: Generate possible completion matches for this word (optional).
+# $4: Suffix to be appended to each completion word (optional).
+# $5: Separator for completion words (optional).
+function __slurm_comp() {
+	local options="$1"
+	local prefix="$2"
+	local _cur="${3-$cur}"
+	local suffix="$4"
+	local ifs="${5-" "}"
+	local IFS=$' \t\n'
+	COMPREPLY=() # reset
 
-    if [[ $curlist == $curitem ]]
-    then
-	COMPREPLY=( $( compgen -W "${1}" -- $cur ) ) ; return
-    elif [[ $cur == *,  ]]  ;
-    then
-	compvalues=""
-	for i in $1;do
-	    [[ $cur =~ $i ]] && continue
-	    compvalues="$i $compvalues "
+	__slurm_log_debug "$(__func__): prefix='$prefix' _cur='$_cur' suffix='$suffix' ifs='$ifs'"
+	__slurm_log_debug "$(__func__): options='$options'"
+
+	local c
+	for c in $options; do
+		c="$c${suffix-}"
+		__slurm_log_trace "$(__func__): for loop: c='$c'"
+		if [[ $c == "$_cur"* ]]; then
+			case $c in
+			*=) ;;     # parameter
+			- | --) ;; # flag stub
+			*,) ;;     # slurm list notation
+			*) c="${c}${ifs}" ;;
+			esac
+			COMPREPLY+=("${prefix-}$c")
+		fi
 	done
-	uniqueprefix=1
-	prefix=${compvalues:0:1}
-	for i in $compvalues;do
-	    [[ ${i:0:1} == $prefix ]] || uniqueprefix=0
-	done
-	if [[ $uniqueprefix == 1  ]]
-	then
-	    compvalues=""
-	    for i in $1;do
-		[[ $cur =~ $i ]] && continue
-		compvalues="$compvalues $curlist,$i"
-	    done
-	fi
-	COMPREPLY=( $( compgen -W "${compvalues}" -- "" ) ) ; return
-    else
-	compvalues=""
-	for i in $1;do
-	    [[ $cur =~ $i ]] && continue
-	    compvalues="$compvalues $curlist,$i"
-	done
-	COMPREPLY=( $( compgen -W "${compvalues}" -- $cur ) ) ;
-    fi
+
+	__ltrim_colon_completions "${_cur}"
+
+	__slurm_log_info "$(__func__): #COMPREPLY[@]='${#COMPREPLY[@]}'"
+	__slurm_log_info "$(__func__): COMPREPLY[*]='${COMPREPLY[*]}'"
 }
 
-function offer_many () {
-    availablevalues=""
-    for i in $1;do
-	[[ $cur =~ $i ]] && continue
-	availablevalues="$i $availablevalues"
-    done
+# Slurm completion helper for count notation
+# Example:
+#     BB      = name[[:type]:count][,name[[:type]:count]...]
+#     GRES    = name[[:type]:count][,name[[:type]:count]...]
+#     LICENSE = license[@db][:count][,license[@db][:count]...]
+#
+# $1: list of items for completion
+# $2: list of units to suffix the count with (optional)
+function __slurm_compreply_count() {
+	local options="$1"
+	local units="$2"
+	local prefix=""
+	local suffix=","
+	local curlist="${cur%"$suffix"*}"
+	local curitem="${cur##*"$suffix"}"
+	local compreply=()
 
-    # Check that there is no unique prefix for all remaining options (God knows why I have to do this. Must be missing something)
-    # TODO when all suboptions start with the same prefix, it is not working great
-    uniqueprefix=1
-    prefix=${availablevalues:0:1}
-    for i in $availablevalues;do
-	[[ ${i:0:1} == $prefix ]] || uniqueprefix=0
-    done
-
-
-    #if [[ "$1" == *'\"'% ]];
-    #then
-    #    compopt -o nospace
-    #fi #added for --format in squeue
-
-    if [[  ${COMP_WORDS[COMP_CWORD-1]} == "$argname" ]]; then
-	# echo  "The first value is about to be entered" >> loglog
-	cur=""
-	COMPREPLY=( $( compgen -W "${1}" -- $cur ) ) ; return
-    fi
-    if [[ ${COMP_WORDS[COMP_CWORD-1]} == '='  && "$cur" != *,* ]]; then
-	# echo  "A supplementary value is being entered" >> loglog
-	COMPREPLY=( $( compgen -W "${1}" -- $cur ) ) ; return
-    fi
-    if [[ ${cur:${#cur}-1:1} == "," && $uniqueprefix == 0  ]]; then
-	 echo  "A supplementary value is about to be entered and there is a no unique suffix" >> loglog
-	compvalues=""
-	for i in $1;do
-	    [[ $cur =~ $i ]] && continue
-	    compvalues="$i $compvalues"
-	done
-	cur=""
-	COMPREPLY=( $( compgen -W "${compvalues}" -- $cur ) ) ;
-	return
-    fi
-    if [[ "$cur" =~ ","  ]] ; then
-	 echo  "A supplementary value is about to be entered and there is a unique prefix or we are in the middle of one" >> loglog
-	compvalues=""
-	for i in $1;do
-	    [[ $cur =~ $i ]] && continue
-	    compvalues="$compvalues ${cur%,*},$i"
-	    #compvalues="$compvalues $i"
-	done
-	COMPREPLY=( $( compgen -W "${compvalues}" -- $cur ) ) ;
-
-	# This is lame, we show complete list rather than last element
-	return
-    fi
-    return 255
-}
-
-function param () {
-    argname="$1"
-    [[ ${COMP_WORDS[COMP_CWORD]} == "=" && ${COMP_WORDS[COMP_CWORD-1]} == $1 ]] && return 0
-    [[ ${COMP_WORDS[COMP_CWORD-1]} == "=" && ${COMP_WORDS[COMP_CWORD-2]} == $1 ]] && return 0
-    [[ ${COMP_WORDS[COMP_CWORD-1]} == $1 ]] && return 0
-    return 255
-}
-
-function _jobs() {
-echo $( scontrol -o show jobs | cut -d' ' -f 1 | cut -d'=' -f 2 ) ;
-}
-function _wckeys() {
-echo $(sacctmgr -p -n list wckeys | cut -d'|' -f1) ;
-}
-function _qos() {
-echo $(sacctmgr -p -n list qos | cut -d'|' -f1) ;
-}
-function _clusters() {
-echo $(sacctmgr -p -n list clusters | cut -d'|' -f1) ;
-}
-function _jobnames() {
-echo $( scontrol -o show jobs | cut -d' ' -f 2 | cut -d'=' -f 2 ) ;
-}
-function _partitions() {
-echo $(scontrol show partitions|grep PartitionName|cut -c 15- |cut -f 1 -d' '|paste -s -d ' ') ;
-}
-function _nodes() {
-echo $(scontrol show nodes | grep NodeName | cut -c 10- | cut -f 1 -d' ' | paste -s -d ' ') ;
-}
-function _accounts() {
-echo $(sacctmgr -pn list accounts | cut -d'|' -f1 | paste -s -d' ') ;
-}
-function _licenses() {
-echo $(scontrol show config| grep Licenses | sed 's/Licenses *=//'| paste -s -d' ') ;
-}
-function _nodes() {
-echo $(scontrol show nodes | grep NodeName | cut -c 10- | cut -f 1 -d' ' | paste -s -d ' ') ;
-}
-function _features() {
-echo $(scontrol -o show nodes|cut -d' ' -f7|sed 's/Features=//'|sort -u|tr -d '()'|paste -d, -s) ;
-}
-function _users() {
-echo $(sacctmgr -pn list users | cut -d'|' -f1) ;
-}
-function _reservations() {
-echo $(scontrol -o show reservations | cut -d' ' -f1 | cut -d= -f2) ;
-}
-function _gres() {
-echo $(scontrol show config | grep GresTypes | cut -d= -f2)
-}
-function _jobname() {
-echo $(scontrol show -o jobs | cut -d' ' -f 2 | sed 's/Name=//')
-}
-function _resource() {
-echo $(sacctmgr -pn list resource | cut -d'|' -f1 | paste -s -d' ')
-}
-function _step() {
-echo $( scontrol -o show step | cut -d' ' -f 1 | cut -d'=' -f 2 ) ;
-}
-
-_sacctmgr()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
-
-    local subopts=""
-    local commands="add archive create delete dump list load modify show "
-    local shortoptions="-h -i -n -p -P -Q -r -s -v -V"
-    local longoptions="--help --immediate --noheader --parsable \
-	--parsable2 --quiet --readonly --associations --verbose --version"
-
-
-    local assocparams="clusters= accounts= users= partition= "
-
-    local assocbasedparams="defaultqos= fairshare= gracetime=\
-			    grpcpumins= grpcpurunmins= grpcpus=\
-			    grpjobs= grpmemory= grpnodes= grpsubmitjobs=\
-			    grpwall= maxcpumins= maxcpus= maxjobs= maxnodes=\
-			    maxsubmitjobs= maxwall= qoslevel="
-
-    local qosflags="DenyOneLimit EnforceUsageThreshold NoReserve\
-		    PartitionMaxNodes PartitionMinNodes PartitionQos\
-		    PartitionTimeLimit"
-    local qospreempt="cluster cancel requeue suspend"
-
-    local clusflags="frontend multipleslurmd"
-
-    # Check whether we are in the middle of an option. If so serve them.
-    remainings=$(compute_set_diff "$longoptions" "${COMP_WORDS[*]}")
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$remainings" ; return ; }
-
-    # Search for a command in the argument list (first occurence)
-    # the command might be in any position because of the options
-    command=$(find_first_occurence "${COMP_WORDS[*]}" "$commands")
-
-    # If no command has been entered, serve the list of valid commands
-    [[ $command == "" ]] && { offer "$commands" ; return ; }
-
-    # Load command has a specific syntax. Treat it first
-    [[ $command == "load" ]] && { _filedir ; return ; }
-
-    case $command in
-    add|create)
-	objects="account cluster coordinator qos user "
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	account)
-	    params="cluster= description= name= organization= parent=\
-		    rawusage= withassoc withcoord withdeleted"
-	    if param "cluster" ; then  offer_list "$(_clusters)" ;
-	    elif param "parent" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	cluster)
-	    params="classification= flags= name= rpc= wolimits"
-	    if param "flags" ; then  offer_list "$clusflags" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	coordinator)
-	    params="accounts= names="
-	    if param "names" ; then  offer_list "$(_users)" ;
-	    elif param "accounts" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	qos)
-	    params="flags= gracetime= grpcpumins= grpcpurunmins= grpcpus=\
-		    grpjobs= grpnodes= grpsubmitjobs= grpwall= maxcpumins=\
-		    maxcpus= maxcpusperuser= maxjobs= maxnodes= mincpus=\
-		    maxnodesperuser= maxsubmitjobs= maxwall= name= preempt=\
-		    preemptmode= priority= usagefactor= usagethreshold=\
-		    withdeleted"
-	    if param "preemptmode" ; then  offer_list "$qospreempt" ;
-	    elif param "flags" ; then  offer_list "$qosflags" ;
-	    elif param "preempt" ; then  offer_list "$(_qos)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	user)
-	    params="account= adminlevel= cluster= defaultaccount=\
-	       defaultwckey= name= partition= rawusage= wckey= withassoc
-	       withcoord withdeleted"
-	    if param "defaultaccount" ; then  offer_list "$(_accounts)" ;
-	    elif param "account" ; then  offer_list "$(_accounts)";
-	    elif param "adminlevel" ; then  offer_list "none operator admin" ;
-	    elif param "cluster" ; then  offer_list "$(_cluster)" ;
-	    elif param "defaultwckey" ; then  offer_list "$(_wckey)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-    archive)
-	objects="dump load"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	dump)
-            _filedir
-	    ;;
-	load)
-            _filedir
-	    ;;
-	*) offer "$objects"
-	    ;;
-	esac
-	;;
-    delete)
-	objects="account cluster coordinator qos user"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	account)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ; return ;fi
-	    params="cluster= description= name= organization= parent="
-	    if param "cluster" ; then  offer_list "$(_clusters)" ;
-	    elif param "parent" ; then  offer_list "$(_accounts)" ;
-	    elif param "name" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	cluster)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="classification= flags= name= rpc= $assocbasedparams"
-	    if param "flags" ; then  offer_list "$clusflags" ;
-	    elif param "defaultqos" ; then  offer_list "$(_qos)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	coordinator)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="accounts= names="
-	    if param "names" ; then  offer_list "$(_users)" ;
-	    elif param "accounts" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	user)
-	    params="account= adminlevel= cluster= defaultaccount=\
-		    defaultwckey= name= wckeys= withassoc"
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    if param "defaultaccount" ; then  offer_list "$(_accounts)" ;
-	    elif param "account" ; then  offer_list "$(_accounts)";
-	    elif param "adminlevel" ; then  offer_list "none operator admin" ;
-	    elif param "cluster" ; then  offer_list "$(_cluster)" ;
-	    elif param "wckeys" ; then  offer_list "$(_wckeys)" ;
-	    elif param "defaultwckey" ; then  offer_list "$(_wckey)" ;
-	    else offer "$params" ;
-	    fi
-	    ;;
-	*) offer "$objects"
-	    ;;
-	esac
-	;;
-    list|show)
-	objects="account association cluster configuration \
-	    event problem qos resource transaction user wckey"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	account)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="cluster= description= name= organization= parent=\
-		    withassoc withcoord withdeleted $assocparams\
-		    $assocbasedparams"
-	    if param "cluster" ; then  offer_list "$(_clusters)" ;
-	    elif param "parent" ; then  offer_list "$(_accounts)" ;
-	    elif param "users" ; then  offer_list "$(_users)" ;
-	    elif param "partition" ; then  offer_list "$(_partition)" ;
-	    elif param "defaultqos" ; then  offer_list "$(_qos)" ;
-	    elif param "name" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	association)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="$assocparams onlydefaults tree withdeleted withsubaccounts\
-		    wolimits wopinfo woplimits"
-	    if param "clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "users" ; then  offer_list "$(_users)" ;
-	    elif param "partition" ; then  offer_list "$(_partitions)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	cluster)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="classification= flags= name= rpc= $assocbasedparams\
-		    wolimits"
-	    if param "flags" ; then  offer_list "$clusflags" ;
-	    elif param "defaultqos" ; then  offer_list "$(_qos)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	event)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="all_clusters all_time clusters= end= event= maxcpu=\
-		    mincpus= nodes= reason= start= states= user= "
-	    if param "clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "nodes" ; then  offer_list "$(_nodes)" ;
-	    elif param "event" ; then  offer_list "cluster node" ;
-	    elif param "states" ; then  offer_list "alloc allocated down drain\
-			fail failing idle mixed maint power_down power_up\
-			resume" ;
-	    elif param "users" ; then  offer_list "$(_users)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	qos)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="flags= gracetime= grpcpumins= grpcpus= grpcpurunmins=\
-		    grpjobs= grpnodes= grpsubmitjobs= grpwall= id= maxcpumins=\
-		    maxcpusmins= maxcpus= maxjobs= maxnodes= mincpus=\
-		    maxnodesperuser= maxsubmitjobs= maxwall= name= preempt=\
-		    preemptmode= priority= rawusage= usagefactor=\
-		   usagethreshold= withdeleted"
-	    if param "preemptmode" ; then  offer_list "cluster cancel\
-							 requeue\
-							 suspend" ;
-	    elif param "flags" ; then  offer_list "$qosflags" ;
-	    elif param "preempt" ; then  offer_list "$(_qos)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	resource)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="cluster= count= description= flags= servertype= name=\
-		    precentallowed= server= type="
-	    if param "name" ; then  offer_list "$(_resource)" ;
-	    elif param "cluster" ; then offer_list "$(_clusters)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	transaction)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="accounts= action= actor= clusters= endtime= startime=\
-		users= withassoc"
-	    if param "accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "actor" ; then  offer_list "$(_users)" ;
-	    elif param "clusters" ; then  offer_list "$(_clusters)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	user)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="account= adminlevel= cluster= defaultaccount=\
-		    defaultwckey= name= partition= wckeys= withassoc withcoord \
-		    withdelted"
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    if param "defaultaccount" ; then  offer_list "$(_accounts)" ;
-	    elif param "account" ; then  offer_list "$(_accounts)";
-	    elif param "adminlevel" ; then  offer_list "none operator admin" ;
-	    elif param "cluster" ; then  offer_list "$(_cluster)" ;
-	    elif param "wckeys" ; then  offer_list "$(_wckeys)" ;
-	    elif param "defaultwckey" ; then  offer_list "$(_wckey)" ;
-	    else offer "$params" ;
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-    modify)
-	objects="account cluster job qos user"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	account)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="cluster= description= name= organization= parent=\
-		rawusage= $assocbasedparams"
-	    if param "cluster" ; then  offer_list "$(_clusters)" ;
-	    elif param "parent" ; then  offer_list "$(_accounts)" ;
-	    elif param "name" ; then  offer_list "$(_accounts)" ;
-	    else offer "$params set"
-	    fi
-	    ;;
-	cluster)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="classification= flags= name= rpc= $assocbasedparams"
-	    if param "flags" ; then  offer_list "$clusflags" ;
-	    elif param "defaultqos" ; then  offer_list "$(_qos)" ;
-	    else offer "$params set"
-	    fi
-	    ;;
-	qos)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="flags= gracetime= grpcpumins= grpcpurunmins= grpcpus=\
-		    grpjobs= grpnodes= grpsubmitjobs= grpwall= maxcpumins=\
-		    maxcpus= maxcpusperuser= maxjobs= maxnodes= mincpus=\
-		    maxnodesperuser= maxsubmitjobs= maxwall= name= preempt=\
-		    preemptmode= priority= rawusage= usagefactor=\
-		    usagethreshold= withdeleted"
-	    if param "flags" ; then  offer_list "$qosflags" ;
-	    elif param "name" ; then offer_list "$(_qos)" ;
-	    elif param "preemptmode" ; then  offer_list "$qospreempt" ;
-	    elif param "preempt" ; then  offer_list "$(_qos)" ;
-	    else offer "$params set"
-	    fi
-	    ;;
-	user)
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    params="account= adminlevel= cluster= defaultaccount=\
-		    defaultwckey= name= partition= rawusage= wckeys= withassoc"
-	    if [[ "${COMP_WORDS[*]}" != *where* ]] ; then offer "where" ;
-		    return ;fi
-	    if param "defaultaccount" ; then  offer_list "$(_accounts)" ;
-	    elif param "account" ; then  offer_list "$(_accounts)";
-	    elif param "adminlevel" ; then  offer_list "none operator admin" ;
-	    elif param "cluster" ; then  offer_list "$(_cluster)" ;
-	    elif param "wckeys" ; then  offer_list "$(_wckeys)" ;
-	    elif param "defaultwckey" ; then  offer_list "$(_wckey)" ;
-	    else offer "$params" ;
-	    fi
-	    ;;
-	*) offer "$objects"
-	    ;;
-	esac
-	;;
-
-    esac
-}
-complete -F _sacctmgr sacctmgr
-
-_sreport()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
-
-    local subopts=""
-    local commands="cluster job user reservation"
-
-    local shortoptions="-a -n -h -p -P -Q -t -v -V"
-    local longoptions="--all_clusters --help --noheader --parsable\
-			--parsable2 --quiet --verbose --version"
-
-    # Check whether we are in the middle of an option. If so serve them.
-    remainings=$(compute_set_diff "$longoptions" "${COMP_WORDS[*]}")
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$remainings" ; return ; }
-
-    # Search for a command in the argument list (first occurence)
-    # the command might be in any position because of the options
-    command=$(find_first_occurence "${COMP_WORDS[*]}" "$commands")
-
-    # If no command has been entered, serve the list of valid commands
-    [[ $command == "" ]] && { offer "$commands" ; return ; }
-
-    opts_all="All_Clusters Clusters= End= Format= Start="
-
-    case $command in
-    user)
-	objects="TopUsage"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	TopUsage)
-	    params="$opts_all Accounts= Group TopCount= Users="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Account Cluster Login\
-						    Proper User" ;
-	    elif param "Accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "Users" ; then  offer_list "$(_users)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-    reservation)
-	objects="Utilization"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	Utilization)
-	    params="$opts_all Names= Nodes= Accounts= Group TopCount= Users= "
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Allocated Associations \
-		Clusters CPUCount CPUTime End Flags Idle Name Nodes\
-		ReservationId Start TotalTime";
-	    elif param "Nodes" ; then  offer_list "$(_nodes)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-    job)
-	objects="SizesByAccount SizesByAccountAndWckey SizesByWckey"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	SizesByAccount|SizesByAccountAndWckey)
-	    params="$opts_all Accounts= FlatView GID= Grouping= \
-		Jobs= Nodes= Partitions= PrintJobCount Users= Wckeys="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Account Cluster" ;
-	    elif param "Accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "GID" ; then  _gids ;
-	    elif param "Users" ; then  offer_list "$(_users)" ;
-	    elif param "Wckeys" ; then  offer_list "$(_wckeys)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	SizesByWckey)
-	    params="$opts_all Accounts= FlatView GID= Grouping= \
-		Jobs= Nodes= OPartitions= PrintJobCount Users= Wckeys="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Wckey Cluster" ;
-	    elif param "Accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "GID" ; then  _gids ;
-	    elif param "Users" ; then  offer_list "$(_users)" ;
-	    elif param "Wckeys" ; then  offer_list "$(_wckeys)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-    cluster)
-	objects="AccountUtilizationByUser UserUtilizationByAccount \
-		    UserUtilizationByWCKey Utilization WCKeyUtilizationByUser"
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-	case $object in
-	Utilization)
-	    params="$opts_all Names= Nodes="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Allocated Cluster \
-		CPUCount Down Idle Overcommitted PlannedDown Reported Reserved";
-	    elif param "Nodes" ; then  offer_list "$(_nodes)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	AccountUtilizationByUser|UserUtilizationByAccount)
-	    params="$opts_all Accounts= Tree Users= Wckeys="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Accounts Cluster CPUCount\
-						    Login Proper Used" ;
-	    elif param "Accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "Users" ; then  offer_list "$(_users)" ;
-	    elif param "Wckeys" ; then  offer_list "$(_wckeys)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	UserUtilizationByWCKey|WCKeyUtilizationByUser)
-	    params="$opts_all Accounts= Tree Users= Wckeys="
-	    if param "Clusters" ; then  offer_list "$(_clusters)" ;
-	    elif param "Format" ; then  offer_list "Cluster CPUCount Login\
-						    Proper Used Wckey" ;
-	    elif param "Accounts" ; then  offer_list "$(_accounts)" ;
-	    elif param "Users" ; then  offer_list "$(_users)" ;
-	    elif param "Wckeys" ; then  offer_list "$(_wckeys)" ;
-	    else offer "$params"
-	    fi
-	    ;;
-	*) offer "$objects" ;;
-	esac
-	;;
-
-    esac
-}
-complete -F _sreport sreport
-
-_scontrol()
-{
-    local cur=${COMP_WORDS[COMP_CWORD]}
-    local prev=${COMP_WORDS[COMP_CWORD-1]}
-
-    local commands="abort cluster create completing delete details\
-		    errnumstr help hold notify oneliner\
-		    pidinfo listpids ping quit reboot_nodes reconfigure release\
-		    requeue requeuehold schedloglevel resume schedloglevel\
-		    script setdebug setdebugflags show shutdown suspend\
-		    takeover uhold update verbose version wait_job"
-
-    local shortoptions="-a -d -h -M -o -Q -v -V "
-    local longoptions="--all --details --help --hide --cluster --oneliner \
-			--quiet --verbose --version"
-
-    # Check whether we are in the middle of an option. If so serve them.
-    remainings=$(compute_set_diff "$longoptions" "${COMP_WORDS[*]}")
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$remainings" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $remainings)"; return ; }
-
-    # Search for a command in the argument list (first occurence)
-    # the command might be in any position because of the options
-    command=$(find_first_occurence "${COMP_WORDS[*]}" "$commands")
-
-    # If no command has been entered, serve the list of valid commands
-    [[ $command == "" ]] && { offer "$commands" ; return ; }
-
-    # Otherwise process command
-    case $command in
-    shutdown) # scontrol shutdown object
-	offer "slurmctld controller"
-	;;
-    setdebug) # scontrol setdebug value
-	offer "quiet info warning error debug debug2 debug3 debug4 debug5 " # FIXME
-	;;
-    uhold | suspend | release | requeue | resume | hold )
-	offer "$(_jobs)"
-	;; #TODO notify
-    show) # scontrol show object [id]
-	objects="aliases config block daemons frontend hostlist hostlistsorted\
-		 hostnames job nodes partitions reservations slurmd steps\
-		 submp topology"
-
-	# Search for the current object in the argument list
-	object=$(find_first_occurence "${COMP_WORDS[*]}" "$objects")
-
-	# If no object has yet been (fully) typed in, serve the list of objects
-	[[ $object == "" ]] && { offer "$objects" ; return ; }
-
-	# Otherwise, offer the ids depending on the object
-	if param "job"          ; then offer  "$(_jobs)"         ; fi
-	if param "nodes"        ; then offer_list "$(_nodes)"        ; fi
-	if param "partitions"   ; then offer "$(_partitions)"   ; fi
-	if param "reservations" ; then offer "$(_reservations)"  ; fi
-	#TODO if object "steps"
-	;;
-    delete) # scontrol delete objectname=id
-	parameters="partitionname= reservationname="
-
-	# If a parameter has been fully typed in, serve the corresponding
-	# values, otherwise, serve the list of parameters.
-	if   param "partitionname"   ; then offer_many "$(_partitions)"
-	elif param "reservationname" ; then offer_many "$(_reservations)"
-	else offer "$parameters" ; fi
-	;;
-    update)
-	parameters="jobid= step= nodename= partitionname=\
-		    reservationname="
-
-	param=$(find_first_partial_occurence "${COMP_WORDS[*]}" "$parameters")
-	[[ $param == "" ]] && { offer "$parameters" ; return ; }
-
-	# If a parameter has been fully typed in, serve the corresponding
-	# values, if it is the first one.
-	if   param "jobid"   ; then offer_many "$(_jobs)" ; return
-	elif param "nodename" ; then offer_many "$(_nodes)"  ; return
-	elif param "partitionname" ; then offer_many "$(_partitions)" ; return
-	elif param "reservationname" ; then offer_many "$(_reservations)"  ; return
-	elif param "step" ; then offer_many "$(_step)" ; return
+	if [[ $curitem == "$curlist" ]]; then
+		curlist=""
+	elif [[ -n $curlist ]]; then
+		prefix="${curlist}${suffix}"
 	fi
 
-	# Otherwise, process the others based on the first one
-	case $param in
-	jobid)
-	    local parameters="account=<account> conn-type=<type> \
-			      contiguous=<yes|no> dependency=<dependency_list>\
-			      eligibletime=yyyy-mm-dd excnodelist=<nodes>\
-			      features=<features> geometry=<geo> gres=<list>\
-			      jobid=<job_id> licenses=<name>\
-			      mincpusnode=<count> minmemorycpu=<megabytes>\
-			      minmemorynode=<megabytes>\
-			      mintmpdisknode=<megabytes> name=<name>\
-			      nice[=delta] nodelist=<nodes>\
-			      numcpus=<min_count[-max_count]\
-			      numnodes=<min_count[-max_count]>\
-			      numtasks=<count> partition=<name>\
-			      priority=<number> qos=<name> reqcores=<count>\
-			      reqnodelist=<nodes> reqsockets=<count>\
-			      reqthreads=<count> requeue=<0|1>\
-			      reservationname=<name> rotate=<yes|no>\
-			      shared=<yes|no> starttime=yyyy-mm-dd\
-			      switches=<count>[@<max-time-to-wait>]\
-			      timelimit=[d-]h:m:s userid=<UID or name>\
-			      wckey=<key>"
+	__slurm_log_debug "$(__func__): cur='$cur' curitem='$curitem' curlist='$curlist'"
 
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
+	case "${curitem}" in
+	*:)
+		__slurm_log_debug "$(__func__): expect count spec"
+		;;
+	*:+([[:digit:]])+([[:alpha:]]))
+		__slurm_log_debug "$(__func__): found count unit spec"
+		local item=""
+		item="$(echo "$curitem" | sed -E "s/[[:alpha:]]+$//g")"
+		options="$(compgen -P "${item}" -W "${units[*]}")"
+		__slurm_comp "${options[*]}" "${prefix-}" "${curitem}" "${suffix-}" ""
+		;;
+	*:+([[:digit:]]))
+		__slurm_log_debug "$(__func__): found count spec"
+		if [[ -n $units ]]; then
+			options="$(compgen -P "${curitem}" -W "${units[*]}")"
+			__slurm_comp "${options[*]}" "${prefix-}" "${curitem}" "${suffix-}" ""
+		else
+			__slurm_comp "${curitem[*]}" "${prefix-}" "${curitem}" "${suffix-}" ""
+		fi
+		;;
+	*)
+		__slurm_log_debug "$(__func__): expect item spec"
+		options="$(compgen -W "${options[*]}" -S ":" -- "${curitem}")"
 
-	    # If a new named argument is about to be entered, serve the list of options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ; return ; }
+		# build array without seen items
+		for item in $options; do
+			__slurm_log_trace "$(__func__): for loop: item='$item'"
+			[[ $item =~ ^[[:space:]]*$ ]] && continue
+			[[ $curlist =~ "${item}"[[:digit:]]+"${suffix}"? ]] && continue
+			compreply+=("$item")
+		done
 
-	    # Test all potential arguments and server corresponding values
-	    if   param "account"         ; then offer_many "$(_accounts)"
-	    elif param "excnodelist"     ; then offer_many "$(_nodes)"
-	    elif param "nodelist"        ; then offer_many "$(_nodes)"
-	    elif param "features"        ; then offer_many "$(_features)"
-	    elif param "gres"            ; then offer_many "$(_gres)"
-	    elif param "licences"        ; then offer_many "$(_licenses)"
-	    elif param "partition"       ; then offer_many "$(_partitions)"
-	    elif param "reservationname" ; then offer_many "$(_reservations)"
-	    elif param "qos"             ; then offer_many "$(_qos)"
-	    elif param "wckey"           ; then offer_many "$(wckeys)"
-	    elif param "conn-type"       ; then offer_many "MESH TORUS NAV"
-	    elif param "rotate"          ; then offer_many "yes no"
-	    elif param "shared"          ; then offer_many "yes no"
-	    else offer "$(sed 's/\=[^ ]*/\=/g' <<< $remainings)"
-	    fi
-	    ;;
-	nodename)
-	    local parameters="features=<features> gres=<gres> \
-	       reason=<reason> state=<state> weight=<weight>"
-
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-
-	    # If a new named argument is about to be entered, serve the list of options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ;
-		    return ; }
-
-	    # Test all potential arguments and server corresponding values
-	    if param "features"   ; then offer_many "$(_features)"
-	    elif param "gres"     ; then offer_many "$(_gres)"
-	    elif param "state"    ; then offer_many "noresp drain fail future\
-						     resume power_down\
-						     power_up undrain"
-	    else offer "$(sed 's/\=[^ ]*/\=/g' <<< $remainings)"
-	    fi
-	    ;;
-	partitionname)
-	    local parameters="allowgroups=<name> allocnodes=<node_list>\
-			      alternate=<partition_name> default=yes|no\
-			      defaulttime=d-h:m:s|unlimited defmempercpu=<MB>\
-			      defmempercnode=<MB> disablerootjobs=yes|no\
-			      gracetime=<seconds> hidden=yes|no\
-			      maxmempercpu=<MB> maxmempercnode=<MB>\
-			      maxnodes=<count> maxtime=d-h:m:s|unlimited\
-			      minnodes=<count> nodes=<name>\
-			      preemptmode=off|cancel|requeue|suspend\
-			      priority=count rootonly=yes|no reqresv=<yes|no>\
-			      shared=yes|no|exclusive|force\
-			      state=up|down|drain|inactive"
-
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-	    # If a new named argument is about to be entered, serve the list of options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ;
-		    return ; }
-
-	    # Test all potential arguments and server corresponding values
-	    if   param "allocnodes"  ; then offer_many "$(_nodes)"
-	    elif param "nodes"       ; then offer_many "$(_nodes)"
-	    elif param "alternate"   ; then offer_many "$(_partitions)"
-	    elif param "default"     ; then offer_many  "yes no"
-	    elif param "preemptmode" ; then offer_many "off cancel\
-							requeue suspend"
-	    elif param "shared"      ; then offer_many "yes no exclusive force"
-	    elif param "state"       ; then offer_many "up down drain inactive"
-	    elif param "disablerootjobs" ; then offer_many "yes no"
-	    elif param "hidden"      ; then offer_many "yes no"
-	    elif param "rootonly"    ; then offer_many "yes no"
-	    elif param "reqresv"     ; then offer_many "yes no"
-	    else offer "$(sed 's/\=[^ ]*/\=/g' <<< $remainings)"
-	    fi
-	    ;;
-	reservationname)
-	    local parameters="accounts=<account_list> corecnt=<num>\
-			      duration=[days-]hours:minutes:seconds\
-			      endtime=yyyy-mm-dd[thh:mm[:ss]]\
-			      features=<feature_list>\
-			      flags=maint,overlap,ignore_jobs,daily,weekly\
-			      licenses=<license> nodecnt=<count>\
-			      nodes=<node_list> users=<user_list>\
-			      partitionname=<partition_list>\
-			      starttime=yyyy-mm-dd[thh:mm[:ss]]"
-
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-	    # If a new named argument is about to be entered, serve the list of options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ;
-		    return ; }
-
-	    # test all potential arguments and server corresponding values
-	    if   param "accounts" ; then offer_many  "$(_accounts)"
-	    elif param "licences" ; then offer_many "$(_licenses)"
-	    elif param "nodes"    ; then offer_many "$(_nodes)"
-	    elif param "features" ; then offer_many "$(_features)"
-	    elif param "users"    ; then offer_many "$(_users)"
-	    elif param "flags"    ; then offer_many "daily first_cores\
-						     ignore_jobs license_only\
-						     maint overlap part_nodes\
-						     spec_nodes static_alloc\
-						     time_float weekly"
-	    elif param "partitioname" ; then offer_many "$(_partitions)"
-	    else offer "$(sed 's/\=[^ ]*/\=/g' <<< $remainings)"
-	    fi
-	    ;;
-	step)
-	    local parameters="stepid=<job_id>[.<step_id>]\
-			     CompFile=<completion_file> TimeLimit=<time>"
-
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ;
-		    return ; }
-	    if param "stepid" ; then offer_list "$(_step)" ;
-	    fi
-	    ;;
-
+		__slurm_comp "${compreply[*]}" "${prefix-}" "${curitem}" "" ""
+		;;
 	esac
-	;;
-    create) # command object attribute1=value1 etc.
-	parameters="partition reservation"
+}
 
-	param=$(find_first_occurence "${COMP_WORDS[*]}" "$parameters")
-	[[ $param == "" ]] && { offer "$parameters" ; return ; }
+# Completion function for parameters
+function __slurm_compreply_param() {
+	local options="$1"
+	local compreply=()
+	local IFS=$' \t\n'
+	local p=""
 
-	# Process object
-	case $param in
-	partition)
-	    local parameters="allocnodes=<node_list> allowgroups=<name>\
-			      alternate=<partition_name> default=yes|no\
-			      defaulttime=d-h:m:s|unlimited defmempercpu=<MB>\
-			      defmempercnode=<MB> disablerootjobs=yes|no\
-			      gracetime=<seconds> hidden=yes|no\
-			      maxmempercpu=<MB> maxmempercnode=<MB>\
-			      maxnodes=<count> maxtime=d-h:m:s|unlimited\
-			      minnodes=<count> nodes=<name>\
-			      preemptmode=off|cancel|requeue|suspend\
-			      priority=count rootonly=yes|no reqresv=<yes|no>\
-			      shared=yes|no|exclusive|force\
-			      state=up|down|drain|inactive"
+	__slurm_log_debug "$(__func__): cur='$cur'"
+	__slurm_log_debug "$(__func__): options='$options'"
 
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-	    # If a new named argument is about to be entered, serve the list of options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ; return ; }
-	    if   param "allocnodes"  ; then offer_many "$(_nodes)"
-	    elif param "nodes"       ; then offer_many "$(_nodes)"
-	    elif param "alternate"   ; then offer_many "$(_partitions)"
-	    elif param "default"     ; then offer_many  "yes no"
-	    elif param "preemptmode" ; then offer_many "off cancel\
-							requeue suspend"
-	    elif param "shared"      ; then offer_many "yes no exclusive force"
-	    elif param "state"       ; then offer_many "up down drain inactive"
-	    elif param "disablerootjobs" ; then offer_many "yes no"
-	    elif param "hidden"      ; then offer_many "yes no"
-	    elif param "rootonly"    ; then offer_many "yes no"
-	    elif param "reqresv"     ; then offer_many "yes no"
-	    fi
-	    ;;
-	reservation)
-	    local parameters="accounts=<account_list> corecnt=<num>\
-	                      duration=[days-]hours:minutes:seconds\
-	                      endtime=yyyy-mm-dd[thh:mm[:ss]]\
-                              features=<feature_list>\
-                              flags=maint,overlap,ignore_jobs,daily,weekly\
-                              licenses=<license> nodecnt=<count>\
-                              nodes=<node_list> users=<user_list>\
-	                      partitionname=<partition_list>\
-                              starttime=yyyy-mm-dd[thh:mm[:ss]]"
+	# build array without seen items
+	for param in $options; do
+		p="${param%%?(\\)=*}"
+		__slurm_log_trace "$(__func__): for loop: param='$param' p*='$p'"
+		[[ ${words[*]} =~ ${p}= ]] && continue
+		[[ ${words[*]} =~ [[:space:]]+${p}[[:space:]]+ ]] && continue
+		compreply+=("$param")
+	done
 
-	    remainings=$(compute_set_diff "$parameters" "${COMP_WORDS[*]}")
-	    # If a new named argument is about to be entered, serve the list of
-	    # options
-	    [[ $cur == "" && $prev != "=" ]] && { offer "$remainings" ;
-		    return ; }
+	__slurm_log_trace "$(__func__): #words[@]='${#words[@]}'"
+	__slurm_log_trace "$(__func__): words[*]='${words[*]}'"
+	__slurm_log_trace "$(__func__): #compreply[@]='${#compreply[@]}'"
+	__slurm_log_trace "$(__func__): compreply[*]='${compreply[*]}'"
 
-	    # Test all potential arguments and server corresponding values
-	    if   param "accounts" ; then offer_many  "$(_accounts)"
-	    elif param "licences" ; then offer_many "$(_licenses)"
-	    elif param "nodes"    ; then offer_many "$(_nodes)"
-	    elif param "features" ; then offer_many "$(_features)"
-	    elif param "users"    ; then offer_many "$(_users)"
-	    elif param "flags"    ; then offer_many "daily first_cores\
-						     ignore_jobs license_only\
-						     maint overlap part_nodes\
-						     spec_nodes static_alloc\
-						     time_float weekly"
-	    elif param "partitioname" ; then offer_many "$(_partitions)"
-	    else offer "$(sed 's/\=[^ ]*/\=/g' <<< $remainings)"
-	    fi
-	    ;;
+	__slurm_comp "$(compgen -W "${compreply[*]}" -- "$cur")"
+}
+
+# Value completion function for (comma) delimeted items
+#
+# $1: word list for completions
+# $2: reserved words, complete not in list (optional)
+# $3: can use hostlist compression (optional)
+function __slurm_compreply_list() {
+	local options="$1"
+	local reserved_words="$2"
+	local hostlist_compression="${3-"false"}"
+	local _mode="automatic"
+	local prefix=""
+	local suffix=","
+	local curlist="${cur%"$suffix"*}"
+	local curitem="${cur##*"$suffix"}"
+	local compreply=()
+	local IFS=$' \t\n'
+	local ifs=" "
+	local curlist_hostnames=""
+	local curlist_hostlist=""
+
+	# append $reserved_words to $options
+	if [[ $cur == "$curitem" ]]; then
+		options="${options} ${reserved_words}"
+	fi
+
+	if [[ $curitem == "$curlist" ]]; then
+		curlist=""
+	elif [[ -n $curlist ]]; then
+		prefix="${curlist}${suffix}"
+	fi
+
+	__slurm_log_debug "$(__func__): cur='$cur' curitem='$curitem' curlist='$curlist'"
+	__slurm_log_trace "$(__func__): reserved_words='$reserved_words'"
+	__slurm_log_trace "$(__func__): options='$options'"
+
+	if [[ $hostlist_compression == "true" ]]; then
+		if ((SLURM_COMP_HOSTLIST == 1)); then
+			__slurm_log_info "$(__func__): Slurm hostlist completion is enabled."
+		fi
+		curlist_hostnames="$(__slurm_hostnames "$curlist")"
+		__slurm_log_trace "$(__func__): curlist_hostnames='$curlist_hostnames'"
+	fi
+
+	# build array without seen items
+	for item in $options; do
+		__slurm_log_trace "$(__func__): for loop: item='$item'"
+		[[ $item =~ ^[[:space:]]*$ ]] && continue
+		[[ $curlist =~ "${item}${suffix}"? ]] && continue
+		[[ $curlist_hostnames =~ "${item}${suffix}"? ]] && continue
+		compreply+=("$item")
+	done
+
+	# compress to hostlist
+	if ((SLURM_COMP_HOSTLIST == 1)) && [[ $hostlist_compression == "true" ]]; then
+		curlist_hostlist="$(__slurm_hostlist "$curlist_hostnames")"
+
+		if [[ -n $curlist_hostlist ]]; then
+			prefix="${curlist_hostlist}${suffix}"
+		fi
+
+		local found=0
+		local filter=()
+		filter=("$(compgen -W "${compreply[*]}" -- "${curitem}")")
+		((${#filter[@]} == 1)) && [[ ${filter[0]} == "$curitem" ]] && found=1
+		__slurm_log_trace "$(__func__): found='$found' #filter[@]='${#filter[@]}' filter[*]='${filter[*]}'"
+
+		if ((found == 1)); then
+			curlist_hostlist="$(__slurm_hostlist "${curlist_hostnames},${curitem}")"
+			prefix=""
+			curitem="$curlist_hostlist"
+			compreply=("$curlist_hostlist")
+		fi
+
+		__slurm_log_trace "$(__func__): curlist_hostlist='$curlist_hostlist'"
+	fi
+
+	__slurm_log_info "$(__func__): Slurm list completion is in $_mode mode."
+	__slurm_log_debug "$(__func__): prefix='$prefix' suffix='$suffix' ifs='$ifs'"
+	__slurm_log_debug "$(__func__): #compreply[@]='${#compreply[@]}'"
+	__slurm_log_debug "$(__func__): compreply[*]='${compreply[*]}'"
+
+	if [[ $cur != "" ]] &&
+		[[ " ${reserved_words} " =~ [[:space:]]+"${cur//$suffix/}"[[:space:]]+ ]]; then
+		cur="${cur//$suffix/}"
+		__slurm_log_info "$(__func__): reserved word '$cur' detected."
+		__slurm_compreply "$reserved_words"
+	else
+		__slurm_comp "$(compgen -W "${compreply[*]}" -- "${curitem}")" "${prefix-}" "${curitem}" "${suffix-}" "${ifs-}"
+	fi
+}
+
+# Completion function for an item
+#
+# $1: options for single completion
+function __slurm_compreply() {
+	local options="$1"
+
+	__slurm_log_debug "$(__func__): cur='$cur'"
+	__slurm_log_debug "$(__func__): #options[@]='${#options[@]}'"
+	__slurm_log_debug "$(__func__): options[*]='${options[*]}'"
+
+	__slurm_comp "$(compgen -W "${options[*]}" -- "$cur")"
+}
+
+# Generic flag completion function
+#
+# $1: client command context
+# STDOUT: results
+function __slurm_autocompletion() {
+	local context="$1"
+	local query="$cur"
+	local output=""
+
+	if [[ -z $cmd ]]; then
+		__slurm_log_error "$(__func__): client command context is empty."
+		echo ""
+		return 1
+	fi
+
+	local cmd="$context --autocomplete=\"$query\""
+	output="$(__slurm_func_wrapper "$cmd")"
+
+	__slurm_log_trace "$(__func__): output='$output'"
+
+	echo "${output}"
+}
+
+# Generic slurm command completion function
+#
+# $1: function name
+# RET: 0 = success, 1 = failure
+function __slurm_comp_command() {
+	local completion_func="$1"
+
+	__slurm_log_debug "$(__func__): completion_func='$completion_func'."
+
+	if declare -f -- "$completion_func" >/dev/null 2>&1; then
+		__slurm_log_trace "$(__func__): function '$completion_func' is defined."
+		$completion_func
+		return $?
+	else
+		__slurm_log_error "$(__func__): function '$completion_func' is not defined."
+		return 1
+	fi
+}
+
+# Search words[@] for an item from input array
+#
+# $1: array of strings
+# RET: found subcommand
+function __slurm_find_subcmd() {
+	local items=("$1")
+	local item=""
+	local IFS=$' \t\n'
+
+	local c=1 word=""
+	while [[ $c -lt ${cword-1} ]]; do
+		word="${words[c]}"
+		__slurm_log_trace "$(__func__): while loop: c='$c' word='$word'"
+		if [[ " ${items[*]} " =~ [[:space:]]+"${word}"[[:space:]]+ ]]; then
+			item="$word"
+			break
+		fi
+		((c++))
+	done
+
+	__slurm_log_debug "$(__func__): item='$item'"
+	__slurm_log_trace "$(__func__): #words[@]='${#words[@]}'"
+	__slurm_log_trace "$(__func__): words[*]='${words[*]}'"
+	__slurm_log_trace "$(__func__): #items[@]='${#items[@]}'"
+	__slurm_log_trace "$(__func__): items[*]='${items[*]}'"
+
+	echo "${item}"
+}
+
+# Search words[@] for any parameters from given array
+#
+# $1: parameter array
+# RET: found parameter
+function __slurm_find_param() {
+	local params="$1"
+	local param=""
+	local IFS=$' \t\n'
+
+	for p in $params; do
+		__slurm_log_trace "$(__func__): for loop: p='$p' p*='${p%%=*}'"
+		if [[ ${words[*]} =~ ${p%%?(\\)=*} ]]; then
+			param="$p"
+			break
+		fi
+	done
+
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #words[@]='${#words[@]}'"
+	__slurm_log_trace "$(__func__): words[*]='${words[*]}'"
+	__slurm_log_trace "$(__func__): params='$params'"
+
+	echo "${param}"
+}
+
+# Adapted from bash-completion _split_longopt()
+#
+# RET: 0 = made split, 1 = no split
+function __slurm_split_opt() {
+	__slurm_log_trace "$(__func__): prev='$prev' cur='$cur'"
+
+	case "${cur}" in
+	--?*=* | ?*=*)
+		prev="${cur%%?(\\)=*}"
+		cur="${cur#*?(\\)=}"
+		;;
+	*) return 1 ;;
 	esac
-	;;
-    esac
+
+	__slurm_log_trace "$(__func__): prev='$prev' cur='$cur'"
+
+	return 0
 }
-complete -F _scontrol scontrol
 
-_squeue()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# _init_completion() wrapper
+#
+# RET: 0 = success, 1 = failure
+function __slurm_init_completion() {
+	COMPREPLY=()
+	cur="${COMP_WORDS[COMP_CWORD]}"
+	prev="${COMP_WORDS[COMP_CWORD - 1]}"
+	cword="${#COMP_CWORD[@]}"
+	words=("${COMP_WORDS[@]}")
+	split="false"
 
-    local shortoptions="-A -a -h -i -j -l -L -M -n -O -o -P -p -q -R -r -S -s\
-			-t -u -V -v -w"
-    local longoptions="--account<account_list> --all --array --noheader --help
-		       --hide --iterate<seconds> --jobs<job_id_list> --long\
-		       --licenses=<license_list> --clusters<string>\
-		       --name=<name_list> --format<fmtstring>\
-		       --Format<fmtstring> --partition<part_list>\
-		       --priotity --qos<qos_list>\
-		       --reservation=<reservation_name> --steps\
-		       --sort<sort_list> --start --state<state_list> --usage\
-		       --verbose --version --nodelist<hostlist>"
+	_init_completion -s -n "=:" || return 1
+	__slurm_split_opt && split="true"
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	__slurm_log_debug "$(__func__): prev='$prev'"
+	__slurm_log_debug "$(__func__): cur='$cur'"
+	__slurm_log_debug "$(__func__): split='$split'"
+	__slurm_log_debug "$(__func__): cword='$cword'"
+	__slurm_log_debug "$(__func__): #words[@]='${#words[@]}'"
+	__slurm_log_debug "$(__func__): words[*]='${words[*]}'"
+	__slurm_log_trace "$(__func__): COMP_CWORD='$COMP_CWORD'"
+	__slurm_log_trace "$(__func__): COMP_LINE='$COMP_LINE'"
+	__slurm_log_trace "$(__func__): COMP_POINT='$COMP_POINT'"
+	__slurm_log_trace "$(__func__): COMP_WORDBREAKS='${COMP_WORDBREAKS}'"
+	__slurm_log_trace "$(__func__): COMP_WORDS[*]='${COMP_WORDS[*]}'"
+	__slurm_log_trace "$(__func__): COMPREPLY[*]='${COMPREPLY[*]}'"
 
-    if [[ $cur == *% ]] ;
-    then
-	offer "%a(Account) %A(NTasks) %b(gres) %c(mincpu) %C(Ncpus) %d(minTmp) \
-	       %D(NNodes) %e(end) %E(dependency) %f(features) %g(group) %G(gID)\
-	       %h(shared) %H(Nsockets) %i(id) %I(Ncores/socket) %j(name)\
-	       %k(comment) %l(limit) %L(timeleft) %m(mem) %M(time) %n(reqnodes)\
-	       %N(alloc_nodes) %O(contiguous) %p(priority) %r(reason)\
-	       %R(reason) %s(selecplugin) %t(state) %T(state) \
-	       %u(user) %U(uID) %v(reservation) %x(excnodes)" ;
-	return;
-    fi
-
-    case $prev in
-    --account|-A) offer_list "$(_accounts)" ;;
-    --jobs|-j) offer_list "$(_jobs)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --name|-n) offer_list "$(_jobname)" ;;
-    --qos) offer_list "$(_qos)" ;;
-    --user|-u) offer_list "$(_users)" ;;
-    --state|-t) offer_list "pending running suspended completing completed" ;;
-    --format|-o|--Format|-O) offer "\\\"%" ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --reservation|-R) offer_list "$(_reservation)" ;;
-    --sort|-S) offer_list "\\\"%" ;;
-    --nodelist|-w) offer_list "$(_nodes)" ;;
-    esac
+	return 0
 }
-complete -F _squeue squeue
 
-_scancel()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Initialize shell completion
+#
+# RET: 0 = success, 1 = failure
+function __slurm_compinit() {
+	# default environment variable values
+	SLURM_COMPLOG_FILE="${SLURM_COMPLOG_FILE:-""}"
+	SLURM_COMPLOG_LEVEL="${SLURM_COMPLOG_LEVEL:-3}"
+	SLURM_COMP_VALUE="${SLURM_COMP_VALUE:-1}"
+	SLURM_COMP_HOSTLIST="${SLURM_COMP_HOSTLIST:-1}"
 
-    local shortoptions=" -A -b -i -M -n -p -q -Q -R -s -t -u -v -V -w"
-    local longoptions="--account<account_list> --batch --ctld --help\
-		       --interactive --clusters<string> --name<job_name>\
-		       --nodelist<hostlist> --partition<part_list>\
-		       --qos<qos_list> --quiet --reservation<reservation_name>\
-		       --signal<SIGXXX> --state<state_list> --user<user_list>\
-		       --usage --verbose --version --wckeys<wckey>"
+	__slurm_log_info ""
+	__slurm_log_info "$(__func__): ========== COMPLETION LOGIC START ==========="
+	__slurm_log_info "$(__func__): SLURM_COMPLOG_LEVEL='${SLURM_COMPLOG_LEVEL}'"
+	__slurm_log_info "$(__func__): SLURM_COMPLOG_FILE='$SLURM_COMPLOG_FILE'"
+	__slurm_log_info "$(__func__): SLURM_COMP_VALUE='${SLURM_COMP_VALUE}'"
+	__slurm_log_info "$(__func__): SLURM_COMP_HOSTLIST='${SLURM_COMP_HOSTLIST}'"
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	# Ensure case sensative case matching
+	shopt -u nocasematch
 
-    case $prev in
-    --account|-A) offer_list "$(_accounts)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --name|-n) offer_list "$(_jobnames)" ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --qos) offer_list "$(_qos)" ;;
-    --reservation|-R) offer_list "$(_reservations)" ;;
-    --state) offer_list "pending running suspended completing completed" ;;
-    --user|-u) offer_list "$(_users)" ;;
-    --wckeys) offer_list "$(_wckeys)" ;;
-    --nodelist|-w) offer_list "$(_nodes)" ;;
-    *) offer_list "$(_jobs)";;
-    esac
+	__slurm_init_completion || return 1
+
+	return 0
 }
-complete -F _scancel scancel
 
-_sshare()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+################################################################################
+#			Slurm Helper Completion Functions
+################################################################################
 
-    local shortoptions="-A -a -h -l -M -p -P -u -v -V"
-    local longoptions="--accounts<accounts> --all --noheader --long\
-		       --clusters<string> --parsable --parsable2\
-			--users<user_list> --verbose --version --help"
+# Check if slurm value completions are enabled
+#
+# RET 0 = enabled, 1 = disabled
+function __slurm_comp_slurm_value() {
+	if ((SLURM_COMP_VALUE == 0)); then
+		__slurm_log_warn "$(__func__): Slurm value completion is disabled."
+		return 1
+	fi
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	__slurm_log_info "$(__func__): Slurm value completion is enabled."
 
-    case $prev in
-    --accounts|-A) offer_list "$(_accounts)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --users|-u) offer_list "$(_users)" ;;
-    esac
+	return 0
 }
-complete -F _sshare sshare
 
-_sbcast()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Filter and normalize completion items
+#
+# $@: array of items
+function __slurm_comp_filter() {
+	local input=("$@")
+	local output
+	output="$(echo "${input[*]}" | awk NF | sort -u | paste -s -d' ')"
 
-    local shortoptions="-C -f -F -j -p -s -t -v -V"
-    local longoptions="--compress --force --fanout<number> --jobid<number>\
-		       --preserve --size<bytes> --timeout<seconds> --verbose\
-		       --version"
+	__slurm_log_trace "$(__func__): #input[@]='${#input[@]}'"
+	__slurm_log_trace "$(__func__): input[*]='${input[*]}'"
+	__slurm_log_trace "$(__func__): output='$output'"
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
-
-    _filedir
+	echo "${output}"
 }
-complete -F _sbcast sbcast
 
-_sinfo()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Determine if a slurmctld will respond
+function __slurm_ctld_status() {
+	local output exit_code
+	output=$(scontrol ping)
+	exit_code=$?
 
-    local shortoptions="-a -b -d -e -h -i -l -M -n -N -o -p -r -R -s -S -t -T\
-			-v -V"
-    local longoptions="--all --bgl --dead --exact --noheader --help --hide\
-		       --iterate<seconds> --long --clusters<clusternames>\
-		       --nodes<nodelist> --Node --format<fmtstr>\
-		       --partition<partition> --responding --list-reasons\
-		       --summarize --sort<sortlist> --state<statelist>\
-		       --reservation --usage --verbose --version"
+	if ((exit_code == 0)); then
+		__slurm_log_debug "$(__func__): exit_code='$exit_code'"
+	else
+		__slurm_log_error "$(__func__): exit_code='$exit_code'"
+	fi
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
-
-    if [[ $cur == *% ]] ;
-    then
-	offer "%all %a(Availability) %A(cpu_usage) %B(max_cpus)\
-	       %c(cpus_per_node) %C(cpu_usage) %d(diskspace) %D(NNodes)\
-	       %E(reason) %f(features) %F(nodes_usage) %g(group) %G(Gres)\
-	       %h(shared) %H(timestamp) %l(time_limit) %L(default_time) %m(mem)\
-	       %M(preemt_mode) %n(hostnames) %N(node_names) %o(node_addr)\
-	       %O(cpu_load) %e(free_mem) %p(partition_prio) %P(partition) %r(root_jobs)\
-	       %R(reason) %s(max_job_size) %S(allowed_allocating_nodes)\
-	       %t(state) %T(state) %u(user) %U(uID) %w(weight)\
-	       %X(sockets_per_node) %Y(cores_per_socket)\
-	       %z(extend_process_info) %Z(threads_per_core)" ;
-	return;
-    fi
-
-    case $prev in
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --nodes|-n) offer_list "$(_nodes)" ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --state) offer_list "pending running suspended completing completed" ;;
-    --format|-o) offer "\\\"%" ;;
-    esac
+	return $exit_code
 }
-complete -F _sinfo sinfo
 
-_sprio()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Determine if a slurmdbd will respond
+function __slurm_dbd_status() {
+	local output exit_code
+	output=$(true) # TODO: need 'sacctmgr ping'
+	exit_code=$?
 
-    local shortoptions="-h -j -l -M -n -o -u -v -V -w"
-    local longoptions="--noheader --help --job<jobids> --long\
-		       --clusters<clustername> --norm --format<fmtstr>\
-		       --user<userlist> --usage --verbose --version --weights"
+	if ((exit_code == 0)); then
+		__slurm_log_debug "$(__func__): exit_code='$exit_code'"
+	else
+		__slurm_log_error "$(__func__): exit_code='$exit_code'"
+	fi
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
-
-    if [[ $cur == *% ]] ;
-    then
-	offer "%a(n_age) %A(w_age) %f(n_fair-share) %F(w_fair-share) %i(JobId)\
-	       %j(n_job_size) %J(w_job_size) %N(Nice adjustmen) %p(n_partition)\
-	       %P(w_partition) %q(n_qos) %Q(w_qos) %u(User) %Y(priority)\
-	       %y(n_priority)" ;
-	return;
-    fi
-
-    case $prev in
-    --jobs|-j) offer_list "$(_jobs)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --format|-o) offer "\\\"%" ;;
-    --user|-u) offer_list "$(_users)" ;;
-    esac
+	return $exit_code
 }
-complete -F _sprio sprio
 
-_sacct()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function for running slurm functions
+function __slurm_func_wrapper() {
+	local cmd="$1"
+	local output=""
+	local exit_code=0
 
-    local shortoptions="-a -A -b -c -D -e -E -f -g -h -j -k -K -l -L -M -n\
-			-N -o -p -P -q -r -s -S -T -u -v -V -W -x -X"
-    local longoptions="--allusers --accounts<accountlist> --brief --completion\
-	               --duplicates --helpformat --endtime<time> --file<path>\
-                       --group<gidlist> --help --jobs<joblist>\
-                       --timelimit-min<time> --timelimit-max<time> --long\
-                       --allclusters --clusters<clusterlist> --noheader\
-	               --nodeslist<nodes> --name=<jobname> --format<itemlist>\
-                       --parsable --parsable2 --qos<qos>\
-                       --partition<partitionlist> --state<statelist>\
-	               --starttime<time> --truncate --user<userlist> --usage\
-                       --verbose --version --wckeys<wckeyslist>\
-                       --associations<assoclist> --allocations"
+	if [[ -z $cmd ]]; then
+		__slurm_log_error "$(__func__): no command given"
+		echo ""
+		return 1
+	fi
 
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)";
-	    return ; }
+	__slurm_log_debug "$(__func__): $cmd"
 
-    case $prev in
-    --accounts|-A) offer_list "$(_accounts)" ;;
-    --group|--gid|-g) _gids ;;
-    --jobs|-j) offer_list "$(_jobs)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --nodes|-N) offer_list "$(_nodes)" ;;
-    --name) offer_list "$(_jobs)" ;;
-    --partition) offer_list "$(_partitions)" ;;
-    --format|-o) offer_list "$(sacct -e)" ;;
-    --state|-s) offer_list "pending running suspended completing completed" ;;
-    --qos) offer_list "$(_qos)" ;;
-    --user|-u) offer_list "$(_users)" ;;
-    --wckeys|-W) offer_list "$(_wckeys)" ;;
-    --associations|-x) offer_list "$(_associations)" ;;
-    esac
+	output="$(eval "$cmd" 2>/dev/null)"
+	exit_code=$?
+
+	if ((exit_code == 0)); then
+		__slurm_log_trace "$(__func__): output='$output'"
+		output="$(__slurm_comp_filter "${output}")"
+	else
+		__slurm_log_error "$(__func__): command failed, ignoring output"
+		output=""
+	fi
+
+	if [[ -n $output ]]; then
+		__slurm_log_debug "$(__func__): output='$output'"
+	else
+		__slurm_log_warn "$(__func__): output is empty"
+	fi
+
+	echo "${output}"
 }
-complete -F _sacct sacct
 
-_salloc()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to get accounts list
+#
+# RET: space delimited list
+function __slurm_accounts() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
 
-    local shortoptions="-A -B -bb -C -c -d -D -F -g -h -H -I -J -k -K -L -m -n\
-			-N -O -p -Q -R -s -S -t -u -V -v -W -w -x"
-    local longoptions="--account=<account> --acctg-freq=<seconds>\
-		       --extra-node-info=<sockets[:cores[:threads]]>\
-		       --begin=<time> --bell --comment=<string>\
-		       --constraint=<list> --contiguous\
-		       --cores-per-socket=<number> --cpu-freq=<p1[-p2[:p3]]>\
-		       --cpus-per-task=<ncpus> --dependency=<deplist>\
-		       --chdir=<path> --exclusive<user> --nodefile=<nodefile>\
-		       --get-user-env --gid=<group> --gres=<list> --hold\
-		       --help --hint=<type> --immediate=<seconds>\
-		       --job-name=<jobname> --jobid=<jobid>\
-		       --kill-command=[signal] --no-kill --licenses=<licenses>\
-		       --distribution=<dist> --mail-type=<type>\
-		       --mail-user=<email> --mem=<MB> --mem-per-cpu=<MB>\
-		       --mem-bind=<type> --mincpus=<number>\
-		       --nodes=<minnodes[-maxnodes]> --ntasks=<number>\
-		       --network=<type> --nice=<[adjustment]>\
-		       --ntasks-per-core=<number> --ntasks-per-socket=<ntasks>\
-		       --ntasks-per-node=<ntasks> --no-bell --no-shell\
-		       --overcommit --power=<flags> --priority=<value>\
-		       --profile=<all|none|energy|task|lustre|network>\
-		       --partition=<partitionname> --quiet --qos=<qos> --reboot\
-		       --reservation=<name> --share --core-spec=<num>\
-		       --signal=<sig_num><sig_time>\
-		       --sockets-per-node=<number>\
-		       --switches=<count><max-time> --time-min=<time>\
-		       --threads-per-core=<number> --time-min=<time>\
-		       --tmp=<MB> --usage --uid=<user> --version --verbose\
-		       --wait=<seconds> --nodelist=<nodelist>\
-		       --wait-all-nodes=<0|1> --wckey=<wckey>\
-		       --exclude=<nodelist> --blrts-image=<path>\
-		       --cnload-image=<path> --conn-type=<type>
-		       --geometry=<XxYxZ> --ioload-image=<path>\
-		       --linux-image=<path> --mloader-image=<path> --no-rotate\
-		       --ramdisk-image=<path>"
-
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)";
-	    return ; }
-
-    case $prev in
-    --account|-A) offer_list "$(_accounts)" ;;
-    --constraint|-C) offer_list "$(_features)" ;;
-    --cpu-bind) offer_list "none rank map_cpu: mask_cpu: sockets cores \
-			     threads ldoms" ;;
-    --dependency) offer_list "after: afterany: afternotok:
-			     afterok: expand: singleton" ;;
-    --gid) _gids ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --gres) offer_list "$(_gres)" ;;
-    --hint) offer "compute_bound memory_bound multithread nomultithread" ;;
-    --jobid) offer_list "$(_jobs)" ;;
-    --licenses|-L) offer_list "$(_licenses)" ;;
-    --distribution|-m) offer "block cyclic plane arbitrary" ;;
-    --mail-type) offer_list "BEGIN END FAIL REQUEUE ALL STAGE_OUT TIME_LIMIT\
-			     TIME_LIMIT_90 TIME_LIMIT_80 TIME_LIMIT_50" ;;
-    --mem-bind) offer "none rank local map_mem: mask_mem:" ;;
-    # TODO --network) _configured_interfaces ;;
-    --reservation) offer_list "$(_reservations)" ;;
-    --clusters) offer_list "$(_clusters)" ;;
-    --nodelist) offer_list "$(_nodes)" ;;
-    --exclude) offer_list "$(_nodes)" ;;
-    --qos) offer_list "$(_qos)" ;;
-    :|afterany|after|afternotok|afterok|expand) offer_list "$(_jobs)" ;;
-    --profile) offer_list "all none energy task lustre network" ;;
-    --wait-all-nodes) offer_list "1 0" ;;
-    --conn-type) offer_list "MESH TORUS NAV" ;;
-    esac
+	local cmd="sacctmgr -Pn list accounts format=account"
+	__slurm_func_wrapper "$cmd"
 }
-complete -F _salloc salloc
 
-_sbatch()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to get burst buffer list
+#
+# RET: space delimited list
+function __slurm_burstbuffers() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
 
-    local shortoptions="-a -A -B -C -c -d -D -e -F -g -h -H -i -I -J -k -K -L\
-			-m -M -n -N -o -O -p -Q -s -S -t -u -v -V -w -x -q -R"
-    local longoptions="--array<indexes> --account<account>\
-		       --acctg-freq<seconds>\
-		       --extra-node-info<sockets[:cores[:threads]]>\
-		       --bb<spec> --begin=<time> --comment<string>\
-		       --constraint<list> --contiguous\
-		       --cores-per-sopcket<number> --cpus-per-task<number>\
-		       --dependency<deplist> --workdir<directory>\
-		       --error<filename pattern> --exclusive<user>\
-		       --export<environment variables|ALL|NONE>\
-		       --export-file<filename|fd> --nodefile<nodefile>\
-		       --get-user-env --gid<group>\
-		       --gres<list> --hold --help --hint<type> --immediate\
-		       --ignore-pbs --input<filename>\
-		       --job-name<jobname> --jobid<jobid> --no-kill\
-		       --licenses<license> --clusters<string>\
-		       --distribution<dist>\
-		       --mail-type<type> --mail-user<user> --mem<MB>\
-		       --mem-per-cpu<MB> --mem-bind<type> --mincpus<n>\
-		       --nodes<minnodes[-maxnodes]> --ntasks<number>\
-		       --network<type> --nice[adjustment] --no-requeue\
-		       --ntasks-per-core<ntasks>  --ntasks-per-socket<ntasks>\
-		       --ntasks-per-node<ntasks> --overcommit\
-		       --output<filename> --open-mode\
-		       --parsable --partition<partition_names> --power<flags>\
-		       --priority<value>\
-		       --profile<type>\
-		       --propagate<limit> --quiet --qos<qos> --reboot\
-		       --requeue --reservation<name> --share --core-spec<num>\
-		       --sicp --signal<signal> --sockets-per-node<sockets>\
-		       --switches<type> --time<time> --test-only\
-		       --threads-per-core<threads> --time-min<time>\
-		       --tmp<MB> --usage --uid=<user> --version --verbose\
-		       --nodelist<node name list> --wait-all-nodes<value>\
-		       --wckey<wckey> --wrap<command string>\
-		       --exclude<node name list> --blrts-image<path>\
-		       --cnload-image<path> --conn-type<type>\
-		       --geometry<XxYxZ> --ioload-image<path>\
-		       --linux-image<path> --mloader-image<path> --no-rotate\
-		       --ramdisk-image<path>"
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
-
-    case $prev in
-    --account|-A) offer_list "$(_accounts)" ;;
-    --constraint|-C) offer_list "$(_features)" ;;
-    --cpu-bind) offer "none rank map_cpu: mask_cpu: sockets \
-			    cores threads ldoms" ;;
-    --dependency|-d) offer "after: afterany: afternotok: \
-			    afterok: expand: singleton" ;;
-    --gid) _gids ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --gres) offer_list "$(_gres)" ;;
-    --hint) offer "compute_bound memory_bound multithread \
-			nomultithread" ;;
-    --jobid) offer_list "$(_jobs)" ;;
-    --licenses|-L) offer_list "$(_licenses)" ;;
-    --distribution|-m) offer_list "block cyclic plane arbitrary" ;;
-    --mail-type) offer_list "BEGIN END FAIL REQUEUE ALL STAGE_OUT TIME_LIMIT\
-			     TIME_LIMIT_90 TIME_LIMIT_80 TIME_LIMIT_50" ;;
-    --mem-bind) offer "quiet verbose none rank local map_mem: mask_mem:" ;;
-    --mpi) offer "openmpi pmi2 pmix none" ;;
-    --propagate) offer_list "all as core cpu data fsize memlock \
-			      nofile nproc rss stack" ;;
-    # TODO --network) _configured_interfaces ;;
-    --reservation) offer_list "$(_reservations)" ;;
-    --clusters|-M) offer_list "$(_clusters)" ;;
-    --nodelist|-w) offer_list "$(_nodes)" ;;
-    --exclude|-x) offer_list "$(_nodes)" ;;
-    --qos) offer_list "$(_qos)" ;;
-    :|afterany|after|afternotok|afterok) offer_list "$(_jobs)" ;;
-    --profile) offer_list "all none energy task lustre network" ;;
-    --propagate) offer_list "ALL AS CORE CPU DATA FSIZE MEMLOCK NOFILE NPROC\
-			     RSS STACK" ;;
-    --wait-all-nodes) offer_list "1 0" ;;
-    *)  _filedir
-    esac
+	local cmd="scontrol -o show burstbuffer | grep -E -o 'Name=\S+' | cut -d= -f2 | tr ',' '\n'"
+	__slurm_func_wrapper "$cmd"
 }
-complete -o filenames -F _sbatch sbatch
 
-_srun()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to get associations list
+#
+# RET: space delimited list
+function __slurm_associations() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
 
-    local shortoptions="-A -B -C -c -d -D -e -E -g  -h -H -i -I -J -k -K -l -L\
-                        -m -N -n -o -O -p\
-			-q -Q -r -s -S -t -T -u -V -v -W -w -x"
-    local longoptions=" --account<account> --acctg-freq\
-			--extra-node-info<spec>\
-			--bb<spec> --begin<time> --comment<string>\
-			--constraint<list> --contiguous\
-			--cores-per-socket<cores> --cpu-bind=<type>\
-			--cpu-freq<freq> --cpus-per-task<ncpus>\
-			--dependency=<dependency_list> --chdir=<path>\
-			--error<mode> --preserve-env --epilog<executable>\
-			--exclusive<user> --export<var> --gid<group>\
-			--gres<list> --hold --help --hint<type>\
-			--immediate=<seconds> --input<mode>\
-			--job-name<jobname> --jobid<jobid>\
-			--kill-on-bad-exit<0|1> --no-kill --launch-cmd\
-			--launcher-opts<options> --label --licenses<license>\
-			--distribution<type> --mail-type<type>\
-			--mail-user<user> --mem<MB> --mem-per-cpu<MB>\
-			--mem-bind<type> --mincpus<n> --msg-timeout<seconds>\
-			--mpi<mpi_type> --multi-prog\
-			--nodes<minnodes[-maxnodes]> --ntasks<number>\
-			--network<type> --nice<adjustment>\
-			--ntasks-per-core<ntasks> --ntasks-per-node<ntasks>\
-			--ntasks-per-socket<ntasks> --overcommit\
-			--output<mode> --open-mode<append|truncate>\
-			--partition<partition_names> --power<flags>\
-			--priority<value> --profile<type> --prolog<executable>\
-			--propagate<limits> --pty --quiet --quit-on-interrupt\
-			--qos<qos> --relative<n> --reboot --resv-ports\
-			--reservation<name> --share\
-			--core-spec<num> --sicp --signal=<num>\
-			--slurmd-debug<level> --sockets-per-node<sockets>\
-			--switches<type> --threads<nthreads> --time<time>\
-			--task-epilog<executable> --task-prolog<executable>\
-			--test-only --threads-per-core<threads>\
-			--time-min<time> --tmp<MB> --unbuffered --usage\
-			--uid<user> --version --verbose --wait<seconds>\
-			--nodelist=<hostlist> --wckey<wckey> --disable-status\
-			--exclude=<hostlist> --no-allocate --blrts-image<path>\
-			--cnload-image<path> --conn-type<type>\
-			--geometry<XxYxZ> --ioload-image<path>\
-			--linux-image<path> --mloader-image<path> --no-rotate\
-			--ramdisk-image<path>
-"
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
-
-    case $prev in
-    --account|-A) offer_list "$(_accounts)" ;;
-    --begin) offer $(date -dtomorrow +"%Y-%m-%d");;
-    --chdir) _filedir ;;
-    --clusters) offer_list "$(_clusters)" ;;
-    --constraint|-C) offer_list "$(_features)" ;;
-    --cpu-bind) offer "none rank map_cpu: mask_cpu: sockets \
-			   cores threads ldoms" ;;
-    --dependency|-d) offer "after: afterany: afternotok: afterok: expand:\
-			    singleton" ;;
-    :|afterany|after|afternotok|afterok) offer_list "$(_jobs)" ;;
-    --exclude|-x) offer_list "$(_nodes)" ;;
-    --gid) _gids ;;
-    --gres) offer_list "$(_gres)" ;;
-    --hint) offer "compute_bound memory_bound multithread \
-		       nomultithread" ;;
-    --job-name|-J) "$(_jobname)" ;;
-    --jobid) offer_list "$(_jobs)" ;;
-    --distribution|-m) offer "block cyclic plane arbitrary pack nopack" ;;
-    --licenses|-L) offer_list "$(_licenses)" ;;
-    --mail-type) offer_list "begin end fail requeue all" ;;
-    --mem-bind) offer "none rank local map_mem: mask_mem:" ;;
-    --mpi) offer "openmpi pmi2 pmix none" ;;
-    --partition|-p) offer_list "$(_partitions)" ;;
-    --profile) offer_list "all none energy task filesystem network" ;;
-    --propagate) offer_list "all as core cpu data fsize memlock \
-			      nofile nproc rss stack" ;;
-    --qos) offer_list "$(_qos)" ;;
-    --reservation) offer_list "$(_reservations)" ;;
-    --slurmd-debug) offer_list "quiet fatal error info verbose" ;;
-    --nodefile) _filedir ;;
-    # TODO --network) _configured_interfaces ;;
-    --prolog|--task-epilog|--task-prolog) _filedir ;;
-    --nodelist|-w) offer_list "$(_nodes)" ;;
-    --open-mode) offer "append truncate" ;;
-    --wait-all-nodes) offer_list "1 0" ;;
-    --conn-type) offer_list "MESH TORUS NAV" ;;
-    *)  COMPREPLY=( $( compgen -c -- "$cur" ) ) ; return
-    esac
+	local cmd="sacctmgr -Pn list associations format=id"
+	__slurm_func_wrapper "$cmd"
 }
-complete -F _srun srun
 
-_sattach()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to return accepted boolean values
+#
+# RET: boolean list
+function __slurm_boolean() {
+	local boolean=(
+		"no"
+		"yes"
+	)
+	local output
+	output="${boolean[*]}"
 
-    local shortoptions=" -h -l -Q -u -V -v"
-    local longoptions=" --help --input-filter[=]<task number>\
-                        --output-filter[=]<task number>\
-                        --error-filter[=]<task number> --label --layout --pty\
-                        --quiet --usage --version --verbose"
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
 }
-complete -F _sattach sattach
 
-_sdiag()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to return accepted compress type values
+#
+# RET: compress_types list
+function __slurm_compress_types() {
+	local compress_types=(
+		"lz4"
+		"none"
+	)
+	local output="${compress_types[*]}"
 
-    local shortoptions="-a -h -i -r -t -T -V"
-    local longoptions="--all --help --sort-by-id --reset --sort-by-time\
-                       --sort-by-time2 --usage --version"
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
 }
-complete -F _sdiag sdiag
 
-_sstat()
-{
-    _get_comp_words_by_ref cur prev words cword
-    _split_long_opt
+# Slurm helper function to return accepted cpu bind type values
+#
+# RET: cpubind_types list
+function __slurm_cpubind_types() {
+	local cpubind_types=(
+		"board"
+		"core"
+		"ldom"
+		"none"
+		"off"
+		"socket"
+		"thread"
+	)
+	local output="${cpubind_types[*]}"
 
-    local shortoptions="-a -e -h -i -j -n -o -p -P -v -V"
-    local longoptions="--allstep --helpformat --help --pidformat --jobs\
-                       --noheader --format --parsable --parsable2 --usage\
-                       --verbose --version"
-
-    [[ $cur == - ]] && { offer "$shortoptions" ; return ; }
-    [[ $cur == -- ]] && { offer "$longoptions" ; return ; }
-    [[ $cur == --* ]] && { offer "$(sed 's/<[^>]*>//g' <<< $longoptions)"; return ; }
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
 }
-complete -F _sstat sstat
-# vim: sw=4:ts=4:expandtab
+
+# Slurm helper function to get clusters list
+#
+# RET: space delimited list
+function __slurm_clusters() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list clusters format=clusters"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get cluster features list
+#
+# RET: space delimited list
+function __slurm_clusters_feature() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list federation format=features"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get clusters RPC list
+#
+# RET: space delimited list
+function __slurm_clusters_rpc() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list clusters format=rpc"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get features list
+#
+# RET: space delimited list
+function __slurm_features() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show nodes | grep -E -o 'AvailableFeatures=\S+' | cut -d= -f2 | tr ',' '\n'"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get active features list
+#
+# RET: space delimited list
+function __slurm_features_active() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show nodes | grep -E -o 'ActiveFeatures=\S+' | cut -d= -f2 | tr ',' '\n'"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get federations list
+#
+# RET: space delimited list
+function __slurm_federations() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list federation format=federation"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get format list
+#
+# $1: slurm command to run helpformat against
+# RET: space delimited list
+function __slurm_helpformat() {
+	local cmd="$1"
+	local output=""
+
+	if [[ -z $cmd ]]; then
+		__slurm_log_error "$(__func__): command context is empty"
+		return 1
+	fi
+
+	output="$(__slurm_func_wrapper "$cmd --helpformat")"
+	output=${output,,} # force lowercase
+	echo "${output}"
+}
+
+# Slurm helper function to get sorted hostlist list
+#
+# RET: space delimited list
+function __slurm_hostlist() {
+	local hostnames="$1"
+	local cmd="scontrol -o show hostlistsorted \"$hostnames\""
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get hostnames list
+#
+# RET: space delimited list
+function __slurm_hostnames() {
+	local hostlist="${1-}"
+	local cmd="scontrol -o show hostnames \"$hostlist\""
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get GRES list
+#
+# RET: space delimited list
+function __slurm_gres() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show config | grep 'GresTypes' | tr -d '[:space:]' | cut -d= -f2 | tr ',' '\n'"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get recent jobs list
+#
+# RET: space delimited list
+function __slurm_jobs() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show jobs | grep -Po 'JobId=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get recent jobstep tasks list
+#
+# RET: space delimited list
+function __slurm_jobsteps_tasks() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show step | grep -Po 'StepId=\d+\.\d+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get recent jobsteps list
+#
+# RET: space delimited list
+function __slurm_jobsteps() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show step | grep -Po 'StepId=\d+\.\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get recent job name list
+#
+# RET: space delimited list
+function __slurm_jobnames() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show jobs | grep -Po 'JobName=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get license list
+#
+# RET: space delimited list
+function __slurm_licenses() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show license | grep -Po 'LicenseName=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get node list
+#
+# RET: space delimited list
+function __slurm_nodes() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show nodes | grep -Po 'NodeName=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get frontend node list
+#
+# RET: space delimited list
+function __slurm_nodes_frontend() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show frontend | grep -Po 'FrontendName=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get organizations list
+#
+# RET: space delimited list
+function __slurm_organizations() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list accounts format=organization"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get partition list
+#
+# RET: space delimited list
+function __slurm_partitions() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show partitions | grep -Po 'PartitionName=\S+' | cut -d'=' -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get QOS list
+#
+# RET: space delimited list
+function __slurm_qos() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list qos format=name"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get QOS ID list
+#
+# RET: space delimited list
+function __slurm_qosid() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list qos format=id"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get reservation list
+#
+# RET: space delimited list
+function __slurm_reservations() {
+	__slurm_comp_slurm_value || return
+	__slurm_ctld_status || return
+
+	local cmd="scontrol -o show reservations | grep -Po 'ReservationName=\S+' | cut -d= -f2"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get resources list
+#
+# RET: space delimited list
+function __slurm_resources() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list resource format=name"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get resource servers list
+#
+# RET: space delimited list
+function __slurm_resources_servers() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list resource format=server"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to return accepted signals list
+#
+# RET: signals
+function __slurm_signals() {
+	local signals=(
+		"SIGHUP"
+		"SIGINT"
+		"SIGQUIT"
+		"SIGKILL"
+		"SIGKILL"
+		"SIGALRM"
+		"SIGTERM"
+		"SIGUSR1"
+		"SIGUSR2"
+		"SIGURG"
+		"SIGCONT"
+		"SIGSTOP"
+		"SIGTSTP"
+		"SIGTTIN"
+		"SIGTTOU"
+		"SIGXCPU"
+	)
+	local output="${signals[*]}"
+
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+# Slurm helper function to get TRES list
+#
+# RET: space delimited list
+function __slurm_tres() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="scontrol -o show config | grep 'AccountingStorageTRES' | cut -d= -f2 | tr -d '[:space:]' | tr ',' '\n'"
+	__slurm_func_wrapper "$cmd"
+}
+
+function __slurm_units() {
+	local units=(
+		"K"
+		"KB"
+		"KiB"
+		"M"
+		"MB"
+		"MiB"
+		"G"
+		"GB"
+		"GiB"
+		"T"
+		"TB"
+		"TiB"
+		"P"
+		"PB"
+		"PiB"
+	)
+	local output="${units[*]}"
+
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+# Slurm helper function to get user list
+#
+# RET: space delimited list
+function __slurm_users() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list users format=user"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm helper function to get user group list
+#
+# RET: space delimited list
+function __slurm_wckeys() {
+	__slurm_comp_slurm_value || return
+	__slurm_dbd_status || return
+
+	local cmd="sacctmgr -Pn list wckeys format=wckey"
+	__slurm_func_wrapper "$cmd"
+}
+
+# Slurm completion helper for flag completion
+#
+# $1: slurm command being completed
+# RET: 0 = did completion; 1 = no completion
+function __slurm_comp_flags() {
+	local cmd="$1"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): cmd='$cmd'"
+
+	case "${cur}" in
+	-*) __slurm_compreply_param "$(__slurm_autocompletion "$cmd")" ;;
+	*) return 1 ;;
+	esac
+
+	return 0
+}
+
+# Slurm completion helper for job dependency spec
+function __slurm_comp_dependency() {
+	local prefix=""
+	local suffix=","
+	if [[ $cur == *"?"* ]] && [[ $cur != *","* ]]; then
+		# Dependency expresson can use either ',' or '?' as the
+		# separator, but not both in the same expression.
+		#   , = logical and (all must be satisfied)
+		#   ? = logical or (any may be satisfied)
+		suffix="?"
+	fi
+	local curlist="${cur%"$suffix"*}"
+	local curitem="${cur##*"$suffix"}"
+	local curitem2="${curitem##*:}"
+	local curverb="${curitem%:*}:"
+	local compreply=()
+
+	local dependency_types=(
+		"after:"
+		"afterany:"
+		"afterburstbuffer:"
+		"aftercorr:"
+		"afternotok:"
+		"afterok:"
+		"singleton"
+	)
+
+	if [[ $curitem == "$curlist" ]]; then
+		curlist=""
+	elif [[ -n $curlist ]]; then
+		prefix="${curlist}${suffix}"
+	fi
+
+	__slurm_log_debug "$(__func__): cur='$cur' curitem='$curitem' curlist='$curlist'"
+	__slurm_log_debug "$(__func__): curitem2='$curitem2' prefix='$prefix' suffix='$suffix'"
+
+	case "${curitem}" in
+	*:*) ;;
+	*)
+		__slurm_log_debug "$(__func__): expect verb spec"
+		compreply=("$(compgen -W "${dependency_types[*]}" -- "${curitem}")")
+		__slurm_comp "${compreply[*]}" "${prefix-}" "${curitem}" "" ""
+		return
+		;;
+	esac
+
+	case "${curitem2}" in
+	*+)
+		__slurm_log_debug "$(__func__): expect time spec"
+		;;
+	*++([0-9]))
+		__slurm_log_debug "$(__func__): found time spec"
+
+		compreply+=("$(compgen -W "${curitem}" -S "${suffix}" -- "${curitem}")")
+		compreply+=("$(compgen -W "${curitem}" -S ":" -- "${curitem}")")
+		if [[ $cur != *","* ]]; then
+			compreply+=("$(compgen -W "${curitem}" -S "?" -- "${curitem}")")
+		fi
+		__slurm_comp "${compreply[*]}" "${prefix-}" "${curitem}" "" ""
+		;;
+	*)
+		__slurm_log_debug "$(__func__): expect job spec"
+		local jobs=()
+		local options=""
+		options="$(__slurm_jobs)"
+
+		# build array without seen items
+		for item in $options; do
+			__slurm_log_trace "$(__func__): for loop: item='$item'"
+			[[ $curitem =~ :"${item}". ]] && continue
+			jobs+=("$item")
+		done
+
+		compreply+=("$(compgen -W "${jobs[*]}" -P "${curverb}" -S "${suffix}" -- "${curitem2}")")
+		compreply+=("$(compgen -W "${jobs[*]}" -P "${curverb}" -S ":" -- "${curitem2}")")
+		compreply+=("$(compgen -W "${jobs[*]}" -P "${curverb}" -S "+" -- "${curitem2}")")
+		if [[ $cur != *","* ]]; then
+			compreply+=("$(compgen -W "${jobs[*]}" -P "${curverb}" -S "?" -- "${curitem2}")")
+		fi
+		__slurm_comp "${compreply[*]}" "${prefix-}" "${curitem}" "" ""
+		;;
+	esac
+}
+
+# Slurm completion helper for salloc, sbatch, srun
+#
+# $1: slurm command being completed
+# RET: 0 = did completion; 1 = no completion
+function __slurm_comp_common() {
+	local cmd="$1"
+	local accelbind_types=(
+		"g"
+		"n"
+		"v"
+	)
+	local acctgfreq_types=(
+		"energy="
+		"filesystem="
+		"network="
+		"task="
+	)
+	local binary=(
+		"0"
+		"1"
+	)
+	local cpubind_types=(
+		"cores"
+		"help"
+		"ldoms"
+		"map_cpu:"
+		"map_ldom:"
+		"mask_cpu:"
+		"mask_ldom:"
+		"none"
+		"quiet"
+		"rank"
+		"rank_ldom"
+		"sockets"
+		"threads"
+		"verbose"
+	)
+	local cpufreq_types=(
+		"low"
+		"medium"
+		"high"
+		"highm1"
+		"conservative"
+		"ondemand"
+		"performance"
+		"powersave"
+	)
+	local distribution_types=(
+		"arbitrary"
+		"block"
+		"cyclic"
+		"plane="
+	)
+	local env_modes=(
+		"L"
+		"S"
+	)
+	local exclusive_types=(
+		"exclusive"
+		"mcs"
+		"oversubscribe"
+		"user"
+	)
+	local export_types=(
+		"all"
+		"none"
+	)
+	local gpubind_types=(
+		"closest"
+		"map_gpu:"
+		"mask_gpu:"
+		"none"
+		"per_task:"
+		"single:"
+	)
+	local gpufreq_types=(
+		"low"
+		"medium"
+		"high"
+		"highm1"
+	)
+	local gres_flags=(
+		"disable-binding"
+		"enforce-binding"
+	)
+	local hints=(
+		"compute_bound"
+		"help"
+		"memory_bound"
+		"multithread"
+		"nomultithread"
+	)
+	local mail_types=(
+		"all"
+		"array_tasks"
+		"begin"
+		"end"
+		"fail"
+		"invalid_depend"
+		"none"
+		"requeue"
+		"stage_out"
+		"time_limit"
+		"time_limit_90"
+		"time_limit_80"
+		"time_limit_50"
+	)
+	local membind_types=(
+		"help"
+		"local"
+		"map_mem:"
+		"mask_mem:"
+		"none"
+		"prefer"
+		"rank"
+		"sort"
+	)
+	local mpi_types=(
+		"list"
+		"none"
+		"pmi2"
+		"pmix"
+	)
+	local network_types=(
+		"blade"
+		"system"
+	)
+	local open_modes=(
+		"append"
+		"truncate"
+	)
+	local power_flags=(
+		"level"
+	)
+	local profile_types=(
+		"all"
+		"energy"
+		"filesystem"
+		"network"
+		"none"
+		"task"
+	)
+	local propagate_types=(
+		"all"
+		"as"
+		"core"
+		"cpu"
+		"data"
+		"fsize"
+		"memlock"
+		"nofile"
+		"none"
+		"nproc"
+		"rss"
+		"stack"
+	)
+	local slurmd_levels=(
+		"quiet"
+		"fatal"
+		"error"
+		"info"
+		"verbose"
+	)
+	local x11_modes=(
+		"all"
+		"first"
+		"last"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): cmd='$cmd'"
+
+	__slurm_comp_flags "$cmd" && return
+
+	case "${prev}" in
+	--accel-bind) __slurm_compreply "${accelbind_types[*]}" ;;
+	-A | --account?(s)) __slurm_compreply "$(__slurm_accounts)" ;;
+	--acctg-freq) __slurm_compreply_list "${acctgfreq_types[*]}" ;;
+	--batch) __slurm_compreply_list "$(__slurm_features)" ;;
+	--bcast) _filedir -d ;;
+	--bcast-exclude) _filedir -d ;;
+	-D | --chdir) _filedir -d ;;
+	--cluster-constraint?(s)) __slurm_compreply_list "$(__slurm_clusters_feature)" ;;
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	--compress) __slurm_compreply "$(__slurm_compress_types)" ;;
+	-C | --constraint) __slurm_compreply_list "$(__slurm_features)" ;;
+	--container) _filedir ;;
+	--cpu-bind) __slurm_compreply "${cpubind_types[*]}" ;;
+	--cpu-freq) __slurm_compreply "${cpufreq_types[*]}" ;;
+	-d | --dependency) __slurm_comp_dependency ;;
+	-m | --distribution) __slurm_compreply "${distribution_types[*]}" ;;
+	--epilog) _filedir ;;
+	-e | --error) _filedir ;;
+	-x | --exclude) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	--exclusive) __slurm_compreply "${exclusive_types[*]}" ;;
+	--export) __slurm_compreply "${export_types[*]}" ;;
+	--export-file) _filedir ;;
+	--get-user-env) __slurm_compreply "${env_modes[*]}" ;;
+	--gid) __slurm_compreply "$(__slurm_linux_groups) $(__slurm_linux_gids)" ;;
+	--gpu-bind) __slurm_compreply "${gpubind_types[*]}" ;;
+	--gpu-freq) __slurm_compreply "${gpufreq_types[*]}" ;;
+	--gres) __slurm_compreply_count "$(__slurm_gres)" ;;
+	--gres-flag?(s)) __slurm_compreply "${gres_flags[*]}" ;;
+	--hint) __slurm_compreply "${hints[*]}" ;;
+	-i | --input) _filedir ;;
+	--jobid) __slurm_compreply "$(__slurm_jobs)" ;;
+	-K)
+		# warning: salloc and srun overload -K
+		case "${cmd}" in
+		salloc) __slurm_compreply "$(__slurm_signals)" ;;
+		srun) __slurm_compreply "${binary[*]}" ;;
+		*) return 1 ;;
+		esac
+		;;
+	--kill-command) __slurm_compreply "$(__slurm_signals)" ;;
+	--kill-on-bad-exit) __slurm_compreply "${binary[*]}" ;;
+	--kill-on-invalid-dep) __slurm_compreply "$(__slurm_boolean)" ;;
+	-L | --license?(s)) __slurm_compreply_count "$(__slurm_licenses)" ;;
+	--mail-type) __slurm_compreply_list "${mail_types[*]}" ;;
+	--mail-user) __slurm_compreply "$(__slurm_users)" ;;
+	--mem-bind) __slurm_compreply "${membind_types[*]}" ;;
+	--mpi) __slurm_compreply "${mpi_types[*]}" ;;
+	--network) __slurm_compreply "${network_types[*]}" ;;
+	-F | --nodefile) _filedir ;;
+	-w | --nodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	--open-mode?(s)) __slurm_compreply "${open_modes[*]}" ;;
+	-o | --output) _filedir ;;
+	-p | --partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	--power) __slurm_compreply_list "${power_flags[*]}" ;;
+	--prefer?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	--profile?(s)) __slurm_compreply_list "${profile_types[*]}" ;;
+	--prolog) _filedir ;;
+	--propagate?(s)) __slurm_compreply_list "${propagate_types[*]}" ;;
+	-q | --qos?(s)) __slurm_compreply "$(__slurm_qos)" ;;
+	--reservation?(s)) __slurm_compreply_list "$(__slurm_reservations)" ;;
+	--send-lib?(s)) __slurm_compreply "$(__slurm_boolean)" ;;
+	--signal) __slurm_compreply "$(__slurm_signals)" ;;
+	--slurmd-debug) __slurm_compreply "${slurmd_levels[*]}" ;;
+	--task-epilog) _filedir ;;
+	--task-prolog) _filedir ;;
+	--tres-per-task) __slurm_compreply_count "$(__slurm_tres | tr '/' ':')" ;;
+	--uid?(s)) __slurm_compreply "$(__slurm_users) $(__slurm_linux_uids)" ;;
+	--wait-all-node?(s)) __slurm_compreply "${binary[*]}" ;;
+	--wckey?(s)) __slurm_compreply "$(__slurm_wckeys)" ;;
+	--x11) __slurm_compreply "${x11_modes[*]}" ;;
+	*) return 1 ;;
+	esac
+
+	return 0
+}
+
+################################################################################
+#			Linux Helper Completion Functions
+################################################################################
+
+# Returns list of linux users from passwd
+#
+# RET: space delimited list
+function __slurm_linux_users() {
+	local output
+	output="$(getent passwd | cut -d: -f1)"
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+# Returns list of linux groups from group
+#
+# RET: space delimited list
+function __slurm_linux_groups() {
+	local output
+	output="$(getent group | cut -d: -f1)"
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+# Returns list of linux UIDs from passwd
+#
+# RET: space delimited list
+function __slurm_linux_uids() {
+	local output
+	output="$(getent passwd | cut -d: -f3)"
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+# Returns list of linux GIDs from passwd
+#
+# RET: space delimited list
+function __slurm_linux_gids() {
+	local output
+	output="$(getent passwd | cut -d: -f4)"
+	__slurm_log_trace "$(__func__): output='$output'"
+	echo "${output}"
+}
+
+################################################################################
+#			SACCT Completion Functions
+################################################################################
+
+# sacct completion handler
+# https://slurm.schedmd.com/sacct.html
+function _sacct() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur' split='$split'"
+
+	local sched_flags=(
+		"schedsubmit"
+		"schedmain"
+		"schedbackfill"
+	)
+	local reasons=(
+		"none"
+		"prolog"
+		"priority"
+		"dependency"
+		"resources"
+		"partitionnodelimit"
+		"partitiontimelimit"
+		"partitiondown"
+		"partitioninactive"
+		"jobheldadmin"
+		"jobhelduser"
+		"begintime"
+		"licenses"
+		"associationjoblimit"
+		"associationresourcelimit"
+		"associationtimelimit"
+		"reservation"
+		"reqnodenotavail"
+		"frontenddown"
+		"partitiondown"
+		"nodedown"
+		"badconstraints"
+		"systemfailure"
+		"joblaunchfailure"
+		"nonzeroexitcode"
+		"timelimit"
+		"inactivelimit"
+		"invalidaccount"
+		"invalidqos"
+		"qosusagethreshold"
+		"qosjoblimit"
+		"qosresourcelimit"
+		"qostimelimit"
+		"blockmaxerror"
+		"blockfreeaction"
+		"cleaning"
+		"qosnotallowed"
+		"accountnotallowed"
+		"dependencyneversatisfied"
+		"qosgrpcpulimit"
+		"qosgrpcpuminuteslimit"
+		"qosgrpcpurunminuteslimit"
+		"qosgrpjobslimit"
+		"qosgrpmemlimit"
+		"qosgrpnodelimit"
+		"qosgrpsubmitjobslimit"
+		"qosgrpwalllimit"
+		"qosmaxcpuperjoblimit"
+		"qosmaxcpuminutesperjoblimit"
+		"qosmaxnodeperjoblimit"
+		"qosmaxwalldurationperjoblimit"
+		"qosmaxcpuperuserlimit"
+		"qosmaxjobsperuserlimit"
+		"qosmaxnodeperuserlimit"
+		"qosmaxsubmitjobperuserlimit"
+		"qosmincpunotsatisfied"
+		"assocgrpcpulimit"
+		"assocgrpcpuminuteslimit"
+		"assocgrpcpurunminuteslimit"
+		"assocgrpjobslimit"
+		"assocgrpmemlimit"
+		"assocgrpnodelimit"
+		"assocgrpsubmitjobslimit"
+		"assocgrpwalllimit"
+		"assocmaxjobslimit"
+		"assocmaxcpuperjoblimit"
+		"assocmaxcpuminutesperjoblimit"
+		"assocmaxnodeperjoblimit"
+		"assocmaxwalldurationperjoblimit"
+		"assocmaxsubmitjoblimit"
+		"jobholdmaxrequeue"
+		"jobarraytasklimit"
+		"burstbufferresources"
+		"burstbufferstagein"
+		"burstbufferoperation"
+		"powernotavail"
+		"powerreserved"
+		"assocgrpunknown"
+		"assocgrpunknownminutes"
+		"assocgrpunknownrunminutes"
+		"assocmaxunknownperjob"
+		"assocmaxunknownpernode"
+		"assocmaxunknownminutesperjob"
+		"assocmaxcpupernode"
+		"assocgrpmemminutes"
+		"assocgrpmemrunminutes"
+		"assocmaxmemperjob"
+		"assocmaxmempernode"
+		"assocmaxmemminutesperjob"
+		"assocgrpnodeminutes"
+		"assocgrpnoderunminutes"
+		"assocmaxnodeminutesperjob"
+		"assocgrpenergy"
+		"assocgrpenergyminutes"
+		"assocgrpenergyrunminutes"
+		"assocmaxenergyperjob"
+		"assocmaxenergypernode"
+		"assocmaxenergyminutesperjob"
+		"assocgrpgres"
+		"assocgrpgresminutes"
+		"assocgrpgresrunminutes"
+		"assocmaxgresperjob"
+		"assocmaxgrespernode"
+		"assocmaxgresminutesperjob"
+		"assocgrplicense"
+		"assocgrplicenseminutes"
+		"assocgrplicenserunminutes"
+		"assocmaxlicenseperjob"
+		"assocmaxlicenseminutesperjob"
+		"assocgrpbb"
+		"assocgrpbbminutes"
+		"assocgrpbbrunminutes"
+		"assocmaxbbperjob"
+		"assocmaxbbpernode"
+		"assocmaxbbminutesperjob"
+		"qosgrpunknown"
+		"qosgrpunknownminutes"
+		"qosgrpunknownrunminutes"
+		"qosmaxunknownperjob"
+		"qosmaxunknownpernode"
+		"qosmaxunknownperuser"
+		"qosmaxunknownminutesperjob"
+		"qosminunknown"
+		"qosmaxcpupernode"
+		"qosgrpmemoryminutes"
+		"qosgrpmemoryrunminutes"
+		"qosmaxmemoryperjob"
+		"qosmaxmemorypernode"
+		"qosmaxmemoryperuser"
+		"qosmaxmemoryminutesperjob"
+		"qosminmemory"
+		"qosgrpnodeminutes"
+		"qosgrpnoderunminutes"
+		"qosmaxnodeminutesperjob"
+		"qosminnode"
+		"qosgrpenergy"
+		"qosgrpenergyminutes"
+		"qosgrpenergyrunminutes"
+		"qosmaxenergyperjob"
+		"qosmaxenergypernode"
+		"qosmaxenergyperuser"
+		"qosmaxenergyminutesperjob"
+		"qosminenergy"
+		"qosgrpgres"
+		"qosgrpgresminutes"
+		"qosgrpgresrunminutes"
+		"qosmaxgresperjob"
+		"qosmaxgrespernode"
+		"qosmaxgresperuser"
+		"qosmaxgresminutesperjob"
+		"qosmingres"
+		"qosgrplicense"
+		"qosgrplicenseminutes"
+		"qosgrplicenserunminutes"
+		"qosmaxlicenseperjob"
+		"qosmaxlicenseperuser"
+		"qosmaxlicenseminutesperjob"
+		"qosminlicense"
+		"qosgrpbb"
+		"qosgrpbbminutes"
+		"qosgrpbbrunminutes"
+		"qosmaxbbperjob"
+		"qosmaxbbpernode"
+		"qosmaxbbperuser"
+		"assocmaxbbminutesperjob"
+		"qosminbb"
+		"deadline"
+		"maxbbperaccount"
+		"maxcpuperaccount"
+		"maxenergyperaccount"
+		"maxgresperaccount"
+		"maxnodeperaccount"
+		"maxlicenseperaccount"
+		"maxmemoryperaccount"
+		"maxunknownperaccount"
+		"maxjobsperaccount"
+		"maxsubmitjobsperaccount"
+		"partitionconfig"
+		"accountingpolicy"
+		"fedjoblock"
+		"outofmemory"
+		"maxmemperlimit"
+		"assocgrpbilling"
+		"assocgrpbillingminutes"
+		"assocgrpbillingrunminutes"
+		"assocmaxbillingperjob"
+		"assocmaxbillingpernode"
+		"assocmaxbillingminutesperjob"
+		"qosgrpbilling"
+		"qosgrpbillingminutes"
+		"qosgrpbillingrunminutes"
+		"qosmaxbillingperjob"
+		"qosmaxbillingpernode"
+		"qosmaxbillingperuser"
+		"qosmaxbillingminutesperjob"
+		"maxbillingperaccount"
+		"qosminbilling"
+		"reservationdeleted"
+	)
+	local states=(
+		"boot_fail"
+		"cancelled"
+		"completed"
+		"deadline"
+		"failed"
+		"node_fail"
+		"out_of_memory"
+		"pending"
+		"preempted"
+		"running"
+		"requeued"
+		"resizing"
+		"revoked"
+		"suspended"
+		"timeout"
+	)
+	local units=(
+		"K"
+		"M"
+		"G"
+		"T"
+		"P"
+	)
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-A | --account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	-x | --association?(s)) __slurm_compreply_list "$(__slurm_associations)" ;;
+	-M | --clusters) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-C | --constraint?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	-f | --file) _filedir ;;
+	-F | --flag?(s)) __slurm_compreply_list "${sched_flags[*]}" ;; # TODO: want --helpsched
+	-o | --format | --field?(s)) __slurm_compreply_list "$(__slurm_helpformat "$1")" ;;
+	-g | --gid?(s) | --group) __slurm_compreply_list "$(__slurm_linux_groups) $(__slurm_linux_gids)" ;;
+	-j | --job?(s)) __slurm_compreply "$(__slurm_jobs) $(__slurm_jobsteps)" ;;
+	--name?(s)) __slurm_compreply_list "$(__slurm_jobnames)" ;;
+	-N | --nodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	-r | --partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	-q | --qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	-R | --reason) __slurm_compreply_list "${reasons[*]}" ;; # TODO: want --helpreason
+	-s | --state) __slurm_compreply_list "${states[*]}" ;;   # TODO: want --helpstate
+	-u | --uid?(s) | --user?(s)) __slurm_compreply_list "$(__slurm_linux_users) $(__slurm_linux_uids)" ;;
+	--units) __slurm_compreply "${units[*]}" ;;
+	-W | --wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	--whole-hetjob) __slurm_compreply "$(__slurm_boolean)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sacct sacct
+
+################################################################################
+#			SACCTMGR Completion Functions
+################################################################################
+
+# helper function for __slurm_comp_sacctmgr_spec_*()
+#
+# $1 - mode selector
+#      0 = where parameters (delete/remove)
+#      1 = where+option parameters (list/show)
+#      2 = where+set parameters (add/create)
+#      3 = where, set parameters (modify/update)
+# RET: 0 = parameters updated, 1 = nothing updated
+function __slurm_comp_mode_select() {
+	local mode="$1"
+	local conditions=(
+		"where"
+		"set"
+	)
+	local condition_where
+	condition_where="$(__slurm_find_subcmd "${conditions[0]}")"
+	local condition_set
+	condition_set="$(__slurm_find_subcmd "${conditions[1]}")"
+
+	__slurm_log_debug "$(__func__): mode='$mode' condition_where='$condition_where' condition_set='$condition_set'"
+	__slurm_log_trace "$(__func__): #parameters_where[@]='${#parameters_where[@]}'"
+	__slurm_log_trace "$(__func__): parameters_where[*]='${parameters_where[*]}'"
+	__slurm_log_trace "$(__func__): #parameters_set[@]='${#parameters_set[@]}'"
+	__slurm_log_trace "$(__func__): parameters_set[*]='${parameters_set[*]}'"
+	__slurm_log_trace "$(__func__): #conditions[@]='${#conditions[@]}'"
+	__slurm_log_trace "$(__func__): conditions[*]='${conditions[*]}'"
+	__slurm_log_trace "$(__func__): #options[@]='${#options[@]}'"
+	__slurm_log_trace "$(__func__): options[*]='${options[*]}'"
+
+	case "${mode}" in
+	0) # delete/remove
+		# only use 'where' parameters
+		parameters+=("${conditions[0]}")
+		parameters+=("${parameters_where[@]}")
+		;;
+	1) # list/show
+		# use 'where' parameters and 'options'
+		parameters+=("${conditions[0]}")
+		if [[ -z $condition_where ]]; then
+			parameters+=("${options[@]}")
+			parameters+=("format=")
+		fi
+		parameters+=("${parameters_where[@]}")
+		;;
+	2) # add/create
+		# use 'where' and 'set' parameters
+		parameters+=("${conditions[0]}")
+		parameters+=("${parameters_where[@]}")
+		parameters+=("${parameters_set[@]}")
+		;;
+	3) # modify/update
+		# use 'where' parameters, or 'set' parameters
+		parameters+=("${conditions[@]}")
+		if [[ -n $condition_where ]]; then
+			parameters+=("${parameters_where[@]}")
+		elif [[ -n $condition_set ]]; then
+			parameters+=("${parameters_set[@]}")
+		else
+			parameters+=("${parameters_where[@]}")
+		fi
+		;;
+	*) return 1 ;;
+	esac
+
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	return 0
+}
+
+# completion helper for sacctmgr association specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-ASSOCIATIONS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_GENERAL-SPECIFICATIONS-FOR-ASSOCIATION-BASED-ENTITIES
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-ASSOCIATION-FORMAT-OPTIONS
+#
+# RET: 0 = did completion, 1 = did not do completion
+function __slurm_comp_sacctmgr_spec_associations() {
+	local mode="$1"
+	if [[ -z ${parameters[0]} ]]; then
+		local parameters=()
+	fi
+	local parameters_where=(
+		"account="
+		"cluster="
+		"partition="
+		"parent="
+		"qos="
+		"user="
+	)
+	local parameters_set=(
+		"defaultqos="
+		"fairshare=" "share="
+		"grpjobs="
+		"grpjobsaccrue="
+		"grpsubmit=" "grpsubmitjobs="
+		"grptres="
+		"grptresmins="
+		"grptresrunmins="
+		"grpwall="
+		"maxjobs="
+		"maxjobsaccrue="
+		"maxsubmit=" "maxsubmitjobs="
+		"maxtresmins=" "maxtresminsperjob="
+		"maxtres=" "maxtresperjob="
+		"maxwall=" "maxwalldurationperjob="
+		"priority="
+		"qoslevel="
+		"qoslevel\+="
+		"qoslevel\-="
+	)
+	local options=(
+		"onlydefaults"
+		"tree"
+		"withdeleted"
+		"withrawqoslevel"
+		"withsubaccounts"
+		"wolimits"
+		"wopinfo"
+		"woplimits"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	defaultqos) __slurm_compreply "$(__slurm_qos)" ;;
+	partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	parent?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	qoslevel?(s)?(+|-)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+# completion helper for sacctmgr account specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-ACCOUNTS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-ACCOUNT-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_accounts() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"cluster="
+		"name="
+		"parent="
+	)
+	local parameters_set=(
+		"description="
+		"organization="
+		"rawusage="
+	)
+	local options=(
+		"withassoc"
+		"withcoord"
+		"withdeleted"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+	__slurm_comp_sacctmgr_spec_associations "$mode" && return
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	organization?(s)) __slurm_compreply "$(__slurm_organizations)" ;;
+	parent?(s)) __slurm_compreply "$(__slurm_accounts)" ;;
+	rawusage) __slurm_compreply "0" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr cluster specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-CLUSTERS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-CLUSTER-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_clusters() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"cluster="
+		"flags="
+		"name="
+		"rpc="
+	)
+	local parameters_set=(
+		"classification="
+		"features="
+		"federation="
+		"fedstate="
+	)
+	local options=(
+		"withdeleted"
+		"withfed"
+		"wolimits"
+	)
+	local fed_states=(
+		"active"
+		"inactive"
+		"drain"
+		"drain+remove"
+	)
+	local flags=(
+		"cray"
+		"external"
+		"frontend"
+		"multipleslurmd"
+		"none"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+	__slurm_comp_sacctmgr_spec_associations "$mode" && return
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	feature?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	federation?(s)) __slurm_compreply_list "$(__slurm_federations)" ;;
+	fedstate) __slurm_compreply "${fed_states[*]}" ;;
+	flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	rpc) __slurm_compreply_list "$(__slurm_clusters_rpc)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr coordinator specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-COORDINATOR
+function __slurm_comp_sacctmgr_spec_coordinators() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"account="
+		"name="
+	)
+	local parameters_set=(
+	)
+	local options=(
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	coordinator?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr event specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-EVENTS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-EVENT-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_events() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"clusters="
+		"condflags="
+		"end="
+		"events="
+		"maxcpus="
+		"mincpus="
+		"nodes="
+		"reason="
+		"start="
+		"states="
+		"users="
+	)
+	local parameters_set=(
+	)
+	local options=(
+		"all_clusters"
+		"all_time"
+	)
+	local cond_flags=(
+		"open"
+	)
+	local event_types=(
+		"cluster"
+		"node"
+	)
+	local states=(
+		"down"
+		"drain"
+		"fail"
+		"future"
+		"idle"
+		"mixed"
+		"unknown"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	condflag?(s)) __slurm_compreply_list "${cond_flags[*]}" ;;
+	event?(s)) __slurm_compreply_list "${event_types[*]}" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	state?(s)) __slurm_compreply_list "${states[*]}" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr federation specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-FEDERATION
+function __slurm_comp_sacctmgr_spec_federations() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"name="
+	)
+	local parameters_set=(
+		"clusters="
+		"clusters\+="
+		"clusters\-="
+	)
+	local options=(
+		"tree"
+		"withdeleted"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)?(+|-)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	feature) __slurm_compreply_list "$(__slurm_features)" ;;
+	federation?(s)) __slurm_compreply_list "$(__slurm_federations)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_federations)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr job specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-JOB
+function __slurm_comp_sacctmgr_spec_jobs() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"cluster="
+		"jobid="
+	)
+	local parameters_set=(
+		"admincomment="
+		"comment="
+		"derivedexitcode="
+		"endtime="
+		"extra="
+		"newwckey="
+		"starttime="
+		"systemcomment="
+		"wckey="
+		"user="
+	)
+	local options=(
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	jobid?(s)) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	newwckey?(s)) __slurm_compreply "$(__slurm_wckeys)" ;;
+	user?(s)) __slurm_compreply "$(__slurm_users)" ;;
+	wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr QOS specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-QOS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-QOS-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_qos() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"id="
+		"name="
+	)
+	local parameters_set=(
+		"flags="
+		"gracetime="
+		"grpjobs="
+		"grpjobsaccrue="
+		"grpsubmit=" "grpsubmitjobs="
+		"grptres="
+		"grptresmins="
+		"grptresrunmins="
+		"grpwall="
+		"limitfactor="
+		"maxjobsaccruepa=" "maxjobsaccrueperaccount="
+		"maxjobsaccruepu=" "maxjobsaccrueperuser="
+		"maxjobspa=" "maxjobsperaccount="
+		"maxjobspu=" "maxjobsperuser="
+		"maxsubmitjobspa=" "maxsubmitjobsperaccount="
+		"maxsubmitjobspu=" "maxsubmitjobsperuser="
+		"maxtres=" "maxtresperjob="
+		"maxtresmins=" "maxtresminsperjob="
+		"maxtrespa=" "maxtresperaccount="
+		"maxtrespernode="
+		"maxtrespu=" "maxtresperuser="
+		"maxwall=" "maxwalldurationperjob="
+		"minpriothreshold="
+		"mintres=" "mintresperjob="
+		"preempt="
+		"preemptexempttime="
+		"preemptmode="
+		"priority="
+		"rawusage="
+		"usagefactor="
+		"usagethreshold="
+	)
+	local options=(
+		"withdeleted"
+	)
+	local flags=(
+		"denyonlimit"
+		"enforceusagethreshold"
+		"nodecay"
+		"noreserve"
+		"overpartqos"
+		"partitionmaxnodes"
+		"partitionminnodes"
+		"partitiontimelimit"
+		"requiresreservation"
+		"usagefactorsafe"
+	)
+	local preempt_modes=(
+		"cancel"
+		"gang"
+		"off"
+		"requeue"
+		"suspend"
+		"within"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	id?(s)) __slurm_compreply_list "$(__slurm_qosid)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	preempt?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	preemptmode) __slurm_compreply "${preempt_modes[*]}" ;;
+	rawusage) __slurm_compreply "0" ;;
+	qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr reservation specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-RESERVATIONS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-RESERVATION-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_reservations() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"clusters="
+		"end="
+		"id="
+		"name="
+		"nodes="
+		"start="
+	)
+	local parameters_set=(
+	)
+	local options=(
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_reservations)" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr resource specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-RESOURCE
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-RESOURCE-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_resources() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"name="
+		"server="
+	)
+	local parameters_set=(
+		"allowed="
+		"cluster="
+		"count="
+		"description="
+		"flags="
+		"servertype="
+		"type="
+	)
+	local options=(
+		"withclusters"
+		"withdeleted"
+	)
+	local condition_set
+	condition_set="$(__slurm_find_subcmd "${conditions[1]}")"
+	local flags=(
+	)
+	local types=(
+		"license"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_resources)" ;;
+	server?(s)) __slurm_compreply_list "$(__slurm_resources_servers)" ;;
+	type?(s)) __slurm_compreply "${types[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr transaction specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-TRANSACTIONS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-TRANSACTIONS-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_transactions() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"account="
+		"action="
+		"actor="
+		"cluster="
+		"end="
+		"start="
+		"user="
+	)
+	local parameters_set=(
+	)
+	local options=(
+		"withassoc"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	actor?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr tres specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-TRES
+function __slurm_comp_sacctmgr_spec_tres() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"id="
+		"name="
+		"type="
+	)
+	local parameters_set=(
+	)
+	local options=(
+	)
+	local types=(
+		"bb"
+		"cpu"
+		"energy"
+		"gres"
+		"license"
+		"memory"
+		"node"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	type?(s)) __slurm_compreply "${types[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr user specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_SPECIFICATIONS-FOR-USERS
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-USER-FORMAT-OPTIONS
+function __slurm_comp_sacctmgr_spec_users() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"account="
+		"cluster="
+		"name="
+		"partition="
+	)
+	local parameters_set=(
+		"account="
+		"adminlevel="
+		"clusters="
+		"defaultaccount="
+		"defaultwckey="
+		"newname="
+		"partition="
+		"rawusage="
+		"wckey="
+	)
+	local options=(
+		"withassoc"
+		"withcoord"
+		"withdeleted"
+	)
+	local admin_levels=(
+		"admin"
+		"none"
+		"operator"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+	__slurm_comp_sacctmgr_spec_associations "$mode" && return
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply "$(__slurm_accounts)" ;;
+	adminlevel?(s)) __slurm_compreply "${admin_levels[*]}" ;;
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	defaultaccount) __slurm_compreply "$(__slurm_accounts)" ;;
+	defaultwckey?(s)) __slurm_compreply "$(__slurm_wckeys)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	newname?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	rawusage) __slurm_compreply "0" ;;
+	wckey?(s)) __slurm_compreply "$(__slurm_wckeys)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion helper for sacctmgr wckeys specifications
+# https://slurm.schedmd.com/sacctmgr.html#SECTION_LIST/SHOW-WCKey
+function __slurm_comp_sacctmgr_spec_wckeys() {
+	local mode="$1"
+	local parameters=()
+	local parameters_where=(
+		"cluster="
+		"id="
+		"name="
+		"user="
+	)
+	local parameters_set=(
+	)
+	local options=(
+		"withdeleted"
+	)
+
+	__slurm_log_debug "$(__func__): mode='$mode'"
+
+	__slurm_comp_mode_select "$mode"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	name?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: sacctmgr add account [key=val]...
+function __sacctmgr_add_account() {
+	__slurm_comp_sacctmgr_spec_accounts 2
+}
+
+# completion handler for: sacctmgr add cluster [key=val]...
+function __sacctmgr_add_cluster() {
+	__slurm_comp_sacctmgr_spec_clusters 2
+}
+
+# completion handler for: sacctmgr add coordinator [key=val]...
+function __sacctmgr_add_coordinator() {
+	__slurm_comp_sacctmgr_spec_coordinators 2
+}
+
+# completion handler for: sacctmgr add federation [key=val]...
+function __sacctmgr_add_federation() {
+	__slurm_comp_sacctmgr_spec_federations 2
+}
+
+# completion handler for: sacctmgr add qos [key=val]...
+function __sacctmgr_add_qos() {
+	__slurm_comp_sacctmgr_spec_qos 2
+}
+
+# completion handler for: sacctmgr add resource [key=val]...
+function __sacctmgr_add_resource() {
+	__slurm_comp_sacctmgr_spec_resources 2
+}
+
+# completion handler for: sacctmgr add user [key=val]...
+function __sacctmgr_add_user() {
+	__slurm_comp_sacctmgr_spec_users 2
+}
+
+# completion handler for: sacctmgr add *
+function __sacctmgr_add() {
+	local subcmds=(
+		"account"
+		"cluster"
+		"coordinator"
+		"federation"
+		"qos"
+		"resource"
+		"user"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: sacctmgr archive dump *
+function __sacctmgr_archive_dump() {
+	local parameters=(
+		"directory="
+		"events"
+		"purgeeventafter="
+		"purgejobafter="
+		"purgestepafter="
+		"purgesuspendafter="
+		"script="
+		"steps"
+		"suspend"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	directory) _filedir ;;
+	script) _filedir ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: sacctmgr archive load *
+function __sacctmgr_archive_load() {
+	local parameters=(
+		"file="
+		"insert="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	file) _filedir ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: sacctmgr archive *
+function __sacctmgr_archive() {
+	local subcmds=(
+		"dump"
+		"load"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: sacctmgr create *
+function __sacctmgr_create() {
+	comp_cmd="${comp_cmd//_create/_add}"
+	__sacctmgr_add
+}
+
+# completion handler for: sacctmgr delete *
+function __sacctmgr_delete() {
+	comp_cmd="${comp_cmd//_delete/_remove}"
+	__sacctmgr_remove
+}
+
+# completion handler for: sacctmgr dump [key=val]...
+function __sacctmgr_dump() {
+	local subcmds=(
+		"account"
+		"association"
+		"cluster"
+		"configuration"
+		"coordinator"
+		"event"
+		"federation"
+		"job"
+		"problem"
+		"qos"
+		"resource"
+		"reservation"
+		"runawayjobs"
+		"stats"
+		"transaction"
+		"tres"
+		"user"
+		"wckey"
+	)
+	local parameters=(
+		"file="
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	local param
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd' param='$param'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	elif [[ -z ${param-} ]]; then
+		__slurm_compreply "${parameters[*]}"
+	else
+		case "${prev}" in
+		file) _filedir ;;
+		esac
+	fi
+}
+
+# completion handler for: sacctmgr list account [key=val]...
+function __sacctmgr_list_account() {
+	__slurm_comp_sacctmgr_spec_accounts 1
+}
+
+# completion handler for: sacctmgr list association [key=val]...
+function __sacctmgr_list_association() {
+	__slurm_comp_sacctmgr_spec_associations 1
+}
+
+# completion handler for: sacctmgr list cluster [key=val]...
+function __sacctmgr_list_cluster() {
+	__slurm_comp_sacctmgr_spec_clusters 1
+}
+
+# completion handler for: sacctmgr list event [key=val]...
+function __sacctmgr_list_event() {
+	__slurm_comp_sacctmgr_spec_events 1
+}
+
+# completion handler for: sacctmgr list federation [key=val]...
+function __sacctmgr_list_federation() {
+	__slurm_comp_sacctmgr_spec_federations 1
+}
+
+# completion handler for: sacctmgr list qos [key=val]...
+function __sacctmgr_list_qos() {
+	__slurm_comp_sacctmgr_spec_qos 1
+}
+
+# completion handler for: sacctmgr list resource [key=val]...
+function __sacctmgr_list_resource() {
+	__slurm_comp_sacctmgr_spec_resources 1
+}
+
+# completion handler for: sacctmgr list reservation [key=val]...
+function __sacctmgr_list_reservation() {
+	__slurm_comp_sacctmgr_spec_reservations 1
+}
+
+# completion handler for: sacctmgr list transaction [key=val]...
+function __sacctmgr_list_transaction() {
+	__slurm_comp_sacctmgr_spec_transactions 1
+}
+
+# completion handler for: sacctmgr list tres [key=val]...
+function __sacctmgr_list_tres() {
+	__slurm_comp_sacctmgr_spec_tres 1
+}
+
+# completion handler for: sacctmgr list user [key=val]...
+function __sacctmgr_list_user() {
+	__slurm_comp_sacctmgr_spec_users 1
+}
+
+# completion handler for: sacctmgr list wckey [key=val]...
+function __sacctmgr_list_wckey() {
+	__slurm_comp_sacctmgr_spec_wckeys 1
+}
+
+# completion handler for: sacctmgr list [key=val]...
+function __sacctmgr_list() {
+	local subcmds=(
+		"account"
+		"association"
+		"cluster"
+		"configuration"
+		"event"
+		"federation"
+		"problem"
+		"qos"
+		"resource"
+		"reservation"
+		"runawayjobs"
+		"stat"
+		"transaction"
+		"tres"
+		"user"
+		"wckey"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: sacctmgr load [key=val]...
+function __sacctmgr_load() {
+	_filedir
+}
+
+# completion handler for: sacctmgr modify account [key=val]...
+function __sacctmgr_modify_account() {
+	__slurm_comp_sacctmgr_spec_accounts 3
+}
+
+# completion handler for: sacctmgr modify cluster [key=val]...
+function __sacctmgr_modify_cluster() {
+	__slurm_comp_sacctmgr_spec_clusters 3
+}
+
+# completion handler for: sacctmgr modify federation [key=val]...
+function __sacctmgr_modify_federation() {
+	__slurm_comp_sacctmgr_spec_federations 3
+}
+
+# completion handler for: sacctmgr modify job [key=val]...
+function __sacctmgr_modify_job() {
+	__slurm_comp_sacctmgr_spec_jobs 3
+}
+
+# completion handler for: sacctmgr modify qos [key=val]...
+function __sacctmgr_modify_qos() {
+	__slurm_comp_sacctmgr_spec_qos 3
+}
+
+# completion handler for: sacctmgr modify resource [key=val]...
+function __sacctmgr_modify_resource() {
+	__slurm_comp_sacctmgr_spec_resources 3
+}
+
+# completion handler for: sacctmgr modify user [key=val]...
+function __sacctmgr_modify_user() {
+	__slurm_comp_sacctmgr_spec_users 3
+}
+
+# completion handler for: sacctmgr modify [key=val]...
+function __sacctmgr_modify() {
+	local subcmds=(
+		"account"
+		"cluster"
+		"federation"
+		"job"
+		"qos"
+		"resource"
+		"user"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: sacctmgr remove account [key=val]...
+function __sacctmgr_remove_account() {
+	__slurm_comp_sacctmgr_spec_accounts 0
+}
+
+# completion handler for: sacctmgr remove cluster [key=val]...
+function __sacctmgr_remove_cluster() {
+	__slurm_comp_sacctmgr_spec_clusters 0
+}
+
+# completion handler for: sacctmgr remove coordinator [key=val]...
+function __sacctmgr_remove_coordinator() {
+	__slurm_comp_sacctmgr_spec_coordinators 0
+}
+
+# completion handler for: sacctmgr remove federation [key=val]...
+function __sacctmgr_remove_federation() {
+	__slurm_comp_sacctmgr_spec_federations 0
+}
+
+# completion handler for: sacctmgr remove qos [key=val]...
+function __sacctmgr_remove_qos() {
+	__slurm_comp_sacctmgr_spec_qos 0
+}
+
+# completion handler for: sacctmgr remove resource [key=val]...
+function __sacctmgr_remove_resource() {
+	__slurm_comp_sacctmgr_spec_resources 0
+}
+
+# completion handler for: sacctmgr remove user [key=val]...
+function __sacctmgr_remove_user() {
+	__slurm_comp_sacctmgr_spec_users 0
+}
+
+# completion handler for: sacctmgr remove *
+function __sacctmgr_remove() {
+	local subcmds=(
+		"account"
+		"cluster"
+		"coordinator"
+		"federation"
+		"qos"
+		"resource"
+		"user"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: sacctmgr list *
+function __sacctmgr_show() {
+	comp_cmd="${comp_cmd//_show/_list}"
+	__sacctmgr_list
+}
+
+# completion handler for: sacctmgr update *
+function __sacctmgr_update() {
+	comp_cmd="${comp_cmd//_update/_modify}"
+	__sacctmgr_modify
+}
+
+# Slurm completion helper for sacctmgr flag completion
+#
+# RET: 0 = did completion; 1 = no completion
+function __slurm_comp_sacctmgr_flags() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	case "${prev}" in
+	*) return 1 ;;
+	esac
+
+	return 0
+}
+
+# sacctmgr completion handler
+function _sacctmgr() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local comp_cmd="$1"
+	local subcmds=(
+		"add" "create"
+		"archive"
+		"clear"
+		"dump"
+		"help"
+		"list" "show"
+		"load"
+		"modify" "update"
+		"reconfigure"
+		"remove" "delete"
+		"shutdown"
+		"version"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	__slurm_comp_flags "$comp_cmd" && return
+	__slurm_comp_sacctmgr_flags && return
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="__${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+complete -o nospace -F _sacctmgr sacctmgr
+
+################################################################################
+#			SALLOC Completion Functions
+################################################################################
+
+# salloc completion handler
+# https://slurm.schedmd.com/salloc.html
+function _salloc() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_common "$1" && return
+	[[ $split == "true" ]] && return
+
+	_filedir
+}
+complete -o nospace -F _salloc salloc
+
+################################################################################
+#			SATTACH Completion Functions
+################################################################################
+
+# sattach completion handler
+# https://slurm.schedmd.com/sattach.html
+function _sattach() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+	[[ $split == "true" ]] && return
+
+	__slurm_compreply "$(__slurm_jobsteps_tasks)"
+
+}
+complete -o nospace -F _sattach sattach
+
+################################################################################
+#			SBATCH Completion Functions
+################################################################################
+
+# sbatch completion handler
+# https://slurm.schedmd.com/sbatch.html
+function _sbatch() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_common "$1" && return
+	[[ $split == "true" ]] && return
+
+	_filedir
+}
+complete -o nospace -F _sbatch sbatch
+
+################################################################################
+#			SBCAST Completion Functions
+################################################################################
+
+# sbcast completion handler
+# https://slurm.schedmd.com/sbcast.html
+function _sbcast() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-C | --compress) __slurm_compreply "$(__slurm_compress_types)" ;;
+	--exclude?(s)) _filedir -d ;;
+	-j | --jobid?(s)) __slurm_compreply "$(__slurm_jobs) $(__slurm_jobsteps)" ;;
+	--send-lib?(s)) __slurm_compreply "$(__slurm_boolean)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		_filedir
+		;;
+	esac
+}
+complete -o nospace -F _sbcast sbcast
+
+################################################################################
+#			SCANCEL Completion Functions
+################################################################################
+
+# scancel completion handler
+# https://slurm.schedmd.com/scancel.html
+function _scancel() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local states=(
+		"pending"
+		"running"
+		"suspended"
+	)
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-A | --account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-n | --jobname?(s)) __slurm_compreply_list "$(__slurm_jobnames)" ;;
+	-w | --nodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	-p | --partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	-q | --qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	-R | --reservation?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	--sibling?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-s | --signal) __slurm_compreply "$(__slurm_signals)" ;;
+	-t | --state?(s)) __slurm_compreply "${states[*]}" ;;
+	-u | --user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	--wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	*) __slurm_compreply "$(__slurm_jobs) $(__slurm_jobsteps)" ;;
+	esac
+}
+complete -o nospace -F _scancel scancel
+
+################################################################################
+#			SCONTROL Completion Functions
+################################################################################
+
+# completion handler for: scontrol cancel_reboot *
+function __scontrol_cancel_reboot() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	case "${prev}" in
+	cancel_reboot) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	esac
+}
+
+# completion handler for: scontrol cluster *
+function __scontrol_cluster() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	case "${prev}" in
+	cluster) __slurm_compreply "$(__slurm_clusters)" ;;
+	esac
+}
+
+# completion handler for: scontrol create nodename=* *
+function __scontrol_create_nodename() {
+	local parameters=(
+		"bcastaddr="
+		"boards="
+		"corespeccount="
+		"corespersocket="
+		"cpubind="
+		"cpus="
+		"cpuspeclist="
+		"features="
+		"gres="
+		"memspeclimit="
+		"nodeaddr="
+		"nodehostname="
+		"nodename=" # meta
+		"port="
+		"procs="
+		"realmemory="
+		"reason="
+		"sockets="
+		"socketsperboard="
+		"state="
+		"threadspercore="
+		"tmpdisk="
+		"weight="
+	)
+	local states=(
+		"cloud"
+		"future"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cpubind) __slurm_compreply "$(__slurm_cpubind_types)" ;;
+	feature?(s)) __slurm_compreply "$(__slurm_features)" ;;
+	gres) __slurm_compreply "$(__slurm_gres)" ;;
+	nodename?(s)) __slurm_compreply_list "$(__slurm_nodes)" "" "true" ;;
+	state) __slurm_compreply "${states[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol create partitionname=* [key=val]...
+function __scontrol_create_partitionname() {
+	__scontrol_update_partitionname
+}
+
+# completion handler for: scontrol create reservation [key=val]...
+function __scontrol_create_reservation() {
+	__scontrol_update_reservationname
+}
+
+# completion handler for: scontrol create reservationname=* [key=val]...
+function __scontrol_create_reservationname() {
+	__scontrol_update_reservationname
+}
+
+# completion handler for: scontrol create *
+function __scontrol_create() {
+	local parameters=(
+		"nodename="
+		"partitionname="
+		"reservation "
+		"reservationname="
+	)
+	local param
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z ${param-} ]]; then
+		__slurm_compreply "${parameters[*]}"
+	else
+		comp_cmd="${comp_cmd}_${param//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: scontrol delete *
+function __scontrol_delete() {
+	local parameters=(
+		"nodename="
+		"partitionname="
+		"reservationname="
+	)
+	local param
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z ${param-} ]]; then
+		__slurm_compreply "${parameters[*]}"
+	else
+		case "${prev}" in
+		nodename?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+		partitionname?(s)) __slurm_compreply "$(__slurm_partitions)" ;;
+		reservationname?(s)) __slurm_compreply "$(__slurm_reservations)" ;;
+		esac
+	fi
+}
+
+# completion handler for: scontrol hold *
+function __scontrol_hold() {
+	local parameters=(
+		"jobid="
+		"jobname="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	jobid) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	jobname) __slurm_compreply_list "$(__slurm_jobnames)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol notify *
+function __scontrol_notify() {
+	case "${prev}" in
+	notify) __slurm_compreply "$(__slurm_jobs)" ;;
+	esac
+}
+
+# completion handler for: scontrol pidinfo *
+function __scontrol_pidinfo() {
+	_pids # TODO: return only slurm pids
+}
+
+# completion handler for: scontrol listpids *
+function __scontrol_listpids() {
+	__slurm_compreply_list "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol reboot *
+function __scontrol_reboot() {
+	local parameters=(
+		"asap"
+		"nextstate="
+		"reason="
+	)
+	local states=(
+		"down"
+		"resume"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	nextstate) __slurm_compreply "${states[*]}" ;;
+	reboot) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol release *
+function __scontrol_release() {
+	local parameters=(
+		"jobid="
+		"jobname="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	jobid) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	jobname) __slurm_compreply_list "$(__slurm_jobnames)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol requeue *
+function __scontrol_requeue() {
+	local parameters=(
+		"incomplete"
+		"jobid="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	jobid) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol requeuehold *
+function __scontrol_requeuehold() {
+	local parameters=(
+		"incomplete"
+		"jobid="
+		"state="
+	)
+	local states=(
+		"specialexit"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	jobid) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	state) __slurm_compreply "${states[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol resume *
+function __scontrol_resume() {
+	__slurm_compreply_list "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol schedloglevel *
+function __scontrol_schedloglevel() {
+	local schedlog_levels=(
+		"disable"
+		"enable"
+	)
+
+	__slurm_compreply "${schedlog_levels[*]}"
+}
+
+# completion handler for: scontrol setdebug *
+function __scontrol_setdebug() {
+	local parameters=(
+		"nodes="
+	)
+	local debug_levels=(
+		"quiet"
+		"fatal"
+		"error"
+		"info"
+		"verbose"
+		"debug"
+		"debug2"
+		"debug3"
+		"debug4"
+		"debug5"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	setdebug) __slurm_compreply "${debug_levels[*]}" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol setdebugflags * [key=val]...
+function __scontrol_setdebugflags() {
+	local debug_flags=(
+		"accrue"
+		"agent"
+		"backfill"
+		"backfillmap"
+		"burstbuffer"
+		"cgroup"
+		"cpu_bind"
+		"cpufrequency"
+		"data"
+		"dependency"
+		"elasticsearch"
+		"energy"
+		"extsensors"
+		"federation"
+		"frontend"
+		"gang"
+		"gres"
+		"hetjob"
+		"jobaccountgather"
+		"jobcontainer"
+		"license"
+		"network"
+		"networkraw"
+		"nodefeatures"
+		"no_conf_hash"
+		"power"
+		"priority"
+		"profile"
+		"protocol"
+		"reservation"
+		"route"
+		"script"
+		"selecttype"
+		"steps"
+		"switch"
+		"timecray"
+		"tracejobs"
+		"triggers"
+		"workqueue"
+	)
+	local _debug_flags=()
+	local parameters=(
+		"nodes="
+	)
+
+	case "${prev}" in
+	setdebugflag?(s))
+		_debug_flags+=("$(compgen -P "+" -W "${debug_flags[*]}")")
+		_debug_flags+=("$(compgen -P "-" -W "${debug_flags[*]}")")
+		__slurm_compreply_list "${_debug_flags[*]}"
+		;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol show assoc_mgr *
+function __scontrol_show_assocmgr() {
+	local parameters=(
+		"accounts="
+		"flags="
+		"qos="
+		"users="
+	)
+	local flags=(
+		"assoc"
+		"users"
+		"qos"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol show hostlist *
+function __scontrol_show_hostlist() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	if [[ $cur =~ ^/ ]]; then
+		_filedir
+	else
+		__slurm_compreply_list "$(__slurm_nodes)" "" "true"
+	fi
+}
+
+# completion handler for: scontrol show hostlistsorted *
+function __scontrol_show_hostlistsorted() {
+	__scontrol_show_hostlist
+}
+
+# completion handler for: scontrol show hostnames *
+function __scontrol_show_hostnames() {
+	__slurm_compreply_list "$(__slurm_nodes)" "" "true"
+}
+
+# completion handler for: scontrol show jobs *
+function __scontrol_show_jobs() {
+	__slurm_compreply "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol show licenses *
+function __scontrol_show_licenses() {
+	__slurm_compreply "$(__slurm_licenses)"
+}
+
+# completion handler for: scontrol show nodes *
+function __scontrol_show_nodes() {
+	__slurm_compreply_list "$(__slurm_nodes)" "" "true"
+}
+
+# completion handler for: scontrol show partitions *
+function __scontrol_show_partitions() {
+	__slurm_compreply "$(__slurm_partitions)"
+}
+
+# completion handler for: scontrol show reservations *
+function __scontrol_show_reservations() {
+	__slurm_compreply "$(__slurm_reservations)"
+}
+
+# completion handler for: scontrol show step *
+function __scontrol_show_steps() {
+	__slurm_compreply "$(__slurm_jobs) $(__slurm_jobsteps)"
+}
+
+# completion handler for: scontrol show *
+function __scontrol_show() {
+	local subcmds=(
+		"aliases"
+		"assoc_mgr"
+		"bbstat"
+		"burstbuffer"
+		"config"
+		"daemons"
+		"dwstat"
+		"federations"
+		"frontend"
+		"hostlist"
+		"hostlistsorted"
+		"hostnames"
+		"jobs"
+		"licenses"
+		"nodes"
+		"partitions"
+		"reservations"
+		"slurmd"
+		"steps"
+		"topology"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: scontrol shutdown *
+function __scontrol_shutdown() {
+	local parameters=(
+		"slurmctld" "controller"
+	)
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z $param ]]; then
+		__slurm_compreply "${parameters[*]}"
+	fi
+}
+
+# completion handler for: scontrol suspend *
+function __scontrol_suspend() {
+	__slurm_compreply_list "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol top *
+function __scontrol_top() {
+	__slurm_compreply_list "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol token *
+function __scontrol_token() {
+	local parameters=(
+		"lifespan="
+		"username="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	lifespan) ;;
+	username?(s)) __slurm_compreply "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol uhold *
+function __scontrol_uhold() {
+	__scontrol_release
+}
+
+# completion handler for: scontrol update frontendname=* [key=val]...
+function __scontrol_update_frontendname() {
+	local parameters=(
+		"frontendname=" # meta
+		"reason="
+		"state="
+	)
+	local states=(
+		"down"
+		"drain"
+		"resume"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	frontendname) __slurm_compreply "$(__slurm_nodes_frontend)" ;;
+	state?(s)) __slurm_compreply "${states[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update jobid=* [key=val]...
+function __scontrol_update_jobid() {
+	local parameters=(
+		"account="
+		"admincomment="
+		"arraytaskthrottle="
+		"burstbuffer="
+		"clusters="
+		"clusterfeatures="
+		"comment="
+		"contiguous="
+		"corespec="
+		"cpuspertask="
+		"deadline="
+		"delayboot="
+		"dependency="
+		"eligibletime="
+		"endtime="
+		"excnodelist="
+		"extra="
+		"features="
+		"gres="
+		"jobid=" # meta
+		"jobname="
+		"licenses="
+		"mailtype="
+		"mailuser="
+		"mincpusnode="
+		"minmemorycpu="
+		"minmemorynode="
+		"mintmpdisknode="
+		"name="
+		"nice="
+		"nodelist="
+		"numcpus="
+		"numnodes="
+		"numtasks="
+		"oversubscribe="
+		"partition="
+		"prefer="
+		"priority="
+		"qos="
+		"reboot="
+		"reqcores="
+		"reqnodelist="
+		"reqnodes="
+		"reqprocs="
+		"reqsockets="
+		"reqthreads="
+		"irequeue="
+		"reservationname="
+		"resetaccruetime="
+		"sitefactor="
+		"stderr="
+		"stdin="
+		"stdout="
+		"shared="
+		"starttime="
+		"switches="
+		"taskspernode="
+		"threadspec="
+		"timelimit="
+		"timemin="
+		"userid="
+		"wait-for-switch="
+		"wckey="
+		"workdir="
+	)
+	local binary=(
+		"0"
+		"1"
+	)
+	local mail_types=(
+		"all"
+		"array_tasks"
+		"begin"
+		"end"
+		"fail"
+		"none"
+		"requeue"
+		"stage_out"
+		"time_limit"
+		"time_limit_90"
+		"time_limit_80"
+		"time_limit_50"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply "$(__slurm_accounts)" ;;
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	clusterfeature?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	contiguous) __slurm_compreply "$(__slurm_boolean)" ;;
+	dependency) __slurm_comp_dependency ;;
+	excnodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	feature?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	gres) __slurm_compreply_list "$(__slurm_gres)" ;;
+	jobid?(s)) __slurm_compreply "$(__slurm_jobs)" ;;
+	jobname?(s)) __slurm_compreply_list "$(__slurm_jobnames)" ;;
+	license?(s)) __slurm_compreply_list "$(__slurm_licenses)" ;;
+	mailtype?(s)) __slurm_compreply_list "${mail_types[*]}" ;;
+	mailuser?(s)) __slurm_compreply "$(__slurm_users)" ;;
+	nodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	oversubscribe) __slurm_compreply "$(__slurm_boolean)" ;;
+	partition) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	prefer) __slurm_compreply "$(__slurm_features)" ;;
+	qos?(s)) __slurm_compreply "$(__slurm_qos)" ;;
+	reboot) __slurm_compreply "$(__slurm_boolean)" ;;
+	reqnodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	irequeue) __slurm_compreply "${binary[*]}" ;;
+	reservationname?(s)) __slurm_compreply_list "$(__slurm_reservations)" ;;
+	stderr) _filedir ;;
+	stdin) _filedir ;;
+	stdout) _filedir ;;
+	shared) __slurm_compreply "$(__slurm_boolean)" ;;
+	userid?(s)) __slurm_compreply "$(__slurm_users)" ;;
+	wckey?(s)) __slurm_compreply "$(__slurm_wckey)" ;;
+	workdir) _filedir -d ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update nodename=* [key=val]...
+function __scontrol_update_nodename() {
+	local parameters=(
+		"activefeatures="
+		"availablefeatures="
+		"comment="
+		"cpubind="
+		"extra="
+		"gres="
+		"nodeaddr="
+		"nodehostname="
+		"nodename=" # meta
+		"reason="
+		"resumeafter="
+		"state="
+		"weight="
+	)
+	local states=(
+		"cancel_reboot"
+		"down"
+		"drain"
+		"fail"
+		"future"
+		"noresp"
+		"power_down"
+		"power_down_asap"
+		"power_down_force"
+		"power_up"
+		"resume"
+		"undrain"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	activefeature?(s)) __slurm_compreply_list "$(__slurm_features_active)" ;;
+	availablefeature?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	cpubind) __slurm_compreply "$(__slurm_cpubind_types)" ;;
+	gres) __slurm_compreply "$(__slurm_gres)" ;;
+	nodename?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	state?(s)) __slurm_compreply "${states[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update partitionname=* [key=val]...
+function __scontrol_update_partitionname() {
+	local parameters=(
+		"allowaccounts="
+		"allowgroups="
+		"allowqos="
+		"allocnodes="
+		"alternate="
+		"cpubind="
+		"default="
+		"defaulttime="
+		"defmempercpu="
+		"defmempernode="
+		"denyaccounts="
+		"denyqos="
+		"disablerootjobs="
+		"exclusiveuser="
+		"gracetime="
+		"hidden="
+		"jobdefaults="
+		"lln="
+		"maxcpuspernode="
+		"maxcpuspersocket="
+		"maxmempercpu="
+		"maxmempernode="
+		"maxnodes="
+		"maxtime="
+		"minnodes="
+		"nodes="
+		"overtimelimit="
+		"oversubscribe="
+		"partitionname=" # meta
+		"powerdownonidle="
+		"preemptmode="
+		"priority="
+		"priorityjobfactor="
+		"prioritytier="
+		"qos="
+		"rootonly="
+		"reqresv="
+		"shared="
+		"state="
+		"tresbillingweights="
+	)
+	local job_defaults=(
+		"defcpupergpu="
+		"defmempergpu="
+	)
+	local oversubscribe_types=(
+		"exclusive"
+		"force"
+		"no"
+		"yes"
+	)
+	local states=(
+		"down"
+		"drain"
+		"inactive"
+		"up"
+	)
+	local preempt_modes=(
+		"cancel"
+		"off"
+		"requeue"
+		"suspend"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	allowaccount?(s)) __slurm_compreply_list "$(__slurm_accounts)" "ALL" ;;
+	allowgroup?(s)) __slurm_compreply_list "$(__slurm_linux_groups)" "ALL" ;;
+	allowqos) __slurm_compreply_list "$(__slurm_qos)" "ALL" ;;
+	allocnode?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	alternate) __slurm_compreply "$(__slurm_partitions) NONE" ;;
+	cpubind) __slurm_compreply "$(__slurm_cpubind_types)" ;;
+	default) __slurm_compreply "$(__slurm_boolean)" ;;
+	denyaccount?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	denyqos) __slurm_compreply_list "$(__slurm_qos)" ;;
+	disablerootjob?(s)) __slurm_compreply "$(__slurm_boolean)" ;;
+	exclusiveuser) __slurm_compreply "$(__slurm_boolean)" ;;
+	hidden) __slurm_compreply "$(__slurm_boolean)" ;;
+	jobdefault?(s)) __slurm_compreply "${job_defaults[*]}" ;;
+	lln) __slurm_compreply "$(__slurm_boolean)" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	oversubscribe) __slurm_compreply "${oversubscribe_types[*]}" ;;
+	partitionname) __slurm_compreply "$(__slurm_partitions)" ;;
+	powerdownonidle) __slurm_compreply "$(__slurm_boolean)" ;;
+	preemptmode) __slurm_compreply "${preempt_modes[*]}" ;;
+	qos?(s)) __slurm_compreply "$(__slurm_qos)" ;;
+	rootonly) __slurm_compreply "$(__slurm_boolean)" ;;
+	reqresv) __slurm_compreply "$(__slurm_boolean)" ;;
+	shared) __slurm_compreply "${oversubscribe_types[*]}" ;;
+	state) __slurm_compreply "${states[*]}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update reservationname=* [key=val]...
+function __scontrol_update_reservationname() {
+	local parameters=(
+		"accounts="
+		"burstbuffer="
+		"corecnt="
+		"duration="
+		"endtime="
+		"features="
+		"flags="
+		"groups="
+		"licenses="
+		"maxstartdelay="
+		"nodecnt="
+		"nodes="
+		"partition="
+		"reservation"      # meta
+		"reservationname=" # meta
+		"skip"
+		"starttime="
+		"tres="
+		"users="
+	)
+	local flags=(
+		"any_nodes"
+		"daily"
+		"flex"
+		"first_cores"
+		"ignore_jobs"
+		"license_only"
+		"hourly"
+		"maint"
+		"magnetic"
+		"no_hold_jobs_after"
+		"overlap"
+		"part_nodes"
+		"purge_comp" "purge_comp\\\="
+		"replace"
+		"replace_down"
+		"spec_nodes"
+		"static_alloc"
+		"time_float"
+		"weekday"
+		"weekend"
+		"weekly"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	burstbuffer?(s)) __slurm_compreply_count "$(__slurm_burstbuffers)" "$(__slurm_units)" ;;
+	feature?(s)) __slurm_compreply_list "$(__slurm_features)" ;;
+	flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	group?(s)) __slurm_compreply_list "$(__slurm_linux_groups)" ;;
+	license?(s)) __slurm_compreply_list "$(__slurm_licenses)" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	partition?(s)) __slurm_compreply "$(__slurm_partitions)" ;;
+	reservationname?(s)) __slurm_compreply "$(__slurm_reservations)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update stepid=* [key=val]...
+function __scontrol_update_stepid() {
+	local parameters=(
+		"stepid=" # meta
+		"timelimit="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	stepid) __slurm_compreply "$(__slurm_jobsteps)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update suspendexcnodes=*
+function __scontrol_update_suspendexcnodes() {
+	local parameters=(
+		"suspendexcnodes="   # meta
+		"suspendexcnodes\+=" # meta
+		"suspendexcnodes\-=" # meta
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	suspendexcnode?(s)?(+|-)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update suspendexcparts=*
+function __scontrol_update_suspendexcparts() {
+	local parameters=(
+		"suspendexcparts="   # meta
+		"suspendexcparts\+=" # meta
+		"suspendexcnodes\-=" # meta
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	suspendexcpart?(s)?(+|-)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update suspendexcstates=*
+function __scontrol_update_suspendexcstates() {
+	local parameters=(
+		"suspendexcstates="   # meta
+		"suspendexcstates\+=" # meta
+		"suspendexcstates\-=" # meta
+	)
+	local states=(
+		"CLOUD"
+		"DOWN"
+		"DRAIN"
+		"DYNAMIC_FUTURE"
+		"DYNAMIC_NORM"
+		"FAIL"
+		"INVALID_REG"
+		"MAINTENANCE"
+		"NOT_RESPONDING"
+		"PERFCTRS"
+		"PLANNED"
+		"RESERVED"
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	suspendexcstate?(s)?(+|-)) __slurm_compreply_list "${states[*],,}" ;;
+	*)
+		[[ $split == "true" ]] && return
+		__slurm_compreply_param "${parameters[*]}"
+		;;
+	esac
+}
+
+# completion handler for: scontrol update *
+function __scontrol_update() {
+	local parameters=(
+		"frontendname="
+		"jobid="
+		"nodename="
+		"partitionname="
+		"reservationname="
+		"stepid="
+		"suspendexcnodes="
+		"suspendexcnodes\+="
+		"suspendexcnodes\-="
+		"suspendexcparts="
+		"suspendexcparts\+="
+		"suspendexcparts\-="
+		"suspendexcstates="
+		"suspendexcstates\+="
+		"suspendexcstates\-="
+	)
+	local param
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z ${param-} ]]; then
+		__slurm_compreply "${parameters[*]}"
+	else
+		comp_cmd="${comp_cmd}_${param//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+
+# completion handler for: scontrol wait_job *
+function __scontrol_wait_job() {
+	__slurm_compreply "$(__slurm_jobs)"
+}
+
+# completion handler for: scontrol write *
+function __scontrol_write() {
+	local subcmds=(
+		"batch_script"
+		"config"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	case "${subcmd}" in
+	batch_script) __slurm_compreply "$(__slurm_jobs)" ;;
+	config) _filedir ;;
+	*) __slurm_compreply "${subcmds[*]}" ;;
+	esac
+}
+
+# Slurm completion helper for scontrol flag completion
+#
+# RET: 0 = did completion; 1 = no completion
+function __slurm_comp_scontrol_flags() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply "$(__slurm_clusters)" ;;
+	-u | --uid?(s)) __slurm_compreply "$(__slurm_users)" ;;
+	*) return 1 ;;
+	esac
+
+	return 0
+}
+
+# scontrol completion handler
+# https://slurm.schedmd.com/scontrol.html
+function _scontrol() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local comp_cmd="$1"
+	local subcmds=(
+		"abort"
+		"cancel_reboot"
+		"cluster"
+		"create"
+		"completing"
+		"delete"
+		"errnumstr"
+		"fsdampeningfactor"
+		"help"
+		"hold"
+		"notify"
+		"pidinfo"
+		"listpids"
+		"ping"
+		"reboot"
+		"reconfigure"
+		"release"
+		"requeue"
+		"requeuehold"
+		"resume"
+		"schedloglevel"
+		"setdebug"
+		"setdebugflags"
+		"show"
+		"shutdown"
+		"suspend"
+		"takeover"
+		"top"
+		"token"
+		"uhold"
+		"update"
+		"version"
+		"wait_job"
+		"write"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	__slurm_comp_flags "$comp_cmd" && return
+	__slurm_comp_scontrol_flags && return
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="__${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+}
+complete -o nospace -F _scontrol scontrol
+
+################################################################################
+#			SCRONTAB Completion Functions
+################################################################################
+
+# scrontab completion handler
+# https://slurm.schedmd.com/scrontab.html
+function _scrontab() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-u) __slurm_compreply "$(__slurm_users)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "-"
+	fi
+}
+complete -o nospace -F _scrontab scrontab
+
+################################################################################
+#			SDIAG Completion Functions
+################################################################################
+
+# sdiag completion handler
+# https://slurm.schedmd.com/sdiag.html
+function _sdiag() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sdiag sdiag
+
+################################################################################
+#			SINFO Completion Functions
+################################################################################
+
+# sinfo completion handler
+# https://slurm.schedmd.com/sinfo.html
+function _sinfo() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local fields=(
+		"%ALL"
+		"%a" "%A"
+		"%b" "%B"
+		"%c" "%C"
+		"%d" "%D"
+		"%e" "%E"
+		"%f" "%F"
+		"%g" "%G"
+		"%h" "%H"
+		"%I"
+		"%l" "%L"
+		"%m" "%M"
+		"%n" "%N"
+		"%o" "%O"
+		"%p" "%P"
+		"%r" "%R"
+		"%s" "%S"
+		"%t" "%T"
+		"%u" "%U"
+		"%v" "%V"
+		"%w"
+		"%X"
+		"%Y"
+		"%z" "%Z"
+	)
+	local fields_long=(
+		"ALL"
+		"allocmem"
+		"allocnodes"
+		"available"
+		"cluster"
+		"comment"
+		"cores"
+		"cpus"
+		"cpusload"
+		"cpusstate"
+		"defaulttime"
+		"disk"
+		"extra"
+		"features"
+		"features_act"
+		"freemem"
+		"gres"
+		"gresused"
+		"groups"
+		"maxcpuspernode"
+		"memory"
+		"nodeaddr"
+		"nodeai"
+		"nodeaiot"
+		"nodehost"
+		"nodelist"
+		"nodes"
+		"oversubscribe"
+		"partition"
+		"partitionname"
+		"port"
+		"preemptmode"
+		"priorityjobfactor"
+		"prioritytier"
+		"reason"
+		"root"
+		"size"
+		"socketcorethread"
+		"sockets"
+		"statecompact"
+		"statelong"
+		"statecomplete"
+		"threads"
+		"time"
+		"timestamp"
+		"user"
+		"userlong"
+		"version"
+		"weight"
+	)
+	local states=(
+		"allocated"
+		"cloud"
+		"completing"
+		"down"
+		"drain"
+		"drained"
+		"draining"
+		"fail"
+		"future"
+		"idle"
+		"maint"
+		"mixed"
+		"no_respond"
+		"perfctrs"
+		"planned"
+		"power_down"
+		"powering_down"
+		"powered_down"
+		"powering_up"
+		"reboot"
+		"reboot^"
+		"reserved"
+		"unknown"
+		"?"
+	)
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-o | --format) __slurm_compreply_list "${fields[*]}" ;;      # TODO: want --helpformat
+	-O | --Format) __slurm_compreply_list "${fields_long[*]}" ;; # TODO: want --helpformat2
+	-n | --node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	-p | --partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	-S | --sort) __slurm_compreply_list "${fields[*]//%/}" ;;
+	-t | --state?(s)) __slurm_compreply_list "${states[*]}" ;; # TODO: want --helpstate
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sinfo sinfo
+
+################################################################################
+#			SPRIO Completion Functions
+################################################################################
+
+# sprio completion handler
+# https://slurm.schedmd.com/sprio.html
+function _sprio() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local fields=(
+		"%a" "%A"
+		"%b" "%B"
+		"%c"
+		"%f" "%F"
+		"%i"
+		"%j" "%J"
+		"%N"
+		"%p" "%P"
+		"%q" "%Q"
+		"%r"
+		"%S"
+		"%t" "%T"
+		"%u"
+		"%y" "%Y"
+	)
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-o | --format) __slurm_compreply_list "${fields[*]}" ;; # TODO: want --helpformat
+	-j | --job?(s)) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	-S | --sort) __slurm_compreply_list "${fields[*]//%/}" ;;
+	-u) __slurm_compreply_list "$(__slurm_users)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sprio sprio
+
+################################################################################
+#			SQUEUE Completion Functions
+################################################################################
+
+# squeue completion handler
+# https://slurm.schedmd.com/squeue.html
+function _squeue() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local fields=(
+		"%ALL"
+		"%a" "%A"
+		"%b" "%B"
+		"%c" "%C"
+		"%d" "%D"
+		"%e" "%E"
+		"%f" "%F"
+		"%g" "%G"
+		"%h" "%H"
+		"%i" "%I"
+		"%j" "%J"
+		"%k" "%K"
+		"%l" "%L"
+		"%m" "%M"
+		"%n" "%N"
+		"%o" "%O"
+		"%p" "%P"
+		"%q" "%Q"
+		"%r" "%R"
+		"%s" "%S"
+		"%t" "%T"
+		"%u" "%U"
+		"%v" "%V"
+		"%w" "%W"
+		"%x" "%X"
+		"%y" "%Y"
+		"%z" "%Z"
+	)
+	local fields_long=(
+		"ALL"
+		"account"
+		"accruetime"
+		"admin_comment"
+		"allocnodes"
+		"allocsid"
+		"arrayjobid"
+		"arraytaskid"
+		"associd"
+		"batchflag"
+		"batchhost"
+		"boardspernode"
+		"burstbuffer"
+		"burstbufferstate"
+		"cluster"
+		"clusterfeature"
+		"command"
+		"comment"
+		"contiguous"
+		"container"
+		"cores"
+		"corespec"
+		"cpufreq"
+		"cpus-per-task"
+		"cpus-per-tres"
+		"deadline"
+		"delayboot"
+		"dependency"
+		"derivedec"
+		"eligibletime"
+		"endtime"
+		"exit_code"
+		"feature"
+		"groupid"
+		"groupname"
+		"hetjobid"
+		"hetjobidset"
+		"hetjoboffset"
+		"jobarrayid"
+		"jobid"
+		"lastschedeval"
+		"licenses"
+		"maxcpus"
+		"maxnodes"
+		"mcslabel"
+		"mem-per-tres"
+		"mincpus"
+		"minmemory"
+		"mintime"
+		"mintmpdisk"
+		"name"
+		"network"
+		"nice"
+		"nodelist"
+		"nodes"
+		"ntperboard"
+		"ntpercore"
+		"ntpernode"
+		"ntpersocket"
+		"numcpus"
+		"numnodes"
+		"numtasks"
+		"origin"
+		"originraw"
+		"oversubscribe"
+		"partition"
+		"preempttime"
+		"pendingtime"
+		"priority"
+		"prioritylong"
+		"profile"
+		"qos"
+		"reason"
+		"reasonlist"
+		"reboot"
+		"reqnodes"
+		"reqswitch"
+		"requeue"
+		"reservation"
+		"resizetime"
+		"restartcnt"
+		"resvport"
+		"schednodes"
+		"sct"
+		"siblingsactive"
+		"siblingsactiveraw"
+		"siblingsviable"
+		"siblingsviableraw"
+		"sockets"
+		"sperboard"
+		"starttime"
+		"state"
+		"statecompact"
+		"stderr"
+		"stdin"
+		"stdout"
+		"stepid"
+		"stepname"
+		"stepstate"
+		"submittime"
+		"system_comment"
+		"threads"
+		"timeleft"
+		"timelimit"
+		"timeused"
+		"tres-alloc"
+		"tres-bind"
+		"tres-freq"
+		"tres-per-job"
+		"tres-per-node"
+		"tres-per-socket"
+		"tres-per-step"
+		"tres-per-task"
+		"userid"
+		"username"
+		"wait4switch"
+		"wckey"
+		"workdir"
+	)
+	local states=(
+		"boot_fail"
+		"cancelled"
+		"completed"
+		"deadline"
+		"failed"
+		"node_fail"
+		"out_of_memory"
+		"pending"
+		"preempted"
+		"running"
+		"requeued"
+		"resizing"
+		"revoked"
+		"suspended"
+		"timeout"
+	)
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-A | --account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	-o | --format) __slurm_compreply_list "${fields[*]}" ;;      # TODO: want --helpformat
+	-O | --Format) __slurm_compreply_list "${fields_long[*]}" ;; # TODO: want --helpformat2
+	-j | --job?(s)) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	-L | --license?(s)) __slurm_compreply_list "$(__slurm_licenses)" ;;
+	-w | --nodelist) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	-p | --partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	-q | --qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
+	-R | --reservation?(s)) __slurm_compreply_list "$(__slurm_reservations)" ;;
+	-S | --sort) __slurm_compreply_list "${fields[*]//%/}" ;;
+	-t | --state?(s)) __slurm_compreply_list "${states[*]}" ;;
+	-u | --user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _squeue squeue
+
+################################################################################
+#			SREPORT Completion Functions
+################################################################################
+
+# completion helper for sreport global specifications
+#
+# RET: 0 = did completion, 1 = did not do completion
+function __slurm_comp_sreport_spec_all() {
+	if [[ -z ${parameters[0]} ]]; then
+		local parameters=()
+	fi
+	parameters+=(
+		"clusters="
+		"end="
+		"format="
+		"start="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	case "${prev}" in
+	cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+# completion handler for: sreport cluster *
+function __sreport_cluster() {
+	local subcmds=(
+		"accountutilizationbyuser"
+		"userutilizationbyaccount"
+		"userutilizationbywckey"
+		"utilization"
+		"wckeyutilizationbyuser"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	parameters=(
+		"accounts="
+		"tree"
+		"users="
+		"wckeys="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+		return
+	fi
+
+	__slurm_comp_sreport_spec_all && return
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_user)" ;;
+	wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+}
+
+# completion handler for: sreport job *
+function __sreport_job() {
+	local subcmds=(
+		"sizesbyaccount"
+		"sizesbyaccountandwckey"
+		"sizesbywckey"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	parameters=(
+		"accounts="
+		"acctasparent"
+		"flatview"
+		"gid="
+		"grouping="
+		"jobs="
+		"nodes="
+		"partitions="
+		"printjobcount="
+		"users="
+		"wckeys="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+		return
+	fi
+
+	__slurm_comp_sreport_spec_all && return
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	gid?(s)) __slurm_compreply_list "$(__slurm_linux_gids)" ;;
+	job?(s)) __slurm_compreply_list "$(__slurm_jobs) $(__slurm_jobsteps)" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" ;;
+	partition?(s)) __slurm_compreply_list "$(__slurm_partitions)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_user)" ;;
+	wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+}
+
+# completion handler for: sreport reservation *
+function __sreport_reservation() {
+	local subcmds=(
+		"utilization"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	parameters=(
+		"names="
+		"nodes="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+		return
+	fi
+
+	__slurm_comp_sreport_spec_all && return
+
+	case "${prev}" in
+	name?(s)) __slurm_compreply_list "$(__slurm_reservations)" ;;
+	node?(s)) __slurm_compreply_list "$(__slurm_nodes)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+}
+
+# completion handler for: sreport user *
+function __sreport_user() {
+	local subcmds=(
+		"topusage"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	parameters=(
+		"accounts="
+		"group"
+		"topcount="
+		"users="
+	)
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+		return
+	fi
+
+	__slurm_comp_sreport_spec_all && return
+
+	case "${prev}" in
+	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	user?(s)) __slurm_compreply_list "$(__slurm_user)" ;;
+	*)
+		[[ $split == "true" ]] && return 1
+		__slurm_compreply_param "${parameters[*]}"
+		return 1
+		;;
+	esac
+}
+
+# Slurm completion helper for sreport flag completion
+#
+# RET: 0 = did completion; 1 = no completion
+function __slurm_comp_sreport_flags() {
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+
+	local time_format=(
+		"secper"
+		"minper"
+		"hourper"
+		"seconds"
+		"minutes"
+		"hours"
+		"percent"
+	)
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-t) __slurm_compreply "${time_format[*]}" ;;
+	-T | --tres) __slurm_compreply_list "$(__slurm_tres)" ;;
+	*) return 1 ;;
+	esac
+
+	return 0
+}
+
+# sreport completion handler
+# https://slurm.schedmd.com/sreport.html
+function _sreport() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local comp_cmd="$1"
+	local subcmds=(
+		"cluster"
+		"job"
+		"reservation"
+		"user"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	__slurm_comp_flags "$comp_cmd" && return
+	__slurm_comp_sreport_flags && return
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+	else
+		comp_cmd="__${comp_cmd}_${subcmd//[^[:alnum:]]/}"
+		__slurm_comp_command "${comp_cmd}"
+	fi
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sreport sreport
+
+################################################################################
+#			SRUN Completion Functions
+################################################################################
+
+# srun completion handler
+# https://slurm.schedmd.com/srun.html
+function _srun() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_common "$1" && return
+	[[ $split == "true" ]] && return
+
+	_filedir
+}
+complete -o nospace -F _srun srun
+
+################################################################################
+#			SSHARE Completion Functions
+################################################################################
+
+# sshare completion handler
+# https://slurm.schedmd.com/sshare.html
+function _sshare() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-A | --account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	-o | --format) __slurm_compreply_list "$(__slurm_helpformat "$1")" ;;
+	-u | --user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sshare sshare
+
+################################################################################
+#			SSTAT Completion Functions
+################################################################################
+
+# sstat completion handler
+# https://slurm.schedmd.com/sstat.html
+function _sstat() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-o | --format | --field?(s)) __slurm_compreply_list "$(__slurm_helpformat "$1")" ;;
+	-j | --job?(s)) __slurm_compreply_list "$(__slurm_jobs) $(__slurm_jobsteps)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _sstat sstat
+
+################################################################################
+#			STRIGGER Completion Functions
+################################################################################
+
+# strigger completion handler
+# https://slurm.schedmd.com/strigger.html
+function _strigger() {
+	local cur prev words cword split
+	__slurm_compinit "$1" || return
+	__slurm_log_info "$(__func__): prev='$prev' cur='$cur'"
+
+	local subcmds=(
+		"--clear"
+		"--get"
+		"--set"
+	)
+	local subcmd
+	subcmd="$(__slurm_find_subcmd "${subcmds[*]}")"
+	local flags=(
+		"perm"
+	)
+
+	__slurm_log_debug "$(__func__): subcmd='$subcmd'"
+	__slurm_log_trace "$(__func__): #subcmds[@]='${#subcmds[@]}'"
+	__slurm_log_trace "$(__func__): subcmds[*]='${subcmds[*]}'"
+
+	if [[ -z ${subcmd-} ]]; then
+		__slurm_compreply "${subcmds[*]}"
+		return
+	fi
+
+	__slurm_comp_flags "$1" && return
+
+	case "${prev}" in
+	-M | --cluster?(s)) __slurm_compreply_list "$(__slurm_clusters)" ;;
+	--flag?(s)) __slurm_compreply_list "${flags[*]}" ;;
+	-j | --jobid?(s)) __slurm_compreply_list "$(__slurm_jobs)" ;;
+	-n | --node?(s)) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	-p | --program) _filedir ;;
+	--user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
+	esac
+
+	[[ $split == "true" ]] && return
+
+	if ((${#COMPREPLY[@]} == 0)) && [[ $cur == "" ]]; then
+		__slurm_compreply "--"
+	fi
+}
+complete -o nospace -F _strigger strigger

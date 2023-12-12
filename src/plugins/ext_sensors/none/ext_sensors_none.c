@@ -49,11 +49,11 @@
 
 /* slurm_xlator.h must be first */
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_ext_sensors.h"
+#include "src/interfaces/ext_sensors.h"
 #include "src/common/fd.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/proctrack.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -112,7 +112,7 @@ extern int ext_sensors_p_get_stependdata(step_record_t *step_rec)
 
 extern List ext_sensors_p_get_config(void)
 {
-	return SLURM_SUCCESS;
+	return NULL;
 }
 
 /*

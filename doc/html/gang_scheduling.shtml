@@ -34,10 +34,10 @@ resources for a <I>SchedulerTimeslice</I> interval.
 This will continue until one of the jobs terminates.
 </P>
 <P>
-NOTE: Heterogeneous jobs are excluded from gang scheduling operations.
+<b>NOTE</b>: Heterogeneous jobs are excluded from gang scheduling operations.
 </P>
 
-<H2>Configuration</H2>
+<h2 id="config">Configuration<a class="slurm_link" href="#config"></a></h2>
 
 <P>
 There are several important configuration parameters relating to
@@ -52,14 +52,15 @@ socket/core/CPU resources allocated by the <I>select/cons_res</I> and
 systems without ALPS.
 </LI>
 <LI>
-<B>SelectTypeParameter</B>: Since resources will be getting overallocated
+<B>SelectTypeParameters</B>: Since resources will be getting overallocated
 with jobs (suspended jobs remain in memory), the resource selection plugin
 should be configured to track the amount of memory used by each job to ensure
 that memory page swapping does not occur.
 When <I>select/linear</I> is chosen, we recommend setting
-<I>SelectTypeParameter=CR_Memory</I>.
+<I>SelectTypeParameters=CR_Memory</I>.
 When <I>select/cons_res</I> or <I>select/cons_tres</I> are chosen, we recommend
-including Memory as a resource (e.g. <I>SelectTypeParameter=CR_Core_Memory</I>).
+including Memory as a resource
+(e.g. <I>SelectTypeParameters=CR_Core_Memory</I>).
 </LI>
 <LI>
 <B>DefMemPerCPU</B>: Since job requests may not explicitly specify
@@ -87,8 +88,10 @@ adversely affecting other jobs sharing the same resources.
 <B>PreemptMode</B>: set the <I>GANG</I> option.
 See the <I>slurm.conf</I> manpage for other options that may be specified to
 enable job <a href="preempt.html">preemption</a> in addition to GANG.
+In order to use gang scheduling, the <b>GANG</b> option must be specified at
+the cluster level.
 <BR>
-NOTE: Gang scheduling is performed independently for each partition, so
+<b>NOTE</b>: Gang scheduling is performed independently for each partition, so
 if you only want time-slicing by <I>OverSubscribe</I>, without any preemption,
 then configuring partitions with overlapping nodes is not recommended.
 On the other hand, if you want to use <I>PreemptType=preempt/partition_prio</I>
@@ -123,7 +126,9 @@ just change the partition <I>OverSubscribe</I> setting, this can be updated with
 <I>scontrol reconfig</I>.
 </P>
 
-<H2>Timeslicer Design and Operation</H2>
+<h2 id="time_slice">Timeslicer Design and Operation
+<a class="slurm_link" href="#time_slice"></a>
+</h2>
 
 <P>
 When enabled, the gang scheduler keeps track of the resources
@@ -163,7 +168,9 @@ A good way to observe the operation of the timeslicer is by running
 equal to <I>SchedulerTimeSlice</I>.
 </P>
 
-<H2>A Simple Example</H2>
+<h2 id="example1">A Simple Example
+<a class="slurm_link" href="#example1"></a>
+</h2>
 
 <P>
 The following example is configured with <I>select/linear</I> and <I>OverSubscribe=FORCE</I>.
@@ -259,7 +266,7 @@ When the gang scheduler is enabled, this type of output in the user
 jobs should be considered benign.
 </P>
 
-<H2>More examples</H2>
+<h2 id="example2">More examples<a class="slurm_link" href="#example2"></a></h2>
 
 <P>
 The following example shows how the timeslicer algorithm keeps the resources
@@ -300,7 +307,7 @@ JOBID PARTITION    NAME  USER ST  TIME NODES NODELIST
    10    active  myload  user  R  1:13     2 n[15-16]
    11    active  myload  user  S  0:30     3 n[12-14]
 </PRE>
-</P>
+
 <P>
 The next example displays "local backfilling":
 </P>
@@ -335,7 +342,9 @@ so this value effectively controls the scope of "local backfilling".
 Normal backfill algorithms check <U>all</U> jobs in the wait queue.
 </P>
 
-<H2>Consumable Resource Examples</H2>
+<h2 id="example3">Consumable Resource Examples
+<a class="slurm_link" href="#example3"></a>
+</h2>
 
 <P>
 The following two examples illustrate the primary difference between
@@ -356,7 +365,7 @@ In both examples 6 jobs are submitted. Each job requests 2 CPUs per node, and
 all of the nodes contain two quad-core processors. The timeslicer will
 initially let the first 4 jobs run and suspend the last 2 jobs.
 The manner in which these jobs are timesliced depends upon the configured
-<I>SelectTypeParameter</I>.
+<I>SelectTypeParameters</I>.
 </P>
 <P>
 In the first example <I>CR_Core_Memory</I> is configured. Note that jobs 46
@@ -522,6 +531,6 @@ Use of the scancel command to send SIGSTOP and SIGCONT signals would stop a
 job without releasing its CPUs for allocation to other jobs and would be a
 preferable mechanism in many cases.</P>
 
-<p style="text-align:center;">Last modified 10 March 2020</p>
+<p style="text-align:center;">Last modified 07 April 2023</p>
 
 <!--#include virtual="footer.txt"-->

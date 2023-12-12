@@ -1,0 +1,51 @@
+Description: Retry getaddrinfo five times before giving up
+ This patch retry getaddrinfo five times before giving up and exiting SLURM
+ deamons. This is needed on Debian systems when using ifupdown for network
+ configuration with allow-hotplug interfaces (which the installer uses by
+ default). This settings do not guarantee that getaddrinfo succeed after
+ network-online.target is complete.
+Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=13280
+Last-Update: 2022-01-21
+
+--- a/src/common/util-net.c
++++ b/src/common/util-net.c
+@@ -39,6 +39,7 @@
+ 
+ #define _GNU_SOURCE
+ 
++#include <unistd.h>
+ #include <arpa/inet.h>
+ #include <errno.h>
+ #include <limits.h>	/* for PATH_MAX */
+@@ -257,6 +258,7 @@
+ 	struct addrinfo* result = NULL;
+ 	struct addrinfo hints;
+ 	int err;
++	int retry = 10;
+ 	bool v4_enabled = slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED;
+ 	bool v6_enabled = slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED;
+ 	char serv[6];
+@@ -278,13 +280,19 @@
+ 
+ 	snprintf(serv, sizeof(serv), "%u", port);
+ 
+-	err = getaddrinfo(hostname, serv, &hints, &result);
++	while ( ( (err = getaddrinfo(hostname, serv, &hints, &result)) != 0 ) && retry ) {
++		error("%s: getaddrinfo() failed: %s: %m, attempt number %d", __func__,
++		      gai_strerror(err), 6 - retry);
++		sleep(1);
++		retry -= 1;
++	}
++
+ 	if (err == EAI_SYSTEM) {
+-		error("%s: getaddrinfo() failed: %s: %m", __func__,
++		error("%s: getaddrinfo() Failed: %s: %m", __func__,
+ 		      gai_strerror(err));
+ 		return NULL;
+ 	} else if (err != 0) {
+-		error("%s: getaddrinfo() failed: %s", __func__,
++		error("%s: getaddrinfo() fAiled: %s", __func__,
+ 		      gai_strerror(err));
+ 		return NULL;
+ 	}

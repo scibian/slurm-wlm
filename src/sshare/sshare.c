@@ -37,6 +37,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/interfaces/priority.h"
 #include "src/sshare/sshare.h"
 #include "src/common/proc_args.h"
 #include <grp.h>
@@ -44,6 +45,7 @@
 
 #define OPT_LONG_HELP  0x100
 #define OPT_LONG_USAGE 0x101
+#define OPT_LONG_AUTOCOMP 0x102
 
 static int      _get_info(shares_request_msg_t *shares_req,
 			  shares_response_msg_t **shares_resp);
@@ -72,6 +74,7 @@ int main (int argc, char **argv)
 	bool all_users = 0;
 
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"accounts", 1, 0, 'A'},
 		{"all",      0, 0, 'a'},
                 {"helpformat",0,0, 'e'},
@@ -97,7 +100,9 @@ int main (int argc, char **argv)
 	quiet_flag        = 0;
 	verbosity         = 0;
 	memset(&req_msg, 0, sizeof(shares_request_msg_t));
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
+	if (priority_g_init() != SLURM_SUCCESS)
+		fatal("failed to initialize priority plugin");
 	log_init("sshare", opts, SYSLOG_FACILITY_DAEMON, NULL);
 
 	while ((opt_char = getopt_long(argc, argv, "aA:ehlM:no:pPqUu:t:vVm",
@@ -177,6 +182,10 @@ int main (int argc, char **argv)
 		case OPT_LONG_USAGE:
 			_usage();
 			exit(0);
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		default:
 			exit_code = 1;
 			fprintf(stderr, "getopt error, returned %c\n",
@@ -317,95 +326,36 @@ static int _get_info(shares_request_msg_t *shares_req,
 }
 
 /* returns number of objects added to list */
+static int _addto_name_char_list_internal(List char_list, char *name, void *x)
+{
+	char *tmp_name = NULL;
+	bool gid = *(bool *)x;
+
+	if (isdigit(*name)) {
+		uint32_t id = strtoul(name, NULL, 10);
+		tmp_name = _convert_to_name(id, gid);
+	} else
+		tmp_name = xstrdup(name);
+
+	if (!list_find_first(char_list, slurm_find_char_in_list, tmp_name)) {
+		list_append(char_list, tmp_name);
+		return 1;
+	} else {
+		xfree(tmp_name);
+		return 0;
+	}
+}
+
+/* returns number of objects added to list */
 static int _addto_name_char_list(List char_list, char *names, bool gid)
 {
-	int i=0, start=0;
-	char *name = NULL, *tmp_char = NULL;
-	ListIterator itr = NULL;
-	char quote_c = '\0';
-	int quote = 0;
-	int count = 0;
-
 	if (!char_list) {
 		error("No list was given to fill in");
 		return 0;
 	}
 
-	itr = list_iterator_create(char_list);
-	if (names) {
-		if (names[i] == '\"' || names[i] == '\'') {
-			quote_c = names[i];
-			quote = 1;
-			i++;
-		}
-		start = i;
-		while (names[i]) {
-			//info("got %d - %d = %d", i, start, i-start);
-			if (quote && names[i] == quote_c)
-				break;
-			else if (names[i] == '\"' || names[i] == '\'')
-				names[i] = '`';
-			else if (names[i] == ',') {
-				if ((i-start) > 0) {
-					name = xmalloc((i-start+1));
-					memcpy(name, names+start, (i-start));
-					//info("got %s %d", name, i-start);
-					if (isdigit((int) *name)) {
-						uint32_t id = strtoul(name,
-								      NULL, 10);
-						xfree(name);
-						name = _convert_to_name(
-							id, gid);
-					}
-
-					while ((tmp_char = list_next(itr))) {
-						if (!xstrcasecmp(tmp_char,
-								 name))
-							break;
-					}
-
-					if (!tmp_char) {
-						list_append(char_list, name);
-						count++;
-					} else
-						xfree(name);
-					list_iterator_reset(itr);
-				}
-				i++;
-				start = i;
-				if (!names[i]) {
-					info("There is a problem with "
-					     "your request.  It appears you "
-					     "have spaces inside your list.");
-					break;
-				}
-			}
-			i++;
-		}
-		if ((i-start) > 0) {
-			name = xmalloc((i-start)+1);
-			memcpy(name, names+start, (i-start));
-
-			if (isdigit((int) *name)) {
-				uint32_t id = strtoul(name, NULL, 10);
-				xfree(name);
-				name = _convert_to_name(id, gid);
-			}
-
-			while ((tmp_char = list_next(itr))) {
-				if (!xstrcasecmp(tmp_char, name))
-					break;
-			}
-
-			if (!tmp_char) {
-				list_append(char_list, name);
-				count++;
-			} else
-				xfree(name);
-		}
-	}
-	list_iterator_destroy(itr);
-	return count;
+	return slurm_parse_char_list(char_list, names, &gid,
+				     _addto_name_char_list_internal);
 }
 
 static char *_convert_to_name(uint32_t id, bool is_gid)

@@ -47,26 +47,30 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/io_hdr.h"
 
+#define GETHOST_NOT_MATCH_PID SLURM_BIT(0)
+#define GETHOST_IPV4 SLURM_BIT(1)
+#define GETHOST_IPV6 SLURM_BIT(2)
+
 typedef enum {
 	REQUEST_CONNECT = 0,
-	REQUEST_SIGNAL_PROCESS_GROUP, /* Defunct since July 2013 */
-	REQUEST_SIGNAL_TASK_LOCAL, /* Defunct see REQUEST_SIGNAL_CONTAINER */
-	REQUEST_SIGNAL_TASK_GLOBAL, /* Defunct see REQUEST_SIGNAL_CONTAINER */
+	REQUEST_STEP_DEFUNCT_1,
+	REQUEST_STEP_DEFUNCT_2,
+	REQUEST_STEP_DEFUNCT_3,
 	REQUEST_SIGNAL_CONTAINER,
 	REQUEST_STATE,
-	REQUEST_INFO,  /* Defunct, See REQUEST_STEP_MEM_LIMITS|UID|NODEID */
+	REQUEST_STEP_DEFUNCT_6,
 	REQUEST_ATTACH,
 	REQUEST_PID_IN_CONTAINER,
 	REQUEST_DAEMON_PID,
 	REQUEST_STEP_SUSPEND,
 	REQUEST_STEP_RESUME,
 	REQUEST_STEP_TERMINATE,
-	REQUEST_STEP_COMPLETION,  /* Defunct, See REQUEST_STEP_COMPLETION_V2 */
+	REQUEST_STEP_DEFUNCT_13,
 	REQUEST_STEP_TASK_INFO,
 	REQUEST_STEP_LIST_PIDS,
 	REQUEST_STEP_RECONFIGURE,
 	REQUEST_STEP_STAT,
-	REQUEST_STEP_COMPLETION_V2,
+	REQUEST_STEP_COMPLETION,
 	REQUEST_STEP_MEM_LIMITS,
 	REQUEST_STEP_UID,
 	REQUEST_STEP_NODEID,
@@ -75,6 +79,7 @@ typedef enum {
 	REQUEST_GETPW,
 	REQUEST_GETGR,
 	REQUEST_GET_NS_FD,
+	REQUEST_GETHOST,
 } step_msg_t;
 
 typedef enum {
@@ -156,13 +161,6 @@ extern int stepd_connect(const char *directory, const char *nodename,
 slurmstepd_state_t stepd_state(int fd, uint16_t protocol_version);
 
 /*
- * Retrieve slurmstepd_info_t structure for a job step.
- *
- * Must be xfree'd by the caller.
- */
-slurmstepd_info_t *stepd_get_info(int fd);
-
-/*
  * Send job notification message to a batch job
  */
 int stepd_notify_job(int fd, uint16_t protocol_version, char *message);
@@ -171,7 +169,7 @@ int stepd_notify_job(int fd, uint16_t protocol_version, char *message);
  * Send a signal to the proctrack container of a job step.
  */
 int stepd_signal_container(int fd, uint16_t protocol_version, int signal,
-			   int flags, uid_t uid);
+			   int flags, char *details, uid_t uid);
 
 /*
  * Attach a client to a running job step.
@@ -183,9 +181,9 @@ int stepd_signal_container(int fd, uint16_t protocol_version, int signal,
  *         probably be moved into a more generic stepd_api call so that
  *         this header does not need to include slurm_protocol_defs.h.
  */
-int stepd_attach(int fd, uint16_t protocol_version,
-		 slurm_addr_t *ioaddr, slurm_addr_t *respaddr,
-		 void *job_cred_sig, reattach_tasks_response_msg_t *resp);
+int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
+		 slurm_addr_t *respaddr, void *job_cred_sig, uint32_t sig_len,
+		 uid_t uid, reattach_tasks_response_msg_t *resp);
 
 /*
  * Scan for available running slurm step daemons by checking
@@ -242,6 +240,13 @@ extern struct group **stepd_getgr(int fd, uint16_t protocol_version,
 
 extern void xfree_struct_group_array(struct group **grp);
 
+/*
+ * Rerturn hostent based based off node_to_host_hashtbl for nodename.
+ */
+extern struct hostent *stepd_gethostbyname(int fd, uint16_t protocol_version,
+					   int mode, const char *nodename);
+
+extern void xfree_struct_hostent(struct hostent *host);
 /*
  * Return the process ID of the slurmstepd.
  */

@@ -295,9 +295,13 @@ typedef struct conf_file_options {
 		       const char *line, char **leftover);
 	void (*destroy)(void *data);
 	struct conf_file_options* line_options;
+	void (*pack)(void *data, buf_t *buffer);
+	void *(*unpack)(buf_t *buffer);
 } s_p_options_t;
 
 
+s_p_hashtbl_t *s_p_hashtbl_create_cnt(const struct conf_file_options options[],
+				      int *cnt);
 s_p_hashtbl_t *s_p_hashtbl_create(const struct conf_file_options options[]);
 void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl);
 
@@ -306,12 +310,15 @@ void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl);
  *                of file.
  * IN ignore_new - do not treat unrecognized keywords as a fatal error,
  *                 print debug() message and continue
+ * OUT last_ancestor - last ancestor configuration filename used to map nested
+ * 		       Include files in configless configurations.
  */
 int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
-		   bool ignore_new);
+		   bool ignore_new, char *last_ancestor,
+		   bool check_permissions);
 
 /* Returns SLURM_SUCCESS if buffer was opened and parse correctly.
- * buffer must be a valid Buf bufferonly containing strings.The parsing
+ * buffer must be a valid buf_t buffer only containing strings. The parsing
  * stops at the first non string content extracted.
  * OUT hash_val - cyclic redundancy check (CRC) character-wise value
  *                of file.
@@ -319,7 +326,7 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
  *                 print debug() message and continue
  */
 int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
-		     Buf buffer, bool ignore_new);
+		     buf_t *buffer, bool ignore_new);
 
 /*
  * Returns 1 if the line is parsed cleanly, and 0 otherwise.
@@ -340,7 +347,7 @@ int s_p_parse_line(s_p_hashtbl_t *hashtbl, const char *line, char **leftover);
 
 /*
  * s_p_hashtbl_merge
- * 
+ *
  * Merge the contents of two s_p_hashtbl_t data structures. Anything in
  * from_hashtbl that does not also appear in to_hashtbl is transfered to it.
  * This is intended primary to support multiple lines of DEFAULT configuration
@@ -629,14 +636,16 @@ void s_p_dump_values(const s_p_hashtbl_t *hashtbl,
  * Primarily for sending a table across the network so you don't have to read a
  * file in.
  */
-extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
-			   const s_p_options_t options[],
-			   const uint32_t cnt);
+extern buf_t *s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
+			       const s_p_options_t options[],
+			       const uint32_t cnt);
 
 /*
  * Given a buffer, unpack key, type, op and value into a hashtbl.
  */
-extern s_p_hashtbl_t *s_p_unpack_hashtbl(Buf buffer);
+extern s_p_hashtbl_t *s_p_unpack_hashtbl_full(buf_t *buffer,
+					      const s_p_options_t options[]);
+extern s_p_hashtbl_t *s_p_unpack_hashtbl(buf_t *buffer);
 
 /*
  * copy options onto the end of full_options

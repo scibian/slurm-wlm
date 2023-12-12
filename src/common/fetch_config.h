@@ -39,15 +39,31 @@
 
 #include "src/common/slurm_protocol_defs.h"
 
+typedef struct {
+	char *conf_file;
+	List include_list;
+} conf_includes_map_t;
+
+extern List conf_includes_list;
+
 extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags);
 
 extern config_response_msg_t *fetch_config_from_controller(uint32_t flags);
 
 extern int dump_to_memfd(char *type, char *config, char **filename);
 
-extern int write_configs_to_conf_cache(config_response_msg_t *msg,
-				       const char *dir);
+extern int find_conf_by_name(void *x, void *key);
 
-extern void load_config_response_msg(config_response_msg_t *msg, int flags);
+extern int write_config_to_memfd(void *x, void *arg);
+
+extern int find_map_conf_file(void *x, void *key);
+
+extern int write_configs_to_conf_cache(config_response_msg_t *msg,
+				       char *dir);
+
+extern void load_config_response_list(config_response_msg_t *msg,
+				      char *files[]);
+
+extern void destroy_config_file(void *object);
 
 #endif

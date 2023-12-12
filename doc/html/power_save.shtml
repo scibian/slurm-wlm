@@ -18,7 +18,7 @@ in an instantaneous surge in power demand of multiple megawatts without
 Slurm's support to increase power demands in a gradual fashion.</p>
 
 
-<h2>Configuration</h2>
+<h2 id="config">Configuration<a class="slurm_link" href="#config"></a></h2>
 
 <p>A great deal of flexibility is offered in terms of when and
 how idle nodes are put into or removed from power save mode.
@@ -33,8 +33,6 @@ The following configuration parameters are available:
 <li><b>SuspendTime</b>:
 Nodes becomes eligible for power saving mode after being idle or down
 for this number of seconds.
-For efficient system utilization, it is recommended that the value of SuspendTime
-be at least as large as the sum of SuspendTimeout plus ResumeTimeout.
 A negative number disables power saving mode.
 The default value is -1 (disabled).</li>
 
@@ -67,18 +65,24 @@ The program executes as <i>SlurmUser</i> (as configured in
 The argument to the program will be the names of nodes to
 be removed from power savings mode (using Slurm's hostlist
 expression format).
+A job to node mapping is available in JSON format by reading the temporary file
+specified by the <b>SLURM_RESUME_FILE</b> environment variable.
+This file should be used at the beginning of <b>ResumeProgram</b> - see the
+<a href=#tolerance>Fault Tolerance</a> section for more details.
 This program may use the <i>scontrol show node</i> command
 to ensure that a node has booted and the <i>slurmd</i>
 daemon started.
 If the <i>slurmd</i> daemon fails to respond within the
-configured <b>SlurmdTimeout</b> value with an updated BootTime,
+configured <b>ResumeTimeout</b> value with an updated BootTime,
 the node will be placed in a DOWN state and the job requesting
 the node will be requeued. If the node isn't actually rebooted
-(i.e. when multiple-slurmd is configured) starting slurmd with
-"-b" option might be useful.
-For reasons of reliability, <b>ResumeProgram</b> may execute
-more than once for a node when the <b>slurmctld</b> daemon
-crashes and is restarted.</li>
+(i.e. when multiple-slurmd is configured) you can start slurmd
+with the "-b" option to report the node boot time as now.
+
+<b>NOTE</b>: The <b>SLURM_RESUME_FILE</b> will only exist and be usable if
+Slurm was compiled with the <a href=download.html#json>JSON-C</a> serializer
+library.
+</li>
 
 <li><b>SuspendTimeout</b>:
 Maximum time permitted (in second) between when a node suspend request
@@ -86,6 +90,10 @@ is issued and when the node shutdown is complete.
 At that time the node must ready for a resume request to be issued
 as needed for new workload.
 The default value is 30 seconds.</li>
+
+<li><b>ReconfigFlags=KeepPowerSaveSettings</b>:
+If set, an "scontrol reconfig" command will preserve the current state of
+SuspendExcNodes, SuspendExcParts and SuspendExcStates.</li>
 
 <li><b>ResumeTimeout</b>:
 Maximum time permitted (in seconds) between when a node resume request
@@ -98,25 +106,53 @@ The default value is 60 seconds.</li>
 
 <li><b>SuspendExcNodes</b>:
 List of nodes to never place in power saving mode.
-Use Slurm's hostlist expression format.
-By default, no nodes are excluded.</li>
+Use Slurm's hostlist expression to identify nodes with an optional ":"
+separator and count of nodes to exclude from the preceding range. For example
+"nid[10\-20]:4" will prevent 4 usable nodes (i.e IDLE and not DOWN, DRAINING or
+already powered down) in the set "nid[10\-20]" from being powered down.
+Multiple sets of nodes can be specified with or without counts in a comma
+separated list (e.g "nid[10\-20]:4,nid[80\-90]:2"). By default, no nodes are
+excluded.
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
 
 <li><b>SuspendExcParts</b>:
 List of partitions with nodes to never place in power saving mode.
 Multiple partitions may be specified using a comma separator.
 By default, no nodes are excluded.</li>
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
+
+<li><b>SuspendExcStates</b>:
+Specifies node states that are not to be powered down automatically.
+Valid states include CLOUD, DOWN, DRAIN, DYNAMIC_FUTURE, DYNAMIC_NORM, FAIL,
+INVALID_REG, MAINTENANCE, NOT_RESPONDING, PERFCTRS, PLANNED, and RESERVED.
+By default, any of these states, if idle for <b>SuspendTime</b>, would be
+powered down.
+This value may be updated with scontrol.
+See <b>ReconfigFlags=KeepPowerSaveSettings</b> for setting persistence.
 
 <li><b>BatchStartTimeout</b>:
 Specifies how long to wait after a batch job start request is issued
 before we expect the batch job to be running on the compute node.
 Depending upon how nodes are returned to service, this value may need to
 be increased above its default value of 10 seconds.</li>
+
+<li><b>PartitionName= ... PowerDownOnIdle=[YES|NO]</b>:
+If set to <b>YES</b> and power saving is enabled for the partition, then nodes
+allocated from this partition will be requested to power down after being
+allocated at least one job.
+These nodes will not power down until they transition from COMPLETING to IDLE.
+If set to <b>NO</b> then power saving will operate
+as configured for the partition.
+The default value is <b>NO</b>.</li>
+
 </ul></p>
 
 <p>Note that <i>SuspendProgram</i> and <i>ResumeProgram</i> execute as
 <i>SlurmUser</i> on the node where the <i>slurmctld</i> daemon runs
 (primary and backup server nodes).
-Use of <i>sudo</i> may be required for <i>SlurmUser</i>to power down
+Use of <i>sudo</i> may be required for <i>SlurmUser</i> to power down
 and restart nodes.
 If you need to convert Slurm's hostlist expression into individual node
 names, the <i>scontrol show hostnames</i> command may prove useful.
@@ -187,7 +223,9 @@ You can also configure Slurm with programs that perform no action as
 <b>SuspendProgram</b> and <b>ResumeProgram</b> to assess the potential
 impact of power saving mode before enabling it.</p>
 
-<h2>Use of Allocations</h2>
+<h2 id="allocations">Use of Allocations
+<a class="slurm_link" href="#allocations"></a>
+</h2>
 
 <p>A resource allocation request will be granted as soon as resources
 are selected for use, possibly before the nodes are all available
@@ -212,37 +250,32 @@ behavior on a per-job basis and a system-wide default can be set with the
 <i>SchedulerParameters=salloc_wait_nodes</i> option.
 </p>
 
-<h2>Fault Tolerance</h2>
+<h2 id="tolerance">Fault Tolerance
+<a class="slurm_link" href="#tolerance"></a>
+</h2>
 
 <p>If the <i>slurmctld</i> daemon is terminated gracefully, it will
-wait up to <b>SuspendTimeout</b> or <b>ResumeTimeout</b> (whichever
-is larger) for any spawned <b>SuspendProgram</b> or
-<b>ResumeProgram</b> to terminate before the daemon terminates.
+wait up to ten seconds (or the maximum of <b>SuspendTimeout</b> or
+<b>ResumeTimeout</b> if less than ten seconds) for any spawned
+<b>SuspendProgram</b> or <b>ResumeProgram</b> to terminate before the daemon
+terminates.
 If the spawned program does not terminate within that time period,
 the event will be logged and <i>slurmctld</i> will exit in order to
 permit another <i>slurmctld</i> daemon to be initiated.
-Synchronization problems could also occur when the <i>slurmctld</i>
-daemon crashes (a rare event) and is restarted. </p>
+Any spawned <b>SuspendProgram</b> or <b>ResumeProgram</b> will continue to run.
+</p>
+<p>
+When the slurmctld daemon shuts down, any <b>SLURM_RESUME_FILE</b>
+temporary files are no longer available, even once slurmctld restarts.
+Therefore, <b>ResumeProgram</b> should use <b>SLURM_RESUME_FILE</b> within
+ten seconds of starting to guarantee that it still exists.
+</p>
 
-<p>In either event, the newly initiated <i>slurmctld</i> daemon (or
-the backup server) will recover saved node state information that
-may not accurately describe the actual node state.
-In the case of a failed <b>SuspendProgram</b>, the negative impact is
-limited to increased power consumption, so no special action is
-currently taken to execute <b>SuspendProgram</b> multiple times in
-order to ensure the node is in a reduced power mode.
-The case of a failed <b>ResumeProgram</b> is more serious in that the
-node could be placed into a DOWN state and/or jobs could fail.
-In order to minimize this risk, when the <i>slurmctld</i> daemon is
-started and node which should be allocated to a job fails to respond,
-the <b>ResumeProgram</b> will be executed (possibly for a second time).</p>
+<h2 id="images">Booting Different Images
+<a class="slurm_link" href="#images"></a>
+</h2>
 
-<h2>Booting Different Images</h2>
-
-<p>Slurm's <b>PrologSlurmctld</b> configuration parameter can identify a
-program to boot different operating system images for each job based upon its
-constraint field (or possibly comment).
-If you want <b>ResumeProgram</b> to boot a various images according to
+<p>If you want <b>ResumeProgram</b> to boot various images according to
 job specifications, it will need to be a fairly sophisticated program
 and perform the following actions:
 <ol>
@@ -251,6 +284,6 @@ and perform the following actions:
 <li>Boot the appropriate image for each node</li>
 </ol>
 
-<p style="text-align:center;">Last modified 11 November 2019</p>
+<p style="text-align:center;">Last modified 03 May 2023</p>
 
 <!--#include virtual="footer.txt"-->

@@ -44,32 +44,44 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "src/common/assoc_mgr.h"
 #include "src/common/cpu_frequency.h"
-#include "src/common/gres.h"
-#include "src/common/node_select.h"
-#include "src/common/plugstack.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_jobacct_gather.h"
-#include "src/common/slurm_acct_gather_profile.h"
-#include "src/common/slurm_mpi.h"
+#include "src/interfaces/gres.h"
+#include "src/interfaces/hash.h"
+#include "src/common/run_command.h"
+#include "src/interfaces/route.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/topology.h"
+#include "src/common/setproctitle.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/jobacct_gather.h"
+#include "src/interfaces/acct_gather_profile.h"
+#include "src/interfaces/mpi.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurm_rlimits_info.h"
+#include "src/common/spank.h"
 #include "src/common/stepd_api.h"
-#include "src/common/switch.h"
-#include "src/common/xcgroup_read_config.h"
+#include "src/interfaces/switch.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+#include "src/interfaces/cgroup.h"
 
-#include "src/slurmd/common/core_spec_plugin.h"
+#include "src/interfaces/core_spec.h"
+#include "src/interfaces/gpu.h"
+#include "src/interfaces/job_container.h"
+
+#include "src/slurmd/common/set_oomadj.h"
 #include "src/slurmd/common/slurmstepd_init.h"
-#include "src/slurmd/common/setproctitle.h"
-#include "src/common/slurm_acct_gather_energy.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/interfaces/task.h"
+#include "src/interfaces/acct_gather_energy.h"
+#include "src/interfaces/proctrack.h"
 #include "src/slurmd/common/xcpuinfo.h"
 #include "src/slurmd/slurmd/slurmd.h"
+#include "src/slurmd/slurmstepd/container.h"
 #include "src/slurmd/slurmstepd/mgr.h"
 #include "src/slurmd/slurmstepd/req.h"
 #include "src/slurmd/slurmstepd/slurmstepd.h"
@@ -85,9 +97,12 @@ static void _got_ack_from_slurmd(int);
 static stepd_step_rec_t *_step_setup(slurm_addr_t *cli, slurm_addr_t *self,
 				     slurm_msg_t *msg);
 #ifdef MEMORY_LEAK_DEBUG
-static void _step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc);
+static void _step_cleanup(stepd_step_rec_t *step, slurm_msg_t *msg, int rc);
 #endif
 static int _process_cmdline (int argc, char **argv);
+
+static pthread_mutex_t cleanup_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool cleanup = false;
 
 /*
  *  List of signals to block in this process
@@ -109,13 +124,13 @@ main (int argc, char **argv)
 	slurm_addr_t *cli;
 	slurm_addr_t *self;
 	slurm_msg_t *msg;
-	stepd_step_rec_t *job;
+	stepd_step_rec_t *step;
 	int rc = 0;
 
 	if (_process_cmdline (argc, argv) < 0)
 		fatal ("Error in slurmstepd command line");
 
-	slurm_conf_init(NULL);
+	run_command_init();
 
 	xsignal_block(slurmstepd_blocked_signals);
 	conf = xmalloc(sizeof(*conf));
@@ -125,17 +140,12 @@ main (int argc, char **argv)
 
 	log_init(argv[0], lopts, LOG_DAEMON, NULL);
 
-	if (slurm_select_init(1) != SLURM_SUCCESS )
-		fatal( "failed to initialize node selection plugin" );
-	if (slurm_auth_init(NULL) != SLURM_SUCCESS)
-		fatal( "failed to initialize authentication plugin" );
-
 	/* Receive job parameters from the slurmd */
 	_init_from_slurmd(STDIN_FILENO, argv, &cli, &self, &msg);
 
 	/* Create the stepd_step_rec_t, mostly from info in a
 	 * launch_tasks_request_msg_t or a batch_job_launch_msg_t */
-	if (!(job = _step_setup(cli, self, msg))) {
+	if (!(step = _step_setup(cli, self, msg))) {
 		_send_fail_to_slurmd(STDOUT_FILENO);
 		rc = SLURM_ERROR;
 		goto ending;
@@ -145,14 +155,14 @@ main (int argc, char **argv)
 	 * to be re-initialized after the fork. */
 	slurm_conf_install_fork_handlers();
 
-	/* sets job->msg_handle and job->msgid */
-	if (msg_thr_create(job) == SLURM_ERROR) {
+	/* sets step->msg_handle and step->msgid */
+	if (msg_thr_create(step) == SLURM_ERROR) {
 		_send_fail_to_slurmd(STDOUT_FILENO);
 		rc = SLURM_ERROR;
 		goto ending;
 	}
 
-	if (job->step_id.step_id != SLURM_EXTERN_CONT)
+	if (step->step_id.step_id != SLURM_EXTERN_CONT)
 		close_slurmd_conn();
 
 	/* slurmstepd is the only daemon that should survive upgrade. If it
@@ -173,43 +183,79 @@ main (int argc, char **argv)
 #endif
 	}
 
-	acct_gather_energy_g_set_data(ENERGY_DATA_STEP_PTR, job);
+	acct_gather_energy_g_set_data(ENERGY_DATA_STEP_PTR, step);
 
 	/* This does most of the stdio setup, then launches all the tasks,
 	 * and blocks until the step is complete */
-	rc = job_manager(job);
+	rc = job_manager(step);
 
-	return stepd_cleanup(msg, job, cli, self, rc, 0);
+	return stepd_cleanup(msg, step, cli, self, rc, 0);
 ending:
-	return stepd_cleanup(msg, job, cli, self, rc, 1);
+	return stepd_cleanup(msg, step, cli, self, rc, 1);
 }
 
-extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
+extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
 			 slurm_addr_t *cli, slurm_addr_t *self,
 			 int rc, bool only_mem)
 {
-	if (!only_mem) {
-		if (job->batch)
-			batch_finish(job, rc); /* sends batch complete message */
+	slurm_mutex_lock(&cleanup_mutex);
 
-		/* signal the message thread to shutdown, and wait for it */
-		eio_signal_shutdown(job->msg_handle);
-		pthread_join(job->msgid, NULL);
+	if (cleanup)
+		goto done;
+
+	if (!step) {
+		error("%s: step is NULL, skipping cleanup", __func__);
+		goto done;
 	}
 
-	mpi_fini();	/* Remove stale PMI2 sockets */
+	if (!only_mem) {
+		if (step->batch)
+			batch_finish(step, rc); /* sends batch complete message */
+
+		/* signal the message thread to shutdown, and wait for it */
+		if (step->msg_handle)
+			eio_signal_shutdown(step->msg_handle);
+		pthread_join(step->msgid, NULL);
+	}
+
+	mpi_fini();
+
+	/*
+	 * This call is only done once per step since stepd_cleanup is protected
+	 * agains multiple and concurrent calls.
+	 */
+	proctrack_g_destroy(step->cont_id);
 
 	if (conf->hwloc_xml)
 		(void)remove(conf->hwloc_xml);
 
+	if (step->container)
+		cleanup_container(step);
+
+	run_command_shutdown();
+
+	if (step->step_id.step_id == SLURM_EXTERN_CONT) {
+		uint32_t jobid;
+#ifdef HAVE_NATIVE_CRAY
+		if (step->het_job_id && (step->het_job_id != NO_VAL))
+			jobid = step->het_job_id;
+		else
+			jobid = step->step_id.job_id;
+#else
+		jobid = step->step_id.job_id;
+#endif
+		if (container_g_stepd_delete(jobid))
+			error("container_g_stepd_delete(%u): %m", jobid);
+	}
+
 #ifdef MEMORY_LEAK_DEBUG
 	acct_gather_conf_destroy();
 	(void) core_spec_g_fini();
-	_step_cleanup(job, msg, rc);
+	_step_cleanup(step, msg, rc);
 
 	fini_setproctitle();
 
-	xcgroup_fini_slurm_cgroup_conf();
+	cgroup_conf_destroy();
 
 	xfree(cli);
 	xfree(self);
@@ -222,8 +268,12 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
 	xfree(conf->spooldir);
+	xfree(conf->cpu_spec_list);
 	xfree(conf);
 #endif
+	cleanup = true;
+done:
+	slurm_mutex_unlock(&cleanup_mutex);
 	info("done with job");
 	return rc;
 }
@@ -244,11 +294,11 @@ extern void close_slurmd_conn(void)
 	dup2(STDERR_FILENO, STDOUT_FILENO);
 }
 
-static slurmd_conf_t *read_slurmd_conf_lite(int fd)
+static slurmd_conf_t *_read_slurmd_conf_lite(int fd)
 {
 	int rc;
 	int len;
-	Buf buffer = NULL;
+	buf_t *buffer = NULL;
 	slurmd_conf_t *confl, *local_conf = NULL;
 	int tmp_int = 0;
 	List tmp_list = NULL;
@@ -273,6 +323,11 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	if (rc == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
 
+	rc = unpack_slurm_conf_lite_no_alloc(buffer);
+	if (rc == SLURM_ERROR)
+		fatal("slurmstepd: problem with unpack of slurm_conf");
+	slurm_conf_init_stepd();
+
 	if (slurm_unpack_list(&tmp_list,
 			      slurmdb_unpack_tres_rec,
 			      slurmdb_destroy_tres_rec,
@@ -280,33 +335,33 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	    != SLURM_SUCCESS)
 		fatal("slurmstepd: problem with unpack of tres list");
 
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	confl->log_opts.prefix_level = 1;
-	confl->log_opts.stderr_level = confl->debug_level;
 	confl->log_opts.logfile_level = confl->debug_level;
-	confl->log_opts.syslog_level = confl->debug_level;
-	/*
-	 * If daemonizing, turn off stderr logging -- also, if
-	 * logging to a file, turn off syslog.
-	 *
-	 * Otherwise, if remaining in foreground, turn off logging
-	 * to syslog (but keep logfile level)
-	 */
-	if (confl->daemonize) {
+
+	if (confl->daemonize)
 		confl->log_opts.stderr_level = LOG_LEVEL_QUIET;
-		if (confl->logfile)
-			confl->log_opts.syslog_level = LOG_LEVEL_QUIET;
+	else
+		confl->log_opts.stderr_level = confl->debug_level;
+
+	if (confl->syslog_debug != LOG_LEVEL_END) {
+		confl->log_opts.syslog_level = confl->syslog_debug;
+	} else if (!confl->daemonize) {
+		confl->log_opts.syslog_level = LOG_LEVEL_QUIET;
+	} else if ((confl->debug_level > LOG_LEVEL_QUIET) && !confl->logfile) {
+		confl->log_opts.syslog_level = confl->debug_level;
 	} else
-		confl->log_opts.syslog_level  = LOG_LEVEL_QUIET;
+		confl->log_opts.syslog_level = LOG_LEVEL_FATAL;
 
 	/*
 	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
 	 * up in the log.
 	 */
-	log_alter(confl->log_opts, 0, confl->logfile);
+	log_alter(confl->log_opts, SYSLOG_FACILITY_DAEMON, confl->logfile);
 	log_set_timefmt(slurm_conf.log_fmt);
-	debug2("debug level is '%s'.", log_num2string(confl->debug_level));
+	debug2("debug level read from slurmd is '%s'.",
+		log_num2string(confl->debug_level));
 
 	confl->acct_freq_task = NO_VAL16;
 	tmp_int = acct_gather_parse_freq(PROFILE_TASK,
@@ -389,10 +444,8 @@ static int _handle_spank_mode (int argc, char **argv)
 	 *   This could happen if slurmstepd is run standalone for
 	 *   testing.
 	 */
-	conf = read_slurmd_conf_lite (STDIN_FILENO);
+	conf = _read_slurmd_conf_lite (STDIN_FILENO);
 	close (STDIN_FILENO);
-
-	slurm_conf_init(NULL);
 
 	if (_get_jobid_uid_gid_from_env(&jobid, &uid, &gid))
 		return error("spank environment invalid");
@@ -423,6 +476,11 @@ static int _process_cmdline (int argc, char **argv)
 	if ((argc == 2) && (xstrcmp(argv[1], "getenv") == 0)) {
 		print_rlimits();
 		_dump_user_env();
+		exit(0);
+	}
+	if ((argc == 2) && (xstrcmp(argv[1], "infinity") == 0)) {
+		set_oom_adj(-1000);
+		(void) poll(NULL, 0, -1);
 		exit(0);
 	}
 	if ((argc == 3) && (xstrcmp(argv[1], "spank") == 0)) {
@@ -492,7 +550,7 @@ static void _set_job_log_prefix(slurm_step_id_t *step_id)
 	setproctitle("%s", buf);
 	/* note: will claim ownership of buf, do not free */
 	xstrcat(buf, " ");
-	log_set_fpfx(&buf);
+	log_set_prefix(&buf);
 }
 
 /*
@@ -504,7 +562,7 @@ _init_from_slurmd(int sock, char **argv,
 		  slurm_addr_t **_cli, slurm_addr_t **_self, slurm_msg_t **_msg)
 {
 	char *incoming_buffer = NULL;
-	Buf buffer;
+	buf_t *buffer;
 	int step_type;
 	int len;
 	uint16_t proto;
@@ -518,16 +576,16 @@ _init_from_slurmd(int sock, char **argv,
 	};
 
 	/* receive conf from slurmd */
-	if (!(conf = read_slurmd_conf_lite(sock)))
+	if (!(conf = _read_slurmd_conf_lite(sock)))
 		fatal("Failed to read conf from slurmd");
 
-	/* receive cgroup conf from slurmd */
-	if (xcgroup_read_conf(sock) != SLURM_SUCCESS)
-		fatal("Failed to read cgroup conf from slurmd");
+	slurm_conf.slurmd_port = conf->port;
+	slurm_conf.slurmd_syslog_debug = conf->syslog_debug;
 
-	/* receive acct_gather conf from slurmd */
-	if (acct_gather_read_conf(sock) != SLURM_SUCCESS)
-		fatal("Failed to read acct_gather conf from slurmd");
+	setenvf(NULL, "SLURMD_NODENAME", "%s", conf->node_name);
+
+	/* receive conf_hashtbl from slurmd */
+	read_conf_recv_stepd(sock);
 
 	/* receive job type from slurmd */
 	safe_read(sock, &step_type, sizeof(int));
@@ -546,8 +604,6 @@ _init_from_slurmd(int sock, char **argv,
 	step_complete.jobacct = jobacctinfo_create(NULL);
 	slurm_mutex_unlock(&step_complete.lock);
 
-	switch_g_slurmd_step_init();
-
 	debug3("slurmstepd rank %d, parent = %pA",
 	       step_complete.rank, &step_complete.parent_addr);
 
@@ -559,7 +615,7 @@ _init_from_slurmd(int sock, char **argv,
 	cli = xmalloc(sizeof(slurm_addr_t));
 	if (slurm_unpack_addr_no_alloc(cli, buffer) == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	/* receive self from slurmd */
 	safe_read(sock, &len, sizeof(int));
@@ -574,7 +630,7 @@ _init_from_slurmd(int sock, char **argv,
 			fatal("slurmstepd: problem with unpack of "
 			      "slurmd_conf");
 		}
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 	}
 
 	/* Grab the slurmd's spooldir. Has %n expanded. */
@@ -608,9 +664,20 @@ _init_from_slurmd(int sock, char **argv,
 		fatal("%s: Unrecognized launch RPC (%d)", __func__, step_type);
 		break;
 	}
+
+	/* Init select and switch before unpack_msg to only init the default */
+	if (select_g_init(1) != SLURM_SUCCESS )
+		fatal( "failed to initialize node selection plugin" );
+
+	if (switch_init(1) != SLURM_SUCCESS)
+		fatal( "failed to initialize authentication plugin" );
+
+	if (gres_init() != SLURM_SUCCESS)
+		fatal("failed to initialize gres plugins");
+
 	if (unpack_msg(msg, buffer) == SLURM_ERROR)
 		fatal("slurmstepd: we didn't unpack the request correctly");
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 	switch (step_type) {
 	case LAUNCH_BATCH_JOB:
@@ -628,18 +695,52 @@ _init_from_slurmd(int sock, char **argv,
 		break;
 	}
 
-	/* Receive GRES information from slurmd */
-	gres_plugin_recv_stepd(sock, msg);
+	_set_job_log_prefix(&step_id);
 
 	/*
-	 * Read slurmd node name - may be dictated by slurmctld due to
-	 * Dynamic Future node mapping.
+	 * Init all plugins after receiving the slurm.conf from the slurmd.
 	 */
-	safe_read(sock, &len, sizeof(int));
-	conf->node_name = xmalloc(len);
-	safe_read(sock, conf->node_name, len);
+	if ((slurm_auth_init(NULL) != SLURM_SUCCESS) ||
+	    (cgroup_g_init() != SLURM_SUCCESS) ||
+	    (hash_g_init() != SLURM_SUCCESS) ||
+	    (acct_gather_conf_init() != SLURM_SUCCESS) ||
+	    (core_spec_g_init() != SLURM_SUCCESS) ||
+	    (slurm_proctrack_init() != SLURM_SUCCESS) ||
+	    (slurmd_task_init() != SLURM_SUCCESS) ||
+	    (jobacct_gather_init() != SLURM_SUCCESS) ||
+	    (acct_gather_profile_init() != SLURM_SUCCESS) ||
+	    (slurm_cred_init() != SLURM_SUCCESS) ||
+	    (job_container_init() != SLURM_SUCCESS) ||
+	    (route_init() != SLURM_SUCCESS) ||
+	    (slurm_topo_init() != SLURM_SUCCESS))
+		fatal("Couldn't load all plugins");
 
-	_set_job_log_prefix(&step_id);
+	/*
+	 * Receive all secondary conf files from the slurmd.
+	 */
+
+	/* receive cgroup conf from slurmd */
+	if (cgroup_read_conf(sock) != SLURM_SUCCESS)
+		fatal("Failed to read cgroup conf from slurmd");
+
+	/* receive acct_gather conf from slurmd */
+	if (acct_gather_read_conf(sock) != SLURM_SUCCESS)
+		fatal("Failed to read acct_gather conf from slurmd");
+
+	/* Receive job_container information from slurmd */
+	if (container_g_recv_stepd(sock) != SLURM_SUCCESS)
+		fatal("Failed to read job_container.conf from slurmd.");
+
+	/* Receive GRES information from slurmd */
+	if (gres_g_recv_stepd(sock, msg) != SLURM_SUCCESS)
+		fatal("Failed to read gres.conf from slurmd.");
+
+	/* Receive mpi.conf from slurmd */
+	if ((step_type == LAUNCH_TASKS) &&
+	    (step_id.step_id != SLURM_EXTERN_CONT) &&
+	    (step_id.step_id != SLURM_INTERACTIVE_STEP) &&
+	    (mpi_conf_recv_stepd(sock) != SLURM_SUCCESS))
+		fatal("Failed to read MPI conf from slurmd");
 
 	if (!conf->hwloc_xml) {
 		conf->hwloc_xml = xstrdup_printf("%s/hwloc_topo_%u.%u",
@@ -673,67 +774,103 @@ rwfail:
 static stepd_step_rec_t *
 _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 {
-	stepd_step_rec_t *job = NULL;
+	stepd_step_rec_t *step = NULL;
 
 	switch (msg->msg_type) {
 	case REQUEST_BATCH_JOB_LAUNCH:
 		debug2("setup for a batch_job");
-		job = mgr_launch_batch_job_setup(msg->data, cli);
+		step = mgr_launch_batch_job_setup(msg->data, cli);
 		break;
 	case REQUEST_LAUNCH_TASKS:
 		debug2("setup for a launch_task");
-		job = mgr_launch_tasks_setup(msg->data, cli, self,
-					     msg->protocol_version);
+		step = mgr_launch_tasks_setup(msg->data, cli, self,
+					      msg->protocol_version);
 		break;
 	default:
 		fatal("handle_launch_message: Unrecognized launch RPC");
 		break;
 	}
 
-	if (!job) {
+	if (!step) {
 		error("_step_setup: no job returned");
 		return NULL;
 	}
 
-	job->jmgr_pid = getpid();
-	job->jobacct = jobacctinfo_create(NULL);
+	if (step->container) {
+	        struct priv_state sprivs;
+		int rc;
+
+		if (drop_privileges(step, false, &sprivs, true) < 0) {
+			error("%s: drop_priviledges failed", __func__);
+			return NULL;
+		}
+		rc = setup_container(step);
+		if (reclaim_privileges(&sprivs) < 0) {
+			error("%s: reclaim_priviledges failed", __func__);
+			return NULL;
+		}
+
+		if (rc == ESLURM_CONTAINER_NOT_CONFIGURED) {
+			debug2("%s: container %s requested but containers are not configured on this node",
+			       __func__, step->container->bundle);
+		} else if (rc) {
+			error("%s: container setup failed: %s",
+			      __func__, slurm_strerror(rc));
+			stepd_step_rec_destroy(step);
+			return NULL;
+		} else {
+			debug2("%s: container %s successfully setup",
+			       __func__, step->container->bundle);
+		}
+	}
+
+	step->jmgr_pid = getpid();
+	step->jobacct = jobacctinfo_create(NULL);
 
 	/* Establish GRES environment variables */
 	if (slurm_conf.debug_flags & DEBUG_FLAG_GRES) {
-		gres_plugin_job_state_log(job->job_gres_list,
-					  job->step_id.job_id);
-		gres_plugin_step_state_log(job->step_gres_list,
-					   job->step_id.job_id,
-					   job->step_id.step_id);
+		gres_job_state_log(step->job_gres_list,
+				   step->step_id.job_id);
+		gres_step_state_log(step->step_gres_list,
+				    step->step_id.job_id,
+				    step->step_id.step_id);
 	}
-	if (msg->msg_type == REQUEST_BATCH_JOB_LAUNCH) {
-		gres_plugin_job_set_env(&job->env, job->job_gres_list, 0);
+	if (step->batch || (step->step_id.step_id == SLURM_INTERACTIVE_STEP)) {
+		gres_g_job_set_env(step, 0);
 	} else if (msg->msg_type == REQUEST_LAUNCH_TASKS) {
-		gres_plugin_step_set_env(&job->env, job->step_gres_list, 0,
-					 NULL, -1);
+		gres_g_step_set_env(step);
 	}
 
 	/*
 	 * Add slurmd node topology informations to job env array
 	 */
-	env_array_overwrite(&job->env,"SLURM_TOPOLOGY_ADDR",
+	env_array_overwrite(&step->env,"SLURM_TOPOLOGY_ADDR",
 			    conf->node_topo_addr);
-	env_array_overwrite(&job->env,"SLURM_TOPOLOGY_ADDR_PATTERN",
+	env_array_overwrite(&step->env,"SLURM_TOPOLOGY_ADDR_PATTERN",
 			    conf->node_topo_pattern);
+	/*
+	 * Reset address for cloud nodes
+	 */
+	if (step->alias_list && set_nodes_alias(step->alias_list)) {
+		error("%s: set_nodes_alias failed: %s", __func__,
+		      step->alias_list);
+		stepd_step_rec_destroy(step);
+		return NULL;
+	}
 
-	set_msg_node_id(job);
+	set_msg_node_id(step);
 
-	return job;
+	return step;
 }
 
 #ifdef MEMORY_LEAK_DEBUG
 static void
-_step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc)
+_step_cleanup(stepd_step_rec_t *step, slurm_msg_t *msg, int rc)
 {
-	if (job) {
-		jobacctinfo_destroy(job->jobacct);
-		if (!job->batch)
-			stepd_step_rec_destroy(job);
+	if (step) {
+		jobacctinfo_destroy(step->jobacct);
+		if (!step->batch)
+			stepd_step_rec_destroy(step);
 	}
 
 	if (msg) {

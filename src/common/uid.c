@@ -50,6 +50,7 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/macros.h"
+#include "src/common/timers.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -66,7 +67,11 @@ static int uid_cache_used = 0;
 static int _getpwnam_r (const char *name, struct passwd *pwd, char *buf,
 		size_t bufsiz, struct passwd **result)
 {
+	DEF_TIMERS;
 	int rc;
+
+	START_TIMER;
+
 	while (1) {
 		rc = getpwnam_r(name, pwd, buf, bufsiz, result);
 		if (rc == EINTR)
@@ -75,13 +80,20 @@ static int _getpwnam_r (const char *name, struct passwd *pwd, char *buf,
 			*result = NULL;
 		break;
 	}
+
+	END_TIMER2(__func__);
+
 	return (rc);
 }
 
 extern int slurm_getpwuid_r (uid_t uid, struct passwd *pwd, char *buf,
 			     size_t bufsiz, struct passwd **result)
 {
+	DEF_TIMERS;
 	int rc;
+
+	START_TIMER;
+
 	while (1) {
 		rc = getpwuid_r(uid, pwd, buf, bufsiz, result);
 		if (rc == EINTR)
@@ -90,6 +102,9 @@ extern int slurm_getpwuid_r (uid_t uid, struct passwd *pwd, char *buf,
 			*result = NULL;
 		break;
 	}
+
+	END_TIMER2(__func__);
+
 	return rc;
 }
 
@@ -126,7 +141,8 @@ int uid_from_string(const char *name, uid_t *uidp)
 	/*
 	 *  Now ensure the supplied uid is in the user database
 	 */
-	if (slurm_getpwuid_r(l, &pwd, buffer, PW_BUF_SIZE, &result) != 0)
+	if ((slurm_getpwuid_r(l, &pwd, buffer, PW_BUF_SIZE, &result) != 0) ||
+	    (result == NULL))
 		return -1;
 
 	*uidp = (uid_t) l;
@@ -231,7 +247,11 @@ gid_from_uid (uid_t uid)
 static int _getgrnam_r (const char *name, struct group *grp, char *buf,
 		size_t bufsiz, struct group **result)
 {
+	DEF_TIMERS;
 	int rc;
+
+	START_TIMER;
+
 	while (1) {
 		rc = getgrnam_r (name, grp, buf, bufsiz, result);
 		if (rc == EINTR)
@@ -240,13 +260,20 @@ static int _getgrnam_r (const char *name, struct group *grp, char *buf,
 			*result = NULL;
 		break;
 	}
+
+	END_TIMER2(__func__);
+
 	return (rc);
 }
 
 static int _getgrgid_r (gid_t gid, struct group *grp, char *buf,
 		size_t bufsiz, struct group **result)
 {
+	DEF_TIMERS;
 	int rc;
+
+	START_TIMER;
+
 	while (1) {
 		rc = getgrgid_r (gid, grp, buf, bufsiz, result);
 		if (rc == EINTR)
@@ -255,6 +282,9 @@ static int _getgrgid_r (gid_t gid, struct group *grp, char *buf,
 			*result = NULL;
 		break;
 	}
+
+	END_TIMER2(__func__);
+
 	return rc;
 }
 

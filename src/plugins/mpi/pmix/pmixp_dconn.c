@@ -36,7 +36,9 @@
 
 #include "pmixp_dconn.h"
 #include "pmixp_dconn_tcp.h"
+#ifdef HAVE_UCX
 #include "pmixp_dconn_ucx.h"
+#endif
 
 pmixp_dconn_t *_pmixp_dconn_conns = NULL;
 uint32_t _pmixp_dconn_conn_cnt = 0;
@@ -79,11 +81,12 @@ int pmixp_dconn_init(int node_cnt, pmixp_p2p_data_t direct_hdr)
 		_pmixp_dconn_conns[i].nodeid = i;
 		_pmixp_dconn_conns[i].state = PMIXP_DIRECT_INIT;
 		_pmixp_dconn_conns[i].priv = _pmixp_dconn_h.init(i, direct_hdr);
+		_pmixp_dconn_conns[i].uid = slurm_conf.slurmd_user_id;
 	}
 	return SLURM_SUCCESS;
 }
 
-void pmixp_dconn_fini()
+void pmixp_dconn_fini(void)
 {
 	int i;
 #ifdef HAVE_UCX
@@ -115,27 +118,27 @@ int pmixp_dconn_connect_do(pmixp_dconn_t *dconn, void *ep_data,
 	return _pmixp_dconn_h.connect(dconn->priv, ep_data, ep_len, init_msg);
 }
 
-pmixp_dconn_progress_type_t pmixp_dconn_progress_type()
+pmixp_dconn_progress_type_t pmixp_dconn_progress_type(void)
 {
 	return _progress_type;
 }
 
-pmixp_dconn_conn_type_t pmixp_dconn_connect_type()
+pmixp_dconn_conn_type_t pmixp_dconn_connect_type(void)
 {
 	return _conn_type;
 }
 
-int pmixp_dconn_poll_fd()
+int pmixp_dconn_poll_fd(void)
 {
 	return _poll_fd;
 }
 
-size_t pmixp_dconn_ep_len()
+size_t pmixp_dconn_ep_len(void)
 {
 	return ep_len;
 }
 
-char *pmixp_dconn_ep_data()
+char *pmixp_dconn_ep_data(void)
 {
 	return ep_data;
 }

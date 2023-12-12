@@ -41,14 +41,7 @@
 ############################################################################
 source ./globals
 
-set exit_code     0
-set test_prog     "test$test_id.prog"
-
-proc cleanup {} {
-	global bin_rm test_prog
-
-	exec $bin_rm -f $test_prog ${test_prog}.o ${test_prog}.TVD.v3breakpoints ${test_prog}.TVD.v3breakpoints~
-}
+set test_prog     "$test_name.prog"
 
 # Note this appears as a single argv value to totalviewcli
 set bulk "dset TV::bulk_launch_enabled true; dset TV::bulk_launch_tmpfile1_host_lines %R; dset TV::bulk_launch_string {$srun --jobid=%J -N%N -n%N -w`awk -F. \'BEGIN {ORS=\",\"} {if (NR==%N) ORS=\"\"; print \$1}\' %t1` -l --input=none %B/tvdsvr%K -callback_host %H -callback_ports %L -set_pws %P -verbosity %V -working_directory %D %F}"
@@ -68,16 +61,22 @@ if {[info exists mpicc] == 0} {
 	skip "mpicc not defined, can't perform mpi testing"
 }
 if {[file executable $mpicc] == 0} {
-	skip "$mpicc does not exists"
+	skip "$mpicc does not exist"
 }
 if {[info exists totalviewcli] == 0} {
 	skip "totalviewcli not defined, can't perform mpi testing"
 }
 if {[file executable $totalviewcli] == 0} {
-	skip "$totalviewcli does not exists"
+	skip "$totalviewcli does not exist"
 }
 if {[get_config_param "FrontendName"] ne "MISSING"} {
     skip "This test is incompatible with front-end systems"
+}
+
+proc cleanup {} {
+	global bin_rm test_prog
+
+	exec $bin_rm -f $test_prog ${test_prog}.o ${test_prog}.TVD.v3breakpoints ${test_prog}.TVD.v3breakpoints~
 }
 
 #
@@ -160,10 +159,7 @@ if {$no_capability != 0} {
 	skip "Unable to run test with present configuration"
 }
 if {$matches != 12} {
-	log_error "totalviewcli operation matches $matches of 12. Remove your ~/.totalview directory and try again"
-	set exit_code 1
-} else {
-	log_debug "So far, so good.."
+	fail "totalviewcli operation matches $matches of 12. Remove your ~/.totalview directory and try again"
 }
 
 #
@@ -240,8 +236,4 @@ if {$no_capability != 0} {
 }
 if {$matches != 12} {
 	fail "totalviewcli operation matches $matches of 12. Remove your ~/.totalview directory and try again"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

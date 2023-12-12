@@ -35,8 +35,8 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/log.h"
-#include "src/common/node_select.h"
 #include "src/common/read_config.h"
+#include "src/interfaces/select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_step_layout.h"
 #include "src/common/slurmdb_defs.h"
@@ -131,12 +131,13 @@ slurm_step_layout_t *slurm_step_layout_create(
  * RET a pointer to an slurm_step_layout_t structure
  * NOTE: allocates memory that should be xfreed by caller
  */
-slurm_step_layout_t *fake_slurm_step_layout_create(
+extern slurm_step_layout_t *fake_slurm_step_layout_create(
 	const char *tlist,
 	uint16_t *cpus_per_node,
 	uint32_t *cpu_count_reps,
 	uint32_t node_cnt,
-	uint32_t task_cnt)
+	uint32_t task_cnt,
+	uint16_t protocol_version)
 {
 	uint32_t cpn = 1;
 	int cpu_cnt = 0, cpu_inx = 0, i, j;
@@ -152,6 +153,7 @@ slurm_step_layout_t *fake_slurm_step_layout_create(
 	step_layout = xmalloc(sizeof(slurm_step_layout_t));
 	step_layout->node_list = xstrdup(tlist);
 	step_layout->node_cnt = node_cnt;
+	step_layout->start_protocol_ver = protocol_version;
 	step_layout->tasks = xcalloc(node_cnt, sizeof(uint16_t));
 	step_layout->tids = xcalloc(node_cnt, sizeof(uint32_t *));
 
@@ -281,7 +283,7 @@ extern void slurm_step_layout_merge(slurm_step_layout_t *step_layout1,
 }
 
 extern void pack_slurm_step_layout(slurm_step_layout_t *step_layout,
-				   Buf buffer, uint16_t protocol_version)
+				   buf_t *buffer, uint16_t protocol_version)
 {
 	uint32_t i = 0;
 
@@ -310,11 +312,11 @@ extern void pack_slurm_step_layout(slurm_step_layout_t *step_layout,
 	}
 }
 
-extern int unpack_slurm_step_layout(slurm_step_layout_t **layout, Buf buffer,
+extern int unpack_slurm_step_layout(slurm_step_layout_t **layout, buf_t *buffer,
 				    uint16_t protocol_version)
 {
 	uint16_t uint16_tmp;
-	uint32_t num_tids, uint32_tmp;
+	uint32_t num_tids;
 	slurm_step_layout_t *step_layout = NULL;
 	int i;
 
@@ -326,10 +328,8 @@ extern int unpack_slurm_step_layout(slurm_step_layout_t **layout, Buf buffer,
 		step_layout = xmalloc(sizeof(slurm_step_layout_t));
 		*layout = step_layout;
 
-		safe_unpackstr_xmalloc(&step_layout->front_end,
-				       &uint32_tmp, buffer);
-		safe_unpackstr_xmalloc(&step_layout->node_list,
-				       &uint32_tmp, buffer);
+		safe_unpackstr(&step_layout->front_end, buffer);
+		safe_unpackstr(&step_layout->node_list, buffer);
 		safe_unpack32(&step_layout->node_cnt, buffer);
 		safe_unpack16(&step_layout->start_protocol_ver, buffer);
 		safe_unpack32(&step_layout->task_cnt, buffer);
@@ -561,6 +561,14 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 	step_hosts_cnt  = hostlist_count(step_alloc_hosts);
 	step_hosts_ptrs = xcalloc(step_hosts_cnt,
 				  sizeof(node_record_t *));
+
+	if (!running_in_daemon()) {
+		/* running in salloc - init node records */
+		slurm_conf_init(NULL);
+		init_node_conf();
+		build_all_nodeline_info(false, 0);
+		rehash_node();
+	}
 
 	step_inx = 0;
 	while((host = hostlist_next(itr_task))) {
@@ -932,10 +940,7 @@ extern char *slurm_step_layout_type_name(task_dist_states_t task_dist)
 	}
 
 	if (!name) {
-		/*
-		 * SLURM_DIST_NO_LLLP or SLURM_DIST_UNKNOWN
-		 * No distribution specified for lllp
-		 */
+		/* SLURM_DIST_UNKNOWN - No distribution specified */
 		xstrfmtcatat(name, &pos, "%s", "Unknown");
 	}
 

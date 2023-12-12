@@ -328,7 +328,7 @@ static inline void * SV2ptr(SV *sv)
 		if ( (svp = hv_fetch (hv, #field, strlen(#field), FALSE)) ) { \
 			ptr->field = (type) (SV2##type (*svp)); \
 		} else if (required) { \
-			Perl_warn (aTHX_ "Required field \"" #field "\" missing in HV"); \
+			Perl_warn (aTHX_ "Required field \"" #field "\" missing in HV at %s:%d",__FILE__,__LINE__); \
 			return -1; \
 		} \
 	} while (0)
@@ -370,6 +370,7 @@ static inline void * SV2ptr(SV *sv)
 inline static int step_id_to_hv(slurm_step_id_t *step_id, HV *hv)
 {
 	STORE_FIELD(hv, step_id, job_id, uint32_t);
+	STORE_FIELD(hv, step_id, step_het_comp, uint32_t);
 	STORE_FIELD(hv, step_id, step_id, uint32_t);
 
 	return 0;
@@ -378,6 +379,7 @@ inline static int step_id_to_hv(slurm_step_id_t *step_id, HV *hv)
 inline static int hv_to_step_id(slurm_step_id_t *step_id, HV *hv)
 {
 	FETCH_FIELD(hv, step_id, job_id, uint32_t, TRUE);
+	FETCH_FIELD(hv, step_id, step_het_comp, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_id, step_id, uint32_t, TRUE);
 
 	return 0;

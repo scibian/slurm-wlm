@@ -110,7 +110,7 @@ inline int pmixp_coll_check(pmixp_coll_t *coll, uint32_t seq)
 	return PMIXP_COLL_REQ_FAILURE;
 }
 
-int pmixp_hostset_from_ranges(const pmixp_proc_t *procs, size_t nprocs,
+int pmixp_hostset_from_ranges(const pmix_proc_t *procs, size_t nprocs,
 			      hostlist_t *hl_out)
 {
 	int i;
@@ -169,7 +169,7 @@ int pmixp_coll_contrib_local(pmixp_coll_t *coll, pmixp_coll_type_t type,
 }
 
 int pmixp_coll_init(pmixp_coll_t *coll, pmixp_coll_type_t type,
-		    const pmixp_proc_t *procs, size_t nprocs)
+		    const pmix_proc_t *procs, size_t nprocs)
 {
 	int rc = SLURM_SUCCESS;
 	hostlist_t hl;
@@ -189,7 +189,12 @@ int pmixp_coll_init(pmixp_coll_t *coll, pmixp_coll_type_t type,
 		rc = SLURM_ERROR;
 		goto exit;
 	}
-	coll->peers_cnt = hostlist_count(hl);
+	if ((coll->peers_cnt = hostlist_count(hl)) <= 0) {
+		PMIXP_ERROR("No peers found");
+		hostlist_destroy(hl);
+		rc = SLURM_ERROR;
+		goto exit;
+	}
 	coll->my_peerid = hostlist_find(hl, pmixp_info_hostname());
 #ifdef PMIXP_COLL_DEBUG
 	/* if we debug collectives - store a copy of a full
@@ -256,7 +261,7 @@ void pmixp_coll_free(pmixp_coll_t *coll)
 	xfree(coll);
 }
 
-int pmixp_coll_belong_chk(const pmixp_proc_t *procs, size_t nprocs)
+int pmixp_coll_belong_chk(const pmix_proc_t *procs, size_t nprocs)
 {
 	int i;
 	pmixp_namespace_t *nsptr = pmixp_nspaces_local();

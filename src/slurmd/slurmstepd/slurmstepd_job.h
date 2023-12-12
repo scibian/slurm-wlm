@@ -41,9 +41,17 @@
 #ifndef _SLURMSTEPD_JOB_H
 #define _SLURMSTEPD_JOB_H
 
+#ifdef __FreeBSD__
+#include <sys/cpuset.h>
+typedef cpuset_t cpu_set_t;
+#endif
+
+#define _GNU_SOURCE
+
 #include <pthread.h>
 #include <pwd.h>
 
+#include "src/common/data.h"
 #include "src/common/macros.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -51,15 +59,13 @@
 #include "src/common/eio.h"
 #include "src/common/env.h"
 #include "src/common/io_hdr.h"
-#include "src/common/job_options.h"
 #include "src/common/stepd_api.h"
 
-#ifndef MAXHOSTNAMELEN
-#define MAXHOSTNAMELEN	64
-#endif
+#define STEP_CONTAINER_MAGIC 0xa0b9b2ba
 
 typedef struct {
-	unsigned char data[SLURM_IO_KEY_SIZE];
+	char *data;
+	uint32_t len;
 } srun_key_t;
 
 typedef struct {
@@ -68,6 +74,7 @@ typedef struct {
 	slurm_addr_t ioaddr;       /* Address to connect on for normal I/O.
 				      Spawn IO uses messages to the normal
 				      resp_addr. */
+	uid_t uid;		   /* user id for job */
 	uint16_t protocol_version; /* protocol_version of the srun */
 } srun_info_t;
 
@@ -81,6 +88,7 @@ typedef enum {
 typedef struct {
 	pthread_mutex_t mutex;	    /* mutex to protect task state          */
 	stepd_step_task_state_t state;  /* task state                       */
+	cpu_set_t *cpu_set;
 
 	int             id;	    /* local task id                        */
 	uint32_t        gtid;	    /* global task id                       */
@@ -123,6 +131,17 @@ typedef struct {		/* MPMD specifications, needed for Cray */
 } mpmd_set_t;
 
 typedef struct {
+	int magic;
+	char *bundle; /* OCI Container Bundle path	*/
+	data_t *config; /* OCI Container config.json contents */
+	char *mount_spool_dir; /* target path to mount container spool dir */
+	char *rootfs; /* path to container rootfs */
+	char *spool_dir; /* path to container spool dir */
+} step_container_t;
+
+typedef struct {
+	char *alias_list; /* node name to address aliases */
+	step_container_t *container; /* populated if step is a container */
 	slurmstepd_state_t state;	/* Job state			*/
 	pthread_cond_t state_cond;	/* Job state conditional	*/
 	pthread_mutex_t state_mutex;	/* Job state mutex		*/
@@ -210,7 +229,9 @@ typedef struct {
 			       * used when a new client attaches
 			       */
 
-	pthread_t      ioid;  /* pthread id of IO thread                    */
+	bool io_running;		/* I/O thread running */
+	pthread_cond_t io_cond;		/* I/O thread state conditional */
+	pthread_mutex_t io_mutex;	/* I/O thread state mutex */
 	pthread_t      msgid; /* pthread id of message thread               */
 	eio_handle_t  *msg_handle; /* eio handle for the message thread     */
 
@@ -224,8 +245,7 @@ typedef struct {
 	char          *batchdir;
 	jobacctinfo_t *jobacct;
 	uint8_t        open_mode;	/* stdout/err append or truncate */
-	job_options_t  options;
-	uint32_t       resv_id;		/* Cray/BASIL reservation ID	*/
+	List options;
 	uint16_t       restart_cnt;	/* batch job restart count	*/
 	char	      *job_alloc_cores;	/* needed by the SPANK cpuset plugin */
 	char	      *step_alloc_cores;/* needed by the SPANK cpuset plugin */
@@ -233,6 +253,9 @@ typedef struct {
 	List           step_gres_list;	/* Needed by GRES plugin */
 	char          *tres_bind;	/* TRES binding */
 	char          *tres_freq;	/* TRES frequency */
+	time_t job_end_time;            /* job end time */
+	char *job_licenses;		/* Licenses allocated to job */
+	time_t job_start_time;          /* job start time */
 	launch_tasks_request_msg_t *msg; /* When a non-batch step this
 					  * is the message sent.  DO
 					  * NOT FREE, IT IS JUST A
@@ -252,6 +275,8 @@ typedef struct {
 	char *x11_target;		/* remote target. unix socket if port == 0 */
 	uint16_t x11_target_port;	/* remote x11 port to connect back to */
 	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
+
+	char *selinux_context;
 } stepd_step_rec_t;
 
 
@@ -259,12 +284,15 @@ stepd_step_rec_t * stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 					 uint16_t protocol_version);
 stepd_step_rec_t * batch_stepd_step_rec_create(batch_job_launch_msg_t *msg);
 
-void stepd_step_rec_destroy(stepd_step_rec_t *job);
+void stepd_step_rec_destroy(stepd_step_rec_t *step);
 
 srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
-			       slurm_addr_t *ioaddr, uint16_t protocol_version);
+			       slurm_addr_t *ioaddr, uid_t uid,
+			       uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
+
+void srun_key_destroy(srun_key_t *key);
 
 stepd_step_task_info_t * task_info_create(int taskid, int gtaskid,
 					  char *ifname, char *ofname,
@@ -276,16 +304,16 @@ stepd_step_task_info_t * task_info_create(int taskid, int gtaskid,
  *   without undefined symbol warnings.
  */
 static inline stepd_step_task_info_t *
-job_task_info_by_pid (stepd_step_rec_t *job, pid_t pid)
+job_task_info_by_pid (stepd_step_rec_t *step, pid_t pid)
 {
 	uint32_t i;
 
-	if (!job)
+	if (!step)
 		return NULL;
 
-	for (i = 0; i < job->node_tasks; i++) {
-		if (job->task[i]->pid == pid)
-			return (job->task[i]);
+	for (i = 0; i < step->node_tasks; i++) {
+		if (step->task[i]->pid == pid)
+			return (step->task[i]);
 	}
 	return (NULL);
 }

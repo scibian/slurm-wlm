@@ -7,7 +7,7 @@ Last-Update: 2018-12-13
 
 --- a/src/common/read_config.h
 +++ b/src/common/read_config.h
-@@ -153,9 +153,9 @@
+@@ -162,9 +162,9 @@
  #  define DEFAULT_SELECT_TYPE       "select/linear"
  #endif
  #define DEFAULT_SITE_FACTOR_PLUGIN  "site_factor/none"
@@ -28,5 +28,5 @@ Last-Update: 2018-12-13
 -#define DEFAULT_SLURMDBD_PIDFILE	"/var/run/slurmdbd.pid"
 +#define DEFAULT_SLURMDBD_PIDFILE	"/run/slurmdbd.pid"
  #define DEFAULT_SLURMDBD_ARCHIVE_DIR	"/tmp"
- //#define DEFAULT_SLURMDBD_STEP_PURGE	1
- 
+ #define DEFAULT_SLURMDBD_KEEPALIVE_INTERVAL 30
+ #define DEFAULT_SLURMDBD_KEEPALIVE_PROBES 3

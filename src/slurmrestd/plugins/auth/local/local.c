@@ -38,6 +38,7 @@
 
 #define _GNU_SOURCE /* needed for SO_PEERCRED */
 
+#include <grp.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -48,14 +49,13 @@
 
 #include "src/common/data.h"
 #include "src/common/log.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/uid.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 #include "src/slurmrestd/rest_auth.h"
-#include "src/slurmrestd/xjson.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -89,6 +89,10 @@ const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 extern int slurm_rest_auth_p_apply(rest_auth_context_t *context);
 
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* protected by lock */
+static bool become_user = false;
+
 #define MAGIC 0xd11abee2
 typedef struct {
 	int magic;
@@ -110,7 +114,7 @@ extern void *slurm_rest_auth_p_get_db_conn(rest_auth_context_t *context)
 	errno = 0;
 	data->db_conn = slurmdb_connection_get(NULL);
 
-	if (!errno)
+	if (!errno && data->db_conn)
 		return data->db_conn;
 
 	error("%s: unable to connect to slurmdbd: %m",
@@ -143,11 +147,15 @@ static int _auth_socket(on_http_request_args_t *args,
 		error("%s: [%s] rejecting socket connection with invalid SO_PEERCRED response",
 		      __func__, name);
 		return ESLURM_AUTH_CRED_INVALID;
+	} else if ((cred.uid == SLURM_AUTH_NOBODY) ||
+		   (cred.gid == SLURM_AUTH_NOBODY)) {
+		error("%s: [%s] rejecting connection from nobody",
+		      __func__, name);
+		return ESLURM_AUTH_CRED_INVALID;
 	} else if (cred.uid == 0) {
 		/* requesting socket is root */
-		error("%s: [%s] accepted root socket connection with uid:%u gid:%u pid:%ld",
-		      __func__, name, cred.uid, cred.gid,
-		      (long) cred.pid);
+		info("%s: [%s] accepted root socket connection with uid:%u gid:%u pid:%ld",
+		     __func__, name, cred.uid, cred.gid, (long) cred.pid);
 
 		/*
 		 * root can be any user if they want - default to
@@ -164,11 +172,56 @@ static int _auth_socket(on_http_request_args_t *args,
 
 		ctxt->user_name = uid_to_string_or_null(cred.uid);
 	} else {
-		/* another user -> REJECT */
-		error("%s: [%s] rejecting socket connection with uid:%u gid:%u pid:%ld",
-		      __func__, name, cred.uid, cred.gid,
-		      (long) cred.pid);
-		return ESLURM_AUTH_CRED_INVALID;
+		/*
+		 * Use lock to ensure there are no race conditions for different
+		 * users trying to connect
+		 */
+		slurm_mutex_lock(&lock);
+		if (become_user) {
+			info("%s: [%s] accepted user proxy socket connection with uid:%u gid:%u pid:%ld",
+			     __func__, name, cred.uid, cred.gid,
+			     (long) cred.pid);
+
+			if (getuid() || getgid())
+				fatal("%s: user proxy mode requires running as root",
+				      __func__);
+
+			ctxt->user_name = uid_to_string_or_null(cred.uid);
+
+			if (!ctxt->user_name)
+				fatal("%s: [%s] unable to resolve user uid %u: %m",
+				      __func__, name, cred.uid);
+
+			if (setgroups(0, NULL))
+				fatal("Unable to drop supplementary groups: %m");
+
+			if (setuid(cred.uid))
+				fatal("%s: [%s] unable to switch to user uid %u: %m",
+				      __func__, name, cred.uid);
+
+			if ((getgid() != cred.gid) && setgid(cred.gid))
+				fatal("%s: [%s] unable to switch to user gid %u: %m",
+				      __func__, name, cred.gid);
+
+			if ((getuid() != cred.uid) || (getgid() != cred.gid))
+				fatal("%s: [%s] user switch sanity check failed",
+				      __func__, name);
+
+			/*
+			 * Only allow user change once to ensure against replay
+			 * attacks. Next attempt to connect will be forced to be
+			 * the same user.
+			 */
+			become_user = false;
+			slurm_mutex_unlock(&lock);
+		} else {
+			slurm_mutex_unlock(&lock);
+			/* another user -> REJECT */
+			error("%s: [%s] rejecting socket connection with uid:%u gid:%u pid:%ld",
+			      __func__, name, cred.uid, cred.gid,
+			      (long) cred.pid);
+			return ESLURM_AUTH_CRED_INVALID;
+		}
 	}
 
 	if (ctxt->user_name) {
@@ -216,6 +269,19 @@ extern int slurm_rest_auth_p_authenticate(on_http_request_args_t *args,
 		return ESLURM_AUTH_CRED_INVALID;
 	} else if (S_ISCHR(status.st_mode) || S_ISFIFO(status.st_mode) ||
 		   S_ISREG(status.st_mode)) {
+		bool reject_proxy = false;
+
+		slurm_mutex_lock(&lock);
+		if (become_user)
+			reject_proxy = true;
+		slurm_mutex_unlock(&lock);
+
+		if (reject_proxy) {
+			error("%s: [%s] rejecting PIPE connection in become user mode",
+			      __func__, name);
+			return ESLURM_AUTH_CRED_INVALID;
+		}
+
 		if (status.st_mode & (S_ISUID | S_ISGID)) {
 			/* FIFO has sticky bits -> REJECT */
 			error("%s: [%s] rejecting PIPE connection sticky bits permissions: %07o",
@@ -228,18 +294,21 @@ extern int slurm_rest_auth_p_authenticate(on_http_request_args_t *args,
 			return ESLURM_AUTH_CRED_INVALID;
 		} else if (status.st_uid == getuid()) {
 			/* FIFO is owned by same user */
-			info("%s: [%s] accepted connection from uid:%u",
-			     __func__, name, status.st_uid);
-
 			ctxt->user_name = uid_to_string_or_null(status.st_uid);
 
 			if (ctxt->user_name) {
 				plugin_data_t *data = xmalloc(sizeof(*data));
 				data->magic = MAGIC;
 				ctxt->plugin_data = data;
+
+				info("[%s] accepted connection from user: %s[%u]",
+				     name, ctxt->user_name, status.st_uid);
 				return SLURM_SUCCESS;
-			} else
+			} else {
+				error("[%s] rejecting connection from unresolvable uid:%u",
+				      name, status.st_uid);
 				return ESLURM_USER_ID_MISSING;
+			}
 		}
 
 		return ESLURM_AUTH_CRED_INVALID;
@@ -261,19 +330,7 @@ extern int slurm_rest_auth_p_apply(rest_auth_context_t *context)
 	xassert(((plugin_data_t *) context->plugin_data)->magic == MAGIC);
 	xassert(context->plugin_id == plugin_id);
 
-	/*
-	 * auth_munge does not support user aliasing: only allow same user
-	 * Always check for a NULL user and not rely on xstrcmp to do the
-	 * check. Neither user or context->user_name shoud never be NULL, but
-	 * just to be safe.
-	 */
-	if (!user || xstrcmp(context->user_name, user)) {
-		rc = ESLURM_AUTH_CRED_INVALID;
-		error("rejecting local auth for user %s", context->user_name);
-	} else {
-		rc = SLURM_SUCCESS;
-		info("apply local auth for user %s", context->user_name);
-	}
+	rc = auth_g_thread_config(NULL, context->user_name);
 
 	xfree(user);
 
@@ -293,9 +350,23 @@ extern void slurm_rest_auth_p_free(rest_auth_context_t *context)
 	xfree(context->plugin_data);
 }
 
-extern void slurm_rest_auth_p_init(void)
+extern void slurm_rest_auth_p_init(bool bu)
 {
-	debug5("%s: REST local auth activated", __func__);
+	if (!bu) {
+		debug3("%s: REST local auth activated", __func__);
+	} else if (!getuid()) {
+		slurm_mutex_lock(&lock);
+		if (become_user)
+			fatal("duplicate call to %s", __func__);
+
+		become_user = true;
+		slurm_mutex_unlock(&lock);
+
+		debug3("%s: REST local auth with become user mode active",
+		       __func__);
+	} else {
+		fatal("%s: become user mode requires running as root", __func__);
+	}
 }
 
 extern void slurm_rest_auth_p_fini(void)

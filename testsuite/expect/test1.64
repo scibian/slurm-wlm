@@ -29,8 +29,13 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set matches     0
+
+# TODO: Remove this precondition check once 22.05 is no longer supported
+regexp {(\d+).(\d+).(\S+)} [get_config_param SLURM_VERSION] - major minor release
+if {$major < 23} {
+	skip "This test is disabled in Slurm versions older than 23.02 (see bug 10314)"
+}
 
 #
 # Spawn initial program via srun
@@ -40,7 +45,6 @@ set srun_pid [spawn $srun -N1 -t1 --begin=noon -v $bin_sleep 1]
 expect {
 	-re "queued and waiting for resources" {
 		incr matches
-		sleep 1
 		exec $bin_kill -INT $srun_pid
 		log_debug "Sent SIGINT"
 		exp_continue
@@ -50,10 +54,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		log_error "srun not responding"
-		set matches -999
-		slow_kill $srun_pid
-		set exit_code 1
+		fail "srun not responding"
 	}
 	eof {
 		log_debug "EOF"
@@ -62,11 +63,4 @@ expect {
 }
 if {$matches != 2} {
 	fail "srun failed to process SIGINT while waiting for allocation"
-}
-
-#
-# Post-processing
-#
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

@@ -37,11 +37,32 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include "slurm.h"
+#include "slurm/slurm.h"
+#include "src/common/proc_args.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/uid.h"
 
 #include "src/scontrol/scontrol.h"
+
+extern int scontrol_create_node(int argc, char **argv)
+{
+	update_node_msg_t node_msg = {0};
+	char *node_line = NULL;
+
+	/* Reconstruct NodeName= line from cmd line */
+	for (int i = 0; i < argc; i++)
+		xstrfmtcat(node_line, "%s%s", i > 0 ? " " : "", argv[i]);
+
+	node_msg.extra = node_line;
+	if (slurm_create_node(&node_msg)) {
+		exit_code = 1;
+		slurm_perror("Error creating the node(s)");
+		return slurm_get_errno();
+	}
+	xfree(node_line);
+
+	return SLURM_SUCCESS;
+}
 
 /*
  * scontrol_update_node - update the slurm node configuration per the supplied
@@ -95,8 +116,9 @@ scontrol_update_node (int argc, char **argv)
 				return -1;
 			}
 			update_cnt++;
-
-
+		} else if (!xstrncasecmp(tag, "Extra", MAX(tag_len, 1))) {
+			node_msg.extra = val;
+			update_cnt++;
 		} else if (!xstrncasecmp(tag, "Features", MAX(tag_len, 1)) ||
 			   !xstrncasecmp(tag, "AvailableFeatures",
 					 MAX(tag_len,3))) {
@@ -106,39 +128,11 @@ scontrol_update_node (int argc, char **argv)
 			node_msg.gres = val;
 			update_cnt++;
 		} else if (xstrncasecmp(tag, "Weight", MAX(tag_len,1)) == 0) {
-			/* Logic borrowed from function _handle_uint32 */
-			char *endptr;
-			unsigned long num;
-			errno = 0;
-			num = strtoul(val, &endptr, 0);
-			if ((endptr[0] == 'k') || (endptr[0] == 'K')) {
-				num *= 1024;
-				endptr++;
+			if (parse_uint32(val, &node_msg.weight)) {
+				exit_code = 1;
+				error("Invalid value %s for Weight", argv[i]);
+				return -1;
 			}
-			if ((num == 0 && errno == EINVAL)
-        		            || (*endptr != '\0')) {
-				if ((xstrcasecmp(val, "UNLIMITED") == 0) ||
-				    (xstrcasecmp(val, "INFINITE")  == 0)) {
-					num = INFINITE;
-				} else {
-					error("Weight value (%s) is not a "
-					      "valid number", val);
-					break;
-				}
-			} else if (errno == ERANGE) {
-				error("Weight value (%s) is out of range",
-				      val);
-				break;
-			} else if (val[0] == '-') {
-				error("Weight value (%s) is less than zero",
-				      val);
-				break;
-			} else if (num > 0xfffffff0) {
-				error("Weight value (%s) is greater than %u",
-					val, 0xfffffff0);
-				break;
-			}
-			node_msg.weight = num;
 			update_cnt++;
 		} else if (!xstrncasecmp(tag, "Comment", MAX(tag_len, 2))) {
 			node_msg.comment = val;
@@ -156,21 +150,25 @@ scontrol_update_node (int argc, char **argv)
 				reason_str[len] = '\0';
 
 			node_msg.reason = reason_str;
-			if ((getlogin() == NULL) ||
-			    (uid_from_string(getlogin(),
-					     &node_msg.reason_uid) < 0)) {
-				node_msg.reason_uid = getuid();
+			update_cnt++;
+		} else if (!xstrncasecmp(tag, "ResumeAfter", MAX(tag_len, 1))) {
+			if (!xstrcmp(val, "-1")) {
+			    node_msg.resume_after = INFINITE;
+			} else if (parse_uint32(val, &node_msg.resume_after)) {
+				exit_code = 1;
+				error("Invalid value %s for ResumeAfter",
+				      argv[i]);
+				return -1;
 			}
 			update_cnt++;
-		}
-		else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {
+		} else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {
 			if (xstrncasecmp(val, "NoResp",
 				        MAX(val_len, 3)) == 0) {
 				node_msg.node_state = NODE_STATE_NO_RESPOND;
 				update_cnt++;
 			} else if (xstrncasecmp(val, "CANCEL_REBOOT",
 				   MAX(val_len, 3)) == 0) {
-				node_msg.node_state = NODE_STATE_CANCEL_REBOOT;
+				node_msg.node_state = NODE_STATE_REBOOT_CANCEL;
 				update_cnt++;
 			} else if (xstrncasecmp(val, "DRAIN",
 				   MAX(val_len, 3)) == 0) {
@@ -188,9 +186,21 @@ scontrol_update_node (int argc, char **argv)
 				   MAX(val_len, 3)) == 0) {
 				node_msg.node_state = NODE_RESUME;
 				update_cnt++;
+			} else if (xstrncasecmp(val, "POWER_DOWN_ASAP",
+				   MAX(val_len, 12)) == 0) {
+				node_msg.node_state =
+					NODE_STATE_POWER_DOWN |
+					NODE_STATE_POWER_DRAIN;
+				update_cnt++;
+			} else if (xstrncasecmp(val, "POWER_DOWN_FORCE",
+				   MAX(val_len, 12)) == 0) {
+				node_msg.node_state =
+					NODE_STATE_POWER_DOWN |
+					NODE_STATE_POWERED_DOWN;
+				update_cnt++;
 			} else if (xstrncasecmp(val, "POWER_DOWN",
 				   MAX(val_len, 7)) == 0) {
-				node_msg.node_state = NODE_STATE_POWER_SAVE;
+				node_msg.node_state = NODE_STATE_POWER_DOWN;
 				update_cnt++;
 			} else if (xstrncasecmp(val, "POWER_UP",
 				   MAX(val_len, 7)) == 0) {
@@ -245,6 +255,14 @@ scontrol_update_node (int argc, char **argv)
 		exit_code = 1;
 		fprintf(stderr, "You must specify a reason when DOWNING or "
 			"DRAINING a node. Request denied\n");
+		goto done;
+	}
+
+	if ((node_msg.resume_after != NO_VAL) &&
+	    (node_msg.node_state != NODE_STATE_DOWN) &&
+	    (node_msg.node_state != NODE_STATE_DRAIN)) {
+		exit_code = 1;
+		fprintf(stderr, "You can only specify a resume time when DOWNING or DRAINING a node. Request denied\n");
 		goto done;
 	}
 
@@ -308,11 +326,6 @@ scontrol_update_front_end (int argc, char **argv)
 				reason_str[len] = '\0';
 
 			front_end_msg.reason = reason_str;
-			if ((getlogin() == NULL) ||
-			    (uid_from_string(getlogin(),
-					     &front_end_msg.reason_uid) < 0)) {
-				front_end_msg.reason_uid = getuid();
-			}
 			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "State", MAX(tag_len, 1)) == 0) {

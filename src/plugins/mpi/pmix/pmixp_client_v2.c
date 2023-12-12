@@ -105,12 +105,13 @@ static pmix_status_t _fencenb_fn(const pmix_proc_t procs_v2[], size_t nprocs,
 	PMIXP_DEBUG("called");
 	int ret;
 	size_t i;
-	pmixp_proc_t *procs = xmalloc(sizeof(*procs) * nprocs);
+	pmix_proc_t *procs = xmalloc(sizeof(*procs) * nprocs);
 	bool collect = false;
 
 	for (i = 0; i < nprocs; i++) {
 		procs[i].rank = procs_v2[i].rank;
-		strncpy(procs[i].nspace, procs_v2[i].nspace, PMIXP_MAX_NSLEN);
+		strlcpy(procs[i].nspace, procs_v2[i].nspace,
+			sizeof(procs[i].nspace));
 	}
 	/* check the info keys */
 	if (info) {
@@ -231,9 +232,12 @@ int pmixp_lib_init(void)
 {
 	pmix_info_t *kvp = NULL;
 	pmix_status_t rc;
+
+#if (HAVE_PMIX_VER < 5)
 	uint32_t jobuid = pmixp_info_jobuid();
 
 	PMIXP_KVP_ADD(kvp, PMIX_USERID, &jobuid, PMIX_UINT32);
+#endif
 
 #ifdef PMIX_SERVER_TMPDIR
 	PMIXP_KVP_ADD(kvp, PMIX_SERVER_TMPDIR,

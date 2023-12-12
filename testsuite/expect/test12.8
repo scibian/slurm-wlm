@@ -27,15 +27,8 @@
 ############################################################################
 source ./globals
 
-set exit_code     0
 set job_id        0
-set file_in       "test$test_id\_sc"
-
-proc cleanup {} {
-	global bin_rm file_in
-
-	exec $bin_rm -f $file_in
-}
+set file_in       "$test_dir/job_script"
 
 set accounting_storage_enforce [get_config_param "AccountingStorageEnforce"]
 if {[param_contains $accounting_storage_enforce "nosteps"] || [param_contains $accounting_storage_enforce "nojobs"]} {
@@ -45,68 +38,27 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test requires use of Slurmdbd"
 }
 
-# Remove any vestigial files
-exec $bin_rm -f $file_in
+proc cleanup {} {
+	global job_id
+
+	cancel_job $job_id
+}
 
 make_bash_script $file_in "$srun -t00:01:00 sleep 300"
 
-spawn $sbatch -o/dev/null -t00:02:00 $file_in
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		fail "sbatch is not responding"
-	}
-	eof {
-		wait
-	}
-}
-
-if {$job_id == 0} {
-	fail "No job was submitted"
-}
+set job_id [submit_job -fail "-o /dev/null -t00:02:00 $file_in"]
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	log_error "Error waiting for job $job_id to complete"
-	cancel_job $job_id
-	set exit_code 1
+	# TODO Temporary debug to troubleshoot bug 11887 (revert once fixed)
+	run_command "$squeue"
+	run_command "$sinfo"
+	run_command "$scontrol show job"
+	run_command "$scontrol show node"
+
+	fail "Error waiting for job ($job_id) to complete"
 }
 
-set failed_cnt 0
-set timeout_cnt 0
-spawn $sacct --jobs=$job_id --format=State --noheader --starttime=00:00
-expect {
-	-re "FAILED" {
-		incr failed_cnt
-		exp_continue
-	}
-	-re "TIMEOUT" {
-		incr timeout_cnt
-		exp_continue
-	}
-	timeout {
-		fail "sacct is not responding"
-	}
-	eof {
-		wait
-	}
-}
-
-if {$failed_cnt != 2 || $timeout_cnt != 1} {
-	log_error "batch job $job_id did not FAIL and/or the step did not TIMEOUT.  Count for FAILED was $failed_cnt (not 2) and TIMEOUT was $timeout_cnt (not 1)"
-	set exit_code 1
-
-	log_debug "Gathering more job information:"
-	spawn $sacct --jobs=$job_id --starttime=00:00
-	expect {
-		eof {
-			wait
-		}
-	}
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors"
-}
+set output [run_command_output -fail "$sacct --jobs=$job_id --format=JobID,State --parsable2 --noheader --starttime=00:00"]
+subtest [regexp "$job_id\\.0\\|TIMEOUT" $output] "Verify that the srun step timed out"
+subtest [regexp "$job_id\\.batch\\|FAILED" $output] "Verify that the batch step failed"
+subtest [regexp "$job_id\\|FAILED" $output] "Verify that the job failed"

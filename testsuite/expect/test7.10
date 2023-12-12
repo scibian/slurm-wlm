@@ -1,8 +1,7 @@
 #!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of Slurm functionality
-#          Test if we can trick Slurm into using the wrong user ID
-#          through an LD_PRELOAD option.
+#          Test user namespaces support
 ############################################################################
 # Copyright (C) 2007 The Regents of the University of California.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -29,18 +28,37 @@
 ############################################################################
 source ./globals
 
-set exit_code            0
-set ld_preload           "ld_preload"
+set ld_preload  "ld_preload"
+set output_file "$test_dir/output.log"
 
 proc cleanup {} {
-	global bin_rm ld_preload
+	global bin_rm ld_preload test_name sacctmgr testsuite_user
+
+	run_command -none "$sacctmgr -vi delete user name=$testsuite_user"
+	run_command -none "$sacctmgr -vi delete account name=$test_name"
 
 	exec $bin_rm -f ${ld_preload}.c ${ld_preload}.lo ${ld_preload}.so
 }
 
-if [is_super_user] {
-	skip "This test can't be run as SlurmUser"
+if {[param_contains [get_config_param "AuthType"] "*none"]} {
+	skip "This test is incompatible with auth/none"
 }
+
+if {![check_run_as_user $testsuite_user]} {
+	skip "This test needs testsuite_user configured in globals.local"
+}
+
+if { [get_config_param -dbd "AllowNoDefAcct"] eq "Yes" } {
+	set def_acct " defaultaccount=$test_name"
+} else {
+	set def_acct ""
+}
+
+# Provide the right permissions to $testsuite_user
+cleanup
+run_command -fail "$sacctmgr -vi add account name=$test_name"
+run_command -fail "$sacctmgr -vi add user name=$testsuite_user account=$test_name$def_acct"
+run_command -fail "$sacctmgr -vi update user $testsuite_user set adminlevel=None"
 
 #
 # Build a shared object that emulates getuid/getgid functions
@@ -54,33 +72,25 @@ exec $bin_echo "int getegid(void) { return ID; }" >>${ld_preload}.c
 exec $bin_cc -c -fPIC -o ${ld_preload}.lo ${ld_preload}.c
 exec $bin_cc -shared -o ${ld_preload}.so ${ld_preload}.lo
 
-global env
-set env(LD_PRELOAD) ./${ld_preload}.so
+#
+# Submit a job as a non-root user but with LD_PRELOAD to impersonate uid=0
+#
+set job_id [submit_job -fail -user $testsuite_user -env "LD_PRELOAD=./${ld_preload}.so" "-N1 -t1 --wrap='$bin_id' --output=$output_file --error=none"]
+subtest {[regexp "$testsuite_user" [get_job_param $job_id UserId]]} "Verify that job has been launched by the right user"
+wait_for_job -fail $job_id DONE
+set output [run_command_output -fail -user $testsuite_user "$bin_cat $output_file"]
+subtest {[regexp "(uid=0)" $output]} "Verify that user namespaces allows uid 0"
 
 #
-# Submit a slurm job that will execute 'id'
+# Submit a job while faking uid=0; verify slurm doesn't submit the job as actual root
 #
-set timeout $max_job_delay
-set srun_pid [spawn $srun -N1 -t1 $bin_id]
-expect {
-	-re "(uid=.*\n)" {
-		log_error "srun ran with bogus getuid functions. Make sure you are not running with auth/none to ensure security"
-		set exit_code 1
-		exp_continue
-	}
-	-re "error" {
-		log_debug "No worries, this error is expected"
-		exp_continue
-	}
-	timeout {
-		slow_kill $srun_pid
-		fail "srun not responding"
-	}
-	eof {
-		wait
-	}
-}
+set output [run_command_output -user $testsuite_user "$bin_unshare -ru $srun $bin_id"]
+subtest {[regexp $testsuite_user $output]} "Verify slurm user is job user"
+subtest {![regexp "(uid=0)" $output]} "Verify slurm user isn't able to escalate to root"
 
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+#
+# Submit a job that fakes uid=0; verify job is not actually root
+#
+set output [run_command_output -user "$testsuite_user" "$srun $bin_unshare -ru $bin_bash -c '$bin_id; ls /root; exit 0'"]
+subtest {[regexp "(uid=0)" $output]} "Verify job can mock uid=0"
+subtest {[regexp "ls: cannot open directory '/root': Permission denied" $output]} "Verify job isn't actually root"

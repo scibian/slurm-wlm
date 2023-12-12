@@ -34,6 +34,80 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+/*
+ * The data_t struct exists to provide a generic and type safe way to work with
+ * complex data types in a tree. All data_t pointers and helpers are re-entrant
+ * but not thread safe.
+ *
+ * data_t ptr always has a root instance created by data_new() and cleaned up by
+ * data_free(). Do not use data_free() on a child data_t ptr as it will
+ * eventually cause a double free error. All the helper functions exist to
+ * manipulate the data_t struct. Never directly edit the contents of the data_t
+ * struct without one of the helpers. Most helper calls will return a data_t
+ * pointer which is a child of the existing tree and will be cleaned up by the
+ * root.
+ *
+ * To use data_t, data_init() must be called before anything else. It is safe to
+ * call this multiple times but not advised before every usage as it may be
+ * slow. data_init() is designed to allow calls for a specific plugin
+ * requirement which will not prevent loading of other plugins by the other
+ * calls to data_init(). data_fini() needs to be called after all data
+ * operations are complete is only for testing for memory leaks.
+ *
+ * data_t has very *strict* typing that is based on JSON. All of the possible
+ * types are in data_type_t. The caller is required to verify the type of the
+ * data_t pointer is correct before calling the helper function to retrieve the
+ * contents. If the source data is provided by a user (or is just unknown), then
+ * one of the many data_*convert*() functions must be used to ensure that the
+ * data_t pointer is of the correct type. These convert functions will generally
+ * allow conversion betwen all of the types except DICT and LIST (as converting
+ * between them is not well defined).
+ *
+ * There are helpers to iterate over all members of LIST and DICT data_t
+ * pointers. These are all function pointer based helpers that will call a given
+ * function pointer on each item being iterated over. The return value is
+ * operational command allowing the function pointer to inform the caller how to
+ * proceed. There are purposefully no iterators for data_t pointers to avoid any
+ * form of dangling pointers.
+ *
+ * data_t uses a plugin interface for serialization of the data to common
+ * formats. These plugins require 3rd party libraries and may not have been
+ * compiled. Any code should expect this possiblity as data_init() will fail if
+ * the plugin is not found.
+ *
+ * Example usage:
+ *
+ * //Global init requiring JSON serializer
+ * if (data_init()) fatal("failed");
+ * if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL)) fatal("failed");
+ * //Create root data entry:
+ * data_t *ex = data_new();
+ * //Set data entry to be a dictionary type
+ * data_set_dict(ex);
+ * //Set key test1 to be string "test1 value"
+ * data_set_string(data_key_set(ex, "test1"), "test1 value");
+ * //Set key test2 to be integer 12345
+ * data_set_int(data_key_set(ex, "test2"), 12345);
+ * // serialize into JSON string
+ * char *json = NULL;
+ * serialize_g_data_to_string(&json, &length, ex, MIME_TYPE_JSON, SER_FLAGS_PRETTY);
+ * // cleanup the example
+ * FREE_NULL_DATA(ex);
+ * // log the json
+ * debug("example json: %s", json);
+ * // deserialise the JSON back into data_t
+ * serialize_g_string_to_data(&ex, json, strlen(json), MIME_TYPE_JSON);
+ * xfree(json);
+ * // verify contents
+ * xassert(data_get_type(ex) == DATA_TYPE_DICT);
+ * xassert(!xstrcmp(data_get_string(data_key_get(ex, "test1"), "test1 value"));
+ * xassert(data_get_int(data_key_get(ex, "test2") == 12345);
+ * // cleanup tree
+ * FREE_NULL_DATA(ex);
+ * // release all global memory and plugins
+ * data_fini();
+ */
+
 #ifndef _DATA_H
 #define _DATA_H
 
@@ -42,6 +116,7 @@
 #include <stddef.h>
 
 #include "src/common/list.h"
+#include "src/common/plugrack.h"
 
 /*
  * The possible types of data.
@@ -128,12 +203,17 @@ typedef data_for_each_cmd_t (*DataDictForF) (const char *key, data_t *data, void
 typedef data_for_each_cmd_t (*DataDictForFConst) (const char *key, const data_t *data, void *arg);
 
 /*
- * Initialize static structs needed by data functions.
- * WARNING: must be called only once before any data commands
+ * Initialize static structs needed by data functions
+ *
  * RET SLURM_SUCCESS or error
  */
-extern int data_init_static(void);
-extern void data_destroy_static(void);
+extern int data_init(void);
+/*
+ * Cleanup global memory used by data_t helpers
+ *
+ * WARNING: must be called only once after all data commands complete
+ */
+extern void data_fini(void);
 
 /*
  * Create new data struct.
@@ -352,6 +432,21 @@ extern int data_list_for_each(data_t *d, DataListForF f, void *arg);
 extern int data_list_for_each_const(const data_t *d, DataListForFConst f, void *arg);
 
 /*
+ * Use match() function ptr find a specific matching value in list
+ * IN data - data list to find entity with given needle
+ * IN match - strict weak ordering function that compares two data to arg
+ *   returning true if the first precedes the second.
+ * IN needle - match against needle value
+ * NOTE: the lists are currently unordered but this is being implemented
+ *   as strict weak order to allow log(n) searching in the future.
+ * RET ptr to matching data or NULL if match not found
+ */
+extern data_t *data_list_find_first(
+	data_t *data,
+	bool (*match)(const data_t *data, void *needle),
+	void *needle);
+
+/*
  *  For each item in data dictionary [d], invokes the function [f] with [arg].
  *
  *  Returns a count of the number of items on which [f] returned
@@ -393,6 +488,14 @@ extern data_t *data_list_append(data_t *data);
 extern data_t *data_list_prepend(data_t *data);
 
 /*
+ * Extract first data from start of list
+ * IN data data object (list type only)
+ * RET first data start of list or NULL if list is empty
+ * 	Result must be free'd up with FREE_NULL_DATA()
+ */
+extern data_t *data_list_dequeue(data_t *data);
+
+/*
  * Copy and join array of data into a single list.
  * IN data - array of data objects (list type only) to copy/merge into a single
  * data list. Last entry must be NULL.
@@ -410,6 +513,31 @@ extern data_t *data_list_join(const data_t **data, bool flatten_lists);
 extern size_t data_get_list_length(const data_t *data);
 
 /*
+ * Get last entity in data list
+ * IN data data list to get last entry
+ * RET last entity in data list or NULL (empty list)
+ */
+extern data_t *data_get_list_last(data_t *data);
+
+/*
+ * Split up string using token and append values to dst
+ * IN dst - data list to append with values
+ * IN src - string to split by token
+ * IN token - token to split src with
+ * RET SLURM_SUCCESS or error
+ */
+extern int data_list_split_str(data_t *dst, const char *src, const char *token);
+
+/*
+ * Create string by joining strings in list with token
+ * IN dst - ptr to string to populate (caller must xfree())
+ * IN src - data list to join
+ * IN token - token to join src with
+ * RET SLURM_SUCCESS or error
+ */
+extern int data_list_join_str(char **dst, const data_t *src, const char *token);
+
+/*
  * Get data entry with given key (from constant data).
  * IN data constant data object to find entity with given key string
  * IN key string of key to find
@@ -424,6 +552,29 @@ extern const data_t *data_key_get_const(const data_t *data, const char *key);
  * RET ptr to data or NULL if it doesn't exist.
  */
 extern data_t *data_key_get(data_t *data, const char *key);
+
+/*
+ * Use match() function ptr find a specific matching value in dictionary
+ * IN data - data object to find entity with given key string
+ * IN match - strict weak ordering function that compares two data to arg
+ *   returning true if the first precedes the second.
+ * IN needle - match against needle value
+ * NOTE: the dictionaries are currently unordered but this is being implemented
+ *   as strict weak order to allow log(n) searching in the future.
+ * RET ptr to matching data or NULL if match not found
+ */
+extern data_t *data_dict_find_first(
+	data_t *data,
+	bool (*match)(const char *key, data_t *data, void *needle),
+	void *needle);
+
+/*
+ * Get data entry with given integer key
+ * IN data data object to find entity with given key string
+ * IN key string of key to find
+ * RET ptr to data or NULL if it doesn't exist.
+ */
+extern data_t *data_key_get_int(data_t *data, int64_t key);
 
 /*
  * Create data entry with given key.

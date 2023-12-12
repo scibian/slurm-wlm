@@ -37,18 +37,15 @@
 
 #include "cons_common.h"
 
-node_res_record_t *select_node_record = NULL;
 node_use_record_t *select_node_usage  = NULL;
 
-/* Delete the given select_node_record and select_node_usage arrays */
-extern void node_data_destroy(node_use_record_t *node_usage,
-			      node_res_record_t *node_data)
+/* Delete the given select_node_usage array */
+extern void node_data_destroy(node_use_record_t *node_usage)
 {
 	int i;
 
-	xfree(node_data);
 	if (node_usage) {
-		for (i = 0; i < select_node_cnt; i++) {
+		for (i = 0; next_node(&i); i++) {
 			FREE_NULL_LIST(node_usage[i].gres_list);
 		}
 		xfree(node_usage);
@@ -64,29 +61,30 @@ extern void node_data_dump(void)
 	if (!(slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE))
 		return;
 
-	for (i = 0; i < select_node_cnt; i++) {
-		node_ptr = select_node_record[i].node_ptr;
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		info("Node:%s Boards:%u SocketsPerBoard:%u CoresPerSocket:%u ThreadsPerCore:%u TotalCores:%u CumeCores:%u TotalCPUs:%u PUsPerCore:%u AvailMem:%"PRIu64" AllocMem:%"PRIu64" State:%s(%d)",
 		     node_ptr->name,
-		     select_node_record[i].boards,
-		     select_node_record[i].sockets,
-		     select_node_record[i].cores,
-		     select_node_record[i].threads,
-		     select_node_record[i].tot_cores,
-		     select_node_record[i].cume_cores,
-		     select_node_record[i].cpus,
-		     select_node_record[i].vpus,
-		     select_node_record[i].real_memory,
-		     select_node_usage[i].alloc_memory,
-		     common_node_state_str(select_node_usage[i].node_state),
-		     select_node_usage[i].node_state);
+		     node_ptr->boards,
+		     node_ptr->tot_sockets / node_ptr->boards,
+		     node_ptr->cores,
+		     node_ptr->threads,
+		     node_ptr->tot_cores,
+		     cr_get_coremap_offset(i + 1),
+		     node_ptr->cpus,
+		     node_ptr->tpc,
+		     node_ptr->real_memory,
+		     select_node_usage[node_ptr->index].alloc_memory,
+		     common_node_state_str(
+			     select_node_usage[node_ptr->index].node_state),
+		     select_node_usage[node_ptr->index].node_state);
 
-		if (select_node_usage[i].gres_list)
-			gres_list = select_node_usage[i].gres_list;
+		if (select_node_usage[node_ptr->index].gres_list)
+			gres_list = select_node_usage[node_ptr->index].
+					gres_list;
 		else
 			gres_list = node_ptr->gres_list;
 		if (gres_list)
-			gres_plugin_node_state_log(gres_list, node_ptr->name);
+			gres_node_state_log(gres_list, node_ptr->name);
 	}
 }
 
@@ -95,36 +93,26 @@ extern node_use_record_t *node_data_dup_use(
 	node_use_record_t *orig_ptr, bitstr_t *node_map)
 {
 	node_use_record_t *new_use_ptr, *new_ptr;
+	node_record_t *node_ptr;
 	List gres_list;
-	int i, i_first, i_last;
 
 	if (orig_ptr == NULL)
 		return NULL;
 
-	new_use_ptr = xcalloc(select_node_cnt, sizeof(node_use_record_t));
+	new_use_ptr = xcalloc(node_record_count, sizeof(node_use_record_t));
 	new_ptr = new_use_ptr;
 
-	if (node_map) {
-		i_first = bit_ffs(node_map);
-		if (i_first != -1)
-			i_last = bit_fls(node_map) + 1;
-		else
-			i_last = -1;
-	} else {
-		i_first = 0;
-		i_last = select_node_cnt;
-	}
-
-	for (i = i_first; i < i_last; i++) {
-		if (node_map && !bit_test(node_map, i))
-			continue;
+	for (int i = 0;
+	     (node_ptr =
+	      (node_map ? next_node_bitmap(node_map, &i) : next_node(&i)));
+	     i++) {
 		new_ptr[i].node_state   = orig_ptr[i].node_state;
 		new_ptr[i].alloc_memory = orig_ptr[i].alloc_memory;
 		if (orig_ptr[i].gres_list)
 			gres_list = orig_ptr[i].gres_list;
 		else
-			gres_list = node_record_table_ptr[i].gres_list;
-		new_ptr[i].gres_list = gres_plugin_node_state_dup(gres_list);
+			gres_list = node_ptr->gres_list;
+		new_ptr[i].gres_list = gres_node_state_list_dup(gres_list);
 	}
 	return new_use_ptr;
 }

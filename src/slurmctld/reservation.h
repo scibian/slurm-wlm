@@ -48,10 +48,10 @@
 #include "src/slurmctld/slurmctld.h"
 
 /* Create a resource reservation */
-extern int create_resv(resv_desc_msg_t *resv_desc_ptr);
+extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg);
 
 /* Update an existing resource reservation */
-extern int update_resv(resv_desc_msg_t *resv_desc_ptr);
+extern int update_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg);
 
 /* Delete an existing resource reservation */
 extern int delete_resv(reservation_name_msg_t *resv_desc_ptr);
@@ -255,5 +255,7 @@ extern void reservation_update_groups(int force);
 extern List get_resv_list(char *name, char **err_resv);
 
 extern void set_reserved_license_count(licenses_t *license);
+
+extern int get_magnetic_resv_count(void);
 
 #endif /* !_RESERVATION_H */

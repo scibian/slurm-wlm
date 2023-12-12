@@ -76,7 +76,7 @@ int pmixp_nspaces_init(void)
 
 int pmixp_nspaces_finalize(void)
 {
-	list_destroy(_pmixp_nspaces.nspaces);
+	FREE_NULL_LIST(_pmixp_nspaces.nspaces);
 	return 0;
 }
 
@@ -93,7 +93,7 @@ int pmixp_nspaces_add(char *name, uint32_t nnodes, int node_id,
 #ifndef NDEBUG
 	nsptr->magic = PMIXP_NSPACE_MAGIC;
 #endif
-	strcpy(nsptr->name, name);
+	strlcpy(nsptr->name, name, sizeof(nsptr->name));
 	nsptr->nnodes = nnodes;
 	nsptr->node_id = node_id;
 	nsptr->ntasks = ntasks;

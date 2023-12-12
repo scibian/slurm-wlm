@@ -1,5 +1,5 @@
 /*****************************************************************************\
- * src/slurmd/slurmstepd/mgr.c - job management functions for slurmstepd
+ * src/slurmd/slurmstepd/mgr.h - job management functions for slurmstepd
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -47,13 +47,13 @@
 /*
  * Send batch exit code to slurmctld. Non-zero rc will DRAIN the node.
  */
-void batch_finish(stepd_step_rec_t *job, int rc);
+void batch_finish(stepd_step_rec_t *step, int rc);
 
 /*
  * Initialize a stepd_step_rec_t structure for a launch tasks
  */
 stepd_step_rec_t *mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg,
-					 slurm_addr_t *client,
+					 slurm_addr_t *cli,
 					 slurm_addr_t *self,
 					 uint16_t protocol_version);
 
@@ -66,7 +66,7 @@ stepd_step_rec_t *mgr_launch_batch_job_setup(batch_job_launch_msg_t *msg,
 /*
  * Finalize a batch job.
  */
-void mgr_launch_batch_job_cleanup(stepd_step_rec_t *job, int rc);
+void mgr_launch_batch_job_cleanup(stepd_step_rec_t *step, int rc);
 
 /*
  * Executes the functions of the slurmd job manager process,
@@ -76,7 +76,7 @@ void mgr_launch_batch_job_cleanup(stepd_step_rec_t *job, int rc);
  * Returns 0 if job ran and completed successfully.
  * Returns errno if job startup failed. NOTE: This will DRAIN the node.
  */
-int job_manager(stepd_step_rec_t *job);
+int job_manager(stepd_step_rec_t *step);
 
 /*
  * Register passwd entries so that we do not need to call initgroups(2)
@@ -84,5 +84,17 @@ int job_manager(stepd_step_rec_t *job);
  */
 extern void init_initgroups(int);
 
+
+struct priv_state {
+	uid_t saved_uid;
+	gid_t saved_gid;
+	gid_t *gid_list;
+	int ngids;
+	char saved_cwd[4096];
+};
+
+extern int drop_privileges(stepd_step_rec_t *step, bool do_setuid,
+			   struct priv_state *state, bool get_list);
+extern int reclaim_privileges(struct priv_state *state);
 
 #endif

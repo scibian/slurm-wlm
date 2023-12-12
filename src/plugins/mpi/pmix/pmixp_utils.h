@@ -42,7 +42,6 @@
 
 extern int pmixp_count_digits_base10(uint32_t val);
 
-void pmixp_xfree_xmalloced(void *x);
 void pmixp_free_buf(void *x);
 int pmixp_usock_create_srv(char *path);
 size_t pmixp_read_buf(int fd, void *buf, size_t count, int *shutdown,
@@ -62,9 +61,7 @@ int pmixp_stepd_send(const char *nodelist, const char *address,
 int pmixp_p2p_send(const char *nodename, const char *address, const char *data,
 		   uint32_t len, unsigned int start_delay,
 		   unsigned int retry_cnt, int silent);
-int pmixp_rmdir_recursively(char *path);
-int pmixp_fixrights(char *path, uid_t uid, mode_t mode);
-int pmixp_mkdir(char *path, mode_t rights);
+int pmixp_mkdir(char *path);
 
 /* lightweight pmix list of pointers */
 #define PMIXP_LIST_DEBUG 0

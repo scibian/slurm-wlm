@@ -13,14 +13,16 @@
 AC_DEFUN([X_AC_LUA],
 [
 	x_ac_lua_pkg_name="lua"
-	#check for 5.3 then 5.2 then 5.1
-	PKG_CHECK_EXISTS([lua5.3], [x_ac_lua_pkg_name=lua5.3],
+	#check for 5.4, 5.3, 5.2 and then 5.1
+	PKG_CHECK_EXISTS([lua5.4], [x_ac_lua_pkg_name=lua5.4],
+		[PKG_CHECK_EXISTS([lua-5.4], [x_ac_lua_pkg_name=lua-5.4],
+		[PKG_CHECK_EXISTS([lua5.3], [x_ac_lua_pkg_name=lua5.3],
 		[PKG_CHECK_EXISTS([lua-5.3], [x_ac_lua_pkg_name=lua-5.3],
 		[PKG_CHECK_EXISTS([lua5.2], [x_ac_lua_pkg_name=lua5.2],
 		[PKG_CHECK_EXISTS([lua-5.2], [x_ac_lua_pkg_name=lua-5.2],
 		[PKG_CHECK_EXISTS([lua5.1], [x_ac_lua_pkg_name=lua5.1],
 		[PKG_CHECK_EXISTS([lua-5.1], [x_ac_lua_pkg_name=lua-5.1],
-	        [x_ac_lua_pkg_name="lua >= 5.1"])])])])])])
+	        [x_ac_lua_pkg_name="lua >= 5.1"])])])])])])])])
 	PKG_CHECK_MODULES([lua], ${x_ac_lua_pkg_name},
                 [x_ac_have_lua="yes"],
                 [x_ac_have_lua="no"])
@@ -32,14 +34,20 @@ AC_DEFUN([X_AC_LUA],
 	  CFLAGS="$CFLAGS $lua_CFLAGS"
 	  LIBS="$LIBS $lua_LIBS"
 	  AC_MSG_CHECKING([for whether we can link to liblua])
-	  AC_TRY_LINK(
-		[#include <lua.h>
-                 #include <lauxlib.h>
-		 #include <lualib.h>
-		],
-		[lua_State *L = luaL_newstate (); luaL_openlibs(L);
-		],
-		[], [x_ac_have_lua="no"])
+	  AC_LINK_IFELSE(
+		  [AC_LANG_PROGRAM(
+			   [[
+			     #include <lua.h>
+			     #include <lauxlib.h>
+			     #include <lualib.h>
+			   ]],
+			   [[
+			     lua_State *L = luaL_newstate();
+			     luaL_openlibs(L);
+			   ]],
+		   )],
+		  [],
+		  [x_ac_have_lua="no"])
 
 	  AC_MSG_RESULT([$x_ac_have_lua $x_ac_lua_pkg_name])
 	  if test "x$x_ac_have_lua" = "xno"; then

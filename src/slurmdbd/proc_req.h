@@ -45,6 +45,7 @@
 
 typedef struct {
 	slurm_persist_conn_t *conn;
+	slurm_persist_conn_t *conn_send;
 	void *db_conn; /* database connection */
 	char *tres_str;
 } slurmdbd_conn_t;
@@ -58,7 +59,7 @@ typedef struct {
  * buffer OUT - outgoing response, must be freed by caller
  * uid IN/OUT - user ID who initiated the RPC
  * RET SLURM_SUCCESS or error code */
-extern int proc_req(void *conn, persist_msg_t *msg,
-		    Buf *out_buffer, uint32_t *uid);
+extern int proc_req(void *conn, persist_msg_t *msg, buf_t **out_buffer,
+		    uint32_t *uid);
 
 #endif /* !_PROC_REQ */

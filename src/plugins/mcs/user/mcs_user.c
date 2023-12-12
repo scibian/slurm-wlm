@@ -35,7 +35,7 @@
 \*****************************************************************************/
 
 #include "slurm/slurm_errno.h"
-#include "src/common/slurm_mcs.h"
+#include "src/interfaces/mcs.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
 
@@ -120,7 +120,8 @@ extern int mcs_p_set_mcs_label(job_record_t *job_ptr, char *label)
 /*
  * mcs_p_check_mcs_label() is called to check mcs_label.
  */
-extern int mcs_p_check_mcs_label (uint32_t user_id, char *mcs_label)
+extern int mcs_p_check_mcs_label(uint32_t user_id, char *mcs_label,
+				 bool assoc_locked)
 {
 	char *user = NULL;
 	int rc = SLURM_SUCCESS;

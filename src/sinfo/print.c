@@ -150,7 +150,7 @@ static int _resv_name_width(reserve_info_t *resv_ptr)
 
 static void _print_reservation(reserve_info_t *resv_ptr, int width)
 {
-	char format[64], tmp1[32], tmp2[32], tmp3[32];
+	char format[64], tmp1[256], tmp2[256], tmp3[32];
 	char *state = "INACTIVE";
 	uint32_t duration;
 	time_t now = time(NULL);
@@ -605,6 +605,19 @@ int _print_disk(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_extra(sinfo_data_t *sinfo_data, int width, bool right_justify,
+		 char *suffix)
+{
+	if (sinfo_data)
+		_print_str(sinfo_data->extra, width, right_justify, true);
+	else
+		_print_str("EXTRA", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_features(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
@@ -700,10 +713,10 @@ int _print_memory(sinfo_data_t * sinfo_data, int width,
 {
 	char id[FORMAT_STRING_SIZE];
 	if (sinfo_data) {
-		_build_min_max_32_string(id, FORMAT_STRING_SIZE,
-				      sinfo_data->min_mem,
-				      sinfo_data->max_mem,
-				      false, false);
+		_build_free_mem_min_max_64(id, FORMAT_STRING_SIZE,
+					   sinfo_data->min_mem,
+					   sinfo_data->max_mem,
+					   false);
 		_print_str(id, width, right_justify, true);
 	} else
 		_print_str("MEMORY", width, right_justify, true);
@@ -970,6 +983,21 @@ int _print_reason(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_resv_name(sinfo_data_t *sinfo_data, int width,
+		     bool right_justify, char *suffix)
+{
+	if (sinfo_data) {
+		char *resv_name = sinfo_data->resv_name ?
+			sinfo_data->resv_name : "";
+		_print_str(resv_name, width, right_justify, true);
+	} else
+		_print_str("RESERVATION", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_root(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
@@ -1060,6 +1088,27 @@ int _print_state_compact(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_state_complete(sinfo_data_t * sinfo_data, int width,
+			  bool right_justify, char *suffix)
+{
+	if (sinfo_data && sinfo_data->nodes_total) {
+		char *state;
+		uint32_t my_state;
+
+		my_state = sinfo_data->node_state;
+		state = xstrtolower(node_state_string_complete(my_state));
+		_print_str(state, width, right_justify, true);
+		xfree(state);
+	} else if (sinfo_data)
+		_print_str("n/a", width, right_justify, true);
+	else
+		_print_str("STATECOMPLETE", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_state_long(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
@@ -1106,7 +1155,7 @@ int _print_timestamp(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
 	if (sinfo_data && sinfo_data->reason_time) {
-		char time_str[32];
+		char time_str[256];
 		slurm_make_time_str(&sinfo_data->reason_time,
 				    time_str, sizeof(time_str));
 		_print_str(time_str, width, right_justify, true);

@@ -51,11 +51,13 @@
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_accounting_storage.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/slurm_persist_conn.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
+#include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/locks.h"
 
@@ -73,6 +75,7 @@ extern uint16_t running_cache __attribute__((weak_import));
 extern pthread_mutex_t assoc_cache_mutex __attribute__((weak_import));
 extern pthread_cond_t assoc_cache_cond __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
+extern List assoc_mgr_tres_list __attribute__((weak_import));
 #else
 slurm_conf_t slurm_conf;
 List job_list = NULL;
@@ -80,6 +83,7 @@ uint16_t running_cache = RUNNING_CACHE_STATE_NOTRUNNING;
 pthread_mutex_t assoc_cache_mutex;
 pthread_cond_t assoc_cache_cond;
 int node_record_count;
+List assoc_mgr_tres_list;
 #endif
 
 /*
@@ -118,7 +122,16 @@ static bool running_db_inx = 0;
 static int first = 1;
 static time_t plugin_shutdown = 0;
 
+static char *cluster_nodes = NULL; /* Protected by node write lock */
+static char *cluster_tres = NULL; /* Protected by node write lock */
+
+static hostlist_t cluster_hl = NULL;
+static pthread_mutex_t cluster_hl_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr);
+extern int jobacct_storage_p_job_heavy(void *db_conn, job_record_t *job_ptr);
+extern void acct_storage_p_send_all(void *db_conn, time_t event_time,
+				    slurm_msg_type_t msg_type);
 
 static void _partial_free_dbd_job_start(void *object)
 {
@@ -127,6 +140,9 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->account);
 		xfree(req->array_task_str);
 		xfree(req->constraints);
+		xfree(req->container);
+		xfree(req->env_hash);
+		xfree(req->licenses);
 		xfree(req->mcs_label);
 		xfree(req->name);
 		xfree(req->nodes);
@@ -134,6 +150,8 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->node_inx);
 		xfree(req->wckey);
 		xfree(req->gres_used);
+		xfree(req->script_hash);
+		xfree(req->submit_line);
 		xfree(req->tres_alloc_str);
 		xfree(req->tres_req_str);
 		xfree(req->work_dir);
@@ -149,6 +167,7 @@ static void _partial_destroy_dbd_job_start(void *object)
 	}
 }
 
+/* Anything allocated here must be freed in _partial_free_dbd_job_start() */
 static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 				job_record_t *job_ptr)
 {
@@ -204,18 +223,20 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	req->db_flags      = job_ptr->db_flags;
 
 	req->db_index      = job_ptr->db_index;
-	req->constraints   = xstrdup(job_ptr->details->features);
+	if (!IS_JOB_PENDING(job_ptr))
+		req->constraints   = xstrdup(job_ptr->details->features_use);
+	else
+		req->constraints   = xstrdup(job_ptr->details->features);
+
+	req->container     = xstrdup(job_ptr->container);
+	req->licenses = xstrdup(job_ptr->licenses);
 	req->job_state     = job_ptr->job_state;
 	req->state_reason_prev = job_ptr->state_reason_prev_db;
 	req->name          = xstrdup(job_ptr->name);
 	req->nodes         = xstrdup(job_ptr->nodes);
 	req->work_dir      = xstrdup(job_ptr->details->work_dir);
 
-	if (job_ptr->node_bitmap) {
-		char temp_bit[BUF_SIZE];
-		req->node_inx = xstrdup(bit_fmt(temp_bit, sizeof(temp_bit),
-						job_ptr->node_bitmap));
-	}
+	/* create req->node_inx outside of locks when packing */
 
 	if (!IS_JOB_PENDING(job_ptr) && job_ptr->part_ptr)
 		req->partition = xstrdup(job_ptr->part_ptr->name);
@@ -225,6 +246,13 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	if (job_ptr->details) {
 		req->req_cpus = job_ptr->details->min_cpus;
 		req->req_mem = job_ptr->details->pn_min_memory;
+		req->submit_line = xstrdup(job_ptr->details->submit_line);
+		/* Only send this once per instance of the job! */
+		if (!job_ptr->db_index || (job_ptr->db_index == NO_VAL64)) {
+			req->env_hash = xstrdup(job_ptr->details->env_hash);
+			req->script_hash =
+				xstrdup(job_ptr->details->script_hash);
+		}
 	}
 	req->resv_id       = job_ptr->resv_id;
 	req->priority      = job_ptr->priority;
@@ -240,6 +268,61 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	return SLURM_SUCCESS;
 }
 
+static void _sending_script_env(dbd_id_rc_msg_t *id_ptr, job_record_t *job_ptr)
+{
+	xassert(id_ptr);
+	xassert(job_ptr);
+	xassert(job_ptr->details);
+
+	if ((slurm_conf.conf_flags & CTL_CONF_SJS) &&
+	    (id_ptr->flags & JOB_SEND_SCRIPT) &&
+	    job_ptr->details->script_hash)
+		job_ptr->bit_flags |= JOB_SEND_SCRIPT;
+	if ((slurm_conf.conf_flags & CTL_CONF_SJE) &&
+	    (id_ptr->flags & JOB_SEND_ENV) &&
+	    job_ptr->details->env_hash)
+		job_ptr->bit_flags |= JOB_SEND_ENV;
+
+	if (jobacct_storage_p_job_heavy(slurmdbd_conn, job_ptr) ==
+	    SLURM_SUCCESS) {
+		job_ptr->bit_flags &= ~JOB_SEND_SCRIPT;
+		job_ptr->bit_flags &= ~JOB_SEND_ENV;
+	}
+}
+
+static int _set_db_inx_for_each(void *x, void *arg)
+{
+	dbd_id_rc_msg_t *id_ptr = x;
+	job_record_t *job_ptr;
+
+	if ((job_ptr = find_job_record(id_ptr->job_id))) {
+		if (job_ptr->db_index) {
+			/*
+			 * Only set if db_index != 0.
+			 * Is set to NO_VAL64 previously
+			 * but may have been set to 0
+			 * after the fact, which means
+			 * the start needs to be sent
+			 * again.
+			 */
+			job_ptr->db_index = id_ptr->db_index;
+			job_ptr->job_state &= (~JOB_UPDATE_DB);
+		}
+		_sending_script_env(id_ptr, job_ptr);
+	}
+
+	return 0;
+}
+
+static int _reset_db_inx_for_each(void *x, void *arg)
+{
+	job_record_t *job_ptr = x;
+
+	if (job_ptr->db_index == NO_VAL64)
+		job_ptr->db_index = 0;
+
+	return 0;
+}
 
 static void *_set_db_inx_thread(void *no_data)
 {
@@ -256,6 +339,12 @@ static void *_set_db_inx_thread(void *no_data)
 		{ NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	/* DEF_TIMERS; */
 
+	/*
+	 * We only want to destory the pointer here not the contents so call
+	 * special function _partial_destroy_dbd_job_start.
+	 */
+	List local_job_list = list_create(_partial_destroy_dbd_job_start);
+
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NAME, "dbinx", NULL, NULL, NULL) < 0) {
 		error("cannot set my name to dbinx: %m");
@@ -265,7 +354,6 @@ static void *_set_db_inx_thread(void *no_data)
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	while (!plugin_shutdown) {
-		List local_job_list = NULL;
 		/* START_TIMER; */
 		/* info("starting db_thread"); */
 		slurm_mutex_lock(&db_inx_lock);
@@ -284,13 +372,6 @@ static void *_set_db_inx_thread(void *no_data)
 		 * data isn't that sensitive and will only be updated
 		 * later in this function. */
 		lock_slurmctld(job_read_lock);	/* USE READ LOCK, SEE ABOVE */
-		if (!job_list) {
-			unlock_slurmctld(job_read_lock);
-			slurm_mutex_unlock(&db_inx_lock);
-			error("_set_db_inx_thread: No job list, waiting");
-			sleep(1);
-			continue;
-		}
 		itr = list_iterator_create(job_list);
 		while ((job_ptr = list_next(itr))) {
 			dbd_job_start_msg_t *req;
@@ -325,14 +406,6 @@ static void *_set_db_inx_thread(void *no_data)
 				continue;
 			}
 
-			/*
-			 * We only want to destory the pointer
-			 * here not the contents so call special function
-			 * _partial_destroy_dbd_job_start.
-			 */
-			if (!local_job_list)
-				local_job_list = list_create(
-					_partial_destroy_dbd_job_start);
 			list_append(local_job_list, req);
 			/* Just so we don't have a crazy
 			   amount of messages at once.
@@ -343,7 +416,7 @@ static void *_set_db_inx_thread(void *no_data)
 		list_iterator_destroy(itr);
 		unlock_slurmctld(job_read_lock);
 
-		if (local_job_list) {
+		while (list_count(local_job_list)) {
 			persist_msg_t req = {0}, resp = {0};
 			dbd_list_msg_t send_msg, *got_msg;
 			int rc = SLURM_SUCCESS;
@@ -354,9 +427,9 @@ static void *_set_db_inx_thread(void *no_data)
 
 			req.msg_type = DBD_SEND_MULT_JOB_START;
 			req.data = &send_msg;
+
 			rc = dbd_conn_send_recv(
 				SLURM_PROTOCOL_VERSION, &req, &resp);
-			FREE_NULL_LIST(local_job_list);
 			if (rc != SLURM_SUCCESS) {
 				error("DBD_SEND_MULT_JOB_START "
 				      "failure: %m");
@@ -375,59 +448,40 @@ static void *_set_db_inx_thread(void *no_data)
 				      resp.msg_type);
 				reset = 1;
 			} else {
-				dbd_id_rc_msg_t *id_ptr = NULL;
 				got_msg = (dbd_list_msg_t *) resp.data;
 
 				lock_slurmctld(job_write_lock);
-				if (!job_list) {
-					error("_set_db_inx_thread: "
-					      "No job list, must be "
-					      "shutting down");
-					goto end_it;
-				}
-				itr = list_iterator_create(got_msg->my_list);
-				while ((id_ptr = list_next(itr))) {
-					if ((job_ptr = find_job_record(
-						     id_ptr->job_id)) &&
-					    job_ptr->db_index) {
-						/* Only set if db_index != 0.
-						 * Is set to NO_VAL64 previously
-						 * but may have been set to 0
-						 * after the fact, which means
-						 * the start needs to be sent
-						 * again. */
-						job_ptr->db_index =
-							id_ptr->db_index;
-						job_ptr->job_state &=
-							(~JOB_UPDATE_DB);
-					}
-				}
-				list_iterator_destroy(itr);
+				list_for_each(got_msg->my_list,
+					      _set_db_inx_for_each, NULL);
 				unlock_slurmctld(job_write_lock);
+
+				/*
+				 * Assume the returned number of elements is
+				 * equivalent to the number that was sent out,
+				 * and thus those have completed processing
+				 * and need to be dropped.
+				 *
+				 * This is due to slurm_pack_list_until()
+				 * potentially sending only a part of the List
+				 * to avoid creating an overly-large RPC that
+				 * cannot be processed the SlurmDBD.
+				 */
+				list_flush_max(local_job_list,
+					       list_count(got_msg->my_list));
 
 				slurmdbd_free_list_msg(got_msg);
 			}
 
 			if (reset) {
+				list_flush(local_job_list);
 				lock_slurmctld(job_read_lock);
 				/* USE READ LOCK, SEE ABOVE on first
 				 * read lock */
-				itr = list_iterator_create(job_list);
-				if (!job_list) {
-					error("_set_db_inx_thread: "
-					      "No job list, must be "
-					      "shutting down");
-					goto end_it;
-				}
-				while ((job_ptr = list_next(itr))) {
-					if (job_ptr->db_index == NO_VAL64)
-						job_ptr->db_index = 0;
-				}
-				list_iterator_destroy(itr);
+				list_for_each(job_list,
+					      _reset_db_inx_for_each, NULL);
 				unlock_slurmctld(job_read_lock);
 			}
 		}
-	end_it:
 		running_db_inx = 0;
 
 		/* END_TIMER; */
@@ -448,7 +502,82 @@ static void *_set_db_inx_thread(void *no_data)
 		slurm_mutex_unlock(&db_inx_lock);
 	}
 
+	FREE_NULL_LIST(local_job_list);
+
 	return NULL;
+}
+
+static int _send_cluster_tres(void *db_conn,
+			      char *cluster_nodes,
+			      char *tres_str_in,
+			      time_t event_time,
+			      uint16_t rpc_version)
+{
+	persist_msg_t msg = {0};
+	dbd_cluster_tres_msg_t req;
+	int rc = SLURM_ERROR;
+
+	if (!tres_str_in)
+		return rc;
+
+	debug2("Sending tres '%s' for cluster", tres_str_in);
+	memset(&req, 0, sizeof(dbd_cluster_tres_msg_t));
+	req.cluster_nodes = cluster_nodes;
+	req.event_time    = event_time;
+	req.tres_str      = tres_str_in;
+
+	msg.msg_type      = DBD_CLUSTER_TRES;
+	msg.conn          = db_conn;
+	msg.data          = &req;
+
+	dbd_conn_send_recv_rc_msg(SLURM_PROTOCOL_VERSION, &msg, &rc);
+
+	return rc;
+}
+
+static void _update_cluster_nodes(void)
+{
+	static int prev_node_record_count = -1;
+	static bitstr_t *total_node_bitmap = NULL;
+	assoc_mgr_lock_t locks = { .tres = READ_LOCK };
+
+	xassert(verify_lock(NODE_LOCK, WRITE_LOCK));
+
+	xfree(cluster_nodes);
+	if (prev_node_record_count != node_record_count) {
+		FREE_NULL_BITMAP(total_node_bitmap);
+		total_node_bitmap = bit_alloc(node_record_count);
+		/*
+		 * Set all bits, bitmap2hostlist() will filter out the non-NULL
+		 * node_record_t's in node_record_table_ptr.
+		 */
+		bit_set_all(total_node_bitmap);
+		prev_node_record_count = node_record_count;
+	}
+
+	slurm_mutex_lock(&cluster_hl_mutex);
+
+	FREE_NULL_HOSTLIST(cluster_hl);
+	cluster_hl = bitmap2hostlist(total_node_bitmap);
+	if (cluster_hl == NULL) {
+		cluster_nodes = xstrdup("");
+	} else {
+		/*
+		 * Can sort since db job's node_inx is based off of
+		 * cluster_nodes instead of node_record_table_ptr.
+		 * See acct_storage_p_node_inx().
+		 */
+		hostlist_sort(cluster_hl);
+		cluster_nodes = hostlist_ranged_string_xmalloc(cluster_hl);
+	}
+
+	assoc_mgr_lock(&locks);
+	xfree(cluster_tres);
+	cluster_tres = slurmdb_make_tres_string(
+		assoc_mgr_tres_list, TRES_STR_FLAG_SIMPLE);
+	assoc_mgr_unlock(&locks);
+
+	slurm_mutex_unlock(&cluster_hl_mutex);
 }
 
 /*
@@ -505,6 +634,9 @@ extern int fini ( void )
 		pthread_join(db_inx_handler_thread, NULL);
 
 	ext_dbd_fini();
+	xfree(cluster_nodes);
+	xfree(cluster_tres);
+	FREE_NULL_HOSTLIST(cluster_hl);
 
 	first = 1;
 
@@ -2517,11 +2649,64 @@ extern int clusteracct_storage_p_node_down(void *db_conn,
 	return SLURM_SUCCESS;
 }
 
+/*
+ * Create bitmap based off of hostlist order instead of node_ptr->index.
+ *
+ * node_record_table_ptr can have NULL slots and result in bitmaps that don't
+ * match the hostlist that the dbd needs.
+ * .e.g.
+ * node_record_table_ptr
+ * [0]=node1
+ * [1]=NULL
+ * [2]=node2
+ * job runs on node1 and node2.
+ *
+ * The bitmap generated against node_record_table_ptr would be 0,2. But the dbd
+ * doesn't know about the NULL slots and expects node[1-2] to be 0,1. A query
+ * for jobs running on node2 won't be found because node2 on the controller is
+ * index 2 and on the dbd it's index 1. See setup_cluster_list_with_inx() and
+ * good_nodes_from_inx().
+ */
+extern char *acct_storage_p_node_inx(void *db_conn, char *nodes)
+{
+	char *host, *ret_str;
+	hostlist_t node_hl;
+	bitstr_t *node_bitmap;
+	hostlist_iterator_t h_itr;
+
+	if (!nodes || !cluster_hl)
+		return NULL;
+
+	node_hl = hostlist_create(nodes);
+	node_bitmap = bit_alloc(node_record_count);
+	h_itr = hostlist_iterator_create(node_hl);
+
+	slurm_mutex_lock(&cluster_hl_mutex);
+	while ((host = hostlist_next(h_itr))) {
+		int loc;
+		if ((loc = hostlist_find(cluster_hl, host)) != -1)
+			bit_set(node_bitmap, loc);
+		free(host);
+	}
+	slurm_mutex_unlock(&cluster_hl_mutex);
+
+	hostlist_iterator_destroy(h_itr);
+	FREE_NULL_HOSTLIST(node_hl);
+
+	ret_str = bit_fmt_full(node_bitmap);
+	FREE_NULL_BITMAP(node_bitmap);
+	return ret_str;
+}
+
 extern int clusteracct_storage_p_node_up(void *db_conn, node_record_t *node_ptr,
 					 time_t event_time)
 {
 	persist_msg_t msg = {0};
 	dbd_node_state_msg_t req;
+
+	if (IS_NODE_FUTURE(node_ptr) ||
+	    (IS_NODE_CLOUD(node_ptr) && IS_NODE_POWERED_DOWN(node_ptr)))
+		return SLURM_SUCCESS;
 
 	memset(&req, 0, sizeof(dbd_node_state_msg_t));
 	req.hostlist   = node_ptr->name;
@@ -2540,29 +2725,39 @@ extern int clusteracct_storage_p_node_up(void *db_conn, node_record_t *node_ptr,
 }
 
 extern int clusteracct_storage_p_cluster_tres(void *db_conn,
-					      char *cluster_nodes,
+					      char *cluster_nodes_in,
 					      char *tres_str_in,
 					      time_t event_time,
 					      uint16_t rpc_version)
 {
-	persist_msg_t msg = {0};
-	dbd_cluster_tres_msg_t req;
+	char *send_cluster_nodes, *send_cluster_tres;
 	int rc = SLURM_ERROR;
+	slurmctld_lock_t node_write_lock = {
+		NO_LOCK, NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
 
-	if (!tres_str_in)
-		return rc;
+	lock_slurmctld(node_write_lock);
 
-	debug2("Sending tres '%s' for cluster", tres_str_in);
-	memset(&req, 0, sizeof(dbd_cluster_tres_msg_t));
-	req.cluster_nodes = cluster_nodes;
-	req.event_time    = event_time;
-	req.tres_str      = tres_str_in;
+	_update_cluster_nodes();
+	/* Make copies while in locks that protect the strings */
+	send_cluster_nodes = xstrdup(cluster_nodes);
+	send_cluster_tres = xstrdup(cluster_tres);
 
-	msg.msg_type      = DBD_CLUSTER_TRES;
-	msg.conn          = db_conn;
-	msg.data          = &req;
+	unlock_slurmctld(node_write_lock);
 
-	dbd_conn_send_recv_rc_msg(SLURM_PROTOCOL_VERSION, &msg, &rc);
+	event_time = time(NULL);
+	rc = _send_cluster_tres(db_conn, send_cluster_nodes,
+				send_cluster_tres, event_time,
+				rpc_version);
+
+	xfree(send_cluster_nodes);
+	xfree(send_cluster_tres);
+
+	if ((rc == ACCOUNTING_FIRST_REG) ||
+	    (rc == ACCOUNTING_NODES_CHANGE_DB) ||
+	    (rc == ACCOUNTING_TRES_CHANGE_DB)) {
+		acct_storage_p_send_all(db_conn, event_time, rc);
+		rc = SLURM_SUCCESS;
+	}
 
 	return rc;
 }
@@ -2667,11 +2862,63 @@ extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr)
 	} else {
 		resp = (dbd_id_rc_msg_t *) msg_rc.data;
 		job_ptr->db_index = resp->db_index;
+		_sending_script_env(resp, job_ptr);
 		rc = resp->return_code;
 		//info("here got %d for return code", resp->rc);
 		slurmdbd_free_id_rc_msg(resp);
 	}
 	_partial_free_dbd_job_start(&req);
+
+	return rc;
+}
+
+extern int jobacct_storage_p_job_heavy(void *db_conn, job_record_t *job_ptr)
+{
+	persist_msg_t msg = {0};
+	dbd_job_heavy_msg_t req;
+	int rc = SLURM_SUCCESS;
+
+	/* No reason to be here */
+	if (!(job_ptr->bit_flags & (JOB_SEND_ENV | JOB_SEND_SCRIPT)))
+		return SLURM_SUCCESS;
+
+	if (!job_ptr->db_index
+	    && (!job_ptr->details || !job_ptr->details->submit_time)) {
+		error("%s: Not inputing this job, it has no submit time.",
+		      __func__);
+		return SLURM_ERROR;
+	}
+
+	xassert(job_ptr->details);
+
+	memset(&req, 0, sizeof(req));
+
+	if (job_ptr->bit_flags & JOB_SEND_ENV) {
+		uint32_t env_size = 0;
+		char **env = get_job_env(job_ptr, &env_size);
+		if (env) {
+			char *pos = NULL;
+			for (int i = 0; i < env_size; i++)
+				xstrfmtcatat(req.env, &pos, "%s\n", env[i]);
+			xfree(env[0]);
+			xfree(env);
+		}
+		req.env_hash = job_ptr->details->env_hash;
+	}
+
+	if (job_ptr->bit_flags & JOB_SEND_SCRIPT) {
+		req.script_buf = get_job_script(job_ptr);
+		req.script_hash = job_ptr->details->script_hash;
+	}
+
+	msg.msg_type    = DBD_JOB_HEAVY;
+	msg.conn        = db_conn;
+	msg.data        = &req;
+
+	rc = slurmdbd_agent_send(SLURM_PROTOCOL_VERSION, &msg);
+
+	FREE_NULL_BUFFER(req.script_buf);
+	xfree(req.env);
 
 	return rc;
 }
@@ -2699,10 +2946,13 @@ extern int jobacct_storage_p_job_complete(void *db_conn, job_record_t *job_ptr)
 
 	if (slurm_conf.conf_flags & CTL_CONF_SJC)
 		req.comment = job_ptr->comment;
+	if (slurm_conf.conf_flags & CTL_CONF_SJX)
+		req.extra = job_ptr->extra;
 
 	req.db_index    = job_ptr->db_index;
 	req.derived_ec  = job_ptr->derived_ec;
 	req.exit_code   = job_ptr->exit_code;
+	req.failed_node = job_ptr->failed_node;
 	req.job_id      = job_ptr->job_id;
 	if (IS_JOB_RESIZING(job_ptr)) {
 		req.end_time    = job_ptr->resize_time;
@@ -2750,7 +3000,6 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 	char *node_list = NULL;
 	persist_msg_t msg = {0};
 	dbd_step_start_msg_t req;
-	char temp_bit[BUF_SIZE];
 
 	if (!step_ptr->step_layout || !step_ptr->step_layout->task_cnt) {
 		tasks = step_ptr->job_ptr->total_cpus;
@@ -2773,13 +3022,11 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 	memset(&req, 0, sizeof(dbd_step_start_msg_t));
 
 	req.assoc_id    = step_ptr->job_ptr->assoc_id;
+	req.container   = step_ptr->container;
 	req.db_index    = step_ptr->job_ptr->db_index;
 	req.name        = step_ptr->name;
 	req.nodes       = node_list;
-	if (step_ptr->step_node_bitmap) {
-		req.node_inx = bit_fmt(temp_bit, sizeof(temp_bit),
-				       step_ptr->step_node_bitmap);
-	}
+	/* reate req->node_inx outside of locks when packing */
 	req.node_cnt    = nodes;
 	if (step_ptr->start_time > step_ptr->job_ptr->resize_time)
 		req.start_time = step_ptr->start_time;
@@ -2799,6 +3046,7 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 
 	req.total_tasks = tasks;
 
+	req.submit_line = step_ptr->submit_line;
 	req.tres_alloc_str = step_ptr->tres_alloc_str;
 
 	req.req_cpufreq_min = step_ptr->cpu_freq_min;
@@ -3172,6 +3420,33 @@ extern int acct_storage_p_get_data(void *db_conn, acct_storage_info_t dinfo,
 		break;
 	}
 	return rc;
+}
+
+extern void acct_storage_p_send_all(void *db_conn, time_t event_time,
+				    slurm_msg_type_t msg_type)
+{
+	/*
+	 * Ignore the rcs here because if there was an error we will
+	 * push the requests on the queue and process them when the
+	 * database server comes back up.
+	 */
+	debug2("called %s", rpc_num2string(msg_type));
+	switch (msg_type) {
+	case ACCOUNTING_FIRST_REG:
+		(void) send_jobs_to_accounting();
+		/* fall through */
+	case ACCOUNTING_NODES_CHANGE_DB:
+		(void) send_resvs_to_accounting(msg_type);
+		/* fall through */
+	case ACCOUNTING_TRES_CHANGE_DB:
+		/* No need to do jobs or resvs when only the TRES change. */
+		(void) send_nodes_to_accounting(event_time);
+		break;
+	default:
+		error("%s: unknown message type of %d given",
+		      __func__, msg_type);
+		xassert(0);
+	}
 }
 
 extern int acct_storage_p_shutdown(void *db_conn)

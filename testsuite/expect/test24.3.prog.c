@@ -41,7 +41,7 @@
 #include <slurm/slurm.h>
 #include <slurm/slurm_errno.h>
 
-#include "src/common/slurm_priority.h"
+#include "src/interfaces/priority.h"
 #include "src/common/assoc_mgr.h"
 #include "src/common/xstring.h"
 #include "src/common/log.h"
@@ -50,7 +50,6 @@
 /* set up some fake system */
 void *acct_db_conn = NULL;
 uint32_t cluster_cpus = 50;
-int long_flag = 1;
 int exit_code = 0;
 sshare_time_format_t time_format = SSHARE_TIME_MINS;
 char *time_format_string = "Minutes";
@@ -468,17 +467,23 @@ int main (int argc, char **argv)
 	job_list = list_create(_list_delete_job);
 
 	/* now init the priorities of the associations */
-	if (slurm_priority_init() != SLURM_SUCCESS)
+	if (priority_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize priority plugin");
 	/* on some systems that don't have multiple cores we need to
 	 * sleep to make sure the thread gets started. */
 	sleep(1);
 	memset(&resp, 0, sizeof(shares_response_msg_t));
 	assoc_mgr_get_shares(NULL, 0, NULL, &resp);
+
+	/*
+	 * This is the global var from sshare.h to tell we want the long format
+	 */
+	long_flag = 1;
+
 	process(&resp, 0);
 
 	/* free memory */
-	if (slurm_priority_fini() != SLURM_SUCCESS)
+	if (priority_g_fini() != SLURM_SUCCESS)
 		fatal("failed to finalize priority plugin");
 	if (job_list)
 		list_destroy(job_list);

@@ -27,22 +27,10 @@
 ############################################################################
 source ./globals
 
-set script1   "test$test_id.in1"
-set exit_code  0
-set job_id     0
-set hostlist   ""
 set node1      ""
 set node2      ""
 set het_job_id 0
-
-proc cleanup { } {
-	global bin_rm script1 het_job_id scancel
-
-	if {$het_job_id > 0} {
-		exec $scancel $het_job_id
-	}
-	exec $bin_rm -rf $script1
-}
+set tmp_dir    "/tmp/${test_name}_[pid]"
 
 set accounting_storage_enforce [get_config_param "AccountingStorageEnforce"]
 if {[param_contains $accounting_storage_enforce "nosteps"] || [param_contains $accounting_storage_enforce "nojobs"]} {
@@ -50,159 +38,44 @@ if {[param_contains $accounting_storage_enforce "nosteps"] || [param_contains $a
 }
 if {[get_config_param "FrontendName"] ne "MISSING"} {
 	skip "This test is incompatible with front-end systems"
-} elseif {[get_config_param "SlurmdUser"] ne "root(0)"} {
+}
+if {[get_config_param "SlurmdUser"] ne "root(0)"} {
 	skip "This test requires that the SlurmdUser be root"
-} elseif {[get_partition_param [default_partition] "TotalNodes"] < 2} {
-	skip "This test requires that the configuration has at least 2 nodes"
 }
 if {[get_config_param "SchedulerType"] ne "sched/backfill"} {
 	skip "This test requires SchedulerType = sched/backfill"
 }
-
-set def_part [default_partition]
-spawn $bin_bash -c "exec $scontrol show hostnames \$($sinfo -tidle --partition=$def_part -h -o%N) | head -n2 |tr \'\n\' ' ' "
-expect {
-	-re "($re_word_str) ($re_word_str)" {
-		set node1 $expect_out(1,string)
-		set node2 $expect_out(2,string)
-		exp_continue
-	}
-	timeout {
-		fail "sinfo is not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {![string compare $node1 ""] || ![string compare $node2 ""]} {
+if { [llength [get_nodes_by_request "--exclusive=user -N2"]] != 2 } {
 	skip "Did not find at least 2 idle nodes"
 }
 
-set matches 0
-set index 0
-set timeout $max_job_delay
-spawn $salloc -t2 -N1 : -N1 $bin_bash
-expect {
-	-re "job ($number) has been allocated resources" {
-		set het_job_id $expect_out(1,string)
-		send "$reset_bash_prompt\r"
-		exp_continue
-	}
-	-re "\"$test_prompt\"" {
-		# skip this, just echo of setting test_prompt
-		exp_continue
-	}
-	-re "$test_prompt" {
-		#log_debug "Job initiated"
-	}
-	timeout {
-		fail "salloc: allocation not granted in $timeout seconds"
-	}
-	eof {
-		wait
-	}
-}
-if {$het_job_id == 0} {
-	fail "salloc failure"
+proc cleanup { } {
+	global het_job_id srun bin_rm tmp_dir
+
+	run_command "$srun --jobid=${het_job_id} --het-group=0 $bin_rm -rf $tmp_dir"
+	run_command "$srun --jobid=${het_job_id} --het-group=1 $bin_rm -rf $tmp_dir"
+
+	cancel_job $het_job_id
 }
 
-make_bash_script $script1 "
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}/$node1
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}/$node2
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}
+set het_job_id [submit_job "-t2 -N1 : -N1 --wrap '$bin_sleep 30'"]
+wait_for_job -fail $het_job_id "RUNNING"
 
-$srun -N1 -n1 --het-group=0 mkdir /tmp/test_${test_id}
-$srun -N1 -n1 --het-group=1 mkdir /tmp/test_${test_id}
-$srun -N1 -n1 --het-group=0 mkdir /tmp/test_${test_id}/$node1
-$srun -N1 -n1 --het-group=1 mkdir /tmp/test_${test_id}/$node2
+run_command -fail "$srun -N1 -n1 --jobid=${het_job_id} --het-group=0 mkdir -p $tmp_dir"
+run_command -fail "$srun -N1 -n1 --jobid=${het_job_id} --het-group=1 mkdir -p $tmp_dir"
 
-$sbcast -f -j$het_job_id $srun /tmp/test_${test_id}/test$test_id\_file
-$sbcast -f -j${het_job_id}+0 $srun /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$sbcast -f -j${het_job_id}+1 $srun /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
+run_command -fail "$srun --jobid=${het_job_id} --het-group=0 printenv SLURM_JOB_ID"
+run_command -fail "$srun --jobid=${het_job_id} --het-group=1 printenv SLURM_JOB_ID"
 
-echo -n \"\nChecking node 1: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/test$test_id\_file
+run_command -fail "$sbcast -f --jobid=$het_job_id $srun $tmp_dir/file"
+run_command -fail "$sbcast -f --jobid=${het_job_id}+0 $srun $tmp_dir/file_comp0"
+run_command -fail "$sbcast -f --jobid=${het_job_id}+1 $srun $tmp_dir/file_comp1"
 
-echo -n \"\nChecking node 0: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/test$test_id\_file
+subtest {![run_command_status "$srun -N1 -n1 --jobid=${het_job_id} --het-group=0 ls $tmp_dir/file"]} "Verify main file is in node of component 0"
+subtest {![run_command_status "$srun -N1 -n1 --jobid=${het_job_id} --het-group=1 ls $tmp_dir/file"]} "Verify main file is in node of component 1"
+subtest {![run_command_status "$srun -N1 -n1 --jobid=${het_job_id} --het-group=0 ls $tmp_dir/file_comp0"]} "Verify file_comp0 is in node of component 0"
+subtest {![run_command_status "$srun -N1 -n1 --jobid=${het_job_id} --het-group=1 ls $tmp_dir/file_comp1"]} "Verify file_comp1 is in node of component 1"
 
-echo -n \"\nChecking node 1 again: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
-
-echo -n \"\nChecking node 0 again: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-
-echo -n \"\nChecking node 1 for lack: \"
-$srun -Q -N1 -n1 --het-group=1 ls /tmp/test_${test_id}/$node2/test$test_id\_file\_comp0
-
-echo -n \"\nChecking node 0 for lack: \"
-$srun -Q -N1 -n1 --het-group=0 ls /tmp/test_${test_id}/$node1/test$test_id\_file\_comp1
-
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/$node1/test$test_id\_file\_comp0
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/$node2/test$test_id\_file\_comp1
-$srun --het-group=0 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}/$node1
-$srun --het-group=1 $bin_rm -f  /tmp/test_${test_id}/test$test_id\_file
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}/$node2
-$srun --het-group=1 $bin_rm -fr /tmp/test_${test_id}
-$srun --het-group=0 $bin_rm -fr /tmp/test_${test_id}
-"
-
-set timeout $max_job_delay
-set matches 0
-send "./$script1 \r"
-expect {
-	-re "Permission denied" {
-		fail "Unable to delete/create file, check permissions"
-	}
-	-re "cannot create directory" {
-		log_debug "This error is expected when nodes share the same tmp directory"
-		exp_continue
-	}
-	-re "Checking node 1: */tmp/test_${test_id}/test$test_id\_file" {
-		incr matches
-		exp_continue
-	}
-	-re "Checking node 0: */tmp/test_${test_id}/test$test_id\_file" {
-		incr matches
-		exp_continue
-	}
-	-re "Checking node 1 again: */tmp/test_${test_id}/$node2/test$test_id\_file\_comp1" {
-		incr matches
-		exp_continue
-	}
-	-re "Checking node 0 again: */tmp/test_${test_id}/$node1/test$test_id\_file\_comp0" {
-		incr matches
-		exp_continue
-	}
-	-re "Checking node 1 for lack: */tmp/test_${test_id}/$node1/test$test_id\_file\_comp0" {
-		log_error "sbcast copied file to wrong node"
-		set exit_code 1
-		exp_continue
-	}
-	-re "Checking node 0 for lack: */tmp/test_${test_id}/$node2/test$test_id\_file\_comp1" {
-		log_error "sbcast copied file to wrong node"
-		set exit_code 1
-		exp_continue
-	}
-	-re "$test_prompt" {
-		#log_debug "Job initiated"
-	}
-	timeout {
-		fail "salloc is not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$matches != 4} {
-	fail "sbcast did not copy the file(s) to the correct nodes ($matches != 4)"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+# TODO: This fails with multiple_slurmd because $tmp_dir is shared
+# subtest {[run_command_status -xfail "$srun -N1 -n1 --jobid=${het_job_id} --het-group=0 ls $tmp_dir/file_comp1"]} "Verify file_comp1 is not is not in node of component 0"
+# subtest {[run_command_status -xfail "$srun -N1 -n1 --jobid=${het_job_id} --het-group=1 ls $tmp_dir/file_comp0"]} "Verify file_comp0 is not is not in node of component 1"

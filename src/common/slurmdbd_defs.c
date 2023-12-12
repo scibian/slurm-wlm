@@ -38,7 +38,7 @@
 \*****************************************************************************/
 
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/jobacct_gather.h"
 
 /*
  * Define slurm-specific aliases for use by plugins, see slurm_xlator.h
@@ -129,6 +129,8 @@ extern slurmdbd_msg_type_t str_2_slurmdbd_msg_type(char *msg_type)
 		return DBD_JOB_COMPLETE;
 	} else if (!xstrcasecmp(msg_type, "Job Start")) {
 		return DBD_JOB_START;
+	} else if (!xstrcasecmp(msg_type, "Job Heavy")) {
+		return DBD_JOB_HEAVY;
 	} else if (!xstrcasecmp(msg_type, "ID RC")) {
 		return DBD_ID_RC;
 	} else if (!xstrcasecmp(msg_type, "Job Suspend")) {
@@ -468,6 +470,12 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 		} else
 			return "Job Start";
 		break;
+	case DBD_JOB_HEAVY:
+		if (get_enum) {
+			return "DBD_JOB_HEAVY";
+		} else
+			return "Job Heavy";
+		break;
 	case DBD_ID_RC:
 		if (get_enum) {
 			return "DBD_ID_RC";
@@ -799,9 +807,8 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 \****************************************************************************/
 extern void slurmdbd_free_buffer(void *x)
 {
-	Buf buffer = (Buf) x;
-	if (buffer)
-		free_buf(buffer);
+	buf_t *buffer = (buf_t *) x;
+	FREE_NULL_BUFFER(buffer);
 }
 
 extern void slurmdbd_free_acct_coord_msg(dbd_acct_coord_msg_t *msg)
@@ -909,6 +916,9 @@ extern void slurmdbd_free_msg(persist_msg_t *msg)
 		break;
 	case DBD_JOB_START:
 		slurmdbd_free_job_start_msg(msg->data);
+		break;
+	case DBD_JOB_HEAVY:
+		slurmdbd_free_job_heavy_msg(msg->data);
 		break;
 	case DBD_JOB_SUSPEND:
 		slurmdbd_free_job_suspend_msg(msg->data);
@@ -1060,6 +1070,8 @@ extern void slurmdbd_free_job_complete_msg(dbd_job_comp_msg_t *msg)
 	if (msg) {
 		xfree(msg->admin_comment);
 		xfree(msg->comment);
+		xfree(msg->extra);
+		xfree(msg->failed_node);
 		xfree(msg->nodes);
 		xfree(msg->system_comment);
 		xfree(msg->tres_alloc_str);
@@ -1074,18 +1086,38 @@ extern void slurmdbd_free_job_start_msg(void *in)
 		xfree(msg->account);
 		xfree(msg->array_task_str);
 		xfree(msg->constraints);
+		xfree(msg->container);
+		xfree(msg->env_hash);
 		xfree(msg->gres_used);
+		xfree(msg->licenses);
 		xfree(msg->mcs_label);
 		xfree(msg->name);
 		xfree(msg->nodes);
 		xfree(msg->node_inx);
 		xfree(msg->partition);
+		xfree(msg->script_hash);
+		xfree(msg->submit_line);
 		xfree(msg->tres_alloc_str);
 		xfree(msg->tres_req_str);
 		xfree(msg->wckey);
 		xfree(msg->work_dir);
 		xfree(msg);
 	}
+}
+
+extern void slurmdbd_free_job_heavy_msg(void *in)
+{
+	dbd_job_heavy_msg_t *msg = in;
+
+	if (!msg)
+		return;
+
+	xfree(msg->env);
+	xfree(msg->env_hash);
+	xfree(msg->script);
+	FREE_NULL_BUFFER(msg->script_buf);
+	xfree(msg->script_hash);
+	xfree(msg);
 }
 
 extern void slurmdbd_free_id_rc_msg(void *in)
@@ -1192,9 +1224,11 @@ extern void slurmdbd_free_step_complete_msg(dbd_step_comp_msg_t *msg)
 extern void slurmdbd_free_step_start_msg(dbd_step_start_msg_t *msg)
 {
 	if (msg) {
+		xfree(msg->container);
 		xfree(msg->name);
 		xfree(msg->nodes);
 		xfree(msg->node_inx);
+		xfree(msg->submit_line);
 		xfree(msg->tres_alloc_str);
 		xfree(msg);
 	}

@@ -70,6 +70,10 @@
 /* Maximum poll wait time for child processes, in milliseconds */
 #define MAX_POLL_WAIT 500
 
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#define POLLRDHUP POLLHUP
+#endif
+
 /* Default and minimum timeout parameters for the capmc command */
 #define DEFAULT_CAPMC_RETRIES 4
 #define DEFAULT_CAPMC_TIMEOUT 60000	/* 60 seconds */
@@ -128,7 +132,8 @@ static s_p_hashtbl_t *_config_make_tbl(char *filename)
 		return tbl;
 	}
 
-	if (s_p_parse_file(tbl, NULL, filename, false) == SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, filename, false, NULL, false) ==
+			   SLURM_ERROR) {
 		error("%s: s_p_parse_file error: %s", prog_name,
 		      slurm_strerror(slurm_get_errno()));
 		s_p_hashtbl_destroy(tbl);
@@ -310,7 +315,7 @@ static char *_node_names_2_nid_list(char *node_names)
 	i = strlen(node_names) + 1;
 	nid_list = xmalloc(i);
 	bit_fmt(nid_list, i, node_bitmap);
-	bit_free(node_bitmap);
+	FREE_NULL_BITMAP(node_bitmap);
 
 	return nid_list;
 }

@@ -72,6 +72,7 @@ extern void free_cron_entry(void *in)
 	xfree(entry->day_of_month);
 	xfree(entry->month);
 	xfree(entry->day_of_week);
+	xfree(entry->cronspec);
 	xfree(entry->command);
 	xfree(entry);
 }
@@ -269,12 +270,10 @@ static int _next_day_of_month(cron_entry_t *entry, struct tm *tm)
 		}
 	} else {
 		/* (ab)use mktime() to figure out leap years for februrary */
-		struct tm test;
+		struct tm test = { 0 };
 		test.tm_year = tm->tm_year;
 		test.tm_mon = 1;
 		test.tm_mday = 29;
-		test.tm_hour = 0;
-		test.tm_min = 0;
 		slurm_mktime(&test);
 		if (test.tm_mon == 1) {
 			/* leap year! */
@@ -293,18 +292,24 @@ static int _next_day_of_month(cron_entry_t *entry, struct tm *tm)
 	return days_to_advance;
 }
 
-extern time_t calc_next_cron_start(cron_entry_t *entry)
+extern time_t calc_next_cron_start(cron_entry_t *entry, time_t next)
 {
 	struct tm tm;
 	time_t now = time(NULL);
-	localtime_r(&now, &tm);
 	int validated_month, days_to_add;
 
 	/*
-	 * Always move into the next minute to avoid running again this minute.
+	 * Avoid running twice in the same minute.
 	 */
-	tm.tm_sec = 0;
-	tm.tm_min++;
+	if (next && next > now + 60) {
+		now = next;
+		localtime_r(&now, &tm);
+		tm.tm_sec = 0;
+	} else {
+		localtime_r(&now, &tm);
+		tm.tm_sec = 0;
+		tm.tm_min++;
+	}
 
 month:
 	_next_month(entry, &tm);
@@ -409,7 +414,7 @@ extern void pack_cron_entry(void *in, uint16_t protocol_version,
 	if (!set)
 		return;
 
-	if (protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		pack32(entry->flags, buffer);
 		pack_bit_str_hex(entry->minute, buffer);
 		pack_bit_str_hex(entry->hour, buffer);
@@ -440,7 +445,7 @@ extern int unpack_cron_entry(void **entry_ptr, uint16_t protocol_version,
 	entry = xmalloc(sizeof(*entry));
 	*entry_ptr = entry;
 
-	if (protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&entry->flags, buffer);
 		unpack_bit_str_hex(&entry->minute, buffer);
 		unpack_bit_str_hex(&entry->hour, buffer);

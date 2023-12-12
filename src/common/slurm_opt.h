@@ -73,16 +73,22 @@ enum {
 	LONG_OPT_ACCEL_BIND,
 	LONG_OPT_ACCTG_FREQ,
 	LONG_OPT_ALLOC_NODELIST,
+	LONG_OPT_ARGV,
 	LONG_OPT_BATCH,
 	LONG_OPT_BCAST,
+	LONG_OPT_BCAST_EXCLUDE,
 	LONG_OPT_BELL,
 	LONG_OPT_BLRTS_IMAGE,
 	LONG_OPT_BURST_BUFFER_FILE,
 	LONG_OPT_BURST_BUFFER_SPEC,
 	LONG_OPT_CLUSTER,
 	LONG_OPT_CLUSTER_CONSTRAINT,
+	LONG_OPT_COMPLETE_FLAG,
 	LONG_OPT_COMMENT,
 	LONG_OPT_COMPRESS,
+	LONG_OPT_CONTAINER,
+	LONG_OPT_CONTAINER_ID,
+	LONG_OPT_CONTEXT,
 	LONG_OPT_CONTIGUOUS,
 	LONG_OPT_CORE,
 	LONG_OPT_CORESPERSOCKET,
@@ -98,6 +104,7 @@ enum {
 	LONG_OPT_EXCLUSIVE,
 	LONG_OPT_EXPORT,
 	LONG_OPT_EXPORT_FILE,
+	LONG_OPT_EXTRA,
 	LONG_OPT_GET_USER_ENV,
 	LONG_OPT_GID,
 	LONG_OPT_GPU_BIND,
@@ -146,6 +153,7 @@ enum {
 	LONG_OPT_HET_GROUP,
 	LONG_OPT_PARSABLE,
 	LONG_OPT_POWER,
+	LONG_OPT_PREFER,
 	LONG_OPT_PRIORITY,
 	LONG_OPT_PROFILE,
 	LONG_OPT_PROLOG,
@@ -157,6 +165,7 @@ enum {
 	LONG_OPT_REQUEUE,
 	LONG_OPT_RESERVATION,
 	LONG_OPT_RESV_PORTS,
+	LONG_OPT_SEND_LIBS,
 	LONG_OPT_SIGNAL,
 	LONG_OPT_SLURMD_DEBUG,
 	LONG_OPT_SOCKETSPERNODE,
@@ -172,6 +181,7 @@ enum {
 	LONG_OPT_TIME_MIN,
 	LONG_OPT_TMP,
 	LONG_OPT_TRES_PER_JOB,
+	LONG_OPT_TRES_PER_TASK,
 	LONG_OPT_UID,
 	LONG_OPT_UMASK,
 	LONG_OPT_USAGE,
@@ -198,10 +208,6 @@ typedef struct {
  * options only processed by sbatch
  */
 typedef struct {
-	/* batch script argv and argc, if provided on the command line */
-	int script_argc;
-	char **script_argv;
-
 	char *array_inx;		/* --array			*/
 	char *batch_features;		/* --batch			*/
 	char *export_file;		/* --export-file=file		*/
@@ -227,11 +233,9 @@ typedef struct {
  * options only processed by srun
  */
 typedef struct {
-	int argc;			/* length of argv array		*/
-	char **argv;			/* left over on command line	*/
-
 	uint16_t accel_bind_type;	/* --accel-bind			*/
 	char *alloc_nodelist;		/* grabbed from the environment	*/
+	char *bcast_exclude;		/* --bcast-exclude */
 	char *bcast_file;		/* --bcast, copy executable to compute nodes */
 	bool bcast_flag;		/* --bcast, copy executable to compute nodes */
 	char *cmd_name;			/* name of command to execute	*/
@@ -246,6 +250,7 @@ typedef struct {
 	bool exclusive;			/* --exclusive			*/
 	bool interactive;		/* --interactive		*/
 	uint32_t jobid;			/* --jobid			*/
+	uint32_t array_task_id;		/* --jobid			*/
 	int32_t kill_bad_exit;		/* --kill-on-bad-exit		*/
 	bool labelio;			/* --label-output		*/
 	int32_t max_threads;		/* --threads			*/
@@ -255,6 +260,7 @@ typedef struct {
 	bool multi_prog;		/* multiple programs to execute */
 	int32_t multi_prog_cmds;	/* number of commands in multi prog file */
 	bool no_alloc;			/* --no-allocate		*/
+	bool overlap_force;		/* true if --overlap		*/
 	char *het_group;		/* --het-group			*/
 	bitstr_t *het_grp_bits;		/* --het-group in bitmap form	*/
 	int het_step_cnt;		/* Total count of het groups to launch */
@@ -262,10 +268,11 @@ typedef struct {
 	bool preserve_env;		/* --preserve-env		*/
 	char *prolog;			/* --prolog			*/
 	char *propagate;		/* --propagate[=RLIMIT_CORE,...]*/
-	bool pty;			/* --pty			*/
+	char *pty;			/* --pty[=fd]			*/
 	bool quit_on_intr;		/* --quit-on-interrupt		*/
 	int relative;			/* --relative			*/
 	int resv_port_cnt;		/* --resv_ports			*/
+	bool send_libs;			/* --send-libs			*/
 	int slurmd_debug;		/* --slurmd-debug		*/
 	char *task_epilog;		/* --task-epilog		*/
 	char *task_prolog;		/* --task-prolog		*/
@@ -291,7 +298,10 @@ typedef struct {
 
 	void (*help_func)(void);	/* Print --help info		*/
 	void (*usage_func)(void);	/* Print --usage info		*/
+	void (*autocomplete_func)(const char *); /* Print --autocomplete= info*/
 
+	int argc;			/* command/script argc		*/
+	char **argv;			/* command/script argv		*/
 	char *burst_buffer;		/* --bb				*/
 	char *burst_buffer_file;	/* --bbf			*/
 	char *clusters;			/* cluster to run this on. */
@@ -304,6 +314,7 @@ typedef struct {
 	bool cpus_set;			/* cpus_per_task explicitly set	*/
 	int min_nodes;			/* --nodes=n			*/
 	int max_nodes;			/* --nodes=x-n			*/
+	char *job_size_str;		/* --nodes			*/
 	bool nodes_set;			/* nodes explicitly set		*/
 	int sockets_per_node;		/* --sockets-per-node=n		*/
 	int cores_per_socket;		/* --cores-per-socket=n		*/
@@ -363,9 +374,13 @@ typedef struct {
 	uint64_t mem_per_gpu;		/* --mem-per-gpu		*/
 	uint64_t pn_min_memory;		/* --mem			*/
 	uint64_t pn_min_tmp_disk;	/* --tmp			*/
+	char *prefer;			/* --prefer			*/
 	char *constraint;		/* --constraint			*/
 	char *c_constraint;		/* --cluster-constraint		*/
 	char *gres;			/* --gres			*/
+	char *container;		/* --container			*/
+	char *container_id;		/* --container-id		*/
+	char *context;			/* --context			*/
 	bool contiguous;		/* --contiguous			*/
 	char *nodefile;			/* --nodefile			*/
 	char *nodelist;			/* --nodelist=node1,node2,...	*/
@@ -375,7 +390,7 @@ typedef struct {
 	bool reboot;			/* --reboot			*/
 
 	time_t begin;			/* --begin			*/
-	char *extra;			/* unused			*/
+	char *extra;			/* --extra			*/
 	uint16_t mail_type;		/* --mail-type			*/
 	char *mail_user;		/* --mail-user			*/
 	int get_user_env_time;		/* --get-user-env[=timeout]	*/
@@ -398,8 +413,11 @@ typedef struct {
 	uint32_t step_het_comp_cnt;     /* How many components are in this het
 					 * step that is part of a non-hetjob. */
 	char *step_het_grps;		/* what het groups are used by step */
+	char *submit_line;		/* submit line of the caller	*/
 	char *tres_bind;		/* derived from gpu_bind	*/
 	char *tres_freq;		/* derived from gpu_freq	*/
+	char *tres_per_task;		/* --tres_per_task		*/
+
 	uint16_t x11;			/* --x11			*/
 	char *x11_magic_cookie;		/* cookie retrieved from xauth	*/
 	char *x11_target;		/* target host, or unix socket	*/
@@ -517,27 +535,47 @@ extern bool slurm_option_get_next_set(slurm_opt_t *opt, char **name,
 				      char **value, size_t *state);
 
 /*
- * Validate that the three memory options (--mem, --mem-per-cpu, --mem-per-gpu)
- * and their associated environment variables are set mutually exclusively.
- *
- * This will fatal() if multiple CLI options are specified simultaneously.
- * If any of the CLI options are specified, the other options are reset to
- * clear anything that may have been set through the environment.
- * Otherwise, if multiple environment variables are set simultaneously,
- * this will fatal().
- */
-extern void validate_memory_options(slurm_opt_t *opt);
-
-/*
  * Validate that conflicting optons (--hint, --ntasks-per-core,
- * --nthreads-per-core) are not used together.
+ * --nthreads-per-core, --cpu-bind [for srun]) are not used together.
  *
  */
 extern int validate_hint_option(slurm_opt_t *opt);
 
 /*
+ * Validate --threads-per-core option and set --cpu-bind=threads if
+ * not already set by user.
+ */
+extern int validate_threads_per_core_option(slurm_opt_t *opt);
+
+/*
  * Validate options that are common to salloc, sbatch, and srun.
  */
 extern void validate_options_salloc_sbatch_srun(slurm_opt_t *opt);
+
+/*
+ * Validate that two spec cores options (-S/--core-spec and --thread-spec)
+ * are not used together.
+ *
+ * This function follows approach of validate_memory_options.
+ */
+extern void validate_spec_cores_options(slurm_opt_t *opt);
+
+/*
+ * Return the argv options in a string.
+ */
+extern char *slurm_option_get_argv_str(const int argc, char **argv);
+
+/*
+ * Return a job_desc_msg_t based on slurm_opt_t.
+ * IN set_defaults - If true, sets default values for struct members. If false,
+ *   all values will be their no value state (either NULL or NO_VAL equiv).
+ */
+extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
+						 bool set_defaults);
+
+/*
+ * Compatible with shell/bash completions.
+ */
+extern void suggest_completion(struct option *opts, const char *query);
 
 #endif	/* _SLURM_OPT_H_ */

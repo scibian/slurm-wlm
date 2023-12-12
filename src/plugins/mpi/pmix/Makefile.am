@@ -7,7 +7,9 @@ PLUGIN_FLAGS = -module -avoid-version --export-dynamic
 AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir) -I$(top_srcdir)/src/common $(HWLOC_CPPFLAGS) \
 	$(UCX_CPPFLAGS)
 
-pmix_src = mpi_pmix.c \
+pmix_src = \
+	mapping.c mapping.h \
+	mpi_pmix.c \
 	pmixp_common.h pmixp_coll.h \
 	pmixp_agent.c pmixp_client.c pmixp_nspaces.c pmixp_info.c \
 	pmixp_agent.h pmixp_client.h pmixp_nspaces.h pmixp_info.h \
@@ -21,26 +23,12 @@ if HAVE_UCX
 pmix_src += pmixp_dconn_ucx.c pmixp_dconn_ucx.h
 endif
 
-pmix_internal_libs = \
-	$(top_builddir)/src/slurmd/common/libslurmd_reverse_tree_math.la
-
 pmix_ldflags = $(PLUGIN_FLAGS) $(HWLOC_LDFLAGS) $(UCX_LDFLAGS)
-pmix_libadd = $(pmix_internal_libs) $(HWLOC_LIBS) $(UCX_LIBS)
+pmix_libadd = $(HWLOC_LIBS) $(UCX_LIBS)
 
 # pkglib_v#dir is needed in each one of the below because of the way we
 # use pkglib_v#_LTLIBRARIES even though it is the same for each one it still
 # needs to be defined.
-
-if HAVE_PMIX_V1
-
-pkglib_v1dir=$(pkglibdir)
-pkglib_v1_LTLIBRARIES = mpi_pmix_v1.la
-mpi_pmix_v1_la_SOURCES = $(pmix_src) pmixp_client_v1.c
-mpi_pmix_v1_la_LIBADD = $(pmix_libadd)
-mpi_pmix_v1_la_LDFLAGS = $(pmix_ldflags) $(PMIX_V1_LDFLAGS)
-mpi_pmix_v1_la_CPPFLAGS = $(AM_CPPFLAGS) $(PMIX_V1_CPPFLAGS) -DHAVE_PMIX_VER=1
-
-endif
 
 if HAVE_PMIX_V2
 
@@ -75,6 +63,22 @@ mpi_pmix_v4_la_CPPFLAGS = $(AM_CPPFLAGS) $(PMIX_V4_CPPFLAGS) -DHAVE_PMIX_VER=4
 
 endif
 
+if HAVE_PMIX_V5
+
+pkglib_v5dir=$(pkglibdir)
+pkglib_v5_LTLIBRARIES = mpi_pmix_v5.la
+mpi_pmix_v5_la_SOURCES = $(pmix_src) pmixp_client_v2.c
+mpi_pmix_v5_la_LIBADD = $(pmix_libadd)
+mpi_pmix_v5_la_LDFLAGS = $(pmix_ldflags) $(PMIX_V5_LDFLAGS)
+mpi_pmix_v5_la_CPPFLAGS = $(AM_CPPFLAGS) $(PMIX_V5_CPPFLAGS) -DHAVE_PMIX_VER=5
+
+endif
+
+
+if HAVE_PMIX_V5
+mpi_pmix_so := mpi_pmix_v5.so
+else
+
 if HAVE_PMIX_V4
 mpi_pmix_so := mpi_pmix_v4.so
 else
@@ -85,19 +89,11 @@ else
 
 if HAVE_PMIX_V2
 mpi_pmix_so := mpi_pmix_v2.so
-else
-
-if HAVE_PMIX_V1
-mpi_pmix_so := mpi_pmix_v1.so
-endif
 
 endif
 endif
 endif
-
-force:
-$(pmix_internal_libs): force
-	@cd `dirname $@` && $(MAKE) `basename $@`
+endif
 
 install-exec-hook:
 	rm -rf $(DESTDIR)$(pkglibdir)/mpi_pmix.so

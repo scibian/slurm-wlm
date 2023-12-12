@@ -53,15 +53,16 @@
 
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "src/slurmctld/burst_buffer.h"
+#include "src/interfaces/burst_buffer.h"
+#include "src/interfaces/preempt.h"
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/locks.h"
-#include "src/slurmctld/preempt.h"
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/plugins/sched/builtin/builtin.h"
@@ -109,14 +110,13 @@ static void _my_sleep(int secs)
 
 static void _load_config(void)
 {
-	char *sched_params = slurm_get_sched_params();
 	char *tmp_ptr;
 
 	sched_timeout = slurm_conf.msg_timeout / 2;
 	sched_timeout = MAX(sched_timeout, 1);
 	sched_timeout = MIN(sched_timeout, 10);
 
-	if ((tmp_ptr = xstrcasestr(sched_params, "interval=")))
+	if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params, "interval=")))
 		builtin_interval = atoi(tmp_ptr + 9);
 	if (builtin_interval < 1) {
 		error("Invalid SchedulerParameters interval: %d",
@@ -124,16 +124,16 @@ static void _load_config(void)
 		builtin_interval = BACKFILL_INTERVAL;
 	}
 
-	if ((tmp_ptr = xstrcasestr(sched_params, "max_job_bf=")))
+	if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params, "max_job_bf=")))
 		max_sched_job_cnt = atoi(tmp_ptr + 11);
-	if ((tmp_ptr = xstrcasestr(sched_params, "bf_max_job_test=")))
+	if ((tmp_ptr = xstrcasestr(slurm_conf.sched_params,
+				   "bf_max_job_test=")))
 		max_sched_job_cnt = atoi(tmp_ptr + 16);
 	if (max_sched_job_cnt < 1) {
 		error("Invalid SchedulerParameters bf_max_job_test: %d",
 		      max_sched_job_cnt);
 		max_sched_job_cnt = 50;
 	}
-	xfree(sched_params);
 }
 
 static void _compute_start_times(void)

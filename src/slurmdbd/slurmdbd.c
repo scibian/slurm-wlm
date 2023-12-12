@@ -58,14 +58,16 @@
 #include "src/common/log.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/hash.h"
 
 #include "src/slurmdbd/read_config.h"
 #include "src/slurmdbd/rpc_mgr.h"
@@ -87,6 +89,7 @@ static int    dbd_sigarray[] = {	/* blocked signals for this process */
 	SIGPIPE, SIGALRM, SIGABRT, SIGHUP, 0 };
 static int    debug_level = 0;		/* incremented for -v on command line */
 static int    foreground = 0;		/* run process as a daemon */
+static int    setwd = 0;		/* change working directory -s  */
 static log_options_t log_opts = 	/* Log to stderr & syslog */
 	LOG_OPTS_INITIALIZER;
 static int	 new_nice = 0;
@@ -149,6 +152,7 @@ int main(int argc, char **argv)
 	 * able to write a core dump.
 	 */
 	_init_pidfile();
+	_become_slurm_user();
 
 	/*
 	 * Do plugin init's after _init_pidfile so systemd is happy as
@@ -156,16 +160,17 @@ int main(int argc, char **argv)
 	 * for the first time after an upgrade.
 	 */
 	if (slurm_auth_init(NULL) != SLURM_SUCCESS) {
-		fatal("Unable to initialize %s authentication plugin",
-		      slurm_conf.authtype);
+		fatal("Unable to initialize authentication plugins");
+	}
+	if (hash_g_init() != SLURM_SUCCESS) {
+		fatal("failed to initialize hash plugin");
 	}
 	if (slurm_acct_storage_init() != SLURM_SUCCESS) {
 		fatal("Unable to initialize %s accounting storage plugin",
 		      slurm_conf.accounting_storage_type);
 	}
 
-	_become_slurm_user();
-	if (foreground == 0)
+	if (foreground == 0 || setwd)
 		_set_work_dir();
 	log_config();
 	init_dbd_stats();
@@ -431,7 +436,7 @@ static void  _init_config(void)
 {
 	struct rlimit rlim;
 
-	rlimits_maximize_nofile();
+	rlimits_use_max_nofile();
 	if (getrlimit(RLIMIT_CORE, &rlim) == 0) {
 		rlim.rlim_cur = rlim.rlim_max;
 		(void) setrlimit(RLIMIT_CORE, &rlim);
@@ -462,7 +467,7 @@ static void _parse_commandline(int argc, char **argv)
 	char *tmp_char;
 
 	opterr = 0;
-	while ((c = getopt(argc, argv, "Dhn:R::vV")) != -1)
+	while ((c = getopt(argc, argv, "Dhn:R::svV")) != -1)
 		switch (c) {
 		case 'D':
 			foreground = 1;
@@ -487,6 +492,9 @@ static void _parse_commandline(int argc, char **argv)
 				lft_rgt_list = list_create(xfree_ptr);
 				slurm_addto_char_list(lft_rgt_list, optarg);
 			}
+			break;
+		case 's':
+			setwd = 1;
 			break;
 		case 'v':
 			debug_level++;
@@ -518,6 +526,8 @@ static void _usage(char *prog_name)
 		"\n\t\tLft and rgt values are used to distinguish "
 		"\n\t\thierarical groups in the slurm accounting database.  "
 		"\n\t\tThis option should be very rarely used.\n");
+	fprintf(stderr, "  -s         \t"
+		"Change working directory to LogFile dirname or /var/tmp/.\n");
 	fprintf(stderr, "  -v         \t"
 		"Verbose mode. Multiple -v's increase verbosity.\n");
 	fprintf(stderr, "  -V         \t"
@@ -846,16 +856,19 @@ static int _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec)
 		       cluster_rec->control_host);
 	fd = slurm_open_msg_conn(&ctld_address);
 	if (fd < 0) {
+		log_flag(NET, "%s: slurm_open_msg_conn(%pA): %m",
+			 __func__, &ctld_address);
 		rc = SLURM_ERROR;
 	} else {
 		slurm_msg_t out_msg;
 		slurm_msg_t_init(&out_msg);
+		slurm_msg_set_r_uid(&out_msg, SLURM_AUTH_UID_ANY);
 		out_msg.msg_type = ACCOUNTING_REGISTER_CTLD;
 		out_msg.flags = SLURM_GLOBAL_AUTH_KEY;
 		out_msg.protocol_version = cluster_rec->rpc_version;
 		slurm_send_node_msg(fd, &out_msg);
 		/* We probably need to add matching recv_msg function
-		 * for an arbitray fd or should these be fire
+		 * for an arbitrary fd or should these be fire
 		 * and forget?  For this, that we can probably
 		 * forget about it */
 		close(fd);
@@ -960,7 +973,7 @@ static void _become_slurm_user(void)
 	/* Set GID to GID of SlurmUser */
 	if ((slurm_user_gid != getegid()) &&
 	    (setgid(slurm_user_gid))) {
-		fatal("Failed to set GID to %d", slurm_user_gid);
+		fatal("Failed to set GID to %u", slurm_user_gid);
 	}
 
 	/* Set UID to UID of SlurmUser */
@@ -971,7 +984,7 @@ static void _become_slurm_user(void)
 	}
 }
 
-extern void _restart_self(int argc, char **argv)
+static void _restart_self(int argc, char **argv)
 {
 	info("Restarting self");
 	if (execvp(argv[0], argv))

@@ -49,9 +49,9 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/parse_time.h"
-#include "src/common/slurm_acct_gather_profile.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/acct_gather_profile.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -207,7 +207,7 @@ static void _combine_pending_array_tasks(List job_list)
 		    !job_rec_ptr->job_ptr->array_bitmap)
 			continue;
 		update_cnt = 0;
-		task_bitmap = (bitstr_t *) job_rec_ptr->job_ptr->array_bitmap;
+		task_bitmap = job_rec_ptr->job_ptr->array_bitmap;
 		bitmap_size = bit_size(task_bitmap);
 		task_iterator = list_iterator_create(job_list);
 		while ((task_rec_ptr = list_next(task_iterator))) {
@@ -225,9 +225,6 @@ static void _combine_pending_array_tasks(List job_list)
 			if (xstrcmp(task_rec_ptr->job_ptr->partition,
 				    job_rec_ptr->job_ptr->partition))
 				continue;	/* Different partition */
-			/* Want to see each reason separately */
-			if (params.array_unique_flag)
-				continue;
 			/* Combine this task into master job array record */
 			update_cnt++;
 			_merge_job_reason(job_rec_ptr->job_ptr,
@@ -341,13 +338,11 @@ static int _print_str(char *str, int width, bool right, bool cut_output)
 
 int _print_nodes(char *nodes, int width, bool right, bool cut)
 {
-	hostlist_t hl = hostlist_create(nodes);
 	char *buf = NULL;
 	int retval;
-	buf = hostlist_ranged_string_xmalloc(hl);
+	buf = slurm_sort_node_list_str(nodes);
 	retval = _print_str(buf, width, right, false);
 	xfree(buf);
-	hostlist_destroy(hl);
 	return retval;
 }
 
@@ -393,7 +388,7 @@ int _print_secs(long time, int width, bool right, bool cut_output)
 int _print_time(time_t t, int level, int width, bool right)
 {
 	if (t) {
-		char time_str[32];
+		char time_str[256];
 		slurm_make_time_str(&t, time_str, sizeof(time_str));
 		_print_str(time_str, width, right, true);
 	} else
@@ -409,7 +404,6 @@ static int _print_one_job_from_format(job_info_t * job, List list)
 {
 	ListIterator iter = list_iterator_create(list);
 	job_format_t *current;
-	int total_width = 0;
 
 	while ((current = list_next(iter))) {
 		if (current->
@@ -417,10 +411,6 @@ static int _print_one_job_from_format(job_info_t * job, List list)
 			     current->suffix)
 		    != SLURM_SUCCESS)
 			return SLURM_ERROR;
-		if (current->width)
-			total_width += (current->width + 1);
-		else
-			total_width += 10;
 	}
 	list_iterator_destroy(iter);
 
@@ -571,6 +561,31 @@ int _print_job_cluster_name(job_info_t * job, int width, bool right,
 		_print_str("CLUSTER", width, right, true);
 	else
 		_print_str(job->cluster, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_job_container(job_info_t *job, int width, bool right, char *suffix)
+{
+	if (!job)		/* Print the Header instead */
+		_print_str("CONTAINER", width, right, true);
+	else
+		_print_str(job->container, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_job_container_id(job_info_t *job, int width, bool right,
+			    char *suffix)
+{
+	if (!job) /* Print the Header instead */
+		_print_str("CONTAINERID", width, right, true);
+	else
+		_print_str(job->container_id, width, right, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -1436,6 +1451,18 @@ int _print_job_cluster_features(job_info_t * job, int width, bool right_justify,
 	return SLURM_SUCCESS;
 }
 
+int _print_job_prefer(job_info_t * job, int width, bool right_justify,
+		      char* suffix)
+{
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("PREFER", width, right_justify, true);
+	else
+		_print_str(job->prefer, width, right_justify, true);
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_job_account(job_info_t * job, int width, bool right_justify,
 			char* suffix)
 {
@@ -1503,24 +1530,6 @@ int _print_job_qos(job_info_t * job, int width, bool right_justify,
 		_print_str("QOS", width, right_justify, true);
 	else
 		_print_str(job->qos, width, right_justify, true);
-	if (suffix)
-		printf("%s", suffix);
-	return SLURM_SUCCESS;
-}
-
-int _print_job_select_jobinfo(job_info_t * job, int width, bool right_justify,
-			char* suffix)
-{
-	char select_buf[100];
-
-	if (job == NULL)	/* Print the Header instead */
-		select_g_select_jobinfo_sprint(NULL,
-			select_buf, sizeof(select_buf), SELECT_PRINT_HEAD);
-	else
-		select_g_select_jobinfo_sprint(job->select_jobinfo,
-			select_buf, sizeof(select_buf), SELECT_PRINT_DATA);
-	_print_str(select_buf, width, right_justify, true);
-
 	if (suffix)
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
@@ -1675,12 +1684,23 @@ int _print_job_cpus_per_task(job_info_t * job, int width, bool right_justify,
 }
 
 int _print_job_derived_ec(job_info_t * job, int width, bool right_justify,
-		    char* suffix)
+			  char* suffix)
 {
-	if (job == NULL)
+	uint16_t exit_status = 0, term_sig = 0;
+	char *out = NULL;
+
+	if (!job)
 		_print_str("DERIVED_EC", width, right_justify, true);
-	else
-		_print_int(job->derived_ec, width, right_justify, true);
+	else if (job->derived_ec != NO_VAL) {
+		if (WIFSIGNALED(job->derived_ec))
+			term_sig = WTERMSIG(job->derived_ec);
+		else if (WIFEXITED(job->derived_ec))
+			exit_status = WEXITSTATUS(job->derived_ec);
+
+		xstrfmtcat(out, "%u:%u", exit_status, term_sig);
+		_print_str(out, width, right_justify, true);
+		xfree(out);
+	}
 
 	if (suffix)
 		printf("%s",suffix);
@@ -1703,12 +1723,23 @@ int _print_job_eligible_time(job_info_t * job, int width, bool right_justify,
 }
 
 int _print_job_exit_code(job_info_t * job, int width, bool right_justify,
-		    char* suffix)
+			 char* suffix)
 {
-	if (job == NULL)
+	uint16_t exit_status = 0, term_sig = 0;
+	char *out = NULL;
+
+	if (!job)
 		_print_str("EXIT_CODE", width, right_justify, true);
-	else
-		_print_int(job->exit_code, width, right_justify, true);
+	else if (job->exit_code != NO_VAL) {
+		if (WIFSIGNALED(job->exit_code))
+			term_sig = WTERMSIG(job->exit_code);
+		else if (WIFEXITED(job->exit_code))
+			exit_status = WEXITSTATUS(job->exit_code);
+
+		xstrfmtcat(out, "%u:%u", exit_status, term_sig);
+		_print_str(out, width, right_justify, true);
+		xfree(out);
+	}
 
 	if (suffix)
 		printf("%s",suffix);
@@ -2345,7 +2376,6 @@ static int _print_step_from_format(void *x, void *arg)
 	List list = (List) arg;
 	ListIterator i = list_iterator_create(list);
 	step_format_t *current;
-	int total_width = 0;
 
 	while ((current = list_next(i))) {
 		if (current->
@@ -2353,10 +2383,6 @@ static int _print_step_from_format(void *x, void *arg)
 			     current->right_justify, current->suffix)
 		    != SLURM_SUCCESS)
 			return SLURM_ERROR;
-		if (current->width)
-			total_width += current->width;
-		else
-			total_width += 10;
 	}
 	list_iterator_destroy(i);
 	printf("\n");
@@ -2387,6 +2413,32 @@ int _print_step_cluster_name(job_step_info_t *step, int width, bool right,
 		_print_str("CLUSTER", width, right, true);
 	else
 		_print_str(step->cluster, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_step_container(job_step_info_t *step, int width, bool right,
+			  char *suffix)
+{
+	if (!step)		/* Print the Header instead */
+		_print_str("CONTAINER", width, right, true);
+	else
+		_print_str(step->container, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_step_container_id(job_step_info_t *step, int width, bool right,
+			     char *suffix)
+{
+	if (!step) /* Print the Header instead */
+		_print_str("CONTAINERID", width, right, true);
+	else
+		_print_str(step->container_id, width, right, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -2825,7 +2877,7 @@ static int _filter_job(job_info_t * job)
 			    (job_step_id->step_id.job_id ==
 			     job->array_job_id) &&
 			    (job->array_bitmap &&
-			     bit_test((bitstr_t *)job->array_bitmap,
+			     bit_test(job->array_bitmap,
 				      job_step_id->array_id))) {
 				filter = 0;
 				partial_array = true;
@@ -2905,7 +2957,8 @@ static int _filter_job(job_info_t * job)
 			return 2;
 	}
 
-	if (params.state_list) {
+	if (params.all_states) {
+	} else if (params.state_list) {
 		filter = 1;
 		iterator = list_iterator_create(params.state_list);
 		while ((state_id = list_next(iterator))) {
@@ -2977,7 +3030,7 @@ static int _filter_job(job_info_t * job)
 	if (partial_array) {
 		/* Print this record, but perhaps only some job array records */
 		bitstr_t *new_array_bitmap;
-		int array_len = bit_size((bitstr_t *)job->array_bitmap);
+		int array_len = bit_size(job->array_bitmap);
 		new_array_bitmap = bit_alloc(array_len);
 		iterator = list_iterator_create(params.job_list);
 		while ((job_step_id = list_next(iterator))) {
@@ -2988,19 +3041,18 @@ static int _filter_job(job_info_t * job)
 			}
 		}
 		list_iterator_destroy(iterator);
-		bit_and((bitstr_t *)job->array_bitmap, new_array_bitmap);
-		bit_free(new_array_bitmap);
+		bit_and(job->array_bitmap, new_array_bitmap);
+		FREE_NULL_BITMAP(new_array_bitmap);
 		xfree(job->array_task_str);
-		i = bit_set_count((bitstr_t *)job->array_bitmap);
+		i = bit_set_count(job->array_bitmap);
 		if (i == 1) {
-			job->array_task_id =
-				bit_ffs((bitstr_t *)job->array_bitmap);
-			bit_free((bitstr_t *)job->array_bitmap);
+			job->array_task_id = bit_ffs(job->array_bitmap);
+			FREE_NULL_BITMAP(job->array_bitmap);
 		} else {
 			i = i * 16 + 10;
 			job->array_task_str = xmalloc(i);
 			(void) bit_fmt(job->array_task_str, i,
-				       (bitstr_t *)job->array_bitmap);
+				       job->array_bitmap);
 		}
 	}
 

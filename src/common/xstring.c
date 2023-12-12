@@ -70,9 +70,12 @@ static size_t _xstrdup_vprintf(char **str, const char *_fmt, va_list _ap);
  * for details.
  */
 strong_alias(_xstrcat,		slurm_xstrcat);
+strong_alias(_xstrcatat,	slurm_xstrcatat);
 strong_alias(_xstrncat,		slurm_xstrncat);
 strong_alias(_xstrcatchar,	slurm_xstrcatchar);
 strong_alias(_xstrftimecat,	slurm_xstrftimecat);
+strong_alias(_xiso8601timecat,	slurm_xiso8601timecat);
+strong_alias(_xrfc5424timecat,	slurm_xrfc5424timecat);
 strong_alias(_xstrfmtcat,	slurm_xstrfmtcat);
 strong_alias(_xstrfmtcatat,	slurm_xstrfmtcatat);
 strong_alias(_xmemcat,		slurm_xmemcat);
@@ -80,6 +83,7 @@ strong_alias(xstrdup,		slurm_xstrdup);
 strong_alias(xstrdup_printf,	slurm_xstrdup_printf);
 strong_alias(xstrndup,		slurm_xstrndup);
 strong_alias(xbasename,		slurm_xbasename);
+strong_alias(xdirname,		slurm_xdirname);
 strong_alias(_xstrsubstitute,   slurm_xstrsubstitute);
 strong_alias(xshort_hostname,   slurm_xshort_hostname);
 strong_alias(xstring_is_whitespace, slurm_xstring_is_whitespace);
@@ -136,6 +140,49 @@ void _xstrcat(char **str1, const char *str2)
 
 	_makespace(str1, -1, strlen(str2));
 	strcat(*str1, str2);
+}
+
+/*
+ * Append str2 onto str at pos, * expanding buf as needed. pos is updated to the
+ * end of the appended string.
+ *
+ * Meant to be used in loops contructing longer strings that are performance
+ * sensitive, as xstrcat() needs to re-seek to the end of str making the string
+ * construction worse by another O(log(strlen)) factor.
+ */
+void _xstrcatat(char **str, char **pos, const char *str2)
+{
+	size_t orig_len, append_len;
+
+	if (!str2)
+		return;
+
+	append_len = strlen(str2);
+
+	/* No string yet to append to, so return a copy of str2. */
+	if (!*str) {
+		*str = xstrdup(str2);
+		*pos = *str + append_len;
+		return;
+	}
+
+	if (!*pos) {
+		orig_len = strlen(*str);
+		*pos = *str + orig_len;
+	} else {
+		xassert(*pos >= *str);
+		orig_len = *pos - *str;
+	}
+
+	_makespace(str, orig_len, append_len);
+
+	memcpy(*str + orig_len, str2, append_len);
+
+	/*
+	 * Update *pos. Cannot happen earlier as _makespace() may have
+	 * changed *str to a different address.
+	 */
+	*pos = *str + orig_len + append_len;
 }
 
 /*
@@ -254,6 +301,35 @@ void _xrfc5424timecat(char **buf, bool msec)
 		_xstrfmtcat(buf, "%s%s", p, z);
 }
 
+extern void _xrfc3339timecat(char **buf)
+{
+	char p[64] = "";
+	char z[12] = "";
+	struct timeval tv;
+	struct tm tm;
+
+	if (gettimeofday(&tv, NULL) == -1)
+		fprintf(stderr, "gettimeofday() failed\n");
+
+	if (!localtime_r(&tv.tv_sec, &tm))
+		fprintf(stderr, "localtime_r() failed\n");
+
+	if (strftime(p, sizeof(p), "%FT%T", &tm) == 0)
+		fprintf(stderr, "strftime() returned 0\n");
+
+	/* The strftime %z format creates timezone offsets of the form
+	 * (+/-)hhmm, whereas the RFC 3339 format is (+/-)hh:mm. So
+	 * shift the minutes one step back and insert the semicolon.
+	 */
+	if (strftime(z, sizeof(z), "%z", &tm) == 0)
+		fprintf(stderr, "strftime() returned 0\n");
+	z[5] = z[4];
+	z[4] = z[3];
+	z[3] = ':';
+
+	_xstrfmtcat(buf, "%s%s", p, z);
+}
+
 /*
  * append formatted string with printf-style args to buf, expanding
  * buf as needed
@@ -367,6 +443,39 @@ char * xbasename(char *path)
 }
 
 /*
+ * Specialized dirname implementation which returns the result of removing the
+ * basename to the given path, or a "." (dot) if the given path doesn't contain
+ * a slash.
+ *
+ * NOTE: This implementation differs from the libgen/libc ones, and it does not
+ *	 conform to the XPG 4.2 or any other standard. For instance, given
+ *	 "/tmp/" as an argument, a conformant implementation would return "/",
+ *	 but this will return "/tmp".
+ *
+ * NOTE: This doesn't handle multiple and contiguous slashes.
+ *
+ * IN:	char pointer to a path
+ * RET:	the path without the xbasename or a dot if no slashes
+ */
+char *xdirname(const char *path)
+{
+	char *fname = xstrdup(path);
+	char *slash;
+
+	if (!fname)
+		return xstrdup(".");
+
+	if (!(slash = strrchr(fname, '/'))) {
+		xfree(fname);
+		return xstrdup(".");
+	}
+
+	*slash = '\0';
+
+	return fname;
+}
+
+/*
  * Duplicate a string.
  *   str (IN)		string to duplicate
  *   RETURN		copy of string
@@ -452,34 +561,63 @@ long int xstrntol(const char *str, char **endptr, size_t n, int base)
  *   str (IN/OUT)	target string (pointer to in case of expansion)
  *   pattern (IN)	substring to look for in str
  *   replacement (IN)   string with which to replace the "pattern" string
+ *   all (IN)           replace all or not
  */
-bool _xstrsubstitute(char **str, const char *pattern, const char *replacement)
+void _xstrsubstitute(char **str, const char *pattern, const char *replacement,
+		     const bool all)
 {
 	int pat_len, rep_len;
-	char *ptr, *end_copy;
-	int pat_offset;
+	char *ptr, *end_copy, *pos = NULL;
+	int append_len, pos_offset;
 
 	if (*str == NULL || pattern == NULL || pattern[0] == '\0')
-		return 0;
+		return;
 
-	if ((ptr = strstr(*str, pattern)) == NULL)
-		return 0;
-	pat_offset = ptr - (*str);
 	pat_len = strlen(pattern);
 	if (replacement == NULL)
 		rep_len = 0;
 	else
 		rep_len = strlen(replacement);
 
-	end_copy = xstrdup(ptr + pat_len);
-	if (rep_len != 0) {
-		_makespace(str, -1, rep_len - pat_len);
-		strcpy((*str)+pat_offset, replacement);
-	}
-	strcpy((*str)+pat_offset+rep_len, end_copy);
-	xfree(end_copy);
+	append_len = rep_len - pat_len;
 
-	return 1;
+	pos_offset = 0;
+again:
+	pos = *str + pos_offset;
+
+	if ((ptr = strstr(pos, pattern)) == NULL)
+		return;
+
+	/* Get the end after the pattern */
+	end_copy = xstrdup(ptr + pat_len);
+
+	pos_offset += ptr - pos;
+
+	if (rep_len != 0) {
+		/*
+		 * If we are making this bigger, make sure we get enough space.
+		 */
+		if (append_len > 0)
+			_makespace(str, -1, append_len);
+		memcpy((*str) + pos_offset, replacement, rep_len);
+		pos_offset += rep_len;
+	}
+
+	/* add the end of new string */
+	if (end_copy) {
+		int end_len = strlen(end_copy);
+		memcpy((*str) + pos_offset, end_copy, end_len);
+
+		/* terminate the string if we are shrinking it */
+		if (append_len < 0)
+			(*str)[pos_offset + end_len] = '\0';
+		xfree(end_copy);
+	}
+
+	if (all)
+		goto again;
+
+	return;
 }
 
 /* xshort_hostname
@@ -723,7 +861,8 @@ extern void xstrtrim(char *string)
 		memmove(string, start, (ptr - start + 1));
 }
 
-extern char *bytes_to_hex(const char *string, int len, const char *delimiter)
+extern char *xstring_bytes2hex(const unsigned char *string, int len,
+			       const char *delimiter)
 {
 	char *hex = NULL, *pos = NULL;
 
@@ -735,13 +874,14 @@ extern char *bytes_to_hex(const char *string, int len, const char *delimiter)
 			xstrfmtcatat(hex, &pos, "%s", delimiter);
 
 		/* convert each char into equiv hex */
-		xstrfmtcatat(hex, &pos, "%02x", (unsigned char) string[i]);
+		xstrfmtcatat(hex, &pos, "%02x", string[i]);
 	}
 
 	return hex;
 }
 
-extern char *bytes_to_printable(const char *string, int len, const char replace)
+extern char *xstring_bytes2printable(const unsigned char *string, int len,
+				     const char replace)
 {
 	char *str = NULL, *pos = NULL;
 

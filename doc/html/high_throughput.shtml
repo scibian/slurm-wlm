@@ -9,14 +9,18 @@ some tuning and this document should help you off to a good start.
 A working knowledge of Slurm should be considered a prerequisite
 for this material.</p>
 
-<h2>Performance Results</h2>
+<h2 id="performance">Performance Results
+<a class="slurm_link" href="#performance"></a>
+</h2>
 
 <p>Slurm has also been validated to execute 500 simple batch jobs per second
 on a sustained basis with short bursts of activity at a much higher level.
 Actual performance depends upon the jobs to be executed plus the hardware and
 configuration used.</p>
 
-<h2>System configuration</h2>
+<h2 id="sys_config">System configuration
+<a class="slurm_link" href="#sys_config"></a>
+</h2>
 
 <p>Several system configuration parameters may require modification to support a large number
 of open files and TCP connections with large bursts of messages. Changes can
@@ -53,7 +57,7 @@ Limit of socket listen() backlog, known in userspace as SOMAXCONN. Defaults to
 128. The value should be raised substantially to support bursts of request.
 For example, to support a burst of 1024 requests, set somaxconn to 1024.</li>
 <li><b>/proc/sys/net/ipv4/ip_local_port_range</b>:
-Identify the ephermeral ports available, which are used for many Slurm
+Identify the ephemeral ports available, which are used for many Slurm
 communications. The value may be raised to support a high volume of
 communications.
 For example, write the value "32768 65535" into the ip_local_port_range file
@@ -65,18 +69,24 @@ using the ifconfig command. A value of 4096 has been found to work well for one
 site with a very large cluster
 (e.g. <i>"ifconfig <interface> txqueuelen 4096"</i>).</p>
 
-<h2>Munge configuration</h2>
+<h2 id="munge_config">Munge configuration
+<a class="slurm_link" href="#munge_config"></a>
+</h2>
 
 <p>By default the Munge daemon runs with two threads, but a higher thread count
 can improve its throughput. We suggest starting the Munge daemon with ten
 threads for high throughput support (e.g. <i>"munged --num-threads 10"</i>).</p>
 
-<h2>User limits</h2>
+<h2 id="user_limits">User limits
+<a class="slurm_link" href="#user_limits"></a>
+</h2>
 
 <p>The <b>ulimit</b> values in effect for the <b>slurmctld</b> daemon should
 be set quite high for memory size, open file count and stack size.</p>
 
-<h2>Slurm Configuration</h2>
+<h2 id="slurm_config">Slurm Configuration
+<a class="slurm_link" href="#slurm_config"></a>
+</h2>
 
 <p>Several Slurm configuration parameters should be adjusted to
 reflect the needs of high throughput computing. The changes described below
@@ -115,7 +125,7 @@ seconds if possible. Use of accounting records for older jobs can increase
 the job throughput rate compared with retaining old jobs in the memory of
 the slurmctld daemon.</li>
 <li><b>PriorityType</b>:
-The <i>priority/builtin</i> is considerably faster than other options, but
+The <i>priority/basic</i> is considerably faster than other options, but
 schedules jobs only on a First In First Out (FIFO) basis.</li>
 <li><b>SchedulerParameters</b>:
 Many scheduling parameters are available.
@@ -131,6 +141,11 @@ scheduling multiple jobs simultaneously may be possible.
 This option may improve system responsiveness when large numbers of jobs
 (many hundreds) are submitted at the same time, but it will delay the
 initiation time of individual jobs.</li>
+<li>Setting the <b>defer_batch</b> option is similar to the <b>defer</b>
+option, as explained above. The difference is that <b>defer_batch</b> will
+allow interactive jobs to be started immediately, but jobs submitted with
+sbatch will be deferred to allow multiple jobs to accumulate and be scheduled
+at once.</li>
 <li><b>sched_min_interval</b> is yet another configuration parameter to control
 how frequently the scheduling logic runs. It can still be triggered on each
 job submit, job termination, or other state change which could permit a new
@@ -146,8 +161,8 @@ default_queue_depth is 100 (jobs), which should be fine in most cases.</li>
 <li>The <i>sched/backfill</i> plugin has relatively high overhead if used with
 large numbers of job. Configuring <b>bf_max_job_test</b> to a modest size (say 100
 jobs or less) and <b>bf_interval</b> to 30 seconds or more will limit the
-overhead of backfill scheduling (NOTE: the default values are fine for both
-of these parameters). Other backfill options available for tuning backfill 
+overhead of backfill scheduling (<b>NOTE</b>: the default values are fine for
+both of these parameters). Other backfill options available for tuning backfill
 scheduling include <b>bf_max_job_user</b>, <b>bf_resolution</b> and
 <b>bf_window</b>. See the slurm.conf man page for details.</li>
 <li>A set of scheduling parameters currently used for running hundreds of jobs
@@ -155,7 +170,6 @@ per second on a sustained basis on one cluster follows. Note that every
 environment is different and this set of parameters will not work well
 in every case, but it may serve as a good starting point.</li>
 <ul>
-<li>assoc_limit_continue</li>
 <li>batch_sched_delay=20</li>
 <li>bf_continue</li>
 <li>bf_interval=300</li>
@@ -184,29 +198,37 @@ are enabled a separate slurmctld thread has to be created for every job start
 Current architecture requires acquisition of a job write lock in every thread,
 which is a costly operation that severely limits scheduler throughput.
 <li><b>SlurmctldDebug</b>:
-More detailed logging will decrease system throughput. Set to 2 (log errors
-only) or 3 (general information logging). Each increment in the logging level
-will increase the number of message by a factor of about 3.</li>
+More detailed logging will decrease system throughput. Set to <i>error</i> or
+<i>info</i> for regular operations with high throughput workload.</li>
 <li><b>SlurmdDebug</b>:
-More detailed logging will decrease system throughput. Set to 2 (log errors
-only) or 3 (general information logging). Each increment in the logging level
-will increase the number of message by a factor of about 3.</li>
+More detailed logging will decrease system throughput. Set to <i>error</i> or
+<i>info</i> for regular operations with high throughput workload.</li>
 <li><b>SlurmdLogFile</b>:
 Writing to local storage is recommended.</li>
-<li><b>TaskPlugin</b>:
-Avoid using <i>task/cgroup</i> with the combination of <i>ConstrainRAMSpace</i>
-it is slower than other alternatives.  On the same note <i>task/affinity</i>
-does not appear to add any measurable overhead.  Using task/affinity for
-affinity is advised in any case.</li>
+<li>The ability to do RPC rate limiting on a per-user basis is a new feature
+with 23.02. It acts as a virtual bucket of tokens that users consume with
+Remote Procedure Calls. This allows users to submit a large number of requests
+in a short period of time, but not a sustained high rate of requests that
+would add stress to the scheduler. You can define the maximum number of tokens
+with <b>rl_bucket_size</b>, the rate at which new tokens are added with
+<b>rl_refill_rate</b>, the frequency with which tokens are refilled with
+<b>rl_refill_period</b> and the number of entities to track with
+<b>rl_table_size</b>. It is enabled with <b>rl_enable</b>.</li>
 <li><b>Other</b>: Configure logging, accounting and other overhead to a minimum
 appropriate for your environment.</li>
 </ul>
 
-<h2>SlurmDBD Configuration</h2>
+<h2 id="slurmdbd_config">SlurmDBD Configuration
+<a class="slurm_link" href="#slurmdbd_config"></a>
+</h2>
 
 <p>Turning accounting off provides a minimal improvement in performance.
   If using SlurmDBD increased speedup can be achieved by setting the CommitDelay
-  option in the <a href=slurmdbd.conf.html>slurmdbd.conf</a></p>
+  option in the <a href=slurmdbd.conf.html>slurmdbd.conf</a> to introduce a
+  delay between the time slurmdbd receives a connection from slurmctld and
+  when it commits the information to the database. This allows multiple
+  requests to be accumulated and reduces the number of commit requests
+  to the database.</p>
 
 <p>You might also consider setting the '<i>Purge*</i>' options in your
   slurmdbd.conf to clear out old Data.  A Typical configuration would
@@ -222,6 +244,6 @@ appropriate for your environment.</li>
 
 </ul>
 
-<p style="text-align:center;">Last modified 5 December 2018</p>
+<p style="text-align:center;">Last modified 18 April 2023</p>
 
 <!--#include virtual="footer.txt"-->

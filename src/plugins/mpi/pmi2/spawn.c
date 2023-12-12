@@ -36,6 +36,7 @@
 \*****************************************************************************/
 
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -143,15 +144,14 @@ spawn_req_free(spawn_req_t *req)
 	}
 }
 
-extern void
-spawn_req_pack(spawn_req_t *req, Buf buf)
+extern void spawn_req_pack(spawn_req_t *req, buf_t *buf)
 {
 	int i, j;
 	spawn_subcmd_t *subcmd;
 	void *auth_cred;
 
-	auth_cred = g_slurm_auth_create(AUTH_DEFAULT_INDEX,
-					slurm_conf.authinfo);
+	auth_cred = auth_g_create(AUTH_DEFAULT_INDEX, slurm_conf.authinfo,
+				  job_info.uid, NULL, 0);
 	if (auth_cred == NULL) {
 		error("authentication: %m");
 		return;
@@ -161,8 +161,8 @@ spawn_req_pack(spawn_req_t *req, Buf buf)
 	 * We can use SLURM_PROTOCOL_VERSION here since there is no possibility
 	 * of protocol mismatch.
 	 */
-	(void) g_slurm_auth_pack(auth_cred, buf, SLURM_PROTOCOL_VERSION);
-	(void) g_slurm_auth_destroy(auth_cred);
+	(void) auth_g_pack(auth_cred, buf, SLURM_PROTOCOL_VERSION);
+	auth_g_destroy(auth_cred);
 
 	pack32(req->seq, buf);
 	packstr(req->from_node, buf);
@@ -189,8 +189,7 @@ spawn_req_pack(spawn_req_t *req, Buf buf)
 	}
 }
 
-extern int
-spawn_req_unpack(spawn_req_t **req_ptr, Buf buf)
+extern int spawn_req_unpack(spawn_req_t **req_ptr, buf_t *buf)
 {
 	spawn_req_t *req = NULL;
 	spawn_subcmd_t *subcmd = NULL;
@@ -203,17 +202,18 @@ spawn_req_unpack(spawn_req_t **req_ptr, Buf buf)
 	 * We can use SLURM_PROTOCOL_VERSION here since there is no possibility
 	 * of protocol mismatch.
 	 */
-	auth_cred = g_slurm_auth_unpack(buf, SLURM_PROTOCOL_VERSION);
+	auth_cred = auth_g_unpack(buf, SLURM_PROTOCOL_VERSION);
 	if (auth_cred == NULL) {
 		error("authentication: %m");
 		return SLURM_ERROR;
 	}
-	if (g_slurm_auth_verify(auth_cred, slurm_conf.authinfo)) {
+	if (auth_g_verify(auth_cred, slurm_conf.authinfo)) {
 		error("authentication: %m");
+		auth_g_destroy(auth_cred);
 		return SLURM_ERROR;
 	}
-	auth_uid = g_slurm_auth_get_uid(auth_cred);
-	(void) g_slurm_auth_destroy(auth_cred);
+	auth_uid = auth_g_get_uid(auth_cred);
+	auth_g_destroy(auth_cred);
 	my_uid = getuid();
 	if ((auth_uid != 0) && (auth_uid != my_uid)) {
 		error("mpi/pmi2: spawn request apparently from uid %u",
@@ -277,7 +277,7 @@ unpack_error:
 extern int
 spawn_req_send_to_srun(spawn_req_t *req, spawn_resp_t **resp_ptr)
 {
-	Buf req_buf = NULL, resp_buf = NULL;
+	buf_t *req_buf = NULL, *resp_buf = NULL;
 	int rc;
 	uint16_t cmd;
 
@@ -287,11 +287,11 @@ spawn_req_send_to_srun(spawn_req_t *req, spawn_resp_t **resp_ptr)
 	spawn_req_pack(req, req_buf);
 	rc = tree_msg_to_srun_with_resp(get_buf_offset(req_buf),
 					get_buf_data(req_buf), &resp_buf);
-	free_buf(req_buf);
+	FREE_NULL_BUFFER(req_buf);
 
 	if (rc == SLURM_SUCCESS) {
 		rc = spawn_resp_unpack(resp_ptr, resp_buf);
-		free_buf(resp_buf);
+		FREE_NULL_BUFFER(resp_buf);
 	}
 	return rc;
 }
@@ -316,8 +316,7 @@ spawn_resp_free(spawn_resp_t *resp)
 	}
 }
 
-extern void
-spawn_resp_pack(spawn_resp_t *resp, Buf buf)
+extern void spawn_resp_pack(spawn_resp_t *resp, buf_t *buf)
 {
 	int i;
 
@@ -331,8 +330,7 @@ spawn_resp_pack(spawn_resp_t *resp, Buf buf)
 	}
 }
 
-extern int
-spawn_resp_unpack(spawn_resp_t **resp_ptr, Buf buf)
+extern int spawn_resp_unpack(spawn_resp_t **resp_ptr, buf_t *buf)
 {
 	spawn_resp_t *resp = NULL;
 	uint32_t temp32;
@@ -362,7 +360,7 @@ unpack_error:
 extern int
 spawn_resp_send_to_stepd(spawn_resp_t *resp, char **node)
 {
-	Buf buf;
+	buf_t *buf;
 	int rc;
 	uint16_t cmd;
 
@@ -375,14 +373,14 @@ spawn_resp_send_to_stepd(spawn_resp_t *resp, char **node)
 	rc = slurm_forward_data(node, tree_sock_addr,
 				get_buf_offset(buf),
 				get_buf_data(buf));
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 	return rc;
 }
 
 extern int
 spawn_resp_send_to_srun(spawn_resp_t *resp)
 {
-	Buf buf;
+	buf_t *buf;
 	int rc;
 	uint16_t cmd;
 
@@ -393,14 +391,14 @@ spawn_resp_send_to_srun(spawn_resp_t *resp)
 	spawn_resp_pack(resp, buf);
 
 	rc = tree_msg_to_srun(get_buf_offset(buf), get_buf_data(buf));
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 	return rc;
 }
 
 extern int
 spawn_resp_send_to_fd(spawn_resp_t *resp, int fd)
 {
-	Buf buf;
+	buf_t *buf;
 	int rc;
 
 	buf = init_buf(1024);
@@ -410,7 +408,7 @@ spawn_resp_send_to_fd(spawn_resp_t *resp, int fd)
 /* 	pack16(cmd, buf); */
 	spawn_resp_pack(resp, buf);
 	rc = slurm_msg_sendto(fd, get_buf_data(buf), get_buf_offset(buf));
-	free_buf(buf);
+	FREE_NULL_BUFFER(buf);
 
 	return rc;
 }

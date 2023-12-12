@@ -50,16 +50,18 @@
 
 #include "slurm/slurm.h"
 
-#include "src/common/cli_filter.h"
+#include "src/interfaces/cli_filter.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
-#include "src/common/node_select.h"
+#include "src/interfaces/gres.h"
 #include "src/common/pack.h"
-#include "src/common/plugstack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
+#include "src/common/run_command.h"
+#include "src/interfaces/select.h"
+#include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
+#include "src/common/spank.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
 
@@ -68,8 +70,6 @@
 #define MAX_RETRIES 15
 #define MAX_WAIT_SLEEP_TIME 32
 
-static void  _add_bb_to_script(char **script_body, char *burst_buffer_file);
-static void  _env_merge_filter(job_desc_msg_t *desc);
 static int   _fill_job_desc_from_opts(job_desc_msg_t *desc);
 static void *_get_script_buffer(const char *filename, int *size);
 static int   _job_wait(uint32_t job_id);
@@ -102,8 +102,11 @@ int main(int argc, char **argv)
 	if (!isatty(STDERR_FILENO))
 		setvbuf(stderr, NULL, _IOLBF, 0);
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
+
+	if (cli_filter_init() != SLURM_SUCCESS)
+		fatal("failed to initialize cli_filter plugin");
 
 	_set_exit_code();
 	if (spank_init_allocator() < 0) {
@@ -137,7 +140,7 @@ int main(int argc, char **argv)
 	if (script_body == NULL)
 		exit(error_exit);
 
-	het_job_argc = argc - sbopt.script_argc;
+	het_job_argc = argc - opt.argc;
 	het_job_argv = argv;
 	for (het_job_inx = 0; !het_job_fini; het_job_inx++) {
 		bool more_het_comps = false;
@@ -164,13 +167,14 @@ int main(int argc, char **argv)
 		 * in to the job script.
 		 */
 		if (opt.burst_buffer_file) {
-			Buf buf = create_mmap_buf(opt.burst_buffer_file);
+			buf_t *buf = create_mmap_buf(opt.burst_buffer_file);
 			if (!buf) {
 				error("Invalid --bbf specification");
 				exit(error_exit);
 			}
-			_add_bb_to_script(&script_body, get_buf_data(buf));
-			free_buf(buf);
+			run_command_add_to_script(&script_body,
+						  get_buf_data(buf));
+			FREE_NULL_BUFFER(buf);
 		}
 
 		if (spank_init_post_opt() < 0) {
@@ -204,8 +208,8 @@ int main(int argc, char **argv)
 		}
 		local_env = xmalloc(sizeof(sbatch_env_t));
 		memcpy(local_env, &het_job_env, sizeof(sbatch_env_t));
-		desc = xmalloc(sizeof(job_desc_msg_t));
-		slurm_init_job_desc_msg(desc);
+
+		desc = slurm_opt_create_job_desc(&opt, true);
 		if (_fill_job_desc_from_opts(desc) == -1)
 			exit(error_exit);
 		if (!first_desc)
@@ -343,7 +347,8 @@ int main(int argc, char **argv)
 		rc = _job_wait(resp->job_id);
 
 #ifdef MEMORY_LEAK_DEBUG
-	slurm_select_fini();
+	cli_filter_fini();
+	select_g_fini();
 	slurm_reset_all_options(&opt, false);
 	slurm_auth_fini();
 	slurm_conf_destroy();
@@ -352,55 +357,6 @@ int main(int argc, char **argv)
 	xfree(script_body);
 
 	return rc;
-}
-
-/* Insert the contents of "burst_buffer_file" into "script_body" */
-static void  _add_bb_to_script(char **script_body, char *burst_buffer_file)
-{
-	char *orig_script = *script_body;
-	char *new_script, *sep, save_char;
-	int i;
-	char *bbf = NULL;
-
-	if (!burst_buffer_file || (burst_buffer_file[0] == '\0'))
-		return;	/* No burst buffer file or empty file */
-
-	if (!orig_script) {
-		*script_body = xstrdup(burst_buffer_file);
-		return;
-	}
-	bbf = xstrdup(burst_buffer_file);
-	i = strlen(bbf) - 1;
-	if (bbf[i] != '\n')	/* Append new line as needed */
-		xstrcat(bbf, "\n");
-
-	if (orig_script[0] != '#') {
-		/* Prepend burst buffer file */
-		new_script = bbf;
-		xstrcat(new_script, orig_script);
-		*script_body = new_script;
-		return;
-	}
-
-	sep = strchr(orig_script, '\n');
-	if (sep) {
-		save_char = sep[1];
-		sep[1] = '\0';
-		new_script = xstrdup(orig_script);
-		xstrcat(new_script, bbf);
-		sep[1] = save_char;
-		xstrcat(new_script, sep + 1);
-		*script_body = new_script;
-		xfree(bbf);
-		return;
-	} else {
-		new_script = xstrdup(orig_script);
-		xstrcat(new_script, "\n");
-		xstrcat(new_script, bbf);
-		*script_body = new_script;
-		xfree(bbf);
-		return;
-	}
 }
 
 /* Wait for specified job ID to terminate, return it's exit code */
@@ -427,8 +383,7 @@ static int _job_wait(uint32_t job_id)
 		rc = slurm_load_job(&resp, job_id, SHOW_ALL);
 		if (rc == SLURM_SUCCESS) {
 			for (i = 0, job_ptr = resp->job_array;
-			     (i < resp->record_count) && complete;
-			     i++, job_ptr++) {
+			     (i < resp->record_count); i++, job_ptr++) {
 				if (IS_JOB_FINISHED(job_ptr)) {
 					if (WIFEXITED(job_ptr->exit_code)) {
 						ec2 = WEXITSTATUS(job_ptr->
@@ -453,192 +408,28 @@ static int _job_wait(uint32_t job_id)
 	return ec;
 }
 
-
-/* Propagate select user environment variables to the job.
- * If ALL is among the specified variables propagate
- * the entire user environment as well.
+/*
+ * Returns 0 on success, -1 on failure
+ * A copy of this exists in src/plugins/openapi/v0.0.xx/jobs.c. If this changes
+ * please do the same there.
  */
-static void _env_merge_filter(job_desc_msg_t *desc)
-{
-	extern char **environ;
-	int i, len;
-	char *save_env[2] = { NULL, NULL }, *tmp, *tok, *last = NULL;
-
-	tmp = xstrdup(opt.export_env);
-	tok = find_quote_token(tmp, ",", &last);
-	while (tok) {
-
-		if (xstrcasecmp(tok, "ALL") == 0) {
-			env_array_merge(&desc->environment,
-					(const char **)environ);
-			tok = find_quote_token(NULL, ",", &last);
-			continue;
-		}
-
-		if (strchr(tok, '=')) {
-			save_env[0] = tok;
-			env_array_merge(&desc->environment,
-					(const char **)save_env);
-		} else {
-			len = strlen(tok);
-			for (i = 0; environ[i]; i++) {
-				if (xstrncmp(tok, environ[i], len) ||
-				    (environ[i][len] != '='))
-					continue;
-				save_env[0] = environ[i];
-				env_array_merge(&desc->environment,
-						(const char **)save_env);
-				break;
-			}
-		}
-		tok = find_quote_token(NULL, ",", &last);
-	}
-	xfree(tmp);
-
-	for (i = 0; environ[i]; i++) {
-		if (xstrncmp("SLURM_", environ[i], 6))
-			continue;
-		save_env[0] = environ[i];
-		env_array_merge(&desc->environment,
-				(const char **)save_env);
-	}
-}
-
-/* Returns 0 on success, -1 on failure */
 static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 {
-	int i;
 	extern char **environ;
 
-	desc->contiguous = opt.contiguous ? 1 : 0;
-	if (opt.core_spec != NO_VAL16)
-		desc->core_spec = opt.core_spec;
-	desc->features = xstrdup(opt.constraint);
-	desc->cluster_features = xstrdup(opt.c_constraint);
-	if (opt.job_name)
-		desc->name = xstrdup(opt.job_name);
-	else
+	if (!desc)
+		return -1;
+
+	if (!opt.job_name)
 		desc->name = xstrdup("sbatch");
-	desc->reservation  = xstrdup(opt.reservation);
-	desc->wckey  = xstrdup(opt.wckey);
 
-	desc->req_nodes = xstrdup(opt.nodelist);
-	desc->extra = xstrdup(opt.extra);
-	desc->exc_nodes = xstrdup(opt.exclude);
-	desc->partition = xstrdup(opt.partition);
-	desc->profile = opt.profile;
-	if (opt.licenses)
-		desc->licenses = xstrdup(opt.licenses);
-	if (opt.nodes_set) {
-		desc->min_nodes = opt.min_nodes;
-		if (opt.max_nodes)
-			desc->max_nodes = opt.max_nodes;
-	} else if (opt.ntasks_set && (opt.ntasks == 0))
-		desc->min_nodes = 0;
-	if (opt.ntasks_per_node)
-		desc->ntasks_per_node = opt.ntasks_per_node;
-	if (opt.ntasks_per_tres != NO_VAL)
-		desc->ntasks_per_tres = opt.ntasks_per_tres;
-	else if (opt.ntasks_per_gpu != NO_VAL)
-		desc->ntasks_per_tres = opt.ntasks_per_gpu;
-	desc->user_id = opt.uid;
-	desc->group_id = opt.gid;
-	if (opt.dependency)
-		desc->dependency = xstrdup(opt.dependency);
-
-	if (sbopt.array_inx)
-		desc->array_inx = xstrdup(sbopt.array_inx);
-	if (sbopt.batch_features)
-		desc->batch_features = xstrdup(sbopt.batch_features);
-	if (opt.mem_bind)
-		desc->mem_bind       = xstrdup(opt.mem_bind);
-	if (opt.mem_bind_type)
-		desc->mem_bind_type  = opt.mem_bind_type;
-	if (opt.plane_size != NO_VAL)
-		desc->plane_size     = opt.plane_size;
-	desc->task_dist  = opt.distribution;
-
-	desc->network = xstrdup(opt.network);
-	if (opt.nice != NO_VAL)
-		desc->nice = NICE_OFFSET + opt.nice;
-	if (opt.priority)
-		desc->priority = opt.priority;
-
-	desc->mail_type = opt.mail_type;
-	if (opt.mail_user)
-		desc->mail_user = xstrdup(opt.mail_user);
-	if (opt.begin)
-		desc->begin_time = opt.begin;
-	if (opt.deadline)
-		desc->deadline = opt.deadline;
-	if (opt.delay_boot != NO_VAL)
-		desc->delay_boot = opt.delay_boot;
-	if (opt.account)
-		desc->account = xstrdup(opt.account);
-	if (opt.burst_buffer)
-		desc->burst_buffer = opt.burst_buffer;
-	if (opt.comment)
-		desc->comment = xstrdup(opt.comment);
-	if (opt.qos)
-		desc->qos = xstrdup(opt.qos);
-
-	if (opt.hold)
-		desc->priority     = 0;
-	if (opt.reboot)
-		desc->reboot = 1;
-
-	/* job constraints */
-	if (opt.pn_min_cpus > -1)
-		desc->pn_min_cpus = opt.pn_min_cpus;
-	if (opt.pn_min_memory != NO_VAL64)
-		desc->pn_min_memory = opt.pn_min_memory;
-	else if (opt.mem_per_cpu != NO_VAL64)
-		desc->pn_min_memory = opt.mem_per_cpu | MEM_PER_CPU;
-	if (opt.pn_min_tmp_disk != NO_VAL64)
-		desc->pn_min_tmp_disk = opt.pn_min_tmp_disk;
-	if (opt.overcommit) {
-		desc->min_cpus = MAX(opt.min_nodes, 1);
-		desc->overcommit = opt.overcommit;
-	} else if (opt.cpus_set)
-		desc->min_cpus = opt.ntasks * opt.cpus_per_task;
-	else if (opt.nodes_set && (opt.min_nodes == 0))
-		desc->min_cpus = 0;
-	else
-		desc->min_cpus = opt.ntasks;
-
-	if (opt.ntasks_set)
-		desc->num_tasks = opt.ntasks;
-	if (opt.cpus_set)
-		desc->cpus_per_task = opt.cpus_per_task;
-	if (opt.ntasks_per_socket > -1)
-		desc->ntasks_per_socket = opt.ntasks_per_socket;
-	if (opt.ntasks_per_core > -1)
-		desc->ntasks_per_core = opt.ntasks_per_core;
-
-	/* node constraints */
-	if (opt.sockets_per_node != NO_VAL)
-		desc->sockets_per_node = opt.sockets_per_node;
-	if (opt.cores_per_socket != NO_VAL)
-		desc->cores_per_socket = opt.cores_per_socket;
-	if (opt.threads_per_core != NO_VAL)
-		desc->threads_per_core = opt.threads_per_core;
-
-	if (opt.no_kill)
-		desc->kill_on_node_fail = 0;
-	if (opt.time_limit != NO_VAL)
-		desc->time_limit = opt.time_limit;
-	if (opt.time_min  != NO_VAL)
-		desc->time_min = opt.time_min;
-	if (opt.shared != NO_VAL16)
-		desc->shared = opt.shared;
+	desc->array_inx = sbopt.array_inx;
+	desc->batch_features = sbopt.batch_features;
+	desc->container = xstrdup(opt.container);
+	xfree(desc->container_id);
+	desc->container_id = xstrdup(opt.container_id);
 
 	desc->wait_all_nodes = sbopt.wait_all_nodes;
-	if (opt.warn_flags)
-		desc->warn_flags = opt.warn_flags;
-	if (opt.warn_signal)
-		desc->warn_signal = opt.warn_signal;
-	if (opt.warn_time)
-		desc->warn_time = opt.warn_time;
 
 	desc->environment = NULL;
 	if (sbopt.export_file) {
@@ -650,13 +441,17 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "ALL")) {
 		env_array_merge(&desc->environment, (const char **) environ);
+	} else if (!xstrcasecmp(opt.export_env, "NIL")) {
+		desc->environment = env_array_create();
+		env_array_merge_slurm(&desc->environment,
+				      (const char **)environ);
 	} else if (!xstrcasecmp(opt.export_env, "NONE")) {
 		desc->environment = env_array_create();
 		env_array_merge_slurm(&desc->environment,
 				      (const char **)environ);
 		opt.get_user_env_time = 0;
 	} else {
-		_env_merge_filter(desc);
+		env_merge_filter(&opt, desc);
 		opt.get_user_env_time = 0;
 	}
 	if (opt.get_user_env_time >= 0) {
@@ -672,72 +467,14 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	desc->env_size = envcount(desc->environment);
 
-	desc->argc     = sbopt.script_argc;
-	desc->argv     = xmalloc(sizeof(char *) * sbopt.script_argc);
-	for (i = 0; i < sbopt.script_argc; i++)
-		desc->argv[i] = xstrdup(sbopt.script_argv[i]);
+	desc->argc     = opt.argc;
+	desc->argv     = opt.argv;
 	desc->std_err  = xstrdup(opt.efname);
 	desc->std_in   = xstrdup(opt.ifname);
 	desc->std_out  = xstrdup(opt.ofname);
-	desc->work_dir = xstrdup(opt.chdir);
+
 	if (sbopt.requeue != NO_VAL)
 		desc->requeue = sbopt.requeue;
-	if (opt.open_mode)
-		desc->open_mode = opt.open_mode;
-	if (opt.acctg_freq)
-		desc->acctg_freq = xstrdup(opt.acctg_freq);
-
-	if (opt.spank_job_env_size) {
-		desc->spank_job_env_size = opt.spank_job_env_size;
-		desc->spank_job_env =
-			xmalloc(sizeof(char *) * opt.spank_job_env_size);
-		for (i = 0; i < opt.spank_job_env_size; i++)
-			desc->spank_job_env[i] = xstrdup(opt.spank_job_env[i]);
-	}
-
-	desc->cpu_freq_min = opt.cpu_freq_min;
-	desc->cpu_freq_max = opt.cpu_freq_max;
-	desc->cpu_freq_gov = opt.cpu_freq_gov;
-
-	if (opt.req_switch >= 0)
-		desc->req_switch = opt.req_switch;
-	if (opt.wait4switch >= 0)
-		desc->wait4switch = opt.wait4switch;
-
-	desc->power_flags = opt.power;
-	if (opt.job_flags)
-		desc->bitflags = opt.job_flags;
-	if (opt.mcs_label)
-		desc->mcs_label = xstrdup(opt.mcs_label);
-
-	if (opt.cpus_per_gpu)
-		xstrfmtcat(desc->cpus_per_tres, "gpu:%d", opt.cpus_per_gpu);
-	if (!opt.tres_bind && ((opt.ntasks_per_tres != NO_VAL) ||
-			       (opt.ntasks_per_gpu != NO_VAL))) {
-		/* Implicit single GPU binding with ntasks-per-tres/gpu */
-		if (opt.ntasks_per_tres != NO_VAL)
-			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
-				   opt.ntasks_per_tres);
-		else
-			xstrfmtcat(opt.tres_bind, "gpu:single:%d",
-				   opt.ntasks_per_gpu);
-	}
-	desc->tres_bind = xstrdup(opt.tres_bind);
-	desc->tres_freq = xstrdup(opt.tres_freq);
-	xfmt_tres(&desc->tres_per_job,    "gpu", opt.gpus);
-	xfmt_tres(&desc->tres_per_node,   "gpu", opt.gpus_per_node);
-	if (opt.gres) {
-		if (desc->tres_per_node)
-			xstrfmtcat(desc->tres_per_node, ",%s", opt.gres);
-		else
-			desc->tres_per_node = xstrdup(opt.gres);
-	}
-	xfmt_tres(&desc->tres_per_socket, "gpu", opt.gpus_per_socket);
-	xfmt_tres(&desc->tres_per_task,   "gpu", opt.gpus_per_task);
-	if (opt.mem_per_gpu != NO_VAL64)
-		xstrfmtcat(desc->mem_per_tres, "gpu:%"PRIu64, opt.mem_per_gpu);
-
-	desc->clusters = xstrdup(opt.clusters);
 
 	return 0;
 }
@@ -915,10 +652,20 @@ static void *_get_script_buffer(const char *filename, int *size)
 			error("Unable to open file %s", filename);
 			goto fail;
 		}
+		/* Quick check against absurdly large file sizes */
+		if (fd != STDIN_FILENO) {
+			struct stat st;
+			if (fstat(fd, &st) == -1)
+				fatal("Cannot stat %s: %m", filename);
+			if (st.st_size > MAX_BATCH_SCRIPT_SIZE)
+				fatal("Script file %s is too large",
+				      filename);
+			buf_size = st.st_size + 1;
+		}
 	}
 
 	/*
-	 * Then read in the script.
+	 * Then read in the script, in chunks of BUFSIZE bytes.
 	 */
 	buf = ptr = xmalloc(buf_size);
 	buf_left = buf_size;
@@ -926,7 +673,24 @@ static void *_get_script_buffer(const char *filename, int *size)
 		buf_left -= tmp_size;
 		script_size += tmp_size;
 		if (buf_left == 0) {
-			buf_size += BUFSIZ;
+			if (buf_size >= MAX_BATCH_SCRIPT_SIZE) {
+				if (filename)
+					close(fd);
+				xfree(buf);
+				if (filename)
+					fatal("Script %s is too big, read %d > %d bytes.",
+					      filename, script_size,
+					      MAX_BATCH_SCRIPT_SIZE);
+				else
+					fatal("Script from STDIN is too big, read %d > %d bytes.",
+					      script_size,
+					      MAX_BATCH_SCRIPT_SIZE);
+			}
+
+			if (buf_size < (MAX_BATCH_SCRIPT_SIZE - BUFSIZ))
+				buf_size += BUFSIZ;
+			else
+				buf_size = MAX_BATCH_SCRIPT_SIZE;
 			xrealloc(buf, buf_size);
 		}
 		ptr = buf + script_size;
@@ -1030,11 +794,6 @@ static int _set_rlimit_env(void)
 
 		debug ("propagating RLIMIT_%s=%lu", rli->name, cur);
 	}
-
-	/*
-	 *  Now increase NOFILE to the max available for this srun
-	 */
-	rlimits_maximize_nofile();
 
 	return rc;
 }

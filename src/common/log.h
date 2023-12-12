@@ -47,6 +47,7 @@
 #define _LOG_H
 
 #include <syslog.h>
+#include <stdarg.h>
 #include <stdio.h>
 
 #include "slurm/slurm.h"
@@ -89,6 +90,10 @@ typedef enum {
 	LOG_LEVEL_END
 }	log_level_t;
 
+typedef enum {
+	LOG_FILE_FMT_TIMESTAMP = 0,
+	LOG_FILE_FMT_JSON,
+} log_file_fmt_t;
 
 /*
  * log options: Each of stderr, syslog, and logfile can have a different level
@@ -99,6 +104,8 @@ typedef struct {
 	log_level_t logfile_level;  /* max level to log to logfile           */
 	bool prefix_level;          /* prefix level (e.g. "debug: ") if true */
 	bool buffered;              /* use internal buffer to never block    */
+	bool raw;                   /* output is to a raw terminal           */
+	log_file_fmt_t logfile_fmt; /* format of logfile output */
 } 	log_options_t;
 
 extern char *slurm_prog_name;
@@ -106,16 +113,20 @@ extern char *slurm_prog_name;
 /* some useful initializers for log_options_t
  */
 #define LOG_OPTS_INITIALIZER	\
-	{ LOG_LEVEL_INFO, LOG_LEVEL_INFO, LOG_LEVEL_INFO, 1, 0 }
+	{ LOG_LEVEL_INFO, LOG_LEVEL_INFO, LOG_LEVEL_INFO, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define LOG_OPTS_SYSLOG_DEFAULT	\
-	{ LOG_LEVEL_QUIET, LOG_LEVEL_INFO, LOG_LEVEL_QUIET, 1, 0 }
+	{ LOG_LEVEL_QUIET, LOG_LEVEL_INFO, LOG_LEVEL_QUIET, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define LOG_OPTS_STDERR_ONLY	\
-	{ LOG_LEVEL_INFO,  LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, 1, 0 }
+	{ LOG_LEVEL_INFO,  LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, \
+		1, 0, 0, LOG_FILE_FMT_TIMESTAMP }
 
 #define SCHEDLOG_OPTS_INITIALIZER	\
-	{ LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, 0, 1 }
+	{ LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, LOG_LEVEL_QUIET, \
+		0, 1, 0, LOG_FILE_FMT_TIMESTAMP }
 
 
 /* Functions for filling in a char buffer with a timestamp. */
@@ -187,10 +198,9 @@ int log_alter_with_fp(log_options_t opt, log_facility_t fac, FILE *fp_in);
 int sched_log_alter(log_options_t opts, log_facility_t fac, char *logfile);
 
 /* Set prefix for log file entries
- * (really only useful for slurmd at this point).
  * Note: will store pfx internally, do not use after this call.
  */
-void log_set_fpfx(char **pfx);
+void log_set_prefix(char **pfx);
 
 /*
  * (re)set argv0 string prepended to all log messages
@@ -267,6 +277,25 @@ extern char *log_build_step_id_str(
  */
 
 /*
+ * return a heap allocated string formed from fmt and ap arglist
+ * returned string is allocated with xmalloc, so must free with xfree.
+ *
+ * args are like printf, with the addition of the following format chars:
+ * - %m expands to strerror(errno)
+ * - %M expand to time stamp, format is configuration dependent
+ * - %pA expands to "AAA.BBB.CCC.DDD:XXXX" for the given slurm_addr_t.
+ * - %pJ expands to "JobId=XXXX" for the given job_ptr, with the appropriate
+ *       format for job arrays and hetjob components.
+ * - %pS expands to "JobId=XXXX StepId=YYYY" for a given step_ptr.
+ * - %t expands to strftime("%x %X") [ locally preferred short date/time ]
+ * - %T expands to rfc2822 date time [ "dd, Mon yyyy hh:mm:ss GMT offset" ]
+ *
+ * these formats are expanded first, leaving all others to be passed to
+ * vsnprintf() to complete the expansion using the ap arglist.
+ */
+extern char *vxstrfmt(const char *fmt, va_list ap);
+
+/*
  * fatal() exits program
  * error() returns SLURM_ERROR
  */
@@ -279,6 +308,7 @@ extern void fatal_abort(const char *, ...)
 extern void fatal(const char *, ...)
 	__attribute__((format (printf, 1, 2))) __attribute__((noreturn));
 int	error(const char *, ...) __attribute__ ((format (printf, 1, 2)));
+void	warning(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	slurm_info(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	slurm_verbose(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 
@@ -288,17 +318,21 @@ extern const char plugin_type[];
 /*
  * Print plugins with the plugin_type and func
  */
-#define format_print(l, fmt, ...)			\
-	if (get_log_level() >= l)			\
-		log_var(l, "%s: %s: "fmt, plugin_type,	\
-			__func__, ##__VA_ARGS__);
+#define format_print(l, fmt, ...)				\
+	do {							\
+		if (get_log_level() >= l)			\
+			log_var(l, "%s: %s: "fmt, plugin_type,	\
+				__func__, ##__VA_ARGS__);	\
+	} while (0)
 #else
 /*
  * Normal log messages
  */
 #define format_print(l, fmt, ...)			\
-	if (get_log_level() >= l)			\
-		log_var(l, fmt, ##__VA_ARGS__);
+	do {						\
+		if (get_log_level() >= l)		\
+			log_var(l, fmt, ##__VA_ARGS__);	\
+	} while (0)
 #endif //SLURM_PLUGIN_DEBUG
 
 #define info(fmt, ...)		\
@@ -384,21 +418,25 @@ void spank_log(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 				     ##__VA_ARGS__);			\
 	} while (0)
 
-#define log_flag_hex(flag, data, len, fmt, ...)                             \
-	for (size_t i = 0; (slurm_conf.debug_flags & DEBUG_FLAG_##flag) &&  \
-			   data && (len > 0) && (i < len) &&                \
-			   (i < (16 * 16)); ) {                             \
-		int remain = len - i;                                       \
-		int print = ((remain <= 16) ? remain : 16);                 \
-		char *phex = bytes_to_hex((data + i), print, " ");          \
-		char *pstr = bytes_to_printable((data + i), print, '.');    \
-									    \
-		format_print(LOG_LEVEL_VERBOSE,                             \
-			     #flag ": " fmt " [%04zu/%04zu] 0x%s \"%s\"",   \
-			     ##__VA_ARGS__, i, (size_t)len, phex, pstr);    \
-		i += print;                                                 \
-		xfree(phex);                                                \
-		xfree(pstr);                                                \
-	}
+/*
+ * Log data as hex dump (use log_flag_hex() instead)
+ * IN data - ptr to data
+ * IN len - number of bytes pointed by data
+ * IN fmt - message to prepend to hex dump
+ */
+extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...);
+
+/*
+ * Log data as hex dump
+ * IN data - ptr to data
+ * IN len - number of bytes pointed by data
+ * IN fmt - message to prepend to hex dump
+ */
+#define log_flag_hex(flag, data, len, fmt, ...)                  \
+	do {                                                     \
+		if (slurm_conf.debug_flags & DEBUG_FLAG_##flag)  \
+			_log_flag_hex(data, len, #flag ": " fmt, \
+				      ##__VA_ARGS__);            \
+	} while (0)
 
 #endif /* !_LOG_H */

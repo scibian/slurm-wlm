@@ -35,6 +35,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/interfaces/auth.h"
+
 #include "sacct.h"
 
 /*
@@ -62,6 +64,7 @@ print_field_t fields[] = {
 	{14, "ConsumedEnergy", print_fields_str, PRINT_CONSUMED_ENERGY},
 	{17, "ConsumedEnergyRaw", print_fields_uint64,
 	 PRINT_CONSUMED_ENERGY_RAW},
+	{19, "Container", print_fields_str, PRINT_CONTAINER},
 	{10, "CPUTime", print_fields_time_from_secs, PRINT_CPU_TIME},
 	{10, "CPUTimeRAW", print_fields_uint64, PRINT_CPU_TIME_RAW},
 	{-10, "DBIndex", print_fields_uint64, PRINT_DB_INX},
@@ -71,6 +74,8 @@ print_field_t fields[] = {
 	{19, "Eligible", print_fields_date, PRINT_ELIGIBLE},
 	{19, "End", print_fields_date, PRINT_END},
 	{8,  "ExitCode", print_fields_str, PRINT_EXITCODE},
+	{14, "Extra", print_fields_str, PRINT_EXTRA},
+	{8,  "FailedNode", print_fields_str, PRINT_FAILED_NODE},
 	{19, "Flags", print_fields_str, PRINT_FLAGS},
 	{6,  "GID", print_fields_uint, PRINT_GID},
 	{9,  "Group", print_fields_str, PRINT_GROUP},
@@ -78,6 +83,7 @@ print_field_t fields[] = {
 	{-12, "JobIDRaw", print_fields_str, PRINT_JOBIDRAW},
 	{10, "JobName", print_fields_str, PRINT_JOBNAME},
 	{9,  "Layout", print_fields_str, PRINT_LAYOUT},
+	{10, "Licenses", print_fields_str, PRINT_LICENSES},
 	{12, "MaxDiskRead", print_fields_str, PRINT_MAXDISKREAD},
 	{15, "MaxDiskReadNode", print_fields_str, PRINT_MAXDISKREADNODE},
 	{15, "MaxDiskReadTask", print_fields_uint, PRINT_MAXDISKREADTASK},
@@ -101,30 +107,31 @@ print_field_t fields[] = {
 	{8,  "NNodes", print_fields_uint, PRINT_NNODES},
 	{15, "NodeList", print_fields_str, PRINT_NODELIST},
 	{8,  "NTasks", print_fields_uint, PRINT_NTASKS},
-	{10, "Priority", print_fields_uint, PRINT_PRIO},
 	{10, "Partition", print_fields_str, PRINT_PARTITION},
+	{10, "Planned", print_fields_time_from_secs, PRINT_PLANNED},
+	{10, "PlannedCPU", print_fields_time_from_secs, PRINT_PLANNED_CPU},
+	{13, "PlannedCPURAW", print_fields_uint, PRINT_PLANNED_CPU_RAW},
+	{10, "Priority", print_fields_uint, PRINT_PRIO},
 	{10, "QOS", print_fields_str, PRINT_QOS},
 	{6,  "QOSRAW", print_fields_uint, PRINT_QOSRAW},
 	{22, "Reason", print_fields_str, PRINT_REASON},
 	{10, "ReqCPUFreq", print_fields_str, PRINT_REQ_CPUFREQ_MAX}, /* vestigial */
-	{13, "ReqCPUFreqMin", print_fields_str, PRINT_REQ_CPUFREQ_MIN},
-	{13, "ReqCPUFreqMax", print_fields_str, PRINT_REQ_CPUFREQ_MAX},
 	{13, "ReqCPUFreqGov", print_fields_str, PRINT_REQ_CPUFREQ_GOV},
+	{13, "ReqCPUFreqMax", print_fields_str, PRINT_REQ_CPUFREQ_MAX},
+	{13, "ReqCPUFreqMin", print_fields_str, PRINT_REQ_CPUFREQ_MIN},
 	{8,  "ReqCPUS", print_fields_uint, PRINT_REQ_CPUS},
 	{10, "ReqMem", print_fields_str, PRINT_REQ_MEM},
 	{8,  "ReqNodes", print_fields_str, PRINT_REQ_NODES},
 	{10, "ReqTRES", print_fields_str, PRINT_TRESR},
 	{20, "Reservation",  print_fields_str, PRINT_RESERVATION},
 	{8,  "ReservationId",  print_fields_uint, PRINT_RESERVATION_ID},
-	{10, "Reserved", print_fields_time_from_secs, PRINT_RESV},
-	{10, "ResvCPU", print_fields_time_from_secs, PRINT_RESV_CPU},
-	{10, "ResvCPURAW", print_fields_uint, PRINT_RESV_CPU},
 	{19, "Start", print_fields_date, PRINT_START},
 	{10, "State", print_fields_str, PRINT_STATE},
 	{19, "Submit", print_fields_date, PRINT_SUBMIT},
+	{20, "SubmitLine", print_fields_str, PRINT_SUBMIT_LINE},
 	{10, "Suspended", print_fields_time_from_secs, PRINT_SUSPENDED},
-	{10, "SystemCPU", print_fields_str, PRINT_SYSTEMCPU},
 	{15, "SystemComment", print_fields_str, PRINT_SYSTEM_COMMENT},
+	{10, "SystemCPU", print_fields_str, PRINT_SYSTEMCPU},
 	{10, "Timelimit", print_fields_str, PRINT_TIMELIMIT},
 	{10, "TimelimitRaw", print_fields_str, PRINT_TIMELIMIT_RAW},
 	{10, "TotalCPU", print_fields_str, PRINT_TOTALCPU},
@@ -150,7 +157,8 @@ print_field_t fields[] = {
 	{10, "WCKey", print_fields_str, PRINT_WCKEY},
 	{10, "WCKeyID", print_fields_uint, PRINT_WCKEYID},
 	{20, "WorkDir", print_fields_str, PRINT_WORK_DIR},
-	{0,  NULL, NULL, 0}};
+	{0,  NULL, NULL, 0}
+};
 
 List jobs = NULL;
 
@@ -163,7 +171,7 @@ int main(int argc, char **argv)
 	} op;
 	int rc = 0;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	sacct_init();
 	parse_command_line(argc, argv);
 
@@ -179,13 +187,16 @@ int main(int argc, char **argv)
 
 	switch (op) {
 	case SACCT_LIST:
-		print_fields_header(print_fields_list);
+		if (!params.mimetype &&
+		    !(params.job_cond->flags & JOBCOND_FLAG_SCRIPT) &&
+		    !(params.job_cond->flags & JOBCOND_FLAG_ENV))
+			print_fields_header(print_fields_list);
 		if (get_data() == SLURM_ERROR)
 			exit(errno);
 		if (params.opt_completion)
 			do_list_completion();
 		else
-			do_list();
+			do_list(argc, argv);
 		break;
 	case SACCT_HELP:
 		do_help();
@@ -197,5 +208,13 @@ int main(int argc, char **argv)
 	}
 
 	sacct_fini();
+
+#if MEMORY_LEAK_DEBUG
+	data_fini();
+	slurm_auth_fini();
+	slurm_conf_destroy();
+	log_fini();
+#endif
+
 	return (rc);
 }

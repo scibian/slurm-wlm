@@ -100,7 +100,7 @@
  *   | Bit_0  | Bit_1  | Bit_2  | Bit_3  | Bit_4  | Bit_5  | Bit_6  | Bit_7  |
  *
  * If a job changes size (relinquishes nodes), the node_bitmap will remain
- * unchanged, but cpus, cpus_used, cpus_array_*, and memory_used will be 
+ * unchanged, but cpus, cpus_used, cpus_array_*, and memory_used will be
  * updated (e.g. cpus and mem_used on that node cleared).
  */
 struct job_resources {
@@ -112,6 +112,7 @@ struct job_resources {
 	uint16_t *cpus;
 	uint16_t *cpus_used;
 	uint16_t *cores_per_socket;
+	uint16_t  cr_type;
 	uint64_t *memory_allocated;
 	uint64_t *memory_used;
 	uint32_t  nhosts;
@@ -122,6 +123,7 @@ struct job_resources {
 	uint32_t *sock_core_rep_count;
 	uint16_t *sockets_per_node;
 	uint16_t *tasks_per_node;
+	uint16_t  threads_per_core;
 	uint8_t   whole_node;
 };
 
@@ -157,20 +159,14 @@ extern job_resources_t *create_job_resources(void);
  *
  * job_resources_t *job_resrcs_ptr = create_job_resources();
  * node_name2bitmap("dummy[2,5,12,16]", true, &(job_res_ptr->node_bitmap));
- * rc = build_job_resources(job_resrcs_ptr, node_record_table_ptr);
+ * rc = build_job_resources(job_resrcs_ptr);
  */
-extern int build_job_resources(job_resources_t *job_resrcs_ptr,
-			       void *node_rec_table);
+extern int build_job_resources(job_resources_t *job_resrcs_ptr);
 
 /* Rebuild cpu_array_cnt, cpu_array_value, and cpu_array_reps based upon the
  * values of cpus in an existing data structure
  * Return total CPU count or -1 on error */
 extern int build_job_resources_cpu_array(job_resources_t *job_resrcs_ptr);
-
-/* Rebuild cpus array based upon the values of nhosts, cpu_array_value and
- * cpu_array_reps in an existing data structure
- * Return total CPU count or -1 on error */
-extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr);
 
 /* Validate a job_resources data structure originally built using
  * build_job_resources() is still valid based upon slurmctld state.
@@ -180,10 +176,9 @@ extern int build_job_resources_cpus_array(job_resources_t *job_resrcs_ptr);
  * change in a node's socket or core count require that any job running on
  * that node be killed. Example of use:
  *
- * rc = valid_job_resources(job_resrcs_ptr, node_record_table_ptr);
+ * rc = valid_job_resources(job_resrcs_ptr);
  */
-extern int valid_job_resources(job_resources_t *job_resrcs_ptr,
-			       void *node_rec_table);
+extern int valid_job_resources(job_resources_t *job_resrcs_ptr);
 
 /* Make a copy of a job_resources data structure,
  * free using free_job_resources() */
@@ -197,10 +192,10 @@ extern void free_job_resources(job_resources_t **job_resrcs_pptr);
 extern void log_job_resources(void *job_ptr);
 
 /* Un/pack full job_resources data structure */
-extern void pack_job_resources(job_resources_t *job_resrcs_ptr, Buf buffer,
+extern void pack_job_resources(job_resources_t *job_resrcs_ptr, buf_t *buffer,
 			       uint16_t protocol_version);
 extern int unpack_job_resources(job_resources_t **job_resrcs_pptr,
-				Buf buffer, uint16_t protocol_version);
+				buf_t *buffer, uint16_t protocol_version);
 
 /* Reset the node_bitmap in a job_resources data structure
  * This is needed after a restart/reconfiguration since nodes can
@@ -303,20 +298,13 @@ extern void add_job_to_cores(job_resources_t *job_resrcs_ptr,
 			     bitstr_t **full_core_bitmap,
 			     const uint16_t *bits_per_node);
 
-/*
- * Remove job from full-length core_bitmap
- * IN job_resrcs_ptr - resources allocated to a job
- * IN/OUT full_bitmap - bitmap of available CPUs, allocate as needed
- * IN bits_per_node - bits per node in the full_bitmap
- * RET 1 on success, 0 otherwise
- */
-extern void remove_job_from_cores(job_resources_t *job_resrcs_ptr,
-				  bitstr_t **full_core_bitmap,
-				  const uint16_t *bits_per_node);
-
 /* Given a job pointer and a global node index, return the index of that
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */
-extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr, 
+extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr,
 					     int node_inx);
+
+extern uint16_t job_resources_get_node_cpu_cnt(job_resources_t *job_resrcs_ptr,
+					       int job_node_inx,
+					       int sys_node_inx);
 
 #endif /* !_JOB_RESOURCES_H */

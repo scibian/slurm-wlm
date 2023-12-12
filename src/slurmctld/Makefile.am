@@ -15,8 +15,6 @@ slurmctld_SOURCES =     \
 	agent.c  	\
 	agent.h		\
 	backup.c	\
-	burst_buffer.c	\
-	burst_buffer.h	\
 	controller.c 	\
 	crontab.c 	\
 	fed_mgr.c 	\
@@ -25,6 +23,8 @@ slurmctld_SOURCES =     \
 	front_end.h	\
 	gang.c		\
 	gang.h		\
+	gres_ctld.c	\
+	gres_ctld.h	\
 	groups.c	\
 	groups.h	\
 	heartbeat.c	\
@@ -32,8 +32,6 @@ slurmctld_SOURCES =     \
 	job_mgr.c 	\
 	job_scheduler.c	\
 	job_scheduler.h	\
-	job_submit.c	\
-	job_submit.h	\
 	licenses.c	\
 	licenses.h	\
 	locks.c   	\
@@ -48,22 +46,24 @@ slurmctld_SOURCES =     \
 	port_mgr.h	\
 	power_save.c	\
 	power_save.h	\
-	preempt.c	\
-	preempt.h	\
 	prep_slurmctld.c \
 	proc_req.c	\
 	proc_req.h	\
+	rate_limit.c	\
+	rate_limit.h	\
 	read_config.c	\
 	read_config.h	\
 	reservation.c	\
 	reservation.h	\
 	rpc_queue.c	\
 	rpc_queue.h	\
-	sched_plugin.c	\
-	sched_plugin.h	\
 	slurmctld.h	\
-	slurmctld_plugstack.c \
-	slurmctld_plugstack.h \
+	slurmscriptd.c \
+	slurmscriptd.h \
+	slurmscriptd_protocol_defs.c \
+	slurmscriptd_protocol_defs.h \
+	slurmscriptd_protocol_pack.c \
+	slurmscriptd_protocol_pack.h \
 	srun_comm.c	\
 	srun_comm.h	\
 	state_save.c	\
@@ -76,12 +76,10 @@ slurmctld_SOURCES =     \
 
 sbin_PROGRAMS = slurmctld
 
-depend_libs = $(top_builddir)/src/common/libdaemonize.la
+slurmctld_LDADD = $(LIB_SLURM) $(SLURMCTLD_INTERFACES)
+slurmctld_LDFLAGS = $(CMD_LDFLAGS)
 
-slurmctld_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS)
-slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
-
-slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD) $(depend_libs)
+slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD) $(SLURMCTLD_INTERFACES)
 
 force:
 $(slurmctld_DEPENDENCIES) : force

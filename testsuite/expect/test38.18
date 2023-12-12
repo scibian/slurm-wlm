@@ -36,15 +36,14 @@ proc submit_job_error {cmd expected_error} {
 
 	set err_match 0
 
-	set cmd_pid [spawn {*}$cmd]
+	spawn {*}$cmd
 	expect {
 		-re $expected_error {
 			incr err_match
 			exp_continue
 		}
 		timeout {
-			slow_kill $cmd_pid
-			fail "command not responding"
+			fail "Command ($cmd) not responding"
 		}
 		eof {
 			wait
@@ -59,21 +58,20 @@ proc submit_job {cmd} {
 	set err_match 0
 	set job_id 0
 
-	set cmd_pid [spawn {*}$cmd]
+	spawn {*}$cmd
 	expect {
 		-re "job ($number)" {
 			set job_id $expect_out(1,string)
 		}
 		timeout {
-			slow_kill $cmd_pid
-			fail "command not responding"
+			fail "Command ($cmd) not responding"
 		}
 		eof {
 			wait
 		}
 	}
 	if {!$job_id} {
-		fail "didn't get a job_id"
+		fail "Didn't get a job_id"
 	}
 
 	return $job_id
@@ -234,17 +232,17 @@ proc test_cpus_per_gpu {} {
 	log_info "Testing --cpus-per-gpu"
 
 	set tests [list \
-		"--cpus-per-gpu=1 : --cpus-per-gpu=2" \
-		"--cpus-per-gpu=2 : --cpus-per-gpu=1" \
-		"--cpus-per-gpu=2 : -n1" \
-		"-n1 : --cpus-per-gpu=2" \
+		"--gpus=1 --cpus-per-gpu=1 : --gpus=1 --cpus-per-gpu=2" \
+		"--gpus=1 --cpus-per-gpu=2 : --gpus=1 --cpus-per-gpu=1" \
+		"--gpus=1 --cpus-per-gpu=2 : -n1" \
+		"-n1 : --gpus=1 --cpus-per-gpu=2" \
 	]
 
 	set regexes [list \
-		"^JobId=.*CpusPerTres=gpu:1.*JobId=.*CpusPerTres=gpu:2" \
-		"^JobId=.*CpusPerTres=gpu:2.*JobId=.*CpusPerTres=gpu:1" \
-		"^JobId=.*CpusPerTres=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*CpusPerTres=gpu:2" \
+		"^JobId=.*CpusPerTres=.*gpu:1.*JobId=.*CpusPerTres=.*gpu:2" \
+		"^JobId=.*CpusPerTres=.*gpu:2.*JobId=.*CpusPerTres=.*gpu:1" \
+		"^JobId=.*CpusPerTres=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*CpusPerTres=.*gpu:2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -279,10 +277,10 @@ proc test_gpus_per_job {} {
 	]
 
 	set regexes [list \
-		"^JobId=.*TresPerJob=gpu:1.*JobId=.*TresPerJob=gpu:2" \
-		"^JobId=.*TresPerJob=gpu:2.*JobId=.*TresPerJob=gpu:1" \
-		"^JobId=.*TresPerJob=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerJob=gpu:2" \
+		"^JobId=.*TresPerJob=.*gpu:1.*JobId=.*TresPerJob=.*gpu:2" \
+		"^JobId=.*TresPerJob=.*gpu:2.*JobId=.*TresPerJob=.*gpu:1" \
+		"^JobId=.*TresPerJob=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerJob=.*gpu:2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -321,15 +319,15 @@ proc test_gpus_per_node {} {
 	]
 
 	set regexes [list \
-		"^JobId=.*TresPerNode=gpu:1.*JobId=.*TresPerNode=gpu:2" \
-		"^JobId=.*TresPerNode=gpu:2.*JobId=.*TresPerNode=gpu:1" \
-		"^JobId=.*TresPerNode=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerNode=gpu:2" \
-		"^JobId=.*TresPerNode=gpu:1.*JobId=.*TresPerNode=gpu:2" \
-		"^JobId=.*TresPerNode=gpu:2.*JobId=.*TresPerNode=gpu:1" \
-		"^JobId=.*TresPerNode=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerNode=gpu:2" \
-		"^JobId=.*TresPerNode=gpu:1,gpu:2.*JobId=.*TresPerNode=gpu:2,gpu:1" \
+		"^JobId=.*TresPerNode=.*gpu:1.*JobId=.*TresPerNode=.*gpu:2" \
+		"^JobId=.*TresPerNode=.*gpu:2.*JobId=.*TresPerNode=.*gpu:1" \
+		"^JobId=.*TresPerNode=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerNode=.*gpu:2" \
+		"^JobId=.*TresPerNode=.*gpu:1.*JobId=.*TresPerNode=.*gpu:2" \
+		"^JobId=.*TresPerNode=.*gpu:2.*JobId=.*TresPerNode=.*gpu:1" \
+		"^JobId=.*TresPerNode=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerNode=.*gpu:2" \
+		"^JobId=.*TresPerNode=.*gpu:1,.*gpu:2.*JobId=.*TresPerNode=.*gpu:2,.*gpu:1" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -388,10 +386,10 @@ proc test_gpus_per_socket {} {
 	]
 
 	set regexes [list \
-		"^JobId=.*TresPerSocket=gpu:1.*JobId=.*TresPerSocket=gpu:2" \
-		"^JobId=.*TresPerSocket=gpu:2.*JobId=.*TresPerSocket=gpu:1" \
-		"^JobId=.*TresPerSocket=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerSocket=gpu:2" \
+		"^JobId=.*TresPerSocket=.*gpu:1.*JobId=.*TresPerSocket=.*gpu:2" \
+		"^JobId=.*TresPerSocket=.*gpu:2.*JobId=.*TresPerSocket=.*gpu:1" \
+		"^JobId=.*TresPerSocket=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerSocket=.*gpu:2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -425,10 +423,10 @@ proc test_gpus_per_task {} {
 	]
 
 	set regexes [list \
-		"^JobId=.*TresPerTask=gpu:1.*JobId=.*TresPerTask=gpu:2" \
-		"^JobId=.*TresPerTask=gpu:2.*JobId=.*TresPerTask=gpu:1" \
-		"^JobId=.*TresPerTask=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerTask=gpu:2" \
+		"^JobId=.*TresPerTask=.*gpu:1.*JobId=.*TresPerTask=.*gpu:2" \
+		"^JobId=.*TresPerTask=.*gpu:2.*JobId=.*TresPerTask=.*gpu:1" \
+		"^JobId=.*TresPerTask=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerTask=.*gpu:2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -455,17 +453,17 @@ proc test_mem_per_gpu {} {
 	log_info "Testing --mem-per-gpu"
 
 	set tests [list \
-		"-n1 --mem-per-gpu=1 : -n1 --mem-per-gpu=2" \
-		"-n1 --mem-per-gpu=2 : -n1 --mem-per-gpu=1" \
-		"-n1 --mem-per-gpu=2 : -n1" \
-		"-n1 : -n1 --mem-per-gpu=2" \
+		"-n1 --gpus=1 --mem-per-gpu=1 : -n1 --gpus=1 --mem-per-gpu=2" \
+		"-n1 --gpus=1 --mem-per-gpu=2 : -n1 --gpus=1 --mem-per-gpu=1" \
+		"-n1 --gpus=1 --mem-per-gpu=2 : -n1" \
+		"-n1 : -n1 --gpus=1 --mem-per-gpu=2" \
 	]
 
 	set regexes [list \
-		"^JobId=.*MemPerTres=gpu:1.*JobId=.*MemPerTres=gpu:2" \
-		"^JobId=.*MemPerTres=gpu:2.*JobId=.*MemPerTres=gpu:1" \
-		"^JobId=.*MemPerTres=gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*MemPerTres=gpu:2" \
+		"^JobId=.*MemPerTres=.*gpu:1.*JobId=.*MemPerTres=.*gpu:2" \
+		"^JobId=.*MemPerTres=.*gpu:2.*JobId=.*MemPerTres=.*gpu:1" \
+		"^JobId=.*MemPerTres=.*gpu:2.*JobId=.*" \
+		"^JobId=.*JobId=.*MemPerTres=.*gpu:2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {
@@ -488,9 +486,9 @@ proc test_mem_per_gpu {} {
 
 test_gpu_bind
 test_gpu_freq
-test_gpus_per_node
 
 if {[check_config_select "cons_tres"]} {
+    test_gpus_per_node
 	test_cpus_per_gpu
 	test_gpus_per_job
 	test_gpus_per_socket
@@ -504,4 +502,3 @@ if {[check_config_select "cons_tres"]} {
 if {$is_skip} {
 	skip "Some tests were skipped"
 }
-

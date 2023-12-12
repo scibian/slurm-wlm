@@ -5,7 +5,6 @@
 #include <EXTERN.h>
 #include <perl.h>
 #include <XSUB.h>
-#include <slurm/slurm.h>
 #include "ppport.h"
 
 #undef VERSION /* MakeMaker defines VERSION to some version we don't care
@@ -13,10 +12,9 @@
 		* included from src/common/job_resources.h below.
 		*/
 
-#include "src/common/job_resources.h"
-
-#include "bitstr.h"
 #include "slurm-perl.h"
+#include "src/common/job_resources.h"
+#include "src/common/xstring.h"
 
 static node_info_msg_t *job_node_ptr = NULL;
 
@@ -45,7 +43,7 @@ static uint32_t _threads_per_core(char *host)
 
 	for (i = 0; i < job_node_ptr->record_count; i++) {
 		if (job_node_ptr->node_array[i].name &&
-		    !strcmp(host, job_node_ptr->node_array[i].name)) {
+		    !xstrcmp(host, job_node_ptr->node_array[i].name)) {
 			threads = job_node_ptr->node_array[i].threads;
 			break;
 		}
@@ -220,6 +218,8 @@ job_info_to_hv(job_info_t *job_info, HV *hv)
 	hv_store_sv(hv, "exc_node_inx", newRV_noinc((SV*)av));
 
 	STORE_FIELD(hv, job_info, exit_code, uint32_t);
+	if (job_info->extra)
+		STORE_FIELD(hv, job_info, extra, charp);
 	if (job_info->features)
 		STORE_FIELD(hv, job_info, features, charp);
 	if (job_info->tres_per_node)
@@ -284,14 +284,13 @@ job_info_to_hv(job_info_t *job_info, HV *hv)
 	STORE_FIELD(hv, job_info, restart_cnt, uint16_t);
 	if(job_info->resv_name)
 		STORE_FIELD(hv, job_info, resv_name, charp);
-	STORE_PTR_FIELD(hv, job_info, select_jobinfo, "Slurm::dynamic_plugin_data_t");
 	STORE_PTR_FIELD(hv, job_info, job_resrcs, "Slurm::job_resources_t");
 	STORE_FIELD(hv, job_info, shared, uint16_t);
 	STORE_FIELD(hv, job_info, show_flags, uint16_t);
 	STORE_FIELD(hv, job_info, start_time, time_t);
 	if(job_info->state_desc)
 		STORE_FIELD(hv, job_info, state_desc, charp);
-	STORE_FIELD(hv, job_info, state_reason, uint16_t);
+	STORE_FIELD(hv, job_info, state_reason, uint32_t);
 	if(job_info->std_in)
 		STORE_FIELD(hv, job_info, std_in, charp);
 	if(job_info->std_out)
@@ -356,6 +355,7 @@ hv_to_job_info(HV *hv, job_info_t *job_info)
 		/* nothing to do */
 	}
 	FETCH_FIELD(hv, job_info, exit_code, uint32_t, TRUE);
+	FETCH_FIELD(hv, job_info, extra, charp, FALSE);
 	FETCH_FIELD(hv, job_info, features, charp, FALSE);
 	FETCH_FIELD(hv, job_info, tres_per_node, charp, FALSE);
 	FETCH_FIELD(hv, job_info, group_id, uint32_t, TRUE);
@@ -418,13 +418,12 @@ hv_to_job_info(HV *hv, job_info_t *job_info)
 	FETCH_FIELD(hv, job_info, resize_time, time_t, TRUE);
 	FETCH_FIELD(hv, job_info, restart_cnt, uint16_t, TRUE);
 	FETCH_FIELD(hv, job_info, resv_name, charp, FALSE);
-	FETCH_PTR_FIELD(hv, job_info, select_jobinfo, "Slurm::dynamic_plugin_data_t", FALSE);
 	FETCH_PTR_FIELD(hv, job_info, job_resrcs, "Slurm::job_resources_t", FALSE);
 	FETCH_FIELD(hv, job_info, shared, uint16_t, TRUE);
 	FETCH_FIELD(hv, job_info, show_flags, uint16_t, TRUE);
 	FETCH_FIELD(hv, job_info, start_time, time_t, TRUE);
 	FETCH_FIELD(hv, job_info, state_desc, charp, FALSE);
-	FETCH_FIELD(hv, job_info, state_reason, uint16_t, TRUE);
+	FETCH_FIELD(hv, job_info, state_reason, uint32_t, TRUE);
 	FETCH_FIELD(hv, job_info, std_in, charp, FALSE);
 	FETCH_FIELD(hv, job_info, std_out, charp, FALSE);
 	FETCH_FIELD(hv, job_info, std_err, charp, FALSE);

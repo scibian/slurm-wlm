@@ -45,39 +45,6 @@
 			  ((sign == '-') ? RESERVE_FLAG_DUR_MINUS : 0))
 
 /*
- *  _process_plus_minus is used to convert a string like
- *       Users+=a,b,c
- *  to   Users=+a,+b,+c
- */
-
-static char * _process_plus_minus(char plus_or_minus, char *src)
-{
-	int num_commas = 0;
-	int ii;
-	int srclen = strlen(src);
-	char *dst, *ret;
-
-	for (ii=0; ii<srclen; ii++) {
-		if (src[ii] == ',')
-			num_commas++;
-	}
-	ret = dst = xmalloc(srclen + 2 + num_commas);
-
-	*dst++ = plus_or_minus;
-	for (ii=0; ii<srclen; ii++) {
-		if (*src == ',') {
-			*dst++ = *src++;
-			*dst++ = plus_or_minus;
-		} else {
-			*dst++ = *src++;
-		}
-	}
-	*dst = '\0';
-
-	return ret;
-}
-
-/*
  * _parse_res_options   parse options for creating or updating a reservation
  * IN argc - count of arguments
  * IN argv - list of arguments
@@ -137,18 +104,27 @@ static int _parse_res_options(int argc, char **argv, const char *msg,
 			}
 			if (plus_minus) {
 				resv_msg_ptr->accounts =
-					_process_plus_minus(plus_minus, val);
+					scontrol_process_plus_minus(plus_minus,
+								    val, false);
 				*res_free_flags |= RESV_FREE_STR_ACCT;
 				plus_minus = '\0';
 			} else {
 				resv_msg_ptr->accounts = val;
 			}
-
+		} else if (xstrncasecmp(tag, "Comment", MAX(taglen, 3)) == 0) {
+			if (resv_msg_ptr->comment) {
+				exit_code = 1;
+				error("Parameter %s specified more than once",
+				      argv[i]);
+				return SLURM_ERROR;
+			}
+			resv_msg_ptr->comment = val;
 		} else if (!xstrncasecmp(tag, "Flags", MAX(taglen, 2))) {
 			uint64_t f;
 			if (plus_minus) {
 				char *tmp =
-					_process_plus_minus(plus_minus, val);
+					scontrol_process_plus_minus(plus_minus,
+								    val, false);
 				f = parse_resv_flags(tmp, msg, resv_msg_ptr);
 				xfree(tmp);
 				plus_minus = '\0';
@@ -168,7 +144,8 @@ static int _parse_res_options(int argc, char **argv, const char *msg,
 			}
 			if (plus_minus) {
 				resv_msg_ptr->groups =
-					_process_plus_minus(plus_minus, val);
+					scontrol_process_plus_minus(plus_minus,
+								    val, false);
 				*res_free_flags |= RESV_FREE_STR_GROUP;
 				plus_minus = '\0';
 			} else {
@@ -184,7 +161,8 @@ static int _parse_res_options(int argc, char **argv, const char *msg,
 			}
 			if (plus_minus) {
 				resv_msg_ptr->users =
-					_process_plus_minus(plus_minus, val);
+					scontrol_process_plus_minus(plus_minus,
+								    val, false);
 				*res_free_flags |= RESV_FREE_STR_USER;
 				plus_minus = '\0';
 			} else {
@@ -282,8 +260,15 @@ static int _parse_res_options(int argc, char **argv, const char *msg,
 			}
 
 		} else if (xstrncasecmp(tag, "Nodes", MAX(taglen, 5)) == 0) {
-			resv_msg_ptr->node_list = val;
-
+			if (plus_minus) {
+				resv_msg_ptr->node_list =
+					scontrol_process_plus_minus(plus_minus,
+								    val, true);
+				*res_free_flags |= RESV_FREE_STR_NODES;
+				plus_minus = '\0';
+			} else {
+				resv_msg_ptr->node_list = val;
+			}
 		} else if (xstrncasecmp(tag, "Features", MAX(taglen, 2)) == 0) {
 			resv_msg_ptr->features = val;
 

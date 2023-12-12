@@ -51,6 +51,7 @@
 
 #define OPT_LONG_LOCAL		0x101
 #define OPT_LONG_FEDR		0x102
+#define OPT_LONG_AUTOCOMP	0x103
 
 char *command_name;
 int exit_code;		/* sreport's exit code, =1 on any error at any time */
@@ -94,6 +95,7 @@ main (int argc, char **argv)
 	int option_index;
 	uint16_t persist_conn_flags = 0;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"all_clusters", 0, 0, 'a'},
 		{"cluster",  1, 0, 'M'},
 		{"federation", no_argument, 0, OPT_LONG_FEDR},
@@ -118,7 +120,7 @@ main (int argc, char **argv)
 	federation_flag   = false;
 	local_flag        = false;
 	quiet_flag        = 0;
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init("sreport", opts, SYSLOG_FACILITY_DAEMON, NULL);
 
 	/* Check to see if we are running a supported accounting plugin */
@@ -197,6 +199,10 @@ main (int argc, char **argv)
 		case (int)'V':
 			_print_version();
 			exit(exit_code);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
 			break;
 		default:
 			fprintf(stderr, "getopt error, returned %c\n",
@@ -311,7 +317,7 @@ static void _build_tres_list(void)
 {
 	ListIterator iter;
 	slurmdb_tres_rec_t *tres;
-	char *tres_tmp = NULL, *tres_tmp2 = NULL, *save_ptr = NULL, *tok;
+	char *save_ptr = NULL, *tok;
 
 	if (!g_tres_list) {
 		slurmdb_tres_cond_t cond = {0};
@@ -338,20 +344,28 @@ static void _build_tres_list(void)
 	}
 
 	tres_usage_str = "TRES";
-	iter = list_iterator_create(g_tres_list);
-	while ((tres = list_next(iter))) {
-		tres_tmp = xstrdup(tres_str);
-		xstrfmtcat(tres_tmp2, "%s%s%s",
-			   tres->type,
-			   tres->name ? "/" : "",
-			   tres->name ? tres->name : "");
-		tok = strtok_r(tres_tmp, ",", &save_ptr);
-		while (tok) {
-			if (!xstrcasecmp(tres_tmp2, tok))
-				break;
-			tok = strtok_r(NULL, ",", &save_ptr);
+	tok = strtok_r(tres_str, ",", &save_ptr);
+	while (tok) {
+		if (!xstrcasecmp(tok, "ALL")) {
+			/* If ALL clean and add all to avoid duplicates */
+			FREE_NULL_LIST(tres_list);
+			tres_list = list_create(slurmdb_destroy_tres_rec);
+
+			iter = list_iterator_create(g_tres_list);
+			while ((tres = list_next(iter))) {
+				slurmdb_tres_rec_t *tres2 =
+					slurmdb_copy_tres_rec(tres);
+				list_append(tres_list, tres2);
+			}
+			list_iterator_destroy(iter);
+
+			break;
 		}
-		if (tok && !xstrcasecmp(tok, "node")) {
+		tres = list_find_first(g_tres_list,
+				       slurmdb_find_tres_in_list_by_type,
+				       tok);
+
+		if (tres && !xstrcasecmp(tok, "node")) {
 			if ((time_format == SLURMDB_REPORT_TIME_SECS_PER) ||
 			    (time_format == SLURMDB_REPORT_TIME_MINS_PER) ||
 			    (time_format == SLURMDB_REPORT_TIME_HOURS_PER) ||
@@ -360,17 +374,16 @@ static void _build_tres_list(void)
 			else
 				node_tres = true;
 		}
-		if (tok || !xstrcasecmp(tres_str, "ALL")) {
-			slurmdb_tres_rec_t *tres2 =
-				slurmdb_copy_tres_rec(tres);
+		if (tres) {
+			slurmdb_tres_rec_t *tres2 = slurmdb_copy_tres_rec(tres);
 			list_append(tres_list, tres2);
 		}
-		xfree(tres_tmp2);
-		xfree(tres_tmp);
+
+		tok = strtok_r(NULL, ",", &save_ptr);
 	}
+
 	if (!list_count(tres_list))
 		fatal("No valid TRES given");
-	list_iterator_destroy(iter);
 }
 
 #if !HAVE_READLINE
@@ -969,7 +982,7 @@ sreport [<OPTION>] [<COMMAND>]                                             \n\
              - Cluster, Count, Login, Proper, Used, Wckey                  \n\
        - Utilization                                                       \n\
              - Allocated, Cluster, Count, Down, Idle, Overcommitted,       \n\
-               PlannedDown, Reported, Reserved                             \n\
+               Planned, PlannedDown, Reported                              \n\
                                                                            \n\
        Job                                                                 \n\
        - Sizes                                                             \n\

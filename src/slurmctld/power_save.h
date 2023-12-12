@@ -45,6 +45,7 @@
 
 /* Global Variables */
 extern bool cloud_reg_addrs;
+extern List resume_job_list;
 
 /*
  * config_power_mgr - Read power management configuration
@@ -60,10 +61,33 @@ extern void start_power_mgr(pthread_t *thread_id);
 /* Report if node power saving is enabled */
 extern bool power_save_test(void);
 
-/* power_job_reboot - Reboot compute nodes for a job from the head node */
-extern int power_job_reboot(job_record_t *job_ptr);
+/*
+ * Reboot compute nodes for a job from the head node using ResumeProgram.
+ *
+ * IN node_bitmap - bitmap of nodes to reboot
+ * IN job_ptr - job requesting reboot
+ * IN features - optional features that the nodes need to be rebooted with
+ */
+extern int power_job_reboot(bitstr_t *node_bitmap, job_record_t *job_ptr,
+			    char *features);
+
+/*
+ * Parse settings for excluding nodes, partitions and states from being
+ * suspended.
+ *
+ * This creates node bitmaps. Must be done again when node bitmaps change.
+ */
+extern void power_save_exc_setup(void);
 
 /* Free module's allocated memory */
 extern void power_save_fini(void);
+
+/*
+ * Set node power times based on global and per-partition settings.
+ *
+ * OUT (optional) partition_suspend_time_set - return True if any partition has
+ *                                             suspend_time set.
+ */
+extern void power_save_set_timeouts(bool *partition_suspend_time_set);
 
 #endif /* _HAVE_POWER_SAVE_H */

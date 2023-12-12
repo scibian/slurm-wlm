@@ -38,6 +38,7 @@
 #ifndef _SLURMDB_DEFS_H
 #define _SLURMDB_DEFS_H
 
+#include "src/common/slurm_persist_conn.h"
 #include "slurm/slurmdb.h"
 
 /* Defined purge macros */
@@ -156,6 +157,7 @@ extern char *slurmdb_tree_name_get(char *name, char *parent, List tree_list);
 extern int set_qos_bitstr_from_string(bitstr_t *valid_qos, char *names);
 extern int set_qos_bitstr_from_list(bitstr_t *valid_qos, List qos_list);
 extern char *get_qos_complete_str_bitstr(List qos_list, bitstr_t *valid_qos);
+extern List get_qos_name_list(List qos_list, List num_qos_list);
 extern char *get_qos_complete_str(List qos_list, List num_qos_list);
 
 extern char *get_classification_str(uint16_t classification);
@@ -175,6 +177,15 @@ extern char *slurmdb_purge_string(uint32_t purge, char *string, int len,
 				  bool with_archive);
 extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 				       char *names, int option);
+/*
+ * send_accounting_update_persist
+ * - Send accounting update to a slurmctld over a persistent connection
+ * IN update_list: updates to send
+ * IN persist_conn: connection to send things on
+ * RET: error code
+ */
+extern int slurmdb_send_accounting_update_persist(
+	List update_list, slurm_persist_conn_t *persist_conn);
 extern int slurmdb_send_accounting_update(List update_list, char *cluster,
 					  char *host, uint16_t port,
 					  uint16_t rpc_version);
@@ -301,4 +312,7 @@ extern void slurmdb_merge_grp_node_usage(bitstr_t **grp_node_bitmap1,
 					 uint16_t **grp_node_job_cnt1,
 					 bitstr_t *grp_node_bitmap2,
 					 uint16_t *grp_node_job_cnt2);
+
+extern char *slurmdb_get_job_id_str(slurmdb_job_rec_t *job);
+
 #endif

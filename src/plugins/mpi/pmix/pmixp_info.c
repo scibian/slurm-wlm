@@ -54,8 +54,6 @@ static bool _srv_use_direct_conn_early = false;
 static bool _srv_same_arch = true;
 #ifdef HAVE_UCX
 static bool _srv_use_direct_conn_ucx = true;
-#else
-static bool _srv_use_direct_conn_ucx = false;
 #endif
 static int _srv_fence_coll_type = PMIXP_COLL_TYPE_FENCE_MAX;
 static bool _srv_fence_coll_barrier = false;
@@ -63,7 +61,7 @@ static bool _srv_fence_coll_barrier = false;
 pmix_jobinfo_t _pmixp_job_info;
 
 static int _resources_set(char ***env);
-static int _env_set(char ***env);
+static int _env_set(const stepd_step_rec_t *step, char ***env);
 
 /* stepd global UNIX socket contact information */
 void pmixp_info_srv_usock_set(char *path, int fd)
@@ -98,10 +96,11 @@ bool pmixp_info_srv_direct_conn(void){
 bool pmixp_info_srv_direct_conn_early(void){
 	return _srv_use_direct_conn_early && _srv_use_direct_conn;
 }
-
+#ifdef HAVE_UCX
 bool pmixp_info_srv_direct_conn_ucx(void){
 	return _srv_use_direct_conn_ucx && _srv_use_direct_conn;
 }
+#endif
 
 int pmixp_info_srv_fence_coll_type(void)
 {
@@ -124,7 +123,7 @@ bool pmixp_info_srv_fence_coll_barrier(void)
 }
 
 /* Job information */
-int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
+int pmixp_info_set(const stepd_step_rec_t *step, char ***env)
 {
 	int i, rc;
 	size_t msize;
@@ -133,50 +132,50 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 	_pmixp_job_info.magic = PMIXP_INFO_MAGIC;
 #endif
 	/* security info */
-	_pmixp_job_info.uid = job->uid;
-	_pmixp_job_info.gid = job->gid;
+	_pmixp_job_info.uid = step->uid;
+	_pmixp_job_info.gid = step->gid;
 
-	memcpy(&_pmixp_job_info.step_id, &job->step_id,
+	memcpy(&_pmixp_job_info.step_id, &step->step_id,
 	       sizeof(_pmixp_job_info.step_id));
 
-	if (job->het_job_id && (job->het_job_id != NO_VAL))
-		_pmixp_job_info.step_id.job_id = job->het_job_id;
+	if (step->het_job_id && (step->het_job_id != NO_VAL))
+		_pmixp_job_info.step_id.job_id = step->het_job_id;
 
-	if (job->het_job_offset != NO_VAL) {
-		_pmixp_job_info.node_id = job->nodeid +
-					  job->het_job_node_offset;
-		_pmixp_job_info.node_tasks = job->node_tasks;
-		_pmixp_job_info.ntasks = job->het_job_ntasks;
-		_pmixp_job_info.nnodes = job->het_job_nnodes;
+	if (step->het_job_offset != NO_VAL) {
+		_pmixp_job_info.node_id = step->nodeid +
+					  step->het_job_node_offset;
+		_pmixp_job_info.node_tasks = step->node_tasks;
+		_pmixp_job_info.ntasks = step->het_job_ntasks;
+		_pmixp_job_info.nnodes = step->het_job_nnodes;
 		msize = _pmixp_job_info.nnodes * sizeof(uint32_t);
 		_pmixp_job_info.task_cnts = xmalloc(msize);
 		for (i = 0; i < _pmixp_job_info.nnodes; i++)
 			_pmixp_job_info.task_cnts[i] =
-						job->het_job_task_cnts[i];
+						step->het_job_task_cnts[i];
 
 		msize = _pmixp_job_info.node_tasks * sizeof(uint32_t);
 		_pmixp_job_info.gtids = xmalloc(msize);
-		for (i = 0; i < job->node_tasks; i++) {
-			_pmixp_job_info.gtids[i] = job->task[i]->gtid +
-						   job->het_job_task_offset;
+		for (i = 0; i < step->node_tasks; i++) {
+			_pmixp_job_info.gtids[i] = step->task[i]->gtid +
+						   step->het_job_task_offset;
 		}
 	} else {
-		_pmixp_job_info.node_id = job->nodeid;
-		_pmixp_job_info.node_tasks = job->node_tasks;
-		_pmixp_job_info.ntasks = job->ntasks;
-		_pmixp_job_info.nnodes = job->nnodes;
+		_pmixp_job_info.node_id = step->nodeid;
+		_pmixp_job_info.node_tasks = step->node_tasks;
+		_pmixp_job_info.ntasks = step->ntasks;
+		_pmixp_job_info.nnodes = step->nnodes;
 		msize = _pmixp_job_info.nnodes * sizeof(uint32_t);
 		_pmixp_job_info.task_cnts = xmalloc(msize);
 		for (i = 0; i < _pmixp_job_info.nnodes; i++)
-			_pmixp_job_info.task_cnts[i] = job->task_cnts[i];
+			_pmixp_job_info.task_cnts[i] = step->task_cnts[i];
 
 		msize = _pmixp_job_info.node_tasks * sizeof(uint32_t);
 		_pmixp_job_info.gtids = xmalloc(msize);
-		for (i = 0; i < job->node_tasks; i++)
-			_pmixp_job_info.gtids[i] = job->task[i]->gtid;
+		for (i = 0; i < step->node_tasks; i++)
+			_pmixp_job_info.gtids[i] = step->task[i]->gtid;
 	}
 #if 0
-	if ((job->het_job_id != 0) && (job->het_job_id != NO_VAL))
+	if ((step->het_job_id != 0) && (step->het_job_id != NO_VAL))
 		info("HET_JOB_ID:%u", _pmixp_job_info.step_id.job_id);
 	info("%ps", &_pmixp_job_info.step_id);
 	info("NODEID:%u", _pmixp_job_info.node_id);
@@ -185,20 +184,23 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 	info("NNODES:%u", _pmixp_job_info.nnodes);
 	for (i = 0; i < _pmixp_job_info.nnodes; i++)
 		info("TASK_CNT[%d]:%u", i,_pmixp_job_info.task_cnts[i]);
-	for (i = 0; i < job->node_tasks; i++)
+	for (i = 0; i < step->node_tasks; i++)
 		info("GTIDS[%d]:%u", i, _pmixp_job_info.gtids[i]);
 #endif
 
-	/* Setup hostnames and job-wide info */
+	_pmixp_job_info.hostname = xstrdup(step->node_name);
+
+	/* Setup job-wide info */
 	if ((rc = _resources_set(env))) {
 		return rc;
 	}
 
-	if ((rc = _env_set(env))) {
+	if ((rc = _env_set(step, env))) {
 		return rc;
 	}
 
-	snprintf(_pmixp_job_info.nspace, PMIXP_MAX_NSLEN, "slurm.pmix.%d.%d",
+	snprintf(_pmixp_job_info.nspace, sizeof(_pmixp_job_info.nspace),
+		 "slurm.pmix.%d.%d",
 		 pmixp_info_jobid(), pmixp_info_stepid());
 
 	return SLURM_SUCCESS;
@@ -245,7 +247,7 @@ eio_handle_t *pmixp_info_io(void)
  */
 
 /*
- * Derived from src/srun/libsrun/opt.c
+ * Derived from src/srun/opt.c
  * _get_task_count()
  *
  * FIXME: original _get_task_count has some additinal ckeck
@@ -315,12 +317,12 @@ static int _resources_set(char ***env)
 	else
 		_pmixp_job_info.abort_agent_port = -1;
 
-	/* Initialize all memory pointers that would be allocated to NULL
+	/*
+	 * Initialize all memory pointers
 	 * So in case of error exit we will know what to xfree
 	 */
 	_pmixp_job_info.job_hl = hostlist_create("");
 	_pmixp_job_info.step_hl = hostlist_create("");
-	_pmixp_job_info.hostname = NULL;
 
 	/* Save step host list */
 	p = getenvp(*env, PMIXP_STEP_NODES_ENV);
@@ -330,11 +332,6 @@ static int _resources_set(char ***env)
 		goto err_exit;
 	}
 	hostlist_push(_pmixp_job_info.step_hl, p);
-
-	/* Extract our node name */
-	p = hostlist_nth(_pmixp_job_info.step_hl, _pmixp_job_info.node_id);
-	_pmixp_job_info.hostname = xstrdup(p);
-	free(p);
 
 	/* Determine job-wide node id and job-wide node count */
 	p = getenvp(*env, PMIXP_JOB_NODES_ENV);
@@ -389,18 +386,66 @@ err_exit:
 	return SLURM_ERROR;
 }
 
-static int _env_set(char ***env)
+static void _parse_pmix_conf_env(char ***env, char *pmix_conf_env)
+{
+	char *tmp, *tok, *sep, *save_ptr = NULL;
+
+	if (!pmix_conf_env || !pmix_conf_env[0])
+		return;
+
+	tmp = xstrdup(pmix_conf_env);
+	tok = strtok_r(tmp, ";", &save_ptr);
+	while (tok) {
+		sep = strchr(tok, '=');
+		if (sep) {
+			sep[0] = '\0';
+			sep++;
+			/* Only set PMIX and UCX related env. vars. */
+			if (!xstrncasecmp("PMIX", tok, 4) &&
+			    !xstrncasecmp("UCX", tok, 4))
+				continue;
+
+			/* Overwrite current user's environment */
+			setenvf(env, tok, "%s", sep);
+
+			debug2("Setting env. from mpi.conf - %s=%s", tok, sep);
+			setenv(tok, sep, 1);
+		}
+		tok = strtok_r(NULL, ";", &save_ptr);
+	}
+	xfree(tmp);
+}
+
+static int _env_set(const stepd_step_rec_t *step, char ***env)
 {
 	char *p = NULL;
 
 	xassert(_pmixp_job_info.hostname);
 
-	_pmixp_job_info.server_addr_unfmt =
-		xstrdup(slurm_conf.slurmd_spooldir);
+	/*
+	 * Set first the random environment vars specified in mpi.conf.
+	 * They will take precedence and overwrite any user environment variable
+	 * already set and any discrete setting in pmix.conf.
+	 */
+	_parse_pmix_conf_env(env, slurm_pmix_conf.env);
 
-	_pmixp_job_info.lib_tmpdir = slurm_conf_expand_slurmd_path(
-				_pmixp_job_info.server_addr_unfmt,
-				_pmixp_job_info.hostname);
+	if (step->container) {
+		_pmixp_job_info.server_addr_unfmt =
+			xstrdup(step->container->spool_dir);
+		_pmixp_job_info.client_lib_tmpdir =
+			xstrdup(step->container->mount_spool_dir);
+	} else {
+		_pmixp_job_info.server_addr_unfmt =
+			xstrdup(slurm_conf.slurmd_spooldir);
+	}
+
+	debug2("set _pmixp_job_info.server_addr_unfmt = %s",
+	       _pmixp_job_info.server_addr_unfmt);
+
+	if (!_pmixp_job_info.lib_tmpdir)
+		_pmixp_job_info.lib_tmpdir = slurm_conf_expand_slurmd_path(
+			_pmixp_job_info.server_addr_unfmt,
+			_pmixp_job_info.hostname, NULL);
 
 	xstrfmtcat(_pmixp_job_info.server_addr_unfmt,
 		   "/stepd.slurm.pmix.%d.%d",
@@ -420,7 +465,13 @@ static int _env_set(char ***env)
 
 	if (p){
 		_pmixp_job_info.cli_tmpdir_base = xstrdup(p);
-	} else {
+	} else if (step->container) {
+		_pmixp_job_info.cli_tmpdir_base = xstrdup(
+			step->container->spool_dir);
+	} else if (slurm_pmix_conf.cli_tmpdir_base)
+		_pmixp_job_info.cli_tmpdir_base =
+			xstrdup(slurm_pmix_conf.cli_tmpdir_base);
+	else {
 		_pmixp_job_info.cli_tmpdir_base = slurm_get_tmp_fs(
 					_pmixp_job_info.hostname);
 	}
@@ -434,7 +485,6 @@ static int _env_set(char ***env)
 
 	/* ----------- Timeout setting ------------- */
 	/* TODO: also would be nice to have a cluster-wide setting in Slurm */
-	_pmixp_job_info.timeout = PMIXP_TIMEOUT_DEFAULT;
 	p = getenvp(*env, PMIXP_TIMEOUT);
 	if (p) {
 		int tmp;
@@ -442,7 +492,8 @@ static int _env_set(char ***env)
 		if (tmp > 0) {
 			_pmixp_job_info.timeout = tmp;
 		}
-	}
+	} else
+		_pmixp_job_info.timeout = slurm_pmix_conf.timeout;
 
 	/* ----------- Forward PMIX settings ------------- */
 	/* FIXME: this may be intrusive as well as PMIx library will create
@@ -455,6 +506,12 @@ static int _env_set(char ***env)
 		 * and stdout is muted.
 		 * One needs to check TMPDIR for the results */
 		setenv(PMIXP_PMIXLIB_DEBUG_REDIR, "file", 1);
+	} else if (slurm_pmix_conf.debug) {
+		char *tmp;
+		tmp = xstrdup_printf("%d", slurm_pmix_conf.debug);
+		setenv(PMIXP_PMIXLIB_DEBUG, tmp, 1);
+		setenv(PMIXP_PMIXLIB_DEBUG_REDIR, "file", 1);
+		xfree(tmp);
 	}
 
 	/*------------- Flag controlling heterogeneous support ----------*/
@@ -468,7 +525,8 @@ static int _env_set(char ***env)
 			   !xstrcasecmp("no", p)) {
 			_srv_same_arch = false;
 		}
-	}
+	} else
+		_srv_same_arch = slurm_pmix_conf.direct_samearch;
 
 	/*------------- Direct connection setting ----------*/
 	p = getenvp(*env, PMIXP_DIRECT_CONN);
@@ -480,7 +538,9 @@ static int _env_set(char ***env)
 			   !xstrcasecmp("no", p)) {
 			_srv_use_direct_conn = false;
 		}
-	}
+	} else
+		_srv_use_direct_conn = slurm_pmix_conf.direct_conn;
+
 	p = getenvp(*env, PMIXP_DIRECT_CONN_EARLY);
 	if (p) {
 		if (!xstrcmp("1", p) || !xstrcasecmp("true", p) ||
@@ -490,10 +550,13 @@ static int _env_set(char ***env)
 			   !xstrcasecmp("no", p)) {
 			_srv_use_direct_conn_early = false;
 		}
-	}
+	} else
+		_srv_use_direct_conn_early = slurm_pmix_conf.direct_conn_early;
 
 	/*------------- Fence coll type setting ----------*/
 	p = getenvp(*env, PMIXP_COLL_FENCE);
+	if (!p)
+		p = slurm_pmix_conf.coll_fence;
 	if (p) {
 		if (!xstrcmp("mixed", p)) {
 			_srv_fence_coll_type = PMIXP_COLL_CPERF_MIXED;
@@ -503,6 +566,7 @@ static int _env_set(char ***env)
 			_srv_fence_coll_type = PMIXP_COLL_CPERF_RING;
 		}
 	}
+
 	p = getenvp(*env, SLURM_PMIXP_FENCE_BARRIER);
 	if (p) {
 		if (!xstrcmp("1",p) || !xstrcasecmp("true", p) ||
@@ -512,7 +576,8 @@ static int _env_set(char ***env)
 			   !xstrcasecmp("no", p)) {
 			_srv_fence_coll_barrier = false;
 		}
-	}
+	} else
+		_srv_fence_coll_barrier = slurm_pmix_conf.fence_barrier;
 
 #ifdef HAVE_UCX
 	p = getenvp(*env, PMIXP_DIRECT_CONN_UCX);
@@ -524,18 +589,21 @@ static int _env_set(char ***env)
 			   !xstrcasecmp("no", p)) {
 			_srv_use_direct_conn_ucx = false;
 		}
-	}
+	} else
+		_srv_use_direct_conn_ucx = slurm_pmix_conf.direct_conn_ucx;
 
 	/* Propagate UCX env */
 	p = getenvp(*env, "UCX_NET_DEVICES");
-	if (p) {
+	if (p)
 		setenv("UCX_NET_DEVICES", p, 1);
-	}
+	else if (slurm_pmix_conf.ucx_netdevices)
+		setenv("UCX_NET_DEVICES", slurm_pmix_conf.ucx_netdevices, 1);
 
 	p = getenvp(*env, "UCX_TLS");
-	if (p) {
+	if (p)
 		setenv("UCX_TLS", p, 1);
-	}
+	else if (slurm_pmix_conf.ucx_tls)
+		setenv("UCX_TLS", slurm_pmix_conf.ucx_tls, 1);
 
 #endif
 

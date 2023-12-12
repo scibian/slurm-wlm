@@ -54,7 +54,7 @@ if {[get_config_param "AccountingStorageType"] ne "accounting_storage/slurmdbd"}
 	skip "This test can't be run without a usable AccountStorageType"
 }
 
-if {[string compare [get_admin_level] "Administrator"]} {
+if {[get_admin_level] ne "Administrator"} {
 	skip "This test can't be run without being an Accounting administrator. Use: sacctmgr mod user \$USER set admin=admin"
 }
 
@@ -87,7 +87,7 @@ proc sbatch { options regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "batch submit failure: expected $regex"
+		fail "Batch submit failure (expected $regex)"
 	}
 
 	return $job_id
@@ -108,7 +108,7 @@ proc squeue { regex } {
 		}
 	}
 	if {$matches != 1} {
-		fail "Unexpected error in squeue. expected $regex"
+		fail "Unexpected error in squeue (expected $regex)"
 	}
 }
 
@@ -125,16 +125,14 @@ proc cancel_federation_jobs { } {
 }
 
 proc cleanup { } {
-	global scancel fed_name user_name bin_rm file_in fedc1 fedc2 fedc3
-	global test_id bin_bash my_sacctmgr
+	global fed_name bin_bash bin_rm test_name
 
 	cancel_federation_jobs
-	exec $bin_bash -c "$bin_rm -f test$test_id*.out"
-
-	return [delete_federations $fed_name]
+	delete_federations $fed_name
+	exec $bin_bash -c "$bin_rm -f $test_name*.out"
 }
 
-#start test
+# Start test
 
 if {![check_federation_setup]} {
 	skip "This test can't be run without fed_slurm_base, fedc1, fedc2, fedc3 setup in globals.local"
@@ -147,11 +145,9 @@ if {![check_federation_up]} {
 set user_name [get_my_user_name]
 
 # Remove existing setup
-if {[cleanup] != 0} {
-	fail "Failed to cleanup"
-}
+cleanup
 
-# add clusters to federation
+# Add clusters to federation
 if {[setup_federation $fed_name]} {
 	fail "Failed to setup federation"
 }
@@ -161,7 +157,7 @@ log_info "Setup cluster features"
 log_info "################################################################"
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc1 set features=fa]
+spawn $sacctmgr -i modify cluster $fedc1 set features=fa
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -180,7 +176,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -188,11 +183,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc2 set features=fb]
+spawn $sacctmgr -i modify cluster $fedc2 set features=fb
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -211,7 +206,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -219,11 +213,11 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 set matches 0
-set my_pid [spawn $sacctmgr -i modify cluster $fedc3 set features=fc]
+spawn $sacctmgr -i modify cluster $fedc3 set features=fc
 expect {
 	-re "Setting$eol" {
 		incr matches
@@ -242,7 +236,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $my_pid
 		fail "sacctmgr mod not responding"
 	}
 	eof {
@@ -250,7 +243,7 @@ expect {
 	}
 }
 if {$matches != 4} {
-	fail "Unexpected error. Got $matches"
+	fail "Unexpected error (got $matches)"
 }
 
 log_info "################################################################"
@@ -265,22 +258,22 @@ set jt "$jid(0)_1"
 
 wait_for_fed_job $jt RUNNING $fedc1,$fedc2,$fedc3
 
-set r0  "(\\s+($jid(0))_(\[1-9\]|10).+$eol)"
-set r1  "(\\s+($jid(0))_\\\[11-15\\\].+$eol)"
+set r0  "(($fedc1\\s+$jid(0))_(\[1-9\]|10).+$eol)"
+set r1  "(($fedc1\\s+$jid(0))_\\\[11-15\\\].+$eol)"
 
-set regf1 "CLUSTER: $fedc1$eol$r1$r0{10}"
-set regf2 "CLUSTER: $fedc2$eol\\s*$eol"
-set regf3 "CLUSTER: $fedc3$eol\\s*"
+set regf1 "$r1$r0{10}"
+set regf2 ""
+set regf3 ""
 
 squeue "$regf1$regf2$regf3"
 
 set jid(1) [sbatch "--cluster-constraint=fa" ""]
 
-set r2 "(\\s+($jid(1))_\\\[1-15\\\].+$eol)"
+set r2 "($fedc1\\s+($jid(1))_\\\[1-15\\\].+$eol)"
 
-set regf1 "CLUSTER: $fedc1$eol.*($r1|$r2){2}$r0{10}"
-set regf2 "CLUSTER: $fedc2$eol\\s*$eol"
-set regf3 "CLUSTER: $fedc3$eol\\s*"
+set regf1 "($r1|$r2){2}$r0{10}"
+set regf2 ""
+set regf3 ""
 
 squeue "$regf1$regf2$regf3"
 
@@ -295,15 +288,15 @@ set jt "$jid(2)_1"
 
 wait_for_fed_job $jt RUNNING $fedc1,$fedc2,$fedc3
 
-set r0  "(\\s+($jid(0))_1\[1-5\].+$eol)"
-set r1  "(\\s+($jid(1))_\[1-5\].+$eol)"
-set r2  "(\\s+($jid(1))_\\\[6-15\\\].+$eol)"
-set r3  "(\\s+($jid(2))_(\[1-9\]|10).+$eol)"
-set r4  "(\\s+($jid(2))_\\\[11-15\\\].+$eol)"
+set r0  "($fedc1\\s+($jid(0))_1\[1-5\].+$eol)"
+set r1  "($fedc1\\s+($jid(1))_\[1-5\].+$eol)"
+set r2  "($fedc1\\s+($jid(1))_\\\[6-15\\\].+$eol)"
+set r3  "($fedc2\\s+($jid(2))_(\[1-9\]|10).+$eol)"
+set r4  "($fedc2\\s+($jid(2))_\\\[11-15\\\].+$eol)"
 
-set regf1 "CLUSTER: $fedc1$eol$r2.*($r0|$r1){10}"
-set regf2 "CLUSTER: $fedc2$eol\\s*$r4$r3{10}"
-set regf3 "CLUSTER: $fedc3$eol\\s*"
+set regf1 "$r2.*($r0|$r1){10}"
+set regf2 "$r4$r3{10}"
+set regf3 ""
 
 squeue "$regf1$regf2$regf3"
 

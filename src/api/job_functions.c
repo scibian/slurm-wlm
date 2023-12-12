@@ -38,8 +38,8 @@
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
 
-#include "src/common/slurm_accounting_storage.h"
-#include "src/common/slurm_jobcomp.h"
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/jobcomp.h"
 
 /*
  * modify existing job in the accounting system
@@ -84,15 +84,15 @@ extern int slurmdb_jobs_fix_runaway(void *db_conn, List jobs)
 }
 
 /* initialization of job completion logging */
-extern int slurmdb_jobcomp_init(char *jobcomp_loc)
+extern int slurmdb_jobcomp_init(void)
 {
-	return g_slurm_jobcomp_init(jobcomp_loc);
+	return jobcomp_g_init();
 }
 
 /* terminate pthreads and free, general clean-up for termination */
 extern int slurmdb_jobcomp_fini(void)
 {
-	return g_slurm_jobcomp_fini();
+	return jobcomp_g_fini();
 }
 /*
  * get info from the storage
@@ -101,5 +101,5 @@ extern int slurmdb_jobcomp_fini(void)
  */
 extern List slurmdb_jobcomp_jobs_get(slurmdb_job_cond_t *job_cond)
 {
-	return g_slurm_jobcomp_get_jobs(job_cond);
+	return jobcomp_g_get_jobs(job_cond);
 }

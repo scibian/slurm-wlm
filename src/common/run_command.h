@@ -39,6 +39,37 @@
 
 #include "src/common/track_script.h"
 
+typedef struct {
+	int (*container_join)(uint32_t job_id, uid_t uid);
+	char **env;
+	uint32_t job_id;
+	int max_wait;
+	bool orphan_on_shutdown;
+	char **script_argv;
+	const char *script_path;
+	const char *script_type;
+	int *status;
+	pthread_t tid;
+	bool *timed_out;
+	bool turnoff_output;
+} run_command_args_t;
+
+/*
+ * run_command_add_to_script
+ *
+ * Insert contents of "new_str" into "script_body"
+ *
+ * If new_str is NULL or empty, then this does nothing.
+ * If *script_body is NULL, then this sets *script_body to new_str.
+ * If *script_body begins with a '#' character (presumably the shebang line),
+ * then this adds new_str to the line below.
+ * Otherwise, this prepends *script_body with new_str.
+ *
+ * IN/OUT script_body - pointer to the string that represents the script.
+ * IN new_str - the string to insert into *script_body
+ */
+extern void run_command_add_to_script(char **script_body, char *new_str);
+
 /*
  * Used to initialize this run_command module.
  * Needed in cases of high-availability when the backup controllers are
@@ -52,21 +83,74 @@ extern void run_command_shutdown(void);
 /* Return count of child processes */
 extern int run_command_count(void);
 
-/* Execute a command, wait for termination and return its stdout.
- * script_type IN - Type of program being run (e.g. "StartStageIn")
- * script_path IN - Fully qualified pathname of the program to execute
- * script_args IN - Arguments to the script
+/*
+ * Execute a command, wait for termination and return its stdout.
+ *
+ * The following describes the variables in run_command_args_t:
+ *
+ * env IN - environment for the command, if NULL execv is used
  * max_wait IN - Maximum time to wait in milliseconds,
  *		 -1 for no limit (asynchronous)
- * tid IN - Thread we are calling from.
+ * orphan_on_shutdown IN - If true, then instead of killing the script on
+ *                         shutdown, orphan the script instead.
+ * script_argv IN - Arguments to the script
+ * script_path IN - Fully qualified pathname of the program to execute
+ * script_type IN - Type of program being run (e.g. "StartStageIn")
  * status OUT - Job exit code
- * Return stdout+stderr of spawned program, value must be xfreed. */
-extern char *run_command(char *script_type, char *script_path,
-			 char **script_argv, int max_wait,
-			 pthread_t tid,
-			 int *status);
+ * tid IN - Thread we are calling from; zero if not using track_script.
+ * timed_out OUT - If not NULL, then set to true if the command timed out.
+ *
+ * Return stdout+stderr of spawned program, value must be xfreed.
+ */
+extern char *run_command(run_command_args_t *run_command_args);
 
-/* Free an array of xmalloced records. The array must be NULL terminated. */
-extern void free_command_argv(char **script_argv);
+/*
+ * Read stdout of a child process and wait for the child process to terminate.
+ * Kills the child's process group once the timeout is reached.
+ *
+ * IN cpid - child process id
+ * IN max_wait - timeout in milliseconds
+ * IN orphan_on_shutdown - if true, orphan instead of kill the child process
+ *                         group when the daemon is shutting down
+ * IN read_fd - file descriptor for reading stdout from the child process
+ * IN script_path - path to script
+ * IN script_type - description of script
+ * IN tid - thread id of the calling thread; zero if not using track_script.
+ * OUT status - exit status of the child process
+ * OUT timed_out - true if the child process' run time hit the timeout max_wait
+ *
+ * Return the output of the child process.
+ * Caller must xfree() returned value (even if no output was read).
+ */
+extern char *run_command_poll_child(int cpid,
+				    int max_wait,
+				    bool orphan_on_shutdown,
+				    int read_fd,
+				    const char *script_path,
+				    const char *script_type,
+				    pthread_t tid,
+				    int *status,
+				    bool *timed_out);
+
+/*
+ * run_command_waitpid_timeout()
+ *
+ *  Same as waitpid(2) but kill process group for pid after timeout millisecs.
+ *
+ *  name IN - name or class of program we're waiting on (for log messages)
+ *  pid IN - child on which to call waitpid(2)
+ *  pstatus OUT - pointer to integer status
+ *  timeout_ms IN - timeout in milliseconds
+ *  elapsed_ms IN - already elapsed time in milliseconds
+ *  tid IN - thread ID of the calling process - only set if using track_script
+ *  timed_out OUT - If not NULL, then set to true if waitpid() did not return
+ *                  successfully after timeout_ms milliseconds.
+ *
+ *  Returns 0 for valid status in pstatus, -1 on failure of waitpid(2).
+ */
+extern int run_command_waitpid_timeout(
+	const char *name, pid_t pid, int *pstatus, int timeout_ms,
+	int elapsed_ms, pthread_t tid,
+	bool *timed_out);
 
 #endif	/* __RUN_COMMAND_H__ */

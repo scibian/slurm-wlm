@@ -28,77 +28,29 @@
 
 # Test GrpNode limit
 proc inc21_30_1 { wait_reason } {
+	global srun acct bin_sleep grn_num
 
-	global srun salloc acct bin_sleep number grn_num check_reason
-	global exit_code
-
-	log_info "Starting GrpNode limit test (Within: inc21.30.1)"
+	log_info "Starting $wait_reason test"
 	set job_id1  0
 	set job_id2  0
-	spawn $salloc -N$grn_num --account=$acct --exclusive -t1 $srun $bin_sleep 10
-	expect {
-		-re "Granted job allocation ($number)" {
-			set job_id1 $expect_out(1,string)
-			log_debug "Job $job_id1 has been submitted. (Within: inc21.30.1)"
-		}
-		-re "Pending job allocation ($number)" {
-			log_error "Job should be running, but is not. (Within: inc21.30.1)"
-			set job_id1 $expect_out(1,string)
-			set exit_code 1
-		}
-		-re "error" {
-			log_error "Job allocation should not have failed. (Within: inc21.30.1)"
-			set exit_code 1
-		}
-		timeout {
-			log_error "salloc is not reponding. (Within: inc21.30.1)"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-	if {$job_id1 == 0} {
-		log_error "Jobs were not submitted. (Within: inc21.30.1)"
-		set exit_code 1
-		return
-	}
 
-	spawn $salloc -N1 --account=$acct --exclusive -t1 $srun $bin_sleep 10
-	expect {
-		-re "Pending job allocation ($number)" {
-			set job_id2 $expect_out(1,string)
-			log_debug "Job $job_id2 is waiting for resources. This is expected. (Within: inc21.30.1)"
-		}
-		-re "Granted job allocation ($number)" {
-			log_error "This should be pended but is not. (Within: inc21.30.1)"
-			set exit_code 1
-		}
-		timeout {
-			log_error "salloc is not reponding. (Within: inc21.30.1)"
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-	if {$job_id2 == 0} {
-		log_error "Jobs were not submitted. (Within: inc21.30.1)"
-		set exit_code 1
-	} else {
-		# checks the state of the job
-		if {![check_job_state $job_id2 PENDING]} {
-			log_error "Job was not on the desired state (Within: inc21.30.1)"
-			set exit_code 1
-		}
-	}
+	# Raise an error to abort the catch block
+	set exception_code [catch {
 
-	if {![check_reason $job_id2 $wait_reason]} {
-		log_error "Bad job wait reason. (Within: inc21.30.1)"
-		set exit_code 1
-	}
+		set job_id1 [submit_job -fail "-N$grn_num --account=$acct --exclusive -t1 -o /dev/null --wrap '$srun $bin_sleep 300'"]
+		subtest {![wait_for_job $job_id1 "RUNNING"]} "Job should run $wait_reason"
+
+		set job_id2 [submit_job -fail "-N1 --account=$acct --exclusive -t1 -o /dev/null --wrap '$srun $bin_sleep 10'"]
+		subtest {![wait_job_reason $job_id2 "PENDING" $wait_reason]} "Job should have wait reason $wait_reason"
+
+	} message] ; # Store the error message in $message
 
 	# Cancels remaining jobs
 	cancel_job $job_id1
 	cancel_job $job_id2
+
+	# Convert any errors into failures (after cleaning up)
+	if {$exception_code == 1} { ; # errors only
+	    fail "Failure testing $wait_reason: $message"
+	}
 }

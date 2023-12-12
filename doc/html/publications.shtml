@@ -4,6 +4,185 @@
 
 <p>Note that some of the older material contains dated information.</p>
 
+<h2>Presentations from Slurm User Group Meeting, September 2023</h2>
+<ul>
+
+<!-- Tuesday -->
+
+<li>Keynote: <a href="SLUG23/quinoa.pdf">Improving quinoa through the development of genetic and genomic resources</a>,
+David Jarvis, Brigham Young University</li>
+
+<li><a href="SLUG23/NERSC-SLUG23.pdf">Never use Slurm HA again: Solve all your problems with Kubernetes</a>,
+Chris Samuel and Doug Jacobsen, NERSC</li>
+
+<!--<li><a href="SLUG23/">Guardant Health Site Report</a>,
+Younts, Guardant</li>-->
+
+<li><a href="SLUG23/containers-slug23.pdf">Containers in Slurm</a>,
+Scott Hilton, SchedMD</li>
+
+<li><a href="SLUG23/CoreWeave-SLUG23.pdf">The Best of Both Worlds: Slurm on Kubernetes</a>,
+Navarre Pratt and Jacob Feldman, CoreWeave</li>
+
+<li><a href="SLUG23/LLSC-SLUG23.pdf">Optimizing Diverse Workloads and Resource Usage with Slurm</a>,
+Chansup Byun et al, LLSC</li>
+
+<li><a href="SLUG23/REST-API-SLUG23.pdf">Slurm's REST API</a>,
+Nathan Rini, SchedMD</li>
+
+<li><a href="SLUG23/GCP-Recursion-SLUG23.pdf">Build a flexible and powerful High Performance Computing foundation with Google Cloud</a>,
+Volker Eyrich (Google) and Joshua Fryer (Recursion)</li>
+
+<li><a href="SLUG23/Dow-SLUG23.pdf">Demand Driven Cluster Elasticity</a>,
+Mike Fazio, Dow</li>
+
+<li><a href="SLUG23/Field-Notes-7.pdf">Field Notes 7 &ndash; How to make the most of Slurm and avoid common issues</a>,
+Jason Booth, SchedMD</li>
+
+<!-- Wednesday -->
+
+<li><a href="SLUG23/SDSC-SLUG23.pdf">Accelerating Genomics Research Machine Learning with Slurm</a>,
+Willy Markuske, San Diego Supercomputing Center (SDSC)</li>
+
+<li><a href="SLUG23/DTU-SLUG23.pdf">Saving Power with Slurm</a>,
+Ole Nielsen, Technical University of Denmark (DTU)</li>
+
+<li><a href="SLUG23/flux_in_slurm.pdf">Running Flux in Slurm</a>,
+Ryan Day, LLNL</li>
+
+<li><a href="SLUG23/CINECA-SLUG23.pdf">Site Report: CINECA experience with Slurm</a>,
+Alessandro Marani, CINECA</li>
+
+<li><a href="SLUG23/step-management-slug23.pdf">Step Management Enhancements</a>,
+Brian Christiansen, SchedMD</li>
+
+<li><a href="SLUG23/LANL-Batsim-SLUG23.pdf">System and Job Scheduling Simulation For Enhancing Production HPC</a>,
+Vivian Hafener, LANL</li>
+
+<li><a href="SLUG23/GT-SLUG23.pdf">Site Update: Georgia Institute of Technology</a>,
+Marian Zvada and Aaron Jezghani, Georgia Tech</li>
+
+<li><a href="SLUG23/AWS-SLUG23.pdf">Building Blocks in the Cloud: Scaling LEGO Engineering with AWS High-Performance Computing</a>,
+Brian Skjerven and Matt Vaughn, AWS</li>
+
+<li><a href="SLUG23/roadmap-slug23.pdf">Slurm 23.02, 23.11, and Beyond (Roadmap)</a>,
+Tim Wickberg, SchedMD</li>
+
+</ul>
+
+<h2>Presentations from Dell HPC Community, September 2023</h2>
+<ul>
+<li><a href="MISC23/DellHPC_20230906.pdf">Slurm and/or/vs Kubernetes</a>,
+Tim Wickberg, SchedMD
+</li>
+</ul>
+
+<h2>Presentations from Cray User Group, May 2023</h2>
+<ul>
+<li><a href="MISC23/CUG23-Slurm-Roadmap.pdf">Slurm 23.02, 23.11, and Beyond</a>,
+Tim Wickberg, SchedMD
+</li>
+</ul>
+
+<h2>Presentations from SC22, November 2022</h2>
+<ul>
+<li><a href="SC22/Slurm-Hearts-Containers.pdf">Slurm ♥ Containers</a>,
+Nate Rini &amp; Tim Wickberg, SchedMD</li>
+<li><a href="SC22/Slurm-Intro.pdf">Doing More with Slurm Advanced Capabilities</a>,
+Shawn Hoopes, SchedMD</li>
+<li><a href="SC22/Roadmap.pdf">Slurm 22.05, 23.02, and Beyond</a>,
+Tim Wickberg, SchedMD</li>
+<li><a href="SC22/Slurm-and-or-vs-Kubernetes.pdf">Slurm and/or/versus Kubernetes</a>,
+Tim Wickberg, SchedMD</li>
+<li><a href="SC22/Accelerating-with-Slurm.pdf">Accelerating HPC and AI with Slurm and SchedMD</a>,
+Nick Ihli, SchedMD</li>
+</ul>
+
+<h2>Presentations from the HPC Containers Advisory Working Group, November 2022</h2>
+<ul>
+<li><a href="MISC22/Slurm_and_Containers_20221103.pdf">Slurm ♥ Containers</a>, Nathan Rini, SchedMD</li>
+</ul>
+
+<h2>Presentations from CNCF Research End User Group, October 2022</h2>
+<ul>
+<li><a href="MISC22/CNCF_RUG_20221005.pdf">Slurm Container Support</a>,
+<a href="https://youtu.be/9-He_yN_Gzg">Video</a>,
+Nathan Rini, SchedMD
+</li>
+</ul>
+
+<h2>Presentations from Slurm User Group Meeting, September 2022</h2>
+<ul>
+<li><a href="SLUG22/Field_Notes_6.pdf">Field Notes 6: From The Frontlines of Slurm Support</a>,
+<a href="https://youtu.be/njEgeMUAqMY">Video</a>,
+Jason Booth, SchedMD</li>
+
+<li><a href="SLUG22/Pathfinding2Clouds.pdf">Pathfinding into the clouds</a>,
+<a href="https://youtu.be/WUbuPQ0RB68">Video</a>,
+Ole Nielsen, Technical University of Denmark (DTU)</li>
+
+<li><a href="SLUG22/OCI_Containers_with_scrun.pdf">OCI Containers with scrun</a>
+<a href="https://youtu.be/7y7IpCTj5mk">Video</a>,
+Nathan Rini, SchedMD</li>
+
+<li><a href="SLUG22/LBNL-site-report.pdf">LBNL Site Report</a>,
+<a href="https://youtu.be/uwYsoPySxmU">Video</a>,
+Wei Feinstein, Lawrence Berkeley National Laboratory</li>
+
+<li><a href="SLUG22/Dynamic_Nodes.pdf">Cloudy, With a Chance of Dynamic Nodes</a>,
+<a href="https://youtu.be/YhSF9YhlSS8">Video</a>,
+Nick Ihli, SchedMD</li>
+
+<li><a href="SLUG22/NTT-SLUG22.pdf">Burst Buffer Lua Plugin For Lustre</a>,
+<a href="https://youtu.be/jyUQ33GTnnE">Video</a>,
+Kota Tsuyuzaki / Rikimaru Honjo / Yusuke Kaneko / Kohei Tahara, NTT Computer and Data Science Laboratory / NTT TechnoCross Corporation</li>
+
+<li><a href="SLUG22/Roadmap.pdf">22.05, 23.02, and Beyond</a>,
+<a href="https://youtu.be/sloTCJaeabs">Video</a>,
+Tim Wickberg, SchedMD</li>
+
+<li><a href="SLUG22/EDA-Slurm-Cluster.pdf">EDA Slurm Cluster on AWS</a>,
+<a href="https://youtu.be/qbJKkUmgJ18">Video</a>,
+Allan Carter, AWS</li>
+</ul>
+
+<h2>Presentations from NHR Container Workshop, December 2021</h2>
+<ul>
+<li><a href="NHR21/containers.pdf">Containers and Slurm</a>,
+<a href="https://youtu.be/5bPRVLe4w6U">Video</a>,
+Nathan Rini, SchedMD</li>
+</ul>
+
+<h2>Presentations from SC21, November 2021</h2>
+<ul>
+<li>BOF: <a href="SC21/BoF.pdf">Slurm Birds of a Feather</a>,
+<a href="https://youtu.be/LjfPvHc3ezQ">Video</a>,
+Tim Wickberg, SchedMD</li>
+</ul>
+
+<h2>Presentations from Slurm User Group Meeting, September 2021</h2>
+<ul>
+<li><a href="SLUG21/Field_Notes_5.pdf">Field Notes 5: From The Frontlines of Slurm Support</a>,
+<a href="https://youtu.be/-YAW-PBvLJc">Video</a>,
+Jason Booth, SchedMD</li>
+
+<li><a href="SLUG21/REST_and_Containers.pdf">REST API <i>and also</i> Containers</a>,
+<a href="https://youtu.be/bqDdW5XfUIw">Video</a>,
+Nathan Rini, SchedMD</li>
+
+<li><a href="SLUG21/burst_buffer_lua.pdf">burst_buffer/lua and slurmscriptd</a>,
+<a href="https://youtu.be/q5j5meDDPpA">Video</a>,
+Marshall Garey, SchedMD</li>
+
+<li><a href="SLUG21/Slurm_in_the_Clouds.pdf">Slurm in the Clouds</a>,
+<a href="https://youtu.be/WV4d49pIp24">Video</a>,
+Nick Ihli, SchedMD</li>
+
+<li><a href="SLUG21/Roadmap.pdf">Slurm 21.08 and Beyond</a>,
+<a href="https://youtu.be/-0tD7gLTxiI">Video</a>,
+Tim Wickberg, SchedMD</li>
+</ul>
+
 <h2>Presentations from SC20, November 2020</h2>
 <ul>
 <li>BOF: <a href="SC20/BoF.pdf">Slurm Birds of a Feather</a>,
@@ -13,15 +192,19 @@ Tim Wickberg, SchedMD</li>
 <h2>Presentations from Slurm User Group Meeting, September 2020</h2>
 <ul>
 <li><a href="SLUG20/Field_Notes.pdf">Field Notes 4: From The Frontlines of Slurm Support</a>,
+<a href="https://youtu.be/F8CZaqOQ4Sk">Video</a>,
 Jason Booth, SchedMD</li>
 
 <li><a href="SLUG20/Cloud_and_Stuff.pdf">Cloud and Stuff</a>,
+<a href="https://youtu.be/Ww-xBZMV0lA">Video</a>,
 Brian Christiansen, SchedMD</li>
 
 <li><a href="SLUG20/REST_API.pdf">REST API</a>,
+<a href="https://youtu.be/RtdJlstFB28">Video</a>,
 Nathan Rini, SchedMD</li>
 
 <li><a href="SLUG20/Roadmap.pdf">Slurm 20.11 and Beyond</a>,
+<a href="https://youtu.be/vHPtttXIiWs">Video</a>,
 Tim Wickberg, SchedMD</li>
 
 </ul>
@@ -842,7 +1025,7 @@ Yiannis Georgiou (Bull) and Matthieu Hautreux (CEA)</li>
 <li><a href="slurm_ug_2012/SUG2012-Soner.pdf">Integer Programming Based Herogeneous CPU-GPU Clusters</a>,
 Seren Soner, Bogazici University</li>
 
-<li><a href="slurm_ug_2012/SUG2012_Emeras.pdf">Job Resource Utilizaiton as a Metric for Clusters Comparision and Optimization</a>,
+<li><a href="slurm_ug_2012/SUG2012_Emeras.pdf">Job Resource Utilization as a Metric for Clusters Comparision and Optimization</a>,
 Joseph Emeras, INRIA/LIG</li>
 
 </ul>
@@ -1067,6 +1250,6 @@ Danny Auble of LLNL about Slurm.</p>
 Learning Chef: Compute Cluter with Slurm</a>
 A Slurm Cookbook by Adam DeConinck</p>
 
-<p style="text-align:center;">Last modified 15 September 2020</p>
+<p style="text-align:center;">Last modified 24 September 2023</p>
 
 <!--#include virtual="footer.txt"-->

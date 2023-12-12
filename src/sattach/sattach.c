@@ -52,8 +52,8 @@
 #include "src/common/macros.h"
 #include "src/common/net.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_cred.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/cred.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xsignal.h"
@@ -68,14 +68,13 @@ static void _mpir_cleanup(void);
 static void _mpir_dump_proctable(void);
 static void _pty_restore(void);
 static void print_layout_info(slurm_step_layout_t *layout);
-static slurm_cred_t *_generate_fake_cred(uint32_t jobid, uint32_t stepid,
+static slurm_cred_t *_generate_fake_cred(slurm_step_id_t stepid,
 					uid_t uid, char *nodelist,
 					uint32_t node_cnt);
 static uint32_t _nodeid_from_layout(slurm_step_layout_t *layout,
 				    uint32_t taskid);
 static void _set_exit_code(void);
-static int _attach_to_tasks(uint32_t jobid,
-			    uint32_t stepid,
+static int _attach_to_tasks(slurm_step_id_t stepid,
 			    slurm_step_layout_t *layout,
 			    slurm_cred_t *fake_cred,
 			    uint16_t num_resp_ports,
@@ -121,10 +120,11 @@ int sattach(int argc, char **argv)
 	slurm_step_layout_t *layout;
 	slurm_cred_t *fake_cred;
 	message_thread_state_t *mts;
+	uint32_t jobid, stepid;
 	client_io_t *io;
 	char *hosts;
-	slurm_step_id_t step_id;
 
+	slurm_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
 	_set_exit_code();
 	if (initialize_and_process_args(argc, argv) < 0) {
@@ -139,18 +139,14 @@ int sattach(int argc, char **argv)
 		log_alter(logopt, 0, NULL);
 	}
 
-	slurm_conf_init(NULL);
-
-	if (xstrcmp(slurm_conf.launch_type, "launch/slurm")) {
-		error("sattach does not support LaunchType=%s",
-		      slurm_conf.launch_type);
+	if (slurm_cred_init() != SLURM_SUCCESS) {
+		error("failed to initialize cred plugin");
 		exit(error_exit);
 	}
+
 	/* FIXME: this does not work with hetsteps */
-	step_id.job_id = opt.jobid;
-	step_id.step_id = opt.stepid;
-	step_id.step_het_comp = NO_VAL;
-	layout = slurm_job_step_layout_get(&step_id);
+
+	layout = slurm_job_step_layout_get(&opt.selected_step->step_id);
 	if (layout == NULL) {
 		error("Could not get job step info: %m");
 		exit(error_exit);
@@ -159,11 +155,13 @@ int sattach(int argc, char **argv)
 		print_layout_info(layout);
 		exit(0);
 	}
+	jobid = opt.selected_step->step_id.job_id;
+	stepid = opt.selected_step->step_id.step_id;
 
 	totalview_jobid = NULL;
-	xstrfmtcat(totalview_jobid, "%u", opt.jobid);
+	xstrfmtcat(totalview_jobid, "%u", jobid);
 	totalview_stepid = NULL;
-	xstrfmtcat(totalview_stepid, "%u", opt.stepid);
+	xstrfmtcat(totalview_stepid, "%u", stepid);
 
 	_mpir_init(layout->task_cnt);
 	if (opt.input_filter_set) {
@@ -175,7 +173,7 @@ int sattach(int argc, char **argv)
 		hosts = layout->front_end;
 	else
 		hosts = layout->node_list;
-	fake_cred = _generate_fake_cred(opt.jobid, opt.stepid,
+	fake_cred = _generate_fake_cred(opt.selected_step->step_id,
 					opt.uid, hosts, layout->node_cnt);
 	mts = _msg_thr_create(layout->node_cnt, layout->task_cnt);
 
@@ -199,7 +197,7 @@ int sattach(int argc, char **argv)
 		xsignal_block(pty_sigarray);
 	}
 
-	_attach_to_tasks(opt.jobid, opt.stepid, layout, fake_cred,
+	_attach_to_tasks(opt.selected_step->step_id, layout, fake_cred,
 			 mts->num_resp_port, mts->resp_port,
 			 io->num_listen, io->listenport,
 			 mts->tasks_started);
@@ -282,43 +280,41 @@ static void print_layout_info(slurm_step_layout_t *layout)
 
 
 /* return a faked job credential */
-static slurm_cred_t *_generate_fake_cred(uint32_t jobid, uint32_t stepid,
+static slurm_cred_t *_generate_fake_cred(slurm_step_id_t stepid,
 					uid_t uid, char *nodelist,
 					uint32_t node_cnt)
 {
-	slurm_cred_arg_t arg;
 	slurm_cred_t *cred;
+	slurm_cred_arg_t *arg = xmalloc(sizeof(*arg));
 
-	memset(&arg, 0, sizeof(slurm_cred_arg_t));
-	arg.step_id.job_id = jobid;
-	arg.step_id.step_id = stepid;
-	arg.step_id.step_het_comp = NO_VAL;
-	arg.uid      = uid;
+	arg->step_id.job_id = stepid.job_id;
+	arg->step_id.step_id = stepid.step_id;
+	arg->step_id.step_het_comp = stepid.step_het_comp;
+	arg->uid = uid;
 
-	arg.job_hostlist  = nodelist;
-	arg.job_nhosts    = node_cnt;
+	arg->job_hostlist = nodelist;
+	arg->job_nhosts = node_cnt;
 
-	arg.step_hostlist = nodelist;
+	arg->step_hostlist = nodelist;
 
-	arg.job_core_bitmap   = bit_alloc(node_cnt);
-	bit_nset(arg.job_core_bitmap, 0, node_cnt-1);
-	arg.step_core_bitmap  = bit_alloc(node_cnt);
-	bit_nset(arg.step_core_bitmap, 0, node_cnt-1);
+	arg->job_core_bitmap = bit_alloc(node_cnt);
+	bit_set_all(arg->job_core_bitmap);
+	arg->step_core_bitmap = bit_alloc(node_cnt);
+	bit_set_all(arg->step_core_bitmap);
 
-	arg.cores_per_socket = xmalloc(sizeof(uint16_t));
-	arg.cores_per_socket[0] = 1;
-	arg.sockets_per_node = xmalloc(sizeof(uint16_t));
-	arg.sockets_per_node[0] = 1;
-	arg.sock_core_rep_count = xmalloc(sizeof(uint32_t));
-	arg.sock_core_rep_count[0] = node_cnt;
+	arg->cores_per_socket = xmalloc(sizeof(uint16_t));
+	arg->cores_per_socket[0] = 1;
+	arg->sockets_per_node = xmalloc(sizeof(uint16_t));
+	arg->sockets_per_node[0] = 1;
+	arg->sock_core_rep_count = xmalloc(sizeof(uint32_t));
+	arg->sock_core_rep_count[0] = node_cnt;
 
-	cred = slurm_cred_faker(&arg);
+	cred = slurm_cred_faker(arg);
 
-	FREE_NULL_BITMAP(arg.job_core_bitmap);
-	FREE_NULL_BITMAP(arg.step_core_bitmap);
-	xfree(arg.cores_per_socket);
-	xfree(arg.sockets_per_node);
-	xfree(arg.sock_core_rep_count);
+	/* Don't free, this memory will be free'd later */
+	arg->job_hostlist = NULL;
+	arg->step_hostlist = NULL;
+	slurm_cred_free_args(arg);
 	return cred;
 }
 
@@ -385,8 +381,7 @@ void _handle_response_msg_list(List other_nodes_resp, bitstr_t *tasks_started)
  * A bit is set in tasks_started for each task for which we receive a
  * reattach response message stating that the task is still running.
  */
-static int _attach_to_tasks(uint32_t jobid,
-			    uint32_t stepid,
+static int _attach_to_tasks(slurm_step_id_t stepid,
 			    slurm_step_layout_t *layout,
 			    slurm_cred_t *fake_cred,
 			    uint16_t num_resp_ports,
@@ -403,15 +398,14 @@ static int _attach_to_tasks(uint32_t jobid,
 
 	slurm_msg_t_init(&msg);
 
-	reattach_msg.step_id.job_id = jobid;
-	reattach_msg.step_id.step_id = stepid;
-	reattach_msg.step_id.step_het_comp = NO_VAL;
+	reattach_msg.step_id = stepid;
 	reattach_msg.num_resp_port = num_resp_ports;
 	reattach_msg.resp_port = resp_ports; /* array of response ports */
 	reattach_msg.num_io_port = num_io_ports;
 	reattach_msg.io_port = io_ports;
 	reattach_msg.cred = fake_cred;
 
+	slurm_msg_set_r_uid(&msg, SLURM_AUTH_UID_ANY);
 	msg.msg_type = REQUEST_REATTACH_TASKS;
 	msg.data = &reattach_msg;
 	msg.protocol_version = layout->start_protocol_ver;
@@ -536,8 +530,8 @@ _exit_handler(message_thread_state_t *mts, slurm_msg_t *exit_msg)
 	int i;
 	int rc;
 
-	if ((msg->step_id.job_id != opt.jobid) ||
-	    (msg->step_id.step_id != opt.stepid)) {
+	if ((msg->step_id.job_id != opt.selected_step->step_id.job_id) ||
+	    (msg->step_id.step_id != opt.selected_step->step_id.step_id)) {
 		debug("Received MESSAGE_TASK_EXIT from wrong job: %ps",
 		      &msg->step_id);
 		return;
@@ -580,12 +574,12 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	uid_t req_uid;
 	uid_t uid = getuid();
 
-	req_uid = g_slurm_auth_get_uid(msg->auth_cred);
+	req_uid = auth_g_get_uid(msg->auth_cred);
 
 	if ((req_uid != slurm_conf.slurm_user_id) && (req_uid != 0) &&
 	    (req_uid != uid)) {
 		error ("Security violation, slurm message from uid %u",
-		       (unsigned int) req_uid);
+		       req_uid);
 		return;
 	}
 

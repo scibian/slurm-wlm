@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	20.11.5
+Version:	23.02.6
 %define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager
@@ -35,6 +35,9 @@ Source:		%{slurm_source_dir}.tar.bz2
 # --without x11		%_without_x11 1		disable internal X11 support
 # --with ucx		%_with_ucx path		require ucx support
 # --with pmix		%_with_pmix path	require pmix support
+# --with nvml		%_with_nvml path	require nvml support
+# --with jwt		%_with_jwt 1		require jwt support
+#
 
 #  Options that are off by default (enable with --with <opt>)
 %bcond_with cray
@@ -53,6 +56,8 @@ Source:		%{slurm_source_dir}.tar.bz2
 %bcond_with lua
 %bcond_with numa
 %bcond_with pmix
+%bcond_with nvml
+%bcond_with jwt
 
 # Use debug by default on all systems
 %bcond_without debug
@@ -66,6 +71,9 @@ Source:		%{slurm_source_dir}.tar.bz2
 %global _hardened_cflags "-Wl,-z,lazy"
 %global _hardened_ldflags "-Wl,-z,lazy"
 
+# Disable Link Time Optimization (LTO)
+%define _lto_cflags %{nil}
+
 Requires: munge
 
 %{?systemd_requires}
@@ -73,7 +81,9 @@ BuildRequires: systemd
 BuildRequires: munge-devel munge-libs
 BuildRequires: python3
 BuildRequires: readline-devel
-Obsoletes: slurm-lua slurm-munge slurm-plugins
+Obsoletes: slurm-lua <= %{version}
+Obsoletes: slurm-munge <= %{version}
+Obsoletes: slurm-plugins <= %{version}
 
 # fake systemd support when building rpms on other platforms
 %{!?_unitdir: %global _unitdir /lib/systemd/systemd}
@@ -133,12 +143,17 @@ BuildRequires: numactl-devel
 
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
 BuildRequires: pmix
-%global pmix_version %(rpm -q pmix --qf "%{VERSION}")
+%global pmix_version %(rpm -q pmix --qf "%{RPMTAG_VERSION}")
 %endif
 
 %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 BuildRequires: ucx-devel
-%global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
+%global ucx_version %(rpm -q ucx-devel --qf "%{RPMTAG_VERSION}")
+%endif
+
+%if %{with jwt}
+BuildRequires: libjwt-devel >= 1.10.0
+Requires: libjwt >= 1.10.0
 %endif
 
 #  Allow override of sysconfdir via _slurm_sysconfdir.
@@ -239,7 +254,7 @@ Slurm compute node daemon. Used to launch jobs on compute nodes
 Summary: Slurm database daemon
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
-Obsoletes: slurm-sql
+Obsoletes: slurm-sql <= %{version}
 %description slurmdbd
 Slurm database daemon. Used to accept and process database RPCs and upload
 database changes to slurmctld daemons on each cluster
@@ -271,7 +286,9 @@ OpenLava wrapper scripts used for helping migrate from OpenLava/LSF to Slurm
 Summary: Perl tool to print Slurm job state information
 Group: Development/System
 Requires: %{name}%{?_isa} = %{version}-%{release}
-Obsoletes: slurm-sjobexit slurm-sjstat slurm-seff
+Obsoletes: slurm-sjobexit <= %{version}
+Obsoletes: slurm-sjstat <= %{version}
+Obsoletes: slurm-seff <= %{version}
 %description contribs
 seff is a mail program used directly by the Slurm daemons. On completion of a
 job, wait for it's accounting information to be available and include that
@@ -290,7 +307,7 @@ Summary: PAM module for restricting access to compute nodes via Slurm
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
 BuildRequires: pam-devel
-Obsoletes: pam_slurm
+Obsoletes: pam_slurm <= %{version}
 %description pam_slurm
 This module restricts access to compute nodes in a cluster where Slurm is in
 use.  Access is granted to root, any user with an Slurm-launched job currently
@@ -318,7 +335,6 @@ Provides a REST interface to Slurm.
 Summary: support daemons and software for the Cray SMW
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
-Obsoletes: craysmw
 %description slurmsmwd
 support daemons and software for the Cray SMW.  Includes slurmsmwd which
 notifies slurm about failed nodes.
@@ -336,7 +352,6 @@ notifies slurm about failed nodes.
 	%{?_with_pam_dir} \
 	%{?_with_cpusetdir} \
 	%{?_with_mysql_config} \
-	%{?_with_ssl} \
 	%{?_without_cray:--enable-really-no-cray}\
 	%{?_with_cray_network:--enable-cray-network}\
 	%{?_with_multiple_slurmd:--enable-multiple-slurmd} \
@@ -347,6 +362,8 @@ notifies slurm about failed nodes.
 	%{!?_with_slurmrestd:--disable-slurmrestd} \
 	%{?_without_x11:--disable-x11} \
 	%{?_with_ucx} \
+	%{?_with_jwt} \
+	%{?_with_nvml} \
 	%{?_with_cflags}
 
 make %{?_smp_mflags}
@@ -424,6 +441,7 @@ rm -f %{buildroot}/%{_libdir}/slurm/job_submit_defaults.so
 rm -f %{buildroot}/%{_libdir}/slurm/job_submit_logging.so
 rm -f %{buildroot}/%{_libdir}/slurm/job_submit_partition.so
 rm -f %{buildroot}/%{_libdir}/slurm/auth_none.so
+rm -f %{buildroot}/%{_libdir}/slurm/cred_none.so
 rm -f %{buildroot}/%{_sbindir}/sfree
 rm -f %{buildroot}/%{_sbindir}/slurm_epilog
 rm -f %{buildroot}/%{_sbindir}/slurm_prolog
@@ -553,7 +571,6 @@ rm -rf %{buildroot}
 %dir %attr(0755,root,root)
 %dir %{_prefix}/include/slurm
 %{_prefix}/include/slurm/*
-%dir %{_libdir}/pkgconfig
 %{_libdir}/pkgconfig/slurm.pc
 #############################################################################
 
@@ -563,7 +580,6 @@ rm -rf %{buildroot}
 %{_perldir}/Slurm/Bitstr.pm
 %{_perldir}/Slurm/Constant.pm
 %{_perldir}/Slurm/Hostlist.pm
-%{_perldir}/Slurm/Stepctx.pm
 %{_perldir}/auto/Slurm/Slurm.so
 %{_perldir}/Slurmdb.pm
 %{_perldir}/auto/Slurmdb/Slurmdb.so

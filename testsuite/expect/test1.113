@@ -26,7 +26,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
 set needed_nodes 2
 set matches 0
 set ncpus ""
@@ -62,7 +61,7 @@ if {$matches < $needed_nodes} {
 
 set nodes 0
 set timeout $max_job_delay
-set srun_pid [spawn $srun -t1 -N1-2 --use-min-nodes -n$ncpus $bin_printenv SLURM_NNODES]
+spawn $srun -t1 -N1-2 --use-min-nodes -n$ncpus $bin_printenv SLURM_NNODES
 expect {
 	-re "srun: job $number queued and waiting for resources" {
 		exp_continue
@@ -73,20 +72,14 @@ expect {
 	-re "($number)" {
 		set nodes $expect_out(1,string)
 		if {$nodes != 1} {
-			log_error "Expected 1 allocated node"
-			set exit_code 1
+			fail "Expected 1 allocated node"
 		}
 		exp_continue
 	}
 	timeout {
-		slow_kill $sun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

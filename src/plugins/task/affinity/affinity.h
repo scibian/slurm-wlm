@@ -74,38 +74,38 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/slurm_xlator.h"
-#include "src/slurmd/common/task_plugin.h"
+#include "src/interfaces/task.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "src/common/cbuf.h"
 #include "src/common/cpu_frequency.h"
+#include "src/common/fd.h"
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
-#include "src/common/node_select.h"
-#include "src/common/fd.h"
-#include "src/common/switch.h"
+#include "src/interfaces/select.h"
+#include "src/common/slurm_resource_info.h"
+#include "src/interfaces/switch.h"
+#include "src/common/util-net.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
-#include "src/common/util-net.h"
-#include "src/common/slurm_resource_info.h"
 
 #ifndef CPUSET_DIR
 #define CPUSET_DIR "/dev/cpuset"
 #endif
 
 /*** from affinity.c ***/
-void	slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job, int statval);
-int	get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job);
-void	reset_cpuset(cpu_set_t *new_mask, cpu_set_t *cur_mask);
+void	slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *step, int statval);
+int	get_cpuset(cpu_set_t *mask, stepd_step_rec_t *step, uint32_t node_tid);
+void	reset_cpuset(cpu_set_t *new_mask);
 int	slurm_setaffinity(pid_t pid, size_t size, const cpu_set_t *mask);
 int	slurm_getaffinity(pid_t pid, size_t size, cpu_set_t *mask);
 
 /*** from numa.c ***/
 #ifdef HAVE_NUMA
-int	 get_memset(nodemask_t *mask, stepd_step_rec_t *job);
-void	 slurm_chk_memset(nodemask_t *mask, stepd_step_rec_t *job);
+int	 get_memset(nodemask_t *mask, stepd_step_rec_t *step);
+void	 slurm_chk_memset(nodemask_t *mask, stepd_step_rec_t *step);
 uint16_t slurm_get_numa_node(uint16_t cpuid);
 #endif
 

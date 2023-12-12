@@ -43,6 +43,7 @@
 #include <dirent.h>
 #include <grp.h>
 #include <inttypes.h>
+#include <netdb.h>
 #include <regex.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -60,13 +61,14 @@
 #include "src/common/macros.h"
 #include "src/common/pack.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_cred.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/cred.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/stepd_api.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xregex.h"
 #include "src/common/xstring.h"
 
 strong_alias(stepd_available, slurm_stepd_available);
@@ -74,11 +76,12 @@ strong_alias(stepd_connect, slurm_stepd_connect);
 strong_alias(stepd_get_uid, slurm_stepd_get_uid);
 strong_alias(stepd_add_extern_pid, slurm_stepd_add_extern_pid);
 strong_alias(stepd_get_x11_display, slurm_stepd_get_x11_display);
-strong_alias(stepd_get_info, slurm_stepd_get_info);
 strong_alias(stepd_getpw, slurm_stepd_getpw);
 strong_alias(xfree_struct_passwd, slurm_xfree_struct_passwd);
 strong_alias(stepd_getgr, slurm_stepd_getgr);
 strong_alias(xfree_struct_group_array, slurm_xfree_struct_group_array);
+strong_alias(stepd_gethostbyname, slurm_stepd_gethostbyname);
+strong_alias(xfree_struct_hostent, slurm_xfree_struct_hostent);
 strong_alias(stepd_get_namespace_fd, slurm_stepd_get_namespace_fd);
 
 /*
@@ -106,8 +109,8 @@ _handle_stray_socket(const char *socket_name)
 	}
 
 	if ((uid = getuid()) != buf.st_uid) {
-		debug3("_handle_stray_socket: socket %s is not owned by uid %d",
-		       socket_name, (int)uid);
+		debug3("_handle_stray_socket: socket %s is not owned by uid %u",
+		       socket_name, uid);
 		return;
 	}
 
@@ -148,9 +151,7 @@ _step_connect(const char *directory, const char *nodename,
 	struct sockaddr_un addr;
 	char *name = NULL, *pos = NULL;
 	uint32_t stepid = step_id->step_id;
-	bool old_id_tied = false;
 
-try_old_id:
 	xstrfmtcatat(name, &pos, "%s/%s_%u.%u",
 		     directory, nodename, step_id->job_id, stepid);
 	if (step_id->step_het_comp != NO_VAL)
@@ -185,28 +186,10 @@ try_old_id:
 		      __func__, name);
 		if (errno == ECONNREFUSED && running_in_slurmd()) {
 			_handle_stray_socket(name);
-			/*
-			 * NOTE: Checking against NO_VAL can be removed after 21.08
-			 */
-			if ((step_id->step_id == SLURM_BATCH_SCRIPT) ||
-			    (step_id->step_id == NO_VAL))
+
+			if (step_id->step_id == SLURM_BATCH_SCRIPT)
 				_handle_stray_script(directory,
 						     step_id->job_id);
-		}
-
-		/* NOTE: This code can be removed after 21.08 */
-		if (errno == ENOENT && !old_id_tied &&
-		    ((step_id->step_id == SLURM_BATCH_SCRIPT) ||
-		     (step_id->step_id == SLURM_EXTERN_CONT))) {
-			debug("%s: Try to use old step_id", __func__);
-			close(fd);
-			if (stepid == SLURM_BATCH_SCRIPT)
-				stepid = NO_VAL;
-			else
-				stepid = INFINITE;
-			pos = name;
-			old_id_tied = true;
-			goto try_old_id;
 		}
 
 		xfree(name);
@@ -267,7 +250,7 @@ extern int stepd_connect(const char *directory, const char *nodename,
 	if (directory == NULL) {
 		slurm_conf_t *cf = slurm_conf_lock();
 		directory = slurm_conf_expand_slurmd_path(cf->slurmd_spooldir,
-							  nodename);
+							  nodename, NULL);
 		slurm_conf_unlock();
 	}
 
@@ -310,47 +293,6 @@ rwfail:
 }
 
 /*
- * Retrieve slurmstepd_info_t structure for a job step.
- *
- * Must be xfree'd by the caller.
- */
-slurmstepd_info_t *stepd_get_info(int fd)
-{
-	int req = REQUEST_INFO;
-	slurmstepd_info_t *step_info = xmalloc(sizeof(*step_info));
-
-	safe_write(fd, &req, sizeof(int));
-
-	safe_read(fd, &step_info->uid, sizeof(uid_t));
-	safe_read(fd, &step_info->step_id.job_id, sizeof(uint32_t));
-	safe_read(fd, &step_info->step_id.step_id, sizeof(uint32_t));
-
-	safe_read(fd, &step_info->protocol_version, sizeof(uint16_t));
-	if (step_info->protocol_version >= SLURM_20_11_PROTOCOL_VERSION) {
-		safe_read(fd, &step_info->nodeid, sizeof(uint32_t));
-		safe_read(fd, &step_info->job_mem_limit, sizeof(uint64_t));
-		safe_read(fd, &step_info->step_mem_limit, sizeof(uint64_t));
-		safe_read(fd, &step_info->step_id.step_het_comp,
-			  sizeof(uint32_t));
-	} else if (step_info->protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		safe_read(fd, &step_info->nodeid, sizeof(uint32_t));
-		safe_read(fd, &step_info->job_mem_limit, sizeof(uint64_t));
-		safe_read(fd, &step_info->step_mem_limit, sizeof(uint64_t));
-		step_info->step_id.step_het_comp = NO_VAL;
-	} else {
-		error("%s: protocol_version %hu not supported",
-		      __func__, step_info->protocol_version);
-		goto rwfail;
-	}
-
-	return step_info;
-
-rwfail:
-	xfree(step_info);
-	return NULL;
-}
-
-/*
  * Send job notification message to a batch job
  */
 int
@@ -379,16 +321,23 @@ stepd_notify_job(int fd, uint16_t protocol_version, char *message)
 /*
  * Send a signal to the proctrack container of a job step.
  */
-int
-stepd_signal_container(int fd, uint16_t protocol_version, int signal, int flags,
-		       uid_t req_uid)
+int stepd_signal_container(int fd, uint16_t protocol_version, int signal,
+			   int flags, char *details, uid_t req_uid)
 {
-	int req = REQUEST_SIGNAL_CONTAINER;
+	int req = REQUEST_SIGNAL_CONTAINER, details_len = 0;
 	int rc;
 	int errnum = 0;
 
 	safe_write(fd, &req, sizeof(int));
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_22_05_PROTOCOL_VERSION) {
+		safe_write(fd, &signal, sizeof(int));
+		safe_write(fd, &flags, sizeof(int));
+		if (details)
+			details_len = strlen(details);
+		safe_write(fd, &details_len, sizeof(int));
+		safe_write(fd, details, details_len);
+		safe_write(fd, &req_uid, sizeof(uid_t));
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &signal, sizeof(int));
 		safe_write(fd, &flags, sizeof(int));
 		safe_write(fd, &req_uid, sizeof(uid_t));
@@ -444,19 +393,27 @@ rwfail:
  * On success returns SLURM_SUCCESS and fills in resp->local_pids,
  * resp->gtids, resp->ntasks, and resp->executable.
  */
-int
-stepd_attach(int fd, uint16_t protocol_version,
-	     slurm_addr_t *ioaddr, slurm_addr_t *respaddr,
-	     void *job_cred_sig, reattach_tasks_response_msg_t *resp)
+int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
+		 slurm_addr_t *respaddr, void *job_cred_sig, uint32_t sig_len,
+		 uid_t uid, reattach_tasks_response_msg_t *resp)
 {
 	int req = REQUEST_ATTACH;
 	int rc = SLURM_SUCCESS;
 
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_22_05_PROTOCOL_VERSION) {
+		safe_write(fd, &req, sizeof(int));
+		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
+		safe_write(fd, respaddr, sizeof(slurm_addr_t));
+		safe_write(fd, &sig_len, sizeof(uint32_t));
+		safe_write(fd, job_cred_sig, sig_len);
+		safe_write(fd, &uid, sizeof(uid_t));
+		safe_write(fd, &protocol_version, sizeof(uint16_t));
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &req, sizeof(int));
 		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
 		safe_write(fd, respaddr, sizeof(slurm_addr_t));
 		safe_write(fd, job_cred_sig, SLURM_IO_KEY_SIZE);
+		safe_write(fd, &uid, sizeof(uid_t));
 		safe_write(fd, &protocol_version, sizeof(uint16_t));
 	} else
 		goto rwfail;
@@ -506,14 +463,17 @@ static int
 _sockname_regex_init(regex_t *re, const char *nodename)
 {
 	char *pattern = NULL;
+	int rc;
 
 	xstrcat(pattern, "^");
 	xstrcat(pattern, nodename);
 	xstrcat(pattern,
 		"_([[:digit:]]*)\\.([[:digit:]]*)\\.{0,1}([[:digit:]]*)$");
 
-	if (regcomp(re, pattern, REG_EXTENDED) != 0) {
-		error("sockname regex compilation failed");
+	if ((rc = regcomp(re, pattern, REG_EXTENDED))) {
+		dump_regex_error(rc, re,
+				 "sockname regex \"%s\" compilation failed",
+				 pattern);
 		return -1;
 	}
 
@@ -529,11 +489,14 @@ _sockname_regex(regex_t *re, const char *filename, slurm_step_id_t *step_id)
 	regmatch_t pmatch[5];
 	char *match;
 	size_t my_size;
+	int rc;
 
 	xassert(step_id);
 
 	memset(pmatch, 0, sizeof(regmatch_t)*nmatch);
-	if (regexec(re, filename, nmatch, pmatch, 0) == REG_NOMATCH) {
+	if ((rc = regexec(re, filename, nmatch, pmatch, 0))) {
+		if (rc != REG_NOMATCH)
+			dump_regex_error(rc, re, "regexc(%s)", filename);
 		return -1;
 	}
 
@@ -587,7 +550,7 @@ stepd_available(const char *directory, const char *nodename)
 	if (directory == NULL) {
 		slurm_conf_t *cf = slurm_conf_lock();
 		directory = slurm_conf_expand_slurmd_path(
-			cf->slurmd_spooldir, nodename);
+			cf->slurmd_spooldir, nodename, NULL);
 		slurm_conf_unlock();
 	}
 
@@ -685,7 +648,7 @@ stepd_cleanup_sockets(const char *directory, const char *nodename)
 			} else {
 				if (stepd_signal_container(
 					    fd, protocol_version, SIGKILL, 0,
-					    getuid())
+					    NULL, getuid())
 				    == -1) {
 					debug("Error sending SIGKILL to %ps",
 					      &step_id);
@@ -931,6 +894,85 @@ extern void xfree_struct_group_array(struct group **grps)
 	xfree(grps);
 }
 
+extern struct hostent *stepd_gethostbyname(int fd, uint16_t protocol_version,
+					   int mode, const char *nodename)
+{
+	int req = REQUEST_GETHOST;
+	int found = 0;
+	int len = 0;
+	int cnt = 0;
+	struct hostent *host = NULL;
+
+	safe_write(fd, &req, sizeof(int));
+
+	safe_write(fd, &mode, sizeof(int));
+
+	if (nodename) {
+		len = strlen(nodename);
+		safe_write(fd, &len, sizeof(int));
+		safe_write(fd, nodename, len);
+	} else {
+		safe_write(fd, &len, sizeof(int));
+	}
+
+	safe_read(fd, &found, sizeof(int));
+
+	if (!found)
+		return NULL;
+
+	host = xmalloc(sizeof(struct hostent));
+
+	safe_read(fd, &len, sizeof(int));
+	host->h_name = xmalloc(len + 1);
+	safe_read(fd, host->h_name, len);
+
+	safe_read(fd, &cnt, sizeof(int));
+	host->h_aliases = xcalloc(cnt + 1, sizeof(char *));
+	for (int i = 0; i < cnt; i++) {
+		safe_read(fd, &len, sizeof(int));
+		host->h_aliases[i] = xmalloc(len + 1);
+		safe_read(fd, host->h_aliases[i], len);
+	}
+	safe_read(fd, &host->h_addrtype, sizeof(int));
+	safe_read(fd, &len, sizeof(int));
+	host->h_length = len;
+
+	/*
+	 * In the current implementation, we define each host to
+	 * only have a single address.
+	 * (Since h_addr_list is a NULL terminated array, allocate
+	 * space for two elements.)
+	 */
+	host->h_addr_list = xcalloc(2, sizeof(char *));
+	host->h_addr_list[0] = xmalloc(len);
+	safe_read(fd, host->h_addr_list[0], len);
+
+	debug("Leaving %s", __func__);
+	return host;
+
+rwfail:
+	xfree_struct_hostent(host);
+	return NULL;
+
+}
+
+extern void xfree_struct_hostent(struct hostent *host)
+{
+	if (!host)
+		return;
+	xfree(host->h_name);
+	for (int i = 0; host->h_aliases && host->h_aliases[i];
+	     i++) {
+		xfree(host->h_aliases[i]);
+	}
+	xfree(host->h_aliases);
+	if (host->h_addr_list) {
+		xfree(host->h_addr_list[0]);
+		xfree(host->h_addr_list);
+	}
+	xfree(host);
+}
+
 /*
  * Return the process ID of the slurmstepd.
  */
@@ -1069,10 +1111,10 @@ rwfail:
 int
 stepd_completion(int fd, uint16_t protocol_version, step_complete_msg_t *sent)
 {
-	int req = REQUEST_STEP_COMPLETION_V2;
+	int req = REQUEST_STEP_COMPLETION;
 	int rc;
 	int errnum = 0;
-	Buf buffer;
+	buf_t *buffer;
 	int len = 0;
 
 	buffer = init_buf(0);

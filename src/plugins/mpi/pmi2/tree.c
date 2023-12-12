@@ -43,6 +43,7 @@
 \*****************************************************************************/
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -59,21 +60,21 @@
 #include "nameserv.h"
 #include "ring.h"
 
-static int _handle_kvs_fence(int fd, Buf buf);
-static int _handle_kvs_fence_resp(int fd, Buf buf);
-static int _handle_spawn(int fd, Buf buf);
-static int _handle_spawn_resp(int fd, Buf buf);
-static int _handle_name_publish(int fd, Buf buf);
-static int _handle_name_unpublish(int fd, Buf buf);
-static int _handle_name_lookup(int fd, Buf buf);
-static int _handle_ring(int fd, Buf buf);
-static int _handle_ring_resp(int fd, Buf buf);
+static int _handle_kvs_fence(int fd, buf_t *buf);
+static int _handle_kvs_fence_resp(int fd, buf_t *buf);
+static int _handle_spawn(int fd, buf_t *buf);
+static int _handle_spawn_resp(int fd, buf_t *buf);
+static int _handle_name_publish(int fd, buf_t *buf);
+static int _handle_name_unpublish(int fd, buf_t *buf);
+static int _handle_name_lookup(int fd, buf_t *buf);
+static int _handle_ring(int fd, buf_t *buf);
+static int _handle_ring_resp(int fd, buf_t *buf);
 
 static uint32_t  spawned_srun_ports_size = 0;
 static uint16_t *spawned_srun_ports = NULL;
 
 
-static int (*tree_cmd_handlers[]) (int fd, Buf buf) = {
+static int (*tree_cmd_handlers[]) (int fd, buf_t *buf) = {
 	_handle_kvs_fence,
 	_handle_kvs_fence_resp,
 	_handle_spawn,
@@ -99,8 +100,7 @@ static char *tree_cmd_names[] = {
 	NULL,
 };
 
-static int
-_handle_kvs_fence(int fd, Buf buf)
+static int _handle_kvs_fence(int fd, buf_t *buf)
 {
 	uint32_t from_nodeid, num_children, temp32, seq;
 	char *from_node = NULL;
@@ -170,8 +170,7 @@ unpack_error:
 	goto out;
 }
 
-static int
-_handle_kvs_fence_resp(int fd, Buf buf)
+static int _handle_kvs_fence_resp(int fd, buf_t *buf)
 {
 	char *key, *val, *errmsg = NULL;
 	int rc = SLURM_SUCCESS;
@@ -226,8 +225,7 @@ unpack_error:
 }
 
 /* only called in srun */
-static int
-_handle_spawn(int fd, Buf buf)
+static int _handle_spawn(int fd, buf_t *buf)
 {
 	int rc;
 	spawn_req_t *req = NULL;
@@ -359,8 +357,7 @@ _send_task_spawn_resp_pmi11(spawn_resp_t *spawn_resp, int task_fd,
 }
 
 /* called in stepd and srun */
-static int
-_handle_spawn_resp(int fd, Buf buf)
+static int _handle_spawn_resp(int fd, buf_t *buf)
 {
 	int rc, task_fd, task_lrank;
 	spawn_resp_t *spawn_resp;
@@ -407,13 +404,12 @@ _handle_spawn_resp(int fd, Buf buf)
 
 
 /* name serv handlers called only in srun */
-static int
-_handle_name_publish(int fd, Buf buf)
+static int _handle_name_publish(int fd, buf_t *buf)
 {
 	int rc;
 	uint32_t tmp32;
 	char *name = NULL, *port = NULL;
-	Buf resp_buf = NULL;
+	buf_t *resp_buf = NULL;
 
 	debug3("mpi/pmi2: in _handle_name_publish");
 
@@ -431,7 +427,7 @@ out:
 	pack32((uint32_t) rc, resp_buf);
 	rc = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			      get_buf_offset(resp_buf));
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 
 	debug3("mpi/pmi2: out _handle_name_publish");
 	return rc;
@@ -441,13 +437,12 @@ unpack_error:
 	goto out;
 }
 
-static int
-_handle_name_unpublish(int fd, Buf buf)
+static int _handle_name_unpublish(int fd, buf_t *buf)
 {
 	int rc;
 	uint32_t tmp32;
 	char *name = NULL;
-	Buf resp_buf = NULL;
+	buf_t *resp_buf = NULL;
 
 	debug3("mpi/pmi2: in _handle_name_unpublish");
 
@@ -463,7 +458,7 @@ out:
 	pack32((uint32_t) rc, resp_buf);
 	rc = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			      get_buf_offset(resp_buf));
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 
 	debug3("mpi/pmi2: out _handle_name_unpublish");
 	return rc;
@@ -473,13 +468,12 @@ unpack_error:
 	goto out;
 }
 
-static int
-_handle_name_lookup(int fd, Buf buf)
+static int _handle_name_lookup(int fd, buf_t *buf)
 {
 	int rc = SLURM_SUCCESS, rc2;
 	uint32_t tmp32;
 	char *name = NULL, *port = NULL;
-	Buf resp_buf = NULL;
+	buf_t *resp_buf = NULL;
 
 	debug3("mpi/pmi2: in _handle_name_lookup");
 
@@ -495,7 +489,7 @@ out:
 	rc2 = slurm_msg_sendto(fd, get_buf_data(resp_buf),
 			       get_buf_offset(resp_buf));
 	rc = MAX(rc, rc2);
-	free_buf(resp_buf);
+	FREE_NULL_BUFFER(resp_buf);
 	xfree(name);
 	xfree(port);
 
@@ -508,8 +502,7 @@ unpack_error:
 }
 
 /* handles ring_in message from one of our stepd children */
-static int
-_handle_ring(int fd, Buf buf)
+static int _handle_ring(int fd, buf_t *buf)
 {
 	uint32_t rank, count, temp32;
 	char *left  = NULL;
@@ -558,8 +551,7 @@ unpack_error:
 }
 
 /* handles ring_out messages coming in from parent in stepd tree */
-static int
-_handle_ring_resp(int fd, Buf buf)
+static int _handle_ring_resp(int fd, buf_t *buf)
 {
 	uint32_t count, temp32;
 	char *left  = NULL;
@@ -599,7 +591,7 @@ handle_tree_cmd(int fd)
 {
 	char *req_buf = NULL;
 	uint32_t len;
-	Buf buf = NULL;
+	buf_t *buf = NULL;
 	uint16_t cmd;
 	int rc;
 
@@ -622,7 +614,7 @@ handle_tree_cmd(int fd)
 
 	debug3("mpi/pmi2: got tree cmd: %hu(%s)", cmd, tree_cmd_names[cmd]);
 	rc = tree_cmd_handlers[cmd](fd, buf);
-	free_buf (buf);
+	FREE_NULL_BUFFER(buf);
 	debug3("mpi/pmi2: out handle_tree_cmd");
 	return rc;
 
@@ -648,11 +640,10 @@ tree_msg_to_srun(uint32_t len, char *msg)
 	return rc;
 }
 
-extern int
-tree_msg_to_srun_with_resp(uint32_t len, char *msg, Buf *resp_ptr)
+extern int tree_msg_to_srun_with_resp(uint32_t len, char *msg, buf_t **resp_ptr)
 {
 	int fd, rc;
-	Buf buf = NULL;
+	buf_t *buf = NULL;
 	char *data = NULL;
 
 	xassert(resp_ptr != NULL);

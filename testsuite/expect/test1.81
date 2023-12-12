@@ -30,8 +30,6 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-
 # find out if we have enough nodes to test functionality
 set node_count [get_partition_param [default_partition] "TotalNodes"]
 if { $node_count < 2 } {
@@ -45,7 +43,7 @@ set host_0      ""
 set task_cnt    0
 set timeout $max_job_delay
 
-set srun_pid [spawn $srun -N1-1 -c 1 -l -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -N1-1 -c 1 -l -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "(Task count specification invalid|configuration is not available)" {
 		if {[get_config_param "FrontendName"] ne "MISSING"} {
@@ -61,7 +59,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -69,14 +66,11 @@ expect {
 	}
 }
 
-if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get SLURM_NODEID of task 0"
-	set exit_code 1
-}
+subtest {$host_0 ne ""} "Should get SLURM_NODEID of task 0"
 
 set alloc_fail 0
 set task_cnt2  0
-set srun_pid [spawn $srun -N1-1 -w $host_0 -n [expr $task_cnt + 1] -l -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -N1-1 -w $host_0 -n [expr $task_cnt + 1] -l -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "($number):" {
 		incr task_cnt2
@@ -87,22 +81,14 @@ expect {
 		set alloc_fail 1
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
 		wait
 	}
 }
-if { $alloc_fail == 0 } {
-	log_error "Did not generate expected error message"
-	set exit_code   1
-}
-if { $task_cnt2 != 0 } {
-	log_error "Allocated more tasks than processors"
-	set exit_code   1
-}
-
+subtest { $alloc_fail != 0 } "Should generate expected error message"
+subtest { $task_cnt2 == 0 } "Should allocate more tasks than processors"
 
 #
 # Submit a 1 node job
@@ -110,7 +96,7 @@ if { $task_cnt2 != 0 } {
 set host_0      ""
 set host_1      ""
 
-set srun_pid [spawn $srun -N1-1 -l -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -N1-1 -l -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "($number): *($re_word_str)" {
 		if {$expect_out(1,string) == 0} {
@@ -122,7 +108,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -133,16 +118,11 @@ expect {
 #
 # Verify node count
 #
-if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get SLURM_NODEID of task 0"
-	set exit_code   1
-}
-if {[string compare $host_1 ""] != 0} {
-	log_error "Started two tasks instead of one"
-}
+subtest {$host_0 ne ""} "Should get SLURM_NODEID of task 0"
+subtest {$host_1 eq ""} "Should start just one task"
+
 if {[get_config_param "FrontendName"] ne "MISSING"} {
-	log_warn "Additional testing is incompatible with front-end systems"
-	pass
+	skip "Additional testing is incompatible with front-end systems"
 }
 
 #
@@ -153,7 +133,7 @@ set host_1      ""
 set host_2      ""
 set host_3      ""
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N1-3 -l -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -N1-3 -l -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "($number): *($re_word_str)" {
 		if {$expect_out(1,string) == 0} {
@@ -171,7 +151,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -182,28 +161,19 @@ expect {
 #
 # Verify node count
 #
-if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get SLURM_NODEID of task 0"
-	set exit_code   1
-}
-if {[string compare $host_3 ""] != 0} {
-	log_error "Started more than three tasks"
-	set exit_code   1
-}
+subtest {$host_0 ne ""} "Should get SLURM_NODEID of task 0"
+subtest {$host_3 eq ""} "Should start no more than three tasks"
 set dup_host 0
-if {[string compare $host_0 $host_1] == 0} {
+if {$host_0 eq $host_1} {
 	set dup_host 1
 }
-if {[string compare $host_0 $host_2] == 0} {
+if {$host_0 eq $host_2} {
 	set dup_host 1
 }
-if {[string compare $host_0 $host_3] == 0} {
+if {$host_0 eq $host_3} {
 	set dup_host 1
 }
-if {$dup_host == 1} {
-	log_error "Re-used a node in the allocation"
-	set exit_code   1
-}
+subtest {$dup_host != 1} "Should not reuse a node in the allocation"
 
 #
 # Submit a 2 to 3 node job
@@ -213,7 +183,7 @@ set host_1      ""
 set host_2      ""
 set host_3      ""
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N2-3 -l -t1 $bin_printenv SLURM_NODEID]
+spawn $srun -N2-3 -l -t1 $bin_printenv SLURM_NODEID
 expect {
 	-re "srun: error" {
 		skip "Can't test srun task distribution"
@@ -234,7 +204,6 @@ expect {
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 	eof {
@@ -245,33 +214,17 @@ expect {
 #
 # Verify node count
 #
-if {[string compare $host_0 ""] == 0} {
-	log_error "Did not get SLURM_NODEID of task 0"
-	set exit_code   1
-}
-if {[string compare $host_1 ""] == 0} {
-	log_error "Did not get SLURM_NODEID of task 1"
-	set exit_code   1
-}
-if {[string compare $host_3 ""] != 0} {
-	log_error "Started more than three tasks"
-	set exit_code   1
-}
+subtest {$host_0 ne ""} "Should get SLURM_NODEID of task 0"
+subtest {$host_1 ne ""} "Should get SLURM_NODEID of task 1"
+subtest {$host_3 eq ""} "Should start no more that three tasks"
 set dup_host 0
-if {[string compare $host_0 $host_1] == 0} {
+if {$host_0 eq $host_1} {
 	set dup_host 1
 }
-if {[string compare $host_0 $host_2] == 0} {
+if {$host_0 eq $host_2} {
 	set dup_host 1
 }
-if {[string compare $host_0 $host_3] == 0} {
+if {$host_0 eq $host_3} {
 	set dup_host 1
 }
-if {$dup_host == 1} {
-	log_error "Re-used a node in the allocation"
-	set exit_code   1
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
-}
+subtest {$dup_host != 1} "Should not reuse a node in the allocation"

@@ -58,14 +58,6 @@ extern void srun_allocate(job_record_t *job_ptr);
 extern void srun_allocate_abort(job_record_t *job_ptr);
 
 /*
- * srun_exec - request that srun execute a specific command
- *	and route it's output to stdout
- * IN step_ptr - pointer to the slurmctld job step record
- * IN argv - command and arguments to execute
- */
-extern void srun_exec(step_record_t *step_ptr, char **argv);
-
-/*
  * srun_job_complete - notify srun of a job's termination
  * IN job_ptr - pointer to the slurmctld job record
  */
@@ -120,13 +112,6 @@ extern void srun_ping (void);
  * IN step_id - id of step responding or NO_VAL if not a step
  */
 extern void srun_response(slurm_step_id_t *step_id);
-
-/*
- * srun_step_timeout - notify srun of a job step's imminent timeout
- * IN step_ptr - pointer to the slurmctld step record
- * IN timeout_val - when it is going to time out
- */
-extern void srun_step_timeout(step_record_t *step_ptr, time_t timeout_val);
 
 /*
  * srun_timeout - notify srun of a job's timeout

@@ -37,8 +37,6 @@
 #ifndef _TASK_CGROUP_DEVICES_H_
 #define _TASK_CGROUP_DEVICES_H_
 
-#include "src/common/xcgroup_read_config.h"
-
 /* initialize devices subsystem of task/cgroup */
 extern int task_cgroup_devices_init(void);
 
@@ -46,12 +44,17 @@ extern int task_cgroup_devices_init(void);
 extern int task_cgroup_devices_fini(void);
 
 /* create user/job/jobstep devices cgroups */
-extern int task_cgroup_devices_create(stepd_step_rec_t *job);
+extern int task_cgroup_devices_create(stepd_step_rec_t *step);
 
-/* create a task cgroup and attach the task to it */
-extern int task_cgroup_devices_attach_task(stepd_step_rec_t *job);
+/* add a task to the devices cgroup */
+extern int task_cgroup_devices_add_pid(stepd_step_rec_t *step, pid_t pid,
+				       uint32_t taskid);
 
-/* add a pid to the cgroup */
-extern int task_cgroup_devices_add_pid(pid_t pid);
+/* constrain the devices in the task */
+extern int task_cgroup_devices_constrain(stepd_step_rec_t *step,
+				         uint32_t taskid);
+
+/* add a pid to the extern step devices cgroup */
+extern int task_cgroup_devices_add_extern_pid(pid_t pid);
 
 #endif

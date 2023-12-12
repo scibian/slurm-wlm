@@ -96,7 +96,7 @@ static void *_cluster_rollup_usage(void *arg)
 	xassert(rollup_stats);
 
 	memset(&mysql_conn, 0, sizeof(mysql_conn_t));
-	mysql_conn.rollback = 1;
+	mysql_conn.flags |= DB_CONN_FLAG_ROLLBACK;
 	mysql_conn.conn = local_rollup->mysql_conn->conn;
 	slurm_mutex_init(&mysql_conn.lock);
 
@@ -534,7 +534,7 @@ static int _get_cluster_usage(mysql_conn_t *mysql_conn, uid_t uid,
 		"down_secs",
 		"pdown_secs",
 		"idle_secs",
-		"resv_secs",
+		"plan_secs",
 		"over_secs",
 		"count",
 		"time_start",
@@ -546,7 +546,7 @@ static int _get_cluster_usage(mysql_conn_t *mysql_conn, uid_t uid,
 		CLUSTER_DCPU,
 		CLUSTER_PDCPU,
 		CLUSTER_ICPU,
-		CLUSTER_RCPU,
+		CLUSTER_PCPU,
 		CLUSTER_OCPU,
 		CLUSTER_CNT,
 		CLUSTER_START,
@@ -610,7 +610,7 @@ static int _get_cluster_usage(mysql_conn_t *mysql_conn, uid_t uid,
 		accounting_rec->pdown_secs = slurm_atoull(row[CLUSTER_PDCPU]);
 		accounting_rec->idle_secs = slurm_atoull(row[CLUSTER_ICPU]);
 		accounting_rec->over_secs = slurm_atoull(row[CLUSTER_OCPU]);
-		accounting_rec->resv_secs = slurm_atoull(row[CLUSTER_RCPU]);
+		accounting_rec->plan_secs = slurm_atoull(row[CLUSTER_PCPU]);
 		accounting_rec->period_start = slurm_atoul(row[CLUSTER_START]);
 		list_append(cluster_rec->accounting_list, accounting_rec);
 	}
@@ -850,7 +850,7 @@ extern int as_mysql_get_usage(mysql_conn_t *mysql_conn, uid_t uid,
 				goto bad_user;
 			}
 
-			/* Existance of user.coord_accts is checked in
+			/* Existence of user.coord_accts is checked in
 			   is_user_any_coord.
 			*/
 			itr = list_iterator_create(user.coord_accts);
@@ -909,7 +909,7 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 	//START_TIMER;
 	xassert(!*rollup_stats_list_in);
 	*rollup_stats_list_in = list_create(slurmdb_destroy_rollup_stats);
-	slurm_mutex_lock(&as_mysql_cluster_list_lock);
+	slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
 	itr = list_iterator_create(as_mysql_cluster_list);
 	while ((cluster_name = list_next(itr))) {
 		local_rollup_t *local_rollup = xmalloc(sizeof(local_rollup_t));
@@ -950,7 +950,7 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 	}
 	slurm_mutex_lock(&rolledup_lock);
 	list_iterator_destroy(itr);
-	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
 
 	while (rolledup < roll_started) {
 		slurm_cond_wait(&rolledup_cond, &rolledup_lock);
@@ -966,4 +966,28 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 	slurm_mutex_unlock(&usage_rollup_lock);
 
 	return rc;
+}
+
+extern bool trigger_reroll(mysql_conn_t *mysql_conn, time_t event_time)
+{
+	slurm_mutex_lock(&rollup_lock);
+	if (event_time < global_last_rollup) {
+		char *query;
+		global_last_rollup = event_time;
+		slurm_mutex_unlock(&rollup_lock);
+
+		query = xstrdup_printf("update \"%s_%s\" set "
+				       "hourly_rollup=%ld, "
+				       "daily_rollup=%ld, monthly_rollup=%ld",
+				       mysql_conn->cluster_name,
+				       last_ran_table, event_time,
+				       event_time, event_time);
+		DB_DEBUG(DB_USAGE, mysql_conn->conn, "query\n%s", query);
+		(void) mysql_db_query(mysql_conn, query);
+		xfree(query);
+		return true;
+	}
+
+	slurm_mutex_unlock(&rollup_lock);
+	return false;
 }

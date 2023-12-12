@@ -48,10 +48,11 @@
 
 #include "src/common/forward.h"
 #include "src/common/macros.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/slurm_route.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/route.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_interface.h"
+#include "src/common/slurm_protocol_pack.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -96,7 +97,7 @@ void *_forward_thread(void *arg)
 {
 	forward_msg_t *fwd_msg = (forward_msg_t *)arg;
 	forward_struct_t *fwd_struct = fwd_msg->fwd_struct;
-	Buf buffer = init_buf(BUF_SIZE);	/* probably enough for header */
+	buf_t *buffer = init_buf(BUF_SIZE);	/* probably enough for header */
 	List ret_list = NULL;
 	int fd = -1;
 	ret_data_info_t *ret_data_info = NULL;
@@ -124,7 +125,7 @@ void *_forward_thread(void *arg)
 			goto cleanup;
 		}
 		if ((fd = slurm_open_msg_conn(&addr)) < 0) {
-			error("forward_thread to %s: %m", name);
+			error("forward_thread to %s (%pA): %m", name, &addr);
 
 			slurm_mutex_lock(&fwd_struct->forward_mutex);
 			mark_as_failed_forward(
@@ -189,7 +190,7 @@ void *_forward_thread(void *arg)
 					       errno);
 			free(name);
 			if (hostlist_count(hl) > 0) {
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 				buffer = init_buf(fwd_struct->buf_len);
 				slurm_mutex_unlock(&fwd_struct->forward_mutex);
 				close(fd);
@@ -243,7 +244,7 @@ void *_forward_thread(void *arg)
 			/*      steps, fwd_msg->timeout); */
 		}
 
-		ret_list = slurm_receive_msgs(fd, steps, fwd_msg->timeout);
+		ret_list = slurm_receive_resp_msgs(fd, steps, fwd_msg->timeout);
 		/* info("sent %d forwards got %d back", */
 		/*      fwd_msg->header.forward.cnt, list_count(ret_list)); */
 
@@ -255,7 +256,7 @@ void *_forward_thread(void *arg)
 			free(name);
 			FREE_NULL_LIST(ret_list);
 			if (hostlist_count(hl) > 0) {
-				free_buf(buffer);
+				FREE_NULL_BUFFER(buffer);
 				buffer = init_buf(fwd_struct->buf_len);
 				slurm_mutex_unlock(&fwd_struct->forward_mutex);
 				close(fd);
@@ -296,19 +297,23 @@ void *_forward_thread(void *arg)
 				}
 				list_iterator_destroy(itr);
 				if (!node_found) {
+					slurm_mutex_lock(&fwd_struct->forward_mutex);
 					mark_as_failed_forward(
 						&fwd_struct->ret_list,
 						tmp,
 						SLURM_COMMUNICATIONS_CONNECTION_ERROR);
+					slurm_mutex_unlock(&fwd_struct->forward_mutex);
 				}
 				free(tmp);
 			}
 			hostlist_iterator_destroy(host_itr);
 			if (!first_node_found) {
+				slurm_mutex_lock(&fwd_struct->forward_mutex);
 				mark_as_failed_forward(
 					&fwd_struct->ret_list,
 					name,
 					SLURM_COMMUNICATIONS_CONNECTION_ERROR);
+				slurm_mutex_unlock(&fwd_struct->forward_mutex);
 			}
 		}
 		break;
@@ -331,7 +336,7 @@ cleanup:
 		error ("close(%d): %m", fd);
 	hostlist_destroy(hl);
 	destroy_forward(&fwd_msg->header.forward);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	slurm_cond_signal(&fwd_struct->notify);
 	slurm_mutex_unlock(&fwd_struct->forward_mutex);
 	xfree(fwd_msg);
@@ -352,6 +357,9 @@ void *_fwd_tree_thread(void *arg)
 	send_msg.flags = fwd_tree->orig_msg->flags;
 	send_msg.data = fwd_tree->orig_msg->data;
 	send_msg.protocol_version = fwd_tree->orig_msg->protocol_version;
+	if (fwd_tree->orig_msg->restrict_uid_set)
+		slurm_msg_set_r_uid(&send_msg,
+				    fwd_tree->orig_msg->restrict_uid);
 
 	/* repeat until we are sure the message was sent */
 	while ((name = hostlist_shift(fwd_tree->tree_hl))) {

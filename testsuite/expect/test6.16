@@ -29,52 +29,32 @@
 ############################################################################
 source ./globals
 
-set exit_code   0
-set file_in     "test$test_id.input"
+set file_in     "$test_dir/input"
 set job_id      0
 
 proc cleanup {} {
-	global file_in
+	global job_id
 
-	exec rm -f $file_in
+	cancel_job $job_id
 }
 
 #
 # Build input script file
 #
 make_bash_script $file_in "
-  $srun -N1 -n1 --mem=10 $bin_sleep $max_job_delay &
-  $srun -N1 -n1 --mem=10 $bin_sleep $max_job_delay &
-  $srun -N1 -n1 --mem=10 $bin_sleep $max_job_delay
+  $srun -N1 -n1 --overlap --mem=10 $bin_sleep $max_job_delay &
+  $srun -N1 -n1 --overlap --mem=10 $bin_sleep $max_job_delay &
+  $srun -N1 -n1 --overlap --mem=10 $bin_sleep $max_job_delay
 "
 
 #
 # Spawn sbatch job
 #
-set sbatch_pid [spawn $sbatch -n3 --mem=30 --output=/dev/null --error=/dev/null --job-name=job.$test_id -t5 $file_in]
-expect {
-	-re "Submitted batch job ($number)" {
-		set job_id $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		slow_kill $sbatch_pid
-		fail "srun not responding"
-	}
-	eof {
-		wait
-	}
-}
-if {$job_id == 0} {
-	fail "Batch submit failure"
-}
+set job_id [submit_job -fail "-n3 --mem=30 --output=/dev/null --error=/dev/null --job-name=job.$test_id -t5 $file_in"]
 
-if {[wait_for_job $job_id RUNNING] != 0} {
-	cancel_job $job_id
-	fail "Error starting job $job_id"
-}
+wait_for_job -fail $job_id RUNNING
 # Wait for job steps to begin
-exec $bin_sleep 3
+wait_for_command_match -fail -pollinterval .1 "$sstat --allsteps --format JobID --noheader $job_id" "$job_id\.2"
 
 #
 # Kill single job steps individually
@@ -97,6 +77,9 @@ expect {
 		incr matches
 		exp_continue
 	}
+	-re "error:" {
+		fail "scancel had an unexpected error"
+	}
 	timeout {
 		fail "scancel not responding"
 	}
@@ -106,8 +89,4 @@ expect {
 }
 if {$matches != 3} {
 	fail "scancel with multiple step_id failed"
-}
-
-if {$exit_code != 0} {
-	fail "Test failed due to previous errors (\$exit_code = $exit_code)"
 }

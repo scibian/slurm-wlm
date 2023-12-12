@@ -107,7 +107,7 @@ main (int argc, char **argv)
 	log_options_t log_opts = LOG_OPTS_STDERR_ONLY ;
 	int rc = 0;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
 	log_init (xbasename(argv[0]), log_opts, SYSLOG_FACILITY_DAEMON, NULL);
 	initialize_and_process_args(argc, argv);
 	if (opt.verbose) {
@@ -178,12 +178,16 @@ static void
 _load_job_records (void)
 {
 	int error_code;
+	uint16_t show_flags = 0;
+
+	show_flags |= SHOW_ALL;
+	show_flags |= opt.clusters ? SHOW_LOCAL : SHOW_FEDERATION;
 
 	/* We need the fill job array string representation for identifying
 	 * and killing job arrays */
 	setenv("SLURM_BITSTR_LEN", "0", 1);
-	error_code = slurm_load_jobs ((time_t) NULL, &job_buffer_ptr,
-				      SHOW_ALL | SHOW_FEDERATION);
+	error_code = slurm_load_jobs((time_t) NULL, &job_buffer_ptr,
+				     show_flags);
 
 	if (error_code) {
 		slurm_perror ("slurm_load_jobs error");
@@ -200,10 +204,10 @@ static bool _is_task_in_job(job_info_t *job_ptr, int array_id)
 
 	if (!job_ptr->array_bitmap)
 		return false;
-	len = bit_size((bitstr_t *)job_ptr->array_bitmap);
+	len = bit_size(job_ptr->array_bitmap);
 	if (len <= array_id)
 		return false;
-	return (bit_test((bitstr_t *)job_ptr->array_bitmap, array_id));
+	return bit_test(job_ptr->array_bitmap, array_id);
 }
 
 static int _verify_job_ids(void)
@@ -296,11 +300,14 @@ static int _verify_job_ids(void)
 static void _filter_job_records(void)
 {
 	int i, job_matches = 0;
-	job_info_t *job_ptr = NULL;
+	job_info_t *job_ptr = NULL, *het_leader = NULL;
 	uint32_t job_base_state;
 
 	job_ptr = job_buffer_ptr->job_array;
 	for (i = 0; i < job_buffer_ptr->record_count; i++, job_ptr++) {
+		if (job_ptr->het_job_id && !job_ptr->het_job_offset)
+			het_leader = job_ptr;
+
 		if (IS_JOB_FINISHED(job_ptr))
 			job_ptr->job_id = 0;
 		if (job_ptr->job_id == 0)
@@ -386,13 +393,38 @@ static void _filter_job_records(void)
 			 * not begin with a '*', act on all wckeys with the same
 			 * name, default or not.
 			 */
-			if ((opt.wckey[0] != '*') && (job_key[0] == '*'))
+			if ((opt.wckey[0] != '*') && job_key &&
+			    (job_key[0] == '*'))
 				job_key++;
 
 			if (xstrcmp(job_key, opt.wckey) != 0) {
 				job_ptr->job_id = 0;
 				continue;
 			}
+		}
+
+		if (het_leader && het_leader->job_id &&
+		    job_ptr->het_job_offset &&
+		    (job_ptr->het_job_id == het_leader->het_job_id)) {
+			/*
+			 * Filter out HetJob non-leader component as its leader
+			 * should have already been evaluated and hasn't been
+			 * filtered out.
+			 *
+			 * The leader RPC signal handler will affect all the
+			 * components, so this avoids extra unneeded RPCs, races
+			 * and issues interpreting multiple error codes.
+			 *
+			 * This can be done assuming the walking of the loaded
+			 * jobs is guaranteed to evaluate in an order such that
+			 * HetJob leaders are evaluated before their matching
+			 * non-leaders and the whole HetJob is evaluated
+			 * contiguously. The slurmctld job_list is ordered by
+			 * job creation time (always leader first) and HetJobs
+			 * are created in a row.
+			 */
+			job_ptr->job_id = 0;
+			continue;
 		}
 
 		job_matches++;
@@ -701,14 +733,24 @@ _cancel_job_id (void *ci)
 		flags |= KILL_JOB_BATCH;
 		job_type = "batch ";
 	}
+
+	/*
+	 * With the introduction of the ScronParameters=explicit_scancel option,
+	 * scancel requests for a cron job should be rejected unless the --cron
+	 * flag is specified.
+	 * To prevent introducing this option from influencing anything other
+	 * than user requests, it has been set up so that when KILL_NO_CRON is
+	 * set when explicit_scancel is also set, the request will be rejected.
+	 */
+	if (!opt.cron)
+		flags |= KILL_NO_CRON;
+
 	if (opt.full) {
 		flags |= KILL_FULL_JOB;
 		job_type = "full ";
 	}
 	if (opt.hurry)
 		flags |= KILL_HURRY;
-	if (cancel_info->array_flag)
-		flags |= KILL_JOB_ARRAY;
 
 	if (!cancel_info->job_id_str) {
 		if (cancel_info->array_job_id &&
@@ -734,21 +776,12 @@ _cancel_job_id (void *ci)
 	}
 
 	for (i = 0; i < MAX_CANCEL_RETRY; i++) {
-		job_step_kill_msg_t kill_msg;
-
 		_add_delay();
 		START_TIMER;
 
-		memset(&kill_msg, 0, sizeof(job_step_kill_msg_t));
-		kill_msg.flags	= flags;
-		kill_msg.step_id.job_id = NO_VAL;
-		kill_msg.step_id.step_id = NO_VAL;
-		kill_msg.step_id.step_het_comp = NO_VAL;
-		kill_msg.sibling     = opt.sibling;
-		kill_msg.signal      = cancel_info->sig;
-		kill_msg.sjob_id     = cancel_info->job_id_str;
-
-		error_code = slurm_kill_job_msg(REQUEST_KILL_JOB, &kill_msg);
+		error_code = slurm_kill_job2(cancel_info->job_id_str,
+					     cancel_info->sig, flags,
+					     opt.sibling);
 
 		END_TIMER;
 		slurm_mutex_lock(&max_delay_lock);
@@ -765,9 +798,7 @@ _cancel_job_id (void *ci)
 		error_code = slurm_get_errno();
 		if ((opt.verbose > 0) ||
 		    ((error_code != ESLURM_ALREADY_DONE) &&
-		     (error_code != ESLURM_INVALID_JOB_ID) &&
-		     ((error_code != ESLURM_NOT_WHOLE_HET_JOB) ||
-		      (opt.job_cnt != 0)))) {
+		     (error_code != ESLURM_INVALID_JOB_ID))) {
 			error("Kill job error on job id %s: %s",
 			      cancel_info->job_id_str,
 			      slurm_strerror(slurm_get_errno()));
@@ -776,7 +807,7 @@ _cancel_job_id (void *ci)
 		     (error_code == ESLURM_INVALID_JOB_ID)) &&
 		    (cancel_info->sig == SIGKILL)) {
 			error_code = 0;	/* Ignore error if job done */
-		}	
+		}
 	}
 
 	/* Purposely free the struct passed in here, so the caller doesn't have

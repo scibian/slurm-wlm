@@ -43,19 +43,21 @@
 #include "src/common/macros.h"
 
 #define xstrcat(__p, __q)		_xstrcat(&(__p), __q)
+#define xstrcatat(__p, __q, __s) _xstrcatat(&(__p), __q, __s)
 #define xstrncat(__p, __q, __l)		_xstrncat(&(__p), __q, __l)
 #define xstrcatchar(__p, __c)		_xstrcatchar(&(__p), __c)
 #define xstrftimecat(__p, __fmt)	_xstrftimecat(&(__p), __fmt)
 #define xiso8601timecat(__p, __msec)            _xiso8601timecat(&(__p), __msec)
 #define xrfc5424timecat(__p, __msec)            _xrfc5424timecat(&(__p), __msec)
+#define xrfc3339timecat(__p) _xrfc3339timecat(&(__p))
 #define xstrfmtcat(__p, __fmt, args...)	_xstrfmtcat(&(__p), __fmt, ## args)
 #define xstrfmtcatat(__p, __q, __fmt, args...) \
 	_xstrfmtcatat(&(__p), __q, __fmt, ## args)
 #define xmemcat(__p, __s, __e)          _xmemcat(&(__p), __s, __e)
-#define xstrsubstitute(__p, __pat, __rep) _xstrsubstitute(&(__p), __pat, __rep)
+#define xstrsubstitute(__p, __pat, __rep) \
+	_xstrsubstitute(&(__p), __pat, __rep, 0)
 #define xstrsubstituteall(__p, __pat, __rep)			\
-	while (_xstrsubstitute(&(__p), __pat, __rep))		\
-		;
+	_xstrsubstitute(&(__p), __pat, __rep, 1)
 
 /*
 ** The following functions take a ptr to a string and expand the
@@ -72,6 +74,16 @@
 ** cat str2 onto str1, expanding str1 as necessary
 */
 void _xstrcat(char **str1, const char *str2);
+
+/*
+ * Append str2 onto str at pos, * expanding buf as needed. pos is updated to the
+ * end of the appended string.
+ *
+ * Meant to be used in loops contructing longer strings that are performance
+ * sensitive, as xstrcat() needs to re-seek to the end of str making the string
+ * construction worse by another O(log(strlen)) factor.
+ */
+void _xstrcatat(char **str, char **pos, const char *str2);
 
 /*
 ** cat len of str2 onto str1, expanding str1 as necessary
@@ -98,6 +110,11 @@ void _xiso8601timecat(char **str, bool);
 ** Concatenate a RFC 5424 timestamp onto str.
 */
 void _xrfc5424timecat(char **str, bool);
+
+/*
+ * Concatenate a RFC 3339 timestamp onto str.
+ */
+void _xrfc3339timecat(char **str);
 
 /*
  * Concatenate printf-style formatted string onto str
@@ -144,11 +161,17 @@ long int xstrntol(const char *str, char **endptr, size_t n, int base);
 char *xbasename(char *path);
 
 /*
+ * Specialized dirname implementation
+ */
+char *xdirname(const char *path);
+
+/*
 ** Find the first instance of a sub-string "pattern" in the string "str",
 ** and replace it with the string "replacement".
 ** If it wasn't found returns 0, otherwise 1
 */
-bool _xstrsubstitute(char **str, const char *pattern, const char *replacement);
+void _xstrsubstitute(char **str, const char *pattern,
+		     const char *replacement, const bool all);
 
 /* xshort_hostname
  *   Returns an xmalloc'd string containing the hostname
@@ -223,7 +246,8 @@ void xstrtrim(char *string);
  * IN delimiter - delimiter between each hex byte (may be NULL)
  * RET hex string (must xfree()) or NULL on error
  */
-extern char *bytes_to_hex(const char *string, int len, const char *delimiter);
+extern char *xstring_bytes2hex(const unsigned char *string, int len,
+			       const char *delimiter);
 
 /*
  * Dump byte string printable format
@@ -232,7 +256,7 @@ extern char *bytes_to_hex(const char *string, int len, const char *delimiter);
  * IN replace - character to replace printable characters
  * RET loggable string (must xfree()) or NULL on error
  */
-extern char *bytes_to_printable(const char *string, int len,
-				const char replace);
+extern char *xstring_bytes2printable(const unsigned char *string, int len,
+				     const char replace);
 
 #endif /* !_XSTRING_H */

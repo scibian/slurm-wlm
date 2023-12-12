@@ -49,6 +49,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "src/common/fetch_config.h"
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
@@ -56,9 +57,12 @@
 #include "src/common/parse_config.h"
 #include "src/common/parse_value.h"
 #include "src/common/read_config.h"
+#include "src/common/run_in_daemon.h"
+#include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xregex.h"
 #include "src/common/xstring.h"
 
 #include "slurm/slurm.h"
@@ -118,6 +122,8 @@ typedef struct _expline_values_st {
 	s_p_hashtbl_t**	values;
 } _expline_values_t;
 
+List conf_includes_list = NULL;
+
 static bool _run_in_daemon(void)
 {
 	static bool run = false, set = false;
@@ -169,12 +175,16 @@ static s_p_values_t *_conf_hashtbl_lookup(const s_p_hashtbl_t *tbl,
 	return NULL;
 }
 
-s_p_hashtbl_t *s_p_hashtbl_create(const s_p_options_t options[])
+s_p_hashtbl_t *s_p_hashtbl_create_cnt(const s_p_options_t options[], int *cnt)
 {
 	s_p_hashtbl_t *tbl = xmalloc(sizeof(*tbl));
 
+	if (cnt)
+		*cnt = 0;
 	for (const s_p_options_t *op = options; op->key; op++) {
 		s_p_values_t *value = xmalloc(sizeof(*value));
+		if (cnt)
+			(*cnt)++;
 		value->key = xstrdup(op->key);
 		value->operator = S_P_OPERATOR_SET;
 		value->type = op->type;
@@ -200,6 +210,11 @@ s_p_hashtbl_t *s_p_hashtbl_create(const s_p_options_t options[])
 		fatal("keyvalue regex compilation failed");
 
 	return tbl;
+}
+
+extern s_p_hashtbl_t *s_p_hashtbl_create(const s_p_options_t options[])
+{
+	return s_p_hashtbl_create_cnt(options, NULL);
 }
 
 /* Swap the data in two data structures without changing the linked list
@@ -298,6 +313,7 @@ static int _keyvalue_regex(s_p_hashtbl_t *tbl, const char *line,
 	size_t nmatch = 8;
 	regmatch_t pmatch[8];
 	char op;
+	int rc;
 
 	*key = NULL;
 	*value = NULL;
@@ -305,8 +321,12 @@ static int _keyvalue_regex(s_p_hashtbl_t *tbl, const char *line,
 	*operator = S_P_OPERATOR_SET;
 	memset(pmatch, 0, sizeof(regmatch_t)*nmatch);
 
-	if (regexec(&tbl->keyvalue_re, line, nmatch, pmatch, 0) == REG_NOMATCH)
+	if ((rc = regexec(&tbl->keyvalue_re, line, nmatch, pmatch, 0))) {
+		if (rc != REG_NOMATCH)
+			dump_regex_error(rc, &tbl->keyvalue_re, "regexec(%s)",
+					 line);
 		return -1;
+	}
 
 	*key = (char *)(xstrndup(line + pmatch[1].rm_so,
 				 pmatch[1].rm_eo - pmatch[1].rm_so));
@@ -552,64 +572,80 @@ static void *_handle_string(const char *key, const char *value)
 static void *_handle_long(const char *key, const char *value)
 {
 	long *data = xmalloc(sizeof(*data));
-	if (s_p_handle_long(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_long(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_uint16(const char *key, const char *value)
 {
 	uint16_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint16(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_uint16(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_uint32(const char *key, const char *value)
 {
 	uint32_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint32(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_uint32(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_uint64(const char *key, const char *value)
 {
 	uint64_t *data = xmalloc(sizeof(*data));
-	if (s_p_handle_uint64(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_uint64(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_boolean(const char *key, const char *value)
 {
 	bool *data = xmalloc(sizeof(*data));
-	if (s_p_handle_boolean(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_boolean(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_float(const char *key, const char *value)
 {
 	float *data = xmalloc(sizeof(*data));
-	if (s_p_handle_float(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_float(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_double(const char *key, const char *value)
 {
 	double *data = xmalloc(sizeof(*data));
-	if (s_p_handle_double(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_double(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
 static void *_handle_ldouble(const char *key, const char *value)
 {
 	long double *data = xmalloc(sizeof(*data));
-	if (s_p_handle_long_double(data, key, value) == SLURM_ERROR)
+	if (s_p_handle_long_double(data, key, value) == SLURM_ERROR) {
+		xfree(data);
 		return NULL;
+	}
 	return data;
 }
 
@@ -869,55 +905,64 @@ static int _handle_expline(s_p_values_t* v, const char* value,
  *                  If the handler for that key parses more of the line,
  *                  it will move the leftover pointer to point to the character
  *                  after it has finished parsing in the line.
+ * RET:
+ *	-1 if the value is invalid.
+ *	0 if the value is validbut no value will be set for "data".
+ *	1 if "data" is set.
  */
-static void _handle_keyvalue_match(s_p_values_t *v,
-				   const char *value, const char *line,
-				   char **leftover)
+static int _handle_keyvalue_match(s_p_values_t *v,
+				  const char *value, const char *line,
+				  char **leftover)
 {
+	int rc = 1;
+
 	switch (v->type) {
 	case S_P_IGNORE:
 		/* do nothing */
 		break;
 	case S_P_STRING:
-		_handle_common(v, value, line, leftover, _handle_string);
+		rc = _handle_common(v, value, line, leftover, _handle_string);
 		break;
 	case S_P_LONG:
-		_handle_common(v, value, line, leftover, _handle_long);
+		rc = _handle_common(v, value, line, leftover, _handle_long);
 		break;
 	case S_P_UINT16:
-		_handle_common(v, value, line, leftover, _handle_uint16);
+		rc = _handle_common(v, value, line, leftover, _handle_uint16);
 		break;
 	case S_P_UINT32:
-		_handle_common(v, value, line, leftover, _handle_uint32);
+		rc = _handle_common(v, value, line, leftover, _handle_uint32);
 		break;
 	case S_P_UINT64:
-		_handle_common(v, value, line, leftover, _handle_uint64);
+		rc = _handle_common(v, value, line, leftover, _handle_uint64);
 		break;
 	case S_P_POINTER:
-		_handle_pointer(v, value, line, leftover);
+		rc = _handle_pointer(v, value, line, leftover);
 		break;
 	case S_P_ARRAY:
-		_handle_array(v, value, line, leftover);
+		rc = _handle_array(v, value, line, leftover);
 		break;
 	case S_P_BOOLEAN:
-		_handle_common(v, value, line, leftover, _handle_boolean);
+		rc = _handle_common(v, value, line, leftover, _handle_boolean);
 		break;
 	case S_P_LINE:
-		_handle_line(v, value, line, leftover);
+		rc = _handle_line(v, value, line, leftover);
 		break;
 	case S_P_EXPLINE:
-		_handle_expline(v, value, line, leftover);
+		rc = _handle_expline(v, value, line, leftover);
 		break;
 	case S_P_FLOAT:
-		_handle_common(v, value, line, leftover, _handle_float);
+		rc = _handle_common(v, value, line, leftover, _handle_float);
 		break;
 	case S_P_DOUBLE:
-		_handle_common(v, value, line, leftover, _handle_double);
+		rc = _handle_common(v, value, line, leftover, _handle_double);
 		break;
 	case S_P_LONG_DOUBLE:
-		_handle_common(v, value, line, leftover, _handle_ldouble);
+		rc = _handle_common(v, value, line, leftover, _handle_ldouble);
 		break;
+	default:
+		fatal("%s: unsupported s_p_value_t type %d", __func__, v->type);
 	}
+	return rc;
 }
 
 /*
@@ -956,8 +1001,13 @@ int s_p_parse_line(s_p_hashtbl_t *hashtbl, const char *line, char **leftover)
 	while (_keyvalue_regex(hashtbl, ptr, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
-			_handle_keyvalue_match(p, value,
-					       new_leftover, &new_leftover);
+			if (_handle_keyvalue_match(p, value, new_leftover,
+						   &new_leftover) == -1) {
+				xfree(key);
+				xfree(value);
+				slurm_seterrno(EINVAL);
+				return 0;
+			}
 			*leftover = ptr = new_leftover;
 		} else {
 			error("Parsing error at unrecognized key: %s", key);
@@ -988,8 +1038,14 @@ static int _parse_next_key(s_p_hashtbl_t *hashtbl,
 	if (_keyvalue_regex(hashtbl, line, &key, &value, &new_leftover, &op) == 0) {
 		if ((p = _conf_hashtbl_lookup(hashtbl, key))) {
 			p->operator = op;
-			_handle_keyvalue_match(p, value,
-					       new_leftover, &new_leftover);
+			if (_handle_keyvalue_match(p, value, new_leftover,
+						   &new_leftover) == -1) {
+				xfree(key);
+				xfree(value);
+				*leftover = (char *)line;
+				slurm_seterrno(EINVAL);
+				return 0;
+			}
 			*leftover = new_leftover;
 		} else if (ignore_new) {
 			debug("%s: Parsing error at unrecognized key: %s",
@@ -1011,25 +1067,6 @@ static int _parse_next_key(s_p_hashtbl_t *hashtbl,
 	}
 
 	return 1;
-}
-
-static char * _add_full_path(char *file_name, char *slurm_conf_path)
-{
-	char *path_name = NULL, *slash;
-
-	if ((file_name == NULL) || (file_name[0] == '/')) {
-		path_name = xstrdup(file_name);
-		return path_name;
-	}
-
-	path_name = xstrdup(slurm_conf_path);
-	slash = strrchr(path_name, '/');
-	if (slash)
-		slash[0] = '\0';
-	xstrcat(path_name, "/");
-	xstrcat(path_name, file_name);
-
-	return path_name;
 }
 
 static char *_parse_for_format(s_p_hashtbl_t *f_hashtbl, char *path)
@@ -1068,6 +1105,57 @@ static char *_parse_for_format(s_p_hashtbl_t *f_hashtbl, char *path)
 }
 
 /*
+ * ListDelF for conf_includes_list
+ *
+ * IN/OUT: object (conf_includes_map_t *map)
+ */
+static void _delete_conf_includes(void *object)
+{
+	conf_includes_map_t *map = object;
+
+	if (map) {
+		xfree(map->conf_file);
+		FREE_NULL_LIST(map->include_list);
+		xfree(map);
+	}
+}
+
+/*
+ * Allocate memory for conf_includes_list if needed.
+ *
+ * Append the include_file to its appropriate conf_file mapping if found,
+ * otherwise create a map for conf_file <-> include_file and append it to
+ * conf_includes_list.
+ *
+ * IN: include_file to be appended.
+ * IN: conf_file where include_file belongs to.
+ */
+static void _handle_include(char *include_file, char *conf_file)
+{
+	conf_includes_map_t *map = NULL;
+
+	xassert(include_file);
+	xassert(conf_file);
+
+	if (!conf_includes_list)
+		conf_includes_list = list_create(_delete_conf_includes);
+
+	if (!(map = list_find_first_ro(conf_includes_list,
+				       find_map_conf_file,
+				       conf_file))) {
+		map = xmalloc(sizeof(*map));
+		map->conf_file = xstrdup(conf_file);
+		map->include_list = list_create(xfree_ptr);
+		list_append(map->include_list, xstrdup(include_file));
+		list_append(conf_includes_list, map);
+	} else if (!list_find_first_ro(map->include_list,
+				       slurm_find_char_exact_in_list,
+				       include_file)) {
+		list_append(map->include_list, xstrdup(include_file));
+	}
+}
+
+/*
  * Returns 1 if the line contained an include directive and the included
  * file was parsed without error.  Returns -1 if the line was an include
  * directive but the included file contained errors.  Returns 0 if
@@ -1075,13 +1163,15 @@ static char *_parse_for_format(s_p_hashtbl_t *f_hashtbl, char *path)
  */
 static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 				    const char *line, char **leftover,
-				    bool ignore_new, char *slurm_conf_path)
+				    bool ignore_new, char *slurm_conf_path,
+				    char *last_ancestor, bool check_permissions)
 {
 	char *ptr;
 	char *fn_start, *fn_stop;
 	char *file_name, *path_name;
 	char *file_with_mod;
 	int rc;
+	struct stat temp;
 
 	*leftover = NULL;
 	if (xstrncasecmp("include", line, strlen("include")) == 0) {
@@ -1101,21 +1191,36 @@ static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 		xfree(file_with_mod);
 		if (!file_name)	/* Error printed by _parse_for_format() */
 			return -1;
-		path_name = _add_full_path(file_name, slurm_conf_path);
-		xfree(file_name);
-		rc = s_p_parse_file(hashtbl, hash_val, path_name, ignore_new);
+		path_name = get_extra_conf_path(file_name);
+
+		stat(path_name, &temp);
+		if ((check_permissions) &&
+		   ((temp.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) != 0600))
+			fatal("Included file %s at %s should be 600 is %o accessible for group or others",
+			      file_name,
+			      path_name,
+			      temp.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO));
+		if (!last_ancestor)
+			last_ancestor = xbasename(slurm_conf_path);
+		rc = s_p_parse_file(hashtbl, hash_val, path_name, ignore_new,
+				    last_ancestor, check_permissions);
 		xfree(path_name);
-		if (rc == SLURM_SUCCESS)
+		if (rc == SLURM_SUCCESS) {
+			if (!xstrstr(file_name, "/") && running_in_slurmctld())
+				_handle_include(file_name, last_ancestor);
+			xfree(file_name);
 			return 1;
-		else
+		} else {
+			xfree(file_name);
 			return -1;
+		}
 	} else {
 		return 0;
 	}
 }
 
 int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
-		   bool ignore_new)
+		   bool ignore_new, char *last_ancestor, bool check_permissions)
 {
 	FILE *f;
 	char *leftover = NULL;
@@ -1133,9 +1238,8 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 
 	for (i = 0; ; i++) {
 		if (i == 1) {	/* Long once, on first retry */
-			error("s_p_parse_file: unable to status file %s: %m, "
-			      "retrying in 1sec up to 60sec",
-			      filename);
+			error("%s: cannot stat file %s: %m, retrying in 1sec up to 60sec",
+			      __func__, filename);
 		}
 		if (i >= 60)	/* Give up after 60 seconds */
 			return SLURM_ERROR;
@@ -1168,9 +1272,15 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 
 		inc_rc = _parse_include_directive(hashtbl, hash_val,
 						  line, &leftover, ignore_new,
-						  filename);
+						  filename, last_ancestor,
+						  check_permissions);
 		if (inc_rc == 0) {
-			_parse_next_key(hashtbl, line, &leftover, ignore_new);
+			if (!_parse_next_key(hashtbl, line, &leftover,
+					     ignore_new)) {
+				rc = SLURM_ERROR;
+				line_number += merged_lines;
+				continue;
+			}
 		} else if (inc_rc < 0) {
 			error("\"Include\" failed in file %s line %d",
 			      filename, line_number);
@@ -1202,7 +1312,7 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 }
 
 int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
-		     Buf buffer, bool ignore_new)
+		     buf_t *buffer, bool ignore_new)
 {
 	char *leftover = NULL;
 	int rc = SLURM_SUCCESS;
@@ -1224,7 +1334,12 @@ int s_p_parse_buffer(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 				xfree(tmp_str);
 				continue;
 			}
-			_parse_next_key(hashtbl, tmp_str, &leftover, ignore_new);
+			if (!_parse_next_key(hashtbl, tmp_str, &leftover,
+					     ignore_new)) {
+				rc = SLURM_ERROR;
+				xfree(tmp_str);
+				continue;
+			}
 			/* Make sure that after parsing only whitespace
 			   is left over */
 			if (!_line_is_space(leftover)) {
@@ -1758,7 +1873,11 @@ int s_p_parse_pair_with_op(s_p_hashtbl_t *hashtbl, const char *key,
 		leftover++;
 	while (*leftover != '\0' && isspace(*leftover))
 		leftover++; /* skip trailing spaces */
-	_handle_keyvalue_match(p, value, leftover, &leftover);
+	if (_handle_keyvalue_match(p, value, leftover, &leftover) == -1) {
+		xfree(value);
+		slurm_seterrno(EINVAL);
+		return 0;
+	}
 	xfree(value);
 
 	return 1;
@@ -2108,11 +2227,11 @@ void s_p_dump_values(const s_p_hashtbl_t *hashtbl,
  * Primarily for sending a table across the network so you don't have to read a
  * file in.
  */
-extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
-			   const s_p_options_t options[],
-			   const uint32_t cnt)
+extern buf_t *s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
+			       const s_p_options_t options[],
+			       const uint32_t cnt)
 {
-	Buf buffer = init_buf(0);
+	buf_t *buffer = init_buf(0);
 	s_p_values_t *p;
 	int i;
 
@@ -2135,6 +2254,15 @@ extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
 			continue;
 
 		switch (options[i].type) {
+		case S_P_ARRAY:
+			if (options[i].pack) {
+				pack32(p->data_count, buffer);
+				void **ptr_array = (void **)p->data;
+				for (int j = 0; j < p->data_count; j++) {
+					options[i].pack(ptr_array[j], buffer);
+				}
+			}
+			break;
 		case S_P_STRING:
 		case S_P_PLAIN_STRING:
 			packstr((char *)p->data, buffer);
@@ -2176,7 +2304,8 @@ extern Buf s_p_pack_hashtbl(const s_p_hashtbl_t *hashtbl,
 /*
  * Given a buffer, unpack key, type, op and value into a hashtbl.
  */
-extern s_p_hashtbl_t *s_p_unpack_hashtbl(Buf buffer)
+extern s_p_hashtbl_t *s_p_unpack_hashtbl_full(buf_t *buffer,
+					      const s_p_options_t options[])
 {
 	s_p_values_t *value = NULL;
 	s_p_hashtbl_t *hashtbl = NULL;
@@ -2211,6 +2340,21 @@ extern s_p_hashtbl_t *s_p_unpack_hashtbl(Buf buffer)
 			continue;
 
 		switch (value->type) {
+		case S_P_ARRAY:
+			xassert(options);
+			if (options[i].unpack) {
+				void **ptr_array;
+				safe_unpack32(&uint32_tmp, buffer);
+				value->data_count = uint32_tmp;
+				value->data = xcalloc(value->data_count,
+						      sizeof(void *));
+				ptr_array = (void **)value->data;
+				for (int j = 0; j < value->data_count; j++) {
+					ptr_array[j] =
+						options[i].unpack(buffer);
+				}
+			}
+			break;
 		case S_P_STRING:
 		case S_P_PLAIN_STRING:
 			safe_unpackstr_xmalloc(&tmp_char, &uint32_tmp, buffer);
@@ -2270,6 +2414,11 @@ unpack_error:
 	s_p_hashtbl_destroy(hashtbl);
 	error("%s: failed", __func__);
 	return NULL;
+}
+
+extern s_p_hashtbl_t *s_p_unpack_hashtbl(buf_t *buffer)
+{
+	return s_p_unpack_hashtbl_full(buffer, NULL);
 }
 
 extern void transfer_s_p_options(s_p_options_t **full_options,

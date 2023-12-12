@@ -53,7 +53,7 @@ typedef struct {
 	time_t ts;
 #ifndef NDEBUG
 	/* we need this only for verification */
-	char nspace[PMIXP_MAX_NSLEN];
+	pmix_nspace_t nspace;
 	int rank;
 #endif
 	void *cbfunc;
@@ -62,7 +62,7 @@ typedef struct {
 
 typedef struct {
 	uint32_t seq_num;
-	pmixp_proc_t proc;
+	pmix_proc_t proc;
 	char *sender_ns;
 	int sender_nodeid;
 	int rank;
@@ -88,19 +88,19 @@ static void _respond_with_error(int seq_num, int nodeid,
 
 int pmixp_dmdx_init(void)
 {
-	_dmdx_requests = list_create(pmixp_xfree_xmalloced);
+	_dmdx_requests = list_create(xfree_ptr);
 	_dmdx_seq_num = 1;
 	return SLURM_SUCCESS;
 }
 
 int pmixp_dmdx_finalize(void)
 {
-	list_destroy(_dmdx_requests);
+	FREE_NULL_LIST(_dmdx_requests);
 	return 0;
 }
 
 
-static void _setup_header(Buf buf, dmdx_type_t t,
+static void _setup_header(buf_t *buf, dmdx_type_t t,
 			  const char *nspace, int rank, int status)
 {
 	char *str;
@@ -125,7 +125,7 @@ static void _setup_header(Buf buf, dmdx_type_t t,
 	pack32((uint32_t)status, buf);
 }
 
-static int _read_type(Buf buf, dmdx_type_t *type)
+static int _read_type(buf_t *buf, dmdx_type_t *type)
 {
 	unsigned char t;
 	int rc;
@@ -138,7 +138,7 @@ static int _read_type(Buf buf, dmdx_type_t *type)
 	return SLURM_SUCCESS;
 }
 
-static int _read_info(Buf buf, char **ns, int *rank,
+static int _read_info(buf_t *buf, char **ns, int *rank,
 		      char **sender_ns, int *status)
 {
 	uint32_t cnt, uint32_tmp;
@@ -182,7 +182,7 @@ static int _read_info(Buf buf, char **ns, int *rank,
 static void _respond_with_error(int seq_num, int nodeid,
 				char *sender_ns, int status)
 {
-	Buf buf = create_buf(NULL, 0);
+	buf_t *buf = create_buf(NULL, 0);
 	pmixp_ep_t ep;
 	int rc;
 
@@ -207,7 +207,7 @@ static void _dmdx_pmix_cb(int status, char *data, size_t sz,
 			  void *cbdata)
 {
 	dmdx_caddy_t *caddy = (dmdx_caddy_t *)cbdata;
-	Buf buf = pmixp_server_buf_new();
+	buf_t *buf = pmixp_server_buf_new();
 	pmixp_ep_t ep;
 	int rc;
 
@@ -232,11 +232,11 @@ static void _dmdx_pmix_cb(int status, char *data, size_t sz,
 	_dmdx_free_caddy(caddy);
 }
 
-int pmixp_dmdx_get(const char *nspace, int rank,
+int pmixp_dmdx_get(const pmix_nspace_t nspace, int rank,
 		   void *cbfunc, void *cbdata)
 {
 	dmdx_req_info_t *req;
-	Buf buf;
+	buf_t *buf;
 	int rc;
 	uint32_t seq;
 	pmixp_ep_t ep;
@@ -259,7 +259,7 @@ int pmixp_dmdx_get(const char *nspace, int rank,
 	req->cbdata = cbdata;
 	req->ts = time(NULL);
 #ifndef NDEBUG
-	strncpy(req->nspace, nspace, PMIXP_MAX_NSLEN);
+	strlcpy(req->nspace, nspace, sizeof(req->nspace));
 	req->rank = rank;
 #endif
 	list_append(_dmdx_requests, req);
@@ -282,7 +282,7 @@ int pmixp_dmdx_get(const char *nspace, int rank,
 	return rc;
 }
 
-static void _dmdx_req(Buf buf, int nodeid, uint32_t seq_num)
+static void _dmdx_req(buf_t *buf, int nodeid, uint32_t seq_num)
 {
 	int rank, rc;
 	int status;
@@ -308,7 +308,7 @@ static void _dmdx_req(Buf buf, int nodeid, uint32_t seq_num)
 		PMIXP_ERROR("Bad request from %s: asked for nspace = %s, mine is %s",
 			    nodename, ns, pmixp_info_namespace());
 		_respond_with_error(seq_num, nodeid, sender_ns,
-				    PMIXP_ERR_INVALID_NAMESPACE);
+				    PMIX_ERR_INVALID_NAMESPACE);
 		xfree(nodename);
 		goto exit;
 	}
@@ -319,7 +319,7 @@ static void _dmdx_req(Buf buf, int nodeid, uint32_t seq_num)
 		PMIXP_ERROR("Bad request from %s: nspace \"%s\" has only %d ranks, asked for %d",
 			    nodename, ns, nsptr->ntasks, rank);
 		_respond_with_error(seq_num, nodeid, sender_ns,
-				    PMIXP_ERR_BAD_PARAM);
+				    PMIX_ERR_BAD_PARAM);
 		xfree(nodename);
 		goto exit;
 	}
@@ -329,7 +329,7 @@ static void _dmdx_req(Buf buf, int nodeid, uint32_t seq_num)
 	caddy->seq_num = seq_num;
 
 	/* ns is a pointer inside incoming buffer */
-	strncpy(caddy->proc.nspace, ns, PMIXP_MAX_NSLEN);
+	strlcpy(caddy->proc.nspace, ns, sizeof(caddy->proc.nspace));
 	ns = NULL; /* protect the data */
 	caddy->proc.rank = rank;
 
@@ -366,7 +366,7 @@ static int _dmdx_req_cmp(void *x, void *key)
 	return (req->seq_num == seq_num);
 }
 
-static void _dmdx_resp(Buf buf, int nodeid, uint32_t seq_num)
+static void _dmdx_resp(buf_t *buf, int nodeid, uint32_t seq_num)
 {
 	dmdx_req_info_t *req;
 	int rank, rc = SLURM_SUCCESS;
@@ -424,7 +424,7 @@ exit:
 	 * anyway. We've notified libpmix, that's enough */
 }
 
-void pmixp_dmdx_process(Buf buf, int nodeid, uint32_t seq)
+void pmixp_dmdx_process(buf_t *buf, int nodeid, uint32_t seq)
 {
 	dmdx_type_t type = 0;
 	_read_type(buf, &type);

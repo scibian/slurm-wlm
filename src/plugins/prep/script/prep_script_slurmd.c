@@ -36,6 +36,7 @@
 
 #include "config.h"
 
+#include <glob.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -43,15 +44,15 @@
 #include "src/common/fd.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-#include "src/common/plugstack.h"
-#include "src/common/prep.h"
+#include "src/interfaces/prep.h"
+#include "src/common/run_command.h"
+#include "src/common/spank.h"
 #include "src/common/track_script.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "src/slurmd/common/job_container_plugin.h"
-#include "src/slurmd/common/run_script.h"
+#include "src/interfaces/job_container.h"
 #include "src/slurmd/slurmd/req.h"
 
 #include "prep_script.h"
@@ -64,20 +65,97 @@ slurmd_conf_t *conf = NULL;
 
 static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog);
-static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id);
+static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id,
+				 int (*container_join)(uint32_t , uid_t));
+
+static int _ef(const char *p, int errnum)
+{
+	return error("prep_script_slurmd: glob: %s: %s", p, strerror(errno));
+}
+
+static List _script_list_create(const char *pattern)
+{
+	glob_t gl;
+	List l = NULL;
+	int rc;
+
+	if (!pattern)
+		return NULL;
+
+	rc = glob(pattern, GLOB_ERR, _ef, &gl);
+
+	switch (rc) {
+	case 0:
+		l = list_create(xfree_ptr);
+		for (size_t i = 0; i < gl.gl_pathc; i++)
+			list_push(l, xstrdup(gl.gl_pathv[i]));
+		break;
+	case GLOB_NOMATCH:
+		break;
+	case GLOB_NOSPACE:
+		error("prep_script_slurmd: glob(3): Out of memory");
+		break;
+	case GLOB_ABORTED:
+		error("prep_script_slurmd: cannot read dir %s: %m", pattern);
+		break;
+	default:
+		error("Unknown glob(3) return code = %d", rc);
+		break;
+	}
+
+	globfree(&gl);
+
+	return l;
+}
+
+static int _run_subpath_command(void *x, void *arg)
+{
+	run_command_args_t *run_command_args = arg;
+	char *resp;
+	int rc = 0;
+
+	xassert(run_command_args->script_argv);
+
+	run_command_args->script_path = x;
+	run_command_args->script_argv[0] = x;
+
+	resp = run_command(run_command_args);
+
+	if (*run_command_args->status) {
+		if (WIFEXITED(*run_command_args->status))
+			error("%s failed: rc:%u output:%s",
+			      run_command_args->script_type,
+			      WEXITSTATUS(*run_command_args->status),
+			      resp);
+		else if (WIFSIGNALED(*run_command_args->status))
+			error("%s killed by signal %u output:%s",
+			      run_command_args->script_type,
+			      WTERMSIG(*run_command_args->status),
+			      resp);
+		else
+			error("%s didn't run: status:%d reason:%s",
+			      run_command_args->script_type,
+			      *run_command_args->status,
+			      resp);
+		rc = -1;
+	} else
+		debug2("%s success rc:%d output:%s",
+		       run_command_args->script_type,
+		       *run_command_args->status,
+		       resp);
+	xfree(resp);
+
+	return rc;
+}
 
 extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog)
 {
 	char *name = is_epilog ? "epilog" : "prolog";
 	char *path = is_epilog ? slurm_conf.epilog : slurm_conf.prolog;
-	char **env = _build_env(job_env, cred, is_epilog);
-	int status = 0, rc;
+	char **env = NULL;
+	int rc = SLURM_SUCCESS;
 	uint32_t jobid = job_env->jobid;
-	int timeout = slurm_conf.prolog_epilog_timeout;
-
-	if (timeout == NO_VAL16)
-		timeout = -1;
 
 #ifdef HAVE_NATIVE_CRAY
 	if (job_env->het_job_id && (job_env->het_job_id != NO_VAL))
@@ -91,14 +169,50 @@ extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 	 *   prolog/epilog status.
 	 */
 	if ((is_epilog && spank_has_epilog()) ||
-	    (!is_epilog && spank_has_prolog()))
-		status = _run_spank_job_script(name, env, jobid);
-	if ((rc = run_script(name, path, jobid, timeout, env, job_env->uid)))
-		status = rc;
+	    (!is_epilog && spank_has_prolog())) {
+		if (!env)
+			env = _build_env(job_env, cred, is_epilog);
+		rc = _run_spank_job_script(name, env, jobid,
+					   job_env->container_join);
+	}
+
+	if (path) {
+		int status = 0;
+		int timeout = slurm_conf.prolog_epilog_timeout;
+		char *cmd_argv[2] = {0};
+		List path_list;
+		run_command_args_t run_command_args = {
+			.container_join = job_env->container_join,
+			.job_id = jobid,
+			.script_argv = cmd_argv,
+			.script_type = name,
+			.status = &status,
+		};
+
+		if (!env)
+			env = _build_env(job_env, cred, is_epilog);
+
+		if (timeout == NO_VAL16)
+			timeout = -1;
+		else
+			timeout *= 1000;
+
+		run_command_args.env = env;
+		run_command_args.max_wait = timeout;
+
+		if (!(path_list = _script_list_create(path)))
+			return error("%s: Unable to create list of paths [%s]",
+				     name, path);
+		list_for_each(
+			path_list, _run_subpath_command, &run_command_args);
+		FREE_NULL_LIST(path_list);
+		if (status)
+			rc = status;
+	}
 
 	env_array_free(env);
 
-	return status;
+	return rc;
 }
 
 /* NOTE: call env_array_free() to free returned value */
@@ -133,6 +247,7 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	setenvf(&env, "SLURM_JOB_ID", "%u", job_env->jobid);
 	setenvf(&env, "SLURM_JOB_UID", "%u", job_env->uid);
 	setenvf(&env, "SLURM_JOB_GID", "%u", job_env->gid);
+	setenvf(&env, "SLURM_JOB_WORK_DIR", "%s", job_env->work_dir);
 
 #ifndef HAVE_NATIVE_CRAY
 	/* uid_to_string on a cray is a heavy call, so try to avoid it */
@@ -156,9 +271,19 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 
 	setenvf(&env, "SLURM_UID", "%u", job_env->uid);
 
-	if (job_env->node_list)
-		setenvf(&env, "SLURM_NODELIST", "%s", job_env->node_list);
+	if (job_env->node_aliases)
+		setenvf(&env, "SLURM_NODE_ALIASES", "%s",
+			job_env->node_aliases);
 
+	if (job_env->node_list) {
+		setenvf(&env, "SLURM_NODELIST", "%s", job_env->node_list);
+		setenvf(&env, "SLURM_JOB_NODELIST", "%s", job_env->node_list);
+	}
+
+	/*
+	 * Overridden by the credential version if available.
+	 * Remove two versions after 22.05.
+	 */
 	if (job_env->partition)
 		setenvf(&env, "SLURM_JOB_PARTITION", "%s", job_env->partition);
 
@@ -167,22 +292,101 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	else
 		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "prolog_slurmd");
 
+	if (is_epilog && (job_env->exit_code != INFINITE)) {
+		int exit_code = 0, signal = 0;
+		if (WIFEXITED(job_env->exit_code))
+                        exit_code = WEXITSTATUS(job_env->exit_code);
+		if (WIFSIGNALED(job_env->exit_code))
+                        signal = WTERMSIG(job_env->exit_code);
+		setenvf(&env, "SLURM_JOB_DERIVED_EC", "%u", job_env->derived_ec);
+		setenvf(&env, "SLURM_JOB_EXIT_CODE", "%u", job_env->exit_code);
+                setenvf(&env, "SLURM_JOB_EXIT_CODE2", "%d:%d", exit_code, signal);
+	}
+
 	if (cred) {
-		slurm_cred_arg_t cred_arg;
-		slurm_cred_get_args(cred, &cred_arg);
-		setenvf(&env, "SLURM_JOB_CONSTRAINTS", "%s",
-			cred_arg.job_constraints);
-		slurm_cred_free_args(&cred_arg);
+		slurm_cred_arg_t *cred_arg = slurm_cred_get_args(cred);
+
+		if (cred_arg->job_account)
+			setenvf(&env, "SLURM_JOB_ACCOUNT", "%s",
+				cred_arg->job_account);
+		if (cred_arg->job_comment)
+			setenvf(&env, "SLURM_JOB_COMMENT", "%s",
+				cred_arg->job_comment);
+		if (cred_arg->job_core_spec == NO_VAL16) {
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_COUNT", "0");
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_TYPE", "cores");
+		} else if (cred_arg->job_core_spec & CORE_SPEC_THREAD) {
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_COUNT", "%u",
+				cred_arg->job_core_spec & (~CORE_SPEC_THREAD));
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_TYPE", "threads");
+		} else {
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_COUNT", "%u",
+				cred_arg->job_core_spec);
+			setenvf(&env, "SLURM_JOB_CORE_SPEC_TYPE", "cores");
+		}
+		if (cred_arg->job_constraints)
+			setenvf(&env, "SLURM_JOB_CONSTRAINTS", "%s",
+				cred_arg->job_constraints);
+		if (cred_arg->job_end_time)
+			setenvf(&env, "SLURM_JOB_END_TIME", "%lu",
+				cred_arg->job_end_time);
+		if (cred_arg->job_extra)
+			setenvf(&env, "SLURM_JOB_EXTRA", "%s",
+				cred_arg->job_extra);
+		if (cred_arg->cpu_array_count) {
+			char *tmp = uint32_compressed_to_str(
+				cred_arg->cpu_array_count,
+				cred_arg->cpu_array,
+				cred_arg->cpu_array_reps);
+			setenvf(&env, "SLURM_JOB_CPUS_PER_NODE", "%s", tmp);
+			xfree(tmp);
+		}
+		if (cred_arg->job_licenses)
+			setenvf(&env, "SLURM_JOB_LICENSES", "%s",
+				cred_arg->job_licenses);
+		if (cred_arg->job_ntasks)
+			setenvf(&env, "SLURM_JOB_NTASKS", "%u",
+				cred_arg->job_ntasks);
+		if (cred_arg->job_nhosts)
+			setenvf(&env, "SLURM_JOB_NUM_NODES", "%u",
+				cred_arg->job_nhosts);
+		setenvf(&env, "SLURM_JOB_OVERSUBSCRIBE", "%s",
+			job_share_string(cred_arg->job_oversubscribe));
+		if (cred_arg->job_partition)
+			setenvf(&env, "SLURM_JOB_PARTITION", "%s",
+				cred_arg->job_partition);
+		if (cred_arg->job_reservation)
+			setenvf(&env, "SLURM_JOB_RESERVATION", "%s",
+				cred_arg->job_reservation);
+		if (cred_arg->job_restart_cnt != INFINITE16)
+			setenvf(&env, "SLURM_JOB_RESTART_COUNT", "%u",
+				cred_arg->job_restart_cnt);
+		if (cred_arg->job_start_time)
+			setenvf(&env, "SLURM_JOB_START_TIME", "%lu",
+				cred_arg->job_start_time);
+		if (cred_arg->job_std_err)
+			setenvf(&env, "SLURM_JOB_STDERR", "%s",
+				cred_arg->job_std_err);
+		if (cred_arg->job_std_in)
+			setenvf(&env, "SLURM_JOB_STDIN", "%s",
+				cred_arg->job_std_in);
+		if (cred_arg->job_std_out)
+			setenvf(&env, "SLURM_JOB_STDOUT", "%s",
+				cred_arg->job_std_out);
+
+		slurm_cred_unlock_args(cred);
 	}
 
 	return env;
 }
 
-static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
+static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id,
+				 int (*container_join)(uint32_t , uid_t))
 {
 	pid_t cpid;
 	int status = 0, timeout;
 	int pfds[2];
+	bool timed_out = false;
 
 	if (pipe(pfds) < 0) {
 		error("%s: pipe: %m", __func__);
@@ -210,7 +414,8 @@ static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
 		 * to avoid a race condition if this process makes a file
 		 * before we add the pid to the container in the parent.
 		 */
-		if (container_g_join(job_id, getuid()) != SLURM_SUCCESS)
+		if (container_join &&
+		    (container_join(job_id, getuid()) != SLURM_SUCCESS))
 			error("container_g_join(%u): %m", job_id);
 
 		if (dup2(pfds[0], STDIN_FILENO) < 0)
@@ -230,14 +435,19 @@ static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
 		error ("Failed to send slurmd conf to slurmstepd\n");
 	close(pfds[1]);
 
-	/*
-	 * Likely bug: prolog_epilog_timeout is NO_VAL16 if not configured,
-	 * leading to this timeout being huge. I suspect a 120-second cap is
-	 * meant here, but I'm leaving this behavior in place for the moment.
-	 */
-	timeout = MAX(slurm_conf.prolog_epilog_timeout, 120);
-	if (waitpid_timeout(mode, cpid, &status, timeout) < 0) {
-		error("spank/%s timed out after %u secs", mode, timeout);
+	if (slurm_conf.prolog_epilog_timeout == NO_VAL16)
+		timeout = -1;
+	else
+		timeout = slurm_conf.prolog_epilog_timeout * 1000;
+	if (run_command_waitpid_timeout(mode, cpid, &status, timeout, 0, 0,
+					&timed_out) < 0) {
+		/*
+		 * waitpid returned an error and set errno;
+		 * run_command_waitpid_timeout() already logged an error
+		 */
+		error("error calling waitpid() for spank/%s", mode);
+		return SLURM_ERROR;
+	} else if (timed_out) {
 		return SLURM_ERROR;
 	}
 

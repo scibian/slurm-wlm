@@ -55,8 +55,12 @@
 
 #include "src/sbcast/sbcast.h"
 
-#define OPT_LONG_HELP   0x100
-#define OPT_LONG_USAGE  0x101
+#define OPT_LONG_EXCLUDE   0x100
+#define OPT_LONG_HELP      0x101
+#define OPT_LONG_USAGE     0x102
+#define OPT_LONG_SEND_LIBS 0x103
+#define OPT_LONG_AUTOCOMP  0x104
+
 
 /* getopt_long options, integers but not characters */
 
@@ -72,13 +76,16 @@ static void     _usage( void );
 extern void parse_command_line(int argc, char **argv)
 {
 	char *env_val = NULL, *sep, *tmp;
-	int opt_char;
+	int opt_char, ret;
 	int option_index;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"compress",  optional_argument, 0, 'C'},
+		{"exclude",   required_argument, 0, OPT_LONG_EXCLUDE},
 		{"fanout",    required_argument, 0, 'F'},
 		{"force",     no_argument,       0, 'f'},
 		{"jobid",     required_argument, 0, 'j'},
+		{"send-libs", optional_argument, 0, OPT_LONG_SEND_LIBS},
 		{"preserve",  no_argument,       0, 'p'},
 		{"size",      required_argument, 0, 's'},
 		{"timeout",   required_argument, 0, 't'},
@@ -89,7 +96,7 @@ extern void parse_command_line(int argc, char **argv)
 		{NULL,        0,                 0, 0}
 	};
 
-	if ((tmp = xstrcasestr(slurm_conf.sbcast_parameters, "Compression="))) {
+	if ((tmp = xstrcasestr(slurm_conf.bcast_parameters, "Compression="))) {
 		tmp += 12;
 		sep = strchr(tmp, ',');
 		if (sep)
@@ -99,15 +106,37 @@ extern void parse_command_line(int argc, char **argv)
 			sep[0] = ',';
 	}
 
+	if (slurm_conf.bcast_exclude)
+		params.exclude = xstrdup(slurm_conf.bcast_exclude);
+
 	if ((env_val = getenv("SBCAST_COMPRESS")))
 		params.compress = parse_compress_type(env_val);
+	if ((env_val = getenv("SBCAST_EXCLUDE"))) {
+		xfree(params.exclude);
+		params.exclude = xstrdup(env_val);
+	}
 	if ( ( env_val = getenv("SBCAST_FANOUT") ) )
 		params.fanout = atoi(env_val);
 	if (getenv("SBCAST_FORCE"))
-		params.force = true;
+		params.flags |= BCAST_FLAG_FORCE;
 
 	if (getenv("SBCAST_PRESERVE"))
-		params.preserve = true;
+		params.flags |= BCAST_FLAG_PRESERVE;
+
+	if (xstrcasestr(slurm_conf.bcast_parameters, "send_libs"))
+		params.flags |= BCAST_FLAG_SEND_LIBS;
+
+	if ((env_val = getenv("SBCAST_SEND_LIBS"))) {
+		ret = parse_send_libs(env_val);
+		if (ret == -1)
+			error("Ignoring unrecognized SBCAST_SEND_LIBS value '%s'",
+			      env_val);
+		else if (ret)
+			params.flags |= BCAST_FLAG_SEND_LIBS;
+		else
+			params.flags &= ~BCAST_FLAG_SEND_LIBS;
+	}
+
 	if ( ( env_val = getenv("SBCAST_SIZE") ) )
 		params.block_size = _map_size(env_val);
 	else
@@ -127,8 +156,12 @@ extern void parse_command_line(int argc, char **argv)
 		case (int)'C':
 			params.compress = parse_compress_type(optarg);
 			break;
+		case (int) OPT_LONG_EXCLUDE:
+			xfree(params.exclude);
+			params.exclude = xstrdup(optarg);
+			break;
 		case (int)'f':
-			params.force = true;
+			params.flags |= BCAST_FLAG_FORCE;
 			break;
 		case (int)'F':
 			params.fanout = atoi(optarg);
@@ -137,7 +170,17 @@ extern void parse_command_line(int argc, char **argv)
 			params.selected_step = slurm_parse_step_str(optarg);
 			break;
 		case (int)'p':
-			params.preserve = true;
+			params.flags |= BCAST_FLAG_PRESERVE;
+			break;
+		case (int) OPT_LONG_SEND_LIBS:
+			ret = parse_send_libs(optarg);
+			if (ret == -1)
+				error("Ignoring unrecognized --send-libs value '%s'",
+				      optarg);
+			else if (ret)
+				params.flags |= BCAST_FLAG_SEND_LIBS;
+			else if (params.flags & BCAST_FLAG_SEND_LIBS)
+				params.flags &= ~BCAST_FLAG_SEND_LIBS;
 			break;
 		case (int) 's':
 			params.block_size = _map_size(optarg);
@@ -157,6 +200,10 @@ extern void parse_command_line(int argc, char **argv)
 		case (int) OPT_LONG_USAGE:
 			_usage();
 			exit(0);
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		}
 	}
 
@@ -183,7 +230,7 @@ extern void parse_command_line(int argc, char **argv)
 
 	if (argv[optind+1][0] == '/') {
 		params.dst_fname = xstrdup(argv[optind+1]);
-	} else if ((tmp = xstrcasestr(slurm_conf.sbcast_parameters,
+	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
 				      "DestDir="))) {
 		tmp += 8;
 		sep = strchr(tmp, ',');
@@ -238,17 +285,17 @@ static uint32_t _map_size( char *buf )
 /* print the parameters specified */
 static void _print_options( void )
 {
-	char job_id_str[64];
-
 	info("-----------------------------");
 	info("block_size = %u", params.block_size);
 	info("compress   = %u", params.compress);
-	info("force      = %s", params.force ? "true" : "false");
+	info("exclude    = %s", params.exclude);
+	info("force      = %s",
+	     (params.flags & BCAST_FLAG_FORCE) ? "true" : "false");
 	info("fanout     = %d", params.fanout);
-	info("jobid      = %s",
-	     slurm_get_selected_step_id(job_id_str, sizeof(job_id_str),
-					params.selected_step));
-	info("preserve   = %s", params.preserve ? "true" : "false");
+	info("preserve   = %s",
+	     (params.flags & BCAST_FLAG_PRESERVE) ? "true" : "false");
+	info("send_libs  = %s",
+	     (params.flags & BCAST_FLAG_SEND_LIBS) ? "true" : "false");
 	info("timeout    = %d", params.timeout);
 	info("verbose    = %d", params.verbose);
 	info("source     = %s", params.src_fname);
@@ -259,7 +306,7 @@ static void _print_options( void )
 
 static void _usage( void )
 {
-	printf("Usage: sbcast [-CfFjpvV] SOURCE DEST\n");
+	printf("Usage: sbcast [--exclude] [-CfFjpvV] [--send-libs] SOURCE DEST\n");
 }
 
 static void _help( void )
@@ -267,10 +314,12 @@ static void _help( void )
 	printf ("\
 Usage: sbcast [OPTIONS] SOURCE DEST\n\
   -C, --compress[=lib]  compress the file being transmitted\n\
+  --exclude=<path_list> shared object paths to be excluded\n\
   -f, --force           replace destination file as required\n\
   -F, --fanout=num      specify message fanout\n\
   -j, --jobid=#[+#][.#] specify job ID with optional hetjob offset and/or step ID\n\
   -p, --preserve        preserve modes and times of source file\n\
+  --send-libs[=yes|no]  autodetect and broadcast executable's shared objects\n\
   -s, --size=num        block size in bytes (rounded off)\n\
   -t, --timeout=secs    specify message timeout (seconds)\n\
   -v, --verbose         provide detailed event logging\n\

@@ -47,7 +47,9 @@
 #include "src/common/log.h"
 #include "src/common/plugin.h"
 #include "src/common/xstring.h"
-#include "src/slurmctld/preempt.h"
+
+#include "src/interfaces/preempt.h"
+
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/job_scheduler.h"
 
@@ -90,7 +92,7 @@ static uint32_t _gen_job_prio(job_record_t *job_ptr)
 }
 
 /* Return grace_time for job */
-static uint32_t _get_grace_time(struct job_record *job_ptr)
+static uint32_t _get_grace_time(job_record_t *job_ptr)
 {
 	if (!job_ptr->part_ptr)
 		return 0;

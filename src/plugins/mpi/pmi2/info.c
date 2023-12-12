@@ -50,9 +50,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "slurm/slurm.h"
-#include "src/srun/libsrun/launch.h"
+#include "src/srun/launch.h"
 #include "src/common/strlcpy.h"
-#include "src/common/switch.h"
+#include "src/interfaces/switch.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 
@@ -236,7 +236,7 @@ ifconfig(void)
 	int s;
 	int n;
 	char addr[NI_MAXHOST];
-	char hostname[MAXHOSTNAMELEN];
+	char hostname[HOST_NAME_MAX];
 	char *buf;
 
 	if (getifaddrs(&ifaddr) == -1) {
@@ -249,7 +249,7 @@ ifconfig(void)
 		++n;
 	/* this should be a good guess of the size we need.
 	 */
-	buf = xmalloc((MAXHOSTNAMELEN + n) * 64);
+	buf = xmalloc((HOST_NAME_MAX + n) * 64);
 
 	gethostname(hostname, sizeof(hostname));
 	n = sprintf(buf, "(%s", hostname);

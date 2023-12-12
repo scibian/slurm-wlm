@@ -49,6 +49,7 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <float.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,8 +61,8 @@
 #include "src/common/read_config.h"
 #include "src/common/proc_args.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_acct_gather_profile.h"
-#include "src/common/slurm_jobacct_gather.h"
+#include "src/interfaces/acct_gather_profile.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "../hdf5_api.h"
 #include "sh5util.h"
 
@@ -199,7 +200,11 @@ main(int argc, char **argv)
 {
 	int cc;
 
-	slurm_conf_init(NULL);
+	slurm_init(NULL);
+
+	if (acct_gather_conf_init() != SLURM_SUCCESS)
+		fatal("Unable to initialize acct_gather_conf");
+
 	cc = _set_options(argc, argv);
 	if (cc < 0)
 		goto ouch;
@@ -1359,7 +1364,7 @@ static void _item_analysis_double(hsize_t nb_tables, hid_t *tables,
 
 	buffer = xmalloc(buf_size);
 	for (;;) {
-		min_val = UINT64_MAX;
+		min_val = DBL_MAX;
 		max_val = 0;
 		sum = 0;
 		nb_series_in_smp = 0;

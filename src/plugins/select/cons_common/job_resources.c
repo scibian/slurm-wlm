@@ -38,6 +38,8 @@
 #include "cons_common.h"
 
 #include "src/slurmctld/slurmctld.h"
+#include "src/slurmctld/gres_ctld.h"
+#include "src/slurmctld/licenses.h"
 
 bool select_state_initializing = true;
 
@@ -49,10 +51,13 @@ typedef enum {
 
 static bitstr_t *_create_core_bitmap(int node_inx)
 {
-	xassert(node_inx < select_node_cnt);
+	xassert(node_inx < node_record_count);
+
+	if (!node_record_table_ptr[node_inx])
+		return NULL;
 
 	if (is_cons_tres)
-		return bit_alloc(select_node_record[node_inx].tot_cores);
+		return bit_alloc(node_record_table_ptr[node_inx]->tot_cores);
 	else {
 		/*
 		 * For cons_res we need the whole system size instead of per
@@ -63,10 +68,10 @@ static bitstr_t *_create_core_bitmap(int node_inx)
 		xassert(!node_inx);
 
 		if (sys_core_size == NO_VAL) {
+			node_record_t *node_ptr;
 			sys_core_size = 0;
-			for (int i = 0; i < select_node_cnt; i++)
-				sys_core_size +=
-					select_node_record[i].tot_cores;
+			for (int i = 0; (node_ptr = next_node(&i)); i++)
+				sys_core_size += node_ptr->tot_cores;
 		}
 		return bit_alloc(sys_core_size);
 	}
@@ -85,13 +90,13 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 			   part_row_data_t *r_ptr,
 			   handle_job_res_t type)
 {
-	int i, i_first, i_last;
 	int c, c_off = 0;
 	bitstr_t **core_array;
 	bitstr_t *use_core_array;
 	uint32_t core_begin;
 	uint32_t core_end;
 	uint16_t cores_per_node;
+	node_record_t *node_ptr;
 
 	if (!job_resrcs_ptr->core_bitmap)
 		return 1;
@@ -108,20 +113,14 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 	} else
 		core_array = r_ptr->row_bitmap;
 
-	i_first = bit_ffs(job_resrcs_ptr->node_bitmap);
-	if (i_first != -1)
-		i_last = bit_fls(job_resrcs_ptr->node_bitmap);
-	else
-		i_last = -2;
-	for (i = i_first; i <= i_last; i++) {
-		if (!bit_test(job_resrcs_ptr->node_bitmap, i))
-			continue;
-
-		cores_per_node = select_node_record[i].tot_cores;
+	for (int i = 0;
+	     (node_ptr = next_node_bitmap(job_resrcs_ptr->node_bitmap, &i));
+	     i++) {
+		cores_per_node = node_ptr->tot_cores;
 
 		if (is_cons_tres) {
 			core_begin = 0;
-			core_end = select_node_record[i].tot_cores;
+			core_end = node_record_table_ptr[i]->tot_cores;
 			use_core_array = core_array[i];
 		} else {
 			core_begin = cr_get_coremap_offset(i);
@@ -129,6 +128,11 @@ static int _handle_job_res(job_resources_t *job_resrcs_ptr,
 			use_core_array = core_array[0];
 		}
 
+		/*
+		 * This segment properly handles the core counts when whole
+		 * nodes are allocated, including when explicitly requesting
+		 * specialized cores.
+		 */
 		if (job_resrcs_ptr->whole_node == 1) {
 			if (!use_core_array) {
 				if (type != HANDLE_JOB_RES_TEST)
@@ -197,17 +201,18 @@ static void _log_tres_state(node_use_record_t *node_usage,
 			    part_res_record_t *part_record_ptr)
 {
 #if _DEBUG
+	node_record_t *node_ptr;
 	part_res_record_t *p_ptr;
 	part_row_data_t *row;
 	char *core_str;
 	int i;
 
-	for (i = 0; i < select_node_cnt; i++) {
+	for (i = 0; (node_ptr = next_node, &i)); i++) {
 		info("Node:%s State:%s AllocMem:%"PRIu64" of %"PRIu64,
-		     node_record_table_ptr[i].name,
+		     node_ptr[i]->name,
 		     _node_state_str(node_usage[i].node_state),
 		     node_usage[i].alloc_memory,
-		     select_node_record[i].real_memory);
+		     node_ptr[i]->real_memory);
 	}
 
 	for (p_ptr = part_record_ptr; p_ptr; p_ptr = p_ptr->next) {
@@ -308,8 +313,9 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	node_record_t *node_ptr;
 	part_res_record_t *p_ptr;
 	List node_gres_list;
-	int i, i_first, i_last, n;
+	int i, n;
 	bitstr_t *core_bitmap;
+	bool new_alloc = true;
 
 	if (!job || !job->core_bitmap) {
 		error("%pJ has no job_resrcs info",
@@ -323,20 +329,14 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE)
 		log_job_resources(job_ptr);
 
-	i_first = bit_ffs(job->node_bitmap);
-	if (i_first != -1)
-		i_last = bit_fls(job->node_bitmap);
-	else
-		i_last = -2;
-
-	for (i = i_first, n = -1; i <= i_last; i++) {
-		if (!bit_test(job->node_bitmap, i))
-			continue;
+	if (job_ptr->gres_list_alloc)
+		new_alloc = false;
+	for (i = 0, n = -1; (node_ptr = next_node_bitmap(job->node_bitmap, &i));
+	     i++) {
 		n++;
 		if (job->cpus[n] == 0)
 			continue;  /* node removed by job resize */
 
-		node_ptr = select_node_record[i].node_ptr;
 		if (action != JOB_RES_ACTION_RESUME) {
 			if (select_node_usage[i].gres_list)
 				node_gres_list = select_node_usage[i].gres_list;
@@ -345,22 +345,21 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 			core_bitmap = copy_job_resources_node(job, n);
 			if (job_ptr->details &&
 			    (job_ptr->details->whole_node == 1))
-				gres_plugin_job_alloc_whole_node(
-					job_ptr->gres_list,
+				gres_ctld_job_alloc_whole_node(
+					job_ptr->gres_list_req,
+					&job_ptr->gres_list_alloc,
 					node_gres_list, job->nhosts,
 					i, n, job_ptr->job_id,
-					node_ptr->name, core_bitmap,
-					job_ptr->user_id);
+					node_ptr->name, core_bitmap, new_alloc);
 			else
-				gres_plugin_job_alloc(
-					job_ptr->gres_list,
+				gres_ctld_job_alloc(
+					job_ptr->gres_list_req,
+					&job_ptr->gres_list_alloc,
 					node_gres_list, job->nhosts,
 					i, n, job_ptr->job_id,
-					node_ptr->name, core_bitmap,
-					job_ptr->user_id);
+					node_ptr->name, core_bitmap, new_alloc);
 
-			gres_plugin_node_state_log(node_gres_list,
-						   node_ptr->name);
+			gres_node_state_log(node_gres_list, node_ptr->name);
 			FREE_NULL_BITMAP(core_bitmap);
 
 			if (job->memory_allocated[n] == 0)
@@ -368,7 +367,7 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 			select_node_usage[i].alloc_memory +=
 				job->memory_allocated[n];
 			if ((select_node_usage[i].alloc_memory >
-			     select_node_record[i].real_memory)) {
+			     node_ptr->real_memory)) {
 				error("node %s memory is "
 				      "overallocated (%"PRIu64") for %pJ",
 				      node_ptr->name,
@@ -379,10 +378,10 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 	}
 
 	if (action != JOB_RES_ACTION_RESUME) {
-		gres_build_job_details(job_ptr->gres_list,
-				       &job_ptr->gres_detail_cnt,
-				       &job_ptr->gres_detail_str,
-				       &job_ptr->gres_used);
+		gres_ctld_job_build_details(job_ptr->gres_list_alloc,
+					    &job_ptr->gres_detail_cnt,
+					    &job_ptr->gres_detail_str,
+					    &job_ptr->gres_used);
 	}
 
 	/* add cores */
@@ -428,14 +427,12 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
 			/* No row available to record this job */
 		}
 		/* update the node state */
-		for (i = i_first, n = -1; i <= i_last; i++) {
-			if (bit_test(job->node_bitmap, i)) {
-				n++;
-				if (job->cpus[n] == 0)
-					continue;  /* node lost by job resize */
-				select_node_usage[i].node_state +=
-					job->node_req;
-			}
+		for (i = 0, n = -1; next_node_bitmap(job->node_bitmap, &i);
+		     i++) {
+			n++;
+			if (job->cpus[n] == 0)
+				continue;  /* node lost by job resize */
+			select_node_usage[i].node_state += job->node_req;
 		}
 		if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("DEBUG: (after):");
@@ -456,23 +453,19 @@ extern int job_res_add_job(job_record_t *job_ptr, job_res_job_action_t action)
  *             (suspended job was terminated)
  * if action = JOB_RES_ACTION_RESUME then only subtract cores
  *             (job is suspended)
- * IN: job_fini - job fully terminating on this node (not just a test)
  *
  * RET SLURM_SUCCESS or error code
  *
  * See also: job_res_add_job()
  */
 extern int job_res_rm_job(part_res_record_t *part_record_ptr,
-			  node_use_record_t *node_usage,
+			  node_use_record_t *node_usage, list_t *license_list,
 			  job_record_t *job_ptr, job_res_job_action_t action,
-			  bool job_fini,
 			  bitstr_t *node_map)
 {
 	struct job_resources *job = job_ptr->job_resrcs;
 	node_record_t *node_ptr;
-	int i_first, i_last;
 	int i, n;
-	List gres_list;
 	bool old_job = false;
 
 	if (select_state_initializing) {
@@ -500,16 +493,14 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 		debug3("%pJ action:%s",
 		       job_ptr, job_res_job_action_string(action));
 	}
+
+	if (license_list)
+		license_job_return_to_list(job_ptr, license_list);
+
 	if (job_ptr->start_time < slurmctld_config.boot_time)
 		old_job = true;
-	i_first = bit_ffs(job->node_bitmap);
-	if (i_first != -1)
-		i_last = bit_fls(job->node_bitmap);
-	else
-		i_last = -2;
-	for (i = i_first, n = -1; i <= i_last; i++) {
-		if (!bit_test(job->node_bitmap, i))
-			continue;
+	for (i = 0, n = -1; (node_ptr = next_node_bitmap(job->node_bitmap, &i));
+	     i++) {
 		n++;
 
 		if (node_map && !bit_test(node_map, i))
@@ -517,17 +508,19 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 		if (job->cpus[n] == 0)
 			continue;  /* node lost by job resize */
 
-		node_ptr = node_record_table_ptr + i;
 		if (action != JOB_RES_ACTION_RESUME) {
+			List node_gres_list;
+
 			if (node_usage[i].gres_list)
-				gres_list = node_usage[i].gres_list;
+				node_gres_list = node_usage[i].gres_list;
 			else
-				gres_list = node_ptr->gres_list;
-			gres_plugin_job_dealloc(job_ptr->gres_list, gres_list,
-						n, job_ptr->job_id,
-						node_ptr->name, old_job,
-						job_ptr->user_id, job_fini);
-			gres_plugin_node_state_log(gres_list, node_ptr->name);
+				node_gres_list = node_ptr->gres_list;
+
+			gres_ctld_job_dealloc(job_ptr->gres_list_alloc,
+					      node_gres_list,
+					      n, job_ptr->job_id,
+					      node_ptr->name, old_job, false);
+			gres_node_state_log(node_gres_list, node_ptr->name);
 
 			if (node_usage[i].alloc_memory <
 			    job->memory_allocated[n]) {
@@ -604,9 +597,10 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 			 * the removal of this job. If all cores are now
 			 * available, set node_state = NODE_CR_AVAILABLE
 			 */
-			for (i = i_first, n = -1; i <= i_last; i++) {
-				if (bit_test(job->node_bitmap, i) == 0)
-					continue;
+			for (i = 0, n = -1;
+			     (node_ptr =
+				      next_node_bitmap(job->node_bitmap, &i));
+			     i++) {
 				n++;
 				if (job->cpus[n] == 0)
 					continue;  /* node lost by job resize */
@@ -617,7 +611,6 @@ extern int job_res_rm_job(part_res_record_t *part_record_ptr,
 					node_usage[i].node_state -=
 						job->node_req;
 				} else {
-					node_ptr = node_record_table_ptr + i;
 					error("node_state mis-count (%pJ job_cnt:%u node:%s node_cnt:%u)",
 					      job_ptr,
 					      job->node_req, node_ptr->name,

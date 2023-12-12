@@ -39,6 +39,8 @@
 \*****************************************************************************/
 
 #include "scontrol.h"
+#include "src/common/data.h"
+#include "src/interfaces/data_parser.h"
 
 static void _print_license_info(const char *, license_info_msg_t *);
 static slurm_license_info_t ** _license_sort(license_info_msg_t
@@ -83,8 +85,7 @@ static slurm_license_info_t ** _license_sort(license_info_msg_t
  * from the controller
  *
  */
-void
-scontrol_print_licenses(const char *name)
+extern void scontrol_print_licenses(const char *name, int argc, char **argv)
 {
 	int cc;
 	license_info_msg_t *msg;
@@ -105,9 +106,15 @@ scontrol_print_licenses(const char *name)
 	}
 
 	last_update = time(NULL);
-	/* print the info
+	/*
+	 * Print the info
 	 */
-	_print_license_info(name, msg);
+	if (mime_type) {
+		exit_code = DATA_DUMP_CLI(LICENSES, *msg, "licenses", argc, argv,
+					  NULL, mime_type);
+	} else {
+		_print_license_info(name, msg);
+	}
 
 	/* free at last
 	 */
@@ -135,7 +142,7 @@ static void _print_license_info(const char *name, license_info_msg_t *msg)
 	for (cc = 0; cc < msg->num_lic; cc++) {
 		if (name && xstrcmp((sorted_lic[cc])->name, name))
 			continue;
-		printf("LicenseName=%s%sTotal=%d Used=%u Free=%u Reserved=%u Remote=%s\n",
+		printf("LicenseName=%s%sTotal=%d Used=%u Free=%u Reserved=%u Remote=%s",
 		       (sorted_lic[cc])->name,
 		       one_liner ? " " : "\n    ",
 		       (sorted_lic[cc])->total,
@@ -143,6 +150,19 @@ static void _print_license_info(const char *name, license_info_msg_t *msg)
 		       (sorted_lic[cc])->available,
 		       (sorted_lic[cc])->reserved,
 		       (sorted_lic[cc])->remote ? "yes" : "no");
+
+		if (sorted_lic[cc]->remote) {
+			char time_str[256];
+			slurm_make_time_str(&sorted_lic[cc]->last_update,
+					    time_str, sizeof(time_str));
+			printf("%sLastConsumed=%u LastDeficit=%u LastUpdate=%s\n",
+			       one_liner ? " " : "\n    ",
+			       sorted_lic[cc]->last_consumed,
+			       sorted_lic[cc]->last_deficit, time_str);
+		} else {
+			printf("\n");
+		}
+
 		if (name)
 			break;
 	}

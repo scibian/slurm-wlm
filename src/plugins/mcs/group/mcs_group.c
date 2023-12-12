@@ -38,7 +38,7 @@
 #include <string.h>
 
 #include "slurm/slurm_errno.h"
-#include "src/common/slurm_mcs.h"
+#include "src/interfaces/mcs.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
 
@@ -94,8 +94,7 @@ extern int init(void)
 	mcs_params_specific = slurm_mcs_get_params_specific();
 
 	if (_check_and_load_params() != 0) {
-		info("mcs: plugin warning : no group in %s",
-		     mcs_params_specific);
+		warning("%s: no group in %s", plugin_type, mcs_params_specific);
 		xfree(mcs_params_specific);
 		/* no need to check others options : default values used */
 		return SLURM_SUCCESS;
@@ -366,7 +365,8 @@ extern int mcs_p_set_mcs_label(job_record_t *job_ptr, char *label)
 /*
  * mcs_p_check_mcs_label() is called to check mcs_label.
  */
-extern int mcs_p_check_mcs_label (uint32_t user_id, char *mcs_label)
+extern int mcs_p_check_mcs_label(uint32_t user_id, char *mcs_label,
+				 bool assoc_locked)
 {
 	int rc = SLURM_ERROR;
 	int i = 0;

@@ -67,7 +67,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/macros.h"
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_auth.h"
+#include "src/interfaces/auth.h"
 #include "src/common/uid.h"
 
 #include "src/database/mysql_common.h"
@@ -92,6 +92,8 @@ extern char *convert_version_table;
 extern char *federation_table;
 extern char *event_table;
 extern char *job_table;
+extern char *job_env_table;
+extern char *job_script_table;
 extern char *last_ran_table;
 extern char *qos_table;
 extern char *resv_table;
@@ -110,7 +112,7 @@ extern char *wckey_table;
  */
 extern List as_mysql_cluster_list;
 extern List as_mysql_total_cluster_list;
-extern pthread_mutex_t as_mysql_cluster_list_lock;
+extern pthread_rwlock_t as_mysql_cluster_list_lock;
 
 extern bool backup_dbd;
 
@@ -153,7 +155,8 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 			 char *assoc_char,
 			 char *cluster_name,
 			 List ret_list,
-			 bool *jobs_running);
+			 bool *jobs_running,
+			 bool *default_account);
 
 extern void mod_tres_str(char **out, char *mod, char *cur,
 			 char *cur_par, char *name, char **vals,
@@ -164,7 +167,7 @@ extern void mod_tres_str(char **out, char *mod, char *cur,
  *
  * IN mysql_conn - mysql connection
  * IN cluster_name - name of cluster to get dimensions for
- * OUT dims - dimenions of cluster
+ * OUT dims - dimensions of cluster
  *
  * RET return SLURM_SUCCESS on success, SLURM_FAILURE otherwise.
  */

@@ -78,13 +78,15 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-extern node_record_t *node_record_table_ptr __attribute__((weak_import));
+extern node_record_t **node_record_table_ptr __attribute__((weak_import));
 extern List job_list __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
+extern int active_node_record_count __attribute__((weak_import));
 #else
-node_record_t *node_record_table_ptr = NULL;
+node_record_t **node_record_table_ptr = NULL;
 List job_list = NULL;
 int node_record_count = 0;
+int active_node_record_count;
 #endif
 
 typedef struct power_config_nodes {
@@ -664,29 +666,26 @@ static void _build_full_nid_string(void)
 	node_record_t *node_ptr;
 	hostset_t hs = NULL;
 	char *sep, *tmp_str;
-	int i, num_ent = 0;
+	int i;
 
 	if (full_nid_string)
 		return;
 
 	lock_slurmctld(read_node_lock);
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (IS_NODE_DOWN(node_ptr))
 			continue;
 		if (!hs)
 			hs = hostset_create(_node_name2nid(node_ptr->name));
 		else
 			hostset_insert(hs, _node_name2nid(node_ptr->name));
-		num_ent++;
 	}
 	unlock_slurmctld(read_node_lock);
 	if (!hs) {
 		error("%s: No nodes found", __func__);
 		return;
 	}
-	tmp_str = xmalloc(node_record_count * 6 + 2);
-	(void) hostset_ranged_string(hs, num_ent * 6, tmp_str);
+	tmp_str = hostset_ranged_string_xmalloc(hs);
 	hostset_destroy(hs);
 	if ((sep = strrchr(tmp_str, ']')))
 		sep[0] = '\0';
@@ -972,8 +971,7 @@ static void _get_nodes_ready(void)
 	json_object_put(j_obj);	/* Frees json memory */
 
 	lock_slurmctld(write_node_lock);
-	for (i = 0, node_ptr = node_record_table_ptr;
-	     i < node_record_count; i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (!node_ptr->power)
 			node_ptr->power = xmalloc(sizeof(power_mgmt_data_t));
 		else
@@ -1109,8 +1107,7 @@ static void _get_node_energy_counter(void)
 	json_object_put(j_obj);	/* Frees json memory */
 
 	lock_slurmctld(write_node_lock);
-	for (i = 0, node_ptr = node_record_table_ptr;
-	     i < node_record_count; i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (!node_ptr->power)
 			node_ptr->power = xmalloc(sizeof(power_mgmt_data_t));
 		else
@@ -1142,7 +1139,7 @@ static void _get_node_energy_counter(void)
 						(ents[i].time_usec +
 						 usecs_day) -
 						node_ptr->power->time_usec;
-				}	
+				}
 				if (delta_time &&
 				    (node_ptr->power->joule_counter <
 				     ents[i].joule_counter)) {
@@ -1315,8 +1312,7 @@ static void _clear_node_caps(void)
 	node_record_t *node_ptr;
 	int i;
 
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (IS_NODE_DOWN(node_ptr))
 			continue;
 		if (!node_ptr->power)
@@ -1333,8 +1329,7 @@ static void _set_node_caps(void)
 	node_record_t *node_ptr;
 	int i;
 
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (IS_NODE_DOWN(node_ptr))
 			continue;
 		if (!node_ptr->power)
@@ -1351,10 +1346,9 @@ static void _set_node_caps(void)
 
 /* For every job needing level power caps across it's nodes, set each of its
  * node's power cap to the average cap based upon the global cap and recent
- * usage. */ 
+ * usage. */
 static void _level_power_by_job(void)
 {
-	int i, i_first, i_last;
 	job_record_t *job_ptr;
 	ListIterator job_iterator;
 	node_record_t *node_ptr;
@@ -1373,14 +1367,9 @@ static void _level_power_by_job(void)
 		min_watts = INFINITE;
 		total_watts = 0;
 		total_nodes = 0;
-		i_first = bit_ffs(job_ptr->node_bitmap);
-		if (i_first < 0)
-			continue;
-		i_last = bit_fls(job_ptr->node_bitmap);
-		for (i = i_first; i <= i_last; i++) {
-			if (!bit_test(job_ptr->node_bitmap, i))
-				continue;
-			node_ptr = node_record_table_ptr + i;
+		for (int i = 0;
+		     (node_ptr = next_node_bitmap(job_ptr->node_bitmap, &i));
+		     i++) {
 			if (!node_ptr->power)
 				continue;
 			if (node_ptr->power->state != 1)/*Not ready, no change*/
@@ -1401,10 +1390,9 @@ static void _level_power_by_job(void)
 		log_flag(POWER, "%s: leveling power caps for %pJ (node_cnt:%u min:%u max:%u ave:%u)",
 			 __func__, job_ptr, total_nodes, min_watts, max_watts,
 			 ave_watts);
-		for (i = i_first; i <= i_last; i++) {
-			if (!bit_test(job_ptr->node_bitmap, i))
-				continue;
-			node_ptr = node_record_table_ptr + i;
+		for (int i = 0;
+		     (node_ptr = next_node_bitmap(job_ptr->node_bitmap, &i));
+		     i++) {
 			if (!node_ptr->power)
 				continue;
 			if (node_ptr->power->state != 1)/*Not ready, no change*/
@@ -1427,8 +1415,7 @@ static void _rebalance_node_power(void)
 	int i;
 
 	/* Lower caps on under used nodes */
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (!node_ptr->power)
 			continue;
 		if (IS_NODE_DOWN(node_ptr) ||
@@ -1497,10 +1484,9 @@ static void _rebalance_node_power(void)
 		red1 = MAX(red1, red2);
 		node_num = node_power_lower_cnt + node_power_same_cnt;
 		if (node_num == 0)
-			node_num = node_record_count;
+			node_num = active_node_record_count;
 		red1 /= node_num;
-		for (i = 0, node_ptr = node_record_table_ptr;
-		     i < node_record_count; i++, node_ptr++) {
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
 			if (IS_NODE_DOWN(node_ptr))
 				continue;
 			if (!node_ptr->power || !node_ptr->power->new_cap_watts)
@@ -1520,8 +1506,7 @@ static void _rebalance_node_power(void)
 	/* Distribute rest of power cap on remaining nodes. */
 	if (node_power_raise_cnt) {
 		ave_power = avail_power / node_power_raise_cnt;
-		for (i = 0, node_ptr = node_record_table_ptr;
-		     i < node_record_count; i++, node_ptr++) {
+		for (i = 0; (node_ptr = next_node(&i)); i++) {
 			if (IS_NODE_DOWN(node_ptr))
 				continue;
 			if (!node_ptr->power || (node_ptr->power->state != 1))
@@ -1572,8 +1557,7 @@ static void _log_node_power(void)
 	int i;
 
 	/* Build and log summary table of required updates to power caps */
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		char *ready_str;
 		if (!node_ptr->power)
 			continue;
@@ -1622,8 +1606,7 @@ static void _set_power_caps(void)
 	script_argv[3] = NULL;
 
 	/* Pass 1, decrease power for select nodes */
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (IS_NODE_DOWN(node_ptr) ||
 		    !node_ptr->power ||
 		    (node_ptr->power->state != 1) ||
@@ -1663,8 +1646,7 @@ static void _set_power_caps(void)
 	}
 
 	/* Pass 2, increase power for select nodes */
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (i = 0; (node_ptr = next_node(&i)); i++) {
 		if (IS_NODE_DOWN(node_ptr) ||
 		    !node_ptr->power ||
 		    (node_ptr->power->state != 1) ||

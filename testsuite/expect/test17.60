@@ -29,12 +29,7 @@
 ############################################################################
 source ./globals
 
-set job_list ""
-
-proc cleanup {} {
-	global job_list
-	cancel_job $job_list
-}
+set job_list [list]
 
 #
 # Get the node to use
@@ -44,17 +39,23 @@ if {[llength $node] != 1} {
 	skip "This test needs to be able to submit a job with '-N1 -t 5'"
 }
 
+proc cleanup {} {
+	global job_list
+
+	cancel_job $job_list
+}
+
 #
 # Submit a blocking job
 #
 set job_block [submit_job -fail "-w $node --exclusive -t 5 --wrap '$bin_sleep 300' -J $test_name -o /dev/null -e /dev/null"]
 lappend job_list $job_block
-wait_for_job $job_block "RUNNING"
+wait_for_job -fail $job_block "RUNNING"
 
 #
 # Submit a job with deadline that will rest pending until deadlines
 #
-set job_id [submit_job -fail "-w $node --begin=now+5 --deadline=now+75 --time-min=1 --wrap '$bin_sleep 60' -J $test_name -o /dev/null -e /dev/null"]
+set job_id [submit_job -fail "-w $node --begin=now+15 --deadline=now+80 --time-min=1 --wrap '$bin_sleep 60' -J $test_name -o /dev/null -e /dev/null"]
 lappend job_list $job_id
 
 #
@@ -63,13 +64,13 @@ lappend job_list $job_id
 #
 set state  ""
 set reason ""
-wait_for -timeout 10 {$state == "PENDING" && $reason == "BeginTime"} {
+wait_for -timeout 15 {$state == "PENDING" && $reason == "BeginTime"} {
 	set state  [get_job_param $job_id "JobState"]
 	set reason [get_job_param $job_id "Reason"]
 }
 subtest {$state == "PENDING" && $reason == "BeginTime"} "Job should be PENDING with reason BeginTime" "JobState=$state Reason=$reason"
 
-wait_for -timeout 60 {$state == "DEADLINE" && $reason == "DeadLine"} {
+wait_for -timeout 120 {$state == "DEADLINE" && $reason == "DeadLine"} {
 	set state  [get_job_param $job_id "JobState"]
 	set reason [get_job_param $job_id "Reason"]
 }

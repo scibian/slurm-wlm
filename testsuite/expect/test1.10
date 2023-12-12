@@ -29,7 +29,7 @@
 source ./globals
 
 set debug_get   0
-set debug_set "error"
+set debug_set "verbose"
 set debug_expected "verbose"
 
 if [param_contains [get_config_param "LaunchParameters"] "test_exec"] {
@@ -41,18 +41,17 @@ if [param_contains [get_config_param "LaunchParameters"] "test_exec"] {
 # Debug debug level is 2, value set with --debug has that offset
 #
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N1 --slurmd-debug=$debug_set -t1 /invalid_executable ]
+spawn $srun -N1 --slurmd-debug=$debug_set -t1 /invalid_executable
 expect {
-	-re "debug level is \'($re_word_str)\'" {
+	-re "debug levels are stderr=\'($re_word_str)\'" {
 		set debug_get $expect_out(1,string)
 		exp_continue
 	}
 	timeout {
-		slow_kill $srun_pid
 		fail "srun not responding"
 	}
 }
 
-if {$debug_get != $debug_expected} {
+if {$debug_get != $debug_set} {
 	fail "Did not log at proper level ($debug_get != $debug_expected)"
 }

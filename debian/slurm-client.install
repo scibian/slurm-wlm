@@ -15,4 +15,5 @@ usr/bin/sacct
 usr/bin/sacctmgr
 usr/bin/scontrol
 usr/bin/sstat
-usr/bin/sh5util
+usr/bin/scrun
+usr/bin/scrontab

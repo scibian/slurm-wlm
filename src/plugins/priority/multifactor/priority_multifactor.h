@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  priority_multifactor.c - slurm multifactor priority plugin.
+ *  priority_multifactor.h - slurm multifactor priority plugin.
  *****************************************************************************
  *  Copyright (C) 2012  Aalto University
  *  Written by Janne Blomqvist <janne.blomqvist@aalto.fi>
@@ -45,7 +45,7 @@
 #ifndef _PRIORITY_MULTIFACTOR_H
 #define _PRIORITY_MULTIFACTOR_H
 
-#include "src/common/slurm_priority.h"
+#include "src/interfaces/priority.h"
 #include "src/common/assoc_mgr.h"
 
 #include "src/slurmctld/locks.h"

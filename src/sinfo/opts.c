@@ -48,6 +48,7 @@
 #include "src/common/read_config.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
+#include "src/interfaces/serializer.h"
 
 #include "src/sinfo/print.h"
 #include "src/sinfo/sinfo.h"
@@ -59,6 +60,9 @@
 #define OPT_LONG_LOCAL     0x103
 #define OPT_LONG_NOCONVERT 0x104
 #define OPT_LONG_FEDR      0x105
+#define OPT_LONG_JSON      0x106
+#define OPT_LONG_YAML      0x107
+#define OPT_LONG_AUTOCOMP  0x108
 
 /* FUNCTIONS */
 static List  _build_state_list( char* str );
@@ -91,10 +95,12 @@ extern void parse_command_line(int argc, char **argv)
 	bool opt_a_set = false, opt_p_set = false;
 	bool env_a_set = false, env_p_set = false;
 	static struct option long_options[] = {
+		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
 		{"all",       no_argument,       0, 'a'},
 		{"dead",      no_argument,       0, 'd'},
 		{"exact",     no_argument,       0, 'e'},
 		{"federation",no_argument,       0, OPT_LONG_FEDR},
+		{"future",    no_argument,       0, 'F'},
 		{"help",      no_argument,       0, OPT_LONG_HELP},
 		{"hide",      no_argument,       0, OPT_LONG_HIDE},
 		{"iterate",   required_argument, 0, 'i'},
@@ -118,6 +124,8 @@ extern void parse_command_line(int argc, char **argv)
 		{"usage",     no_argument,       0, OPT_LONG_USAGE},
 		{"verbose",   no_argument,       0, 'v'},
 		{"version",   no_argument,       0, 'V'},
+                {"json", no_argument, 0, OPT_LONG_JSON},
+                {"yaml", no_argument, 0, OPT_LONG_YAML},
 		{NULL,        0,                 0, 0}
 	};
 
@@ -132,6 +140,8 @@ extern void parse_command_line(int argc, char **argv)
 	}
 	if (getenv("SINFO_FEDERATION"))
 		params.federation_flag = true;
+	if (getenv("SINFO_FUTURE"))
+		params.future_flag = true;
 	if (getenv("SINFO_LOCAL"))
 		params.local = true;
 	if ( ( env_val = getenv("SINFO_PARTITION") ) ) {
@@ -157,7 +167,7 @@ extern void parse_command_line(int argc, char **argv)
 	}
 
 	while ((opt_char = getopt_long(argc, argv,
-				       "adehi:lM:n:No:O:p:rRsS:t:TvV",
+				       "adeFhi:lM:n:No:O:p:rRsS:t:TvV",
 				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
@@ -176,6 +186,9 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case (int)'e':
 			params.exact_match = true;
+			break;
+		case (int)'F':
+			params.future_flag = true;
 			break;
 		case (int)'h':
 			params.no_header = true;
@@ -290,6 +303,22 @@ extern void parse_command_line(int argc, char **argv)
 		case OPT_LONG_LOCAL:
 			params.local = true;
 			break;
+		case OPT_LONG_JSON:
+			params.mimetype = MIME_TYPE_JSON;
+			params.match_flags.gres_used_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			break;
+		case OPT_LONG_YAML:
+			params.mimetype = MIME_TYPE_YAML;
+			params.match_flags.gres_used_flag = true;
+			data_init();
+			serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			break;
+		case OPT_LONG_AUTOCOMP:
+			suggest_completion(long_options, optarg);
+			exit(0);
+			break;
 		}
 	}
 
@@ -343,13 +372,13 @@ extern void parse_command_line(int argc, char **argv)
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,reservation:.11 ,nodelist:0") :
 				xstrdup("partition:9 ,cluster:8 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		} else {
 			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-				xstrdup("partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0") :
+				xstrdup("partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,reservation:.11 ,nodelist:0") :
 				xstrdup("partition:9 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0");
 		}
 	}
@@ -512,15 +541,21 @@ _node_state_list (void)
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_POWERING_DOWN));
 	xstrcat(all_states, ",");
-	xstrcat(all_states, node_state_string(NODE_STATE_POWER_SAVE));
+	xstrcat(all_states, node_state_string(NODE_STATE_POWERED_DOWN));
 	xstrcat(all_states, ",");
-	xstrcat(all_states, node_state_string(NODE_STATE_POWER_UP));
+	xstrcat(all_states, node_state_string(NODE_STATE_POWER_DOWN));
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_POWERING_UP));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_FAIL));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_MAINT));
 	xstrcat(all_states, ",");
-	xstrcat(all_states, node_state_string(NODE_STATE_REBOOT));
+	xstrcat(all_states, node_state_string(NODE_STATE_REBOOT_REQUESTED));
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_REBOOT_ISSUED));
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_PLANNED));
 
 	for (i = 0; i < strlen (all_states); i++)
 		all_states[i] = tolower (all_states[i]);
@@ -557,6 +592,9 @@ _node_state_id (char *str)
 			return (i);
 	}
 
+	if ((xstrncasecmp("PLANNED", str, len) == 0) ||
+	    (xstrncasecmp("PLND", str, len) == 0))
+		return NODE_STATE_PLANNED;
 	if (xstrncasecmp("DRAIN", str, len) == 0)
 		return NODE_STATE_DRAIN;
 	if (xstrncasecmp("DRAINED", str, len) == 0)
@@ -576,16 +614,20 @@ _node_state_id (char *str)
 		return NODE_STATE_NO_RESPOND;
 	if (_node_state_equal (NODE_STATE_POWERING_DOWN, str))
 		return NODE_STATE_POWERING_DOWN;
-	if (_node_state_equal (NODE_STATE_POWER_SAVE, str))
-		return NODE_STATE_POWER_SAVE;
-	if (_node_state_equal (NODE_STATE_POWER_UP, str))
-		return NODE_STATE_POWER_UP;
+	if (_node_state_equal (NODE_STATE_POWERED_DOWN, str))
+		return NODE_STATE_POWERED_DOWN;
+	if (_node_state_equal (NODE_STATE_POWER_DOWN, str))
+		return NODE_STATE_POWER_DOWN;
+	if (_node_state_equal (NODE_STATE_POWERING_UP, str))
+		return NODE_STATE_POWERING_UP;
 	if (_node_state_equal (NODE_STATE_FAIL, str))
 		return NODE_STATE_FAIL;
 	if (_node_state_equal (NODE_STATE_MAINT, str))
 		return NODE_STATE_MAINT;
-	if (_node_state_equal (NODE_STATE_REBOOT, str))
-		return NODE_STATE_REBOOT;
+	if (_node_state_equal (NODE_STATE_REBOOT_REQUESTED, str))
+		return NODE_STATE_REBOOT_REQUESTED;
+	if (_node_state_equal (NODE_STATE_REBOOT_ISSUED, str))
+		return NODE_STATE_REBOOT_ISSUED;
 	if (_node_state_equal(NODE_STATE_CLOUD, str))
 		return NODE_STATE_CLOUD;
 
@@ -722,6 +764,12 @@ _parse_format( char* format )
 					      field_size,
 					      right_justify,
 					      suffix );
+		} else if (field[0] == 'i') {
+			params.match_flags.resv_name_flag = true;
+			format_add_resv_name(params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix);
 		} else if (field[0] == 'I') {
 			params.match_flags.priority_job_factor_flag = true;
 			format_add_priority_job_factor(params.format_list,
@@ -988,6 +1036,10 @@ static int _parse_long_format (char* format_long)
 					 field_size,
 					 right_justify,
 					 suffix );
+		} else if (!xstrcasecmp(token, "extra")) {
+			params.match_flags.extra_flag = true;
+			format_add_extra(params.format_list, field_size,
+					 right_justify, suffix);
 		} else if (!xstrcasecmp(token, "features")) {
 			params.match_flags.features_flag = true;
 			format_add_features( params.format_list,
@@ -1104,6 +1156,12 @@ static int _parse_long_format (char* format_long)
 					   field_size,
 					   right_justify,
 					   suffix );
+		} else if (!xstrcasecmp(token, "reservation")) {
+			params.match_flags.resv_name_flag = true;
+			format_add_resv_name(params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix);
 		} else if (!xstrcasecmp(token, "root")) {
 			params.match_flags.root_flag = true;
 			format_add_root( params.format_list,
@@ -1128,6 +1186,11 @@ static int _parse_long_format (char* format_long)
 			format_add_state_compact( params.format_list,
 						  field_size,
 						  right_justify,
+						  suffix );
+		} else if (!xstrcasecmp(token, "statecomplete")) {
+			params.match_flags.statecomplete_flag = true;
+			format_add_state_complete(params.format_list,
+						  field_size, right_justify,
 						  suffix );
 		} else if (!xstrcasecmp(token, "statelong")) {
 			params.match_flags.state_flag = true;
@@ -1326,6 +1389,8 @@ void _print_options( void )
 					"true" : "false");
 	printf("disk_flag       = %s\n", params.match_flags.disk_flag ?
 			"true" : "false");
+	printf("extra_flag      = %s\n",
+	       params.match_flags.extra_flag ? "true" : "false");
 	printf("features_flag   = %s\n", params.match_flags.features_flag ?
 			"true" : "false");
 	printf("features_flag_act = %s\n", params.match_flags.features_act_flag?
@@ -1361,6 +1426,8 @@ void _print_options( void )
 			params.match_flags.reason_user_flag ?  "true" : "false");
 	printf("reservation_flag = %s\n", params.reservation_flag ?
 			"true" : "false");
+	printf("resv_name_flag   = %s\n", params.match_flags.resv_name_flag ?
+	       "true" : "false");
 	printf("root_flag       = %s\n", params.match_flags.root_flag ?
 			"true" : "false");
 	printf("oversubscribe_flag      = %s\n",
@@ -1368,6 +1435,8 @@ void _print_options( void )
 			"true" : "false");
 	printf("state_flag      = %s\n", params.match_flags.state_flag ?
 			"true" : "false");
+	printf("statecomplete_flag = %s\n",
+	       params.match_flags.statecomplete_flag ? "true" : "false");
 	printf("weight_flag     = %s\n", params.match_flags.weight_flag ?
 			"true" : "false");
 	printf("-----------------------------\n\n");
@@ -1389,9 +1458,11 @@ Usage: sinfo [OPTIONS]\n\
   -d, --dead                 show only non-responding nodes\n\
   -e, --exact                group nodes only on exact match of configuration\n\
       --federation           Report federated information if a member of one\n\
+  -F, --future               Report information about nodes in \"FUTURE\" state.    \n\
   -h, --noheader             no headers on output\n\
   --hide                     do not show hidden or non-accessible partitions\n\
   -i, --iterate=seconds      specify an iteration period\n\
+      --json                 Produce JSON output\n\
       --local                show only local cluster in a federation.\n\
                              Overrides --federation.\n\
   -l, --long                 long output - displays more information\n\
@@ -1412,6 +1483,7 @@ Usage: sinfo [OPTIONS]\n\
   -T, --reservation          show only reservation information\n\
   -v, --verbose              verbosity level\n\
   -V, --version              output version information and exit\n\
+      --yaml                 Produce YAML output\n\
 \nHelp options:\n\
   --help                     show this help message\n\
   --usage                    display brief usage message\n");

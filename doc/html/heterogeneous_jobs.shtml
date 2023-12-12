@@ -6,7 +6,10 @@
 <li><a href="#overview">Overview</a></li>
 <li><a href="#submitting">Submitting Jobs</a></li>
 <li><a href="#burst_buffer">Burst Buffers</a></li>
-<li><a href="#managing">Managing Jobs</a></li>
+<li>
+  <a href="#managing">Managing Jobs</a>
+  <ul><li><a href="#accounting">Accounting</a></li></ul>
+</li>
 <li><a href="#job_steps">Launching Applications (Job Steps)</a></li>
 <li><a href="#env_var">Environment Variables</a></li>
 <li><a href="#examples">Examples</a></li>
@@ -15,7 +18,7 @@
 <li><a href="#sys_admin">System Administrator Information</a></li>
 </ul>
 
-<h2><a name="overview">Overview</a></h2>
+<h2 id="overview">Overview<a class="slurm_link" href="#overview"></a></h2>
 
 <p>Slurm version 17.11 and later supports the ability to submit and manage
 heterogeneous jobs, in which each component has virtually all job options
@@ -23,7 +26,9 @@ available including partition, account and QOS (Quality Of Service).
 For example, part of a job might require four cores and 4 GB for each of 128
 tasks while another part of the job would require 16 GB of memory and one CPU.</p>
 
-<h2><a name="submitting">Submitting Jobs</a></h2>
+<h2 id="submitting">Submitting Jobs
+<a class="slurm_link" href="#submitting"></a>
+</h2>
 
 <p>The <i>salloc</i>, <i>sbatch</i> and <i>srun</i> commands can all be used
 to submit heterogeneous jobs.
@@ -69,6 +74,7 @@ A list of propagated options follows.</p>
 <li>--kill-on-bad-exit  (option available only in srun)</li>
 <li>--label             (option available only in srun)</li>
 <li>--mcs-label</li>
+<li>--mem</li>
 <li>--msg-timeout       (option available only in srun)</li>
 <li>--no-allocate       (option available only in srun)</li>
 <li>--no-requeue</li>
@@ -174,15 +180,18 @@ fashion with respect to quality of service (QOS) limits.
 Each component of a heterogeneous job counts as a "job" with respect to
 resource limits.</p>
 
-<h2><a name="burst_buffer">Burst Buffers</a></h2>
+<h2 id="burst_buffer">Burst Buffers
+<a class="slurm_link" href="#burst_buffer"></a>
+</h2>
 
-<p>A burst buffer can either be persistent or linked to a specific job ID
-(at least the Cray implementation).
+<p>A burst buffer can either be persistent or linked to a specific job ID.
 Since a heterogeneous job consists of multiple job IDs, a job-specific burst
 buffer will be associated with only one heterogeneous job component.
-Only a persistent burst buffer can be accessed by all components of a
-heterogeneous job.
-A sample batch script demonstrating this for a Cray system is appended.</p>
+Each component can have its own burst buffer directives, and they are processed
+separately. Only a persistent burst buffer can be accessed by all components
+of a heterogeneous job. Persistent burst buffers are only available in the
+datawarp plugin. A sample batch script demonstrating this for the datawarp
+plugin is appended.</p>
 
 <pre>
 #!/bin/bash
@@ -195,16 +204,20 @@ A sample batch script demonstrating this for a Cray system is appended.</p>
 ...
 </pre>
 
-<p><b>NOTE:</b> Cray's DataWarp interface directly reads the job script, but
+<p><b>NOTE</b>: Cray's DataWarp interface directly reads the job script, but
 has no knowledge of "Slurm's "hetjob" directive, so Slurm internally rebuilds
-the script for each job component so that only that job components burst buffer
-directives are included in that script. The batch script first component of the
-job will be modified in order to replace the "#DW" directives of other
-job components with "#EXCLUDED DW" to prevent their interpretation by Cray
-infrastructure. Since the batch script will only be executed by the first job
+the script for each job component so that only that job component's burst buffer
+directives are included in that script. The batch script's first component of the
+job will be modified in order to replace the burst buffer directives of other
+job components with "#EXCLUDED directive" where directive is "DW" or "BB"
+for the datawarp plugin and is the
+<a href="burst_buffer.html#submit_lua">configured</a> value for the lua plugin.
+This prevents their interpretation by Cray infrastructure and aids
+administrators in writing an interface for the lua plugin.
+Since the batch script will only be executed by the first job
 component, the subsequent job components will not include commands from the
-original script. These scripts are build and managed by Slurm for internal
-purposes (and visiable from various Slurm commands) from a user script as shown
+original script. These scripts are built and managed by Slurm for internal
+purposes (and visible from various Slurm commands) from a user script as shown
 above. An example is shown below:</p>
 
 <pre>
@@ -228,7 +241,7 @@ above. An example is shown below:</p>
 exit 0
 </pre>
 
-<h2><a name="managing">Managing Jobs</a></h2>
+<h2 id="managing">Managing Jobs<a class="slurm_link" href="#managing"></a></h2>
 
 <p>Information maintained in Slurm for a heterogeneous job includes:</p>
 <ul>
@@ -300,7 +313,7 @@ JOBID PARTITION  NAME  USER ST  TIME  NODES NODELIST
 
 <p>While a heterogeneous job is in pending state, only the entire job can be
 cancelled rather than its individual components.
-A request to cancel an individual component of a heterogeneous job not in
+A request to cancel an individual component of a heterogeneous job in
 pending state will return an error.
 After the job has begun execution, the individual component can be cancelled.</p>
 
@@ -353,7 +366,7 @@ If SchedulerParameters configuration parameter includes the option
 "whole_hetjob" then the operation would apply to all components of the job if
 any job component is specified to be operated upon. In the below example, the
 scancel command will either cancel all components of job 93 if
-SchedulingParameters=whole_hetjob is configured, otherwise only job 93+1 will be
+SchedulerParameters=whole_hetjob is configured, otherwise only job 93+1 will be
 cancelled. If a specific heterogeneous job component is specified (e.g. "scancel
 93+1"), then only that one component will be effected.</p>
 <pre>
@@ -367,7 +380,7 @@ $ scancel 94 (where job ID 94 is equivalent to 93+1)
 # Cancel only 93+1 if SchedulerParameters does not include "whole_hetjob"
 </pre>
 
-<h3>Accounting</h3>
+<h3 id="accounting">Accounting<a class="slurm_link" href="#accounting"></a></h3>
 
 <p>Slurm's accounting database records the het_job_id and het_job_offset
 fields.
@@ -406,7 +419,9 @@ $ sacct -j 67767+1 --whole-hetjob=yes
 67767+1     foo     debug    test         4 COMPLETED      0:0
 </pre>
 
-<h2><a name="job_steps">Launching Applications (Job Steps)</a></h2>
+<h2 id="job_steps">Launching Applications (Job Steps)
+<a class="slurm_link" href="#job_steps"></a>
+</h2>
 
 <p>The srun command is used to launch applications.
 By default, the application is launched only on the first component of a
@@ -462,7 +477,7 @@ allocated resources because of two srun commands executing at the same time).
 If the srun --het-group option is used to create multiple job steps (for the
 different components of a heterogeneous job), those job steps will be created
 sequentially.
-When multiple srun commmands execute at the same time, this may result in some
+When multiple srun commands execute at the same time, this may result in some
 step allocations taking place, while others are delayed.
 Only after all job step allocations have been granted will the application
 being launched.</p>
@@ -495,15 +510,19 @@ error: Attempt to run a job step with het-group value of 2,
        but the job allocation has maximum value of 1
 </pre>
 
-<h2><a name="env_var">Environment Variables</a></h2>
+<h2 id="env_var">Environment Variables
+<a class="slurm_link" href="#env_var"></a>
+</h2>
 
 <p>Slurm environment variables will be set independently for each component of
-the job by appending "_HET_GROUP_" and a sequence number the usual name.
+the job by appending "_HET_GROUP_" and a sequence number to the usual name.
 In addition, the "SLURM_JOB_ID" environment variable will contain the job ID
 of the heterogeneous job leader and "SLURM_HET_SIZE" will contain the number of
-components in the job. If using srun with a single specific het group (for
-instance --het-group=1) "SLURM_JOB_ID" will contain the job ID of that specific
-component, behaving like a regular (non-heterogeneous job). For example:</p>
+components in the job. Note that if using srun with a single specific
+het group (for instance --het-group=1) "SLURM_JOB_ID" will contain the job
+ID of the heterogeneous job leader. The job ID for a specific heterogeneous
+component is set in "SLURM_JOB_ID_HET_GROUP_&lt;component_id&gt;". For example:
+</p>
 <pre>
 $ salloc -N1 : -N2 bash
 salloc: Pending job allocation 11741
@@ -520,14 +539,20 @@ SLURM_JOB_NODELIST_HET_GROUP_0=nid00001
 SLURM_JOB_NODELIST_HET_GROUP_1=nid[00011-00012]
 ...
 $ srun --het-group=1 printenv SLURM_JOB_ID
-11742
+11741
+11741
 $ srun --het-group=0 printenv SLURM_JOB_ID
+11741
+$ srun --het-group=1 printenv SLURM_JOB_ID_HET_GROUP_1
+11742
+11742
+$ srun --het-group=0 printenv SLURM_JOB_ID_HET_GROUP_0
 11741
 </pre>
 
 <p>The various MPI implementations rely heavily upon Slurm environment variables
 for proper operation.
-A single MPI applications executing in a single MPI_COMM_WORLD require a
+A single MPI application executing in a single MPI_COMM_WORLD requires a
 uniform set of environment variables that reflect a single job allocation.
 The example below shows how Slurm sets environment variables for MPI.</p>
 <pre>
@@ -549,7 +574,7 @@ SLURM_JOB_NODELIST=nid[00001,00011-00012]
 ...
 </pre>
 
-<h2><a name="examples">Examples</a></h2>
+<h2 id="examples">Examples<a class="slurm_link" href="#examples"></a></h2>
 
 <p>Create a heterogeneous resource allocation containing one node with 256GB
 of memory and a feature of "haswell" plus 2176 cores on 32 nodes with a
@@ -582,7 +607,9 @@ SLURM_NTASKS will be set to the total count of tasks in all components.
 Note that the task rank and count values are needed by MPI and typically
 determined by examining Slurm environment variables.</p>
 
-<h2><a name="limitations">Limitations</a></h2>
+<h2 id="limitations">Limitations
+<a class="slurm_link" href="#limitations"></a>
+</h2>
 
 <p>The backfill scheduler has limitations in how it tracks usage of CPUs and
 memory in the future.
@@ -608,6 +635,10 @@ partition for the first job component, preventing the scheduler from being
 able to fulfill the second request, resulting in a job that is never able to
 start.</p>
 
+<p>Magnetic reservations cannot "attract" heterogeneous jobs - heterogeneous
+jobs will only run in magnetic reservations if they explicitly request the
+reservation.</p>
+
 <p>Job arrays of heterogeneous jobs are not supported.</p>
 
 <p>The srun command's --no-allocate option is not supported
@@ -619,6 +650,10 @@ single srun command (e.g.
 
 <p>The sattach command can only be used to attach to a single component of
 a heterogeneous job at a time.</p>
+
+<p>License requests are only allowed on the first component
+job (e.g.
+"sbatch -L ansys:2 : script.sh").<p>
 
 <p>Heterogeneous jobs are only scheduled by the backfill scheduler plugin.
 The more frequently executed scheduling logic only starts jobs on a first-in
@@ -648,7 +683,9 @@ communication ports (no change in Slurm behavior).</p>
 to all components of the heterogeneous job (not possible today) plus changes to
 srun in order to better synchronize the step startup and error handling. -->
 
-<h2><a name="het_steps">Heterogeneous Steps</a></h2>
+<h2 id="het_steps">Heterogeneous Steps
+<a class="slurm_link" href="#het_steps"></a>
+</h2>
 
 <p>Slurm version 20.11 introduces the ability to request heterogeneous job
 steps from within a non-homogeneous job allocation. This allows you the
@@ -665,7 +702,7 @@ per processor while another task needs all the available GPUs on a node with
 only one processor. This can be accomplished like this:
 
 <pre>
-$ salloc -N2 --exclusive
+$ salloc -N2 --exclusive --gpus=10
 salloc: Granted job allocation 61034
 $ srun -N1 -n4 --gpus=4 printenv SLURMD_NODENAME : -N1 -n1 --gpus=6 printenv SLURMD_NODENAME
 node02
@@ -675,7 +712,9 @@ node01
 node01
 </pre>
 
-<h2><a name="sys_admin">System Administrator Information</a></h2>
+<h2 id="sys_admin">System Administrator Information
+<a class="slurm_link" href="#sys_admin"></a>
+</h2>
 
 <p>The job submit plugin is invoked independently for each component of a
 heterogeneous job.</p>
@@ -751,6 +790,6 @@ Such a situation will have an adverse effect upon scheduling other jobs,
 especially other heterogeneous jobs.</p>
 
 
-<p style="text-align:center;">Last modified 29 December 2020</p>
+<p style="text-align:center;">Last modified 21 October 2022</p>
 
 <!--#include virtual="footer.txt"-->

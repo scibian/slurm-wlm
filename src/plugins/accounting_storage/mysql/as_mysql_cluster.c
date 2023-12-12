@@ -42,7 +42,9 @@
 #include "as_mysql_federation.h"
 #include "as_mysql_usage.h"
 #include "as_mysql_wckey.h"
-#include "src/common/node_select.h"
+
+#include "src/interfaces/select.h"
+#include "src/common/slurm_time.h"
 
 extern int as_mysql_get_fed_cluster_id(mysql_conn_t *mysql_conn,
 				       const char *cluster,
@@ -416,7 +418,7 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 
 			added++;
 			/* add it to the list and sort */
-			slurm_mutex_lock(&as_mysql_cluster_list_lock);
+			slurm_rwlock_wrlock(&as_mysql_cluster_list_lock);
 			check_itr = list_iterator_create(as_mysql_cluster_list);
 			while ((tmp_name = list_next(check_itr))) {
 				if (!xstrcmp(tmp_name, object->name))
@@ -432,7 +434,7 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 				error("Cluster %s(%s) appears to already be in "
 				      "our cache list, not adding.", tmp_name,
 				      object->name);
-			slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+			slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
 		}
 
 		if (!external_cluster) {
@@ -448,7 +450,12 @@ extern int as_mysql_add_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			assoc->user = xstrdup("root");
 			assoc->acct = xstrdup("root");
 			assoc->is_def = 1;
-
+			/*
+			 * If the cluster is registering then don't add to the
+			 * update_list.
+			 */
+			if (object->flags & CLUSTER_FLAG_REGISTER)
+				assoc->flags |= ASSOC_FLAG_NO_UPDATE;
 			if (as_mysql_add_assocs(mysql_conn, uid, assoc_list)
 			    == SLURM_ERROR) {
 				error("Problem adding root user association");
@@ -535,6 +542,7 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 		xstrfmtcat(vals, ", control_host='%s'", cluster->control_host);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->control_port) {
@@ -542,12 +550,14 @@ extern List as_mysql_modify_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			   cluster->control_port, cluster->control_port);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->rpc_version) {
 		xstrfmtcat(vals, ", rpc_version=%u", cluster->rpc_version);
 		set++;
 		clust_reg = true;
+		fed_update = true;
 	}
 
 	if (cluster->dimensions) {
@@ -819,7 +829,8 @@ extern List as_mysql_remove_clusters(mysql_conn_t *mysql_conn, uint32_t uid,
 			   object, cluster_month_table, now);
 		rc = remove_common(mysql_conn, DBD_REMOVE_CLUSTERS, now,
 				   user_name, cluster_table, name_char,
-				   assoc_char, object, ret_list, &jobs_running);
+				   assoc_char, object, ret_list, &jobs_running,
+				   NULL);
 		xfree(object);
 		if (rc != SLURM_SUCCESS)
 			break;
@@ -1094,8 +1105,9 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
 	time_t now = time(NULL);
-	List use_cluster_list = as_mysql_cluster_list;
+	List use_cluster_list = NULL;
 	slurmdb_user_rec_t user;
+	bool locked = false;
 
 	/* if this changes you will need to edit the corresponding enum */
 	char *event_req_inx[] = {
@@ -1146,12 +1158,17 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 		else
 			xstrcat(extra, " where (");
 
+		xstrfmtcat(extra,
+			   "(CONVERT(SUBSTRING_INDEX(tres,'%d=',-1),"
+			   "UNSIGNED INTEGER)",
+			   TRES_CPU);
+
 		if (event_cond->cpus_max) {
-			xstrfmtcat(extra, "count between %u and %u)",
+			xstrfmtcat(extra, " between %u and %u))",
 				   event_cond->cpus_min, event_cond->cpus_max);
 
 		} else {
-			xstrfmtcat(extra, "count='%u')",
+			xstrfmtcat(extra, "='%u'))",
 				   event_cond->cpus_min);
 
 		}
@@ -1222,10 +1239,24 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 		else
 			xstrcat(extra, " where (");
 
-		xstrfmtcat(extra,
-			   "(time_start < %ld) "
-			   "&& (time_end >= %ld || time_end = 0))",
-			   event_cond->period_end, event_cond->period_start);
+		if (event_cond->cond_flags & SLURMDB_EVENT_COND_OPEN)
+			xstrfmtcat(extra,
+				   "(time_start >= %ld) && (time_end = 0))",
+				   event_cond->period_start);
+		else
+			xstrfmtcat(extra,
+				   "(time_start < %ld) "
+				   "&& (time_end >= %ld || time_end = 0))",
+				   event_cond->period_end,
+				   event_cond->period_start);
+
+	} else if (event_cond->cond_flags & SLURMDB_EVENT_COND_OPEN) {
+		if (extra)
+			xstrcat(extra, " && (");
+		else
+			xstrcat(extra, " where (");
+
+		xstrfmtcat(extra, "time_end = 0)");
 	}
 
 	if (event_cond->reason_list
@@ -1288,17 +1319,27 @@ extern List as_mysql_get_cluster_events(mysql_conn_t *mysql_conn, uint32_t uid,
 		xstrcat(extra, ")");
 	}
 
-	if (event_cond->cluster_list && list_count(event_cond->cluster_list))
-		use_cluster_list = event_cond->cluster_list;
 empty:
 	xfree(tmp);
 	xstrfmtcat(tmp, "%s", event_req_inx[0]);
 	for(i=1; i<EVENT_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", event_req_inx[i]);
+		bool include = true;
+		if (event_cond && event_cond->format_list)
+			include = list_find_first(event_cond->format_list,
+						  slurm_find_char_in_list,
+						  event_req_inx[i]);
+		xstrfmtcat(tmp, ", %s%s",
+			   include ? "" : "'' as ", event_req_inx[i]);
 	}
 
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_lock(&as_mysql_cluster_list_lock);
+	if (event_cond && event_cond->cluster_list &&
+	    list_count(event_cond->cluster_list)) {
+		use_cluster_list = event_cond->cluster_list;
+	} else {
+		slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+		use_cluster_list = list_shallow_copy(as_mysql_cluster_list);
+		locked = true;
+	}
 
 	ret_list = list_create(slurmdb_destroy_event_rec);
 
@@ -1358,8 +1399,10 @@ empty:
 	xfree(tmp);
 	xfree(extra);
 
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	if (locked) {
+		FREE_NULL_LIST(use_cluster_list);
+		slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
+	}
 
 	return ret_list;
 }
@@ -1523,6 +1566,7 @@ extern int as_mysql_fini_ctld(mysql_conn_t *mysql_conn,
 	time_t now = time(NULL);
 	char *query = NULL;
 	bool free_it = false;
+	bool affected_rows = false;
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
@@ -1545,7 +1589,11 @@ extern int as_mysql_fini_ctld(mysql_conn_t *mysql_conn,
 	if (rc != SLURM_SUCCESS)
 		return SLURM_ERROR;
 
-	if (!last_affected_rows(mysql_conn) || !slurmdbd_conf->track_ctld ||
+	affected_rows = last_affected_rows(mysql_conn);
+	if (affected_rows)
+		as_mysql_add_feds_to_update_list(mysql_conn);
+
+	if (!affected_rows || !slurmdbd_conf->track_ctld ||
 	    (cluster_rec->flags & CLUSTER_FLAG_EXT))
 		return rc;
 
@@ -1696,12 +1744,17 @@ add_it:
 	query = xstrdup_printf(
 		"insert into \"%s_%s\" (cluster_nodes, tres, "
 		"time_start, reason) "
-		"values ('%s', '%s', %ld, 'Cluster Registered TRES');",
+		"values ('%s', '%s', %ld, 'Cluster Registered TRES') "
+		"on duplicate key update time_end=0, tres=VALUES(tres);",
 		mysql_conn->cluster_name, event_table,
 		cluster_nodes, *tres_str_in, event_time);
 
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
+
+	if (trigger_reroll(mysql_conn, event_time))
+		debug("Need to reroll usage from %s, cluster %s changes happened before last rollup.",
+		      slurm_ctime2(&event_time), mysql_conn->cluster_name);
 
 	if (rc != SLURM_SUCCESS)
 		goto end_it;

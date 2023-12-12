@@ -49,11 +49,13 @@
 #include "src/common/bitstring.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/node_select.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/preempt.h"
+#include "src/interfaces/select.h"
+
 #include "src/slurmctld/locks.h"
-#include "src/slurmctld/preempt.h"
 #include "src/slurmctld/slurmctld.h"
 
 /* global timeslicer thread variables */
@@ -248,7 +250,7 @@ static uint16_t _get_part_gr_type(part_record_t *part_ptr)
  */
 static void _load_phys_res_cnt(void)
 {
-	uint16_t bit = 0, sock = 0;
+	uint16_t bit = 0;
 	uint32_t i, bit_index = 0;
 	node_record_t *node_ptr;
 
@@ -259,13 +261,11 @@ static void _load_phys_res_cnt(void)
 
 	gs_bits_per_node = xmalloc(node_record_count * sizeof(uint16_t));
 
-	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
-	     i++, node_ptr++) {
+	for (int i = 0; (node_ptr = next_node(&i)); i++) {
 		if (gr_type == GS_CPU) {
 			bit = node_ptr->config_ptr->cpus;
 		} else {
-			sock = node_ptr->config_ptr->tot_sockets;
-			bit  = node_ptr->config_ptr->cores * sock;
+			bit  = node_ptr->tot_cores;
 		}
 
 		gs_bits_per_node[bit_index++] = bit;
@@ -281,17 +281,16 @@ static void _load_phys_res_cnt(void)
 
 static uint16_t _get_phys_bit_cnt(int node_index)
 {
-	node_record_t *node_ptr = node_record_table_ptr + node_index;
+	node_record_t *node_ptr = node_record_table_ptr[node_index];
 
 	if (gr_type == GS_CPU)
-		return node_ptr->config_ptr->cpus;
-	return node_ptr->config_ptr->cores *
-		node_ptr->config_ptr->tot_sockets;
+		return node_ptr->cpus;
+	return node_ptr->tot_cores;
 }
 
 static uint16_t _get_socket_cnt(int node_index)
 {
-	node_record_t *node_ptr = node_record_table_ptr + node_index;
+	node_record_t *node_ptr = node_record_table_ptr[node_index];
 
 	return node_ptr->config_ptr->tot_sockets;
 }
@@ -366,26 +365,23 @@ static int _find_job_index(struct gs_part *p_ptr, uint32_t job_id)
 /* Return 1 if job "cpu count" fits in this row, else return 0 */
 static int _can_cpus_fit(job_record_t *job_ptr, struct gs_part *p_ptr)
 {
-	int i, j, size;
 	uint16_t *p_cpus, *j_cpus;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 
 	if (gr_type != GS_CPU)
 		return 0;
 
-	size = bit_size(job_res->node_bitmap);
 	p_cpus = p_ptr->active_cpus;
 	j_cpus = job_res->cpus;
 
 	if (!p_cpus || !j_cpus)
 		return 0;
 
-	for (j = 0, i = 0; i < size; i++) {
-		if (bit_test(job_res->node_bitmap, i)) {
-			if (p_cpus[i]+j_cpus[j] > _get_phys_bit_cnt(i))
-				return 0;
-			j++;
-		}
+	for (int j = 0, i = 0; next_node_bitmap(job_res->node_bitmap, &i);
+	     i++) {
+		if (p_cpus[i] + j_cpus[j] > _get_phys_bit_cnt(i))
+			return 0;
+		j++;
 	}
 	return 1;
 }
@@ -481,10 +477,8 @@ static void _add_job_to_active(job_record_t *job_ptr, struct gs_part *p_ptr)
 	job_gr_type = _get_part_gr_type(job_ptr->part_ptr);
 	if ((job_gr_type == GS_CPU2) || (job_gr_type == GS_CORE) ||
 	    (job_gr_type == GS_SOCKET)) {
-		if (p_ptr->jobs_active == 0 && p_ptr->active_resmap) {
-			uint32_t size = bit_size(p_ptr->active_resmap);
-			bit_nclear(p_ptr->active_resmap, 0, size-1);
-		}
+		if (p_ptr->jobs_active == 0 && p_ptr->active_resmap)
+			bit_clear_all(p_ptr->active_resmap);
 		add_job_to_cores(job_res, &(p_ptr->active_resmap),
 				 gs_bits_per_node);
 		if (job_gr_type == GS_SOCKET)
@@ -1130,9 +1124,6 @@ extern void gs_init(void)
 /* Terminate the gang scheduling thread and free its data structures */
 extern void gs_fini(void)
 {
-	if (!(slurm_conf.preempt_mode & PREEMPT_MODE_GANG))
-		return;
-
 	/* terminate the timeslicer thread */
 	log_flag(GANG, "gang: entering gs_fini");
 	slurm_mutex_lock(&thread_flag_mutex);
@@ -1145,6 +1136,14 @@ extern void gs_fini(void)
 		usleep(120000);
 		if (timeslicer_thread_id)
 			error("gang: timeslicer pthread still running");
+		else {
+			slurm_mutex_lock(&thread_flag_mutex);
+			thread_running = false;
+			slurm_mutex_unlock(&thread_flag_mutex);
+			slurm_mutex_lock(&term_lock);
+			thread_shutdown = false;
+			slurm_mutex_unlock(&term_lock);
+		}
 	} else {
 		slurm_mutex_unlock(&thread_flag_mutex);
 	}
@@ -1209,9 +1208,6 @@ extern void gs_wake_jobs(void)
 {
 	job_record_t *job_ptr;
 	ListIterator job_iterator;
-
-	if (!(slurm_conf.preempt_mode & PREEMPT_MODE_GANG))
-		return;
 
 	if (!job_list)	/* no jobs */
 		return;
@@ -1544,6 +1540,5 @@ static void *_timeslicer_thread(void *arg)
 	}
 
 	timeslicer_thread_id = (pthread_t) 0;
-	pthread_exit((void *) 0);
 	return NULL;
 }

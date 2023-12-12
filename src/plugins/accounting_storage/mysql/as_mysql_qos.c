@@ -125,6 +125,85 @@ static int _preemption_loop(mysql_conn_t *mysql_conn, int begin_qosid,
 	return rc;
 }
 
+static int _setup_qos_cond_limits(slurmdb_qos_cond_t *qos_cond, char **extra)
+{
+	int set = 0;
+	ListIterator itr = NULL;
+	char *object = NULL;
+
+	xassert(extra);
+	xassert(*extra);
+
+	if (!qos_cond)
+		return 0;
+
+	/*
+	 * Don't handle with_deleted here, we don't want to delete or modify
+	 * deleted things
+	 */
+	/* if (qos_cond->with_deleted) */
+	/* 	xstrcat(extra, "where (deleted=0 || deleted=1)"); */
+	/* else */
+	/* 	xstrcat(extra, "where deleted=0"); */
+
+	if (qos_cond->description_list &&
+	    list_count(qos_cond->description_list)) {
+		set = 0;
+		xstrcat(*extra, " && (");
+		itr = list_iterator_create(qos_cond->description_list);
+		while ((object = list_next(itr))) {
+			if (set)
+				xstrcat(*extra, " || ");
+			xstrfmtcat(*extra, "description='%s'", object);
+			set = 1;
+		}
+		list_iterator_destroy(itr);
+		xstrcat(*extra, ")");
+	}
+
+	if (qos_cond->id_list &&
+	    list_count(qos_cond->id_list)) {
+		set = 0;
+		xstrcat(*extra, " && (");
+		itr = list_iterator_create(qos_cond->id_list);
+		while ((object = list_next(itr))) {
+			if (set)
+				xstrcat(*extra, " || ");
+			xstrfmtcat(*extra, "id='%s'", object);
+			set = 1;
+		}
+		list_iterator_destroy(itr);
+		xstrcat(*extra, ")");
+	}
+
+	if (qos_cond->name_list &&
+	    list_count(qos_cond->name_list)) {
+		set = 0;
+		xstrcat(*extra, " && (");
+		itr = list_iterator_create(qos_cond->name_list);
+		while ((object = list_next(itr))) {
+			if (set)
+				xstrcat(*extra, " || ");
+			xstrfmtcat(*extra, "name='%s'", object);
+			set = 1;
+		}
+		list_iterator_destroy(itr);
+		xstrcat(*extra, ")");
+	}
+
+	if ((qos_cond->preempt_mode != NO_VAL16) && qos_cond->preempt_mode) {
+		set = 1;
+		xstrfmtcat(*extra, " && (preempt_mode&%d",
+			   qos_cond->preempt_mode);
+		if (qos_cond->preempt_mode & PREEMPT_MODE_COND_OFF)
+			xstrcat(*extra, " || preempt_mode=0");
+		xstrcat(*extra, ")");
+	}
+
+
+	return set;
+}
+
 static int _setup_qos_limits(slurmdb_qos_rec_t *qos,
 			     char **cols, char **vals,
 			     char **extra, char **added_preempt,
@@ -181,6 +260,8 @@ static int _setup_qos_limits(slurmdb_qos_rec_t *qos,
 			qos->usage_factor = 1;
 		if (fuzzy_equal(qos->usage_thres, NO_VAL))
 			qos->usage_thres = (double)INFINITE;
+		if (fuzzy_equal(qos->limit_factor, NO_VAL))
+			qos->limit_factor = INFINITE;
 	}
 
 	if (qos->description) {
@@ -431,9 +512,7 @@ static int _setup_qos_limits(slurmdb_qos_rec_t *qos,
 			   qos->preempt_exempt_time);
 	}
 
-	if ((qos->preempt_mode != NO_VAL16)
-	    && ((int16_t)qos->preempt_mode >= 0)) {
-		qos->preempt_mode &= (~PREEMPT_MODE_GANG);
+	if (qos->preempt_mode != NO_VAL16) {
 		xstrcat(*cols, ", preempt_mode");
 		xstrfmtcat(*vals, ", %u", qos->preempt_mode);
 		xstrfmtcat(*extra, ", preempt_mode=%u", qos->preempt_mode);
@@ -470,6 +549,17 @@ static int _setup_qos_limits(slurmdb_qos_rec_t *qos,
 		xstrcat(*cols, ", usage_thres");
 		xstrfmtcat(*vals, ", %f", qos->usage_thres);
 		xstrfmtcat(*extra, ", usage_thres=%f", qos->usage_thres);
+	}
+
+	if (fuzzy_equal(qos->limit_factor, INFINITE)) {
+		xstrcat(*cols, ", limit_factor");
+		xstrcat(*vals, ", NULL");
+		xstrcat(*extra, ", limit_factor=NULL");
+	} else if (!fuzzy_equal(qos->limit_factor, NO_VAL)
+		   && (qos->limit_factor > 0)) {
+		xstrcat(*cols, ", limit_factor");
+		xstrfmtcat(*vals, ", %f", qos->limit_factor);
+		xstrfmtcat(*extra, ", limit_factor=%f", qos->limit_factor);
 	}
 
 	/* When modifying anything below this comment it happens in
@@ -745,14 +835,13 @@ extern List as_mysql_modify_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 				slurmdb_qos_cond_t *qos_cond,
 				slurmdb_qos_rec_t *qos)
 {
-	ListIterator itr = NULL;
 	List ret_list = NULL;
 	int rc = SLURM_SUCCESS;
 	char *object = NULL;
 	char *vals = NULL, *extra = NULL, *query = NULL, *name_char = NULL;
 	time_t now = time(NULL);
 	char *user_name = NULL;
-	int set = 0, i;
+	int i;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
 	char *tmp_char1=NULL, *tmp_char2=NULL;
@@ -778,50 +867,7 @@ extern List as_mysql_modify_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	xstrcat(extra, "where deleted=0");
 
-	if (qos_cond->description_list
-	    && list_count(qos_cond->description_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->description_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "description='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
-
-	if (qos_cond->id_list
-	    && list_count(qos_cond->id_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->id_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "id='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
-
-	if (qos_cond->name_list
-	    && list_count(qos_cond->name_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->name_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "name='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
+	_setup_qos_cond_limits(qos_cond, &extra);
 
 	_setup_qos_limits(qos, &tmp_char1, &tmp_char2,
 			  &vals, &added_preempt, 0);
@@ -962,10 +1008,8 @@ extern List as_mysql_modify_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 				} else {
 					if (!cleared) {
 						cleared = 1;
-						bit_nclear(
-							qos_rec->preempt_bitstr,
-							0,
-							qos_cnt-1);
+						bit_clear_all(
+							qos_rec->preempt_bitstr);
 					}
 
 					bit_set(qos_rec->preempt_bitstr,
@@ -979,6 +1023,7 @@ extern List as_mysql_modify_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 
 		qos_rec->usage_factor = qos->usage_factor;
 		qos_rec->usage_thres = qos->usage_thres;
+		qos_rec->limit_factor = qos->limit_factor;
 
 		if (addto_update_list(mysql_conn->update_list,
 				      SLURMDB_MODIFY_QOS, qos_rec)
@@ -1036,9 +1081,9 @@ extern List as_mysql_remove_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 		*name_char = NULL, *assoc_char = NULL;
 	time_t now = time(NULL);
 	char *user_name = NULL;
-	int set = 0;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
+	List cluster_list_tmp = NULL;
 
 	if (!qos_cond) {
 		error("we need something to change");
@@ -1055,54 +1100,8 @@ extern List as_mysql_remove_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 	}
 
 	xstrcat(extra, "where deleted=0");
-	if (qos_cond->description_list
-	    && list_count(qos_cond->description_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->description_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "description='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
 
-	if (qos_cond->id_list
-	    && list_count(qos_cond->id_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->id_list);
-		while ((object = list_next(itr))) {
-			if (!object[0])
-				continue;
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "id='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
-
-	if (qos_cond->name_list
-	    && list_count(qos_cond->name_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->name_list);
-		while ((object = list_next(itr))) {
-			if (!object[0])
-				continue;
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "name='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
+	_setup_qos_cond_limits(qos_cond, &extra);
 
 	if (!extra) {
 		error("Nothing to remove");
@@ -1158,9 +1157,10 @@ extern List as_mysql_remove_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	user_name = uid_to_string((uid_t) uid);
 
-	slurm_mutex_lock(&as_mysql_cluster_list_lock);
-	if (list_count(as_mysql_cluster_list)) {
-		itr = list_iterator_create(as_mysql_cluster_list);
+	slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+	cluster_list_tmp = list_shallow_copy(as_mysql_cluster_list);
+	if (list_count(cluster_list_tmp)) {
+		itr = list_iterator_create(cluster_list_tmp);
 		while ((object = list_next(itr))) {
 			/*
 			 * remove this qos from all the associations
@@ -1180,7 +1180,8 @@ extern List as_mysql_remove_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 
 			if ((rc = remove_common(mysql_conn, DBD_REMOVE_QOS, now,
 						user_name, qos_table, name_char,
-						assoc_char, object, NULL, NULL))
+						assoc_char, object, NULL, NULL,
+						NULL))
 			    != SLURM_SUCCESS)
 				break;
 		}
@@ -1188,9 +1189,10 @@ extern List as_mysql_remove_qos(mysql_conn_t *mysql_conn, uint32_t uid,
 	} else
 		rc = remove_common(mysql_conn, DBD_REMOVE_QOS, now,
 				   user_name, qos_table, name_char,
-				   assoc_char, NULL, NULL, NULL);
+				   assoc_char, NULL, NULL, NULL, NULL);
 
-	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	FREE_NULL_LIST(cluster_list_tmp);
+	slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
 
 	xfree(extra);
 	xfree(assoc_char);
@@ -1211,9 +1213,6 @@ extern List as_mysql_get_qos(mysql_conn_t *mysql_conn, uid_t uid,
 	char *extra = NULL;
 	char *tmp = NULL;
 	List qos_list = NULL;
-	ListIterator itr = NULL;
-	char *object = NULL;
-	int set = 0;
 	int i=0;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
@@ -1257,6 +1256,7 @@ extern List as_mysql_get_qos(mysql_conn_t *mysql_conn, uid_t uid,
 		"usage_factor",
 		"usage_thres",
 		"min_tres_pj",
+		"limit_factor",
 	};
 	enum {
 		QOS_REQ_NAME,
@@ -1293,6 +1293,7 @@ extern List as_mysql_get_qos(mysql_conn_t *mysql_conn, uid_t uid,
 		QOS_REQ_UF,
 		QOS_REQ_UT,
 		QOS_REQ_MITPJ,
+		QOS_REQ_LF,
 		QOS_REQ_COUNT
 	};
 
@@ -1309,51 +1310,7 @@ extern List as_mysql_get_qos(mysql_conn_t *mysql_conn, uid_t uid,
 	else
 		xstrcat(extra, "where deleted=0");
 
-
-	if (qos_cond->description_list
-	    && list_count(qos_cond->description_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->description_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "description='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
-
-	if (qos_cond->id_list
-	    && list_count(qos_cond->id_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->id_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "id='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
-
-	if (qos_cond->name_list
-	    && list_count(qos_cond->name_list)) {
-		set = 0;
-		xstrcat(extra, " && (");
-		itr = list_iterator_create(qos_cond->name_list);
-		while ((object = list_next(itr))) {
-			if (set)
-				xstrcat(extra, " || ");
-			xstrfmtcat(extra, "name='%s'", object);
-			set = 1;
-		}
-		list_iterator_destroy(itr);
-		xstrcat(extra, ")");
-	}
+	_setup_qos_cond_limits(qos_cond, &extra);
 
 empty:
 
@@ -1512,6 +1469,11 @@ empty:
 
 		if (row[QOS_REQ_MITPJ][0])
 			qos->min_tres_pj = xstrdup(row[QOS_REQ_MITPJ]);
+
+		if (row[QOS_REQ_LF])
+			qos->limit_factor = atof(row[QOS_REQ_LF]);
+		else
+			qos->limit_factor = (double)INFINITE;
 	}
 	mysql_free_result(result);
 

@@ -47,6 +47,7 @@
 
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/net.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xmalloc.h"
@@ -69,11 +70,11 @@ static void * _pty_thread(void *arg);
 
 /* Set pty window size in job structure
  * RET 0 on success, -1 on error */
-int set_winsize(srun_job_t *job)
+int set_winsize(int fd, srun_job_t *job)
 {
 	struct winsize ws;
 
-	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws)) {
+	if (ioctl(fd, TIOCGWINSZ, &ws)) {
 		error("ioctl(TIOCGWINSZ): %m");
 		return -1;
 	}
@@ -84,7 +85,7 @@ int set_winsize(srun_job_t *job)
 	return 0;
 }
 
-/* SIGWINCH should already be blocked by srun/libsrun/srun_job.c */
+/* SIGWINCH should already be blocked by srun/srun_job.c */
 void block_sigwinch(void)
 {
 	xsignal_block(pty_sigarray);
@@ -154,6 +155,7 @@ static void *_pty_thread(void *arg)
 		return NULL;
 	}
 
+	net_set_keep_alive(fd);
 	while (job->state <= SRUN_JOB_RUNNING) {
 		debug2("waiting for SIGWINCH");
 		if ((poll(NULL, 0, -1) < 1) && (errno != EINTR)) {
@@ -161,7 +163,7 @@ static void *_pty_thread(void *arg)
 			continue;
 		}
 		if (winch) {
-			set_winsize(job);
+			set_winsize(STDOUT_FILENO, job);
 			_notify_winsize_change(fd, job);
 		}
 		winch = 0;

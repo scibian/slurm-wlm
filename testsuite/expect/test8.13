@@ -71,7 +71,7 @@ proc set_user_resv_delete {} {
 		reconfigure -fail
 
 		if {![param_contains [get_config_param "SlurmctldParameters"] "user_resv_delete"]} {
-			fail "could not set user_resv_delete as a SlurmctldParameter"
+			fail "Could not set user_resv_delete as a SlurmctldParameter"
 		}
 	}
 	log_info "user_resv_delete set in SlurmctldParameters"
@@ -86,7 +86,7 @@ proc unset_user_resv_delete {} {
 		reconfigure -fail
 
 		if {[param_contains [get_config_param "SlurmctldParameters"] "user_resv_delete"]} {
-			fail "could not unset user_resv_delete as a SlurmctldParameter"
+			fail "Could not unset user_resv_delete as a SlurmctldParameter"
 		}
 	}
 	log_info "user_resv_delete unset in SlurmctldParameters"
@@ -143,9 +143,8 @@ proc test_user_resv_delete {AccountingStorageEnforce test_user resv_user expecte
 		run_command -subtest -user $test_user "$scontrol delete reservationname=$resv_name"
 		run_command -subtest -xfail "$scontrol show reservationname=$resv_name"
 	} else {
-		log_info "Confirm that reservation non-member user CANNOT not delete reservation"
-		# TODO: Add -subtest -xfail once bug 10676 is fixed (>=21.08)
-		set output [run_command_output -user $test_user "$scontrol delete reservationname=$resv_name"]
+		log_info "Confirm that reservation non-member user CANNOT delete reservation"
+		set output [run_command_output -subtest -xfail -user $test_user "$scontrol delete reservationname=$resv_name"]
 		set rc [regexp -all -nocase {invalid user id} $output]
 		subtest {$rc == 1} "Message \"invalid user id\" should be shown when $test_user attempt to delete reservation $resv_name"
 		run_command -subtest "$scontrol show reservationname=$resv_name"

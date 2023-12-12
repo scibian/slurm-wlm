@@ -58,10 +58,13 @@ char *job_req_inx[] = {
 	"t1.array_max_tasks",
 	"t1.array_task_str",
 	"t1.constraints",
+	"t1.container",
 	"t1.cpus_req",
 	"t1.derived_ec",
 	"t1.derived_es",
 	"t1.exit_code",
+	"t1.extra",
+	"t1.failed_node",
 	"t1.flags",
 	"t1.id_array_job",
 	"t1.id_array_task",
@@ -79,6 +82,7 @@ char *job_req_inx[] = {
 	"t1.job_db_inx",
 	"t1.job_name",
 	"t1.kill_requid",
+	"t1.licenses",
 	"t1.mem_req",
 	"t1.node_inx",
 	"t1.nodelist",
@@ -94,13 +98,15 @@ char *job_req_inx[] = {
 	"t1.time_submit",
 	"t1.time_suspended",
 	"t1.timelimit",
-	"t1.track_steps",
 	"t1.wckey",
 	"t1.gres_used",
 	"t1.tres_alloc",
 	"t1.tres_req",
 	"t1.work_dir",
 	"t1.mcs_label",
+	"t4.batch_script",
+	"t1.submit_line",
+	"t4.env_vars",
 	"t2.acct",
 	"t2.lft",
 	"t2.user"
@@ -112,10 +118,13 @@ enum {
 	JOB_REQ_ARRAY_MAX,
 	JOB_REQ_ARRAY_STR,
 	JOB_REQ_CONSTRAINTS,
+	JOB_REQ_CONTAINER,
 	JOB_REQ_REQ_CPUS,
 	JOB_REQ_DERIVED_EC,
 	JOB_REQ_DERIVED_ES,
 	JOB_REQ_EXIT_CODE,
+	JOB_REQ_EXTRA,
+	JOB_REQ_FAILED_NODE,
 	JOB_REQ_FLAGS,
 	JOB_REQ_ARRAYJOBID,
 	JOB_REQ_ARRAYTASKID,
@@ -133,6 +142,7 @@ enum {
 	JOB_REQ_DB_INX,
 	JOB_REQ_NAME,
 	JOB_REQ_KILL_REQUID,
+	JOB_REQ_LICENSES,
 	JOB_REQ_REQ_MEM,
 	JOB_REQ_NODE_INX,
 	JOB_REQ_NODELIST,
@@ -148,13 +158,15 @@ enum {
 	JOB_REQ_SUBMIT,
 	JOB_REQ_SUSPENDED,
 	JOB_REQ_TIMELIMIT,
-	JOB_REQ_TRACKSTEPS,
 	JOB_REQ_WCKEY,
 	JOB_REQ_GRES_USED,
 	JOB_REQ_TRESA,
 	JOB_REQ_TRESR,
 	JOB_REQ_WORK_DIR,
 	JOB_REQ_MCS_LABEL,
+	JOB_REQ_SCRIPT,
+	JOB_REQ_SUBMIT_LINE,
+	JOB_REQ_ENV,
 	JOB_REQ_ACCOUNT,
 	JOB_REQ_LFT,
 	JOB_REQ_USER_NAME,
@@ -184,9 +196,11 @@ char *step_req_inx[] = {
 	"t1.sys_usec",
 	"t1.act_cpufreq",
 	"t1.consumed_energy",
+	"t1.container",
 	"t1.req_cpufreq_min",
 	"t1.req_cpufreq",
 	"t1.req_cpufreq_gov",
+	"t1.submit_line",
 	"t1.tres_alloc",
 	"t1.tres_usage_in_max",
 	"t1.tres_usage_in_max_taskid",
@@ -227,9 +241,11 @@ enum {
 	STEP_REQ_SYS_USEC,
 	STEP_REQ_ACT_CPUFREQ,
 	STEP_REQ_CONSUMED_ENERGY,
+	STEP_REQ_CONTAINER,
 	STEP_REQ_REQ_CPUFREQ_MIN,
 	STEP_REQ_REQ_CPUFREQ_MAX,
 	STEP_REQ_REQ_CPUFREQ_GOV,
+	STEP_REQ_SUBMIT_LINE,
 	STEP_REQ_TRES,
 	STEP_REQ_TRES_USAGE_IN_MAX,
 	STEP_REQ_TRES_USAGE_IN_MAX_TASKID,
@@ -302,12 +318,12 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 		if (job_ids) {
 			if (job_cond->flags & JOBCOND_FLAG_WHOLE_HETJOB)
 				xstrfmtcat(*extra, "t1.id_job in (%s) || "
-					   "(t1.het_job_offset<>%u && "
 					   "t1.het_job_id in (select "
 					   "t4.het_job_id from \"%s_%s\" as "
-					   "t4 where t4.id_job in (%s)))",
-					   job_ids, NO_VAL, cluster_name,
-					   job_table, job_ids);
+					   "t4 where t4.id_job in (%s) && "
+					   "t4.het_job_id)",
+					   job_ids, cluster_name, job_table,
+					   job_ids);
 			else if (job_cond->flags & JOBCOND_FLAG_NO_WHOLE_HETJOB)
 				xstrfmtcat(*extra, "t1.id_job in (%s)",
 					   job_ids);
@@ -480,8 +496,13 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 	/* This is here to make sure we are looking at only this user
 	 * if this flag is set.  We also include any accounts they may be
 	 * coordinator of.
+	 *
+	 * This clause must be kept in sync with the access check in
+	 * as_mysql_jobacct_process_get_jobs().
 	 */
-	if (!is_admin && (slurm_conf.private_data & PRIVATE_DATA_JOBS)) {
+	if (!is_admin && ((slurm_conf.private_data & PRIVATE_DATA_JOBS) ||
+			  (job_cond->flags & JOBCOND_FLAG_SCRIPT) ||
+			  (job_cond->flags & JOBCOND_FLAG_ENV))) {
 		query = xstrdup_printf("select lft from \"%s_%s\" "
 				       "where user='%s'",
 				       cluster_name, assoc_table, user->name);
@@ -560,6 +581,17 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			       job_fields, cluster_name, job_table,
 			       cluster_name, assoc_table,
 			       cluster_name, resv_table);
+
+	if (job_cond->flags & JOBCOND_FLAG_SCRIPT)
+		xstrfmtcat(query,
+			   " left join \"%s_%s\" as t4 "
+			   "on t1.script_hash_inx=t4.hash_inx",
+			   cluster_name, job_script_table);
+	else if (job_cond->flags & JOBCOND_FLAG_ENV)
+		xstrfmtcat(query,
+			   " left join \"%s_%s\" as t4 "
+			   "on t1.env_hash_inx=t4.hash_inx",
+			   cluster_name, job_env_table);
 
 	if (job_cond->flags & JOBCOND_FLAG_RUNAWAY) {
 		if (extra)
@@ -652,6 +684,14 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		if (!job->array_job_id && !job->array_task_id)
 			job->array_task_id = NO_VAL;
 
+		/*
+		 * This shouldn't happen with new jobs.
+		 * If older jobs have het_job_id == 0 and het_job_offset == 0,
+		 * then correct het_job_offset to be NO_VAL.
+		 */
+		if (!job->het_job_id && !job->het_job_offset)
+			job->het_job_offset = NO_VAL;
+
 		if (row[JOB_REQ_RESV_NAME] && row[JOB_REQ_RESV_NAME][0])
 			job->resv_name = xstrdup(row[JOB_REQ_RESV_NAME]);
 
@@ -700,10 +740,16 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->end = slurm_atoul(row[JOB_REQ_END]);
 		job->timelimit = slurm_atoul(row[JOB_REQ_TIMELIMIT]);
 
+		job->script = xstrdup(row[JOB_REQ_SCRIPT]);
+
+		job->env = xstrdup(row[JOB_REQ_ENV]);
+
+		job->submit_line = xstrdup(row[JOB_REQ_SUBMIT_LINE]);
+
 		/* since the job->end could be set later end it here */
 		if (job->end) {
 			job_ended = 1;
-			if (!job->start || (job->start > job->end))
+			if (job->start > job->end)
 				job->start = job->end;
 		}
 
@@ -802,12 +848,25 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->jobname = xstrdup(row[JOB_REQ_NAME]);
 		job->gid = slurm_atoul(row[JOB_REQ_GID]);
 		job->exitcode = slurm_atoul(row[JOB_REQ_EXIT_CODE]);
+		job->failed_node = xstrdup(row[JOB_REQ_FAILED_NODE]);
 		job->derived_ec = slurm_atoul(row[JOB_REQ_DERIVED_EC]);
 		job->derived_es = xstrdup(row[JOB_REQ_DERIVED_ES]);
 		job->admin_comment = xstrdup(row[JOB_REQ_ADMIN_COMMENT]);
 		job->system_comment = xstrdup(row[JOB_REQ_SYSTEM_COMMENT]);
 		job->constraints = xstrdup(row[JOB_REQ_CONSTRAINTS]);
+		job->container = xstrdup(row[JOB_REQ_CONTAINER]);
+		job->extra = xstrdup(row[JOB_REQ_EXTRA]);
+		job->licenses = xstrdup(row[JOB_REQ_LICENSES]);
 		job->flags = slurm_atoul(row[JOB_REQ_FLAGS]);
+
+		/*
+		 * This tells us we never had a start time so the job was
+		 * canceled before it ran.
+		 */
+		if (!job->start && job->end &&
+		    (job->flags & SLURMDB_JOB_FLAG_START_R))
+			job->start = NO_VAL;
+
 		job->state_reason_prev = slurm_atoul(row[JOB_REQ_STATE_REASON]);
 
 		if (row[JOB_REQ_PARTITION])
@@ -821,11 +880,13 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			job->nodes = xstrdup("(unknown)");
 		}
 
-		job->track_steps = slurm_atoul(row[JOB_REQ_TRACKSTEPS]);
 		job->priority = slurm_atoul(row[JOB_REQ_PRIORITY]);
 		job->req_cpus = slurm_atoul(row[JOB_REQ_REQ_CPUS]);
 		job->req_mem = slurm_atoull(row[JOB_REQ_REQ_MEM]);
-		job->requid = slurm_atoul(row[JOB_REQ_KILL_REQUID]);
+		if (!row[JOB_REQ_KILL_REQUID])
+			job->requid = INFINITE;
+		else
+			job->requid = slurm_atoul(row[JOB_REQ_KILL_REQUID]);
 		job->qosid = slurm_atoul(row[JOB_REQ_QOS]);
 		job->show_full = 1;
 
@@ -1003,15 +1064,21 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 
 			step->stepname = xstrdup(step_row[STEP_REQ_NAME]);
 			step->nodes = xstrdup(step_row[STEP_REQ_NODELIST]);
-			step->requid =
-				slurm_atoul(step_row[STEP_REQ_KILL_REQUID]);
+			if (!step_row[STEP_REQ_KILL_REQUID])
+				step->requid = INFINITE;
+			else
+				step->requid = slurm_atoul(
+					step_row[STEP_REQ_KILL_REQUID]);
 
-			step->user_cpu_sec = slurm_atoul(
+			step->submit_line =
+				xstrdup(step_row[STEP_REQ_SUBMIT_LINE]);
+
+			step->user_cpu_sec = slurm_atoull(
 				step_row[STEP_REQ_USER_SEC]);
 			step->user_cpu_usec = slurm_atoul(
 				step_row[STEP_REQ_USER_USEC]);
-			step->sys_cpu_sec =
-				slurm_atoul(step_row[STEP_REQ_SYS_SEC]);
+			step->sys_cpu_sec =slurm_atoull(
+				step_row[STEP_REQ_SYS_SEC]);
 			step->sys_cpu_usec = slurm_atoul(
 				step_row[STEP_REQ_SYS_USEC]);
 			step->tot_cpu_sec +=
@@ -1070,37 +1137,13 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 				atof(step_row[STEP_REQ_ACT_CPUFREQ]);
 			step->stats.consumed_energy = slurm_atoull(
 				step_row[STEP_REQ_CONSUMED_ENERGY]);
+			step->container = xstrdup(step_row[STEP_REQ_CONTAINER]);
 
 			if (step_row[STEP_REQ_TRES])
 				step->tres_alloc_str =
 					xstrdup(step_row[STEP_REQ_TRES]);
 		}
 		mysql_free_result(step_result);
-
-		if (!job->track_steps) {
-			uint64_t j_cpus, s_cpus;
-			/* If we don't have track_steps we want to see
-			   if we have multiple steps.  If we only have
-			   1 step check the job name against the step
-			   name in most all cases it will be
-			   different.  If it is different print out
-			   the step separate.  It could also be a single
-			   step/allocation where the job was allocated more than
-			   the step requested (eg. CR_Socket).
-			*/
-			if (list_count(job->steps) > 1)
-				job->track_steps = 1;
-			else if (step &&
-				 (xstrcmp(step->stepname, job->jobname) ||
-				  (((j_cpus = slurmdb_find_tres_count_in_string(
-					     job->tres_alloc_str, TRES_CPU))
-				    != INFINITE64) &&
-				   ((s_cpus = slurmdb_find_tres_count_in_string(
-					     step->tres_alloc_str, TRES_CPU))
-				    != INFINITE64) &&
-				  j_cpus != s_cpus)))
-					job->track_steps = 1;
-		}
 	skip_steps:
 		/* need to reset here to make the above test valid */
 		step = NULL;
@@ -1200,7 +1243,7 @@ extern List setup_cluster_list_with_inx(mysql_conn_t *mysql_conn,
 		if (bit_ffs(local_cluster->asked_bitmap) != -1) {
 			list_append(local_cluster_list, local_cluster);
 			if (local_cluster->end == 0) {
-				local_cluster->end = now;
+				local_cluster->end = now + 1;
 				(*curr_cluster) = local_cluster;
 			} else if (!(*curr_cluster)
 				   || (((local_cluster_t *)(*curr_cluster))->end
@@ -1352,7 +1395,7 @@ no_resv:
 
 	/* Don't show revoked sibling federated jobs w/out -D */
 	if (!(job_cond->flags & JOBCOND_FLAG_DUP))
-		xstrfmtcat(*extra, " %s (t1.state != %d)",
+		xstrfmtcat(*extra, " %s (t1.state != %"PRIu64")",
 			   *extra ? "&&" : "where",
 			   JOB_REVOKED);
 
@@ -1557,12 +1600,17 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 		else
 			xstrcat(*extra, " where (");
 
+		xstrfmtcat(*extra,
+			   "(CONVERT(SUBSTRING_INDEX(t1.tres_alloc,'%d=',-1),"
+			   "UNSIGNED INTEGER)",
+			   TRES_CPU);
+
 		if (job_cond->cpus_max) {
-			xstrfmtcat(*extra, "(t1.ext_1 between %u and %u))",
+			xstrfmtcat(*extra, " between %u and %u))",
 				   job_cond->cpus_min, job_cond->cpus_max);
 
 		} else {
-			xstrfmtcat(*extra, "(t1.ext_1='%u'))",
+			xstrfmtcat(*extra, "='%u'))",
 				   job_cond->cpus_min);
 
 		}
@@ -1604,6 +1652,7 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 		}
 	}
 
+	/* Time window should be exclusive of the end time, ie [start,end) */
 	if (!job_cond->state_list || !list_count(job_cond->state_list)) {
 		/*
 		 * There's an explicit list of jobs, so don't hide
@@ -1619,7 +1668,9 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 					xstrcat(*extra, " where (");
 
 				xstrfmtcat(*extra,
-					   "(t1.time_submit <= %ld) && (t1.time_end >= %ld || t1.time_end = 0))",
+					   "(t1.time_submit < %ld) && "
+					   "(t1.time_end >= %ld ||"
+					   " t1.time_end = 0))",
 					   job_cond->usage_end,
 					   job_cond->usage_start);
 			}
@@ -1686,15 +1737,22 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 	List job_list = NULL;
 	slurmdb_user_rec_t user;
 	int only_pending = 0;
-	List use_cluster_list = as_mysql_cluster_list;
+	List use_cluster_list = NULL;
 	char *cluster_name;
+	bool locked = false;
 	assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK,
 				   READ_LOCK, NO_LOCK, NO_LOCK };
 
 	memset(&user, 0, sizeof(slurmdb_user_rec_t));
 	user.uid = uid;
 
-	if (slurm_conf.private_data & PRIVATE_DATA_JOBS) {
+	/*
+	 * This clause must be kept in sync with the access check in
+	 * _cluster_get_jobs().
+	 */
+	if ((slurm_conf.private_data & PRIVATE_DATA_JOBS) ||
+	    (job_cond->flags & JOBCOND_FLAG_SCRIPT) ||
+	    (job_cond->flags & JOBCOND_FLAG_ENV)) {
 		if (!(is_admin = is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
 			/*
@@ -1715,12 +1773,36 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 	    && (slurm_atoul(list_peek(job_cond->state_list)) == JOB_PENDING))
 		only_pending = 1;
 
+	if (job_cond &&
+	    (!job_cond->step_list || !list_count(job_cond->step_list))) {
+		char *reason = NULL;
+
+		if (job_cond->flags & JOBCOND_FLAG_SCRIPT)
+			reason = "job scripts";
+
+		if (job_cond->flags & JOBCOND_FLAG_ENV)
+			reason = "job environment";
+
+		if (reason) {
+			error("User %u is requesting %s, but no job requested, this is not allowed",
+			      user.uid, reason);
+			return NULL;
+		}
+	}
+
 	setup_job_cond_limits(job_cond, &extra);
 
 	xfree(tmp);
 	xstrfmtcat(tmp, "%s", job_req_inx[0]);
 	for (i = 1; i < JOB_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", job_req_inx[i]);
+		/* Only get the script if requesting it */
+		if (((i == JOB_REQ_SCRIPT) &&
+		     (!job_cond || !(job_cond->flags & JOBCOND_FLAG_SCRIPT))) ||
+		    ((i == JOB_REQ_ENV) &&
+		     (!job_cond || !(job_cond->flags & JOBCOND_FLAG_ENV))))
+			xstrcat(tmp, ", ''");
+		else
+			xstrfmtcat(tmp, ", %s", job_req_inx[i]);
 	}
 
 	xfree(tmp2);
@@ -1732,8 +1814,11 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 	if (job_cond
 	    && job_cond->cluster_list && list_count(job_cond->cluster_list))
 		use_cluster_list = job_cond->cluster_list;
-	else
-		slurm_mutex_lock(&as_mysql_cluster_list_lock);
+	else {
+		slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+		use_cluster_list = list_shallow_copy(as_mysql_cluster_list);
+		locked = true;
+	}
 
 	assoc_mgr_lock(&locks);
 
@@ -1753,8 +1838,10 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 
 	assoc_mgr_unlock(&locks);
 
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	if (locked) {
+		FREE_NULL_LIST(use_cluster_list);
+		slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
+	}
 
 	xfree(tmp);
 	xfree(tmp2);
