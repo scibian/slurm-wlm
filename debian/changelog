@@ -1,3 +1,10 @@
+slurm-wlm (23.02.6-1sci8u1) scibian8; urgency=medium
+
+  * update scibian specific patches
+  * suppress kafka related packages
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 12 Dec 2023 18:08:06 +0100
+
 slurm-wlm (23.02.6-1) unstable; urgency=medium
 
   * New upstream release fixes CVE-2023-41914
