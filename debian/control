@@ -586,35 +586,6 @@ Description: Slurm JWT authentication plugin development files
  This package contains development files for the JSON Web Tokens (JWT)
  Slurm authentication plugin.
 
-Package: slurm-wlm-kafka-plugin
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins (= ${binary:Version})
-Description: Slurm Kafka job-completion plugin
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains the Kafka Slurm job-completion plugin.
-
-Package: slurm-wlm-kafka-plugin-dev
-Section: devel
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins-dev (= ${binary:Version}),
- slurm-wlm-kafka-plugin (= ${binary:Version})
-Description: Slurm Kafka job-completion plugin development files
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains development files for the Kafka Slurm
- job-completion plugin.
-
 Package: slurm-wlm-mysql-plugin
 Architecture: any
 Depends:
