@@ -9,13 +9,11 @@ We revert this patch for now until we find a better fix.
 
 Upstream: https://github.com/SchedMD/slurm/commit/b31fa177c1ca26dcd2d5cd952e692ef87d95b528
 
-Index: slurm-llnl/doc/man/man5/slurm.conf.5
-===================================================================
---- slurm-llnl.orig/doc/man/man5/slurm.conf.5
-+++ slurm-llnl/doc/man/man5/slurm.conf.5
-@@ -1083,8 +1083,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
+--- a/doc/man/man5/slurm.conf.5
++++ b/doc/man/man5/slurm.conf.5
+@@ -1464,8 +1464,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
  on all nodes to minimize its impact upon parallel programs.
- This program is will be killed if it does not terminate normally within
+ This program will be killed if it does not terminate normally within
  60 seconds.
 -This program will also be executed when the slurmd daemon is first started and
 -before it registers with the slurmctld daemon.
@@ -24,22 +22,20 @@ Index: slurm-llnl/doc/man/man5/slurm.conf.5
 +slurmctld until this has been satisfied.
 +The return code is otherwise ignored.
  By default, no program will be executed.
+ .IP
  
- .TP
-Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
-===================================================================
---- slurm-llnl.orig/src/slurmd/slurmd/slurmd.c
-+++ slurm-llnl/src/slurmd/slurmd/slurmd.c
-@@ -123,6 +123,8 @@
- #  define MAXHOSTNAMELEN	64
- #endif
+--- a/src/slurmd/slurmd/slurmd.c
++++ b/src/slurmd/slurmd/slurmd.c
+@@ -120,6 +120,8 @@
+ #include "src/slurmd/slurmd/req.h"
+ #include "src/slurmd/slurmd/slurmd.h"
  
 +#define HEALTH_RETRY_DELAY 10
 +
  #define MAX_THREADS		256
  
  #define _free_and_set(__dst, __src)		\
-@@ -217,6 +219,7 @@ static void      _usage(void);
+@@ -215,6 +217,7 @@ static void      _usage(void);
  static void      _usr_handler(int);
  static int       _validate_and_convert_cpu_list(void);
  static void      _wait_for_all_threads(int secs);
@@ -47,7 +43,7 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
  
  /**************************************************************************\
   * To test for memory leaks, set MEMORY_LEAK_DEBUG to 1 using
-@@ -394,7 +397,8 @@ main (int argc, char **argv)
+@@ -381,7 +384,8 @@ main (int argc, char **argv)
  	slurm_conf_install_fork_handlers();
  	record_launched_jobs();
  
@@ -57,7 +53,8 @@ Index: slurm-llnl/src/slurmd/slurmd/slurmd.c
  
  	slurm_thread_create_detached(NULL, _registration_engine, NULL);
  
-@@ -2605,5 +2610,27 @@ static void _resource_spec_fini(void)
+@@ -2588,6 +2592,28 @@ static void _resource_spec_fini(void)
+ }
  
  /*
 + * Wait for health check to execute successfully
