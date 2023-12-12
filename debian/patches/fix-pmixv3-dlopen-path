@@ -4,12 +4,12 @@ Forwarded: no
 Last-Update: 2022-02-01
 
 diff --git a/src/plugins/mpi/pmix/mpi_pmix.c b/src/plugins/mpi/pmix/mpi_pmix.c
-index 69c5191..d7d4f49 100644
+index 2c881d6d..ec5b9fbc 100644
 --- a/src/plugins/mpi/pmix/mpi_pmix.c
 +++ b/src/plugins/mpi/pmix/mpi_pmix.c
-@@ -137,7 +137,7 @@ static void *_libpmix_open(void)
- #elif defined PMIXP_V4_LIBPATH
- 	xstrfmtcat(full_path, "%s/", PMIXP_V4_LIBPATH);
+@@ -139,7 +139,7 @@ static void *_libpmix_open(void)
+ #elif defined PMIXP_V5_LIBPATH
+ 	xstrfmtcat(full_path, "%s/", PMIXP_V5_LIBPATH);
  #endif
 -	xstrfmtcat(full_path, "libpmix.so");
 +	xstrfmtcat(full_path, "libpmix.so.2");
