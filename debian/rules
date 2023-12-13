@@ -20,7 +20,7 @@ ifneq ($(DEB_TARGET_ARCH_BITS),64)
 endif
 
 %:
-	dh $@ --builddirectory --with bash-completion
+	dh $@ --builddirectory --parallel --with systemd
 
 override_dh_auto_clean:
 	dh_auto_clean
