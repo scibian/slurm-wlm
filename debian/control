@@ -323,7 +323,6 @@ Depends:
  slurm-wlm-hdf5-plugin (= ${binary:Version}),
  slurm-wlm-influxdb-plugin (= ${binary:Version}),
  slurm-wlm-ipmi-plugins (= ${binary:Version}),
- slurm-wlm-jwt-plugin (= ${binary:Version}),
  slurm-wlm-rrd-plugin (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
  slurm-wlm-rsmi-plugin (= ${binary:Version}),
@@ -342,7 +341,6 @@ Depends:
  slurm-wlm-hdf5-plugin-dev (= ${binary:Version}),
  slurm-wlm-influxdb-plugin-dev (= ${binary:Version}),
  slurm-wlm-ipmi-plugins-dev (= ${binary:Version}),
- slurm-wlm-jwt-plugin-dev (= ${binary:Version}),
  slurm-wlm-rrd-plugin-dev (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
  slurm-wlm-rsmi-plugin-dev (= ${binary:Version}),
@@ -552,40 +550,6 @@ Description: Slurm Elasticsearch job-completion plugin development files
  This package contains development files for the Elasticsearch Slurm
  job-completion plugin.
 
-Package: slurm-wlm-jwt-plugin
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins (= ${binary:Version})
-Breaks: slurm-wlm-basic-plugins (<< 22.05.7-1)
-Replaces: slurm-wlm-basic-plugins (<< 22.05.7-1)
-Description: Slurm JWT authentication plugins
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains the JSON Web Tokens (JWT) Slurm authentication
- plugin.
-
-Package: slurm-wlm-jwt-plugin-dev
-Section: devel
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins-dev (= ${binary:Version}),
- slurm-wlm-jwt-plugin (= ${binary:Version})
-Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Description: Slurm JWT authentication plugin development files
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains development files for the JSON Web Tokens (JWT)
- Slurm authentication plugin.
-
 Package: slurm-wlm-mysql-plugin
 Architecture: any
 Depends:
@@ -608,7 +572,6 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
  slurm-wlm-basic-plugins-dev (= ${binary:Version}),
- slurm-wlm-jwt-plugin (= ${binary:Version})
 Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
 Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
 Description: Slurm MySQL plugins development files
