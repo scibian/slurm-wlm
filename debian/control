@@ -325,7 +325,6 @@ Depends:
  slurm-wlm-ipmi-plugins (= ${binary:Version}),
  slurm-wlm-rrd-plugin (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
- slurm-wlm-rsmi-plugin (= ${binary:Version}),
  ${misc:Depends},
 Description: Slurm free plugins (metapackage)
  The Slurm Workload Manager is an open-source cluster resource management and
@@ -343,7 +342,6 @@ Depends:
  slurm-wlm-ipmi-plugins-dev (= ${binary:Version}),
  slurm-wlm-rrd-plugin-dev (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
- slurm-wlm-rsmi-plugin-dev (= ${binary:Version}),
  ${misc:Depends},
 Description: Slurm free plugins development files (metapackage)
  The Slurm Workload Manager is an open-source cluster resource management and
@@ -417,39 +415,6 @@ Description: Slurm HDF5 plugin development files
  .
  This package contains development files for the HDF5-based Slurm
  job profiling plugin.
-
-Package: slurm-wlm-rsmi-plugin
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- librocm-smi64-1,
- slurm-wlm-basic-plugins (= ${binary:Version})
-Description: Slurm RSMI plugin
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains the ROCm System Management Interface Slurm gpu plugin.
-
-Package: slurm-wlm-rsmi-plugin-dev
-Section: devel
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- librocm-smi-dev,
- slurm-wlm-basic-plugins-dev (= ${binary:Version}),
- slurm-wlm-rsmi-plugin (= ${binary:Version})
-Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Description: Slurm RSMI plugin development files
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains development files for the ROCm System Management
- Interface Slurm gpu plugin.
 
 Package: slurm-wlm-influxdb-plugin
 Architecture: any
