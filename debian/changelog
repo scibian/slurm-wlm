@@ -1,3 +1,14 @@
+slurm-wlm (23.02.6-1sci8u1) scibian8; urgency=medium
+
+  * update scibian specific patches
+  * suppress kafka related packages
+  * suppress jwt related packages
+  * replace bash-completion build with systemd
+  * rollback dh_strip to be jessie compatible
+  * suppress smi related packages
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 13 Dec 2023 18:20:57 +0100
+
 slurm-wlm (23.02.6-1) unstable; urgency=medium
 
   * New upstream release fixes CVE-2023-41914
