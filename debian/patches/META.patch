@@ -1,0 +1,13 @@
+diff --git a/META b/META
+index e6ce6e83..ed5905fc 100644
+--- a/META
++++ b/META
+@@ -9,7 +9,7 @@
+   Minor:	02
+   Micro:	6
+   Version:	23.02.6
+-  Release:	1
++  Release:	Edf.1.0
+ 
+ ##
+ #  When making a new Major/Minor version update
