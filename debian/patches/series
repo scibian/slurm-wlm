@@ -9,3 +9,5 @@ fix-pmixv3-dlopen-path
 retry-getaddrinfo
 force-nvml
 remove-hashbang
+schedmd-security-patch.patch
+META.patch
