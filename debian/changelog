@@ -1,3 +1,9 @@
+slurm-wlm (23.02.6-1sci11u2) scibian11; urgency=medium
+
+  * Apply schedmd security patch
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 20 Dec 2023 17:27:47 +0100
+
 slurm-wlm (23.02.6-1sci11u1) scibian11; urgency=medium
 
   * update scibian specific patches
