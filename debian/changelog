@@ -1,3 +1,9 @@
+slurm-wlm (23.02.6-1sci9u2) scibian9; urgency=medium
+
+  * Apply schedmd security patch
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 19 Dec 2023 13:55:46 +0100
+
 slurm-wlm (23.02.6-1sci9u1) scibian9; urgency=medium
 
   * Import Upstream version 23.02.6
