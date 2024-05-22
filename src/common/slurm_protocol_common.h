@@ -42,11 +42,6 @@
 
 #include "config.h"
 
-#include <sys/time.h>
-#include <time.h>
-
-#include "slurm/slurm_errno.h"
-
 /* for sendto and recvfrom commands */
 #define SLURM_PROTOCOL_NO_SEND_RECV_FLAGS 0
 
@@ -66,17 +61,18 @@
  * done here with them since we have to support old version of archive
  * files since they don't update once they are created.
  */
+#define SLURM_23_11_PROTOCOL_VERSION ((40 << 8) | 0)
 #define SLURM_23_02_PROTOCOL_VERSION ((39 << 8) | 0)
 #define SLURM_22_05_PROTOCOL_VERSION ((38 << 8) | 0)
-#define SLURM_21_08_PROTOCOL_VERSION ((37 << 8) | 0)
 
-#define SLURM_PROTOCOL_VERSION SLURM_23_02_PROTOCOL_VERSION
-#define SLURM_ONE_BACK_PROTOCOL_VERSION SLURM_22_05_PROTOCOL_VERSION
-#define SLURM_MIN_PROTOCOL_VERSION SLURM_21_08_PROTOCOL_VERSION
+#define SLURM_PROTOCOL_VERSION SLURM_23_11_PROTOCOL_VERSION
+#define SLURM_ONE_BACK_PROTOCOL_VERSION SLURM_23_02_PROTOCOL_VERSION
+#define SLURM_MIN_PROTOCOL_VERSION SLURM_22_05_PROTOCOL_VERSION
 
 #if 0
 /* Old Slurm versions kept for reference only.  Slurm only actively keeps track
  * of 2 previous versions. */
+#define SLURM_21_08_PROTOCOL_VERSION ((37 << 8) | 0)
 #define SLURM_20_11_PROTOCOL_VERSION ((36 << 8) | 0)
 #define SLURM_20_02_PROTOCOL_VERSION ((35 << 8) | 0)
 #define SLURM_19_05_PROTOCOL_VERSION ((34 << 8) | 0)
@@ -101,12 +97,13 @@
 
 /* Used to set flags to empty */
 #define SLURM_PROTOCOL_NO_FLAGS 0
-#define SLURM_GLOBAL_AUTH_KEY   0x0001
-#define SLURMDBD_CONNECTION     0x0002
-#define SLURM_MSG_KEEP_BUFFER   0x0004
-#define SLURM_DROP_PRIV		0x0008
-#define USE_BCAST_NETWORK	0x0010
-#define CTLD_QUEUE_PROCESSING	0x0020
-#define SLURM_NO_AUTH_CRED	0x0040
+#define SLURM_GLOBAL_AUTH_KEY   SLURM_BIT(0)
+#define SLURMDBD_CONNECTION     SLURM_BIT(1)
+#define SLURM_MSG_KEEP_BUFFER   SLURM_BIT(2)
+#define SLURM_DROP_PRIV		SLURM_BIT(3)
+#define USE_BCAST_NETWORK	SLURM_BIT(4)
+#define CTLD_QUEUE_PROCESSING	SLURM_BIT(5)
+#define SLURM_NO_AUTH_CRED	SLURM_BIT(6)
+#define SLURM_PACK_ADDRS	SLURM_BIT(7)
 
 #endif

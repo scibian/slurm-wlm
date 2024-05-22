@@ -50,6 +50,7 @@
 #include "src/common/stepd_api.h"
 
 #include "src/interfaces/data_parser.h"
+#include "src/common/openapi.h"
 
 #define CONTAINER_ID_TAG "containerid="
 #define POLL_SLEEP	3	/* retry interval in seconds  */
@@ -199,7 +200,7 @@ scontrol_print_completing_job(job_info_t *job_ptr,
 {
 	int i, c_offset = 0;
 	node_info_t *node_info;
-	hostlist_t comp_nodes, down_nodes;
+	hostlist_t *comp_nodes, *down_nodes;
 	char *node_buf;
 	char time_str[256];
 	time_t completing_time = 0;
@@ -317,10 +318,20 @@ extern void scontrol_print_job(char *job_id_str, int argc, char **argv)
 	error_code = scontrol_load_job(&job_buffer_ptr, job_id);
 
 	if (mime_type) {
-		if ((error_code = DATA_DUMP_CLI(JOB_INFO_MSG, *job_buffer_ptr,
-						"jobs", argc, argv, NULL,
-						mime_type)))
-			exit_code =1;
+		openapi_resp_job_info_msg_t resp = {
+			.jobs = job_buffer_ptr,
+		};
+
+		if (job_buffer_ptr) {
+			resp.last_update = job_buffer_ptr->last_update;
+			resp.last_backfill = job_buffer_ptr->last_backfill;
+		}
+
+		DATA_DUMP_CLI(OPENAPI_JOB_INFO_RESP, resp, argc, argv, NULL,
+			      mime_type, data_parser, error_code);
+
+		if (error_code)
+			exit_code = 1;
 		return;
 	}
 
@@ -423,7 +434,8 @@ extern void scontrol_print_step(char *job_step_id_str, int argc, char **argv)
 		FREE_NULL_LIST(step_list);
 	} else {
 		slurm_selected_step_t id = {0};
-		if (!(error_code = unfmt_job_id_string(job_step_id_str, &id))) {
+		if (!(error_code = unfmt_job_id_string(job_step_id_str, &id,
+						       NO_VAL))) {
 			if (id.array_task_id != NO_VAL)
 				array_id = id.array_task_id;
 
@@ -473,11 +485,19 @@ extern void scontrol_print_step(char *job_step_id_str, int argc, char **argv)
 
 	if (error_code || !job_step_info_ptr) {
 		if (mime_type) {
-			DATA_DUMP_CLI(STEP_INFO_MSG, job_step_info_ptr, "steps",
-				      argc, argv, NULL, mime_type);
-			exit_code = SLURM_ERROR;
-			slurm_free_job_step_info_response_msg(
-				job_step_info_ptr);
+			openapi_resp_job_step_info_msg_t resp = {
+				.steps = job_step_info_ptr,
+			};
+
+			if (job_step_info_ptr)
+				resp.last_update =
+					job_step_info_ptr->last_update;
+
+			DATA_DUMP_CLI(OPENAPI_STEP_INFO_MSG, resp, argc, argv,
+				      NULL, mime_type, data_parser, error_code);
+
+			if (error_code)
+				exit_code = 1;
 			return;
 		}
 
@@ -525,9 +545,15 @@ extern void scontrol_print_step(char *job_step_id_str, int argc, char **argv)
 	}
 
 	if (mime_type) {
-		if (DATA_DUMP_CLI(STEP_INFO_ARRAY, steps, "steps", argc, argv,
-				  NULL, mime_type))
-			exit_code = SLURM_ERROR;
+		openapi_resp_job_step_info_msg_t resp = {
+			.steps = job_step_info_ptr,
+		};
+
+		if (job_step_info_ptr)
+			resp.last_update = job_step_info_ptr->last_update;
+
+		DATA_DUMP_CLI(OPENAPI_STEP_INFO_MSG, resp, argc, argv, NULL,
+			      mime_type, data_parser, error_code);
 	} else if (steps) {
 		int i = 0;
 
@@ -925,7 +951,7 @@ extern void scontrol_gethost(const char *stepd_node, const char *node_name)
 extern void
 scontrol_print_hosts (char * node_list)
 {
-	hostlist_t hl;
+	hostlist_t *hl;
 	char *host;
 
 	if (!node_list) {
@@ -973,7 +999,7 @@ extern int scontrol_encode_hostlist(char *arg_hostlist, bool sorted)
 	char *io_buf = NULL, *tmp_list, *ranged_string, *hostlist;
 	int buf_size = 1024 * 1024;
 	int data_read = 0;
-	hostlist_t hl;
+	hostlist_t *hl;
 
 	if (!arg_hostlist) {
 		fprintf(stderr, "Hostlist is NULL\n");

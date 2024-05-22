@@ -40,6 +40,7 @@
 #define _SLURMD_H
 
 #include <inttypes.h>
+#include <limits.h>
 #include <pthread.h>
 #include <sys/types.h>
 
@@ -47,11 +48,6 @@
 #include "src/common/list.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/interfaces/cred.h"
-
-#ifndef __USE_XOPEN_EXTENDED
-extern pid_t getsid(pid_t pid);		/* missing from <unistd.h> */
-extern pid_t getpgid(pid_t pid);
-#endif
 
 extern int devnull;
 extern bool get_reg_resp;
@@ -71,7 +67,6 @@ typedef struct {
 	uint32_t spank_job_env_size;
 	uid_t uid;
 	gid_t gid;
-	char *user_name;
 	char *work_dir;
 } job_env_t;
 
@@ -80,8 +75,9 @@ typedef struct {
  */
 typedef struct slurmd_config {
 	char         *prog;		/* Program basename		   */
-	char         ***argv;           /* pointer to argument vector      */
-	int          *argc;             /* pointer to argument count       */
+	char         **argv;            /* argument vector                 */
+	int          argc;              /* argument count                  */
+	char binary[PATH_MAX];		/* path to slurmd                  */
 	buf_t        *buf;              /* packed version of this lite config */
 	char         *hostname;	 	/* local hostname		   */
 	char         *conf_server;	/* slurmctld to fetch config from  */
@@ -119,14 +115,16 @@ typedef struct slurmd_config {
 	char         *node_name;	/* node name                       */
 	char         *node_topo_addr;   /* node's topology address         */
 	char         *node_topo_pattern;/* node's topology address pattern */
+	char         *extra;		/* arbiratry string		   */
 	char         *conffile;		/* config filename                 */
+	char         *instance_id;	/* cloud instance id		   */
+	char         *instance_type;	/* cloud instance type		   */
 	char         *logfile;		/* slurmd logfile, if any          */
 	char         *pidfile;		/* slurmd pidfile, if any          */
 	char         *tmp_fs;		/* TmpFS                           */
 	uint32_t     syslog_debug;	/* send output to both logfile and
 					 * syslog */
 	char         *spooldir;		/* SlurmdSpoolDir		   */
-	char         *pubkey;		/* location of job cred public key */
 	char         *stepd_loc;	/* slurmstepd path                 */
 	uint16_t      port;		/* local slurmd port               */
 	int           lfd;		/* slurmd listen file descriptor   */
@@ -134,22 +132,20 @@ typedef struct slurmd_config {
 	log_options_t log_opts;         /* current logging options         */
 	uint32_t      debug_level;	/* logging detail level            */
 	uint16_t      debug_level_set;	/* debug_level set on command line */
-	bool	      boot_time;	/* Report node boot time now (-b)  */
+	time_t	      boot_time;	/* Use this as node boot time if set */
 	bool	      daemonize;	/* daemonize flag (-D)		   */
 	bool          setwd;		/* setwd flag (-s)		   */
 	bool          def_config;       /* We haven't read in the config yet */
 	bool	      cleanstart;	/* clean start requested (-c)      */
 	bool	      mlock_pages;	/* mlock() slurmd  */
 
-	slurm_cred_ctx_t vctx;          /* slurm_cred_t verifier context   */
-
 	pthread_mutex_t config_mutex;	/* lock for slurmd_config access   */
 	uint16_t        acct_freq_task;
 
-	List		starting_steps; /* steps that are starting but cannot
+	list_t *starting_steps;		/* steps that are starting but cannot
 					   receive RPCs yet */
 	pthread_cond_t	starting_steps_cond;
-	List		prolog_running_jobs;
+	list_t *prolog_running_jobs;
 	pthread_cond_t	prolog_running_cond;
 	bool		print_gres;	/* Print gres info (-G) and exit */
 
@@ -171,13 +167,6 @@ extern bool tres_packed;
  */
 int send_registration_msg(uint32_t status);
 
-/*
- * save_cred_state - save the current credential list to a file
- * IN list - list of credentials
- * RET int - zero or error code
- */
-int save_cred_state(slurm_cred_ctx_t vctx);
-
 /* Run the health check program if configured */
 int run_script_health_check(void);
 
@@ -186,6 +175,7 @@ void slurmd_shutdown(int signum);
 
 /* Handler for debug level update */
 extern void update_slurmd_logging(log_level_t log_lvl);
+extern void update_stepd_logging(bool reconfig);
 
 /*
  * Build a slurmd configuration buffer _once_ for sending to slurmstepd

@@ -219,12 +219,38 @@ pthread_mutex_t lua_thread_mutex = PTHREAD_MUTEX_INITIALIZER;
  * don't use stage throttle for stage_in.
  * This variable is protected by bb_state.bb_mutex.
  */
+static pthread_mutex_t stage_in_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int stage_in_cnt = 0;
 
 /* Function prototypes */
 static bb_job_t *_get_bb_job(job_record_t *job_ptr);
 static void _queue_teardown(uint32_t job_id, uint32_t user_id, bool hurry,
 			    uint32_t group_id);
+
+static int _get_stage_in_cnt(void)
+{
+	int cnt;
+
+	slurm_mutex_lock(&stage_in_mutex);
+	cnt = stage_in_cnt;
+	slurm_mutex_unlock(&stage_in_mutex);
+
+	return cnt;
+}
+
+static void _incr_stage_in_cnt(void)
+{
+	slurm_mutex_lock(&stage_in_mutex);
+	stage_in_cnt++;
+	slurm_mutex_unlock(&stage_in_mutex);
+}
+
+static void _decr_stage_in_cnt(void)
+{
+	slurm_mutex_lock(&stage_in_mutex);
+	stage_in_cnt--;
+	slurm_mutex_unlock(&stage_in_mutex);
+}
 
 static int _get_lua_thread_cnt(void)
 {
@@ -610,6 +636,15 @@ static int _lua_job_info_field(lua_State *L, const job_info_t *job_info,
 		lua_pushstring(L, job_info->tres_alloc_str);
 	} else if (!xstrcmp(name, "user_id")) {
 		lua_pushinteger(L, job_info->user_id);
+	/*
+	 * user_name is not guaranteed to be set, but is accurate when it is.
+	 * See slurm_job_info_t in slurm.h. This is for performance reasons,
+	 * as we are avoiding using a job_write_lock to set it in job_info
+	 * before it is packed, and we are avoiding doing a lookup with UID
+	 * multiple times per job in the lua script. If performance is not a
+	 * concern and username is needed, the script may do a lookup using
+	 * the UID.
+	 */
 	} else if (!xstrcmp(name, "user_name")) {
 		lua_pushstring(L, job_info->user_name);
 	} else if (!xstrcmp(name, "wait4switch")) {
@@ -1665,7 +1700,7 @@ static void *_start_stage_out(void *x)
 						stage_out_args->gid);
 			}
 		} else {
-			job_ptr->job_state &= (~JOB_STAGE_OUT);
+			job_state_unset_flag(job_ptr, JOB_STAGE_OUT);
 			xfree(job_ptr->state_desc);
 			last_job_update = time(NULL);
 			log_flag(BURST_BUF, "Stage-out/post-run complete for %pJ",
@@ -1694,7 +1729,6 @@ fini:
 static void _queue_stage_out(job_record_t *job_ptr, bb_job_t *bb_job)
 {
 	stage_out_args_t *stage_out_args;
-	pthread_t tid;
 
 	stage_out_args = xmalloc(sizeof *stage_out_args);
 	stage_out_args->job_id = bb_job->job_id;
@@ -1702,13 +1736,13 @@ static void _queue_stage_out(job_record_t *job_ptr, bb_job_t *bb_job)
 	stage_out_args->gid = job_ptr->group_id;
 	stage_out_args->job_script = bb_handle_job_script(job_ptr, bb_job);
 
-	slurm_thread_create_detached(&tid, _start_stage_out, stage_out_args);
+	slurm_thread_create_detached(_start_stage_out, stage_out_args);
 }
 
 static void _pre_queue_stage_out(job_record_t *job_ptr, bb_job_t *bb_job)
 {
 	bb_set_job_bb_state(job_ptr, bb_job, BB_STATE_POST_RUN);
-	job_ptr->job_state |= JOB_STAGE_OUT;
+	job_state_set_flag(job_ptr, JOB_STAGE_OUT);
 	xfree(job_ptr->state_desc);
 	xstrfmtcat(job_ptr->state_desc, "%s: Stage-out in progress",
 		   plugin_type);
@@ -2163,12 +2197,6 @@ extern int init(void)
                 return rc;
 	lua_script_path = get_extra_conf_path("burst_buffer.lua");
 
-	if ((rc = data_init())) {
-		error("%s: unable to init data structures: %s",
-		      __func__, slurm_strerror(rc));
-		return rc;
-	}
-
 	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
 		error("%s: unable to load JSON serializer: %s",
 		      __func__, slurm_strerror(rc));
@@ -2239,7 +2267,6 @@ extern int fini(void)
 
 	slurm_lua_fini();
 	xfree(lua_script_path);
-	/* Don't call data_fini(), that is taken care of elsewhere. */
 
 	return SLURM_SUCCESS;
 }
@@ -3074,7 +3101,7 @@ static void *_start_teardown(void *x)
 		if ((bb_job = _get_bb_job(job_ptr)))
 			bb_set_job_bb_state(job_ptr, bb_job,
 					    BB_STATE_COMPLETE);
-		job_ptr->job_state &= (~JOB_STAGE_OUT);
+		job_state_unset_flag(job_ptr, JOB_STAGE_OUT);
 		if (!IS_JOB_PENDING(job_ptr) &&	/* No email if requeue */
 		    (job_ptr->mail_type & MAIL_JOB_STAGE_OUT)) {
 			mail_job_info(job_ptr, MAIL_JOB_STAGE_OUT);
@@ -3118,7 +3145,6 @@ static void _queue_teardown(uint32_t job_id, uint32_t user_id, bool hurry,
 	int hash_inx = job_id % 10;
 	struct stat buf;
 	teardown_args_t *teardown_args;
-	pthread_t tid;
 
 	xstrfmtcat(hash_dir, "%s/hash.%d",
 		   slurm_conf.state_save_location, hash_inx);
@@ -3144,7 +3170,7 @@ static void _queue_teardown(uint32_t job_id, uint32_t user_id, bool hurry,
 	teardown_args->job_script = job_script;
 	teardown_args->hurry = hurry;
 
-	slurm_thread_create_detached(&tid, _start_teardown, teardown_args);
+	slurm_thread_create_detached(_start_teardown, teardown_args);
 
 	xfree(hash_dir);
 }
@@ -3386,11 +3412,11 @@ static void *_start_stage_in(void *x)
 					job_ptr->group_id);
 		}
 	}
-	stage_in_cnt--;
 	slurm_mutex_unlock(&bb_state.bb_mutex);
 	unlock_slurmctld(job_write_lock);
 
 fini:
+	_decr_stage_in_cnt();
 	xfree(resp_msg);
 	xfree(stage_in_args->job_script);
 	xfree(stage_in_args->pool);
@@ -3406,7 +3432,6 @@ static int _queue_stage_in(job_record_t *job_ptr, bb_job_t *bb_job)
 	int hash_inx = job_ptr->job_id % 10;
 	stage_in_args_t *stage_in_args;
 	bb_alloc_t *bb_alloc = NULL;
-	pthread_t tid;
 
 	xstrfmtcat(hash_dir, "%s/hash.%d",
 		   slurm_conf.state_save_location, hash_inx);
@@ -3440,8 +3465,8 @@ static int _queue_stage_in(job_record_t *job_ptr, bb_job_t *bb_job)
 	bb_limit_add(job_ptr->user_id, bb_job->total_size, bb_job->job_pool,
 		     &bb_state, true);
 
-	stage_in_cnt++;
-	slurm_thread_create_detached(&tid, _start_stage_in, stage_in_args);
+	_incr_stage_in_cnt();
+	slurm_thread_create_detached(_start_stage_in, stage_in_args);
 
 	xfree(hash_dir);
 	xfree(job_dir);
@@ -3473,7 +3498,7 @@ static int _try_alloc_job_bb(void *x, void *arg)
 	else
 		rc = 0;
 
-	if (stage_in_cnt >= MAX_BURST_BUFFERS_PER_STAGE)
+	if (_get_stage_in_cnt() >= MAX_BURST_BUFFERS_PER_STAGE)
 		return SLURM_ERROR; /* Break out of loop */
 
 	if (rc == 0) {
@@ -3674,9 +3699,9 @@ static void _kill_job(job_record_t *job_ptr, bool hold_job)
 	xfree(job_ptr->state_desc);
 	job_ptr->state_desc = xstrdup("Burst buffer pre_run error");
 
-	job_ptr->job_state  = JOB_REQUEUE;
+	job_state_set(job_ptr, JOB_REQUEUE);
 	job_completion_logger(job_ptr, true);
-	job_ptr->job_state = JOB_PENDING | JOB_COMPLETING;
+	job_state_set(job_ptr, (JOB_PENDING | JOB_COMPLETING));
 
 	deallocate_nodes(job_ptr, false, false, false);
 }
@@ -3785,7 +3810,7 @@ static void *_start_pre_run(void *x)
 	}
 	if (job_ptr) {
 		if (run_kill_job)
-			job_ptr->job_state &= ~JOB_CONFIGURING;
+			job_state_unset_flag(job_ptr, JOB_CONFIGURING);
 		prolog_running_decr(job_ptr);
 	}
 	slurm_mutex_unlock(&bb_state.bb_mutex);
@@ -3819,7 +3844,6 @@ extern int bb_p_job_begin(job_record_t *job_ptr)
 	int rc = SLURM_SUCCESS;
 	uint32_t argc;
 	char **argv;
-	pthread_t tid;
 	bb_job_t *bb_job;
 	pre_run_args_t *pre_run_args;
 	run_lua_args_t run_lua_args;
@@ -3914,10 +3938,10 @@ extern int bb_p_job_begin(job_record_t *job_ptr)
 	pre_run_args->gid = job_ptr->group_id;
 	if (job_ptr->details) { /* Defer launch until completion */
 		job_ptr->details->prolog_running++;
-		job_ptr->job_state |= JOB_CONFIGURING;
+		job_state_set_flag(job_ptr, JOB_CONFIGURING);
 	}
 
-	slurm_thread_create_detached(&tid, _start_pre_run, pre_run_args);
+	slurm_thread_create_detached(_start_pre_run, pre_run_args);
 
 fini:
 	xfree(job_script);
@@ -4187,7 +4211,7 @@ extern char *bb_p_xlate_bb_2_tres_str(char *burst_buffer)
 			uint64_t mb_xlate = 1024 * 1024;
 			size = bb_get_size_num(tok,
 					       bb_state.bb_config.granularity);
-			total += (size + mb_xlate - 1) / mb_xlate;
+			total += ROUNDUP(size, mb_xlate);
 		}
 
 		tok = strtok_r(NULL, ",", &save_ptr);

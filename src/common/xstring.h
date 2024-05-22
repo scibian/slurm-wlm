@@ -190,10 +190,11 @@ char *xshort_hostname(void);
 bool xstring_is_whitespace(const char *str);
 
 /*
- * If str make everything lowercase.  Should not be called on static char *'s
- * Returns the lowered string which is the same pointer that is sent in.
+ * If str make everything lowercase.
+ * Should not be called on static char *'s.
+ * Returns true if any changes have been made.
  */
-char *xstrtolower(char *str);
+extern bool xstrtolower(char *str);
 
 /*
  * safe strchr (handles NULL values)

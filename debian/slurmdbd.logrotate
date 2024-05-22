@@ -3,7 +3,7 @@
   missingok
   nocopytruncate
   nocreate
-  nodelaycompress
+  delaycompress
   nomail
   notifempty
   noolddir
@@ -11,6 +11,7 @@
   sharedscripts
   size=5M
   postrotate
-      /usr/sbin/invoke-rc.d --quiet slurmdbd reconfig >/dev/null
+      /usr/sbin/start-stop-daemon -s USR2 --stop -x /usr/sbin/slurmdbd -q
+      /bin/sleep 1
   endscript
 }

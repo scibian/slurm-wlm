@@ -44,13 +44,13 @@ typedef struct {
 	uint32_t disk_total;
 	char *features;
 	char *features_act;
-	hostlist_t hl;
+	hostlist_t *hl;
 	uint64_t mem_total;
 	uint32_t node_cnt;
 	uint32_t node_alloc_cnt;
 	uint32_t node_error_cnt;
 	uint32_t node_idle_cnt;
-	List node_ptr_list;
+	list_t *node_ptr_list;
 	uint32_t node_state;
 	partition_info_t* part_ptr;
 	char *reason;
@@ -67,7 +67,7 @@ typedef struct {
 	 * root, share, groups */
 	partition_info_t* part_ptr;
 	int pos;
-	List sub_list;
+	list_t *sub_list;
 	sview_part_sub_t sub_part_total;
 } sview_part_info_t;
 
@@ -850,7 +850,7 @@ static void _subdivide_part(sview_part_info_t *sview_part_info,
 			    GtkTreeIter *iter)
 {
 	GtkTreeIter first_sub_iter;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int i = 0, line = 0;
 	sview_part_sub_t *sview_part_sub = NULL;
 	int set = 0;
@@ -1585,12 +1585,11 @@ static void _append_part_sub_record(sview_part_sub_t *sview_part_sub,
 	_update_part_sub_record(sview_part_sub, treestore, &sub_iter);
 }
 
-static void _update_info_part(List info_list,
-			      GtkTreeView *tree_view)
+static void _update_info_part(list_t *info_list, GtkTreeView *tree_view)
 {
 	GtkTreeModel *model = gtk_tree_view_get_model(tree_view);
 	char *name = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	sview_part_info_t *sview_part_info = NULL;
 
 	set_for_update(model, SORTID_UPDATED);
@@ -1655,8 +1654,7 @@ static void _destroy_part_sub(void *object)
 		xfree(sview_part_sub->features);
 		xfree(sview_part_sub->features_act);
 		xfree(sview_part_sub->reason);
-		if (sview_part_sub->hl)
-			hostlist_destroy(sview_part_sub->hl);
+		FREE_NULL_HOSTLIST(sview_part_sub->hl);
 		FREE_NULL_LIST(sview_part_sub->node_ptr_list);
 		xfree(sview_part_sub);
 	}
@@ -1741,7 +1739,7 @@ static int _insert_sview_part_sub(sview_part_info_t *sview_part_info,
 				  node_info_t *node_ptr)
 {
 	sview_part_sub_t *sview_part_sub = NULL;
-	ListIterator itr = list_iterator_create(sview_part_info->sub_list);
+	list_itr_t *itr = list_iterator_create(sview_part_info->sub_list);
 
 	while ((sview_part_sub = list_next(itr))) {
 		if (sview_part_sub->node_state
@@ -1805,20 +1803,20 @@ static int _sview_sub_part_sort(void *a, void *b)
 	return 0;
 }
 
-static List _create_part_info_list(partition_info_msg_t *part_info_ptr,
-				   node_info_msg_t *node_info_ptr)
+static list_t *_create_part_info_list(partition_info_msg_t *part_info_ptr,
+				      node_info_msg_t *node_info_ptr)
 {
 	sview_part_info_t *sview_part_info = NULL;
 	partition_info_t *part_ptr = NULL;
 	static node_info_msg_t *last_node_info_ptr = NULL;
 	static partition_info_msg_t *last_part_info_ptr = NULL;
-	List last_list = NULL;
-	ListIterator last_list_itr = NULL;
+	list_t *last_list = NULL;
+	list_itr_t *last_list_itr = NULL;
 	node_info_t *node_ptr = NULL;
-	static List info_list = NULL;
+	static list_t *info_list = NULL;
 	int i, j2;
 	sview_part_sub_t *sview_part_sub = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 
 	if (info_list && (node_info_ptr == last_node_info_ptr)
 	    && (part_info_ptr == last_part_info_ptr))
@@ -1953,7 +1951,7 @@ static List _create_part_info_list(partition_info_msg_t *part_info_ptr,
 	return info_list;
 }
 
-static void _display_info_part(List info_list,	popup_info_t *popup_win)
+static void _display_info_part(list_t *info_list, popup_info_t *popup_win)
 {
 	specific_info_t *spec_info = popup_win->spec_info;
 	char *name = (char *)spec_info->search_info->gchar_data;
@@ -1961,7 +1959,7 @@ static void _display_info_part(List info_list,	popup_info_t *popup_win)
 	int found = 0;
 	partition_info_t *part_ptr = NULL;
 	GtkTreeView *treeview = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	sview_part_info_t *sview_part_info = NULL;
 	int update = 0;
 	int j = 0;
@@ -2190,7 +2188,7 @@ extern int get_new_info_part(partition_info_msg_t **part_ptr, int force)
 		if (error_code == SLURM_SUCCESS) {
 			slurm_free_partition_info_msg(g_part_info_ptr);
 			changed = 1;
-		} else if (slurm_get_errno() == SLURM_NO_CHANGE_IN_DATA) {
+		} else if (errno == SLURM_NO_CHANGE_IN_DATA) {
 			error_code = SLURM_NO_CHANGE_IN_DATA;
 			new_part_ptr = g_part_info_ptr;
 			changed = 0;
@@ -2500,11 +2498,11 @@ extern void get_info_part(GtkTable *table, display_data_t *display_data)
 	GtkWidget *label = NULL;
 	GtkTreeView *tree_view = NULL;
 	static GtkWidget *display_widget = NULL;
-	List info_list = NULL;
+	list_t *info_list = NULL;
 	int j, k;
 	sview_part_info_t *sview_part_info = NULL;
 	partition_info_t *part_ptr = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	GtkTreePath *path = NULL;
 	static bool set_opts = false;
 
@@ -2545,7 +2543,7 @@ extern void get_info_part(GtkTable *table, display_data_t *display_data)
 			gtk_widget_destroy(display_widget);
 		view = ERROR_VIEW;
 		snprintf(error_char, 100, "slurm_load_partitions: %s",
-			 slurm_strerror(slurm_get_errno()));
+			 slurm_strerror(errno));
 		label = gtk_label_new(error_char);
 		display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(table, label, 0, 1, 0, 1);
@@ -2565,7 +2563,7 @@ extern void get_info_part(GtkTable *table, display_data_t *display_data)
 			gtk_widget_destroy(display_widget);
 		view = ERROR_VIEW;
 		snprintf(error_char, 100, "slurm_load_node: %s",
-			 slurm_strerror(slurm_get_errno()));
+			 slurm_strerror(errno));
 		label = gtk_label_new(error_char);
 		display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(table, label, 0, 1, 0, 1);
@@ -2644,6 +2642,8 @@ display_it:
 			def_sort_col = SORTID_CLUSTER_NAME;
 		create_treestore(tree_view, display_data_part, SORTID_CNT,
 				 def_sort_col, SORTID_COLOR);
+
+		set_column_width_fixed(tree_view, SORTID_NODELIST, 100);
 	}
 
 	view = INFO_VIEW;
@@ -2667,13 +2667,13 @@ extern void specific_info_part(popup_info_t *popup_win)
 	char error_char[100];
 	GtkWidget *label = NULL;
 	GtkTreeView *tree_view = NULL;
-	List info_list = NULL;
-	List send_info_list = NULL;
+	list_t *info_list = NULL;
+	list_t *send_info_list = NULL;
 	int j=0;
 	sview_part_info_t *sview_part_info_ptr = NULL;
 	partition_info_t *part_ptr = NULL;
-	ListIterator itr = NULL;
-	hostset_t hostset = NULL;
+	list_itr_t *itr = NULL;
+	hostset_t *hostset = NULL;
 
 	if (!spec_info->display_widget)
 		setup_popup_info(popup_win, display_data_part, SORTID_CNT);
@@ -2697,7 +2697,7 @@ extern void specific_info_part(popup_info_t *popup_win)
 		}
 		spec_info->view = ERROR_VIEW;
 		snprintf(error_char, 100, "slurm_load_partitions: %s",
-			 slurm_strerror(slurm_get_errno()));
+			 slurm_strerror(errno));
 		label = gtk_label_new(error_char);
 		spec_info->display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(popup_win->table, label, 0, 1, 0, 1);
@@ -2719,7 +2719,7 @@ extern void specific_info_part(popup_info_t *popup_win)
 			gtk_widget_destroy(spec_info->display_widget);
 		spec_info->view = ERROR_VIEW;
 		snprintf(error_char, 100, "slurm_load_node: %s",
-			 slurm_strerror(slurm_get_errno()));
+			 slurm_strerror(errno));
 		label = gtk_label_new(error_char);
 		spec_info->display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(popup_win->table, label, 0, 1, 0, 1);
@@ -2865,7 +2865,7 @@ extern void set_menus_part(void *arg, void *arg2, GtkTreePath *path, int type)
 	GtkTreeView *tree_view = (GtkTreeView *)arg;
 	popup_info_t *popup_win = (popup_info_t *)arg;
 	GtkMenu *menu = (GtkMenu *)arg2;
-	List button_list = (List)arg2;
+	list_t *button_list = arg2;
 
 	switch(type) {
 	case TAB_CLICKED:
@@ -2907,7 +2907,7 @@ extern void popup_all_part(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	char *state = NULL;
 	char title[100] = {0};
 	int only_line = 0;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	popup_info_t *popup_win = NULL;
 	GError *error = NULL;
 	GtkTreeIter par_iter;
@@ -3028,7 +3028,7 @@ extern void popup_all_part(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	default:
 		g_print("part got unknown type %d\n", id);
 	}
-	if (!sview_thread_new((gpointer)popup_thr, popup_win, false, &error)) {
+	if (!sview_thread_new((gpointer)popup_thr, popup_win, &error)) {
 		g_printerr ("Failed to create part popup thread: %s\n",
 			    error->message);
 		return;

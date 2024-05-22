@@ -34,8 +34,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SERIALIZER_H
-#define _SERIALIZER_H
+#ifndef _INTERFACES_SERIALIZER_H
+#define _INTERFACES_SERIALIZER_H
 
 #include "src/common/data.h"
 
@@ -89,7 +89,11 @@ extern int serialize_g_string_to_data(data_t **dest, const char *src,
  * Check if there is a plugin loaded that can handle the requested mime type
  * RET ptr to best matching mime type or NULL if none can match
  */
-extern const char *resolve_mime_type(const char *mime_type);
+extern const char *resolve_mime_type(const char *mime_type,
+				     const char **plugin_ptr);
+
+/* Provide ptr to NULL terminated array of all supported mimetypes */
+extern const char **get_mime_type_array(void);
 
 /*
  * Load and initialize serializer plugins

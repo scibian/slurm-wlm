@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	23.02.6
+Version:	23.11.7
 %define rel	1
 Release:	%{rel}%{?dist}
 Summary:	Slurm Workload Manager
@@ -24,12 +24,12 @@ Source:		%{slurm_source_dir}.tar.bz2
 # --with cray_network	%_with_cray_network 1	build for a non-Cray system with a Cray network
 # --with cray_shasta	%_with_cray_shasta 1	build for a Cray Shasta system
 # --with slurmrestd	%_with_slurmrestd 1	build slurmrestd
+# --with yaml		%_with_yaml 1		build with yaml serializer
 # --with slurmsmwd      %_with_slurmsmwd 1      build slurmsmwd
 # --without debug	%_without_debug 1	don't compile with debugging symbols
 # --with hdf5		%_with_hdf5 path	require hdf5 support
 # --with hwloc		%_with_hwloc 1		require hwloc support
 # --with lua		%_with_lua path		build Slurm lua bindings
-# --with mysql		%_with_mysql 1		require mysql/mariadb support
 # --with numa		%_with_numa 1		require NUMA support
 # --without pam		%_without_pam 1		don't require pam-devel RPM to be installed
 # --without x11		%_without_x11 1		disable internal X11 support
@@ -37,6 +37,8 @@ Source:		%{slurm_source_dir}.tar.bz2
 # --with pmix		%_with_pmix path	require pmix support
 # --with nvml		%_with_nvml path	require nvml support
 # --with jwt		%_with_jwt 1		require jwt support
+# --with freeipmi	%_with_freeipmi 1	require freeipmi support
+# --with selinux	%_with_selinux 1	build with selinux support
 #
 
 #  Options that are off by default (enable with --with <opt>)
@@ -51,13 +53,14 @@ Source:		%{slurm_source_dir}.tar.bz2
 # These options are only here to force there to be these on the build.
 # If they are not set they will still be compiled if the packages exist.
 %bcond_with hwloc
-%bcond_with mysql
 %bcond_with hdf5
 %bcond_with lua
 %bcond_with numa
 %bcond_with pmix
 %bcond_with nvml
 %bcond_with jwt
+%bcond_with yaml
+%bcond_with freeipmi
 
 # Use debug by default on all systems
 %bcond_without debug
@@ -88,13 +91,36 @@ Obsoletes: slurm-plugins <= %{version}
 # fake systemd support when building rpms on other platforms
 %{!?_unitdir: %global _unitdir /lib/systemd/systemd}
 
-%define use_mysql_devel %(perl -e '`rpm -q mariadb-devel`; print $?;')
+%define use_mysql_devel %(perl -e '`rpm -q mysql-devel`; print !$?;')
+# Default for OpenSUSE/SLES builds
+%define use_libmariadb_devel %(perl -e '`rpm -q libmariadb-devel`; print !$?;')
+# Package name from the official MariaDB version
+%define use_MariaDB_devel %(perl -e '`rpm -q MariaDB-devel`; print !$?;')
+# Oracle mysql community
+%define use_mysql_community %(perl -e '`rpm -q mysql-community-devel`; print !$?;')
+# Oracle mysql commercial
+%define use_mysql_commercial %(perl -e '`rpm -q mysql-commercial-devel`; print !$?;')
 
-%if %{with mysql}
-%if %{use_mysql_devel}
+%if 0%{?use_mysql_devel}
 BuildRequires: mysql-devel >= 5.0.0
 %else
+%if 0%{?use_mysql_community}
+BuildRequires: mysql-community-devel >= 5.0.0
+%else
+%if 0%{?use_mysql_commercial}
+BuildRequires: mysql-commercial-devel >= 5.0.0
+%else
+%if 0%{?use_libmariadb_devel}
+# OpenSUSE/SLES has a different versioning scheme, so skip the version check
+BuildRequires: libmariadb-devel
+%else
+%if 0%{?use_MariaDB_devel}
+BuildRequires: MariaDB-devel >= 5.0.0
+%else
 BuildRequires: mariadb-devel >= 5.0.0
+%endif
+%endif
+%endif
 %endif
 %endif
 
@@ -110,11 +136,6 @@ BuildRequires: pkg-config
 %endif
 
 %if %{with cray_network}
-%if %{use_mysql_devel}
-BuildRequires: mysql-devel
-%else
-BuildRequires: mariadb-devel
-%endif
 BuildRequires: cray-libalpscomm_cn-devel
 BuildRequires: cray-libalpscomm_sn-devel
 BuildRequires: hwloc-devel
@@ -154,6 +175,21 @@ BuildRequires: ucx-devel
 %if %{with jwt}
 BuildRequires: libjwt-devel >= 1.10.0
 Requires: libjwt >= 1.10.0
+%endif
+
+%if %{with yaml}
+Requires: libyaml >= 0.2.5
+BuildRequires: libyaml-devel >= 0.2.5
+%endif
+
+%if %{with freeipmi}
+Requires: freeipmi
+BuildRequires: freeipmi-devel
+%endif
+
+%if %{with selinux}
+Requires: libselinux
+BuildRequires: libselinux-devel
 %endif
 
 #  Allow override of sysconfdir via _slurm_sysconfdir.
@@ -228,10 +264,24 @@ Group: Development/System
 %description example-configs
 Example configuration files for Slurm.
 
+%package sackd
+Summary: Slurm authentication daemon
+Group: System Environment/Base
+Requires: %{name}%{?_isa} = %{version}-%{release}
+%description sackd
+Slurm authentication daemon. Used on login nodes that are not running slurmd
+daemons to allow authentication to the cluster.
+
 %package slurmctld
 Summary: Slurm controller daemon
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
+%if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
+Requires: pmix = %{pmix_version}
+%endif
+%if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
+Requires: ucx = %{ucx_version}
+%endif
 %description slurmctld
 Slurm controller daemon. Used to manage the job queue, schedule jobs,
 and dispatch RPC messages to the slurmd processon the compute nodes
@@ -348,6 +398,7 @@ notifies slurm about failed nodes.
 
 %build
 %configure \
+	--with-systemdsystemunitdir=%{_unitdir} \
 	%{?_without_debug:--disable-debug} \
 	%{?_with_pam_dir} \
 	%{?_with_cpusetdir} \
@@ -355,6 +406,7 @@ notifies slurm about failed nodes.
 	%{?_without_cray:--enable-really-no-cray}\
 	%{?_with_cray_network:--enable-cray-network}\
 	%{?_with_multiple_slurmd:--enable-multiple-slurmd} \
+	%{?_with_selinux:--enable-selinux} \
 	%{?_with_pmix} \
 	%{?_with_freeipmi} \
 	%{?_with_hdf5} \
@@ -363,7 +415,9 @@ notifies slurm about failed nodes.
 	%{?_without_x11:--disable-x11} \
 	%{?_with_ucx} \
 	%{?_with_jwt} \
+	%{?_with_yaml} \
 	%{?_with_nvml} \
+	%{?_with_freeipmi} \
 	%{?_with_cflags}
 
 make %{?_smp_mflags}
@@ -386,14 +440,6 @@ chmod +x find-requires.sh
 rm -rf %{buildroot}
 make install DESTDIR=%{buildroot}
 make install-contrib DESTDIR=%{buildroot}
-
-install -D -m644 etc/slurmctld.service %{buildroot}/%{_unitdir}/slurmctld.service
-install -D -m644 etc/slurmd.service    %{buildroot}/%{_unitdir}/slurmd.service
-install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
-
-%if %{with slurmrestd}
-install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.service
-%endif
 
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
 # Cray's version of libpmi should be used. Move it elsewhere if the site still
@@ -471,8 +517,6 @@ test -f %{buildroot}/%{_sbindir}/capmc_suspend		&&
   echo %{_sbindir}/capmc_suspend			>> $LIST
 test -f %{buildroot}/%{_sbindir}/capmc_resume		&&
   echo %{_sbindir}/capmc_resume				>> $LIST
-test -f %{buildroot}/%{_bindir}/netloc_to_topology		&&
-  echo %{_bindir}/netloc_to_topology			>> $LIST
 
 test -f %{buildroot}/opt/modulefiles/slurm/%{version}-%{rel} &&
   echo /opt/modulefiles/slurm/%{version}-%{rel} >> $LIST
@@ -588,6 +632,12 @@ rm -rf %{buildroot}
 
 #############################################################################
 
+%files sackd
+%defattr(-,root,root)
+%{_sbindir}/sackd
+%{_unitdir}/sackd.service
+#############################################################################
+
 %files slurmctld
 %defattr(-,root,root)
 %{_sbindir}/slurmctld
@@ -680,6 +730,13 @@ rm -rf %{buildroot}
 
 %postun
 /sbin/ldconfig
+
+%post sackd
+%systemd_post sackd.service
+%preun sackd
+%systemd_preun sackd.service
+%postun sackd
+%systemd_postun_with_restart sackd.service
 
 %post slurmctld
 %systemd_post slurmctld.service

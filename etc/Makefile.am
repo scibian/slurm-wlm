@@ -1,5 +1,5 @@
 ETC_FILES = init.d.slurmdbd init.d.slurm \
-	    slurmctld.service slurmdbd.service slurmd.service \
+	    sackd.service slurmctld.service slurmdbd.service slurmd.service \
 	    slurmrestd.service
 
 CLEANFILES = $(ETC_FILES)
@@ -21,6 +21,9 @@ init.d.slurmdbd: Makefile $(srcdir)/init.d.slurmdbd.in
 init.d.slurm: Makefile $(srcdir)/init.d.slurm.in
 	$(edit) $(srcdir)/init.d.slurm.in > init.d.slurm
 
+sackd.service: Makefile $(srcdir)/sackd.service.in
+	$(edit) $(srcdir)/sackd.service.in > sackd.service
+
 slurmctld.service: Makefile $(srcdir)/slurmctld.service.in
 	$(edit) $(srcdir)/slurmctld.service.in > slurmctld.service
 
@@ -34,7 +37,8 @@ slurmrestd.service: Makefile $(srcdir)/slurmrestd.service.in
 	$(edit) $(srcdir)/slurmrestd.service.in > slurmrestd.service
 
 if WITH_SYSTEMD_UNITS
-systemdsystemunit_DATA = slurmctld.service slurmdbd.service slurmd.service
+systemdsystemunit_DATA = sackd.service slurmctld.service slurmdbd.service \
+	slurmd.service
 if WITH_SLURMRESTD
 systemdsystemunit_DATA += slurmrestd.service
 endif

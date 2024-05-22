@@ -84,6 +84,8 @@ uint16_t block_map_size;
 uint16_t *block_map, *block_map_inv;
 extern slurmd_conf_t *conf;
 
+static bool refresh_hwloc = false;
+
 /*
  * get_procs - Return the count of procs on this system
  * Input: procs - buffer for the CPU count
@@ -248,7 +250,7 @@ extern int xcpuinfo_hwloc_topo_load(
 
 	if (full && first_full) {
 		/* Always regenerate file on slurmd startup */
-		if (running_in_slurmd())
+		if (refresh_hwloc)
 			check_file = false;
 		first_full = false;
 	}
@@ -328,7 +330,7 @@ end_it:
  *         p_sockets - number of physical processor sockets
  *         p_cores - total number of physical CPU cores
  *         p_threads - total number of hardware execution threads
- *         block_map - asbtract->physical block distribution map
+ *         block_map - abstract->physical block distribution map
  *         block_map_inv - physical->abstract block distribution map (inverse)
  *         return code - 0 if no error, otherwise errno
  * NOTE: User must xfree block_map and block_map_inv
@@ -1051,6 +1053,11 @@ xcpuinfo_init(void)
 	return SLURM_SUCCESS;
 }
 
+extern void xcpuinfo_refresh_hwloc(bool refresh)
+{
+	refresh_hwloc = refresh;
+}
+
 int
 xcpuinfo_fini(void)
 {
@@ -1122,7 +1129,11 @@ int xcpuinfo_abs_to_mac(char *lrange, char **prange)
 	for (icore = 0; icore < total_cores; icore++) {
 		if (bit_test(absmap, icore)) {
 			for (ithread = 0; ithread < conf->threads; ithread++) {
-				absid = icore * conf->threads + ithread;
+				/*
+				 * Use actual hardware thread count to get the
+				 * correct offset for the CPU ID.
+				 */
+				absid = icore * conf->actual_threads + ithread;
 				absid %= total_cpus;
 
 				macid = conf->block_map[absid];
@@ -1193,7 +1204,11 @@ int xcpuinfo_mac_to_abs(char *in_range, char **out_range)
 	for (int icore = 0; icore < total_cores; icore++) {
 		for (int ithread = 0; ithread < conf->threads; ithread++) {
 			int absid, macid;
-			macid = (icore * conf->threads) + ithread;
+			/*
+			 * Use actual hardware thread count to get the
+			 * correct offset for the CPU ID.
+			 */
+			macid = (icore * conf->actual_threads) + ithread;
 			macid %= total_cpus;
 
 			/* Skip this machine CPU id if not in in_range */
@@ -1210,7 +1225,11 @@ int xcpuinfo_mac_to_abs(char *in_range, char **out_range)
 	/* condense abstract CPU bitmap into an abstract core bitmap */
 	for (int icore = 0; icore < total_cores; icore++) {
 		for (int ithread = 0; ithread < conf->threads; ithread++) {
-			int icpu = (icore * conf->threads) + ithread;
+			/*
+			 * Use actual hardware thread count to get the
+			 * correct offset for the CPU ID.
+			 */
+			int icpu = (icore * conf->actual_threads) + ithread;
 			icpu %= total_cpus;
 
 			if (bit_test(absmap, icpu)) {

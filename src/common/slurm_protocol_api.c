@@ -72,7 +72,6 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_common.h"
 #include "src/common/slurm_protocol_pack.h"
-#include "src/interfaces/route.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -130,9 +129,8 @@ static void _slurm_api_free_comm_config(slurm_protocol_config_t *proto_conf)
 static slurm_protocol_config_t *_slurm_api_get_comm_config(void)
 {
 	slurm_protocol_config_t *proto_conf = NULL;
-	slurm_addr_t controller_addr;
 	slurm_conf_t *conf;
-	int i;
+	uint16_t port;
 
 	conf = slurm_conf_lock();
 
@@ -145,37 +143,26 @@ static slurm_protocol_config_t *_slurm_api_get_comm_config(void)
 		error("Unable to establish controller port");
 		goto cleanup;
 	}
-	if (conf->control_cnt == 0) {
-		error("No slurmctld servers configured");
-		goto cleanup;
-	}
 
-	memset(&controller_addr, 0, sizeof(slurm_addr_t));
-	slurm_set_addr(&controller_addr, conf->slurmctld_port,
-		       conf->control_addr[0]);
-	if (slurm_addr_is_unspec(&controller_addr)) {
-		error("Unable to establish control machine address");
-		goto cleanup;
-	}
+	port = slurm_conf.slurmctld_port;
+	port += (time(NULL) + getpid()) % slurm_conf.slurmctld_port_count;
 
 	proto_conf = xmalloc(sizeof(slurm_protocol_config_t));
 	proto_conf->controller_addr = xcalloc(conf->control_cnt,
 					      sizeof(slurm_addr_t));
 	proto_conf->control_cnt = conf->control_cnt;
-	memcpy(&proto_conf->controller_addr[0], &controller_addr,
-	       sizeof(slurm_addr_t));
 
-	for (i = 1; i < proto_conf->control_cnt; i++) {
+	for (int i = 0; i < proto_conf->control_cnt; i++) {
+
 		if (conf->control_addr[i]) {
 			slurm_set_addr(&proto_conf->controller_addr[i],
-				       conf->slurmctld_port,
-				       conf->control_addr[i]);
+				       port, conf->control_addr[i]);
 		}
 	}
 
 	if (conf->slurmctld_addr) {
 		proto_conf->vip_addr_set = true;
-		slurm_set_addr(&proto_conf->vip_addr, conf->slurmctld_port,
+		slurm_set_addr(&proto_conf->vip_addr, port,
 			       conf->slurmctld_addr);
 	}
 
@@ -228,12 +215,6 @@ static int _check_hash(buf_t *buffer, header_t *header, slurm_msg_t *msg,
 			else if ((cred_hash[1] == type[0]) &&
 				 (cred_hash[2] == type[1]))
 				msg->hash_index = HASH_PLUGIN_NONE;
-			/* 2 versions after 22.05 this else if can be removed */
-			else if ((msg->protocol_version <=
-				  SLURM_MIN_PROTOCOL_VERSION) &&
-				 (cred_hash[1] == type[1]) &&
-				 (cred_hash[2] == type[0]))
-				msg->hash_index = HASH_PLUGIN_NONE;
 			else
 				rc = SLURM_ERROR;
 		} else {
@@ -270,15 +251,7 @@ static int _compute_hash(buf_t *buffer, slurm_msg_t *msg, slurm_hash_t *hash)
 	if (slurm_get_plugin_hash_enable(msg->auth_index)) {
 		uint16_t msg_type = htons(msg->msg_type);
 
-		/* 2 versions after 22.05 this if can be removed */
-		if (msg->protocol_version <= SLURM_MIN_PROTOCOL_VERSION) {
-			/*
-			 * Unfortunately 21.08.8 and 20.11.9 did not normalize
-			 * this to network order, and require host-byte order.
-			 */
-			msg_type = msg->msg_type;
-			hash->type = HASH_PLUGIN_NONE;
-		} else if (msg->hash_index != HASH_PLUGIN_DEFAULT)
+		if (msg->hash_index != HASH_PLUGIN_DEFAULT)
 			hash->type = msg->hash_index;
 
 		if (hash->type == HASH_PLUGIN_NONE) {
@@ -489,25 +462,18 @@ bool slurm_with_slurmdbd(void)
  */
 extern char *slurm_auth_opts_to_socket(char *opts)
 {
-	char *socket = NULL, *sep, *tmp;
+	char *socket = NULL;
 
 	if (!opts)
 		return NULL;
 
-	tmp = strstr(opts, "socket=");
-	if (tmp) {
-		/* New format */
-		socket = xstrdup(tmp + 7);
-		sep = strchr(socket, ',');
-		if (sep)
-			sep[0] = '\0';
-	} else if (strchr(opts, '=')) {
-		/* New format, but socket not specified */
-		;
-	} else {
-		/* Old format */
+	socket = conf_get_opt_str(opts, "socket=");
+	/*
+	 * If socket not specified AND = is not present, assume its the old
+	 * format and opts is the socket
+	 */
+	if (!socket && !strchr(opts, '='))
 		socket = xstrdup(opts);
-	}
 
 	return socket;
 }
@@ -595,40 +561,6 @@ char *slurm_get_acct_gather_interconnect_type(void)
 		slurm_conf_unlock();
 	}
 	return acct_gather_interconnect_type;
-}
-
-/* slurm_get_filesystem_accounting_type
- * get FilesystemAccountingType from slurm_conf object
- * RET char *   - filesystem_accounting type, MUST be xfreed by caller
- */
-char *slurm_get_acct_gather_filesystem_type(void)
-{
-	char *acct_gather_filesystem_type = NULL;
-	slurm_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		acct_gather_filesystem_type =
-			xstrdup(conf->acct_gather_filesystem_type);
-		slurm_conf_unlock();
-	}
-	return acct_gather_filesystem_type;
-}
-
-
-extern uint16_t slurm_get_acct_gather_node_freq(void)
-{
-	uint16_t freq = 0;
-	slurm_conf_t *conf;
-
-	if (slurmdbd_conf) {
-	} else {
-		conf = slurm_conf_lock();
-		freq = conf->acct_gather_node_freq;
-		slurm_conf_unlock();
-	}
-	return freq;
 }
 
 /* slurm_get_ext_sensors_type
@@ -842,37 +774,22 @@ int slurm_open_msg_conn(slurm_addr_t * slurm_address)
  * Calls connect to make a connection-less datagram connection
  *	primary or secondary slurmctld message engine
  * IN/OUT addr       - address of controller contacted
- * IN/OUT use_backup - IN: whether to try the backup first or not
- *                     OUT: set to true if connection established with backup
+ * IN/OUT index      - IN: which controller to start from
+ *                   - OUT: which controller is connected
  * IN comm_cluster_rec	- Communication record (host/port/version)/
  * RET slurm_fd	- file descriptor of the connection created
  */
-extern int slurm_open_controller_conn(slurm_addr_t *addr, bool *use_backup,
-				      slurmdb_cluster_rec_t *comm_cluster_rec)
+static int _open_controller(slurm_addr_t *addr, int *index,
+			    slurmdb_cluster_rec_t *comm_cluster_rec)
 {
 	int fd = -1;
 	slurm_protocol_config_t *proto_conf = NULL;
-	int i, retry, max_retry_period;
-	uint16_t port;
+	int retry, max_retry_period;
 
 	if (!comm_cluster_rec) {
 		/* This means the addr wasn't set up already */
 		if (!(proto_conf = _slurm_api_get_comm_config()))
 			return SLURM_ERROR;
-
-		for (i = 0; i < proto_conf->control_cnt; i++) {
-			port = slurm_conf.slurmctld_port +
-				((time(NULL) + getpid()) %
-				 slurm_conf.slurmctld_port_count);
-			slurm_set_port(&(proto_conf->controller_addr[i]), port);
-		}
-
-		if (proto_conf->vip_addr_set) {
-			port = slurm_conf.slurmctld_port +
-				((time(NULL) + getpid()) %
-				 slurm_conf.slurmctld_port_count);
-			slurm_set_port(&(proto_conf->vip_addr), port);
-		}
 	}
 
 #ifdef HAVE_NATIVE_CRAY
@@ -905,34 +822,23 @@ extern int slurm_open_controller_conn(slurm_addr_t *addr, bool *use_backup,
 			log_flag(NET, "%s: Failed to contact controller(%pA): %m",
 				 __func__, &proto_conf->vip_addr);
 		} else {
-			if (!*use_backup) {
-				fd = slurm_open_msg_conn(
-						&proto_conf->controller_addr[0]);
+			for (int i = 0; i < proto_conf->control_cnt; i++) {
+				int inx = (*index + i) % proto_conf->control_cnt;
+				slurm_addr_t *ctrl_addr =
+					&proto_conf->controller_addr[inx];
+				if (slurm_addr_is_unspec(ctrl_addr))
+					continue;
+				fd = slurm_open_msg_conn(ctrl_addr);
 				if (fd >= 0) {
-					*use_backup = false;
+					log_flag(NET, "%s: Contacted SlurmctldHost[%d](%pA)",
+						 __func__, inx, ctrl_addr);
+					*index = inx;
 					goto end_it;
 				}
-				log_flag(NET,"%s: Failed to contact primary controller(%pA): %m",
-					 __func__,
-					 &proto_conf->controller_addr[0]);
+				log_flag(NET, "%s: Failed to contact SlurmctldHost[%d](%pA): %m",
+					 __func__, inx, ctrl_addr);
 			}
-			if ((proto_conf->control_cnt > 1) || *use_backup) {
-				for (i = 1; i < proto_conf->control_cnt; i++) {
-					fd = slurm_open_msg_conn(
-						&proto_conf->controller_addr[i]);
-					if (fd >= 0) {
-						log_flag(NET, "%s: Contacted backup controller(%pA) attempt:%d",
-							 __func__,
-							 &proto_conf->controller_addr[i],
-							 (i - 1));
-						*use_backup = true;
-						goto end_it;
-					}
-				}
-				*use_backup = false;
-				log_flag(NET, "%s: Failed to contact backup controller: %m",
-					 __func__);
-			}
+			*index = 0;
 		}
 	}
 	addr = NULL;
@@ -1064,7 +970,7 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, buf_t *buffer)
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
-	msg->auth_index = slurm_auth_index(auth_cred);
+	msg->auth_index = auth_index(auth_cred);
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
 		rc = auth_g_verify(auth_cred, _global_auth_key());
 	} else {
@@ -1084,8 +990,8 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, buf_t *buffer)
 		goto total_return;
 	}
 
-	msg->auth_uid = auth_g_get_uid(auth_cred);
-	msg->auth_uid_set = true;
+	auth_g_get_ids(auth_cred, &msg->auth_uid, &msg->auth_gid);
+	msg->auth_ids_set = true;
 
 skip_auth:
 	/*
@@ -1097,7 +1003,7 @@ skip_auth:
 
 	msg->body_offset =  get_buf_offset(buffer);
 
-	if ((header.body_length > remaining_buf(buffer)) ||
+	if ((header.body_length != remaining_buf(buffer)) ||
 	    _check_hash(buffer, &header, msg, auth_cred) ||
 	    (unpack_msg(msg, buffer) != SLURM_SUCCESS)) {
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
@@ -1355,7 +1261,7 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
-	msg.auth_index = slurm_auth_index(auth_cred);
+	msg.auth_index = auth_index(auth_cred);
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
 		rc = auth_g_verify(auth_cred, _global_auth_key());
 	} else {
@@ -1375,8 +1281,8 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 		goto total_return;
 	}
 
-	msg.auth_uid = auth_g_get_uid(auth_cred);
-	msg.auth_uid_set = true;
+	auth_g_get_ids(auth_cred, &msg.auth_uid, &msg.auth_gid);
+	msg.auth_ids_set = true;
 
 skip_auth:
 
@@ -1387,7 +1293,7 @@ skip_auth:
 	msg.msg_type = header.msg_type;
 	msg.flags = header.flags;
 
-	if ((header.body_length > remaining_buf(buffer)) ||
+	if ((header.body_length != remaining_buf(buffer)) ||
 	    _check_hash(buffer, &header, &msg, auth_cred) ||
 	    (unpack_msg(&msg, buffer) != SLURM_SUCCESS)) {
 		auth_g_destroy(auth_cred);
@@ -1773,6 +1679,9 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 		}
 	}
 
+	if (header.flags & SLURM_NO_AUTH_CRED)
+		goto skip_auth;
+
 	if (!(auth_cred = auth_g_unpack(buffer, header.version))) {
 		/* peer may have not been resolved already */
 		if (!peer)
@@ -1784,7 +1693,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		goto total_return;
 	}
-	msg->auth_index = slurm_auth_index(auth_cred);
+	msg->auth_index = auth_index(auth_cred);
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
 		rc = auth_g_verify(auth_cred, _global_auth_key());
 	} else {
@@ -1804,9 +1713,10 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 		goto total_return;
 	}
 
-	msg->auth_uid = auth_g_get_uid(auth_cred);
-	msg->auth_uid_set = true;
+	auth_g_get_ids(auth_cred, &msg->auth_uid, &msg->auth_gid);
+	msg->auth_ids_set = true;
 
+skip_auth:
 	/*
 	 * Unpack message body
 	 */
@@ -1814,7 +1724,7 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 	msg->msg_type = header.msg_type;
 	msg->flags = header.flags;
 
-	if ( (header.body_length > remaining_buf(buffer)) ||
+	if ((header.body_length != remaining_buf(buffer)) ||
 	    _check_hash(buffer, &header, msg, auth_cred) ||
 	     (unpack_msg(msg, buffer) != SLURM_SUCCESS) ) {
 		auth_g_destroy(auth_cred);
@@ -2009,8 +1919,8 @@ extern int slurm_send_node_msg(int fd, slurm_msg_t *msg)
 			if (slurm_conf.debug_flags & DEBUG_FLAG_NET)
 				peer = fd_resolve_peer(fd);
 
-			log_flag(NET, "%s: [%s] persistent connection has disappeared for msg_type=%u",
-				__func__, peer, msg->msg_type);
+			log_flag(NET, "%s: [%s] persistent connection has disappeared for msg_type=%s",
+				__func__, peer, rpc_num2string(msg->msg_type));
 		} else if (rc < 0) {
 			peer = fd_resolve_peer(fd);
 			error("%s: [%s] slurm_persist_send_msg(msg_type=%s) failed: %m",
@@ -2032,8 +1942,8 @@ extern int slurm_send_node_msg(int fd, slurm_msg_t *msg)
 	if (rc >= 0) {
 		/* sent successfully */
 	} else if (errno == ENOTCONN) {
-		log_flag(NET, "%s: peer has disappeared for msg_type=%u",
-			 __func__, msg->msg_type);
+		log_flag(NET, "%s: peer has disappeared for msg_type=%s",
+			 __func__, rpc_num2string(msg->msg_type));
 	} else if (errno == EBADF) {
 		/* failure of sendto() and peer lookup will never work */
 		error("%s: slurm_bufs_sendto(fd=%d) with msg_type=%s failed: %m",
@@ -2158,7 +2068,7 @@ extern int slurm_unpack_addr_array(slurm_addr_t **addr_array_ptr,
 	slurm_addr_t *addr_array = NULL;
 
 	safe_unpack32(size_val, buffer);
-	addr_array = xcalloc(*size_val, sizeof(slurm_addr_t));
+	safe_xcalloc(addr_array, *size_val, sizeof(slurm_addr_t));
 
 	for (int i = 0; i < *size_val; i++) {
 		if (slurm_unpack_addr_no_alloc(&addr_array[i], buffer))
@@ -2201,7 +2111,7 @@ extern void response_init(slurm_msg_t *resp_msg, slurm_msg_t *msg,
 	 * but we're stuck doing that on older protocol versions for
 	 * backwards-compatibility.
 	 */
-	if (!msg->auth_uid_set)
+	if (!msg->auth_ids_set)
 		slurm_msg_set_r_uid(resp_msg, SLURM_AUTH_NOBODY);
 	else if ((msg->auth_uid != slurm_conf.slurm_user_id) &&
 		 (msg->auth_uid != slurm_conf.slurmd_user_id))
@@ -2422,12 +2332,11 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 	int fd = -1;
 	int rc = 0;
 	time_t start_time = time(NULL);
-	int retry = 1;
 	slurm_conf_t *conf;
 	bool have_backup;
 	uint16_t slurmctld_timeout;
 	slurm_addr_t ctrl_addr;
-	static bool use_backup = false;
+	static int index = 0;
 	slurmdb_cluster_rec_t *save_comm_cluster_rec = comm_cluster_rec;
 	int ratelimited = 0;
 
@@ -2442,27 +2351,21 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 	slurm_msg_set_r_uid(request_msg, SLURM_AUTH_UID_ANY);
 
 tryagain:
-	retry = 1;
 	if (comm_cluster_rec)
 		request_msg->flags |= SLURM_GLOBAL_AUTH_KEY;
-
-	if ((fd = slurm_open_controller_conn(&ctrl_addr, &use_backup,
-					     comm_cluster_rec)) < 0) {
-		rc = -1;
-		goto cleanup;
-	}
 
 	conf = slurm_conf_lock();
 	have_backup = conf->control_cnt > 1;
 	slurmctld_timeout = conf->slurmctld_timeout;
 	slurm_conf_unlock();
 
-	while (retry) {
-		/*
-		 * If the backup controller is in the process of assuming
-		 * control, we sleep and retry later
-		 */
-		retry = 0;
+	while (true) {
+		if ((fd = _open_controller(&ctrl_addr, &index,
+					   comm_cluster_rec)) < 0) {
+			rc = -1;
+			break;
+		}
+
 		rc = _send_and_recv_msg(fd, request_msg, response_msg, 0);
 		if (response_msg->auth_cred)
 			auth_g_destroy(response_msg->auth_cred);
@@ -2476,31 +2379,24 @@ tryagain:
 		    && (have_backup)
 		    && (difftime(time(NULL), start_time)
 			< (slurmctld_timeout + (slurmctld_timeout / 2)))) {
-			if (((return_code_msg_t *)
-			     response_msg->data)->return_code
-			     == ESLURM_IN_STANDBY_MODE) {
-				log_flag(NET, "%s: Primary not responding, backup not in control. Sleeping and retry.",
-					 __func__);
+			log_flag(NET, "%s: SlurmctldHost[%d] is in standby, trying next",
+				 __func__, index);
+			index++;
+
+			/*
+			 * After running through all backups, pause to
+			 * give the primary some time to come back up.
+			 */
+			if (index == conf->control_cnt) {
+				index = 0;
 				sleep(slurmctld_timeout / 2);
-				use_backup = false;
-			} else {
-				log_flag(NET, "%s: Primary was contacted, but says it is the backup in standby.  Trying the backup",
-					 __func__);
-				use_backup = true;
 			}
+
 			slurm_free_return_code_msg(response_msg->data);
-			if ((fd = slurm_open_controller_conn(&ctrl_addr,
-							     &use_backup,
-							     comm_cluster_rec))
-			    < 0) {
-				rc = -1;
-			} else {
-				retry = 1;
-			}
+			continue;
 		}
 
-		if (rc == -1)
-			break;
+		break;
 	}
 
 	if (!rc && (response_msg->msg_type == RESPONSE_SLURM_RC) &&
@@ -2513,12 +2409,12 @@ tryagain:
 		 */
 		verbose("RPC rate limited %d time(s). Sleeping then trying again.",
 			ratelimited);
-		sleep(1);
+		sleep(ratelimited);
 		goto tryagain;
 	}
 
 	if (!rc && (response_msg->msg_type == RESPONSE_SLURM_REROUTE_MSG)) {
-		reroute_msg_t *rr_msg = (reroute_msg_t *)response_msg->data;
+		reroute_msg_t *rr_msg = response_msg->data;
 
 		/*
 		 * Don't expect mutliple hops but in the case it does
@@ -2537,7 +2433,6 @@ tryagain:
 	if (comm_cluster_rec != save_comm_cluster_rec)
 		slurmdb_destroy_cluster_rec(comm_cluster_rec);
 
-cleanup:
 	if (rc != 0)
  		_remap_slurmctld_errno();
 
@@ -2581,13 +2476,13 @@ extern int slurm_send_only_controller_msg(slurm_msg_t *req,
 	int      rc = SLURM_SUCCESS;
 	int fd = -1;
 	slurm_addr_t ctrl_addr;
-	bool     use_backup = false;
+	int index = 0;
 
 	/*
 	 *  Open connection to Slurm controller:
 	 */
-	if ((fd = slurm_open_controller_conn(&ctrl_addr, &use_backup,
-					     comm_cluster_rec)) < 0) {
+	if ((fd = _open_controller(&ctrl_addr, &index,
+				   comm_cluster_rec)) < 0) {
 		rc = SLURM_ERROR;
 		goto cleanup;
 	}
@@ -2752,19 +2647,14 @@ void slurm_send_msg_maybe(slurm_msg_t *req)
 List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout)
 {
 	List ret_list = NULL;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 
 	if (!running_in_daemon()) {
 		/*
-		 * Load route and topo plugins here to make it so the api can do
+		 * Load topo plugin here to make it so the api can do
 		 * it easily
 		 */
-		if (route_init() != SLURM_SUCCESS) {
-			error("failed to initialize route plugins");
-			return NULL;
-		}
-
-		if (slurm_topo_init() != SLURM_SUCCESS) {
+		if (topology_g_init() != SLURM_SUCCESS) {
 			error("failed to initialize route plugins");
 			return NULL;
 		}
@@ -2924,60 +2814,6 @@ extern int slurm_send_recv_controller_rc_msg(slurm_msg_t *req, int *rc,
 	return ret_c;
 }
 
-/* this is used to set how many nodes are going to be on each branch
- * of the tree.
- * IN total       - total number of nodes to send to
- * IN tree_width  - how wide the tree should be on each hop
- * RET int *	  - int array tree_width in length each space
- *		    containing the number of nodes to send to each hop
- *		    on the span.
- */
-extern int *set_span(int total,  uint16_t tree_width)
-{
-	int *span = NULL;
-	int left = total;
-	int i = 0;
-
-	if (tree_width == 0)
-		tree_width = slurm_conf.tree_width;
-
-	span = xcalloc(tree_width, sizeof(int));
-	//info("span count = %d", tree_width);
-	if (total <= tree_width) {
-		return span;
-	}
-
-	while (left > 0) {
-		for (i = 0; i < tree_width; i++) {
-			if ((tree_width-i) >= left) {
-				if (span[i] == 0) {
-					left = 0;
-					break;
-				} else {
-					span[i] += left;
-					left = 0;
-					break;
-				}
-			} else if (left <= tree_width) {
-				if (span[i] == 0)
-					left--;
-
-				span[i] += left;
-				left = 0;
-				break;
-			}
-
-			if (span[i] == 0)
-				left--;
-
-			span[i] += tree_width;
-			left -= tree_width;
-		}
-	}
-
-	return span;
-}
-
 /*
  * Free a slurm message's memebers but not the message itself
  */
@@ -3011,7 +2847,7 @@ extern void slurm_msg_set_r_uid(slurm_msg_t *msg, uid_t r_uid)
 
 extern char *nodelist_nth_host(const char *nodelist, int inx)
 {
-	hostlist_t hl = hostlist_create(nodelist);
+	hostlist_t *hl = hostlist_create(nodelist);
 	char *name = hostlist_nth(hl, inx);
 	hostlist_destroy(hl);
 	return name;
@@ -3019,7 +2855,7 @@ extern char *nodelist_nth_host(const char *nodelist, int inx)
 
 extern int nodelist_find(const char *nodelist, const char *name)
 {
-	hostlist_t hl = hostlist_create(nodelist);
+	hostlist_t *hl = hostlist_create(nodelist);
 	int id = hostlist_find(hl, name);
 	hostlist_destroy(hl);
 	return id;
@@ -3180,7 +3016,7 @@ extern int slurm_forward_data(
 	ret_data_info_t *ret_data_info = NULL;
 	slurm_msg_t msg;
 	forward_data_msg_t req;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 	bool redo_nodelist = false;
 	slurm_msg_t_init(&msg);
 
@@ -3290,4 +3126,40 @@ extern int slurm_char_to_hex(int c)
 		return cl + (10 - 'a');
 	else
 		return -1;
+}
+
+extern int slurm_associations_get_shares(shares_request_msg_t *shares_req,
+					 shares_response_msg_t **shares_resp)
+{
+	int rc;
+	slurm_msg_t req_msg;
+	slurm_msg_t resp_msg;
+
+	slurm_msg_t_init(&req_msg);
+	slurm_msg_t_init(&resp_msg);
+
+	req_msg.msg_type = REQUEST_SHARE_INFO;
+	req_msg.data = shares_req;
+
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
+		return SLURM_ERROR;
+
+	switch (resp_msg.msg_type) {
+	case RESPONSE_SHARE_INFO:
+		*shares_resp = (shares_response_msg_t *) resp_msg.data;
+		break;
+	case RESPONSE_SLURM_RC:
+		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+		slurm_free_return_code_msg(resp_msg.data);
+		if (rc)
+			slurm_seterrno_ret(rc);
+		*shares_resp = NULL;
+		break;
+	default:
+		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
+		break;
+	}
+
+	return SLURM_SUCCESS;
 }

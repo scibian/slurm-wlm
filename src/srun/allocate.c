@@ -130,7 +130,7 @@ static void _signal_while_allocating(int signo)
 
 	local_signal = xmalloc(sizeof(int));
 	*local_signal = signo;
-	slurm_thread_create_detached(NULL, _safe_signal_while_allocating,
+	slurm_thread_create_detached(_safe_signal_while_allocating,
 				     local_signal);
 }
 
@@ -277,21 +277,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		}
 	}
 	if (is_ready) {
-		resource_allocation_response_msg_t *resp;
-		char *tmp_str;
 		if (i > 0)
      			verbose("Nodes %s are ready for job", alloc->node_list);
-		if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD") &&
-		    (slurm_allocation_lookup(pending_job_id, &resp)
-		     == SLURM_SUCCESS)) {
-			tmp_str = alloc->alias_list;
-			alloc->alias_list = resp->alias_list;
-			resp->alias_list = tmp_str;
-			if (resp->node_addr)
-				add_remote_nodes_to_conf_tbls(resp->node_list,
-							      resp->node_addr);
-			slurm_free_resource_allocation_response_msg(resp);
-		}
 	} else if (!destroy_job) {
 		if (job_killed) {
 			error("Job allocation %u has been revoked",
@@ -357,9 +344,8 @@ extern int allocate_test(void)
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-extern resource_allocation_response_msg_t *
-	allocate_nodes(bool handle_signals, slurm_opt_t *opt_local)
-
+extern resource_allocation_response_msg_t *allocate_nodes(
+	slurm_opt_t *opt_local)
 {
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	resource_allocation_response_msg_t *resp = NULL;
@@ -396,11 +382,9 @@ extern resource_allocation_response_msg_t *
 
 	/* NOTE: Do not process signals in separate pthread. The signal will
 	 * cause slurm_allocate_resources_blocking() to exit immediately. */
-	if (handle_signals) {
-		xsignal_unblock(sig_array);
-		for (i = 0; sig_array[i]; i++)
-			xsignal(sig_array[i], _signal_while_allocating);
-	}
+	xsignal_unblock(sig_array);
+	for (i = 0; sig_array[i]; i++)
+		xsignal(sig_array[i], _signal_while_allocating);
 
 	while (!resp) {
 		resp = slurm_allocate_resources_blocking(j,
@@ -461,8 +445,7 @@ extern resource_allocation_response_msg_t *
 		goto relinquish;
 	}
 
-	if (handle_signals)
-		xsignal_block(sig_array);
+	xsignal_block(sig_array);
 
 	job_desc_msg_destroy(j);
 
@@ -494,7 +477,7 @@ static int _copy_other_port(void *x, void *arg)
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-List allocate_het_job_nodes(bool handle_signals)
+list_t *allocate_het_job_nodes(void)
 {
 	resource_allocation_response_msg_t *resp = NULL;
 	job_desc_msg_t *j, *first_job = NULL;
@@ -557,11 +540,9 @@ List allocate_het_job_nodes(bool handle_signals)
 
 	/* NOTE: Do not process signals in separate pthread. The signal will
 	 * cause slurm_allocate_resources_blocking() to exit immediately. */
-	if (handle_signals) {
-		xsignal_unblock(sig_array);
-		for (i = 0; sig_array[i]; i++)
-			xsignal(sig_array[i], _signal_while_allocating);
-	}
+	xsignal_unblock(sig_array);
+	for (i = 0; sig_array[i]; i++)
+		xsignal(sig_array[i], _signal_while_allocating);
 
 	is_het_job = true;
 
@@ -641,8 +622,7 @@ List allocate_het_job_nodes(bool handle_signals)
 		goto relinquish;
 	}
 
-	if (handle_signals)
-		xsignal_block(sig_array);
+	xsignal_block(sig_array);
 
 	return job_resp_list;
 

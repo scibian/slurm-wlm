@@ -56,6 +56,11 @@ Currently, the options are:
 .IP
 .RS
 .TP
+\fBnrt\fR
+Automatically detect AWS Trainium/Inferentia devices.
+.IP
+
+.TP
 \fBnvml\fR
 Automatically detect NVIDIA GPUs. Requires the NVIDIA Management Library (NVML).
 .IP
@@ -119,7 +124,8 @@ specific CPUs on the same socket (or NUMA with numa_node_as_socket) and this
 option should generally be
 used to identify all cores on some socket. Though, job step allocations that
 request a portion of the job's resources with
---exact will look at cores directly for which more specific core identification
+\-\-exact and task binding through \-\-gpu\-\bind
+will both look at cores directly for which more specific core identification
 may be useful.
 
 
@@ -226,7 +232,7 @@ gres (gpu) only allow one of the sharing gres to be used by the shared gres.
 This is the default for MPS.
 
 \fBNOTE\fR: If a gres has this flag configured it is global, so all other nodes
-with that gres will have this flag implied.  This flag is not compatible with
+with that gres will have this flag implied. This flag is not compatible with
 all_sharing for a specific gres.
 .IP
 
@@ -236,7 +242,7 @@ To be used on a shared gres. This is the opposite of one_sharing and can be
 used to allow all sharing gres (gpu) on a node to be used for shared gres (mps).
 
 \fBNOTE\fR: If a gres has this flag configured it is global, so all other nodes
-with that gres will have this flag implied.  This flag is not compatible with
+with that gres will have this flag implied. This flag is not compatible with
 one_sharing for a specific gres.
 .IP
 
@@ -374,8 +380,9 @@ the example below.
 An optional arbitrary string identifying the type of generic resource.
 For example, this might be used to identify a specific model of GPU, which users
 can then specify in a job request.
-A restart of the \fBslurmctld\fR and \fBslurmd\fR daemons is required for changes
-to the \fBType\fR option to take effect.
+For changes to the \fBType\fR option to take effect with a scontrol reconfig all
+affected \fBslurmd\fR daemons must be responding to the \fBslurmctld\fR.
+Otherwise a restart of the \fBslurmctld\fR and \fBslurmd\fR daemons is required.
 
 \fBNOTE\fR: If using autodetect functionality and defining the Type in your
 gres.conf file, the Type specified should match or be a substring of the value
@@ -464,7 +471,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"

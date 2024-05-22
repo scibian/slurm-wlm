@@ -37,6 +37,8 @@
 #ifndef _HAVE_RUN_IN_DAEMON_H
 #define _HAVE_RUN_IN_DAEMON_H
 
+#include "src/common/log.h"
+
 /* Determine slurm_prog_name (calling process) is in list of daemons
  *
  * IN/OUT - run - set to true if running and false if not
@@ -48,6 +50,9 @@ extern bool run_in_daemon(bool *run, bool *set, char *daemons);
 
 /* check if running in a daemon */
 extern bool running_in_daemon(void);
+
+/* check if running in the slurmctld */
+extern bool running_in_sackd(void);
 
 /* check if running in the slurmctld */
 extern bool running_in_slurmctld(void);
@@ -69,5 +74,13 @@ extern bool running_in_slurmrestd(void);
 
 /* check if running in the slurmstepd */
 extern bool running_in_slurmstepd(void);
+
+#define error_in_daemon(fmt, ...)		\
+do {						\
+	if (running_in_daemon())		\
+		error(fmt, ##__VA_ARGS__);	\
+	else					\
+		verbose(fmt, ##__VA_ARGS__);	\
+} while (false)
 
 #endif

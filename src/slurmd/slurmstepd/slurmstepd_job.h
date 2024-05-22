@@ -64,12 +64,7 @@ typedef cpuset_t cpu_set_t;
 #define STEP_CONTAINER_MAGIC 0xa0b9b2ba
 
 typedef struct {
-	char *data;
-	uint32_t len;
-} srun_key_t;
-
-typedef struct {
-	srun_key_t *key;	   /* srun key for IO verification         */
+	char *key;                 /* srun key for IO verification         */
 	slurm_addr_t resp_addr;	   /* response addr for task exit msg      */
 	slurm_addr_t ioaddr;       /* Address to connect on for normal I/O.
 				      Spawn IO uses messages to the normal
@@ -152,6 +147,8 @@ typedef struct {
 	uint32_t       ntasks; /* total number of tasks in current job      */
 	uint32_t       nodeid; /* relative position of this node in job     */
 	uint32_t       node_tasks;	/* number of tasks on *this* node   */
+	slurm_addr_t *node_addrs; /* allocated node addrs -- from cred */
+	char *node_list; /* allocated nodes -- from cred */
 	uint32_t       het_job_id;	/* Hetjob ID or NO_VAL */
 	uint32_t       het_job_nnodes;	/* total node count for entire hetjob */
 	char          *het_job_node_list; /* Hetjob step node list */
@@ -238,7 +235,6 @@ typedef struct {
 	pid_t          jmgr_pid;     /* job manager pid                     */
 	pid_t          pgid;         /* process group id for tasks          */
 	uint32_t       flags;        /* See LAUNCH_* flags defined in slurm_protocol_defs.h */
-	uint16_t       overcommit;
 	env_t          *envtp;
 	uint64_t       cont_id;
 
@@ -291,8 +287,6 @@ srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
 			       uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
-
-void srun_key_destroy(srun_key_t *key);
 
 stepd_step_task_info_t * task_info_create(int taskid, int gtaskid,
 					  char *ifname, char *ofname,

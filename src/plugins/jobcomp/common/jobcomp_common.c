@@ -37,8 +37,8 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/data.h"
 #include "src/common/fd.h"
+#include "src/common/id_util.h"
 #include "src/common/parse_time.h"
-#include "src/common/uid.h"
 #include "src/plugins/jobcomp/common/jobcomp_common.h"
 #include "src/slurmctld/slurmctld.h"
 
@@ -135,8 +135,8 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 	uint32_t time_limit;
 	data_t *record = NULL;
 
-	usr_str = uid_to_string_or_null(job_ptr->user_id);
-	grp_str = gid_to_string_or_null(job_ptr->group_id);
+	usr_str = user_from_job(job_ptr);
+	grp_str = group_from_job(job_ptr);
 
 	if ((job_ptr->time_limit == NO_VAL) && job_ptr->part_ptr)
 		time_limit = job_ptr->part_ptr->max_time;
@@ -175,7 +175,11 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 					sizeof(end_str));
 	}
 
-	elapsed_time = job_ptr->end_time - job_ptr->start_time;
+	if (job_ptr->end_time && job_ptr->start_time &&
+	    job_ptr->start_time < job_ptr->end_time)
+		elapsed_time = job_ptr->end_time - job_ptr->start_time;
+	else
+		elapsed_time = 0;
 
 	tmp_int = tmp_int2 = 0;
 	if (job_ptr->derived_ec == NO_VAL)
@@ -327,9 +331,17 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 	if (job_ptr->wckey)
 		data_set_string(data_key_set(record, "wc_key"), job_ptr->wckey);
 
+	if (job_ptr->tres_req_str)
+		data_set_string(data_key_set(record, "tres_req_raw"),
+				job_ptr->tres_req_str);
+
 	if (job_ptr->tres_fmt_req_str)
 		data_set_string(data_key_set(record, "tres_req"),
 				job_ptr->tres_fmt_req_str);
+
+	if (job_ptr->tres_alloc_str)
+		data_set_string(data_key_set(record, "tres_alloc_raw"),
+				job_ptr->tres_alloc_str);
 
 	if (job_ptr->tres_fmt_alloc_str)
 		data_set_string(data_key_set(record, "tres_alloc"),

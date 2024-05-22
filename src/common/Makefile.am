@@ -18,6 +18,8 @@ libcommon_la_SOURCES =				\
 	cbuf.h					\
 	conmgr.c				\
 	conmgr.h				\
+	core_array.c				\
+	core_array.h				\
 	cpu_frequency.c				\
 	cpu_frequency.h				\
 	cron.c					\
@@ -30,6 +32,8 @@ libcommon_la_SOURCES =				\
 	eio.h					\
 	env.c					\
 	env.h					\
+	extra_constraints.c			\
+	extra_constraints.h			\
 	fd.c					\
 	fd.h					\
 	fetch_config.c				\
@@ -45,6 +49,10 @@ libcommon_la_SOURCES =				\
 	hostlist.h				\
 	http.h					\
 	http.c					\
+	identity.h				\
+	identity.c				\
+	id_util.h				\
+	id_util.c				\
 	io_hdr.c				\
 	io_hdr.h				\
 	job_features.c				\
@@ -64,6 +72,8 @@ libcommon_la_SOURCES =				\
 	node_conf.h				\
 	oci_config.c				\
 	oci_config.h				\
+	openapi.c				\
+	openapi.h				\
 	optz.c					\
 	optz.h					\
 	pack.c					\
@@ -91,6 +101,8 @@ libcommon_la_SOURCES =				\
 	run_command.h				\
 	run_in_daemon.c				\
 	run_in_daemon.h				\
+	sack_api.c				\
+	sack_api.h				\
 	setproctitle.c				\
 	setproctitle.h				\
 	slurm_errno.c				\
@@ -130,8 +142,6 @@ libcommon_la_SOURCES =				\
 	slurmdbd_pack.h				\
 	spank.c					\
 	spank.h					\
-	state_control.c				\
-	state_control.h				\
 	stepd_api.c				\
 	stepd_api.h				\
 	strlcpy.c				\
@@ -161,12 +171,16 @@ libcommon_la_SOURCES =				\
 	x11_util.h				\
 	xassert.c				\
 	xassert.h				\
+	xahash.c				\
+	xahash.h				\
 	xhash.c					\
 	xhash.h					\
 	xmalloc.c				\
 	xmalloc.h				\
 	xregex.c				\
 	xregex.h				\
+	xsystemd.c				\
+	xsystemd.h				\
 	xsignal.c				\
 	xsignal.h				\
 	xstring.c				\
