@@ -44,11 +44,14 @@
 #include <netdb.h>
 #include <sched.h>
 #include <signal.h>
-#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#if HAVE_SYS_PRCTL_H
+#include <sys/prctl.h>
+#endif
 
 #include "slurm/slurm.h"
 
@@ -67,15 +70,20 @@
 
 #include "src/interfaces/accounting_storage.h"
 #include "src/interfaces/auth.h"
-#include "src/interfaces/openapi.h"
+#include "src/interfaces/data_parser.h"
 #include "src/interfaces/select.h"
 #include "src/interfaces/serializer.h"
 
 #include "src/slurmrestd/http.h"
+#include "src/slurmrestd/openapi.h"
 #include "src/slurmrestd/operations.h"
 #include "src/slurmrestd/rest_auth.h"
 
 #define OPT_LONG_MAX_CON 0x100
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#define unshare(_) (false)
+#endif
 
 decl_static_data(usage_txt);
 
@@ -90,6 +98,7 @@ typedef struct {
 
 /* Debug level to use */
 static int debug_level = 0;
+static int debug_increase = 0;
 /* detected run mode */
 static run_mode_t run_mode = { 0 };
 /* Listen string */
@@ -110,10 +119,12 @@ static size_t auth_plugin_count = 0;
 static plugrack_t *auth_rack = NULL;
 
 static char *oas_specs = NULL;
-bool unshare_sysv = true;
-bool unshare_files = true;
-bool check_user = true;
-bool become_user = false;
+static char *data_parser_plugins = NULL;
+static data_parser_t **parsers = NULL;
+static bool unshare_sysv = true;
+static bool unshare_files = true;
+static bool check_user = true;
+static bool become_user = false;
 
 extern parsed_host_port_t *parse_host_port(const char *str);
 extern void free_parse_host_port(parsed_host_port_t *parsed);
@@ -141,7 +152,7 @@ static void _parse_env(void)
 	if ((buffer = getenv("SLURMRESTD_DEBUG")) != NULL) {
 		debug_level = log_string2num(buffer);
 
-		if (debug_level <= 0)
+		if ((debug_level < 0) || (debug_level == NO_VAL16))
 			fatal("Invalid env SLURMRESTD_DEBUG: %s", buffer);
 	}
 
@@ -171,6 +182,11 @@ static void _parse_env(void)
 		oas_specs = xstrdup(buffer);
 	}
 
+	if ((buffer = getenv("SLURMRESTD_DATA_PARSER_PLUGINS")) != NULL) {
+		xfree(data_parser_plugins);
+		data_parser_plugins = xstrdup(buffer);
+	}
+
 	if ((buffer = getenv("SLURMRESTD_SECURITY"))) {
 		char *token = NULL, *save_ptr = NULL;
 		char *toklist = xstrdup(buffer);
@@ -188,6 +204,44 @@ static void _parse_env(void)
 				become_user = true;
 			} else {
 				fatal("Unexpected value in SLURMRESTD_SECURITY=%s",
+				      token);
+			}
+			token = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(toklist);
+	}
+
+	if ((buffer = getenv("SLURMRESTD_JSON"))) {
+		char *token = NULL, *save_ptr = NULL;
+		char *toklist = xstrdup(buffer);
+
+		token = strtok_r(toklist, ",", &save_ptr);
+		while (token) {
+			if (!xstrcasecmp(token, "compact")) {
+				json_flags = SER_FLAGS_COMPACT;
+			} else if (!xstrcasecmp(token, "pretty")) {
+				json_flags = SER_FLAGS_PRETTY;
+			} else {
+				fatal("Unexpected value in SLURMRESTD_JSON=%s",
+				      token);
+			}
+			token = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(toklist);
+	}
+
+	if ((buffer = getenv("SLURMRESTD_YAML"))) {
+		char *token = NULL, *save_ptr = NULL;
+		char *toklist = xstrdup(buffer);
+
+		token = strtok_r(toklist, ",", &save_ptr);
+		while (token) {
+			if (!xstrcasecmp(token, "compact")) {
+				yaml_flags = SER_FLAGS_COMPACT;
+			} else if (!xstrcasecmp(token, "pretty")) {
+				yaml_flags = SER_FLAGS_PRETTY;
+			} else {
+				fatal("Unexpected value in SLURMRESTD_YAML=%s",
 				      token);
 			}
 			token = strtok_r(NULL, ",", &save_ptr);
@@ -241,14 +295,26 @@ static void _setup_logging(int argc, char **argv)
 	log_options_t logopt = LOG_OPTS_INITIALIZER;
 	log_facility_t fac = SYSLOG_FACILITY_DAEMON;
 
-	/* increase debug level as requested */
-	logopt.syslog_level += debug_level;
+	/*
+	 * Set debug level as requested.
+	 * debug_level is set to the value of SLURMRESTD_DEBUG.
+	 * SLURMRESTD_DEBUG sets the debug level if -v's are not given.
+	 * debug_increase is the command line option -v, which applies on top
+	 * of the default log level (info).
+	 */
+	if (debug_increase)
+		debug_level = MIN((LOG_LEVEL_INFO + debug_increase),
+				  (LOG_LEVEL_END - 1));
+	else if (!debug_level)
+		debug_level = LOG_LEVEL_INFO;
+
+	logopt.syslog_level = debug_level;
 
 	if (run_mode.stderr_tty) {
 		/* Log to stderr if it is a tty */
 		logopt = (log_options_t) LOG_OPTS_STDERR_ONLY;
 		fac = SYSLOG_FACILITY_USER;
-		logopt.stderr_level += debug_level;
+		logopt.stderr_level = debug_level;
 	}
 
 	if (log_init(xbasename(argv[0]), logopt, fac, NULL))
@@ -283,12 +349,16 @@ static void _parse_commandline(int argc, char **argv)
 
 	opterr = 0;
 
-	while ((c = getopt_long(argc, argv, "a:f:g:hs:t:u:vV", long_options,
+	while ((c = getopt_long(argc, argv, "a:d:f:g:hs:t:u:vV", long_options,
 				&option_index)) != -1) {
 		switch (c) {
 		case 'a':
 			xfree(rest_auth);
 			rest_auth = xstrdup(optarg);
+			break;
+		case 'd':
+			xfree(data_parser_plugins);
+			data_parser_plugins = xstrdup(optarg);
 			break;
 		case 'f':
 			xfree(slurm_conf_filename);
@@ -314,7 +384,7 @@ static void _parse_commandline(int argc, char **argv)
 				fatal("Unable to resolve user: %s", optarg);
 			break;
 		case 'v':
-			debug_level++;
+			debug_increase++;
 			break;
 		case 'V':
 			print_slurm_version();
@@ -344,12 +414,16 @@ static void _lock_down(void)
 	if ((getuid() == SLURM_AUTH_NOBODY) || (getgid() == SLURM_AUTH_NOBODY))
 		fatal("slurmrestd must not be run as nobody");
 
+#if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1)
 		fatal("Unable to disable new privileges: %m");
+#endif
+
 	if (unshare_sysv && unshare(CLONE_SYSVSEM))
 		fatal("Unable to unshare System V namespace: %m");
 	if (unshare_files && unshare(CLONE_FILES))
 		fatal("Unable to unshare file descriptors: %m");
+
 	if (gid && setgroups(0, NULL))
 		fatal("Unable to drop supplementary groups: %m");
 	if (uid != 0 && (gid == 0))
@@ -376,7 +450,7 @@ static void _lock_down(void)
 }
 
 /* simple wrapper to hand over operations router in http context */
-static void *_setup_http_context(con_mgr_fd_t *con, void *arg)
+static void *_setup_http_context(conmgr_fd_t *con, void *arg)
 {
 	xassert(operations_router == arg);
 	return setup_http_context(con, operations_router);
@@ -401,14 +475,23 @@ static void _auth_plugrack_foreach(const char *full_type, const char *fq_path,
 static void _plugrack_foreach_list(const char *full_type, const char *fq_path,
 				   const plugin_handle_t id, void *arg)
 {
-	info("%s", full_type);
+	fprintf(stderr, "%s\n", full_type);
 }
 
 static int _op_handler_openapi(const char *context_id,
 			       http_request_method_t method, data_t *parameters,
-			       data_t *query, int tag, data_t *resp, void *auth)
+			       data_t *query, int tag, data_t *resp, void *auth,
+			       data_parser_t *parser)
 {
-	return get_openapi_specification(openapi_state, resp);
+	return get_openapi_specification(resp);
+}
+
+static void _on_signal_interrupt(conmgr_fd_t *con, conmgr_work_type_t type,
+				 conmgr_work_status_t status, const char *tag,
+				 void *arg)
+{
+	info("%s: caught SIGINT. Shutting down.", __func__);
+	conmgr_request_shutdown();
 }
 
 int main(int argc, char **argv)
@@ -416,13 +499,12 @@ int main(int argc, char **argv)
 	int rc = SLURM_SUCCESS, parse_rc = SLURM_SUCCESS;
 	struct sigaction sigpipe_handler = { .sa_handler = _sigpipe_handler };
 	socket_listen = list_create(xfree_ptr);
-	con_mgr_t *conmgr = NULL;
-	con_mgr_events_t conmgr_events = {
+	conmgr_events_t conmgr_events = {
 		.on_data = parse_http,
 		.on_connection = _setup_http_context,
 		.on_finish = on_http_connection_finish,
 	};
-	static const con_mgr_callbacks_t callbacks = {
+	static const conmgr_callbacks_t callbacks = {
 		.parse = parse_host_port,
 		.free_parse = free_parse_host_port,
 	};
@@ -450,24 +532,20 @@ int main(int argc, char **argv)
 	if (thread_count > 1024)
 		fatal("Excessive thread count");
 
-	if (data_init())
-		fatal("Unable to initialize data static structures");
-
 	if (serializer_g_init(NULL, NULL))
 		fatal("Unable to initialize serializers");
 
-	if (!(conmgr = init_con_mgr((run_mode.listen ? thread_count : 1),
-				    max_connections, callbacks)))
-		fatal("Unable to initialize connection manager");
+	init_conmgr((run_mode.listen ? thread_count : 1), max_connections,
+		    callbacks);
 
-	if (init_operations())
-		fatal("Unable to initialize operations structures");
+	conmgr_add_signal_work(SIGINT, _on_signal_interrupt, NULL,
+			       "_on_signal_interrupt()");
 
 	auth_rack = plugrack_create("rest_auth");
 	plugrack_read_dir(auth_rack, slurm_conf.plugindir);
 
 	if (rest_auth && !xstrcasecmp(rest_auth, "list")) {
-		info("Possible REST authentication plugins:");
+		fprintf(stderr, "Possible REST authentication plugins:\n");
 		plugrack_foreach(auth_rack, _plugrack_foreach_list, NULL);
 		exit(0);
 	} else if (rest_auth) {
@@ -510,11 +588,30 @@ int main(int argc, char **argv)
 	if (init_rest_auth(become_user, auth_plugin_handles, auth_plugin_count))
 		fatal("Unable to initialize rest authentication");
 
+	if (data_parser_plugins && !xstrcasecmp(data_parser_plugins, "list")) {
+		fprintf(stderr, "Possible data_parser plugins:\n");
+		parsers = data_parser_g_new_array(NULL, NULL, NULL, NULL,
+						  NULL, NULL, NULL, NULL,
+						  data_parser_plugins,
+						  _plugrack_foreach_list,
+						  false);
+		exit(SLURM_SUCCESS);
+	} else if (!(parsers = data_parser_g_new_array(NULL, NULL, NULL, NULL,
+						       NULL, NULL, NULL, NULL,
+						       data_parser_plugins,
+						       NULL, false))) {
+		fatal("Unable to initialize data_parser plugins");
+	}
+	xfree(data_parser_plugins);
+
+	if (init_operations(parsers))
+		fatal("Unable to initialize operations structures");
+
 	if (oas_specs && !xstrcasecmp(oas_specs, "list")) {
-		info("Possible OpenAPI plugins:");
-		exit(init_openapi(&openapi_state, oas_specs,
-				  _plugrack_foreach_list));
-	} else if (init_openapi(&openapi_state, oas_specs, NULL))
+		fprintf(stderr, "Possible OpenAPI plugins:\n");
+		init_openapi(oas_specs, _plugrack_foreach_list, NULL);
+		exit(0);
+	} else if (init_openapi(oas_specs, NULL, parsers))
 		fatal("Unable to initialize OpenAPI structures");
 
 	xfree(oas_specs);
@@ -539,19 +636,19 @@ int main(int argc, char **argv)
 		debug("Interactive mode activated (TTY detected on STDIN)");
 
 	if (!run_mode.listen) {
-		if ((rc = con_mgr_process_fd(conmgr, CON_TYPE_RAW, STDIN_FILENO,
-					     STDOUT_FILENO, conmgr_events, NULL,
-					     0, operations_router)))
+		if ((rc = conmgr_process_fd(CON_TYPE_RAW, STDIN_FILENO,
+					    STDOUT_FILENO, conmgr_events, NULL,
+					    0, operations_router)))
 			fatal("%s: unable to process stdin: %s",
 			      __func__, slurm_strerror(rc));
 
 		/* fail on first error if this is piped process */
-		conmgr->exit_on_error = true;
+		conmgr_set_exit_on_error(true);
 	} else if (run_mode.listen) {
 		mode_t mask = umask(0);
 
-		if (con_mgr_create_sockets(conmgr, CON_TYPE_RAW, socket_listen,
-					   conmgr_events, operations_router))
+		if (conmgr_create_sockets(CON_TYPE_RAW, socket_listen,
+					  conmgr_events, operations_router))
 			fatal("Unable to create sockets");
 
 		umask(mask);
@@ -560,27 +657,25 @@ int main(int argc, char **argv)
 		debug("%s: server listen mode activated", __func__);
 	}
 
-	rc = con_mgr_run(conmgr);
+	rc = conmgr_run(true);
 
 	/*
 	 * Capture if there were issues during parsing in inet mode.
 	 * Inet mode expects connection errors to propagate upwards as
 	 * connection errors so they can be logged appropriately.
 	 */
-	if (conmgr->exit_on_error)
-		parse_rc = conmgr->error;
+	if (conmgr_get_exit_on_error())
+		parse_rc = conmgr_get_error();
 
 	unbind_operation_handler(_op_handler_openapi);
 
 	/* cleanup everything */
 	destroy_rest_auth();
 	destroy_operations();
-	destroy_openapi(openapi_state);
-	openapi_state = NULL;
-	free_con_mgr(conmgr);
-
+	destroy_openapi();
+	free_conmgr();
+	FREE_NULL_DATA_PARSER_ARRAY(parsers, false);
 	serializer_g_fini();
-	data_fini();
 	for (size_t i = 0; i < auth_plugin_count; i++) {
 		plugrack_release_by_type(auth_rack, auth_plugin_types[i]);
 		xfree(auth_plugin_types[i]);
@@ -592,6 +687,7 @@ int main(int argc, char **argv)
 	auth_rack = NULL;
 
 	xfree(auth_plugin_handles);
+	select_g_fini();
 	slurm_fini();
 	log_fini();
 

@@ -38,7 +38,9 @@
 
 #include "src/common/fd.h"
 #include "src/common/io_hdr.h"
+#include "src/common/run_in_daemon.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/xstring.h"
 
 /* If this changes, io_hdr_pack|unpack must change. */
 int g_io_hdr_size = sizeof(uint32_t) + 3*sizeof(uint16_t);
@@ -131,8 +133,7 @@ fail:
 	return n;
 }
 
-extern int io_init_msg_validate(io_init_msg_t *msg, const char *sig,
-				uint32_t sig_len)
+extern int io_init_msg_validate(io_init_msg_t *msg, const char *sig)
 {
 	debug2("Entering io_init_msg_validate");
 
@@ -144,8 +145,7 @@ extern int io_init_msg_validate(io_init_msg_t *msg, const char *sig,
 		return SLURM_ERROR;
 	}
 
-	if (msg->io_key_len != sig_len ||
-	    memcmp((void *) sig, (void *) msg->io_key, msg->io_key_len)) {
+	if (xstrcmp(msg->io_key, sig)) {
 		error("Invalid IO init header signature");
 		return SLURM_ERROR;
 	}
@@ -168,7 +168,7 @@ static int io_init_msg_pack(io_init_msg_t *hdr, buf_t *buffer)
 		pack32(hdr->nodeid, buffer);
 		pack32(hdr->stdout_objs, buffer);
 		pack32(hdr->stderr_objs, buffer);
-		packmem(hdr->io_key, hdr->io_key_len, buffer);
+		packstr(hdr->io_key, buffer);
 
 		tail_offset = get_buf_offset(buffer);
 		len = tail_offset - top_offset - sizeof(len);
@@ -193,7 +193,7 @@ static int io_init_msg_unpack(io_init_msg_t *hdr, buf_t *buffer)
 		safe_unpack32(&hdr->nodeid, buffer);
 		safe_unpack32(&hdr->stdout_objs, buffer);
 		safe_unpack32(&hdr->stderr_objs, buffer);
-		safe_unpackmem_xmalloc(&hdr->io_key, &hdr->io_key_len, buffer);
+		safe_unpackstr(&hdr->io_key, buffer);
 	} else
 		goto unpack_error;
 
@@ -237,7 +237,7 @@ extern int io_init_msg_read_from_fd(int fd, io_init_msg_t *msg)
 
 	debug2("Entering %s", __func__);
 	if (wait_fd_readable(fd, 300)) {
-		error("io_init_msg_read timed out");
+		error_in_daemon("io_init_msg_read timed out");
 		return SLURM_ERROR;
 	}
 
@@ -247,7 +247,8 @@ extern int io_init_msg_read_from_fd(int fd, io_init_msg_t *msg)
 	safe_read(fd, buf->head, len);
 
 	if ((rc = io_init_msg_unpack(msg, buf)))
-		error("%s: io_init_msg_unpack failed: rc=%d", __func__, rc);
+		error_in_daemon("%s: io_init_msg_unpack failed: rc=%d",
+				__func__, rc);
 
 	FREE_NULL_BUFFER(buf);
 	debug2("Leaving %s", __func__);
@@ -255,6 +256,6 @@ extern int io_init_msg_read_from_fd(int fd, io_init_msg_t *msg)
 
 rwfail:
 	FREE_NULL_BUFFER(buf);
-	error("%s: reading slurm_io_init_msg failed: %m",__func__);
+	error_in_daemon("%s: reading slurm_io_init_msg failed: %m",__func__);
 	return SLURM_ERROR;
 }

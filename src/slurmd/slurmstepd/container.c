@@ -378,9 +378,8 @@ static int _modify_config(stepd_step_rec_t *step, stepd_step_task_info_t *task)
 
 	xassert(c->magic == STEP_CONTAINER_MAGIC);
 
-	/* Disable terminal to ensure stdin/err/out are used */
 	data_set_bool(data_define_dict_path(c->config, "/process/terminal/"),
-		      false);
+		      (step->flags & LAUNCH_PTY));
 
 	/* point to correct rootfs */
 	data_set_string(data_define_dict_path(c->config, "/root/path/"),
@@ -752,12 +751,6 @@ extern int setup_container(stepd_step_rec_t *step)
 		return ESLURM_CONTAINER_NOT_CONFIGURED;
 	}
 
-	if ((rc = data_init())) {
-		error("Unable to init data structures: %s",
-		      slurm_strerror(rc));
-		goto error;
-	}
-
 	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
 		error("Unable to load JSON plugin: %s",
 		      slurm_strerror(rc));
@@ -1012,15 +1005,12 @@ static void _create_start(stepd_step_rec_t *step,
 static void _generate_patterns(stepd_step_rec_t *step,
 			       stepd_step_task_info_t *task)
 {
-	static bool generated = false;
 	char *gen;
 	int id = -1;
 	char **argv = NULL;
 
-	if (generated)
-		return;
-
-	generated = true;
+	debug2("%s: %ps TaskId=%d",
+	       __func__, &step->step_id, (task ? task->id : -1));
 
 	if (task) {
 		id = task->id;
@@ -1028,29 +1018,58 @@ static void _generate_patterns(stepd_step_rec_t *step,
 	}
 
 	gen = _generate_pattern(oci_conf->runtime_create, step, id, argv);
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(create_argv[2]);
 		create_argv[2] = gen;
+		set = true;
+	}
 
 	gen = _generate_pattern(oci_conf->runtime_delete, step, id, argv);
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(delete_argv[2]);
 		delete_argv[2] = gen;
+		set = true;
+	}
 
 	gen = _generate_pattern(oci_conf->runtime_kill, step, id, argv);
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(kill_argv[2]);
 		kill_argv[2] = gen;
+		set = true;
+	}
 
 	gen = _generate_pattern(oci_conf->runtime_query, step, id, argv);
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(query_argv[2]);
 		query_argv[2] = gen;
+		set = true;
+	}
 
 	gen = _generate_pattern(oci_conf->runtime_run, step, id, argv);
-
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(run_argv[2]);
 		run_argv[2] = gen;
+		set = true;
+	}
 
 	gen = _generate_pattern(oci_conf->runtime_start, step, id, argv);
-	if (gen)
+	if (gen) {
+		static bool set = false;
+		if (set)
+			xfree(start_argv[2]);
 		start_argv[2] = gen;
+		set = true;
+	}
 }
 
 extern void container_run(stepd_step_rec_t *step,
@@ -1177,6 +1196,7 @@ extern void cleanup_container(stepd_step_rec_t *step)
 
 	/* cleanup may be called without ever setting up container */
 
+	_generate_patterns(step, NULL);
 	_kill_container();
 
 	if (oci_conf->disable_cleanup)

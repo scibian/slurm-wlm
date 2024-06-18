@@ -141,7 +141,7 @@ void ping_nodes (void)
 	time_t now = time(NULL), still_live_time, node_dead_time;
 	static time_t last_ping_time = (time_t) 0;
 	static time_t last_ping_timeout = (time_t) 0;
-	hostlist_t down_hostlist = NULL;
+	hostlist_t *down_hostlist = NULL;
 	char *host_str = NULL;
 	agent_arg_t *ping_agent_args = NULL;
 	agent_arg_t *reg_agent_args = NULL;
@@ -313,6 +313,8 @@ void ping_nodes (void)
 			hostlist_push_host(reg_agent_args->hostlist,
 					   node_ptr->name);
 			reg_agent_args->node_count++;
+			if (PACK_FANOUT_ADDRS(node_ptr))
+				reg_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 			continue;
 		}
 
@@ -333,6 +335,8 @@ void ping_nodes (void)
 				node_ptr->protocol_version;
 		hostlist_push_host(ping_agent_args->hostlist, node_ptr->name);
 		ping_agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			ping_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
 #endif
 
@@ -449,10 +453,13 @@ extern void run_health_check(void)
 		if (run_cyclic &&
 		    (node_test_cnt++ >= node_limit))
 				break;
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
+		if (IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_INVALID_REG(node_ptr) ||
+		    IS_NODE_NO_RESPOND(node_ptr) ||
+		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		    IS_NODE_POWERING_UP(node_ptr) ||
+		    IS_NODE_REBOOT_ISSUED(node_ptr))
 			continue;
 		if (node_states != HEALTH_CHECK_NODE_ANY) {
 			uint16_t cpus_total, cpus_used = 0;
@@ -495,8 +502,10 @@ extern void run_health_check(void)
 				node_ptr->protocol_version;
 		hostlist_push_host(check_agent_args->hostlist, node_ptr->name);
 		check_agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			check_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
-	if (base_node_loc >= node_record_count)
+	if (!node_ptr)
 		base_node_loc = 0;
 #endif
 
@@ -548,16 +557,21 @@ extern void update_nodes_acct_gather_data(void)
 	}
 #else
 	for (i = 0; (node_ptr = next_node(&i)); i++) {
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
+		if (IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_INVALID_REG(node_ptr) ||
+		    IS_NODE_NO_RESPOND(node_ptr) ||
+		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		    IS_NODE_POWERING_UP(node_ptr) ||
+		    IS_NODE_REBOOT_ISSUED(node_ptr))
 			continue;
 		if (agent_args->protocol_version > node_ptr->protocol_version)
 			agent_args->protocol_version =
 				node_ptr->protocol_version;
 		hostlist_push_host(agent_args->hostlist, node_ptr->name);
 		agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
 #endif
 

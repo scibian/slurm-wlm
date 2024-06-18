@@ -144,7 +144,8 @@ extern ssize_t slurm_msg_recvfrom_timeout(int fd, char **pbuf, size_t *lenp,
 	/*
 	 *  Allocate memory on heap for message
 	 */
-	*pbuf = xmalloc_nz(msglen);
+	if (!(*pbuf = try_xmalloc(msglen)))
+		slurm_seterrno_ret(ENOMEM);
 
 	if (slurm_recv_timeout(fd, *pbuf, msglen, 0, tmout) != msglen) {
 		xfree(*pbuf);
@@ -159,16 +160,10 @@ extern ssize_t slurm_msg_recvfrom_timeout(int fd, char **pbuf, size_t *lenp,
 
 extern ssize_t slurm_msg_sendto(int fd, char *buffer, size_t size)
 {
-	return slurm_msg_sendto_timeout(fd, buffer, size,
-	                                (slurm_conf.msg_timeout * 1000));
-}
-
-ssize_t slurm_msg_sendto_timeout(int fd, char *buffer,
-				 size_t size, int timeout)
-{
 	int   len;
 	uint32_t usize;
 	SigFunc *ohandler;
+	int timeout = slurm_conf.msg_timeout * 1000;
 
 	/*
 	 *  Ignore SIGPIPE so that send can return a error code if the
@@ -738,13 +733,13 @@ extern void slurm_set_addr(slurm_addr_t *addr, uint16_t port, char *host)
 		__func__, port, host);
 
 	/*
-	 * get_addr_info uses hints from our config to determine what address
+	 * xgetaddrinfo uses hints from our config to determine what address
 	 * families to return
 	 */
-	ai_start = get_addr_info(host, port);
+	ai_start = xgetaddrinfo_port(host, port);
 
 	if (!ai_start) {
-		error("%s: Unable to resolve \"%s\"", __func__, host);
+		error_in_daemon("%s: Unable to resolve \"%s\"", __func__, host);
 		addr->ss_family = AF_UNSPEC;
 		return;
 	}

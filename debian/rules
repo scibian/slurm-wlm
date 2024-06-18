@@ -19,6 +19,10 @@ ifneq ($(DEB_TARGET_ARCH_BITS),64)
   ENABLEDEPRECATED = --enable-deprecated
 endif
 
+# PMIX is now only available on 64-bit systems
+PMIX_ARCH:= amd64 arm64 mips64el ppc64el riscv64 s390x alpha ia64 loong64 ppc64
+PMIX:=    $(if $(filter $(DEB_TARGET_ARCH), $(PMIX_ARCH)), --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2, )
+
 %:
 	dh $@ --builddirectory --with bash-completion
 
@@ -32,8 +36,8 @@ override_dh_auto_clean:
 # hardening-no-fortify-functions
 # Notice that -g in CFLAGS is still provided by dpkg-buildflags
 override_dh_auto_configure:
-	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2 $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
-	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2 $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
+	dh_auto_configure -- --sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-multiple-slurmd $(PMIX) --with-pam_dir=/usr/lib/$(DEB_HOST_MULTIARCH)/security $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
+	dh_auto_configure --builddirectory build-emulator -- -sysconfdir=/etc/slurm --with-munge --enable-pam --without-rpath --disable-debug --enable-front-end --enable-multiple-slurmd $(PMIX) --with-pam_dir=/usr/lib/$(DEB_HOST_MULTIARCH)/security $(ENABLEDEPRECATED) SUCMD=/bin/su SLEEP_CMD=/bin/sleep
 override_dh_auto_build:
 	dh_auto_build
 	dh_auto_build --builddirectory build-emulator
@@ -125,6 +129,7 @@ override_dh_auto_install:
 		ls $$(cat debian/$$f.install | sed "s/^/debian\/tmp\//") ; \
 	done | sort >> debian/plugin_packages_filelist
 
+	cp debian/slurm-wlm-basic-plugins.install.in debian/slurm-wlm-basic-plugins.install
 	comm -23 debian/all_plugins_filelist debian/plugin_packages_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins.install
 
 	ls debian/tmp/usr/lib/*/slurm-wlm/*.a debian/tmp/usr/lib/*/slurm-wlm/*.la | sort > debian/all_plugins_dev_filelist
@@ -136,9 +141,9 @@ override_dh_auto_install:
 	comm -23 debian/all_plugins_dev_filelist debian/plugin_packages_dev_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins-dev.install
 
 override_dh_strip:
-	dh_strip -plibslurm39
-	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
-	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
+	dh_strip -plibslurm40t64
+	dh_strip -plibpmi0t64 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
+	dh_strip -plibpmi2-0t64 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-elasticsearch-plugin
 	dh_strip -pslurm-wlm-hdf5-plugin
@@ -147,6 +152,9 @@ override_dh_strip:
 	dh_strip -pslurm-wlm-jwt-plugin
 	dh_strip -pslurm-wlm-rrd-plugin
 	dh_strip -pslurm-wlm-mysql-plugin
+	dh_strip -pslurm-wlm-rsmi-plugin
+	dh_strip -pslurm-wlm-kafka-plugin
+	dh_strip -psackd
 	dh_strip -pslurm-client --dbgsym-migration='slurm-client-dbg (<< 17.02.6~)'
 	dh_strip -pslurmd --dbgsym-migration='slurmd-dbg (<< 17.02.6~)'
 	dh_strip -pslurmctld --dbgsym-migration='slurmctld-dbg (<< 17.02.6~)'
@@ -165,8 +173,7 @@ override_dh_strip:
 	dh_strip -plibslurm-dev --no-automatic-dbgsym
 	dh_strip -pslurmrestd --no-automatic-dbgsym
 	strip --verbose --strip-unneeded --remove-section=.comment \
-		--remove-section=.note debian/slurm-*-plugin*-dev/usr/lib/*/slurm-wlm/*.a \
-		debian/libpam-slurm*-dev/lib/security/*.a
+		--remove-section=.note debian/slurm-*-plugin*-dev/usr/lib/*/slurm-wlm/*.a
 
 override_dh_auto_test:
 

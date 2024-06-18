@@ -171,16 +171,12 @@ char *uid_to_string_or_null(uid_t uid)
 	return ustring;
 }
 
-/*
- * Convert a uid to an xmalloc'd string.
- * Always returns a string - "nobody" is sent back on error.
- */
-char *uid_to_string(uid_t uid)
+extern char *uid_to_string(uid_t uid)
 {
 	char *result = uid_to_string_or_null(uid);
 
 	if (!result)
-		result = xstrdup("nobody");
+		result = xstrdup_printf("%u", uid);
 
 	return result;
 }
@@ -225,6 +221,34 @@ extern char *uid_to_string_cached(uid_t uid)
 	}
 	slurm_mutex_unlock(&uid_lock);
 	return entry->username;
+}
+
+extern char *uid_to_dir(uid_t uid)
+{
+	struct passwd pwd, *result;
+	char buffer[PW_BUF_SIZE];
+	char *dir = NULL;
+	int rc;
+
+	rc = slurm_getpwuid_r(uid, &pwd, buffer, PW_BUF_SIZE, &result);
+	if (result && (rc == 0))
+		dir = xstrdup(result->pw_dir);
+
+	return dir;
+}
+
+extern char *uid_to_shell(uid_t uid)
+{
+	struct passwd pwd, *result;
+	char buffer[PW_BUF_SIZE];
+	char *shell = NULL;
+	int rc;
+
+	rc = slurm_getpwuid_r(uid, &pwd, buffer, PW_BUF_SIZE, &result);
+	if (result && (rc == 0))
+		shell = xstrdup(result->pw_shell);
+
+	return shell;
 }
 
 gid_t
@@ -329,12 +353,12 @@ int gid_from_string(const char *name, gid_t *gidp)
 	return 0;
 }
 
-char *gid_to_string(gid_t gid)
+extern char *gid_to_string(gid_t gid)
 {
 	char *result = gid_to_string_or_null(gid);
 
 	if (!result)
-		return xstrdup("nobody");
+		return xstrdup_printf("%u", gid);
 
 	return result;
 }

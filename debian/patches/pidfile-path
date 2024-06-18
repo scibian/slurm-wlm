@@ -5,12 +5,12 @@ Bug-Debian: http://bugs.debian.org/885759
 Forwarded: not-needed
 Last-Update: 2018-12-13
 
---- a/src/common/read_config.h
-+++ b/src/common/read_config.h
-@@ -162,9 +162,9 @@
- #  define DEFAULT_SELECT_TYPE       "select/linear"
+--- slurm-wlm-23.11.1.orig/src/common/read_config.h
++++ slurm-wlm-23.11.1/src/common/read_config.h
+@@ -144,9 +144,9 @@ typedef struct node_record node_record_t
+ #else
+ #  define DEFAULT_SELECT_TYPE       "select/cons_tres"
  #endif
- #define DEFAULT_SITE_FACTOR_PLUGIN  "site_factor/none"
 -#define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 +#define DEFAULT_SLURMCTLD_PIDFILE   "/run/slurmctld.pid"
  #define DEFAULT_SLURMCTLD_TIMEOUT   120
@@ -19,8 +19,8 @@ Last-Update: 2018-12-13
  #define DEFAULT_SLURMD_TIMEOUT      300
  #define DEFAULT_SPOOLDIR            "/var/spool/slurmd"
  #define DEFAULT_STORAGE_HOST        "localhost"
---- a/src/slurmdbd/read_config.h
-+++ b/src/slurmdbd/read_config.h
+--- slurm-wlm-23.11.1.orig/src/slurmdbd/read_config.h
++++ slurm-wlm-23.11.1/src/slurmdbd/read_config.h
 @@ -48,7 +48,7 @@
  
  #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/munge"

@@ -39,6 +39,7 @@
 #include <inttypes.h>
 #include <sys/mman.h>	/* memfd_create */
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #include "src/common/fetch_config.h"
 #include "src/common/read_config.h"
@@ -49,6 +50,19 @@
 #include "src/common/strlcpy.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
+
+static char *slurmd_config_files[] = {
+	"slurm.conf", "acct_gather.conf", "cgroup.conf",
+	"cli_filter.lua", "ext_sensors.conf", "gres.conf", "helpers.conf",
+	"job_container.conf", "knl_cray.conf", "mpi.conf", "oci.conf",
+	"plugstack.conf", "scrun.lua", "topology.conf", NULL
+};
+
+static char *client_config_files[] = {
+	"slurm.conf", "cli_filter.lua", "plugstack.conf", "topology.conf",
+	"oci.conf", "scrun.lua", NULL
+};
+
 
 static void _init_minimal_conf_server_config(List controllers);
 
@@ -100,6 +114,8 @@ static void _fetch_child(List controllers, uint32_t flags)
 	buf_t *buffer = init_buf(1024 * 1024);
 	int len = 0;
 
+	setenv("SLURM_CONFIG_FETCH", "1", 1);
+
 	/*
 	 * Parent process was holding this, but we need to drop it before
 	 * issuing any RPC calls as the RPC stack will call into
@@ -136,6 +152,8 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 	char *env_conf_server = getenv("SLURM_CONF_SERVER");
 	List controllers = NULL;
 	pid_t pid;
+	char *sack_key = NULL;
+	struct stat statbuf;
 
 	/*
 	 * Two main processing options here: we are either given an explicit
@@ -176,6 +194,17 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 			return NULL;
                 }
 	}
+
+	/* If the slurm.key file exists, assume we're using auth/slurm */
+	sack_key = get_extra_conf_path("slurm.key");
+	if (!stat(sack_key, &statbuf)) {
+		/*
+		 * This envvar will ensure both the config fetching process
+		 * as well as ourselves will use the original key location.
+		 */
+		setenv("SLURM_SACK_KEY", sack_key, 1);
+	}
+	xfree(sack_key);
 
 	/*
 	 * At this point we have a List of controllers.
@@ -316,17 +345,18 @@ static void _init_minimal_conf_server_config(List controllers)
 		fatal("%s: could not write temporary config", __func__);
 	xfree(conf);
 
-	slurm_conf_init(filename);
+	slurm_init(filename);
 
 	close(fd);
 	xfree(filename);
 }
 
 static int _write_conf(const char *dir, const char *name, const char *content,
-		      bool exists)
+		      bool exists, bool execute)
 {
 	char *file = NULL, *file_final = NULL;
 	int fd = -1;
+	mode_t mode = execute ? 0755 : 0644;
 
 	xstrfmtcat(file, "%s/%s.new", dir, name);
 	xstrfmtcat(file_final, "%s/%s", dir, name);
@@ -337,7 +367,7 @@ static int _write_conf(const char *dir, const char *name, const char *content,
 	}
 
 
-	if ((fd = open(file, O_CREAT|O_WRONLY|O_TRUNC|O_CLOEXEC, 0644)) < 0) {
+	if ((fd = open(file, O_CREAT|O_WRONLY|O_TRUNC|O_CLOEXEC, mode)) < 0) {
 		error("%s: could not open config file `%s`", __func__, file);
 		goto rwfail;
 	}
@@ -377,7 +407,7 @@ extern int write_one_config(void *x, void *arg)
 	config_file_t *config = (config_file_t *) x;
 	char *dir = (char *) arg;
 	if (_write_conf(dir, config->file_name, config->file_content,
-		        config->exists))
+		        config->exists, config->execute))
 		return SLURM_ERROR;
 	return SLURM_SUCCESS;
 }
@@ -404,7 +434,8 @@ extern int write_configs_to_conf_cache(config_response_msg_t *msg,
 	return SLURM_SUCCESS;
 }
 
-static void _load_conf2list(config_response_msg_t *msg, char *file_name)
+static void _load_conf2list(config_response_msg_t *msg, char *file_name,
+			    bool is_script)
 {
 	config_file_t *conf_file = NULL;
 	buf_t *config;
@@ -426,6 +457,7 @@ static void _load_conf2list(config_response_msg_t *msg, char *file_name)
 
 	conf_file = xmalloc(sizeof(*conf_file));
 	conf_file->exists = config_exists;
+	conf_file->execute = is_script;
 	if (config)
 		conf_file->file_content = xstrndup(config->head, config->size);
 	conf_file->file_name = xstrdup(file_name);
@@ -451,7 +483,7 @@ static int _foreach_include_file(void *x, void *arg)
 	char *file_name = x;
 	config_response_msg_t *msg = arg;
 
-	_load_conf2list(msg, file_name);
+	_load_conf2list(msg, file_name, false);
 
 	return SLURM_SUCCESS;
 }
@@ -479,16 +511,19 @@ extern int find_map_conf_file(void *x, void *key)
 	return 0;
 }
 
-extern void load_config_response_list(config_response_msg_t *msg, char *files[])
+extern config_response_msg_t *new_config_response(bool to_slurmd)
 {
+	config_response_msg_t *msg = xmalloc(sizeof(*msg));
 	conf_includes_map_t *map = NULL;
+	char **files = client_config_files;
 
-	xassert(msg);
-	if (!msg->config_files)
-		msg->config_files = list_create(destroy_config_file);
+	if (to_slurmd)
+		files = slurmd_config_files;
+
+	msg->config_files = list_create(destroy_config_file);
 
 	for (int i = 0; files[i]; i++) {
-		_load_conf2list(msg, files[i]);
+		_load_conf2list(msg, files[i], false);
 
 		if (conf_includes_list) {
 			map = list_find_first_ro(conf_includes_list,
@@ -499,6 +534,21 @@ extern void load_config_response_list(config_response_msg_t *msg, char *files[])
 						 _foreach_include_file, msg);
 		}
 	}
+
+	/*
+	 * Load Prolog and Epilog scripts.
+	 * Only load if a non-absolute path is provided, this is our
+	 * indication that the file should be sent out, and matches
+	 * configuration semantics for the Include lines.
+	 */
+	if (to_slurmd) {
+		if (slurm_conf.prolog && (slurm_conf.prolog[0] != '/'))
+			_load_conf2list(msg, slurm_conf.prolog, true);
+		if (slurm_conf.epilog && (slurm_conf.epilog[0] != '/'))
+			_load_conf2list(msg, slurm_conf.epilog, true);
+	}
+
+	return msg;
 }
 
 extern void destroy_config_file(void *object)
@@ -515,4 +565,25 @@ extern void destroy_config_file(void *object)
 	xfree(conf_file->file_name);
 	xfree(conf_file->file_content);
 	xfree(conf_file);
+}
+
+extern void grab_include_directives(void)
+{
+	char *conf_file = NULL;
+	struct stat stat_buf;
+	uint32_t parse_flags = 0;
+
+	parse_flags |= PARSE_FLAGS_INCLUDE_ONLY;
+	for (int i = 0; slurmd_config_files[i]; i++) {
+		if ((!conf_includes_list) ||
+		    (!list_find_first_ro(conf_includes_list,
+					 find_map_conf_file,
+					 slurmd_config_files[i]))) {
+			conf_file = get_extra_conf_path(slurmd_config_files[i]);
+			if (!stat(conf_file, &stat_buf))
+				s_p_parse_file(NULL, NULL, conf_file,
+					       parse_flags, NULL);
+		}
+		xfree(conf_file);
+	}
 }

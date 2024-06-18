@@ -1,2 +1,2 @@
-lib/security/pam_slurm.so
+usr/lib/*/security/pam_slurm.so
 debian/pam-configs/slurm usr/share/pam-configs/

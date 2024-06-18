@@ -2,25 +2,31 @@
 
 <h1><a id="top">Accounting and Resource Limits</a></h1>
 
-
-<h2>Contents</h2>
-<a href="#Overview">Overview</a><br>
-<a href="#infrastructure">Infrastructure</a><br>
-<a href="#slurm-jobcomp-configuration">Slurm JobComp Configuration</a><br>
-<a href="#slurm-accounting-configuration-before-build">Slurm Accounting Configuration Before Build</a><br>
-<a href="#slurm-accounting-configuration-after-build">Slurm Accounting Configuration After Build</a><br>
-<a href="#slurmdbd-configuration">SlurmDBD Configuration</a><br>
-<a style="margin-left: 20px" href="#slurmdbd-archive-purge">  SlurmDBD Archive and Purge</a><br>
-<a href="#mysql-configuration">MySQL Configuration</a><br>
-<a href="#archive">Archive Server</a><br>
-<a href="#tools">Tools</a><br>
-<a href="#database-configuration">Database Configuration</a><br>
-<a href="#cluster-options">Cluster Options</a><br>
-<a href="#account-options">Account Options</a><br>
-<a href="#user-options">User Options</a><br>
-<a href="#limit-enforcement">Limit Enforcement</a><br>
-<a href="#modifying-entities">Modifying Entities</a><br>
-<a href="#removing-entities">Removing Entities</a><br>
+<h2 id="contents">Contents<a class="slurm_link" href="#contents"></a></h2>
+<ul>
+<li><a href="#Overview">Overview</a></li>
+<li><a href="#infrastructure">Infrastructure</a>
+<ul>
+<li><a href="#backup-host">Storage Backup Host</a></li>
+</ul></li>
+<li><a href="#slurm-jobcomp-configuration">Slurm JobComp Configuration</a></li>
+<li><a href="#slurm-accounting-configuration-before-build">Slurm Accounting Configuration Before Build</a></li>
+<li><a href="#slurm-accounting-configuration-after-build">Slurm Accounting Configuration After Build</a></li>
+<li><a href="#slurmdbd-configuration">SlurmDBD Configuration</a>
+<ul>
+<li><a href="#slurmdbd-archive-purge">  SlurmDBD Archive and Purge</a></li>
+</ul>
+<li><a href="#mysql-configuration">MySQL Configuration</a></li>
+<li><a href="#archive">Archive Server</a></li>
+<li><a href="#tools">Tools</a></li>
+<li><a href="#database-configuration">Database Configuration</a></li>
+<li><a href="#cluster-options">Cluster Options</a></li>
+<li><a href="#account-options">Account Options</a></li>
+<li><a href="#user-options">User Options</a></li>
+<li><a href="#limit-enforcement">Limit Enforcement</a></li>
+<li><a href="#modifying-entities">Modifying Entities</a></li>
+<li><a href="#removing-entities">Removing Entities</a></li>
+</ul>
 
 <h2 id="Overview">Overview<a class="slurm_link" href="#Overview"></a></h2>
 
@@ -188,6 +194,21 @@ If they plan on running sacctmgr or any of the accounting tools they
 should have the same UID, or they will not authenticate correctly.  An
 LDAP server could also serve as a way to gather this information.</p>
 
+<h3 id="backup-host">Storage Backup Host
+<a class="slurm_link" href="#backup-host"></a>
+</h3>
+
+<p>A backup instance of slurmdbd can be configured by specifying
+<a href="slurm.conf.html#OPT_AccountingStorageBackupHost">
+AccountingStorageBackupHost</a> in slurm.conf, as well as
+<a href="slurmdbd.conf.html#OPT_DbdBackupHost">DbdBackupHost</a> in
+slurmdbd.conf. The backup host should be on a different machine than the one
+hosting the primary instance of slurmdbd. Both instances of slurmdbd should
+have access to the same database, share the same munge key(s), and have the
+same users with the same UID/GIDs. The
+<a href="network.html#failover">network page</a> has a visual representation
+of how this might look.</p>
+
 <h2 id="slurm-jobcomp-configuration">Slurm JobComp Configuration
 <a class="slurm_link" href="#slurm-jobcomp-configuration"></a>
 </h2>
@@ -240,9 +261,10 @@ cluster, a user, account and optionally a partition.</p>
 <p><b>MySQL or MariaDB is the preferred database.</b>
 
 <p><b>NOTE</b>: If you have an existing Slurm accounting database and
-plan to upgrade your database server to MariaDB 10.2.1 (or newer) from a
-pre-10.2.1 version or from any version of MySQL, please contact SchedMD
-for assistance.</p>
+plan to upgrade your database server to MariaDB 10.2.1 or later from an older
+version of MariaDB or any version of MySQL, ensure you are running slurmdbd
+22.05.7 or later. These versions will gracefully handle changes to MariaDB
+default values that can cause problems for slurmdbd.</p>
 
 <p>To enable this database support
 one only needs to have the development package for the database they
@@ -271,14 +293,16 @@ database schema or when purging old records. We recommend assigning a
 significant portion of the system memory to this, keeping in mind the other
 resource requirements on the machine running MySQL/MariaDB, somewhere between
 5 and 50 percent of the available memory.
+<i>innodb_log_file_size</i> Should also be increased from default to reduce
+unnecessary small writes to disk.  For MySQL 8.0.30+,
+<i>innodb_redo_log_capacity</i> should be used instead.
 When using <b>AccountingStoreFlags=job_env,job_script</b> or older SQL servers,
 it is also important to check the value of <i>max_allowed_packet</i>.  When the
 packet size is too small and a large job script is used, the SQL server may
 reject the sql query as being too large.  This value should be at least 16MB,
 and must be larger than the value of <b>max_script_size</b>.
-Setting <i>innodb_lock_wait_timeout</i> and
-<i>innodb_log_file_size</i> to
-larger values than the default is also recommended.</p>
+Setting <i>innodb_lock_wait_timeout</i> to 900 is reccomended to allow some
+potentially extended queries to complete successfully.</p>
 
 <p>
 See the following example:
@@ -427,10 +451,15 @@ slurmctld will ignore registering to the external slurmdbd.
 <li><b>AccountingStorageHost</b>: The name or address of the host where
 SlurmDBD executes</li>
 
-<li><b>AccountingStoragePass</b>: If using SlurmDBD with a second MUNGE
-daemon, store the pathname of the named socket used by MUNGE to provide
-enterprise-wide authentication (i.e. /var/run/munge/moab.socket.2). Otherwise
-the default MUNGE daemon will be used. </li>
+<li><b>AccountingStoragePass</b>: The password used to gain access to the
+database to store the accounting data. Only used for database type storage
+plugins, ignored otherwise. In the case of Slurm DBD (Database Daemon) with
+MUNGE authentication this can be configured to use a MUNGE daemon specifically
+configured to provide authentication between clusters while the default MUNGE
+daemon provides authentication within a cluster. In that case,
+<b>AccountingStoragePass</b> should specify the named port to be used for
+communications with the alternate MUNGE daemon
+(e.g. "/var/run/munge/global.socket.2"). The default value is NULL.</li>
 
 <li><b>AccountingStoragePort</b>:
 The network port that SlurmDBD accepts communication on.</li>
@@ -920,7 +949,7 @@ completely. This is meant to clean up after typographical errors.
 Removing user associations or accounts, however, will cause slurmctld to lose
 track of usage data for that user/account.</p>
 
-<p style="text-align:center;">Last modified 28 June 2023</p>
+<p style="text-align:center;">Last modified 13 March 2024</p>
 
 <!--#include virtual="footer.txt"-->
 

@@ -405,7 +405,7 @@ extern uint64_t RRD_consolidate(time_t step_starttime, time_t step_endtime,
 	uint64_t consumed_energy = 0;
 	uint64_t tmp;
 	char *node_name = NULL;
-	hostlist_t hl;
+	hostlist_t *hl;
 	char* path;
 
 	node_name = bitmap2node_name(bitmap_of_nodes);
@@ -554,7 +554,7 @@ static int _ext_sensors_read_conf(void)
 	} else {
 		debug2("ext_sensors: Reading ext_sensors file %s", conf_path);
 		tbl = s_p_hashtbl_create(options);
-		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL, false) ==
+		if (s_p_parse_file(tbl, NULL, conf_path, 0, NULL) ==
 		    SLURM_ERROR) {
 			fatal("ext_sensors: Could not open/read/parse "
 			      "ext_sensors file %s", conf_path);

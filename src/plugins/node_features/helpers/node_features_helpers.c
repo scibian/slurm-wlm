@@ -331,7 +331,7 @@ static int _parse_feature_node(void **data, slurm_parser_enum_t type, const char
 
 	if (!running_in_slurmctld() && conf->node_name && name) {
 		bool match = false;
-		hostlist_t hl;
+		hostlist_t *hl;
 		hl = hostlist_create(name);
 		if (hl) {
 			match = (hostlist_find(hl, conf->node_name) >= 0);
@@ -419,8 +419,7 @@ static int _read_config_file(void)
 	tbl = s_p_hashtbl_create(conf_options);
 
 	confpath = get_extra_conf_path("helpers.conf");
-	if (s_p_parse_file(tbl, NULL, confpath, false, NULL, false) ==
-	    SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, confpath, 0, NULL) == SLURM_ERROR) {
 		error("could not parse configuration file: %s", confpath);
 		goto fail;
 	}

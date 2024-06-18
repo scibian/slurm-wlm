@@ -112,6 +112,11 @@ static const char *req_fxns[] = {
  */
 static pthread_mutex_t lua_lock = PTHREAD_MUTEX_INITIALIZER;
 
+typedef struct {
+	uint32_t submit_uid;
+	uint32_t user_id;
+} foreach_part_list_args_t;
+
 /* These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
  * overwritten when linking with the slurmctld.
@@ -212,13 +217,39 @@ static int _job_rec_field_index(lua_State *L)
 	return slurm_lua_job_record_field(L, job_ptr, name);
 }
 
+static int _foreach_update_jobs_global(void *x, void *arg)
+{
+	char job_id_buf[11]; /* Big enough for a uint32_t */
+	job_record_t *job_ptr = x;
+	lua_State *st = arg;
+
+	/*
+	 * Create an empty table, with a metatable that looks up the
+	 * data for the individual job.
+	 */
+	lua_newtable(st);
+
+	lua_newtable(st);
+	lua_pushcfunction(st, _job_rec_field_index);
+	lua_setfield(st, -2, "__index");
+	/*
+	 * Store the job_record in the metatable, so the index
+	 * function knows which job it's getting data for.
+	 */
+	lua_pushlightuserdata(st, job_ptr);
+	lua_setfield(st, -2, "_job_rec_ptr");
+	lua_setmetatable(st, -2);
+
+	/* Lua copies passed strings, so we can reuse the buffer. */
+	snprintf(job_id_buf, sizeof(job_id_buf), "%d", job_ptr->job_id);
+	lua_setfield(st, -2, job_id_buf);
+
+	return 0;
+}
+
 /* Get the list of existing slurmctld job records. */
 static void _update_jobs_global(lua_State *st)
 {
-	char job_id_buf[11]; /* Big enough for a uint32_t */
-	ListIterator iter;
-	job_record_t *job_ptr;
-
 	if (last_lua_jobs_update >= last_job_update) {
 		return;
 	}
@@ -226,30 +257,8 @@ static void _update_jobs_global(lua_State *st)
 	lua_getglobal(st, "slurm");
 	lua_newtable(st);
 
-	iter = list_iterator_create(job_list);
-	while ((job_ptr = list_next(iter))) {
-		/* Create an empty table, with a metatable that looks up the
-		 * data for the individual job.
-		 */
-		lua_newtable(st);
-
-		lua_newtable(st);
-		lua_pushcfunction(st, _job_rec_field_index);
-		lua_setfield(st, -2, "__index");
-		/* Store the job_record in the metatable, so the index
-		 * function knows which job it's getting data for.
-		 */
-		lua_pushlightuserdata(st, job_ptr);
-		lua_setfield(st, -2, "_job_rec_ptr");
-		lua_setmetatable(st, -2);
-
-		/* Lua copies passed strings, so we can reuse the buffer. */
-		snprintf(job_id_buf, sizeof(job_id_buf),
-		         "%d", job_ptr->job_id);
-		lua_setfield(st, -2, job_id_buf);
-	}
+	list_for_each(job_list, _foreach_update_jobs_global, st);
 	last_lua_jobs_update = last_job_update;
-	list_iterator_destroy(iter);
 
 	lua_setfield(st, -2, "jobs");
 	lua_pop(st, 1);
@@ -313,12 +322,36 @@ static int _resv_field_index(lua_State *L)
 	return _resv_field(resv_ptr, name);
 }
 
+static int _foreach_update_resvs_global(void *x, void *arg)
+{
+	slurmctld_resv_t *resv_ptr = x;
+	lua_State *st = arg;
+
+	/*
+	 * Create an empty table, with a metatable that looks up the
+	 * data for the individual reservation.
+	 */
+	lua_newtable(st);
+
+	lua_newtable(st);
+	lua_pushcfunction(st, _resv_field_index);
+	lua_setfield(st, -2, "__index");
+	/*
+	 * Store the slurmctld_resv_t in the metatable, so the index
+	 * function knows which reservation it's getting data for.
+	 */
+	lua_pushlightuserdata(st, resv_ptr);
+	lua_setfield(st, -2, "_resv_ptr");
+	lua_setmetatable(st, -2);
+
+	lua_setfield(st, -2, resv_ptr->name);
+
+	return 0;
+}
+
 /* Get the list of existing slurmctld reservation records. */
 static void _update_resvs_global(lua_State *st)
 {
-	ListIterator iter;
-	slurmctld_resv_t *resv_ptr;
-
 	if (last_lua_resv_update >= last_resv_update) {
 		return;
 	}
@@ -326,27 +359,8 @@ static void _update_resvs_global(lua_State *st)
 	lua_getglobal(st, "slurm");
 	lua_newtable(st);
 
-	iter = list_iterator_create(resv_list);
-	while ((resv_ptr = (slurmctld_resv_t *) list_next(iter))) {
-		/* Create an empty table, with a metatable that looks up the
-		 * data for the individual reservation.
-		 */
-		lua_newtable(st);
-
-		lua_newtable(st);
-		lua_pushcfunction(st, _resv_field_index);
-		lua_setfield(st, -2, "__index");
-		/* Store the slurmctld_resv_t in the metatable, so the index
-		 * function knows which reservation it's getting data for.
-		 */
-		lua_pushlightuserdata(st, resv_ptr);
-		lua_setfield(st, -2, "_resv_ptr");
-		lua_setmetatable(st, -2);
-
-		lua_setfield(st, -2, resv_ptr->name);
-	}
+	list_for_each(resv_list, _foreach_update_resvs_global, st);
 	last_lua_resv_update = last_resv_update;
-	list_iterator_destroy(iter);
 
 	lua_setfield(st, -2, "reservations");
 	lua_pop(st, 1);
@@ -581,6 +595,8 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushnumber(L, job_desc->max_cpus);
 	} else if (!xstrcmp(name, "max_nodes")) {
 		lua_pushnumber(L, job_desc->max_nodes);
+	} else if (!xstrcmp(name, "mcs_label")) {
+		lua_pushstring(L, job_desc->mcs_label);
 	} else if (!xstrcmp(name, "mem_per_tres")) {
 		lua_pushstring(L, job_desc->mem_per_tres);
 	} else if (!xstrcmp(name, "min_cpus")) {
@@ -713,9 +729,15 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 	} else if (!xstrcmp(name, "user_id")) {
 		lua_pushnumber(L, job_desc->user_id);
 	} else if (!xstrcmp(name, "user_name")) {
-		char *username = uid_to_string_or_null(job_desc->user_id);
-		lua_pushstring(L, username);
-		xfree(username);
+		if (job_desc->id) {
+			identity_t *id = job_desc->id;
+			lua_pushstring(L, id->pw_name);
+		} else {
+			char *username =
+				uid_to_string_or_null(job_desc->user_id);
+			lua_pushstring(L, username);
+			xfree(username);
+		}
 	} else if (!xstrcmp(name, "wait4switch")) {
 		lua_pushnumber(L, job_desc->wait4switch);
 	} else if (!xstrcmp(name, "work_dir")) {
@@ -879,6 +901,11 @@ static int _set_job_req_field(lua_State *L)
 		job_desc->max_cpus = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "max_nodes")) {
 		job_desc->max_nodes = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "mcs_label")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->mcs_label);
+		if (strlen(value_str))
+			job_desc->mcs_label = xstrdup(value_str);
 	} else if (!xstrcmp(name, "mem_per_tres")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->mem_per_tres);
@@ -1210,35 +1237,46 @@ static bool _user_can_use_part(uint32_t user_id, uint32_t submit_uid,
 	return false;
 }
 
-static void _push_partition_list(uint32_t user_id, uint32_t submit_uid)
+static int _foreach_push_partition_list(void *x, void *arg)
 {
-	ListIterator part_iterator;
-	part_record_t *part_ptr;
+	part_record_t *part_ptr = x;
+	foreach_part_list_args_t *args = arg;
+
+	if (!_user_can_use_part(args->user_id, args->submit_uid, part_ptr))
+		return 0;
+
+	/*
+	 * Create an empty table, with a metatable that looks up the
+	 * data for the partition.
+	 */
+	lua_newtable(L);
 
 	lua_newtable(L);
-	part_iterator = list_iterator_create(part_list);
-	while ((part_ptr = list_next(part_iterator))) {
-		if (!_user_can_use_part(user_id, submit_uid, part_ptr))
-			continue;
+	lua_pushcfunction(L, _part_rec_field_index);
+	lua_setfield(L, -2, "__index");
+	/*
+	 * Store the part_record in the metatable, so the index
+	 * function knows which job it's getting data for.
+	 */
+	lua_pushlightuserdata(L, part_ptr);
+	lua_setfield(L, -2, "_part_rec_ptr");
+	lua_setmetatable(L, -2);
 
-		/* Create an empty table, with a metatable that looks up the
-		 * data for the partition.
-		 */
-		lua_newtable(L);
+	lua_setfield(L, -2, part_ptr->name);
 
-		lua_newtable(L);
-		lua_pushcfunction(L, _part_rec_field_index);
-		lua_setfield(L, -2, "__index");
-		/* Store the part_record in the metatable, so the index
-		 * function knows which job it's getting data for.
-		 */
-		lua_pushlightuserdata(L, part_ptr);
-		lua_setfield(L, -2, "_part_rec_ptr");
-		lua_setmetatable(L, -2);
+	return 0;
+}
 
-		lua_setfield(L, -2, part_ptr->name);
-	}
-	list_iterator_destroy(part_iterator);
+static void _push_partition_list(uint32_t user_id, uint32_t submit_uid)
+{
+	foreach_part_list_args_t args = {
+		.submit_uid = submit_uid,
+		.user_id = user_id,
+	};
+
+	lua_newtable(L);
+
+	list_for_each(part_list, _foreach_push_partition_list, &args);
 }
 
 

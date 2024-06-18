@@ -54,6 +54,7 @@ extern void pack_slurmd_conf_lite(slurmd_conf_t *conf, buf_t *buffer)
 	pack16(conf->sockets, buffer);
 	pack16(conf->cores, buffer);
 	pack16(conf->threads, buffer);
+	pack16(conf->actual_threads, buffer);
 	packstr(conf->cpu_spec_list, buffer);
 	pack16(conf->core_spec_cnt, buffer);
 	pack64(conf->mem_spec_limit, buffer);
@@ -90,6 +91,7 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, buf_t *buffer)
 		safe_unpack16(&conf->sockets, buffer);
 		safe_unpack16(&conf->cores, buffer);
 		safe_unpack16(&conf->threads, buffer);
+		safe_unpack16(&conf->actual_threads, buffer);
 		safe_unpackstr_xmalloc(&conf->cpu_spec_list, &uint32_tmp,
 				       buffer);
 		safe_unpack16(&conf->core_spec_cnt, buffer);
@@ -206,8 +208,6 @@ extern void pack_slurm_conf_lite(buf_t *buffer)
 	/* job_comp_type */
 	/* job_comp_user */
 	packstr(slurm_conf.job_container_plugin, buffer);
-	/* job_credential_private_key */
-	/* job_credential_public_certificate */
 	/* job_defaults_list */
 	pack16(slurm_conf.job_file_append, buffer);
 	/* job_requeue */
@@ -249,6 +249,7 @@ extern void pack_slurm_conf_lite(buf_t *buffer)
 	/* power_plugin */
 	/* preempt_exempt_time */
 	/* preempt_mode */
+	packstr(slurm_conf.preempt_params, buffer);
 	/* preempt_type */
 	packstr(slurm_conf.prep_params, buffer);
 	packstr(slurm_conf.prep_plugins, buffer);
@@ -288,7 +289,6 @@ extern void pack_slurm_conf_lite(buf_t *buffer)
 	/* resv_over_run */
 	/* resv_prolog */
 	/* ret2service */
-	packstr(slurm_conf.route_plugin, buffer);
 	/* sched_logfile */
 	/* sched_log_level */
 	/* sched_params */
@@ -436,8 +436,6 @@ extern int unpack_slurm_conf_lite_no_alloc(buf_t *buffer)
 	/* job_comp_type */
 	/* job_comp_user */
 	safe_unpackstr(&slurm_conf.job_container_plugin, buffer);
-	/* job_credential_private_key */
-	/* job_credential_public_certificate */
 	/* job_defaults_list */
 	safe_unpack16(&slurm_conf.job_file_append, buffer);
 	/* job_requeue */
@@ -479,6 +477,7 @@ extern int unpack_slurm_conf_lite_no_alloc(buf_t *buffer)
 	/* power_plugin */
 	/* preempt_exempt_time */
 	/* preempt_mode */
+	safe_unpackstr(&slurm_conf.preempt_params, buffer);
 	/* preempt_type */
 	safe_unpackstr(&slurm_conf.prep_params, buffer);
 	safe_unpackstr(&slurm_conf.prep_plugins, buffer);
@@ -518,7 +517,6 @@ extern int unpack_slurm_conf_lite_no_alloc(buf_t *buffer)
 	/* resv_over_run */
 	/* resv_prolog */
 	/* ret2service */
-	safe_unpackstr(&slurm_conf.route_plugin, buffer);
 	/* sched_logfile */
 	/* sched_log_level */
 	/* sched_params */
@@ -591,4 +589,50 @@ unpack_error:
 	free_slurm_conf(&slurm_conf, false);
 
 	return SLURM_ERROR;
+}
+
+extern void pack_stepd_reconf(buf_t *buffer, uint16_t protocol_version)
+{
+	/*
+	 * Unlike the initialization functions above, this does need to be
+	 * able to communicate with an older slurmstepd if the slurmd process
+	 * has been upgraded.
+	 */
+	if (protocol_version >= SLURM_23_11_PROTOCOL_VERSION) {
+		packstr_array(slurm_conf.control_addr, slurm_conf.control_cnt,
+			      buffer);
+		packstr(slurm_conf.slurmctld_addr, buffer);
+		pack32(slurm_conf.slurmctld_port, buffer);
+		pack16(slurm_conf.slurmctld_port_count, buffer);
+	}
+}
+
+/*
+ * This does not need to be versioned - slurmd will always pack in our
+ * native protocol version. Directly unpack into slurm_conf - the buffer
+ * was already read in successfully off the socket and we trust slurmd
+ * to have structured this correctly.
+ */
+extern void unpack_stepd_reconf(buf_t *buffer)
+{
+	xfree(slurm_conf.control_addr);
+	safe_unpackstr_array(&slurm_conf.control_addr,
+			     &slurm_conf.control_cnt, buffer);
+	xfree(slurm_conf.slurmctld_addr);
+	safe_unpackstr(&slurm_conf.slurmctld_addr, buffer);
+
+	safe_unpack32(&slurm_conf.slurmctld_port, buffer);
+	safe_unpack16(&slurm_conf.slurmctld_port_count, buffer);
+
+	for (int i = 0; i < slurm_conf.control_cnt; i++)
+		debug("%s: control_addr[%d]=%s",
+		      __func__, i, slurm_conf.control_addr[i]);
+	debug("%s: slurmctld_port=%d, slurmctld_port_count=%d, slurmctld_addr=%s",
+	      __func__, slurm_conf.slurmctld_port,
+	      slurm_conf.slurmctld_port_count, slurm_conf.slurmctld_addr);
+
+	return;
+
+unpack_error:
+	error("%s: unpack_error: %m", __func__);
 }

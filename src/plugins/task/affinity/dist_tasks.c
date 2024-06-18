@@ -549,7 +549,7 @@ extern int lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id,
 
 	/*
 	 * FIXME: I'm worried about core_bitmap with CPU_BIND_TO_SOCKETS &
-	 * max_cores - does select/cons_res plugin allocate whole
+	 * max_cores - does select/cons_tres plugin allocate whole
 	 * socket??? Maybe not. Check srun man page.
 	 */
 
@@ -756,16 +756,17 @@ static bitstr_t *_get_avail_map(slurm_cred_t *cred, uint16_t *hw_sockets,
 				uint16_t *hw_cores, uint16_t *hw_threads)
 {
 	bitstr_t *req_map, *hw_map;
-	uint16_t p, t, new_p, num_cpus, sockets, cores;
+	uint16_t p, t, new_p, num_cores, sockets, cores;
 	int job_node_id;
 	int start;
 	char *str;
 	int spec_thread_cnt = 0;
 	slurm_cred_arg_t *arg = slurm_cred_get_args(cred);
 
-	*hw_sockets = conf->sockets;
-	*hw_cores   = conf->cores;
-	*hw_threads = conf->threads;
+	*hw_sockets = conf->actual_sockets;
+	*hw_cores   = conf->actual_cores;
+	*hw_threads = conf->actual_threads;
+
 	/* we need this node's ID in relation to the whole
 	 * job allocation, not just this jobstep */
 	job_node_id = nodelist_find(arg->job_hostlist, conf->node_name);
@@ -779,8 +780,8 @@ static bitstr_t *_get_avail_map(slurm_cred_t *cred, uint16_t *hw_sockets,
 	debug3("slurmctld s %u c %u; hw s %u c %u t %u",
 	       sockets, cores, *hw_sockets, *hw_cores, *hw_threads);
 
-	num_cpus = MIN((sockets * cores), ((*hw_sockets)*(*hw_cores)));
-	req_map = (bitstr_t *) bit_alloc(num_cpus);
+	num_cores = MIN((sockets * cores), ((*hw_sockets)*(*hw_cores)));
+	req_map = (bitstr_t *) bit_alloc(num_cores);
 	hw_map  = (bitstr_t *) bit_alloc(conf->block_map_size);
 
 	/* Transfer core_bitmap data to local req_map.
@@ -789,7 +790,7 @@ static bitstr_t *_get_avail_map(slurm_cred_t *cred, uint16_t *hw_sockets,
 	 * sync with the slurmctld daemon). */
 	for (p = 0; p < (sockets * cores); p++) {
 		if (bit_test(arg->step_core_bitmap, start + p))
-			bit_set(req_map, (p % num_cpus));
+			bit_set(req_map, (p % num_cores));
 	}
 
 	str = (char *)bit_fmt_hexmask(req_map);
@@ -797,7 +798,7 @@ static bitstr_t *_get_avail_map(slurm_cred_t *cred, uint16_t *hw_sockets,
 	       &arg->step_id, str);
 	xfree(str);
 
-	for (p = 0; p < num_cpus; p++) {
+	for (p = 0; p < num_cores; p++) {
 		if (bit_test(req_map, p) == 0)
 			continue;
 		/* If we are pretending we have a larger system than
@@ -805,10 +806,12 @@ static bitstr_t *_get_avail_map(slurm_cred_t *cred, uint16_t *hw_sockets,
 		   don't bust the bank.
 		*/
 		new_p = p % conf->block_map_size;
-		/* core_bitmap does not include threads, so we
-		 * add them here but limit them to what the job
-		 * requested */
-		for (t = 0; t < (*hw_threads); t++) {
+		/*
+		 * core_bitmap does not include threads, so we add them here.
+		 * Add all configured threads. The step will be limited to
+		 * requested threads later.
+		 */
+		for (t = 0; t < (conf->threads); t++) {
 			uint16_t bit = new_p * (*hw_threads) + t;
 			bit %= conf->block_map_size;
 			bit_set(hw_map, bit);
@@ -991,12 +994,16 @@ static int _task_layout_lllp_cyclic(launch_tasks_request_msg_t *req,
 		req_threads_per_core = 1;
 
 	size = bit_set_count(avail_map);
-	if (req_threads_per_core) {
-		if (size < (req->cpus_per_task * (hw_threads /
+	/*
+	 * If configured threads > hw threads, then we are oversubscribing
+	 * threads, so don't check the number of bits set.
+	 */
+	if (req_threads_per_core && (conf->threads <= hw_threads)) {
+		if (size < (req->cpus_per_task * (conf->threads /
 						  req_threads_per_core))) {
 			error("only %d bits in avail_map, threads_per_core requires %d!",
 			      size,
-			      (req->cpus_per_task * (hw_threads /
+			      (req->cpus_per_task * (conf->threads /
 						     req_threads_per_core)));
 			FREE_NULL_BITMAP(avail_map);
 			return ESLURMD_CPU_LAYOUT_ERROR;
@@ -1201,12 +1208,16 @@ static int _task_layout_lllp_block(launch_tasks_request_msg_t *req,
 		req_threads_per_core = 1;
 
 	size = bit_set_count(avail_map);
-	if (req_threads_per_core) {
-		if (size < (req->cpus_per_task * (hw_threads /
+	/*
+	 * If configured threads > hw threads, then we are oversubscribing
+	 * threads, so don't check the number of bits set.
+	 */
+	if (req_threads_per_core && (conf->threads <= hw_threads)) {
+		if (size < (req->cpus_per_task * (conf->threads /
 						  req_threads_per_core))) {
 			error("only %d bits in avail_map, threads_per_core requires %d!",
 			      size,
-			      (req->cpus_per_task * (hw_threads /
+			      (req->cpus_per_task * (conf->threads /
 						     req_threads_per_core)));
 			FREE_NULL_BITMAP(avail_map);
 			return ESLURMD_CPU_LAYOUT_ERROR;

@@ -51,6 +51,7 @@
 #include <sys/socket.h>
 
 #include "src/common/read_config.h"
+#include "src/common/run_in_daemon.h"
 #include "src/common/strlcpy.h"
 #include "src/common/util-net.h"
 #include "src/common/macros.h"
@@ -252,14 +253,20 @@ extern char *make_full_path(const char *rpath)
 	return cwd2;
 }
 
-struct addrinfo *get_addr_info(const char *hostname, uint16_t port)
+extern struct addrinfo *xgetaddrinfo_port(const char *hostname, uint16_t port)
 {
-	struct addrinfo* result = NULL;
+	char serv[6];
+	snprintf(serv, sizeof(serv), "%hu", port);
+	return xgetaddrinfo(hostname, serv);
+}
+
+extern struct addrinfo *xgetaddrinfo(const char *hostname, const char *serv)
+{
+	struct addrinfo *result = NULL;
 	struct addrinfo hints;
 	int err;
 	bool v4_enabled = slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED;
 	bool v6_enabled = slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED;
-	char serv[6];
 
 	memset(&hints, 0, sizeof(hints));
 
@@ -271,21 +278,36 @@ struct addrinfo *get_addr_info(const char *hostname, uint16_t port)
 	else
 		hints.ai_family = AF_UNSPEC;
 
+	/* RFC4291 2.4 "Unspecified" address type or IPv4 INADDR_ANY */
+	if (!xstrcmp("::", hostname)) {
+		/*
+		 * Only specify one address instead of NULL if possible to avoid
+		 * EADDRINUSE when trying to bind on IPv4 and IPv6 INADDR_ANY.
+		 */
+		if (v6_enabled)
+			hostname = "0::0";
+		else if (v4_enabled)
+			hostname = "0.0.0.0";
+		else
+			hostname = NULL;
+	}
+	/* RFC4291 2.4 "Loopback" address type */
+	if (v6_enabled && !xstrcmp("::1", hostname))
+		hostname = "0::1";
+
 	hints.ai_flags = AI_ADDRCONFIG | AI_NUMERICSERV | AI_PASSIVE;
 	if (hostname)
 		hints.ai_flags |= AI_CANONNAME;
 	hints.ai_socktype = SOCK_STREAM;
 
-	snprintf(serv, sizeof(serv), "%u", port);
-
 	err = getaddrinfo(hostname, serv, &hints, &result);
 	if (err == EAI_SYSTEM) {
-		error("%s: getaddrinfo() failed: %s: %m", __func__,
-		      gai_strerror(err));
+		error_in_daemon("%s: getaddrinfo(%s:%s) failed: %s: %m",
+				__func__, hostname, serv, gai_strerror(err));
 		return NULL;
 	} else if (err != 0) {
-		error("%s: getaddrinfo() failed: %s", __func__,
-		      gai_strerror(err));
+		error_in_daemon("%s: getaddrinfo(%s:%s) failed: %s",
+				__func__, hostname, serv, gai_strerror(err));
 		return NULL;
 	}
 

@@ -183,6 +183,7 @@ $(libslurm_o_LDADD) $(convenience_libs) $(slurmapi_add) : force
 $(VERSION_SCRIPT) :
 	(echo "{ global:";   \
 	 echo "   islurm_*;"; \
+	 echo "   sack_*;"; \
 	 echo "   slurm_*;"; \
 	 echo "   slurmdb_*;"; \
 	 echo "   plugin_context_*;"; \
@@ -193,6 +194,11 @@ $(VERSION_SCRIPT) :
 	 echo "   switch_record_cnt;"; \
 	 echo "   switch_levels;"; \
 	 echo "   switch_record_table;"; \
+	 echo "   bblock_node_cnt;"; \
+	 echo "   block_levels;"; \
+	 echo "   block_record_cnt;"; \
+	 echo "   block_record_table;"; \
+	 echo "   blocks_nodes_bitmap;"; \
 	 echo "  local: *;"; \
 	 echo "};") > $(VERSION_SCRIPT)
 

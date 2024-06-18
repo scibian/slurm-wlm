@@ -41,13 +41,13 @@
 #include "pack.h"
 
 #define PERSIST_FLAG_NONE           0x0000
-#define PERSIST_FLAG_DBD            0x0001
-#define PERSIST_FLAG_RECONNECT      0x0002
-#define PERSIST_FLAG_ALREADY_INITED 0x0004
-#define PERSIST_FLAG_P_USER_CASE    0x0008
-#define PERSIST_FLAG_SUPPRESS_ERR   0x0010
-#define PERSIST_FLAG_EXT_DBD        0x0020
-#define PERSIST_FLAG_DONT_UPDATE_CLUSTER 0x0040
+#define PERSIST_FLAG_DBD            SLURM_BIT(0)
+#define PERSIST_FLAG_RECONNECT      SLURM_BIT(1)
+#define PERSIST_FLAG_ALREADY_INITED SLURM_BIT(2)
+#define PERSIST_FLAG_P_USER_CASE    SLURM_BIT(3)
+#define PERSIST_FLAG_SUPPRESS_ERR   SLURM_BIT(4)
+#define PERSIST_FLAG_EXT_DBD        SLURM_BIT(5)
+#define PERSIST_FLAG_DONT_UPDATE_CLUSTER SLURM_BIT(6)
 
 #define PERSIST_CONN_NOT_INITED -2
 
@@ -69,8 +69,10 @@ typedef struct {
 
 typedef struct {
 	void *auth_cred;
-	int (*callback_proc)(void *arg, persist_msg_t *msg,
-			     buf_t **out_buffer, uint32_t *uid);
+	uid_t auth_uid;
+	gid_t auth_gid;
+	bool auth_ids_set;
+	int (*callback_proc)(void *arg, persist_msg_t *msg, buf_t **out_buffer);
 	void (*callback_fini)(void *arg);
 	char *cluster_name;
 	time_t comm_fail_time;	/* avoid constant error messages */

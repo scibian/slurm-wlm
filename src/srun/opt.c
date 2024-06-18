@@ -48,7 +48,6 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>		/* getenv     */
-#include <sys/param.h>		/* MAXPATHLEN */
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -545,7 +544,7 @@ env_vars_t env_vars[] = {
   { "SLURM_COMPRESS", LONG_OPT_COMPRESS },
   { "SLURM_CONSTRAINT", 'C' },
   { "SLURM_CORE_SPEC", 'S' },
-  { "SRUN_CPUS_PER_TASK", 'c' },
+  { "SLURM_CPUS_PER_TASK", 'c' },
   { "SLURM_CPU_BIND", LONG_OPT_CPU_BIND },
   { "SLURM_CPU_FREQ_REQ", LONG_OPT_CPU_FREQ },
   { "SLURM_CPUS_PER_GPU", LONG_OPT_CPUS_PER_GPU },
@@ -558,6 +557,7 @@ env_vars_t env_vars[] = {
   { "SLURM_EXCLUSIVE", LONG_OPT_EXCLUSIVE },
   { "SLURM_EXPORT_ENV", LONG_OPT_EXPORT },
   { "SRUN_EXPORT_ENV", LONG_OPT_EXPORT }, /* overrides SLURM_EXPORT_ENV */
+  { "SLURM_EXTERNAL_LAUNCHER", LONG_OPT_EXTERNAL_LAUNCHER },
   { "SLURM_GPUS", 'G' },
   { "SLURM_GPU_BIND", LONG_OPT_GPU_BIND },
   { "SLURM_GPU_FREQ", LONG_OPT_GPU_FREQ },
@@ -614,6 +614,7 @@ env_vars_t env_vars[] = {
   { "SLURM_THREADS", 'T' },
   { "SLURM_THREADS_PER_CORE", LONG_OPT_THREADSPERCORE },
   { "SLURM_TIMELIMIT", 't' },
+  { "SLURM_TRES_BIND", LONG_OPT_TRES_BIND },
   { "SLURM_TRES_PER_TASK", LONG_OPT_TRES_PER_TASK },
   { "SLURM_UNBUFFEREDIO", 'u' },
   { "SLURM_USE_MIN_NODES", LONG_OPT_USE_MIN_NODES },
@@ -683,7 +684,7 @@ static bitstr_t *_get_het_group(const int argc, char **argv,
 	int i, opt_char, option_index = 0;
 	char *tmp = NULL;
 	bitstr_t *het_grp_bits = bit_alloc(MAX_HET_JOB_COMPONENTS);
-	hostlist_t hl;
+	hostlist_t *hl;
 	char *opt_string = NULL;
 	struct option *optz = slurm_option_table_create(&opt, &opt_string);
 
@@ -901,9 +902,27 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 static bool _opt_verify(void)
 {
 	bool verified = true;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 	int hl_cnt = 0;
 	bool mpack_reset_nodes = false;
+
+	if (opt.srun_opt->interactive) {
+		if (((opt.distribution & SLURM_DIST_STATE_BASE) ==
+		     SLURM_DIST_ARBITRARY)) {
+			opt.distribution &= ~SLURM_DIST_ARBITRARY;
+		}
+	}
+
+	/*
+	 * This means --ntasks was read from the environment.
+	 * We will override it with what the user specified in the hostlist.
+	 */
+	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)) {
+		if (slurm_option_set_by_env(&opt, 'n'))
+			opt.ntasks_set = false;
+		if (slurm_option_set_by_env(&opt, 'N'))
+			opt.nodes_set = false;
+	}
 
 	validate_options_salloc_sbatch_srun(&opt);
 
@@ -998,17 +1017,6 @@ static bool _opt_verify(void)
 	if (!sropt.prolog)
 		sropt.prolog = xstrdup(slurm_conf.srun_prolog);
 
-	/*
-	 * This means --ntasks was read from the environment.
-	 * We will override it with what the user specified in the hostlist.
-	 */
-	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)) {
-		if (slurm_option_set_by_env(&opt, 'n'))
-			opt.ntasks_set = false;
-		if (slurm_option_set_by_env(&opt, 'N'))
-			opt.nodes_set = false;
-	}
-
 	/* slurm_verify_cpu_bind has to be called before validate_hint_option */
 	if (opt.srun_opt->cpu_bind) {
 		if (slurm_verify_cpu_bind(opt.srun_opt->cpu_bind,
@@ -1048,48 +1056,10 @@ static bool _opt_verify(void)
 		verified = false;
 	}
 
-	if (opt.nodefile) {
-		char *tmp;
-		xfree(opt.nodelist);
-		if (!(tmp = slurm_read_hostfile(opt.nodefile, 0))) {
-			error("Invalid --nodefile node file");
-			exit(-1);
-		}
-		opt.nodelist = xstrdup(tmp);
-		free(tmp);
-	}
-
-	if (!opt.nodelist) {
-		if ((opt.nodelist = xstrdup(getenv("SLURM_HOSTFILE")))) {
-			/* make sure the file being read in has a / in
-			   it to make sure it is a file in the
-			   valid_node_list function */
-			if (!strstr(opt.nodelist, "/")) {
-				char *add_slash = xstrdup("./");
-				xstrcat(add_slash, opt.nodelist);
-				xfree(opt.nodelist);
-				opt.nodelist = add_slash;
-			}
-			opt.distribution &= SLURM_DIST_STATE_FLAGS;
-			opt.distribution |= SLURM_DIST_ARBITRARY;
-			if (!_valid_node_list(&opt.nodelist)) {
-				error("Failure getting NodeNames from "
-				      "hostfile");
-				exit(error_exit);
-			} else {
-				debug("loaded nodes (%s) from hostfile",
-				      opt.nodelist);
-			}
-		}
-	} else {
-		if (!_valid_node_list(&opt.nodelist))
-			exit(error_exit);
-	}
-
 	/* set proc and node counts based on the arbitrary list of nodes */
 	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	   && (!opt.nodes_set || !opt.ntasks_set)) {
-		hostlist_t hl = hostlist_create(opt.nodelist);
+		hostlist_t *hl = hostlist_create(opt.nodelist);
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = true;
 			opt.ntasks = hostlist_count(hl);
@@ -1207,15 +1177,11 @@ static bool _opt_verify(void)
 			if (opt.verbose)
 				info("Number of tasks implicitly set to %d",
 				     opt.ntasks);
-		} else if (opt.ntasks_per_node != NO_VAL) {
-			opt.ntasks *= opt.ntasks_per_node;
-			opt.ntasks_set = true;
 		}
 
 		/* massage the numbers */
 		if (opt.nodelist) {
-			if (hl)	/* possibly built above */
-				hostlist_destroy(hl);
+			FREE_NULL_HOSTLIST(hl);
 			hl = hostlist_create(opt.nodelist);
 			if (!hl) {
 				error("memory allocation failure");
@@ -1297,8 +1263,7 @@ static bool _opt_verify(void)
 		opt.ntasks_set = 1;
 	}
 
-	if (hl)
-		hostlist_destroy(hl);
+	FREE_NULL_HOSTLIST(hl);
 
 	if ((opt.deadline) && (opt.begin) && (opt.deadline < opt.begin)) {
 		error("Incompatible begin and deadline time specification");
@@ -1307,12 +1272,6 @@ static bool _opt_verify(void)
 
 	if (!sropt.mpi_type)
 		sropt.mpi_type = xstrdup(slurm_conf.mpi_default);
-
-	if (!mpi_g_client_init(&sropt.mpi_type)) {
-		error("Invalid MPI type '%s', --mpi=list for acceptable types",
-		      sropt.mpi_type);
-		exit(error_exit);
-	}
 
 	if (!opt.job_name)
 		opt.job_name = xstrdup(sropt.cmd_name);
@@ -1524,7 +1483,7 @@ static void _usage(void)
 "            [--mpi-combine=yes|no] [--het-group=value]\n"
 "            [--cpus-per-gpu=n] [--gpus=n] [--gpu-bind=...] [--gpu-freq=...]\n"
 "            [--gpus-per-node=n] [--gpus-per-socket=n] [--gpus-per-task=n]\n"
-"            [--mem-per-gpu=MB] [--tres-per-task=list]\n"
+"            [--mem-per-gpu=MB] [--tres-bind=...] [--tres-per-task=list]\n"
 "            executable [args...]\n");
 
 }
@@ -1628,6 +1587,7 @@ static void _help(void)
 "  -T, --threads=threads       set srun launch fanout\n"
 "  -t, --time=minutes          time limit\n"
 "      --time-min=minutes      minimum time limit (if distinct)\n"
+"      --tres-bind=...         task to tres binding options\n"
 "      --tres-per-task=list    list of tres required per task\n"
 "  -u, --unbuffered            do not line-buffer stdout/err\n"
 "      --use-min-nodes         if a range of node counts is given, prefer the\n"

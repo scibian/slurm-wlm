@@ -47,9 +47,6 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "src/slurmctld/gang.h"
-#include "src/slurmctld/slurmctld.h"
-
 typedef struct {
 	int (*reconfig)(void);
 } slurm_sched_ops_t;
@@ -91,8 +88,6 @@ extern int sched_g_init(void)
 		retval = SLURM_ERROR;
 		goto done;
 	}
-	main_sched_init();
-
 done:
 	slurm_mutex_unlock( &g_context_lock );
 	return retval;
@@ -108,19 +103,12 @@ extern int sched_g_fini(void)
 	rc = plugin_context_destroy(g_context);
 	g_context = NULL;
 
-	main_sched_fini();
-
-	if (slurm_conf.preempt_mode & PREEMPT_MODE_GANG)
-		gs_fini();
-
 	return rc;
 }
 
 extern int sched_g_reconfig(void)
 {
 	xassert(g_context);
-
-	gs_reconfig();
 
 	return (*(ops.reconfig))();
 }

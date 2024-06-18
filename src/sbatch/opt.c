@@ -48,7 +48,6 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>		/* getenv     */
-#include <sys/param.h>		/* MAXPATHLEN */
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
@@ -232,6 +231,7 @@ env_vars_t env_vars[] = {
   { "SBATCH_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
   { "SBATCH_THREADS_PER_CORE", LONG_OPT_THREADSPERCORE },
   { "SBATCH_TIMELIMIT", 't' },
+  { "SBATCH_TRES_BIND", LONG_OPT_TRES_BIND },
   { "SBATCH_TRES_PER_TASK", LONG_OPT_TRES_PER_TASK },
   { "SBATCH_USE_MIN_NODES", LONG_OPT_USE_MIN_NODES },
   { "SBATCH_WAIT", 'W' },
@@ -672,7 +672,7 @@ static bool _opt_verify(void)
 {
 	bool verified = true;
 	char *dist = NULL;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 	int hl_cnt = 0;
 
 	validate_options_salloc_sbatch_srun(&opt);
@@ -721,43 +721,6 @@ static bool _opt_verify(void)
 	if (opt.exclude && !_valid_node_list(&opt.exclude))
 		exit(error_exit);
 
-	if (opt.nodefile) {
-		char *tmp;
-		xfree(opt.nodelist);
-		if (!(tmp = slurm_read_hostfile(opt.nodefile, 0))) {
-			error("Invalid --nodefile node file");
-			exit(-1);
-		}
-		opt.nodelist = xstrdup(tmp);
-		free(tmp);
-	}
-
-	if (!opt.nodelist) {
-		if ((opt.nodelist = xstrdup(getenv("SLURM_HOSTFILE")))) {
-			/* make sure the file being read in has a / in
-			   it to make sure it is a file in the
-			   valid_node_list function */
-			if (!strstr(opt.nodelist, "/")) {
-				char *add_slash = xstrdup("./");
-				xstrcat(add_slash, opt.nodelist);
-				xfree(opt.nodelist);
-				opt.nodelist = add_slash;
-			}
-			opt.distribution &= SLURM_DIST_STATE_FLAGS;
-			opt.distribution |= SLURM_DIST_ARBITRARY;
-			if (!_valid_node_list(&opt.nodelist)) {
-				error("Failure getting NodeNames from hostfile");
-				exit(error_exit);
-			} else {
-				debug("loaded nodes (%s) from hostfile",
-				      opt.nodelist);
-			}
-		}
-	} else {
-		if (!_valid_node_list(&opt.nodelist))
-			exit(error_exit);
-	}
-
 	if (opt.nodelist && !opt.nodes_set) {
 		hl = hostlist_create(opt.nodelist);
 		if (!hl) {
@@ -805,7 +768,7 @@ static bool _opt_verify(void)
 	 * if (n/plane_size < N) and ((N-1) * plane_size >= n) -->
 	 * problem Simple check will not catch all the problem/invalid
 	 * cases.
-	 * The limitations of the plane distribution in the cons_res
+	 * The limitations of the plane distribution in the cons_tres
 	 * environment are more extensive and are documented in the
 	 * Slurm reference guide.  */
 	if ((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE &&
@@ -886,8 +849,8 @@ static bool _opt_verify(void)
 	   of nodes */
 	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	    && (!opt.nodes_set || !opt.ntasks_set)) {
-		if (!hl)
-			hl = hostlist_create(opt.nodelist);
+		FREE_NULL_HOSTLIST(hl);
+		hl = hostlist_create(opt.nodelist);
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = 1;
 			opt.ntasks = hostlist_count(hl);
@@ -926,8 +889,7 @@ static bool _opt_verify(void)
 	if (opt.threads_per_core != NO_VAL)
 		het_job_env.threads_per_core = opt.threads_per_core;
 
-	if (hl)
-		hostlist_destroy(hl);
+	FREE_NULL_HOSTLIST(hl);
 
 	if ((opt.deadline) && (opt.begin) && (opt.deadline < opt.begin)) {
 		error("Incompatible begin and deadline time specification");
@@ -1138,11 +1100,10 @@ static void _usage(void)
 "              [--core-spec=cores] [--thread-spec=threads]\n"
 "              [--bb=burst_buffer_spec] [--bbf=burst_buffer_file]\n"
 "              [--array=index_values] [--profile=...] [--ignore-pbs] [--spread-job]\n"
-"              [--export[=names]] [--export-file=file|fd] [--delay-boot=mins]\n"
-"              [--use-min-nodes]\n"
+"              [--export[=names]] [--delay-boot=mins] [--use-min-nodes]\n"
 "              [--cpus-per-gpu=n] [--gpus=n] [--gpu-bind=...] [--gpu-freq=...]\n"
 "              [--gpus-per-node=n] [--gpus-per-socket=n] [--gpus-per-task=n]\n"
-"              [--mem-per-gpu=MB] [--tres-per-task=list]\n"
+"              [--mem-per-gpu=MB] [--tres-bind=...] [--tres-per-task=list]\n"
 "              executable [args...]\n");
 }
 
@@ -1170,8 +1131,6 @@ static void _help(void)
 "  -D, --chdir=directory       set working directory for batch script\n"
 "  -e, --error=err             file for batch script's standard error\n"
 "      --export[=names]        specify environment variables to export\n"
-"      --export-file=file|fd   specify environment variables file or file\n"
-"                              descriptor to export\n"
 "      --get-user-env          load environment from local cluster\n"
 "      --gid=group_id          group ID to run job as (user root only)\n"
 "      --gres=list             required generic resources\n"
@@ -1223,6 +1182,7 @@ static void _help(void)
 "      --thread-spec=threads   count of reserved threads\n"
 "  -t, --time=minutes          time limit\n"
 "      --time-min=minutes      minimum time limit (if distinct)\n"
+"      --tres-bind=...         task to tres binding options\n"
 "      --tres-per-task=list    list of tres required per task\n"
 "      --uid=user_id           user ID to run job as (user root only)\n"
 "      --use-min-nodes         if a range of node counts is given, prefer the\n"

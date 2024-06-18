@@ -38,6 +38,7 @@
 
 #include "src/interfaces/accounting_storage.h"
 #include "src/interfaces/auth.h"
+#include "src/interfaces/cred.h"
 #include "src/interfaces/gres.h"
 #include "src/interfaces/hash.h"
 #include "src/interfaces/select.h"
@@ -45,36 +46,30 @@
 extern void slurm_init(const char *conf)
 {
 	slurm_conf_init(conf);
-	slurm_client_init_plugins();
-}
 
-extern void slurm_fini(void)
-{
-	slurm_client_fini_plugins();
-	slurm_conf_destroy();
-}
-
-extern void slurm_client_init_plugins(void)
-{
-	if (slurm_auth_init(NULL) != SLURM_SUCCESS)
+	if (auth_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize auth plugin");
 
 	if (hash_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize hash plugin");
 
-	if (slurm_acct_storage_init() != SLURM_SUCCESS)
+	if (acct_storage_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize the accounting storage plugin");
-
-	if (select_g_init(0) != SLURM_SUCCESS)
-		fatal("failed to initialize node selection plugin");
 
 	if (gres_init() != SLURM_SUCCESS)
 		fatal("failed to initialize gres plugin");
+
+	if (cred_g_init() != SLURM_SUCCESS)
+		fatal("failed to initialize cred plugin");
 }
 
-extern void slurm_client_fini_plugins(void)
+extern void slurm_fini(void)
 {
+	cred_g_fini();
 	gres_fini();
-	select_g_fini();
-	slurm_acct_storage_fini();
+	acct_storage_g_fini();
+	hash_g_fini();
+	auth_g_fini();
+
+	slurm_conf_destroy();
 }

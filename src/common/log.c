@@ -788,6 +788,19 @@ static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
 				     STEP_ID_FLAG_SPACE | STEP_ID_FLAG_NO_JOB);
 }
 
+static char *_print_data_t(const data_t *d, char *buffer, uint16_t size)
+{
+	/*
+	 * NOTE: You will notice we put a %.0s in front of the string.
+	 * This is to handle the fact that we can't remove the job_ptr
+	 * argument from the va_list directly. So when we call vsnprintf()
+	 * to handle the va_list this will effectively skip this argument.
+	 */
+	snprintf(buffer, size, "%%.0s%s(0x%"PRIxPTR")",
+		 data_get_type_string(d), ((uintptr_t) d));
+	return buffer;
+}
+
 extern char *vxstrfmt(const char *fmt, va_list ap)
 {
 	char	*intermediate_fmt = NULL;
@@ -824,6 +837,7 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 			case 'p':
 				switch (*(p + 2)) {
 				case 'A':
+				case 'D':
 				case 'J':
 				case 's':
 				case 'S':
@@ -882,6 +896,22 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 					xstrcat(intermediate_fmt,
 						_addr2fmt(
 							addr_ptr,
+							substitute_on_stack,
+							sizeof(substitute_on_stack)));
+					va_end(ap_copy);
+					break;
+				}
+				case 'D':	/* "%pD" -> data_type(0xDEADBEEF) */
+				{
+					data_t *d = NULL;
+					va_list	ap_copy;
+
+					va_copy(ap_copy, ap);
+					for (int i = 0; i < cnt; i++ )
+						d = va_arg(ap_copy, void *);
+					xstrcat(intermediate_fmt,
+						_print_data_t(
+							d,
 							substitute_on_stack,
 							sizeof(substitute_on_stack)));
 					va_end(ap_copy);
@@ -984,7 +1014,7 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 					xiso8601timecat(substitute, true);
 					break;
 				}
-				switch (log->fmt) {
+				switch (log->fmt & (~LOG_FMT_FORMAT_STDERR)) {
 				case LOG_FMT_ISO8601_MS:
 					/* "%M" => "yyyy-mm-ddThh:mm:ss.fff"  */
 					xiso8601timecat(substitute, true);
@@ -1205,9 +1235,9 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 	if (SCHED_LOG_INITIALIZED && sched &&
 	    (highest_sched_log_level > LOG_LEVEL_QUIET)) {
 		buf = vxstrfmt(fmt, args);
-		xlogfmtcat(&msgbuf, "[%M] %s%s%s", sched_log->prefix, pfx, buf);
+		xlogfmtcat(&msgbuf, "[%M] %s%s", sched_log->prefix, pfx);
 		_log_printf(sched_log, sched_log->fbuf, sched_log->logfp,
-			    "sched: %s\n", msgbuf);
+			    "sched: %s%s\n", msgbuf, buf);
 		fflush(sched_log->logfp);
 		xfree(msgbuf);
 	}
@@ -1283,10 +1313,21 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 		if (spank) {
 			_log_printf(log, log->buf, stderr, "%s%s", buf, eol);
 		} else if (log->fmt == LOG_FMT_THREAD_ID) {
+			/*
+			 * This is for backward compatibility. In versions
+			 * < 23.11 this was the only way to print to stderr.
+			 * Keep this behavior since LogTimeFormat=format_stderr
+			 * results in a little bit different format.
+			 */
 			char tmp[64];
 			_set_idbuf(tmp, sizeof(tmp));
 			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
 			            tmp, pfx, buf, eol);
+		} else if ((log->fmt & LOG_FMT_FORMAT_STDERR)) {
+			xlogfmtcat(&msgbuf, "[%M] %s", pfx);
+			_log_printf(log, log->buf, stderr, "%s%s%s",
+				    msgbuf, buf, eol);
+			xfree(msgbuf);
 		} else {
 			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
 			            log->argv0, pfx, buf, eol);
@@ -1329,8 +1370,8 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 		xfree(msgbuf);
 	} else {
 		xassert(log->opt.logfile_fmt == LOG_FILE_FMT_TIMESTAMP);
-		xlogfmtcat(&msgbuf, "[%M] %s%s%s", log->prefix, pfx, buf);
-		_log_printf(log, log->fbuf, log->logfp, "%s\n", msgbuf);
+		xlogfmtcat(&msgbuf, "[%M] %s%s", log->prefix, pfx);
+		_log_printf(log, log->fbuf, log->logfp, "%s%s\n", msgbuf, buf);
 		fflush(log->logfp);
 
 		xfree(msgbuf);
@@ -1500,15 +1541,9 @@ void slurm_debug5(const char *fmt, ...)
 	LOG_MACRO(LOG_LEVEL_DEBUG5, false, fmt);
 }
 
-int sched_error(const char *fmt, ...)
+void sched_error(const char *fmt, ...)
 {
 	LOG_MACRO(LOG_LEVEL_ERROR, true, fmt);
-
-	/*
-	 *  Return SLURM_ERROR so calling functions can
-	 *    do "return error (...);"
-	 */
-	return SLURM_ERROR;
 }
 
 void sched_info(const char *fmt, ...)

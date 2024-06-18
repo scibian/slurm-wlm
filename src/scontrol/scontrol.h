@@ -89,6 +89,7 @@ extern int sibling_flag; /* show sibling jobs (if any fed job). */
 extern uint32_t cluster_flags; /* what type of cluster are we talking to */
 extern uint32_t euid; /* send request to the slurmctld in behave of this user */
 extern const char *mime_type; /* user requested JSON or YAML */
+extern const char *data_parser; /* data_parser args */
 
 extern front_end_info_msg_t *old_front_end_info_ptr;
 extern job_info_msg_t *old_job_info_ptr;
@@ -103,6 +104,7 @@ extern int	scontrol_callerid(int argc, char **argv);
 extern int	scontrol_create_part(int argc, char **argv);
 extern int	scontrol_create_res(int argc, char **argv);
 extern int	scontrol_encode_hostlist(char *hostlist, bool sorted);
+extern void	scontrol_getaddrs(char *node_list);
 extern void	scontrol_gethost(const char *stepd_node, const char *node_name);
 extern int	scontrol_hold(char *op, char *job_id_str);
 extern int	scontrol_job_notify(int argc, char **argv);

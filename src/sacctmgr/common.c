@@ -39,6 +39,7 @@
 \*****************************************************************************/
 
 #include "src/sacctmgr/sacctmgr.h"
+#include "src/common/macros.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -46,12 +47,23 @@
 #include <unistd.h>
 #include <termios.h>
 
-static pthread_t lock_warning_thread;
+static bool warn_needed = false;
+static pthread_mutex_t warn_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t warn_cond = PTHREAD_COND_INITIALIZER;
 
 static void *_print_lock_warn(void *no_data)
 {
-	sleep(5);
-	printf(" Database is busy or waiting for lock from other user.\n");
+	struct timespec ts = { 0, 0 };
+	ts.tv_sec = time(NULL) + 5;
+
+	slurm_mutex_lock(&warn_mutex);
+	if (warn_needed) {
+		slurm_cond_timedwait(&warn_cond, &warn_mutex, &ts);
+		if (warn_needed)
+			printf(" Database is busy or waiting for lock from other user.\n");
+		warn_needed = false;
+	}
+	slurm_mutex_unlock(&warn_mutex);
 
 	return NULL;
 }
@@ -298,6 +310,11 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Event");
 		field->len = 7;
 		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("Extra", object, MAX(command_len, 2))) {
+		field->type = PRINT_EXTRA;
+		field->name = xstrdup("Extra");
+		field->len = 20;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("Features", object, MAX(command_len, 3))) {
 		field->type = PRINT_FEATURES;
 		field->name = xstrdup("Features");
@@ -395,16 +412,26 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("ID");
 		field->len = 6;
 		field->print_routine = print_fields_uint;
-	} else if (!xstrncasecmp("Info", object, MAX(command_len, 2))) {
+	} else if (!xstrncasecmp("Info", object, MAX(command_len, 3))) {
 		field->type = PRINT_INFO;
 		field->name = xstrdup("Info");
 		field->len = 20;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("LFT", object, MAX(command_len, 1))) {
-		field->type = PRINT_LFT;
-		field->name = xstrdup("LFT");
-		field->len = 6;
-		field->print_routine = print_fields_uint;
+	} else if (!xstrncasecmp("InstanceId", object, MAX(command_len, 9))) {
+		field->type = PRINT_INSTANCE_ID;
+		field->name = xstrdup("InstanceId");
+		field->len = 20;
+		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("InstanceType", object, MAX(command_len, 9))) {
+		field->type = PRINT_INSTANCE_TYPE;
+		field->name = xstrdup("InstanceType");
+		field->len = 20;
+		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("Lineage", object, MAX(command_len, 1))) {
+		field->type = PRINT_LINEAGE;
+		field->name = xstrdup("Lineage");
+		field->len = -20;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("servertype", object, MAX(command_len, 10))) {
 		field->type = PRINT_SERVERTYPE;
 		field->name = xstrdup("ServerType");
@@ -647,12 +674,6 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Partition");
 		field->len = 10;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("PluginIDSelect", object,
-				 MAX(command_len, 2))) {
-		field->type = PRINT_SELECT;
-		field->name = xstrdup("PluginIDSelect");
-		field->len = 14;
-		field->print_routine = print_fields_uint;
 	} else if (!xstrncasecmp("PreemptMode", object, MAX(command_len, 8))) {
 		field->type = PRINT_PREEM;
 		field->name = xstrdup("PreemptMode");
@@ -825,15 +846,20 @@ static print_field_t *_get_print_field(char *object)
 	return field;
 }
 
-extern void notice_thread_init()
+extern void notice_thread_init(void)
 {
-	slurm_thread_create_detached(&lock_warning_thread,
-				     _print_lock_warn, NULL);
+	slurm_mutex_lock(&warn_mutex);
+	warn_needed = true;
+	slurm_thread_create_detached(_print_lock_warn, NULL);
+	slurm_mutex_unlock(&warn_mutex);
 }
 
-extern void notice_thread_fini()
+extern void notice_thread_fini(void)
 {
-	pthread_cancel(lock_warning_thread);
+	slurm_mutex_lock(&warn_mutex);
+	warn_needed = false;
+	slurm_cond_broadcast(&warn_cond);
+	slurm_mutex_unlock(&warn_mutex);
 }
 
 extern int commit_check(char *warning)
@@ -1009,7 +1035,8 @@ end_it:
 	return rc;
 }
 
-extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
+extern int sacctmgr_update_qos_usage(slurmdb_qos_cond_t *qos_cond,
+				     long double new_raw_usage)
 {
 	List update_list = NULL;
 	List cluster_list;
@@ -1035,7 +1062,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 		list_append(cluster_list, xstrdup(slurm_conf.cluster_name));
 	}
 
-	if (!commit_check("Would you like to reset usage?")) {
+	if (!commit_check("Would you like to update usage?")) {
 		printf(" Changes Discarded\n");
 		return rc;
 	}
@@ -1060,7 +1087,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 
 		update_list = list_create(slurmdb_destroy_update_object);
 		update_obj = xmalloc(sizeof(slurmdb_update_object_t));
-		update_obj->type = SLURMDB_REMOVE_QOS_USAGE;
+		update_obj->type = SLURMDB_UPDATE_QOS_USAGE;
 		update_obj->objects = list_create(NULL);
 
 		while ((qos_name = list_next(itr2))) {
@@ -1072,6 +1099,9 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 				slurmdb_destroy_update_object(update_obj);
 				goto end_it;
 			}
+			if (!rec->usage)
+				rec->usage = xmalloc(sizeof(*rec->usage));
+			rec->usage->usage_raw = new_raw_usage;
 			list_append(update_obj->objects, rec);
 		}
 		list_iterator_reset(itr2);

@@ -286,7 +286,7 @@ extern int update_front_end(update_front_end_msg_t *msg_ptr, uid_t auth_uid)
 {
 #ifdef HAVE_FRONT_END
 	char  *this_node_name = NULL;
-	hostlist_t host_list;
+	hostlist_t *host_list;
 	front_end_record_t *front_end_ptr;
 	int i, rc = SLURM_SUCCESS;
 	time_t now = time(NULL);
@@ -764,7 +764,6 @@ extern int load_all_front_end_state(bool state_only)
 	char *node_name = NULL, *reason = NULL, *state_file;
 	int error_code = 0, node_cnt = 0;
 	uint32_t node_state;
-	uint32_t name_len;
 	uint32_t reason_uid = NO_VAL;
 	time_t reason_time = 0;
 	front_end_record_t *front_end_ptr;
@@ -784,7 +783,7 @@ extern int load_all_front_end_state(bool state_only)
 	xfree(state_file);
 	unlock_state_files();
 
-	safe_unpackstr_xmalloc( &ver_str, &name_len, buffer);
+	safe_unpackstr(&ver_str, buffer);
 	debug3("Version string in front_end_state header is %s", ver_str);
 	if (ver_str && !xstrcmp(ver_str, FRONT_END_STATE_VERSION))
 		safe_unpack16(&protocol_version, buffer);
@@ -808,9 +807,9 @@ extern int load_all_front_end_state(bool state_only)
 		uint16_t obj_protocol_version = NO_VAL16;
 
 		if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-			safe_unpackstr_xmalloc (&node_name, &name_len, buffer);
+			safe_unpackstr(&node_name, buffer);
 			safe_unpack32 (&node_state,  buffer);
-			safe_unpackstr_xmalloc (&reason,    &name_len, buffer);
+			safe_unpackstr(&reason, buffer);
 			safe_unpack_time (&reason_time, buffer);
 			safe_unpack32 (&reason_uid,  buffer);
 			safe_unpack16 (&obj_protocol_version, buffer);
@@ -954,8 +953,8 @@ extern void sync_front_end_state(void)
 			    IS_JOB_RUNNING(job_ptr)) {
 				error("front end node %s has vanished, killing %pJ",
 				      job_ptr->batch_host, job_ptr);
-				job_ptr->job_state = JOB_NODE_FAIL |
-						     JOB_COMPLETING;
+				job_state_set(job_ptr, (JOB_NODE_FAIL |
+							JOB_COMPLETING));
 			} else if (job_ptr->front_end_ptr == NULL) {
 				info("front end node %s has vanished",
 				     job_ptr->batch_host);

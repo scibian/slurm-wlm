@@ -117,7 +117,7 @@ int _do_stat(slurm_step_id_t *step_id, char *nodelist,
 	job_step_stat_t *step_stat = NULL;
 	int ntasks = 0;
 	int tot_tasks = 0;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 	char *ave_usage_tmp = NULL;
 
 	debug("requesting info for %ps", step_id);
@@ -273,7 +273,6 @@ int main(int argc, char **argv)
 	print_fields_header(print_fields_list);
 	itr = list_iterator_create(params.opt_job_list);
 	while ((selected_step = list_next(itr))) {
-		resource_allocation_response_msg_t *resp;
 		job_step_info_response_msg_t *step_info = NULL;
 
 		memcpy(&step_id, &selected_step->step_id, sizeof(step_id));
@@ -293,15 +292,6 @@ int main(int argc, char **argv)
 
 			continue;
 		}
-
-		if (slurm_allocation_lookup(step_id.job_id, &resp)) {
-			error("No steps running for job %u",
-			      selected_step->step_id.job_id);
-			continue;
-		} else if (resp->alias_list) {
-			set_nodes_alias(resp->alias_list);
-		}
-		slurm_free_resource_allocation_response_msg(resp);
 
 		for (int i = 0; i < step_info->job_step_count; i++) {
 			/* If no stepid was requested set it to the first one */

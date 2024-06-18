@@ -1,4 +1,4 @@
-.TH squeue "1" "Slurm Commands" "January 2023" "Slurm Commands"
+.TH squeue "1" "Slurm Commands" "January 2024" "Slurm Commands"
 
 .SH "NAME"
 squeue \- view information about jobs located in the Slurm scheduling queue.
@@ -36,7 +36,7 @@ array index values printed using a regular expression).
 
 .TP
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIcluster_name\fR>
-Clusters to issue commands to.  Multiple cluster names may be comma separated.
+Clusters to issue commands to. Multiple cluster names may be comma separated.
 A value of '\fIall\fR' will query to run on all clusters.
 This option implicitly sets the \fB\-\-local\fR option.
 .IP
@@ -135,9 +135,7 @@ Executing (batch) host. For an allocated session, this is the host on which
 the session is executing (i.e. the node from which the \fBsrun\fR or the
 \fBsalloc\fR command was executed). For a batch job, this is the node executing
 the batch script. In the case of a typical Linux cluster, this would be the
-compute node zero of the allocation. In the case of a Cray ALPS
-system, this would be the front\-end host whose slurmd daemon executes the job
-script.
+compute node zero of the allocation.
 .IP
 
 .TP
@@ -151,7 +149,7 @@ default value of zero.
 .TP
 \fB%C\fR
 Number of CPUs (processors) requested by the job or allocated to
-it if already running.  As a job is completing this number will
+it if already running. As a job is completing this number will
 reflect the current number of CPUs allocated.
 (Valid for jobs only)
 .IP
@@ -574,9 +572,7 @@ Executing (batch) host. For an allocated session, this is the host on which
 the session is executing (i.e. the node from which the \fBsrun\fR or the
 \fBsalloc\fR command was executed). For a batch job, this is the node executing
 the batch script. In the case of a typical Linux cluster, this would be the
-compute node zero of the allocation. In the case of a Cray ALPS
-system, this would be the front\-end host whose slurmd daemon executes the job
-script.
+compute node zero of the allocation.
 (Valid for jobs only)
 .IP
 
@@ -889,7 +885,7 @@ The number of tasks per socket allocated to the job.
 .TP
 \fBNumCPUs\fR
 Number of CPUs (processors) requested by the job or allocated to
-it if already running.  As a job is completing, this number will
+it if already running. As a job is completing, this number will
 reflect the current number of CPUs allocated.
 (Valid for jobs and job steps)
 .IP
@@ -1305,8 +1301,8 @@ By default, prints a time stamp with the header.
 .IP
 
 .TP
-\fB\-j\fR, \fB\-\-jobs\fR=<\fIjob_id_list\fR>
-Requests a comma separated list of job IDs to display.  Defaults to all jobs.
+\fB\-j\fR, \fB\-\-jobs\fR[=<\fIjob_id_list\fR>]
+Specify a comma separated list of job IDs to display. Defaults to all jobs.
 The \fB\-\-jobs\fR=<\fIjob_id_list\fR> option may be used in conjunction with
 the \fB\-\-steps\fR option to print step information about specific jobs.
 Note: If a list of job IDs is provided, the jobs are displayed even if
@@ -1322,10 +1318,11 @@ Use the environment variable SLURM_BITSTR_LEN to specify larger field sizes.
 .IP
 
 .TP
-\f3\-\-json\fP
-Dump all job information as JSON. All information is dumped, even if it would
-normally not be. Formatting options are ignored; however, filtering arguments
-are still used.
+\f3\-\-json\fP, \f3\-\-json\fP=\fIlist\fR, \f3\-\-json\fP=<\fIdata_parser\fR>
+Dump information as JSON using the default data_parser plugin or explicit
+data_parser with parameters. All information is dumped, even if it would
+normally not be. Sorting and formatting arguments passed to other options are
+ignored; however, filtering arguments are still used.
 .IP
 
 .TP
@@ -1353,7 +1350,7 @@ Equivalent to \fB\-\-user=<my username>\fR.
 
 .TP
 \fB\-n\fR, \fB\-\-name\fR=<\fIname_list\fR>
-Request jobs or job steps having one of the specified names.  The
+Request jobs or job steps having one of the specified names. The
 list consists of a comma separated list of job names.
 .IP
 
@@ -1374,6 +1371,12 @@ A node_name of \fBlocalhost\fR is mapped to the current host name.
 .TP
 \fB\-h\fR, \fB\-\-noheader\fR
 Do not print a header on the output.
+.IP
+
+.TP
+\fB\-\-only\-job\-state\fR
+Only query for the job state. Query utilizes RPC that only retains JobID
+and State information reducing work required by slurmctld to respond.
 .IP
 
 .TP
@@ -1442,7 +1445,7 @@ Slurm is configured to use the backfill scheduling plugin.
 
 .TP
 \fB\-t\fR, \fB\-\-states\fR=<\fIstate_list\fR>
-Specify the states of jobs to view.  Accepts a comma separated list of
+Specify the states of jobs to view. Accepts a comma separated list of
 state names or "all". If "all" is specified then jobs of all states will be
 reported. If no state is specified then pending, running, and completing
 jobs are reported. See the \fBJOB STATE CODES\fR section below for a list of
@@ -1452,8 +1455,8 @@ equivalent).
 .IP
 
 .TP
-\fB\-s\fR, \fB\-\-steps\fR
-Specify the job steps to view.  This flag indicates that a comma separated list
+\fB\-s\fR, \fB\-\-steps\fR[=<\fIstep_list\fR>]
+Specify the job steps to view. This flag indicates that a comma separated list
 of job steps to view follows without an equal sign (see examples).
 The job step format is "job_id[_array_id].step_id". Defaults to all job
 steps. Since this option's argument is optional, for proper parsing
@@ -1486,10 +1489,11 @@ Print version information and exit.
 .IP
 
 .TP
-\f3\-\-yaml\fP
-Dump all job information as YAML. All information is dumped, even if it would
-normally not be. Formatting options are ignored; however, filtering arguments
-are still used.
+\f3\-\-yaml\fP, \f3\-\-yaml\fP=\fIlist\fR, \f3\-\-yaml\fP=<\fIdata_parser\fR>
+Dump information as JSON using the default data_parser plugin or explicit
+data_parser with parameters. All information is dumped, even if it would
+normally not be. Sorting and formatting arguments passed to other options are
+ignored; however, filtering arguments are still used.
 .IP
 
 .SH "JOB REASON CODES"
@@ -2040,7 +2044,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 .SH "SEE ALSO"
 \fBscancel\fR(1), \fBscontrol\fR(1), \fBsinfo\fR(1), \fBsrun\fR(1),

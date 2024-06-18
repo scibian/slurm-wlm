@@ -1,4 +1,4 @@
-.TH "oci.conf" "5" "Slurm Configuration File" "September 2023" "Slurm Configuration File"
+.TH "oci.conf" "5" "Slurm Configuration File" "February 2024" "Slurm Configuration File"
 
 .SH "NAME"
 oci.conf \- Slurm configuration file for containers.
@@ -30,8 +30,8 @@ Default is unique directory generated in \fBSlurmdSpoolDir\fR.
 .TP
 \fBCreateEnvFile=(null|newline|disabled)\fR
 Create environment file for container. File will have one environment variable
-per line if value is "newline". File will have one environment
-variable terminated by NULL character (aka '\0') if value is "null". If value
+per line if value is "newline". File will have each environment
+variable terminated by a NUL (aka '\\0') if value is "null". If value
 is "disabled", then the environment file will not be created.
 
 Value of "true" is treated as "null" for backwards compatibility.
@@ -113,7 +113,7 @@ Default is false.
 
 .TP
 \fBRunTimeCreate\fR
-Pattern for OCI runtime create operation.  See the section \fBOCI Pattern\fR
+Pattern for OCI runtime create operation. See the section \fBOCI Pattern\fR
 for details on pattern replacement.
 .sp
 Default: (disabled)
@@ -121,7 +121,7 @@ Default: (disabled)
 
 .TP
 \fBRunTimeDelete\fR
-Pattern for OCI runtime delete operation.  See the section \fBOCI Pattern\fR
+Pattern for OCI runtime delete operation. See the section \fBOCI Pattern\fR
 for details on pattern replacement.
 .sp
 Default: (disabled)
@@ -129,7 +129,7 @@ Default: (disabled)
 
 .TP
 \fBRunTimeKill\fR
-Pattern for OCI runtime kill operation.  See the section \fBOCI Pattern\fR
+Pattern for OCI runtime kill operation. See the section \fBOCI Pattern\fR
 for details on pattern replacement.
 .sp
 Default: (disabled)
@@ -137,7 +137,7 @@ Default: (disabled)
 
 .TP
 \fBRunTimeQuery\fR
-Pattern for OCI runtime query operation (also known as state).  See the section
+Pattern for OCI runtime query operation (also known as state). See the section
 \fBOCI Pattern\fR for details on pattern replacement.
 .sp
 Default: (disabled)
@@ -157,7 +157,7 @@ Default: (disabled)
 
 .TP
 \fBRunTimeStart\fR
-Pattern for OCI runtime start operation.  See the section \fBOCI Pattern\fR
+Pattern for OCI runtime start operation. See the section \fBOCI Pattern\fR
 for details on pattern replacement.
 .sp
 Default: (disabled)
@@ -289,7 +289,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"

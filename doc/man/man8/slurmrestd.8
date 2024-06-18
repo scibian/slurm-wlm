@@ -69,6 +69,13 @@ is active. User must specify the following HTTP cookies with each request:
 .IP
 
 .TP
+\fB\-d <data_parser plugins to load>\fR
+Comma\-delimited list of data_parser plugins.
+Set to "list" to dump a list of the possible plugins to load.
+Defaults: all builtin supported data_parser plugins.
+.IP
+
+.TP
 \fB\-f <file>\fR
 Read Slurm configuration from the specified file. See \fBNOTES\fR below.
 .IP
@@ -154,6 +161,22 @@ variable takes precedence over the setting in the slurm.conf.
 .IP
 
 .TP
+\fBSLURMRESTD_JSON\fR
+Control JSON serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR
+Output JSON as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR
+Output JSON in pretty format to make it more readable.
+.IP
+.RE
+
+.TP
 \fBSLURM_JWT\fR
 This variable must be set to use JWT token authentication.
 .IP
@@ -165,7 +188,14 @@ Set allowed authentication types. See \fB\-a\fR
 
 .TP
 \fBSLURMRESTD_DEBUG\fR
-Set debug level explicitly. Valid values are 1\-10. See \fB\-v\fR
+Set debug level explicitly. Valid values are 0\-9, or the same string values as
+the debug options such as SlurmctldDebug in slurm.conf(5).
+Ignored if \fB\-v\fR passed as argument during invocation.
+.IP
+
+.TP
+\fBSLURMRESTD_DATA_PARSER_PLUGINS\fR
+Comma\-delimited list of data_parser plugins to load. See \fB\-d\fR
 .IP
 
 .TP
@@ -215,6 +245,22 @@ Disables unsharing the SYSV namespace.
 \fBdisable_user_check\fR
 Disables check that slurmrestd is not running as root or SlurmUser, or with the
 root or SlurmUser's primary group.
+.RE
+.IP
+
+.TP
+\fBSLURMRESTD_YAML\fR
+Control YAML serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR
+Output YAML as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR
+Output YAML in pretty format to make it more readable.
 .RE
 .IP
 
@@ -546,7 +592,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"
