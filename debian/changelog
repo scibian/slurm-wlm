@@ -1,3 +1,13 @@
+slurm-wlm (23.11.7-1sci9u1) scibian9; urgency=medium
+
+  * Remove pmix dlopen path
+  * update patches
+  * Fix pam_dir path on scibian9
+  * Fix pmix2 path for Scibian9
+  * Remove kafka plugin from Scibian9
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Tue, 18 Jun 2024 16:15:32 +0200
+
 slurm-wlm (23.11.7-1) unstable; urgency=medium
 
   * New upstream release
