@@ -50,6 +50,7 @@
 #include "src/common/list.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
+#include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -1096,7 +1097,8 @@ int _print_state_complete(sinfo_data_t * sinfo_data, int width,
 		uint32_t my_state;
 
 		my_state = sinfo_data->node_state;
-		state = xstrtolower(node_state_string_complete(my_state));
+		state = node_state_string_complete(my_state);
+		xstrtolower(state);
 		_print_str(state, width, right_justify, true);
 		xfree(state);
 	} else if (sinfo_data)
@@ -1173,15 +1175,13 @@ int _print_user(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
 	if (sinfo_data && (sinfo_data->reason_uid != NO_VAL)) {
-		char user[FORMAT_STRING_SIZE];
-		struct passwd *pw = NULL;
+		char *user = uid_to_string_or_null(sinfo_data->reason_uid);
 
-		if ((pw=getpwuid(sinfo_data->reason_uid)))
-			snprintf(user, sizeof(user), "%s", pw->pw_name);
-		else
-			snprintf(user, sizeof(user), "Unk(%u)",
-				 sinfo_data->reason_uid);
+		if (!user)
+			xstrfmtcat(user, "Unk(%u)", sinfo_data->reason_uid);
 		_print_str(user, width, right_justify, true);
+
+		xfree(user);
 	} else if (sinfo_data)
 		_print_str("Unknown", width, right_justify, true);
 	else
@@ -1196,16 +1196,14 @@ int _print_user_long(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix)
 {
 	if (sinfo_data && (sinfo_data->reason_uid != NO_VAL)) {
-		char user[FORMAT_STRING_SIZE];
-		struct passwd *pw = NULL;
+		char *user = uid_to_string_or_null(sinfo_data->reason_uid);
 
-		if ((pw=getpwuid(sinfo_data->reason_uid)))
-			snprintf(user, sizeof(user), "%s(%u)", pw->pw_name,
-				 sinfo_data->reason_uid);
-		else
-			snprintf(user, sizeof(user), "Unk(%u)",
-				 sinfo_data->reason_uid);
+		if (!user)
+			user = xstrdup("Unk");
+		xstrfmtcat(user, "(%u)", sinfo_data->reason_uid);
 		_print_str(user, width, right_justify, true);
+
+		xfree(user);
 	} else if (sinfo_data)
 		_print_str("Unknown", width, right_justify, true);
 	else

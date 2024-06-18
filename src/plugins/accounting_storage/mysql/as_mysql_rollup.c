@@ -83,7 +83,7 @@ typedef struct {
 	time_t end;
 	uint32_t flags;
 	int id;
-	hostlist_t hl;
+	hostlist_t *hl;
 	List local_assocs; /* list of assocs to spread unused time
 			      over of type local_id_usage_t */
 	List loc_tres;
@@ -1034,8 +1034,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 		seconds -= resv_seconds;
 		if (seconds > 0) {
 			if (((state & NODE_STATE_BASE) == NODE_STATE_FUTURE) ||
-			    ((state & NODE_STATE_CLOUD) &&
-			     (state & NODE_STATE_POWERED_DOWN)))
+			     (state & NODE_STATE_POWERED_DOWN))
 				_add_tres_time_2_list(c_usage->loc_tres,
 						      row[EVENT_REQ_TRES],
 						      TIME_PDOWN,
@@ -1390,6 +1389,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 
 		/* now get the jobs during this time only  */
 		query = xstrdup_printf("select %s from \"%s_%s\" as job "
+				       "FORCE INDEX (rollup) "
 				       "where (job.time_eligible && "
 				       "job.time_eligible < %ld && "
 				       "(job.time_end >= %ld || "

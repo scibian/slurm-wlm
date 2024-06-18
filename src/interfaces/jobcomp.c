@@ -51,9 +51,9 @@
 #include "src/slurmctld/slurmctld.h"
 
 typedef struct slurm_jobcomp_ops {
-	int          (*set_loc)   ( void );
-	int          (*job_write) ( job_record_t *job_ptr);
-	List         (*get_jobs)  ( slurmdb_job_cond_t *params );
+	int (*set_loc)(void);
+	int (*job_write)(job_record_t *job_ptr);
+	list_t *(*get_jobs)(slurmdb_job_cond_t *params);
 } slurm_jobcomp_ops_t;
 
 /*
@@ -69,6 +69,7 @@ static const char *syms[] = {
 static slurm_jobcomp_ops_t ops;
 static plugin_context_t *g_context = NULL;
 static pthread_mutex_t context_lock = PTHREAD_MUTEX_INITIALIZER;
+static plugin_init_t plugin_inited = PLUGIN_NOT_INITED;
 
 extern void
 jobcomp_destroy_job(void *object)
@@ -111,10 +112,15 @@ extern int jobcomp_g_init(void)
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "jobcomp";
 
-	slurm_mutex_lock( &context_lock );
+	slurm_mutex_lock(&context_lock);
 
-	if (g_context)
+	if (plugin_inited)
 		goto done;
+
+	if (!slurm_conf.job_comp_type) {
+		plugin_inited = PLUGIN_NOOP;
+		goto done;
+	}
 
 	g_context = plugin_context_create(plugin_type,
 					  slurm_conf.job_comp_type,
@@ -124,28 +130,30 @@ extern int jobcomp_g_init(void)
 		error("cannot create %s context for %s",
 		      plugin_type, slurm_conf.job_comp_type);
 		retval = SLURM_ERROR;
+		plugin_inited = PLUGIN_NOT_INITED;
 		goto done;
 	}
-
+	plugin_inited = PLUGIN_INITED;
 done:
 	if (g_context)
 		retval = (*(ops.set_loc))();
-	slurm_mutex_unlock( &context_lock );
+	slurm_mutex_unlock(&context_lock);
 	return retval;
 }
 
 extern int jobcomp_g_fini(void)
 {
-	slurm_mutex_lock( &context_lock );
+	slurm_mutex_lock(&context_lock);
 
-	if ( !g_context)
+	if (!g_context)
 		goto done;
 
-	plugin_context_destroy ( g_context );
+	plugin_context_destroy(g_context);
 	g_context = NULL;
 
 done:
-	slurm_mutex_unlock( &context_lock );
+	plugin_inited = PLUGIN_NOT_INITED;
+	slurm_mutex_unlock(&context_lock);
 	return SLURM_SUCCESS;
 }
 
@@ -153,12 +161,17 @@ extern int jobcomp_g_write(job_record_t *job_ptr)
 {
 	int retval = SLURM_SUCCESS;
 
-	slurm_mutex_lock( &context_lock );
+	xassert(plugin_inited);
+
+	if (plugin_inited == PLUGIN_NOOP)
+		return SLURM_SUCCESS;
+
+	slurm_mutex_lock(&context_lock);
 
 	xassert(g_context);
 	retval = (*(ops.job_write))(job_ptr);
 
-	slurm_mutex_unlock( &context_lock );
+	slurm_mutex_unlock(&context_lock);
 	return retval;
 }
 
@@ -166,16 +179,26 @@ extern List jobcomp_g_get_jobs(slurmdb_job_cond_t *job_cond)
 {
 	List job_list = NULL;
 
-	slurm_mutex_lock( &context_lock );
+	xassert(plugin_inited);
+
+	if (plugin_inited == PLUGIN_NOOP)
+		return NULL;
+
+	slurm_mutex_lock(&context_lock);
 	xassert(g_context);
 	job_list = (*(ops.get_jobs))(job_cond);
-	slurm_mutex_unlock( &context_lock );
+	slurm_mutex_unlock(&context_lock);
 	return job_list;
 }
 
 extern int jobcomp_g_set_location(void)
 {
 	int retval = SLURM_SUCCESS;
+
+	xassert(plugin_inited);
+
+	if (plugin_inited == PLUGIN_NOOP)
+		return SLURM_SUCCESS;
 
 	slurm_mutex_lock(&context_lock);
 	xassert(g_context);

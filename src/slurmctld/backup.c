@@ -40,6 +40,7 @@
 #include "config.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -58,6 +59,7 @@
 
 #include "src/interfaces/accounting_storage.h"
 #include "src/interfaces/auth.h"
+#include "src/interfaces/priority.h"
 #include "src/interfaces/select.h"
 #include "src/interfaces/switch.h"
 
@@ -77,7 +79,6 @@ static void *       _background_signal_hand(void *no_data);
 static void         _backup_reconfig(void);
 static int          _shutdown_primary_controller(int wait_time);
 static void *       _trigger_slurmctld_event(void *arg);
-inline static void  _update_cred_key(void);
 
 typedef struct ping_struct {
 	int backup_inx;
@@ -134,9 +135,9 @@ void run_backup(void)
 	slurmctld_config.resume_backup = false;
 
 	/* It is now ok to tell the primary I am done (if I ever had control) */
-	slurm_mutex_lock(&slurmctld_config.thread_count_lock);
+	slurm_mutex_lock(&slurmctld_config.backup_finish_lock);
 	slurm_cond_broadcast(&slurmctld_config.backup_finish_cond);
-	slurm_mutex_unlock(&slurmctld_config.thread_count_lock);
+	slurm_mutex_unlock(&slurmctld_config.backup_finish_lock);
 
 	if (xsignal_block(backup_sigarray) < 0)
 		error("Unable to block signals");
@@ -153,7 +154,14 @@ void run_backup(void)
 	slurm_thread_create(&slurmctld_config.thread_id_sig,
 			    _background_signal_hand, NULL);
 
-	slurm_thread_create_detached(NULL, _trigger_slurmctld_event, NULL);
+	slurm_thread_create_detached(_trigger_slurmctld_event, NULL);
+
+	/* wait for the heartbeat file to exist before starting */
+	while (!get_last_heartbeat(NULL) &&
+	       (slurmctld_config.shutdown_time == 0)) {
+		warning("Waiting for heartbeat file to exist...");
+		sleep(1);
+	}
 
 	for (i = 0; ((i < 5) && (slurmctld_config.shutdown_time == 0)); i++) {
 		sleep(1);       /* Give the primary slurmctld set-up time */
@@ -198,9 +206,12 @@ void run_backup(void)
 				use_time = last_heartbeat;
 			}
 
-			if ((time(NULL) - use_time) >
-			    slurm_conf.slurmctld_timeout)
-				break;
+			if (((time(NULL) - use_time) >
+			    slurm_conf.slurmctld_timeout)) {
+				if (last_heartbeat)
+					break;
+				error("Not taking control. Heartbeat file could not be read and the primary slurmctld is unresponsive. Something is wrong with your StateSaveLocation.");
+			}
 		}
 	}
 
@@ -247,7 +258,16 @@ void run_backup(void)
 	init_job_conf();
 	unlock_slurmctld(config_write_lock);
 
+	/* Calls assoc_mgr_init() */
 	ctld_assoc_mgr_init();
+
+	/*
+	 * priority_g_init() needs to be called after assoc_mgr_init()
+	 * and before read_slurm_conf() because jobs could be killed
+	 * during read_slurm_conf() and call priority_g_job_end().
+	 */
+	if (priority_g_init() != SLURM_SUCCESS)
+		fatal("failed to initialize priority plugin");
 
 	/* clear old state and read new state */
 	lock_slurmctld(config_write_lock);
@@ -259,6 +279,14 @@ void run_backup(void)
 	if (read_slurm_conf(2, false)) {	/* Recover all state */
 		error("Unable to recover slurm state");
 		abort();
+	}
+	configless_update();
+	if (conf_includes_list) {
+		/*
+		 * clear included files so that subsequent conf
+		 * parsings refill it with updated information.
+		 */
+		list_flush(conf_includes_list);
 	}
 	unlock_slurmctld(config_write_lock);
 	select_g_select_nodeinfo_set_all();
@@ -277,9 +305,6 @@ static void *_background_signal_hand(void *no_data)
 	/* Locks: Write configuration, job, node, and partition */
 	slurmctld_lock_t config_write_lock = {
 		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
-
-	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	while (slurmctld_config.shutdown_time == 0) {
 		xsignal_sigset_create(backup_sigarray, &set);
@@ -303,8 +328,6 @@ static void *_background_signal_hand(void *no_data)
 			 */
 			lock_slurmctld(config_write_lock);
 			_backup_reconfig();
-			/* Leave config lock set through this */
-			_update_cred_key();
 			unlock_slurmctld(config_write_lock);
 			break;
 		case SIGABRT:   /* abort */
@@ -325,16 +348,6 @@ static void *_background_signal_hand(void *no_data)
 	return NULL;
 }
 
-/*
- * Reset the job credential key based upon configuration parameters.
- * slurm_conf is locked on entry.
- */
-static void _update_cred_key(void)
-{
-	slurm_cred_ctx_key_update(slurmctld_config.cred_ctx,
-	                          slurm_conf.job_credential_private_key);
-}
-
 static void _sig_handler(int signal)
 {
 }
@@ -345,26 +358,14 @@ static void _sig_handler(int signal)
  */
 static void *_background_rpc_mgr(void *no_data)
 {
-	int newsockfd, sockfd;
+	int newsockfd;
+	int fd_next = 0, i;
 	slurm_addr_t cli_addr;
 	slurm_msg_t msg;
 
-	/* Read configuration only */
-	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	int sigarray[] = {SIGUSR1, 0};
 
-	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 	debug3("_background_rpc_mgr pid = %lu", (unsigned long) getpid());
-
-	/* initialize port for RPCs */
-	lock_slurmctld(config_read_lock);
-
-	if ((sockfd = slurm_init_msg_engine_port(slurm_conf.slurmctld_port))
-	    == SLURM_ERROR)
-		fatal("slurm_init_msg_engine_port error %m");
-	unlock_slurmctld(config_read_lock);
 
 	/*
 	 * Prepare to catch SIGUSR1 to interrupt accept().  This signal is
@@ -379,11 +380,23 @@ static void *_background_rpc_mgr(void *no_data)
 	 * Process incoming RPCs indefinitely
 	 */
 	while (slurmctld_config.shutdown_time == 0) {
-		/*
-		 * accept needed for stream implementation is a no-op in
-		 * message implementation that just passes sockfd to newsockfd
-		 */
-		if ((newsockfd = slurm_accept_msg_conn(sockfd, &cli_addr))
+		if (poll(listen_fds, listen_nports, -1) == -1) {
+			if (errno != EINTR)
+				error("slurm_accept_msg_conn poll: %m");
+			continue;
+		}
+
+		/* find one to process */
+		for (i = 0; i < listen_nports; i++) {
+			if (listen_fds[(fd_next + i) % listen_nports].revents) {
+				i = (fd_next + i) % listen_nports;
+				break;
+			}
+		}
+		fd_next = (i + 1) % listen_nports;
+
+		if ((newsockfd = slurm_accept_msg_conn(listen_fds[i].fd,
+						       &cli_addr))
 		    == SLURM_ERROR) {
 			if (errno != EINTR)
 				error("slurm_accept_msg_conn: %m");
@@ -405,7 +418,6 @@ static void *_background_rpc_mgr(void *no_data)
 	}
 
 	debug3("_background_rpc_mgr shutting down");
-	close(sockfd);	/* close the main socket */
 	return NULL;
 }
 
@@ -417,7 +429,7 @@ static int _background_process_msg(slurm_msg_t *msg)
 	int error_code = SLURM_SUCCESS;
 	bool send_rc = true;
 
-	if (!msg->auth_uid_set) {
+	if (!msg->auth_ids_set) {
 		error("%s: received message without previously validated auth",
 		      __func__);
 		return SLURM_ERROR;
@@ -439,9 +451,8 @@ static int _background_process_msg(slurm_msg_t *msg)
 
 	if (msg->msg_type != REQUEST_PING) {
 		bool super_user = false;
-		uid_t uid = auth_g_get_uid(msg->auth_cred);
 
-		if (validate_slurm_user(uid))
+		if (validate_slurm_user(msg->auth_uid))
 			super_user = true;
 
 		if (super_user && (msg->msg_type == REQUEST_SHUTDOWN)) {
@@ -450,9 +461,13 @@ static int _background_process_msg(slurm_msg_t *msg)
 		} else if (super_user &&
 			   (msg->msg_type == REQUEST_TAKEOVER)) {
 			info("Performing background RPC: REQUEST_TAKEOVER");
-			(void) _shutdown_primary_controller(SHUTDOWN_WAIT);
-			takeover = true;
-			error_code = SLURM_SUCCESS;
+			if (get_last_heartbeat(NULL)) {
+				_shutdown_primary_controller(SHUTDOWN_WAIT);
+				takeover = true;
+				error_code = SLURM_SUCCESS;
+			} else {
+				error_code = ESLURM_TAKEOVER_NO_HEARTBEAT;
+			}
 		} else if (super_user &&
 			   (msg->msg_type == REQUEST_CONTROL)) {
 			debug3("Ignoring RPC: REQUEST_CONTROL");
@@ -709,7 +724,7 @@ static int _shutdown_primary_controller(int wait_time)
 		 */
 		if (i < backup_inx)
 			shutdown_arg->shutdown = true;
-		slurm_thread_create_detached(NULL, _shutdown_controller,
+		slurm_thread_create_detached(_shutdown_controller,
 					     shutdown_arg);
 		slurm_mutex_lock(&shutdown_mutex);
 		shutdown_thread_cnt++;

@@ -8,7 +8,7 @@ Last-Update: 2018-10-01
 
 --- a/doc/man/man1/strigger.1
 +++ b/doc/man/man1/strigger.1
-@@ -391,7 +391,7 @@
+@@ -390,7 +390,7 @@
  strigger \-\-set \-\-primary_slurmctld_failure \\
           \-\-program=/usr/sbin/primary_slurmctld_failure
  # Notify the administrator of the failure using e\-mail
@@ -17,7 +17,7 @@ Last-Update: 2018-10-01
  
  $ strigger \-\-set \-\-primary_slurmctld_failure \\
             \-\-program=/usr/sbin/primary_slurmctld_failure
-@@ -410,7 +410,7 @@
+@@ -409,7 +409,7 @@
  strigger \-\-set \-\-node \-\-down \\
           \-\-program=/usr/sbin/slurm_admin_notify
  # Notify administrator using by e\-mail

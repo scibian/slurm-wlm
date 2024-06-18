@@ -59,24 +59,24 @@
 #include <unistd.h>
 
 #include "src/common/fd.h"
-
 #include "src/common/hostlist.h"
 #include "src/common/log.h"
 #include "src/common/net.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/interfaces/auth.h"
-#include "src/interfaces/cli_filter.h"
-#include "src/interfaces/jobacct_gather.h"
 #include "src/common/slurm_opt.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/spank.h"
-#include "src/interfaces/switch.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/auth.h"
+#include "src/interfaces/cli_filter.h"
+#include "src/interfaces/jobacct_gather.h"
+#include "src/interfaces/switch.h"
 
 #include "src/bcast/file_bcast.h"
 
@@ -129,7 +129,6 @@ static void  _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc);
 static void *_launch_one_app(void *data);
 static void  _pty_restore(void);
 static void  _set_exit_code(void);
-static void  _set_node_alias(srun_job_t *job, List srun_job_list);
 static void  _setup_env_working_cluster(void);
 static void  _setup_job_env(srun_job_t *job, List srun_job_list,
 			    bool got_alloc);
@@ -179,7 +178,7 @@ int srun(int ac, char **av)
 
 	if (cli_filter_init() != SLURM_SUCCESS)
 		fatal("failed to initialize cli_filter plugin");
-	if (slurm_cred_init() != SLURM_SUCCESS)
+	if (cred_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize cred plugin");
 	if (switch_init(0) != SLURM_SUCCESS )
 		fatal("failed to initialize switch plugins");
@@ -190,9 +189,9 @@ int srun(int ac, char **av)
 	if (opt_list) {
 		if (!_enable_het_job_steps())
 			fatal("Job steps that span multiple components of a heterogeneous job are not currently supported");
-		create_srun_job((void **) &srun_job_list, &got_alloc, 0, 1);
+		create_srun_job((void **) &srun_job_list, &got_alloc);
 	} else
-		create_srun_job((void **) &job, &got_alloc, 0, 1);
+		create_srun_job((void **) &job, &got_alloc);
 
 	/*
 	 * Detect is process is in non-matching user namespace or UIDs
@@ -205,7 +204,6 @@ int srun(int ac, char **av)
 		debug3("%s: %ps GID %u and srun process GID %u mismatch",
 		       __func__, &job->step_id, job->gid, getgid());
 
-	_set_node_alias(job, srun_job_list);
 	_setup_job_env(job, srun_job_list, got_alloc);
 
 	/*
@@ -243,10 +241,9 @@ int srun(int ac, char **av)
 #ifdef MEMORY_LEAK_DEBUG
 	cli_filter_fini();
 	mpi_fini();
-	select_g_fini();
 	switch_fini();
 	slurm_reset_all_options(&opt, false);
-	slurm_auth_fini();
+	auth_g_fini();
 	slurm_conf_destroy();
 	log_fini();
 #endif /* MEMORY_LEAK_DEBUG */
@@ -278,7 +275,7 @@ static void *_launch_one_app(void *data)
 		launch_begin = true;
 		slurm_mutex_unlock(&launch_mutex);
 
-		pre_launch_srun_job(job, 0, 1, opt_local);
+		pre_launch_srun_job(job, opt_local);
 
 		slurm_mutex_lock(&launch_mutex);
 		launch_fini = true;
@@ -327,7 +324,7 @@ relaunch:
 static void _reorder_het_job_recs(char **in_node_list, uint16_t **in_task_cnts,
 			       uint32_t ***in_tids, int total_nnodes)
 {
-	hostlist_t in_hl, out_hl;
+	hostlist_t *in_hl, *out_hl;
 	uint16_t *out_task_cnts = NULL;
 	uint32_t **out_tids = NULL;
 	char *hostname;
@@ -415,7 +412,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 		first_job = (srun_job_t *) list_peek(srun_job_list);
 		if (!opt_list) {
 			if (first_job)
-				fini_srun(first_job, got_alloc, &global_rc, 0);
+				fini_srun(first_job, got_alloc, &global_rc);
 			fatal("%s: have srun_job_list, but no opt_list",
 			      __func__);
 		}
@@ -499,7 +496,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 				slurm_mutex_unlock(&step_mutex);
 				if (first_job) {
 					fini_srun(first_job, got_alloc,
-						  &global_rc, 0);
+						  &global_rc);
 				}
 				fatal("%s: job allocation count does not match request count (%d != %d)",
 				      __func__, list_count(srun_job_list),
@@ -542,8 +539,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 			opts->step_mutex  = &step_mutex;
 			srun_opt->het_step_cnt = het_job_step_cnt;
 
-			slurm_thread_create_detached(NULL, _launch_one_app,
-						     opts);
+			slurm_thread_create_detached(_launch_one_app, opts);
 		}
 		xfree(het_job_node_list);
 		xfree(het_job_task_cnts);
@@ -556,7 +552,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 		slurm_mutex_unlock(&step_mutex);
 
 		if (first_job)
-			fini_srun(first_job, got_alloc, &global_rc, 0);
+			fini_srun(first_job, got_alloc, &global_rc);
 	} else {
 		int i;
 		mpir_init(job->ntasks);
@@ -598,7 +594,7 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 		opts->opt_local   = &opt;
 		sropt.het_step_cnt = 1;
 		_launch_one_app(opts);
-		fini_srun(job, got_alloc, &global_rc, 0);
+		fini_srun(job, got_alloc, &global_rc);
 	}
 }
 
@@ -715,9 +711,25 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	}
 
 	setup_env(env, srun_opt->preserve_env);
+	/*
+	 * set_env_from_opts() could set job->env vars that are already set in
+	 * environ, but the values could be different (srun requests something
+	 * that is different from the job's environment) and we want the
+	 * job->env to take precedence.
+	 *
+	 * env_array_merge() overwrites anything in dest (the first argument)
+	 * with anything in source (the second argument). Thus, anything in
+	 * environ would overwrite anything already in job->env. The environ
+	 * vars could differ from vars in job->env, and at this point job->env
+	 * is the correct one.
+	 *
+	 * So, we need to first set the env vars from job->env to the environ,
+	 * then do the merge.
+	 */
 	set_env_from_opts(opt_local, &job->env,
 			  (job->het_job_offset == NO_VAL) ?
 			  -1 : job->het_job_offset);
+	env_array_set_environment(job->env);
 	env_array_merge(&job->env, (const char **)environ);
 
 	xfree(env->task_count);
@@ -734,7 +746,7 @@ static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 		srun_job_t *first_job = list_peek(srun_job_list);
 		if (!opt_list) {
 			if (first_job)
-				fini_srun(first_job, got_alloc, &global_rc, 0);
+				fini_srun(first_job, got_alloc, &global_rc);
 			fatal("%s: have srun_job_list, but no opt_list",
 			      __func__);
 		}
@@ -745,7 +757,7 @@ static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 			if (!job) {
 				if (first_job) {
 					fini_srun(first_job, got_alloc,
-						  &global_rc, 0);
+						  &global_rc);
 				}
 				fatal("%s: job allocation count does not match request count (%d != %d)",
 				      __func__, list_count(srun_job_list),
@@ -802,7 +814,7 @@ static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	}
 	if (srun_opt->send_libs)
 		params->flags |= BCAST_FLAG_SEND_LIBS;
-	params->fanout = 0;
+	params->tree_width = 0;
 	params->selected_step = xmalloc(sizeof(*params->selected_step));
 	params->selected_step->array_task_id = NO_VAL;
 	memcpy(&params->selected_step->step_id, &job->step_id,
@@ -901,32 +913,6 @@ static void _set_exit_code(void)
 	}
 }
 
-static int _foreach_set_node_alias(void *x, void *arg)
-{
-	srun_job_t *job = x;
-	char *alias_list = NULL;
-
-	xassert(job);
-
-	if (job &&
-	    job->step_ctx &&
-	    job->step_ctx->step_resp &&
-	    job->step_ctx->step_resp->cred &&
-	    (alias_list = slurm_cred_get(job->step_ctx->step_resp->cred,
-					 CRED_DATA_JOB_ALIAS_LIST)))
-		set_nodes_alias(alias_list);
-
-	return SLURM_SUCCESS;
-}
-
-static void _set_node_alias(srun_job_t *job, List srun_job_list)
-{
-	if (srun_job_list)
-		list_for_each(srun_job_list, _foreach_set_node_alias, NULL);
-	else if (job)
-		_foreach_set_node_alias(job, NULL);
-}
-
 static void _pty_restore(void)
 {
 	/* STDIN is probably closed by now */
@@ -936,12 +922,12 @@ static void _pty_restore(void)
 
 static void _setup_env_working_cluster(void)
 {
-	char *working_env, *addr_ptr, *port_ptr, *rpc_ptr, *select_ptr;
+	char *working_env, *addr_ptr, *port_ptr, *rpc_ptr;
 
 	if ((working_env = xstrdup(getenv("SLURM_WORKING_CLUSTER"))) == NULL)
 		return;
 
-	/* Format is cluster_name:address:port:rpc[:plugin_id_select] */
+	/* Format is cluster_name:address:port:rpc */
 	if (!(addr_ptr = strchr(working_env,  ':')) ||
 	    !(port_ptr = strchr(addr_ptr + 1, ':')) ||
 	    !(rpc_ptr  = strchr(port_ptr + 1, ':'))) {
@@ -954,9 +940,6 @@ static void _setup_env_working_cluster(void)
 	*port_ptr++ = '\0';
 	*rpc_ptr++  = '\0';
 
-	if ((select_ptr = strchr(rpc_ptr, ':')))
-		*select_ptr++ = '\0';
-
 	if (xstrcmp(slurm_conf.cluster_name, working_env)) {
 		working_cluster_rec = xmalloc(sizeof(slurmdb_cluster_rec_t));
 		slurmdb_init_cluster_rec(working_cluster_rec, false);
@@ -968,11 +951,7 @@ static void _setup_env_working_cluster(void)
 		slurm_set_addr(&working_cluster_rec->control_addr,
 			       working_cluster_rec->control_port,
 			       working_cluster_rec->control_host);
-
-		if (select_ptr)
-			working_cluster_rec->plugin_id_select =
-				select_get_plugin_id_pos(strtol(select_ptr,
-								NULL, 10));
 	}
 	xfree(working_env);
+	unsetenv("SLURM_WORKING_CLUSTER");
 }

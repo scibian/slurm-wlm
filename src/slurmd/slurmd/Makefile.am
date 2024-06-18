@@ -2,6 +2,7 @@
 # Makefile for slurmd
 
 AUTOMAKE_OPTIONS = foreign
+CLEANFILES = core.*
 
 sbin_PROGRAMS = slurmd
 
@@ -25,12 +26,19 @@ slurmd_LDFLAGS = $(CMD_LDFLAGS) $(depend_ldflags)
 
 SLURMD_SOURCES = \
 	slurmd.c slurmd.h \
+	cred_context.c cred_context.h \
 	req.c req.h \
 	get_mach_stat.c get_mach_stat.h
 
 slurmd_SOURCES = $(SLURMD_SOURCES)
 
 slurmd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD) $(SLURMD_INTERFACES)
+
+REF = usage.txt
+include $(top_srcdir)/make_ref.include
+noinst_LTLIBRARIES = $(LIB_REF)
+EXTRA_slurmd_DEPENDENCIES = $(LIB_REF)
+slurmd_LDADD += $(LIB_REF)
 
 force:
 $(slurmd_DEPENDENCIES) : force

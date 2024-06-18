@@ -58,16 +58,12 @@ libcommon_interfaces_la_SOURCES =    \
 	mpi.h					\
 	node_features.c				\
 	node_features.h				\
-	openapi.c				\
-	openapi.h				\
 	power.c					\
 	power.h					\
 	prep.c					\
 	prep.h					\
 	priority.c				\
 	priority.h				\
-	route.c					\
-	route.h					\
 	select.c				\
 	select.h				\
 	serializer.c				\

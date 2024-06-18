@@ -47,37 +47,65 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+strong_alias(topology_g_build_config, slurm_topology_g_build_config);
+
+static uint32_t active_topo_id;
+
 /* defined here but is really tree plugin related */
 switch_record_t *switch_record_table = NULL;
 int switch_record_cnt = 0;
 int switch_levels = 0;               /* number of switch levels     */
 
-/* defined here but is really hypercube plugin related */
-int hypercube_dimensions = 0;
-struct hypercube_switch *hypercube_switch_table = NULL;
-int hypercube_switch_cnt = 0;
-struct hypercube_switch ***hypercube_switches = NULL;
+/* defined here but is really block plugin related */
+bitstr_t *blocks_nodes_bitmap = NULL;	/* nodes on any bblock */
+block_record_t *block_record_table = NULL;
+uint16_t bblock_node_cnt = 0;
+bitstr_t *block_levels = NULL;
+int block_record_cnt = 0;
+
+char *topo_conf = NULL;
 
 typedef struct slurm_topo_ops {
+	uint32_t (*plugin_id);
 	int		(*build_config)		( void );
 	bool		(*node_ranking)		( void );
 	int		(*get_node_addr)	( char* node_name,
 						  char** addr,
 						  char** pattern );
+	int (*split_hostlist) (hostlist_t *hl,
+			       hostlist_t ***sp_hl,
+			       int *count,
+			       uint16_t tree_width);
+	int (*topoinfo_free) (void *topoinfo_ptr);
+	int (*topoinfo_get) (void **topoinfo_pptr);
+	int (*topoinfo_pack) (void *topoinfo_ptr, buf_t *buffer,
+			      uint16_t protocol_version);
+	int (*topoinfo_print) (void *topoinfo_ptr, char *nodes_list,
+			       char **out);
+	int (*topoinfo_unpack) (void **topoinfo_pptr, buf_t *buffer,
+				uint16_t protocol_version);
 } slurm_topo_ops_t;
 
 /*
  * Must be synchronized with slurm_topo_ops_t above.
  */
 static const char *syms[] = {
-	"topo_build_config",
-	"topo_generate_node_ranking",
-	"topo_get_node_addr",
+	"plugin_id",
+	"topology_p_build_config",
+	"topology_p_generate_node_ranking",
+	"topology_p_get_node_addr",
+	"topology_p_split_hostlist",
+	"topology_p_topology_free",
+	"topology_p_topology_get",
+	"topology_p_topology_pack",
+	"topology_p_topology_print",
+	"topology_p_topology_unpack",
 };
 
 static slurm_topo_ops_t ops;
 static plugin_context_t	*g_context = NULL;
 static pthread_mutex_t g_context_lock = PTHREAD_MUTEX_INITIALIZER;
+static plugin_init_t plugin_inited = PLUGIN_NOT_INITED;
 
 /*
  * The topology plugin can not be changed via reconfiguration
@@ -85,15 +113,20 @@ static pthread_mutex_t g_context_lock = PTHREAD_MUTEX_INITIALIZER;
  * be restarted and job priority changes may be required to change
  * the topology type.
  */
-extern int slurm_topo_init(void)
+extern int topology_g_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "topo";
 
 	slurm_mutex_lock(&g_context_lock);
 
-	if (g_context)
+	if (plugin_inited)
 		goto done;
+
+	xassert(slurm_conf.topology_plugin);
+
+	if (!topo_conf)
+		topo_conf = get_extra_conf_path("topology.conf");
 
 	g_context = plugin_context_create(plugin_type,
 					  slurm_conf.topology_plugin,
@@ -103,36 +136,42 @@ extern int slurm_topo_init(void)
 		error("cannot create %s context for %s",
 		      plugin_type, slurm_conf.topology_plugin);
 		retval = SLURM_ERROR;
+		plugin_inited = PLUGIN_NOT_INITED;
 		goto done;
 	}
-
+	active_topo_id = *(ops.plugin_id);
+	plugin_inited = PLUGIN_INITED;
 done:
 	slurm_mutex_unlock(&g_context_lock);
 	return retval;
 }
 
-extern int slurm_topo_fini(void)
+extern int topology_g_fini(void)
 {
-	int rc;
+	int rc = SLURM_SUCCESS;
 
-	if (!g_context)
-		return SLURM_SUCCESS;
+	if (g_context) {
+		rc = plugin_context_destroy(g_context);
+		g_context = NULL;
+	}
 
-	rc = plugin_context_destroy(g_context);
-	g_context = NULL;
+	xfree(topo_conf);
+
+	plugin_inited = PLUGIN_NOT_INITED;
+
 	return rc;
 }
 
-extern int slurm_topo_build_config(void)
+extern int topology_g_build_config(void)
 {
 	int rc;
 	DEF_TIMERS;
 
-	xassert(g_context);
+	xassert(plugin_inited);
 
 	START_TIMER;
 	rc = (*(ops.build_config))();
-	END_TIMER3("slurm_topo_build_config", 20000);
+	END_TIMER3(__func__, 20000);
 
 	return rc;
 }
@@ -141,18 +180,153 @@ extern int slurm_topo_build_config(void)
  * This operation is only supported by those topology plugins for
  * which the node ordering between slurmd and slurmctld is invariant.
  */
-extern bool slurm_topo_generate_node_ranking(void)
+extern bool topology_g_generate_node_ranking(void)
 {
-	xassert(g_context);
+	xassert(plugin_inited);
 
 	return (*(ops.node_ranking))();
 }
 
-extern int slurm_topo_get_node_addr(char* node_name,
-				    char **addr,
+extern int topology_g_get_node_addr(char *node_name, char **addr,
 				    char **pattern)
 {
-	xassert(g_context);
+	xassert(plugin_inited);
 
 	return (*(ops.get_node_addr))(node_name,addr,pattern);
+}
+
+extern int topology_g_split_hostlist(hostlist_t *hl,
+				     hostlist_t ***sp_hl,
+				     int *count,
+				     uint16_t tree_width)
+{
+	int rc;
+	int j, nnodes, nnodex;
+	char *buf;
+
+	nnodes = nnodex = 0;
+	xassert(g_context);
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_ROUTE) {
+		/* nnodes has to be set here as the hl is empty after the
+		 * split_hostlise call.  */
+		nnodes = hostlist_count(hl);
+		buf = hostlist_ranged_string_xmalloc(hl);
+		info("ROUTE: split_hostlist: hl=%s tree_width %u",
+		     buf, tree_width);
+		xfree(buf);
+	}
+
+	if (!tree_width)
+		tree_width = slurm_conf.tree_width;
+
+	rc = (*(ops.split_hostlist))(hl, sp_hl, count, tree_width);
+	if (!rc && !(*count))
+		rc = SLURM_ERROR;
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_ROUTE) {
+		/* Sanity check to make sure all nodes in msg list are in
+		 * a child list */
+		nnodex = 0;
+		for (j = 0; j < *count; j++) {
+			nnodex += hostlist_count((*sp_hl)[j]);
+		}
+		if (nnodex != nnodes) {	/* CLANG false positive */
+			info("ROUTE: number of nodes in split lists (%d)"
+			     " is not equal to number in input list (%d)",
+			     nnodex, nnodes);
+		}
+	}
+
+	return rc;
+}
+
+extern int topology_g_topology_get(dynamic_plugin_data_t **topoinfo)
+{
+	dynamic_plugin_data_t *topoinfo_ptr = NULL;
+
+	xassert(plugin_inited);
+
+	topoinfo_ptr = xmalloc(sizeof(dynamic_plugin_data_t));
+	*topoinfo = topoinfo_ptr;
+	topoinfo_ptr->plugin_id = active_topo_id;
+
+	return (*(ops.topoinfo_get))(&topoinfo_ptr->data);
+
+}
+
+extern int topology_g_topology_pack(dynamic_plugin_data_t *topoinfo,
+				    buf_t *buffer, uint16_t protocol_version)
+{
+	xassert(plugin_inited);
+
+	if (topoinfo->plugin_id != active_topo_id)
+		return SLURM_ERROR;
+
+	pack32(*(ops.plugin_id), buffer);
+	return (*(ops.topoinfo_pack))(topoinfo->data, buffer, protocol_version);
+}
+
+extern int topology_g_topology_print(dynamic_plugin_data_t *topoinfo,
+				     char *nodes_list, char **out)
+{
+	xassert(plugin_inited);
+
+	if (topoinfo->plugin_id != active_topo_id)
+		return SLURM_ERROR;
+
+	return (*(ops.topoinfo_print))(topoinfo->data, nodes_list, out);
+}
+
+extern int topology_g_topology_unpack(dynamic_plugin_data_t **topoinfo,
+				      buf_t *buffer, uint16_t protocol_version)
+{
+	dynamic_plugin_data_t *topoinfo_ptr = NULL;
+
+	xassert(plugin_inited);
+
+	topoinfo_ptr = xmalloc(sizeof(dynamic_plugin_data_t));
+	*topoinfo = topoinfo_ptr;
+
+	if (protocol_version >= SLURM_23_11_PROTOCOL_VERSION) {
+		uint32_t plugin_id;
+		safe_unpack32(&plugin_id, buffer);
+		if (plugin_id != active_topo_id) {
+			error("%s: topology plugin %u not active",
+			      __func__, plugin_id);
+			goto unpack_error;
+		} else {
+			 topoinfo_ptr->plugin_id = active_topo_id;
+		}
+	} else {
+		error("%s: protocol_version %hu not supported", __func__,
+		      protocol_version);
+		goto unpack_error;
+	}
+
+	if ((*(ops.topoinfo_unpack))(&topoinfo_ptr->data, buffer,
+				     protocol_version) != SLURM_SUCCESS)
+		goto unpack_error;
+
+	return SLURM_SUCCESS;
+
+unpack_error:
+	topology_g_topology_free(topoinfo_ptr);
+	*topoinfo = NULL;
+	error("%s: unpack error", __func__);
+	return SLURM_ERROR;
+}
+
+extern int topology_g_topology_free(dynamic_plugin_data_t *topoinfo)
+{
+	int rc = SLURM_SUCCESS;
+
+	xassert(plugin_inited);
+
+	if (topoinfo) {
+		if (topoinfo->data)
+			rc = (*(ops.topoinfo_free))(topoinfo->data);
+		xfree(topoinfo);
+	}
+	return rc;
 }

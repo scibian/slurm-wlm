@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_auth.c - implementation-independent authentication API definitions
+ *  auth.c - implementation-independent authentication API definitions
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -37,16 +37,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <pthread.h>
 
 #include "src/common/macros.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/util-net.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -66,21 +66,21 @@ typedef struct {
 					 void *data, int dlen);
 	void		(*destroy)	(void *cred);
 	int		(*verify)	(void *cred, char *auth_info);
-	uid_t		(*get_uid)	(void *cred);
-	gid_t		(*get_gid)	(void *cred);
+	void		(*get_ids)	(void *cred, uid_t *uid, gid_t *gid);
 	char *		(*get_host)	(void *cred);
 	int		(*get_data)	(void *cred, char **data,
 					 uint32_t *len);
+	void *		(*get_identity)	(void *cred);
 	int		(*pack)		(void *cred, buf_t *buf,
 					 uint16_t protocol_version);
 	void *		(*unpack)	(buf_t *buf, uint16_t protocol_version);
 	int		(*thread_config) (const char *token, const char *username);
 	void		(*thread_clear) (void);
 	char *		(*token_generate) (const char *username, int lifespan);
-} slurm_auth_ops_t;
+} auth_ops_t;
 /*
  * These strings must be kept in the same order as the fields
- * declared for slurm_auth_ops_t.
+ * declared for auth_ops_t.
  */
 static const char *syms[] = {
 	"plugin_id",
@@ -89,10 +89,10 @@ static const char *syms[] = {
 	"auth_p_create",
 	"auth_p_destroy",
 	"auth_p_verify",
-	"auth_p_get_uid",
-	"auth_p_get_gid",
+	"auth_p_get_ids",
 	"auth_p_get_host",
 	"auth_p_get_data",
+	"auth_p_get_identity",
 	"auth_p_pack",
 	"auth_p_unpack",
 	"auth_p_thread_config",
@@ -109,13 +109,14 @@ auth_plugin_types_t auth_plugin_types[] = {
 	{ AUTH_PLUGIN_NONE, "auth/none" },
 	{ AUTH_PLUGIN_MUNGE, "auth/munge" },
 	{ AUTH_PLUGIN_JWT, "auth/jwt" },
+	{ AUTH_PLUGIN_SLURM, "auth/slurm" },
 };
 
 /*
  * A global authentication context.  "Global" in the sense that there's
  * only one, with static bindings.  We don't export it.
  */
-static slurm_auth_ops_t *ops = NULL;
+static auth_ops_t *ops = NULL;
 static plugin_context_t **g_context = NULL;
 static int g_context_num = -1;
 static pthread_rwlock_t context_lock = PTHREAD_RWLOCK_INITIALIZER;
@@ -158,7 +159,8 @@ extern const char *auth_get_plugin_name(int plugin_id)
 
 extern bool slurm_get_plugin_hash_enable(int index)
 {
-	xassert(g_context_num > 0);
+	if (g_context_num <= 0)
+		fatal("No hash plugins loaded. Was slurm_init() called before calling any Slurm API functions?");
 
 	return *(ops[index].hash_enable);
 }
@@ -171,7 +173,7 @@ extern bool auth_is_plugin_type_inited(int plugin_id)
 	return false;
 }
 
-extern int slurm_auth_init(char *auth_type)
+extern int auth_g_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *auth_alt_types = NULL, *list = NULL;
@@ -188,9 +190,12 @@ extern int slurm_auth_init(char *auth_type)
 		xfree(slurm_conf.authtype);
 		slurm_conf.authtype = xstrdup(
 			auth_get_plugin_name(AUTH_PLUGIN_JWT));
-	} else if (auth_type) {
+	}
+
+	if (getenv("SLURM_SACK_KEY")) {
 		xfree(slurm_conf.authtype);
-		slurm_conf.authtype = xstrdup(auth_type);
+		slurm_conf.authtype = xstrdup(
+			auth_get_plugin_name(AUTH_PLUGIN_SLURM));
 	}
 
 	type = slurm_conf.authtype;
@@ -212,9 +217,13 @@ extern int slurm_auth_init(char *auth_type)
 	 * be comma separated, vs. AuthType which can have only one value.
 	 */
 	while (type) {
-		xrecalloc(ops, g_context_num + 1, sizeof(slurm_auth_ops_t));
+		xrecalloc(ops, g_context_num + 1, sizeof(auth_ops_t));
 		xrecalloc(g_context, g_context_num + 1,
 			  sizeof(plugin_context_t));
+
+		if (!xstrncmp(type, "auth/", 5))
+			type += 5;
+		type = xstrdup_printf("auth/%s", type);
 
 		g_context[g_context_num] = plugin_context_create(
 			plugin_type, type, (void **)&ops[g_context_num],
@@ -223,15 +232,15 @@ extern int slurm_auth_init(char *auth_type)
 		if (!g_context[g_context_num]) {
 			error("cannot create %s context for %s", plugin_type, type);
 			retval = SLURM_ERROR;
+			xfree(type);
 			goto done;
 		}
 		g_context_num++;
+		xfree(type);
 
 		if (auth_alt_types) {
 			type = strtok_r(list, ",", &last);
 			list = NULL; /* for next iteration */
-		} else {
-			type = NULL;
 		}
 	}
 done:
@@ -246,7 +255,7 @@ done:
 }
 
 /* Release all global memory associated with the plugin */
-extern int slurm_auth_fini(void)
+extern int auth_g_fini(void)
 {
 	int i, rc = SLURM_SUCCESS, rc2;
 
@@ -284,9 +293,9 @@ done:
  * The cast through cred_wrapper_t then gives us convenient access
  * to that auth_index value.
  */
-int slurm_auth_index(void *cred)
+extern int auth_index(void *cred)
 {
-	cred_wrapper_t *wrapper = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrapper = cred;
 
 	if (wrapper)
 		return wrapper->index;
@@ -339,7 +348,7 @@ void *auth_g_create(int index, char *auth_info, uid_t r_uid,
 
 extern void auth_g_destroy(void *cred)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrap = cred;
 
 	xassert(g_context_num > 0);
 
@@ -349,10 +358,10 @@ extern void auth_g_destroy(void *cred)
 	(*(ops[wrap->index].destroy))(cred);
 }
 
-int auth_g_verify(void *cred, char *auth_info)
+extern int auth_g_verify(void *cred, char *auth_info)
 {
 	int rc = SLURM_ERROR;
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrap = cred;
 
 	xassert(g_context_num > 0);
 
@@ -366,26 +375,27 @@ int auth_g_verify(void *cred, char *auth_info)
 	return rc;
 }
 
-uid_t auth_g_get_uid(void *cred)
+extern void auth_g_get_ids(void *cred, uid_t *uid, gid_t *gid)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
-	uid_t uid = SLURM_AUTH_NOBODY;
+	cred_wrapper_t *wrap = cred;
 
 	xassert(g_context_num > 0);
 
+	*uid = SLURM_AUTH_NOBODY;
+	*gid = SLURM_AUTH_NOBODY;
+
 	if (!wrap)
-		return SLURM_AUTH_NOBODY;
+		return;
 
 	slurm_rwlock_rdlock(&context_lock);
-	uid = (*(ops[wrap->index].get_uid))(cred);
+	(*(ops[wrap->index].get_ids))(cred, uid, gid);
 	slurm_rwlock_unlock(&context_lock);
-
-	return uid;
 }
 
-gid_t auth_g_get_gid(void *cred)
+extern uid_t auth_g_get_uid(void *cred)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrap = cred;
+	uid_t uid = SLURM_AUTH_NOBODY;
 	gid_t gid = SLURM_AUTH_NOBODY;
 
 	xassert(g_context_num > 0);
@@ -394,25 +404,54 @@ gid_t auth_g_get_gid(void *cred)
 		return SLURM_AUTH_NOBODY;
 
 	slurm_rwlock_rdlock(&context_lock);
-	gid = (*(ops[wrap->index].get_gid))(cred);
+	(*(ops[wrap->index].get_ids))(cred, &uid, &gid);
 	slurm_rwlock_unlock(&context_lock);
 
-	return gid;
+	return uid;
 }
 
-char *auth_g_get_host(void *cred)
+extern char *auth_g_get_host(void *slurm_msg)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	slurm_addr_t addr;
+	slurm_msg_t *msg = slurm_msg;
+	cred_wrapper_t *wrap = NULL;
 	char *host = NULL;
 
 	xassert(g_context_num > 0);
 
-	if (!wrap)
+	if (!msg || !(wrap = msg->auth_cred))
 		return NULL;
 
 	slurm_rwlock_rdlock(&context_lock);
-	host = (*(ops[wrap->index].get_host))(cred);
+	host = (*(ops[wrap->index].get_host))(wrap);
 	slurm_rwlock_unlock(&context_lock);
+
+	if (host) {
+		debug3("%s: using auth token: %s", __func__, host);
+		return host;
+	}
+
+	if (msg->conn && msg->conn->rem_host) {
+		/* use remote host name if persistent connection */
+		host = xstrdup(msg->conn->rem_host);
+		debug3("%s: using remote hostname: %s", __func__, host);
+		return host;
+	}
+
+	if (slurm_get_peer_addr(msg->conn_fd, &addr)) {
+		error("%s: unable to determine host", __func__);
+		return NULL;
+	}
+
+	/* use remote host IP, then look it up */
+	if ((host = xgetnameinfo((struct sockaddr *) &addr, sizeof(addr)))) {
+		debug3("%s: looked up from connection's IP address: %s",
+		       __func__, host);
+	} else {
+		host = xmalloc(INET6_ADDRSTRLEN);
+		slurm_get_ip_str(&addr, host, INET6_ADDRSTRLEN);
+		debug3("%s: using connection's IP address: %s", __func__, host);
+	}
 
 	return host;
 }
@@ -434,9 +473,26 @@ extern int auth_g_get_data(void *cred, char **data, uint32_t *len)
 	return rc;
 }
 
-int auth_g_pack(void *cred, buf_t *buf, uint16_t protocol_version)
+extern void *auth_g_get_identity(void *cred)
 {
-	cred_wrapper_t *wrap = (cred_wrapper_t *) cred;
+	cred_wrapper_t *wrap = cred;
+	void *id = NULL;
+
+	xassert(g_context_num > 0);
+
+	if (!wrap)
+		return NULL;
+
+	slurm_rwlock_rdlock(&context_lock);
+	id = (*(ops[wrap->index].get_identity))(cred);
+	slurm_rwlock_unlock(&context_lock);
+
+	return id;
+}
+
+extern int auth_g_pack(void *cred, buf_t *buf, uint16_t protocol_version)
+{
+	cred_wrapper_t *wrap = cred;
 
 	xassert(g_context_num > 0);
 
@@ -453,7 +509,7 @@ int auth_g_pack(void *cred, buf_t *buf, uint16_t protocol_version)
 	}
 }
 
-void *auth_g_unpack(buf_t *buf, uint16_t protocol_version)
+extern void *auth_g_unpack(buf_t *buf, uint16_t protocol_version)
 {
 	uint32_t plugin_id = 0;
 	cred_wrapper_t *cred;
@@ -487,7 +543,7 @@ unpack_error:
 	return NULL;
 }
 
-int auth_g_thread_config(const char *token, const char *username)
+extern int auth_g_thread_config(const char *token, const char *username)
 {
 	int rc = SLURM_SUCCESS;
 	xassert(g_context_num > 0);
@@ -499,7 +555,7 @@ int auth_g_thread_config(const char *token, const char *username)
 	return rc;
 }
 
-void auth_g_thread_clear(void)
+extern void auth_g_thread_clear(void)
 {
 	xassert(g_context_num > 0);
 
@@ -508,8 +564,8 @@ void auth_g_thread_clear(void)
 	slurm_rwlock_unlock(&context_lock);
 }
 
-char *auth_g_token_generate(int plugin_id, const char *username,
-			    int lifespan)
+extern char *auth_g_token_generate(int plugin_id, const char *username,
+				   int lifespan)
 {
 	char *token = NULL;
 	xassert(g_context_num > 0);

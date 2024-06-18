@@ -50,23 +50,27 @@
 #include <unistd.h>
 
 #include "src/common/cpu_frequency.h"
-#include "src/common/fd.h"
 #include "src/common/eio.h"
+#include "src/common/fd.h"
 #include "src/common/macros.h"
 #include "src/common/parse_time.h"
-#include "src/interfaces/auth.h"
-#include "src/interfaces/jobacct_gather.h"
-#include "src/interfaces/acct_gather.h"
+#include "src/common/proc_args.h"
 #include "src/common/stepd_api.h"
 #include "src/common/strlcpy.h"
-#include "src/interfaces/switch.h"
 #include "src/common/timers.h"
 #include "src/common/tres_frequency.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "src/interfaces/core_spec.h"
+#include "src/interfaces/acct_gather.h"
+#include "src/interfaces/auth.h"
+#include "src/interfaces/job_container.h"
+#include "src/interfaces/jobacct_gather.h"
 #include "src/interfaces/proctrack.h"
+#include "src/interfaces/switch.h"
+#include "src/interfaces/task.h"
+
+#include "src/slurmd/common/slurmstepd_init.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/io.h"
 #include "src/slurmd/slurmstepd/mgr.h"
@@ -76,9 +80,6 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmd/slurmstepd/step_terminate_monitor.h"
 #include "src/slurmd/slurmstepd/ulimits.h"
-
-#include "src/interfaces/task.h"
-#include "src/interfaces/job_container.h"
 
 static void *_handle_accept(void *arg);
 static int _handle_request(int fd, stepd_step_rec_t *step,
@@ -370,7 +371,7 @@ _msg_socket_readable(eio_obj_t *obj)
 static int
 _msg_socket_accept(eio_obj_t *obj, List objs)
 {
-	stepd_step_rec_t *step = (stepd_step_rec_t *)obj->arg;
+	stepd_step_rec_t *step = obj->arg;
 	int fd;
 	struct sockaddr_un addr;
 	int len = sizeof(addr);
@@ -407,7 +408,7 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 	param = xmalloc(sizeof(struct request_params));
 	param->fd = fd;
 	param->step = step;
-	slurm_thread_create_detached(NULL, _handle_accept, param);
+	slurm_thread_create_detached(_handle_accept, param);
 
 	debug3("Leaving _msg_socket_accept");
 	return SLURM_SUCCESS;
@@ -415,9 +416,9 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 
 static void *_handle_accept(void *arg)
 {
-	/*struct request_params *param = (struct request_params *)arg;*/
-	int fd = ((struct request_params *)arg)->fd;
-	stepd_step_rec_t *step = ((struct request_params *)arg)->step;
+	struct request_params *param = arg;
+	int fd = param->fd;
+	stepd_step_rec_t *step = param->step;
 	int req;
 	int client_protocol_ver;
 	buf_t *buffer = NULL;
@@ -661,8 +662,8 @@ _handle_signal_container(int fd, stepd_step_rec_t *step, uid_t uid)
 	safe_read(fd, details, details_len);
 	safe_read(fd, &req_uid, sizeof(uid_t));
 
-	debug("_handle_signal_container for %ps uid=%u signal=%d",
-	      &step->step_id, req_uid, sig);
+	debug("_handle_signal_container for %ps uid=%u signal=%d flag=0x%x",
+	      &step->step_id, req_uid, sig, flag);
 	/* verify uid off uid instead of req_uid as we can trust that one */
 	if ((uid != step->uid) && !_slurm_authorized_user(uid)) {
 		error("signal container req from uid %u for %ps owned by uid %u",
@@ -671,6 +672,9 @@ _handle_signal_container(int fd, stepd_step_rec_t *step, uid_t uid)
 		errnum = EPERM;
 		goto done;
 	}
+
+	if (flag & KILL_NO_SIG_FAIL)
+		step->flags |= LAUNCH_NO_SIG_FAIL;
 
 	/*
 	 * Sanity checks
@@ -776,8 +780,7 @@ _handle_signal_container(int fd, stepd_step_rec_t *step, uid_t uid)
 	}
 
 	if (sig == SIG_DEBUG_WAKE) {
-		int i;
-		for (i = 0; i < step->node_tasks; i++)
+		for (int i = 0; i < step->node_tasks; i++)
 			pdebug_wake_process(step, step->task[i]->pid);
 		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
@@ -829,6 +832,9 @@ _handle_signal_container(int fd, stepd_step_rec_t *step, uid_t uid)
 		verbose("Sent signal %d to %ps", sig, &step->step_id);
 	}
 	slurm_mutex_unlock(&suspend_mutex);
+
+	if ((sig == SIGTERM) || (sig == SIGKILL))
+		set_job_state(step, SLURMSTEPD_STEP_CANCELLED);
 
 done:
 	xfree(details);
@@ -943,6 +949,8 @@ _handle_terminate(int fd, stepd_step_rec_t *step, uid_t uid)
 	}
 	slurm_mutex_unlock(&suspend_mutex);
 
+	set_job_state(step, SLURMSTEPD_STEP_CANCELLED);
+
 done:
 	/* Send the return code and errnum */
 	safe_write(fd, &rc, sizeof(int));
@@ -958,20 +966,20 @@ _handle_attach(int fd, stepd_step_rec_t *step, uid_t uid)
 	srun_info_t *srun;
 	int rc = SLURM_SUCCESS;
 	uint32_t *gtids = NULL, *pids = NULL;
+	uint32_t key_len;
 	int len, i;
 
 	debug("_handle_attach for %ps", &step->step_id);
 
 	srun       = xmalloc(sizeof(srun_info_t));
-	srun->key = xmalloc(sizeof(srun_key_t));
 
 	debug("sizeof(srun_info_t) = %d, sizeof(slurm_addr_t) = %d",
 	      (int) sizeof(srun_info_t), (int) sizeof(slurm_addr_t));
 	safe_read(fd, &srun->ioaddr, sizeof(slurm_addr_t));
 	safe_read(fd, &srun->resp_addr, sizeof(slurm_addr_t));
-	safe_read(fd, &srun->key->len, sizeof(uint32_t));
-	srun->key->data = xmalloc(srun->key->len);
-	safe_read(fd, srun->key->data, srun->key->len);
+	safe_read(fd, &key_len, sizeof(uint32_t));
+	srun->key = xmalloc(key_len);
+	safe_read(fd, srun->key, key_len);
 	safe_read(fd, &srun->uid, sizeof(uid_t));
 	safe_read(fd, &srun->protocol_version, sizeof(uint16_t));
 
@@ -997,7 +1005,7 @@ _handle_attach(int fd, stepd_step_rec_t *step, uid_t uid)
 		goto done;
 	}
 
-	list_prepend(step->sruns, (void *) srun);
+	list_prepend(step->sruns, srun);
 	rc = io_client_connect(srun, step);
 	srun = NULL;
 	debug("  back from io_client_connect, rc = %d", rc);
@@ -1043,7 +1051,7 @@ done:
 		}
 	}
 	if (srun) {
-		srun_key_destroy(srun->key);
+		xfree(srun->key);
 		xfree(srun);
 	}
 	return SLURM_SUCCESS;
@@ -1119,7 +1127,7 @@ static void _block_on_pid(pid_t pid)
  */
 static void *_wait_extern_pid(void *args)
 {
-	extern_pid_t *extern_pid = (extern_pid_t *)args;
+	extern_pid_t *extern_pid = args;
 
 	stepd_step_rec_t *step = extern_pid->step;
 	pid_t pid = extern_pid->pid;
@@ -1230,7 +1238,7 @@ static int _handle_add_extern_pid_internal(stepd_step_rec_t *step, pid_t pid)
 		set_user_limits(step, pid);
 
 	/* spawn a thread that will wait on the pid given */
-	slurm_thread_create_detached(NULL, _wait_extern_pid, extern_pid);
+	slurm_thread_create_detached(_wait_extern_pid, extern_pid);
 
 	return SLURM_SUCCESS;
 }
@@ -1448,7 +1456,8 @@ static int _handle_gethost(int fd, stepd_step_rec_t *step, pid_t remote_pid)
 	int found = 0;
 	unsigned char address[sizeof(struct in6_addr)];
 	char *address_str = NULL;
-	int af;
+	int af = AF_UNSPEC;
+	slurm_addr_t addr;
 
 	safe_read(fd, &mode, sizeof(int));
 	safe_read(fd, &len, sizeof(int));
@@ -1461,7 +1470,25 @@ static int _handle_gethost(int fd, stepd_step_rec_t *step, pid_t remote_pid)
 
 	if (!(mode & GETHOST_NOT_MATCH_PID) && !pid_match)
 		debug("%s: no pid_match", __func__);
-	else if (nodename && (address_str = slurm_conf_get_address(nodename))) {
+	else if (nodename && (!slurm_conf_get_addr(nodename, &addr, 0))) {
+		char *tmp_str;
+
+		found = 1;
+
+		if (addr.ss_family == AF_INET)
+			af = AF_INET;
+		else if (addr.ss_family == AF_INET6)
+			af = AF_INET6;
+
+		nodename_r = xstrdup(nodename);
+		hostname = xstrdup(nodename);
+
+		slurm_get_ip_str(&addr, (char *)address, INET6_ADDRSTRLEN);
+		tmp_str = xstrdup((char *)address);
+		inet_pton(af, tmp_str, &address);
+		xfree(tmp_str);
+	} else if (nodename &&
+		   (address_str = slurm_conf_get_address(nodename))) {
 		if ((mode & GETHOST_IPV6) &&
 		    (inet_pton(AF_INET6, address_str, &address) == 1)) {
 			found = 1;
@@ -1539,12 +1566,10 @@ _handle_suspend(int fd, stepd_step_rec_t *step, uid_t uid)
 {
 	int rc = SLURM_SUCCESS;
 	int errnum = 0;
-	uint16_t job_core_spec = NO_VAL16;
+	char *tmp;
+	static uint32_t suspend_grace_time = NO_VAL;
 
-	safe_read(fd, &job_core_spec, sizeof(uint16_t));
-
-	debug("_handle_suspend for %ps uid:%u core_spec:%u",
-	      &step->step_id, uid, job_core_spec);
+	debug("%s for %ps uid:%u", __func__, &step->step_id, uid);
 
 	if (!_slurm_authorized_user(uid)) {
 		debug("job step suspend request from uid %u for %ps",
@@ -1574,6 +1599,27 @@ _handle_suspend(int fd, stepd_step_rec_t *step, uid_t uid)
 		if (!step->batch && switch_g_job_step_pre_suspend(step))
 			error("switch_g_job_step_pre_suspend: %m");
 
+		if (suspend_grace_time == NO_VAL) {
+			char *suspend_grace_str = "suspend_grace_time=";
+
+			/* Set default suspend_grace_time */
+			suspend_grace_time = 2;
+
+			/*
+			 * Overwrite default suspend grace time if set in
+			 * slurm_conf
+			 */
+			if ((tmp = xstrcasestr(slurm_conf.preempt_params,
+					       suspend_grace_str))) {
+				if (parse_uint32((tmp +
+						  strlen(suspend_grace_str)),
+						 &suspend_grace_time)) {
+					error("Could not parse '%s' Using default instead.",
+					      tmp);
+				}
+			}
+		}
+
 		/* SIGTSTP is sent first to let MPI daemons stop their tasks,
 		 * then wait 2 seconds, then send SIGSTOP to the spawned
 		 * process's container to stop everything else.
@@ -1587,7 +1633,7 @@ _handle_suspend(int fd, stepd_step_rec_t *step, uid_t uid)
 			verbose("Error suspending %ps (SIGTSTP): %m",
 				&step->step_id);
 		} else
-			sleep(2);
+			sleep(suspend_grace_time);
 
 		if (proctrack_g_signal(step->cont_id, SIGSTOP) < 0) {
 			verbose("Error suspending %ps (SIGSTOP): %m",
@@ -1599,8 +1645,6 @@ _handle_suspend(int fd, stepd_step_rec_t *step, uid_t uid)
 	}
 	if (!step->batch && switch_g_job_step_post_suspend(step))
 		error("switch_g_job_step_post_suspend: %m");
-	if (!step->batch && core_spec_g_suspend(step->cont_id, job_core_spec))
-		error("core_spec_g_suspend: %m");
 
 	slurm_mutex_unlock(&suspend_mutex);
 
@@ -1618,12 +1662,8 @@ _handle_resume(int fd, stepd_step_rec_t *step, uid_t uid)
 {
 	int rc = SLURM_SUCCESS;
 	int errnum = 0;
-	uint16_t job_core_spec = NO_VAL16;
 
-	safe_read(fd, &job_core_spec, sizeof(uint16_t));
-
-	debug("_handle_resume for %ps uid:%u core_spec:%u",
-	      &step->step_id, uid, job_core_spec);
+	debug("%s for %ps uid:%u", __func__, &step->step_id, uid);
 
 	if (!_slurm_authorized_user(uid)) {
 		debug("job step resume request from uid %u for %ps",
@@ -1651,9 +1691,6 @@ _handle_resume(int fd, stepd_step_rec_t *step, uid_t uid)
 	} else {
 		if (!step->batch && switch_g_job_step_pre_resume(step))
 			error("switch_g_job_step_pre_resume: %m");
-		if (!step->batch && core_spec_g_resume(step->cont_id,
-						      job_core_spec))
-			error("core_spec_g_resume: %m");
 		if (proctrack_g_signal(step->cont_id, SIGCONT) < 0) {
 			verbose("Error resuming %ps: %m", &step->step_id);
 		} else {
@@ -1820,7 +1857,6 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *step, uid_t uid)
 	bool update_data = true;
 	jobacctinfo_t *jobacct = NULL;
 	jobacctinfo_t *temp_jobacct = NULL;
-	int i = 0;
 	int num_tasks = 0;
 	uint64_t msg_timeout_us;
 	DEF_TIMERS;
@@ -1856,7 +1892,7 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *step, uid_t uid)
 		num_tasks = 1;
 		proctrack_g_get_pids(step->cont_id, &pids, &npids);
 
-		for (i = 0; i < npids; i++) {
+		for (int i = 0; i < npids; i++) {
 			temp_jobacct = jobacct_gather_stat_task(pids[i],
 								update_data);
 			update_data = false;
@@ -1870,7 +1906,7 @@ _handle_stat_jobacct(int fd, stepd_step_rec_t *step, uid_t uid)
 
 		xfree(pids);
 	} else {
-		for (i = 0; i < step->node_tasks; i++) {
+		for (int i = 0; i < step->node_tasks; i++) {
 			temp_jobacct =
 				jobacct_gather_stat_task(step->task[i]->pid,
 							 update_data);
@@ -1913,13 +1949,12 @@ rwfail:
 static int
 _handle_task_info(int fd, stepd_step_rec_t *step)
 {
-	int i;
 	stepd_step_task_info_t *task;
 
 	debug("_handle_task_info for %ps", &step->step_id);
 
 	safe_write(fd, &step->node_tasks, sizeof(uint32_t));
-	for (i = 0; i < step->node_tasks; i++) {
+	for (int i = 0; i < step->node_tasks; i++) {
 		task = step->task[i];
 		safe_write(fd, &task->id, sizeof(int));
 		safe_write(fd, &task->gtid, sizeof(uint32_t));
@@ -1937,7 +1972,6 @@ rwfail:
 static int
 _handle_list_pids(int fd, stepd_step_rec_t *step)
 {
-	int i;
 	pid_t *pids = NULL;
 	int npids = 0;
 	uint32_t pid;
@@ -1945,7 +1979,7 @@ _handle_list_pids(int fd, stepd_step_rec_t *step)
 	debug("_handle_list_pids for %ps", &step->step_id);
 	proctrack_g_get_pids(step->cont_id, &pids, &npids);
 	safe_write(fd, &npids, sizeof(uint32_t));
-	for (i = 0; i < npids; i++) {
+	for (int i = 0; i < npids; i++) {
 		pid = (uint32_t)pids[i];
 		safe_write(fd, &pid, sizeof(uint32_t));
 	}
@@ -1963,6 +1997,8 @@ static int
 _handle_reconfig(int fd, stepd_step_rec_t *step, uid_t uid)
 {
 	int rc = SLURM_SUCCESS;
+	int len;
+	buf_t *buffer = NULL;
 	int errnum = 0;
 
 	if (!_slurm_authorized_user(uid)) {
@@ -1971,6 +2007,18 @@ _handle_reconfig(int fd, stepd_step_rec_t *step, uid_t uid)
 		rc = -1;
 		errnum = EPERM;
 		goto done;
+	}
+
+	/*
+	 * Pull in any needed configuration changes.
+	 * len = 0 indicates we're just going for a log rotate.
+	 */
+	safe_read(fd, &len, sizeof(int));
+	if (len) {
+		buffer = init_buf(len);
+		safe_read(fd, buffer->head, len);
+		unpack_stepd_reconf(buffer);
+		FREE_NULL_BUFFER(buffer);
 	}
 
 	/*
@@ -1987,14 +2035,13 @@ done:
 	safe_write(fd, &errnum, sizeof(int));
 	return SLURM_SUCCESS;
 rwfail:
+	FREE_NULL_BUFFER(buffer);
 	return SLURM_ERROR;
 }
 
 extern void wait_for_resumed(uint16_t msg_type)
 {
-	int i;
-
-	for (i = 0; ; i++) {
+	for (int i = 0; ; i++) {
 		if (i)
 			sleep(1);
 		if (!suspended)

@@ -131,7 +131,7 @@ typedef enum {
 	/* ASSOCIATION */
 	PRINT_DQOS = 2000,
 	PRINT_ID,
-	PRINT_LFT,
+	PRINT_LINEAGE,
 	PRINT_PID,
 	PRINT_PNAME,
 	PRINT_RGT,
@@ -149,7 +149,6 @@ typedef enum {
 	PRINT_NODEINX,
 	PRINT_CLUSTER_NODES,
 	PRINT_RPC_VERSION,
-	PRINT_SELECT,
 
 	/* ACCT */
 	PRINT_ORG = 4000,
@@ -193,6 +192,11 @@ typedef enum {
 	PRINT_TIMESUBMIT,
 	PRINT_TIMEELIGIBLE,
 
+	/* INSTANCE */
+	PRINT_INSTANCE_ID,
+	PRINT_INSTANCE_TYPE,
+	PRINT_EXTRA,
+
 	/* RESOURCE */
 	PRINT_COUNT = 9000,
 	PRINT_TYPE,
@@ -226,13 +230,11 @@ extern List g_qos_list;
 extern List g_res_list;
 extern List g_tres_list;
 extern const char *mime_type; /* user requested JSON or YAML */
+extern const char *data_parser; /* data_parser args */
 
 extern bool user_case_norm;
 extern bool tree_display;
 extern bool have_db_conn;
-
-extern bool sacctmgr_check_default_qos(uint32_t qos_id,
-				       slurmdb_assoc_cond_t *assoc_cond);
 
 extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 					 char *type, char *value,
@@ -260,6 +262,7 @@ extern int sacctmgr_list_cluster(int argc, char **argv);
 extern int sacctmgr_list_config(void);
 extern int sacctmgr_list_event(int argc, char **argv);
 extern int sacctmgr_list_federation(int argc, char **argv);
+extern int sacctmgr_list_instance(int argc, char **argv);
 extern int sacctmgr_list_problem(int argc, char **argv);
 extern int sacctmgr_list_qos(int argc, char **argv);
 extern int sacctmgr_list_res(int argc, char **argv);
@@ -292,8 +295,8 @@ extern int sacctmgr_archive_load(int argc, char **argv);
 /* common.c */
 extern int parse_option_end(char *option);
 extern char *strip_quotes(char *option, int *increased, bool make_lower);
-extern void notice_thread_init();
-extern void notice_thread_fini();
+extern void notice_thread_init(void);
+extern void notice_thread_fini(void);
 extern int commit_check(char *warning);
 extern int get_uint(char *in_value, uint32_t *out_value, char *type);
 extern int get_uint16(char *in_value, uint16_t *out_value, char *type);
@@ -311,7 +314,8 @@ extern void sacctmgr_print_cluster(slurmdb_cluster_rec_t *cluster);
 extern void sacctmgr_print_federation(slurmdb_federation_rec_t *fed);
 extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos);
 extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond);
-extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond);
+extern int sacctmgr_update_qos_usage(slurmdb_qos_cond_t *qos_cond,
+				     long double new_raw_usage);
 extern int sort_coord_list(void *, void *);
 extern List sacctmgr_process_format_list(List format_list);
 extern int sacctmgr_validate_cluster_list(List cluster_list);

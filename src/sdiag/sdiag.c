@@ -88,9 +88,10 @@ int main(int argc, char **argv)
 			_sort_rpc();
 
 			if (params.mimetype) {
-				rc = DATA_DUMP_CLI(STATS_MSG, *buf,
-						   "statistics", argc, argv,
-						   NULL, params.mimetype);
+				DATA_DUMP_CLI_SINGLE(OPENAPI_DIAG_RESP, buf,
+						     argc, argv, NULL,
+						     params.mimetype,
+						     params.data_parser, rc);
 			} else {
 				rc = _print_stats();
 			}
@@ -154,6 +155,13 @@ static int _print_stats(void)
 	}
 	printf("\tLast queue length: %u\n", buf->schedule_queue_len);
 
+	printf("\nMain scheduler exit:\n");
+
+	for (i = 0; i < buf->schedule_exit_cnt; i++) {
+		printf("\t%s:%2u\n", schedule_exit2string(i),
+		       buf->schedule_exit[i]);
+	}
+
 	if (buf->bf_active) {
 		printf("\nBackfilling stats (WARNING: data obtained"
 		       " in the middle of backfilling execution.)\n");
@@ -198,6 +206,12 @@ static int _print_stats(void)
 		printf("\tMean table size: %u\n",
 		       buf->bf_table_size_sum / buf->bf_cycle_counter);
 	}
+	printf("\nBackfill exit\n");
+
+	for (i = 0; i < buf->bf_exit_cnt; i++) {
+		printf("\t%s:%2u\n", bf_exit2string(i),
+		       buf->bf_exit[i]);
+	}
 
 	printf("\nLatency for 1000 calls to gettimeofday(): %d microseconds\n",
 	       buf->gettimeofday_latency);
@@ -213,9 +227,7 @@ static int _print_stats(void)
 
 	printf("\nRemote Procedure Call statistics by user\n");
 	for (i = 0; i < buf->rpc_user_size; i++) {
-		char *user = uid_to_string_or_null(buf->rpc_user_id[i]);
-		if (!user)
-			xstrfmtcat(user, "%u", buf->rpc_user_id[i]);
+		char *user = uid_to_string(buf->rpc_user_id[i]);
 
 		printf("\t%-16s(%8u) count:%-6u "
 		       "ave_time:%-6u total_time:%"PRIu64"\n",

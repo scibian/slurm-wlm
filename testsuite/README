@@ -288,7 +288,6 @@ test5.9    Validate that squeue -O displays correct job/step format.
 test5.10   Validate that squeue --priority is listing jobs by priority.
 test5.11   Validate that job node estimation is accurate.
 
-
 test6.#    Testing of scancel options.
 ======================================
 test6.1    Validate scancel usage option (--usage option).
@@ -461,8 +460,6 @@ test17.3   Confirm that sbatch reports a proper version number
 	   (--version option).
 test17.4   Confirm that as sbatch job executes as the appropriate user and
 	   group.
-test17.5   Confirm that sbatch stdout, and stderr options work (--output
-	   and --error option respectively, including use of %j specification)
 test17.6   Confirm that a job executes with the proper task count (--ntasks
 	   option).
 test17.8   Confirm that sbatch sets appropriate time limit (--time
@@ -483,7 +480,6 @@ test17.18  Test of job dependencies and deferred begin time (--dependency
 	   and --begin options).
 test17.19  Test of job submit to multiple partitions (--partition).
 test17.20  Test of mail options (--mail-type and --mail-user options)
-test17.21  Tests #Slurm entry functionality in a batch script
 test17.22  Test of running non-existent job, confirm timely termination.
 test17.23  Test of nice value specification (--nice option).
 test17.24  Test of --partition and --verbose options.
@@ -620,7 +616,6 @@ test24.#   Testing of sshare/priority multifactor plugin.
 =========================================================
 test24.1   multifactor plugin algo test
 test24.2   sshare h, n, p, P, v, and V options.
-test24.3   multifactor plugin algo test for fairshare=parent
 test24.4   Test of Fair Tree multifactor
 test24.5   Test SiteFactor
 test24.6   Test non-normalized factors
@@ -654,7 +649,6 @@ test28.5   Validates that scontrol can hold and release a whole job
 test28.6   Validates that when a job array is submitted to multiple
 	   partitions that the jobs run on them.
 test28.7   Confirms job array dependencies.
-test28.8   Test of job array suspend/resume.
 test28.9   Test of maximum running task count in a job array.
 test28.10  Test change to maximum running task count in a job array.
 test28.11  Test that job arrays requesting features with --constraint are
@@ -685,8 +679,8 @@ test32.12  Validates that sgather -t changes the timeout message.
 
 test33.#   Test of message forwarding.
 ======================================
-test33.1   Validates the route_g_splithost api of the route plugin correctly
-           splits hostlists.
+test33.1   Validates the topology_g_split_hostlist api of the route plugin
+	   correctly splits hostlists.
 
 test34.*   Test of Slurm preemption.
 ====================================
@@ -770,18 +764,15 @@ test39.13  Validate proper GRES operation under heavy load (many jobs)
 test39.14  Increase size of job with allocated GPUs
 test39.15  Test --gpus-per-tres with --overcommit option
 test39.16  Test --gpus-per-tres with --exclusive option
-test39.17  Test allocating sub-sets of GRES to job steps
 test39.18  Test gres.conf and system GPU normalization and merging logic
 test39.19  Test accounting for GPU resources with various allocation options
 test39.20  Test GPU resource limits with various allocation options
-test39.21  Simple CUDA test
 test39.22  Test heterogeneous job GPU allocations.
 test39.23  Test --gpus-per-task with implicit task count
 
 test40.#   Test of job select/cons_tres and gres/mps options.
 =============================================================
 test40.1   Test some invalid gres/mps job option
-test40.2   Test scheduling of gres/gpu and gres/mps
 test40.3   Test accounting for MPS resources with various allocation options
 test40.4   Test MPS resource limits with various allocation options
 test40.5   Increase size of job with allocated MPS
@@ -818,6 +809,8 @@ test_105_1   /commands/sbatch/test_gpu_options.py
 test_105_2   /commands/sbatch/test_hetjob.py
 test_105_3   /commands/sbatch/test_invalid_mps_options.py
 test_105_4   /commands/sbatch/test_--usage.py
+test_105_5   Test sbatch --output and --error options work, including use of spaces, %j, and %u
+test_105_6   Test #SBATCH directives in sbatch scripts
 
 test_106_#   Testing of sbcast options.
 =======================================
@@ -869,6 +862,7 @@ test_114_#   Testing of squeue options.
 test_114_1   /commands/squeue/test_--help.py
 test_114_2   /commands/squeue/test_--usage.py
 test_114_3   /commands/squeue/test_--json.py
+test_114_4   Validate that squeue --only-job-state is listing jobs accurately.
 
 test_115_#   Testing of sreport options.
 ========================================
@@ -948,6 +942,7 @@ test_122_#   Testing of job_arrays.
 ===================================
 test_122_1   /features/job_arrays/test_basics.py
 test_122_2   Test job array with gres
+test_122_3   Test suspension of job arrays
 
 test_123_#   Testing of reservations.
 =====================================
@@ -983,16 +978,16 @@ test_129_1   /parameters/slurm/PreserveCaseUser/test_PreserveCaseUser.py
 test_130_#   Testing of PriorityType.
 =====================================
 test_130_1   /parameters/slurm/PriorityType/basic/test_priority.py
-test_130_2   /parameters/slurm/PriorityType/multifactor/test_plugin.py
+test_130_2   multifactor plugin algo test for fairshare=parent
 test_130_3   /parameters/slurm/PriorityType/multifactor/test_priority.py
 
 test_132_#   Testing of Prolog.
 ===============================
 test_132_1   /parameters/slurm/Prolog/test_prolog.py
 
-test_133_#   Testing of RoutePlugin.
-====================================
-test_133_1   /parameters/slurm/RoutePlugin/topology/test_plugin.py
+test_133_#   Testing of TopologyParam.
+======================================
+test_133_1   python version of test33.1
 
 test_134_#   Testing of SwitchType.
 ===================================
@@ -1016,6 +1011,10 @@ test_138_#   Testing stressing cases.
 test_138_1   /stress/test_stdin_broadcast.py
 test_138_2   Test parallel performance of squeue
 
+test_139_#   Testing dynamic nodes.
+===================================
+test_139_1   Test creation, registration, usage, and deletion of dynamic nodes.
+
 test_140_#   Testing --tres options.
 ====================================
 test_140_1   Test --tres-per-task option
@@ -1035,3 +1034,4 @@ test_144_2   Test enforce-binding with GPUs that share cores
 test_144_3   Test --exact with GPUs and multiple steps
 test_144_4   Test gres with file or type and --overlap
 test_144_6   Test gres with no_consume flag
+test_144_7   Test allocating sub-sets of GRES to job steps

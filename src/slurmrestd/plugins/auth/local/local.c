@@ -44,6 +44,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#include <sys/param.h>
+#include <sys/ucred.h>
+#include <sys/un.h>
+#endif
+
 #include "slurm/slurm.h"
 #include "slurm/slurmdb.h"
 
@@ -128,34 +134,36 @@ static int _auth_socket(on_http_request_args_t *args,
 			rest_auth_context_t *ctxt,
 			const char *header_user_name)
 {
-	struct ucred cred = { 0 };
-	socklen_t len = sizeof(cred);
-	const int input_fd = args->context->con->input_fd;
-	const char *name = args->context->con->name;
+	int rc;
+	const char *name = conmgr_fd_get_name(args->context->con);
+	uid_t cred_uid;
+	gid_t cred_gid;
+	pid_t cred_pid;
 
 	xassert(!ctxt->user_name);
 
-	if (getsockopt(input_fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) == -1) {
+	if ((rc = conmgr_get_fd_auth_creds(args->context->con, &cred_uid,
+					   &cred_gid, &cred_pid))) {
 		/* socket may be remote, local auth doesn't apply */
-		debug("%s: [%s] unable to get socket ownership: %m",
-		      __func__, name);
+		debug("%s: [%s] unable to get socket ownership: %s",
+		      __func__, name, slurm_strerror(rc));
 		return ESLURM_AUTH_CRED_INVALID;
 	}
 
-	if ((cred.uid == -1) || (cred.gid == -1) || (cred.pid == 0)) {
-		/* SO_PEERCRED failed silently */
+	if((cred_uid == -1) || (cred_gid == -1) || !cred_pid) {
+		/* *_PEERCRED failed silently */
 		error("%s: [%s] rejecting socket connection with invalid SO_PEERCRED response",
 		      __func__, name);
 		return ESLURM_AUTH_CRED_INVALID;
-	} else if ((cred.uid == SLURM_AUTH_NOBODY) ||
-		   (cred.gid == SLURM_AUTH_NOBODY)) {
+	} else if ((cred_uid == SLURM_AUTH_NOBODY) ||
+		   (cred_gid == SLURM_AUTH_NOBODY)) {
 		error("%s: [%s] rejecting connection from nobody",
 		      __func__, name);
 		return ESLURM_AUTH_CRED_INVALID;
-	} else if (cred.uid == 0) {
+	} else if (!cred_uid) {
 		/* requesting socket is root */
 		info("%s: [%s] accepted root socket connection with uid:%u gid:%u pid:%ld",
-		     __func__, name, cred.uid, cred.gid, (long) cred.pid);
+		     __func__, name, cred_uid, cred_gid, (long) cred_pid);
 
 		/*
 		 * root can be any user if they want - default to
@@ -165,12 +173,11 @@ static int _auth_socket(on_http_request_args_t *args,
 			ctxt->user_name = xstrdup(header_user_name);
 		else
 			ctxt->user_name = uid_to_string_or_null(getuid());
-	} else if (getuid() == cred.uid) {
+	} else if (getuid() == cred_uid) {
 		info("%s: [%s] accepted user socket connection with uid:%u gid:%u pid:%ld",
-		     __func__, name, cred.uid, cred.gid,
-		     (long) cred.pid);
+		     __func__, name, cred_uid, cred_gid, (long) cred_pid);
 
-		ctxt->user_name = uid_to_string_or_null(cred.uid);
+		ctxt->user_name = uid_to_string_or_null(cred_uid);
 	} else {
 		/*
 		 * Use lock to ensure there are no race conditions for different
@@ -179,31 +186,31 @@ static int _auth_socket(on_http_request_args_t *args,
 		slurm_mutex_lock(&lock);
 		if (become_user) {
 			info("%s: [%s] accepted user proxy socket connection with uid:%u gid:%u pid:%ld",
-			     __func__, name, cred.uid, cred.gid,
-			     (long) cred.pid);
+			     __func__, name, cred_uid, cred_gid,
+			     (long) cred_pid);
 
 			if (getuid() || getgid())
 				fatal("%s: user proxy mode requires running as root",
 				      __func__);
 
-			ctxt->user_name = uid_to_string_or_null(cred.uid);
+			ctxt->user_name = uid_to_string_or_null(cred_uid);
 
 			if (!ctxt->user_name)
-				fatal("%s: [%s] unable to resolve user uid %u: %m",
-				      __func__, name, cred.uid);
+				fatal("%s: [%s] unable to resolve user uid %u",
+				      __func__, name, cred_uid);
 
 			if (setgroups(0, NULL))
 				fatal("Unable to drop supplementary groups: %m");
 
-			if (setuid(cred.uid))
+			if (setuid(cred_uid))
 				fatal("%s: [%s] unable to switch to user uid %u: %m",
-				      __func__, name, cred.uid);
+				      __func__, name, cred_uid);
 
-			if ((getgid() != cred.gid) && setgid(cred.gid))
+			if ((getgid() != cred_gid) && setgid(cred_gid))
 				fatal("%s: [%s] unable to switch to user gid %u: %m",
-				      __func__, name, cred.gid);
+				      __func__, name, cred_gid);
 
-			if ((getuid() != cred.uid) || (getgid() != cred.gid))
+			if ((getuid() != cred_uid) || (getgid() != cred_gid))
 				fatal("%s: [%s] user switch sanity check failed",
 				      __func__, name);
 
@@ -218,8 +225,8 @@ static int _auth_socket(on_http_request_args_t *args,
 			slurm_mutex_unlock(&lock);
 			/* another user -> REJECT */
 			error("%s: [%s] rejecting socket connection with uid:%u gid:%u pid:%ld",
-			      __func__, name, cred.uid, cred.gid,
-			      (long) cred.pid);
+			      __func__, name, cred_uid, cred_gid,
+			      (long) cred_pid);
 			return ESLURM_AUTH_CRED_INVALID;
 		}
 	}
@@ -239,10 +246,11 @@ extern int slurm_rest_auth_p_authenticate(on_http_request_args_t *args,
 	struct stat status = { 0 };
 	const char *header_user_name = find_http_header(args->headers,
 							HTTP_HEADER_USER_NAME);
-
-	const int input_fd = args->context->con->input_fd;
-	const int output_fd = args->context->con->output_fd;
-	const char *name = args->context->con->name;
+	const conmgr_fd_status_t cstatus =
+		conmgr_fd_get_status(args->context->con);
+	const int input_fd = conmgr_fd_get_input_fd(args->context->con);
+	const int output_fd = conmgr_fd_get_output_fd(args->context->con);
+	const char *name = conmgr_fd_get_name(args->context->con);
 
 	xassert(!ctxt->user_name);
 
@@ -253,15 +261,14 @@ extern int slurm_rest_auth_p_authenticate(on_http_request_args_t *args,
 		return ESLURM_AUTH_SKIP;
 	}
 
-	if (args->context->con->is_socket && !args->context->con->unix_socket) {
+	if (cstatus.is_socket && !cstatus.unix_socket) {
 		/*
 		 * SO_PEERCRED only works on unix sockets
 		 */
 		debug("%s: [%s] socket authentication only supported on UNIX sockets",
 		      __func__, name);
 		return ESLURM_AUTH_SKIP;
-	} else if (args->context->con->is_socket &&
-		   args->context->con->unix_socket) {
+	} else if (cstatus.is_socket && cstatus.unix_socket) {
 		return _auth_socket(args, ctxt, header_user_name);
 	} else if (fstat(input_fd, &status)) {
 		error("%s: [%s] unable to stat fd %d: %m",

@@ -39,7 +39,7 @@
 
 #include "api.h"
 #include "src/interfaces/data_parser.h"
-#include "src/interfaces/openapi.h"
+#include "src/slurmrestd/openapi.h"
 
 typedef data_parser_type_t type_t;
 typedef struct parser_s parser_t;
@@ -138,7 +138,7 @@ typedef struct parser_s {
 	/*
 	 * Populates OpenAPI specification.
 	 * 	For parsers where the normal OpenAPI specification generation is
-	 * 	insufficent. This allows the parser to explicitly set the
+	 * 	insufficient. This allows the parser to explicitly set the
 	 * 	specification for the type. General goal is to not to need to
 	 * 	use this function but some output formats are just too different
 	 * 	the original data source.
@@ -154,7 +154,7 @@ typedef struct parser_s {
 /*
  * Called at startup to run any setup of parsers and testing
  */
-extern void parsers_init();
+extern void parsers_init(void);
 
 #ifndef NDEBUG
 extern void check_parser_funcname(const parser_t *const parser,

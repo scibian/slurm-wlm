@@ -1,11 +1,19 @@
+From: Scibian Project <packaging@scibian.org>
+Date: Tue, 18 Jun 2024 11:45:38 +0200
+Subject: META
+
+---
+ META | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
 diff --git a/META b/META
-index e6ce6e83..ed5905fc 100644
+index e07a937..c5f23fe 100644
 --- a/META
 +++ b/META
 @@ -9,7 +9,7 @@
-   Minor:	02
-   Micro:	6
-   Version:	23.02.6
+   Minor:	11
+   Micro:	7
+   Version:	23.11.7
 -  Release:	1
 +  Release:	Edf.1.0
  
