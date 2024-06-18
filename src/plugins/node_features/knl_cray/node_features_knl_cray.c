@@ -59,7 +59,7 @@
 #  include <json/json.h>
 #endif
 
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
+#ifndef POLLRDHUP
 #define POLLRDHUP POLLHUP
 #endif
 
@@ -335,8 +335,7 @@ static s_p_hashtbl_t *_config_make_tbl(char *filename)
 		return tbl;
 	}
 
-	if (s_p_parse_file(tbl, NULL, filename, false, NULL, false) ==
-	    SLURM_ERROR) {
+	if (s_p_parse_file(tbl, NULL, filename, 0, NULL) == SLURM_ERROR) {
 		error("knl.conf: %s: s_p_parse_file error: %m", __func__);
 		s_p_hashtbl_destroy(tbl);
 		tbl = NULL;
@@ -2214,7 +2213,7 @@ static int _update_node_state(char *node_list, bool set_locks)
 	int mcdram_cap_cnt = 0, mcdram_cfg_cnt = 0, mcdram_cfg2_cnt = 0;
 	int numa_cap_cnt = 0, numa_cfg_cnt = 0, numa_cfg2_cnt = 0;
 	node_record_t *node_ptr;
-	hostlist_t host_list;
+	hostlist_t *host_list;
 	char *node_name;
 
 	slurm_mutex_lock(&config_mutex);

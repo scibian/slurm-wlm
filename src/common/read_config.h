@@ -7,7 +7,7 @@
  *  Portions Copyright (C) 2008 Vijay Ramasubramanian.
  *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
- *  Written by Morris Mette <jette1@llnl.gov>.
+ *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of Slurm, a resource management program.
@@ -79,7 +79,6 @@ typedef struct node_record node_record_t;
 #define DEFAULT_ACCOUNTING_TRES  "cpu,mem,energy,node,billing,fs/disk,vmem,pages"
 #define DEFAULT_ACCOUNTING_DB      "slurm_acct_db"
 #define DEFAULT_ACCOUNTING_ENFORCE  0
-#define DEFAULT_ACCOUNTING_STORAGE_TYPE "accounting_storage/none"
 #define DEFAULT_AUTH_TYPE          "auth/munge"
 #define DEFAULT_AUTH_TOKEN_LIFESPAN 1800
 #define DEFAULT_BATCH_START_TIMEOUT 10
@@ -87,7 +86,6 @@ typedef struct node_record node_record_t;
 #define DEFAULT_COMPLETE_WAIT       0
 #define DEFAULT_CRED_TYPE           "cred/munge"
 #define DEFAULT_EPILOG_MSG_TIME     2000
-#define DEFAULT_EXT_SENSORS_TYPE    "ext_sensors/none"
 #define DEFAULT_FIRST_JOB_ID        1
 #define DEFAULT_GET_ENV_TIMEOUT     2
 #define DEFAULT_GETNAMEINFO_CACHE_TIMEOUT 60
@@ -98,23 +96,12 @@ typedef struct node_record node_record_t;
 /* NOTE: DEFAULT_INACTIVE_LIMIT must be 0 for Blue Gene/L systems */
 #define DEFAULT_INACTIVE_LIMIT      0
 #define DEFAULT_INTERACTIVE_STEP_OPTS "--interactive --preserve-env --pty $SHELL"
-#define DEFAULT_JOB_ACCT_GATHER_TYPE  "jobacct_gather/none"
-#define JOB_ACCT_GATHER_TYPE_NONE "jobacct_gather/none"
 #define DEFAULT_JOB_ACCT_GATHER_FREQ  "30"
-#define DEFAULT_ACCT_GATHER_ENERGY_TYPE "acct_gather_energy/none"
-#define DEFAULT_ACCT_GATHER_PROFILE_TYPE "acct_gather_profile/none"
-#define DEFAULT_ACCT_GATHER_INTERCONNECT_TYPE "acct_gather_interconnect/none"
-#define DEFAULT_ACCT_GATHER_FILESYSTEM_TYPE "acct_gather_filesystem/none"
-#define ACCOUNTING_STORAGE_TYPE_NONE "accounting_storage/none"
-#define DEFAULT_CORE_SPEC_PLUGIN    "core_spec/none"
 #define DEFAULT_ENFORCE_PART_LIMITS 0
-#define DEFAULT_JOB_COMP_TYPE       "jobcomp/none"
 #if defined HAVE_NATIVE_CRAY
 #  define DEFAULT_ALLOW_SPEC_RESOURCE_USAGE 1
-#  define DEFAULT_JOB_CONTAINER_PLUGIN  "job_container/cncu"
 #else
 #  define DEFAULT_ALLOW_SPEC_RESOURCE_USAGE 0
-#  define DEFAULT_JOB_CONTAINER_PLUGIN "job_container/none"
 #endif
 #define DEFAULT_KEEPALIVE_TIME (NO_VAL)
 #define DEFAULT_KILL_ON_BAD_EXIT    0
@@ -128,25 +115,21 @@ typedef struct node_record node_record_t;
 #define DEFAULT_MAX_JOB_COUNT       10000
 #define DEFAULT_MAX_JOB_ID          0x03ff0000
 #define DEFAULT_MAX_STEP_COUNT      40000
-#define DEFAULT_MCS_PLUGIN          "mcs/none"
 #define DEFAULT_MEM_PER_CPU         0
 #define DEFAULT_MAX_MEM_PER_CPU     0
 #define DEFAULT_MIN_JOB_AGE         300
-#define DEFAULT_MPI_DEFAULT         "none"
 #define DEFAULT_MSG_AGGR_WINDOW_MSGS 1
 #define DEFAULT_MSG_AGGR_WINDOW_TIME 100
 #define DEFAULT_MSG_TIMEOUT         10
-#define DEFAULT_POWER_PLUGIN        ""
 #if defined WITH_CGROUP
 #  define DEFAULT_PROCTRACK_TYPE      "proctrack/cgroup"
 #else
 #  define DEFAULT_PROCTRACK_TYPE      "proctrack/pgid"
 #endif
-#define DEFAULT_PREEMPT_TYPE        "preempt/none"
 #define DEFAULT_PREP_PLUGINS        "prep/script"
 #define DEFAULT_PRIORITY_DECAY      604800 /* 7 days */
 #define DEFAULT_PRIORITY_CALC_PERIOD 300 /* in seconds */
-#define DEFAULT_PRIORITY_TYPE       "priority/basic"
+#define DEFAULT_PRIORITY_TYPE       "priority/multifactor"
 #define DEFAULT_RECONF_KEEP_PART_STATE 0
 #define DEFAULT_RETURN_TO_SERVICE   0
 #define DEFAULT_RESUME_RATE         300
@@ -159,9 +142,8 @@ typedef struct node_record node_record_t;
 #if defined HAVE_NATIVE_CRAY
 #  define DEFAULT_SELECT_TYPE       "select/cray_aries"
 #else
-#  define DEFAULT_SELECT_TYPE       "select/linear"
+#  define DEFAULT_SELECT_TYPE       "select/cons_tres"
 #endif
-#define DEFAULT_SITE_FACTOR_PLUGIN  "site_factor/none"
 #define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 #define DEFAULT_SLURMCTLD_TIMEOUT   120
 #define DEFAULT_SLURMD_PIDFILE      "/var/run/slurmd.pid"
@@ -175,12 +157,6 @@ typedef struct node_record node_record_t;
 #define DEFAULT_SUSPEND_RATE        60
 #define DEFAULT_SUSPEND_TIME        0
 #define DEFAULT_SUSPEND_TIMEOUT     30
-#if defined HAVE_NATIVE_CRAY
-#  define DEFAULT_SWITCH_TYPE         "switch/cray_aries"
-#else
-#  define DEFAULT_SWITCH_TYPE         "switch/none"
-#endif
-#define DEFAULT_TASK_PLUGIN         "task/none"
 #define DEFAULT_TCP_TIMEOUT         2
 #define DEFAULT_TMP_FS              "/tmp"
 #if defined HAVE_3D
@@ -189,10 +165,12 @@ typedef struct node_record node_record_t;
 #  define DEFAULT_TOPOLOGY_PLUGIN     "topology/none"
 #endif
 #define DEFAULT_WAIT_TIME           0
-#  define DEFAULT_TREE_WIDTH        50
+#define DEFAULT_TREE_WIDTH	    16
 #define DEFAULT_UNKILLABLE_TIMEOUT  60 /* seconds */
-#define DEFAULT_BATCH_SCRIPT_LIMIT (4 * 1024 * 1024) /* 5MB */
+#define DEFAULT_BATCH_SCRIPT_LIMIT (4 * 1024 * 1024) /* 4MB */
 #define MAX_BATCH_SCRIPT_SIZE (512 * 1024 * 1024) /* 512MB */
+#define DEFAULT_MAX_SUBMIT_LINE_SIZE (1024 * 1024) /* 1MB */
+#define MAX_MAX_SUBMIT_LINE_SIZE (2 * 1024 * 1024) /* 2MB */
 
 /* MAX_TASKS_PER_NODE is defined in slurm.h
  */
@@ -401,24 +379,6 @@ extern void read_config_add_key_pair(list_t *key_pair_list,
 extern void slurm_conf_init_stepd(void);
 
 /*
- * slurm_conf_init_load - load the slurm configuration from the a file.
- * IN file_name - name of the slurm configuration file to be read
- *	If file_name is NULL, then this routine tries to use
- *	the value in the SLURM_CONF env variable.  Failing that,
- *	it uses the compiled-in default file name.
- *	If the conf structures have already been initialized by a call to
- *	slurm_conf_init, any subsequent calls will do nothing until
- *	slurm_conf_destroy is called.
- * IN load_auth - If true, load the auth and hash plugins.
- *      NOTE: false should only be passed to this if doing unit testing where we
- *            know we are suppose to load any plugins.
- * RET SLURM_SUCCESS if conf file is initialized.  If the slurm conf
- *       was already initialied, return SLURM_ERROR.
- *
- */
-extern int slurm_conf_init_load(const char *file_name, bool load_auth);
-
-/*
  * slurm_conf_init - load the slurm configuration from the a file.
  * IN file_name - name of the slurm configuration file to be read
  *	If file_name is NULL, then this routine tries to use
@@ -466,6 +426,7 @@ extern slurm_conf_t *slurm_conf_lock(void);
 extern void slurm_conf_unlock(void);
 
 
+extern int slurm_conf_check_addr(const char *node_name, bool *dynamic);
 /*
  * Set "ptr_array" with the pointer to an array of pointers to
  * slurm_conf_frontend_t structures.
@@ -660,7 +621,7 @@ extern char *debug_flags2str(uint64_t debug_flags);
  * debug_str2flags - Convert a DebugFlags string to the equivalent uint64_t
  * Returns SLURM_ERROR if invalid
  */
-extern int debug_str2flags(char *debug_flags, uint64_t *flags_out);
+extern int debug_str2flags(const char *debug_flags, uint64_t *flags_out);
 
 /*
  * reconfig_flags2str - convert a ReconfigFlags uint16_t to the equivalent string
@@ -734,5 +695,16 @@ extern void slurm_conf_remove_node(char *node_name);
  */
 extern uint16_t slurm_conf_get_frontend_port(char *node_hostname);
 #endif
+
+/*
+ * Get substring from a csv-style string.
+ *
+ * IN opts - csv-style string to be parsed
+ * IN arg - the search string + delimiter between option and its value
+ * 	(EG: "planet=")
+ *
+ * RET xmalloc()'d string after the delimiter, and before next ","
+ */
+extern char *conf_get_opt_str(const char *opts, const char *arg);
 
 #endif /* !_READ_CONFIG_H */

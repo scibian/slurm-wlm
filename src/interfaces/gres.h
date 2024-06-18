@@ -36,8 +36,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _GRES_H
-#define _GRES_H
+#ifndef _INTERFACES_GRES_H
+#define _INTERFACES_GRES_H
 
 #include "slurm/slurm.h"
 #include "slurm/slurmdb.h"
@@ -110,6 +110,7 @@ typedef struct {
 					      directly requested */
 #define GRES_CONF_FROM_STATE SLURM_BIT(13) /* Flags from state, blow away once
 					      node checks in. */
+#define GRES_CONF_GLOBAL_INDEX SLURM_BIT(14) /* devices use global index */
 
 #define GRES_CONF_ENV_SET    0x000008E0   /* Easy check if any of
 					   * GRES_CONF_ENV_* are set. */
@@ -120,6 +121,7 @@ typedef struct {
 #define GRES_AUTODETECT_GPU_RSMI  0x00000002
 #define GRES_AUTODETECT_GPU_OFF   0x00000004 /* Do NOT use global */
 #define GRES_AUTODETECT_GPU_ONEAPI 0x00000008
+#define GRES_AUTODETECT_GPU_NRT 0x00000010
 
 #define GRES_AUTODETECT_GPU_FLAGS 0x000000ff /* reserve first 8 bits for gpu
 					      * flags */
@@ -185,7 +187,7 @@ typedef struct {
 
 /* Current GRES state information managed by slurmctld daemon */
 typedef struct gres_node_state {
-	struct gres_node_state *alt_gres_ns;
+	struct gres_state *alt_gres;
 	/* Actual hardware found */
 	uint64_t gres_cnt_found;
 
@@ -212,8 +214,8 @@ typedef struct gres_node_state {
 	bitstr_t *gres_bit_alloc;	/* If gres.conf contains File field */
 
 	/*
-	 * Topology specific information. In the case of gres/mps, there is one
-	 * topo record per file (GPU) and the size of the GRES bitmaps (i.e.
+	 * Topology specific information. In the case of shared gres, there is
+	 * one topo record per file (GPU) and the size of the GRES bitmaps (i.e.
 	 * gres_bit_alloc and topo_gres_bitmap[#]) is equal to the number of
 	 * GPUs on the node while the count is a site-configurable value.
 	 */
@@ -279,6 +281,8 @@ typedef struct gres_job_state {
 					 * Used with GRES files */
 	uint64_t *gres_cnt_node_select;	/* Per node GRES selected,
 					 * Used without GRES files */
+	uint64_t **gres_per_bit_select; /* For shared gres to track which
+					   gres was allocated for which bit */
 
 	/* Allocated resources details */
 	/*
@@ -294,6 +298,8 @@ typedef struct gres_job_state {
 					 * Used with GRES files */
 	uint64_t *gres_cnt_node_alloc;	/* Per node GRES allocated,
 					 * Used with and without GRES files */
+	uint64_t **gres_per_bit_alloc;  /* For shared gres to track which
+					   gres was allocated for which bit */
 
 	/*
 	 * Resources currently allocated to job steps on each node.
@@ -302,6 +308,7 @@ typedef struct gres_job_state {
 	 */
 	bitstr_t **gres_bit_step_alloc;
 	uint64_t  *gres_cnt_step_alloc;
+	uint64_t **gres_per_bit_step_alloc;
 } gres_job_state_t;
 
 typedef enum {
@@ -357,7 +364,10 @@ typedef struct gres_step_state {
 	 * gres_cnt_node_alloc is an array the same size as the number of nodes
 	 * in the job because node_cnt is the same as the job.
 	 */
-	uint64_t total_gres;		/* allocated GRES for this step */
+	uint64_t total_gres;		/* allocated GRES for this step.
+					 * Also used in the requested step list
+					 * as the total requested GRES for
+					 * this step. */
 	uint64_t gross_gres;		/* used during the scheduling phase,
 					 * GRES that could be available for this
 					 * step if no other steps active */
@@ -366,6 +376,8 @@ typedef struct gres_step_state {
 	uint32_t node_cnt;
 	bitstr_t *node_in_use;
 	bitstr_t **gres_bit_alloc;	/* Used with GRES files */
+	uint64_t **gres_per_bit_alloc;  /* For shared gres to track which
+					   gres was allocated for which bit */
 } gres_step_state_t;
 
 /* Per-socket GRES availability information for scheduling purposes */
@@ -383,6 +395,9 @@ typedef struct sock_gres {	/* GRES availability by socket */
 	uint64_t total_cnt_before_filter; /* Total GRES count before
 					   * first_pass of
 					   * gres_select_filter_sock_core */
+	bool use_total_gres; /* Was this struct built counting all gres or
+			      * only currently available gres
+			      * i.e. test_only */
 } sock_gres_t;
 
 /* Similar to multi_core_data_t in slurm_protocol_defs.h */
@@ -517,7 +532,7 @@ extern int gres_node_config_pack(buf_t *buffer);
  * IN orig_config - Gres information supplied from slurm.conf
  * IN/OUT gres_list - List of Gres records for this node to track usage
  */
-extern int gres_init_node_config(char *orig_config, List *gres_list);
+extern void gres_init_node_config(char *orig_config, List *gres_list);
 
 /*
  * Return how many gres Names are on the system.
@@ -1110,6 +1125,8 @@ extern gres_state_t *gres_create_state(void *src_ptr,
 				       gres_state_type_enum_t state_type,
 				       void *gres_data);
 
+extern void gres_job_state_delete(gres_job_state_t *gres_js);
+
 extern void gres_job_clear_alloc(gres_job_state_t *gres_js);
 
 extern void gres_job_list_delete(void *list_element);
@@ -1125,6 +1142,12 @@ extern void gres_sock_delete(void *x);
  * IN locked - if the assoc_mgr tres read locked is locked or not
  */
 extern void gres_clear_tres_cnt(uint64_t *tres_cnt, bool locked);
+
+/*
+ * Return TRUE if this the gres with this name consumes GRES count > 1 for a
+ * single device file (e.g. MPS)
+ */
+extern bool gres_is_shared_name(char *name);
 
 /*
  * Return TRUE if this plugin ID consumes GRES count > 1 for a single device
@@ -1194,4 +1217,4 @@ extern bool gres_use_busy_dev(gres_state_t *gres_state_node,
  */
 extern void gres_parse_config_dummy(void);
 
-#endif /* !_GRES_H */
+#endif

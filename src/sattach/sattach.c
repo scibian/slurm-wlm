@@ -139,7 +139,7 @@ int sattach(int argc, char **argv)
 		log_alter(logopt, 0, NULL);
 	}
 
-	if (slurm_cred_init() != SLURM_SUCCESS) {
+	if (cred_g_init() != SLURM_SUCCESS) {
 		error("failed to initialize cred plugin");
 		exit(error_exit);
 	}
@@ -258,7 +258,7 @@ _nodeid_from_layout(slurm_step_layout_t *layout, uint32_t taskid)
 
 static void print_layout_info(slurm_step_layout_t *layout)
 {
-	hostlist_t nl;
+	hostlist_t *nl;
 	int i, j;
 
 	printf("Job step layout:\n");
@@ -402,8 +402,8 @@ static int _attach_to_tasks(slurm_step_id_t stepid,
 	reattach_msg.num_resp_port = num_resp_ports;
 	reattach_msg.resp_port = resp_ports; /* array of response ports */
 	reattach_msg.num_io_port = num_io_ports;
+	reattach_msg.io_key = slurm_cred_get_signature(fake_cred);
 	reattach_msg.io_port = io_ports;
-	reattach_msg.cred = fake_cred;
 
 	slurm_msg_set_r_uid(&msg, SLURM_AUTH_UID_ANY);
 	msg.msg_type = REQUEST_REATTACH_TASKS;
@@ -414,6 +414,7 @@ static int _attach_to_tasks(slurm_step_id_t stepid,
 		hosts = layout->front_end;
 	else
 		hosts = layout->node_list;
+	fwd_set_alias_addrs(layout->alias_addrs);
 	nodes_resp = slurm_send_recv_msgs(hosts, &msg, timeout);
 	if (nodes_resp == NULL) {
 		error("slurm_send_recv_msgs failed: %m");
@@ -422,6 +423,7 @@ static int _attach_to_tasks(slurm_step_id_t stepid,
 
 	_handle_response_msg_list(nodes_resp, tasks_started);
 	FREE_NULL_LIST(nodes_resp);
+	xfree(reattach_msg.io_key);
 
 	return SLURM_SUCCESS;
 }
@@ -526,7 +528,7 @@ _launch_handler(message_thread_state_t *mts, slurm_msg_t *resp)
 static void
 _exit_handler(message_thread_state_t *mts, slurm_msg_t *exit_msg)
 {
-	task_exit_msg_t *msg = (task_exit_msg_t *) exit_msg->data;
+	task_exit_msg_t *msg = exit_msg->data;
 	int i;
 	int rc;
 
@@ -597,8 +599,8 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 		/* FIXME - does nothing yet */
 		break;
 	default:
-		error("received spurious message type: %d",
-		      msg->msg_type);
+		error("received spurious message type: %s",
+		      rpc_num2string(msg->msg_type));
 		break;
 	}
 	return;

@@ -735,8 +735,8 @@ static int _init_new_scope_dbus(char *scope_path)
 			 * the unit will also terminate.
 			 */
 			if (cgroup_dbus_abandon_scope(scope_path))
-				error("Cannot abandon cgroup scope %s",
-				      scope_path);
+				log_flag(CGROUP, "Cannot abandon cgroup scope %s",
+					 scope_path);
 			else
 				log_flag(CGROUP, "Abandoned scope %s",
 					 scope_path);
@@ -1034,7 +1034,7 @@ extern int init(void)
 
 	/*
 	 * Check available controllers in cgroup.controller, record them in our
-	 * bitmap and enable them if CgroupAutomountOption is set.
+	 * bitmap and enable them if EnableControllers option is set.
 	 * We enable them manually just because we support CgroupIgnoreSystemd
 	 * option. Theorically when starting a unit with Delegate=yes, you will
 	 * get all controllers available at your level.
@@ -1073,9 +1073,6 @@ extern int init(void)
 		if (_init_stepd_system_scope(getpid()) != SLURM_SUCCESS)
 			return SLURM_ERROR;
 	}
-
-	/* In cgroup/v2 the entire cgroup tree is owned by root. */
-	slurm_cgroup_conf.root_owned_cgroups = true;
 
 	/*
 	 * If we're slurmd we're all set and able to constrain things, i.e.
@@ -1376,7 +1373,7 @@ extern int cgroup_p_step_get_pids(pid_t **pids, int *npids)
 }
 
 /* Freeze the user processes of this step */
-extern int cgroup_p_step_suspend()
+extern int cgroup_p_step_suspend(void)
 {
 	/* This plugin is unloaded. */
 	if (!int_cg[CG_LEVEL_STEP_USER].path)
@@ -1392,7 +1389,7 @@ extern int cgroup_p_step_suspend()
 }
 
 /* Resume the user processes of this step */
-extern int cgroup_p_step_resume()
+extern int cgroup_p_step_resume(void)
 {
 	/* This plugin is unloaded. */
 	if (!int_cg[CG_LEVEL_STEP_USER].path)
@@ -1908,7 +1905,7 @@ fail:
 	return NULL;
 }
 
-extern int cgroup_p_step_start_oom_mgr()
+extern int cgroup_p_step_start_oom_mgr(void)
 {
 	/* Just return, no need to start anything. */
 	return SLURM_SUCCESS;
@@ -2029,12 +2026,11 @@ extern int cgroup_p_task_addto(cgroup_ctl_type_t ctl, stepd_step_rec_t *step,
 
 extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 {
-	char *cpu_stat = NULL, *memory_stat = NULL, *memory_swap_current = NULL;
+	char *cpu_stat = NULL, *memory_stat = NULL, *memory_current = NULL;
 	char *ptr;
 	size_t tmp_sz = 0;
 	cgroup_acct_t *stats = NULL;
 	task_cg_info_t *task_cg_info;
-	uint64_t tmp = 0;
 
 	if (!(task_cg_info = list_find_first(task_list, _find_task_cg_info,
 					     &task_id))) {
@@ -2059,6 +2055,17 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 	}
 
 	if (common_cgroup_get_param(&task_cg_info->task_cg,
+				    "memory.current",
+				    &memory_current,
+				    &tmp_sz) != SLURM_SUCCESS) {
+		if (task_id == task_special_id)
+			log_flag(CGROUP, "Cannot read task_special memory.current file");
+		else
+			log_flag(CGROUP, "Cannot read task %d memory.current file",
+				 task_id);
+	}
+
+	if (common_cgroup_get_param(&task_cg_info->task_cg,
 				    "memory.stat",
 				    &memory_stat,
 				    &tmp_sz) != SLURM_SUCCESS) {
@@ -2069,27 +2076,15 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 				 task_id);
 	}
 
-	if (common_cgroup_get_param(&task_cg_info->task_cg,
-				    "memory.swap.current",
-				    &memory_swap_current,
-				    &tmp_sz) != SLURM_SUCCESS) {
-		if (task_id == task_special_id)
-			log_flag(CGROUP, "Cannot read task_special memory.swap.current file");
-		else
-			log_flag(CGROUP, "Cannot read task %d memory.swap.current file",
-				 task_id);
-	}
-
 	/*
 	 * Initialize values. A NO_VAL64 will indicate the caller that something
-	 * happened here.
+	 * happened here. Values that aren't set here are returned as 0.
 	 */
 	stats = xmalloc(sizeof(*stats));
 	stats->usec = NO_VAL64;
 	stats->ssec = NO_VAL64;
 	stats->total_rss = NO_VAL64;
 	stats->total_pgmajfault = NO_VAL64;
-	stats->total_vmem = NO_VAL64;
 
 	if (cpu_stat) {
 		ptr = xstrstr(cpu_stat, "user_usec");
@@ -2106,62 +2101,19 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 
 	/*
 	 * In cgroup/v1, total_rss was the hierarchical sum of # of bytes of
-	 * anonymous and swap cache memory (including transparent huge pages),
-	 * so let's make the sum here to make the same thing. In v2 anon_thp
-	 * are included in anon.
+	 * anonymous and swap cache memory (including transparent huge pages).
 	 *
-	 * In cgroup/v2 we could use memory.current, but that includes all the
-	 * memory the app has touched. We opt here to do a more fine-grain
-	 * calculation reading different fields.
-	 *
-	 * It is possible that some of the fields do not exist, for example if
-	 * swap is not enabled the swapcached value won't exist, in that case
-	 * we won't take it into account.
+	 * In cgroup/v2 we use memory.current which includes all the
+	 * memory the app has touched. Using this value makes it consistent with
+	 * the OOM killer limit.
 	 */
+	if (memory_current) {
+		if (sscanf(memory_current, "%"PRIu64, &stats->total_rss) != 1)
+			error("Cannot parse memory.current file");
+		xfree(memory_current);
+	}
+
 	if (memory_stat) {
-		ptr = xstrstr(memory_stat, "anon");
-		if (ptr &&
-		    (sscanf(ptr, "anon %"PRIu64, &stats->total_rss) != 1))
-			error("Cannot parse anon field in memory.stat file");
-
-		ptr = xstrstr(memory_stat, "swapcached");
-		if (ptr && (sscanf(ptr, "swapcached %"PRIu64, &tmp) != 1))
-			log_flag(CGROUP, "Cannot parse swapcached field in memory.stat file");
-		else
-			stats->total_rss += tmp;
-
-		/*
-		 * Don't add more fields here.
-		 * We need swapcached tmp value below.
-		 */
-
-		if (stats->total_rss != NO_VAL64) {
-			stats->total_vmem = stats->total_rss;
-
-			/* Remove swap cache from VMem before adding all swap */
-			if (tmp != NO_VAL64)
-				stats->total_vmem -= tmp;
-
-			ptr = xstrstr(memory_stat, "file");
-			if (ptr && (sscanf(ptr, "file %"PRIu64, &tmp) != 1))
-				log_flag(CGROUP, "Cannot parse file field in memory.stat file");
-			else
-				stats->total_vmem += tmp;
-
-			if (memory_swap_current) {
-				if (sscanf(memory_swap_current,
-					   "%"PRIu64, &tmp) != 1)
-					log_flag(CGROUP, "Cannot parse file memory.swap.current file");
-				else
-					stats->total_vmem += tmp;
-			}
-		}
-
-		/*
-		 * Future: we can add more here or do a more fine-grain control
-		 * with shmem or others depending on NoShare or UsePSS.
-		 */
-
 		ptr = xstrstr(memory_stat, "pgmajfault");
 		if (ptr && (sscanf(ptr, "pgmajfault %"PRIu64,
 				   &stats->total_pgmajfault) != 1))
@@ -2169,7 +2121,6 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
 		xfree(memory_stat);
 	}
 
-	xfree(memory_swap_current);
 	return stats;
 }
 
@@ -2177,7 +2128,7 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t task_id)
  * Return conversion units used for stats gathered from cpuacct.
  * Dividing the provided data by this number will give seconds.
  */
-extern long int cgroup_p_get_acct_units()
+extern long int cgroup_p_get_acct_units(void)
 {
 	/* usec and ssec from cpuacct.stat are provided in micro-seconds. */
 	return (long int)USEC_IN_SEC;

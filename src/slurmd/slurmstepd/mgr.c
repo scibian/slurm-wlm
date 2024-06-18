@@ -48,6 +48,7 @@
 #endif
 
 #include <grp.h>
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <pwd.h>
@@ -55,7 +56,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
@@ -103,18 +103,17 @@
 #include "src/interfaces/jobacct_gather.h"
 #include "src/interfaces/mpi.h"
 #include "src/interfaces/proctrack.h"
-#include "src/interfaces/select.h"
 #include "src/interfaces/switch.h"
 #include "src/interfaces/task.h"
 
 #include "src/slurmd/common/fname.h"
+#include "src/slurmd/common/privileges.h"
 #include "src/slurmd/common/set_oomadj.h"
 #include "src/slurmd/common/slurmd_cgroup.h"
 #include "src/slurmd/common/xcpuinfo.h"
 
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/io.h"
-#include "src/slurmd/slurmstepd/mgr.h"
 #include "src/slurmd/slurmstepd/pam_ses.h"
 #include "src/slurmd/slurmstepd/pdebug.h"
 #include "src/slurmd/slurmstepd/req.h"
@@ -133,7 +132,7 @@ step_complete_t step_complete = {
 	-1,
 	-1,
 	-1,
-	{},
+	(char *)NULL,
 	-1,
 	-1,
 	true,
@@ -168,7 +167,6 @@ static int  _slurmd_job_log_init(stepd_step_rec_t *step);
 static void _wait_for_io(stepd_step_rec_t *step);
 static int  _send_exit_msg(stepd_step_rec_t *step, uint32_t *tid, int n,
 			   int status);
-static void _set_job_state(stepd_step_rec_t *step, slurmstepd_state_t new_state);
 static void _wait_for_all_tasks(stepd_step_rec_t *step);
 static int  _wait_for_any_task(stepd_step_rec_t *step, bool waitflag);
 
@@ -193,7 +191,7 @@ static int    _send_complete_batch_script_msg(stepd_step_rec_t *step,
  */
 extern stepd_step_rec_t *
 mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
-		       slurm_addr_t *self, uint16_t protocol_version)
+		       uint16_t protocol_version)
 {
 	stepd_step_rec_t *step = NULL;
 
@@ -210,7 +208,6 @@ mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg, slurm_addr_t *cli,
 	}
 
 	step->envtp->cli = cli;
-	step->envtp->self = self;
 	step->accel_bind_type = msg->accel_bind_type;
 	step->tres_bind = xstrdup(msg->tres_bind);
 	step->tres_freq = xstrdup(msg->tres_freq);
@@ -374,6 +371,11 @@ batch_finish(stepd_step_rec_t *step, int rc)
 	} else if (step->step_id.step_id == SLURM_BATCH_SCRIPT) {
 		verbose("job %u completed with slurm_rc = %d, job_rc = %d",
 			step->step_id.job_id, rc, step_complete.step_rc);
+
+		/* if launch failed, make sure to tag step as failed too */
+		if (!step_complete.step_rc && rc)
+			step_complete.step_rc = rc;
+
 		_send_complete_batch_script_msg(
 			step, rc, step_complete.step_rc);
 	} else {
@@ -414,12 +416,7 @@ mgr_launch_batch_job_setup(batch_job_launch_msg_t *msg, slurm_addr_t *cli)
 	if (_make_batch_script(msg, step))
 		goto cleanup;
 
-	/* this is the new way of setting environment variables */
 	env_array_for_batch_job(&step->env, msg, conf->node_name);
-
-	/* this is the old way of setting environment variables (but
-	 * needed) */
-	step->envtp->overcommit = msg->overcommit;
 
 	return step;
 
@@ -610,14 +607,17 @@ _send_exit_msg(stepd_step_rec_t *step, uint32_t *tid, int n, int status)
 	ListIterator    i       = NULL;
 	srun_info_t    *srun    = NULL;
 
-	debug3("sending task exit msg for %d tasks status %d oom %d",
-	       n, status, step->oom_error);
+	debug3("%s: sending task exit msg for %d tasks (oom:%s exit_status:%s",
+	       __func__, n, (step->oom_error ? "true" : "false"),
+	       slurm_strerror(status));
 
 	memset(&msg, 0, sizeof(msg));
 	msg.task_id_list	= tid;
 	msg.num_tasks		= n;
 	if (step->oom_error)
 		msg.return_code = SIG_OOM;
+	else if (WIFSIGNALED(status) && (step->flags & LAUNCH_NO_SIG_FAIL))
+		msg.return_code = SLURM_SUCCESS;
 	else
 		msg.return_code = status;
 
@@ -713,8 +713,6 @@ _one_step_complete_msg(stepd_step_rec_t *step, int first, int last)
 	int i;
 	static bool acct_sent = false;
 
-	debug2("_one_step_complete_msg: first=%d, last=%d", first, last);
-
 	if (step->batch) {	/* Nested batch step anomalies */
 		if (first == -1)
 			first = 0;
@@ -745,11 +743,15 @@ _one_step_complete_msg(stepd_step_rec_t *step, int first, int last)
 		acct_sent = true;
 	}
 	/*********************************************/
+
+	debug2("%s: ranks=%d-%d parent_rank=%d step_rc[0x%x]=%s",
+	       __func__, first, last, step_complete.parent_rank, msg.step_rc,
+	       slurm_strerror(msg.step_rc));
+
 	slurm_msg_t_init(&req);
 	slurm_msg_set_r_uid(&req, slurm_conf.slurmd_user_id);
 	req.msg_type = REQUEST_STEP_COMPLETE;
 	req.data = &msg;
-	req.address = step_complete.parent_addr;
 
 	/* Do NOT change this check to "step_complete.rank != 0", because
 	 * there are odd situations where SlurmUser or root could
@@ -757,14 +759,23 @@ _one_step_complete_msg(stepd_step_rec_t *step, int first, int last)
 	 * can be built with out the hostlist from the credential.
 	 */
 	if (step_complete.parent_rank != -1) {
-		debug3("Rank %d sending complete to rank %d, range %d to %d",
+		debug3("Rank %d sending complete to rank %d(%s), range %d to %d",
 		       step_complete.rank, step_complete.parent_rank,
-		       first, last);
+		       step_complete.parent_name, first, last);
 		/* On error, pause then try sending to parent again.
 		 * The parent slurmstepd may just not have started yet, because
 		 * of the way that the launch message forwarding works.
 		 */
-		for (i = 0; i < REVERSE_TREE_PARENT_RETRY; i++) {
+		if (slurm_conf_get_addr(step_complete.parent_name, &req.address,
+					0)) {
+			i = REVERSE_TREE_PARENT_RETRY;
+			error("%s: failed getting address for parent NodeName %s (parent rank %d)",
+			      __func__, step_complete.parent_name,
+			      step_complete.parent_rank);
+		} else
+			i = 0;
+
+		for (; i < REVERSE_TREE_PARENT_RETRY; i++) {
 			if (i)
 				sleep(1);
 			retcode = slurm_send_recv_rc_msg_only_one(&req, &rc, 0);
@@ -897,7 +908,7 @@ extern void stepd_send_step_complete_msgs(stepd_step_rec_t *step)
 	slurm_mutex_unlock(&step_complete.lock);
 }
 
-static void _set_job_state(stepd_step_rec_t *step, slurmstepd_state_t new_state)
+extern void set_job_state(stepd_step_rec_t *step, slurmstepd_state_t new_state)
 {
 	slurm_mutex_lock(&step->state_mutex);
 	step->state = new_state;
@@ -992,6 +1003,7 @@ static void *_x11_signal_handler(void *arg)
 static int _set_xauthority(stepd_step_rec_t *step)
 {
 	struct priv_state sprivs = { 0 };
+	int rc = SLURM_SUCCESS;
 
 	if (drop_privileges(step, true, &sprivs, false) < 0) {
 		error("%s: Unable to drop privileges before xauth", __func__);
@@ -1001,7 +1013,7 @@ static int _set_xauthority(stepd_step_rec_t *step)
 	if (x11_set_xauth(step->x11_xauthority, step->x11_magic_cookie,
 			  step->x11_display)) {
 		error("%s: failed to run xauth", __func__);
-		return SLURM_ERROR;
+		rc =  SLURM_ERROR;
 	}
 
 	if (reclaim_privileges(&sprivs) < 0) {
@@ -1009,7 +1021,7 @@ static int _set_xauthority(stepd_step_rec_t *step)
 		return SLURM_ERROR;
 	}
 
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 static int _spawn_job_container(stepd_step_rec_t *step)
@@ -1039,7 +1051,7 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 	if (spank_init(step) < 0) {
 		error("%s: Plugin stack initialization failed.", __func__);
 		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn();
+		close_slurmd_conn(SLURM_PLUGIN_NAME_INVALID);
 		return SLURM_PLUGIN_NAME_INVALID;
 	}
 	debug2("%s: After call to spank_init()", __func__);
@@ -1112,8 +1124,8 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 		}
 
 		if (rc != SLURM_SUCCESS) {
-			_set_job_state(step, SLURMSTEPD_STEP_ENDING);
-			close_slurmd_conn();
+			set_job_state(step, SLURMSTEPD_STEP_ENDING);
+			close_slurmd_conn(rc);
 			goto fail1;
 		}
 	}
@@ -1134,11 +1146,11 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 		sleep(1);
 		_exit(0);
 	} else if (pid < 0) {
+		rc = errno;
 		error("fork: %m");
-		_set_job_state(step, SLURMSTEPD_STEP_ENDING);
-		rc = SLURM_ERROR;
+		set_job_state(step, SLURMSTEPD_STEP_ENDING);
 		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn();
+		close_slurmd_conn(rc);
 		goto fail1;
 	}
 
@@ -1150,7 +1162,7 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 		killpg(pid, SIGKILL);
 		kill(pid, SIGKILL);
 		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn();
+		close_slurmd_conn(rc);
 		goto fail1;
 	}
 
@@ -1161,15 +1173,36 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 	jobacct_gather_add_task(pid, &jobacct_id, 1);
 	container_g_add_cont(jobid, step->cont_id);
 
-	_set_job_state(step, SLURMSTEPD_STEP_RUNNING);
+	set_job_state(step, SLURMSTEPD_STEP_RUNNING);
 	if (!slurm_conf.job_acct_gather_freq)
 		jobacct_gather_stat_task(0, true);
 
-	if (spank_task_post_fork(step, -1) < 0)
+	if (spank_task_post_fork(step, -1) < 0) {
 		error("spank extern task post-fork failed");
+		rc = SLURM_ERROR;
 
-	/* let the slurmd know we actually are done with the setup */
-	close_slurmd_conn();
+		/*
+		 * Failure before the tasks have even started, so we will need
+		 * to mark all of them as failed unless there is already an
+		 * error present to avoid slurmctld from thinking this was a
+		 * slurmd issue and the step just landed on an unhealthy node.
+		 */
+		slurm_mutex_lock(&step_complete.lock);
+		if (!step_complete.step_rc)
+			step_complete.step_rc = rc;
+		slurm_mutex_unlock(&step_complete.lock);
+
+		for (uint32_t i = 0; i < step->node_tasks; i++)
+			if (step->task[i]->estatus <= 0)
+				step->task[i]->estatus = W_EXITCODE(1, 0);
+	}
+
+	/*
+	 * Tell slurmd the setup status; slurmd will handle a failure and
+	 * cleanup the sleep task launched above, so we do not need to do
+	 * anything special here to handle a setup failure.
+	 */
+	close_slurmd_conn(rc);
 
 	while ((wait4(pid, &status, 0, &rusage) < 0) && (errno == EINTR)) {
 		;	       /* Wait until above process exits from signal */
@@ -1192,7 +1225,7 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 	/* Call the other plugins to clean up
 	 * the cgroup hierarchy.
 	 */
-	_set_job_state(step, SLURMSTEPD_STEP_ENDING);
+	set_job_state(step, SLURMSTEPD_STEP_ENDING);
 	step_terminate_monitor_start(step);
 	proctrack_g_signal(step->cont_id, SIGKILL);
 	proctrack_g_wait(step->cont_id);
@@ -1236,10 +1269,19 @@ fail1:
 		error("spank_fini failed");
 	debug2("%s: After call to spank_fini()", __func__);
 
-	_set_job_state(step, SLURMSTEPD_STEP_ENDING);
+	set_job_state(step, SLURMSTEPD_STEP_ENDING);
 
 	if (step_complete.rank > -1)
 		stepd_wait_for_children_slurmstepd(step);
+
+	/*
+	 * Step failed outside of the exec()ed tasks, make sure to tell
+	 * slurmctld about it to avoid the user not knowing about a
+	 * failure.
+	 */
+	if (rc && !step_complete.step_rc)
+		step_complete.step_rc = rc;
+
 	stepd_send_step_complete_msgs(step);
 
 	return rc;
@@ -1394,7 +1436,7 @@ job_manager(stepd_step_rec_t *step)
 
 	/* Send step launch response with list of pids */
 	_send_launch_resp(step, 0);
-	_set_job_state(step, SLURMSTEPD_STEP_RUNNING);
+	set_job_state(step, SLURMSTEPD_STEP_RUNNING);
 
 #ifdef PR_SET_DUMPABLE
 	/* RHEL6 requires setting "dumpable" flag AGAIN; after euid changes */
@@ -1409,7 +1451,7 @@ job_manager(stepd_step_rec_t *step)
 	_wait_for_all_tasks(step);
 	acct_gather_profile_endpoll();
 	acct_gather_profile_g_node_step_end();
-	_set_job_state(step, SLURMSTEPD_STEP_ENDING);
+	set_job_state(step, SLURMSTEPD_STEP_ENDING);
 
 fail3:
 	if (!step->batch && (step->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
@@ -1429,7 +1471,7 @@ fail2:
 	 * terminated before the switch window can be released by
 	 * switch_g_job_postfini().
 	 */
-	_set_job_state(step, SLURMSTEPD_STEP_ENDING);
+	set_job_state(step, SLURMSTEPD_STEP_ENDING);
 	step_terminate_monitor_start(step);
 	if (step->cont_id != 0) {
 		proctrack_g_signal(step->cont_id, SIGKILL);
@@ -1506,7 +1548,7 @@ fail1:
 	/* If interactive job startup was abnormal,
 	 * be sure to notify client.
 	 */
-	_set_job_state(step, SLURMSTEPD_STEP_ENDING);
+	set_job_state(step, SLURMSTEPD_STEP_ENDING);
 	if (rc != 0) {
 		error("%s: exiting abnormally: %s",
 		      __func__, slurm_strerror(rc));
@@ -1518,12 +1560,17 @@ fail1:
 			info("job_manager exiting with aborted job");
 		else
 			stepd_wait_for_children_slurmstepd(step);
+
+		/*
+		 * Step failed outside of the exec()ed tasks, make sure to tell
+		 * slurmctld about it to avoid the user not knowing about a
+		 * failure.
+		 */
+		if (rc && !step_complete.step_rc)
+			step_complete.step_rc = rc;
+
 		stepd_send_step_complete_msgs(step);
 	}
-
-	if (!step->batch && (step->step_id.step_id != SLURM_INTERACTIVE_STEP)
-	    && core_spec_g_clear(step->cont_id))
-		error("core_spec_g_clear: %m");
 
 	return(rc);
 }
@@ -1678,17 +1725,30 @@ static int exec_wait_signal_child (struct exec_wait_info *e)
 {
 	char c = '\0';
 
-	if (write (e->parentfd, &c, sizeof (c)) != 1)
-		return error ("write to unblock task %d failed: %m", e->id);
+	safe_write(e->parentfd, &c, sizeof(c));
 
-	return (0);
+	return SLURM_SUCCESS;
+rwfail:
+	error("%s: write(fd:%d) to unblock task %d failed",
+		      __func__, e->parentfd, e->id);
+
+	return SLURM_ERROR;
 }
 
 static int exec_wait_signal (struct exec_wait_info *e, stepd_step_rec_t *step)
 {
 	debug3 ("Unblocking %ps task %d, writefd = %d",
 		&step->step_id, e->id, e->parentfd);
-	exec_wait_signal_child (e);
+
+	if (exec_wait_signal_child(e) != SLURM_SUCCESS) {
+		/*
+		 * can't unblock the task so it must have errored out already
+		 */
+		if (!step->task[e->id]->estatus)
+			step->task[e->id]->estatus = W_EXITCODE(1, 0);
+		step->task[e->id]->exited = true;
+	}
+
 	return (0);
 }
 
@@ -1813,7 +1873,10 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 	/*
 	 * Reclaim privileges to do the io setup
 	 */
-	reclaim_privileges(&sprivs);
+	if (reclaim_privileges(&sprivs) < 0) {
+		error("Unable to reclaim privileges");
+		/* Don't bother erroring out here */
+	}
 	if (rc)
 		goto fail1; /* pam_setup error */
 
@@ -1887,6 +1950,14 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 	if (spank_user (step) < 0) {
 		error("spank_user failed.");
 		rc = SLURM_ERROR;
+
+		step->task[0]->estatus = W_EXITCODE(1, 0);
+		step->task[0]->exited = true;
+		slurm_mutex_lock(&step_complete.lock);
+		if (!step_complete.step_rc)
+			step_complete.step_rc = rc;
+		slurm_mutex_unlock(&step_complete.lock);
+
 		goto fail4;
 	}
 
@@ -1908,6 +1979,8 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 			rc = SLURM_ERROR;
 			goto fail4;
 		} else if ((pid = _exec_wait_get_pid(ei)) == 0) { /* child */
+			int rc;
+
 			/*
 			 *  Destroy exec_wait_list in the child.
 			 *   Only exec_wait_info for previous tasks have been
@@ -1930,9 +2003,9 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 			 * NOTE: Only put things in here that are self contained
 			 * and belong in the child.
 			 */
-			if (_pre_task_child_privileged(step, i, &sprivs) < 0)
-				_exit(1);
-
+			if ((rc = _pre_task_child_privileged(step, i, &sprivs)))
+				fatal("%s: _pre_task_child_privileged() failed: %s",
+				      __func__, slurm_strerror(rc));
 
  			if (_become_user(step, &sprivs) < 0) {
  				error("_become_user failed: %m");
@@ -2038,7 +2111,7 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 		 * Affinity must be set after cgroup is set, or moving pids from
 		 * one cgroup to another will reset affinity.
 		 */
-		if (task_g_pre_launch_priv(step, i) < 0) {
+		if (task_g_pre_launch_priv(step, i, jobacct_id.taskid) < 0) {
 			error("task_g_set_affinity: %m");
 			rc = SLURM_ERROR;
 			goto fail2;
@@ -2047,6 +2120,23 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 		if (spank_task_post_fork (step, i) < 0) {
 			error ("spank task %d post-fork failed", i);
 			rc = SLURM_ERROR;
+
+			/*
+			 * Failure before the tasks have even started, so we
+			 * will need to mark all of them as failed unless there
+			 * is already an error present to avoid slurmctld from
+			 * thinking this was a slurmd issue and the step just
+			 * landed on an unhealthy node.
+			 */
+			slurm_mutex_lock(&step_complete.lock);
+			if (!step_complete.step_rc)
+				step_complete.step_rc = rc;
+			slurm_mutex_unlock(&step_complete.lock);
+
+			if (step->task[i]->estatus <= 0)
+				step->task[i]->estatus = W_EXITCODE(1, 0);
+			step->task[i]->exited = true;
+
 			goto fail2;
 		}
 	}
@@ -2091,7 +2181,10 @@ fail4:
 		error ("Unable to return to working directory");
 	}
 fail3:
-	reclaim_privileges (&sprivs);
+	if (reclaim_privileges(&sprivs) < 0) {
+		error("Unable to reclaim privileges");
+		/* Don't bother erroring out here */
+	}
 fail2:
 	FREE_NULL_LIST(exec_wait_list);
 	io_close_task_fds(step);
@@ -2137,7 +2230,8 @@ extern int stepd_send_pending_exit_msgs(stepd_step_rec_t *step)
 	}
 
 	if (nsent) {
-		debug2("Aggregated %d task exit messages", nsent);
+		debug2("%s: aggregated %d task exit messages (rc=[0x%x]:%s)",
+		       __func__, nsent, status, slurm_strerror(status));
 		_send_exit_msg(step, tid, nsent, status);
 	}
 	xfree(tid);
@@ -2299,6 +2393,15 @@ _wait_for_any_task(stepd_step_rec_t *step, bool waitflag)
 			rc = task_g_post_term(step, t);
 			if (rc == ENOMEM)
 				step->oom_error = true;
+			else if (rc && !t->estatus)
+				t->estatus = rc;
+
+			if (t->estatus) {
+				slurm_mutex_lock(&step_complete.lock);
+				if (!step_complete.step_rc)
+					step_complete.step_rc = t->estatus;
+				slurm_mutex_unlock(&step_complete.lock);
+			}
 		}
 
 	} while ((pid > 0) && !waitflag);
@@ -2383,7 +2486,7 @@ _wait_for_io(stepd_step_rec_t *step)
 static char *
 _make_batch_dir(stepd_step_rec_t *step)
 {
-	char path[MAXPATHLEN];
+	char path[PATH_MAX];
 
 	if (step->step_id.step_id == SLURM_BATCH_SCRIPT)
 		snprintf(path, sizeof(path), "%s/job%05u",
@@ -2463,7 +2566,7 @@ static int _make_batch_script(batch_job_launch_msg_t *msg,
 
 	munmap(output, length);
 
-	if (chown(script, (uid_t) msg->uid, (gid_t) -1) < 0) {
+	if (chown(script, step->uid, (gid_t) -1) < 0) {
 		error("chown(%s): %m", script);
 		goto error;
 	}
@@ -2477,23 +2580,16 @@ error:
 	return SLURM_ERROR;
 }
 
-extern int stepd_drain_node(char *reason)
+extern void stepd_drain_node(char *reason)
 {
-	slurm_msg_t req_msg;
 	update_node_msg_t update_node_msg;
 
 	slurm_init_update_node_msg(&update_node_msg);
 	update_node_msg.node_names = conf->node_name;
 	update_node_msg.node_state = NODE_STATE_DRAIN;
 	update_node_msg.reason = reason;
-	slurm_msg_t_init(&req_msg);
-	req_msg.msg_type = REQUEST_UPDATE_NODE;
-	req_msg.data = &update_node_msg;
 
-	if (slurm_send_only_controller_msg(&req_msg, working_cluster_rec) < 0)
-		return SLURM_ERROR;
-
-	return SLURM_SUCCESS;
+	(void) slurm_update_node(&update_node_msg);
 }
 
 static void
@@ -2504,6 +2600,8 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	launch_tasks_response_msg_t resp;
 	int nodeid;
 	char *name = NULL;
+	slurm_cred_arg_t *cred;
+	uid_t launch_uid = SLURM_AUTH_NOBODY;
 
 	/*
 	 * The extern step can get here if something goes wrong starting the
@@ -2524,6 +2622,12 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	nodeid = 0;
 	name = xstrdup(msg->complete_nodelist);
 #endif
+
+	/* Need to fetch the step uid to restrict the response appropriately */
+	cred = slurm_cred_get_args(msg->cred);
+	launch_uid = cred->uid;
+	slurm_cred_unlock_args(msg->cred);
+
 	debug ("sending launch failure message: %s", slurm_strerror (rc));
 
 	slurm_msg_t_init(&resp_msg);
@@ -2533,7 +2637,7 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	resp_msg.data = &resp;
 	resp_msg.msg_type = RESPONSE_LAUNCH_TASKS;
 	resp_msg.protocol_version = protocol_version;
-	slurm_msg_set_r_uid(&resp_msg, msg->uid);
+	slurm_msg_set_r_uid(&resp_msg, launch_uid);
 
 	memcpy(&resp.step_id, &msg->step_id, sizeof(resp.step_id));
 
@@ -2638,89 +2742,6 @@ _send_complete_batch_script_msg(stepd_step_rec_t *step, int err, int status)
 
 	return SLURM_SUCCESS;
 }
-
-/* If get_list is false make sure ps->gid_list is initialized before
- * hand to prevent xfree.
- */
-extern int drop_privileges(stepd_step_rec_t *step, bool do_setuid,
-			   struct priv_state *ps, bool get_list)
-{
-	auth_setuid_lock();
-	ps->saved_uid = getuid();
-	ps->saved_gid = getgid();
-
-	if (!getcwd (ps->saved_cwd, sizeof (ps->saved_cwd))) {
-		error ("Unable to get current working directory: %m");
-		strlcpy(ps->saved_cwd, "/tmp", sizeof(ps->saved_cwd));
-	}
-
-	ps->ngids = getgroups(0, NULL);
-	if (ps->ngids == -1) {
-		error("%s: getgroups(): %m", __func__);
-		return -1;
-	}
-	if (get_list) {
-		ps->gid_list = xcalloc(ps->ngids, sizeof(gid_t));
-
-		if (getgroups(ps->ngids, ps->gid_list) == -1) {
-			error("%s: couldn't get %d groups: %m",
-			      __func__, ps->ngids);
-			xfree(ps->gid_list);
-			return -1;
-		}
-	}
-
-	/*
-	 * No need to drop privileges if we're not running as root
-	 */
-	if (getuid() != (uid_t) 0)
-		return SLURM_SUCCESS;
-
-	if (setegid(step->gid) < 0) {
-		error("setegid: %m");
-		return -1;
-	}
-
-	if (setgroups(step->ngids, step->gids) < 0) {
-		error("setgroups: %m");
-		return -1;
-	}
-
-	if (do_setuid && seteuid(step->uid) < 0) {
-		error("seteuid: %m");
-		return -1;
-	}
-
-	return SLURM_SUCCESS;
-}
-
-extern int reclaim_privileges(struct priv_state *ps)
-{
-	int rc = SLURM_SUCCESS;
-
-	/*
-	 * No need to reclaim privileges if our uid == step->uid
-	 */
-	if (geteuid() == ps->saved_uid)
-		goto done;
-	else if (seteuid(ps->saved_uid) < 0) {
-		error("seteuid: %m");
-		rc = -1;
-	} else if (setegid(ps->saved_gid) < 0) {
-		error("setegid: %m");
-		rc = -1;
-	} else if (setgroups(ps->ngids, ps->gid_list) < 0) {
-		error("setgroups: %m");
-		rc = -1;
-	}
-
-done:
-	auth_setuid_unlock();
-	xfree(ps->gid_list);
-
-	return rc;
-}
-
 
 static int
 _slurmd_job_log_init(stepd_step_rec_t *step)
@@ -2910,14 +2931,14 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *step,
 
 #ifdef WITH_SELINUX
 		if (setexeccon(step->selinux_context)) {
-			error("Failed to set SELinux context to %s: %m",
+			error("Failed to set SELinux context to '%s': %m",
 			      step->selinux_context);
-			_exit(1);
+			_exit(127);
 		}
 #else
 		if (step->selinux_context) {
 			error("Built without SELinux support but context was specified");
-			_exit(1);
+			_exit(127);
 		}
 #endif
 
@@ -2925,13 +2946,13 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *step,
 		if (drop_privileges(step, true, &sprivs, false) < 0) {
 			error("run_script_as_user drop_privileges: %m");
 			/* child process, should not return */
-			exit(127);
+			_exit(127);
 		}
 
 		if (_become_user(step, &sprivs) < 0) {
 			error("run_script_as_user _become_user failed: %m");
 			/* child process, should not return */
-			exit(127);
+			_exit(127);
 		}
 
 		if (chdir(step->cwd) == -1)
@@ -2961,7 +2982,7 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *step,
 		_exit(127);
 	}
 
-	if (exec_wait_signal_child (ei) < 0)
+	if (exec_wait_signal_child (ei) != SLURM_SUCCESS)
 		error ("run_script_as_user: Failed to wakeup %s", name);
 	_exec_wait_info_destroy (ei);
 

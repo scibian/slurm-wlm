@@ -687,7 +687,7 @@ proc get_subtest_fail_count {} {
 #	reset_bash_prompt
 #
 # DESCRIPTION
-#	The procedure will normally be called within an expect body to
+#	The procedure must be called within an expect body to
 #	reset the bash prompt to the $test_prompt.
 #
 # EXAMPLE
@@ -709,7 +709,8 @@ proc get_subtest_fail_count {} {
 proc reset_bash_prompt {} {
 	global testsuite_dir
 
-	send "source $testsuite_dir/reset_bash_prompt.sh\n"
+	upvar spawn_id sid
+	send -i $sid "source $testsuite_dir/reset_bash_prompt.sh\n"
 }
 
 
@@ -2789,6 +2790,7 @@ proc wait_job_reason args {
 proc get_config args {
 	global sacctmgr scontrol
 
+	set config_dict [list]
 	set command "$scontrol"
 	while {[llength $args]} {
 		switch -glob -- [lindex $args 0] {
@@ -3277,7 +3279,7 @@ proc get_select_type_params { {partition ""} } {
 #
 # DESCRIPTION
 #	Determine if SelectType is equivalent to the passed one by also
-#	checking other_cons_res and other_cons_tres on SelectTypeParameters
+#	checking other_cons_tres on SelectTypeParameters
 #	in case that select/cray_aries is configured.
 #
 # ARGUMENTS
@@ -3298,12 +3300,7 @@ proc check_config_select { type } {
 	}
 	if {$select_type eq "select/cray_aries"} {
 		if {$type eq "linear" &&
-		    ![param_contains $select_type_parameters "other_cons_res"] &&
 		    ![param_contains $select_type_parameters "other_cons_tres"]} {
-			return true
-		}
-		if {$type eq "cons_res" &&
-		    [param_contains $select_type_parameters "other_cons_res"]} {
 			return true
 		}
 		if {$type eq "cons_tres" &&
@@ -4220,15 +4217,10 @@ proc get_nodes_by_state {{states ""} {partition ""}} {
 		set states "idle"
 	}
 
-	set output [run_command_output -fail "$sinfo -h -N -p $partition -o '%N|%t' -e"]
+	set output [run_command_output -fail "$sinfo -h -N -p $partition -o '%N' -e -t $states"]
 	foreach line [split $output "\n"] {
 		if {$line eq ""} { continue }
-		lassign [split $line |] node_name node_state
-		foreach requested_state [split $states ,] {
-			if {$node_state eq $requested_state} {
-				lappend node_list $node_name
-			}
-		}
+		lappend node_list $line
 	}
 
 	return $node_list
@@ -7189,7 +7181,7 @@ proc _test_init {} {
 
 	# Default precondition checks
 	if {![regexp "is UP" [run_command_output -nolog -none "$scontrol ping"]]} {
-		skip "The expect testsuite requires Slurm to be running, but 'scontrol ping' failed."
+		skip "The expect testsuite requires Slurm to be running, but '$scontrol ping' failed."
 	}
 	if {[llength [get_nodes_by_state]] < 1} {
 		skip "The expect testsuite requires there to be at least one idle node in the default partition."

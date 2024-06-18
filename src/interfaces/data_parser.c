@@ -37,8 +37,10 @@
 #include "config.h"
 
 #include "src/common/data.h"
+#include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
+#include "src/common/openapi.h"
 #include "src/common/read_config.h"
 #include "src/common/timers.h"
 #include "src/common/xassert.h"
@@ -57,6 +59,8 @@ struct data_parser_s {
 	/* arg returned by plugin init() */
 	void *arg;
 	const char *plugin_type; /* ptr to plugin plugin_type - do not xfree */
+	char *params; /* parameters from _new - must xfree */
+	char *plugin_string; /* plugin_type+params - must xfree */
 };
 
 typedef struct {
@@ -70,11 +74,17 @@ typedef struct {
 		     data_parser_on_error_t on_query_error, void *error_arg,
 		     data_parser_on_warn_t on_parse_warn,
 		     data_parser_on_warn_t on_dump_warn,
-		     data_parser_on_warn_t on_query_warn, void *warn);
+		     data_parser_on_warn_t on_query_warn, void *warn,
+		     char *params);
 	void (*free)(void *arg);
 	int (*assign)(void *arg, data_parser_attr_type_t type, void *obj);
 	int (*specify)(void *arg, data_t *dst);
 } parse_funcs_t;
+
+typedef struct {
+	char *plugin_type;
+	char *params;
+} plugin_param_t;
 
 /*
  * Must be synchronized with parse_funcs_t above.
@@ -92,13 +102,20 @@ static plugins_t *plugins = NULL;
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int active_parsers = 0;
 
+static const char *_get_plugin_version(const char *plugin_type);
+
 extern int data_parser_g_parse(data_parser_t *parser, data_parser_type_t type,
 			       void *dst, ssize_t dst_bytes, data_t *src,
 			       data_t *parent_path)
 {
-	const parse_funcs_t *funcs = plugins->functions[parser->plugin_offset];
+	const parse_funcs_t *funcs;
 	DEF_TIMERS;
 	int rc;
+
+	if (!parser)
+		return ESLURM_DATA_INVALID_PARSER;
+
+	funcs = plugins->functions[parser->plugin_offset];
 
 	if (!src || (data_get_type(src) == DATA_TYPE_NONE))
 		return ESLURM_DATA_PARSE_NOTHING;
@@ -123,7 +140,12 @@ extern int data_parser_g_dump(data_parser_t *parser, data_parser_type_t type,
 {
 	DEF_TIMERS;
 	int rc;
-	const parse_funcs_t *funcs = plugins->functions[parser->plugin_offset];
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return ESLURM_DATA_INVALID_PARSER;
+
+	funcs = plugins->functions[parser->plugin_offset];
 
 	xassert(data_get_type(dst));
 	xassert(type > DATA_PARSER_TYPE_INVALID);
@@ -140,6 +162,138 @@ extern int data_parser_g_dump(data_parser_t *parser, data_parser_type_t type,
 	return rc;
 }
 
+/* takes ownership of params */
+static data_parser_t *_new_parser(data_parser_on_error_t on_parse_error,
+				  data_parser_on_error_t on_dump_error,
+				  data_parser_on_error_t on_query_error,
+				  void *error_arg,
+				  data_parser_on_warn_t on_parse_warn,
+				  data_parser_on_warn_t on_dump_warn,
+				  data_parser_on_warn_t on_query_warn,
+				  void *warn_arg, int plugin_index,
+				  char *params)
+{
+	DEF_TIMERS;
+	const parse_funcs_t *funcs;
+	data_parser_t *parser = xmalloc(sizeof(*parser));
+
+	parser->magic = PARSE_MAGIC;
+
+	parser->plugin_offset = plugin_index;
+	parser->plugin_type = plugins->types[plugin_index];
+	parser->params = params;
+
+	START_TIMER;
+	funcs = plugins->functions[plugin_index];
+	parser->arg = funcs->new(on_parse_error, on_dump_error, on_query_error,
+				 error_arg, on_parse_warn, on_dump_warn,
+				 on_query_warn, warn_arg, params);
+	END_TIMER2(__func__);
+
+	slurm_mutex_lock(&init_mutex);
+	xassert(active_parsers >= 0);
+	active_parsers++;
+	slurm_mutex_unlock(&init_mutex);
+
+	return parser;
+}
+
+static plugin_param_t *_parse_plugin_type(const char *plugin_type)
+{
+	char *type, *last = NULL, *pl;
+	plugin_param_t *pparams = NULL;
+	int count = 0;
+
+	if (!plugin_type)
+		return NULL;
+
+	pl = xstrdup(plugin_type);
+	type = strtok_r(pl, ",", &last);
+	while (type) {
+		char *pl;
+		plugin_param_t *p;
+
+		xrecalloc(pparams, (count + 2), sizeof(*pparams));
+
+		p = &pparams[count];
+
+		if ((pl = xstrstr(type,
+				  SLURM_DATA_PARSER_PLUGIN_PARAMS_CHAR))) {
+			p->plugin_type = xstrndup(type, (pl - type));
+			p->params = xstrdup(pl);
+		} else {
+			p->plugin_type = xstrdup(type);
+		}
+
+		log_flag(DATA, "%s: plugin=%s params=%s",
+		       __func__, p->plugin_type, p->params);
+
+		count++;
+
+		type = strtok_r(NULL, ",", &last);
+	}
+
+	xfree(pl);
+	return pparams;
+}
+
+static int _load_plugins(plugin_param_t *pparams, plugrack_foreach_t listf,
+			 bool skip_loading)
+{
+	int rc = SLURM_SUCCESS;
+
+	if (skip_loading)
+		return rc;
+
+	slurm_mutex_lock(&init_mutex);
+
+	xassert(sizeof(parse_funcs_t) ==
+		(sizeof(void *) * ARRAY_SIZE(parse_syms)));
+
+	if (!pparams) {
+		rc = load_plugins(&plugins, PARSE_MAJOR_TYPE, NULL, listf,
+				  parse_syms, ARRAY_SIZE(parse_syms));
+	} else {
+		for (int i = 0; !rc && pparams[i].plugin_type; i++)
+			rc = load_plugins(&plugins, PARSE_MAJOR_TYPE,
+					  pparams[i].plugin_type, listf,
+					  parse_syms, ARRAY_SIZE(parse_syms));
+	}
+
+	xassert(rc || plugins);
+
+	slurm_mutex_unlock(&init_mutex);
+
+	return rc;
+}
+
+static int _find_plugin_by_type(const char *plugin_type)
+{
+	if (!plugin_type)
+		return -1;
+
+	/* quick match by pointer address */
+	for (int i = 0; i < plugins->count; i++) {
+		if (plugin_type == plugins->types[i])
+			return i;
+	}
+
+	/* match by full string */
+	for (int i = 0; i < plugins->count; i++) {
+		if (!xstrcasecmp(plugin_type, plugins->types[i]))
+			return i;
+	}
+
+	/* match by string without "data_parser/" */
+	for (int i = 0; i < plugins->count; i++) {
+		if (!xstrcasecmp(plugin_type,
+				 _get_plugin_version(plugins->types[i])))
+			return i;
+	}
+
+	return -1;
+}
+
 extern data_parser_t *data_parser_g_new(data_parser_on_error_t on_parse_error,
 					data_parser_on_error_t on_dump_error,
 					data_parser_on_error_t on_query_error,
@@ -151,69 +305,196 @@ extern data_parser_t *data_parser_g_new(data_parser_on_error_t on_parse_error,
 					plugrack_foreach_t listf,
 					bool skip_loading)
 {
-	DEF_TIMERS;
-	int rc = SLURM_SUCCESS, i;
-	const parse_funcs_t *funcs;
-	data_parser_t *parser = xmalloc(sizeof(*parser));
+	int rc, index;
+	char *params = NULL;
+	data_parser_t *parser = NULL;
+	plugin_param_t *pparams;
 
-	parser->magic = PARSE_MAGIC;
-
-	slurm_mutex_lock(&init_mutex);
-	xassert(active_parsers >= 0);
-
-	xassert(sizeof(parse_funcs_t) ==
-		sizeof(void *) * ARRAY_SIZE(parse_syms));
-
-	if (!skip_loading) {
-		rc = load_plugins(&plugins, PARSE_MAJOR_TYPE, plugin_type,
-				  listf, parse_syms, ARRAY_SIZE(parse_syms));
-		xassert(rc || plugins);
+	if (!xstrcasecmp(plugin_type, "list")) {
+		xassert(listf);
+		load_plugins(&plugins, PARSE_MAJOR_TYPE, plugin_type, listf,
+			     parse_syms, ARRAY_SIZE(parse_syms));
+		return NULL;
 	}
 
-	active_parsers++;
-	slurm_mutex_unlock(&init_mutex);
+	pparams = _parse_plugin_type(plugin_type);
 
-	if (rc) {
+	if (!pparams || !pparams[0].plugin_type) {
+		error("%s: invalid plugin %s", __func__, plugin_type);
+		goto cleanup;
+	}
+
+	if (pparams[1].plugin_type) {
+		error("%s: rejecting ambiguous plugin %s",
+		      __func__, plugin_type);
+		goto cleanup;
+	}
+
+	if ((rc = _load_plugins(pparams, listf, skip_loading))) {
 		error("%s: failure loading plugins: %s",
 		      __func__, slurm_strerror(rc));
-		goto fail;
+		goto cleanup;
 	}
 
-	//TODO: better matching and checks
-	for (i = 0; plugin_type && (i < plugins->count); i++) {
-		if (!xstrcasecmp(plugin_type, plugins->types[i]))
-			break;
+	if ((index = _find_plugin_by_type(pparams[0].plugin_type)) < 0) {
+		error("%s: unable to find plugin %s", __func__,
+		      pparams[0].plugin_type);
+		goto cleanup;
 	}
 
-	if (i == plugins->count) {
-		error("%s: plugin %s not found", __func__, plugin_type);
-		goto fail;
+	SWAP(params, pparams[0].params);
+
+	parser = _new_parser(on_parse_error, on_dump_error, on_query_error,
+			     error_arg, on_parse_warn, on_dump_warn,
+			     on_query_warn, warn_arg, index, params);
+cleanup:
+	if (pparams) {
+		for (int i = 0; pparams[i].plugin_type; i++) {
+			xfree(pparams[i].plugin_type);
+			xfree(pparams[i].params);
+		}
+		xfree(pparams);
 	}
-
-	parser->plugin_offset = i;
-	parser->plugin_type = plugins->types[i];
-
-	START_TIMER;
-	funcs = plugins->functions[i];
-	parser->arg = funcs->new(on_parse_error, on_dump_error, on_query_error,
-				 error_arg, on_parse_warn, on_dump_warn,
-				 on_query_warn, warn_arg);
-	END_TIMER2(__func__);
 
 	return parser;
-fail:
-	data_parser_g_free(parser, skip_loading);
+}
+
+extern data_parser_t **data_parser_g_new_array(
+	data_parser_on_error_t on_parse_error,
+	data_parser_on_error_t on_dump_error,
+	data_parser_on_error_t on_query_error,
+	void *error_arg,
+	data_parser_on_warn_t on_parse_warn,
+	data_parser_on_warn_t on_dump_warn,
+	data_parser_on_warn_t on_query_warn,
+	void *warn_arg,
+	const char *plugin_type,
+	plugrack_foreach_t listf,
+	bool skip_loading)
+{
+	int rc, i = 0;
+	data_parser_t **parsers = NULL;
+	plugin_param_t *pparams;
+
+	if (!xstrcasecmp(plugin_type, "list")) {
+		xassert(listf);
+		load_plugins(&plugins, PARSE_MAJOR_TYPE, plugin_type, listf,
+			     parse_syms, ARRAY_SIZE(parse_syms));
+		return NULL;
+	}
+
+	pparams = _parse_plugin_type(plugin_type);
+
+	if ((rc = _load_plugins(pparams, listf, skip_loading))) {
+		error("%s: failure loading plugins: %s",
+		      __func__, slurm_strerror(rc));
+		goto cleanup;
+	}
+
+	/* always allocate for all possible plugins */
+	parsers = xcalloc((plugins->count + 1), sizeof(*parsers));
+
+	if (pparams) {
+		for (; pparams[i].plugin_type; i++) {
+			int index =
+				_find_plugin_by_type(pparams[i].plugin_type);
+
+			if (index < 0) {
+				error("%s: unable to find plugin %s",
+				      __func__, pparams[i].plugin_type);
+				goto cleanup;
+			}
+
+			parsers[i] = _new_parser(on_parse_error, on_dump_error,
+						 on_query_error, error_arg,
+						 on_parse_warn, on_dump_warn,
+						 on_query_warn, warn_arg, index,
+						 pparams[i].params);
+
+			pparams[i].params = NULL;
+			xfree(pparams[i].plugin_type);
+		}
+	} else {
+		for (; i < plugins->count; i++) {
+			parsers[i] = _new_parser(on_parse_error, on_dump_error,
+						 on_query_error, error_arg,
+						 on_parse_warn, on_dump_warn,
+						 on_query_warn, warn_arg, i,
+						 NULL);
+		}
+	}
+
+	xfree(pparams);
+
+	return parsers;
+cleanup:
+	if (pparams) {
+		for (; pparams[i].plugin_type; i++) {
+			xfree(pparams[i].plugin_type);
+			xfree(pparams[i].params);
+		}
+		xfree(pparams);
+	}
+
+	if (plugins)
+		for (int j = 0; j < plugins->count; j++)
+			FREE_NULL_DATA_PARSER(parsers[j]);
+	xfree(parsers);
+
 	return NULL;
 }
 
 extern const char *data_parser_get_plugin(data_parser_t *parser)
 {
+	if (!parser)
+		return NULL;
+
+	xassert(parser->magic == PARSE_MAGIC);
+
+	/*
+	 * Generate string as requested using full plugin type where the
+	 * original request may not having included data_parser/
+	 */
+	if (!parser->plugin_string)
+		xstrfmtcat(parser->plugin_string, "%s%s", parser->plugin_type,
+			   (parser->params ? parser->params : ""));
+
+	return parser->plugin_string;
+}
+
+static const char *_get_plugin_version(const char *plugin_type)
+{
+	static const char prefix[] = PARSE_MAJOR_TYPE "/";
+
+#ifndef NDEBUG
+	/* catch if the prefix ever changes in an unexpected way */
+	const char *match;
+	xassert(plugin_type);
+	match = xstrstr(plugin_type, prefix);
+	xassert(match);
+#endif
+
+	return plugin_type + strlen(prefix);
+}
+
+extern const char *data_parser_get_plugin_version(data_parser_t *parser)
+{
 	xassert(!parser || parser->magic == PARSE_MAGIC);
 
-	if (parser)
-		return parser->plugin_type;
-	else
+	if (!parser)
 		return NULL;
+
+	return _get_plugin_version(parser->plugin_type);
+}
+
+extern const char *data_parser_get_plugin_params(data_parser_t *parser)
+{
+	xassert(!parser || parser->magic == PARSE_MAGIC);
+
+	if (!parser)
+		return NULL;
+
+	return parser->params;
 }
 
 extern void data_parser_g_free(data_parser_t *parser, bool skip_unloading)
@@ -238,6 +519,8 @@ extern void data_parser_g_free(data_parser_t *parser, bool skip_unloading)
 		funcs->free(parser->arg);
 	END_TIMER2(__func__);
 
+	xfree(parser->params);
+	xfree(parser->plugin_string);
 	parser->arg = NULL;
 	parser->plugin_offset = -1;
 	parser->magic = ~PARSE_MAGIC;
@@ -253,12 +536,28 @@ extern void data_parser_g_free(data_parser_t *parser, bool skip_unloading)
 	slurm_mutex_unlock(&init_mutex);
 }
 
+extern void data_parser_g_array_free(data_parser_t **ptr, bool skip_unloading)
+{
+	if (!ptr)
+		return;
+
+	for (int i = 0; ptr[i]; i++)
+		data_parser_g_free(ptr[i], skip_unloading);
+
+	xfree(ptr);
+}
+
 extern int data_parser_g_assign(data_parser_t *parser,
 				data_parser_attr_type_t type, void *obj)
 {
 	int rc;
 	DEF_TIMERS;
-	const parse_funcs_t *funcs = plugins->functions[parser->plugin_offset];
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return ESLURM_DATA_INVALID_PARSER;
+
+	funcs = plugins->functions[parser->plugin_offset];
 
 	xassert(parser);
 	xassert(plugins);
@@ -274,117 +573,196 @@ extern int data_parser_g_assign(data_parser_t *parser,
 	return rc;
 }
 
-static bool _dump_cli_stdout_on_error(void *arg, data_parser_type_t type,
-				      int error_code, const char *source,
-				      const char *why, ...)
+extern openapi_resp_meta_t *data_parser_cli_meta(int argc, char **argv,
+						 const char *mime_type,
+						 const char *data_parser)
+{
+	openapi_resp_meta_t *meta = xmalloc_nz(sizeof(*meta));
+	int tty;
+	char *parser = NULL;
+	char **argvnt = NULL;
+
+	/* need a new array with a NULL terminator */
+	if (argc > 0) {
+		argvnt = xcalloc(argc, sizeof(*argv));
+		memcpy(argvnt, argv, (sizeof(*argv) * (argc - 1)));
+	}
+
+	if (isatty(STDIN_FILENO))
+		tty = STDIN_FILENO;
+	else if (isatty(STDOUT_FILENO))
+		tty = STDOUT_FILENO;
+	else if (isatty(STDERR_FILENO))
+		tty = STDERR_FILENO;
+	else
+		tty = -1;
+
+	if (data_parser)
+		parser = xstrdup(data_parser);
+
+	*meta = (openapi_resp_meta_t) {
+		.plugin = {
+			.data_parser = parser,
+			.accounting_storage =
+				slurm_conf.accounting_storage_type,
+		},
+		.command = argvnt,
+		.client = {
+			.source = ((tty != -1) ? fd_resolve_path(tty) :
+				   NULL),
+			.uid = getuid(),
+			.gid = getgid(),
+		},
+		.slurm = {
+			.version = {
+				.major = xstrdup(SLURM_MAJOR),
+				.micro = xstrdup(SLURM_MICRO),
+				.minor = xstrdup(SLURM_MINOR),
+			},
+			.release = xstrdup(SLURM_VERSION_STRING),
+			.cluster = xstrdup(slurm_conf.cluster_name),
+		}
+	};
+
+	return meta;
+}
+
+static void _plugrack_foreach_list(const char *full_type, const char *fq_path,
+				   const plugin_handle_t id, void *arg)
+{
+	info("%s", full_type);
+}
+
+static bool _on_error(void *arg, data_parser_type_t type, int error_code,
+		      const char *source, const char *why, ...)
 {
 	va_list ap;
-	data_t *errors = arg;
-	data_t *e = data_set_dict(data_list_append(errors));
+	char *str;
+	data_parser_dump_cli_ctxt_t *ctxt = arg;
+	openapi_resp_error_t *e = NULL;
 
-	if (why) {
-		va_start(ap, why);
-		data_set_string_own(data_key_set(e, "description"),
-				    vxstrfmt(why, ap));
-		va_end(ap);
+	if (ctxt) {
+		xassert(ctxt->magic == DATA_PARSER_DUMP_CLI_CTXT_MAGIC);
+		xassert(ctxt->errors);
+
+		if (!ctxt->errors)
+			return false;
+
+		e = xmalloc(sizeof(*e));
+	}
+
+	va_start(ap, why);
+	str = vxstrfmt(why, ap);
+	va_end(ap);
+
+	if (str) {
+		error("%s: parser=%s rc[%d]=%s -> %s",
+		      (source ? source : __func__),
+		      (!ctxt ? "DEFAULT" : ctxt->data_parser),
+		      error_code, slurm_strerror(error_code), str);
+
+		if (e)
+			e->description = str;
 	}
 
 	if (error_code) {
-		data_set_int(data_key_set(e, "error_number"), error_code);
-		data_set_string(data_key_set(e, "error"),
-				slurm_strerror(error_code));
+		if (e)
+			e->num = error_code;
+
+		if (ctxt && !ctxt->rc)
+			ctxt->rc = error_code;
 	}
 
-	if (source)
-		data_set_string(data_key_set(e, "source"), source);
+	if (source && ctxt)
+		e->source = xstrdup(source);
 
-	data_set_string_fmt(data_key_set(e, "data_type"), "0x%x", type);
+	if (ctxt)
+		list_append(ctxt->errors, e);
 
 	return false;
 }
 
-static void _dump_cli_stdout_on_warn(void *arg, data_parser_type_t type,
-				     const char *source, const char *why, ...)
+static void _on_warn(void *arg, data_parser_type_t type, const char *source,
+		     const char *why, ...)
 {
 	va_list ap;
-	data_t *warns = arg;
-	data_t *w = data_set_dict(data_list_append(warns));
+	char *str;
+	data_parser_dump_cli_ctxt_t *ctxt = arg;
+	openapi_resp_warning_t *w = NULL;
 
-	if (why) {
-		va_start(ap, why);
-		data_set_string_own(data_key_set(w, "description"),
-				    vxstrfmt(why, ap));
-		va_end(ap);
+	if (ctxt) {
+		xassert(ctxt->magic == DATA_PARSER_DUMP_CLI_CTXT_MAGIC);
+		xassert(ctxt->warnings);
+
+		if (!ctxt->warnings)
+			return;
+
+		w = xmalloc(sizeof(*w));
 	}
 
-	if (source)
-		data_set_string(data_key_set(w, "source"), source);
+	va_start(ap, why);
+	str = vxstrfmt(why, ap);
+	va_end(ap);
 
-	data_set_string_fmt(data_key_set(w, "data_type"), "0x%x", type);
-}
+	if (str) {
+		debug("%s: parser=%s WARNING: %s",
+		      (source ? source : __func__),
+		      (!ctxt ? "DEFAULT" : ctxt->data_parser), str);
 
-static void _populate_cli_response_meta(data_t *meta, int argc, char **argv,
-					data_parser_t *parser)
-{
-	data_t *cmd, *slurm, *slurmv, *plugin;
+		if (ctxt)
+			w->description = str;
+	}
 
-	plugin = data_set_dict(data_key_set(meta, "plugins"));
-	cmd = data_set_list(data_key_set(meta, "command"));
-	slurm = data_set_dict(data_key_set(meta, "Slurm"));
-	slurmv = data_set_dict(data_key_set(slurm, "version"));
+	if (source && ctxt)
+		w->source = xstrdup(source);
 
-	data_set_string(data_key_set(plugin, "data_parser"),
-			data_parser_get_plugin(parser));
-	data_set_string(data_key_set(plugin, "accounting_storage"),
-			slurm_conf.accounting_storage_type);
-
-	data_set_string(data_key_set(slurm, "release"), SLURM_VERSION_STRING);
-	(void) data_convert_type(data_set_string(data_key_set(slurmv, "major"),
-						 SLURM_MAJOR),
-				 DATA_TYPE_INT_64);
-	(void) data_convert_type(data_set_string(data_key_set(slurmv, "micro"),
-						 SLURM_MICRO),
-				 DATA_TYPE_INT_64);
-	(void) data_convert_type(data_set_string(data_key_set(slurmv, "minor"),
-						 SLURM_MINOR),
-				 DATA_TYPE_INT_64);
-
-	for (int i = 0; i < argc; i++)
-		data_set_string(data_list_append(cmd), argv[i]);
+	if (ctxt)
+		list_append(ctxt->warnings, w);
 }
 
 extern int data_parser_dump_cli_stdout(data_parser_type_t type, void *obj,
-				       int obj_bytes, const char *key, int argc,
-				       char **argv, void *acct_db_conn,
-				       const char *mime_type)
+				       int obj_bytes, void *acct_db_conn,
+				       const char *mime_type,
+				       const char *data_parser,
+				       data_parser_dump_cli_ctxt_t *ctxt,
+				       openapi_resp_meta_t *meta)
 {
 	int rc = SLURM_SUCCESS;
-	data_t *resp = data_set_dict(data_new());
-	data_t *meta = data_set_dict(data_key_set(resp, "meta"));
-	data_t *dout = data_key_set(resp, key);
+	data_t *dresp = NULL;
+	data_parser_t *parser;
 	char *out = NULL;
-	data_parser_t *parser =
-		data_parser_g_new(_dump_cli_stdout_on_error,
-				  _dump_cli_stdout_on_error,
-				  _dump_cli_stdout_on_error,
-				  data_set_list(data_key_set(resp, "errors")),
-				  _dump_cli_stdout_on_warn,
-				  _dump_cli_stdout_on_warn,
-				  _dump_cli_stdout_on_warn,
-				  data_set_list(data_key_set(resp, "warnings")),
-				  SLURM_DATA_PARSER_VERSION, NULL, false);
 
-	if (!parser) {
-		rc = ESLURM_NOT_SUPPORTED;
+	if (!xstrcasecmp(data_parser, "list")) {
+		info("Possible data_parser plugins:");
+		parser = data_parser_g_new(NULL, NULL, NULL, NULL, NULL, NULL,
+					   NULL, NULL, "list",
+					   _plugrack_foreach_list, false);
+		FREE_NULL_DATA_PARSER(parser);
+		return SLURM_SUCCESS;
+	}
+
+	if (!(parser = data_parser_cli_parser(data_parser, ctxt))) {
+		rc = ESLURM_DATA_INVALID_PARSER;
+		error("%s output not supported by %s",
+		      mime_type, SLURM_DATA_PARSER_VERSION);
 		goto cleanup;
 	}
 
-	_populate_cli_response_meta(meta, argc, argv, parser);
+	if (acct_db_conn)
+		data_parser_g_assign(parser, DATA_PARSER_ATTR_DBCONN_PTR,
+				     acct_db_conn);
 
-	data_parser_g_assign(parser, DATA_PARSER_ATTR_DBCONN_PTR, acct_db_conn);
-	data_parser_g_dump(parser, type, obj, obj_bytes, dout);
-	serialize_g_data_to_string(&out, NULL, resp, mime_type,
-				   SER_FLAGS_PRETTY);
+	if (!meta->plugin.data_parser)
+		meta->plugin.data_parser =
+			xstrdup(data_parser_get_plugin(parser));
+
+	dresp = data_new();
+
+	if (!data_parser_g_dump(parser, type, obj, obj_bytes, dresp) &&
+	    (data_get_type(dresp) != DATA_TYPE_NULL)) {
+		serialize_g_data_to_string(&out, NULL, dresp, mime_type,
+					   SER_FLAGS_PRETTY);
+	}
 
 	if (out && out[0])
 		printf("%s\n", out);
@@ -392,10 +770,9 @@ extern int data_parser_dump_cli_stdout(data_parser_type_t type, void *obj,
 		debug("No output generated");
 
 cleanup:
-#ifdef MEMORY_LEAK_DEBUG
 	xfree(out);
+	FREE_NULL_DATA(dresp);
 	FREE_NULL_DATA_PARSER(parser);
-#endif /* MEMORY_LEAK_DEBUG */
 
 	return rc;
 }
@@ -404,7 +781,12 @@ extern int data_parser_g_specify(data_parser_t *parser, data_t *dst)
 {
 	int rc;
 	DEF_TIMERS;
-	const parse_funcs_t *funcs = plugins->functions[parser->plugin_offset];
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return ESLURM_DATA_INVALID_PARSER;
+
+	funcs = plugins->functions[parser->plugin_offset];
 
 	xassert(parser);
 	xassert(plugins);
@@ -416,4 +798,12 @@ extern int data_parser_g_specify(data_parser_t *parser, data_t *dst)
 	END_TIMER2(__func__);
 
 	return rc;
+}
+
+extern data_parser_t *data_parser_cli_parser(const char *data_parser, void *arg)
+{
+	return data_parser_g_new(_on_error, _on_error, _on_error, arg, _on_warn,
+				 _on_warn, _on_warn, arg,
+				 (data_parser ?  data_parser :
+				  SLURM_DATA_PARSER_VERSION), NULL, false);
 }

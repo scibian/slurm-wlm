@@ -59,6 +59,7 @@ slurm_persist_conn_t *slurmdbd_conn = NULL;
 
 static pthread_mutex_t agent_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  agent_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t shutdown_cond = PTHREAD_COND_INITIALIZER;
 static List      agent_list     = (List) NULL;
 static pthread_t agent_tid      = 0;
 
@@ -133,7 +134,8 @@ static int _unpack_return_code(uint16_t rpc_version, buf_t *buffer)
 		slurm_persist_free_rc_msg(msg);
 		break;
 	default:
-		error("bad message type %d != PERSIST_RC", msg_type);
+		error("bad message type %s != PERSIST_RC",
+		      slurmdbd_msg_type_2_str(msg_type, true));
 	}
 
 	return rc;
@@ -232,7 +234,8 @@ static int _handle_mult_rc_ret(void)
 			error("unpack message error");
 		break;
 	default:
-		error("bad message type %d != PERSIST_RC", msg_type);
+		error("bad message type %s != PERSIST_RC",
+		      slurmdbd_msg_type_2_str(msg_type, true));
 	}
 
 unpack_error:
@@ -634,10 +637,14 @@ static void *_agent(void *x)
 			slurm_mutex_unlock(&slurmdbd_lock);
 			_max_dbd_msg_action(&cnt);
 			END_TIMER2("slurmdbd agent: sleep");
-			log_flag(AGENT, "slurmdbd agent sleeping with agent_count=%d",
-				 list_count(agent_list));
 			abs_time.tv_sec  = time(NULL) + 10;
 			abs_time.tv_nsec = 0;
+			if (*slurmdbd_conn->shutdown != 0) {
+				slurm_mutex_unlock(&agent_lock);
+				break;
+			}
+			log_flag(AGENT, "slurmdbd agent sleeping with agent_count=%d",
+				 list_count(agent_list));
 			slurm_cond_timedwait(&agent_cond, &agent_lock,
 					     &abs_time);
 			slurm_mutex_unlock(&agent_lock);
@@ -760,6 +767,7 @@ static void *_agent(void *x)
 
 	FREE_NULL_LIST(agent_list);
 	agent_running = false;
+	slurm_cond_signal(&shutdown_cond);
 	slurm_mutex_unlock(&agent_lock);
 	return NULL;
 }
@@ -788,29 +796,10 @@ static void _shutdown_agent(void)
 		return;
 
 	slurmdbd_shutdown = time(NULL);
-	for (int i = 0; i < 50; i++) {	/* up to 5 secs total */
-		slurm_mutex_lock(&agent_lock);
-		if (!agent_running) {
-			slurm_mutex_unlock(&agent_lock);
-			goto fini;
-		}
+	slurm_mutex_lock(&agent_lock);
+	if (agent_running)
 		slurm_cond_broadcast(&agent_cond);
-		slurm_mutex_unlock(&agent_lock);
-
-		usleep(100000);	/* 0.1 sec per try */
-	}
-
-	/*
-	 * On rare occasions agent thread may not end quickly,
-	 * perhaps due to communication problems with slurmdbd.
-	 * Cancel it and join before returning or we could remove
-	 * and leave the agent without valid data.
-	 */
-	error("agent failed to shutdown gracefully");
-	error("unable to save pending requests");
-	pthread_cancel(agent_tid);
-
-fini:
+	slurm_mutex_unlock(&agent_lock);
 	pthread_join(agent_tid,  NULL);
 	agent_tid = 0;
 }

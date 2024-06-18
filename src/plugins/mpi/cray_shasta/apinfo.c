@@ -77,7 +77,7 @@ static void _multi_prog_parse(const stepd_step_rec_t *step, int *ncmds,
 	char *line = NULL, *local_data = NULL;
 	char *end_ptr = NULL, *save_ptr = NULL, *tmp_str = NULL;
 	char *rank_spec = NULL, *p = NULL, *one_rank = NULL;
-	hostlist_t hl;
+	hostlist_t *hl;
 	uint32_t *offsets = NULL;
 
 	offsets = xcalloc(step->ntasks, sizeof(uint32_t));
@@ -210,6 +210,13 @@ static pals_pe_t *_setup_pals_pes(int ntasks, int nnodes, uint16_t *task_cnts,
 				pes[taskid].cmdidx = 0;
 			} else {
 				pes[taskid].cmdidx = tid_offsets[taskid];
+
+				// Make sure we don't set a negative cmdidx;
+				// this can happen for non-heterogeneous job
+				// steps in a heterogeneous job.
+				if (pes[taskid].cmdidx < 0) {
+					pes[taskid].cmdidx = 0;
+				}
 			}
 		}
 	}
@@ -492,7 +499,7 @@ static int _open_apinfo(const stepd_step_rec_t *step)
  */
 static int _write_pals_nodes(int fd, char *nodelist)
 {
-	hostlist_t hl;
+	hostlist_t *hl;
 	char *host;
 	pals_node_t node;
 
@@ -590,7 +597,7 @@ extern int create_apinfo(const stepd_step_rec_t *step, const char *spool)
 	fd = _open_ss_info(step, spool, &hdr, &ss_apinfo);
 	profiles = _setup_pals_profiles(fd, &hdr, ss_apinfo, &nprofiles);
 	nics = _setup_pals_nics(fd, &hdr, ss_apinfo, &nnics);
-	if (fd)
+	if (fd != -1)
 		close(fd);
 	xfree(ss_apinfo);
 

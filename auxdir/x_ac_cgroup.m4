@@ -20,6 +20,7 @@ AC_DEFUN([X_AC_CGROUP],
     with_cgroup=yes
     ;;
   esac
+  AM_CONDITIONAL(LINUX_BUILD, test x$with_cgroup = xyes)
   AM_CONDITIONAL(WITH_CGROUP, test x$with_cgroup = xyes)
   if test x$with_cgroup = xyes; then
     AC_DEFINE(WITH_CGROUP, 1, [Building with Linux cgroup support])
@@ -37,7 +38,7 @@ AC_DEFUN([X_AC_BPF], [
            [_x_ac_bpf_dirs="$with_bpf"])])
 
   if [test "x$with_bpf" = xno]; then
-    AC_MSG_WARN([support for bpf disabled])
+    AC_MSG_NOTICE([support for bpf disabled])
   else
     AC_CACHE_CHECK(
       [for bpf installation],

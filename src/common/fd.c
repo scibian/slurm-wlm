@@ -326,17 +326,16 @@ extern char *fd_resolve_path(int fd)
 	char *path = NULL;
 
 #if defined(__linux__)
-	char *ret = NULL;
-	path = xstrdup_printf("/proc/self/fd/%u", fd);
-	ret = realpath(path, NULL);
-	if (!ret) {
-		debug("%s: realpath(%s) failed: %m", __func__,  path);
-	} else {
-		resolved = xstrdup(ret);
-		free(ret);
-	}
-#endif
+	char ret[PATH_MAX + 1];
 
+	path = xstrdup_printf("/proc/self/fd/%u", fd);
+	memset(ret, 0, (PATH_MAX + 1));
+
+	if (readlink(path, ret, PATH_MAX) < 0)
+		debug("%s: readlink(%s) failed: %m", __func__,  path);
+	else
+		resolved = xstrdup(ret);
+#endif
 	// TODO: use fcntl(fd, F_GETPATH, filePath) on macOS
 
 	xfree(path);
@@ -509,6 +508,7 @@ static int _rmdir_recursive(int dirfd)
 
 	if (!(dp = fdopendir(dirfd))) {
 		error("%s: can't open directory: %m", __func__);
+		(void) close(dirfd);
 		return 1;
 	}
 
@@ -543,7 +543,6 @@ static int _rmdir_recursive(int dirfd)
 		debug("%s: descending into directory `%s`",
 		      __func__, ent->d_name);
 		rc += _rmdir_recursive(childfd);
-		(void) close(childfd);
 
 		if (unlinkat(dirfd, ent->d_name, AT_REMOVEDIR) != -1) {
 			debug("%s: removed now-empty directory `%s`",
@@ -570,7 +569,6 @@ extern int rmdir_recursive(const char *path, bool remove_top)
 	}
 
 	rc = _rmdir_recursive(dirfd);
-	close(dirfd);
 
 	if (remove_top) {
 		if (rmdir(path) < 0) {

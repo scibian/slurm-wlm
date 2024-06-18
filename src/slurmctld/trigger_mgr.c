@@ -124,9 +124,10 @@ typedef struct trig_mgr_info {
 	time_t   orig_time;	/* offset (pending) or time stamp (complete) */
 } trig_mgr_info_t;
 
-/* Prototype for ListDelF */
-void _trig_del(void *x) {
-	trig_mgr_info_t * tmp = (trig_mgr_info_t *) x;
+static void _trig_del(void *x)
+{
+	trig_mgr_info_t *tmp = x;
+
 	xfree(tmp->res_id);
 	xfree(tmp->orig_res_id);
 	xfree(tmp->program);
@@ -752,7 +753,6 @@ static void _dump_trigger_state(trig_mgr_info_t *trig_ptr, buf_t *buffer)
 static int _load_trigger_state(buf_t *buffer, uint16_t protocol_version)
 {
 	trig_mgr_info_t *trig_ptr;
-	uint32_t str_len;
 
 	xassert(verify_lock(JOB_LOCK, READ_LOCK));
 
@@ -768,14 +768,14 @@ static int _load_trigger_state(buf_t *buffer, uint16_t protocol_version)
 		safe_unpack16   (&trig_ptr->flags,     buffer);
 		safe_unpack32   (&trig_ptr->trig_id,   buffer);
 		safe_unpack16   (&trig_ptr->res_type,  buffer);
-		safe_unpackstr_xmalloc(&trig_ptr->res_id, &str_len, buffer);
+		safe_unpackstr(&trig_ptr->res_id, buffer);
 		/* rebuild nodes_bitmap as needed from res_id */
 		/* rebuild job_id as needed from res_id */
 		safe_unpack32   (&trig_ptr->trig_type, buffer);
 		safe_unpack_time(&trig_ptr->trig_time, buffer);
 		safe_unpack32   (&trig_ptr->user_id,   buffer);
 		safe_unpack32   (&trig_ptr->group_id,  buffer);
-		safe_unpackstr_xmalloc(&trig_ptr->program, &str_len, buffer);
+		safe_unpackstr(&trig_ptr->program, buffer);
 		safe_unpack8    (&trig_ptr->state,     buffer);
 	} else {
 		error("_load_trigger_state: protocol_version "
@@ -942,7 +942,6 @@ extern void trigger_state_restore(void)
 	buf_t *buffer;
 	time_t buf_time;
 	char *ver_str = NULL;
-	uint32_t ver_str_len;
 
 	/* read the file */
 	xassert(verify_lock(CONF_LOCK, READ_LOCK));
@@ -957,7 +956,7 @@ extern void trigger_state_restore(void)
 	xfree(state_file);
 	unlock_state_files();
 
-	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
+	safe_unpackstr(&ver_str, buffer);
 	if (ver_str && !xstrcmp(ver_str, TRIGGER_STATE_VERSION))
 		safe_unpack16(&protocol_version, buffer);
 
@@ -1499,7 +1498,7 @@ static void _trigger_database_event(trig_mgr_info_t *trig_in, time_t now)
 static void _trigger_run_program(trig_mgr_info_t *trig_in)
 {
 	char *tmp, *save_ptr = NULL, *tok;
-	char *program, *args[64], user_name[1024];
+	char *program, *args[64];
 	char *pname, *uname;
 	uid_t uid;
 	gid_t gid;
@@ -1533,8 +1532,6 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 	uid = trig_in->user_id;
 	gid = trig_in->group_id;
 	uname = uid_to_string(uid);
-	snprintf(user_name, sizeof(user_name), "%s", uname);
-	xfree(uname);
 
 	child_pid = fork();
 	if (child_pid > 0) {
@@ -1544,7 +1541,7 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 		closeall(0);
 		setpgid(0, 0);
 		setsid();
-		if ((initgroups(user_name, gid) == -1) && !run_as_self) {
+		if ((initgroups(uname, gid) == -1) && !run_as_self) {
 			error("trigger: initgroups: %m");
 			exit(1);
 		}
@@ -1561,6 +1558,7 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 	} else {
 		error("fork: %m");
 	}
+	xfree(uname);
 	xfree(program);
 	for (i = 0; i < 64; i++)
 		xfree(args[i]);

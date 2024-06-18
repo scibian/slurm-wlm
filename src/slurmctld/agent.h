@@ -57,15 +57,18 @@ typedef struct agent_arg {
 	bool r_uid_set;			/* true if receiver UID set */
 	slurm_addr_t    *addr;          /* if set will send to this
 					   addr not hostlist */
-	hostlist_t	hostlist;	/* hostlist containing the
+	hostlist_t *hostlist;		/* hostlist containing the
 					 * nodes we are sending to */
 	uint16_t        protocol_version; /* protocol version to use */
 	slurm_msg_type_t msg_type;	/* RPC to be issued */
 	void		*msg_args;	/* RPC data to be transmitted */
+	uint16_t msg_flags;		/* Flags to be added to msg */
 } agent_arg_t;
 
 /* Start a thread to manage queued agent requests */
 extern void agent_init(void);
+
+extern void agent_fini(void);
 
 /*
  * agent - party responsible for transmitting an common RPC in parallel

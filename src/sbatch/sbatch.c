@@ -39,13 +39,13 @@
 \*****************************************************************************/
 
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/param.h>               /* MAXPATHLEN */
 #include <sys/resource.h> /* for RLIMIT_NOFILE */
 
 #include "slurm/slurm.h"
@@ -58,7 +58,6 @@
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/run_command.h"
-#include "src/interfaces/select.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/spank.h"
@@ -188,13 +187,6 @@ int main(int argc, char **argv)
 			 * gets the user's default environment variables. */
 			(void) _set_rlimit_env();
 		}
-
-		/*
-		 * if the environment is coming from a file, the
-		 * environment at execution startup, must be unset.
-		 */
-		if (sbopt.export_file != NULL)
-			env_unset_environment();
 
 		_set_prio_process_env();
 		_set_spank_env();
@@ -348,9 +340,8 @@ int main(int argc, char **argv)
 
 #ifdef MEMORY_LEAK_DEBUG
 	cli_filter_fini();
-	select_g_fini();
 	slurm_reset_all_options(&opt, false);
-	slurm_auth_fini();
+	auth_g_fini();
 	slurm_conf_destroy();
 	log_fini();
 #endif /* MEMORY_LEAK_DEBUG */
@@ -432,23 +423,18 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->wait_all_nodes = sbopt.wait_all_nodes;
 
 	desc->environment = NULL;
-	if (sbopt.export_file) {
-		desc->environment = env_array_from_file(sbopt.export_file);
-		if (desc->environment == NULL)
-			exit(1);
-	}
 	if (opt.export_env == NULL) {
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "ALL")) {
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "NIL")) {
 		desc->environment = env_array_create();
-		env_array_merge_slurm(&desc->environment,
-				      (const char **)environ);
+		env_array_merge_slurm_spank(&desc->environment,
+					    (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "NONE")) {
 		desc->environment = env_array_create();
-		env_array_merge_slurm(&desc->environment,
-				      (const char **)environ);
+		env_array_merge_slurm_spank(&desc->environment,
+					    (const char **) environ);
 		opt.get_user_env_time = 0;
 	} else {
 		env_merge_filter(&opt, desc);
@@ -510,9 +496,9 @@ static void _set_spank_env(void)
  * current state */
 static void _set_submit_dir_env(void)
 {
-	char buf[MAXPATHLEN + 1], host[256];
+	char buf[PATH_MAX], host[256];
 
-	if ((getcwd(buf, MAXPATHLEN)) == NULL)
+	if ((getcwd(buf, PATH_MAX)) == NULL)
 		error("getcwd failed: %m");
 	else if (setenvf(NULL, "SLURM_SUBMIT_DIR", "%s", buf) < 0)
 		error("unable to set SLURM_SUBMIT_DIR in environment");

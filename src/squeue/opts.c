@@ -51,6 +51,7 @@
 #include "src/common/read_config.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
+#include "src/common/ref.h"
 #include "src/common/uid.h"
 #include "src/interfaces/serializer.h"
 
@@ -69,13 +70,19 @@
 #define OPT_LONG_JSON         0x110
 #define OPT_LONG_YAML         0x111
 #define OPT_LONG_AUTOCOMP     0x112
+/*
+ * OPT_LONG_ONLY_JOB_STATE was added in 23.11.5. At the time, the master branch
+ * already used up to 0x116. So, OPT_LONG_ONLY_JOB_STATE was set to 0x117. We
+ * are setting it to 0x117 here as well to be consistent.
+ */
+#define OPT_LONG_ONLY_JOB_STATE   0x117
 
 /* FUNCTIONS */
-static List  _build_job_list( char* str );
-static List  _build_str_list( char* str );
-static List  _build_state_list( char* str );
-static List  _build_step_list( char* str );
-static List  _build_user_list( char* str );
+static list_t *_build_job_list(char *str);
+static list_t *_build_str_list(char *str);
+static list_t *_build_state_list(char *str);
+static list_t *_build_step_list(char *str);
+static list_t *_build_user_list(char *str);
 static char *_get_prefix(char *token);
 static void  _help( void );
 static int   _parse_state( char* str, uint32_t* states );
@@ -86,9 +93,12 @@ static void _parse_long_token( char *token, char *sep, int *field_size,
 static void  _print_options( void );
 static void  _usage( void );
 static void _filter_nodes(void);
-static List _load_clusters_nodes(void);
+static list_t *_load_clusters_nodes(void);
 static void _node_info_list_del(void *data);
-static char *_map_node_name(List clusters_node_info, char *name);
+static char *_map_node_name(list_t *clusters_node_info, char *name);
+
+decl_static_data(help_txt);
+decl_static_data(usage_txt);
 
 /*
  * parse_command_line
@@ -124,6 +134,7 @@ parse_command_line( int argc, char* *argv )
 		{"nodes",      required_argument, 0, 'w'},
 		{"nodelist",   required_argument, 0, 'w'},
 		{"noheader",   no_argument,       0, 'h'},
+		{"only-job-state", no_argument, 0, OPT_LONG_ONLY_JOB_STATE},
 		{"partitions", required_argument, 0, 'p'},
 		{"priority",   no_argument,       0, 'P'},
 		{"qos",        required_argument, 0, 'q'},
@@ -139,8 +150,8 @@ parse_command_line( int argc, char* *argv )
 		{"users",      required_argument, 0, 'u'},
 		{"verbose",    no_argument,       0, 'v'},
 		{"version",    no_argument,       0, 'V'},
-		{"json", no_argument, 0, OPT_LONG_JSON},
-		{"yaml", no_argument, 0, OPT_LONG_YAML},
+		{"json", optional_argument, 0, OPT_LONG_JSON},
+		{"yaml", optional_argument, 0, OPT_LONG_YAML},
 		{NULL,         0,                 0, 0}
 	};
 
@@ -338,6 +349,9 @@ parse_command_line( int argc, char* *argv )
 			xstrfmtcat(params.users, "%u", geteuid());
 			params.user_list = _build_user_list(params.users);
 			break;
+		case OPT_LONG_ONLY_JOB_STATE:
+			params.only_state = true;
+			break;
 		case OPT_LONG_SIBLING:
 			params.sibling_flag = true;
 			break;
@@ -353,15 +367,17 @@ parse_command_line( int argc, char* *argv )
 			exit(0);
 		case OPT_LONG_JSON:
 			params.mimetype = MIME_TYPE_JSON;
+			params.data_parser = optarg;
 			params.detail_flag = true;
-			data_init();
-			serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL);
+			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
+				fatal("JSON plugin load failure");
 			break;
 		case OPT_LONG_YAML:
 			params.mimetype = MIME_TYPE_YAML;
+			params.data_parser = optarg;
 			params.detail_flag = true;
-			data_init();
-			serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL);
+			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
+				fatal("YAML plugin load failure");
 			break;
 		case OPT_LONG_AUTOCOMP:
 			suggest_completion(long_options, optarg);
@@ -372,6 +388,9 @@ parse_command_line( int argc, char* *argv )
 
 	if (params.long_list && params.format)
 		fatal("Options -o(--format) and -l(--long) are mutually exclusive. Please remove one and retry.");
+
+	if (params.only_state && params.step_flag)
+		fatal("Options --only-job-state and -s(--steps) are mutually exclusive. Please remove one and retry.");
 
 	if (!override_format_env) {
 		if ((env_val = getenv("SQUEUE_FORMAT")))
@@ -469,7 +488,7 @@ parse_command_line( int argc, char* *argv )
 		params.job_id = job_step_ptr->step_id.job_id;
 	}
 	if (params.user_list && (list_count(params.user_list) == 1)) {
-		ListIterator iterator;
+		list_itr_t *iterator;
 		uint32_t *uid_ptr;
 		iterator = list_iterator_create(params.user_list);
 		while ((uid_ptr = list_next(iterator))) {
@@ -1831,7 +1850,7 @@ _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 static void
 _print_options(void)
 {
-	ListIterator iterator;
+	list_itr_t *iterator;
 	int i;
 	char *license, *name, *part;
 	uint32_t *user;
@@ -1857,6 +1876,7 @@ _print_options(void)
 	printf( "local       = %s\n", params.local_flag ? "true" : "false");
 	printf( "names       = %s\n", params.names );
 	printf( "nodes       = %s\n", hostlist ) ;
+	printf( "only_job_state = %s\n", params.only_state ? "true" : "false");
 	printf( "partitions  = %s\n", params.partitions ) ;
 	printf( "priority    = %s\n", params.priority_flag ? "true" : "false");
 	printf( "reservation = %s\n", params.reservation ) ;
@@ -1972,10 +1992,9 @@ endit:
  * IN str - comma separated list of job_ids
  * RET List of job_ids (uint32_t)
  */
-static List
-_build_job_list( char* str )
+static list_t *_build_job_list(char *str)
 {
-	List my_list;
+	list_t *my_list;
 	char *end_ptr = NULL, *job = NULL, *tmp_char = NULL;
 	char *my_job_list = NULL;
 	int job_id, array_id;
@@ -2013,10 +2032,9 @@ _build_job_list( char* str )
  * IN str - comma separated list of strings
  * RET List of strings
  */
-static List
-_build_str_list(char* str)
+static list_t *_build_str_list(char *str)
 {
-	List my_list;
+	list_t *my_list;
 	char *elem, *tok = NULL, *tmp_char = NULL, *my_str = NULL;
 
 	if (str == NULL)
@@ -2038,10 +2056,9 @@ _build_str_list(char* str)
  * IN str - comma separated list of job states
  * RET List of enum job_states values
  */
-static List
-_build_state_list( char* str )
+static list_t *_build_state_list(char *str)
 {
-	List my_list;
+	list_t *my_list;
 	char *state = NULL, *tmp_char = NULL, *my_state_list = NULL;
 	uint32_t *state_id = NULL;
 
@@ -2073,10 +2090,9 @@ _build_state_list( char* str )
  * IN str - comma separated list of job_id[array_id].step_id values
  * RET List of job/step_ids (structure of uint32_t's)
  */
-static List
-_build_step_list( char* str )
+static list_t *_build_step_list(char *str)
 {
-	List my_list;
+	list_t *my_list;
 	char *end_ptr = NULL, *step = NULL, *tmp_char = NULL, *tmps_char = NULL;
 	char *job_name = NULL, *step_name = NULL, *my_step_list = NULL;
 	int job_id, array_id, step_id;
@@ -2124,10 +2140,9 @@ _build_step_list( char* str )
  * IN str - comma separated list of user names
  * RET List of UIDs (uint32_t)
  */
-static List
-_build_user_list( char* str )
+static list_t *_build_user_list(char *str)
 {
-	List my_list;
+	list_t *my_list;
 	char *user = NULL;
 	char *tmp_char = NULL, *my_user_list = NULL;
 
@@ -2153,69 +2168,20 @@ _build_user_list( char* str )
 	return my_list;
 }
 
-static void _usage(void)
-{
-	printf("\
-Usage: squeue [-A account] [--clusters names] [-i seconds] [--job jobid]\n\
-              [-n name] [-o format] [-p partitions] [--qos qos]\n\
-              [--reservation reservation] [--sort fields] [--start]\n\
-              [--step step_id] [-t states] [-u user_name] [--usage]\n\
-              [-L licenses] [-w nodes] [--federation] [--local] [--sibling]\n\
-	      [-ahjlrsv]\n");
-}
-
 static void _help(void)
 {
-	printf("\
-Usage: squeue [OPTIONS]\n\
-  -A, --account=account(s)        comma separated list of accounts\n\
-				  to view, default is all accounts\n\
-  -a, --all                       display jobs in hidden partitions\n\
-      --federation                Report federated information if a member\n\
-                                  of one\n\
-  -h, --noheader                  no headers on output\n\
-      --hide                      do not display jobs in hidden partitions\n\
-  -i, --iterate=seconds           specify an interation period\n\
-  -j, --job=job(s)                comma separated list of jobs IDs\n\
-                                  to view, default is all\n\
-      --json                      Produce JSON output\n\
-      --local                     Report information only about jobs on the\n\
-                                  local cluster. Overrides --federation.\n\
-  -l, --long                      long report\n\
-  -L, --licenses=(license names)  comma separated list of license names to view\n\
-  -M, --clusters=cluster_name     cluster to issue commands to.  Default is\n\
-                                  current cluster.  cluster with no name will\n\
-                                  reset to default. Implies --local.\n\
-  -n, --name=job_name(s)          comma separated list of job names to view\n\
-      --noconvert                 don't convert units from their original type\n\
-                                  (e.g. 2048M won't be converted to 2G).\n\
-  -o, --format=format             format specification\n\
-  -O, --Format=format             format specification\n\
-  -p, --partition=partition(s)    comma separated list of partitions\n\
-				  to view, default is all partitions\n\
-  -q, --qos=qos(s)                comma separated list of qos's\n\
-				  to view, default is all qos's\n\
-  -R, --reservation=name          reservation to view, default is all\n\
-  -r, --array                     display one job array element per line\n\
-      --sibling                   Report information about all sibling jobs\n\
-                                  on a federated cluster. Implies --federation.\n\
-  -s, --step=step(s)              comma separated list of job steps\n\
-				  to view, default is all\n\
-  -S, --sort=fields               comma separated list of fields to sort on\n\
-      --start                     print expected start times of pending jobs\n\
-  -t, --states=states             comma separated list of states to view,\n\
-				  default is pending and running,\n\
-				  '--states=all' reports all states\n\
-  -u, --user=user_name(s)         comma separated list of users to view\n\
-      --name=job_name(s)          comma separated list of job names to view\n\
-  -v, --verbose                   verbosity level\n\
-  -V, --version                   output version information and exit\n\
-  -w, --nodelist=hostlist         list of nodes to view, default is \n\
-				  all nodes\n\
-      --yaml                      Produce YAML output\n\
-\nHelp options:\n\
-  --help                          show this help message\n\
-  --usage                         display a brief summary of squeue options\n");
+	char *txt;
+	static_ref_to_cstring(txt, help_txt);
+	printf("%s", txt);
+	xfree(txt);
+}
+
+static void _usage(void)
+{
+	char *txt;
+	static_ref_to_cstring(txt, usage_txt);
+	printf("%s", txt);
+	xfree(txt);
 }
 
 /*
@@ -2224,8 +2190,8 @@ Usage: squeue [OPTIONS]\n\
 static void _filter_nodes(void)
 {
 	char *name = NULL, *nodename = NULL;
-	hostset_t nodenames = hostset_create(NULL);
-	List clusters_nodes = NULL;
+	hostset_t *nodenames = hostset_create(NULL);
+	list_t *clusters_nodes = NULL;
 
 	/* Retrieve node_info from controllers */
 	if (!(clusters_nodes = _load_clusters_nodes()))
@@ -2266,10 +2232,10 @@ static void _node_info_list_del(void *data)
  *
  * NOTE: caller must free the returned list if not NULL.
  */
-static List _load_clusters_nodes(void)
+static list_t *_load_clusters_nodes(void)
 {
-	List node_info_list = NULL;
-	ListIterator iter = NULL;
+	list_t *node_info_list = NULL;
+	list_itr_t *iter = NULL;
 	node_info_msg_t *node_info = NULL;
 
 	node_info_list = list_create(_node_info_list_del);
@@ -2305,11 +2271,11 @@ static List _load_clusters_nodes(void)
  *
  * NOTE: caller must xfree() the returned name.
  */
-static char *_map_node_name(List clusters_node_info, char *name)
+static char *_map_node_name(list_t *clusters_node_info, char *name)
 {
 	char *nodename = NULL;
 	node_info_msg_t *node_info;
-	ListIterator node_info_itr;
+	list_itr_t *node_info_itr;
 
 	if (!name)
 		return NULL;

@@ -106,7 +106,6 @@ hv_to_cluster_cond(HV* hv, slurmdb_cluster_cond_t* cluster_cond)
     FETCH_FIELD(hv, cluster_cond, with_usage,     uint16_t, FALSE);
 
     FETCH_LIST_FIELD(hv, cluster_cond, cluster_list);
-    FETCH_LIST_FIELD(hv, cluster_cond, plugin_id_select_list);
     FETCH_LIST_FIELD(hv, cluster_cond, rpc_version_list);
 
     return 0;
@@ -270,8 +269,7 @@ report_acct_grouping_to_hv(slurmdb_report_acct_grouping_t* rec, HV* hv)
 
     STORE_FIELD(hv, rec, acct,     charp);
     STORE_FIELD(hv, rec, count,    uint32_t);
-    STORE_FIELD(hv, rec, lft,      uint32_t);
-    STORE_FIELD(hv, rec, rgt,      uint32_t);
+    STORE_FIELD(hv, rec, lineage,  charp);
 
     my_av = (AV*)sv_2mortal((SV*)newAV());
     if (rec->groups) {
@@ -741,7 +739,7 @@ job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
     STORE_FIELD(hv, rec, gid,             uint32_t);
     STORE_FIELD(hv, rec, jobid,           uint32_t);
     STORE_FIELD(hv, rec, jobname,         charp);
-    STORE_FIELD(hv, rec, lft,             uint32_t);
+    STORE_FIELD(hv, rec, lineage,         charp);
     STORE_FIELD(hv, rec, partition,       charp);
     STORE_FIELD(hv, rec, nodes,           charp);
     STORE_FIELD(hv, rec, priority,        uint32_t);

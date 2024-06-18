@@ -44,6 +44,7 @@
 #include "slurm/slurm.h"
 
 #include "src/common/cpu_frequency.h"
+#include "src/common/forward.h"
 #include "src/common/parse_time.h"
 #include "src/interfaces/select.h"
 #include "src/common/slurm_protocol_api.h"
@@ -66,7 +67,7 @@ typedef struct load_step_resp_struct {
 
 static int _nodes_in_list(char *node_list)
 {
-	hostset_t host_set = hostset_create(node_list);
+	hostset_t *host_set = hostset_create(node_list);
 	int count = hostset_count(host_set);
 	hostset_destroy(host_set);
 	return count;
@@ -358,7 +359,7 @@ static void *_load_step_thread(void *args)
 	}
 	xfree(args);
 
-	return (void *) NULL;
+	return NULL;
 }
 
 static int
@@ -614,14 +615,14 @@ extern int slurm_job_step_stat(slurm_step_id_t *step_id,
 	if (!node_list) {
 		if (!(step_layout = slurm_job_step_layout_get(step_id))) {
 			rc = errno;
-			error("slurm_job_step_stat: "
-			      "problem getting step_layout for %ps: %s",
-			      step_id, slurm_strerror(rc));
+			error("%s: problem getting step_layout for %ps: %s",
+			      __func__, step_id, slurm_strerror(rc));
 			return rc;
 		}
 		node_list = step_layout->node_list;
 		use_protocol_ver = MIN(SLURM_PROTOCOL_VERSION,
 				       step_layout->start_protocol_ver);
+		fwd_set_alias_addrs(step_layout->alias_addrs);
 	}
 
  	if (!*resp) {
@@ -669,23 +670,20 @@ extern int slurm_job_step_stat(slurm_step_id_t *step_id,
 			rc = slurm_get_return_code(ret_data_info->type,
 						   ret_data_info->data);
 			if (rc == ESLURM_INVALID_JOB_ID) {
-				debug("slurm_job_step_stat: job step %ps has already completed",
-				      step_id);
+				debug("%s: job step %ps has already completed",
+				      __func__, step_id);
 			} else {
-				error("slurm_job_step_stat: "
-				      "there was an error with the request to "
-				      "%s rc = %s",
-				      ret_data_info->node_name,
+				error("%s: there was an error with the request to %s rc = %s",
+				      __func__, ret_data_info->node_name,
 				      slurm_strerror(rc));
 			}
 			break;
 		default:
 			rc = slurm_get_return_code(ret_data_info->type,
 						   ret_data_info->data);
-			error("slurm_job_step_stat: "
-			      "unknown return given from %s: %d rc = %s",
-			      ret_data_info->node_name, ret_data_info->type,
-			      slurm_strerror(rc));
+			error("%s: unknown return given from %s: %d rc = %s",
+			      __func__, ret_data_info->node_name,
+			      ret_data_info->type, slurm_strerror(rc));
 			break;
 		}
 	}
@@ -734,6 +732,7 @@ extern int slurm_job_step_get_pids(slurm_step_id_t *step_id,
 			return rc;
 		}
 		node_list = step_layout->node_list;
+		fwd_set_alias_addrs(step_layout->alias_addrs);
 	}
 
 	if (!*resp) {

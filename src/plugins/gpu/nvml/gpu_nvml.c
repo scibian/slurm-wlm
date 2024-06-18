@@ -1273,8 +1273,8 @@ static int _handle_mig(nvmlDevice_t *device, unsigned int gpu_minor,
 		/* Divide MB by 1024 (2^10) to get GB, and then round */
 		xstrfmtcat(nvml_mig->profile_name, "%ug.%lugb",
 			   attributes.gpuInstanceSliceCount,
-			   (unsigned long)((attributes.memorySizeMB + 1023) /
-					   1024));
+			   (unsigned long)(ROUNDUP(attributes.memorySizeMB,
+						   1024)));
 	}
 
 	if (_nvml_use_mig_uuid())
@@ -1499,19 +1499,17 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 					continue;
 				}
 
-				nvml_mig.links = gres_links_create_empty(
-					j, mig_count);
-
 				/*
 				 * Add MIG device to GRES list. MIG does not
 				 * support NVLinks. CPU affinity, CPU count, and
 				 * device name will be the same as non-MIG GPU.
 				 */
 				gres_slurmd_conf.file = nvml_mig.files;
-				gres_slurmd_conf.links = nvml_mig.links;
 				gres_slurmd_conf.type_name =
 					nvml_mig.profile_name;
 				gres_slurmd_conf.unique_id = nvml_mig.unique_id;
+				gres_slurmd_conf.config_flags |=
+					GRES_CONF_GLOBAL_INDEX;
 
 				add_gres_to_list(gres_list_system,
 						 &gres_slurmd_conf);
@@ -1547,6 +1545,145 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 
 	info("%u GPU system device(s) detected", device_count);
 	return gres_list_system;
+}
+
+static char *_get_nvml_func_str(void *fname)
+{
+	if (fname == nvmlDeviceGetComputeRunningProcesses)
+		return "Compute";
+	return "Graphics";
+}
+
+static int _get_nvml_process_info(nvmlReturn_t (*get_proc)(nvmlDevice_t,
+							   unsigned int *,
+							   nvmlProcessInfo_t *),
+				  nvmlDevice_t device, pid_t pid,
+				  acct_gather_data_t *data)
+{
+	nvmlReturn_t rc;
+	nvmlProcessInfo_t *proc_info;
+	unsigned int proc_cnt = 0;
+
+	/*
+	 * Get the number of "[Compute|Graphics]" processes. If there are no
+	 * processes proc_cnt will be 0 and rc == NVML_SUCCESS, if there are
+	 * processes proc_cnt will be set and rc == NVML_ERROR_INSUFFICIENT_SIZE
+	 */
+	rc = get_proc(device, &proc_cnt, NULL);
+
+	if ((rc != NVML_SUCCESS) && (rc != NVML_ERROR_INSUFFICIENT_SIZE)) {
+		error("NVML: Failed to get %s running process count(%d): %s",
+		      _get_nvml_func_str(get_proc), rc, nvmlErrorString(rc));
+		return SLURM_ERROR;
+	}
+
+	if (proc_cnt) {
+		proc_info = xcalloc(proc_cnt, sizeof(*proc_info));
+		rc = get_proc(device, &proc_cnt, proc_info);
+		if (rc != NVML_SUCCESS) {
+			if (rc == NVML_ERROR_INSUFFICIENT_SIZE) {
+				log_flag(JAG, "NVML: Failed to get %s running procs(%d): %s. New processes started in between calls, accounting not gathered during this interval",
+					 _get_nvml_func_str(get_proc),
+					 rc, nvmlErrorString(rc));
+			} else {
+				error("NVML: Failed to get %s running procs(%d): %s",
+				      _get_nvml_func_str(get_proc),
+				      rc, nvmlErrorString(rc));
+			}
+			xfree(proc_info);
+			return SLURM_ERROR;
+		}
+		for (int i = 0; i < proc_cnt; i++) {
+			if (proc_info[i].pid != pid)
+				continue;
+			/* Store MB usedGpuMemory is in bytes */
+			data[gpumem_pos].size_read += proc_info[i].usedGpuMemory;
+			break;
+		}
+		xfree(proc_info);
+		log_flag(JAG, "pid %d has GPUUtil=%lu and MemMB=%lu",
+			 pid, data[gpuutil_pos].size_read,
+			 data[gpumem_pos].size_read / 1048576);
+	}
+	return SLURM_SUCCESS;
+}
+
+static int _get_gpumem(nvmlDevice_t device, pid_t pid, acct_gather_data_t *data)
+{
+	data[gpumem_pos].size_read = 0;
+
+	if (_get_nvml_process_info(nvmlDeviceGetComputeRunningProcesses, device,
+				   pid, data) != SLURM_SUCCESS)
+		return SLURM_ERROR;
+
+	if (_get_nvml_process_info(nvmlDeviceGetGraphicsRunningProcesses,
+				   device, pid, data) != SLURM_SUCCESS)
+		return SLURM_ERROR;
+
+	return SLURM_SUCCESS;
+}
+
+static int _get_gpuutil(nvmlDevice_t device, pid_t pid,
+			acct_gather_data_t *data)
+{
+	nvmlReturn_t rc;
+	nvmlProcessUtilizationSample_t *proc_util;
+	unsigned int cnt = 0;
+
+	data[gpuutil_pos].size_read = 0;
+
+	/*
+	 * Sending NULL will fill in cnt with the number of processes so we can
+	 * use that to allocate the array correctly afterwards. A rc of
+	 * NVML_SUCCESS means no processes yet.
+	 */
+	rc = nvmlDeviceGetProcessUtilization(device, NULL, &cnt,
+					     data[gpuutil_pos].last_time);
+	if (rc == NVML_SUCCESS || !cnt)
+		return SLURM_SUCCESS;
+
+	if (rc != NVML_ERROR_INSUFFICIENT_SIZE) {
+		error("NVML: Failed to get process count for gpu utilization(%d): %s",
+		      rc, nvmlErrorString(rc));
+		return SLURM_ERROR;
+	}
+
+	proc_util = xcalloc(cnt, sizeof(*proc_util));
+	rc = nvmlDeviceGetProcessUtilization(device, proc_util, &cnt,
+					     data[gpuutil_pos].last_time);
+
+	if (rc == NVML_ERROR_NOT_FOUND) {
+		debug2("Couldn't find pid %d, probably hasn't started yet or has already finished",
+		       pid);
+		xfree(proc_util);
+		return SLURM_SUCCESS;
+#if HAVE_MIG_SUPPORT
+	} else if ((rc == NVML_ERROR_NOT_SUPPORTED) &&
+		   _nvml_is_device_mig(&device)) {
+		/*
+		 * NOTE: At the moment you can not query MIGs for
+		 * utilization. This will probably be fixed in the
+		 * future and hopefully this will start working.
+		 */
+		debug2("On MIG-enabled GPUs, querying process utilization is not currently supported.");
+#endif
+	} else if (rc != NVML_SUCCESS) {
+		error("NVML: Failed to get usage(%d): %s", rc,
+		      nvmlErrorString(rc));
+		xfree(proc_util);
+		return SLURM_ERROR;
+	}
+
+	for (int i = 0; i < cnt; i++) {
+		if (proc_util[i].pid != pid)
+			continue;
+		data[gpuutil_pos].last_time = proc_util[i].timeStamp;
+		data[gpuutil_pos].size_read += proc_util[i].smUtil;
+		break;
+	}
+	xfree(proc_util);
+
+	return SLURM_SUCCESS;
 }
 
 extern int init(void)
@@ -1709,128 +1846,30 @@ extern int gpu_p_energy_read(uint32_t dv_ind, gpu_status_t *gpu)
 
 extern int gpu_p_usage_read(pid_t pid, acct_gather_data_t *data)
 {
-	nvmlReturn_t rc;
 	unsigned int device_count = 0;
+	bool track_gpumem, track_gpuutil;
 
-	if ((gpuutil_pos == -1) || (gpumem_pos == -1)) {
+	track_gpumem = (gpumem_pos != -1);
+	track_gpuutil = (gpuutil_pos != -1);
+
+	if (!track_gpuutil && !track_gpumem) {
 		debug2("%s: We are not tracking TRES gpuutil/gpumem", __func__);
 		return SLURM_SUCCESS;
 	}
+
 	_nvml_init();
 	gpu_p_get_device_count(&device_count);
 
-	data[gpuutil_pos].size_read = 0;
-	data[gpumem_pos].size_read = 0;
 	for (int i = 0; i < device_count; i++) {
 		nvmlDevice_t device;
-		nvmlProcessUtilizationSample_t *proc_util;
-		unsigned int cnt = 0, gcnt = 0, ccnt = 0;
-		nvmlProcessInfo_t *proc_info;
 
 		if (!_nvml_get_handle(i, &device))
 			continue;
 
-		/*
-		 * Sending NULL will fill in cnt with the number of processes
-		 * so we can use that to allocate the array correctly
-		 * afterwards. A rc of NVML_SUCCESS means no processes yet.
-		 */
-		rc = nvmlDeviceGetProcessUtilization(
-			device, NULL, &cnt, data[gpuutil_pos].last_time);
-		if (rc == NVML_SUCCESS || !cnt)
-			continue;
-
-		if (rc != NVML_ERROR_INSUFFICIENT_SIZE)
-			return SLURM_ERROR;
-
-		proc_util = xcalloc(cnt, sizeof(*proc_util));
-		rc = nvmlDeviceGetProcessUtilization(
-			device, proc_util, &cnt, data[gpuutil_pos].last_time);
-
-		if (rc == NVML_ERROR_NOT_FOUND) {
-			debug2("Couldn't find pid %d, probably hasn't started yet or has already finished",
-			       pid);
-			xfree(proc_util);
-			continue;
-#if HAVE_MIG_SUPPORT
-		} else if ((rc == NVML_ERROR_NOT_SUPPORTED) &&
-			   _nvml_is_device_mig(&device)) {
-			/*
-			 * NOTE: At the moment you can not query MIGs for
-			 * utilization. This will probably be fixed in the
-			 * future and hopefully this will start working.
-			 */
-			debug2("On MIG-enabled GPUs, querying process utilization is not currently supported.");
-#endif
-		} else if (rc != NVML_SUCCESS) {
-			error("NVML: Failed to get usage(%d): %s",
-			      rc, nvmlErrorString(rc));
-			xfree(proc_util);
-			return SLURM_ERROR;
-		}
-
-		for (int j = 0; j < cnt; j++) {
-			if (proc_util[j].pid != pid)
-				continue;
-			data[gpuutil_pos].last_time = proc_util[j].timeStamp;
-			data[gpuutil_pos].size_read += proc_util[j].smUtil;
-			break;
-		}
-		xfree(proc_util);
-
-		/*
-		 * Get the number of Graphics and Compute processes. If there
-		 * are no processes *cnt will be 0 and rc == NVML_SUCCESS, if
-		 * there are processes *cnt will be set and rc ==
-		 * NVML_ERROR_INSUFFICIENT_SIZE
-		 */
-		rc = nvmlDeviceGetGraphicsRunningProcesses(
-			device, &gcnt, NULL);
-		if ((rc != NVML_SUCCESS) &&
-		    (rc != NVML_ERROR_INSUFFICIENT_SIZE))
-			return SLURM_ERROR;
-
-		rc = nvmlDeviceGetComputeRunningProcesses(
-			device, &ccnt, NULL);
-		if ((rc != NVML_SUCCESS) &&
-		    (rc != NVML_ERROR_INSUFFICIENT_SIZE))
-			return SLURM_ERROR;
-
-		/*
-		 * This is how we get the memory in bytes instead of precentage
-		 */
-		proc_info = xcalloc(gcnt+ccnt, sizeof(*proc_info));
-		if (gcnt) {
-			rc = nvmlDeviceGetGraphicsRunningProcesses(
-				device, &gcnt, proc_info);
-			if (rc != NVML_SUCCESS) {
-				error("NVML: Failed to get Graphics running procs(%d): %s",
-				      rc, nvmlErrorString(rc));
-				xfree(proc_info);
-				return SLURM_ERROR;
-			}
-		}
-
-		if (ccnt) {
-			rc = nvmlDeviceGetComputeRunningProcesses(
-				device, &ccnt, proc_info + gcnt);
-			if (rc != NVML_SUCCESS) {
-				error("NVML: Failed to get Compute running procs(%d): %s",
-				      rc, nvmlErrorString(rc));
-				xfree(proc_info);
-				return SLURM_ERROR;
-			}
-		}
-
-		for (int j = 0; j < (gcnt + ccnt); j++) {
-			if (proc_info[j].pid != pid)
-				continue;
-			/* Store MB usedGpuMemory is in bytes */
-			data[gpumem_pos].size_read +=
-				proc_info[j].usedGpuMemory;
-			break;
-		}
-		xfree(proc_info);
+		if (track_gpumem)
+			_get_gpumem(device, pid, data);
+		if (track_gpuutil)
+			_get_gpuutil(device, pid, data);
 
 		log_flag(JAG, "pid %d has GPUUtil=%lu and MemMB=%lu",
 			 pid,

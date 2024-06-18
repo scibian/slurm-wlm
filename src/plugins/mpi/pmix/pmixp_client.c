@@ -407,14 +407,14 @@ static int _set_mapsinfo(List lresp)
 	pmix_info_t *kvp;
 	char *regexp, *input, *map = NULL, *pos = NULL;
 	pmixp_namespace_t *nsptr = pmixp_nspaces_local();
-	hostlist_t hl = nsptr->hl;
+	hostlist_t *hl = nsptr->hl;
 	int rc, i, j;
 	int count = hostlist_count(hl);
 	uint32_t *node2tasks = NULL, *cur_task = NULL;
 
-	input = hostlist_deranged_string_malloc(hl);
+	input = hostlist_deranged_string_xmalloc(hl);
 	rc = PMIx_generate_regex(input, &regexp);
-	free(input);
+	xfree(input);
 	if (PMIX_SUCCESS != rc) {
 		return SLURM_ERROR;
 	}
@@ -781,6 +781,7 @@ error:
 
 extern int pmixp_lib_abort(int status, void *cbfunc, void *cbdata)
 {
+	uint16_t flags = 0;
 	pmix_op_cbfunc_t abort_cbfunc = (pmix_op_cbfunc_t)cbfunc;
 
 	/*
@@ -789,7 +790,11 @@ extern int pmixp_lib_abort(int status, void *cbfunc, void *cbdata)
 	 */
 	pmixp_abort_propagate(status);
 
-	slurm_kill_job_step(pmixp_info_jobid(), pmixp_info_stepid(), SIGKILL);
+	if (!status)
+		flags |= KILL_NO_SIG_FAIL;
+
+	slurm_kill_job_step(pmixp_info_jobid(), pmixp_info_stepid(), SIGKILL,
+			    flags);
 
 	if (abort_cbfunc)
 		abort_cbfunc(PMIX_SUCCESS, cbdata);

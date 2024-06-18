@@ -53,13 +53,12 @@ extern int on_error(parse_op_t op, data_parser_type_t type, args_t *args,
 	const parser_t *const parser = find_parser_by_type(type);
 	va_list ap;
 	char *str;
-	bool cont;
+	bool cont = false;
 	int errno_backup = errno;
 
-	xassert((op == PARSING) || (op == DUMPING) || (op == QUERYING));
 	xassert(type > DATA_PARSER_TYPE_INVALID);
 	xassert(type < DATA_PARSER_TYPE_MAX);
-	xassert(parser && (parser->type == type));
+	xassert(!parser || (parser->type == type));
 	xassert(args);
 	xassert(error_code != SLURM_SUCCESS);
 	xassert(caller && caller[0]);
@@ -77,13 +76,40 @@ extern int on_error(parse_op_t op, data_parser_type_t type, args_t *args,
 	xassert((op != PARSING) ||
 		(source && (source[0] == OPENAPI_PATH_REL[0]) &&
 		 (source[1] == OPENAPI_PATH_SEP[0])));
-	cont = args->on_parse_error(args->error_arg, type, error_code,
-				    source, "%s", str);
+
+	switch (op) {
+	case PARSING:
+		if (args->on_parse_error)
+			cont = args->on_parse_error(args->error_arg, type,
+						    error_code, source, "%s",
+						    str);
+		else
+			cont = false;
+		break;
+	case DUMPING:
+		if (args->on_dump_error)
+			cont = args->on_dump_error(args->error_arg, type,
+						   error_code, source, "%s",
+						   str);
+		else
+			cont = false;
+		break;
+	case QUERYING:
+		if (args->on_query_error)
+			cont = args->on_query_error(args->error_arg, type,
+						    error_code, source, "%s",
+						    str);
+		else
+			cont = false;
+		break;
+	case PARSE_INVALID:
+		fatal_abort("%s: invalid op should never be called", __func__);
+	}
 
 	debug2("%s->%s->%s continue=%c type=%s return_code[%u]=%s why=%s",
 	       caller, source, __func__, (cont ? 'T' : 'F'),
-	       parser->type_string, error_code, slurm_strerror(error_code),
-	       str);
+	       (parser ? parser->type_string : "UNKNOWN"), error_code,
+	       slurm_strerror(error_code), str);
 
 	/* never clobber errno */
 	errno = errno_backup;
@@ -104,7 +130,7 @@ extern void on_warn(parse_op_t op, data_parser_type_t type, args_t *args,
 	xassert((op == PARSING) || (op == DUMPING) || (op == QUERYING));
 	xassert(type > DATA_PARSER_TYPE_INVALID);
 	xassert(type < DATA_PARSER_TYPE_MAX);
-	xassert(parser && (parser->type == type));
+	xassert(!parser || (parser->type == type));
 	xassert(args);
 	xassert(caller && caller[0]);
 	xassert(why && why[0]);
@@ -121,10 +147,29 @@ extern void on_warn(parse_op_t op, data_parser_type_t type, args_t *args,
 	xassert((op != PARSING) ||
 		(source && (source[0] == OPENAPI_PATH_REL[0]) &&
 		 (source[1] == OPENAPI_PATH_SEP[0])));
-	args->on_parse_warn(args->warn_arg, type, source, "%s", str);
+
+	switch (op) {
+	case PARSING:
+		if (args->on_parse_warn)
+			args->on_parse_warn(args->warn_arg, type, source, "%s",
+					    str);
+		break;
+	case DUMPING:
+		if (args->on_dump_warn)
+			args->on_dump_warn(args->warn_arg, type, source, "%s",
+					   str);
+		break;
+	case QUERYING:
+		if (args->on_query_warn)
+			args->on_query_warn(args->warn_arg, type, source, "%s",
+					    str);
+		break;
+	case PARSE_INVALID:
+		fatal_abort("%s: invalid op should never be called", __func__);
+	}
 
 	debug2("%s->%s->%s type=%s why=%s", caller, source, __func__,
-	       parser->type_string, str);
+	       (parser ? parser->type_string : "UNKNOWN"), str);
 
 	/* never clobber errno */
 	errno = errno_backup;

@@ -5,6 +5,7 @@ generated_html = \
 	accounting.html \
 	add.html \
 	api.html \
+	authentication.html \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
@@ -12,20 +13,18 @@ generated_html = \
 	classic_fair_share.html \
 	cli_filter_plugins.html \
 	configless_slurm.html \
-	cons_res.html \
-	cons_res_share.html \
+	cons_tres.html \
+	cons_tres_share.html \
 	containers.html \
 	contributor.html \
 	core_spec.html \
 	cpu_management.html \
 	cray.html \
-	disclaimer.html \
 	dist_plane.html \
 	documentation.html \
-	download.html \
 	dynamic_nodes.html \
 	elasticsearch.html \
-	elastic_computing.html \
+	extra_constraints.html \
 	faq.html \
 	federation.html \
 	gang_scheduling.html \
@@ -42,17 +41,16 @@ generated_html = \
 	job_launch.html \
 	job_submit_plugins.html \
 	jwt.html \
+	kubernetes.html \
 	licenses.html \
 	fair_tree.html \
 	mail.html \
 	man_index.html \
 	mc_support.html \
 	mcs.html \
-	meetings.html \
 	mpi_guide.html \
 	multi_cluster.html \
 	network.html \
-	news.html \
 	nss_slurm.html \
 	openapi_release_notes.html \
 	overview.html \
@@ -71,11 +69,14 @@ generated_html = \
 	qos.html \
 	quickstart_admin.html \
 	quickstart.html \
+	related_software.html \
+	release_notes.html \
 	reservations.html \
 	resource_binding.html \
 	resource_limits.html \
 	rest.html \
 	rest_api.html \
+	rest_quickstart.html \
 	rosetta.html \
 	sched_config.html \
 	select_design.html \
@@ -83,12 +84,9 @@ generated_html = \
 	site_factor.html \
 	slurm.html \
 	slurm_ug_agenda.html \
-	team.html \
-	testimonials.html \
 	topology.html \
 	tres.html \
 	troubleshoot.html \
-	tutorials.html \
 	user_permissions.html \
 	wckey.html
 

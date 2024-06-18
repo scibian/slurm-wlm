@@ -48,7 +48,6 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/param.h>	/* MAXPATHLEN */
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -205,17 +204,26 @@ _step_connect(const char *directory, const char *nodename,
 static char *
 _guess_nodename(void)
 {
-	char host[256];
+	char host[HOST_NAME_MAX];
 	char *nodename = NULL;
 
-	if (gethostname_short(host, 256) != 0)
-		return NULL;
+	/* If we are in a step just grab it from the ENV */
+	if ((nodename = getenv("SLURMD_NODENAME")))
+		return xstrdup(nodename);
 
+	if (gethostname_short(host, sizeof(host)) != 0)
+		return NULL;
 	nodename = slurm_conf_get_nodename(host);
 	if (nodename == NULL)
 		nodename = slurm_conf_get_aliased_nodename();
 	if (nodename == NULL) /* if no match, try localhost */
 		nodename = slurm_conf_get_nodename("localhost");
+	/*
+	 * If nothing above has given us a name, just return what
+	 * gethostname_short. This is helpful for dynamic nodes.
+	 */
+	if (!nodename)
+		nodename = xstrdup(host);
 
 	return nodename;
 }
@@ -329,17 +337,13 @@ int stepd_signal_container(int fd, uint16_t protocol_version, int signal,
 	int errnum = 0;
 
 	safe_write(fd, &req, sizeof(int));
-	if (protocol_version >= SLURM_22_05_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &signal, sizeof(int));
 		safe_write(fd, &flags, sizeof(int));
 		if (details)
 			details_len = strlen(details);
 		safe_write(fd, &details_len, sizeof(int));
 		safe_write(fd, details, details_len);
-		safe_write(fd, &req_uid, sizeof(uid_t));
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		safe_write(fd, &signal, sizeof(int));
-		safe_write(fd, &flags, sizeof(int));
 		safe_write(fd, &req_uid, sizeof(uid_t));
 	} else {
 		error("%s: invalid protocol_version %u",
@@ -400,19 +404,12 @@ int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
 	int req = REQUEST_ATTACH;
 	int rc = SLURM_SUCCESS;
 
-	if (protocol_version >= SLURM_22_05_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &req, sizeof(int));
 		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
 		safe_write(fd, respaddr, sizeof(slurm_addr_t));
 		safe_write(fd, &sig_len, sizeof(uint32_t));
 		safe_write(fd, job_cred_sig, sig_len);
-		safe_write(fd, &uid, sizeof(uid_t));
-		safe_write(fd, &protocol_version, sizeof(uint16_t));
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		safe_write(fd, &req, sizeof(int));
-		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
-		safe_write(fd, respaddr, sizeof(slurm_addr_t));
-		safe_write(fd, job_cred_sig, SLURM_IO_KEY_SIZE);
 		safe_write(fd, &uid, sizeof(uid_t));
 		safe_write(fd, &protocol_version, sizeof(uint16_t));
 	} else
@@ -1006,14 +1003,25 @@ stepd_suspend(int fd, uint16_t protocol_version,
 	int rc = 0;
 	int errnum = 0;
 
-	if (phase == 0) {
-		safe_write(fd, &req, sizeof(int));
-		safe_write(fd, &susp_req->job_core_spec, sizeof(uint16_t));
-	} else {
-		/* Receive the return code and errno */
-		safe_read(fd, &rc, sizeof(int));
-		safe_read(fd, &errnum, sizeof(int));
-		errno = errnum;
+	if (protocol_version >= SLURM_23_11_PROTOCOL_VERSION) {
+		if (phase == 0) {
+			safe_write(fd, &req, sizeof(int));
+		} else {
+			/* Receive the return code and errno */
+			safe_read(fd, &rc, sizeof(int));
+			safe_read(fd, &errnum, sizeof(int));
+			errno = errnum;
+		}
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		if (phase == 0) {
+			safe_write(fd, &req, sizeof(int));
+			safe_write(fd, NO_VAL16, sizeof(uint16_t));
+		} else {
+			/* Receive the return code and errno */
+			safe_read(fd, &rc, sizeof(int));
+			safe_read(fd, &errnum, sizeof(int));
+			errno = errnum;
+		}
 	}
 
 	return rc;
@@ -1037,14 +1045,25 @@ stepd_resume(int fd, uint16_t protocol_version,
 	int rc = 0;
 	int errnum = 0;
 
-	if (phase == 0) {
-		safe_write(fd, &req, sizeof(int));
-		safe_write(fd, &susp_req->job_core_spec, sizeof(uint16_t));
-	} else {
-		/* Receive the return code and errno */
-		safe_read(fd, &rc, sizeof(int));
-		safe_read(fd, &errnum, sizeof(int));
-		errno = errnum;
+	if (protocol_version >= SLURM_23_11_PROTOCOL_VERSION) {
+		if (phase == 0) {
+			safe_write(fd, &req, sizeof(int));
+		} else {
+			/* Receive the return code and errno */
+			safe_read(fd, &rc, sizeof(int));
+			safe_read(fd, &errnum, sizeof(int));
+			errno = errnum;
+		}
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		if (phase == 0) {
+			safe_write(fd, &req, sizeof(int));
+			safe_write(fd, NO_VAL16, sizeof(uint16_t));
+		} else {
+			/* Receive the return code and errno */
+			safe_read(fd, &rc, sizeof(int));
+			safe_read(fd, &errnum, sizeof(int));
+			errno = errnum;
+		}
 	}
 
 	return rc;
@@ -1052,21 +1071,24 @@ rwfail:
 	return -1;
 }
 
-/*
- * Reconfigure the job step (Primarily to allow the stepd to refresh
- * it's log file pointer.
- *
- * Returns SLURM_SUCCESS is successful.  On error returns SLURM_ERROR
- * and sets errno.
- */
-int
-stepd_reconfig(int fd, uint16_t protocol_version)
+extern int stepd_reconfig(int fd, uint16_t protocol_version, buf_t *reconf)
 {
 	int req = REQUEST_STEP_RECONFIGURE;
 	int rc;
 	int errnum = 0;
 
 	safe_write(fd, &req, sizeof(int));
+
+	if (protocol_version >= SLURM_23_11_PROTOCOL_VERSION) {
+		int len = 0;
+		if (reconf) {
+			len = get_buf_offset(reconf);
+			safe_write(fd, &len, sizeof(int));
+			safe_write(fd, get_buf_data(reconf), len);
+		} else {
+			safe_write(fd, &len, sizeof(int));
+		}
+	}
 
 	/* Receive the return code and errno */
 	safe_read(fd, &rc, sizeof(int));
