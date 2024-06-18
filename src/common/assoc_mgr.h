@@ -111,6 +111,7 @@ extern List assoc_mgr_tres_list;
 extern slurmdb_tres_rec_t **assoc_mgr_tres_array;
 extern char **assoc_mgr_tres_name_array;
 extern List assoc_mgr_assoc_list;
+extern List assoc_mgr_coord_list;
 extern List assoc_mgr_res_list;
 extern List assoc_mgr_qos_list;
 extern List assoc_mgr_user_list;
@@ -132,7 +133,9 @@ extern void assoc_mgr_lock(assoc_mgr_lock_t *locks);
 extern void assoc_mgr_unlock(assoc_mgr_lock_t *locks);
 
 #ifndef NDEBUG
-extern bool verify_assoc_lock(assoc_mgr_lock_datatype_t datatype, lock_level_t level);
+extern bool verify_assoc_lock(assoc_mgr_lock_datatype_t datatype,
+			      lock_level_t level);
+extern bool verify_assoc_unlock(assoc_mgr_lock_datatype_t datatype);
 #endif
 
 /* ran after a new tres_list is given */
@@ -262,6 +265,22 @@ extern int assoc_mgr_fill_in_wckey(void *db_conn,
 				   bool locked);
 
 /*
+ * Get a list of all users that are coordinator for this account.  This
+ * will fill in if there are coordinators from a parent account also.
+ * IN: acct - Name of account.
+ * RET: list of slurmdb_coord_rec_t's to be freed from caller.
+ */
+extern list_t *assoc_mgr_acct_coords(void *db_conn, char *acct_name);
+
+/*
+ * Get a list of all users that are coordinator for this account.  This
+ * will fill in if there are coordinators from a parent account also.
+ * IN: acct - Name of account.
+ * RET: list of slurmdb_coord_rec_t's to be freed from caller.
+ */
+extern list_t *assoc_mgr_user_acct_coords(void *db_conn, char *user_name);
+
+/*
  * get admin_level of uid
  * IN: uid - uid of user to check admin_level of.
  * RET: admin level SLURMDB_ADMIN_NOTSET on error
@@ -270,13 +289,22 @@ extern slurmdb_admin_level_t assoc_mgr_get_admin_level(void *db_conn,
 						       uint32_t uid);
 
 /*
+ * Get admin_level of uid where USER_LOCK is already in READ_LOCK.
+ * IN: uid - uid of user to check admin_level of.
+ * RET: admin level SLURMDB_ADMIN_NOTSET on error
+ */
+extern slurmdb_admin_level_t assoc_mgr_get_admin_level_locked(void *db_conn,
+							      uint32_t uid);
+
+/*
  * see if user is coordinator of given acct
  * IN: uid - uid of user to check.
  * IN: acct - name of account
+ * IN: is_locked - true if the assoc_mgr user READ_LOCK is already locked.
  * RET: true or false
  */
 extern bool assoc_mgr_is_user_acct_coord(void *db_conn, uint32_t uid,
-					char *acct);
+					char *acct, bool is_locked);
 
 /*
  * see if user is coordinator of given acct
@@ -284,9 +312,8 @@ extern bool assoc_mgr_is_user_acct_coord(void *db_conn, uint32_t uid,
  * IN: acct - name of account
  * RET: true or false
  */
-extern bool assoc_mgr_is_user_acct_coord_user_rec(void *db_conn,
-                                                 slurmdb_user_rec_t *user,
-                                                 char *acct_name);
+extern bool assoc_mgr_is_user_acct_coord_user_rec(slurmdb_user_rec_t *user,
+						  char *acct_name);
 
 /*
  * get the share information from the association list
@@ -423,7 +450,8 @@ extern void assoc_mgr_remove_assoc_usage(slurmdb_assoc_rec_t *assoc);
  * IN:  slurmdb_qos_rec_t *qos
  * RET: SLURM_SUCCESS on success or else SLURM_ERROR
  */
-extern void assoc_mgr_remove_qos_usage(slurmdb_qos_rec_t *qos);
+extern void assoc_mgr_update_qos_usage(slurmdb_qos_rec_t *qos,
+				       long double new_usage);
 
 /*
  * Dump the state information of the association mgr just in case the
@@ -458,11 +486,13 @@ extern int load_assoc_mgr_state(bool only_tres);
  */
 extern int assoc_mgr_refresh_lists(void *db_conn, uint16_t cache_level);
 
+extern void assoc_mgr_set_uid(uid_t uid, char *username);
+
 /*
  * Sets the uids of users added to the system after the start of the
  * calling program.
  */
-extern int assoc_mgr_set_missing_uids();
+extern int assoc_mgr_set_missing_uids(void);
 
 /* Normalize shares for an association. External so a priority plugin
  * can call it if needed.
@@ -492,15 +522,31 @@ extern int assoc_mgr_find_tres_pos2(slurmdb_tres_rec_t *tres_rec, bool locked);
 extern slurmdb_tres_rec_t *assoc_mgr_find_tres_rec(
 	slurmdb_tres_rec_t *tres_rec);
 
+/* fills in allocates and sets tres_cnt based off tres_list
+ * OUT tres_cnt - array to be filled in g_tres_cnt in length
+ * IN tres_list - list of slurmdb_tres_rec_t's
+ * IN locked - if the assoc_mgr tres read lock is locked or not.
+ * IN relative - if the counts should be relative (percentage) or absolute
+ * IN relative_tres_cnt - if relative is set the total count of tres possibl.
+ * RET if positions changed in array from string 1 if nothing changed 0
+ */
+extern int assoc_mgr_set_tres_cnt_array_from_list(
+	uint64_t **tres_cnt, list_t *tres_list, bool locked,
+	bool relative, uint64_t *relative_tres_cnt);
+
 /* fills in allocates and sets tres_cnt based off tres_str
  * OUT tres_cnt - array to be filled in g_tres_cnt in length
  * IN tres_str - simple format of tres used with id and count set
  * IN init_val - what the initial value is going to be set to
  * IN locked - if the assoc_mgr tres read lock is locked or not.
+ * IN relative - if the counts should be relative (percentage) or absolute
+ * IN relative_tres_cnt - if relative is set the total count of tres possibl.
  * RET if positions changed in array from string 1 if nothing changed 0
  */
 extern int assoc_mgr_set_tres_cnt_array(uint64_t **tres_cnt, char *tres_str,
-					uint64_t init_val, bool locked);
+					uint64_t init_val, bool locked,
+					bool relative,
+					uint64_t *relative_tres_cnt);
 
 /* Creates all the tres arrays for an association.
  * NOTE: The assoc_mgr tres read lock needs to be locked before this
@@ -511,6 +557,22 @@ extern void assoc_mgr_set_assoc_tres_cnt(slurmdb_assoc_rec_t *assoc);
  * NOTE: The assoc_mgr tres read lock needs to be locked before this
  * is called. */
 extern void assoc_mgr_set_qos_tres_cnt(slurmdb_qos_rec_t *qos);
+
+/* Creates all the tres arrays for a QOS with the relative flag set.
+ * NOTE: The assoc_mgr qos write and tres read lock needs to be locked before
+ * this is called. */
+extern void assoc_mgr_set_qos_tres_relative_cnt(slurmdb_qos_rec_t *qos,
+						uint64_t *tres_cnt);
+
+/* Creates all the tres arrays for a QOS with the relative flag set.
+ * NOTE: The assoc_mgr qos write and tres read lock needs to be locked before
+ * this is called. */
+extern void assoc_mgr_set_unset_qos_tres_relative_cnt(bool locked);
+
+/* Removes QOS_FLAG_RELATIVE_SET from all qos.
+ * NOTE: The assoc_mgr qos write lock needs to be locked before this
+ * is called. */
+extern void assoc_mgr_clear_qos_tres_relative_cnt(bool locked);
 
 /* Make a simple tres string from a tres count array.
  * IN tres_cnt - counts of each tres used
@@ -549,6 +611,6 @@ extern int assoc_mgr_get_old_tres_pos(int cur_pos);
 /* Test whether the tres positions have changed since last reading the tres
  * list.
  */
-extern int assoc_mgr_tres_pos_changed();
+extern int assoc_mgr_tres_pos_changed(void);
 
 #endif /* _SLURM_ASSOC_MGR_H */

@@ -101,6 +101,7 @@
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/ping_nodes.h"
+#include "src/slurmctld/sackd_mgr.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/slurmscriptd.h"
 #include "src/slurmctld/state_save.h"
@@ -112,6 +113,7 @@
 #define DUMP_RPC_COUNT 		25
 #define HOSTLIST_MAX_SIZE 	80
 #define MAIL_PROG_TIMEOUT 120 /* Timeout in seconds */
+#define AGENT_SHUTDOWN_WAIT 3
 
 typedef enum {
 	DSH_NEW,        /* Request not yet started */
@@ -139,7 +141,7 @@ typedef struct thd {
 					 * upon termination */
 	slurm_addr_t *addr;		/* specific addr to send to
 					 * will not do nodelist if set */
-	hostlist_t nodelist;		/* list of nodes to send to */
+	hostlist_t *nodelist;		/* list of nodes to send to */
 	char *nodename;			/* node to send to */
 	List ret_list;
 } thd_t;
@@ -155,6 +157,7 @@ typedef struct agent_info {
 	uid_t r_uid;			/* receiver UID */
 	slurm_msg_type_t msg_type;	/* RPC to be issued */
 	void **msg_args_pptr;		/* RPC data to be used */
+	uint16_t msg_flags;		/* Flags to be added to msg*/
 	uint16_t protocol_version;	/* if set, use this version */
 } agent_info_t;
 
@@ -169,6 +172,7 @@ typedef struct task_info {
 	uid_t r_uid;			/* receiver UID */
 	slurm_msg_type_t msg_type;	/* RPC to be issued */
 	void *msg_args_ptr;		/* ptr to RPC data to be used */
+	uint16_t msg_flags;		/* Flags to be added to msg*/
 	uint16_t protocol_version;	/* if set, use this version */
 } task_info_t;
 
@@ -199,6 +203,8 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 		int no_resp_cnt, int retry_cnt);
 static void _purge_agent_args(agent_arg_t *agent_arg_ptr);
 static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count);
+static void _queue_update_node(char *node_name);
+static void _queue_update_srun(slurm_step_id_t *step_id);
 static int  _setup_requeue(agent_arg_t *agent_arg_ptr, thd_t *thread_ptr,
 			   int *count, int *spot);
 static void _sig_handler(int dummy);
@@ -220,6 +226,13 @@ static List defer_list = NULL;		/* agent_arg_t list for requests
 static List mail_list = NULL;		/* pending e-mail requests */
 static List retry_list = NULL;		/* agent_arg_t list for retry */
 
+static list_t *update_node_list = NULL;	/* node list for update */
+static pthread_mutex_t update_nodes_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t update_nodes_cond = PTHREAD_COND_INITIALIZER;
+
+static list_t *update_srun_list = NULL;
+static pthread_mutex_t update_srun_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t update_srun_cond = PTHREAD_COND_INITIALIZER;
 
 static pthread_mutex_t agent_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  agent_cnt_cond  = PTHREAD_COND_INITIALIZER;
@@ -232,7 +245,9 @@ static pthread_mutex_t pending_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  pending_cond = PTHREAD_COND_INITIALIZER;
 static int pending_wait_time = NO_VAL16;
 static bool pending_mail = false;
-static bool pending_thread_running = false;
+static pthread_t pending_thread_tid = 0;
+static pthread_t nodes_update_tid = 0;
+static pthread_t srun_update_tid = 0;
 static bool pending_check_defer = false;
 
 static bool run_scheduler    = false;
@@ -349,9 +364,9 @@ void *agent(void *args)
 		 */
 		task_specific_ptr = _make_task_data(agent_info_ptr, i);
 
-		slurm_thread_create_detached(&thread_ptr[i].thread,
-					     _thread_per_group_rpc,
-					     task_specific_ptr);
+		slurm_thread_create(&thread_ptr[i].thread,
+				    _thread_per_group_rpc,
+				    task_specific_ptr);
 		agent_info_ptr->threads_active++;
 		slurm_mutex_unlock(&agent_info_ptr->thread_mutex);
 	}
@@ -360,14 +375,16 @@ void *agent(void *args)
 	pthread_join(thread_wdog, NULL);
 	delay = (int) difftime(time(NULL), begin_time);
 	if (delay > (slurm_conf.msg_timeout * 2)) {
-		info("agent msg_type=%u ran for %d seconds",
-			agent_arg_ptr->msg_type,  delay);
+		info("agent msg_type=%s ran for %d seconds",
+		     rpc_num2string(agent_arg_ptr->msg_type),  delay);
 	}
 	slurm_mutex_lock(&agent_info_ptr->thread_mutex);
 	while (agent_info_ptr->threads_active != 0) {
 		slurm_cond_wait(&agent_info_ptr->thread_cond,
 				&agent_info_ptr->thread_mutex);
 	}
+	for (i = 0; i < agent_info_ptr->thread_count; i++)
+		pthread_join(thread_ptr[i].thread, NULL);
 	slurm_mutex_unlock(&agent_info_ptr->thread_mutex);
 
 	log_flag(AGENT, "%s: end agent thread_count:%d threads_active:%d retry:%c get_reply:%c msg_type:%s protocol_version:%hu",
@@ -455,6 +472,7 @@ static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr)
 	agent_info_ptr->r_uid = agent_arg_ptr->r_uid;
 	agent_info_ptr->msg_type       = agent_arg_ptr->msg_type;
 	agent_info_ptr->msg_args_pptr  = &agent_arg_ptr->msg_args;
+	agent_info_ptr->msg_flags = agent_arg_ptr->msg_flags;
 	agent_info_ptr->protocol_version = agent_arg_ptr->protocol_version;
 
 	if (!agent_info_ptr->thread_count)
@@ -466,6 +484,7 @@ static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr)
 	if ((agent_arg_ptr->msg_type != REQUEST_JOB_NOTIFY)	&&
 	    (agent_arg_ptr->msg_type != REQUEST_REBOOT_NODES)	&&
 	    (agent_arg_ptr->msg_type != REQUEST_RECONFIGURE)	&&
+	    (agent_arg_ptr->msg_type != REQUEST_RECONFIGURE_SACKD) &&
 	    (agent_arg_ptr->msg_type != REQUEST_RECONFIGURE_WITH_CONFIG) &&
 	    (agent_arg_ptr->msg_type != REQUEST_SHUTDOWN)	&&
 	    (agent_arg_ptr->msg_type != SRUN_TIMEOUT)		&&
@@ -555,6 +574,7 @@ static task_info_t *_make_task_data(agent_info_t *agent_info_ptr, int inx)
 	task_info_ptr->r_uid = agent_info_ptr->r_uid;
 	task_info_ptr->msg_type          = agent_info_ptr->msg_type;
 	task_info_ptr->msg_args_ptr      = *agent_info_ptr->msg_args_pptr;
+	task_info_ptr->msg_flags = agent_info_ptr->msg_flags;
 	task_info_ptr->protocol_version  = agent_info_ptr->protocol_version;
 
 	return task_info_ptr;
@@ -600,7 +620,7 @@ static void _update_wdog_state(thd_t *thread_ptr,
  */
 static void *_wdog(void *args)
 {
-	bool srun_agent = false;
+	bool srun_agent = false, sack_agent = false;
 	int i;
 	agent_info_t *agent_ptr = (agent_info_t *) args;
 	thd_t *thread_ptr = agent_ptr->thread_struct;
@@ -620,6 +640,8 @@ static void *_wdog(void *args)
 	     (agent_ptr->msg_type == RESPONSE_RESOURCE_ALLOCATION)	||
 	     (agent_ptr->msg_type == RESPONSE_HET_JOB_ALLOCATION) )
 		srun_agent = true;
+	if (agent_ptr->msg_type == REQUEST_RECONFIGURE_SACKD)
+		sack_agent = true;
 
 	thd_comp.max_delay = 0;
 
@@ -657,9 +679,12 @@ static void *_wdog(void *args)
 		slurm_mutex_unlock(&agent_ptr->thread_mutex);
 	}
 
-	if (srun_agent) {
+	if (sack_agent) {
+		if (thread_ptr[0].state != DSH_DONE)
+			sackd_mgr_remove_node(thread_ptr[0].nodename);
+	} else if (srun_agent) {
 		_notify_slurmctld_jobs(agent_ptr);
-	} else {
+	} else if (agent_ptr->msg_type != REQUEST_SHUTDOWN) {
 		_notify_slurmctld_nodes(agent_ptr,
 					thd_comp.no_resp_cnt,
 					thd_comp.retry_cnt);
@@ -675,14 +700,11 @@ static void *_wdog(void *args)
 			 __func__, thd_comp.max_delay);
 
 	slurm_mutex_unlock(&agent_ptr->thread_mutex);
-	return (void *) NULL;
+	return NULL;
 }
 
 static void _notify_slurmctld_jobs(agent_info_t *agent_ptr)
 {
-	/* Locks: Write job */
-	slurmctld_lock_t job_write_lock =
-	    { NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	slurm_step_id_t step_id = {
 		.job_id = 0,
 		.step_id = NO_VAL,
@@ -719,12 +741,9 @@ static void _notify_slurmctld_jobs(agent_info_t *agent_ptr)
 		error("%s: invalid msg_type %u", __func__, agent_ptr->msg_type);
 		return;
 	}
-	lock_slurmctld(job_write_lock);
-	if  (thread_ptr[0].state == DSH_DONE) {
-		srun_response(&step_id);
-	}
 
-	unlock_slurmctld(job_write_lock);
+	if (thread_ptr[0].state == DSH_DONE)
+		_queue_update_srun(&step_id);
 }
 
 static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
@@ -739,6 +758,7 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 		{ .conf = READ_LOCK, .node = WRITE_LOCK };
 	thd_t *thread_ptr = agent_ptr->thread_struct;
 	int i;
+	bool locked = false;
 
 	/* Notify slurmctld of non-responding nodes */
 	if (no_resp_cnt) {
@@ -764,9 +784,8 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 		_queue_agent_retry(agent_ptr, retry_cnt);
 
 	/* Update last_response on responding nodes */
-	lock_slurmctld(node_write_lock);
 	for (i = 0; i < agent_ptr->thread_count; i++) {
-		char *down_msg, *node_names;
+		char *down_msg, **node_names;
 		slurm_msg_type_t resp_type = RESPONSE_SLURM_RC;
 
 		if (!thread_ptr[i].ret_list) {
@@ -781,45 +800,70 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 			state = ret_data_info->err;
 		switch_on_state:
 			if (is_ret_list) {
-				node_names = ret_data_info->node_name;
+				node_names = &ret_data_info->node_name;
 				resp_type = ret_data_info->type;
 			} else
-				node_names = thread_ptr[i].nodename;
+				node_names = &thread_ptr[i].nodename;
+
+			if (!is_ret_list && !(*node_names))
+				goto finished;
 
 			switch (state) {
 			case DSH_NO_RESP:
-				node_not_resp(node_names,
+				if (!locked) {
+					locked = true;
+					lock_slurmctld(node_write_lock);
+				}
+				node_not_resp(*node_names,
 					      thread_ptr[i].start_time,
 					      resp_type);
 				break;
 			case DSH_FAILED:
+				if (!locked) {
+					locked = true;
+					lock_slurmctld(node_write_lock);
+				}
 #ifdef HAVE_FRONT_END
 				down_msg = "";
 #else
-				drain_nodes(node_names, "Prolog/Epilog failure",
+				drain_nodes(*node_names, "Prolog/Epilog failure",
 				            slurm_conf.slurm_user_id);
 				down_msg = ", set to state DRAIN";
 #endif
 				error("Prolog/Epilog failure on nodes %s%s",
-				      node_names, down_msg);
+				      *node_names, down_msg);
 				break;
 			case DSH_DUP_JOBID:
+				if (!locked) {
+					locked = true;
+					lock_slurmctld(node_write_lock);
+				}
 #ifdef HAVE_FRONT_END
 				down_msg = "";
 #else
-				drain_nodes(node_names, "Duplicate jobid",
+				drain_nodes(*node_names, "Duplicate jobid",
 				            slurm_conf.slurm_user_id);
 				down_msg = ", set to state DRAIN";
 #endif
 				error("Duplicate jobid on nodes %s%s",
-				      node_names, down_msg);
+				      *node_names, down_msg);
 				break;
 			case DSH_DONE:
-				node_did_resp(node_names);
+				/*
+				 * Process now if we've already obtained the
+				 * lock. Otherwise delegate to the dedicated
+				 * processing thread.
+				 */
+				if (locked) {
+					node_did_resp(*node_names);
+				} else {
+					_queue_update_node(*node_names);
+					*node_names = NULL;
+				}
 				break;
 			default:
 				error("unknown state returned for %s",
-				      node_names);
+				      *node_names);
 				break;
 			}
 			if (!is_ret_list)
@@ -828,7 +872,9 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 		list_iterator_destroy(itr);
 finished:	;
 	}
-	unlock_slurmctld(node_write_lock);
+	if (locked)
+		unlock_slurmctld(node_write_lock);
+
 	if (run_scheduler) {
 		run_scheduler = false;
 		/* below functions all have their own locking */
@@ -895,7 +941,7 @@ static void *_thread_per_group_rpc(void *args)
 	thd_t           *thread_ptr         = task_ptr->thread_struct_ptr;
 	state_t thread_state = DSH_NO_RESP;
 	slurm_msg_type_t msg_type = task_ptr->msg_type;
-	bool is_kill_msg, srun_agent;
+	bool is_kill_msg, srun_agent, sack_agent;
 	List ret_list = NULL;
 	ListIterator itr;
 	ret_data_info_t *ret_data_info = NULL;
@@ -925,6 +971,7 @@ static void *_thread_per_group_rpc(void *args)
 			(msg_type == SRUN_USER_MSG)		||
 			(msg_type == RESPONSE_RESOURCE_ALLOCATION) ||
 			(msg_type == SRUN_NODE_FAIL) );
+	sack_agent = (msg_type == REQUEST_RECONFIGURE_SACKD);
 
 	thread_ptr->start_time = time(NULL);
 
@@ -942,6 +989,7 @@ static void *_thread_per_group_rpc(void *args)
 	msg.msg_type = msg_type;
 	msg.data     = task_ptr->msg_args_ptr;
 	slurm_msg_set_r_uid(&msg, task_ptr->r_uid);
+	msg.flags |= task_ptr->msg_flags;
 
 	if (thread_ptr->nodename)
 		log_flag(AGENT, "%s: sending %s to %s", __func__,
@@ -1010,7 +1058,7 @@ static void *_thread_per_group_rpc(void *args)
 		} else if (slurm_send_only_node_msg(&msg) == SLURM_SUCCESS) {
 			thread_state = DSH_DONE;
 		} else {
-			if (!srun_agent) {
+			if (!sack_agent && !srun_agent) {
 				lock_slurmctld(node_read_lock);
 				_comm_err(thread_ptr->nodename, msg_type);
 				unlock_slurmctld(node_read_lock);
@@ -1129,16 +1177,17 @@ static void *_thread_per_group_rpc(void *args)
 					     __func__, job_id);
 				} else if (rc == SLURM_SUCCESS) {
 					if (msg_ptr->signal == SIGSTOP) {
-						job_ptr->job_state |=
-							JOB_STOPPED;
+						job_state_set_flag(job_ptr,
+								   JOB_STOPPED);
 					} else { // SIGCONT
-						job_ptr->job_state &=
-							~JOB_STOPPED;
+						job_state_unset_flag(
+							job_ptr, JOB_STOPPED);
 					}
 				}
 
 				if (job_ptr)
-					job_ptr->job_state &= ~JOB_SIGNALING;
+					job_state_unset_flag(job_ptr,
+							     JOB_SIGNALING);
 
 				unlock_slurmctld(job_write_lock);
 			}
@@ -1186,7 +1235,7 @@ static void *_thread_per_group_rpc(void *args)
 			thread_state = DSH_DONE;
 			break;
 		default:
-			if (!srun_agent) {
+			if (!sack_agent && !srun_agent) {
 				if (ret_data_info->err)
 					errno = ret_data_info->err;
 				else
@@ -1197,7 +1246,7 @@ static void *_thread_per_group_rpc(void *args)
 				unlock_slurmctld(node_read_lock);
 			}
 
-			if (srun_agent)
+			if (sack_agent || srun_agent)
 				thread_state = DSH_FAILED;
 			else if (rc || (ret_data_info->type ==
 					RESPONSE_FORWARD_FAILED))
@@ -1225,7 +1274,7 @@ cleanup:
 			lock_slurmctld(job_write_lock);
 			job_ptr = find_job_record(job_id);
 			if (job_ptr)
-				job_ptr->job_state &= ~JOB_SIGNALING;
+				job_state_unset_flag(job_ptr, JOB_SIGNALING);
 			unlock_slurmctld(job_write_lock);
 		}
 	}
@@ -1241,7 +1290,7 @@ cleanup:
 	(*threads_active_ptr)--;
 	slurm_cond_signal(thread_cond_ptr);
 	slurm_mutex_unlock(thread_mutex_ptr);
-	return (void *) NULL;
+	return NULL;
 }
 
 /*
@@ -1377,10 +1426,10 @@ static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count)
 			count, j);
 		agent_arg_ptr->node_count = j;
 	}
-	debug2("Queue RPC msg_type=%u, nodes=%d for retry",
-	       agent_arg_ptr->msg_type, j);
+	debug2("Queue RPC msg_type=%s, nodes=%d for retry",
+	       rpc_num2string(agent_arg_ptr->msg_type), j);
 
-	/* add the requeust to a list */
+	/* add the request to a list */
 	queued_req_ptr = xmalloc(sizeof(queued_request_t));
 	queued_req_ptr->agent_arg_ptr = agent_arg_ptr;
 	queued_req_ptr->last_attempt  = time(NULL);
@@ -1444,24 +1493,151 @@ static void *_agent_init(void *arg)
 		_agent_retry(min_wait, mail_too);
 	}
 
-	slurm_mutex_lock(&pending_mutex);
-	pending_thread_running = false;
-	slurm_mutex_unlock(&pending_mutex);
 	return NULL;
+}
+
+static int _foreach_node_did_resp(void *x, void *arg)
+{
+	node_did_resp((char *) x);
+	return 1;
+}
+
+/* Start a thread to manage queued agent requests */
+static void *_agent_nodes_update(void *arg)
+{
+	struct timespec ts = {0, 0};
+	slurmctld_lock_t node_write_lock =
+		{ .conf = READ_LOCK, .node = WRITE_LOCK };
+
+	slurm_mutex_lock(&update_nodes_mutex);
+	while (true) {
+		ts.tv_sec = time(NULL) + 2;
+		slurm_cond_timedwait(&update_nodes_cond, &update_nodes_mutex,
+				     &ts);
+
+		if (slurmctld_config.shutdown_time) {
+			slurm_mutex_unlock(&update_nodes_mutex);
+			break;
+		}
+
+		if (!list_count(update_node_list))
+			continue;
+		lock_slurmctld(node_write_lock);
+		list_delete_all(update_node_list, _foreach_node_did_resp, NULL);
+		unlock_slurmctld(node_write_lock);
+	}
+
+	return NULL;
+}
+
+static void _queue_update_node(char *node_name)
+{
+	slurm_mutex_lock(&update_nodes_mutex);
+	if (!update_node_list)
+		update_node_list = list_create(xfree_ptr);
+	list_append(update_node_list, node_name);
+	slurm_mutex_unlock(&update_nodes_mutex);
+}
+
+static int _foreach_srun_response(void *x, void *arg)
+{
+	srun_response(x);
+	return 1;
+}
+
+/* Start a thread to manage queued agent requests */
+static void *_agent_srun_update(void *arg)
+{
+	struct timespec ts = {0, 0};
+	slurmctld_lock_t job_write_lock = { .job = WRITE_LOCK };
+
+	slurm_mutex_lock(&update_srun_mutex);
+	while (true) {
+		ts.tv_sec = time(NULL) + 2;
+		slurm_cond_timedwait(&update_srun_cond, &update_srun_mutex,
+				     &ts);
+		if (slurmctld_config.shutdown_time)
+			break;
+
+		if (!list_count(update_srun_list))
+			continue;
+
+		lock_slurmctld(job_write_lock);
+		list_delete_all(update_srun_list, _foreach_srun_response, NULL);
+		unlock_slurmctld(job_write_lock);
+	}
+	slurm_mutex_unlock(&update_srun_mutex);
+
+	return NULL;
+}
+
+static void _queue_update_srun(slurm_step_id_t *step_id)
+{
+	slurm_step_id_t *queue_step_id = xmalloc(sizeof(*queue_step_id));
+
+	memcpy(queue_step_id, step_id, sizeof(*step_id));
+
+	list_append(update_srun_list, queue_step_id);
+
+	/*
+	 * This may or may not wake the _agent_srun_update thread.
+	 * But - we intentionally do not want to claim the &update_srun_mutex
+	 * here which would be the only way to ensure it was asleep, as that
+	 * would block us from queuing additional work while it was blocked
+	 * waiting for the job write lock.
+	 */
+	slurm_cond_signal(&update_srun_cond);
 }
 
 extern void agent_init(void)
 {
-	slurm_mutex_lock(&pending_mutex);
-	if (pending_thread_running) {
+	if (pending_thread_tid) {
 		error("%s: thread already running", __func__);
-		slurm_mutex_unlock(&pending_mutex);
 		return;
 	}
 
-	slurm_thread_create_detached(NULL, _agent_init, NULL);
-	pending_thread_running = true;
-	slurm_mutex_unlock(&pending_mutex);
+	update_srun_list = list_create(xfree_ptr);
+
+	slurm_thread_create(&pending_thread_tid, _agent_init, NULL);
+	slurm_thread_create(&nodes_update_tid, _agent_nodes_update, NULL);
+	slurm_thread_create(&srun_update_tid, _agent_srun_update, NULL);
+}
+
+extern void agent_fini(void)
+{
+	struct timespec ts = {0, 0};
+	int rc = 0;
+
+	agent_trigger(999, true, true);
+
+	slurm_mutex_lock(&update_nodes_mutex);
+	slurm_cond_broadcast(&update_nodes_cond);
+	slurm_mutex_unlock(&update_nodes_mutex);
+
+	slurm_mutex_lock(&update_srun_mutex);
+	slurm_cond_broadcast(&update_srun_cond);
+	slurm_mutex_unlock(&update_srun_mutex);
+
+	slurm_thread_join(pending_thread_tid);
+	slurm_thread_join(nodes_update_tid);
+	slurm_thread_join(srun_update_tid);
+
+	ts.tv_sec = time(NULL) + AGENT_SHUTDOWN_WAIT;
+
+	slurm_mutex_lock(&agent_cnt_mutex);
+	slurm_cond_broadcast(&agent_cnt_cond);
+	while (agent_thread_cnt) {
+                rc = pthread_cond_timedwait(&agent_cnt_cond, &agent_cnt_mutex,
+					    &ts);
+		if (rc == ETIMEDOUT) {
+			error("%s: left %d agent threads active", __func__,
+			      agent_thread_cnt);
+			break;
+		}
+	}
+	slurm_mutex_unlock(&agent_cnt_mutex);
+
+	FREE_NULL_LIST(update_srun_list);
 }
 
 /*
@@ -1585,8 +1761,9 @@ static void _agent_defer(void)
 				 REQUEST_SIGNAL_TASKS)
 				rc = _signal_defer(queued_req_ptr);
 			else
-				fatal("%s: Invalid message type (%u)",
-				      __func__, agent_arg_ptr->msg_type);
+				fatal("%s: Invalid message type (%s)",
+				      __func__,
+				      rpc_num2string(agent_arg_ptr->msg_type));
 
 			if (rc == -1) {   /* abort request */
 				_purge_agent_args(
@@ -1705,7 +1882,7 @@ next:
 		if (agent_arg_ptr) {
 			debug2("Spawning RPC agent for msg_type %s",
 			       rpc_num2string(agent_arg_ptr->msg_type));
-			slurm_thread_create_detached(NULL, agent, agent_arg_ptr);
+			slurm_thread_create_detached(agent, agent_arg_ptr);
 			agent_started++;
 		} else
 			error("agent_retry found record with no agent_args");
@@ -1726,7 +1903,7 @@ next:
 
 			mail_thread_cnt++;
 			agent_thread_cnt++;
-			slurm_thread_create_detached(NULL, _mail_proc, mi);
+			slurm_thread_create_detached(_mail_proc, mi);
 		}
 		slurm_mutex_unlock(&mail_mutex);
 		slurm_mutex_unlock(&agent_cnt_mutex);
@@ -1752,10 +1929,9 @@ void agent_queue_request(agent_arg_t *agent_arg_ptr)
 	}
 
 	if (agent_arg_ptr->msg_type == REQUEST_SHUTDOWN) {
-		/* execute now */
-		slurm_thread_create_detached(NULL, agent, agent_arg_ptr);
-		/* give agent a chance to start */
-		usleep(10000);
+		pthread_t agent_thread = 0;
+		slurm_thread_create(&agent_thread, agent, agent_arg_ptr);
+		pthread_join(agent_thread, NULL);
 		return;
 	}
 
@@ -1804,6 +1980,9 @@ extern void agent_purge(void)
 		FREE_NULL_LIST(mail_list);
 		slurm_mutex_unlock(&mail_mutex);
 	}
+	slurm_mutex_lock(&update_nodes_mutex);
+	FREE_NULL_LIST(update_node_list);
+	slurm_mutex_unlock(&update_nodes_mutex);
 
 	xfree(rpc_stat_counts);
 	xfree(rpc_stat_types);
@@ -1883,6 +2062,8 @@ static void _purge_agent_args(agent_arg_t *agent_arg_ptr)
 			slurm_free_prolog_launch_msg(agent_arg_ptr->msg_args);
 		else if (agent_arg_ptr->msg_type == REQUEST_REBOOT_NODES)
 			slurm_free_reboot_msg(agent_arg_ptr->msg_args);
+		else if (agent_arg_ptr->msg_type == REQUEST_RECONFIGURE_SACKD)
+			slurm_free_config_response_msg(agent_arg_ptr->msg_args);
 		else if (agent_arg_ptr->msg_type == REQUEST_RECONFIGURE_WITH_CONFIG)
 			slurm_free_config_response_msg(agent_arg_ptr->msg_args);
 		else
@@ -1961,7 +2142,7 @@ static void *_mail_proc(void *arg)
 	slurm_mutex_unlock(&mail_mutex);
 	slurm_mutex_unlock(&agent_cnt_mutex);
 
-	return (void *) NULL;
+	return NULL;
 }
 
 static char *_mail_type_str(uint16_t mail_type)

@@ -123,7 +123,7 @@ extern slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import));
 extern node_record_t **node_record_table_ptr __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
 extern time_t last_node_update __attribute__((weak_import));
-extern int slurmctld_primary __attribute__((weak_import));
+extern bool slurmctld_primary __attribute__((weak_import));
 extern void *acct_db_conn  __attribute__((weak_import));
 extern bool ignore_state_errors __attribute__((weak_import));
 #else
@@ -133,7 +133,7 @@ slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 node_record_t **node_record_table_ptr;
 int node_record_count;
 time_t last_node_update;
-int slurmctld_primary;
+bool slurmctld_primary = true;
 void *acct_db_conn = NULL;
 bool ignore_state_errors = true;
 #endif
@@ -423,8 +423,8 @@ static void _initialize_event(alpsc_ev_app_t *event, step_record_t *step_ptr,
 			      alpsc_ev_app_state_e state)
 {
 	job_record_t *job_ptr = step_ptr->job_ptr;
-	hostlist_t hl = NULL;
-	hostlist_iterator_t hlit;
+	hostlist_t *hl = NULL;
+	hostlist_iterator_t *hlit;
 	char *node;
 	int rv;
 	uint32_t jobid;
@@ -890,9 +890,7 @@ extern int init ( void )
 	 */
 	other_select_type_param = slurm_conf.select_type_param;
 
-	if (other_select_type_param & CR_OTHER_CONS_RES)
-		plugin_id = SELECT_PLUGIN_CRAY_CONS_RES;
-	else if (other_select_type_param & CR_OTHER_CONS_TRES)
+	if (other_select_type_param & CR_OTHER_CONS_TRES)
 		plugin_id = SELECT_PLUGIN_CRAY_CONS_TRES;
 	else
 		plugin_id = SELECT_PLUGIN_CRAY_LINEAR;
@@ -1222,8 +1220,7 @@ extern int select_p_job_init(List job_list)
 					debug("CCM %pJ recovery rerun prologue",
 					      job_ptr);
 					job_ptr->job_state |= JOB_CONFIGURING;
-					slurm_thread_create_detached(NULL,
-								     ccm_begin,
+					slurm_thread_create_detached(ccm_begin,
 								     job_ptr);
 				}
 			}
@@ -1237,7 +1234,7 @@ extern int select_p_job_init(List job_list)
 	return other_job_init(job_list);
 }
 
-extern int select_p_node_init()
+extern int select_p_node_init(void)
 {
 	select_nodeinfo_t *nodeinfo = NULL;
 	node_record_t *node_ptr;
@@ -1405,7 +1402,7 @@ extern int select_p_node_init()
  * IN/OUT preemptee_job_list - Pointer to list of job pointers. These are the
  *		jobs to be preempted to initiate the pending job. Not set
  *		if mode=SELECT_MODE_TEST_ONLY or input pointer is NULL.
- * IN exc_core_bitmap - bitmap of cores being reserved.
+ * IN resv_exc_ptr - Various TRES which the job can NOT use.
  * RET zero on success, EINVAL otherwise
  * globals (passed via select_p_node_init):
  *	node_record_count - count of nodes configured
@@ -1422,7 +1419,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 			     uint32_t req_nodes, uint16_t mode,
 			     List preemptee_candidates,
 			     List *preemptee_job_list,
-			     bitstr_t *exc_core_bitmap)
+			     resv_exc_t *resv_exc_ptr)
 {
 #ifdef HAVE_NATIVE_CRAY
 	/* Restart if the thread ever has an unrecoverable error and exits. */
@@ -1461,7 +1458,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 
 	return other_job_test(job_ptr, bitmap, min_nodes, max_nodes,
 			      req_nodes, mode, preemptee_candidates,
-			      preemptee_job_list, exc_core_bitmap);
+			      preemptee_job_list, resv_exc_ptr);
 }
 
 extern int select_p_job_begin(job_record_t *job_ptr)
@@ -1514,7 +1511,7 @@ extern int select_p_job_begin(job_record_t *job_ptr)
 				debug("CCM %pJ setting JOB_CONFIGURING",
 				      job_ptr);
 				job_ptr->job_state |= JOB_CONFIGURING;
-				slurm_thread_create_detached(NULL, ccm_begin,
+				slurm_thread_create_detached(ccm_begin,
 							     job_ptr);
 			}
 		}
@@ -1556,7 +1553,7 @@ extern int select_p_job_fini(job_record_t *job_ptr)
 	/* Create a thread to run the CCM epilog for a CCM partition */
 	if (ccm_config.ccm_enabled) {
 		if (ccm_check_partitions(job_ptr)) {
-			slurm_thread_create_detached(NULL, ccm_fini, job_ptr);
+			slurm_thread_create_detached(ccm_fini, job_ptr);
 		}
 	}
 #endif
@@ -2044,13 +2041,4 @@ extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
 extern int select_p_reconfigure(void)
 {
 	return other_reconfigure();
-}
-
-extern bitstr_t * select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
-				     uint32_t node_cnt,
-				     bitstr_t *avail_bitmap,
-				     bitstr_t **core_bitmap)
-{
-	return other_resv_test(resv_desc_ptr, node_cnt,
-			       avail_bitmap, core_bitmap);
 }

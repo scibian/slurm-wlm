@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_mpi.h - Generic MPI selector for Slurm
+ *  mpi.h - Generic MPI selector for Slurm
  *****************************************************************************
  *  Copyright (C) 2002-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -36,8 +36,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SLURM_MPI_H
-#define _SLURM_MPI_H
+#ifndef _INTERFACES_MPI_H
+#define _INTERFACES_MPI_H
 
 #include <stdbool.h>
 
@@ -73,7 +73,6 @@ typedef struct {
 	uint32_t nnodes; /* number of nodes in current job step */
 	uint32_t nodeid; /* relative position of this node in job */
 	uint32_t ntasks; /* total number of tasks in current job */
-	slurm_addr_t *self;
 	slurm_step_id_t step_id; /* Current step id (or NO_VAL) */
 } mpi_task_info_t;
 
@@ -162,4 +161,4 @@ extern int mpi_id_from_plugin_type(char *mpi_type);
 /* Tear down things in the MPI plugin */
 extern int mpi_fini(void);
 
-#endif /* !_SLURM_MPI_H */
+#endif

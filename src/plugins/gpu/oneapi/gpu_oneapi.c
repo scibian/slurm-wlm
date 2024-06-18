@@ -865,11 +865,11 @@ static bool _oneapi_get_device_name(uint32_t domain, uint32_t bus,
 	/*
 	 * Build search pattern to search strings like
 	 * "../../devices/pci0000:89/0000:89:02.0/0000:8a:00.0
-	 * /0000:8b:01.0/0000:8c:00.0/drm/card0"
+	 * /0000:8b:01.0/0000:8c:00.0/drm/renderD0"
 	 */
 	snprintf(device_pattern, sizeof(device_pattern),
-		 "/%04x:%02x:%02x.%0x/drm/renderD[0-9]+$", domain, bus,
-		 device, function);
+		 "/%04x:%02x:%02x.%0x/%s",
+		 domain, bus, device, function, card_reg_string);
 	if ((rc = regcomp(&search_reg, device_pattern, REG_EXTENDED))) {
 		dump_regex_error(rc, &search_reg,
 				 "Device file regex \"%s\" compilation failed",
@@ -969,6 +969,9 @@ extern int init(void)
 
 	/* Init oneAPI */
 	setenv("ZES_ENABLE_SYSMAN", "1", 1);
+	setenv("ZE_FLAT_DEVICE_HIERARCHY", "COMPOSITE", 1);
+	setenv("ZE_ENABLE_PCI_ID_DEVICE_ORDER", "1", 1);
+
 	if (zeInit(0) != ZE_RESULT_SUCCESS)
 		fatal("zeInit failed");
 

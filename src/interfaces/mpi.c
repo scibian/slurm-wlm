@@ -268,6 +268,15 @@ static int _mpi_fini_locked(void)
 	return rc;
 }
 
+static bool _is_none_plugin(char *mpi_type)
+{
+	if (!mpi_type ||
+	    !xstrcmp(mpi_type, "openmpi") ||
+	    !xstrcmp(mpi_type, "none"))
+		return true;
+	return false;
+}
+
 static int _mpi_init_locked(char **mpi_type)
 {
 	int count = 0, *opts_cnt;
@@ -276,6 +285,7 @@ static int _mpi_init_locked(char **mpi_type)
 	s_p_options_t **opts;
 	char *conf_path;
 	struct stat buf;
+	uint32_t parse_flags = 0;
 
 	/* Plugin load */
 
@@ -283,18 +293,18 @@ static int _mpi_init_locked(char **mpi_type)
 	if (mpi_type) {
 		debug("MPI: Type: %s", *mpi_type);
 
-		if (!slurm_conf.mpi_default) {
-			error("MPI: No default type set.");
-			return SLURM_ERROR;
-		} else if (!*mpi_type)
+		if (!*mpi_type)
 			*mpi_type = xstrdup(slurm_conf.mpi_default);
 		/*
 		 * The openmpi plugin has been equivalent to none for a while.
-		 * Translate so we can discard that duplicated no-op plugin.
+		 * Return immediately if no plugin is needed.
 		 */
-		if (!xstrcmp(*mpi_type, "openmpi")) {
+		if (_is_none_plugin(*mpi_type)) {
 			xfree(*mpi_type);
-			*mpi_type = xstrdup("none");
+			g_context_cnt = 0;
+			client_plugin_id = NO_VAL;
+			setenv("SLURM_MPI_TYPE", "none", 1);
+			return SLURM_SUCCESS;
 		}
 
 		plugin_names = list_create(xfree_ptr);
@@ -304,19 +314,6 @@ static int _mpi_init_locked(char **mpi_type)
 		debug("MPI: Loading all types");
 
 		plugin_names = plugin_get_plugins_of_type(mpi_char);
-
-		/*
-		 * 2 versions after 22.05 this running_in_slurmctld() check can
-		 * be removed. Until then we still need to have the double load
-		 * of the symlink just in case a 21.08 srun is talking to a
-		 * 22.05+ slurmd.
-		 */
-		if (running_in_slurmctld()) {
-			/* Remove the PMIx symlink, so we don't load it twice */
-			list_delete_first(plugin_names,
-					  slurm_find_char_exact_in_list,
-					  "mpi/pmix");
-		}
 	}
 
 	/* Iterate and load */
@@ -389,12 +386,13 @@ static int _mpi_init_locked(char **mpi_type)
 			debug2("No mpi.conf file (%s)", conf_path);
 		else {
 			debug2("Reading mpi.conf file (%s)", conf_path);
+			parse_flags |= PARSE_FLAGS_IGNORE_NEW;
 			for (int i = 0; i < g_context_cnt; i++) {
 				if (!all_tbls[i])
 					continue;
 				if (s_p_parse_file(all_tbls[i],
 						   NULL, conf_path,
-						   true, NULL, false) !=
+						   parse_flags, NULL) !=
 						   SLURM_SUCCESS)
 					/*
 					 * conf_path can't be freed: It's needed
@@ -502,6 +500,10 @@ extern int mpi_g_slurmstepd_prefork(const stepd_step_rec_t *step, char ***env)
 {
 	xassert(step);
 	xassert(env);
+
+	if (!g_context_cnt)
+		return SLURM_SUCCESS;
+
 	xassert(g_context);
 	xassert(ops);
 
@@ -516,6 +518,10 @@ extern int mpi_g_slurmstepd_task(const mpi_task_info_t *mpi_task, char ***env)
 {
 	xassert(mpi_task);
 	xassert(env);
+
+	if (!g_context_cnt)
+		return SLURM_SUCCESS;
+
 	xassert(g_context);
 	xassert(ops);
 
@@ -528,7 +534,8 @@ extern int mpi_g_slurmstepd_task(const mpi_task_info_t *mpi_task, char ***env)
 
 extern int mpi_g_client_init(char **mpi_type)
 {
-	_mpi_init(mpi_type);
+	if (!client_plugin_id)
+		_mpi_init(mpi_type);
 
 	return client_plugin_id;
 }
@@ -540,6 +547,10 @@ extern mpi_plugin_client_state_t *mpi_g_client_prelaunch(
 
 	xassert(mpi_step);
 	xassert(env);
+
+	if (!g_context_cnt)
+		return (void *)0xdeadbeef; /* only return NULL on error */
+
 	xassert(g_context);
 	xassert(ops);
 
@@ -557,6 +568,9 @@ extern mpi_plugin_client_state_t *mpi_g_client_prelaunch(
 
 extern int mpi_g_client_fini(mpi_plugin_client_state_t *state)
 {
+	if (!g_context_cnt)
+		return SLURM_SUCCESS;
+
 	xassert(g_context);
 	xassert(ops);
 
@@ -625,10 +639,18 @@ extern int mpi_conf_send_stepd(int fd, uint32_t plugin_id)
 	/* 0 shouldn't ever happen here. */
 	xassert(plugin_id);
 
+	if (plugin_id == NO_VAL) {
+		safe_write(fd, &len, sizeof(len));
+		return SLURM_SUCCESS;
+	}
+
 	slurm_mutex_lock(&context_lock);
 
-	if ((index = _plugin_idx(plugin_id)) < 0)
+	if ((index = _plugin_idx(plugin_id)) < 0) {
+		error("%s: unable to resolve MPI plugin offset from plugin_id=%u. This error usually results from a job being submitted against an MPI plugin which was not compiled into slurmd but was for job submission command.",
+		      __func__, plugin_id);
 		goto rwfail;
+	}
 
 	/* send the type over */
 	mpi_type = _plugin_type(index);
@@ -661,7 +683,9 @@ extern int mpi_conf_recv_stepd(int fd)
 	int rc;
 
 	safe_read(fd, &len, sizeof(len));
-	xassert(len);
+	if (!len) /* no plugin */
+		return SLURM_SUCCESS;
+
 	mpi_type = xmalloc(len+1);
 	safe_read(fd, mpi_type, len);
 
@@ -703,6 +727,10 @@ rwfail:
 extern int mpi_id_from_plugin_type(char *mpi_type)
 {
 	int id = -1;
+
+	if (_is_none_plugin(mpi_type))
+		return NO_VAL;
+
 	xassert(g_context_cnt);
 
 	slurm_mutex_lock(&context_lock);

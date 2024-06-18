@@ -97,6 +97,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
+	$(top_srcdir)/auxdir/gtk-2.0.m4 \
 	$(top_srcdir)/auxdir/libtool.m4 \
 	$(top_srcdir)/auxdir/ltoptions.m4 \
 	$(top_srcdir)/auxdir/ltsugar.m4 \
@@ -123,7 +124,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_lz4.m4 \
 	$(top_srcdir)/auxdir/x_ac_man2html.m4 \
 	$(top_srcdir)/auxdir/x_ac_munge.m4 \
-	$(top_srcdir)/auxdir/x_ac_netloc.m4 \
 	$(top_srcdir)/auxdir/x_ac_nvml.m4 \
 	$(top_srcdir)/auxdir/x_ac_ofed.m4 \
 	$(top_srcdir)/auxdir/x_ac_oneapi.m4 \
@@ -137,6 +137,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
+	$(top_srcdir)/auxdir/x_ac_sview.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
 	$(top_srcdir)/auxdir/x_ac_uid_gid_size.m4 \
@@ -311,9 +312,6 @@ MUNGE_LDFLAGS = @MUNGE_LDFLAGS@
 MUNGE_LIBS = @MUNGE_LIBS@
 MYSQL_CFLAGS = @MYSQL_CFLAGS@
 MYSQL_LIBS = @MYSQL_LIBS@
-NETLOC_CPPFLAGS = @NETLOC_CPPFLAGS@
-NETLOC_LDFLAGS = @NETLOC_LDFLAGS@
-NETLOC_LIBS = @NETLOC_LIBS@
 NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
@@ -464,7 +462,7 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 ETC_FILES = init.d.slurmdbd init.d.slurm \
-	    slurmctld.service slurmdbd.service slurmd.service \
+	    sackd.service slurmctld.service slurmdbd.service slurmd.service \
 	    slurmrestd.service
 
 CLEANFILES = $(ETC_FILES)
@@ -478,9 +476,9 @@ edit = sed \
 	-e 's|@SYSTEMD_TASKSMAX_OPTION[@]|$(SYSTEMD_TASKSMAX_OPTION)|g'
 
 noinst_DATA = $(ETC_FILES)
-@WITH_SYSTEMD_UNITS_TRUE@systemdsystemunit_DATA = slurmctld.service \
-@WITH_SYSTEMD_UNITS_TRUE@	slurmdbd.service slurmd.service \
-@WITH_SYSTEMD_UNITS_TRUE@	$(am__append_1)
+@WITH_SYSTEMD_UNITS_TRUE@systemdsystemunit_DATA = sackd.service \
+@WITH_SYSTEMD_UNITS_TRUE@	slurmctld.service slurmdbd.service \
+@WITH_SYSTEMD_UNITS_TRUE@	slurmd.service $(am__append_1)
 all: all-am
 
 .SUFFIXES:
@@ -673,6 +671,9 @@ init.d.slurmdbd: Makefile $(srcdir)/init.d.slurmdbd.in
 
 init.d.slurm: Makefile $(srcdir)/init.d.slurm.in
 	$(edit) $(srcdir)/init.d.slurm.in > init.d.slurm
+
+sackd.service: Makefile $(srcdir)/sackd.service.in
+	$(edit) $(srcdir)/sackd.service.in > sackd.service
 
 slurmctld.service: Makefile $(srcdir)/slurmctld.service.in
 	$(edit) $(srcdir)/slurmctld.service.in > slurmctld.service

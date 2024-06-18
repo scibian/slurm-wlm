@@ -660,19 +660,21 @@ bool xstring_is_whitespace(const char *str)
 	return true;
 }
 
-/*
- * If str make everything lowercase.  Should not be called on static char *'s
- */
-char *xstrtolower(char *str)
+extern bool xstrtolower(char *str)
 {
-	if (str) {
-		int j = 0;
-		while (str[j]) {
-			str[j] = tolower((int)str[j]);
-			j++;
-		}
+	bool modified = false;
+
+	if (!str)
+		return modified;
+
+	for (int j = 0; str[j]; j++) {
+		int c = tolower((int) str[j]);
+
+		if (c != str[j])
+			modified = true;
+		str[j] = c;
 	}
-	return str;
+	return modified;
 }
 
 /* safe strchr */

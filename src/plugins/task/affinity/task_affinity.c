@@ -172,8 +172,6 @@ static void _calc_cpu_affinity(stepd_step_rec_t *step)
 		step->task[i]->cpu_set = xmalloc(sizeof(cpu_set_t));
 		if (!get_cpuset(step->task[i]->cpu_set, step, i))
 			xfree(step->task[i]->cpu_set);
-		else
-			reset_cpuset(step->task[i]->cpu_set);
 	}
 }
 
@@ -249,7 +247,8 @@ extern int task_p_pre_launch (stepd_step_rec_t *step)
  * task_p_pre_launch_priv() is called prior to exec of application task.
  * Runs in privileged mode.
  */
-extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid,
+				  uint32_t global_tid)
 {
 	int rc = SLURM_SUCCESS;
 	cpu_set_t *new_mask = step->task[node_tid]->cpu_set;

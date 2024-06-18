@@ -118,7 +118,7 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 	partition_info_t *p = NULL;
 	struct records {
 	  char *rec;
-	  hostlist_t hostlist;
+	  hostlist_t *hostlist;
 	  struct records *next;
 	} *rp = NULL;
 	struct records *crp;
@@ -519,6 +519,7 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	char tmp_str[256];
 	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
 	int i;
+	bool format_stderr = false;
 
 	if ( slurm_ctl_conf_ptr == NULL )
 		return NULL;
@@ -954,18 +955,6 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("JobCredentialPrivateKey");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->
-				  job_credential_private_key);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("JobCredentialPublicCertificate");
-	key_pair->value = xstrdup(
-		slurm_ctl_conf_ptr->job_credential_public_certificate);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("JobDefaults");
 	key_pair->value =
 		job_defaults_str(slurm_ctl_conf_ptr->job_defaults_list);
@@ -1016,6 +1005,11 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("LogTimeFormat");
+	if (slurm_ctl_conf_ptr->log_fmt & LOG_FMT_FORMAT_STDERR) {
+		format_stderr = true;
+		slurm_ctl_conf_ptr->log_fmt &= (~LOG_FMT_FORMAT_STDERR);
+	}
+
 	if (slurm_ctl_conf_ptr->log_fmt == LOG_FMT_ISO8601_MS)
 		key_pair->value = xstrdup("iso8601_ms");
 	else if (slurm_ctl_conf_ptr->log_fmt == LOG_FMT_ISO8601)
@@ -1032,6 +1026,11 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 		key_pair->value = xstrdup("short");
 	else if (slurm_ctl_conf_ptr->log_fmt == LOG_FMT_THREAD_ID)
 		key_pair->value = xstrdup("thread_id");
+
+	if (format_stderr) {
+		xstrcat(key_pair->value, ",format_stderr");
+		slurm_ctl_conf_ptr->log_fmt |= LOG_FMT_FORMAT_STDERR;
+	}
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1480,11 +1479,6 @@ extern void *slurm_ctl_conf_2_key_pairs(slurm_conf_t *slurm_ctl_conf_ptr)
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("ReturnToService");
 	key_pair->value = xstrdup(tmp_str);
-	list_append(ret_list, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("RoutePlugin");
-	key_pair->value = xstrdup(slurm_ctl_conf_ptr->route_plugin);
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1944,8 +1938,23 @@ slurm_load_slurmd_status(slurmd_status_t **slurmd_status_ptr)
 
 	if (cluster_flags & CLUSTER_FLAG_MULTSD) {
 		if ((this_addr = getenv("SLURMD_NODENAME"))) {
-			slurm_conf_get_addr(this_addr, &req_msg.address,
-					    req_msg.flags);
+			if (slurm_conf_get_addr(this_addr, &req_msg.address,
+						req_msg.flags)) {
+				/*
+				 * The node isn't in the conf, see if the
+				 * controller has an address for it.
+				 */
+				slurm_node_alias_addrs_t *alias_addrs;
+				if (!slurm_get_node_alias_addrs(this_addr,
+								&alias_addrs)) {
+					add_remote_nodes_to_conf_tbls(
+						alias_addrs->node_list,
+						alias_addrs->node_addrs);
+				}
+				slurm_free_node_alias_addrs(alias_addrs);
+				slurm_conf_get_addr(this_addr, &req_msg.address,
+						    req_msg.flags);
+			}
 		} else {
 			this_addr = "localhost";
 			slurm_set_addr(&req_msg.address, slurm_conf.slurmd_port,

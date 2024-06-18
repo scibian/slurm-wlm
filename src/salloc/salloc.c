@@ -43,11 +43,11 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/param.h>
 #include <sys/resource.h> /* for struct rlimit */
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -63,7 +63,6 @@
 #include "src/interfaces/gres.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/interfaces/select.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
@@ -327,12 +326,6 @@ int main(int argc, char **argv)
 	 */
 	if (is_interactive)
 		atexit(_reset_input_mode);
-	if (opt.gid != SLURM_AUTH_NOBODY) {
-		if (setgid(opt.gid) < 0) {
-			error("setgid: %m");
-			exit(error_exit);
-		}
-	}
 
 	/* If can run on multiple clusters find the earliest run time
 	 * and run it there */
@@ -410,19 +403,6 @@ int main(int argc, char **argv)
 		else
 			debug("%s", msg);
 		sleep(++retries);
-	}
-
-	/* If the requested uid is different than ours, become that uid */
-	if (opt.uid != SLURM_AUTH_NOBODY) {
-		/* drop extended groups before changing uid/gid */
-		if ((setgroups(0, NULL) < 0)) {
-			error("setgroups: %m");
-			exit(error_exit);
-		}
-		if (setuid(opt.uid) < 0) {
-			error("setuid: %m");
-			exit(error_exit);
-		}
 	}
 
 	if (!alloc && !job_resp_list) {
@@ -694,9 +674,8 @@ relinquish:
 
 #ifdef MEMORY_LEAK_DEBUG
 	cli_filter_fini();
-	select_g_fini();
 	slurm_reset_all_options(&opt, false);
-	slurm_auth_fini();
+	auth_g_fini();
 	slurm_conf_destroy();
 	log_fini();
 #endif /* MEMORY_LEAK_DEBUG */
@@ -715,12 +694,11 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
 		slurm_setup_remote_working_cluster(alloc);
 
 		/* set env for srun's to find the right cluster */
-		setenvf(NULL, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d:%d",
+		setenvf(NULL, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d",
 			working_cluster_rec->name,
 			working_cluster_rec->control_host,
 			working_cluster_rec->control_port,
-			working_cluster_rec->rpc_version,
-			select_get_plugin_id());
+			working_cluster_rec->rpc_version);
 	}
 
 	if (!_wait_nodes_ready(alloc)) {
@@ -801,8 +779,8 @@ static void _set_submit_dir_env(void)
 {
 	char host[256];
 
-	work_dir = xmalloc(MAXPATHLEN + 1);
-	if ((getcwd(work_dir, MAXPATHLEN)) == NULL)
+	work_dir = xmalloc(PATH_MAX);
+	if ((getcwd(work_dir, PATH_MAX)) == NULL)
 		error("getcwd failed: %m");
 	else if (setenvf(NULL, "SLURM_SUBMIT_DIR", "%s", work_dir) < 0)
 		error("unable to set SLURM_SUBMIT_DIR in environment");
@@ -1130,18 +1108,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		}
 	}
 	if (is_ready) {
-		resource_allocation_response_msg_t *resp;
-		char *tmp_str;
 		if (i > 1)
      			info("Nodes %s are ready for job", alloc->node_list);
-		if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD") &&
-		    (slurm_allocation_lookup(alloc->job_id, &resp)
-		     == SLURM_SUCCESS)) {
-			tmp_str = alloc->alias_list;
-			alloc->alias_list = resp->alias_list;
-			resp->alias_list = tmp_str;
-			slurm_free_resource_allocation_response_msg(resp);
-		}
 	} else if (!allocation_interrupted) {
 		if (job_killed || allocation_revoked) {
 			error("Job allocation %u has been revoked",

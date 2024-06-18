@@ -88,8 +88,10 @@ struct squeue_parameters {
 	char* format_long;
 	char* jobs;
 	char *mimetype; /* --yaml or --json */
+	char *data_parser; /* data_parser args */
 	char* names;
-	hostset_t nodes;
+	hostset_t *nodes;
+	bool only_state; /* limit query to only job states */
 	char* licenses;
 	char* partitions;
 	char* qoss;

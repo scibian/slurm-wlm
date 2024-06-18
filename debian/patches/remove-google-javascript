@@ -10,15 +10,15 @@ Last-Update: 2016-09-29
 --- a/doc/html/header.txt
 +++ b/doc/html/header.txt
 @@ -5,7 +5,6 @@
- 	<meta name="viewport" content="width=device-width" />
+ 	<meta name="viewport" content="width=device-width">
  
  	<!--#pagetitle-->
 -	<!--#canonical-->
  
- 	<link rel="shortcut icon" href="favicon.ico" />
+ 	<link rel="shortcut icon" href="favicon.ico">
  
 @@ -15,17 +14,6 @@
- 	<link rel="stylesheet" type="text/css" href="slurm.css" />
+ 	<link rel="stylesheet" type="text/css" href="slurm.css">
  
  	<script src="jquery.min.js"></script>
 -	<script type="text/javascript">

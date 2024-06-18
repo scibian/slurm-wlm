@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  switch_hpe_slingshot.h - Library for managing HPE Slingshot networks
  *****************************************************************************
- *  Copyright 2021-2022 Hewlett Packard Enterprise Development LP
+ *  Copyright 2021-2023 Hewlett Packard Enterprise Development LP
  *  Written by David Gloe <david.gloe@hpe.com>
  *  Written by Jim Nordby <james.nordby@hpe.com>
  *
@@ -47,7 +47,8 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 /* Version of the state file */
-#define SLINGSHOT_STATE_VERSION 1
+#define SLINGSHOT_STATE_VERSION 2
+#define SLINGSHOT_STATE_VERSION_VER1 1
 
 /* State file name */
 #define SLINGSHOT_STATE_FILE "slingshot_state"
@@ -73,25 +74,20 @@
 /* Number of retries for destroying CXI services */
 #define SLINGSHOT_CXI_DESTROY_RETRIES 5
 
-/*
- * Values/directories/filenames for jackaloped BASIC/OAUTH authentication
- */
+/* File path format to rdzv_get_en setting */
+#define SLINGSHOT_RDZV_GET_EN_FMT \
+	"/sys/class/cxi/cxi%d/device/properties/rdzv_get_en"
+
+/* File path to the default rdzv_get_en setting */
+#define SLINGSHOT_RDZV_GET_EN_DEFAULT_FILE \
+	"/sys/module/cxi_core/parameters/rdzv_get_en_default"
+
+/* Set of valid auth types used for REST */
 typedef enum {
-	SLINGSHOT_JLOPE_AUTH_NONE = 0, /* No authentication */
-	SLINGSHOT_JLOPE_AUTH_BASIC,    /* User name and password */
-	SLINGSHOT_JLOPE_AUTH_OAUTH     /* OAuth2 client credentials grant */
-} jlope_auth_t;
-#define SLINGSHOT_JLOPE_AUTH_BASIC_STR  "BASIC" /* jlope_auth token */
-#define SLINGSHOT_JLOPE_AUTH_OAUTH_STR  "OAUTH" /* jlope_auth token */
-#define SLINGSHOT_JLOPE_AUTH_BASIC_USER "cxi"   /* user name for BASIC auth */
-#define SLINGSHOT_JLOPE_TIMEOUT         10      /* timeout for REST calls */
-#define SLINGSHOT_JLOPE_CONNECT_TIMEOUT 10      /* timeout for REST connect */
-#define SLINGSHOT_JLOPE_AUTH_BASIC_DIR                "/etc/jackaloped"
-#define SLINGSHOT_JLOPE_AUTH_OAUTH_DIR                "/etc/wlm-client-auth"
-#define SLINGSHOT_JLOPE_AUTH_BASIC_PWD_FILE           "passwd"
-#define SLINGSHOT_JLOPE_AUTH_OAUTH_CLIENT_ID_FILE     "client-id"
-#define SLINGSHOT_JLOPE_AUTH_OAUTH_CLIENT_SECRET_FILE "client-secret"
-#define SLINGSHOT_JLOPE_AUTH_OAUTH_ENDPOINT_FILE      "endpoint"
+	SLINGSHOT_AUTH_NONE = 0, /* No authentication */
+	SLINGSHOT_AUTH_BASIC,    /* User name and password */
+	SLINGSHOT_AUTH_OAUTH     /* OAuth2 client credentials grant */
+} slingshot_rest_auth_t;
 
 /* Per-job shared VNI structure */
 typedef struct job_vni {
@@ -108,6 +104,8 @@ typedef struct slingshot_state {
 	bitstr_t *vni_table;    /* Bitmap of allocated VNIs */
 	uint32_t num_job_vnis;  /* Number of per-job shared VNIs */
 	job_vni_t *job_vnis;    /* Per-job shared VNI reservations */
+	uint32_t num_job_hwcoll; /* Number of per-job shared VNIs */
+	uint32_t *job_hwcoll;	/* Array of job IDs using collectives */
 } slingshot_state_t;
 
 /* Max NIC resources per application */
@@ -160,8 +158,13 @@ typedef struct slingshot_config {
 	uint32_t flags;                 /* Bitmap of configuration flags */
 	slingshot_limits_set_t limits;  /* Set of NIC resource limits */
 	char *jlope_url;                /* URL of jackaloped REST interface */
-	jlope_auth_t jlope_auth;        /* jackaloped authentication type */
-	char *jlope_authdir;            /* directory containing auth files */
+	slingshot_rest_auth_t jlope_auth; /* jackaloped authentication type */
+	char *jlope_authdir;            /* jackaloped auth file directory */
+	uint32_t hwcoll_addrs_per_job;  /* #Hardware collectives per job */
+	uint32_t hwcoll_num_nodes;      /* Minimum job nodes for HW coll */
+	char *fm_url;                   /* fabric manager REST interface URL */
+	slingshot_rest_auth_t fm_auth;  /* fabric manager authentication type */
+	char *fm_authdir;               /* fabric manager auth file directory */
 } slingshot_config_t;
 
 /* Values for slingshot_config_t.single_node_vni */
@@ -199,6 +202,19 @@ typedef struct {
 	char device_name[16];  /* Device name */
 } slingshot_hsn_nic_t;
 
+/*
+ * Information to support Slingshot HSN hardware collectives
+ * and communication with Slingshot Fabric Manager (FM)
+ */
+typedef struct {
+	uint32_t job_id; 	 /* job id */
+	uint32_t step_id; 	 /* step id */
+	char *mcast_token;       /* Session token returned from FM */
+	char *fm_url;            /* FM URL for creating multicast trees */
+	uint32_t addrs_per_job;  /* Collectives multicast addrs per job */
+	uint32_t num_nodes;      /* Minimum #nodes to get multicast addrs */
+} slingshot_hwcoll_t;
+
 /* Denotes packing a null jobinfo structure */
 #define SLINGSHOT_JOBINFO_NULL_VERSION 0xDEAFDEAF
 
@@ -212,10 +228,10 @@ typedef struct slingshot_jobinfo {
 	uint32_t depth;        /* Threads-per-task for limit calculation */
 	uint32_t num_profiles; /* Number of communication profiles */
 	slingshot_comm_profile_t *profiles; /* List of communication profiles */
-	bitstr_t *vni_pids;    /* Unused */
 	uint32_t flags;        /* Configuration flags */
 	uint32_t num_nics;     /* Number of entries in 'nics' array */
 	slingshot_hsn_nic_t *nics; /* HSN NIC information for instant on */
+	slingshot_hwcoll_t *hwcoll; /* HSN HW collectives info */
 } slingshot_jobinfo_t;
 
 /* Slingshot traffic classes (bitmap) */
@@ -231,12 +247,16 @@ typedef struct slingshot_jobinfo {
  * If SLINGSHOT_FLAGS_ADJUST_LIMITS is set (default), slurmd will adjust
  * resource limit reservations by subtracting system service reserved/used
  * resources
+ *
+ * If SLINGSHOT_FLAGS_DISABLE_RDZV_GET is set, slurmd will disable rendezvous
+ * gets in the Cassini NIC for the duration of the application
  */
 #define SLINGSHOT_FLAGS_ADJUST_LIMITS 0x1
 /*
  * #define SLINGSHOT_FLAGS_VNI_PIDS      0x2 DEPRECATED in 23.02, can be used in
  *					     25.02
  */
+#define SLINGSHOT_FLAGS_DISABLE_RDZV_GET 0x4
 #define SLINGSHOT_FLAGS_DEFAULT SLINGSHOT_FLAGS_ADJUST_LIMITS
 
 /* Environment variables set for applications */
@@ -244,6 +264,13 @@ typedef struct slingshot_jobinfo {
 #define SLINGSHOT_VNIS_ENV            "SLINGSHOT_VNIS"
 #define SLINGSHOT_DEVICES_ENV         "SLINGSHOT_DEVICES"
 #define SLINGSHOT_TCS_ENV             "SLINGSHOT_TCS"
+/* Slingshot collectives environment variables set for applications */
+#define SLINGSHOT_FI_CXI_COLL_JOB_ID_ENV          "FI_CXI_COLL_JOB_ID"
+#define SLINGSHOT_FI_CXI_COLL_JOB_STEP_ID_ENV     "FI_CXI_COLL_JOB_STEP_ID"
+#define SLINGSHOT_FI_CXI_COLL_MCAST_TOKEN_ENV     "FI_CXI_COLL_MCAST_TOKEN"
+#define SLINGSHOT_FI_CXI_COLL_FABRIC_MGR_URL_ENV  "FI_CXI_COLL_FABRIC_MGR_URL"
+#define SLINGSHOT_FI_CXI_HWCOLL_ADDRS_PER_JOB_ENV "FI_CXI_HWCOLL_ADDRS_PER_JOB"
+#define SLINGSHOT_FI_CXI_HWCOLL_MIN_NODES_ENV     "FI_CXI_HWCOLL_MIN_NODES"
 
 /* Global variables */
 extern slingshot_state_t slingshot_state;
@@ -253,14 +280,23 @@ extern slingshot_config_t slingshot_config;
 /* apinfo.c */
 extern bool create_slingshot_apinfo(const stepd_step_rec_t *step);
 extern void remove_slingshot_apinfo(const stepd_step_rec_t *step);
+/* collectives.c */
+extern bool slingshot_init_collectives(void);
+extern void slingshot_fini_collectives(void);
+extern bool slingshot_setup_collectives(slingshot_jobinfo_t *job,
+					uint32_t node_cnt, uint32_t job_id,
+					uint32_t step_id);
+extern void slingshot_collectives_env(slingshot_jobinfo_t *job, char ***env);
+extern void slingshot_release_collectives_job_step(slingshot_jobinfo_t *job);
+extern void slingshot_release_collectives_job(uint32_t job_id);
 /* config.c */
 extern void slingshot_free_config(void);
 extern bool slingshot_setup_config(const char *switch_params);
-extern bool slingshot_setup_job_step(slingshot_jobinfo_t *job, int node_cnt,
+extern bool slingshot_setup_job_step_vni(slingshot_jobinfo_t *job, int node_cnt,
 	uint32_t job_id, const char *network_params,
 	const char *job_network_params);
-extern void slingshot_free_job_step(slingshot_jobinfo_t *job);
-extern void slingshot_free_job(uint32_t job_id);
+extern void slingshot_free_job_step_vni(slingshot_jobinfo_t *job);
+extern void slingshot_free_job_vni(uint32_t job_id);
 /* instant_on.c */
 extern bool slingshot_init_instant_on(void);
 extern void slingshot_fini_instant_on(void);

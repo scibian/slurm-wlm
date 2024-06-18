@@ -220,7 +220,7 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog)
 {
 	char **env = env_array_create();
-	bool user_name_set = 0;
+	bool user_set = false;
 
 	env[0] = NULL;
 	if (!valid_spank_job_env(job_env->spank_job_env,
@@ -248,19 +248,6 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	setenvf(&env, "SLURM_JOB_UID", "%u", job_env->uid);
 	setenvf(&env, "SLURM_JOB_GID", "%u", job_env->gid);
 	setenvf(&env, "SLURM_JOB_WORK_DIR", "%s", job_env->work_dir);
-
-#ifndef HAVE_NATIVE_CRAY
-	/* uid_to_string on a cray is a heavy call, so try to avoid it */
-	if (!job_env->user_name) {
-		job_env->user_name = uid_to_string(job_env->uid);
-		user_name_set = true;
-	}
-#endif
-
-	setenvf(&env, "SLURM_JOB_USER", "%s", job_env->user_name);
-	if (user_name_set)
-		xfree(job_env->user_name);
-
 	setenvf(&env, "SLURM_JOBID", "%u", job_env->jobid);
 
 	if (job_env->het_job_id && (job_env->het_job_id != NO_VAL)) {
@@ -271,21 +258,10 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 
 	setenvf(&env, "SLURM_UID", "%u", job_env->uid);
 
-	if (job_env->node_aliases)
-		setenvf(&env, "SLURM_NODE_ALIASES", "%s",
-			job_env->node_aliases);
-
 	if (job_env->node_list) {
 		setenvf(&env, "SLURM_NODELIST", "%s", job_env->node_list);
 		setenvf(&env, "SLURM_JOB_NODELIST", "%s", job_env->node_list);
 	}
-
-	/*
-	 * Overridden by the credential version if available.
-	 * Remove two versions after 22.05.
-	 */
-	if (job_env->partition)
-		setenvf(&env, "SLURM_JOB_PARTITION", "%s", job_env->partition);
 
 	if (is_epilog)
 		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "epilog_slurmd");
@@ -373,8 +349,18 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 		if (cred_arg->job_std_out)
 			setenvf(&env, "SLURM_JOB_STDOUT", "%s",
 				cred_arg->job_std_out);
-
+		if (cred_arg->id->pw_name) {
+			user_set = true;
+			setenvf(&env, "SLURM_JOB_USER", "%s",
+				cred_arg->id->pw_name);
+		}
 		slurm_cred_unlock_args(cred);
+	}
+
+	if (!user_set) {
+		char *user_name = uid_to_string(job_env->uid);
+		setenvf(&env, "SLURM_JOB_USER", "%s", user_name);
+		xfree(user_name);
 	}
 
 	return env;

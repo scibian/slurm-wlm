@@ -69,6 +69,7 @@ typedef struct {
 	void *dst; /* already has offset applied */
 	data_t *parent_path;
 	ssize_t index;
+	uint64_t set;
 } foreach_flag_parser_args_t;
 
 typedef struct {
@@ -86,7 +87,7 @@ static void _set_flag_bit(const parser_t *const parser, void *dst,
 			  const flag_bit_t *bit, bool matched, const char *path,
 			  data_t *src)
 {
-	/* C allows complier to choose a size for the enum */
+	/* C allows compiler to choose a size for the enum */
 	if (parser->size == sizeof(uint64_t)) {
 		uint64_t *flags = dst;
 		if (matched)
@@ -121,7 +122,7 @@ static void _set_flag_bit_equal(const parser_t *const parser, void *dst,
 				const flag_bit_t *bit, bool matched,
 				const char *path, data_t *src)
 {
-	/* C allows complier to choose a size for the enum
+	/* C allows compiler to choose a size for the enum
 	 *
 	 * If the comparsion is all or nothing, then clear all the masked bits
 	 * if it doesnt match which means parser order matters with these.
@@ -181,12 +182,13 @@ static data_for_each_cmd_t _foreach_flag_parser(data_t *src, void *arg)
 	void *dst = args->dst;
 	const parser_t *const parser = args->parser;
 	char *path = NULL;
-	uint64_t set = 0;
 	bool matched_any = false;
 
 	xassert(args->magic == MAGIC_FOREACH_LIST_FLAG);
 	xassert(args->args->magic == MAGIC_ARGS);
 	xassert(parser->magic == MAGIC_PARSER);
+
+	path = _flag_parent_path(&path, args);
 
 	for (int8_t i = 0; (i < parser->flag_bit_array_count); i++) {
 		const flag_bit_t *bit = &parser->flag_bit_array[i];
@@ -195,27 +197,27 @@ static data_for_each_cmd_t _foreach_flag_parser(data_t *src, void *arg)
 		if (matched)
 			matched_any = true;
 
-		if (bit->type == FLAG_BIT_TYPE_BIT)
-			_set_flag_bit(parser, dst, bit, matched,
-				      _flag_parent_path(&path, args), src);
-		else if (bit->type == FLAG_BIT_TYPE_EQUAL) {
-			if (matched || ((~set & bit->mask) == bit->mask))
+		if (bit->type == FLAG_BIT_TYPE_BIT) {
+			uint64_t value = (bit->mask & bit->value);
+
+			if (matched || (~args->set & value) == value)
+				_set_flag_bit(parser, dst, bit, matched, path, src);
+			args->set |= value;
+		} else if (bit->type == FLAG_BIT_TYPE_EQUAL) {
+			if (matched || ((~args->set & bit->mask) == bit->mask))
 				_set_flag_bit_equal(parser, dst, bit, matched,
-						    _flag_parent_path(&path,
-								      args),
-						    src);
-			set |= bit->mask;
-		}
-		else
+						    path, src);
+			args->set |= bit->mask;
+		} else
 			fatal_abort("%s: invalid bit_flag_t", __func__);
 
-		args->index++;
 	}
+
+	args->index++;
 
 	if (!matched_any) {
 		on_error(PARSING, parser->type, args->args,
-			 ESLURM_DATA_FLAGS_INVALID,
-			 _flag_parent_path(&path, args), __func__,
+			 ESLURM_DATA_FLAGS_INVALID, path, __func__,
 			 "Unknown flag \"%s\"", data_get_string(src));
 		xfree(path);
 		return DATA_FOR_EACH_FAIL;
@@ -260,7 +262,7 @@ static int _parse_flag(void *dst, const parser_t *const parser, data_t *src,
 			      ESLURM_DATA_FLAGS_INVALID_TYPE,
 			      set_source_path(&path, ppath), __func__,
 			      "Expected a List but found a %s",
-			      data_type_to_string(data_get_type(src)));
+			      data_get_type_string(src));
 
 		goto cleanup;
 	/*
@@ -347,7 +349,7 @@ static int _parse_list(const parser_t *const parser, void *dst, data_t *src,
 
 	log_flag(DATA, "%s: BEGIN: list parsing %s{%s(0x%"PRIxPTR")} to List 0x%"PRIxPTR" via parser %s(0x%"PRIxPTR")",
 		__func__, set_source_path(&path, parent_path),
-		data_type_to_string(data_get_type(src)), (uintptr_t) src,
+		data_get_type_string(src), (uintptr_t) src,
 		(uintptr_t) dst, parser->type_string, (uintptr_t) parser
 	);
 
@@ -360,7 +362,7 @@ static int _parse_list(const parser_t *const parser, void *dst, data_t *src,
 		rc = on_error(PARSING, parser->type, args,
 			      ESLURM_DATA_FLAGS_INVALID_TYPE, path, __func__,
 			      "Expected List but found a %s",
-			      data_type_to_string(data_get_type(src)));
+			      data_get_type_string(src));
 		goto cleanup;
 	}
 
@@ -379,7 +381,7 @@ static int _parse_list(const parser_t *const parser, void *dst, data_t *src,
 
 cleanup:
 	log_flag(DATA, "%s: END: list parsing %s{%s(0x%"PRIxPTR")} to List 0x%"PRIxPTR" via parser %s(0x%"PRIxPTR") rc[%d]:%s",
-		__func__, path, data_type_to_string(data_get_type(src)),
+		__func__, path, data_get_type_string(src),
 		(uintptr_t) src, (uintptr_t) dst, parser->type_string,
 		(uintptr_t) parser, rc, slurm_strerror(rc)
 	);
@@ -417,7 +419,7 @@ static int _parse_pointer(const parser_t *const parser, void *dst, data_t *src,
 	*ptr = alloc_parser_obj(pt);
 
 	if ((rc = parse(*ptr, NO_VAL, pt, src, args, parent_path)))
-		free_parser_obj(parser, *ptr);
+		free_parser_obj(pt, *ptr);
 
 	return rc;
 }
@@ -487,7 +489,7 @@ static int _parse_nt_array(const parser_t *const parser, void *dst, data_t *src,
 			      ESLURM_DATA_FLAGS_INVALID_TYPE,
 			      set_source_path(&path, parent_path), __func__,
 			      "Expected List but found a %s",
-			      data_type_to_string(data_get_type(src)));
+			      data_get_type_string(src));
 		goto cleanup;
 	}
 
@@ -574,7 +576,7 @@ static int _parser_linked(args_t *args, const parser_t *const array,
 	if (parser->model == PARSER_MODEL_ARRAY_SKIP_FIELD) {
 		log_flag(DATA, "%s: SKIP: parsing %s{%s(0x%" PRIxPTR ")} to %s(0x%" PRIxPTR "+%zd)%s%s=%s(0x%" PRIxPTR ") via array parser %s(0x%" PRIxPTR ")=%s(0x%" PRIxPTR ")",
 			 __func__, parser->field_name,
-			 data_type_to_string(data_get_type(src)),
+			 data_get_type_string(src),
 			 (uintptr_t) src, parser->obj_type_string,
 			 (uintptr_t) dst, parser->ptr_offset,
 			 (parser->field_name ? "->" : ""),
@@ -589,7 +591,7 @@ static int _parser_linked(args_t *args, const parser_t *const array,
 	xassert(parser->model == PARSER_MODEL_ARRAY_LINKED_FIELD);
 
 	log_flag(DATA, "%s: BEGIN: parsing %s{%s(0x%" PRIxPTR ")} to %s(0x%" PRIxPTR "+%zd)%s%s=%s(0x%" PRIxPTR ") via array parser %s(0x%" PRIxPTR ")=%s(0x%" PRIxPTR ")",
-		 __func__, path, data_type_to_string(data_get_type(src)),
+		 __func__, path, data_get_type_string(src),
 		 (uintptr_t) src, array->obj_type_string, (uintptr_t) dst,
 		 array->ptr_offset, (array->field_name ? "->" : ""),
 		 (array->field_name ? array->field_name : ""),
@@ -600,7 +602,7 @@ static int _parser_linked(args_t *args, const parser_t *const array,
 		   ppath);
 
 	log_flag(DATA, "%s: END: parsing %s{%s(0x%" PRIxPTR ")} to %s(0x%" PRIxPTR "+%zd)%s%s=%s(0x%" PRIxPTR ") via array parser %s(0x%" PRIxPTR ")=%s(0x%" PRIxPTR ") rc[%d]:%s",
-		 __func__, path, data_type_to_string(data_get_type(src)),
+		 __func__, path, data_get_type_string(src),
 		 (uintptr_t) src, array->obj_type_string, (uintptr_t) dst,
 		 array->ptr_offset, (array->field_name ? "->" : ""),
 		 (array->field_name ? array->field_name : ""),
@@ -652,8 +654,7 @@ static void _parse_check_openapi(const parser_t *const parser, data_t *src,
 		data_type_to_string(openapi_type_format_to_data_type(
 			parser->obj_openapi)),
 		found_type, (found_format ? " format=" : ""),
-		(found_format ? found_format : ""),
-		data_type_to_string(data_get_type(src)));
+		(found_format ? found_format : ""), data_get_type_string(src));
 
 	xfree(path);
 }
@@ -707,7 +708,7 @@ extern int parse(void *dst, ssize_t dst_bytes, const parser_t *const parser,
 
 	log_flag(DATA, "%s: BEGIN: parsing %s{%s(0x%" PRIxPTR ")} to %zd byte object %s(0x%" PRIxPTR "+%zd)%s%s via parser %s(0x%" PRIxPTR ")",
 		 __func__, set_source_path(&path, parent_path),
-		 data_type_to_string(data_get_type(src)),
+		 data_get_type_string(src),
 		 (uintptr_t) src, (dst_bytes == NO_VAL ? -1 : dst_bytes),
 		 parser->obj_type_string, (uintptr_t) dst,
 		 (parser->ptr_offset == NO_VAL ? 0 : parser->ptr_offset),
@@ -767,7 +768,7 @@ extern int parse(void *dst, ssize_t dst_bytes, const parser_t *const parser,
 cleanup:
 	log_flag(DATA, "%s: END: parsing %s{%s(0x%" PRIxPTR ")} to %zd byte object %s(0x%" PRIxPTR "+%zd)%s%s via parser %s(0x%" PRIxPTR ") rc[%d]:%s",
 		 __func__, set_source_path(&path, parent_path),
-		 data_type_to_string(data_get_type(src)), (uintptr_t) src,
+		 data_get_type_string(src), (uintptr_t) src,
 		 (dst_bytes == NO_VAL ? -1 : dst_bytes),
 		 parser->obj_type_string, (uintptr_t) dst, (parser->ptr_offset
 							    == NO_VAL ? 0 :
@@ -783,9 +784,12 @@ cleanup:
 }
 
 static bool _match_flag_bit(const parser_t *const parser, void *src,
-			    const flag_bit_t *bit)
+			    const flag_bit_t *bit, uint64_t used_equal_bits)
 {
 	const uint64_t v = bit->mask & bit->value;
+
+	if (used_equal_bits & bit->mask)
+		return false;
 
 	/* C allows complier to choose a size for the enum */
 	if (parser->size == sizeof(uint64_t)) {
@@ -806,32 +810,40 @@ static bool _match_flag_bit(const parser_t *const parser, void *src,
 }
 
 static bool _match_flag_equal(const parser_t *const parser, void *src,
-			      const flag_bit_t *bit)
+			      const flag_bit_t *bit,
+			      uint64_t *used_equal_bits_ptr)
 {
+	bool found;
 	const uint64_t v = bit->mask & bit->value;
 
-	/* C allows complier to choose a size for the enum */
+	/* C allows compiler to choose a size for the enum */
 	if (parser->size == sizeof(uint64_t)) {
 		uint64_t *flags = src;
-		return ((*flags & bit->mask) == v);
+		found = ((*flags & bit->mask) == v);
 	} else if (parser->size == sizeof(uint32_t)) {
 		uint32_t *flags = src;
-		return ((*flags & bit->mask) == v);
+		found = ((*flags & bit->mask) == v);
 	} else if (parser->size == sizeof(uint16_t)) {
 		uint16_t *flags = src;
-		return ((*flags & bit->mask) == v);
+		found = ((*flags & bit->mask) == v);
 	} else if (parser->size == sizeof(uint8_t)) {
 		uint8_t *flags = src;
-		return ((*flags & bit->mask) == v);
+		found = ((*flags & bit->mask) == v);
+	} else {
+		fatal("%s: unexpected enum size: %zu", __func__, parser->size);
 	}
 
-	fatal("%s: unexpected enum size: %zu", __func__, parser->size);
+	if (found)
+		*used_equal_bits_ptr |= bit->mask;
+
+	return found;
 }
 
 static int _dump_flag_bit_array(args_t *args, void *src, data_t *dst,
 				const parser_t *const parser)
 {
 	int rc = SLURM_SUCCESS;
+	uint64_t used_equal_bits = 0;
 
 	xassert(args->magic == MAGIC_ARGS);
 	check_parser(parser);
@@ -846,9 +858,11 @@ static int _dump_flag_bit_array(args_t *args, void *src, data_t *dst,
 		const flag_bit_t *bit = &parser->flag_bit_array[i];
 
 		if (bit->type == FLAG_BIT_TYPE_BIT)
-			found = _match_flag_bit(parser, src, bit);
+			found = _match_flag_bit(parser, src, bit,
+						used_equal_bits);
 		else if (bit->type == FLAG_BIT_TYPE_EQUAL)
-			found = _match_flag_equal(parser, src, bit);
+			found = _match_flag_equal(parser, src, bit,
+						  &used_equal_bits);
 		else
 			fatal_abort("%s: invalid bit_flag_t", __func__);
 
@@ -891,8 +905,7 @@ static int _dump_flag_bit_array(args_t *args, void *src, data_t *dst,
 				 parser->size, parser->obj_type_string,
 				 (uintptr_t) src, parser->ptr_offset,
 				 parser->field_name, parser->type_string,
-				 (uintptr_t) parser,
-				 data_type_to_string(data_get_type(dst)),
+				 (uintptr_t) parser, data_get_type_string(dst),
 				 (uintptr_t) dst);
 		}
 	}

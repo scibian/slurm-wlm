@@ -25,6 +25,8 @@
 
 #include "config.h"
 
+#include <stdbool.h>
+
 #include "gthread_helper.h"
 
 void sview_thread_init(gpointer vtable)
@@ -34,13 +36,17 @@ void sview_thread_init(gpointer vtable)
 #endif
 }
 
-GThread *sview_thread_new(GThreadFunc func, gpointer data,
-			  gboolean joinable, GError **error)
+bool sview_thread_new(GThreadFunc func, gpointer data, GError **error)
 {
 #ifndef GLIB_NEW_THREADS
-	return g_thread_create(func, data, joinable, error);
+	return g_thread_create(func, data, false, error);
 #else
-	return g_thread_try_new(NULL, func, data, error);
+	GThread *new;
+	if ((new = g_thread_try_new(NULL, func, data, error))) {
+		g_thread_unref(new);
+		return true;
+	}
+	return false;
 #endif
 }
 

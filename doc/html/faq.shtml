@@ -149,10 +149,12 @@
 <li><a href="#amazon_ec2">Can Slurm be used to run jobs on Amazon's EC2?</a></li>
 <li><a href="#core_dump">If a Slurm daemon core dumps, where can I find the
   core file?</a></li>
+<li><a href="#backtrace">How can I get a backtrace from a core file?</a></li>
 <li><a href="#totalview">How can TotalView be configured to operate with
   Slurm?</a></li>
 <li><a href="#git_patch">How can a patch file be generated from a Slurm commit
   in GitHub?</a></li>
+<li><a href="#apply_patch">How can I apply a patch to my Slurm source?</a></li>
 <li><a href="#enforce_limits">Why are the resource limits set in the database
   not being enforced?</a></li>
 <li><a href="#restore_priority">After manually setting a job priority value,
@@ -516,14 +518,24 @@ will be unchanged.</p>
 
 <p><a id="terminal"><b>Can tasks be launched with a remote (pseudo)
 terminal?</b></a><br>
-You have several ways to do so, the recommended ones are the following:<br>
-The simplest method is to make use of srun's <i>--pty</i> option,
-(e.g. <i>srun --pty bash -i</i>).
+The best method is to use <code>salloc</code> with
+<b>use_interactive_step</b> set in the <b>LaunchParameters</b> option in
+<i>slurm.conf</i>. See
+<a href="#prompt">getting shell prompts in interactive mode</a>.</p>
+
+<p>An alternative but not recommended method is to make use of srun's
+<i>--pty</i> option, (e.g. <i>srun --pty bash -i</i>).
 Srun's <i>--pty</i> option runs task zero in pseudo terminal mode. Bash's
-<i>-i</i> option instructs it to run in interactive mode (with prompts).<br>
-In addition to that method you have the option to automatically have salloc
-place terminals on the compute nodes by setting "use_interactive_step" as
-an option in LaunchParameters.</p>
+<i>-i</i> option instructs it to run in interactive mode (with prompts).
+However, unlike the batch or interactive steps, this launches a step which
+consumes all resources in the job. This means that subsequent steps cannot be
+launched in the job unless they use the <i>--overlap</i> option. If task plugins
+are configured, the shell is limited to CPUs of the first task. Subsequent
+steps (which must be launched with <i>--overlap</i>) may be limited to fewer
+resources than expected or may fail to launch tasks altogether if multiple
+nodes were requested.  Therefore, this alternative should rarely be used;
+<code>salloc</code> should be used instead.
+</p>
 
 <p><a id="force"><b>What does &quot;srun: Force Terminated job&quot;
 indicate?</b></a><br>
@@ -973,8 +985,8 @@ See the slurm.conf and srun man pages for more information.</p>
 jobs per node?</b></a><br>
 There are two mechanisms to control this.
 If you want to allocate individual processors on a node to jobs,
-configure <i>SelectType=select/cons_res</i>.
-See <a href="cons_res.html">Consumable Resources in Slurm</a>
+configure <i>SelectType=select/cons_tres</i>.
+See <a href="cons_tres.html">Consumable Resources in Slurm</a>
 for details about this configuration.
 If you want to allocate whole nodes to jobs, configure
 configure <i>SelectType=select/linear</i>.
@@ -1118,9 +1130,11 @@ to relocate them. In order to do so, follow this procedure:</p>
 make sure the permissions allow the <i>SlurmUser</i> to read and write it.
 <li>Restart all Slurm daemons</li>
 </ol>
-<p>There should be no loss of any running or pending jobs. Ensure that
-any nodes added to the cluster have a current <i>slurm.conf</i> file
-installed.
+<p>Jobs that were started by the old controller will receive the updated
+controller address and will continue and finish normally. There should be
+no loss of any pending jobs.
+Ensure that any nodes added to the cluster have a current <i>slurm.conf</i>
+file installed.
 <b>CAUTION:</b> If two nodes are simultaneously configured as the primary
 controller (two nodes on which <i>SlurmctldHost</i> specify the local host
 and the <i>slurmctld</i> daemon is executing on each), system behavior will be
@@ -1557,8 +1571,6 @@ core file will be written to the <i>StateSaveLocation</i>, or "/var/tmp/" as a
 last resort.<br>
 SlurmUser must have write permission on the directories. If none of the above
 directories have write permission for SlurmUser, no core file will be produced.
-For testing purposes the command "scontrol abort" can be used to abort the
-slurmctld daemon and generate a core file.
 
 <p>If <i>slurmd</i> is started with the -D option, then the core file will also be
 written to the current working directory. If <i>SlurmdLogFile</i> is an
@@ -1658,6 +1670,46 @@ system, get sure it is allowing to dump cores:</p>
 
 <pre>$ coredumpctl info</pre>
 
+<p><a id="backtrace"><b>How can I get a backtrace from a core file?</b></a><br>
+If you do have a crash that generates a core file, you will want to get a
+backtrace of that crash to send to SchedMD for evaluation.</p>
+
+<p><b>NOTE</b>: Core files must be analyzed by the same binary that was used
+when they were generated. Compile time differences make it almost impossible
+for SchedMD to use a core file from a different system. You should always
+send a backtrace rather than a core file when sumitting a support request.</p>
+
+<p>In order to generate a backtrace you must use <i>gdb</i>, specify the
+path to the <i>slurm*</i> binary that generated the crash, and specify the
+path to the core file. Below is an example of how to get a backtrace of a
+core file generated by <i>slurmctld</i>:
+<pre>
+gdb -ex 't a a bt full' -batch /path/to/slurmctld &lt;core_file&gt;
+</pre>
+</p>
+
+<p>You can also use <i>gdb</i> to generate a backtrace without a core file.
+This can be useful if you are experiencing a crash on startup and aren't
+getting a core file for some reason. You would want to start the binary
+from inside of <i>gdb</i>, wait for it to crash, and generate the backtrace.
+Below is an example, using <i>slurmctld</i> as the example binary:
+<pre>
+(gdb) /path/to/slurmctld
+(gdb) set print pretty
+(gdb) r -d
+(gdb) t a a bt full
+</pre>
+</p>
+
+<p>You may also need to get a backtrace of a running daemon if it is stuck
+or hung. To do this you would point <i>gdb</i> at the running binary and
+have it generate the backtrace. Below is an example, again using
+<i>slurmctld</i> as the example:
+<pre>
+gdb -ex 't a a bt' -batch -p $(pidof slurmctld)
+</pre>
+</p>
+
 <p><a id="totalview"><b>How can TotalView be configured to operate with
   Slurm?</b></a><br>
 The following lines should also be added to the global <i>.tvdrc</i> file
@@ -1699,6 +1751,32 @@ Find and open the commit in GitHub then append ".patch" to the URL and save
 the resulting file. For an example, see:
 <a href="https://github.com/SchedMD/slurm/commit/91e543d433bed11e0df13ce0499be641774c99a3.patch">
 https://github.com/SchedMD/slurm/commit/91e543d433bed11e0df13ce0499be641774c99a3.patch</a>
+</p>
+
+<p><a id="apply_patch"><b>How can I apply a patch to my Slurm source?</b></a>
+<br>
+If you have a patch file that you need to apply to your source, such as a
+security or bug fix patch supplied by SchedMD's support, you can do
+so with the <b>patch</b> command. You would first extract the contents of the
+source tarball for the version you are using. You can then apply the patch
+to the extracted source. Below is an example of how to do this with the
+source for Slurm 23.11.1:
+<pre>
+$ tar xjvf slurm-23.11.1.tar.bz2 > /dev/null
+$ patch -p1 -d slurm-23.11.1/ < example.patch
+patching file src/slurmctld/step_mgr.c
+</pre>
+</p>
+
+<p>Once the patch has been applied to the source code, you can proceed to
+build Slurm as you would normally if you build with <b>make</b>. If you use
+<b>rpmbuild</b> to build Slurm, you will have to create a tarball with the
+patched files. The filename of the tarball must match the original filename
+to avoid errors.
+<pre>
+$ tar cjvf slurm-23.11.1.tar.bz2 slurm-23.11.1/ > /dev/null
+$ rpmbuild -ta slurm-23.11.1.tar.bz2 > /dev/null
+</pre>
 </p>
 
 <p><a id="enforce_limits"><b>Why are the resource limits set in the
@@ -2041,12 +2119,12 @@ version or are upgrading from MySQL, additional steps will need to be taken.</p>
 <p><i>Before MariaDB 10.2.1, BLOB and TEXT columns could not be assigned a
 DEFAULT value. This restriction was lifted in MariaDB 10.2.1.</i></p>
 
-<p>Therefore, if a site begins using MariaDB >= 10.2.1 and is either using
-an existing Slurm database from an earlier version or has restored one from
-a dump from an earlier version or from any version of MySQL, some text/blob
-default values will need to be altered to avoid failures from subsequent
-queries from slurmdbd that set affected fields to DEFAULT. Please contact
-SchedMD for assistance with this.</p>
+<p>Therefore, if a site begins using MariaDB 10.2.1 or later and is using an
+existing Slurm database from an earlier version of MariaDB or any version
+of MySQL, some text/blob default values will need to be altered to avoid
+failures from subsequent queries from slurmdbd that set affected fields to
+DEFAULT. Make sure you are using slurmdbd 22.05.7 or later, as these versions
+will automatically correct the default values at startup.</p>
 
 <p><a id="routing_queue"><b>How can a routing queue be configured?</b></a><br>
 A job submit plugin is designed to have access to a job request from a user,
@@ -2419,6 +2497,6 @@ output file). It's also possible that a job could have multiple output files
 (see <a href=srun.html#OPT_filename-pattern>filename pattern</a> in the srun
 man page).</p>
 
-<p style="text-align:center;">Last modified 27 July 2023</p>
+<p style="text-align:center;">Last modified 27 March 2024</p>
 
 <!--#include virtual="footer.txt"-->

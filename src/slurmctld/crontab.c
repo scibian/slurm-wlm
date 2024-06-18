@@ -55,6 +55,7 @@ typedef struct {
 	uid_t uid;
 	gid_t gid;
 	char **err_msg;
+	identity_t *id;
 	char **job_submit_user_msg;
 	char **failed_lines;
 	List new_jobs;
@@ -64,8 +65,8 @@ typedef struct {
 
 static int _handle_job(void *x, void *y)
 {
-	job_desc_msg_t *job = (job_desc_msg_t *) x;
-	foreach_cron_job_args_t *args = (foreach_cron_job_args_t *) y;
+	job_desc_msg_t *job = x;
+	foreach_cron_job_args_t *args = y;
 	job_record_t *job_ptr = NULL;
 	char *err_msg = NULL;
 
@@ -92,6 +93,9 @@ static int _handle_job(void *x, void *y)
 
 	xfree(job->alloc_node);
 	job->alloc_node = xstrdup(args->alloc_node);
+
+	FREE_NULL_IDENTITY(job->id);
+	job->id = copy_identity(args->id);
 
 	/* enforce this flag so the job submit plugin can differentiate */
 	job->bitflags |= CRON_JOB;
@@ -166,17 +170,17 @@ static int _purge_job(void *x, void *ignored)
  */
 static int _clear_requeue_cron(void *x, void *y)
 {
-	job_record_t *job_ptr = (job_record_t *) x;
-	uid_t *uid = (uid_t *) y;
+	job_record_t *job_ptr = x;
+	uid_t *uid = y;
 
 	if ((job_ptr->user_id == *uid) &&
 	    (job_ptr->bit_flags & CRON_JOB)) {
 		job_ptr->bit_flags &= ~CRON_JOB;
-		job_ptr->job_state &= ~JOB_REQUEUE;
+		job_state_unset_flag(job_ptr, JOB_REQUEUE);
 
 		if (!IS_JOB_RUNNING(job_ptr)) {
 			time_t now = time(NULL);
-			job_ptr->job_state = JOB_CANCELLED;
+			job_state_set(job_ptr, JOB_CANCELLED);
 			job_ptr->start_time = now;
 			job_ptr->end_time = now;
 			job_ptr->exit_code = 1;
@@ -189,8 +193,8 @@ static int _clear_requeue_cron(void *x, void *y)
 
 static int _set_requeue_cron(void *x, void *y)
 {
-	job_record_t *job_ptr = (job_record_t *) x;
-	bool *set = (bool *) y;
+	job_record_t *job_ptr = x;
+	bool *set = y;
 
 	if (*set)
 		job_ptr->bit_flags |= CRON_JOB;
@@ -202,9 +206,8 @@ static int _set_requeue_cron(void *x, void *y)
 
 static int _copy_jobids(void *x, void *y)
 {
-	job_record_t *job_ptr = (job_record_t *) x;
-	crontab_update_response_msg_t *response =
-		(crontab_update_response_msg_t *) y;
+	job_record_t *job_ptr = x;
+	crontab_update_response_msg_t *response = y;
 
 	response->jobids[response->jobids_count++] = job_ptr->job_id;
 
@@ -213,7 +216,8 @@ static int _copy_jobids(void *x, void *y)
 
 extern void crontab_submit(crontab_update_request_msg_t *request,
 			   crontab_update_response_msg_t *response,
-			   char *alloc_node, uint16_t protocol_version)
+			   char *alloc_node, identity_t *id,
+			   uint16_t protocol_version)
 {
 	foreach_cron_job_args_t args;
 	char *dir = NULL, *file = NULL;
@@ -247,6 +251,7 @@ extern void crontab_submit(crontab_update_request_msg_t *request,
 		args.uid = request->uid;
 		args.gid = request->gid;
 		args.err_msg = &response->err_msg;
+		args.id = id;
 		args.job_submit_user_msg = &response->job_submit_user_msg;
 		args.failed_lines = &response->failed_lines;
 		args.new_jobs = list_create(NULL);

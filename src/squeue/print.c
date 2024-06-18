@@ -88,7 +88,8 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 	l = list_create(_job_list_del);
 	if (!params.no_header)
 		_print_job_from_format(NULL, format);
-	_part_state_load();
+	if (!params.only_state)
+		_part_state_load();
 
 	/* Filter out the jobs of interest */
 	for (i = 0; i < size; i++) {
@@ -784,16 +785,12 @@ int _print_job_group_id(job_info_t * job, int width, bool right, char* suffix)
 
 int _print_job_group_name(job_info_t * job, int width, bool right, char* suffix)
 {
-	struct group *group_info = NULL;
-
 	if (job == NULL)	/* Print the Header instead */
 		_print_str("GROUP", width, right, true);
 	else {
-		group_info = getgrgid((gid_t) job->group_id);
-		if (group_info && group_info->gr_name[0])
-			_print_str(group_info->gr_name, width, right, true);
-		else
-			_print_int(job->group_id, width, right, true);
+		char *group = gid_to_string(job->group_id);
+		_print_str(group, width, right, true);
+		xfree(group);
 	}
 	if (suffix)
 		printf("%s", suffix);

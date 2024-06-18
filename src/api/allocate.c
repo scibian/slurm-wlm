@@ -183,9 +183,7 @@ slurm_allocate_resources_blocking (const job_desc_msg_t *user_req,
 
 	/* make a copy of the user's job description struct so that we
 	 * can make changes before contacting the controller */
-	req = (job_desc_msg_t *)xmalloc(sizeof(job_desc_msg_t));
-	if (req == NULL)
-		return NULL;
+	req = xmalloc(sizeof(job_desc_msg_t));
 	memcpy(req, user_req, sizeof(job_desc_msg_t));
 
 	/*
@@ -295,7 +293,7 @@ static void *_load_willrun_thread(void *args)
 	list_append(load_args->resp_msg_list, resp);
 	xfree(args);
 
-	return (void *) NULL;
+	return NULL;
 }
 
 static int _fed_job_will_run(job_desc_msg_t *req,
@@ -328,8 +326,7 @@ static int _fed_job_will_run(job_desc_msg_t *req,
 
 	/* Spawn one pthread per cluster to collect job information */
 	resp_msg_list = list_create(NULL);
-	load_thread = xmalloc(sizeof(pthread_t) *
-			      list_count(fed->cluster_list));
+	load_thread = xcalloc(list_count(fed->cluster_list), sizeof(pthread_t));
 	iter = list_iterator_create(fed->cluster_list);
 	while ((cluster = (slurmdb_cluster_rec_t *)list_next(iter))) {
 		if ((cluster->control_host == NULL) ||
@@ -612,7 +609,7 @@ extern int slurm_het_job_will_run(List job_req_list)
 	ListIterator iter, itr;
 	time_t first_start = (time_t) 0;
 	uint32_t first_job_id = 0, tot_proc_count = 0, *job_id_ptr;
-	hostset_t hs = NULL;
+	hostset_t *hs = NULL;
 	char *job_list = NULL;
 
 	if (!job_req_list || (list_count(job_req_list) == 0)) {
@@ -935,10 +932,10 @@ _handle_rc_msg(slurm_msg_t *msg)
 
 /*
  * Read a Slurm hostfile specified by "filename".  "filename" must contain
- * a list of Slurm NodeNames, one per line.  Reads up to "n" number of hostnames
- * from the file. Returns a string representing a hostlist ranged string of
- * the contents of the file.  This is a helper function, it does not
- * contact any Slurm daemons.
+ * a list of Slurm NodeNames, one per line, comma seperated, or * notation.
+ * Reads up to "n" number of hostnames from the file. Returns a string
+ * representing a hostlist ranged string of the contents of the file.
+ * This is a helper function, it does not contact any Slurm daemons.
  *
  * Returns a string representing the hostlist.  Returns NULL if there are fewer
  * than "n" hostnames in the file, or if an error occurs.  If "n" ==
@@ -953,7 +950,7 @@ char *slurm_read_hostfile(const char *filename, int n)
 	int i, j;
 	int line_size;
 	int line_num = 0;
-	hostlist_t hostlist = NULL;
+	hostlist_t *hostlist = NULL;
 	char *nodelist = NULL, *end_part = NULL;
 	char *asterisk, *tmp_text = NULL, *save_ptr = NULL, *host_name;
 	int total_file_len = 0;
@@ -1052,6 +1049,9 @@ char *slurm_read_hostfile(const char *filename, int n)
 			    (i = atoi(asterisk + 1))) {
 				asterisk[0] = '\0';
 
+				if (n != (int) NO_VAL)
+					i = MIN(i,
+						n - hostlist_count(hostlist));
 				/*
 				 * Don't forget the extra space potentially
 				 * needed
@@ -1064,6 +1064,10 @@ char *slurm_read_hostfile(const char *filename, int n)
 				hostlist_push_host(hostlist, host_name);
 			}
 			host_name = strtok_r(NULL, ",", &save_ptr);
+
+			if ((n != (int) NO_VAL) &&
+			    (hostlist_count(hostlist) == n))
+				break;
 		}
 		xfree(tmp_text);
 
@@ -1162,8 +1166,8 @@ static void _destroy_allocation_response_socket(listen_t *listen)
  * IN msg: message received
  * OUT resp: resource allocation response message or List of them
  * RET 1 if resp is filled in, 0 otherwise */
-static int
-_handle_msg(slurm_msg_t *msg, uint16_t msg_type, void **resp)
+static int _handle_msg(slurm_msg_t *msg, uint16_t msg_type, void **resp,
+		       uint32_t job_id)
 {
 	uid_t req_uid;
 	uid_t uid       = getuid();
@@ -1185,10 +1189,18 @@ _handle_msg(slurm_msg_t *msg, uint16_t msg_type, void **resp)
 		msg->data = NULL;
 		rc = 1;
 	} else if (msg->msg_type == SRUN_JOB_COMPLETE) {
-		info("Job has been cancelled");
+		srun_job_complete_msg_t *job_comp_msg = msg->data;
+		if (job_comp_msg->job_id == job_id) {
+			info("Job has been cancelled");
+		} else {
+			verbose("Ignoring SRUN_JOB_COMPLETE message for JobId=%u (our JobId=%u)",
+				job_comp_msg->job_id, job_id);
+			rc = 2;
+		}
 	} else {
-		error("%s: received spurious message type: %u",
-		      __func__, msg->msg_type);
+		error("%s: received spurious message type: %s",
+		      __func__, rpc_num2string(msg->msg_type));
+		rc = 2;
 	}
 	return rc;
 }
@@ -1198,8 +1210,8 @@ _handle_msg(slurm_msg_t *msg, uint16_t msg_type, void **resp)
  * IN msg_type: RESPONSE_RESOURCE_ALLOCATION or RESPONSE_HET_JOB_ALLOCATION
  * OUT resp: resource allocation response message or List
  * RET 1 if resp is filled in, 0 otherwise */
-static int
-_accept_msg_connection(int listen_fd, uint16_t msg_type, void **resp)
+static int _accept_msg_connection(int listen_fd, uint16_t msg_type, void **resp,
+				  uint32_t job_id)
 {
 	int	     conn_fd;
 	slurm_msg_t  *msg = NULL;
@@ -1231,7 +1243,8 @@ _accept_msg_connection(int listen_fd, uint16_t msg_type, void **resp)
 		return SLURM_ERROR;
 	}
 
-	rc = _handle_msg(msg, msg_type, resp); /* xfer payload */
+	rc = _handle_msg(msg, msg_type, resp, job_id); /* xfer payload */
+
 	slurm_free_msg(msg);
 
 	close(conn_fd);
@@ -1296,8 +1309,14 @@ static void _wait_for_allocation_response(uint32_t job_id,
 
 	info("job %u queued and waiting for resources", job_id);
 	*resp = NULL;
-	if ((rc = _wait_for_alloc_rpc(listen, timeout)) == 1)
-		rc = _accept_msg_connection(listen->fd, msg_type, resp);
+	while (true) {
+		if ((rc = _wait_for_alloc_rpc(listen, timeout)) != 1)
+			break;
+
+		if ((rc = _accept_msg_connection(listen->fd, msg_type, resp,
+						 job_id)) != 2)
+			break;
+	}
 	if (rc <= 0) {
 		errnum = errno;
 		/* Maybe the resource allocation response RPC got lost

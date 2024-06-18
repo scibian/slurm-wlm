@@ -17,6 +17,25 @@
 #
 # Makefile for slurmctld
 
+# This is common code for a Makefile.am and creates $(LIB_REF) to be used
+# afterwards in noinst_LTLIBRARIES and EXTRA_slurmrestd_DEPENDENCIES
+#
+# usage
+#
+# REF = usage.txt
+# include $(top_srcdir)/make_ref.include
+# noinst_LTLIBRARIES [+]= $(LIB_REF)
+# EXTRA_$PROGRAMNAME_DEPENDENCIES [+]= $(LIB_REF)
+# $PROGRAMNAME_LDADD += $(LIB_REF)
+#
+# What the above lines do is include this file in a Makefile.am
+# It will insert usage.txt as a variable that the calling program can access
+# with the calls in src/common/ref.h.
+#
+# If I where doing this for the slurmrestd I would put 'slurmrestd' in for
+# $PROGRAMNAME i.e. EXTRA_slurmrestd_DEPENDENCIES, slurmrestd_LDADD.
+
+
 VPATH = @srcdir@
 am__is_gnu_make = { \
   if test -z '$(MAKELEVEL)'; then \
@@ -100,6 +119,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
+	$(top_srcdir)/auxdir/gtk-2.0.m4 \
 	$(top_srcdir)/auxdir/libtool.m4 \
 	$(top_srcdir)/auxdir/ltoptions.m4 \
 	$(top_srcdir)/auxdir/ltsugar.m4 \
@@ -126,7 +146,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_lz4.m4 \
 	$(top_srcdir)/auxdir/x_ac_man2html.m4 \
 	$(top_srcdir)/auxdir/x_ac_munge.m4 \
-	$(top_srcdir)/auxdir/x_ac_netloc.m4 \
 	$(top_srcdir)/auxdir/x_ac_nvml.m4 \
 	$(top_srcdir)/auxdir/x_ac_ofed.m4 \
 	$(top_srcdir)/auxdir/x_ac_oneapi.m4 \
@@ -140,6 +159,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
 	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
+	$(top_srcdir)/auxdir/x_ac_sview.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
 	$(top_srcdir)/auxdir/x_ac_uid_gid_size.m4 \
@@ -155,27 +175,31 @@ CONFIG_CLEAN_FILES =
 CONFIG_CLEAN_VPATH_FILES =
 am__installdirs = "$(DESTDIR)$(sbindir)"
 PROGRAMS = $(sbin_PROGRAMS)
+LTLIBRARIES = $(noinst_LTLIBRARIES)
+lib_ref_la_DEPENDENCIES = lib_ref.lo
+am_lib_ref_la_OBJECTS =
+lib_ref_la_OBJECTS = $(am_lib_ref_la_OBJECTS)
+AM_V_lt = $(am__v_lt_@AM_V@)
+am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
+am__v_lt_0 = --silent
+am__v_lt_1 = 
 am_slurmctld_OBJECTS = acct_policy.$(OBJEXT) agent.$(OBJEXT) \
 	backup.$(OBJEXT) controller.$(OBJEXT) crontab.$(OBJEXT) \
 	fed_mgr.$(OBJEXT) front_end.$(OBJEXT) gang.$(OBJEXT) \
 	gres_ctld.$(OBJEXT) groups.$(OBJEXT) heartbeat.$(OBJEXT) \
-	job_mgr.$(OBJEXT) job_scheduler.$(OBJEXT) licenses.$(OBJEXT) \
-	locks.$(OBJEXT) node_mgr.$(OBJEXT) node_scheduler.$(OBJEXT) \
-	partition_mgr.$(OBJEXT) ping_nodes.$(OBJEXT) \
-	port_mgr.$(OBJEXT) power_save.$(OBJEXT) \
+	job_mgr.$(OBJEXT) job_scheduler.$(OBJEXT) job_state.$(OBJEXT) \
+	licenses.$(OBJEXT) locks.$(OBJEXT) node_mgr.$(OBJEXT) \
+	node_scheduler.$(OBJEXT) partition_mgr.$(OBJEXT) \
+	ping_nodes.$(OBJEXT) port_mgr.$(OBJEXT) power_save.$(OBJEXT) \
 	prep_slurmctld.$(OBJEXT) proc_req.$(OBJEXT) \
 	rate_limit.$(OBJEXT) read_config.$(OBJEXT) \
-	reservation.$(OBJEXT) rpc_queue.$(OBJEXT) \
+	reservation.$(OBJEXT) rpc_queue.$(OBJEXT) sackd_mgr.$(OBJEXT) \
 	slurmscriptd.$(OBJEXT) slurmscriptd_protocol_defs.$(OBJEXT) \
 	slurmscriptd_protocol_pack.$(OBJEXT) srun_comm.$(OBJEXT) \
 	state_save.$(OBJEXT) statistics.$(OBJEXT) step_mgr.$(OBJEXT) \
 	trigger_mgr.$(OBJEXT)
 slurmctld_OBJECTS = $(am_slurmctld_OBJECTS)
 am__DEPENDENCIES_1 =
-AM_V_lt = $(am__v_lt_@AM_V@)
-am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
-am__v_lt_0 = --silent
-am__v_lt_1 = 
 slurmctld_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
 	$(slurmctld_LDFLAGS) $(LDFLAGS) -o $@
@@ -200,14 +224,15 @@ am__depfiles_remade = ./$(DEPDIR)/acct_policy.Po ./$(DEPDIR)/agent.Po \
 	./$(DEPDIR)/front_end.Po ./$(DEPDIR)/gang.Po \
 	./$(DEPDIR)/gres_ctld.Po ./$(DEPDIR)/groups.Po \
 	./$(DEPDIR)/heartbeat.Po ./$(DEPDIR)/job_mgr.Po \
-	./$(DEPDIR)/job_scheduler.Po ./$(DEPDIR)/licenses.Po \
-	./$(DEPDIR)/locks.Po ./$(DEPDIR)/node_mgr.Po \
-	./$(DEPDIR)/node_scheduler.Po ./$(DEPDIR)/partition_mgr.Po \
-	./$(DEPDIR)/ping_nodes.Po ./$(DEPDIR)/port_mgr.Po \
-	./$(DEPDIR)/power_save.Po ./$(DEPDIR)/prep_slurmctld.Po \
-	./$(DEPDIR)/proc_req.Po ./$(DEPDIR)/rate_limit.Po \
-	./$(DEPDIR)/read_config.Po ./$(DEPDIR)/reservation.Po \
-	./$(DEPDIR)/rpc_queue.Po ./$(DEPDIR)/slurmscriptd.Po \
+	./$(DEPDIR)/job_scheduler.Po ./$(DEPDIR)/job_state.Po \
+	./$(DEPDIR)/licenses.Po ./$(DEPDIR)/locks.Po \
+	./$(DEPDIR)/node_mgr.Po ./$(DEPDIR)/node_scheduler.Po \
+	./$(DEPDIR)/partition_mgr.Po ./$(DEPDIR)/ping_nodes.Po \
+	./$(DEPDIR)/port_mgr.Po ./$(DEPDIR)/power_save.Po \
+	./$(DEPDIR)/prep_slurmctld.Po ./$(DEPDIR)/proc_req.Po \
+	./$(DEPDIR)/rate_limit.Po ./$(DEPDIR)/read_config.Po \
+	./$(DEPDIR)/reservation.Po ./$(DEPDIR)/rpc_queue.Po \
+	./$(DEPDIR)/sackd_mgr.Po ./$(DEPDIR)/slurmscriptd.Po \
 	./$(DEPDIR)/slurmscriptd_protocol_defs.Po \
 	./$(DEPDIR)/slurmscriptd_protocol_pack.Po \
 	./$(DEPDIR)/srun_comm.Po ./$(DEPDIR)/state_save.Po \
@@ -232,7 +257,7 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
 am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
 am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
-SOURCES = $(slurmctld_SOURCES)
+SOURCES = $(lib_ref_la_SOURCES) $(slurmctld_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -368,9 +393,6 @@ MUNGE_LDFLAGS = @MUNGE_LDFLAGS@
 MUNGE_LIBS = @MUNGE_LIBS@
 MYSQL_CFLAGS = @MYSQL_CFLAGS@
 MYSQL_LIBS = @MYSQL_LIBS@
-NETLOC_CPPFLAGS = @NETLOC_CPPFLAGS@
-NETLOC_LDFLAGS = @NETLOC_LDFLAGS@
-NETLOC_LIBS = @NETLOC_LIBS@
 NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
@@ -521,7 +543,7 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
-CLEANFILES = core.*
+CLEANFILES = core.* *.bino
 AM_CPPFLAGS = -I$(top_srcdir)
 
 # noinst_LTLIBRARIES = libslurmctld.la
@@ -550,6 +572,7 @@ slurmctld_SOURCES = \
 	job_mgr.c 	\
 	job_scheduler.c	\
 	job_scheduler.h	\
+	job_state.c	\
 	licenses.c	\
 	licenses.h	\
 	locks.c   	\
@@ -575,6 +598,8 @@ slurmctld_SOURCES = \
 	reservation.h	\
 	rpc_queue.c	\
 	rpc_queue.h	\
+	sackd_mgr.c	\
+	sackd_mgr.h	\
 	slurmctld.h	\
 	slurmscriptd.c \
 	slurmscriptd.h \
@@ -591,14 +616,23 @@ slurmctld_SOURCES = \
 	trigger_mgr.c	\
 	trigger_mgr.h
 
-slurmctld_LDADD = $(LIB_SLURM) $(SLURMCTLD_INTERFACES)
+slurmctld_LDADD = $(LIB_SLURM) $(SLURMCTLD_INTERFACES) $(LIB_REF)
 slurmctld_LDFLAGS = $(CMD_LDFLAGS)
 slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD) $(SLURMCTLD_INTERFACES)
+REF = usage.txt
+BIN_REF = $(REF:.txt=.bino)
+LIB_REF = lib_ref.la
+
+# a blank lib_ref_la_SOURCES is needed for 'make cscope' to work correctly.
+lib_ref_la_SOURCES = 
+lib_ref_la_LIBADD = lib_ref.lo
+noinst_LTLIBRARIES = $(LIB_REF)
+EXTRA_slurmctld_DEPENDENCIES = $(LIB_REF)
 all: all-am
 
 .SUFFIXES:
 .SUFFIXES: .c .lo .o .obj
-$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am  $(am__configure_deps)
+$(srcdir)/Makefile.in: @MAINTAINER_MODE_TRUE@ $(srcdir)/Makefile.am $(top_srcdir)/make_ref.include $(am__configure_deps)
 	@for dep in $?; do \
 	  case '$(am__configure_deps)' in \
 	    *$$dep*) \
@@ -618,6 +652,7 @@ Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status
 	    echo ' cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@ $(am__maybe_remake_depfiles)'; \
 	    cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@ $(am__maybe_remake_depfiles);; \
 	esac;
+$(top_srcdir)/make_ref.include $(am__empty):
 
 $(top_builddir)/config.status: $(top_srcdir)/configure $(CONFIG_STATUS_DEPENDENCIES)
 	cd $(top_builddir) && $(MAKE) $(AM_MAKEFLAGS) am--refresh
@@ -677,6 +712,20 @@ clean-sbinPROGRAMS:
 	echo " rm -f" $$list; \
 	rm -f $$list
 
+clean-noinstLTLIBRARIES:
+	-test -z "$(noinst_LTLIBRARIES)" || rm -f $(noinst_LTLIBRARIES)
+	@list='$(noinst_LTLIBRARIES)'; \
+	locs=`for p in $$list; do echo $$p; done | \
+	      sed 's|^[^/]*$$|.|; s|/[^/]*$$||; s|$$|/so_locations|' | \
+	      sort -u`; \
+	test -z "$$locs" || { \
+	  echo rm -f $${locs}; \
+	  rm -f $${locs}; \
+	}
+
+lib_ref.la: $(lib_ref_la_OBJECTS) $(lib_ref_la_DEPENDENCIES) $(EXTRA_lib_ref_la_DEPENDENCIES) 
+	$(AM_V_CCLD)$(LINK)  $(lib_ref_la_OBJECTS) $(lib_ref_la_LIBADD) $(LIBS)
+
 slurmctld$(EXEEXT): $(slurmctld_OBJECTS) $(slurmctld_DEPENDENCIES) $(EXTRA_slurmctld_DEPENDENCIES) 
 	@rm -f slurmctld$(EXEEXT)
 	$(AM_V_CCLD)$(slurmctld_LINK) $(slurmctld_OBJECTS) $(slurmctld_LDADD) $(LIBS)
@@ -700,6 +749,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/heartbeat.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_mgr.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_scheduler.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/job_state.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/licenses.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/locks.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/node_mgr.Po@am__quote@ # am--include-marker
@@ -714,6 +764,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/read_config.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/reservation.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/rpc_queue.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sackd_mgr.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmscriptd.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmscriptd_protocol_defs.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmscriptd_protocol_pack.Po@am__quote@ # am--include-marker
@@ -809,7 +860,7 @@ distclean-tags:
 	-rm -f TAGS ID GTAGS GRTAGS GSYMS GPATH tags
 check-am: all-am
 check: check-am
-all-am: Makefile $(PROGRAMS)
+all-am: Makefile $(PROGRAMS) $(LTLIBRARIES)
 installdirs:
 	for dir in "$(DESTDIR)$(sbindir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
@@ -847,8 +898,8 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libtool clean-sbinPROGRAMS \
-	mostlyclean-am
+clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
+	clean-sbinPROGRAMS mostlyclean-am
 
 distclean: distclean-am
 		-rm -f ./$(DEPDIR)/acct_policy.Po
@@ -864,6 +915,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/heartbeat.Po
 	-rm -f ./$(DEPDIR)/job_mgr.Po
 	-rm -f ./$(DEPDIR)/job_scheduler.Po
+	-rm -f ./$(DEPDIR)/job_state.Po
 	-rm -f ./$(DEPDIR)/licenses.Po
 	-rm -f ./$(DEPDIR)/locks.Po
 	-rm -f ./$(DEPDIR)/node_mgr.Po
@@ -878,6 +930,7 @@ distclean: distclean-am
 	-rm -f ./$(DEPDIR)/read_config.Po
 	-rm -f ./$(DEPDIR)/reservation.Po
 	-rm -f ./$(DEPDIR)/rpc_queue.Po
+	-rm -f ./$(DEPDIR)/sackd_mgr.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd_protocol_defs.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd_protocol_pack.Po
@@ -944,6 +997,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/heartbeat.Po
 	-rm -f ./$(DEPDIR)/job_mgr.Po
 	-rm -f ./$(DEPDIR)/job_scheduler.Po
+	-rm -f ./$(DEPDIR)/job_state.Po
 	-rm -f ./$(DEPDIR)/licenses.Po
 	-rm -f ./$(DEPDIR)/locks.Po
 	-rm -f ./$(DEPDIR)/node_mgr.Po
@@ -958,6 +1012,7 @@ maintainer-clean: maintainer-clean-am
 	-rm -f ./$(DEPDIR)/read_config.Po
 	-rm -f ./$(DEPDIR)/reservation.Po
 	-rm -f ./$(DEPDIR)/rpc_queue.Po
+	-rm -f ./$(DEPDIR)/sackd_mgr.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd_protocol_defs.Po
 	-rm -f ./$(DEPDIR)/slurmscriptd_protocol_pack.Po
@@ -987,14 +1042,15 @@ uninstall-am: uninstall-sbinPROGRAMS
 .MAKE: install-am install-strip
 
 .PHONY: CTAGS GTAGS TAGS all all-am am--depfiles check check-am clean \
-	clean-generic clean-libtool clean-sbinPROGRAMS cscopelist-am \
-	ctags ctags-am distclean distclean-compile distclean-generic \
-	distclean-libtool distclean-tags dvi dvi-am html html-am info \
-	info-am install install-am install-data install-data-am \
-	install-dvi install-dvi-am install-exec install-exec-am \
-	install-html install-html-am install-info install-info-am \
-	install-man install-pdf install-pdf-am install-ps \
-	install-ps-am install-sbinPROGRAMS install-strip installcheck \
+	clean-generic clean-libtool clean-noinstLTLIBRARIES \
+	clean-sbinPROGRAMS cscopelist-am ctags ctags-am distclean \
+	distclean-compile distclean-generic distclean-libtool \
+	distclean-tags dvi dvi-am html html-am info info-am install \
+	install-am install-data install-data-am install-dvi \
+	install-dvi-am install-exec install-exec-am install-html \
+	install-html-am install-info install-info-am install-man \
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-sbinPROGRAMS install-strip installcheck \
 	installcheck-am installdirs maintainer-clean \
 	maintainer-clean-generic mostlyclean mostlyclean-compile \
 	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
@@ -1002,6 +1058,25 @@ uninstall-am: uninstall-sbinPROGRAMS
 
 .PRECIOUS: Makefile
 
+
+%.bino: %.txt
+	$(AM_V_GEN)curr_dir=$(shell pwd); cd $(abs_srcdir); $(LD) -r -o "$(abs_builddir)/$*.bino" -z noexecstack --format=binary "$(notdir $<)"; cd $$curr_dir
+	$(AM_V_at)@OBJCOPY@ --rename-section .data=.rodata,alloc,load,readonly,data,contents "$*.bino"
+
+lib_ref.lo: $(BIN_REF)
+	$(AM_V_at)echo "# $@ - a libtool object file" >"$@"
+	$(AM_V_at)echo "# Generated by libtool" >>"$@"
+	$(AM_V_at)echo "# (Not really... but we need libtool to believe it was.)" >>"$@"
+	$(AM_V_at)echo "#" >>"$@"
+	$(AM_V_at)echo "# Please DO NOT delete this file!" >>"$@"
+	$(AM_V_at)echo "# It is necessary for linking the library." >>"$@"
+	$(AM_V_at)echo >>"$@"
+	$(AM_V_at)echo "# Name of the PIC object." >>"$@"
+	$(AM_V_at)echo "pic_object='$(BIN_REF)'" >>"$@"
+	$(AM_V_at)echo >>"$@"
+	$(AM_V_at)echo "# Name of the non-PIC object" >>"$@"
+	$(AM_V_at)echo "non_pic_object=''" >>"$@"
+	$(AM_V_at)echo >>"$@"
 
 force:
 $(slurmctld_DEPENDENCIES) : force

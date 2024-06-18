@@ -48,6 +48,7 @@
 #include "src/common/proc_args.h"
 #include "src/common/strlcpy.h"
 
+#include "src/interfaces/data_parser.h"
 #include "src/interfaces/serializer.h"
 
 #define OPT_LONG_AUTOCOMP 0x100
@@ -69,6 +70,7 @@ List g_qos_list = NULL;
 List g_res_list = NULL;
 List g_tres_list = NULL;
 const char *mime_type = NULL; /* mimetype if we are using data_parser */
+const char *data_parser = NULL; /* data_parser args */
 
 /* by default, normalize all usernames to lower case */
 bool user_case_norm = true;
@@ -110,8 +112,8 @@ int main(int argc, char **argv)
 		{"associations", 0, 0, 's'},
 		{"verbose",  0, 0, 'v'},
 		{"version",  0, 0, 'V'},
-		{"json", 0, 0, OPT_LONG_JSON},
-		{"yaml", 0, 0, OPT_LONG_YAML},
+		{"json", optional_argument, 0, OPT_LONG_JSON},
+		{"yaml", optional_argument, 0, OPT_LONG_YAML},
 		{NULL,       0, 0, 0}
 	};
 
@@ -177,15 +179,13 @@ int main(int argc, char **argv)
 			break;
 		case OPT_LONG_JSON :
 			mime_type = MIME_TYPE_JSON;
-			if (data_init())
-				fatal("data_init() failed");
+			data_parser = optarg;
 			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
 				fatal("JSON plugin load failure");
 			break;
 		case OPT_LONG_YAML :
 			mime_type = MIME_TYPE_YAML;
-			if (data_init())
-				fatal("data_init() failed");
+			data_parser = optarg;
 			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
 				fatal("YAML plugin load failure");
 			break;
@@ -224,9 +224,19 @@ int main(int argc, char **argv)
 
 
 	/* We are only running a single command and exiting */
-	if (optind < argc)
+	if (optind < argc) {
 		error_code = _process_command(argc - optind, argv + optind);
-	else {
+	} else if ((argc == 2) && (optind == argc) && mime_type &&
+		   !xstrcmp(data_parser, "list")) {
+		/*
+		 * We are only listing the available data parser plugins.
+		 * Calling DATA_DUMP_CLI_SINGLE() with a dummy type to get to
+		 * "list".
+		 * TODO: After Bug 18109 is fixed, replace this logic:
+		 */
+		DATA_DUMP_CLI_SINGLE(OPENAPI_PING_ARRAY_RESP, NULL, argc, argv,
+				     NULL, mime_type, data_parser, exit_code);
+	} else {
 		/* We are running interactively multiple commands */
 		int input_field_count = 0;
 		char **input_fields = xcalloc(MAX_INPUT_FIELDS, sizeof(char *));
@@ -261,7 +271,7 @@ int main(int argc, char **argv)
 	if (local_exit_code)
 		exit_code = local_exit_code;
 	slurmdb_connection_close(&db_conn);
-	slurm_acct_storage_fini();
+	acct_storage_g_fini();
 	FREE_NULL_LIST(g_qos_list);
 	FREE_NULL_LIST(g_res_list);
 	FREE_NULL_LIST(g_tres_list);
@@ -742,6 +752,9 @@ static void _show_it(int argc, char **argv)
 	} else if (xstrncasecmp(argv[0], "Federation",
 				MAX(command_len, 1)) == 0) {
 		error_code = sacctmgr_list_federation((argc - 1), &argv[1]);
+	} else if (xstrncasecmp(argv[0], "Instances",
+				MAX(command_len, 1)) == 0) {
+		error_code = sacctmgr_list_instance((argc - 1), &argv[1]);
 	} else if (xstrncasecmp(argv[0], "Problems",
 				MAX(command_len, 1)) == 0) {
 		error_code = sacctmgr_list_problem((argc - 1), &argv[1]);

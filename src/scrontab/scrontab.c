@@ -97,7 +97,6 @@ static void _parse_args(int argc, char **argv)
 
 	static struct option long_options[] = {
 		{"autocomplete", required_argument, 0, OPT_LONG_AUTOCOMP},
-		/* invalid option definition; needed for suggest_completion() */
 		{NULL, no_argument, 0, 'e'},
 		{NULL, no_argument, 0, 'l'},
 		{NULL, no_argument, 0, 'r'},
@@ -352,12 +351,8 @@ static job_desc_msg_t *_entry_to_job(cron_entry_t *entry, char *script)
 	}
 
 	if (!job->work_dir) {
-		struct passwd *pwd = NULL;
-
-		if (!(pwd = getpwuid(uid)))
-			fatal("getpwuid(%u) failed", uid);
-
-		job->work_dir = xstrdup(pwd->pw_dir);
+		if (!(job->work_dir = uid_to_dir(uid)))
+			fatal("uid_to_dir(%u) failed", uid);
 	}
 
 	return job;

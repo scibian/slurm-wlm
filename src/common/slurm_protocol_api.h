@@ -136,20 +136,6 @@ char *slurm_get_preempt_type(void);
  */
 char *slurm_get_acct_gather_interconnect_type(void);
 
-/* slurm_get_acct_filesystem_profile_type
- * get FilesystemAccountingType from slurm_conf object
- * RET char *   - acct_gather_filesystem_type, MUST be xfreed by caller
- */
-char *slurm_get_acct_gather_filesystem_type(void);
-
-
-/* slurm_get_acct_gather_node_freq
- * returns the accounting poll frequency for requesting info from a
- * node from the slurm_conf object
- * RET int    - accounting node frequency
- */
-extern uint16_t slurm_get_acct_gather_node_freq(void);
-
 /* slurm_get_ext_sensors_type
  * get ExtSensorsType from slurm_conf object
  * RET char *   - ext_sensors type, MUST be xfreed by caller
@@ -305,18 +291,6 @@ int slurm_send_node_msg(int open_fd, slurm_msg_t *msg);
 /**********************************************************************\
  * msg connection establishment functions used by msg clients
 \**********************************************************************/
-
-/*
- * Calls connect to make a connection-less datagram connection to the
- *	primary or secondary slurmctld message engine
- * IN/OUT addr       - address of controller contacted
- * IN/OUT use_backup - IN: whether to try the backup first or not
- *                     OUT: set to true if connection established with backup
- * IN comm_cluster_rec	- Communication record (host/port/version)/
- * RET slurm_fd	- file descriptor of the connection created
- */
-extern int slurm_open_controller_conn(slurm_addr_t *addr, bool *use_backup,
-				      slurmdb_cluster_rec_t *comm_cluster_rec);
 
 /*
  * Calls connect to make a connection-less datagram connection to a specific
@@ -568,13 +542,6 @@ extern int slurm_send_recv_msg(int fd, slurm_msg_t *req,
 
 /* Slurm message functions */
 
-/* set_span
- * build an array indicating how message fanout should occur
- * IN total - total number of nodes to communicate with
- * IN tree_width - message fanout, use system default if zero
- * NOTE: Returned array MUST be release by caller using xfree */
-extern int *set_span(int total, uint16_t tree_width);
-
 extern void slurm_free_msg_members(slurm_msg_t *msg);
 extern void slurm_free_msg(slurm_msg_t * msg);
 
@@ -641,5 +608,14 @@ extern int slurm_hex_to_char(int v);
  * RET value as an int, -1 on error.
  */
 extern int slurm_char_to_hex(int c);
+
+/*
+ * Query assoc share info from slurmctld
+ * IN shares_req - which accounts and users to query
+ * IN/OUT shares_resp - populated result
+ * RET: SLURM_SUCCESS or error
+ */
+extern int slurm_associations_get_shares(shares_request_msg_t *shares_req,
+					 shares_response_msg_t **shares_resp);
 
 #endif
