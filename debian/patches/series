@@ -4,7 +4,6 @@ sacctmgr-increase-buffer
 pidfile-path
 rpath
 miscellanea-manpages
-fix-pmixv3-dlopen-path
 retry-getaddrinfo
 force-nvml
 META.patch
