@@ -137,9 +137,9 @@ override_dh_auto_install:
 	comm -23 debian/all_plugins_dev_filelist debian/plugin_packages_dev_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins-dev.install
 
 override_dh_strip:
-	dh_strip -plibslurm40t64
-	dh_strip -plibpmi0t64 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
-	dh_strip -plibpmi2-0t64 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
+	dh_strip -plibslurm41
+	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
+	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-elasticsearch-plugin
 	dh_strip -pslurm-wlm-hdf5-plugin

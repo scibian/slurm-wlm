@@ -1,4 +1,4 @@
-libslurm.so.40 libslurm40t64 #MINVER#
+libslurm.so.41 libslurm41 #MINVER#
 * Build-Depends-Package: libslurm-dev
  active_node_record_count@Base 23.02.2
  bblock_node_cnt@Base 23.11.3
