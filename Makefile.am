@@ -9,7 +9,6 @@ pkginclude_HEADERS =		\
 	slurm/slurmdb.h 	\
 	slurm/slurm_errno.h	\
 	slurm/slurm_version.h	\
-	slurm/smd_ns.h		\
 	slurm/spank.h
 
 MAINTAINERCLEANFILES = 					\
@@ -18,6 +17,8 @@ MAINTAINERCLEANFILES = 					\
 	ltconfig ltmain.sh missing mkinstalldirs 	\
 	slurm/slurm_version.h				\
 	stamp-h.in
+
+CONFIG_CLEAN_FILES = ""
 
 # Cleanup contribs with distclean/mrproper
 distclean-contrib:

@@ -1,9 +1,7 @@
 /*****************************************************************************\
  *  common_jag.h - slurm job accounting gather common plugin functions.
  *****************************************************************************
- *  Copyright (C) 2013 SchedMD LLC
- *  Written by Danny Auble <da@schedmd.com>, who borrowed heavily
- *  from the original code in jobacct_gather/linux
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -46,6 +44,7 @@
 typedef struct jag_prec {	/* process record */
 	bool	visited;
 	int	act_cpufreq;	/* actual average cpu frequency */
+	bool    completed;       /* the process no longer exists */
 	int	last_cpu;	/* last cpu */
 	pid_t	pid;
 	pid_t	ppid;
@@ -61,7 +60,7 @@ typedef struct jag_callbacks {
 	List (*get_precs) (List task_list, uint64_t cont_id,
 			   struct jag_callbacks *callbacks);
 	void (*get_offspring_data) (List prec_list,
-				    jag_prec_t *ancestor, pid_t pid);
+				    jag_prec_t *ancestor, pid_t pid, jag_prec_t * permanent_ancestor);
 } jag_callbacks_t;
 
 extern void jag_common_init(long in_hertz);

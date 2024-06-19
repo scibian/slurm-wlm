@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  prep_script_slurmd.c - Prolog / Epilog handling
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -65,8 +64,7 @@ slurmd_conf_t *conf = NULL;
 
 static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog);
-static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id,
-				 int (*container_join)(uint32_t , uid_t));
+static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id);
 
 static int _ef(const char *p, int errnum)
 {
@@ -152,15 +150,11 @@ extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 			 bool is_epilog)
 {
 	char *name = is_epilog ? "epilog" : "prolog";
-	char *path = is_epilog ? slurm_conf.epilog : slurm_conf.prolog;
+	uint32_t script_cnt = is_epilog ? slurm_conf.epilog_cnt :
+					  slurm_conf.prolog_cnt;
+	char **scripts = is_epilog ? slurm_conf.epilog : slurm_conf.prolog;
 	char **env = NULL;
 	int rc = SLURM_SUCCESS;
-	uint32_t jobid = job_env->jobid;
-
-#ifdef HAVE_NATIVE_CRAY
-	if (job_env->het_job_id && (job_env->het_job_id != NO_VAL))
-		jobid = job_env->het_job_id;
-#endif
 
 	/*
 	 *  Always run both spank prolog/epilog and real prolog/epilog script,
@@ -172,18 +166,16 @@ extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 	    (!is_epilog && spank_has_prolog())) {
 		if (!env)
 			env = _build_env(job_env, cred, is_epilog);
-		rc = _run_spank_job_script(name, env, jobid,
-					   job_env->container_join);
+		rc = _run_spank_job_script(name, env, job_env->jobid);
 	}
 
-	if (path) {
+	if (script_cnt) {
 		int status = 0;
 		int timeout = slurm_conf.prolog_epilog_timeout;
 		char *cmd_argv[2] = {0};
-		List path_list;
+		list_t *path_list = NULL;
 		run_command_args_t run_command_args = {
-			.container_join = job_env->container_join,
-			.job_id = jobid,
+			.job_id = job_env->jobid,
 			.script_argv = cmd_argv,
 			.script_type = name,
 			.status = &status,
@@ -199,10 +191,22 @@ extern int slurmd_script(job_env_t *job_env, slurm_cred_t *cred,
 
 		run_command_args.env = env;
 		run_command_args.max_wait = timeout;
+		for (int i = 0; i < script_cnt; i++) {
+			list_t *tmp_list = _script_list_create(scripts[i]);
 
-		if (!(path_list = _script_list_create(path)))
-			return error("%s: Unable to create list of paths [%s]",
-				     name, path);
+			if (!tmp_list) {
+				error("%s: Unable to create list of paths [%s]",
+				      name, scripts[i]);
+				return SLURM_ERROR;
+			}
+
+			if (path_list) {
+				list_transfer(path_list, tmp_list);
+				FREE_NULL_LIST(tmp_list);
+			} else {
+				path_list = tmp_list;
+			}
+		}
 		list_for_each(
 			path_list, _run_subpath_command, &run_command_args);
 		FREE_NULL_LIST(path_list);
@@ -366,8 +370,7 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	return env;
 }
 
-static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id,
-				 int (*container_join)(uint32_t , uid_t))
+static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id)
 {
 	pid_t cpid;
 	int status = 0, timeout;
@@ -394,15 +397,6 @@ static int _run_spank_job_script(const char *mode, char **env, uint32_t job_id,
 			"spank",
 			(char *) mode,
 			NULL };
-
-		/*
-		 * container_g_join() needs to be called in the child process
-		 * to avoid a race condition if this process makes a file
-		 * before we add the pid to the container in the parent.
-		 */
-		if (container_join &&
-		    (container_join(job_id, getuid()) != SLURM_SUCCESS))
-			error("container_g_join(%u): %m", job_id);
 
 		if (dup2(pfds[0], STDIN_FILENO) < 0)
 			fatal("dup2: %m");

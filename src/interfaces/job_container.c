@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  job_container_plugin.c - job container plugin stub.
  *****************************************************************************
- *  Copyright (C) 2013 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Written by Morris Jette
  *
  *  This file is part of Slurm, a resource management program.
@@ -48,13 +48,9 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 typedef struct job_container_ops {
-	int	(*container_p_create)	(uint32_t job_id, uid_t uid);
-	int	(*container_p_add_cont)	(uint32_t job_id, uint64_t cont_id);
 	int	(*container_p_join)	(uint32_t job_id, uid_t uid);
 	int	(*container_p_join_external)(uint32_t job_id);
-	int	(*container_p_delete)	(uint32_t job_id);
 	int	(*container_p_restore)	(char *dir_name, bool recover);
-	void	(*container_p_reconfig)	(void);
 	int	(*container_p_stepd_create)	(uint32_t job_id,
 					         stepd_step_rec_t *step);
 	int	(*container_p_stepd_delete)	(uint32_t job_id);
@@ -67,13 +63,9 @@ typedef struct job_container_ops {
  * Must be synchronized with job_container_ops_t above.
  */
 static const char *syms[] = {
-	"container_p_create",
-	"container_p_add_cont",
 	"container_p_join",
 	"container_p_join_external",
-	"container_p_delete",
 	"container_p_restore",
-	"container_p_reconfig",
 	"container_p_stepd_create",
 	"container_p_stepd_delete",
 	"container_p_send_stepd",
@@ -176,25 +168,8 @@ done:
 	return rc;
 }
 
-/* Create a container for the specified job */
-extern int container_g_create(uint32_t job_id, uid_t uid)
-{
-	int i, rc = SLURM_SUCCESS;
-
-	xassert(g_container_context_num >= 0);
-
-	for (i = 0; ((i < g_container_context_num) && (rc == SLURM_SUCCESS));
-	     i++) {
-		rc = (*(ops[i].container_p_create))(job_id, uid);
-	}
-
-	return rc;
-}
-
 /*
  * Add the calling process to the specified job's container.
- * A proctrack container will be generated containing the process
- * before container_g_add_cont() is called (see below).
  */
 extern int container_g_join(uint32_t job_id, uid_t uid)
 {
@@ -227,37 +202,6 @@ extern int container_g_join_external(uint32_t job_id)
 	return rc;
 }
 
-/* Add a proctrack container (PAGG) to the specified job's container
- * The PAGG will be the job's cont_id returned by proctrack/sgi_job */
-extern int container_g_add_cont(uint32_t job_id, uint64_t cont_id)
-{
-	int i, rc = SLURM_SUCCESS;
-
-	xassert(g_container_context_num >= 0);
-
-	for (i = 0; ((i < g_container_context_num) && (rc == SLURM_SUCCESS));
-	     i++) {
-		rc = (*(ops[i].container_p_add_cont))(job_id, cont_id);
-	}
-
-	return rc;
-}
-
-/* Delete the container for the specified job */
-extern int container_g_delete(uint32_t job_id)
-{
-	int i, rc = SLURM_SUCCESS;
-
-	xassert(g_container_context_num >= 0);
-
-	for (i = 0; ((i < g_container_context_num) && (rc == SLURM_SUCCESS));
-	     i++) {
-		rc = (*(ops[i].container_p_delete))(job_id);
-	}
-
-	return rc;
-}
-
 /* Restore container information */
 extern int container_g_restore(char * dir_name, bool recover)
 {
@@ -271,20 +215,6 @@ extern int container_g_restore(char * dir_name, bool recover)
 	}
 
 	return rc;
-}
-
-/* Note change in configuration (e.g. "DebugFlag=JobContainer" set) */
-extern void container_g_reconfig(void)
-{
-	int i;
-
-	xassert(g_container_context_num >= 0);
-
-	for (i = 0; i < g_container_context_num;i++) {
-		(*(ops[i].container_p_reconfig))();
-	}
-
-	return;
 }
 
 /* Create a container for the specified job, actions run in slurmstepd */

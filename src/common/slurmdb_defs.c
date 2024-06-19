@@ -220,7 +220,7 @@ static int _sort_slurmdb_hierarchical_rec_list(
 	List slurmdb_hierarchical_rec_list)
 {
 	slurmdb_hierarchical_rec_t *slurmdb_hierarchical_rec = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 
 	if (!list_count(slurmdb_hierarchical_rec_list))
 		return SLURM_SUCCESS;
@@ -242,7 +242,7 @@ static int _append_hierarchical_children_ret_list(
 	List ret_list, List slurmdb_hierarchical_rec_list)
 {
 	slurmdb_hierarchical_rec_t *slurmdb_hierarchical_rec = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 
 	if (!ret_list)
 		return SLURM_ERROR;
@@ -266,7 +266,7 @@ static int _append_hierarchical_children_ret_list(
 static char *_get_qos_list_str(List qos_list)
 {
 	char *qos_char = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 
 	if (!qos_list)
@@ -505,7 +505,7 @@ static local_cluster_rec_t * _job_will_run (job_desc_msg_t *req)
 		local_cluster->start_time = will_run_resp->start_time;
 
 		if (will_run_resp->preemptee_job_id) {
-			ListIterator itr;
+			list_itr_t *itr;
 			uint32_t *job_id_ptr;
 			char *job_list = NULL, *sep = "";
 			local_cluster->preempt_cnt = list_count(
@@ -935,6 +935,9 @@ extern void slurmdb_destroy_job_rec(void *object)
 		xfree(job->resv_name);
 		xfree(job->script);
 		FREE_NULL_LIST(job->steps);
+		xfree(job->std_err);
+		xfree(job->std_in);
+		xfree(job->std_out);
 		xfree(job->submit_line);
 		xfree(job->system_comment);
 		xfree(job->tres_alloc_str);
@@ -1384,7 +1387,7 @@ extern void slurmdb_destroy_used_limits(void *object)
 		FREE_NULL_BITMAP(slurmdb_used_limits->node_bitmap);
 		xfree(slurmdb_used_limits->node_job_cnt);
 		xfree(slurmdb_used_limits->tres);
-		xfree(slurmdb_used_limits->tres_run_mins);
+		xfree(slurmdb_used_limits->tres_run_secs);
 		xfree(slurmdb_used_limits);
 	}
 }
@@ -1459,7 +1462,7 @@ extern List slurmdb_get_info_cluster(char *cluster_names)
 	List temp_list = NULL;
 	char *cluster_name = NULL;
 	void *db_conn = NULL;
-	ListIterator itr, itr2;
+	list_itr_t *itr, *itr2;
 	bool all_clusters = 0;
 
 	if (cluster_names && !xstrcasecmp(cluster_names, "all"))
@@ -1776,7 +1779,7 @@ extern char *slurmdb_qos_str(List qos_list, uint32_t level)
 
 extern uint32_t str_2_slurmdb_qos(List qos_list, char *level)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	char *working_level = NULL;
 
@@ -1819,6 +1822,147 @@ extern char *slurmdb_federation_flags_str(uint32_t flags)
 #endif
 
 	return federation_flags;
+}
+
+#define T(flag, str) { flag, XSTRINGIFY(flag), str }
+static const struct {
+	slurmdb_acct_flags_t flag;
+	char *flag_str;
+	char *str;
+} slurmdb_acct_flags_map[] = {
+	T(SLURMDB_ACCT_FLAG_DELETED, "Deleted"),
+	T(SLURMDB_ACCT_FLAG_WASSOC, "WithAssociations"),
+	T(SLURMDB_ACCT_FLAG_WCOORD, "WithCoordinators"),
+	T(SLURMDB_ACCT_FLAG_USER_COORD_NO, "NoUsersAreCoords"),
+	T(SLURMDB_ACCT_FLAG_USER_COORD, "UsersAreCoords"),
+	T(SLURMDB_ACCT_FLAG_INVALID, "INVALID"),
+};
+#undef T
+
+static slurmdb_acct_flags_t _str_2_acct_flag(char *flag_in)
+{
+	if (!flag_in || !flag_in[0])
+		return SLURMDB_ACCT_FLAG_NONE;
+
+	for (int i = 0; i < ARRAY_SIZE(slurmdb_acct_flags_map); i++)
+		if (!xstrncasecmp(flag_in, slurmdb_acct_flags_map[i].str,
+				  strlen(flag_in)))
+			return slurmdb_acct_flags_map[i].flag;
+
+	debug("%s: Unable to match %s to a slurmdbd_acct_flags_t flag",
+	      __func__, flag_in);
+	return SLURMDB_ACCT_FLAG_INVALID;
+}
+
+extern slurmdb_acct_flags_t str_2_slurmdb_acct_flags(char *flags_in)
+{
+	slurmdb_acct_flags_t acct_flags = 0;
+	char *token, *my_flags, *last = NULL;
+
+	my_flags = xstrdup(flags_in);
+	token = strtok_r(my_flags, ",", &last);
+	while (token) {
+		slurmdb_acct_flags_t f = _str_2_acct_flag(token);
+
+		if (f == SLURMDB_ACCT_FLAG_INVALID) {
+			acct_flags = SLURMDB_ACCT_FLAG_INVALID;
+			break;
+		}
+
+		acct_flags |= f;
+		token = strtok_r(NULL, ",", &last);
+	}
+	xfree(my_flags);
+
+	return acct_flags;
+}
+
+extern char *slurmdb_acct_flags_2_str(slurmdb_acct_flags_t flags)
+{
+	char *acct_flags = NULL, *at = NULL;
+
+	if (flags == SLURMDB_ACCT_FLAG_NONE)
+		return xstrdup("None");
+
+	for (int i = 0; i < ARRAY_SIZE(slurmdb_acct_flags_map); i++) {
+		if ((slurmdb_acct_flags_map[i].flag & flags) ==
+		    slurmdb_acct_flags_map[i].flag)
+			xstrfmtcatat(acct_flags, &at, "%s%s",
+				     (acct_flags ? "," : ""),
+				     slurmdb_acct_flags_map[i].str);
+	}
+
+	return acct_flags;
+}
+
+#define T(flag, str) { flag, XSTRINGIFY(flag), str }
+static const struct {
+	slurmdb_assoc_flags_t flag;
+	char *flag_str;
+	char *str;
+} slurmdb_assoc_flags_map[] = {
+	T(ASSOC_FLAG_DELETED, "Deleted"),
+	T(ASSOC_FLAG_NO_UPDATE, "NoUpdate"),
+	T(ASSOC_FLAG_EXACT, "Exact"),
+	T(ASSOC_FLAG_USER_COORD_NO, "NoUsersAreCoords"),
+	T(ASSOC_FLAG_USER_COORD, "UsersAreCoords"),
+	T(ASSOC_FLAG_INVALID, "INVALID"),
+};
+#undef T
+
+static slurmdb_assoc_flags_t _str_2_assoc_flag(char *flag_in)
+{
+	if (!flag_in || !flag_in[0])
+		return ASSOC_FLAG_NONE;
+
+	for (int i = 0; i < ARRAY_SIZE(slurmdb_assoc_flags_map); i++)
+		if (!xstrncasecmp(flag_in, slurmdb_assoc_flags_map[i].str,
+				  strlen(flag_in)))
+			return slurmdb_assoc_flags_map[i].flag;
+
+	debug("%s: Unable to match %s to a slurmdbd_assoc_flags_t flag",
+	      __func__, flag_in);
+	return ASSOC_FLAG_INVALID;
+}
+
+extern slurmdb_assoc_flags_t str_2_slurmdb_assoc_flags(char *flags_in)
+{
+	slurmdb_assoc_flags_t assoc_flags = 0;
+	char *token, *my_flags, *last = NULL;
+
+	my_flags = xstrdup(flags_in);
+	token = strtok_r(my_flags, ",", &last);
+	while (token) {
+		slurmdb_assoc_flags_t f = _str_2_assoc_flag(token);
+
+		if (f == ASSOC_FLAG_INVALID) {
+			assoc_flags = ASSOC_FLAG_INVALID;
+			break;
+		}
+		assoc_flags |= f;
+		token = strtok_r(NULL, ",", &last);
+	}
+	xfree(my_flags);
+
+	return assoc_flags;
+}
+
+extern char *slurmdb_assoc_flags_2_str(slurmdb_assoc_flags_t flags)
+{
+	char *assoc_flags = NULL, *at = NULL;
+
+	if (flags == ASSOC_FLAG_NONE)
+		return xstrdup("None");
+
+	for (int i = 0; i < ARRAY_SIZE(slurmdb_assoc_flags_map); i++) {
+		if ((slurmdb_assoc_flags_map[i].flag & flags) ==
+		    slurmdb_assoc_flags_map[i].flag)
+			xstrfmtcatat(assoc_flags, &at, "%s%s",
+				     (assoc_flags ? "," : ""),
+				     slurmdb_assoc_flags_map[i].str);
+	}
+
+	return assoc_flags;
 }
 
 static uint32_t _str_2_federation_flags(char *flags)
@@ -2172,7 +2316,7 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 	xhash_t *all_parents = xhash_init(_arch_hash_rec_id, NULL);
 	List arch_rec_list =
 		list_create(slurmdb_destroy_hierarchical_rec);
-	ListIterator itr;
+	list_itr_t *itr;
 
 	/*
 	 * The list should already be sorted by lineage, do it anyway
@@ -2249,7 +2393,7 @@ extern List slurmdb_get_acct_hierarchical_rec_list(List assoc_list)
 /* IN/OUT: tree_list a list of slurmdb_print_tree_t's */
 extern char *slurmdb_tree_name_get(char *name, char *parent, List tree_list)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_print_tree_t *slurmdb_print_tree = NULL;
 	slurmdb_print_tree_t *par_slurmdb_print_tree = NULL;
 
@@ -2298,7 +2442,7 @@ extern char *slurmdb_tree_name_get(char *name, char *parent, List tree_list)
 
 extern int set_qos_bitstr_from_list(bitstr_t *valid_qos, List qos_list)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int rc = SLURM_SUCCESS;
 	char *temp_char = NULL;
 
@@ -2403,7 +2547,7 @@ extern List get_qos_name_list(List qos_list, List num_qos_list)
 {
 	List temp_list;
 	char *temp_char;
-	ListIterator itr;
+	list_itr_t *itr;
 	int option;
 
 	if (!qos_list || !list_count(qos_list)
@@ -2557,6 +2701,8 @@ extern uint16_t str_2_slurmdb_problem(char *problem)
 extern void log_assoc_rec(slurmdb_assoc_rec_t *assoc_ptr,
 			  List qos_list)
 {
+	char *tmp_char = NULL;
+
 	xassert(assoc_ptr);
 
 	if (get_log_level() < LOG_LEVEL_DEBUG2)
@@ -2611,6 +2757,10 @@ extern void log_assoc_rec(slurmdb_assoc_rec_t *assoc_ptr,
 			      time_buf, sizeof(time_buf));
 		debug2("  GrpWall          : %s", time_buf);
 	}
+
+	tmp_char = slurmdb_assoc_flags_2_str(assoc_ptr->flags);
+	debug2("  Flags            : %s", tmp_char);
+	xfree(tmp_char);
 
 	debug2("  Lineage          : %s", assoc_ptr->lineage);
 
@@ -2936,8 +3086,8 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
 	return count;
 }
 
-extern int slurmdb_send_accounting_update_persist(
-	List update_list, slurm_persist_conn_t *persist_conn)
+extern int slurmdb_send_accounting_update_persist(list_t *update_list,
+						  persist_conn_t *persist_conn)
 {
 	slurm_msg_t req;
 	slurm_msg_t resp;
@@ -3048,7 +3198,7 @@ extern slurmdb_report_cluster_rec_t *slurmdb_cluster_rec_2_report(
 	slurmdb_report_cluster_rec_t *slurmdb_report_cluster;
 	slurmdb_cluster_accounting_rec_t *accting = NULL;
 	slurmdb_tres_rec_t *tres_rec;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int count;
 
 	xassert(cluster);
@@ -3094,13 +3244,16 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	local_cluster_rec_t *local_cluster = NULL;
 	int rc = SLURM_SUCCESS;
 	char local_hostname[HOST_NAME_MAX];
-	ListIterator itr;
+	list_itr_t *itr;
 	List cluster_list = NULL;
 	List ret_list = NULL;
 	List tried_feds = NULL;
 
 	*cluster_rec = NULL;
-	cluster_list = slurmdb_get_info_cluster(cluster_names);
+
+	if (slurm_get_cluster_info(&(cluster_list), cluster_names, 0)) {
+		return SLURM_ERROR;
+	}
 
 	/* return if we only have 1 or less clusters here */
 	if (!cluster_list || !list_count(cluster_list)) {
@@ -3183,7 +3336,7 @@ static local_cluster_rec_t * _het_job_will_run(List job_req_list)
 {
 	local_cluster_rec_t *local_cluster = NULL, *tmp_cluster;
 	job_desc_msg_t *req;
-	ListIterator iter;
+	list_itr_t *iter;
 
 	iter = list_iterator_create(job_req_list);
 	while ((req = (job_desc_msg_t *) list_next(iter))) {
@@ -3225,13 +3378,16 @@ extern int slurmdb_get_first_het_job_cluster(List job_req_list,
 	local_cluster_rec_t *local_cluster = NULL;
 	int rc = SLURM_SUCCESS;
 	char local_hostname[HOST_NAME_MAX] = "";
-	ListIterator itr;
+	list_itr_t *itr;
 	List cluster_list = NULL;
 	List ret_list = NULL;
 	List tried_feds = NULL;
 
 	*cluster_rec = NULL;
-	cluster_list = slurmdb_get_info_cluster(cluster_names);
+
+	if (slurm_get_cluster_info(&(cluster_list), cluster_names, 0)) {
+		return SLURM_ERROR;
+	}
 
 	/* return if we only have 1 or less clusters here */
 	if (!cluster_list || !list_count(cluster_list)) {
@@ -3366,7 +3522,6 @@ extern void slurmdb_copy_cluster_rec(slurmdb_cluster_rec_t *out,
 	out->name             = xstrdup(in->name);
 	xfree(out->nodes);
 	out->nodes            = xstrdup(in->nodes);
-	out->plugin_id_select = in->plugin_id_select;
 	out->rpc_version      = in->rpc_version;
 	xfree(out->tres_str);
 	out->tres_str         = xstrdup(in->tres_str);
@@ -3404,7 +3559,7 @@ extern void slurmdb_copy_federation_rec(slurmdb_federation_rec_t *out,
 	FREE_NULL_LIST(out->cluster_list);
 	if (in->cluster_list) {
 		slurmdb_cluster_rec_t *cluster_in = NULL;
-		ListIterator itr  = list_iterator_create(in->cluster_list);
+		list_itr_t *itr  = list_iterator_create(in->cluster_list);
 		out->cluster_list = list_create(slurmdb_destroy_cluster_rec);
 		while ((cluster_in = list_next(itr))) {
 			slurmdb_cluster_rec_t *cluster_out =
@@ -3490,7 +3645,7 @@ extern slurmdb_tres_rec_t *slurmdb_copy_tres_rec(slurmdb_tres_rec_t *tres)
 extern List slurmdb_copy_tres_list(List tres)
 {
 	slurmdb_tres_rec_t *tres_rec = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	List tres_out;
 
 	if (!tres)
@@ -3522,7 +3677,7 @@ extern list_t *slurmdb_list_copy_coord(list_t *coord_accts)
 extern List slurmdb_diff_tres_list(List tres_list_old, List tres_list_new)
 {
 	slurmdb_tres_rec_t *tres_rec = NULL, *tres_rec_old;
-	ListIterator itr;
+	list_itr_t *itr;
 	List tres_out;
 
 	if (!tres_list_new || !list_count(tres_list_new))
@@ -3548,7 +3703,7 @@ extern char *slurmdb_tres_string_combine_lists(
 	List tres_list_old, List tres_list_new)
 {
 	slurmdb_tres_rec_t *tres_rec = NULL, *tres_rec_old;
-	ListIterator itr;
+	list_itr_t *itr;
 	char *tres_str = NULL;
 
 	if (!tres_list_new || !list_count(tres_list_new))
@@ -3575,7 +3730,7 @@ extern char *slurmdb_tres_string_combine_lists(
 extern char *slurmdb_make_tres_string(List tres, uint32_t flags)
 {
 	char *tres_str = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_tres_rec_t *tres_rec;
 
 	if (!tres)
@@ -4348,7 +4503,7 @@ extern int slurmdb_sum_accounting_list(
 extern void slurmdb_transfer_acct_list_2_tres(
 	List accounting_list, List *tres)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_accounting_rec_t *accting = NULL;
 
 	xassert(accounting_list);
@@ -4365,7 +4520,7 @@ extern void slurmdb_transfer_acct_list_2_tres(
 extern void slurmdb_transfer_tres_time(
 	List *tres_list_out, char *tres_str, int elapsed)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_tres_rec_t *tres_rec = NULL;
 	List job_tres_list = NULL;
 
@@ -4401,7 +4556,7 @@ extern int slurmdb_get_tres_base_unit(char *tres_type)
 extern char *slurmdb_ave_tres_usage(char *tres_string, int tasks)
 {
 	List tres_list = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_tres_rec_t *tres_rec = NULL;
 	uint32_t flags = TRES_STR_FLAG_SIMPLE + TRES_STR_FLAG_REPLACE;
 	char *ret_tres_str = NULL;

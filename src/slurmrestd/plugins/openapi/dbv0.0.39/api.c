@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  api.c - Slurm REST API openapi operations handlers
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -482,7 +481,9 @@ extern void slurm_openapi_p_init(void)
 {
 	/* Check to see if we are running a supported accounting plugin */
 	if (!slurm_with_slurmdbd()) {
-		fatal("%s: slurm not configured with slurmdbd", __func__);
+		debug("%s: refusing to load. Slurm not configured with slurmdbd",
+		      __func__);
+		return;
 	}
 
 	xassert(!global_parser);
@@ -578,4 +579,10 @@ extern int username_to_uid(void *x, void *arg)
 	user = xstrdup_printf("%u", uid);
 	list_append(list, user);
 	return SLURM_SUCCESS;
+}
+
+extern int slurm_openapi_p_get_paths(const openapi_path_binding_t **paths_ptr,
+				     const openapi_resp_meta_t **meta_ptr)
+{
+	return ESLURM_NOT_SUPPORTED;
 }

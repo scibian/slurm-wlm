@@ -397,19 +397,20 @@ rwfail:
  * On success returns SLURM_SUCCESS and fills in resp->local_pids,
  * resp->gtids, resp->ntasks, and resp->executable.
  */
-int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
-		 slurm_addr_t *respaddr, void *job_cred_sig, uint32_t sig_len,
-		 uid_t uid, reattach_tasks_response_msg_t *resp)
+extern int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
+			slurm_addr_t *respaddr, char *io_key, uid_t uid,
+			reattach_tasks_response_msg_t *resp)
 {
 	int req = REQUEST_ATTACH;
+	uint32_t io_key_len = strlen(io_key) + 1;
 	int rc = SLURM_SUCCESS;
 
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &req, sizeof(int));
 		safe_write(fd, ioaddr, sizeof(slurm_addr_t));
 		safe_write(fd, respaddr, sizeof(slurm_addr_t));
-		safe_write(fd, &sig_len, sizeof(uint32_t));
-		safe_write(fd, job_cred_sig, sig_len);
+		safe_write(fd, &io_key_len, sizeof(uint32_t));
+		safe_write(fd, io_key, io_key_len);
 		safe_write(fd, &uid, sizeof(uid_t));
 		safe_write(fd, &protocol_version, sizeof(uint16_t));
 	} else
@@ -537,12 +538,14 @@ stepd_available(const char *directory, const char *nodename)
 	struct dirent *ent;
 	regex_t re;
 	struct stat stat_buf;
+	char *local_nodename = NULL;
 
 	if (nodename == NULL) {
-		if (!(nodename = _guess_nodename())) {
+		if (!(local_nodename = _guess_nodename())) {
 			error("%s: Couldn't find nodename", __func__);
 			return NULL;
 		}
+		nodename = local_nodename;
 	}
 	if (directory == NULL) {
 		slurm_conf_t *cf = slurm_conf_lock();
@@ -587,6 +590,7 @@ stepd_available(const char *directory, const char *nodename)
 
 	closedir(dp);
 done:
+	xfree(local_nodename);
 	regfree(&re);
 	return l;
 }
@@ -1144,7 +1148,34 @@ stepd_completion(int fd, uint16_t protocol_version, step_complete_msg_t *sent)
 	debug("Entering stepd_completion for %ps, range_first = %d, range_last = %d",
 	      &sent->step_id, sent->range_first, sent->range_last);
 
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_24_05_PROTOCOL_VERSION) {
+		safe_write(fd, &req, sizeof(int));
+		safe_write(fd, &sent->range_first, sizeof(int));
+		safe_write(fd, &sent->range_last, sizeof(int));
+		safe_write(fd, &sent->step_rc, sizeof(int));
+		safe_write(fd, &sent->step_id.step_id, sizeof(uint32_t));
+		safe_write(fd, &sent->send_to_stepmgr, sizeof(bool));
+
+		/*
+		 * We must not use setinfo over a pipe with slurmstepd here
+		 * Indeed, slurmd does a large use of getinfo over a pipe
+		 * with slurmstepd and doing the reverse can result in
+		 * a deadlock scenario with slurmstepd :
+		 * slurmd(lockforread,write)/slurmstepd(write,lockforread)
+		 * Do pack/unpack instead to be sure of independances of
+		 * slurmd and slurmstepd
+		 */
+		jobacctinfo_pack(sent->jobacct, protocol_version,
+				 PROTOCOL_TYPE_SLURM, buffer);
+		len = get_buf_offset(buffer);
+		safe_write(fd, &len, sizeof(int));
+		safe_write(fd, get_buf_data(buffer), len);
+		FREE_NULL_BUFFER(buffer);
+
+		/* Receive the return code and errno */
+		safe_read(fd, &rc, sizeof(int));
+		safe_read(fd, &errnum, sizeof(int));
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_write(fd, &req, sizeof(int));
 		safe_write(fd, &sent->range_first, sizeof(int));
 		safe_write(fd, &sent->range_last, sizeof(int));
@@ -1374,4 +1405,24 @@ extern uint32_t stepd_get_nodeid(int fd, uint16_t protocol_version)
 	return nodeid;
 rwfail:
 	return NO_VAL;
+}
+
+extern int stepd_relay_msg(int fd, slurm_msg_t *msg, uint16_t protocol_version)
+{
+	int req = msg->msg_type;
+	uint32_t buf_size;
+
+	safe_write(fd, &req, sizeof(int));
+
+	buf_size = get_buf_offset(msg->buffer) - msg->body_offset;
+
+	safe_write(fd, &msg->protocol_version, sizeof(uint16_t));
+	send_fd_over_pipe(fd, msg->conn_fd);
+	safe_write(fd, &buf_size, sizeof(uint32_t));
+	safe_write(fd, &msg->buffer->head[msg->body_offset], buf_size);
+
+	return 0;
+
+rwfail:
+	return -1;
 }

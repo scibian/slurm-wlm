@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  prep.h - driver for PrEpPlugins ('Pr'olog and 'Ep'ilog)
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -69,8 +68,6 @@ extern int prep_g_init(prep_callbacks_t *callbacks);
  * Returns a Slurm errno.
  */
 extern int prep_g_fini(void);
-
-extern int prep_g_reconfig(void);
 
 /*
  **************************************************************************

@@ -1340,13 +1340,13 @@ def require_tool(tool):
         pytest.skip(msg, allow_module_level=True)
 
 
-def require_whereami(is_cray=False):
+def require_whereami():
     """Compiles the whereami.c program to be used by tests.
 
     This function installs the whereami program.  To get the
     correct output, TaskPlugin is required in the slurm.conf
     file before slurm starts up.
-    ex: TaskPlugin=task/cray_aries,task/cgroup,task/affinity
+    ex: TaskPlugin=task/cgroup,task/affinity
 
     The file will be installed in the testsuite/python/lib/scripts
     directory where the whereami.c file is located
@@ -1364,12 +1364,6 @@ def require_whereami(is_cray=False):
         >>>     user=atf.properties['slurm-user'])
     """
     require_config_parameter("TaskPlugin", "task/cgroup,task/affinity")
-
-    # Set requirement for cray systems
-    if is_cray:
-        require_config_parameter(
-            "TaskPlugin", "task/cray_aries,task/cgroup,task/affinity"
-        )
 
     # If the file already exists and we don't need to recompile
     dest_file = f"{properties['testsuite_scripts_dir']}/whereami"
@@ -2623,6 +2617,54 @@ def get_step_parameter(step_id, parameter_name, default=None, quiet=False):
         return default
 
 
+def wait_for_node_state_any(
+    nodename,
+    desired_node_states,
+    timeout=default_polling_timeout,
+    poll_interval=None,
+    fatal=False,
+    reverse=False,
+):
+    """Wait for any of the specified node states to be reached.
+
+    Polls the node state every poll interval seconds, waiting up to the timeout
+    for the specified node state to be reached.
+
+    Args:
+        nodename (string): The name of the node whose state is being monitored.
+        desired_node_states (iterable): The states that the node is expected to reach.
+        timeout (integer): The number of seconds to wait before timing out.
+        poll_interval (float): Number of seconds between node state polls.
+        fatal (boolean): If True, a timeout will cause the test to fail.
+        reverse (boolean): If True, wait for the node to lose the desired state.
+
+    Returns:
+        Boolean value indicating whether the node ever reached the desired state.
+
+    Example:
+        >>> wait_for_node_state_any('node1', ['IDLE', 'ALLOCATED'], timeout=60, poll_interval=5)
+        True
+        >>> wait_for_node_state_any('node2', ['DOWN'], timeout=30, fatal=True)
+        False
+    """
+
+    state_set = frozenset(desired_node_states)
+
+    def any_overlap(state):
+        return bool(state_set & set(state.split("+"))) != reverse
+
+    # Wrapper for the repeat_until command to do all our state checking for us
+    repeat_until(
+        lambda: get_node_parameter(nodename, "State"),
+        any_overlap,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        fatal=fatal,
+    )
+
+    return any_overlap(get_node_parameter(nodename, "State"))
+
+
 def wait_for_node_state(
     nodename,
     desired_node_state,
@@ -2734,10 +2776,12 @@ def wait_for_step_accounted(job_id, step_id, **repeat_until_kwargs):
 def wait_for_job_state(
     job_id,
     desired_job_state,
+    desired_reason=None,
     timeout=default_polling_timeout,
     poll_interval=None,
     fatal=False,
     quiet=False,
+    xfail=False,
 ):
     """Wait for the specified job to reach the desired state.
 
@@ -2754,10 +2798,12 @@ def wait_for_job_state(
     Args:
         job_id (integer): The id of the job.
         desired_job_state (string): The desired state of the job.
+        desired_reason (string): Optional reason to also match.
         timeout (integer): The number of seconds to poll before timing out.
         poll_interval (float): Time (in seconds) between job state polls.
         fatal (boolean): If True, a timeout will cause the test to fail.
         quiet (boolean): If True, logging is performed at the TRACE log level.
+        xfail (boolean): If True, state (or reason) are not expected to be reached.
 
     Returns:
         Boolean value indicating whether the job reached the desired state.
@@ -2784,16 +2830,24 @@ def wait_for_job_state(
 
     # We don't use repeat_until here because we support pseudo-job states and
     # we want to allow early return (e.g. for a DONE state if we want RUNNING)
-    begin_time = time.time()
-    logging.log(
-        log_level, f"Waiting for job ({job_id}) to reach state {desired_job_state}"
-    )
 
+    xfail_str = ""
+    if xfail:
+        xfail_str = "not "
+    message = (
+        f"Waiting for job ({job_id}) to {xfail_str}reach state {desired_job_state}"
+    )
+    if desired_reason is not None:
+        message += f" and reason {desired_reason}"
+    logging.log(log_level, message)
+
+    begin_time = time.time()
     while time.time() < begin_time + timeout:
         job_state = get_job_parameter(
             job_id, "JobState", default="NOT_FOUND", quiet=True
         )
 
+        message = f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}"
         if job_state in [
             "NOT_FOUND",
             "BOOT_FAIL",
@@ -2807,36 +2861,69 @@ def wait_for_job_state(
             "PREEMPTED",
         ]:
             if desired_job_state == "DONE" or job_state == desired_job_state:
-                logging.log(
-                    log_level, f"Job ({job_id}) is in desired state {desired_job_state}"
+                message = f"Job ({job_id}) is in the {xfail_str}desired state {desired_job_state}"
+                reason = get_job_parameter(
+                    job_id, "Reason", default="NOT_FOUND", quiet=True
                 )
-                return True
-            else:
-                message = f"Job ({job_id}) is in state {job_state}, but we wanted {desired_job_state}"
+                if desired_reason is None or reason == desired_reason:
+                    if desired_reason is not None:
+                        message += (
+                            f" with the {xfail_str}desired reason {desired_reason}"
+                        )
+                    if not xfail:
+                        logging.log(log_level, message)
+                    else:
+                        logging.warning(message)
+                    return True
+                else:
+                    message += (
+                        f", but with reason {reason} and we waited for {desired_reason}"
+                    )
+
+            if not xfail:
                 if fatal:
                     pytest.fail(message)
                 else:
                     logging.warning(message)
-                    return False
+            else:
+                logging.log(log_level, message)
+            return False
         elif job_state == desired_job_state:
-            logging.log(
-                log_level, f"Job ({job_id}) is in desired state {desired_job_state}"
+            message = (
+                f"Job ({job_id}) is in the {xfail_str}desired state {desired_job_state}"
             )
-            return True
-        else:
-            logging.log(
-                log_level,
-                f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}",
+            reason = get_job_parameter(
+                job_id, "Reason", default="NOT_FOUND", quiet=True
             )
+            if desired_reason is None or reason == desired_reason:
+                if desired_reason is not None:
+                    message += f" with the {xfail_str}desired reason {desired_reason}"
+                if not xfail:
+                    logging.log(log_level, message)
+                else:
+                    logging.warning(message)
+                return True
+            else:
+                message += (
+                    f", but with reason {reason} and we waited for {desired_reason}"
+                )
 
+        logging.log(log_level, message)
         time.sleep(poll_interval)
 
-    message = f"Job ({job_id}) did not reach the {desired_job_state} state within the {timeout} second timeout"
-    if fatal:
-        pytest.fail(message)
+    message = f"Job ({job_id}) did not reach the {desired_job_state} state"
+    if desired_reason is not None:
+        message += f" or the reason {desired_reason}"
+    message += f" within the {timeout} second(s) timeout"
+    if not xfail:
+        if fatal:
+            pytest.fail(message)
+        else:
+            logging.warning(message)
     else:
-        logging.warning(message)
-        return False
+        logging.log(log_level, message)
+
+    return False
 
 
 def check_steps_delayed(job_id, job_output, expected_delayed):
@@ -3037,12 +3124,16 @@ def require_nodes(requested_node_count, requirements_list=[]):
         Gres
         Features
 
+    Other node requirement types will still be appended to the requirements,
+    but this could stop slurm from starting.
+
     Returns:
         None
 
     Example:
         >>> require_nodes(2, [('CPUs', 4), ('RealMemory', 40)])
         >>> require_nodes(2, [('CPUs', 2), ('RealMemory', 30), ('Features', 'gpu,mpi')])
+        >>> require_nodes(2, [('CPUs', 4), ('Sockets', 1)])
     """
 
     # If using local-config and slurm is running, use live node information
@@ -3185,7 +3276,16 @@ def require_nodes(requested_node_count, requirements_list=[]):
                     if nonqualifying_node_count == 1:
                         augmentation_dict[parameter_name] = parameter_value
             else:
-                pytest.fail(f"{parameter_name} is not a supported requirement type")
+                logging.debug(
+                    f"{parameter_name} is not a supported node requirement type."
+                )
+                logging.debug(
+                    f"{parameter_name}={parameter_value} will be added anyways!"
+                )
+                augmentation_dict[parameter_name] = parameter_value
+                if node_qualifies:
+                    node_qualifies = False
+                    nonqualifying_node_count += 1
         if node_qualifies:
             qualifying_node_count += 1
             if first_qualifying_node_name == "":

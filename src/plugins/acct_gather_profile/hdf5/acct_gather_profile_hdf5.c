@@ -5,7 +5,7 @@
  *  Copyright (C) 2013 Bull S. A. S.
  *		Bull, Rue Jean Jaures, B.P.68, 78340, Les Clayes-sous-Bois.
  *
- *  Portions Copyright (C) 2013 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *
  *  Initially written by Rod Schultz <rod.schultz@bull.com> @ Bull
  *  and Danny Auble <da@schedmd.com> @ SchedMD.
@@ -642,22 +642,9 @@ extern int acct_gather_profile_p_add_sample_data(int table_id, void *data,
 
 extern void acct_gather_profile_p_conf_values(List *data)
 {
-	config_key_pair_t *key_pair;
-
-	xassert(*data);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileHDF5Dir");
-	key_pair->value = xstrdup(hdf5_conf.dir);
-	list_append(*data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileHDF5Default");
-	key_pair->value = xstrdup(acct_gather_profile_to_string(hdf5_conf.def));
-	list_append(*data, key_pair);
-
-	return;
-
+	add_key_pair(*data, "ProfileHDF5Dir", "%s", hdf5_conf.dir);
+	add_key_pair(*data, "ProfileHDF5Default", "%s",
+		     acct_gather_profile_to_string(hdf5_conf.def));
 }
 
 extern bool acct_gather_profile_p_is_active(uint32_t type)

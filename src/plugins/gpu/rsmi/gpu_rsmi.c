@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  gpu_rsmi.c - Support rsmi interface to an AMD GPU.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (c) 2019, Advanced Micro Devices, Inc. All rights reserved.
  *  Written by Advanced Micro Devices,
  *  who borrowed heavily from SLURM gpu and nvml plugin.
@@ -249,7 +249,7 @@ static void _rsmi_print_freqs(uint32_t dv_ind, log_level_t l)
 		return;
 
 	qsort(mem_freqs, size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 	if ((size > 1) && (mem_freqs[0] <= mem_freqs[(size)-1])) {
 		error("%s: memory frequencies are not stored in descending order!",
 		      __func__);
@@ -263,7 +263,7 @@ static void _rsmi_print_freqs(uint32_t dv_ind, log_level_t l)
 		return;
 
 	qsort(gfx_freqs, size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 	if ((size > 1) && (gfx_freqs[0] <= gfx_freqs[(size)-1])) {
 		error("%s: Graphics frequencies are not stored in descending order!",
 		      __func__);
@@ -303,7 +303,7 @@ static void _rsmi_get_nearest_freqs(uint32_t dv_ind,
 
 	memcpy(mem_freqs_sort, mem_freqs, mem_freqs_size*sizeof(unsigned int));
 	qsort(mem_freqs_sort, mem_freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 	if ((mem_freqs_size > 1) &&
 	    (mem_freqs_sort[0] <= mem_freqs_sort[(mem_freqs_size)-1])) {
 		error("%s: memory frequencies are not stored in descending order!",
@@ -327,7 +327,7 @@ static void _rsmi_get_nearest_freqs(uint32_t dv_ind,
 
 	memcpy(gfx_freqs_sort, gfx_freqs, gfx_freqs_size*sizeof(unsigned int));
 	qsort(gfx_freqs_sort, gfx_freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 	if ((gfx_freqs_size > 1) &&
 	    (gfx_freqs_sort[0] <= gfx_freqs_sort[(gfx_freqs_size)-1])) {
 		error("%s: graphics frequencies are not stored in descending order!",
@@ -667,7 +667,7 @@ static void _rsmi_get_version(char *version, unsigned int len)
 		      status_string);
 		version[0] = '\0';
 	} else {
-		sprintf(version, "%s", rsmi_version.build);
+		snprintf(version, len, "%s", rsmi_version.build);
 		if (rsmi_version.major < RSMI_REQ_VERSION_USAGE) {
 			get_usage = false;
 			error("%s: GPU usage accounting disabled. RSMI version >= 6.0.0 required.",
@@ -948,11 +948,6 @@ static List _get_system_gpu_list_rsmi(node_config_load_t *node_config)
 
 	info("%u GPU system device(s) detected", device_count);
 	return gres_list_system;
-}
-
-extern int gpu_p_reconfig(void)
-{
-	return SLURM_SUCCESS;
 }
 
 extern List gpu_p_get_system_gpu_list(node_config_load_t *node_config)

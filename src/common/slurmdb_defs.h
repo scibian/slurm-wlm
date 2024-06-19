@@ -35,11 +35,13 @@
  *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+
 #ifndef _SLURMDB_DEFS_H
 #define _SLURMDB_DEFS_H
 
-#include "src/common/slurm_persist_conn.h"
 #include "slurm/slurmdb.h"
+
+#include "src/common/persist_conn.h"
 
 /* Defined purge macros */
 #define SLURMDB_PURGE_GET_UNITS(_X) \
@@ -121,6 +123,10 @@ extern slurmdb_step_rec_t *slurmdb_create_step_rec(void);
 extern slurmdb_assoc_usage_t *slurmdb_create_assoc_usage(int tres_cnt);
 extern slurmdb_qos_usage_t *slurmdb_create_qos_usage(int tres_cnt);
 
+extern char *slurmdb_acct_flags_2_str(slurmdb_acct_flags_t flags);
+extern slurmdb_acct_flags_t str_2_slurmdb_acct_flags(char *flag_str);
+extern char *slurmdb_assoc_flags_2_str(slurmdb_assoc_flags_t flags);
+extern slurmdb_assoc_flags_t str_2_slurmdb_assoc_flags(char *flag_str);
 extern char *slurmdb_cluster_fed_states_str(uint32_t states);
 extern uint32_t str_2_cluster_fed_states(char *states);
 extern char *slurmdb_federation_flags_str(uint32_t flags);
@@ -182,8 +188,8 @@ extern int slurmdb_addto_qos_char_list(List char_list, List qos_list,
  * IN persist_conn: connection to send things on
  * RET: error code
  */
-extern int slurmdb_send_accounting_update_persist(
-	List update_list, slurm_persist_conn_t *persist_conn);
+extern int slurmdb_send_accounting_update_persist(list_t *update_list,
+						  persist_conn_t *persist_conn);
 extern int slurmdb_send_accounting_update(List update_list, char *cluster,
 					  char *host, uint16_t port,
 					  uint16_t rpc_version);

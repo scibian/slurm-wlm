@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurm_lua.c - Lua integration common functions
  *****************************************************************************
- *  Copyright (C) 2015-2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -315,6 +314,8 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "SPREAD_JOB");
 	lua_pushnumber(L, USE_MIN_NODES);
 	lua_setfield(L, -2, "USE_MIN_NODES");
+	lua_pushnumber(L, STEPMGR_ENABLED);
+	lua_setfield(L, -2, "STEPMGR_ENABLED");
 
 	lua_pushstring(L, slurm_conf.cluster_name);
 	lua_setfield(L, -2, "CLUSTER_NAME");

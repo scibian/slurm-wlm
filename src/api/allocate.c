@@ -304,7 +304,7 @@ static int _fed_job_will_run(job_desc_msg_t *req,
 	int pthread_count = 0, i;
 	pthread_t *load_thread = 0;
 	load_willrun_req_struct_t *load_args;
-	ListIterator iter;
+	list_itr_t *iter;
 	will_run_response_msg_t *earliest_resp = NULL;
 	load_willrun_resp_struct_t *tmp_resp;
 	slurmdb_cluster_rec_t *cluster;
@@ -351,7 +351,7 @@ static int _fed_job_will_run(job_desc_msg_t *req,
 
 	/* Wait for all pthreads to complete */
 	for (i = 0; i < pthread_count; i++)
-		pthread_join(load_thread[i], NULL);
+		slurm_thread_join(load_thread[i]);
 	xfree(load_thread);
 
 	iter = list_iterator_create(resp_msg_list);
@@ -385,7 +385,7 @@ static void _het_job_alloc_test(List resp, uint32_t *node_cnt, uint32_t *job_id)
 {
 	resource_allocation_response_msg_t *alloc;
 	uint32_t inx = 0, het_job_node_cnt = 0, het_job_id = 0;
-	ListIterator iter;
+	list_itr_t *iter;
 
 	xassert(resp);
 	iter = list_iterator_create(resp);
@@ -432,7 +432,7 @@ List slurm_allocate_het_job_blocking(List job_req_list, time_t timeout,
 	job_desc_msg_t *req;
 	listen_t *listen = NULL;
 	int errnum = SLURM_SUCCESS;
-	ListIterator iter;
+	list_itr_t *iter;
 	bool immediate_flag = false;
 	uint32_t node_cnt = 0, job_id = 0;
 	bool already_done = false;
@@ -569,7 +569,7 @@ int slurm_job_will_run(job_desc_msg_t *req)
 		     will_run_resp->node_list,
 		     will_run_resp->part_name);
 		if (will_run_resp->preemptee_job_id) {
-			ListIterator itr;
+			list_itr_t *itr;
 			uint32_t *job_id_ptr;
 			char *job_list = NULL, *sep = "";
 			itr = list_iterator_create(will_run_resp->
@@ -606,7 +606,7 @@ extern int slurm_het_job_will_run(List job_req_list)
 	will_run_response_msg_t *will_run_resp;
 	char buf[256], *sep = "";
 	int rc = SLURM_SUCCESS, inx = 0;
-	ListIterator iter, itr;
+	list_itr_t *iter, *itr;
 	time_t first_start = (time_t) 0;
 	uint32_t first_job_id = 0, tot_proc_count = 0, *job_id_ptr;
 	hostset_t *hs = NULL;
@@ -741,6 +741,7 @@ slurm_job_step_create (job_step_create_request_msg_t *req,
 {
 	slurm_msg_t req_msg, resp_msg;
 	int delay = 0, rc, retry = 0;
+	char *stepmgr_nodename = NULL;
 
 	slurm_msg_t_init(&req_msg);
 	slurm_msg_t_init(&resp_msg);
@@ -748,11 +749,50 @@ slurm_job_step_create (job_step_create_request_msg_t *req,
 	req_msg.data     = req;
 
 re_send:
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
-					   working_cluster_rec) < 0)
+	/* xstrdup() to be consistent with reroute and be able to free. */
+	if ((stepmgr_nodename = xstrdup(getenv("SLURM_STEPMGR")))) {
+trystepmgr:
+		slurm_msg_set_r_uid(&req_msg, slurm_conf.slurmd_user_id);
+
+		if (slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					req_msg.flags)) {
+			/*
+			 * The node isn't in the conf, see if the
+			 * controller has an address for it.
+			 */
+			slurm_node_alias_addrs_t *alias_addrs;
+			if (!slurm_get_node_alias_addrs(stepmgr_nodename,
+							&alias_addrs)) {
+				add_remote_nodes_to_conf_tbls(
+					alias_addrs->node_list,
+					alias_addrs->node_addrs);
+			}
+			slurm_free_node_alias_addrs(alias_addrs);
+			slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					    req_msg.flags);
+		}
+		xfree(stepmgr_nodename);
+
+		if (slurm_send_recv_node_msg(&req_msg, &resp_msg, 0))
+			return SLURM_ERROR;
+	} else if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+						  working_cluster_rec) < 0) {
 		return SLURM_ERROR;
+	}
 
 	switch (resp_msg.msg_type) {
+	case RESPONSE_SLURM_REROUTE_MSG:
+	{
+		reroute_msg_t *rr_msg = resp_msg.data;
+		xfree(stepmgr_nodename);
+		stepmgr_nodename = rr_msg->stepmgr;
+		rr_msg->stepmgr = NULL;
+		if (stepmgr_nodename)
+			goto trystepmgr;
+		else
+			return SLURM_ERROR;
+		break;
+	}
 	case RESPONSE_SLURM_RC:
 		rc = _handle_rc_msg(&resp_msg);
 		if ((rc < 0) && (errno == EAGAIN)) {
@@ -839,6 +879,7 @@ extern int slurm_het_job_lookup(uint32_t jobid, List *info)
 	job_alloc_info_msg_t req;
 	slurm_msg_t req_msg;
 	slurm_msg_t resp_msg;
+	char *stepmgr_nodename = NULL;
 
 	memset(&req, 0, sizeof(req));
 	req.job_id = jobid;
@@ -848,9 +889,34 @@ extern int slurm_het_job_lookup(uint32_t jobid, List *info)
 	req_msg.msg_type = REQUEST_HET_JOB_ALLOC_INFO;
 	req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
-					   working_cluster_rec) < 0)
+	if ((stepmgr_nodename = xstrdup(getenv("SLURM_STEPMGR")))) {
+		slurm_msg_set_r_uid(&req_msg, slurm_conf.slurmd_user_id);
+
+		if (slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					req_msg.flags)) {
+			/*
+			 * The node isn't in the conf, see if the
+			 * controller has an address for it.
+			 */
+			slurm_node_alias_addrs_t *alias_addrs;
+			if (!slurm_get_node_alias_addrs(stepmgr_nodename,
+							&alias_addrs)) {
+				add_remote_nodes_to_conf_tbls(
+					alias_addrs->node_list,
+					alias_addrs->node_addrs);
+			}
+			slurm_free_node_alias_addrs(alias_addrs);
+			slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					    req_msg.flags);
+		}
+		xfree(stepmgr_nodename);
+
+		if (slurm_send_recv_node_msg(&req_msg, &resp_msg, 0))
+			return SLURM_ERROR;
+	} else if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+						  working_cluster_rec) < 0) {
 		return SLURM_ERROR;
+	}
 
 	req.req_cluster = NULL;
 
@@ -885,17 +951,56 @@ extern int slurm_sbcast_lookup(slurm_selected_step_t *selected_step,
 {
 	slurm_msg_t req_msg;
 	slurm_msg_t resp_msg;
+	char *stepmgr_nodename = NULL;
 
 	slurm_msg_t_init(&req_msg);
 	slurm_msg_t_init(&resp_msg);
 	req_msg.msg_type = REQUEST_JOB_SBCAST_CRED;
 	req_msg.data     = selected_step;
 
-	if (slurm_send_recv_controller_msg(&req_msg,
-					   &resp_msg,working_cluster_rec) < 0)
+trystepmgr:
+	if (stepmgr_nodename) {
+		slurm_msg_set_r_uid(&req_msg, slurm_conf.slurmd_user_id);
+
+		if (slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					req_msg.flags)) {
+			/*
+			 * The node isn't in the conf, see if the
+			 * controller has an address for it.
+			 */
+			slurm_node_alias_addrs_t *alias_addrs;
+			if (!slurm_get_node_alias_addrs(stepmgr_nodename,
+							&alias_addrs)) {
+				add_remote_nodes_to_conf_tbls(
+					alias_addrs->node_list,
+					alias_addrs->node_addrs);
+			}
+			slurm_free_node_alias_addrs(alias_addrs);
+			slurm_conf_get_addr(stepmgr_nodename, &req_msg.address,
+					    req_msg.flags);
+		}
+		xfree(stepmgr_nodename);
+
+		if (slurm_send_recv_node_msg(&req_msg, &resp_msg, 0))
+			return SLURM_ERROR;
+	} else if (slurm_send_recv_controller_msg(
+		    &req_msg,
+		    &resp_msg,working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
+	case RESPONSE_SLURM_REROUTE_MSG:
+	{
+		reroute_msg_t *rr_msg = resp_msg.data;
+		stepmgr_nodename = rr_msg->stepmgr;
+		rr_msg->stepmgr = NULL;
+		if (stepmgr_nodename)
+			goto trystepmgr;
+		else
+			return SLURM_ERROR;
+
+		break;
+	}
 	case RESPONSE_SLURM_RC:
 		if (_handle_rc_msg(&resp_msg) < 0)
 			return SLURM_ERROR;

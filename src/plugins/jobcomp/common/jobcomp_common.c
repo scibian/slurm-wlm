@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  jobcomp_common.c - common functions for jobcomp plugins
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC
- *  Written by Alejandro Sanchez <alex@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -244,6 +243,10 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 		data_set_int(data_key_set(record, "het_job_offset"),
 			     job_ptr->het_job_offset);
 	}
+
+	if ((job_ptr->priority != NO_VAL) && (job_ptr->priority != INFINITE))
+		data_set_int(data_key_set(record, "priority"),
+			     job_ptr->priority);
 
 	if (job_ptr->details && job_ptr->details->submit_time) {
 		parse_time_make_str_utc(&job_ptr->details->submit_time,

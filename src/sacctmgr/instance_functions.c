@@ -2,8 +2,7 @@
  *  instance_functions.c - functions dealing with instances in the
  *			   accounting system.
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Ben Glines <ben.glines@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -134,8 +133,8 @@ extern int sacctmgr_list_instance(int argc, char **argv)
 	List format_list; /* list of char * */
 	List instance_list = NULL; /* list of slurmdb_instance_rec_t */
 	List print_fields_list; /* list of print_field_t */
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	print_field_t *field = NULL;
 
 	instance_cond->cluster_list = list_create(xfree_ptr);

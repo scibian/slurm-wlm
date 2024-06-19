@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  cgroup_v1.h - Cgroup v1 plugin
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Felip Moll <felip.moll@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -56,7 +55,5 @@
 #include "src/plugins/cgroup/common/cgroup_common.h"
 
 #include "xcgroup.h"
-
-#define MAX_MOVE_WAIT 1000 /* Miliseconds */
 
 #endif /* !_CGROUP_V1_H */

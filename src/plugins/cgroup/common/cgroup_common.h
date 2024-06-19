@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  cgroup_common.h - Cgroup plugin common header file
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Felip Moll <felip.moll@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -222,5 +221,16 @@ extern int common_cgroup_lock(xcgroup_t *cg);
  * RETURN SLURM_SUCCESS if unlock was successful, SLURM_ERROR otherwise.
  */
 extern int common_cgroup_unlock(xcgroup_t *cg);
+
+/*
+ * Given a cgroup, wait for a pid to disappear from this cgroup.
+ *
+ * IN cg - cgroup where we will look into until the pid disappears.
+ * IN pid - pid to wait for.
+ * IN cg_name - cgroup name for custom logging purposes.
+ * OUT moved - if the pid has been moved out.
+ */
+extern bool common_cgroup_wait_pid_moved(xcgroup_t *cg, pid_t pid,
+					 const char *cg_name);
 
 #endif /* !_CGROUP_COMMON_H */
