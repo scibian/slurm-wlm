@@ -146,7 +146,6 @@ override_dh_strip:
 	dh_strip -pslurm-wlm-influxdb-plugin
 	dh_strip -pslurm-wlm-ipmi-plugins
 	dh_strip -pslurm-wlm-jwt-plugin
-	dh_strip -pslurm-wlm-rrd-plugin
 	dh_strip -pslurm-wlm-mysql-plugin
 	dh_strip -pslurm-wlm-rsmi-plugin
 	dh_strip -pslurm-wlm-kafka-plugin

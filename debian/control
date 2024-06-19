@@ -20,7 +20,6 @@ Build-Depends: dpkg-dev (>= 1.22.5),
  liblua5.1-0-dev,
  libhwloc-dev,
  dh-exec,
- librrd-dev,
  libipmimonitoring-dev,
  hdf5-helpers,
  libfreeipmi-dev,
@@ -242,7 +241,6 @@ Depends:
  slurm-wlm-influxdb-plugin (= ${binary:Version}),
  slurm-wlm-ipmi-plugins (= ${binary:Version}),
  slurm-wlm-jwt-plugin (= ${binary:Version}),
- slurm-wlm-rrd-plugin (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
  slurm-wlm-rsmi-plugin (= ${binary:Version}),
  ${misc:Depends},
@@ -261,7 +259,6 @@ Depends:
  slurm-wlm-influxdb-plugin-dev (= ${binary:Version}),
  slurm-wlm-ipmi-plugins-dev (= ${binary:Version}),
  slurm-wlm-jwt-plugin-dev (= ${binary:Version}),
- slurm-wlm-rrd-plugin-dev (= ${binary:Version}),
  slurm-wlm-mysql-plugin-dev (= ${binary:Version}),
  slurm-wlm-rsmi-plugin-dev (= ${binary:Version}),
  ${misc:Depends},
@@ -403,39 +400,6 @@ Description: Slurm InfluxDB plugin development files
  .
  This package contains development files for the InfluxDB-based Slurm
  job profiling plugin.
-
-Package: slurm-wlm-rrd-plugin
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins (= ${binary:Version})
-Breaks: slurm-wlm-basic-plugins (<< 22.05.7-1)
-Replaces: slurm-wlm-basic-plugins (<< 22.05.7-1)
-Description: Slurm RRD plugin
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains the RRD-based Slurm sensor plugin.
-
-Package: slurm-wlm-rrd-plugin-dev
-Section: devel
-Architecture: any
-Depends:
- ${shlibs:Depends},
- ${misc:Depends},
- slurm-wlm-basic-plugins-dev (= ${binary:Version}),
- slurm-wlm-rrd-plugin (= ${binary:Version})
-Breaks: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Replaces: slurm-wlm-basic-plugins-dev (<< 22.05.7-1)
-Description: Slurm RRD plugins development files
- The Slurm Workload Manager is an open-source cluster resource management and
- job scheduling system that strives to be simple, scalable, portable,
- fault-tolerant, and interconnect agnostic.
- .
- This package contains development files for the RRD-based Slurm
- sensor plugin.
 
 Package: slurm-wlm-elasticsearch-plugin
 Architecture: any
