@@ -4,7 +4,7 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-export PERL_ARCHLIB := $(shell perl -MConfig -e 'print substr($$Config{vendorarch}, 1)')
+export PERL_ARCHLIB := usr$(shell perl -e 'use Config; $$T=$$Config{installsitearch}; $$P=$$Config{installprefix}; $$P1="$$P/local"; $$T =~ s/$$P1//; $$T =~ s/$$P//; print $$T;')
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-bindnow
 
 # Getting the list of the plugins packages excluding the basic package
