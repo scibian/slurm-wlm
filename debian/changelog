@@ -1,3 +1,11 @@
+slurm-wlm (23.11.7-1sci11u1) scibian11; urgency=medium
+
+  * Fix pam_dir path without usrmerge
+  * Remove kafka plugin
+  * Remove leftover rsmi (amd gpu) config
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Wed, 19 Jun 2024 09:32:20 +0200
+
 slurm-wlm (23.02.6-1sci11u2) scibian11; urgency=medium
 
   * Apply schedmd security patch
