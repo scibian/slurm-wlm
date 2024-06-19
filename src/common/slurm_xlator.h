@@ -338,6 +338,9 @@
 #define get_extra_conf_path	slurm_get_extra_conf_path
 #define sort_key_pairs		slurm_sort_key_pairs
 #define conf_get_opt_str	slurm_conf_get_opt_str
+#define add_key_pair		slurm_add_key_pair
+#define add_key_pair_bool	slurm_add_key_pair_bool
+#define add_key_pair_own	slurm_add_key_pair_own
 
 /* run_in_daemon.[ch] functions */
 #define run_in_daemon           slurm_run_in_daemon
@@ -391,6 +394,7 @@
 #define	_xmemcat		slurm_xmemcat
 #define	xstrdup			slurm_xstrdup
 #define	xstrdup_printf		slurm_xstrdup_printf
+#define _xstrdup_vprintf	slurm_xstrdup_vprintf
 #define	xstrndup		slurm_xstrndup
 #define	xbasename		slurm_xbasename
 #define	xdirname		slurm_xdirname
@@ -406,6 +410,7 @@
 #define xstrncasecmp		slurm_xstrncasecmp
 #define	xstrstr			slurm_xstrstr
 #define xstrcasestr		slurm_xstrcasestr
+#define xbase64_from_base64url	slurm_xbase64_from_base64url
 
 /* slurm_protocol_api.[ch] functions */
 #define convert_num_unit2       slurm_convert_num_unit2
@@ -417,8 +422,6 @@
 /* slurm_protocol_defs.[ch] functions */
 #define preempt_mode_string	slurm_preempt_mode_string
 #define preempt_mode_num	slurm_preempt_mode_num
-#define job_reason_string	slurm_job_reason_string
-#define job_reason_num		slurm_job_reason_num
 #define job_share_string	slurm_job_share_string
 #define job_state_string	slurm_job_state_string
 #define job_state_string_compact slurm_job_state_string_compact
@@ -434,7 +437,6 @@
 				slurm_node_state_string_complete
 #define private_data_string	slurm_private_data_string
 #define accounting_enforce_string slurm_accounting_enforce_string
-#define cray_nodelist2nids	slurm_cray_nodelist2nids
 #define reservation_flags_string slurm_reservation_flags_string
 #define print_multi_line_string slurm_print_multi_line_string
 
@@ -533,6 +535,11 @@
 
 /* topology.[ch] functions */
 #define topology_g_build_config slurm_topology_g_build_config
+
+/* job_state_reason.[ch] functions */
+#define job_state_reason_string	slurm_job_state_reason_string
+#define job_state_reason_num slurm_job_state_reason_num
+#define job_state_reason_check slurm_job_state_reason_check
 
 /* serializer.[ch] functions */
 #define serializer_g_init slurm_serializer_g_init

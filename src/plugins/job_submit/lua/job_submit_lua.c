@@ -2,7 +2,7 @@
  *  job_submit_lua.c - Set defaults in job submit request specifications.
  *****************************************************************************
  *  Copyright (C) 2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -639,8 +639,6 @@ static int _get_job_req_field(const job_desc_msg_t *job_desc, const char *name)
 		lua_pushstring(L, job_desc->partition);
 	} else if (!xstrcmp(name, "prefer")) {
 		lua_pushstring(L, job_desc->prefer);
-	} else if (!xstrcmp(name, "power_flags")) {
-		lua_pushnumber(L, job_desc->power_flags);
 	} else if (!xstrcmp(name, "pn_min_cpus")) {
 		lua_pushnumber(L, job_desc->pn_min_cpus);
 	} else if (!xstrcmp(name, "pn_min_memory")) {
@@ -947,8 +945,6 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->prefer);
 		if (strlen(value_str))
 			job_desc->prefer = xstrdup(value_str);
-	} else if (!xstrcmp(name, "power_flags")) {
-		job_desc->power_flags = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "pn_min_cpus")) {
 		job_desc->pn_min_cpus = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "pn_min_memory")) {

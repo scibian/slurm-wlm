@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -154,7 +154,6 @@ void slurm_init_resv_desc_msg (resv_desc_msg_t * resv_msg)
 	resv_msg->node_cnt = NO_VAL;
 	resv_msg->purge_comp_time = NO_VAL;
 	resv_msg->start_time	= (time_t) NO_VAL;
-	resv_msg->resv_watts	= NO_VAL;
 }
 
 /*

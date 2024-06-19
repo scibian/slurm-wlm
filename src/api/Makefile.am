@@ -97,6 +97,7 @@ slurmapi_src =           \
 	burst_buffer_info.c \
 	assoc_mgr_info.c    \
 	cancel.c         \
+	cluster_info.c   \
 	complete.c       \
 	config_info.c    \
 	crontab.c        \
@@ -179,26 +180,16 @@ force:
 $(libslurm_o_LDADD) $(convenience_libs) $(slurmapi_add) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`
 
-# select/cray needs to load select/linear, thus plugin_context_ is required
 $(VERSION_SCRIPT) :
 	(echo "{ global:";   \
 	 echo "   islurm_*;"; \
 	 echo "   sack_*;"; \
 	 echo "   slurm_*;"; \
 	 echo "   slurmdb_*;"; \
-	 echo "   plugin_context_*;"; \
 	 echo "   working_cluster_rec;"; \
 	 echo "   node_record_count;"; \
 	 echo "   active_node_record_count;"; \
 	 echo "   node_record_table_ptr;"; \
-	 echo "   switch_record_cnt;"; \
-	 echo "   switch_levels;"; \
-	 echo "   switch_record_table;"; \
-	 echo "   bblock_node_cnt;"; \
-	 echo "   block_levels;"; \
-	 echo "   block_record_cnt;"; \
-	 echo "   block_record_table;"; \
-	 echo "   blocks_nodes_bitmap;"; \
 	 echo "  local: *;"; \
 	 echo "};") > $(VERSION_SCRIPT)
 

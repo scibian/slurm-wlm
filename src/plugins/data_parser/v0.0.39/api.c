@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  api.c - Slurm data parsing handlers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -184,7 +183,9 @@ extern int data_parser_p_assign(args_t *args, data_parser_attr_type_t type,
 	switch (type) {
 	case DATA_PARSER_ATTR_TRES_LIST:
 		xassert(!args->tres_list || (args->tres_list == obj) || !obj);
-		FREE_NULL_LIST(args->tres_list);
+
+		if (args->tres_list != obj)
+			FREE_NULL_LIST(args->tres_list);
 		args->tres_list = obj;
 
 		log_flag(DATA, "assigned TRES list 0x%"PRIxPTR" to parser 0x%"PRIxPTR,
@@ -200,13 +201,61 @@ extern int data_parser_p_assign(args_t *args, data_parser_attr_type_t type,
 		return SLURM_SUCCESS;
 	case DATA_PARSER_ATTR_QOS_LIST:
 		xassert(!args->qos_list || (args->qos_list == obj) || !obj);
-		FREE_NULL_LIST(args->qos_list);
+
+		if (args->qos_list != obj)
+			FREE_NULL_LIST(args->qos_list);
 		args->qos_list = obj;
 
 		log_flag(DATA, "assigned QOS List at 0x%" PRIxPTR" to parser 0x%"PRIxPTR,
 			 (uintptr_t) obj, (uintptr_t) args);
 		return SLURM_SUCCESS;
-	default :
+	default:
 		return EINVAL;
 	}
+}
+
+extern openapi_type_t data_parser_p_resolve_openapi_type(
+	args_t *args,
+	data_parser_type_t type,
+	const char *field)
+{
+	const parser_t *const parser = find_parser_by_type(type);
+
+	xassert(args->magic == MAGIC_ARGS);
+
+	if (!parser)
+		return OPENAPI_TYPE_INVALID;
+
+	if (!field)
+		return openapi_type_format_to_type(parser->obj_openapi);
+
+	for (int i = 0; i < parser->field_count; i++) {
+		if (!xstrcasecmp(parser->fields[i].field_name, field)) {
+			const parser_t *p =
+				find_parser_by_type(parser->fields[i].type);
+
+			while (p->pointer_type)
+				p = find_parser_by_type(p->pointer_type);
+
+			return openapi_type_format_to_type(p->obj_openapi);
+		}
+	}
+
+	return OPENAPI_TYPE_INVALID;
+}
+
+extern const char *data_parser_p_resolve_type_string(args_t *args,
+						     data_parser_type_t type)
+{
+	const parser_t *parser = find_parser_by_type(type);
+
+	xassert(args->magic == MAGIC_ARGS);
+
+	if (!parser)
+		return NULL;
+
+	while (parser->pointer_type)
+		parser = find_parser_by_type(parser->pointer_type);
+
+	return parser->type_string;
 }

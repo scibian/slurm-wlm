@@ -4,7 +4,7 @@
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Portions Copyright (C) 2008 Vijay Ramasubramanian.
- *  Portions Copyright (C) 2010-2013 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2013      Intel, Inc.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
@@ -100,7 +100,6 @@
 #include "src/interfaces/acct_gather_energy.h"
 #include "src/interfaces/auth.h"
 #include "src/interfaces/cgroup.h"
-#include "src/interfaces/core_spec.h"
 #include "src/interfaces/cred.h"
 #include "src/interfaces/gpu.h"
 #include "src/interfaces/gres.h"
@@ -190,8 +189,8 @@ static time_t sent_reg_time = (time_t) 0;
 static char *cached_features_avail = NULL;
 static char *cached_features_active = NULL;
 static bool plugins_registered = false;
-static bool refresh_cached_features = true;
-static pthread_mutex_t cached_features_mutex = PTHREAD_MUTEX_INITIALIZER;
+bool refresh_cached_features = true;
+pthread_mutex_t cached_features_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int       _convert_spec_cores(void);
 static int       _core_spec_init(void);
@@ -203,7 +202,6 @@ static void      _handle_connection(int fd, slurm_addr_t *client);
 static void      _hup_handler(int);
 static void      _increment_thd_count(void);
 static void      _init_conf(void);
-static bool      _is_core_spec_cray(void);
 static int       _memory_spec_init(void);
 static void      _msg_engine(void);
 static void _notify_parent_of_success(void);
@@ -366,14 +364,14 @@ main (int argc, char **argv)
 		error("Unable to restore job_container state.");
 	if (prep_g_init(NULL) != SLURM_SUCCESS)
 		fatal("failed to initialize prep plugin");
-	if (core_spec_g_init() < 0)
-		fatal("Unable to initialize core specialization plugin.");
-	if (switch_init(0) < 0)
+	if (switch_g_init(false) < 0)
 		fatal("Unable to initialize switch plugin.");
 	if (node_features_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize node_features plugin");
 	if (mpi_g_daemon_init() != SLURM_SUCCESS)
 		fatal("Failed to initialize MPI plugins.");
+	if (select_g_init(1) != SLURM_SUCCESS)
+		fatal("Failed to initialize select plugins.");
 	file_bcast_init();
 	run_command_init();
 	plugins_registered = true;
@@ -605,6 +603,7 @@ _service_connection(void *arg)
 
 	debug3("in the service_connection");
 	slurm_msg_t_init(msg);
+	msg->flags |= SLURM_MSG_KEEP_BUFFER;
 	if ((rc = slurm_receive_msg_and_forward(con->fd, con->cli_addr, msg))
 	   != SLURM_SUCCESS) {
 		error("service_connection: slurm_receive_msg: %m");
@@ -622,6 +621,14 @@ _service_connection(void *arg)
 		goto cleanup;
 	}
 	debug2("Start processing RPC: %s", rpc_num2string(msg->msg_type));
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_AUDIT_RPCS) {
+		slurm_addr_t cli_addr;
+		(void) slurm_get_peer_addr(con->fd, &cli_addr);
+		log_flag(AUDIT_RPCS, "msg_type=%s uid=%u client=[%pA] protocol=%u",
+			 rpc_num2string(msg->msg_type), msg->auth_uid,
+			 &cli_addr, msg->protocol_version);
+	}
 
 	slurmd_req(msg);
 
@@ -972,25 +979,24 @@ _read_config(void)
 	 * Allow for Prolog and Epilog scripts to have non-absolute paths.
 	 * This is needed for configless to work with Prolog and Epilog.
 	 */
-	if (cf->prolog) {
-		char *tmp_prolog = cf->prolog;
-		cf->prolog = get_extra_conf_path(tmp_prolog);
+	for (int i = 0; i < cf->prolog_cnt; i++) {
+		char *tmp_prolog = cf->prolog[i];
+		cf->prolog[i] = get_extra_conf_path(tmp_prolog);
 		xfree(tmp_prolog);
 	}
-	if (cf->epilog) {
-		char *tmp_epilog = cf->epilog;
-		cf->epilog = get_extra_conf_path(tmp_epilog);
+	for (int i = 0; i < cf->epilog_cnt; i++) {
+		char *tmp_epilog = cf->epilog[i];
+		cf->epilog[i] = get_extra_conf_path(tmp_epilog);
 		xfree(tmp_epilog);
 	}
+
 
 #ifndef HAVE_FRONT_END
 	/*
 	 * We can't call slurm_select_cr_type() because we don't load the select
 	 * plugin here.
 	 */
-	if (!xstrcmp(cf->select_type, "select/cons_tres") ||
-	    (!xstrcmp(cf->select_type, "select/cray_aries") &&
-	     (cf->select_type_param & CR_OTHER_CONS_TRES)))
+	if (!xstrcmp(cf->select_type, "select/cons_tres"))
 		cr_flag = true;
 
 	if (cf->preempt_mode & PREEMPT_MODE_GANG)
@@ -1112,7 +1118,7 @@ _read_config(void)
 	 * configuration file because the slurmctld creates bitmaps
 	 * for scheduling before these nodes check in.
 	 */
-	config_overrides = cf->conf_flags & CTL_CONF_OR;
+	config_overrides = cf->conf_flags & CONF_FLAG_OR;
 	if (conf->dynamic_type == DYN_NODE_FUTURE) {
 		/* Already set to actual config earlier in _dynamic_init() */
 	} else if ((conf->conf_sockets == conf->actual_cpus) &&
@@ -1477,12 +1483,18 @@ _print_conf(void)
 	debug3("ConfMemory  = %"PRIu64"", conf->conf_memory_size);
 	debug3("PhysicalMem = %"PRIu64"", conf->physical_memory_size);
 	debug3("TmpDisk     = %u",       conf->tmp_disk_space);
-	debug3("Epilog      = `%s'",     cf->epilog);
+
+	for (int i = 0; i < cf->epilog_cnt; i++)
+		debug3("Epilog[%d] = `%s'", i, cf->epilog[i]);
+
 	debug3("Logfile     = `%s'",     conf->logfile);
 	debug3("HealthCheck = `%s'",     cf->health_check_program);
 	debug3("NodeName    = %s",       conf->node_name);
 	debug3("Port        = %u",       conf->port);
-	debug3("Prolog      = `%s'",     cf->prolog);
+
+	for (int i = 0; i < cf->prolog_cnt; i++)
+		debug3("Prolog[%d] = `%s'", i, cf->prolog[i]);
+
 	debug3("TmpFS       = `%s'",     conf->tmp_fs);
 	debug3("Slurmstepd  = `%s'",     conf->stepd_loc);
 	debug3("Spool Dir   = `%s'",     conf->spooldir);
@@ -1492,7 +1504,7 @@ _print_conf(void)
 	debug3("TaskProlog  = `%s'",     cf->task_prolog);
 	debug3("TaskEpilog  = `%s'",     cf->task_epilog);
 	debug3("TaskPluginParam = %u",   cf->task_plugin_param);
-	debug3("UsePAM      = %"PRIu64, (cf->conf_flags & CTL_CONF_PAM));
+	debug3("UsePAM      = %"PRIu64, (cf->conf_flags & CONF_FLAG_PAM));
 	slurm_conf_unlock();
 }
 
@@ -1758,6 +1770,9 @@ _process_cmdline(int ac, char **av)
 		}
 	}
 
+	if (under_systemd && !conf->daemonize)
+		fatal("--systemd and -D options are mutually exclusive");
+
 	/*
 	 *  If slurmstepd path wasn't overridden by command line, set
 	 *  it to the default here:
@@ -1929,10 +1944,11 @@ static int _establish_configuration(void)
 		return SLURM_SUCCESS;
 	}
 
-	if (!(configs = fetch_config(conf->conf_server,
-				     CONFIG_REQUEST_SLURMD))) {
-		error("%s: failed to load configs", __func__);
-		return SLURM_ERROR;
+	while (!(configs = fetch_config(conf->conf_server,
+					CONFIG_REQUEST_SLURMD))) {
+		error("%s: failed to load configs. Retrying in 10 seconds.",
+		      __func__);
+		sleep(10);
 	}
 
 	/*
@@ -2065,6 +2081,15 @@ static void _dynamic_init(void)
 
 	slurm_mutex_lock(&conf->config_mutex);
 
+	if ((conf->dynamic_type == DYN_NODE_FUTURE) && conf->node_name) {
+		/*
+		 * You can't specify a node name with dynamic future nodes,
+		 * otherwise the slurmd will keep registering as a new dynamic
+		 * future node because the node_name won't map to the hostname.
+		 */
+		fatal("Specifying a node name for dynamic future nodes is not supported.");
+	}
+
 	/* Use -N name if specified. */
 	if (!conf->node_name) {
 		char hostname[HOST_NAME_MAX];
@@ -2194,7 +2219,8 @@ _slurmd_init(void)
 	 * This needs to happen before _read_config where we will try to read
 	 * cgroup.conf values
 	 */
-	cgroup_conf_init();
+	if (cgroup_conf_init() != SLURM_SUCCESS)
+		log_flag(CGROUP, "cgroup conf was already initialized.");
 
 	xcpuinfo_refresh_hwloc(original);
 
@@ -2347,11 +2373,10 @@ _slurmd_fini(void)
 	assoc_mgr_fini(false);
 	mpi_fini();
 	node_features_g_fini();
-	core_spec_g_fini();
 	jobacct_gather_fini();
 	acct_gather_profile_fini();
 	cred_state_fini();
-	switch_fini();
+	switch_g_fini();
 	slurmd_task_fini();
 	slurm_conf_destroy();
 	proctrack_g_fini();
@@ -2570,17 +2595,6 @@ static int _resource_spec_init(void)
 	return SLURM_SUCCESS;
 }
 
-/* Return true if CoreSpecPlugin=core_spec/cray */
-static bool _is_core_spec_cray(void)
-{
-	bool use_core_spec_cray = false;
-	char *core_spec_plugin = slurm_get_core_spec_plugin();
-	if (core_spec_plugin && strstr(core_spec_plugin, "cray"))
-		use_core_spec_cray = true;
-	xfree(core_spec_plugin);
-	return use_core_spec_cray;
-}
-
 /*
  * If configured, initialize core specialization
  */
@@ -2599,10 +2613,6 @@ static int _core_spec_init(void)
 	if ((conf->core_spec_cnt == 0) && (conf->cpu_spec_list == NULL)) {
 		debug("Resource spec: No specialized cores configured by "
 		      "default on this node");
-		return SLURM_SUCCESS;
-	}
-	if (_is_core_spec_cray()) {	/* No need to use cgroups */
-		debug("Using core_spec/cray to manage specialized cores");
 		return SLURM_SUCCESS;
 	}
 
@@ -2937,8 +2947,6 @@ extern int run_script_health_check(void)
 		 * pointing to the wrong place otherwise.
 		 */
 		run_command_args.env = env;
-		if (xstrstr(slurm_conf.job_container_plugin, "cncu"))
-			run_command_args.container_join = container_g_join;
 
 		resp = run_command(&run_command_args);
 		if (rc) {

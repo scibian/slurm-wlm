@@ -108,6 +108,8 @@ slurm_errtab_t slurm_errtab[] = {
 	  "Unable to contact slurm controller (shutdown failure)"},
 	{ ERRTAB_ENTRY(SLURMCTLD_COMMUNICATIONS_BACKOFF),
 	  "Rate limit exceeded, please retry momentarily"},
+	{ ERRTAB_ENTRY(SLURMCTLD_COMMUNICATIONS_HARD_DROP),
+	  "Rate limit exceeded, please retry later"},
 
 	/* _info.c/communication layer RESPONSE_SLURM_RC message codes */
 
@@ -467,6 +469,14 @@ slurm_errtab_t slurm_errtab[] = {
 	  "Cannot signal job" },
 	{ ERRTAB_ENTRY(ESLURM_SIGNAL_JOBS_INVALID),
 	  "Invalid signal jobs request, at least one job id or filter is required." },
+	{ ERRTAB_ENTRY(ESLURM_RES_CORES_PER_GPU_UNIQUE),
+	  "RestrictedCoresPerGPU: Not enough unique cores per GPU" },
+	{ ERRTAB_ENTRY(ESLURM_RES_CORES_PER_GPU_TOPO),
+	  "RestrictedCoresPerGPU: Missing core topology for GPUs" },
+	{ ERRTAB_ENTRY(ESLURM_RES_CORES_PER_GPU_NO),
+	  "RestrictedCoresPerGPU: No GPUs configured on node" },
+	{ ERRTAB_ENTRY(ESLURM_MAX_POWERED_NODES),
+	  "Max powered up nodes reached" },
 
 	/* SPANK errors */
 	{ ERRTAB_ENTRY(ESPANK_ERROR),
@@ -585,6 +595,9 @@ slurm_errtab_t slurm_errtab[] = {
 	  "There is something internally wrong with the SQL needed for this. Please consult the slurmdbd log for more info."                    },
 	{ ERRTAB_ENTRY(ESLURM_NO_REMOVE_DEFAULT_QOS),
 	  "This request would make it so some associations would not have access to their default qos."                                         },
+	{ ERRTAB_ENTRY(ESLURM_COORD_NO_INCREASE_JOB_LIMIT),
+	  "Coordinators can not increase job limits beyond the parent ones" },
+
 
 	/* Federation Errors */
 	{ ERRTAB_ENTRY(ESLURM_FED_CLUSTER_MAX_CNT),
@@ -669,6 +682,10 @@ slurm_errtab_t slurm_errtab[] = {
 	  "Request to parse empty string rejected"},
 	{ ERRTAB_ENTRY(ESLURM_DATA_INVALID_PARSER),
 	  "Invalid parser requested"},
+	{ ERRTAB_ENTRY(ESLURM_DATA_PARSING_DEPTH),
+	  "Parsing tree too deep. Possible cyclic parsing detected"},
+	{ ERRTAB_ENTRY(ESLURM_DATA_PARSER_INVALID_STATE),
+	  "Parser went into an invalid state. Possible library issue."},
 
 	/* container  errors */
 	{ ERRTAB_ENTRY(ESLURM_CONTAINER_NOT_CONFIGURED),

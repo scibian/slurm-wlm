@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  x11_forwarding.c - setup x11 port forwarding
  *****************************************************************************
- *  Copyright (C) 2017-2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -67,7 +66,7 @@ static uint32_t job_id = NO_VAL;
 static uid_t job_uid;
 
 static bool local_xauthority = false;
-static char hostname[256] = {0};
+static char hostname[HOST_NAME_MAX] = {0};
 
 static eio_handle_t *eio_handle;
 

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurmscriptd.c - Slurm script functions.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Marshall Garey <marshall@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -62,7 +61,6 @@
 #include "src/common/xstring.h"
 
 #include "src/interfaces/burst_buffer.h"
-#include "src/interfaces/select.h"
 
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/slurmctld.h"
@@ -466,12 +464,46 @@ static void _incr_script_cnt(void)
 	slurm_mutex_unlock(&script_count_mutex);
 }
 
+static void _change_proc_name(int argc, char **argv, char *proc_name)
+{
+	char *log_prefix;
+	/*
+	 * Since running_in_slurmctld() is called before we fork()'d,
+	 * the result is cached in static variables, so calling it now
+	 * would return true even though we're now slurmscriptd.
+	 * Reset those cached variables so running_in_slurmctld()
+	 * returns false if called from slurmscriptd.
+	 * But first change slurm_prog_name since that is
+	 * read by run_in_daemon().
+	 */
+	xfree(slurm_prog_name);
+	slurm_prog_name = xstrdup(proc_name);
+	running_in_slurmctld_reset();
+
+	/*
+	 * Change the process name to slurmscriptd.
+	 * Since slurmscriptd logs to the slurmctld log file, add a
+	 * prefix to make it clear which daemon a log comes from.
+	 */
+	init_setproctitle(argc, argv);
+	setproctitle("%s", proc_name);
+#if HAVE_SYS_PRCTL_H
+	if (prctl(PR_SET_NAME, proc_name, NULL, NULL, NULL) < 0) {
+		error("%s: cannot set my name to %s %m",
+		      __func__, proc_name);
+	}
+#endif
+	/* log_set_prefix takes control of an xmalloc()'d string */
+	log_prefix = xstrdup_printf("%s: ", proc_name);
+	log_set_prefix(&log_prefix);
+}
+
 /*
  * Run a script with a given timeout (in seconds).
  * Return the status or SLURM_ERROR if fork() fails.
  */
-static int _run_script(run_command_args_t *run_command_args, uint32_t job_id,
-		       int timeout, char *tmp_file_env_name, char *tmp_file_str,
+static int _run_script(run_command_args_t *run_command_args,
+		       run_script_msg_t *script_msg,
 		       char **resp_msg, bool *signalled)
 {
 	int status = SLURM_ERROR;
@@ -479,6 +511,10 @@ static int _run_script(run_command_args_t *run_command_args, uint32_t job_id,
 	char *resp = NULL;
 	bool killed = false;
 	int tmp_fd = 0;
+	uint32_t job_id = script_msg->job_id;
+	int timeout = script_msg->timeout;
+	char *tmp_file_env_name = script_msg->tmp_file_env_name;
+	char *tmp_file_str = script_msg->tmp_file_str;
 
 	if ((timeout <= 0) || (timeout == NO_VAL16))
 		ms_timeout = -1; /* wait indefinitely in run_command() */
@@ -583,27 +619,6 @@ static int _handle_flush_job(slurmscriptd_msg_t *recv_msg)
 		 rpc_num2string(recv_msg->msg_type), flush_msg->job_id);
 
 	track_script_flush_job(flush_msg->job_id);
-
-	return SLURM_SUCCESS;
-}
-
-static int _handle_reconfig(slurmscriptd_msg_t *recv_msg)
-{
-	slurmctld_lock_t config_write_lock =
-		{ .conf = WRITE_LOCK };
-	reconfig_msg_t *reconfig_msg = recv_msg->msg_data;
-
-	log_flag(SCRIPT, "Handling %s", rpc_num2string(recv_msg->msg_type));
-
-	lock_slurmctld(config_write_lock);
-	slurm_conf.debug_flags = reconfig_msg->debug_flags;
-	xfree(slurm_conf.slurmctld_logfile);
-	slurm_conf.slurmctld_logfile = xstrdup(reconfig_msg->logfile);
-	slurm_conf.log_fmt = reconfig_msg->log_fmt;
-	slurm_conf.slurmctld_debug = reconfig_msg->slurmctld_debug;
-	slurm_conf.slurmctld_syslog_debug = reconfig_msg->syslog_debug;
-	update_logging();
-	unlock_slurmctld(config_write_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -779,10 +794,7 @@ static int _handle_run_script(slurmscriptd_msg_t *recv_msg)
 		 * script_msg->timeout may also not be set (NO_VAL16).
 		 * Let _run_script handle the conversion.
 		 */
-		status = _run_script(&run_command_args, script_msg->job_id,
-				     script_msg->timeout,
-				     script_msg->tmp_file_env_name,
-				     script_msg->tmp_file_str,
+		status = _run_script(&run_command_args, script_msg,
 				     &resp_msg, &signalled);
 		break;
 	case SLURMSCRIPTD_POWER:
@@ -797,10 +809,7 @@ static int _handle_run_script(slurmscriptd_msg_t *recv_msg)
 		 */
 		run_command_args.tid = 0;
 		run_command_args.orphan_on_shutdown = true;
-		status = _run_script(&run_command_args, script_msg->job_id,
-				     script_msg->timeout,
-				     script_msg->tmp_file_env_name,
-				     script_msg->tmp_file_str,
+		status = _run_script(&run_command_args, script_msg,
 				     &resp_msg, &signalled);
 
 		break;
@@ -982,9 +991,6 @@ static int _handle_request(int req, buf_t *buffer)
 		case SLURMSCRIPTD_REQUEST_FLUSH_JOB:
 			rc = _handle_flush_job(&recv_msg);
 			break;
-		case SLURMSCRIPTD_REQUEST_RECONFIG:
-			rc = _handle_reconfig(&recv_msg);
-			break;
 		case SLURMSCRIPTD_REQUEST_RUN_SCRIPT:
 			rc = _handle_run_script(&recv_msg);
 			break;
@@ -1101,12 +1107,34 @@ static void *_slurmctld_listener_thread(void *x)
 	return NULL;
 }
 
+static void _wait_for_all_scripts(void)
+{
+	int last_pc = 0;
+	struct timespec ts = {0, 0};
+
+	/*
+	 * Wait until all script complete messages have been processed or until
+	 * the readfd is closed, in which case we know we'll never get more
+	 * messages from slurmscriptd.
+	 */
+	slurm_mutex_lock(&script_count_mutex);
+	while (slurmctld_readfd > 0) {
+		if (!script_count)
+			break;
+		if (last_pc != script_count)
+			info("waiting for %d running processes", script_count);
+		last_pc = script_count;
+		ts.tv_sec = time(NULL) + 2;
+		slurm_cond_timedwait(&script_count_cond, &script_count_mutex,
+				     &ts);
+	}
+	slurm_mutex_unlock(&script_count_mutex);
+}
+
 static void _kill_slurmscriptd(void)
 {
 	int status;
 	int rc;
-	int last_pc = 0;
-	struct timespec ts = {0, 0};
 
 	if (slurmscriptd_pid <= 0) {
 		error("%s: slurmscriptd_pid < 0, we don't know the PID of slurmscriptd.",
@@ -1120,23 +1148,9 @@ static void _kill_slurmscriptd(void)
 	/* Tell slurmscriptd to shutdown, then wait for it to finish. */
 	rc = _send_to_slurmscriptd(SLURMSCRIPTD_SHUTDOWN, NULL, false, NULL,
 				   NULL);
-	/*
-	 * Wait until all script complete messages have been processed or until
-	 * the readfd is closed, in which case we know we'll never get more
-	 * messages from slurmscriptd.
-	 */
-	slurm_mutex_lock(&script_count_mutex);
-	while ((rc == SLURM_SUCCESS) && (slurmctld_readfd > 0)) {
-		if (!script_count)
-			break;
-		if (last_pc != script_count)
-			info("waiting for %d running processes", script_count);
-		last_pc = script_count;
-		ts.tv_sec = time(NULL) + 2;
-		slurm_cond_timedwait(&script_count_cond, &script_count_mutex,
-				     &ts);
-	}
-	slurm_mutex_unlock(&script_count_mutex);
+
+	if (rc == SLURM_SUCCESS)
+		_wait_for_all_scripts();
 
 	if (rc != SLURM_SUCCESS) {
 		/* Shutdown signal failed. Try to reap slurmscriptd now. */
@@ -1193,6 +1207,8 @@ extern void slurmscriptd_flush(void)
 {
 	_send_to_slurmscriptd(SLURMSCRIPTD_REQUEST_FLUSH, NULL, true, NULL,
 			      NULL);
+
+	_wait_for_all_scripts();
 }
 
 extern void slurmscriptd_flush_job(uint32_t job_id)
@@ -1205,36 +1221,6 @@ extern void slurmscriptd_flush_job(uint32_t job_id)
 	send_args->msg_type = SLURMSCRIPTD_REQUEST_FLUSH_JOB;
 
 	slurm_thread_create_detached(_async_send_to_slurmscriptd, send_args);
-}
-
-extern void slurmscriptd_reconfig(void)
-{
-	reconfig_msg_t msg;
-	slurmctld_lock_t config_read_lock =
-		{ .conf = READ_LOCK };
-
-	memset(&msg, 0, sizeof(msg));
-
-	/*
-	 * slurmscriptd only needs a minimal configuration, so only send what
-	 * needs to be updated rather than sending the entire slurm_conf
-	 * or having slurmscriptd read/parse the slurm.conf file.
-	 */
-	lock_slurmctld(config_read_lock);
-	msg.debug_flags = slurm_conf.debug_flags;
-	msg.logfile = slurm_conf.slurmctld_logfile;
-	msg.log_fmt = slurm_conf.log_fmt;
-	msg.slurmctld_debug = slurm_conf.slurmctld_debug;
-	msg.syslog_debug = slurm_conf.slurmctld_syslog_debug;
-	/*
-	 * If we ever allow switching plugins on reconfig, then we will need to
-	 * pass slurm_conf.bb_type to slurmscriptd, since a child/fork() of
-	 * slurmscriptd calls bb_g_run_script().
-	 */
-	unlock_slurmctld(config_read_lock);
-
-	_send_to_slurmscriptd(SLURMSCRIPTD_REQUEST_RECONFIG, &msg, false,
-			      NULL, NULL);
 }
 
 extern int slurmscriptd_run_mail(char *script_path, uint32_t argc, char **argv,
@@ -1302,8 +1288,8 @@ extern void slurmscriptd_run_power(char *script_path, char *hosts,
 
 extern int slurmscriptd_run_bb_lua(uint32_t job_id, char *function,
 				   uint32_t argc, char **argv, uint32_t timeout,
-				   char *job_buf, int job_buf_size,
-				   char **resp, bool *track_script_signalled)
+				   buf_t *job_buf, char **resp,
+				   bool *track_script_signalled)
 {
 	int status, rc;
 	run_script_msg_t run_script_msg;
@@ -1314,8 +1300,8 @@ extern int slurmscriptd_run_bb_lua(uint32_t job_id, char *function,
 	run_script_msg.argc = argc;
 	run_script_msg.argv = argv;
 	run_script_msg.env = NULL;
-	run_script_msg.extra_buf = job_buf;
-	run_script_msg.extra_buf_size = job_buf_size;
+	run_script_msg.extra_buf = job_buf ? job_buf->head : NULL;
+	run_script_msg.extra_buf_size = job_buf ? job_buf->processed : 0;
 	run_script_msg.job_id = job_id;
 	run_script_msg.script_name = function; /* Shallow copy, do not free */
 	run_script_msg.script_path = NULL;
@@ -1517,39 +1503,9 @@ extern int slurmscriptd_init(int argc, char **argv)
 	} else { /* child (slurmscriptd_pid == 0) */
 		ssize_t i;
 		int rc = SLURM_ERROR, ack;
-		char *proc_name = "slurmscriptd";
-		char *log_prefix;
 		char *failed_plugin = NULL;
 
-		/*
-		 * Since running_in_slurmctld() is called before we fork()'d,
-		 * the result is cached in static variables, so calling it now
-		 * would return true even though we're now slurmscriptd.
-		 * Reset those cached variables so running_in_slurmctld()
-		 * returns false if called from slurmscriptd.
-		 * But first change slurm_prog_name since that is
-		 * read by run_in_daemon().
-		 */
-		xfree(slurm_prog_name);
-		slurm_prog_name = xstrdup(proc_name);
-		running_in_slurmctld_reset();
-
-		/*
-		 * Change the process name to slurmscriptd.
-		 * Since slurmscriptd logs to the slurmctld log file, add a
-		 * prefix to make it clear which daemon a log comes from.
-		 */
-		init_setproctitle(argc, argv);
-		setproctitle("%s", proc_name);
-#if HAVE_SYS_PRCTL_H
-		if (prctl(PR_SET_NAME, proc_name, NULL, NULL, NULL) < 0) {
-			error("%s: cannot set my name to %s %m",
-			      __func__, proc_name);
-		}
-#endif
-		/* log_set_prefix takes control of an xmalloc()'d string */
-		log_prefix = xstrdup_printf("%s: ", proc_name);
-		log_set_prefix(&log_prefix);
+		_change_proc_name(argc, argv, "slurmscriptd");
 
 		/* Close extra fd's. */
 		if (close(to_slurmscriptd[1]) < 0) {
@@ -1625,7 +1581,7 @@ extern int slurmscriptd_fini(void)
 
 	/* Now shutdown communications. */
 	eio_signal_shutdown(msg_handle);
-	pthread_join(slurmctld_listener_tid, NULL);
+	slurm_thread_join(slurmctld_listener_tid);
 	slurm_mutex_destroy(&script_resp_map_mutex);
 	xhash_clear(script_resp_map);
 	slurm_mutex_destroy(&write_mutex);

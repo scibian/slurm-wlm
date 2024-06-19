@@ -167,6 +167,7 @@ typedef enum {
 	SLURM_PERSIST_INIT = 6500, /* So we don't use the
 				    * REQUEST_PERSIST_INIT also used here.
 				    */
+	SLURM_PERSIST_INIT_TLS = 6501,
 } slurmdbd_msg_type_t;
 
 /*****************************************************************************\
@@ -294,6 +295,9 @@ typedef struct dbd_job_start_msg {
 	time_t   start_time;	/* job start time */
 	uint32_t state_reason_prev; /* Last reason of blocking before job
 				     * started */
+	char *std_err;          /* The stderr file path of the job */
+	char *std_in;           /* The stdin file path of the job */
+	char *std_out;          /* The stdout file path of the job */
 	char *submit_line;      /* The command issued with all it's options in a
 				 * string */
 	time_t   submit_time;	/* job submit time */
@@ -370,7 +374,6 @@ typedef struct dbd_node_state_msg {
 typedef struct dbd_register_ctld_msg {
 	uint16_t dimensions;    /* dimensions of system */
 	uint32_t flags;         /* flags for cluster */
-	uint32_t plugin_id_select; /* the select plugin_id */
 	uint16_t port;		/* slurmctld's comm port */
 } dbd_register_ctld_msg_t;
 
@@ -416,6 +419,11 @@ typedef struct dbd_step_start_msg {
 	uint32_t total_tasks;	/* count of tasks for step */
 	char *tres_alloc_str;   /* Simple comma separated list of TRES */
 } dbd_step_start_msg_t;
+
+typedef struct {
+	void *data;
+	uint16_t msg_type;
+} dbd_relay_msg_t;
 
 /*****************************************************************************\
  * Slurm DBD message processing functions

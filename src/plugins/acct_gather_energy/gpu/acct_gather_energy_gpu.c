@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  acct_gather_energy_gpu.c - slurm energy accounting plugin for GPUs.
  *****************************************************************************
- *  Copyright (C) 2019-2021 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (c) 2019, Advanced Micro Devices, Inc. All rights reserved.
  *  Written by Advanced Micro Devices,
  *  who borrowed from the ipmi plugin of the same type
@@ -316,17 +316,15 @@ static void *_thread_gpu_run(void *no_data)
 	abs.tv_nsec = tvnow.tv_usec * 1000;
 
 	//loop until slurm stop
+	slurm_mutex_lock(&gpu_mutex);
 	while (!flag_energy_accounting_shutdown) {
-		slurm_mutex_lock(&gpu_mutex);
-
 		_thread_update_node_energy();
 
 		/* Sleep until the next time. */
 		abs.tv_sec += DEFAULT_GPU_FREQ;
 		slurm_cond_timedwait(&gpu_cond, &gpu_mutex, &abs);
-
-		slurm_mutex_unlock(&gpu_mutex);
 	}
+	slurm_mutex_unlock(&gpu_mutex);
 
 	log_flag(ENERGY, "gpu-thread: ended");
 
@@ -577,16 +575,14 @@ extern int fini(void)
 	slurm_cond_signal(&launch_cond);
 	slurm_mutex_unlock(&launch_mutex);
 
-	if (thread_gpu_id_launcher)
-		pthread_join(thread_gpu_id_launcher, NULL);
+	slurm_thread_join(thread_gpu_id_launcher);
 
 	slurm_mutex_lock(&gpu_mutex);
 	/* clean up the run thread */
 	slurm_cond_signal(&gpu_cond);
 	slurm_mutex_unlock(&gpu_mutex);
 
-	if (thread_gpu_id_run)
-		pthread_join(thread_gpu_id_run, NULL);
+	slurm_thread_join(thread_gpu_id_run);
 
 	/*
 	 * We don't really want to destroy the the state, so those values
@@ -621,13 +617,13 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	xassert(running_in_slurmd_stepd());
 	switch (data_type) {
 	case ENERGY_DATA_NODE_ENERGY_UP:
-		slurm_mutex_lock(&gpu_mutex);
 		if (running_in_slurmd()) {
-			if (_thread_init() == SLURM_SUCCESS) {
-				_thread_update_node_energy();
-				_get_node_energy(energy);
-			}
+			/* Signal the thread to update node energy */
+			slurm_cond_signal(&gpu_cond);
+			slurm_mutex_lock(&gpu_mutex);
+			_get_node_energy(energy);
 		} else {
+			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 			_get_node_energy_up(energy);
 		}
@@ -659,11 +655,12 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_JOULES_TASK:
-		slurm_mutex_lock(&gpu_mutex);
 		if (running_in_slurmd()) {
-			if (_thread_init() == SLURM_SUCCESS)
-				_thread_update_node_energy();
+			/* Signal the thread to update node energy */
+			slurm_cond_signal(&gpu_cond);
+			slurm_mutex_lock(&gpu_mutex);
 		} else {
+			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 		}
 		for (i = 0; i < gpus_len; ++i)

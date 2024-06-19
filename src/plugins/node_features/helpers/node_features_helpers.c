@@ -53,6 +53,8 @@
 
 #include "src/slurmd/slurmd/slurmd.h"
 
+#define FEATURE_FLAG_NO_REBOOT SLURM_BIT(0)
+
 /*
  * These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
@@ -88,11 +90,13 @@ typedef struct {
 typedef struct {
 	const char *name;
 	const char *helper;
+	uint64_t flags;
 } plugin_feature_t;
 
 static s_p_options_t feature_options[] = {
 	 {"Feature", S_P_STRING},
 	 {"Helper", S_P_STRING},
+	 {"Flags", S_P_STRING},
 	 {NULL},
 };
 
@@ -160,12 +164,14 @@ static int _list_make_str(void *x, void *y)
 	return 0;
 }
 
-static plugin_feature_t *_feature_create(const char *name, const char *helper)
+static plugin_feature_t *_feature_create(const char *name, const char *helper,
+					 uint64_t flags)
 {
 	plugin_feature_t *feature = xmalloc(sizeof(*feature));
 
 	feature->name = xstrdup(name);
 	feature->helper = xstrdup(helper);
+	feature->flags = flags;
 
 	return feature;
 }
@@ -236,7 +242,17 @@ cleanup:
 	return result;
 }
 
-static int _feature_register(const char *name, const char *helper)
+static char * _feature_flag2str(uint64_t flags) {
+	if (flags & FEATURE_FLAG_NO_REBOOT)
+		return "rebootless";
+	else if (!flags)
+		return "(none)";
+	else
+		return "unknown";
+}
+
+static int _feature_register(const char *name, const char *helper,
+			     uint64_t flags)
 {
 	const plugin_feature_t *existing;
 	plugin_feature_t *feature = NULL;
@@ -258,9 +274,10 @@ static int _feature_register(const char *name, const char *helper)
 		}
 	}
 
-	feature = _feature_create(name, helper);
+	feature = _feature_create(name, helper, flags);
 
-	info("Adding new feature \"%s\"", feature->name);
+	info("Adding new feature \"%s\" Flags=%s",
+	     feature->name, _feature_flag2str(feature->flags));
 	list_append(helper_features, feature);
 
 	return SLURM_SUCCESS;
@@ -295,9 +312,14 @@ static int _parse_feature(void **data, slurm_parser_enum_t type,
 			  const char *line, char **leftover)
 {
 	s_p_hashtbl_t *tbl = NULL;
+	char *tmp_flags = NULL;
 	char *path = NULL;
 	int rc = -1;
 	char *tmp_name;
+	char *tmp_str = NULL;
+	char *last = NULL;
+	char *tok = NULL;
+	uint64_t flags = 0;
 
 	tbl = s_p_hashtbl_create(feature_options);
 	if (!s_p_parse_line(tbl, *leftover, leftover))
@@ -311,10 +333,24 @@ static int _parse_feature(void **data, slurm_parser_enum_t type,
 	}
 
 	s_p_get_string(&path, "Helper", tbl);
+	if (s_p_get_string(&tmp_flags, "Flags", tbl)) {
+		tmp_str = xstrdup(tmp_flags);
+		tok = strtok_r(tmp_str, ",", &last);
+		while (tok) {
+			if (!xstrcasecmp(tok, "rebootless"))
+				flags |= FEATURE_FLAG_NO_REBOOT;
+			else
+				error("helpers.conf: Ignoring invalid Flags=%s",
+				      tok);
+			tok = strtok_r(NULL, ",", &last);
+		}
+	}
 
 	/* In slurmctld context, we can have path == NULL */
-	*data = _feature_create(tmp_name, path);
+	*data = _feature_create(tmp_name, path, flags);
 	xfree(path);
+	xfree(tmp_str);
+	xfree(tmp_flags);
 
 	rc = 1;
 
@@ -385,7 +421,8 @@ static int _handle_config_features(plugin_feature_t **features, int count)
 			}
 
 			/* In slurmctld context, we can have path == NULL */
-			if (_feature_register(tok, feature->helper)) {
+			if (_feature_register(tok, feature->helper,
+					      feature->flags)) {
 				xfree(tmp_name);
 				return SLURM_ERROR;
 			}
@@ -718,11 +755,12 @@ extern int node_features_p_job_valid(char *job_features, list_t *feature_list)
 	return SLURM_SUCCESS;
 }
 
-extern int node_features_p_node_set(char *active_features)
+extern int node_features_p_node_set(char *active_features, bool *need_reboot)
 {
 	char *tmp, *saveptr;
 	char *input = NULL;
 	const plugin_feature_t *feature = NULL;
+	bool reboot = false;
 	int rc = SLURM_ERROR;
 
 	input = xstrdup(active_features);
@@ -734,11 +772,16 @@ extern int node_features_p_node_set(char *active_features)
 			continue;
 		}
 
+		if (!(feature->flags & FEATURE_FLAG_NO_REBOOT))
+			reboot = true;
+
 		if (_feature_set_state(feature) != SLURM_SUCCESS) {
 			active_features[0] = '\0';
 			goto fini;
 		}
 	}
+
+	*need_reboot = reboot;
 
 	rc = SLURM_SUCCESS;
 
@@ -950,12 +993,8 @@ static int _make_features_config(void *x, void *y)
 {
 	plugin_feature_t *feature = (plugin_feature_t *)x;
 	List data = (List)y;
-	config_key_pair_t *key_pair;
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("Feature");
-	key_pair->value = _make_helper_str(feature);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "Feature", _make_helper_str(feature));
 
 	return 0;
 }
@@ -964,12 +1003,9 @@ static int _make_exclusive_config(void *x, void *y)
 {
 	List exclusive = (List) x;
 	List data = (List) y;
-	config_key_pair_t *key_pair;
 
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("MutuallyExclusive");
-	key_pair->value = _make_exclusive_str(exclusive);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "MutuallyExclusive",
+			 _make_exclusive_str(exclusive));
 
 	return 0;
 }
@@ -977,7 +1013,6 @@ static int _make_exclusive_config(void *x, void *y)
 /* Get node features plugin configuration */
 extern void node_features_p_get_config(config_plugin_params_t *p)
 {
-	config_key_pair_t *key_pair;
 	List data;
 
 	xassert(p);
@@ -988,20 +1023,12 @@ extern void node_features_p_get_config(config_plugin_params_t *p)
 
 	list_for_each(helper_exclusives, _make_exclusive_config, data);
 
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("AllowUserBoot");
-	key_pair->value = _make_uid_str(allowed_uid, allowed_uid_cnt);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "AllowUserBoot",
+			 _make_uid_str(allowed_uid, allowed_uid_cnt));
 
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("BootTime");
-	key_pair->value = xstrdup_printf("%u", boot_time);
-	list_append(data, key_pair);
+	add_key_pair(data, "BootTime", "%u", boot_time);
 
-	key_pair = xmalloc(sizeof(*key_pair));
-	key_pair->name = xstrdup("ExecTime");
-	key_pair->value = xstrdup_printf("%u", exec_time);
-	list_append(data, key_pair);
+	add_key_pair(data, "ExecTime", "%u", exec_time);
 }
 
 extern bitstr_t *node_features_p_get_node_bitmap(void)
@@ -1017,11 +1044,6 @@ extern char *node_features_p_node_xlate2(char *new_features)
 extern uint32_t node_features_p_boot_time(void)
 {
 	return boot_time;
-}
-
-extern int node_features_p_reconfig(void)
-{
-	return _read_config_file();
 }
 
 extern bool node_features_p_user_update(uid_t uid)

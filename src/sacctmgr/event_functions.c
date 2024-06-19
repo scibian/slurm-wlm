@@ -172,7 +172,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			continue;
 		} else if (!end || (!xstrncasecmp(argv[i], "Events",
 						  MAX(command_len, 1)))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			List tmp_list = list_create(xfree_ptr);
 			char *temp = NULL;
 
@@ -322,8 +322,8 @@ extern int sacctmgr_list_event(int argc, char **argv)
 	List event_list = NULL;
 	slurmdb_event_rec_t *event = NULL;
 	int i = 0;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	int field_count = 0;
 
 	print_field_t *field = NULL;
@@ -507,14 +507,16 @@ extern int sacctmgr_list_event(int argc, char **argv)
 				break;
 			case PRINT_USER:
 				if (event->reason_uid != NO_VAL) {
-					tmp_char = uid_to_string_cached(
+					tmp_char = xstrdup_printf(
+						"%s(%u)",
+						uid_to_string_cached(
+							event->reason_uid),
 						event->reason_uid);
-					snprintf(tmp, sizeof(tmp), "%s(%u)",
-						 tmp_char, event->reason_uid);
 				} else
-					memset(tmp, 0, sizeof(tmp));
-				field->print_routine(field, tmp,
+					tmp_char = NULL;
+				field->print_routine(field, tmp_char,
 						     (curr_inx == field_count));
+				xfree(tmp_char);
 				break;
 			default:
 				field->print_routine(field, NULL,

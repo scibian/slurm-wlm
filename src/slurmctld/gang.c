@@ -2,7 +2,7 @@
  *  gang.c - Gang scheduler functions.
  *****************************************************************************
  *  Copyright (C) 2008 Hewlett-Packard Development Company, L.P.
- *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Written by Chris Holmes
  *  CODE-OCEC-09-009. All rights reserved.
  *
@@ -278,7 +278,7 @@ static void _destroy_parts(void *x)
  * once a job is added. */
 static void _build_parts(void)
 {
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	part_record_t *p_ptr;
 	struct gs_part *gs_part_ptr;
 	int num_parts;
@@ -600,8 +600,6 @@ static void _preempt_job_dequeue(void)
 			}
 		}
 	}
-
-	return;
 }
 
 /* This is the reverse order defined by list.h so to generated a list in
@@ -610,23 +608,18 @@ static int _sort_partitions(void *part1, void *part2)
 {
 	struct gs_part *g1;
 	struct gs_part *g2;
-	int prio1;
-	int prio2;
 
 	g1 = *(struct gs_part **)part1;
 	g2 = *(struct gs_part **)part2;
 
-	prio1 = g1->priority;
-	prio2 = g2->priority;
-
-	return prio2 - prio1;
+	return slurm_sort_uint_list_desc(&g1->priority, &g2->priority);
 }
 
 /* Scan the partition list. Add the given job as a "shadow" to every
  * partition with a lower priority than the given partition */
 static void _cast_shadow(struct gs_job *j_ptr, uint16_t priority)
 {
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	struct gs_part *p_ptr;
 	int i;
 
@@ -666,7 +659,7 @@ static void _cast_shadow(struct gs_job *j_ptr, uint16_t priority)
 /* Remove the given job as a "shadow" from all partitions */
 static void _clear_shadow(struct gs_job *j_ptr)
 {
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	struct gs_part *p_ptr;
 	int i;
 
@@ -798,7 +791,7 @@ static void _update_active_row(struct gs_part *p_ptr, int add_new_jobs)
  */
 static void _update_all_active_rows(void)
 {
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
  	struct gs_part *p_ptr;
 
 	/* Sort the partitions. This way the shadows of any high-priority
@@ -856,8 +849,6 @@ static void _remove_job_from_part(uint32_t job_id, struct gs_part *p_ptr,
 	}
 	j_ptr->job_ptr = NULL;
 	xfree(j_ptr);
-
-	return;
 }
 
 /* Add the given job to the given partition, and if it remains running
@@ -960,7 +951,7 @@ static void _scan_slurm_job_list(void)
 	job_record_t *job_ptr;
 	struct gs_part *p_ptr;
 	int i;
-	ListIterator job_iterator;
+	list_itr_t *job_iterator;
 	char *part_name;
 
 	if (!job_list) {	/* no jobs */
@@ -1017,8 +1008,6 @@ static void _scan_slurm_job_list(void)
 	/* now that all of the old jobs have been flushed out,
 	 * update the active row of all partitions */
 	_update_all_active_rows();
-
-	return;
 }
 
 
@@ -1165,7 +1154,7 @@ extern void gs_job_start(job_record_t *job_ptr)
 extern void gs_wake_jobs(void)
 {
 	job_record_t *job_ptr;
-	ListIterator job_iterator;
+	list_itr_t *job_iterator;
 
 	if (!job_list)	/* no jobs */
 		return;
@@ -1244,7 +1233,7 @@ extern void gs_job_fini(job_record_t *job_ptr)
 extern void gs_reconfig(void)
 {
 	int i;
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	struct gs_part *p_ptr, *newp_ptr;
 	List old_part_list;
 	job_record_t *job_ptr;
@@ -1463,7 +1452,7 @@ static void *_timeslicer_thread(void *arg)
 	/* Write locks on job and read lock on nodes */
 	slurmctld_lock_t job_write_lock = {
 		NO_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK, READ_LOCK };
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	struct gs_part *p_ptr;
 
 	log_flag(GANG, "gang: starting timeslicer loop");

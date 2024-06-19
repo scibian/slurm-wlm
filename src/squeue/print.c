@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2013 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -57,10 +57,11 @@
 #include "src/common/xstring.h"
 
 #include "src/squeue/print.h"
+#include "src/common/print_fields.h"
 #include "src/squeue/squeue.h"
 
 static void	_combine_pending_array_tasks(List l);
-static int	_filter_job(job_info_t * job);
+static bool _filter_job(job_info_t *job);
 static int	_filter_job_part(char *part_name);
 static int	_filter_step(job_step_info_t * step);
 static void	_job_list_del(void *x);
@@ -77,11 +78,69 @@ static partition_info_msg_t *part_info_msg = NULL;
 /*****************************************************************************
  * Global Print Functions
  *****************************************************************************/
+typedef struct {
+	int *count;
+	list_t *req_list;
+	job_info_t *job_ptr;
+} foreach_prio_job_req_arg_t;
 
-int print_jobs_array(job_info_t * jobs, int size, List format)
+static int _foreach_create_prio_job_req(void *x, void *arg)
+{
+	char *part_name = x;
+	foreach_prio_job_req_arg_t *req_arg = arg;
+	job_info_t *job_ptr = req_arg->job_ptr;
+	squeue_job_rec_t *job_rec_ptr;
+
+	(*req_arg->count)++;
+
+	if (_filter_job_part(part_name))
+		return SLURM_SUCCESS;
+
+	job_rec_ptr = xmalloc(sizeof(squeue_job_rec_t));
+	job_rec_ptr->job_ptr = req_arg->job_ptr;
+	job_rec_ptr->part_name = xstrdup(part_name);
+	job_rec_ptr->part_prio = _part_get_prio_tier(part_name);
+
+	if (IS_JOB_PENDING(job_ptr) && job_ptr->priority_array) {
+		job_rec_ptr->job_prio =
+			job_ptr->priority_array[(*req_arg->count) - 1];
+	} else {
+		job_rec_ptr->job_prio = job_ptr->priority;
+	}
+	list_append(req_arg->req_list, job_rec_ptr);
+
+	return SLURM_SUCCESS;
+}
+
+static void _create_priority_list(list_t *l,
+				  job_info_t *job_ptr)
+{
+	char *tmp;
+	int j = 0;
+	foreach_prio_job_req_arg_t arg = {0};
+	list_t *part_names = list_create(xfree_ptr);
+
+	/*
+	 * If the job requests multiple partitions then priority_array_parts
+	 * will exist. When a job is running the controller only sends the
+	 * partition that the job is running in in job_ptr->partition so we can
+	 * just use job_ptr->partition and job_ptr->priority.
+	 */
+	if (IS_JOB_PENDING(job_ptr) && job_ptr->priority_array_parts)
+		tmp = job_ptr->priority_array_parts;
+	else
+		tmp = job_ptr->partition;
+	slurm_addto_char_list(part_names, tmp);
+
+	arg.count = &j;
+	arg.job_ptr = job_ptr;
+	arg.req_list = l;
+	list_for_each(part_names, _foreach_create_prio_job_req, &arg);
+}
+
+extern void print_jobs_array(job_info_t *jobs, int size, list_t *format)
 {
 	squeue_job_rec_t *job_rec_ptr;
-	char *tmp, *tok, *save_ptr = NULL;
 	int i;
 	List l;
 
@@ -96,21 +155,7 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 		if (_filter_job(&jobs[i]))
 			continue;
 		if (params.priority_flag) {
-			tmp = xstrdup(jobs[i].partition);
-			tok = strtok_r(tmp, ",", &save_ptr);
-			while (tok) {
-				if (_filter_job_part(tok) == 0) {
-					job_rec_ptr = xmalloc(
-						      sizeof(squeue_job_rec_t));
-					job_rec_ptr->job_ptr = jobs + i;
-					job_rec_ptr->part_name = xstrdup(tok);
-					job_rec_ptr->part_prio =
-						_part_get_prio_tier(tok);
-					list_append(l, (void *) job_rec_ptr);
-				}
-				tok = strtok_r(NULL, ",", &save_ptr);
-			}
-			xfree(tmp);
+			_create_priority_list(l, &jobs[i]);
 		} else {
 			if (_filter_job_part(jobs[i].partition))
 				continue;
@@ -137,11 +182,9 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 	/* Print the jobs of interest */
 	list_for_each(l, _print_job_from_format, format);
 	FREE_NULL_LIST(l);
-
-	return SLURM_SUCCESS;
 }
 
-int print_steps_array(job_step_info_t * steps, int size, List format)
+extern void print_steps_array(job_step_info_t *steps, int size, list_t *format)
 {
 	if (!params.no_header)
 		_print_step_from_format(NULL, format);
@@ -165,24 +208,22 @@ int print_steps_array(job_step_info_t * steps, int size, List format)
 		list_for_each(step_list, _print_step_from_format, format);
 		FREE_NULL_LIST(step_list);
 	}
-
-	return SLURM_SUCCESS;
 }
 
 /* Combine a job array's task "reason" into the master job array record
  * reason as needed */
 static void _merge_job_reason(job_info_t *job_ptr, job_info_t *task_ptr)
 {
-	char *task_desc;
+	const char *task_desc;
 
 	if (job_ptr->state_reason == task_ptr->state_reason)
 		return;
 
 	if (!job_ptr->state_desc) {
 		job_ptr->state_desc =
-			xstrdup(job_reason_string(job_ptr->state_reason));
+			xstrdup(job_state_reason_string(job_ptr->state_reason));
 	}
-	task_desc = job_reason_string(task_ptr->state_reason);
+	task_desc = job_state_reason_string(task_ptr->state_reason);
 	if (strstr(job_ptr->state_desc, task_desc))
 		return;
 	xstrfmtcat(job_ptr->state_desc, ",%s", task_desc);
@@ -194,7 +235,7 @@ static void _merge_job_reason(job_info_t *job_ptr, job_info_t *task_ptr)
 static void _combine_pending_array_tasks(List job_list)
 {
 	squeue_job_rec_t *job_rec_ptr, *task_rec_ptr;
-	ListIterator job_iterator, task_iterator;
+	list_itr_t *job_iterator, *task_iterator;
 	bitstr_t *task_bitmap;
 	int bitmap_size, update_cnt;
 
@@ -403,7 +444,7 @@ int _print_time(time_t t, int level, int width, bool right)
  *****************************************************************************/
 static int _print_one_job_from_format(job_info_t * job, List list)
 {
-	ListIterator iter = list_iterator_create(list);
+	list_itr_t *iter = list_iterator_create(list);
 	job_format_t *current;
 
 	while ((current = list_next(iter))) {
@@ -435,8 +476,11 @@ static int _print_job_from_format(void *x, void *arg)
 		xfree(job_rec_ptr->job_ptr->partition);
 		job_rec_ptr->job_ptr->partition = xstrdup(job_rec_ptr->
 							  part_name);
-
 	}
+
+	if (job_rec_ptr->job_prio)
+		job_rec_ptr->job_ptr->priority = job_rec_ptr->job_prio;
+
 	if (job_rec_ptr->job_ptr->array_task_str && params.array_flag) {
 		char *p;
 
@@ -700,12 +744,12 @@ int _print_job_reason(job_info_t * job, int width, bool right, char* suffix)
 	if (job == NULL)        /* Print the Header instead */
 		_print_str("REASON", width, right, true);
 	else {
-		char *reason;
+		const char *reason;
 		if (job->state_desc)
 			reason = job->state_desc;
 		else
-			reason = job_reason_string(job->state_reason);
-		_print_str(reason, width, right, true);
+			reason = job_state_reason_string(job->state_reason);
+		_print_str((char *)reason, width, right, true);
 	}
 	if (suffix)
 		printf("%s", suffix);
@@ -1086,11 +1130,12 @@ int _print_job_reason_list(job_info_t * job, int width, bool right,
 		       || IS_JOB_OOM(job)
 		       || IS_JOB_DEADLINE(job)
 		       || IS_JOB_FAILED(job))) {
-		char *reason_fmt = NULL, *reason = NULL;
+		char *reason_fmt = NULL;
+		const char *reason = NULL;
 		if (job->state_desc)
 			reason = job->state_desc;
 		else
-			reason = job_reason_string(job->state_reason);
+			reason = job_state_reason_string(job->state_reason);
 		xstrfmtcat(reason_fmt, "(%s)", reason);
 		_print_str(reason_fmt, width, right, true);
 		xfree(reason_fmt);
@@ -2090,25 +2135,32 @@ int _print_job_sockets_per_board(job_info_t * job, int width,
 
 }
 
+static char *_expand_std_patterns(char *path, job_info_t *job)
+{
+	job_std_pattern_t job_stp;
+
+	job_stp.array_task_id = job->array_task_id;
+	job_stp.first_step_name = "batch";
+	job_stp.first_step_node = job->batch_host;
+	job_stp.jobid = job->job_id;
+	job_stp.jobname = job->name;
+	job_stp.user = job->user_name;
+	job_stp.work_dir = job->work_dir;
+
+	return expand_stdio_fields(path, &job_stp);
+}
+
 int _print_job_std_err(job_info_t * job, int width,
 		       bool right_justify, char* suffix)
 {
-	char tmp_line[1024];
-
 	if (job == NULL)
 		_print_str("STDERR", width, right_justify, true);
-	else if (!job->batch_flag)
-		_print_str("N/A", width, right_justify, true);
-	else if (job->std_err)
+	else if (params.expand_patterns) {
+		char *tmp_str = _expand_std_patterns(job->std_err, job);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else
 		_print_str(job->std_err, width, right_justify, true);
-	else if (job->std_out)
-		_print_str(job->std_out, width, right_justify, true);
-	else {
-		snprintf(tmp_line,sizeof(tmp_line), "%s/slurm-%u.out",
-			 job->work_dir, job->job_id);
-
-		_print_str(tmp_line, width, right_justify, true);
-	}
 
 	if (suffix)
 		printf("%s", suffix);
@@ -2120,7 +2172,11 @@ int _print_job_std_in(job_info_t * job, int width,
 {
 	if (job == NULL)
 		_print_str("STDIN", width, right_justify, true);
-	else
+	else if (params.expand_patterns) {
+		char *tmp_str = _expand_std_patterns(job->std_in, job);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else
 		_print_str(job->std_in, width, right_justify, true);
 
 	if (suffix)
@@ -2132,18 +2188,26 @@ int _print_job_std_in(job_info_t * job, int width,
 int _print_job_std_out(job_info_t * job, int width,
 		       bool right_justify, char* suffix)
 {
-	char tmp_line[1024];
+	/*
+	 * Populate the default patterns in std_out for batch jobs.
+	 */
+	if (job && !job->std_out && job->batch_flag) {
+		if (job->array_job_id)
+			xstrfmtcat(job->std_out, "%s/slurm-%%A_%%a.out",
+				   job->work_dir);
+                else
+			xstrfmtcat(job->std_out, "%s/slurm-%%j.out",
+				   job->work_dir);
+	}
 
 	if (job == NULL)
 		_print_str("STDOUT", width, right_justify, true);
-	else if (job->std_out)
+	else if (params.expand_patterns) {
+		char *tmp_str = _expand_std_patterns(job->std_out, job);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else
 		_print_str(job->std_out, width, right_justify, true);
-	else {
-		snprintf(tmp_line,sizeof(tmp_line), "%s/slurm-%u.out",
-			 job->work_dir, job->job_id);
-
-		_print_str(tmp_line, width, right_justify, true);
-	}
 
 	if (suffix)
 		printf("%s", suffix);
@@ -2371,7 +2435,7 @@ static int _print_step_from_format(void *x, void *arg)
 {
 	job_step_info_t *job_step = (job_step_info_t *) x;
 	List list = (List) arg;
-	ListIterator i = list_iterator_create(list);
+	list_itr_t *i = list_iterator_create(list);
 	step_format_t *current;
 
 	while ((current = list_next(i))) {
@@ -2838,14 +2902,13 @@ int _print_step_tres_per_task(job_step_info_t * step, int width, bool right,
 }
 
 /*
- * Filter job records per input specifications,
- * Returns >0 if job should be filter out (not printed)
- * Returns 0 if job record should be printed
+ * Filter job records per input specifications.
+ * Returns true if the job should be filtered out (not printed).
  */
-static int _filter_job(job_info_t * job)
+static bool _filter_job(job_info_t *job)
 {
-	int i, filter;
-	ListIterator iterator;
+	int i;
+	list_itr_t *iterator;
 	uint32_t *user;
 	uint32_t *state_id;
 	char *account, *license, *qos, *name;
@@ -2853,10 +2916,10 @@ static int _filter_job(job_info_t * job)
 	bool partial_array = false;
 
 	if (job->job_id == 0)
-		return 1;
+		return true;
 
 	if (params.job_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.job_list);
 		while ((job_step_id = list_next(iterator))) {
 			if (((job_step_id->array_id == NO_VAL)             &&
@@ -2867,7 +2930,7 @@ static int _filter_job(job_info_t * job)
 			    ((job_step_id->array_id == job->array_task_id) &&
 			     (job_step_id->step_id.job_id ==
 			      job->array_job_id))) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 			if ((job_step_id->array_id != NO_VAL)             &&
@@ -2876,25 +2939,25 @@ static int _filter_job(job_info_t * job)
 			    (job->array_bitmap &&
 			     bit_test(job->array_bitmap,
 				      job_step_id->array_id))) {
-				filter = 0;
+				filter = false;
 				partial_array = true;
 				break;
 			}
 			if (job_step_id->step_id.job_id == job->het_job_id) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 1;
+		if (filter)
+			return true;
 	}
 
 	if (params.licenses_list) {
 		char *token = NULL, *last = NULL, *tmp_name = NULL;
 		char *tmp_token;
+		bool filter = true;
 
-		filter = 1;
 		if (job->licenses) {
 			tmp_name = xstrdup(job->licenses);
 			token = strtok_r(tmp_name, ",", &last);
@@ -2912,7 +2975,7 @@ static int _filter_job(job_info_t * job)
 			iterator = list_iterator_create(params.licenses_list);
 			while ((license = list_next(iterator))) {
 				if (xstrcmp(token, license) == 0) {
-					filter = 0;
+					filter = false;
 					break;
 				}
 			}
@@ -2920,43 +2983,43 @@ static int _filter_job(job_info_t * job)
 			token = strtok_r(NULL, ",", &last);
 		}
 		xfree(tmp_name);
-		if (filter == 1)
-			return 2;
+		if (filter)
+			return true;
 	}
 
 	if (params.account_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.account_list);
 		while ((account = list_next(iterator))) {
 			 if ((job->account != NULL) &&
 			     (xstrcasecmp(account, job->account) == 0)) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 2;
+		if (filter)
+			return true;
 	}
 
 	if (params.qos_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.qos_list);
 		while ((qos = list_next(iterator))) {
 			 if ((job->qos != NULL) &&
 			     (xstrcasecmp(qos, job->qos) == 0)) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 2;
+		if (filter)
+			return true;
 	}
 
 	if (params.all_states) {
 	} else if (params.state_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.state_list);
 		while ((state_id = list_next(iterator))) {
 			bool match = false;
@@ -2967,61 +3030,64 @@ static int _filter_job(job_info_t * job)
 			} else if (*state_id == job->job_state)
 				match = true;
 			if (match) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 3;
+		if (filter)
+			return true;
 	} else {
 		if (!IS_JOB_PENDING(job) &&
 		    !IS_JOB_RUNNING(job) &&
 		    !IS_JOB_STAGE_OUT(job) &&
 		    !IS_JOB_SUSPENDED(job) &&
 		    !IS_JOB_COMPLETING(job))
-			return 4;
+			return true;
 	}
 
 	if ((params.nodes)
 	    && ((job->nodes == NULL)
 		|| (!hostset_intersects(params.nodes, job->nodes))))
-		return 5;
+		return true;
+
+	if (params.notme_flag && (getuid() == job->user_id))
+		return true;
 
 	if (params.user_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.user_list);
 		while ((user = list_next(iterator))) {
 			if (*user == job->user_id) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 6;
+		if (filter)
+			return true;
 	}
 
 	if (params.reservation) {
 		if ((job->resv_name == NULL) ||
 		    (xstrcmp(job->resv_name, params.reservation))) {
-			return 7;
+			return true;
 		}
 	}
 
 	if (params.name_list) {
-		filter = 1;
+		bool filter = true;
 		iterator = list_iterator_create(params.name_list);
 		while ((name = list_next(iterator))) {
 			if ((job->name != NULL) &&
 			     (xstrcasecmp(name, job->name) == 0)) {
-				filter = 0;
+				filter = false;
 				break;
 			}
 		}
 		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return 8;
+		if (filter)
+			return true;
 	}
 
 	if (partial_array) {
@@ -3053,14 +3119,14 @@ static int _filter_job(job_info_t * job)
 		}
 	}
 
-	return 0;
+	return false;
 }
 
 /* Return 0 if supplied partition name is to be printed, otherwise return 2 */
 static int _filter_job_part(char *part_name)
 {
 	char *token = NULL, *last = NULL, *tmp_name = NULL, *part;
-	ListIterator iterator;
+	list_itr_t *iterator;
 	int rc = 2;
 
 	if (!params.part_list)
@@ -3091,7 +3157,7 @@ static int _filter_job_part(char *part_name)
 static int _filter_step(job_step_info_t * step)
 {
 	int filter;
-	ListIterator iterator;
+	list_itr_t *iterator;
 	uint32_t *user;
 	char *part;
 	squeue_job_step_t *job_step_id;

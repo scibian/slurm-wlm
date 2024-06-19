@@ -1,8 +1,7 @@
 /*****************************************************************************
  *  alloc.c - Slurm scrun job alloc handlers
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -269,7 +268,6 @@ static int _on_msg(conmgr_fd_t *con, slurm_msg_t *msg, void *arg)
 		};
 
 		response_init(&resp_msg, msg, RESPONSE_SLURM_RC, &rc_msg);
-		resp_msg.data_size = sizeof(rc_msg);
 
 		rc = conmgr_queue_write_msg(con, &resp_msg);
 		/* nothing to xfree() */
@@ -519,6 +517,11 @@ static void _alloc_job(void)
 	read_lock_state();
 	desc->name = xstrdup(state.id);
 	desc->container_id = xstrdup(state.id);
+	if (state.spank_job_env) {
+		desc->spank_job_env =
+			env_array_copy((const char **) state.spank_job_env);
+		desc->spank_job_env_size = envcount(state.spank_job_env);
+	}
 	unlock_state();
 	if (!desc->min_nodes || (desc->min_nodes == NO_VAL))
 		desc->min_nodes = 1;

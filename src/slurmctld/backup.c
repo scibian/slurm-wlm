@@ -186,8 +186,12 @@ void run_backup(void)
 			 */
 			break;
 		} else {
+			char *abort_msg = NULL;
+			bool abort_takeover = false;
+			static time_t prev_heartbeat = 0;
 			time_t use_time, last_heartbeat;
 			int server_inx = -1;
+
 			last_heartbeat = get_last_heartbeat(&server_inx);
 			debug("%s: last_heartbeat %ld from server %d",
 			      __func__, last_heartbeat, server_inx);
@@ -206,11 +210,41 @@ void run_backup(void)
 				use_time = last_heartbeat;
 			}
 
+			if (!last_heartbeat) {
+				/*
+				 * Failed to read the heartbeat file, abort
+				 * takeover because the StateSaveLocation is
+				 * broken.
+				 */
+				abort_takeover = 1;
+				abort_msg = "Not taking control. Primary slurmctld is unresponsive, but heartbeat file could not be read. Something is wrong with your StateSaveLocation.";
+			} else if (!prev_heartbeat) {
+				/*
+				 * Need at least one loop to detect if the
+				 * primary is still running.
+				 */
+				abort_takeover = 1;
+				abort_msg = "Not taking control. Primary slurmctld is unresponsive, but not yet able to determine if primary may actually be running.";
+			} else if (last_heartbeat != prev_heartbeat) {
+				/*
+				 * If the primary is unresponsive but the
+				 * heartbeat is getting updated, consider the
+				 * controller still "working" and abort the
+				 * takeover.
+				 */
+				abort_takeover = 1;
+				abort_msg = "Not taking control. Primary slurmctld is unresponsive, but is still updating the heartbeat file. Check for clock skew.";
+			}
+
+			prev_heartbeat = last_heartbeat;
+
 			if (((time(NULL) - use_time) >
 			    slurm_conf.slurmctld_timeout)) {
-				if (last_heartbeat)
+				if (!abort_takeover) {
+					prev_heartbeat = 0;
 					break;
-				error("Not taking control. Heartbeat file could not be read and the primary slurmctld is unresponsive. Something is wrong with your StateSaveLocation.");
+				}
+				error("%s", abort_msg);
 			}
 		}
 	}
@@ -227,7 +261,7 @@ void run_backup(void)
 			        slurm_conf.slurmctld_pidfile);
 
 		info("BackupController terminating");
-		pthread_join(slurmctld_config.thread_id_sig, NULL);
+		slurm_thread_join(slurmctld_config.thread_id_sig);
 		log_fini();
 		if (dump_core)
 			abort();
@@ -246,8 +280,8 @@ void run_backup(void)
 	trigger_backup_ctld_as_ctrl();
 
 	pthread_kill(slurmctld_config.thread_id_sig, SIGTERM);
-	pthread_join(slurmctld_config.thread_id_sig, NULL);
-	pthread_join(slurmctld_config.thread_id_rpc, NULL);
+	slurm_thread_join(slurmctld_config.thread_id_sig);
+	slurm_thread_join(slurmctld_config.thread_id_rpc);
 
 	/*
 	 * The job list needs to be freed before we run
@@ -271,12 +305,12 @@ void run_backup(void)
 
 	/* clear old state and read new state */
 	lock_slurmctld(config_write_lock);
-	if (switch_g_restore(slurm_conf.state_save_location, true)) {
+	if (switch_g_restore(true)) {
 		error("failed to restore switch state");
 		abort();
 	}
 	slurmctld_config.shutdown_time = (time_t) 0;
-	if (read_slurm_conf(2, false)) {	/* Recover all state */
+	if (read_slurm_conf(2)) {	/* Recover all state */
 		error("Unable to recover slurm state");
 		abort();
 	}
@@ -288,10 +322,8 @@ void run_backup(void)
 		 */
 		list_flush(conf_includes_list);
 	}
-	unlock_slurmctld(config_write_lock);
 	select_g_select_nodeinfo_set_all();
-
-	return;
+	unlock_slurmctld(config_write_lock);
 }
 
 /*
@@ -409,8 +441,18 @@ static void *_background_rpc_mgr(void *no_data)
 		slurm_msg_t_init(&msg);
 		if (slurm_receive_msg(newsockfd, &msg, 0) != 0)
 			error("slurm_receive_msg: %m");
-		else
+		else {
+			if (slurm_conf.debug_flags & DEBUG_FLAG_AUDIT_RPCS) {
+				slurm_addr_t cli_addr;
+				(void) slurm_get_peer_addr(newsockfd, &cli_addr);
+				log_flag(AUDIT_RPCS, "msg_type=%s uid=%u client=[%pA] protocol=%u",
+					 rpc_num2string(msg.msg_type),
+					 msg.auth_uid, &cli_addr,
+					 msg.protocol_version);
+			}
+
 			_background_process_msg(&msg);
+		}
 
 		slurm_free_msg_members(&msg);
 
@@ -436,7 +478,7 @@ static int _background_process_msg(slurm_msg_t *msg)
 	}
 
 	if (slurm_conf.debug_flags & DEBUG_FLAG_PROTOCOL) {
-		char *p = rpc_num2string(msg->msg_type);
+		const char *p = rpc_num2string(msg->msg_type);
 		if (msg->conn) {
 			info("%s: received opcode %s from persist conn on (%s)%s uid %u",
 			     __func__, p, msg->conn->cluster_name,
@@ -589,7 +631,7 @@ extern int ping_controllers(bool active_controller)
 	for (i = 0; i < ping_target_cnt; i++) {
 		if (i == backup_inx)	/* Avoid pinging ourselves */
 			continue;
-		pthread_join(ping_tids[i], NULL);
+		slurm_thread_join(ping_tids[i]);
 	}
 	xfree(ping_tids);
 
@@ -632,7 +674,6 @@ static void _backup_reconfig(void)
 	slurm_conf_reinit(NULL);
 	update_logging();
 	slurm_conf.last_update = time(NULL);
-	return;
 }
 
 static void *_shutdown_controller(void *arg)

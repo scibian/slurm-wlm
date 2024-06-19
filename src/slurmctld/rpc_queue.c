@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  rpc_queue.c
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -59,8 +58,8 @@ bool enabled = true;
 static void *_rpc_queue_worker(void *arg)
 {
 	slurmctld_rpc_t *q = (slurmctld_rpc_t *) arg;
-	slurm_msg_t *msg;
 	int processed = 0;
+	long processed_usec = 0;
 
 #if HAVE_SYS_PRCTL_H
 	char *name = xstrdup_printf("rpcq-%u", q->msg_type);
@@ -81,7 +80,17 @@ static void *_rpc_queue_worker(void *arg)
 	 * acquisition, then fall back to sleep until additional work is queued.
 	 */
 	while (true) {
-		msg = list_dequeue(q->work);
+		slurm_msg_t *msg = NULL;
+		bool highload = false;
+		long sleep_usec = 0;
+
+		/* apply per-cycle rate limiting, if configured */
+		if ((q->max_per_cycle && (processed == q->max_per_cycle)) ||
+		    (q->max_usec_per_cycle &&
+		     (processed_usec >= q->max_usec_per_cycle)))
+			highload = true;
+		else
+			msg = list_dequeue(q->work);
 
 		if (!msg) {
 			unlock_slurmctld(q->locks);
@@ -89,9 +98,25 @@ static void *_rpc_queue_worker(void *arg)
 			if (processed && q->post_func)
 				q->post_func();
 
-			log_flag(PROTOCOL, "%s(%s): sleeping after processing %d",
-				 __func__, q->msg_name, processed);
-			processed = 0;
+			if (processed) {
+				slurm_mutex_lock(&q->mutex);
+				q->cycle_last = processed;
+				if (processed > q->cycle_max)
+					q->cycle_max = processed;
+				record_rpc_queue_stats(q);
+				slurm_mutex_unlock(&q->mutex);
+			}
+
+			/*
+			 * Use yield_sleep if there's more work to be done,
+			 * otherwise interval if set, otherwise 500 usec.
+			 */
+			if (highload && (q->yield_sleep > 0))
+				sleep_usec = q->yield_sleep;
+			else if (q->interval > 0)
+				sleep_usec = q->interval;
+			else
+				sleep_usec = 500;
 
 			/*
 			 * Rate limit RPC processing. Ensure that when we
@@ -105,7 +130,14 @@ static void *_rpc_queue_worker(void *arg)
 			 * This extends the race described below, but this
 			 * is handled properly.
 			 */
-			usleep(500);
+
+			log_flag(PROTOCOL, "%s(%s): sleeping %ld usec after processing %d/%u msgs (processed_usec=%ld/%d)",
+				 __func__, q->msg_name, sleep_usec,
+				 processed, q->max_per_cycle,
+				 processed_usec, q->max_usec_per_cycle);
+			processed = 0;
+			processed_usec = 0;
+			usleep(sleep_usec);
 
 			slurm_mutex_lock(&q->mutex);
 
@@ -131,7 +163,12 @@ static void *_rpc_queue_worker(void *arg)
 		} else {
 			DEF_TIMERS;
 			START_TIMER;
-
+			if (q->max_queued) {
+				slurm_mutex_lock(&q->mutex);
+				q->queued--;
+				record_rpc_queue_stats(q);
+				slurm_mutex_unlock(&q->mutex);
+			}
 			msg->flags |= CTLD_QUEUE_PROCESSING;
 			q->func(msg);
 			if ((msg->conn_fd >= 0) && (close(msg->conn_fd) < 0))
@@ -141,6 +178,7 @@ static void *_rpc_queue_worker(void *arg)
 			record_rpc_stats(msg, DELTA_TIMER);
 			slurm_free_msg(msg);
 			processed++;
+			processed_usec += DELTA_TIMER;
 		}
 	}
 
@@ -166,8 +204,10 @@ extern void rpc_queue_init(void)
 		slurm_mutex_init(&q->mutex);
 		q->shutdown = false;
 
-		log_flag(PROTOCOL, "%s: starting queue for %s",
-			 __func__, q->msg_name);
+		verbose("starting rpc_queue for %s: max_per_cycle=%u max_usec_per_cycle=%u max_queued=%d hard_drop=%d yield_sleep=%d interval=%d",
+			q->msg_name, q->max_per_cycle, q->max_usec_per_cycle,
+			q->max_queued, q->hard_drop, q->yield_sleep,
+			q->interval);
 		slurm_thread_create(&q->thread, _rpc_queue_worker, q);
 	}
 }
@@ -195,29 +235,50 @@ extern void rpc_queue_shutdown(void)
 		if (!q->queue_enabled)
 			continue;
 
-		pthread_join(q->thread, NULL);
+		slurm_thread_join(q->thread);
 		FREE_NULL_LIST(q->work);
 	}
 }
 
-extern bool rpc_enqueue(slurm_msg_t *msg)
+extern bool rpc_queue_enabled(void)
+{
+	return enabled;
+}
+
+extern int rpc_enqueue(slurm_msg_t *msg)
 {
 	if (!enabled)
-		return false;
+		return ESLURM_NOT_SUPPORTED;
 
 	for (slurmctld_rpc_t *q = slurmctld_rpcs; q->msg_type; q++) {
 		if (q->msg_type == msg->msg_type) {
 			if (!q->queue_enabled)
 				break;
 
+			if (q->max_queued) {
+				slurm_mutex_lock(&q->mutex);
+				if (q->queued >= q->max_queued) {
+					q->dropped++;
+					record_rpc_queue_stats(q);
+					slurm_mutex_unlock(&q->mutex);
+					if (q->hard_drop)
+						return SLURMCTLD_COMMUNICATIONS_HARD_DROP;
+					else
+						return SLURMCTLD_COMMUNICATIONS_BACKOFF;
+				}
+				q->queued++;
+				record_rpc_queue_stats(q);
+				slurm_mutex_unlock(&q->mutex);
+			}
+
 			list_enqueue(q->work, msg);
 			slurm_mutex_lock(&q->mutex);
 			slurm_cond_signal(&q->cond);
 			slurm_mutex_unlock(&q->mutex);
-			return true;
+			return SLURM_SUCCESS;
 		}
 	}
 
 	/* RPC does not have a dedicated queue */
-	return false;
+	return ESLURM_NOT_SUPPORTED;
 }

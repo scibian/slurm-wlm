@@ -1,8 +1,7 @@
 /*****************************************************************************
  *  anchor.c - Slurm scrun anchor handlers
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -72,9 +71,6 @@
 #include "src/common/xstring.h"
 
 #include "src/scrun/scrun.h"
-
-#define CONMGR_THREADS 4
-#define MAX_OPEN_CONNECTIONS 124
 
 /*
  * Special file descriptor for SIGCHILD handler
@@ -1264,25 +1260,6 @@ extern void on_allocation(conmgr_fd_t *con, conmgr_work_type_t type,
 		_try_start();
 }
 
-extern parsed_host_port_t *parse_host_port(const char *str)
-{
-	/*
-	 * This is a placeholder to avoid linker errors but should never get
-	 * called in scrun
-	 */
-	fatal_abort("stub");
-	return NULL;
-}
-
-extern void free_parse_host_port(parsed_host_port_t *parsed)
-{
-	/*
-	 * This is a placeholder to avoid linker errors but should never get
-	 * called in scrun
-	 */
-	fatal_abort("stub");
-}
-
 static void *_on_connection(conmgr_fd_t *con, void *arg)
 {
 	/* may or may not need to be locked for this one */
@@ -1316,7 +1293,6 @@ static int _send_state(conmgr_fd_t *con, slurm_msg_t *req_msg)
 
 	state_msg = slurm_create_container_state_msg();
 	msg->data = state_msg;
-	msg->data_size = sizeof(*state_msg);
 
 	read_lock_state();
 	state_msg->oci_version = xstrdup(state.oci_version);
@@ -1541,7 +1517,7 @@ check_pid:
 	return rc;
 }
 
-extern int spawn_anchor(void)
+static int _anchor_child(int pipe_fd[2])
 {
 	static const conmgr_events_t conmgr_events = {
 		.on_msg = _on_connection_msg,
@@ -1553,40 +1529,14 @@ extern int spawn_anchor(void)
 		.on_connection = _on_startup_con,
 		.on_finish = _on_startup_con_fin,
 	};
-	static const conmgr_callbacks_t callbacks = {
-		.parse = parse_host_port,
-		.free_parse = free_parse_host_port,
-	};
-	int pipe_fd[2] = { -1, -1 };
-	pid_t child;
-	int rc, spank_rc;
 	list_t *socket_listen = list_create(xfree_ptr);
-
-	check_state();
-
-	init_lua();
-
-	if ((rc = spank_init_allocator()))
-		fatal("%s: failed to initialize plugin stack: %s",
-		      __func__, slurm_strerror(rc));
-
-	if (pipe(pipe_fd))
-		fatal("pipe() failed: %m");
-	xassert(pipe_fd[0] > STDERR_FILENO);
-	xassert(pipe_fd[1] > STDERR_FILENO);
-
-	_open_pidfile();
-
-	if ((child = _daemonize(state.requested_terminal))) {
-		if (close(pipe_fd[1]))
-			fatal("%s: close pipe failed: %m", __func__);
-
-		rc = _wait_create_pid(pipe_fd[0], child);
-		goto done;
-	}
+	int rc, spank_rc;
 
 	state.pid = getpid();
 	_populate_pidfile();
+
+	/* must init conmgr after calling fork() in _daemonize() */
+	init_conmgr(0, 0, (conmgr_callbacks_t) { NULL, NULL } );
 
 	change_status_force(CONTAINER_ST_CREATING);
 
@@ -1606,8 +1556,6 @@ extern int spawn_anchor(void)
 		_adopt_tty();
 	else if (state.requested_terminal)
 		_open_pty();
-
-	init_conmgr(CONMGR_THREADS, MAX_OPEN_CONNECTIONS, callbacks);
 
 	/* scrun anchor process */
 
@@ -1655,14 +1603,44 @@ extern int spawn_anchor(void)
 	debug4("%s: END conmgr_run()", __func__);
 	slurm_mutex_unlock(&state.debug_lock);
 #endif
-
-
-done:
-	debug("%s: anchor exiting: %s", __func__, slurm_strerror(rc));
-
 	FREE_NULL_LIST(socket_listen);
 	free_conmgr();
 
+	return rc;
+}
+
+extern int spawn_anchor(void)
+{
+	int pipe_fd[2] = { -1, -1 };
+	pid_t child;
+	int rc, spank_rc;
+
+	check_state();
+
+	init_lua();
+
+	if ((rc = spank_init_allocator()))
+		fatal("%s: failed to initialize plugin stack: %s",
+		      __func__, slurm_strerror(rc));
+
+	if (pipe(pipe_fd))
+		fatal("pipe() failed: %m");
+	xassert(pipe_fd[0] > STDERR_FILENO);
+	xassert(pipe_fd[1] > STDERR_FILENO);
+
+	_open_pidfile();
+
+	if ((child = _daemonize(state.requested_terminal))) {
+		if (close(pipe_fd[1]))
+			fatal("%s: close pipe failed: %m", __func__);
+
+		rc = _wait_create_pid(pipe_fd[0], child);
+		goto done;
+	} else
+		rc = _anchor_child(pipe_fd);
+
+done:
+	debug("%s: anchor exiting: %s", __func__, slurm_strerror(rc));
 	debug("%s: exit[%d]: %s", __func__, rc, slurm_strerror(rc));
 
 	spank_rc = spank_fini(NULL);

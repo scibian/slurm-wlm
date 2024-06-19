@@ -294,7 +294,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.nnodes		= ctx->step_resp->step_layout->node_cnt;
 	launch.ntasks		= ctx->step_resp->step_layout->task_cnt;
 	launch.slurmd_debug	= params->slurmd_debug;
-	launch.switch_job	= ctx->step_resp->switch_job;
+	launch.switch_step = ctx->step_resp->switch_step;
 	launch.profile		= params->profile;
 	launch.task_prolog	= params->task_prolog;
 	launch.task_epilog	= params->task_epilog;
@@ -316,6 +316,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.cpt_compact_cnt = params->cpt_compact_cnt;
 	launch.cpt_compact_reps = params->cpt_compact_reps;
 	launch.tres_per_task	= ctx->step_req->tres_per_task;
+	launch.stepmgr = xstrdup(ctx->step_resp->stepmgr);
 
 	launch.threads_per_core	= params->threads_per_core;
 	launch.ntasks_per_board = params->ntasks_per_board;
@@ -391,6 +392,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 	launch.resp_port = xcalloc(launch.num_resp_port, sizeof(uint16_t));
 	memcpy(launch.resp_port, ctx->launch_state->resp_port,
 	       (sizeof(uint16_t) * launch.num_resp_port));
+
 	rc = _launch_tasks(ctx, &launch, params->msg_timeout,
 			   params->tree_width, launch.complete_nodelist);
 
@@ -401,6 +403,7 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 fail1:
 	xfree(launch.complete_nodelist);
 	xfree(launch.cwd);
+	xfree(launch.stepmgr);
 	env_array_free(env);
 	FREE_NULL_LIST(launch.options);
 	return rc;
@@ -492,7 +495,7 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	launch.nnodes		= ctx->step_resp->step_layout->node_cnt;
 	launch.ntasks		= ctx->step_resp->step_layout->task_cnt;
 	launch.slurmd_debug	= params->slurmd_debug;
-	launch.switch_job	= ctx->step_resp->switch_job;
+	launch.switch_step = ctx->step_resp->switch_step;
 	launch.profile		= params->profile;
 	launch.task_prolog	= params->task_prolog;
 	launch.task_epilog	= params->task_epilog;
@@ -735,7 +738,7 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 
 	slurm_mutex_unlock(&sls->lock);
 	if (sls->msg_thread)
-		pthread_join(sls->msg_thread, NULL);
+		slurm_thread_join(sls->msg_thread);
 	slurm_mutex_lock(&sls->lock);
 	pmi_kvs_free();
 
@@ -750,7 +753,7 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 		slurm_cond_broadcast(&sls->cond);
 
 		slurm_mutex_unlock(&sls->lock);
-		pthread_join(sls->io_timeout_thread, NULL);
+		slurm_thread_join(sls->io_timeout_thread);
 		slurm_mutex_lock(&sls->lock);
 	}
 
@@ -802,7 +805,7 @@ extern void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	hostlist_t *hl;
 	char *name = NULL;
 	List ret_list = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	ret_data_info_t *ret_data_info = NULL;
 	int rc = SLURM_SUCCESS;
 	struct step_launch_state *sls = ctx->launch_state;
@@ -1641,7 +1644,7 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 #endif
 	slurm_msg_t msg;
 	List ret_list = NULL;
-	ListIterator ret_itr;
+	list_itr_t *ret_itr;
 	ret_data_info_t *ret_data = NULL;
 	int rc = SLURM_SUCCESS;
 	int tot_rc = SLURM_SUCCESS;
@@ -1677,16 +1680,6 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 		msg.protocol_version = ctx->step_resp->use_protocol_ver;
 	else
 		msg.protocol_version = SLURM_PROTOCOL_VERSION;
-
-	/*
-	 * Prior to Slurm 23.02 --slurmd-debug was interpreted as offset to
-	 * LOG_LEVEL_ERROR, so we need to adjust the value. This can be removed
-	 * 2 versions after 23.02.
-	 */
-	if (ctx->step_resp->use_protocol_ver < SLURM_23_02_PROTOCOL_VERSION) {
-		launch_msg->slurmd_debug-= LOG_LEVEL_ERROR;
-	}
-
 
 #ifdef HAVE_FRONT_END
 	cred_args = slurm_cred_get_args(ctx->step_resp->cred);

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  associations.c - Slurm REST API acct associations http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -200,7 +199,7 @@ static void _delete_assoc(ctxt_t *ctxt, slurmdb_assoc_cond_t *assoc_cond,
 /* Turn *dst into a TRES string that will turn submitted *dst to match mod */
 static void _diff_tres(char **dst, char *mod)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	List dst_list = NULL;
 	List mod_list = NULL;
 	slurmdb_tres_rec_t *tres;

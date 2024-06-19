@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -68,7 +68,8 @@ static void  _add_delay(void);
 static int   _cancel_jobs(void);
 static void *_cancel_job_id (void *cancel_info);
 static void *_cancel_step_id (void *cancel_info);
-static int  _confirmation(job_info_t *job_ptr, uint32_t step_id);
+static int  _confirmation(job_info_t *job_ptr, uint32_t step_id,
+			  uint32_t array_id);
 static void _filter_job_records(void);
 static void _load_job_records (void);
 static int  _multi_cluster(List clusters);
@@ -138,11 +139,11 @@ static uint16_t _init_flags(char **job_type)
 	 * scancel requests for a cron job should be rejected unless the --cron
 	 * flag is specified.
 	 * To prevent introducing this option from influencing anything other
-	 * than user requests, it has been set up so that when KILL_NO_CRON is
+	 * than user requests, it has been set up so that when KILL_CRON is not
 	 * set when explicit_scancel is also set, the request will be rejected.
 	 */
-	if (!opt.cron)
-		flags |= KILL_NO_CRON;
+	if (opt.cron)
+		flags |= KILL_CRON;
 
 	if (opt.full) {
 		flags |= KILL_FULL_JOB;
@@ -318,7 +319,7 @@ static int _ctld_signal_jobs(void)
 static int
 _multi_cluster(List clusters)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	int rc = 0, rc2;
 
 	itr = list_iterator_create(clusters);
@@ -609,11 +610,13 @@ static void _filter_job_records(void)
 	return;
 }
 
-static char *_build_jobid_str(job_info_t *job_ptr)
+static char *_build_jobid_str(job_info_t *job_ptr, uint32_t array_id)
 {
 	char *result = NULL;
 
-	if (job_ptr->array_task_str) {
+	if (array_id != NO_VAL && array_id != INFINITE) {
+		xstrfmtcat(result, "%u_%u", job_ptr->array_job_id, array_id);
+	} else if (job_ptr->array_task_str) {
 		xstrfmtcat(result, "%u_[%s]",
 			   job_ptr->array_job_id, job_ptr->array_task_str);
 	} else if (job_ptr->array_task_id != NO_VAL) {
@@ -676,8 +679,9 @@ static void _cancel_jobid_by_state(uint32_t job_state, int *rc)
 				continue;
 
 			if (opt.interactive &&
-			    (_confirmation(job_ptr, opt.step_id[j]) == 0)) {
-				job_ptr->job_id = 0;	/* Don't check again */
+			    (_confirmation(job_ptr, opt.step_id[j],
+					   opt.array_id[j]) == 0)) {
+				opt.job_id[j] = 0;	 /* Don't check again */
 				continue;
 			}
 
@@ -700,10 +704,17 @@ static void _cancel_jobid_by_state(uint32_t job_state, int *rc)
 					&num_active_threads_cond;
 			if (opt.step_id[j] == SLURM_BATCH_SCRIPT) {
 				cancel_info->job_id_str =
-					_build_jobid_str(job_ptr);
+					_build_jobid_str(job_ptr,
+							 opt.array_id[j]);
+
 				slurm_thread_create_detached(_cancel_job_id,
 							     cancel_info);
-				job_ptr->job_id = 0;
+
+				if (opt.array_id[j] == NO_VAL ||
+				    opt.array_id[j] == INFINITE)
+					job_ptr->job_id = 0;
+				else
+					opt.job_id[j] = 0;
 			} else {
 				cancel_info->job_id = job_ptr->job_id;
 				cancel_info->step_id = opt.step_id[j];
@@ -750,14 +761,14 @@ _cancel_jobs_by_state(uint32_t job_state, int *rc)
 			continue;
 
 		if (opt.interactive &&
-		    (_confirmation(job_ptr, SLURM_BATCH_SCRIPT) == 0)) {
+		    (_confirmation(job_ptr, SLURM_BATCH_SCRIPT, NO_VAL) == 0)) {
 			job_ptr->job_id = 0;
 			continue;
 		}
 
 		cancel_info = (job_cancel_info_t *)
 			xmalloc(sizeof(job_cancel_info_t));
-		cancel_info->job_id_str = _build_jobid_str(job_ptr);
+		cancel_info->job_id_str = _build_jobid_str(job_ptr, NO_VAL);
 		cancel_info->rc      = rc;
 		cancel_info->sig     = opt.signal;
 		cancel_info->num_active_threads = &num_active_threads;
@@ -1031,12 +1042,12 @@ _cancel_step_id (void *ci)
 
 /* _confirmation - Confirm job cancel request interactively */
 static int
-_confirmation(job_info_t *job_ptr, uint32_t step_id)
+_confirmation(job_info_t *job_ptr, uint32_t step_id, uint32_t array_id)
 {
 	char *job_id_str, in_line[128];
 
 	while (1) {
-		job_id_str = _build_jobid_str(job_ptr);
+		job_id_str = _build_jobid_str(job_ptr, array_id);
 		if (step_id == SLURM_BATCH_SCRIPT) {
 			printf("Cancel job_id=%s name=%s partition=%s [y/n]? ",
 			       job_id_str, job_ptr->name,

@@ -2,8 +2,7 @@
 ############################################################################
 # Purpose: Validate heterogeneous gpu job options.
 ############################################################################
-# Copyright (C) 2020 SchedMD LLC.
-# Written by Brian Christiansen <brian@schedmd.com>
+# Copyright (C) SchedMD LLC.
 #
 # This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
@@ -423,10 +422,10 @@ proc test_gpus_per_task {} {
 	]
 
 	set regexes [list \
-		"^JobId=.*TresPerTask=.*gpu:1.*JobId=.*TresPerTask=.*gpu:2" \
-		"^JobId=.*TresPerTask=.*gpu:2.*JobId=.*TresPerTask=.*gpu:1" \
-		"^JobId=.*TresPerTask=.*gpu:2.*JobId=.*" \
-		"^JobId=.*JobId=.*TresPerTask=.*gpu:2" \
+		"^JobId=.*TresPerTask=.*gpu=1.*JobId=.*TresPerTask=.*gpu=2" \
+		"^JobId=.*TresPerTask=.*gpu=2.*JobId=.*TresPerTask=.*gpu=1" \
+		"^JobId=.*TresPerTask=.*gpu=2.*JobId=.*" \
+		"^JobId=.*JobId=.*TresPerTask=.*gpu=2" \
 	]
 
 	foreach cmd {sbatch srun salloc} {

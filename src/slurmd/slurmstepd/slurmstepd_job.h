@@ -112,19 +112,6 @@ typedef struct {
 	char	      **argv;
 } stepd_step_task_info_t;
 
-typedef struct {		/* MPMD specifications, needed for Cray */
-	uint64_t apid;		/* Application ID */
-	int num_cmds;		/* Number of executables in MPMD set */
-	char **args;		/* Array of argument string for each executable */
-	char **command;		/* Array of command name for each executable */
-	int *first_pe;		/* First rank on this node of each executable,
-				 * -1 if executable not on this node */
-	int *start_pe;		/* Starting rank of each executable in set */
-	int *total_pe;		/* Total ranks of each executable in set */
-
-	int *placement;		/* NID of each rank (ntasks in length) */
-} mpmd_set_t;
-
 typedef struct {
 	int magic;
 	char *bundle; /* OCI Container Bundle path	*/
@@ -181,7 +168,7 @@ typedef struct {
 	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
 	uint32_t cpu_freq_max; /* Maximum cpu frequency  */
 	uint32_t cpu_freq_gov; /* cpu frequency governor */
-	dynamic_plugin_data_t *switch_job; /* switch-specific job information     */
+	dynamic_plugin_data_t *switch_step; /* switch-specific job information */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
 	/* fields from the launch cred used to support nss_slurm	    */
@@ -256,11 +243,7 @@ typedef struct {
 					  * is the message sent.  DO
 					  * NOT FREE, IT IS JUST A
 					  * POINTER. */
-	mpmd_set_t     *mpmd_set;	/* MPMD specifications for Cray */
 	uint16_t	job_core_spec;	/* count of specialized cores */
-	int		non_smp;	/* Set if task IDs are not monotonically
-					 * increasing across all nodes, set only
-					 * native Cray systems */
 	bool		oom_error;	/* step out of memory error */
 
 	uint16_t x11;			/* only set for extern step */
@@ -273,6 +256,7 @@ typedef struct {
 	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
 
 	char *selinux_context;
+	char *stepmgr;
 } stepd_step_rec_t;
 
 

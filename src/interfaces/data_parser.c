@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  data_t parser plugin interface
  ******************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -79,6 +78,19 @@ typedef struct {
 	void (*free)(void *arg);
 	int (*assign)(void *arg, data_parser_attr_type_t type, void *obj);
 	int (*specify)(void *arg, data_t *dst);
+	openapi_type_t (*resolve_openapi_type)(void *arg,
+					       data_parser_type_t type,
+					       const char *field);
+	const char *(*resolve_type_str)(void *arg, data_parser_type_t type);
+	int (*inc_ref)(void *arg, data_parser_type_t type,
+		       void **references_ptr);
+	int (*populate_schema)(void *arg, data_parser_type_t type,
+		       void **references_ptr, data_t *dst, data_t *schemas);
+	int (*populate_parameters)(void *arg, data_parser_type_t parameter_type,
+				   data_parser_type_t query_type,
+				   void **references_ptr, data_t *dst,
+				   data_t *schemas);
+	void (*release_refs)(void *arg, void **references_ptr);
 } parse_funcs_t;
 
 typedef struct {
@@ -96,6 +108,12 @@ static const char *parse_syms[] = {
 	"data_parser_p_free",
 	"data_parser_p_assign",
 	"data_parser_p_specify",
+	"data_parser_p_resolve_openapi_type",
+	"data_parser_p_resolve_type_string",
+	"data_parser_p_increment_reference",
+	"data_parser_p_populate_schema",
+	"data_parser_p_populate_parameters",
+	"data_parser_p_release_references",
 };
 
 static plugins_t *plugins = NULL;
@@ -246,6 +264,9 @@ static int _load_plugins(plugin_param_t *pparams, plugrack_foreach_t listf,
 		return rc;
 
 	slurm_mutex_lock(&init_mutex);
+
+	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL)))
+		fatal("JSON plugin loading failed: %s", slurm_strerror(rc));
 
 	xassert(sizeof(parse_funcs_t) ==
 		(sizeof(void *) * ARRAY_SIZE(parse_syms)));
@@ -806,4 +827,114 @@ extern data_parser_t *data_parser_cli_parser(const char *data_parser, void *arg)
 				 _on_warn, _on_warn, arg,
 				 (data_parser ?  data_parser :
 				  SLURM_DATA_PARSER_VERSION), NULL, false);
+}
+
+extern openapi_type_t data_parser_g_resolve_openapi_type(
+	data_parser_t *parser,
+	data_parser_type_t type,
+	const char *field)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return OPENAPI_TYPE_INVALID;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser);
+	xassert(plugins);
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->resolve_openapi_type(parser->arg, type, field);
+}
+
+extern const char *data_parser_g_resolve_type_string(data_parser_t *parser,
+						     data_parser_type_t type)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return NULL;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(plugins);
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->resolve_type_str(parser->arg, type);
+}
+
+extern int data_parser_g_increment_reference(data_parser_t *parser,
+					     data_parser_type_t type,
+					     void **references_ptr)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return EINVAL;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->inc_ref(parser->arg, type, references_ptr);
+}
+
+extern int data_parser_g_populate_schema(data_parser_t *parser,
+					 data_parser_type_t type,
+					 void **references_ptr, data_t *dst,
+					 data_t *schemas)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return EINVAL;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->populate_schema(parser->arg, type, references_ptr, dst,
+				      schemas);
+}
+
+extern int data_parser_g_populate_parameters(data_parser_t *parser,
+					     data_parser_type_t parameter_type,
+					     data_parser_type_t query_type,
+					     void **references_ptr, data_t *dst,
+					     data_t *schemas)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return EINVAL;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->populate_parameters(parser->arg, parameter_type,
+					  query_type, references_ptr, dst,
+					  schemas);
+}
+
+extern void data_parser_g_release_references(data_parser_t *parser,
+					     void **references_ptr)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->release_refs(parser->arg, references_ptr);
 }

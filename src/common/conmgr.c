@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  conmgr.c - definitions for connection manager
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -46,6 +45,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -94,7 +94,7 @@
  * Connection tracking structure
  */
 struct conmgr_fd_s {
-	int magic;
+	int magic; /* MAGIC_CON_MGR_FD */
 	conmgr_con_type_t type;
 	/* input and output may be a different fd to inet mode */
 	int input_fd;
@@ -153,12 +153,12 @@ struct conmgr_fd_s {
 	bool work_active;
 	/*
 	 * list of non-IO work pending
-	 * type: wrap_work_arg_t
+	 * type: work_t*
 	 */
 	list_t *work;
 	/*
 	 * list of non-IO work pending out buffer being full sent
-	 * type: wrap_work_arg_t
+	 * type: work_t*
 	 */
 	list_t *write_complete_work;
 };
@@ -181,7 +181,7 @@ typedef struct {
 /*
  * Global instance of conmgr
  */
-struct {
+struct conmgr_s {
 	/* Max number of connections at any one time allowed */
 	int max_connections;
 	/*
@@ -193,12 +193,12 @@ struct {
 	 * list of connections that only listen
 	 * type: conmgr_fd_t
 	 */
-	list_t *listen;
+	list_t *listen_conns;
 	/*
 	 * list of complete connections pending cleanup
 	 * type: conmgr_fd_t
 	 */
-	list_t *complete;
+	list_t *complete_conns;
 	/*
 	 * True if _watch() is running
 	 * Changes protected by watch_mutex
@@ -221,6 +221,8 @@ struct {
 	 * Sends all new work to deferred_funcs() while true
 	 */
 	bool quiesced;
+	/* at fork handler installed */
+	bool at_fork_installed;
 	/* thread pool */
 	workq_t *workq;
 	/* will inspect connections (not listeners */
@@ -264,21 +266,28 @@ struct {
 	/* use mutex to wait for watch to finish */
 	pthread_mutex_t watch_mutex;
 	pthread_cond_t watch_cond;
-} mgr = {
-	.mutex = PTHREAD_MUTEX_INITIALIZER,
-	.cond = PTHREAD_COND_INITIALIZER,
-	.max_connections = -1,
-	.event_fd = { -1, -1 },
-	.signal_fd = { -1, -1 },
-	.error = SLURM_SUCCESS,
-	.quiesced = true,
-	.shutdown = true,
 };
+
+#define CONMGR_MGR_DEFAULT \
+	(struct conmgr_s) {\
+		.mutex = PTHREAD_MUTEX_INITIALIZER,\
+		.cond = PTHREAD_COND_INITIALIZER,\
+		.watch_mutex = PTHREAD_MUTEX_INITIALIZER,\
+		.watch_cond = PTHREAD_COND_INITIALIZER,\
+		.max_connections = -1,\
+		.event_fd = { -1, -1 },\
+		.signal_fd = { -1, -1 },\
+		.error = SLURM_SUCCESS,\
+		.quiesced = true,\
+		.shutdown = true,\
+	}
+
+struct conmgr_s mgr = CONMGR_MGR_DEFAULT;
 
 typedef void (*on_poll_event_t)(int fd, conmgr_fd_t *con, short revents);
 
 typedef struct {
-	int magic;
+	int magic; /* MAGIC_WORK */
 	conmgr_fd_t *con;
 	conmgr_work_func_t func;
 	void *arg;
@@ -299,7 +308,7 @@ typedef struct {
 	const char *tag;
 } deferred_func_t;
 
-struct {
+static struct {
 	conmgr_work_status_t status;
 	const char *string;
 } statuses[] = {
@@ -309,7 +318,7 @@ struct {
 	{ CONMGR_WORK_STATUS_CANCELLED, "CANCELLED" },
 };
 
-struct {
+static struct {
 	conmgr_work_type_t type;
 	const char *string;
 } types[] = {
@@ -339,6 +348,21 @@ typedef struct {
 	void *arg;
 	conmgr_con_type_t type;
 } socket_listen_init_t;
+
+/*
+ * Default number of write()s to queue up using the stack instead of xmalloc().
+ * Avoid the slow down from calling xmalloc() on a majority of the writev()s.
+ */
+#define IOV_STACK_COUNT 16
+#define HANDLE_WRITEV_ARGS_MAGIC 0x1a4afb40
+typedef struct {
+	int magic; /* HANDLE_WRITEV_ARGS_MAGIC */
+	int index;
+	const int iov_count;
+	conmgr_fd_t *con;
+	struct iovec *iov;
+	ssize_t wrote;
+} handle_writev_args_t;
 
 static int _close_con_for_each(void *x, void *arg);
 static void _listen_accept(conmgr_fd_t *con, conmgr_work_type_t type,
@@ -398,6 +422,8 @@ extern const char *conmgr_work_type_string(conmgr_work_type_t type)
 static void _connection_fd_delete(void *x)
 {
 	conmgr_fd_t *con = x;
+
+	xassert(con->magic == MAGIC_CON_MGR_FD);
 
 	log_flag(NET, "%s: [%s] free connection input_fd=%d output_fd=%d",
 		 __func__, con->name, con->input_fd, con->output_fd);
@@ -479,6 +505,15 @@ static void _fini_signal_handler(void)
 	mgr.signal_handler_count = 0;
 }
 
+static void _atfork_child(void)
+{
+	/*
+	 * Force conmgr to return to default state before it was initialized at
+	 * forking as all of the prior state is completely unusable.
+	 */
+	mgr = CONMGR_MGR_DEFAULT;
+}
+
 extern void init_conmgr(int thread_count, int max_connections,
 			conmgr_callbacks_t callbacks)
 {
@@ -490,6 +525,16 @@ extern void init_conmgr(int thread_count, int max_connections,
 	slurm_mutex_lock(&mgr.mutex);
 
 	mgr.shutdown = false;
+
+	if (!mgr.at_fork_installed) {
+		int rc;
+
+		if ((rc = pthread_atfork(NULL, NULL, _atfork_child)))
+			fatal_abort("%s: pthread_atfork() failed: %s",
+				    __func__, slurm_strerror(rc));
+
+		mgr.at_fork_installed = true;
+	}
 
 	if (mgr.workq) {
 		/* already initialized */
@@ -516,8 +561,8 @@ extern void init_conmgr(int thread_count, int max_connections,
 
 	mgr.max_connections = max_connections;
 	mgr.connections = list_create(NULL);
-	mgr.listen = list_create(NULL);
-	mgr.complete = list_create(NULL);
+	mgr.listen_conns = list_create(NULL);
+	mgr.complete_conns = list_create(NULL);
 	mgr.callbacks = callbacks;
 	mgr.workq = new_workq(thread_count);
 	mgr.deferred_funcs = list_create(NULL);
@@ -599,7 +644,7 @@ static void _close_all_connections(bool locked)
 
 	/* close all connections */
 	list_for_each(mgr.connections, _close_con_for_each, NULL);
-	list_for_each(mgr.listen, _close_con_for_each, NULL);
+	list_for_each(mgr.listen_conns, _close_con_for_each, NULL);
 
 	if (!locked)
 		slurm_mutex_unlock(&mgr.mutex);
@@ -608,8 +653,9 @@ static void _close_all_connections(bool locked)
 extern void free_conmgr(void)
 {
 	slurm_mutex_lock(&mgr.mutex);
-	if (mgr.shutdown) {
-		log_flag(NET, "%s: connection manager already shutdown",
+
+	if (!mgr.workq) {
+		log_flag(NET, "%s: Ignoring duplicate shutdown request",
 			 __func__);
 		slurm_mutex_unlock(&mgr.mutex);
 		return;
@@ -621,15 +667,13 @@ extern void free_conmgr(void)
 	/* run all deferred work if there is any */
 	_requeue_deferred_funcs();
 
-	slurm_mutex_unlock(&mgr.mutex);
-
 	log_flag(NET, "%s: connection manager shutting down", __func__);
 
 	/* processing may still be running at this point in a thread */
-	_close_all_connections(false);
+	_close_all_connections(true);
 
 	/* tell all timers about being canceled */
-	_cancel_delayed_work(false);
+	_cancel_delayed_work(true);
 
 	/*
 	 * make sure WORKQ is done before making any changes encase there are
@@ -646,8 +690,8 @@ extern void free_conmgr(void)
 	 * It should be safe to shutdown the mgr.
 	 */
 	FREE_NULL_LIST(mgr.connections);
-	FREE_NULL_LIST(mgr.listen);
-	FREE_NULL_LIST(mgr.complete);
+	FREE_NULL_LIST(mgr.listen_conns);
+	FREE_NULL_LIST(mgr.complete_conns);
 
 	if (mgr.delayed_work) {
 		FREE_NULL_LIST(mgr.delayed_work);
@@ -655,14 +699,23 @@ extern void free_conmgr(void)
 			fatal("%s: timer_delete() failed: %m", __func__);
 	}
 
-	slurm_mutex_destroy(&mgr.mutex);
-	slurm_cond_destroy(&mgr.cond);
-
-	if (close(mgr.event_fd[0]) || close(mgr.event_fd[1]))
+	if (((mgr.event_fd[0] >= 0) && close(mgr.event_fd[0])) ||
+	    ((mgr.event_fd[1] >= 0) && close(mgr.event_fd[1])))
 		error("%s: unable to close event_fd: %m", __func__);
 
-	if (close(mgr.signal_fd[0]) || close(mgr.signal_fd[1]))
+	if (((mgr.signal_fd[0] >= 0) && close(mgr.signal_fd[0])) ||
+	    ((mgr.signal_fd[1] >= 0) && close(mgr.signal_fd[1])))
 		error("%s: unable to close signal_fd: %m", __func__);
+
+	xfree(mgr.signal_work);
+
+	slurm_mutex_unlock(&mgr.mutex);
+	/*
+	 * Do not destroy the mutex or cond so that this function does not
+	 * crash when it tries to lock mgr.mutex if called more than once.
+	 */
+	/* slurm_mutex_destroy(&mgr.mutex); */
+	/* slurm_cond_destroy(&mgr.cond); */
 }
 
 /*
@@ -796,6 +849,11 @@ static conmgr_fd_t *_add_connection(conmgr_con_type_t type,
 		}
 	}
 
+#ifndef NDEBUG
+	if (source && source->unix_socket && con->unix_socket)
+		xassert(!xstrcmp(source->unix_socket, con->unix_socket));
+#endif
+
 	if (source && source->unix_socket && !con->unix_socket)
 		con->unix_socket = xstrdup(source->unix_socket);
 
@@ -849,7 +907,7 @@ static conmgr_fd_t *_add_connection(conmgr_con_type_t type,
 
 	slurm_mutex_lock(&mgr.mutex);
 	if (is_listen)
-		list_append(mgr.listen, con);
+		list_append(mgr.listen_conns, con);
 	else
 		list_append(mgr.connections, con);
 	slurm_mutex_unlock(&mgr.mutex);
@@ -910,12 +968,23 @@ static void _wrap_work(void *x)
 	xfree(work);
 }
 
+static int _get_fd_readable(conmgr_fd_t *con)
+{
+	int readable = 0;
+
+	if (fd_get_readable_bytes(con->input_fd, &readable, con->name) ||
+	    !readable)
+		readable = DEFAULT_READ_BYTES;
+
+	return readable;
+}
+
 static void _handle_read(conmgr_fd_t *con, conmgr_work_type_t type,
 			 conmgr_work_status_t status, const char *tag,
 			 void *arg)
 {
 	ssize_t read_c;
-	int readable;
+	int rc, readable;
 
 	con->can_read = false;
 	xassert(con->magic == MAGIC_CON_MGR_FD);
@@ -926,38 +995,14 @@ static void _handle_read(conmgr_fd_t *con, conmgr_work_type_t type,
 		return;
 	}
 
-#ifdef FIONREAD
-	/* request kernel tell us the size of the incoming buffer */
-	if (ioctl(con->input_fd, FIONREAD, &readable))
-		log_flag(NET, "%s: [%s] unable to call FIONREAD: %m",
-			 __func__, con->name);
-	else if (readable == 0) {
-		/* Didn't fail but buffer is empty so this may be EOF */
-		readable = 1;
-	}
-
-	if (readable < 0) {
-		/* invalid FIONREAD response */
-		readable = DEFAULT_READ_BYTES;
-	}
-#else
-	/* default to at least 512 available in buffer */
-	readable = DEFAULT_READ_BYTES;
-#endif /* FIONREAD */
+	readable = _get_fd_readable(con);
 
 	/* Grow buffer as needed to handle the incoming data */
-	if (remaining_buf(con->in) < readable) {
-		int need = readable - remaining_buf(con->in);
-
-		if ((need + size_buf(con->in)) >= MAX_BUF_SIZE) {
-			error("%s: [%s] out of buffer space.",
-			      __func__, con->name);
-
-			_close_con(false, con);
-			return;
-		}
-
-		grow_buf(con->in, need);
+	if ((rc = try_grow_buf_remaining(con->in, readable))) {
+		error("%s: [%s] unable to allocate larger input buffer: %s",
+		      __func__, con->name, slurm_strerror(rc));
+		_close_con(false, con);
+		return;
 	}
 
 	/* check for errors with a NULL read */
@@ -994,72 +1039,132 @@ static void _handle_read(conmgr_fd_t *con, conmgr_work_type_t type,
 	}
 }
 
+static int _foreach_add_writev_iov(void *x, void *arg)
+{
+	buf_t *out = x;
+	handle_writev_args_t *args = arg;
+	struct iovec *iov = &args->iov[args->index];
+
+	xassert(out->magic == BUF_MAGIC);
+	xassert(args->magic == HANDLE_WRITEV_ARGS_MAGIC);
+
+	if (args->index >= args->iov_count)
+		return -1;
+
+	iov->iov_base = ((void *) get_buf_data(out)) + get_buf_offset(out);
+	iov->iov_len = remaining_buf(out);
+
+	log_flag(NET, "%s: [%s] queued writev[%d] %u/%u bytes to outgoing fd %u",
+		 __func__, args->con->name, args->index, remaining_buf(out),
+		 size_buf(out), args->con->output_fd);
+
+	args->index++;
+	return 0;
+}
+
+static int _foreach_writev_flush_bytes(void *x, void *arg)
+{
+	buf_t *out = x;
+	handle_writev_args_t *args = arg;
+
+	xassert(out->magic == BUF_MAGIC);
+	xassert(args->magic == HANDLE_WRITEV_ARGS_MAGIC);
+	xassert(args->wrote >= 0);
+
+	if (!args->wrote)
+		return 0;
+
+	if (args->wrote >= remaining_buf(out)) {
+		log_flag(NET, "%s: [%s] completed write[%d] of %u/%u bytes to outgoing fd %u",
+			 __func__, args->con->name, args->index,
+			 remaining_buf(out), size_buf(out),
+			 args->con->output_fd);
+		log_flag_hex_range(NET_RAW, get_buf_data(out), size_buf(out),
+				   get_buf_offset(out), size_buf(out),
+				   "%s: [%s] completed write[%d] of %u/%u bytes",
+				   __func__, args->con->name, args->index,
+				   remaining_buf(out), size_buf(out));
+
+		args->wrote -= remaining_buf(out);
+		args->index++;
+		return 1;
+	} else {
+		log_flag(NET, "%s: [%s] partial write[%d] of %zd/%u bytes to outgoing fd %u",
+			 __func__, args->con->name, args->index,
+			 args->wrote, size_buf(out), args->con->output_fd);
+		log_flag_hex_range(NET_RAW, get_buf_data(out), size_buf(out),
+				   get_buf_offset(out), args->wrote,
+				   "%s: [%s] partial write[%d] of %zd/%u bytes",
+				   __func__, args->con->name, args->index,
+				   args->wrote, remaining_buf(out));
+
+		set_buf_offset(out, get_buf_offset(out) + args->wrote);
+		args->wrote = 0;
+		args->index++;
+		return 0;
+	}
+}
+
+static void _handle_writev(conmgr_fd_t *con, const int out_count)
+{
+	const int iov_count = MIN(IOV_MAX, out_count);
+	struct iovec iov_stack[IOV_STACK_COUNT];
+	handle_writev_args_t args = {
+		.magic = HANDLE_WRITEV_ARGS_MAGIC,
+		.iov_count = iov_count,
+		.con = con,
+		.iov = iov_stack,
+	};
+
+	/* Try to use stack for small write counts when possible */
+	if (iov_count > ARRAY_SIZE(iov_stack))
+		args.iov = xcalloc(iov_count, sizeof(*args.iov));
+
+	(void) list_for_each_ro(con->out, _foreach_add_writev_iov, &args);
+	xassert(args.index == iov_count);
+
+	args.wrote = writev(con->output_fd, args.iov, iov_count);
+
+	if (args.wrote == -1) {
+		if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
+			log_flag(NET, "%s: [%s] retry write: %m",
+				 __func__, con->name);
+		} else {
+			error("%s: [%s] error while write: %m",
+			      __func__, con->name);
+			/* drop outbound data on the floor */
+			list_flush(con->out);
+			_close_con(false, con);
+		}
+	} else if (args.wrote == 0) {
+		log_flag(NET, "%s: [%s] wrote 0 bytes", __func__, con->name);
+	} else {
+		log_flag(NET, "%s: [%s] wrote %zd bytes",
+			 __func__, con->name, args.wrote);
+
+		args.index = 0;
+		(void) list_delete_all(con->out, _foreach_writev_flush_bytes,
+				       &args);
+		xassert(!args.wrote);
+	}
+
+	if (args.iov != iov_stack)
+		xfree(args.iov);
+}
+
 static void _handle_write(conmgr_fd_t *con, conmgr_work_type_t type,
 			  conmgr_work_status_t status, const char *tag,
 			  void *arg)
 {
-	buf_t *out;
-	ssize_t wrote;
-	int bytes;
-	void *buffer;
+	int out_count;
 
 	xassert(con->magic == MAGIC_CON_MGR_FD);
 
-	if (!(out = list_peek(con->out))) {
+	if (!(out_count = list_count(con->out)))
 		log_flag(NET, "%s: [%s] skipping attempt with zero writes",
 			 __func__, con->name);
-		return;
-	}
-
-	xassert(out->magic == BUF_MAGIC);
-	bytes = remaining_buf(out);
-	buffer = get_buf_data(out) + get_buf_offset(out);
-
-	xassert(bytes > 0);
-
-	log_flag(NET, "%s: [%s] attempting %u writes bytes to fd %u",
-		 __func__, con->name, bytes, con->output_fd);
-
-	/* write in non-blocking fashion as we can always continue later */
-	if (con->is_socket)
-		/* avoid ESIGPIPE on sockets and never block */
-		wrote = send(con->output_fd, buffer, bytes,
-			     (MSG_DONTWAIT | MSG_NOSIGNAL));
-	else /* normal write for non-sockets */
-		wrote = write(con->output_fd, buffer, bytes);
-
-	if (wrote == -1) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			log_flag(NET, "%s: [%s] retry write: %m",
-				 __func__, con->name);
-			return;
-		}
-
-		error("%s: [%s] error while write: %m", __func__, con->name);
-		/* drop outbound data on the floor */
-		list_flush(con->out);
-		_close_con(false, con);
-		return;
-	} else if (wrote == 0) {
-		log_flag(NET, "%s: [%s] write 0 bytes", __func__, con->name);
-		return;
-	}
-
-	log_flag(NET, "%s: [%s] wrote %zu/%u bytes",
-		 __func__, con->name, wrote, bytes);
-	log_flag_hex(NET_RAW, get_buf_data(out), wrote,
-		     "%s: [%s] wrote", __func__, con->name);
-
-	if (wrote != bytes) {
-		/* Update offset with bytes written so far */
-		set_buf_offset(out, (get_buf_offset(out) + wrote));
-	} else {
-		buf_t *cleanup = list_pop(con->out);
-
-		xassert(cleanup == out);
-
-		FREE_NULL_BUFFER(cleanup);
-	}
+	else
+		_handle_writev(con, out_count);
 }
 
 static int _on_rpc_connection_data(conmgr_fd_t *con, void *arg)
@@ -1095,12 +1200,10 @@ static int _on_rpc_connection_data(conmgr_fd_t *con, void *arg)
 	}
 
 	need = sizeof(con->msglen) + con->msglen;
-	if (size_buf(con->in) < need) {
-		uint32_t delta = (need - size_buf(con->in));
-		log_flag(NET, "%s: [%s] increasing buffer %u bytes for  RPC message length: %u",
-			 __func__, con->name, delta, con->msglen);
-
-		grow_buf(con->in, delta);
+	if ((rc = try_grow_buf_remaining(con->in, need))) {
+		log_flag(NET, "%s: [%s] unable to increase buffer %u bytes for RPC message: %s",
+			 __func__, con->name, need, slurm_strerror(rc));
+		return rc;
 	}
 
 	if (size_buf(con->in) >= need) {
@@ -1117,7 +1220,7 @@ static int _on_rpc_connection_data(conmgr_fd_t *con, void *arg)
 
 		if ((rc = slurm_unpack_received_msg(msg, con->input_fd, rpc))) {
 			rc = errno;
-			error("%s: [%s] unpack_msg() failed: %s",
+			error("%s: [%s] slurm_unpack_received_msg() failed: %s",
 			      __func__, con->name, slurm_strerror(rc));
 			slurm_free_msg(msg);
 			msg = NULL;
@@ -1454,8 +1557,8 @@ static int _handle_connection(void *x, void *arg)
 	if (!con->is_listen && con->output_fd != -1 &&
 	    !list_is_empty(con->out)) {
 		if (con->can_write) {
-			log_flag(NET, "%s: [%s] need to write %u bytes",
-				 __func__, con->name, count);
+			log_flag(NET, "%s: [%s] %u pending writes",
+				 __func__, con->name, list_count(con->out));
 			_add_work(true, con, _handle_write,
 				  CONMGR_WORK_TYPE_CONNECTION_FIFO, con,
 				  "_handle_write");
@@ -1602,7 +1705,7 @@ static void _inspect_connections(void *x)
 {
 	slurm_mutex_lock(&mgr.mutex);
 
-	if (list_transfer_match(mgr.connections, mgr.complete,
+	if (list_transfer_match(mgr.connections, mgr.complete_conns,
 				_handle_connection, NULL))
 		slurm_cond_broadcast(&mgr.cond);
 	mgr.inspecting = false;
@@ -1814,6 +1917,31 @@ again:
 	}
 }
 
+static void _init_poll_fds(poll_args_t *args, struct pollfd **fds_ptr_p,
+			   int conn_count)
+{
+	struct pollfd *fds_ptr = NULL;
+
+	xrecalloc(args->fds, ((conn_count * 2) + 2), sizeof(*args->fds));
+
+	args->nfds = 0;
+	fds_ptr = args->fds;
+
+	/* Add signal fd */
+	fds_ptr->fd = mgr.signal_fd[0];
+	fds_ptr->events = POLLIN;
+	fds_ptr++;
+	args->nfds++;
+
+	/* Add event fd */
+	fds_ptr->fd = mgr.event_fd[0];
+	fds_ptr->events = POLLIN;
+	fds_ptr++;
+	args->nfds++;
+
+	*fds_ptr_p = fds_ptr;
+}
+
 /*
  * Poll all processing connections sockets and
  * signal_fd and event_fd.
@@ -1847,24 +1975,7 @@ static void _poll_connections(void *x)
 		goto done;
 	}
 
-	fds_ptr = args->fds;
-
-	xrecalloc(args->fds, ((count * 2) + 2), sizeof(*args->fds));
-
-	args->nfds = 0;
-	fds_ptr = args->fds;
-
-	/* Add signal fd */
-	fds_ptr->fd = mgr.signal_fd[0];
-	fds_ptr->events = POLLIN;
-	fds_ptr++;
-	args->nfds++;
-
-	/* Add event fd */
-	fds_ptr->fd = mgr.event_fd[0];
-	fds_ptr->events = POLLIN;
-	fds_ptr++;
-	args->nfds++;
+	_init_poll_fds(args, &fds_ptr, count);
 
 	/*
 	 * populate sockets with !work_active
@@ -1954,7 +2065,7 @@ static void _listen(void *x)
 	/* if shutdown has been requested: then don't listen() anymore */
 	if (mgr.shutdown) {
 		log_flag(NET, "%s: caught shutdown. closing %u listeners",
-			 __func__, list_count(mgr.listen));
+			 __func__, list_count(mgr.listen_conns));
 		goto cleanup;
 	}
 
@@ -1971,7 +2082,7 @@ static void _listen(void *x)
 	}
 
 	/* grab counts once */
-	count = list_count(mgr.listen);
+	count = list_count(mgr.listen_conns);
 
 	log_flag(NET, "%s: listeners=%u", __func__, count);
 
@@ -1981,24 +2092,10 @@ static void _listen(void *x)
 		goto cleanup;
 	}
 
-	xrecalloc(args->fds, (count + 2), sizeof(*args->fds));
-	fds_ptr = args->fds;
-	args->nfds = 0;
-
-	/* Add signal fd */
-	fds_ptr->fd = mgr.signal_fd[0];
-	fds_ptr->events = POLLIN;
-	fds_ptr++;
-	args->nfds++;
-
-	/* Add event fd */
-	fds_ptr->fd = mgr.event_fd[0];
-	fds_ptr->events = POLLIN;
-	fds_ptr++;
-	args->nfds++;
+	_init_poll_fds(args, &fds_ptr, count);
 
 	/* populate listening sockets */
-	itr = list_iterator_create(mgr.listen);
+	itr = list_iterator_create(mgr.listen_conns);
 	while ((con = list_next(itr))) {
 		/* already accept queued or listener already closed */
 		if (con->work_active || con->read_eof)
@@ -2026,7 +2123,7 @@ static void _listen(void *x)
 		 __func__, args->nfds, (count + 2));
 
 	/* _poll() will lock mgr.mutex */
-	_poll(args, mgr.listen, _handle_listen_event, __func__);
+	_poll(args, mgr.listen_conns, _handle_listen_event, __func__);
 
 	slurm_mutex_lock(&mgr.mutex);
 cleanup:
@@ -2052,6 +2149,191 @@ static void _wait_for_watch(void)
 	slurm_mutex_unlock(&mgr.watch_mutex);
 }
 
+static void _handle_complete_conns(void)
+{
+	if (mgr.listen_active || mgr.poll_active) {
+		/*
+		 * Must wait for all poll() calls to complete or
+		 * there may be a use after free of a connection.
+		 *
+		 * Send signal to break out of any active poll()s.
+		 */
+		_signal_change(true);
+	} else {
+		conmgr_fd_t *con;
+
+		/*
+		 * Memory cleanup of connections can be done entirely
+		 * independently as there should be nothing left in
+		 * conmgr that references the connection.
+		 */
+
+		while ((con = list_pop(mgr.complete_conns)))
+			_queue_func(true, _connection_fd_delete, con,
+				    "_connection_fd_delete");
+	}
+}
+
+static void _handle_listen_conns(poll_args_t **listen_args_p, int conn_count)
+{
+	if (!*listen_args_p) {
+		*listen_args_p = xmalloc(sizeof(**listen_args_p));
+		(*listen_args_p)->magic = MAGIC_POLL_ARGS;
+	}
+
+	/* run any queued work */
+	list_transfer_match(mgr.listen_conns, mgr.complete_conns,
+			    _handle_connection, NULL);
+
+	if (!mgr.listen_active) {
+		/* only try to listen if number connections is below limit */
+		if (conn_count >= mgr.max_connections)
+			log_flag(NET, "%s: deferring accepting new connections until count is below max: %u/%u",
+				 __func__, conn_count, mgr.max_connections);
+		else { /* request a listen thread to run */
+			log_flag(NET, "%s: queuing up listen",
+				 __func__);
+			mgr.listen_active = true;
+			_queue_func(true, _listen, *listen_args_p,
+				    "_listen");
+		}
+	} else
+		log_flag(NET, "%s: listeners active already", __func__);
+}
+
+static void _handle_new_conns(poll_args_t **poll_args_p)
+{
+	if (!*poll_args_p) {
+		*poll_args_p = xmalloc(sizeof(**poll_args_p));
+		(*poll_args_p)->magic = MAGIC_POLL_ARGS;
+	}
+
+	if (!mgr.inspecting) {
+		mgr.inspecting = true;
+		_queue_func(true, _inspect_connections, NULL,
+			    "_inspect_connections");
+	}
+
+	if (!mgr.poll_active) {
+		/* request a listen thread to run */
+		log_flag(NET, "%s: queuing up poll", __func__);
+		mgr.poll_active = true;
+		_queue_func(true, _poll_connections, *poll_args_p,
+			    "_poll_connections");
+	} else
+		log_flag(NET, "%s: poll active already", __func__);
+}
+
+static void _handle_events(poll_args_t **listen_args_p,
+			   poll_args_t **poll_args_p,
+			   bool *work)
+{
+	int count;
+
+	/* grab counts once */
+	count = list_count(mgr.connections);
+
+	log_flag(NET, "%s: starting connections=%u listen_conns=%u",
+		 __func__, count, list_count(mgr.listen_conns));
+
+	*work = false;
+
+	if (!list_is_empty(mgr.complete_conns))
+		_handle_complete_conns();
+
+	/* start listen thread if needed */
+	if (!list_is_empty(mgr.listen_conns)) {
+		_handle_listen_conns(listen_args_p, count);
+		*work = true;
+	}
+
+	/* start poll thread if needed */
+	if (count) {
+		_handle_new_conns(poll_args_p);
+		*work = true;
+	}
+}
+
+static void _read_event_fd(void)
+{
+	int event_read;
+	char buf[100]; /* buffer for event_read */
+
+	/*
+	 * Only clear signal and event pipes once both polls
+	 * are done.
+	 */
+	event_read = read(mgr.event_fd[0], buf, sizeof(buf));
+	if (event_read > 0) {
+		log_flag(NET, "%s: detected %u events from event fd",
+			 __func__, event_read);
+		mgr.event_signaled = 0;
+	} else if (!event_read || (errno == EWOULDBLOCK) ||
+		   (errno == EAGAIN))
+		log_flag(NET, "%s: nothing to read from event fd", __func__);
+	else if (errno == EINTR)
+		log_flag(NET, "%s: try again on read of event fd: %m",
+			 __func__);
+	else
+		fatal("%s: unable to read from event fd: %m",
+		      __func__);
+}
+
+static bool _watch_loop(poll_args_t **listen_args_p, poll_args_t **poll_args_p)
+{
+	bool work = false; /* is there any work to do? */
+
+	if (mgr.shutdown)
+		_close_all_connections(true);
+	else if (mgr.quiesced) {
+		if (mgr.poll_active || mgr.listen_active) {
+			/*
+			 * poll() hasn't returned yet so signal it to
+			 * stop again and wait for the thread to return
+			 */
+			_signal_change(true);
+			slurm_cond_wait(&mgr.cond, &mgr.mutex);
+			return true;
+		}
+
+		return false;
+	}
+
+	if (!mgr.poll_active && !mgr.listen_active) {
+		_read_event_fd();
+		if (mgr.signaled) {
+			_handle_signals();
+			return true;
+		}
+	}
+
+	_handle_events(listen_args_p, poll_args_p, &work);
+
+	if (!work && (mgr.poll_active || mgr.listen_active)) {
+		/*
+		 * poll() hasn't returned yet so signal it to stop again
+		 * and wait for the thread to return
+		 */
+		_signal_change(true);
+		slurm_cond_wait(&mgr.cond, &mgr.mutex);
+		return true;
+	}
+
+	if (work) {
+		/* wait until something happens */
+		slurm_cond_wait(&mgr.cond, &mgr.mutex);
+		return true;
+	}
+
+	log_flag(NET, "%s: cleaning up", __func__);
+	_signal_change(true);
+	_fini_signal_handler();
+
+	xassert(!mgr.poll_active);
+	xassert(!mgr.listen_active);
+	return false;
+}
+
 /*
  * Poll all connections and handle any events
  * IN blocking - non-zero if blocking
@@ -2060,9 +2342,6 @@ static void _watch(void *blocking)
 {
 	poll_args_t *listen_args = NULL;
 	poll_args_t *poll_args = NULL;
-	int count, event_read;
-	char buf[100]; /* buffer for event_read */
-	bool work; /* is there any work to do? */
 
 	slurm_mutex_lock(&mgr.mutex);
 
@@ -2085,156 +2364,8 @@ static void _watch(void *blocking)
 
 	_init_signal_handler();
 
-watch:
-	if (mgr.shutdown)
-		_close_all_connections(true);
-	else if (mgr.quiesced) {
-		if (mgr.poll_active || mgr.listen_active) {
-			/*
-			 * poll() hasn't returned yet so signal it to stop again
-			 * and wait for the thread to return
-			 */
-			_signal_change(true);
-			slurm_cond_wait(&mgr.cond, &mgr.mutex);
-			goto watch;
-		}
+	while (_watch_loop(&listen_args, &poll_args));
 
-		goto quiesced;
-	}
-
-	/* grab counts once */
-	count = list_count(mgr.connections);
-
-	log_flag(NET, "%s: starting connections=%u listen=%u",
-		 __func__, count, list_count(mgr.listen));
-
-	if (!mgr.poll_active && !mgr.listen_active) {
-		/* only clear signal and event pipes once both polls are done */
-		event_read = read(mgr.event_fd[0], buf, sizeof(buf));
-		if (event_read > 0) {
-			log_flag(NET, "%s: detected %u events from event fd",
-				 __func__, event_read);
-			mgr.event_signaled = 0;
-		} else if (event_read == 0)
-			log_flag(NET, "%s: nothing to read from event fd", __func__);
-		else if (errno == EAGAIN || errno == EWOULDBLOCK ||
-			 errno == EINTR)
-			log_flag(NET, "%s: try again on read of event fd: %m",
-				 __func__);
-		else
-			fatal("%s: unable to read from event fd: %m", __func__);
-
-		if (mgr.signaled) {
-			_handle_signals();
-			goto watch;
-		}
-	}
-
-	work = false;
-
-	if (!list_is_empty(mgr.complete)) {
-		if (mgr.listen_active || mgr.poll_active) {
-			/*
-			 * Must wait for all poll() calls to complete or
-			 * there may be a use after free of a connection.
-			 *
-			 * Send signal to break out of any active poll()s.
-			 */
-			_signal_change(true);
-		} else {
-			conmgr_fd_t *con;
-
-			/*
-			 * Memory cleanup of connections can be done entirely
-			 * independently as there should be nothing left in
-			 * conmgr that references the connection.
-			 */
-
-			while ((con = list_pop(mgr.complete)))
-				_queue_func(true, _connection_fd_delete, con,
-					    "_connection_fd_delete");
-		}
-	}
-
-	/* start listen thread if needed */
-	if (!list_is_empty(mgr.listen)) {
-		if (!listen_args) {
-			listen_args = xmalloc(sizeof(*listen_args));
-			listen_args->magic = MAGIC_POLL_ARGS;
-		}
-
-		/* run any queued work */
-		list_transfer_match(mgr.listen, mgr.complete,
-				    _handle_connection, NULL);
-
-		if (!mgr.listen_active) {
-			/* only try to listen if number connections is below limit */
-			if (count >= mgr.max_connections)
-				log_flag(NET, "%s: deferring accepting new connections until count is below max: %u/%u",
-					 __func__, count, mgr.max_connections);
-			else { /* request a listen thread to run */
-				log_flag(NET, "%s: queuing up listen", __func__);
-				mgr.listen_active = true;
-				_queue_func(true, _listen, listen_args,
-					    "_listen");
-			}
-		} else
-			log_flag(NET, "%s: listeners active already", __func__);
-
-		work = true;
-	}
-
-	/* start poll thread if needed */
-	if (count) {
-		if (!poll_args) {
-			poll_args = xmalloc(sizeof(*poll_args));
-			poll_args->magic = MAGIC_POLL_ARGS;
-		}
-
-		if (!mgr.inspecting) {
-			mgr.inspecting = true;
-			_queue_func(true, _inspect_connections, NULL,
-				    "_inspect_connections");
-		}
-
-		if (!mgr.poll_active) {
-			/* request a listen thread to run */
-			log_flag(NET, "%s: queuing up poll", __func__);
-			mgr.poll_active = true;
-			_queue_func(true, _poll_connections, poll_args,
-				    "_poll_connections");
-		} else
-			log_flag(NET, "%s: poll active already", __func__);
-
-		work = true;
-	}
-
-	if (!work && (mgr.poll_active || mgr.listen_active)) {
-		/*
-		 * poll() hasn't returned yet so signal it to stop again
-		 * and wait for the thread to return
-		 */
-		_signal_change(true);
-		slurm_cond_wait(&mgr.cond, &mgr.mutex);
-		goto watch;
-	}
-
-	if (work) {
-		/* wait until something happens */
-		slurm_cond_wait(&mgr.cond, &mgr.mutex);
-		goto watch;
-	}
-
-	log_flag(NET, "%s: cleaning up", __func__);
-
-	_signal_change(true);
-
-	_fini_signal_handler();
-
-	xassert(!mgr.poll_active);
-	xassert(!mgr.listen_active);
-
-quiesced:
 	xassert(mgr.watching);
 	mgr.watching = false;
 
@@ -2340,9 +2471,8 @@ static void _listen_accept(conmgr_fd_t *con, conmgr_work_type_t type,
 	if ((fd = accept4(con->input_fd, (struct sockaddr *) &addr,
 			  &addrlen, SOCK_CLOEXEC)) < 0) {
 		if (errno == EINTR) {
-			log_flag(NET, "%s: [%s] interrupt on accept()",
+			log_flag(NET, "%s: [%s] interrupt on accept(). Retrying.",
 				 __func__, con->name);
-			_close_con(false, con);
 			return;
 		}
 		if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
@@ -2377,7 +2507,11 @@ static void _listen_accept(conmgr_fd_t *con, conmgr_work_type_t type,
 
 		xassert(usock->sun_family == AF_UNIX);
 
-		unix_path = usock->sun_path;
+		/* address may not be populated by kernel */
+		if (usock->sun_path[0])
+			unix_path = usock->sun_path;
+		else
+			unix_path = con->unix_socket;
 	}
 
 	/* hand over FD for normal processing */
@@ -2429,6 +2563,8 @@ extern int conmgr_queue_write_msg(conmgr_fd_t *con, slurm_msg_t *msg)
 	uint32_t msglen = 0;
 
 	xassert(con->magic == MAGIC_CON_MGR_FD);
+	xassert(msg->protocol_version <= SLURM_PROTOCOL_VERSION);
+	xassert(msg->protocol_version >= SLURM_MIN_PROTOCOL_VERSION);
 
 	if ((rc = slurm_buffers_pack_msg(msg, &buffers, false)))
 		goto cleanup;
@@ -2437,6 +2573,13 @@ extern int conmgr_queue_write_msg(conmgr_fd_t *con, slurm_msg_t *msg)
 
 	if (buffers.auth)
 		msglen += get_buf_offset(buffers.auth);
+
+	if (msglen > MAX_MSG_SIZE) {
+		log_flag(NET, "%s: [%s] invalid RPC message length: %u",
+			 __func__, con->name, msglen);
+		rc = SLURM_PROTOCOL_INSANE_MSG_LENGTH;
+		goto cleanup;
+	}
 
 	/* switch to network order */
 	msglen = htonl(msglen);
@@ -2578,7 +2721,8 @@ static bool _is_listening(const slurm_addr_t *addr, socklen_t addrlen)
 
 	memcpy(&address, addr, addrlen);
 
-	if (list_find_first_ro(mgr.listen, _match_socket_address, &address))
+	if (list_find_first_ro(mgr.listen_conns, _match_socket_address,
+			       &address))
 		return true;
 
 	return false;
@@ -3334,25 +3478,15 @@ extern int conmgr_fd_xfer_in_buffer(const conmgr_fd_t *con,
 		return EINVAL;
 
 	if (*buffer_ptr) {
-		bool will_fit;
+		int rc;
 
 		buf = *buffer_ptr;
-		xassert(buf->magic == BUF_MAGIC);
 
-		will_fit = remaining_buf(buf) >= get_buf_offset(con->in);
-
-		if (buf->mmaped) {
-			/* can't grow a mmaped buffer */
-			if (!will_fit)
-				return ENOMEM;
-		} else if (!get_buf_offset(buf)) {
-			SWAP(buf->head, con->in->head);
-			SWAP(buf->processed, con->in->processed);
-			SWAP(buf->size, con->in->size);
+		if (!swap_buf_data(buf, con->in))
 			return SLURM_SUCCESS;
-		} else if (!will_fit) {
-			grow_buf(buf, get_buf_offset(con->in));
-		}
+
+		if ((rc = try_grow_buf_remaining(buf, get_buf_offset(con->in))))
+			return rc;
 
 		memcpy(get_buf_data(buf) + get_buf_offset(buf),
 		       get_buf_data(con->in), get_buf_offset(con->in));
@@ -3365,9 +3499,15 @@ extern int conmgr_fd_xfer_in_buffer(const conmgr_fd_t *con,
 				       size_buf(con->in))))
 			return EINVAL;
 
+		if (!(con->in->head = try_xmalloc(BUFFER_START_SIZE))) {
+			error("%s: [%s] Unable to allocate replacement input buffer",
+			      __func__, con->name);
+			FREE_NULL_BUFFER(buf);
+			return ENOMEM;
+		}
+
 		*buffer_ptr = buf;
 
-		con->in->head = xmalloc_nz(BUFFER_START_SIZE);
 		set_buf_offset(con->in, 0);
 		con->in->size = BUFFER_START_SIZE;
 

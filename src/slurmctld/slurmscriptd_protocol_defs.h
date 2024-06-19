@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurmscriptd_protocol_defs.h - definitions used for slurmscriptd RPCs.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Marshall Garey <marshall@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -100,16 +99,7 @@ typedef struct {
 	bool log_rotate;
 } log_msg_t;
 
-typedef struct {
-	uint64_t debug_flags;
-	char *logfile;
-	uint16_t log_fmt;
-	uint16_t slurmctld_debug;
-	uint16_t syslog_debug;
-} reconfig_msg_t;
-
 /* Free message functions */
-extern void slurmscriptd_free_reconfig(reconfig_msg_t *msg);
 extern void slurmscriptd_free_run_script_msg(run_script_msg_t *msg);
 extern void slurmscriptd_free_script_complete(script_complete_t *msg);
 

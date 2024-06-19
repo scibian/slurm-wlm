@@ -48,7 +48,7 @@ AC_PROG_CC
 AC_PROG_CXX
 AC_PROG_MAKE_SET
 LT_INIT
-PKG_PROG_PKG_CONFIG([0.9.0])
+X_AC_PKGCONFIG
 
 dnl Find objcopy and setup path
 AC_CHECK_TARGET_TOOL([OBJCOPY], objcopy, [], [])
@@ -229,11 +229,11 @@ X_AC_RSMI
 X_AC_ONEAPI
 X_AC_PMIX
 X_AC_FREEIPMI
-X_AC_RRDTOOL
 X_AC_UCX
 X_AC_X11
 X_AC_SELINUX
 X_AC_RDKAFKA
+X_AC_S2N
 
 X_AC_CGROUP
 X_AC_BPF
@@ -247,7 +247,6 @@ PKG_CHECK_MODULES([CHECK], [check >= 0.9.8], [ac_have_check="yes"], [ac_have_che
 AM_CONDITIONAL(HAVE_CHECK, test "x$ac_have_check" = "xyes")
 
 X_AC_SVIEW
-X_AC_CRAY
 X_AC_HPE_SLINGSHOT
 
 dnl checks for system services.
@@ -261,7 +260,7 @@ dnl check for how to emulate setproctitle
 dnl
 X_AC_SETPROCTITLE
 
-dnl check for debug compilation, must follow X_AC_CRAY
+dnl check for debug compilation
 dnl
 X_AC_DEBUG
 
@@ -353,9 +352,6 @@ dnl All slurm Makefiles:
 AC_CONFIG_FILES([Makefile
 		 auxdir/Makefile
 		 contribs/Makefile
-		 contribs/cray/Makefile
-		 contribs/cray/csm/Makefile
-		 contribs/cray/slurmsmwd/Makefile
 		 contribs/lua/Makefile
 		 contribs/nss_slurm/Makefile
 		 contribs/openlava/Makefile
@@ -391,6 +387,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/Makefile
 		 src/plugins/accounting_storage/Makefile
 		 src/plugins/accounting_storage/common/Makefile
+		 src/plugins/accounting_storage/ctld_relay/Makefile
 		 src/plugins/accounting_storage/mysql/Makefile
 		 src/plugins/accounting_storage/slurmdbd/Makefile
 		 src/plugins/acct_gather_energy/Makefile
@@ -427,8 +424,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/cli_filter/lua/Makefile
 		 src/plugins/cli_filter/syslog/Makefile
 		 src/plugins/cli_filter/user_defaults/Makefile
-		 src/plugins/core_spec/Makefile
-		 src/plugins/core_spec/cray_aries/Makefile
 		 src/plugins/cred/Makefile
 		 src/plugins/cred/common/Makefile
 		 src/plugins/cred/munge/Makefile
@@ -436,8 +431,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/data_parser/Makefile
 		 src/plugins/data_parser/v0.0.39/Makefile
 		 src/plugins/data_parser/v0.0.40/Makefile
-		 src/plugins/ext_sensors/Makefile
-		 src/plugins/ext_sensors/rrd/Makefile
+		 src/plugins/data_parser/v0.0.41/Makefile
 		 src/plugins/gpu/Makefile
 		 src/plugins/gpu/common/Makefile
 		 src/plugins/gpu/generic/Makefile
@@ -452,13 +446,13 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/gres/nic/Makefile
 		 src/plugins/gres/shard/Makefile
 		 src/plugins/hash/Makefile
+		 src/plugins/hash/common_xkcp/Makefile
 		 src/plugins/hash/k12/Makefile
+		 src/plugins/hash/sha3/Makefile
 		 src/plugins/job_container/Makefile
-		 src/plugins/job_container/cncu/Makefile
 		 src/plugins/job_container/tmpfs/Makefile
 		 src/plugins/job_submit/Makefile
 		 src/plugins/job_submit/all_partitions/Makefile
-		 src/plugins/job_submit/cray_aries/Makefile
 		 src/plugins/job_submit/defaults/Makefile
 		 src/plugins/job_submit/logging/Makefile
 		 src/plugins/job_submit/lua/Makefile
@@ -488,11 +482,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/mpi/pmix/Makefile
 		 src/plugins/node_features/Makefile
 		 src/plugins/node_features/helpers/Makefile
-		 src/plugins/node_features/knl_cray/Makefile
 		 src/plugins/node_features/knl_generic/Makefile
-		 src/plugins/power/Makefile
-		 src/plugins/power/common/Makefile
-		 src/plugins/power/cray_aries/Makefile
 		 src/plugins/preempt/Makefile
 		 src/plugins/preempt/partition_prio/Makefile
 		 src/plugins/preempt/qos/Makefile
@@ -503,7 +493,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/priority/multifactor/Makefile
 		 src/plugins/proctrack/Makefile
 		 src/plugins/proctrack/cgroup/Makefile
-		 src/plugins/proctrack/cray_aries/Makefile
 		 src/plugins/proctrack/linuxproc/Makefile
 		 src/plugins/proctrack/pgid/Makefile
 		 src/plugins/sched/Makefile
@@ -511,9 +500,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/sched/builtin/Makefile
 		 src/plugins/select/Makefile
 		 src/plugins/select/cons_tres/Makefile
-		 src/plugins/select/cray_aries/Makefile
 		 src/plugins/select/linear/Makefile
-		 src/plugins/select/other/Makefile
 		 src/plugins/serializer/Makefile
 		 src/plugins/serializer/json/Makefile
 		 src/plugins/serializer/url-encoded/Makefile
@@ -521,12 +508,14 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/site_factor/Makefile
 		 src/plugins/site_factor/example/Makefile
 		 src/plugins/switch/Makefile
-		 src/plugins/switch/cray_aries/Makefile
 		 src/plugins/switch/hpe_slingshot/Makefile
+		 src/plugins/switch/nvidia_imex/Makefile
 		 src/plugins/task/Makefile
 		 src/plugins/task/affinity/Makefile
 		 src/plugins/task/cgroup/Makefile
-		 src/plugins/task/cray_aries/Makefile
+		 src/plugins/tls/Makefile
+		 src/plugins/tls/none/Makefile
+		 src/plugins/tls/s2n/Makefile
 		 src/plugins/topology/Makefile
 		 src/plugins/topology/3d_torus/Makefile
 		 src/plugins/topology/block/Makefile
@@ -558,11 +547,9 @@ AC_CONFIG_FILES([Makefile
 		 src/slurmrestd/plugins/auth/jwt/Makefile
 		 src/slurmrestd/plugins/auth/local/Makefile
 		 src/slurmrestd/plugins/openapi/Makefile
-		 src/slurmrestd/plugins/openapi/dbv0.0.38/Makefile
 		 src/slurmrestd/plugins/openapi/dbv0.0.39/Makefile
 		 src/slurmrestd/plugins/openapi/slurmctld/Makefile
 		 src/slurmrestd/plugins/openapi/slurmdbd/Makefile
-		 src/slurmrestd/plugins/openapi/v0.0.38/Makefile
 		 src/slurmrestd/plugins/openapi/v0.0.39/Makefile
 		 src/sprio/Makefile
 		 src/squeue/Makefile
@@ -570,6 +557,7 @@ AC_CONFIG_FILES([Makefile
 		 src/srun/Makefile
 		 src/sshare/Makefile
 		 src/sstat/Makefile
+		 src/stepmgr/Makefile
 		 src/strigger/Makefile
 		 src/sview/Makefile
 		 testsuite/Makefile

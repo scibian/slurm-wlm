@@ -63,8 +63,7 @@ extern void reservation_delete_resv_exc(resv_exc_t *resv_exc);
 extern slurmctld_resv_t *find_resv_name(char *resv_name);
 
 /* Dump the reservation records to a buffer */
-extern void show_resv(char **buffer_ptr, int *buffer_size, uid_t uid,
-		      uint16_t protocol_version);
+extern buf_t *show_resv(uid_t uid, uint16_t protocol_version);
 
 /* Save the state of all reservations to file */
 extern int dump_all_resv_state(void);
@@ -150,18 +149,6 @@ extern burst_buffer_info_msg_t *job_test_bb_resv(job_record_t *job_ptr,
  */
 extern int job_test_lic_resv(job_record_t *job_ptr, char *lic_name,
 			     time_t when, bool reboot);
-
-/*
- * Determine how many watts the specified job is prevented from using
- * due to reservations
- *
- * IN job_ptr   - job to test
- * IN when      - when the job is expected to start
- * IN reboot    - true if node reboot required to start job
- * RET amount of watts the job is prevented from using
- */
-extern uint32_t job_test_watts_resv(job_record_t *job_ptr, time_t when,
-				    bool reboot);
 
 /*
  * Determine which nodes a job can use based upon reservations

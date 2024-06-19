@@ -81,6 +81,14 @@ Read Slurm configuration from the specified file. See \fBNOTES\fR below.
 .IP
 
 .TP
+\fB\-\-generate\-openapi\-spec\fR
+Dump JSON formatted OpenAPI specification to stdout and exit immediately.
+Loads miminal plugins required. Loading of \fBslurm.conf\fR(5) can be disabled
+by passing additional arguments \fB\-f /dev/null\fR or setting
+\fBSLURM_CONF\fR=/dev/null in the environment.
+.IP
+
+.TP
 \fB\-g <group id>\fR
 Change group id (and drop supplemental groups) before processing client
 request. This should be a unique group with no write access or special
@@ -89,7 +97,7 @@ root or the daemon won't start with the default settings.
 .IP
 
 .TP
-\fB\-h\fR
+\fB\-h\fR, \fB\-\-help\fR
 Help; print a brief summary of command options.
 .IP
 
@@ -146,7 +154,7 @@ Print version information and exit.
 
 .SH "ENVIRONMENT VARIABLES"
 The following environment variables can be used to override settings
-compiled into slurmctld.
+compiled into slurmrestd.
 
 .TP
 \fBSLURM_CONF\fR
@@ -212,6 +220,14 @@ Set the maximum number of connections to process at any one time. See
 .TP
 \fBSLURMRESTD_OPENAPI_PLUGINS\fR
 Comma\-delimited list of OpenAPI plugins to load. See \fB\-s\fR
+.IP
+
+.TP
+\fBSLURMRESTD_RESPONSE_STATUS_CODES\fR
+Comma\-delimited list of OpenAPI method responses to generate in OpenAPI
+specification.
+.BR
+Default: 200,default
 .IP
 
 .TP
