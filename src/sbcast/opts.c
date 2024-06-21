@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2016 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -76,7 +76,7 @@ static void     _usage( void );
  */
 extern void parse_command_line(int argc, char **argv)
 {
-	char *env_val = NULL, *sep, *tmp;
+	char *env_val = NULL, *tmp;
 	int opt_char, ret;
 	int option_index;
 	static struct option long_options[] = {
@@ -98,14 +98,10 @@ extern void parse_command_line(int argc, char **argv)
 		{NULL,        0,                 0, 0}
 	};
 
-	if ((tmp = xstrcasestr(slurm_conf.bcast_parameters, "Compression="))) {
-		tmp += 12;
-		sep = strchr(tmp, ',');
-		if (sep)
-			sep[0] = '\0';
+	if ((tmp = conf_get_opt_str(slurm_conf.bcast_parameters,
+				    "Compression="))) {
 		params.compress = parse_compress_type(tmp);
-		if (sep)
-			sep[0] = ',';
+		xfree(tmp);
 	}
 
 	if (slurm_conf.bcast_exclude)
@@ -241,15 +237,10 @@ extern void parse_command_line(int argc, char **argv)
 
 	if (argv[optind+1][0] == '/') {
 		params.dst_fname = xstrdup(argv[optind+1]);
-	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
-				      "DestDir="))) {
-		tmp += 8;
-		sep = strchr(tmp, ',');
-		if (sep)
-			sep[0] = '\0';
-		xstrfmtcat(params.dst_fname, "%s/%s", tmp, argv[optind+1]);
-		if (sep)
-			sep[0] = ',';
+	} else if ((params.dst_fname =
+		    conf_get_opt_str(slurm_conf.bcast_parameters,
+				     "DestDir="))) {
+		xstrfmtcat(params.dst_fname, "/%s", argv[optind+1]);
 	} else {
 #ifdef HAVE_GET_CURRENT_DIR_NAME
 		tmp = get_current_dir_name();

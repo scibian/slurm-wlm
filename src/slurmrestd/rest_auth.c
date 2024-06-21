@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  rest_auth.c - Slurm REST API HTTP authentication
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -43,6 +42,7 @@
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/plugin.h"
+#include "src/common/read_config.h"
 #include "src/interfaces/auth.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
@@ -224,6 +224,9 @@ extern int rest_auth_g_apply(rest_auth_context_t *context)
 
 extern void *openapi_get_db_conn(void *ctxt)
 {
+	if (!slurm_conf.accounting_storage_type)
+		return NULL;
+
 	/*
 	 * Implements authentication translation from the generic openapi
 	 * version to the rest pointer

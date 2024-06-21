@@ -1,7 +1,7 @@
 /****************************************************************************\
  *  slurmdbd_agent.c - functions to the agent talking to the SlurmDBD
  *****************************************************************************
- *  Copyright (C) 2011-2018 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
@@ -50,7 +50,12 @@ enum {
 	MAX_DBD_ACTION_EXIT
 };
 
-slurm_persist_conn_t *slurmdbd_conn = NULL;
+typedef struct {
+	uint32_t msg_size;
+	list_t *my_list;
+} foreach_get_my_list_t;
+
+persist_conn_t *slurmdbd_conn = NULL;
 
 
 #define DBD_MAGIC		0xDEAD3219
@@ -154,6 +159,25 @@ static int _get_return_code(void)
 	return rc;
 }
 
+static int _get_return_codes(void *x, void *arg)
+{
+	buf_t *out_buf = x;
+	int *rc_ptr = arg;
+	buf_t *b;
+
+	if ((*rc_ptr = _unpack_return_code(slurmdbd_conn->version, out_buf)) !=
+	    SLURM_SUCCESS)
+		return -1;
+
+	if ((b = list_dequeue(agent_list))) {
+		FREE_NULL_BUFFER(b);
+	} else {
+		error("DBD_GOT_MULT_MSG unpack message error");
+	}
+
+	return 0;
+}
+
 static int _handle_mult_rc_ret(void)
 {
 	buf_t *buffer;
@@ -161,7 +185,6 @@ static int _handle_mult_rc_ret(void)
 	persist_rc_msg_t *msg = NULL;
 	dbd_list_msg_t *list_msg = NULL;
 	int rc = SLURM_ERROR;
-	buf_t *out_buf = NULL;
 
 	buffer = slurm_persist_recv_msg(slurmdbd_conn);
 	if (buffer == NULL)
@@ -180,23 +203,8 @@ static int _handle_mult_rc_ret(void)
 
 		slurm_mutex_lock(&agent_lock);
 		if (agent_list) {
-			ListIterator itr =
-				list_iterator_create(list_msg->my_list);
-			while ((out_buf = list_next(itr))) {
-				buf_t *b;
-				if ((rc = _unpack_return_code(
-					     slurmdbd_conn->version, out_buf))
-				    != SLURM_SUCCESS)
-					break;
-
-				if ((b = list_dequeue(agent_list))) {
-					FREE_NULL_BUFFER(b);
-				} else {
-					error("DBD_GOT_MULT_MSG "
-					      "unpack message error");
-				}
-			}
-			list_iterator_destroy(itr);
+			list_for_each(list_msg->my_list, _get_return_codes,
+				      &rc);
 		}
 		slurm_mutex_unlock(&agent_lock);
 		slurmdbd_free_list_msg(list_msg);
@@ -584,6 +592,19 @@ static void _print_agent_list_msg_types(void)
 	xfree(mlist);
 }
 
+static int _get_my_list(void *x, void *arg)
+{
+	buf_t *buffer = x;
+	foreach_get_my_list_t *args = arg;
+
+	args->msg_size += size_buf(buffer);
+	if (args->msg_size > MAX_MSG_SIZE)
+		return -1;
+	list_enqueue(args->my_list, buffer);
+
+	return 0;
+}
+
 static void *_agent(void *x)
 {
 	int rc;
@@ -604,14 +625,14 @@ static void *_agent(void *x)
 	list_req.data = &list_msg;
 	memset(&list_msg, 0, sizeof(dbd_list_msg_t));
 
-	log_flag(AGENT, "slurmdbd agent_count=%d with msg_type=%s",
+	log_flag(DBD_AGENT, "slurmdbd agent_count=%d with msg_type=%s",
 		 list_count(agent_list),
 		 slurmdbd_msg_type_2_str(list_req.msg_type, 1));
 
 	while (*slurmdbd_conn->shutdown == 0) {
 		slurm_mutex_lock(&slurmdbd_lock);
 		if (halt_agent) {
-			log_flag(AGENT, "slurmdbd agent halt with agent_count=%d",
+			log_flag(DBD_AGENT, "slurmdbd agent halt with agent_count=%d",
 				 list_count(agent_list));
 
 			slurm_cond_wait(&slurmdbd_cond, &slurmdbd_lock);
@@ -625,7 +646,7 @@ static void *_agent(void *x)
 			if (slurmdbd_conn->fd < 0) {
 				fail_time = time(NULL);
 
-				log_flag(AGENT, "slurmdbd disconnected with agent_count=%d",
+				log_flag(DBD_AGENT, "slurmdbd disconnected with agent_count=%d",
 					 list_count(agent_list));
 			}
 		}
@@ -650,26 +671,21 @@ static void *_agent(void *x)
 			slurm_mutex_unlock(&agent_lock);
 			continue;
 		} else if (((cnt > 0) && ((cnt % 100) == 0)) ||
-		           (slurm_conf.debug_flags & DEBUG_FLAG_AGENT))
+		           (slurm_conf.debug_flags & DEBUG_FLAG_DBD_AGENT))
 			info("agent_count:%d", cnt);
 		/* Leave item on the queue until processing complete */
 		if (agent_list) {
-			uint32_t msg_size = sizeof(list_req);
 			if (cnt > 1) {
-				int agent_count = 0;
-				ListIterator agent_itr =
-					list_iterator_create(agent_list);
-				list_msg.my_list = list_create(NULL);
-				while ((buffer = list_next(agent_itr))) {
-					msg_size += size_buf(buffer);
-					if (msg_size > MAX_MSG_SIZE)
-						break;
-					list_enqueue(list_msg.my_list, buffer);
-					agent_count++;
-					if (agent_count > 1000)
-						break;
-				}
-				list_iterator_destroy(agent_itr);
+				int max_rpcs = 1000;
+				foreach_get_my_list_t args = {
+					.msg_size = sizeof(list_req),
+					.my_list = list_create(NULL),
+				};
+
+				list_msg.my_list = args.my_list;
+
+				list_for_each_max(agent_list, &max_rpcs,
+						  _get_my_list, &args, 1, true);
 				buffer = pack_slurmdbd_msg(
 					&list_req, SLURM_PROTOCOL_VERSION);
 			} else
@@ -749,7 +765,7 @@ static void *_agent(void *x)
 
 			fail_time = time(NULL);
 
-			if (slurm_conf.debug_flags & DEBUG_FLAG_AGENT) {
+			if (slurm_conf.debug_flags & DEBUG_FLAG_DBD_AGENT) {
 				info("slurmdbd agent failed with rc:%d",
 				     rc);
 				_print_agent_list_msg_types();
@@ -800,15 +816,14 @@ static void _shutdown_agent(void)
 	if (agent_running)
 		slurm_cond_broadcast(&agent_cond);
 	slurm_mutex_unlock(&agent_lock);
-	pthread_join(agent_tid,  NULL);
-	agent_tid = 0;
+	slurm_thread_join(agent_tid);
 }
 
 /****************************************************************************
  * Socket open/close/read/write functions
  ****************************************************************************/
 
-extern void slurmdbd_agent_set_conn(slurm_persist_conn_t *pc)
+extern void slurmdbd_agent_set_conn(persist_conn_t *pc)
 {
 	if (!running_in_slurmctld())
 		return;

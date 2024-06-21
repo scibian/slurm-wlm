@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  api.c - Slurm REST API openapi operations handlers
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -43,6 +42,7 @@
 
 #include "src/common/data.h"
 #include "src/common/log.h"
+#include "src/common/read_config.h"
 #include "src/common/ref.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
@@ -171,7 +171,7 @@ extern ctxt_t *init_connection(const char *context_id,
 	ctxt->errors = errors;
 	ctxt->warnings = warn;
 
-	if (!ctxt->db_conn)
+	if (!ctxt->db_conn && slurm_conf.accounting_storage_type)
 		resp_error(ctxt, ESLURM_DB_CONNECTION, __func__,
 			   "openapi_get_db_conn() failed to open slurmdb connection");
 
@@ -361,4 +361,10 @@ extern void slurm_openapi_p_fini(void)
 
 	data_parser_g_free(global_parser, false);
 	global_parser = NULL;
+}
+
+extern int slurm_openapi_p_get_paths(const openapi_path_binding_t **paths_ptr,
+				     const openapi_resp_meta_t **meta_ptr)
+{
+	return ESLURM_NOT_SUPPORTED;
 }

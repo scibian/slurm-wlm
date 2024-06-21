@@ -357,7 +357,7 @@ void _handle_response_msg(slurm_msg_type_t msg_type, void *msg,
 
 void _handle_response_msg_list(List other_nodes_resp, bitstr_t *tasks_started)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	ret_data_info_t *ret_data_info = NULL;
 	uint32_t msg_rc;
 
@@ -500,7 +500,7 @@ static void _msg_thr_wait(message_thread_state_t *mts)
 static void _msg_thr_destroy(message_thread_state_t *mts)
 {
 	eio_signal_shutdown(mts->msg_handle);
-	pthread_join(mts->msg_thread, NULL);
+	slurm_thread_join(mts->msg_thread);
 	eio_handle_destroy(mts->msg_handle);
 	slurm_mutex_destroy(&mts->lock);
 	slurm_cond_destroy(&mts->cond);

@@ -46,87 +46,21 @@
 #include "src/common/plugrack.h"
 #include "src/slurmctld/slurmctld.h"
 
-/*
- * Local data
- */
-typedef struct {
-	uint32_t	(*plugin_id);
-	int		(*state_save)		(char *dir_name);
-	int		(*state_restore)	(char *dir_name);
-	int		(*job_init)		(List job_list);
-	int		(*node_init)		(void);
-	int		(*job_test)		(job_record_t *job_ptr,
-						 bitstr_t *bitmap,
-						 uint32_t min_nodes,
-						 uint32_t max_nodes,
-						 uint32_t req_nodes,
-						 uint16_t mode,
-						 List preeemptee_candidates,
-						 List *preemptee_job_list,
-						 resv_exc_t *resv_exc_ptr);
-	int		(*job_begin)		(job_record_t *job_ptr);
-	int		(*job_ready)		(job_record_t *job_ptr);
-	int		(*job_expand)		(job_record_t *from_job_ptr,
-						 job_record_t *to_job_ptr);
-	int		(*job_resized)		(job_record_t *job_ptr,
-						 node_record_t *node_ptr);
-	int		(*job_fini)		(job_record_t *job_ptr);
-	int		(*job_suspend)		(job_record_t *job_ptr,
-						 bool indf_susp);
-	int		(*job_resume)		(job_record_t *job_ptr,
-						 bool indf_susp);
-	bitstr_t *      (*step_pick_nodes)      (job_record_t *job_ptr,
-						 select_jobinfo_t *step_jobinfo,
-						 uint32_t node_count,
-						 bitstr_t **avail_nodes);
-	int             (*step_start)           (step_record_t *step_ptr);
-	int             (*step_finish)          (step_record_t *step_ptr,
-						 bool killing_step);
-	int		(*nodeinfo_pack)	(select_nodeinfo_t *nodeinfo,
-						 buf_t *buffer,
-						 uint16_t protocol_version);
-	int		(*nodeinfo_unpack)	(select_nodeinfo_t **nodeinfo,
-						 buf_t *buffer,
-						 uint16_t protocol_version);
-	select_nodeinfo_t *(*nodeinfo_alloc)	(void);
-	int		(*nodeinfo_free)	(select_nodeinfo_t *nodeinfo);
-	int		(*nodeinfo_set_all)	(void);
-	int		(*nodeinfo_set)		(job_record_t *job_ptr);
-	int		(*nodeinfo_get)		(select_nodeinfo_t *nodeinfo,
-						 enum
-						 select_nodedata_type dinfo,
-						 enum node_states state,
-						 void *data);
-	select_jobinfo_t *(*jobinfo_alloc)	(void);
-	int		(*jobinfo_free)		(select_jobinfo_t *jobinfo);
-	int		(*jobinfo_set)		(select_jobinfo_t *jobinfo,
-						 enum
-						 select_jobdata_type data_type,
-						 void *data);
-	int		(*jobinfo_get)		(select_jobinfo_t *jobinfo,
-						 enum
-						 select_jobdata_type data_type,
-						 void *data);
-	select_jobinfo_t *(*jobinfo_copy)	(select_jobinfo_t *jobinfo);
-	int		(*jobinfo_pack)		(select_jobinfo_t *jobinfo,
-						 buf_t *buffer,
-						 uint16_t protocol_version);
-	int		(*jobinfo_unpack)	(select_jobinfo_t **jobinfo_pptr,
-						 buf_t *buffer,
-						 uint16_t protocol_version);
-	int		(*get_info_from_plugin)	(enum
-						 select_plugindata_info dinfo,
-						 job_record_t *job_ptr,
-						 void *data);
-	int		(*reconfigure)		(void);
-} slurm_select_ops_t;
-
-/*
- * Defined in node_select.c Must be synchronized with slurm_select_ops_t above.
- * Also must be synchronized with the other_select.c in
- * the select/other lib.
- */
-extern const char *node_select_syms[];
+typedef struct avail_res {	/* Per-node resource availability */
+	uint16_t avail_cpus;	/* Count of available CPUs for this job
+				   limited by options like --ntasks-per-node */
+	uint16_t avail_gpus;	/* Count of available GPUs */
+	uint16_t avail_res_cnt;	/* Count of available CPUs + GPUs */
+	uint16_t *avail_cores_per_sock;	/* Per-socket available core count */
+	uint32_t gres_min_cpus; /* Minimum required cpus for gres */
+	uint32_t gres_max_tasks; /* Maximum tasks for gres */
+	uint16_t max_cpus;	/* Maximum available CPUs on the node */
+	uint16_t min_cpus;	/* Minimum allocated CPUs */
+	uint16_t sock_cnt;	/* Number of sockets on this node */
+	List sock_gres_list;	/* Per-socket GRES availability, sock_gres_t */
+	uint16_t spec_threads;	/* Specialized threads to be reserved */
+	uint16_t tpc;		/* Threads/cpus per core */
+} avail_res_t;
 
 /* Convert a node coordinate character into its equivalent number:
  * '0' = 0; '9' = 9; 'A' = 10; etc. */
@@ -159,9 +93,6 @@ extern int select_g_fini(void);
 
 /* Get this plugin's sequence number in Slurm's internal tables */
 extern int select_get_plugin_id_pos(uint32_t plugin_id);
-
-/* Get the plugin ID number. Unique for each select plugin type */
-extern int select_get_plugin_id(void);
 
 /* If the slurmctld is running a linear based select plugin return 1
  * else 0. */

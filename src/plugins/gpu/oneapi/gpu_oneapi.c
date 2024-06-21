@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  gpu_oneapi.c - Support oneAPI interface to an Intel GPU.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2022 Intel Corporation
  *  Written by Kemp Ke <kemp.ke@intel.com>
  *  Based on gpu_nvml.c, written by Danny Auble <da@schedmd.com>
@@ -319,7 +319,7 @@ static bool _oneapi_get_nearest_freq(zes_freq_handle_t freq_handle,
 
 	memcpy(freqs_sort, freqs, freqs_size * sizeof(unsigned int));
 	qsort(freqs_sort, freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 
 	/* Set the nearest valid frequency for the requested frequency */
 	gpu_common_get_nearest_freq(freq, freqs_size, freqs_sort);
@@ -388,7 +388,7 @@ static void _oneapi_print_freqs(ze_device_handle_t device, log_level_t l)
 						  &freqs_size))
 			continue;
 		qsort(freqs, freqs_size, sizeof(unsigned int),
-		      gpu_common_sort_freq_descending);
+		      slurm_sort_uint_list_desc);
 
 		/* Get frequency property */
 		oneapi_rc = zesFrequencyGetProperties(freq_handles[i],
@@ -982,11 +982,6 @@ extern int fini(void)
 {
 	debug("unloading");
 
-	return SLURM_SUCCESS;
-}
-
-extern int gpu_p_reconfig(void)
-{
 	return SLURM_SUCCESS;
 }
 

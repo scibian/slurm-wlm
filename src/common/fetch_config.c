@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  fetch_config.c - functions for "configless" slurm operation
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -53,8 +52,8 @@
 
 static char *slurmd_config_files[] = {
 	"slurm.conf", "acct_gather.conf", "cgroup.conf",
-	"cli_filter.lua", "ext_sensors.conf", "gres.conf", "helpers.conf",
-	"job_container.conf", "knl_cray.conf", "mpi.conf", "oci.conf",
+	"cli_filter.lua", "gres.conf", "helpers.conf",
+	"job_container.conf", "mpi.conf", "oci.conf",
 	"plugstack.conf", "scrun.lua", "topology.conf", NULL
 };
 
@@ -152,7 +151,7 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 	char *env_conf_server = getenv("SLURM_CONF_SERVER");
 	List controllers = NULL;
 	pid_t pid;
-	char *sack_key = NULL;
+	char *sack_jwks = NULL, *sack_key = NULL;
 	struct stat statbuf;
 
 	/*
@@ -196,14 +195,13 @@ extern config_response_msg_t *fetch_config(char *conf_server, uint32_t flags)
 	}
 
 	/* If the slurm.key file exists, assume we're using auth/slurm */
+	sack_jwks = get_extra_conf_path("slurm.jwks");
 	sack_key = get_extra_conf_path("slurm.key");
-	if (!stat(sack_key, &statbuf)) {
-		/*
-		 * This envvar will ensure both the config fetching process
-		 * as well as ourselves will use the original key location.
-		 */
+	if (!stat(sack_jwks, &statbuf))
+		setenv("SLURM_SACK_JWKS", sack_jwks, 1);
+	else if (!stat(sack_key, &statbuf))
 		setenv("SLURM_SACK_KEY", sack_key, 1);
-	}
+	xfree(sack_jwks);
 	xfree(sack_key);
 
 	/*
@@ -542,10 +540,16 @@ extern config_response_msg_t *new_config_response(bool to_slurmd)
 	 * configuration semantics for the Include lines.
 	 */
 	if (to_slurmd) {
-		if (slurm_conf.prolog && (slurm_conf.prolog[0] != '/'))
-			_load_conf2list(msg, slurm_conf.prolog, true);
-		if (slurm_conf.epilog && (slurm_conf.epilog[0] != '/'))
-			_load_conf2list(msg, slurm_conf.epilog, true);
+		for (int i = 0; i < slurm_conf.prolog_cnt; i++) {
+			if (slurm_conf.prolog[i][0] != '/')
+				_load_conf2list(msg, slurm_conf.prolog[i],
+						true);
+		}
+		for (int i = 0; i < slurm_conf.epilog_cnt; i++) {
+			if (slurm_conf.epilog[i][0] != '/')
+				_load_conf2list(msg, slurm_conf.epilog[i],
+						true);
+		}
 	}
 
 	return msg;

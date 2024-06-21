@@ -41,6 +41,8 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <poll.h>
+#include <stdint.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -60,10 +62,29 @@
 #include "src/common/xstring.h"
 
 /*
+ * Helper macro to log_flag(NET, ...) against a given connection
+ * IN fd - file descriptor relavent for logging
+ * IN con_name - human friendly name for fd or NULL (to auto resolve)
+ * IN fmt - log message format
+ */
+#define log_net(fd, con_name, fmt, ...) \
+do { \
+	if (slurm_conf.debug_flags & DEBUG_FLAG_NET) { \
+		char *log_name = NULL; \
+		if (!con_name) \
+			con_name = log_name = fd_resolve_path(fd); \
+		log_flag(NET, "%s: [%s] " fmt, \
+			 __func__, con_name, ##__VA_ARGS__); \
+		xfree(log_name); \
+	} \
+} while (false)
+
+/*
  * Define slurm-specific aliases for use by plugins, see slurm_xlator.h
  * for details.
  */
 strong_alias(closeall, slurm_closeall);
+strong_alias(fd_close, slurm_fd_close);
 strong_alias(fd_set_blocking,	slurm_fd_set_blocking);
 strong_alias(fd_set_nonblocking,slurm_fd_set_nonblocking);
 strong_alias(fd_get_socket_error, slurm_fd_get_socket_error);
@@ -115,6 +136,14 @@ extern void closeall(int fd)
 		}
 	}
 	closedir(d);
+}
+
+extern void fd_close(int *fd)
+{
+	if (fd && *fd >= 0) {
+		close(*fd);
+		*fd = -1;
+	}
 }
 
 void fd_set_close_on_exec(int fd)
@@ -239,6 +268,7 @@ static pid_t fd_test_lock(int fd, int type)
 	return(lock.l_pid);
 }
 
+
 /* Wait for a file descriptor to be readable (up to time_limit seconds).
  * Return 0 when readable or -1 on error */
 extern int wait_fd_readable(int fd, int time_limit)
@@ -260,7 +290,7 @@ extern int wait_fd_readable(int fd, int time_limit)
 			else	/* Exception */
 				return -1;
 		} else if (rc == 0) {
-			error("Timeout waiting for slurmstepd");
+			error("Timeout waiting for socket");
 			return -1;
 		} else if (errno != EINTR) {
 			error("poll(): %m");
@@ -269,6 +299,44 @@ extern int wait_fd_readable(int fd, int time_limit)
 			time_left = time_limit - (time(NULL) - start);
 		}
 	}
+}
+
+/*
+ * Check if a file descriptor is writable now.
+ *
+ * This function assumes that O_NONBLOCK is set already, if it is not this
+ * function will block!
+ *
+ * Return 1 when writeable or 0 on error
+ */
+extern bool fd_is_writable(int fd)
+{
+	bool rc = true;
+	char temp[2];
+	struct pollfd ufd;
+
+	/* setup call to poll */
+	ufd.fd = fd;
+	ufd.events = POLLOUT;
+
+	while (true) {
+		if (poll(&ufd, 1, 0) == -1) {
+			if ((errno == EINTR) || (errno == EAGAIN))
+				continue;
+			debug2("%s: poll error: %m", __func__);
+			rc = false;
+			break;
+		}
+		if ((ufd.revents & POLLHUP) ||
+		    (recv(fd, &temp, 1, MSG_PEEK) == 0)) {
+			debug2("%s: socket is not writable", __func__);
+			rc = false;
+			break;
+		}
+		break;
+	}
+
+	return rc;
 }
 
 /*
@@ -401,7 +469,7 @@ extern void send_fd_over_pipe(int socket, int fd)
 	struct msghdr msg = { 0 };
 	struct cmsghdr *cmsg;
 	char buf[CMSG_SPACE(sizeof(fd))];
-	char c;
+	char c = '\0';
 	struct iovec iov[1];
 
 	memset(buf, '\0', sizeof(buf));
@@ -586,4 +654,62 @@ extern int rmdir_recursive(const char *path, bool remove_top)
 		      __func__, path, rc);
 
 	return rc;
+}
+
+
+extern int fd_get_readable_bytes(int fd, int *readable_ptr,
+				 const char *con_name)
+{
+#ifdef FIONREAD
+	/* default readable to max positive 32 bit signed integer */
+	int readable = INT32_MAX;
+
+	/* assert readable_ptr is set but gracefully allow for it not to be */
+	xassert(readable_ptr);
+
+	if (fd < 0) {
+		log_net(fd, con_name,
+			"Refusing request for ioctl(%d, FIONREAD) with invalid file descriptor: %d",
+			fd, fd);
+		return EINVAL;
+	}
+
+	/* request kernel tell us the size of the incoming buffer */
+	if (ioctl(fd, FIONREAD, &readable)) {
+		int rc = errno;
+		log_net(fd, con_name,
+			"ioctl(%d, FIONREAD, 0x%"PRIxPTR") failed: %s",
+			fd, (uintptr_t) &readable, slurm_strerror(rc));
+		return rc;
+	}
+
+	/* validate response from kernel is sane (or likely sane) */
+	if (readable < 0) {
+		/* invalid FIONREAD response -> bad driver response */
+		log_net(fd, con_name,
+			"Invalid response: ioctl(%d, FIONREAD, 0x%"PRIxPTR")=%d",
+			 fd, (uintptr_t) &readable, readable);
+		return ENOSYS;
+	}
+	/* verify if readable was even set */
+	if (readable == INT32_MAX) {
+		/* ioctl() did not error but did not change readable?? */
+		log_net(fd, con_name,
+			"Invalid unchanged readable value: ioctl(%d, FIONREAD, 0x%"PRIxPTR")=%d",
+			fd, (uintptr_t) &readable, readable);
+		return ENOSYS;
+	}
+
+	if (readable_ptr) {
+		*readable_ptr = readable;
+
+		log_net(fd, con_name,
+			"Successful query: ioctl(%d, FIONREAD, 0x%"PRIxPTR")=%d",
+			 fd, (uintptr_t) readable_ptr, readable);
+	}
+
+	return SLURM_SUCCESS;
+#else /* FIONREAD */
+	return ESLURM_NOT_SUPPORTED;
+#endif /* !FIONREAD */
 }

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  openapi.c - OpenAPI helpers
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -147,6 +146,15 @@ extern openapi_type_format_t openapi_data_type_to_type_format(data_type_t type)
 			return openapi_types[i].format;
 
 	return OPENAPI_FORMAT_INVALID;
+}
+
+extern openapi_type_t openapi_type_format_to_type(openapi_type_format_t format)
+{
+	for (int i = 0; i < ARRAY_SIZE(openapi_types); i++)
+		if (openapi_types[i].format == format)
+			return openapi_types[i].type;
+
+	return OPENAPI_TYPE_INVALID;
 }
 
 static data_for_each_cmd_t _foreach_join_path_str(data_t *data, void *arg)

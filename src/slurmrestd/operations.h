@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  operations.h - definitions for handling http operations
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -80,14 +79,12 @@ extern int bind_operation_handler(const char *path, openapi_handler_t callback,
  * Same rules as bind_operation_handler() but handles populating response and
  * tracking warnings and errors.
  *
- * IN path - url path to match - must include {data_parser}
- * IN callback - handler function for callback
- * IN tag - arbitrary tag passed to handler when path matched
+ * IN op_path - operation path to bind
+ * IN meta - meta info about plugin that owns callback or NULL
  * RET SLURM_SUCCESS or error
  */
-extern int bind_operation_ctxt_handler(const char *path,
-				       openapi_ctxt_handler_t callback, int tag,
-				       const openapi_resp_meta_t *meta);
+extern int bind_operation_path(const openapi_path_binding_t *op_path,
+			       const openapi_resp_meta_t *meta);
 
 /*
  * Unbind a given callback handler from all paths

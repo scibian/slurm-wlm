@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  workq.c - definitions for work queue manager
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -120,6 +119,21 @@ static int _find_worker(void *x, void *arg)
 	return (x == arg);
 }
 
+static void _worker_free(void *x)
+{
+	workq_worker_t *worker = x;
+
+	if (!worker)
+		return;
+
+	_check_magic_worker(worker);
+
+	log_flag(WORKQ, "%s: [%u] free worker", __func__, worker->id);
+
+	worker->magic = ~MAGIC_WORKER;
+	xfree(worker);
+}
+
 static void _worker_delete(void *x)
 {
 	workq_worker_t *worker = x;
@@ -139,10 +153,7 @@ static void _worker_delete(void *x)
 	slurm_mutex_unlock(&worker->workq->mutex);
 	xassert(worker == x);
 
-	log_flag(WORKQ, "%s: [%u] free worker", __func__, worker->id);
-
-	worker->magic = ~MAGIC_WORKER;
-	xfree(worker);
+	_worker_free(worker);
 }
 
 static void _work_delete(void *x)
@@ -167,7 +178,7 @@ extern workq_t *new_workq(int count)
 	xassert(count < 1024);
 
 	workq->magic = MAGIC_WORKQ;
-	workq->workers = list_create(NULL);
+	workq->workers = list_create(_worker_free);
 	workq->work = list_create(_work_delete);
 	workq->threads = count;
 
@@ -217,6 +228,7 @@ static void _wait_work_complete(workq_t *workq)
 	_check_magic_workq(workq);
 
 	slurm_mutex_lock(&workq->mutex);
+	xassert(workq->shutdown);
 	log_flag(WORKQ, "%s: waiting for %u queued workers",
 		 __func__, list_count(workq->work));
 	slurm_mutex_unlock(&workq->mutex);
@@ -233,11 +245,12 @@ static void _wait_work_complete(workq_t *workq)
 			break;
 		}
 		worker = list_peek(workq->workers);
+		xassert(worker->magic == MAGIC_WORKER);
 		tid = worker->tid;
 		slurm_mutex_unlock(&workq->mutex);
 
 		log_flag(WORKQ, "%s: waiting on %d workers", __func__, count);
-		pthread_join(tid, NULL);
+		slurm_thread_join(tid);
 	}
 }
 

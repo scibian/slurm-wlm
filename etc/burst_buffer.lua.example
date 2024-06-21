@@ -65,8 +65,6 @@
 --not required to run this file and may be removed.
 --]]
 
-lua_script_name="burst_buffer.lua"
-
 --Print job_info to the log file
 function print_job_info(job_info)
 	account = job_info["account"]
@@ -123,8 +121,7 @@ function print_job_info(job_info)
 		--Or do lookup with UID here
 	end
 
-	slurm.log_info("%s:\
-JobId=%u\
+	slurm.log_info("JobId=%u\
 	account=%s\
 	array_job_id=%u\
 	array_task_id=%u\
@@ -139,7 +136,7 @@ JobId=%u\
 	partition=%s\
 	user_name=%s\
 ",
-		lua_script_name, job_id, account, array_job_id, array_task_id,
+		job_id, account, array_job_id, array_task_id,
 		array_max_tasks, array_task_str, gres_total, group_id,
 		het_job_id, het_job_offset, job_state, nodes, partition,
 		user_name)
@@ -195,8 +192,8 @@ end
 --]]
 function slurm_bb_job_process(job_script, uid, gid, job_info)
 	local contents
-	slurm.log_info("%s: slurm_bb_job_process(). job_script=%s, uid=%s, gid=%s",
-		lua_script_name, job_script, uid, gid)
+	slurm.log_info("slurm_bb_job_process(). job_script=%s, uid=%s, gid=%s",
+		job_script, uid, gid)
 	io.input(job_script)
 	contents = io.read("*all")
 
@@ -228,9 +225,6 @@ end
 --of this function. It must be a single JSON string representing the pools.
 --]]
 function slurm_bb_pools()
-
-	slurm.log_info("%s: slurm_bb_pools().", lua_script_name)
-
 	--This commented out code specifies pools in a file:
 	--local pools_file, pools
 	--pools_file = "/path/to/file"
@@ -262,8 +256,8 @@ end
 --This function is normally called after the job completes (or is cancelled).
 --]]
 function slurm_bb_job_teardown(job_id, job_script, hurry, uid, gid)
-	slurm.log_info("%s: slurm_bb_job_teardown(). job id:%s, job script:%s, hurry:%s, uid:%s, gid:%s",
-		lua_script_name, job_id, job_script, hurry, uid, gid)
+	slurm.log_info("slurm_bb_job_teardown(). job id:%s, job script:%s, hurry:%s, uid:%s, gid:%s",
+		job_id, job_script, hurry, uid, gid)
 	local rc, ret_str = sleep_wrapper(1)
 	return rc, ret_str
 end
@@ -275,8 +269,8 @@ end
 --This function is called while the job is pending.
 --]]
 function slurm_bb_setup(job_id, uid, gid, pool, bb_size, job_script, job_info)
-	slurm.log_info("%s: slurm_bb_setup(). job id:%s, uid: %s, gid:%s, pool:%s, size:%s, job script:%s",
-		lua_script_name, job_id, uid, gid, pool, bb_size, job_script)
+	slurm.log_info("slurm_bb_setup(). job id:%s, uid: %s, gid:%s, pool:%s, size:%s, job script:%s",
+		job_id, uid, gid, pool, bb_size, job_script)
 
 	return slurm.SUCCESS
 end
@@ -289,9 +283,36 @@ end
 --pending.
 --]]
 function slurm_bb_data_in(job_id, job_script, uid, gid, job_info)
-	slurm.log_info("%s: slurm_bb_data_in(). job id:%s, job script:%s, uid:%s, gid:%s",
+	slurm.log_info("slurm_bb_data_in(). job id:%s, job script:%s, uid:%s, gid:%s",
+		job_id, job_script, uid, gid)
+	local rc, ret_str = sleep_wrapper(1)
+	return rc, ret_str
+end
+
+--[[
+--slurm_bb_test_data_in
+--
+--This function is called asynchronously and is not required to return quickly.
+--This function is called immediately after slurm_bb_data_in while the job is
+--pending.
+--
+--This function is meant to be used to poll if data_in has completed.
+--If the first return value is slurm.SUCCESS and the second return value is
+--"BUSY" (or slurm.SLURM_BB_BUSY), then the job will continue to pend and
+--this function will continue to be called periodically.
+--If the first return value is slurm.SUCCESS and the second return value is
+--empty or any other string besides "BUSY", then job and burst buffer state
+--will proceed. If the first return value is not slurm.SUCCESS, then the job
+--will be placed in a held state.
+--
+--If this function returns slurm.SUCCESS, slurm.SLURM_BB_BUSY for longer than
+--StageInTimeout, then the job will be placed in a held state.
+--]]
+function slurm_bb_test_data_in(job_id, job_script, uid, gid, job_info)
+	slurm.log_info("%s: slurm_bb_test_data_in(). job id:%s, job script:%s, uid:%s, gid:%s",
 		lua_script_name, job_id, job_script, uid, gid)
 	local rc, ret_str = sleep_wrapper(1)
+	--return rc, slurm.SLURM_BB_BUSY
 	return rc, ret_str
 end
 
@@ -299,8 +320,8 @@ end
 --slurm_bb_real_size
 --
 --This function is called asynchronously and is not required to return quickly.
---This function is called immediately after slurm_bb_data_in while the job is
---pending.
+--This function is called immediately after slurm_bb_test_data_in while the job
+--is pending.
 --
 --This function is only called if pools are specified and the job requested a
 --pool. This function may return a number (surrounded by quotes to make it a
@@ -308,8 +329,8 @@ end
 --will be changed to this number. A commented out example is given.
 --]]
 function slurm_bb_real_size(job_id, uid, gid, job_info)
-	slurm.log_info("%s: slurm_bb_real_size(). job id:%s, uid:%s, gid:%s",
-		lua_script_name, job_id, uid, gid)
+	slurm.log_info("slurm_bb_real_size(). job id:%s, uid:%s, gid:%s",
+		job_id, uid, gid)
 	--return slurm.SUCCESS, "10000"
 	return slurm.SUCCESS
 end
@@ -327,8 +348,8 @@ end
 --environment. A commented out example is given.
 --]]
 function slurm_bb_paths(job_id, job_script, path_file, uid, gid, job_info)
-	slurm.log_info("%s: slurm_bb_paths(). job id:%s, job script:%s, path file:%s, uid:%s, gid:%s",
-		lua_script_name, job_id, job_script, path_file, uid, gid)
+	slurm.log_info("slurm_bb_paths(). job id:%s, job script:%s, path file:%s, uid:%s, gid:%s",
+		job_id, job_script, path_file, uid, gid)
 	--io.output(path_file)
 	--io.write("FOO=BAR")
 	return slurm.SUCCESS
@@ -342,8 +363,8 @@ end
 --job starts running when the job is in a "running + configuring" state.
 --]]
 function slurm_bb_pre_run(job_id, job_script, uid, gid, job_info)
-	slurm.log_info("%s: slurm_bb_pre_run(). job id:%s, job script:%s, uid:%s, gid:%s",
-		lua_script_name, job_id, job_script, uid, gid)
+	slurm.log_info("slurm_bb_pre_run(). job id:%s, job script:%s, uid:%s, gid:%s",
+		job_id, job_script, uid, gid)
 	local rc, ret_str
 	rc, ret_str = sleep_wrapper(1)
 
@@ -383,8 +404,8 @@ end
 --state.
 --]]
 function slurm_bb_post_run(job_id, job_script, uid, gid, job_info)
-	slurm.log_info("%s: slurm_post_run(). job id:%s, job script:%s, uid:%s, gid:%s",
-		lua_script_name, job_id, job_script, uid, gid)
+	slurm.log_info("slurm_post_run(). job id:%s, job script:%s, uid:%s, gid:%s",
+		job_id, job_script, uid, gid)
 	local rc, ret_str = sleep_wrapper(1)
 	return rc, ret_str
 end
@@ -397,9 +418,33 @@ end
 --slurm_bb_post_run. The job is in a "stage out" state.
 --]]
 function slurm_bb_data_out(job_id, job_script, uid, gid, job_info)
-	slurm.log_info("%s: slurm_bb_data_out(). job id:%s, job script:%s, uid:%s, gid:%s",
+	slurm.log_info("slurm_bb_data_out(). job id:%s, job script:%s, uid:%s, gid:%s",
+		job_id, job_script, uid, gid)
+	local rc, ret_str = sleep_wrapper(1)
+	return rc, ret_str
+end
+
+--[[
+--slurm_bb_test_data_out
+--
+--This function is called asynchronously and is not required to return quickly.
+--This function is called immediately after slurm_bb_data_out while the job is
+--pending.
+--
+--This function is meant to be used to poll if data_out has completed.
+--If the first return value is slurm.SUCCESS and the second return value is
+--"BUSY" (or slurm.SLURM_BB_BUSY), then the job will stay in the completing
+--state and this function will continue to be called periodically.
+--If the first return value is slurm.SUCCESS and the second return value is
+--empty or any other string besides "BUSY", then job and burst buffer state
+--will proceed. If the first return value is not slurm.SUCCESS, then the job
+--will be placed in a held state.
+--]]
+function slurm_bb_test_data_out(job_id, job_script, uid, gid, job_info)
+	slurm.log_info("%s: slurm_bb_test_data_out(). job id:%s, job script:%s, uid:%s, gid:%s",
 		lua_script_name, job_id, job_script, uid, gid)
 	local rc, ret_str = sleep_wrapper(1)
+	--return rc, slurm.SLURM_BB_BUSY
 	return rc, ret_str
 end
 
@@ -435,8 +480,8 @@ end
 function slurm_bb_get_status(uid, gid, ...)
 
 	local i, v, args, outstr, arr
-	slurm.log_info("%s: slurm_bb_get_status(), uid: %s, gid:%s",
-		lua_script_name, uid, gid)
+	slurm.log_info("slurm_bb_get_status(), uid: %s, gid:%s",
+		uid, gid)
 
 	arr = { }
 	-- Create a table from variable arg list

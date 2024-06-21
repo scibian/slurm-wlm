@@ -1,13 +1,21 @@
-Description: Retry getaddrinfo five times before giving up
- This patch retry getaddrinfo five times before giving up and exiting SLURM
- deamons. This is needed on Debian systems when using ifupdown for network
- configuration with allow-hotplug interfaces (which the installer uses by
- default). This settings do not guarantee that getaddrinfo succeed after
- network-online.target is complete.
-Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+From: Gennaro Oliva <oliva.g@na.icar.cnr.it>
+Date: Wed, 19 Jun 2024 14:50:24 +0200
+Subject: Retry getaddrinfo five times before giving up
+
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=13280
 Last-Update: 2022-01-21
 
+This patch retry getaddrinfo five times before giving up and exiting SLURM
+deamons. This is needed on Debian systems when using ifupdown for network
+configuration with allow-hotplug interfaces (which the installer uses by
+default). This settings do not guarantee that getaddrinfo succeed after
+network-online.target is complete.
+---
+ src/common/util-net.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/common/util-net.c b/src/common/util-net.c
+index a0fb281..c05be2d 100644
 --- a/src/common/util-net.c
 +++ b/src/common/util-net.c
 @@ -39,6 +39,7 @@
@@ -18,15 +26,15 @@ Last-Update: 2022-01-21
  #include <arpa/inet.h>
  #include <errno.h>
  #include <limits.h>	/* for PATH_MAX */
-@@ -265,6 +266,7 @@
+@@ -265,6 +266,7 @@ extern struct addrinfo *xgetaddrinfo(const char *hostname, const char *serv)
  	struct addrinfo *result = NULL;
  	struct addrinfo hints;
  	int err;
 +	int retry = 10;
- 	bool v4_enabled = slurm_conf.conf_flags & CTL_CONF_IPV4_ENABLED;
- 	bool v6_enabled = slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED;
+ 	bool v4_enabled = slurm_conf.conf_flags & CONF_FLAG_IPV4_ENABLED;
+ 	bool v6_enabled = slurm_conf.conf_flags & CONF_FLAG_IPV6_ENABLED;
  
-@@ -300,7 +302,13 @@
+@@ -300,7 +302,13 @@ extern struct addrinfo *xgetaddrinfo(const char *hostname, const char *serv)
  		hints.ai_flags |= AI_CANONNAME;
  	hints.ai_socktype = SOCK_STREAM;
  

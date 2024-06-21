@@ -2,8 +2,7 @@
  *  node_features.h - Infrastructure for changing a node's features on user
  *	demand
  *****************************************************************************
- *  Copyright (C) 2016 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -50,9 +49,6 @@ extern int node_features_g_fini(void);
 /* Return count of node_feature plugins configured */
 extern int node_features_g_count(void);
 
-/* Reset plugin configuration information */
-extern int node_features_g_reconfig(void);
-
 /* Return TRUE if this (one) feature name is under this plugin's control */
 extern bool node_features_g_changeable_feature(char *feature);
 
@@ -85,8 +81,9 @@ extern bool node_features_g_node_power(void);
 /* Set's the node's active features based upon job constraints.
  * NOTE: Executed by the slurmd daemon.
  * IN active_features - New active features
+ * OUT need_reboot - indicate if feature update requires subsequent reboot
  * RET error code */
-extern int node_features_g_node_set(char *active_features);
+extern int node_features_g_node_set(char *active_features, bool *need_reboot);
 
 /* Get this node's current and available MCDRAM and NUMA settings from BIOS.
  * avail_modes IN/OUT - available modes, must be xfreed

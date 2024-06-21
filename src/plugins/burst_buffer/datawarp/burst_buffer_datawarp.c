@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  burst_buffer_datawarp.c - Plugin for managing a Cray DataWarp burst_buffer
  *****************************************************************************
- *  Copyright (C) 2014-2018 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -2536,7 +2535,6 @@ extern int init(void)
 	_test_config();
 	log_flag(BURST_BUF, "");
 	bb_alloc_cache(&bb_state);
-	run_command_init();
 	slurm_thread_create(&bb_state.bb_thread, _bb_agent, NULL);
 	slurm_mutex_unlock(&bb_state.bb_mutex);
 
@@ -2551,7 +2549,6 @@ extern int fini(void)
 {
 	int pc, last_pc = 0;
 
-	run_command_shutdown();
 	while ((pc = run_command_count()) > 0) {
 		if ((last_pc != 0) && (last_pc != pc)) {
 			info("waiting for %d running processes",
@@ -2571,9 +2568,8 @@ extern int fini(void)
 
 	if (bb_state.bb_thread) {
 		slurm_mutex_unlock(&bb_state.bb_mutex);
-		pthread_join(bb_state.bb_thread, NULL);
+		slurm_thread_join(bb_state.bb_thread);
 		slurm_mutex_lock(&bb_state.bb_mutex);
-		bb_state.bb_thread = 0;
 	}
 	bb_clear_config(&bb_state.bb_config, true);
 	bb_clear_cache(&bb_state);
@@ -3353,7 +3349,7 @@ extern int bb_p_job_try_stage_in(List job_queue)
 {
 	bb_job_queue_rec_t *job_rec;
 	List job_candidates;
-	ListIterator job_iter;
+	list_itr_t *job_iter;
 	job_record_t *job_ptr;
 	bb_job_t *bb_job;
 	int rc;

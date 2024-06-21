@@ -29,11 +29,9 @@ There are several important configuration parameters relating to preemption:
 </P>
 <UL>
 <LI>
-<B>SelectType</B>: Slurm job preemption logic supports
-nodes allocated by the <I>select/linear</I> plugin,
-socket/core/CPU resources allocated by the
-<I>select/cons_tres</I> plugin, or <I>select/cray_aries</I> for Cray XC
-systems.
+<B>SelectType</B>: Slurm job preemption logic supports nodes allocated by the
+<I>select/linear</I> plugin, socket/core/CPU resources allocated by the
+<I>select/cons_tres</I> plugin.
 </LI>
 <LI>
 <B>SelectTypeParameter</B>: Since resources may be getting over-allocated
@@ -224,6 +222,12 @@ The one exception is that these ExclusiveUser jobs will be able to preempt
 (but not be preempted by) fully "--exclusive" jobs from other users.
 This is for the same reason that "--exclusive=user" blocks preemption, but this
 partition-level setting can only be overridden by making a job fully exclusive.
+</LI>
+<LI>
+<b>MCSParameters</b>: If <a href="mcs.html">MCS</a> labels are set on jobs,
+preemption will be restricted to other jobs with the same MCS label. If this
+parameter is configured to use <code>enforced,select</code>, MCS labels will
+be set by default on jobs, causing this restriction to be universal.
 </LI>
 </UL>
 
@@ -548,6 +552,6 @@ order to support ideal placements such as this, which can quickly complicate
 the design. Any and all help is welcome here!
 </P>
 
-<p style="text-align:center;">Last modified 19 February 2024</p>
+<p style="text-align:center;">Last modified 21 May 2024</p>
 
 <!--#include virtual="footer.txt"-->

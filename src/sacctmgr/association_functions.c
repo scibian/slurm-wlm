@@ -95,7 +95,7 @@ static int _set_cond(int *start, int argc, char **argv,
 						MAX(command_len, 1))
 			  || !xstrncasecmp(argv[i], "Associations",
 					   MAX(command_len, 2))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			char *temp = NULL;
 			uint32_t id = 0;
 
@@ -151,7 +151,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 			set = 1;
 	} else if (!xstrncasecmp(type, "Ids", MAX(command_len, 1))
 		   || !xstrncasecmp(type, "Associations", MAX(command_len, 2))) {
-		ListIterator itr = NULL;
+		list_itr_t *itr = NULL;
 		char *temp = NULL;
 		uint32_t id = 0;
 
@@ -440,7 +440,12 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		if (get_uint(value, &assoc->max_submit_jobs,
 			     "MaxSubmitJobs") == SLURM_SUCCESS)
 			set = 1;
-	} else if (!xstrncasecmp(type, "MaxTRESPerJob", MAX(command_len, 7))) {
+	} else if (!xstrncasecmp(type, "MaxTRES",
+				 MAX(command_len, 7)) ||
+		   !xstrncasecmp(type, "MaxTRESPJ",
+				 MAX(command_len, 9)) ||
+		   !xstrncasecmp(type, "MaxTRESPerJob",
+				 MAX(command_len, 11))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -452,7 +457,10 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 			xfree(tmp_char);
 		} else
 			exit_code = 1;
-	} else if (!xstrncasecmp(type, "MaxTRESPerNode", MAX(command_len, 11))) {
+	} else if (!xstrncasecmp(type, "MaxTRESPerNode",
+				 MAX(command_len, 11)) ||
+		   !xstrncasecmp(type, "MaxTRESPN",
+				 MAX(command_len, 9))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -465,7 +473,9 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		} else
 			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxTRESMinsPerJob",
-				MAX(command_len, 8))) {
+				MAX(command_len, 8)) ||
+		   !xstrncasecmp(type, "MaxTRESMinsPJ",
+				 MAX(command_len, 13))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -589,6 +599,10 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 			print_fields_str(field, "parent", last);
 		else
 			field->print_routine(field, &assoc->shares_raw, last);
+		break;
+	case PRINT_FLAGS:
+		tmp_char = slurmdb_assoc_flags_2_str(assoc->flags);
+		field->print_routine(field, tmp_char, last);
 		break;
 	case PRINT_GRPCM:
 		tmp_uint64 = slurmdb_find_tres_count_in_string(
@@ -750,8 +764,8 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	List assoc_list = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	int i=0;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	char *last_cluster = NULL;
 	List tree_list = NULL;
 

@@ -1,7 +1,7 @@
 /****************************************************************************\
  *  opts.c - sprio command line option parsing
  *****************************************************************************
- *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2009 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Don Lipari <lipari1@llnl.gov>
@@ -48,6 +48,7 @@
 
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/ref.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
 #include "src/sprio/sprio.h"
@@ -59,6 +60,7 @@
 #define OPT_LONG_SIBLING   0x103
 #define OPT_LONG_FEDR      0x104
 #define OPT_LONG_AUTOCOMP  0x105
+#define OPT_LONG_HELPFORMAT 0x106
 
 /* FUNCTIONS */
 static list_t *_build_job_list(char *str);
@@ -66,10 +68,14 @@ static list_t *_build_part_list(char *str);
 static list_t *_build_user_list(char *str);
 static char *_get_prefix(char *token);
 static void  _help( void );
+static void _help_format(void);
 static void  _parse_token( char *token, char *field, int *field_size,
                            bool *right_justify, char **suffix);
 static void  _print_options( void );
 static void  _usage( void );
+
+decl_static_data(help_txt);
+decl_static_data(usage_txt);
 
 static void _opt_env(void)
 {
@@ -79,10 +85,8 @@ static void _opt_env(void)
 		params.federation = true;
 
 	if ((env_val = getenv("SLURM_CLUSTERS"))) {
-		if (!(params.clusters = slurmdb_get_info_cluster(env_val))) {
-			print_db_notok(env_val, 1);
-			exit(1);
-		}
+		xfree(params.cluster_names);
+		params.cluster_names = xstrdup(env_val);
 		params.local = true;
 	}
 	if (getenv("SPRIO_FEDERATION"))
@@ -121,6 +125,7 @@ parse_command_line( int argc, char* *argv )
 		{"weights",    no_argument,       0, 'w'},
 		{"federation", no_argument,       0, OPT_LONG_FEDR},
 		{"help",       no_argument,       0, OPT_LONG_HELP},
+		{"helpformat", no_argument, 0, OPT_LONG_HELPFORMAT},
 		{"local",      no_argument,       0, OPT_LONG_LOCAL},
 		{"sib",        no_argument,       0, OPT_LONG_SIBLING},
 		{"sibling",    no_argument,       0, OPT_LONG_SIBLING},
@@ -153,12 +158,8 @@ parse_command_line( int argc, char* *argv )
 			override_format_env = true;
 			break;
 		case (int) 'M':
-			FREE_NULL_LIST(params.clusters);
-			if (!(params.clusters =
-			      slurmdb_get_info_cluster(optarg))) {
-				print_db_notok(optarg, 0);
-				exit(1);
-			}
+			xfree(params.cluster_names);
+			params.cluster_names = xstrdup(optarg);
 			params.local = true;
 			break;
 		case (int) 'n':
@@ -211,6 +212,10 @@ parse_command_line( int argc, char* *argv )
 			suggest_completion(long_options, optarg);
 			exit(0);
 			break;
+		case OPT_LONG_HELPFORMAT:
+			_help_format();
+			exit(0);
+			break;
 		}
 	}
 
@@ -238,6 +243,21 @@ parse_command_line( int argc, char* *argv )
 
 	if (params.verbose)
 		_print_options();
+
+	FREE_NULL_LIST(params.clusters);
+	if (params.cluster_names) {
+		if (slurm_get_cluster_info(&(params.clusters),
+					   params.cluster_names,
+					   (params.federation ?
+					    SHOW_FEDERATION : SHOW_LOCAL))) {
+
+			print_db_notok(params.cluster_names, 0);
+			fatal("Could not get cluster information");
+		}
+		working_cluster_rec = list_peek(params.clusters);
+		params.local = true;
+	}
+
 	if (params.clusters) {
 		if (list_count(params.clusters) > 1) {
 			fatal("Only one cluster can be used at a time with "
@@ -246,6 +266,34 @@ parse_command_line( int argc, char* *argv )
 		working_cluster_rec = list_peek(params.clusters);
 	}
 }
+
+static fmt_data_t fmt_data[] = {
+	{NULL, 'a', _print_age_priority_normalized},
+	{NULL, 'A', _print_age_priority_weighted},
+	{NULL, 'b', _print_assoc_priority_normalized},
+	{NULL, 'B', _print_assoc_priority_weighted},
+	{NULL, 'c', _print_cluster_name},
+	{NULL, 'f', _print_fs_priority_normalized},
+	{NULL, 'F', _print_fs_priority_weighted},
+	{NULL, 'i', _print_job_job_id},
+	{NULL, 'j', _print_js_priority_normalized},
+	{NULL, 'J', _print_js_priority_weighted},
+	{NULL, 'n', _print_qos_name},
+	{NULL, 'N', _print_job_nice},
+	{NULL, 'o', _print_account},
+	{NULL, 'p', _print_part_priority_normalized},
+	{NULL, 'P', _print_part_priority_weighted},
+	{NULL, 'r', _print_partition},
+	{NULL, 'S', _print_site_priority},
+	{NULL, 'q', _print_qos_priority_normalized},
+	{NULL, 'Q', _print_qos_priority_weighted},
+	{NULL, 'u', _print_job_user_name},
+	{NULL, 'y', _print_job_priority_normalized},
+	{NULL, 'Y', _print_job_priority_weighted},
+	{NULL, 't', _print_tres_normalized},
+	{NULL, 'T', _print_tres_weighted},
+	{NULL, 0, NULL},
+};
 
 /*
  * parse_format - Take the user's format specification and use it to build
@@ -261,6 +309,8 @@ extern int parse_format( char* format )
 	char *prefix = NULL, *suffix = NULL, *token = NULL;
 	char *tmp_char = NULL, *tmp_format = NULL;
 	char field[1];
+	int i;
+	bool found = false;
 
 	if (format == NULL) {
 		error ("Format option lacks specification.");
@@ -278,124 +328,21 @@ extern int parse_format( char* format )
 	if (token && (format[0] != '%'))	/* toss header */
 		token = strtok_r( NULL, "%", &tmp_char );
 	while (token) {
+		found = false;
 		_parse_token( token, field, &field_size, &right_justify,
 			      &suffix);
-		if (field[0] == 'a')
-			job_format_add_age_priority_normalized(params.format_list,
-							       field_size,
-							       right_justify,
-							       suffix );
-		else if (field[0] == 'A')
-			job_format_add_age_priority_weighted(params.format_list,
-							     field_size,
-							     right_justify,
-							     suffix );
-		else if (field[0] == 'b')
-			job_format_add_assoc_priority_normalized(
-							params.format_list,
-							field_size,
-							right_justify, suffix);
-		else if (field[0] == 'B')
-			job_format_add_assoc_priority_weighted(
-							params.format_list,
-							field_size,
-							right_justify, suffix);
-		else if (field[0] == 'c')
-			job_format_add_cluster_name(params.format_list,
-						    field_size, right_justify,
-						    suffix);
-		else if (field[0] == 'f')
-			job_format_add_fs_priority_normalized(params.format_list,
-							      field_size,
-							      right_justify,
-							      suffix );
-		else if (field[0] == 'F')
-			job_format_add_fs_priority_weighted(params.format_list,
-							    field_size,
-							    right_justify,
-							    suffix );
-		else if (field[0] == 'i')
-			job_format_add_job_id(params.format_list,
-					      field_size,
-					      right_justify,
-					      suffix );
-		else if (field[0] == 'j')
-			job_format_add_js_priority_normalized(params.format_list,
-							      field_size,
-							      right_justify,
-							      suffix );
-		else if (field[0] == 'J')
-			job_format_add_js_priority_weighted(params.format_list,
-							    field_size,
-							    right_justify,
-							    suffix );
-		else if (field[0] == 'N')
-			job_format_add_job_nice(params.format_list,
-						field_size,
-						right_justify,
-						suffix );
-		else if (field[0] == 'n')
-			job_format_add_qos_name(params.format_list,
-						field_size,
-						right_justify,
-						suffix );
-		else if (field[0] == 'o')
-			job_format_add_account(params.format_list,
-					       field_size,
-					       right_justify,
-					       suffix);
-		else if (field[0] == 'p')
-			job_format_add_part_priority_normalized(params.format_list,
-								field_size,
-								right_justify,
-								suffix );
-		else if (field[0] == 'P')
-			job_format_add_part_priority_weighted(params.format_list,
-							      field_size,
-							      right_justify,
-							      suffix );
-		else if (field[0] == 'r')
-			job_format_add_partition(params.format_list,
-						 field_size, right_justify,
-						 suffix);
-		else if (field[0] == 'S')
-			job_format_add_site_priority(params.format_list,
-						     field_size,
-						     right_justify, suffix);
-		else if (field[0] == 'q')
-			job_format_add_qos_priority_normalized(params.format_list,
-							       field_size,
-							       right_justify,
-							       suffix );
-		else if (field[0] == 'Q')
-			job_format_add_qos_priority_weighted(params.format_list,
-							     field_size,
-							     right_justify,
-							     suffix );
-		else if (field[0] == 'u')
-			job_format_add_user_name(params.format_list,
-						 field_size,
-						 right_justify,
-						 suffix );
-		else if (field[0] == 'y')
-			job_format_add_job_priority_normalized(params.format_list,
-							       field_size,
-							       right_justify,
-							       suffix );
-		else if (field[0] == 'Y')
-			job_format_add_job_priority_weighted(params.format_list,
-							     field_size,
-							     right_justify,
-							     suffix );
-		else if (field[0] == 't')
-			job_format_add_tres_normalized(params.format_list,
-						     field_size, right_justify,
-						     suffix);
-		else if (field[0] == 'T')
-			job_format_add_tres_weighted(params.format_list,
-						     field_size, right_justify,
-						     suffix);
-		else
+		for (i = 0; fmt_data[i].name || fmt_data[i].c; i++) {
+			if (field[0] == fmt_data[i].c) {
+				found = true;
+				job_format_add_function(
+					params.format_list, field_size,
+					right_justify, suffix, fmt_data[i].fn);
+				break;
+			}
+		}
+		if (found) {
+			; /* NO OP */
+		} else
 			error( "Invalid job format specification: %c",
 			       field[0] );
 
@@ -509,7 +456,6 @@ static list_t *_build_job_list(char *str)
 {
 	list_t *my_list;
 	char *job = NULL, *tmp_char = NULL, *my_job_list = NULL;
-	int i;
 	uint32_t *job_id = NULL;
 
 	if ( str == NULL)
@@ -519,13 +465,14 @@ static list_t *_build_job_list(char *str)
 	my_job_list = xstrdup(str);
 	job = strtok_r(my_job_list, ",", &tmp_char);
 	while (job) {
-		i = slurm_xlate_job_id(job);
-		if (i <= 0) {
+		slurm_selected_step_t sel_step;
+		if (unfmt_job_id_string(str, &sel_step, NO_VAL)) {
 			error("Invalid job id: %s", job);
 			exit(1);
-		}
+		} else if (sel_step.het_job_offset != NO_VAL)
+			sel_step.step_id.job_id += sel_step.het_job_offset;
 		job_id = xmalloc(sizeof(uint32_t));
-		*job_id = (uint32_t) i;
+		*job_id = sel_step.step_id.job_id;
 		list_append(my_list, job_id);
 		job = strtok_r(NULL, ",", &tmp_char);
 	}
@@ -591,35 +538,38 @@ static list_t *_build_user_list(char *str)
 	return my_list;
 }
 
-static void _usage(void)
+static void _usage( void )
 {
-	printf("Usage: sprio [-j jid[s]] [-u user_name[s]] [-o format] [-p partitions]\n");
-	printf("   [--federation] [--local] [--sibling] [--usage] [-hlnvVw]\n");
+	char *txt;
+	static_ref_to_cstring(txt, usage_txt);
+	printf("%s", txt);
+	xfree(txt);
 }
 
-static void _help(void)
+static void _help( void )
 {
-	printf("\
-Usage: sprio [OPTIONS]\n\
-      --federation                display jobs in federation if a member of one\n\
-  -h, --noheader                  no headers on output\n\
-  -j, --jobs                      comma separated list of jobs\n\
-                                  to view, default is all\n\
-      --local                     display jobs on local cluster only\n\
-  -l, --long                      long report\n\
-  -M, --cluster=cluster_name      cluster to issue commands to.  Default is\n\
-                                  current cluster.  cluster with no name will\n\
-                                  reset to default.\n\
-                                  NOTE: SlurmDBD must be up.\n\
-  -n, --norm                      display normalized values\n\
-  -o, --format=format             format specification\n\
-      --sibling                   display job records separately for each federation cluster\n\
-  -p, --partition=partition_name  comma separated list of partitions\n\
-  -u, --user=user_name            comma separated list of users to view\n\
-  -v, --verbose                   verbosity level\n\
-  -V, --version                   output version information and exit\n\
-  -w, --weights                   show the weights for each priority factor\n\
-\nHelp options:\n\
-  --help                          show this help message\n\
-  --usage                         display a brief summary of sprio options\n");
+	char *txt;
+	static_ref_to_cstring(txt, help_txt);
+	printf("%s", txt);
+	xfree(txt);
+}
+
+static void _help_format(void)
+{
+	int i = 0;
+	int cnt = 0;
+
+	for (i = 0; fmt_data[i].c || fmt_data[i].name; i++) {
+		if (!fmt_data[i].c)
+			continue;
+
+		if (cnt & 8) {
+			cnt = 0;
+			printf("\n");
+		}
+
+		cnt++;
+		printf("%%%-5c", fmt_data[i].c);
+	}
+	printf("\n");
 }

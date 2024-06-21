@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parse.c
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -161,6 +160,17 @@ extern cron_entry_t *cronspec_to_bitstring(char *pos)
 				pos += 5;
 			else
 				pos += 8;
+		} else if (!strncasecmp(pos, "elevenses", 9)) {
+			/* "0 11 * * *" */
+			bit_set(entry->minute, 0);
+			bit_set(entry->hour, 11);
+			bit_set_all(entry->day_of_month);
+			entry->flags |= CRON_WILD_DOM;
+			bit_set_all(entry->month);
+			entry->flags |= CRON_WILD_MONTH;
+			bit_set_all(entry->day_of_week);
+			entry->flags |= CRON_WILD_DOW;
+			pos += 9;
 		} else if (!strncasecmp(pos, "fika", 4)) {
 			/* "0 15 * * *" */
 			bit_set(entry->minute, 0);

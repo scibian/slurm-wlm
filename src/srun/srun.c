@@ -180,7 +180,7 @@ int srun(int ac, char **av)
 		fatal("failed to initialize cli_filter plugin");
 	if (cred_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize cred plugin");
-	if (switch_init(0) != SLURM_SUCCESS )
+	if (switch_g_init(false) != SLURM_SUCCESS )
 		fatal("failed to initialize switch plugins");
 
 	_setup_env_working_cluster();
@@ -241,7 +241,7 @@ int srun(int ac, char **av)
 #ifdef MEMORY_LEAK_DEBUG
 	cli_filter_fini();
 	mpi_fini();
-	switch_fini();
+	switch_g_fini();
 	slurm_reset_all_options(&opt, false);
 	auth_g_fini();
 	slurm_conf_destroy();
@@ -395,7 +395,7 @@ fini:	hostlist_destroy(in_hl);
 
 static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 {
-	ListIterator opt_iter, job_iter;
+	list_itr_t *opt_iter, *job_iter;
 	slurm_opt_t *opt_local = NULL;
 	_launch_app_data_t *opts;
 	int total_ntasks = 0, total_nnodes = 0, step_cnt = 0, node_offset = 0;
@@ -739,7 +739,7 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 
 static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 {
-	ListIterator opt_iter, job_iter;
+	list_itr_t *opt_iter, *job_iter;
 	slurm_opt_t *opt_local;
 
 	if (srun_job_list) {
@@ -778,7 +778,7 @@ static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 {
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	struct bcast_parameters *params;
-	char *sep = NULL, *tmp = NULL;
+	char *tmp = NULL;
 	xassert(srun_opt);
 
 	if ((opt_local->argc == 0) || (opt_local->argv[0] == NULL))
@@ -788,26 +788,17 @@ static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	params->block_size = 8 * 1024 * 1024;
 	if (srun_opt->compress) {
 		params->compress = srun_opt->compress;
-	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
-				      "Compression="))) {
-		tmp += 12;
-		sep = strchr(tmp, ',');
-		if (sep)
-			sep[0] = '\0';
+	} else if ((tmp = conf_get_opt_str(slurm_conf.bcast_parameters,
+					   "Compression="))) {
 		params->compress = parse_compress_type(tmp);
-		if (sep)
-			sep[0] = ',';
+		xfree(tmp);
 	}
 	params->exclude = xstrdup(srun_opt->bcast_exclude);
 	if (srun_opt->bcast_file && (srun_opt->bcast_file[0] == '/')) {
 		params->dst_fname = xstrdup(srun_opt->bcast_file);
-	} else if ((tmp = xstrcasestr(slurm_conf.bcast_parameters,
-				      "DestDir="))) {
-		/* skip past the key to the value */
-		params->dst_fname = xstrdup(tmp + 8);
-		/* handle a further comma-separated value */
-		if ((sep = xstrchr(params->dst_fname, ',')))
-			sep[0] = '\0';
+	} else if ((params->dst_fname =
+		    conf_get_opt_str(slurm_conf.bcast_parameters,
+				     "DestDir="))) {
 		xstrcatchar(params->dst_fname, '/');
 	} else {
 		xstrfmtcat(params->dst_fname, "%s/", opt_local->chdir);

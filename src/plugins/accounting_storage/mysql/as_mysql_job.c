@@ -565,6 +565,12 @@ no_rollup_change:
 			xstrcat(query, ", work_dir");
 		if (job_ptr->details->features)
 			xstrcat(query, ", constraints");
+		if (job_ptr->details->std_err)
+			xstrcat(query, ", std_err");
+		if (job_ptr->details->std_in)
+			xstrcat(query, ", std_in");
+		if (job_ptr->details->std_out)
+			xstrcat(query, ", std_out");
 		if (job_ptr->details->submit_line)
 			xstrcat(query, ", submit_line");
 		if (job_ptr->container)
@@ -623,6 +629,15 @@ no_rollup_change:
 		if (job_ptr->details->features)
 			xstrfmtcat(query, ", '%s'",
 				   job_ptr->details->features);
+		if (job_ptr->details->std_err)
+			xstrfmtcat(query, ", '%s'",
+				   job_ptr->details->std_err);
+		if (job_ptr->details->std_in)
+			xstrfmtcat(query, ", '%s'",
+				   job_ptr->details->std_in);
+		if (job_ptr->details->std_out)
+			xstrfmtcat(query, ", '%s'",
+				   job_ptr->details->std_out);
 		if (job_ptr->details->submit_line)
 			xstrfmtcat(query, ", '%s'",
 				   job_ptr->details->submit_line);
@@ -696,7 +711,15 @@ no_rollup_change:
 		if (job_ptr->details->features)
 			xstrfmtcat(query, ", constraints='%s'",
 				   job_ptr->details->features);
-
+		if (job_ptr->details->std_err)
+			xstrfmtcat(query, ", std_err='%s'",
+				   job_ptr->details->std_err);
+		if (job_ptr->details->std_in)
+			xstrfmtcat(query, ", std_in='%s'",
+				   job_ptr->details->std_in);
+		if (job_ptr->details->std_out)
+			xstrfmtcat(query, ", std_out='%s'",
+				   job_ptr->details->std_out);
 		if (job_ptr->details->submit_line)
 			xstrfmtcat(query, ", submit_line='%s'",
 				   job_ptr->details->submit_line);
@@ -762,7 +785,15 @@ no_rollup_change:
 		if (job_ptr->details->features)
 			xstrfmtcat(query, "constraints='%s', ",
 				   job_ptr->details->features);
-
+		if (job_ptr->details->std_err)
+			xstrfmtcat(query, "std_err='%s', ",
+				   job_ptr->details->std_err);
+		if (job_ptr->details->std_in)
+			xstrfmtcat(query, "std_in='%s', ",
+				   job_ptr->details->std_in);
+		if (job_ptr->details->std_out)
+			xstrfmtcat(query, "std_out='%s', ",
+				   job_ptr->details->std_out);
 		if (job_ptr->details->submit_line)
 			xstrfmtcat(query, "submit_line='%s', ",
 				   job_ptr->details->submit_line);
@@ -867,7 +898,7 @@ extern List as_mysql_modify_job(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *user_name = NULL;
 	List job_list = NULL;
 	slurmdb_job_rec_t *job_rec;
-	ListIterator itr;
+	list_itr_t *itr;
 	List id_switch_list = NULL;
 	id_switch_t *id_switch;
 	bool is_admin;
@@ -1108,6 +1139,29 @@ endit:
 	return ret_list;
 }
 
+/*
+ * Get update format for setting derived_ec on the dbd side.
+ *
+ * stepmgr jobs don't update the controller job's derived_ec so we update as the
+ * step and job come into the dbd.
+ */
+static char *_get_derived_ec_update_str(uint32_t exit_code)
+{
+	char *derived_str = NULL;
+
+	/*
+	 * Sync with _internal_step_complete() for setting derived_ec on the
+	 * contoller.
+	 */
+	if (exit_code == SIG_OOM)
+		derived_str = xstrdup_printf("%u", exit_code);
+	else
+		derived_str = xstrdup_printf("GREATEST(%u, derived_ec)",
+					     exit_code);
+
+	return derived_str;
+}
+
 extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 				 job_record_t *job_ptr)
 {
@@ -1204,8 +1258,12 @@ extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 			       mysql_conn->cluster_name, job_table,
 			       end_time, job_state);
 
-	if (job_ptr->derived_ec != NO_VAL)
-		xstrfmtcat(query, ", derived_ec=%u", job_ptr->derived_ec);
+	if (job_ptr->derived_ec != NO_VAL) {
+		char *derived_ec_str =
+			_get_derived_ec_update_str(job_ptr->derived_ec);
+		xstrfmtcat(query, ", derived_ec=%s", derived_ec_str);
+		xfree(derived_ec_str);
+	}
 
 	if (job_ptr->tres_alloc_str)
 		xstrfmtcat(query, ", tres_alloc='%s'", job_ptr->tres_alloc_str);
@@ -1665,15 +1723,30 @@ extern int as_mysql_step_complete(mysql_conn_t *mysql_conn,
 
 	/* set the energy for the entire job. */
 	if (step_ptr->job_ptr->tres_alloc_str) {
+		char *derived_ec_str = _get_derived_ec_update_str(exit_code);
 		query = xstrdup_printf(
-			"update \"%s_%s\" set tres_alloc='%s' where "
+			"update \"%s_%s\" set tres_alloc='%s', derived_ec=%s where "
 			"job_db_inx=%"PRIu64,
 			mysql_conn->cluster_name, job_table,
-			step_ptr->job_ptr->tres_alloc_str,
+			step_ptr->job_ptr->tres_alloc_str, derived_ec_str,
 			step_ptr->job_ptr->db_index);
 		DB_DEBUG(DB_STEP, mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
+		xfree(derived_ec_str);
+	} else if (exit_code &&
+		   (step_ptr->step_id.step_id != SLURM_BATCH_SCRIPT) &&
+		   (step_ptr->step_id.step_id != SLURM_EXTERN_CONT)) {
+		char *derived_ec_str = _get_derived_ec_update_str(exit_code);
+		query = xstrdup_printf(
+			"update \"%s_%s\" set derived_ec=%s where "
+			"job_db_inx=%"PRIu64,
+			mysql_conn->cluster_name, job_table, derived_ec_str,
+			step_ptr->job_ptr->db_index);
+		DB_DEBUG(DB_STEP, mysql_conn->conn, "query\n%s", query);
+		rc = mysql_db_query(mysql_conn, query);
+		xfree(query);
+		xfree(derived_ec_str);
 	}
 
 	return rc;
@@ -1793,7 +1866,7 @@ again:
 	 * the suspend table and the step table
 	 */
 	query = xstrdup_printf(
-		"select distinct t1.job_db_inx, t1.state from \"%s_%s\" "
+		"select distinct t1.job_db_inx, t1.state, t1.time_suspended from \"%s_%s\" "
 		"as t1 where t1.time_end=0 LIMIT %u;",
 		mysql_conn->cluster_name, job_table, MAX_FLUSH_JOBS);
 	DB_DEBUG(DB_JOB, mysql_conn->conn, "query\n%s", query);
@@ -1807,6 +1880,10 @@ again:
 	while ((row = mysql_fetch_row(result))) {
 		int state = slurm_atoul(row[1]);
 		if (state == JOB_SUSPENDED) {
+			time_t time_suspended = slurm_atoull(row[2]);
+			/* To avoid underflow, use the latest time_suspended. */
+			if (event_time < time_suspended)
+				event_time = time_suspended;
 			if (suspended_char)
 				xstrfmtcat(suspended_char,
 					   ", %s", row[0]);

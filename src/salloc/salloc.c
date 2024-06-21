@@ -182,7 +182,7 @@ int main(int argc, char **argv)
 	char **het_job_argv;
 	static char *msg = "Slurm job queue full, sleeping and retrying.";
 	slurm_allocation_callbacks_t callbacks;
-	ListIterator iter_req, iter_resp;
+	list_itr_t *iter_req, *iter_resp;
 
 	slurm_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
@@ -414,7 +414,8 @@ int main(int argc, char **argv)
 		} else if (opt.immediate &&
 			   ((errno == ETIMEDOUT) ||
 			    (errno == ESLURM_NOT_TOP_PRIORITY) ||
-			    (errno == ESLURM_NODES_BUSY))) {
+			    (errno == ESLURM_NODES_BUSY) ||
+			    (errno == ESLURM_PORTS_BUSY))) {
 			error("Unable to allocate resources: %m");
 			error_exit = immediate_exit;
 		} else {
@@ -505,7 +506,7 @@ int main(int argc, char **argv)
 				desc->bitflags |= JOB_NTASKS_SET;
 			if (alloc && desc &&
 			    (desc->bitflags & JOB_NTASKS_SET)) {
-				if (desc->ntasks_per_node != NO_VAL16)
+				if (desc->num_tasks == NO_VAL)
 					desc->num_tasks =
 						alloc->node_cnt *
 						desc->ntasks_per_node;
@@ -532,7 +533,7 @@ int main(int argc, char **argv)
 		if (desc->ntasks_per_node != NO_VAL16)
 			desc->bitflags |= JOB_NTASKS_SET;
 		if (alloc && desc && (desc->bitflags & JOB_NTASKS_SET)) {
-			if (desc->ntasks_per_node != NO_VAL16)
+			if (desc->num_tasks == NO_VAL)
 				desc->num_tasks =
 					alloc->node_cnt * desc->ntasks_per_node;
 			else if (alloc->node_cnt > desc->num_tasks)
@@ -716,7 +717,7 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
  * and is "sh". */
 static void _match_job_name(job_desc_msg_t *desc_last, List job_req_list)
 {
-	ListIterator iter;
+	list_itr_t *iter;
 	job_desc_msg_t *desc = NULL;
 	char *name;
 

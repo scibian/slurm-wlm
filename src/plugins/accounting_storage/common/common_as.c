@@ -42,6 +42,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "src/common/slurm_xlator.h"
+
 #include "src/common/env.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/interfaces/auth.h"
@@ -49,6 +51,18 @@
 #include "src/common/xstring.h"
 #include "src/slurmdbd/read_config.h"
 #include "common_as.h"
+
+/* These are defined here so when we link with something other than
+ * the slurmctld we will have these symbols defined.  They will get
+ * overwritten when linking with the slurmctld.
+ */
+#if defined(__APPLE__)
+extern __thread bool drop_priv __attribute__((weak_import));
+extern slurmdbd_conf_t *slurmdbd_conf __attribute__((weak_import));
+#else
+__thread bool drop_priv;
+slurmdbd_conf_t *slurmdbd_conf;
+#endif
 
 extern char *assoc_day_table;
 extern char *assoc_hour_table;
@@ -61,10 +75,6 @@ extern char *cluster_month_table;
 extern char *wckey_day_table;
 extern char *wckey_hour_table;
 extern char *wckey_month_table;
-
-#ifndef NDEBUG
-extern __thread bool drop_priv;
-#endif
 
 /*
  * We want SLURMDB_MODIFY_ASSOC always to be the last
@@ -86,7 +96,7 @@ static int _sort_update_object_dec(void *a, void *b)
 static void _dump_slurmdb_assoc_records(List assoc_list)
 {
 	slurmdb_assoc_rec_t *assoc = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 
 	itr = list_iterator_create(assoc_list);
 	while((assoc = list_next(itr))) {
@@ -104,7 +114,7 @@ static void _dump_slurmdb_clus_res_record(slurmdb_clus_res_rec_t *clus_res)
 static void _dump_slurmdb_clus_res_records(List clus_res_list)
 {
 	slurmdb_clus_res_rec_t *clus_res = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	itr = list_iterator_create(clus_res_list);
 	while ((clus_res = list_next(itr))) {
 		_dump_slurmdb_clus_res_record(clus_res);
@@ -115,7 +125,7 @@ static void _dump_slurmdb_clus_res_records(List clus_res_list)
 static void _dump_slurmdb_res_records(List res_list)
 {
 	slurmdb_res_rec_t *res = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	itr = list_iterator_create(res_list);
 	while ((res = list_next(itr))) {
 		debug("\t\tname=%s", res->name);
@@ -337,7 +347,7 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
  */
 extern void dump_update_list(List update_list)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_update_object_t *object = NULL;
 
 	debug3("========== DUMP UPDATE LIST ==========");
@@ -566,8 +576,8 @@ extern int set_usage_information(char **usage_table,
  */
 extern void merge_delta_qos_list(List qos_list, List delta_qos_list)
 {
-	ListIterator curr_itr = list_iterator_create(qos_list);
-	ListIterator new_itr = list_iterator_create(delta_qos_list);
+	list_itr_t *curr_itr = list_iterator_create(qos_list);
+	list_itr_t *new_itr = list_iterator_create(delta_qos_list);
 	char *new_qos = NULL, *curr_qos = NULL;
 
 	while((new_qos = list_next(new_itr))) {
@@ -928,4 +938,136 @@ rwfail:
 	slurm_mutex_unlock(&local_file_lock);
 
 	return SLURM_ERROR;
+}
+
+extern int as_build_step_start_msg(dbd_step_start_msg_t *req,
+				   step_record_t *step_ptr)
+{
+	uint32_t tasks = 0, nodes = 0, task_dist = 0;
+	char *node_list = NULL;
+
+	xassert(req);
+	xassert(step_ptr);
+
+	if (!step_ptr->step_layout || !step_ptr->step_layout->task_cnt) {
+		tasks = step_ptr->job_ptr->total_cpus;
+		nodes = step_ptr->job_ptr->total_nodes;
+		node_list = step_ptr->job_ptr->nodes;
+	} else {
+		tasks = step_ptr->step_layout->task_cnt;
+		nodes = step_ptr->step_layout->node_cnt;
+		task_dist = step_ptr->step_layout->task_dist;
+		node_list = step_ptr->step_layout->node_list;
+	}
+
+	if (!step_ptr->job_ptr->db_index
+	    && (!step_ptr->job_ptr->details
+		|| !step_ptr->job_ptr->details->submit_time)) {
+		error("jobacct_storage_p_step_start: "
+		      "Not inputing this job, it has no submit time.");
+		return SLURM_ERROR;
+	}
+	memset(req, 0, sizeof(dbd_step_start_msg_t));
+
+	req->assoc_id    = step_ptr->job_ptr->assoc_id;
+	req->container   = step_ptr->container;
+	req->db_index    = step_ptr->job_ptr->db_index;
+	req->name        = step_ptr->name;
+	req->nodes       = node_list;
+	/* reate req->node_inx outside of locks when packing */
+	req->node_cnt    = nodes;
+	if (step_ptr->start_time > step_ptr->job_ptr->resize_time)
+		req->start_time = step_ptr->start_time;
+	else
+		req->start_time = step_ptr->job_ptr->resize_time;
+
+	if (step_ptr->job_ptr->resize_time)
+		req->job_submit_time   = step_ptr->job_ptr->resize_time;
+	else if (step_ptr->job_ptr->details)
+		req->job_submit_time   =
+			step_ptr->job_ptr->details->submit_time;
+
+	memcpy(&req->step_id, &step_ptr->step_id, sizeof(req->step_id));
+
+	if (step_ptr->step_layout)
+		req->task_dist   = step_ptr->step_layout->task_dist;
+	req->task_dist   = task_dist;
+
+	req->total_tasks = tasks;
+
+	req->submit_line = step_ptr->submit_line;
+	req->tres_alloc_str = step_ptr->tres_alloc_str;
+
+	req->req_cpufreq_min = step_ptr->cpu_freq_min;
+	req->req_cpufreq_max = step_ptr->cpu_freq_max;
+	req->req_cpufreq_gov = step_ptr->cpu_freq_gov;
+
+	return SLURM_SUCCESS;
+}
+
+extern int as_build_step_comp_msg(dbd_step_comp_msg_t *req,
+				  step_record_t *step_ptr)
+{
+	uint32_t tasks = 0;
+
+	xassert(req);
+	xassert(step_ptr);
+
+	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
+		tasks = 1;
+	else {
+		if (!step_ptr->step_layout || !step_ptr->step_layout->task_cnt)
+			tasks = step_ptr->job_ptr->total_cpus;
+		else
+			tasks = step_ptr->step_layout->task_cnt;
+	}
+
+	if (!step_ptr->job_ptr->db_index
+	    && ((!step_ptr->job_ptr->details
+		 || !step_ptr->job_ptr->details->submit_time)
+		&& !step_ptr->job_ptr->resize_time)) {
+		error("jobacct_storage_p_step_complete: "
+		      "Not inputing this job, it has no submit time.");
+		return SLURM_ERROR;
+	}
+
+	memset(req, 0, sizeof(dbd_step_comp_msg_t));
+
+	req->assoc_id    = step_ptr->job_ptr->assoc_id;
+	req->db_index    = step_ptr->job_ptr->db_index;
+	req->end_time    = time(NULL);	/* called at step completion */
+	req->exit_code   = step_ptr->exit_code;
+#ifndef HAVE_FRONT_END
+	/* Only send this info on a non-frontend system since this
+	 * information is of no use on systems that run on a front-end
+	 * node.  Since something else is running the job.
+	 */
+	req->jobacct     = step_ptr->jobacct;
+#else
+	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
+		req->jobacct     = step_ptr->jobacct;
+#endif
+
+	req->req_uid     = step_ptr->requid;
+	if (step_ptr->start_time > step_ptr->job_ptr->resize_time)
+		req->start_time = step_ptr->start_time;
+	else
+		req->start_time = step_ptr->job_ptr->resize_time;
+
+	if (step_ptr->job_ptr->resize_time)
+		req->job_submit_time   = step_ptr->job_ptr->resize_time;
+	else if (step_ptr->job_ptr->details)
+		req->job_submit_time   =
+			step_ptr->job_ptr->details->submit_time;
+
+	if (step_ptr->job_ptr->bit_flags & TRES_STR_CALC)
+		req->job_tres_alloc_str = step_ptr->job_ptr->tres_alloc_str;
+
+	req->state       = step_ptr->state;
+
+	memcpy(&req->step_id, &step_ptr->step_id, sizeof(req->step_id));
+
+	req->total_tasks = tasks;
+
+	return SLURM_SUCCESS;
 }

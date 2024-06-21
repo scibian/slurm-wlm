@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  site_factor.c - site priority factor driver
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -43,7 +42,6 @@
 
 /* Symbols provided by the plugin */
 typedef struct slurm_ops {
-	void	(*reconfig)	(void);
 	void	(*set)		(job_record_t *job_ptr);
 	void	(*update)	(void);
 } slurm_ops_t;
@@ -53,7 +51,6 @@ typedef struct slurm_ops {
  * declared for slurm_ops_t.
  */
 static const char *syms[] = {
-	"site_factor_p_reconfig",
 	"site_factor_p_set",
 	"site_factor_p_update",
 };
@@ -120,25 +117,11 @@ extern int site_factor_g_fini(void)
 	return rc;
 }
 
-extern void site_factor_g_reconfig(void)
-{
-	DEF_TIMERS;
-
-	xassert(plugin_inited);
-
-	if (plugin_inited == PLUGIN_NOOP)
-		return;
-
-	START_TIMER;
-	(*(ops.reconfig))();
-	END_TIMER3(__func__, SITE_FACTOR_TIMER_RECONFIG);
-}
-
 extern void site_factor_g_set(job_record_t *job_ptr)
 {
 	DEF_TIMERS;
 
-	xassert(plugin_inited);
+	xassert(plugin_inited != PLUGIN_NOT_INITED);
 
 	if (plugin_inited == PLUGIN_NOOP)
 		return;
@@ -152,7 +135,7 @@ extern void site_factor_g_update(void)
 {
 	DEF_TIMERS;
 
-	xassert(plugin_inited);
+	xassert(plugin_inited != PLUGIN_NOT_INITED);
 
 	if (plugin_inited == PLUGIN_NOOP)
 		return;

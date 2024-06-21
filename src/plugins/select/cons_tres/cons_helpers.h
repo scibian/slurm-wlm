@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  cons_helpers.h - Helper functions for the select/cons_tres plugin
  *****************************************************************************
- *  Copyright (C) SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Derived in large part from select/cons_tres plugins
  *
  *  This file is part of Slurm, a resource management program.
@@ -54,17 +54,13 @@ extern uint64_t cons_helpers_get_def_cpu_per_gpu(List job_defaults_list);
  */
 extern uint64_t cons_helpers_get_def_mem_per_gpu(List job_defaults_list);
 
-/* Determine how many cpus per core we can use */
-extern uint16_t cons_helpers_cpus_per_core(
-	job_details_t *details, int node_inx);
-
 /*
  * Bit a core bitmap array of available cores
  * node_bitmap IN - Nodes available for use
- * core_spec IN - Specialized core specification, NO_VAL16 if none
+ * job_ptr IN - Various things set to restrict cores.
  * RET core bitmap array, one per node. Use free_core_array() to release memory
  */
 extern bitstr_t **cons_helpers_mark_avail_cores(
-	bitstr_t *node_bitmap, uint16_t core_spec);
+	bitstr_t *node_bitmap, job_record_t *job_ptr);
 
 #endif /* _CONS_HELPERS_H */

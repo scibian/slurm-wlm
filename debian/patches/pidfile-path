@@ -1,16 +1,26 @@
-Description: Fix default pidfile paths
- This patch points default pidfild paths under /run
-Author: Mehdi Dogguy <mehdi@debian.org> and Gennaro Oliva <oliva.g@na.icar.cnr.it>
+From: "Mehdi Dogguy mehdi@debian.org and Gennaro Oliva"
+ <oliva.g@na.icar.cnr.it>
+Date: Wed, 19 Jun 2024 14:50:23 +0200
+Subject: Fix default pidfile paths
+
 Bug-Debian: http://bugs.debian.org/885759
 Forwarded: not-needed
 Last-Update: 2018-12-13
 
---- slurm-wlm-23.11.1.orig/src/common/read_config.h
-+++ slurm-wlm-23.11.1/src/common/read_config.h
-@@ -144,9 +144,9 @@ typedef struct node_record node_record_t
- #else
- #  define DEFAULT_SELECT_TYPE       "select/cons_tres"
- #endif
+This patch points default pidfild paths under /run
+---
+ src/common/read_config.h   | 4 ++--
+ src/slurmdbd/read_config.h | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/common/read_config.h b/src/common/read_config.h
+index 702c9c6..05df85a 100644
+--- a/src/common/read_config.h
++++ b/src/common/read_config.h
+@@ -137,9 +137,9 @@ typedef struct node_record node_record_t;
+ #define DEFAULT_SCHED_TIME_SLICE    30
+ #define DEFAULT_SCHEDTYPE           "sched/backfill"
+ #define DEFAULT_SELECT_TYPE         "select/cons_tres"
 -#define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 +#define DEFAULT_SLURMCTLD_PIDFILE   "/run/slurmctld.pid"
  #define DEFAULT_SLURMCTLD_TIMEOUT   120
@@ -19,8 +29,10 @@ Last-Update: 2018-12-13
  #define DEFAULT_SLURMD_TIMEOUT      300
  #define DEFAULT_SPOOLDIR            "/var/spool/slurmd"
  #define DEFAULT_STORAGE_HOST        "localhost"
---- slurm-wlm-23.11.1.orig/src/slurmdbd/read_config.h
-+++ slurm-wlm-23.11.1/src/slurmdbd/read_config.h
+diff --git a/src/slurmdbd/read_config.h b/src/slurmdbd/read_config.h
+index 2a98570..1ba1ef1 100644
+--- a/src/slurmdbd/read_config.h
++++ b/src/slurmdbd/read_config.h
 @@ -48,7 +48,7 @@
  
  #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/munge"
