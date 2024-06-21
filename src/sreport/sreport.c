@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  sreport.c - report generating tool for slurm accounting.
  *****************************************************************************
- *  Portions Copyright (C) 2010-2017 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -315,7 +315,7 @@ static char *_build_cluster_string(void)
 
 static void _build_tres_list(void)
 {
-	ListIterator iter;
+	list_itr_t *iter;
 	slurmdb_tres_rec_t *tres;
 	char *save_ptr = NULL, *tok;
 

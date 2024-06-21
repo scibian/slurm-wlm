@@ -69,26 +69,6 @@ extern int *slurmdb_setup_cluster_dim_size(void)
 	return NULL;
 }
 
-extern bool is_cray_system(void)
-{
-	if (working_cluster_rec)
-		return working_cluster_rec->flags & CLUSTER_FLAG_CRAY;
-
-#ifdef HAVE_NATIVE_CRAY
-	return true;
-#else
-	return false;
-#endif
-}
-
-extern uint16_t slurmdb_setup_cluster_name_dims(void)
-{
-	if (is_cray_system())
-		return 1;	/* Cray uses 1-dimensional hostlists */
-
-	return slurmdb_setup_cluster_dims();
-}
-
 extern uint32_t slurmdb_setup_cluster_flags(void)
 {
 	static uint32_t cluster_flags = NO_VAL;
@@ -105,9 +85,6 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 #ifdef HAVE_FRONT_END
 	cluster_flags |= CLUSTER_FLAG_FE;
 #endif
-#ifdef HAVE_NATIVE_CRAY
-	cluster_flags |= CLUSTER_FLAG_CRAY;
-#endif
 	return cluster_flags;
 }
 
@@ -118,9 +95,6 @@ static uint32_t _str_2_cluster_flags(char *flags_in)
 
 	if (xstrcasestr(flags_in, "MultipleSlurmd"))
 		return CLUSTER_FLAG_MULTSD;
-
-	if (xstrcasestr(flags_in, "Cray"))
-		return CLUSTER_FLAG_CRAY;
 
 	return (uint32_t) 0;
 }
@@ -157,12 +131,6 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
 		xstrcat(cluster_flags, "MultipleSlurmd");
-	}
-
-	if (flags_in & CLUSTER_FLAG_CRAY) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "Cray");
 	}
 
 	if (flags_in & CLUSTER_FLAG_EXT) {

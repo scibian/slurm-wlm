@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  cluster.c - Slurm REST API acct cluster http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -92,7 +91,7 @@ static void _update_clusters(ctxt_t *ctxt)
 	FREE_OPENAPI_RESP_COMMON_CONTENTS(resp_ptr);
 }
 
-static int _op_handler_cluster(ctxt_t *ctxt)
+extern int op_handler_cluster(ctxt_t *ctxt)
 {
 	openapi_cluster_param_t params = {0};
 	slurmdb_cluster_cond_t cluster_cond = {
@@ -102,6 +101,12 @@ static int _op_handler_cluster(ctxt_t *ctxt)
 	if (DATA_PARSE(ctxt->parser, OPENAPI_CLUSTER_PARAM, params,
 		       ctxt->parameters, ctxt->parent_path))
 		goto cleanup;
+
+	if (!params.name) {
+		resp_error(ctxt, ESLURM_REST_INVALID_QUERY, __func__,
+			   "Unable to parse cluster name");
+		goto cleanup;
+	}
 
 	cluster_cond.cluster_list = list_create(NULL);
 	list_append(cluster_cond.cluster_list, params.name);
@@ -122,7 +127,7 @@ cleanup:
 	return SLURM_SUCCESS;
 }
 
-static int _op_handler_clusters(ctxt_t *ctxt)
+extern int op_handler_clusters(ctxt_t *ctxt)
 {
 	slurmdb_cluster_cond_t *cluster_cond = NULL;
 
@@ -147,18 +152,4 @@ static int _op_handler_clusters(ctxt_t *ctxt)
 cleanup:
 	slurmdb_destroy_cluster_cond(cluster_cond);
 	return SLURM_SUCCESS;
-}
-
-extern void init_op_cluster(void)
-{
-	bind_handler("/slurmdb/{data_parser}/clusters/", _op_handler_clusters,
-		     0);
-	bind_handler("/slurmdb/{data_parser}/cluster/{cluster_name}",
-		     _op_handler_cluster, 0);
-}
-
-extern void destroy_op_cluster(void)
-{
-	unbind_operation_ctxt_handler(_op_handler_clusters);
-	unbind_operation_ctxt_handler(_op_handler_clusters);
 }

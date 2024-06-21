@@ -2,9 +2,7 @@
  *  node_features_knl_generic.c - Plugin for managing Intel KNL state
  *  information on a generic Linux cluster
  *****************************************************************************
- *  Copyright (C) 2016-2017 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
- *             Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -165,14 +163,12 @@ static uint16_t allow_numa = KNL_NUMA_FLAG;
 static uid_t *allowed_uid = NULL;
 static int allowed_uid_cnt = 0;
 static uint32_t boot_time = (5 * 60);	/* 5 minute estimated boot time */
-static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t cpu_bind[KNL_NUMA_CNT];	/* Derived from numa_cpu_bind */
 static uint16_t default_mcdram = KNL_CACHE;
 static uint16_t default_numa = KNL_ALL2ALL;
 static char *mc_path = NULL;
 static char *numa_cpu_bind = NULL;
 static uint32_t syscfg_timeout = 0;
-static bool reconfig = false;
 static time_t shutdown_time = 0;
 static int syscfg_found = -1;
 static char *syscfg_path = NULL;
@@ -968,10 +964,7 @@ extern int fini(void)
 {
 	shutdown_time = time(NULL);
 	slurm_mutex_lock(&ume_mutex);
-	if (ume_thread) {
-		pthread_join(ume_thread, NULL);
-		ume_thread = 0;
-	}
+	slurm_thread_join(ume_thread);
 	slurm_mutex_unlock(&ume_mutex);
 	xfree(allowed_uid);
 	allowed_uid_cnt = 0;
@@ -984,25 +977,10 @@ extern int fini(void)
 	return SLURM_SUCCESS;
 }
 
-/* Reload configuration */
-extern int node_features_p_reconfig(void)
-{
-	slurm_mutex_lock(&config_mutex);
-	reconfig = true;
-	slurm_mutex_unlock(&config_mutex);
-	return SLURM_SUCCESS;
-}
-
 /* Update active and available features on specified nodes,
  * sets features on all nodes if node_list is NULL */
 extern int node_features_p_get_node(char *node_list)
 {
-	slurm_mutex_lock(&config_mutex);
-	if (reconfig) {
-		(void) init();
-		reconfig = false;
-	}
-	slurm_mutex_unlock(&config_mutex);
 	return SLURM_SUCCESS;
 }
 
@@ -1398,13 +1376,16 @@ static char *_find_key_val(char *key, char *resp_msg)
 /* Set's the node's active features based upon job constraints.
  * NOTE: Executed by the slurmd daemon.
  * IN active_features - New active features
+ * OUT need_reboot - indicate if feature update requires subsequent reboot
  * RET error code */
-extern int node_features_p_node_set(char *active_features)
+extern int node_features_p_node_set(char *active_features, bool *need_reboot)
 {
 	char *resp_msg, *argv[10], tmp[100];
 	char *key;
 	int error_code = SLURM_SUCCESS, status = 0;
 	char *mcdram_mode = NULL, *numa_mode = NULL;
+
+	*need_reboot = true;
 
 	if ((active_features == NULL) || (active_features[0] == '\0'))
 		return SLURM_SUCCESS;
@@ -2031,72 +2012,38 @@ extern uint32_t node_features_p_boot_time(void)
 /* Get node features plugin configuration */
 extern void node_features_p_get_config(config_plugin_params_t *p)
 {
-	config_key_pair_t *key_pair;
 	List data;
 
 	xassert(p);
 	xstrcat(p->name, plugin_type);
 	data = p->key_pairs;
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AllowMCDRAM");
-	key_pair->value = _knl_mcdram_str(allow_mcdram);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "AllowMCDRAM", _knl_mcdram_str(allow_mcdram));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AllowNUMA");
-	key_pair->value = _knl_numa_str(allow_numa);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "AllowNUMA", _knl_numa_str(allow_numa));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AllowUserBoot");
-	key_pair->value = _make_uid_str(allowed_uid, allowed_uid_cnt);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "AllowUserBoot",
+			 _make_uid_str(allowed_uid, allowed_uid_cnt));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("BootTime");
-	key_pair->value = xstrdup_printf("%u", boot_time);
-	list_append(data, key_pair);
+	add_key_pair(data, "BootTime", "%u", boot_time);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("DefaultMCDRAM");
-	key_pair->value = _knl_mcdram_str(default_mcdram);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "DefaultMCDRAM",
+			 _knl_mcdram_str(default_mcdram));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("DefaultNUMA");
-	key_pair->value = _knl_numa_str(default_numa);
-	list_append(data, key_pair);
+	add_key_pair_own(data, "DefaultNUMA", _knl_numa_str(default_numa));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("Force");
-	key_pair->value = xstrdup_printf("%u", force_load);
-	list_append(data, key_pair);
+	add_key_pair(data, "Force", "%u", force_load);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("McPath");
-	key_pair->value = xstrdup(mc_path);
-	list_append(data, key_pair);
+	add_key_pair(data, "McPath", "%s", mc_path);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("SyscfgPath");
-	key_pair->value = xstrdup(syscfg_path);
-	list_append(data, key_pair);
+	add_key_pair(data, "SyscfgPath", "%s", syscfg_path);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("SyscfgTimeout");
-	key_pair->value = xstrdup_printf("%u", syscfg_timeout);
-	list_append(data, key_pair);
+	add_key_pair(data, "SyscfgTimeout", "%u", syscfg_timeout);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("SystemType");
-	key_pair->value = xstrdup(_knl_system_type_str(knl_system_type));
-	list_append(data, key_pair);
+	add_key_pair(data, "SystemType", "%s",
+		     _knl_system_type_str(knl_system_type));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("UmeCheckInterval");
-	key_pair->value = xstrdup_printf("%u", ume_check_interval);
-	list_append(data, key_pair);
+	add_key_pair(data, "UmeCheckInterval", "%u", ume_check_interval);
 
 	list_sort(data, (ListCmpF) sort_key_pairs);
 

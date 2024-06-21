@@ -51,9 +51,10 @@
 
 extern int devnull;
 extern bool get_reg_resp;
+extern bool refresh_cached_features;
+extern pthread_mutex_t cached_features_mutex;
 
 typedef struct {
-	int (*container_join)(uint32_t job_id, uid_t uid);
 	uint32_t derived_ec;
 	uint32_t exit_code;
 	char **gres_job_env;

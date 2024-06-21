@@ -4,7 +4,7 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-export PERL_ARCHLIB := $(shell perl -MConfig -e 'print substr($$Config{vendorarch}, 1)')
+export PERL_ARCHLIB := usr$(shell perl -e 'use Config; $$T=$$Config{installsitearch}; $$P=$$Config{installprefix}; $$P1="$$P/local"; $$T =~ s/$$P1//; $$T =~ s/$$P//; print $$T;')
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-bindnow
 
 # Getting the list of the plugins packages excluding the basic package
@@ -141,16 +141,15 @@ override_dh_auto_install:
 	comm -23 debian/all_plugins_dev_filelist debian/plugin_packages_dev_filelist | sed "s/^debian\/tmp\///" >> debian/slurm-wlm-basic-plugins-dev.install
 
 override_dh_strip:
-	dh_strip -plibslurm40t64
-	dh_strip -plibpmi0t64 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
-	dh_strip -plibpmi2-0t64 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
+	dh_strip -plibslurm41
+	dh_strip -plibpmi0 --dbgsym-migration='libpmi0-dbg (<< 17.02.6~)'
+	dh_strip -plibpmi2-0 --dbgsym-migration='libpmi2-0-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-basic-plugins --dbgsym-migration='slurm-wlm-basic-plugins-dbg (<< 17.02.6~)'
 	dh_strip -pslurm-wlm-elasticsearch-plugin
 	dh_strip -pslurm-wlm-hdf5-plugin
 	dh_strip -pslurm-wlm-influxdb-plugin
 	dh_strip -pslurm-wlm-ipmi-plugins
 	dh_strip -pslurm-wlm-jwt-plugin
-	dh_strip -pslurm-wlm-rrd-plugin
 	dh_strip -pslurm-wlm-mysql-plugin
 	dh_strip -psackd
 	dh_strip -pslurm-client --dbgsym-migration='slurm-client-dbg (<< 17.02.6~)'

@@ -2,8 +2,7 @@
  *  prep_slurmctld.c - slurmctld-specific aspects of the PrEpPlugin interface
  *		       (for PrologSlurmctld / EpilogSlurmctld scripts)
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -41,7 +40,8 @@
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/power_save.h"
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/srun_comm.h"
+
+#include "src/stepmgr/srun_comm.h"
 
 extern void prep_prolog_slurmctld_callback(int rc, uint32_t job_id,
 					   bool timed_out)

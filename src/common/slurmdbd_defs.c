@@ -1,7 +1,7 @@
 /****************************************************************************\
  *  slurmdbd_defs.c - functions for use with Slurm DBD RPCs
  *****************************************************************************
- *  Copyright (C) 2011-2018 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
@@ -238,6 +238,9 @@ extern slurmdbd_msg_type_t str_2_slurmdbd_msg_type(char *msg_type)
 	} else if (!xstrcasecmp(msg_type,
 				"Persistent Connection Initialization")) {
 		return SLURM_PERSIST_INIT;
+	} else if (!xstrcasecmp(msg_type,
+				"Persistent TLS Connection Initialization")) {
+		return SLURM_PERSIST_INIT_TLS;
 	} else {
 		return NO_VAL;
 	}
@@ -826,6 +829,12 @@ extern char *slurmdbd_msg_type_2_str(slurmdbd_msg_type_t msg_type, int get_enum)
 		} else
 			return "Persistent Connection Initialization";
 		break;
+	case SLURM_PERSIST_INIT_TLS:
+		if (get_enum) {
+			return "SLURM_PERSIST_INIT_TLS";
+		} else
+			return "Persistent TLS Connection Initialization";
+		break;
 	default:
 		snprintf(unk_str, sizeof(unk_str), "MsgType=%d", msg_type);
 		return unk_str;
@@ -996,6 +1005,7 @@ extern void slurmdbd_free_msg(persist_msg_t *msg)
 	case DBD_SHUTDOWN:
 		break;
 	case SLURM_PERSIST_INIT:
+	case SLURM_PERSIST_INIT_TLS:
 		slurm_free_msg(msg->data);
 		break;
 	default:
@@ -1135,6 +1145,9 @@ extern void slurmdbd_free_job_start_msg(void *in)
 		xfree(msg->node_inx);
 		xfree(msg->partition);
 		xfree(msg->script_hash);
+		xfree(msg->std_err);
+		xfree(msg->std_in);
+		xfree(msg->std_out);
 		xfree(msg->submit_line);
 		xfree(msg->tres_alloc_str);
 		xfree(msg->tres_req_str);

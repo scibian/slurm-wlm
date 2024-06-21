@@ -445,11 +445,6 @@ Copyright: 2002-2007 The Regents of the University of California
            2013 Intel Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/ext_sensors/rrd/ext_sensors_rrd.c
-       src/plugins/ext_sensors/rrd/ext_sensors_rrd.h
-Copyright: 2013 Bull - Thomas Cadeau/Martin Perry/Yiannis Georgiou
-License: GPL-2+ with OpenSSL exception
-
 Files: src/interfaces/topology.?
 Copyright: 2009-2010 Lawrence Livermore National Security, LLC
            2014 Silicon Graphics, Inc

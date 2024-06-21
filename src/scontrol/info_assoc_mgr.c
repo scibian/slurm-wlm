@@ -3,7 +3,7 @@
  *                     slurmctld functions for scontrol.
  *****************************************************************************
  *  Copyright (C) 2004 CSCS
- *  Copyright (C) 2015 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Written by Stephen Trofinoff and Danny Auble
  *
  *  This file is part of Slurm, a resource management program.
@@ -116,17 +116,17 @@ static int _print_used_acct_limit(slurmdb_used_limits_t *used_limit,
 			 qos_rec->max_tres_pa_ctld,
 			 used_limit->tres, 0);
 
+	/* NEW LINE */
+	printf("%s", new_line_char);
+
+	_print_tres_line("MaxTRESRunMinsPA",
+			 qos_rec->max_tres_run_mins_pa_ctld,
+			 used_limit->tres_run_secs, 60);
+
 	if (one_liner)
 		printf("}");
 
-	/* MaxTRESRunMinsPA doesn't do anything yet, if/when it does
-	 * change the last param in the print_tres_line to 0. */
-
 	/* printf("%s", one_liner ? "" : "    "); */
-	/* _print_tres_line("MaxTRESRunMinsPA", */
-	/* 		 qos_rec->max_tres_run_mins_pa_ctld, */
-	/* 		 used_limit->tres_run_mins, 60, 1); */
-
 
 	return SLURM_SUCCESS;
 }
@@ -169,23 +169,24 @@ static int _print_used_user_limit(slurmdb_used_limits_t *used_limit,
 			 qos_rec->max_tres_pu_ctld,
 			 used_limit->tres, 0);
 
+	/* NEW LINE */
+	printf("%s", new_line_char);
+
+	_print_tres_line("MaxTRESRunMinsPU",
+			 qos_rec->max_tres_run_mins_pu_ctld,
+			 used_limit->tres_run_secs, 60);
+
 	if (one_liner)
 		printf("}");
 
-	/* MaxTRESRunMinsPU doesn't do anything yet, if/when it does
-	 * change the last param in the print_tres_line to 0. */
-
 	/* printf("%s", one_liner ? "" : "    "); */
-	/* _print_tres_line("MaxTRESRunMinsPU", */
-	/* 		 qos_rec->max_tres_run_mins_pu_ctld, */
-	/* 		 used_limit->tres_run_mins, 60, 1); */
 
 	return SLURM_SUCCESS;
 }
 
 static void _print_assoc_mgr_info(assoc_mgr_info_msg_t *msg)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_user_rec_t *user_rec;
 	slurmdb_assoc_rec_t *assoc_rec;
 	slurmdb_qos_rec_t *qos_rec;

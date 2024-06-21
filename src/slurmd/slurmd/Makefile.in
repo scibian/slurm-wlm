@@ -130,7 +130,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_affinity.m4 \
 	$(top_srcdir)/auxdir/x_ac_c99.m4 \
 	$(top_srcdir)/auxdir/x_ac_cgroup.m4 \
-	$(top_srcdir)/auxdir/x_ac_cray.m4 \
 	$(top_srcdir)/auxdir/x_ac_curl.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
@@ -150,13 +149,14 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_ofed.m4 \
 	$(top_srcdir)/auxdir/x_ac_oneapi.m4 \
 	$(top_srcdir)/auxdir/x_ac_pam.m4 \
+	$(top_srcdir)/auxdir/x_ac_pkgconfig.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
 	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
-	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
+	$(top_srcdir)/auxdir/x_ac_s2n.m4 \
 	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_sview.m4 \
@@ -188,7 +188,9 @@ am__objects_1 = slurmd.$(OBJEXT) cred_context.$(OBJEXT) req.$(OBJEXT) \
 am_slurmd_OBJECTS = $(am__objects_1)
 slurmd_OBJECTS = $(am_slurmd_OBJECTS)
 am__DEPENDENCIES_1 =
-am__DEPENDENCIES_2 = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
+am__DEPENDENCIES_2 = $(top_builddir)/src/bcast/libfile_bcast.la \
+	../common/libslurmd_common.o $(am__DEPENDENCIES_1)
+am__DEPENDENCIES_3 = $(am__DEPENDENCIES_1) $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1)
 slurmd_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(AM_CFLAGS) $(CFLAGS) \
@@ -270,14 +272,6 @@ CHECK_CFLAGS = @CHECK_CFLAGS@
 CHECK_LIBS = @CHECK_LIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
-CRAY_JOB_CPPFLAGS = @CRAY_JOB_CPPFLAGS@
-CRAY_JOB_LDFLAGS = @CRAY_JOB_LDFLAGS@
-CRAY_SELECT_CPPFLAGS = @CRAY_SELECT_CPPFLAGS@
-CRAY_SELECT_LDFLAGS = @CRAY_SELECT_LDFLAGS@
-CRAY_SWITCH_CPPFLAGS = @CRAY_SWITCH_CPPFLAGS@
-CRAY_SWITCH_LDFLAGS = @CRAY_SWITCH_LDFLAGS@
-CRAY_TASK_CPPFLAGS = @CRAY_TASK_CPPFLAGS@
-CRAY_TASK_LDFLAGS = @CRAY_TASK_LDFLAGS@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CXX = @CXX@
@@ -285,8 +279,6 @@ CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
-DATAWARP_CPPFLAGS = @DATAWARP_CPPFLAGS@
-DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
@@ -411,10 +403,11 @@ RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
 RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
-RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
-RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
-RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
+S2N_CPPFLAGS = @S2N_CPPFLAGS@
+S2N_DIR = @S2N_DIR@
+S2N_LDFLAGS = @S2N_LDFLAGS@
+S2N_LIBS = @S2N_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
@@ -498,6 +491,7 @@ mandir = @mandir@
 mkdir_p = @mkdir_p@
 oldincludedir = @oldincludedir@
 pdfdir = @pdfdir@
+pkgconfigdir = @pkgconfigdir@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
 psdir = @psdir@
@@ -519,7 +513,8 @@ AUTOMAKE_OPTIONS = foreign
 CLEANFILES = core.* *.bino
 depend_libs = \
 	$(top_builddir)/src/bcast/libfile_bcast.la \
-	../common/libslurmd_common.o
+	../common/libslurmd_common.o \
+	$(SLURMD_INTERFACES)
 
 
 # These 2 depend_* should look the same in ../slurmstepd/Makefile.am
@@ -529,7 +524,7 @@ depend_ldadd = $(HWLOC_LIBS) $(PAM_LIBS) $(UTIL_LIBS)
 depend_ldflags = $(HWLOC_LDFLAGS) -Wl,--no-as-needed
 AM_CPPFLAGS = -I$(top_srcdir) $(HWLOC_CPPFLAGS)
 slurmd_LDADD = $(depend_libs) $(LIB_SLURM) $(NUMA_LIBS) \
-	$(depend_ldadd) $(SLURMD_INTERFACES) $(LIB_REF)
+	$(depend_ldadd) $(LIB_REF)
 slurmd_LDFLAGS = $(CMD_LDFLAGS) $(depend_ldflags)
 SLURMD_SOURCES = \
 	slurmd.c slurmd.h \
@@ -538,7 +533,7 @@ SLURMD_SOURCES = \
 	get_mach_stat.c get_mach_stat.h
 
 slurmd_SOURCES = $(SLURMD_SOURCES)
-slurmd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD) $(SLURMD_INTERFACES)
+slurmd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
 REF = usage.txt
 BIN_REF = $(REF:.txt=.bino)
 LIB_REF = lib_ref.la

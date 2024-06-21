@@ -2,8 +2,7 @@
  *  slurm_acct_gather.c - generic interface needed for some
  *                        acct_gather plugins.
  *****************************************************************************
- *  Copyright (C) 2013 SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -208,15 +207,6 @@ extern int acct_gather_read_conf(int fd)
 	return SLURM_SUCCESS;
 rwfail:
 	return SLURM_ERROR;
-}
-
-extern int acct_gather_reconfig(void)
-{
-	acct_gather_conf_destroy();
-	slurm_mutex_init(&conf_mutex);
-	acct_gather_conf_init();
-
-	return SLURM_SUCCESS;
 }
 
 extern int acct_gather_conf_destroy(void)

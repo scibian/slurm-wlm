@@ -105,6 +105,9 @@ char *job_req_inx[] = {
 	"t1.work_dir",
 	"t1.mcs_label",
 	"t4.batch_script",
+	"t1.std_err",
+	"t1.std_in",
+	"t1.std_out",
 	"t1.submit_line",
 	"t4.env_vars",
 	"t2.acct",
@@ -166,6 +169,9 @@ enum {
 	JOB_REQ_WORK_DIR,
 	JOB_REQ_MCS_LABEL,
 	JOB_REQ_SCRIPT,
+	JOB_REQ_STDERR,
+	JOB_REQ_STDIN,
+	JOB_REQ_STDOUT,
 	JOB_REQ_SUBMIT_LINE,
 	JOB_REQ_ENV,
 	JOB_REQ_ACCOUNT,
@@ -271,7 +277,7 @@ enum {
 static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 					   char *cluster_name, char **extra)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurm_selected_step_t *selected_step = NULL;
 
 	if (!job_cond || (job_cond->flags & JOBCOND_FLAG_RUNAWAY))
@@ -487,7 +493,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 	slurmdb_step_rec_t *step = NULL;
 	time_t now = time(NULL);
 	List job_list = list_create(slurmdb_destroy_job_rec);
-	ListIterator itr = NULL, itr2 = NULL;
+	list_itr_t *itr = NULL, *itr2 = NULL;
 	List local_cluster_list = NULL;
 	int set = 0;
 	char *prefix="t2";
@@ -513,7 +519,8 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			xstrcat(extra, " && ");
 		xstrfmtcat(extra, "((%s.lineage like '%%/0-%s/%%')",
 			   prefix, user->name);
-		if (user->coord_accts && list_count(user->coord_accts)) {
+		if (!(slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) &&
+		    user->coord_accts && list_count(user->coord_accts)) {
 			slurmdb_coord_rec_t *coord = NULL;
 			itr = list_iterator_create(user->coord_accts);
 			while ((coord = list_next(itr))) {
@@ -726,6 +733,10 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->script = xstrdup(row[JOB_REQ_SCRIPT]);
 
 		job->env = xstrdup(row[JOB_REQ_ENV]);
+
+		job->std_err = xstrdup(row[JOB_REQ_STDERR]);
+		job->std_in = xstrdup(row[JOB_REQ_STDIN]);
+		job->std_out = xstrdup(row[JOB_REQ_STDOUT]);
 
 		job->submit_line = xstrdup(row[JOB_REQ_SUBMIT_LINE]);
 
@@ -1268,7 +1279,7 @@ extern int good_nodes_from_inx(List local_cluster_list,
 		    || (start >= (*curr_cluster)->end)) {
 			local_cluster_t *local_cluster = NULL;
 
-			ListIterator itr =
+			list_itr_t *itr =
 				list_iterator_create(local_cluster_list);
 			while ((local_cluster = list_next(itr))) {
 				if ((start >= local_cluster->start)
@@ -1297,7 +1308,7 @@ extern int setup_job_cluster_cond_limits(mysql_conn_t *mysql_conn,
 					 char *cluster_name, char **extra)
 {
 	int set = 0;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *object = NULL;
 
 	if (!job_cond)
@@ -1389,7 +1400,7 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 				 char **extra)
 {
 	int set = 0;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *object = NULL;
 
 	if (!job_cond || (job_cond->flags & JOBCOND_FLAG_RUNAWAY))
@@ -1714,7 +1725,7 @@ extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn,
 {
 	char *extra = NULL;
 	char *tmp = NULL, *tmp2 = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int is_admin=1;
 	int i;
 	List job_list = NULL;

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  openapi.h - OpenAPI definitions
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -79,6 +78,7 @@ extern data_type_t openapi_type_format_to_data_type(
 	openapi_type_format_t format);
 extern openapi_type_format_t openapi_string_to_type_format(const char *str);
 extern openapi_type_format_t openapi_data_type_to_type_format(data_type_t type);
+extern openapi_type_t openapi_type_format_to_type(openapi_type_format_t format);
 
 /*
  * Separator used to split up a relative path.
@@ -286,6 +286,19 @@ typedef struct {
 	job_desc_msg_t *job;
 	list_t *jobs; /* list of job_desc_msg_t* */
 } openapi_job_submit_request_t;
+
+typedef struct {
+	OPENAPI_RESP_STRUCT_META_FIELD;
+	OPENAPI_RESP_STRUCT_ERRORS_FIELD;
+	OPENAPI_RESP_STRUCT_WARNINGS_FIELD;
+	uint32_t job_id;
+	char *job_submit_user_msg;
+} openapi_job_alloc_response_t;
+
+typedef struct {
+	job_desc_msg_t *job;
+	list_t *hetjob; /* list of job_desc_msg_t* */
+} openapi_job_alloc_request_t;
 
 /* mirrors job_step_info_response_msg_t */
 typedef struct {

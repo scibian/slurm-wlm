@@ -1,36 +1,36 @@
-/*  launch.c - Define job launch plugin functions.
-*****************************************************************************
-*  Copyright (C) 2012 SchedMD LLC
-*  Written by Danny Auble <da@schedmd.com>
-*
-*  This file is part of Slurm, a resource management program.
-*  For details, see <https://slurm.schedmd.com/>.
-*  Please also read the included file: DISCLAIMER.
-*
-*  Slurm is free software; you can redistribute it and/or modify it under
-*  the terms of the GNU General Public License as published by the Free
-*  Software Foundation; either version 2 of the License, or (at your option)
-*  any later version.
-*
-*  In addition, as a special exception, the copyright holders give permission
-*  to link the code of portions of this program with the OpenSSL library under
-*  certain conditions as described in each individual source file, and
-*  distribute linked combinations including the two. You must obey the GNU
-*  General Public License in all respects for all of the code used other than
-*  OpenSSL. If you modify file(s) with this exception, you may extend this
-*  exception to your version of the file(s), but you are not obligated to do
-*  so. If you do not wish to do so, delete this exception statement from your
-*  version.  If you delete this exception statement from all source files in
-*  the program, then also delete it here.
-*
-*  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
-*  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-*  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
-*  details.
-*
-*  You should have received a copy of the GNU General Public License along
-*  with Slurm; if not, write to the Free Software Foundation, Inc.,
-*  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
+/*****************************************************************************\
+ *  launch.c - Define job launch plugin functions.
+ *****************************************************************************
+ *  Copyright (C) SchedMD LLC.
+ *
+ *  This file is part of Slurm, a resource management program.
+ *  For details, see <https://slurm.schedmd.com/>.
+ *  Please also read the included file: DISCLAIMER.
+ *
+ *  Slurm is free software; you can redistribute it and/or modify it under
+ *  the terms of the GNU General Public License as published by the Free
+ *  Software Foundation; either version 2 of the License, or (at your option)
+ *  any later version.
+ *
+ *  In addition, as a special exception, the copyright holders give permission
+ *  to link the code of portions of this program with the OpenSSL library under
+ *  certain conditions as described in each individual source file, and
+ *  distribute linked combinations including the two. You must obey the GNU
+ *  General Public License in all respects for all of the code used other than
+ *  OpenSSL. If you modify file(s) with this exception, you may extend this
+ *  exception to your version of the file(s), but you are not obligated to do
+ *  so. If you do not wish to do so, delete this exception statement from your
+ *  version.  If you delete this exception statement from all source files in
+ *  the program, then also delete it here.
+ *
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+ *  details.
+ *
+ *  You should have received a copy of the GNU General Public License along
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #include "config.h"
@@ -89,7 +89,7 @@ extern char **environ;
 static int _step_signal(int signal)
 {
 	srun_job_t *my_srun_job;
-	ListIterator iter;
+	list_itr_t *iter;
 	int rc = SLURM_SUCCESS, rc2;
 
 	if (!local_job_list) {
@@ -246,7 +246,7 @@ static int _is_openmpi_port_error(int errcode)
 {
 	if (errcode != OPEN_MPI_PORT_ERROR)
 		return 0;
-	if (opt_save && (opt_save->srun_opt->resv_port_cnt == NO_VAL))
+	if (opt_save && (opt_save->resv_port_cnt == NO_VAL))
 		return 0;
 	if (difftime(time(NULL), launch_start_time) > slurm_conf.msg_timeout)
 		return 0;
@@ -759,8 +759,11 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 		else
 			step_req->cpu_count = step_req->min_nodes;
 	} else if (opt_local->cpus_set) {
-		step_req->cpu_count =
-			opt_local->ntasks * opt_local->cpus_per_task;
+		if (opt_local->ntasks == NO_VAL)
+			step_req->cpu_count = NO_VAL;
+		else
+			step_req->cpu_count = opt_local->ntasks *
+				opt_local->cpus_per_task;
 		if (srun_opt->whole)
 			info("Ignoring --whole since -c/--cpus-per-task used");
 		else if (!srun_opt->exact)
@@ -865,19 +868,10 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 
 	step_req->relative = srun_opt->relative;
 
-	if (srun_opt->resv_port_cnt != NO_VAL) {
-		step_req->resv_port_cnt = srun_opt->resv_port_cnt;
+	if (opt_local->resv_port_cnt != NO_VAL) {
+		step_req->resv_port_cnt = opt_local->resv_port_cnt;
 	} else {
-#if defined(HAVE_NATIVE_CRAY)
-		/*
-		 * On Cray systems default to reserving one port, or one
-		 * more than the number of multi prog commands, for Cray PMI
-		 */
-		step_req->resv_port_cnt = (srun_opt->multi_prog ?
-					   srun_opt->multi_prog_cmds + 1 : 1);
-#else
 		step_req->resv_port_cnt = NO_VAL16;
-#endif
 	}
 
 	step_req->srun_pid = (uint32_t) getpid();
@@ -997,7 +991,7 @@ static job_step_create_request_msg_t *_create_job_step_create_request(
 	{
 		uint16_t base_dist;
 		/* Leave distribution set to unknown if taskcount <= nodes and
-		 * memory is set to 0. step_mgr will handle the mem=0 case. */
+		 * memory is set to 0. stepmgr will handle the mem=0 case. */
 		if (!opt_local->mem_per_cpu || !opt_local->pn_min_memory ||
 		    srun_opt->interactive)
 			base_dist = SLURM_DIST_UNKNOWN;
@@ -1228,6 +1222,10 @@ extern int launch_g_create_job_step(srun_job_t *job, bool use_all_cpus,
 	for (i = 0; (!(*destroy_job)); i++) {
 		bool timed_out = false;
 		if (srun_opt->no_alloc) {
+			if (step_req->num_tasks == NO_VAL) {
+				step_req->num_tasks = job->ntasks;
+				step_req->cpu_count = job->cpu_count;
+			}
 			job->step_ctx = step_ctx_create_no_alloc(
 				step_req, job->step_id.step_id);
 		} else {
@@ -1327,6 +1325,9 @@ extern int launch_g_create_job_step(srun_job_t *job, bool use_all_cpus,
 		return SLURM_ERROR;
 	}
 	fwd_set_alias_addrs(step_layout->alias_addrs);
+	if (opt_local->cpus_set && (job->cpu_count == NO_VAL))
+		job->cpu_count = step_layout->task_cnt *
+			opt_local->cpus_per_task;
 	if (job->ntasks != step_layout->task_cnt)
 		job->ntasks = step_layout->task_cnt;
 
@@ -1593,7 +1594,7 @@ extern void launch_g_print_status(void)
 extern void launch_g_fwd_signal(int signal)
 {
 	srun_job_t *my_srun_job;
-	ListIterator iter;
+	list_itr_t *iter;
 
 	if (!local_job_list) {
 		debug("%s: local_job_list does not exist yet", __func__);

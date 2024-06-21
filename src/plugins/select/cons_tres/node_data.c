@@ -2,7 +2,7 @@
  *  node_data.c - Functions dealing with structures dealing with nodes unique to
  *                the select plugin.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Derived in large part from select/cons_[res|tres] plugins
  *
  *  This file is part of Slurm, a resource management program.
@@ -54,7 +54,7 @@ extern void node_data_destroy(node_use_record_t *node_usage)
 	int i;
 
 	if (node_usage) {
-		for (i = 0; next_node(&i); i++) {
+		for (i = 0; i < node_record_count; i++) {
 			FREE_NULL_LIST(node_usage[i].gres_list);
 			FREE_NULL_LIST(node_usage[i].jobs);
 		}

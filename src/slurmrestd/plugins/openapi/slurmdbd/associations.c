@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  associations.c - Slurm REST API acct associations http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -85,7 +84,7 @@ static void _delete_assoc(ctxt_t *ctxt, slurmdb_assoc_cond_t *assoc_cond,
 /* Turn *dst into a TRES string that will turn submitted *dst to match mod */
 static void _diff_tres(char **dst, char *mod)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	List dst_list = NULL;
 	List mod_list = NULL;
 	slurmdb_tres_rec_t *tres;
@@ -344,7 +343,7 @@ static void _update_associations(ctxt_t *ctxt)
 	FREE_OPENAPI_RESP_COMMON_CONTENTS(resp_ptr);
 }
 
-static int _op_handler_association(ctxt_t *ctxt)
+extern int op_handler_association(ctxt_t *ctxt)
 {
 	slurmdb_assoc_cond_t *assoc_cond = NULL;
 
@@ -367,7 +366,7 @@ cleanup:
 	return SLURM_SUCCESS;
 }
 
-static int _op_handler_associations(ctxt_t *ctxt)
+extern int op_handler_associations(ctxt_t *ctxt)
 {
 	slurmdb_assoc_cond_t *assoc_cond = NULL;
 
@@ -376,6 +375,9 @@ static int _op_handler_associations(ctxt_t *ctxt)
 		if (DATA_PARSE(ctxt->parser, ASSOC_CONDITION_PTR, assoc_cond,
 			       ctxt->query, ctxt->parent_path))
 			goto cleanup;
+
+		if (!assoc_cond)
+			assoc_cond = xmalloc(sizeof(*assoc_cond));
 
 		if (assoc_cond->usage_start && !assoc_cond->usage_end)
 			assoc_cond->usage_end = time(NULL);
@@ -398,18 +400,4 @@ static int _op_handler_associations(ctxt_t *ctxt)
 cleanup:
 	slurmdb_destroy_assoc_cond(assoc_cond);
 	return SLURM_SUCCESS;
-}
-
-extern void init_op_associations(void)
-{
-	bind_handler("/slurmdb/{data_parser}/associations/",
-		     _op_handler_associations, 0);
-	bind_handler("/slurmdb/{data_parser}/association/",
-		     _op_handler_association, 0);
-}
-
-extern void destroy_op_associations(void)
-{
-	unbind_operation_ctxt_handler(_op_handler_associations);
-	unbind_operation_ctxt_handler(_op_handler_association);
 }

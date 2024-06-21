@@ -71,6 +71,7 @@
 #include "src/common/macros.h"
 #include "src/common/net.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/util-net.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -118,14 +119,14 @@ cleanup:
 }
 
 /* set keepalive time on socket */
-extern int net_set_keep_alive(int sock)
+extern void net_set_keep_alive(int sock)
 {
 	int opt_int;
 	socklen_t opt_len;
 	struct linger opt_linger;
 
 	if (slurm_conf.keepalive_time == NO_VAL)
-		return 0;
+		return;
 
 	opt_len = sizeof(struct linger);
 	opt_linger.l_onoff = 1;
@@ -137,7 +138,7 @@ extern int net_set_keep_alive(int sock)
 	opt_int = slurm_conf.keepalive_time;
 	if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &opt_int, opt_len) < 0) {
 		error("Unable to set keepalive socket option: %m");
-		return -1;
+		return;
 	}
 
 /*
@@ -153,7 +154,7 @@ extern int net_set_keep_alive(int sock)
 		if (setsockopt(sock, SOL_TCP, TCP_KEEPINTVL,
 			       &opt_int, opt_len) < 0) {
 			error("Unable to set keepalive interval: %m");
-			return -1;
+			return;
 		}
 	}
 	if (slurm_conf.keepalive_probes != NO_VAL) {
@@ -161,13 +162,13 @@ extern int net_set_keep_alive(int sock)
 		if (setsockopt(sock, SOL_TCP, TCP_KEEPCNT,
 			       &opt_int, opt_len) < 0) {
 			error("Unable to set keepalive probes: %m");
-			return -1;
+			return;
 		}
 	}
 	opt_int = slurm_conf.keepalive_time;
 	if (setsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, opt_len) < 0) {
 		error("Unable to set keepalive socket time: %m");
-		return -1;
+		return;
 	}
 #endif
 
@@ -188,8 +189,17 @@ extern int net_set_keep_alive(int sock)
 	getsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, &opt_len);
 	info("got keepalive_time is %d on fd %d", opt_int, sock);
 #endif
+}
 
-	return 0;
+extern void net_set_nodelay(int sock)
+{
+	int opt_int = 1;
+
+	if (sock < 0)
+		return;
+
+	if (setsockopt(sock, SOL_TCP, TCP_NODELAY, &opt_int, sizeof(int)) < 0)
+		error("Unable to set TCP_NODELAY: %m");
 }
 
 /*
@@ -301,10 +311,13 @@ int net_stream_listen_ports(int *fd, uint16_t *port, uint16_t *ports, bool local
 
 extern char *sockaddr_to_string(const slurm_addr_t *addr, socklen_t addrlen)
 {
-	int rc, prev_errno = errno;
+	int prev_errno = errno;
 	char *resp = NULL;
-	char host[NI_MAXHOST] = { 0 };
-	char serv[NI_MAXSERV] = { 0 };
+	int port = 0;
+	char *host = NULL;
+
+	if (addr->ss_family == AF_UNSPEC)
+		return NULL;
 
 	if (addr->ss_family == AF_UNIX) {
 		const struct sockaddr_un *addr_un =
@@ -317,20 +330,20 @@ extern char *sockaddr_to_string(const slurm_addr_t *addr, socklen_t addrlen)
 			return NULL;
 	}
 
-	resp = xmalloc(NI_MAXHOST + NI_MAXSERV);
-	rc = getnameinfo((const struct sockaddr *) addr, addrlen, host,
-			 NI_MAXHOST, serv, NI_MAXSERV, NI_NUMERICSERV);
-	if (rc == EAI_SYSTEM) {
-		error("Unable to get address: %m");
-	} else if (rc) {
-		error("Unable to get address: %s", gai_strerror(rc));
-	} else {
-		/* construct RFC3986 host port pair */
-		if (host[0] != '\0' && serv[0] != '\0')
-			xstrfmtcat(resp, "[%s]:%s", host, serv);
-		else if (serv[0] != '\0')
-			xstrfmtcat(resp, "[::]:%s", serv);
-	}
+	if (addr->ss_family == AF_INET)
+		port = ((struct sockaddr_in *) addr)->sin_port;
+	else if (addr->ss_family == AF_INET6)
+		port = ((struct sockaddr_in6 *) addr)->sin6_port;
+
+	host = xgetnameinfo((struct sockaddr *) addr, addrlen);
+
+	/* construct RFC3986 host port pair */
+	if (host && port)
+		xstrfmtcat(resp, "[%s]:%d", host, port);
+	else if (port)
+		xstrfmtcat(resp, "[::]:%d", port);
+
+	xfree(host);
 
 	/*
 	 * Avoid clobbering errno as this function is likely to be used for

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  opt.c
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -169,7 +168,6 @@ extern void fill_job_desc_from_opts(job_desc_msg_t *desc)
 	if (opt.wait4switch >= 0)
 		desc->wait4switch = opt.wait4switch;
 
-	desc->power_flags = opt.power;
 	if (opt.job_flags)
 		desc->bitflags = opt.job_flags;
 	desc->mcs_label = xstrdup(opt.mcs_label);
