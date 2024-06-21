@@ -2,7 +2,6 @@
  *  common_topo.c - common functions for accounting storage
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -38,6 +37,7 @@
 #define _COMMON_TOPO_H
 
 #include <slurm/slurm.h>
+#include "src/interfaces/topology.h"
 
 /*
  * common_topo_split_hostlist_treewidth - logic to split an input hostlist into
@@ -83,6 +83,16 @@ extern bool common_topo_route_tree(void);
  *                          otherwise.
  */
 extern bool common_topo_route_part(void);
+
+/*
+ * This is an common step to be called from the select plugin in _select_nodes()
+ * and call _eval_nodes() which is based on topology to tackle the knapsack
+ * problem. This code incrementally removes nodes with low CPU counts for the
+ * job and re-evaluates each result.
+ *
+ * RET SLURM_SUCCESS or an error code
+ */
+extern int common_topo_choose_nodes(topology_eval_t *topo_eval);
 
 #endif
 

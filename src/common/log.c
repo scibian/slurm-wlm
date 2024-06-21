@@ -788,16 +788,37 @@ static char *_stepid2fmt(step_record_t *step_ptr, char *buf, int buf_size)
 				     STEP_ID_FLAG_SPACE | STEP_ID_FLAG_NO_JOB);
 }
 
-static char *_print_data_t(const data_t *d, char *buffer, uint16_t size)
+static char *_print_data_t(const data_t *d, char *buffer, int size)
 {
 	/*
 	 * NOTE: You will notice we put a %.0s in front of the string.
-	 * This is to handle the fact that we can't remove the job_ptr
+	 * This is to handle the fact that we can't remove the data_t
 	 * argument from the va_list directly. So when we call vsnprintf()
 	 * to handle the va_list this will effectively skip this argument.
 	 */
 	snprintf(buffer, size, "%%.0s%s(0x%"PRIxPTR")",
 		 data_get_type_string(d), ((uintptr_t) d));
+	return buffer;
+}
+
+static char *_print_data_json(const data_t *d, char *buffer, int size)
+{
+	char *nbuf = NULL;
+
+	/*
+	 * NOTE: You will notice we put a %.0s in front of the string.
+	 * This is to handle the fact that we can't remove the data_t
+	 * argument from the va_list directly. So when we call vsnprintf()
+	 * to handle the va_list this will effectively skip this argument.
+	 */
+	if (serialize_g_data_to_string(&nbuf, NULL, d, MIME_TYPE_JSON,
+				       SER_FLAGS_COMPACT))
+		snprintf(buffer, size, "%%.0s(JSON serialization failed)");
+	else
+		snprintf(buffer, size, "%%.0s%s", nbuf);
+
+	xfree(nbuf);
+
 	return buffer;
 }
 
@@ -837,6 +858,7 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 			case 'p':
 				switch (*(p + 2)) {
 				case 'A':
+				case 'd':
 				case 'D':
 				case 'J':
 				case 's':
@@ -896,6 +918,22 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 					xstrcat(intermediate_fmt,
 						_addr2fmt(
 							addr_ptr,
+							substitute_on_stack,
+							sizeof(substitute_on_stack)));
+					va_end(ap_copy);
+					break;
+				}
+				case 'd':	/* "%pd" -> compact JSON serialized string */
+				{
+					data_t *d = NULL;
+					va_list	ap_copy;
+
+					va_copy(ap_copy, ap);
+					for (int i = 0; i < cnt; i++ )
+						d = va_arg(ap_copy, void *);
+					xstrcat(intermediate_fmt,
+						_print_data_json(
+							d,
 							substitute_on_stack,
 							sizeof(substitute_on_stack)));
 					va_end(ap_copy);
@@ -1636,7 +1674,8 @@ extern char *log_build_step_id_str(
 	return buf;
 }
 
-extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...)
+extern void _log_flag_hex(const void *data, size_t len, ssize_t start,
+			  ssize_t end, const char *fmt, ...)
 {
 	va_list ap;
 	char *prepend;
@@ -1645,17 +1684,22 @@ extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...)
 	if (!data || !len)
 		return;
 
+	if (start < 0)
+		start = 0;
+	if ((end < 0) || (end > len))
+		end = len;
+
 	va_start(ap, fmt);
 	prepend = vxstrfmt(fmt, ap);
 	va_end(ap);
 
-	for (int i = 0; (i < len); ) {
-		int remain = len - i;
+	for (size_t i = start; (i < end); ) {
+		int remain = end - i;
 		int print = (remain < hex_cols) ? remain : hex_cols;
 		char *phex = xstring_bytes2hex((data + i), print, " ");
 		char *pstr = xstring_bytes2printable((data + i), print, '.');
 
-		format_print(LOG_LEVEL_VERBOSE, "%s [%04d/%04zu] 0x%s \"%s\"",
+		format_print(LOG_LEVEL_VERBOSE, "%s [%04zu/%04zu] 0x%s \"%s\"",
 			     prepend, i, len, phex, pstr);
 
 		i += print;

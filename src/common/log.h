@@ -284,6 +284,7 @@ extern char *log_build_step_id_str(
  * - %m expands to strerror(errno)
  * - %M expand to time stamp, format is configuration dependent
  * - %pA expands to "AAA.BBB.CCC.DDD:XXXX" for the given slurm_addr_t.
+ * - %pd expands to compact JSON serialization for the given data_t*.
  * - %pD expands to "type(0xDEADBEEF)" for the given data_t*.
  * - %pJ expands to "JobId=XXXX" for the given job_ptr, with the appropriate
  *       format for job arrays and hetjob components.
@@ -423,9 +424,12 @@ void spank_log(const char *, ...) __attribute__ ((format (printf, 1, 2)));
  * Log data as hex dump (use log_flag_hex() instead)
  * IN data - ptr to data
  * IN len - number of bytes pointed by data
+ * IN start - starting byte offset
+ * IN end - end byte offset
  * IN fmt - message to prepend to hex dump
  */
-extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...);
+extern void _log_flag_hex(const void *data, size_t len, ssize_t start,
+			  ssize_t end, const char *fmt, ...);
 
 /*
  * Log data as hex dump
@@ -433,11 +437,25 @@ extern void _log_flag_hex(const void *data, size_t len, const char *fmt, ...);
  * IN len - number of bytes pointed by data
  * IN fmt - message to prepend to hex dump
  */
-#define log_flag_hex(flag, data, len, fmt, ...)                  \
-	do {                                                     \
-		if (slurm_conf.debug_flags & DEBUG_FLAG_##flag)  \
-			_log_flag_hex(data, len, #flag ": " fmt, \
-				      ##__VA_ARGS__);            \
+#define log_flag_hex(flag, data, len, fmt, ...)                       \
+	do {                                                          \
+		if (slurm_conf.debug_flags & DEBUG_FLAG_##flag)       \
+			_log_flag_hex(data, len, -1, -1,              \
+				      #flag ": " fmt, ##__VA_ARGS__); \
+	} while (0)
+/*
+ * Log range of bytes from data as hex dump
+ * IN data - ptr to data
+ * IN len - number of bytes pointed by data
+ * IN start - starting byte offset
+ * IN end - end byte offset
+ * IN fmt - message to prepend to hex dump
+ */
+#define log_flag_hex_range(flag, data, len, start, end, fmt, ...)     \
+	do {                                                          \
+		if (slurm_conf.debug_flags & DEBUG_FLAG_##flag)       \
+			_log_flag_hex(data, len, start, end,          \
+				      #flag ": " fmt, ##__VA_ARGS__); \
 	} while (0)
 
 #endif /* !_LOG_H */

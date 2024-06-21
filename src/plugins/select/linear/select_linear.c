@@ -5,7 +5,7 @@
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2014 Silicon Graphics International Corp. All rights reserved.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
@@ -74,10 +74,11 @@
 #include "src/interfaces/topology.h"
 
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/gres_ctld.h"
 #include "src/slurmctld/licenses.h"
 #include "src/slurmctld/proc_req.h"
 #include "src/plugins/select/linear/select_linear.h"
+
+#include "src/stepmgr/gres_stepmgr.h"
 
 #define NO_SHARE_LIMIT	0xfffe
 #define NODEINFO_MAGIC	0x82ad
@@ -95,8 +96,6 @@ extern List part_list __attribute__((weak_import));
 extern List job_list __attribute__((weak_import));
 extern int node_record_count __attribute__((weak_import));
 extern time_t last_node_update __attribute__((weak_import));
-extern switch_record_t *switch_record_table __attribute__((weak_import));
-extern int switch_record_cnt __attribute__((weak_import));
 extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
 #else
 slurm_conf_t slurm_conf;
@@ -105,8 +104,6 @@ List part_list;
 List job_list;
 int node_record_count;
 time_t last_node_update;
-switch_record_t *switch_record_table;
-int switch_record_cnt;
 slurmctld_config_t slurmctld_config;
 #endif
 
@@ -144,12 +141,6 @@ static int _job_expand(job_record_t *from_job_ptr, job_record_t *to_job_ptr);
 static int _job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 		     uint32_t min_nodes, uint32_t max_nodes,
 		     uint32_t req_nodes);
-static int _job_test_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
-			  uint32_t min_nodes, uint32_t max_nodes,
-			  uint32_t req_nodes);
-static int _job_test_topo(job_record_t *job_ptr, bitstr_t *bitmap,
-			  uint32_t min_nodes, uint32_t max_nodes,
-			  uint32_t req_nodes);
 static bool _rem_run_job(struct cr_record *cr_ptr, uint32_t job_id);
 static bool _rem_tot_job(struct cr_record *cr_ptr, uint32_t job_id);
 static int _rm_job_from_nodes(struct cr_record *cr_ptr,
@@ -208,8 +199,6 @@ const uint32_t plugin_id	= SELECT_PLUGIN_LINEAR;
 const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static uint16_t cr_type;
-static bool have_dragonfly = false;
-static bool topo_optional = false;
 
 /* Record of resources consumed on each node including job details */
 static struct cr_record *cr_ptr = NULL;
@@ -635,7 +624,7 @@ static int _find_job_mate(job_record_t *job_ptr, bitstr_t *bitmap,
 			  uint32_t min_nodes, uint32_t max_nodes,
 			  uint32_t req_nodes)
 {
-	ListIterator job_iterator;
+	list_itr_t *job_iterator;
 	job_record_t *job_scan_ptr;
 	int rc = EINVAL;
 
@@ -702,18 +691,6 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 	    (!bit_super_set(job_ptr->details->req_node_bitmap, bitmap)))
 		return error_code;
 
-	if (switch_record_cnt && switch_record_table &&
-	    ((topo_optional == false) || job_ptr->req_switch)) {
-		/* Perform optimized resource selection based upon topology */
-		if (have_dragonfly) {
-			return _job_test_dfly(job_ptr, bitmap,
-					      min_nodes, max_nodes, req_nodes);
-		} else {
-			return _job_test_topo(job_ptr, bitmap,
-					      min_nodes, max_nodes, req_nodes);
-		}
-	}
-
 	consec_index = 0;
 	consec_size  = 50;	/* start allocation for 50 sets of
 				 * consecutive nodes */
@@ -722,7 +699,6 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 	consec_start = xcalloc(consec_size, sizeof(int));
 	consec_end   = xcalloc(consec_size, sizeof(int));
 	consec_req   = xcalloc(consec_size, sizeof(int));
-
 
 	/* Build table with information about sets of consecutive nodes */
 	consec_cpus[consec_index] = consec_nodes[consec_index] = 0;
@@ -970,632 +946,6 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *bitmap,
 }
 
 /*
- * _job_test_dfly - A dragonfly topology aware version of _job_test()
- * NOTE: The logic here is almost identical to that of _eval_nodes_dfly() in
- *       select/cons_tres/job_test.c. Any bug found here is probably also there.
- */
-static int _job_test_dfly(job_record_t *job_ptr, bitstr_t *bitmap,
-			  uint32_t min_nodes, uint32_t max_nodes,
-			  uint32_t req_nodes)
-{
-	bitstr_t **switches_bitmap;		/* nodes on this switch */
-	int       *switches_cpu_cnt;		/* total CPUs on switch */
-	uint32_t  *switches_node_cnt;		/* total nodes on switch */
-	uint32_t  *switches_node_use;		/* nodes from switch used */
-
-	bitstr_t  *req_nodes_bitmap   = NULL;
-	int rem_cpus;			/* remaining resources desired */
-	int avail_cpus, total_cpus = 0;
-	uint32_t want_nodes, alloc_nodes = 0;
-	int i, j, rc = SLURM_SUCCESS;
-	int best_fit_inx, first, last;
-	int best_fit_nodes, best_fit_cpus;
-	int best_fit_location = 0;
-	bool sufficient;
-	long time_waiting = 0;
-	int leaf_switch_count = 0;	/* Count of leaf node switches used */
-
-	if (job_ptr->req_switch > 1) {
-		/* Maximum leaf switch count >1 probably makes no sense */
-		info("%s: Resetting %pJ leaf switch count from %u to 0",
-		     __func__, job_ptr, job_ptr->req_switch);
-		job_ptr->req_switch = 0;
-	}
-	if (job_ptr->req_switch) {
-		time_t     time_now;
-		time_now = time(NULL);
-		if (job_ptr->wait4switch_start == 0)
-			job_ptr->wait4switch_start = time_now;
-		time_waiting = time_now - job_ptr->wait4switch_start;
-	}
-
-	rem_cpus = job_ptr->details->min_cpus;
-	if (req_nodes > min_nodes)
-		want_nodes = req_nodes;
-	else
-		want_nodes = min_nodes;
-
-	/* Construct a set of switch array entries,
-	 * use the same indexes as switch_record_table in slurmctld */
-	switches_bitmap   = xcalloc(switch_record_cnt, sizeof(bitstr_t *));
-	switches_cpu_cnt  = xcalloc(switch_record_cnt, sizeof(int));
-	switches_node_cnt = xcalloc(switch_record_cnt, sizeof(uint32_t));
-	switches_node_use = xcalloc(switch_record_cnt, sizeof(int));
-	if (job_ptr->details->req_node_bitmap) {
-		req_nodes_bitmap = bit_copy(job_ptr->details->req_node_bitmap);
-		i = bit_set_count(req_nodes_bitmap);
-		if (i > (int)max_nodes) {
-			info("%pJ requires more nodes than currently available (%u>%u)",
-			     job_ptr, i, max_nodes);
-			rc = EINVAL;
-			goto fini;
-		}
-	}
-
-	/* phase 1: make availability bitmaps for switches */
-	sufficient = false;
-	for (i = 0; i < switch_record_cnt; i++) {
-		switches_bitmap[i] = bit_copy(switch_record_table[i].
-					      node_bitmap);
-		bit_and(switches_bitmap[i], bitmap);
-		if (req_nodes_bitmap &&
-		    !bit_super_set(req_nodes_bitmap, switches_bitmap[i]))
-			switches_node_cnt[i] = 0;
-		else {
-			switches_node_cnt[i] = bit_set_count(switches_bitmap[i]);
-			sufficient = true;
-		}
-	}
-	bit_clear_all(bitmap);
-
-#if SELECT_DEBUG
-	/* Don't compile this, it slows things down too much */
-	for (i = 0; i < switch_record_cnt; i++) {
-		char *node_names = NULL;
-		if (switches_node_cnt[i])
-			node_names = bitmap2node_name(switches_bitmap[i]);
-		debug("switch=%s nodes=%u:%s speed=%u",
-		      switch_record_table[i].name,
-		      switches_node_cnt[i], node_names,
-		      switch_record_table[i].link_speed);
-		xfree(node_names);
-	}
-#endif
-
-	/* check if requested nodes are available */
-	if (!sufficient) {
-		info("%pJ requires nodes not available on any switch",
-		     job_ptr);
-		rc = EINVAL;
-		goto fini;
-	}
-
-	/* phase 2: calculate CPU resources for each switch */
-	for (i = 0; next_node(&i); i++) {
-		avail_cpus = _get_avail_cpus(job_ptr, i);
-		for (j = 0; j < switch_record_cnt; j++) {
-			if (bit_test(switches_bitmap[j], i)) {
-				switches_cpu_cnt[j] += avail_cpus;
-			}
-		}
-	}
-
-	/* phase 3 */
-	/* Determine lowest level switch satisfying request with best fit */
-	best_fit_inx = -1;
-	for (j = 0; j < switch_record_cnt; j++) {
-#if SELECT_DEBUG
-		debug5("checking switch %d: nodes %u cpus %d", j,
-		       switches_node_cnt[j], switches_cpu_cnt[j]);
-#endif
-		if ((switches_cpu_cnt[j]  < rem_cpus) ||
-		    (switches_node_cnt[j] < min_nodes))
-			continue;
-		if ((best_fit_inx == -1) ||
-		    (switch_record_table[j].level <
-		     switch_record_table[best_fit_inx].level) ||
-		    ((switch_record_table[j].level ==
-		      switch_record_table[best_fit_inx].level) &&
-		     (switches_node_cnt[j] < switches_node_cnt[best_fit_inx])))
-			best_fit_inx = j;
-	}
-	if (best_fit_inx == -1) {
-		debug("%s: could not find resources for %pJ",
-		      __func__, job_ptr);
-		rc = EINVAL;
-		goto fini;
-	}
-
-	/* phase 4: select resources from already allocated leaves */
-	/* Identify usable leafs (within higher switch having best fit) */
-	for (j = 0; j < switch_record_cnt; j++) {
-		if ((switch_record_table[j].level > 0) ||
-		    (!bit_super_set(switches_bitmap[j],
-				    switches_bitmap[best_fit_inx]))) {
-			switches_node_cnt[j] = 0;
-		} else if (req_nodes_bitmap) {
-			/* we have subnodes count zeroed yet so count them */
-			switches_node_cnt[j] = bit_set_count(switches_bitmap[j]);
-		}
-	}
-	/* set already allocated nodes and gather additional resources */
-	if (req_nodes_bitmap) {
-		/* Accumulate specific required resources, if any */
-		for (j = 0; j < switch_record_cnt; j++) {
-			if (alloc_nodes > max_nodes)
-				break;
-			if (switches_node_cnt[j] == 0 ||
-			    bit_overlap_any(req_nodes_bitmap,
-					    switches_bitmap[j]) == 0)
-				continue;
-
-			/* Use nodes from this leaf */
-			if (!bit_set_count(switches_bitmap[j])) {
-				switches_node_cnt[j] = 0;
-				continue;
-			}
-			for (int i = 0;
-			     next_node_bitmap(switches_bitmap[j], &i); i++) {
-				if (!bit_test(req_nodes_bitmap, i)) {
-					/* node wasn't requested */
-					continue;
-				}
-
-				bit_clear(switches_bitmap[j], i);
-				switches_node_cnt[j]--;
-				avail_cpus = _get_avail_cpus(job_ptr, i);
-				switches_cpu_cnt[j] -= avail_cpus;
-
-				if (bit_test(bitmap, i)) {
-					/* node on multiple leaf switches
-					 * and already selected */
-					continue;
-				}
-
-				switches_node_use[j]++;
-				bit_set(bitmap, i);
-				alloc_nodes++;
-				rem_cpus -= avail_cpus;
-				total_cpus += _get_total_cpus(i);
-			}
-		}
-	}
-
-	/* phase 5 */
-	/* Select resources from leafs on a best-fit or round-robin basis */
-	while ((alloc_nodes <= max_nodes) &&
-	       ((alloc_nodes < want_nodes) || (rem_cpus > 0))) {
-		best_fit_cpus = best_fit_nodes = 0;
-		for (j = 0; j < switch_record_cnt; j++) {
-			if (switches_node_cnt[j] == 0)
-				continue;
-			/* If multiple leaf switches must be used, prefer use
-			 * of leaf switches with fewest number of idle CPUs.
-			 * This results in more leaf switches being used and
-			 * achieves better network bandwidth. */
-			if ((best_fit_nodes == 0) ||
-			    (switches_node_use[best_fit_location] >
-			     switches_node_use[j]) ||
-			    ((switches_node_use[best_fit_location] ==
-			      switches_node_use[j]) &&
-			     (switches_cpu_cnt[j] < best_fit_cpus))) {
-				best_fit_cpus =  switches_cpu_cnt[j];
-				best_fit_nodes = switches_node_cnt[j];
-				best_fit_location = j;
-			}
-		}
-#if SELECT_DEBUG
-		info("%s: found switch %d for allocation: nodes %d cpus %d "
-		       "allocated %u", __func__, best_fit_location,
-		       best_fit_nodes, best_fit_cpus, alloc_nodes);
-#endif
-		if (best_fit_nodes == 0)
-			break;
-
-		/* Use select nodes from this leaf */
-		first = bit_ffs(switches_bitmap[best_fit_location]);
-		if (first < 0) {
-			switches_node_cnt[best_fit_location] = 0;
-			continue;
-		}
-		last  = bit_fls(switches_bitmap[best_fit_location]);
-		for (i = first; i <= last; i++) {
-			if (!bit_test(switches_bitmap[best_fit_location], i))
-				continue;
-
-			if (bit_test(bitmap, i)) {
-				/* node on multiple leaf switches
-				 * and already selected */
-				continue;
-			}
-
-			bit_clear(switches_bitmap[best_fit_location], i);
-			switches_node_cnt[best_fit_location]--;
-			switches_node_use[best_fit_location]++;
-			bit_set(bitmap, i);
-			alloc_nodes++;
-			j = _get_avail_cpus(job_ptr, i);
-			switches_cpu_cnt[best_fit_location] -= j;
-			rem_cpus -= j;
-			total_cpus += _get_total_cpus(i);
-			break;
-		}
-		leaf_switch_count++;
-		if (job_ptr->req_switch > 0) {
-			if (time_waiting >= job_ptr->wait4switch) {
-				job_ptr->best_switch = true;
-				debug3("%pJ Waited %ld sec for switches use=%d",
-					job_ptr, time_waiting,
-					leaf_switch_count);
-			} else if (leaf_switch_count > job_ptr->req_switch) {
-				/* Allocation is for more than requested number
-				 * of switches */
-				job_ptr->best_switch = false;
-				debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
-					job_ptr, time_waiting,
-					job_ptr->req_switch,
-					leaf_switch_count,
-					job_ptr->wait4switch);
-			} else {
-				job_ptr->best_switch = true;
-			}
-		}
-	}
-	if ((alloc_nodes <= max_nodes) && (rem_cpus <= 0) &&
-	    (alloc_nodes >= min_nodes)) {
-		rc = SLURM_SUCCESS;
-	} else
-		rc = EINVAL;
-
-fini:	if (rc == SLURM_SUCCESS) {
-		/* Job's total_cpus is needed for SELECT_MODE_WILL_RUN */
-		job_ptr->total_cpus = total_cpus;
-	} else if (alloc_nodes > max_nodes)
-		info("%pJ requires more nodes than allowed",
-		     job_ptr);
-	FREE_NULL_BITMAP(req_nodes_bitmap);
-	for (i = 0; i < switch_record_cnt; i++)
-		FREE_NULL_BITMAP(switches_bitmap[i]);
-	xfree(switches_bitmap);
-	xfree(switches_cpu_cnt);
-	xfree(switches_node_cnt);
-	xfree(switches_node_use);
-
-	return rc;
-}
-
-
-/*
- * _job_test_topo - A topology aware version of _job_test()
- * NOTE: The logic here is almost identical to that of _eval_nodes_topo() in
- *       select/cons_tres/job_test.c. Any bug found here is probably also there.
- */
-static int _job_test_topo(job_record_t *job_ptr, bitstr_t *bitmap,
-			  uint32_t min_nodes, uint32_t max_nodes,
-			  uint32_t req_nodes)
-{
-	bitstr_t **switches_bitmap;		/* nodes on this switch */
-	int       *switches_cpu_cnt;		/* total CPUs on switch */
-	uint32_t  *switches_node_cnt;		/* total nodes on switch */
-	int       *switches_required;		/* set if has required node */
-
-	bitstr_t  *req_nodes_bitmap   = NULL;
-	int rem_cpus;			/* remaining resources desired */
-	int avail_cpus, total_cpus = 0;
-	uint32_t want_nodes, alloc_nodes = 0;
-	int i, j, rc = SLURM_SUCCESS;
-	int best_fit_inx, first, last;
-	int best_fit_nodes, best_fit_cpus;
-	int best_fit_location = 0;
-	bool sufficient;
-	long time_waiting = 0;
-	int leaf_switch_count = 0;	/* Count of leaf node switches used */
-
-	if (job_ptr->req_switch) {
-		time_t     time_now;
-		time_now = time(NULL);
-		if (job_ptr->wait4switch_start == 0)
-			job_ptr->wait4switch_start = time_now;
-		time_waiting = time_now - job_ptr->wait4switch_start;
-	}
-
-	rem_cpus = job_ptr->details->min_cpus;
-	if (req_nodes > min_nodes)
-		want_nodes = req_nodes;
-	else
-		want_nodes = min_nodes;
-
-	/* Construct a set of switch array entries,
-	 * use the same indexes as switch_record_table in slurmctld */
-	switches_bitmap   = xcalloc(switch_record_cnt, sizeof(bitstr_t *));
-	switches_cpu_cnt  = xcalloc(switch_record_cnt, sizeof(int));
-	switches_node_cnt = xcalloc(switch_record_cnt, sizeof(uint32_t));
-	switches_required = xcalloc(switch_record_cnt, sizeof(int));
-	if (job_ptr->details->req_node_bitmap) {
-		req_nodes_bitmap = bit_copy(job_ptr->details->req_node_bitmap);
-		i = bit_set_count(req_nodes_bitmap);
-		if (i > (int)max_nodes) {
-			info("%pJ requires more nodes than currently available (%u>%u)",
-			     job_ptr, i, max_nodes);
-			rc = EINVAL;
-			goto fini;
-		}
-	}
-
-	/* phase 1: make availability bitmaps for switches */
-	sufficient = false;
-	for (i=0; i<switch_record_cnt; i++) {
-		switches_bitmap[i] = bit_copy(switch_record_table[i].
-					      node_bitmap);
-		bit_and(switches_bitmap[i], bitmap);
-		if (req_nodes_bitmap &&
-		    !bit_super_set(req_nodes_bitmap, switches_bitmap[i]))
-			switches_node_cnt[i] = 0;
-		else {
-			switches_node_cnt[i] = bit_set_count(switches_bitmap[i]);
-			sufficient = true;
-		}
-	}
-	bit_clear_all(bitmap);
-
-#if SELECT_DEBUG
-	/* Don't compile this, it slows things down too much */
-	for (i=0; i<switch_record_cnt; i++) {
-		char *node_names = NULL;
-		if (switches_node_cnt[i])
-			node_names = bitmap2node_name(switches_bitmap[i]);
-		debug("switch=%s nodes=%u:%s speed=%u",
-		      switch_record_table[i].name,
-		      switches_node_cnt[i], node_names,
-		      switch_record_table[i].link_speed);
-		xfree(node_names);
-	}
-#endif
-
-	/* check if requested nodes are available */
-	if (!sufficient) {
-		info("%pJ requires nodes not available on any switch",
-		     job_ptr);
-		rc = EINVAL;
-		goto fini;
-	}
-
-	/* phase 2: accumulate all cpu resources for each switch */
-	for (i = 0; next_node(&i); i++) {
-		avail_cpus = _get_avail_cpus(job_ptr, i);
-		for (j=0; j<switch_record_cnt; j++) {
-			if (bit_test(switches_bitmap[j], i)) {
-				switches_cpu_cnt[j] += avail_cpus;
-			}
-		}
-	}
-
-	/* phase 3 */
-	/* Determine lowest level switch satisfying request with best fit */
-	best_fit_inx = -1;
-	for (j = 0; j < switch_record_cnt; j++) {
-#if SELECT_DEBUG
-		debug5("checking switch %d: nodes %u cpus %d", j,
-		       switches_node_cnt[j], switches_cpu_cnt[j]);
-#endif
-		if ((switches_cpu_cnt[j]  < rem_cpus) ||
-		    (switches_node_cnt[j] < min_nodes))
-			continue;
-		if ((best_fit_inx == -1) ||
-		    (switch_record_table[j].level <
-		     switch_record_table[best_fit_inx].level) ||
-		    ((switch_record_table[j].level ==
-		      switch_record_table[best_fit_inx].level) &&
-		     (switches_node_cnt[j] < switches_node_cnt[best_fit_inx])))
-			best_fit_inx = j;
-	}
-	if (best_fit_inx == -1) {
-		debug("%s: could not find resources for %pJ",
-		      __func__, job_ptr);
-		rc = EINVAL;
-		goto fini;
-	}
-
-	/* phase 4: select resources from already allocated leaves */
-	/* Identify usable leafs (within higher switch having best fit) */
-	for (j = 0; j < switch_record_cnt; j++) {
-		if ((switch_record_table[j].level > 0) ||
-		    (!bit_super_set(switches_bitmap[j],
-				    switches_bitmap[best_fit_inx]))) {
-			switches_node_cnt[j] = 0;
-		} else if (req_nodes_bitmap) {
-			/* we have subnodes count zeroed yet so count them */
-			switches_node_cnt[j] = bit_set_count(switches_bitmap[j]);
-		}
-	}
-	/* set already allocated nodes and gather additional resources */
-	if (req_nodes_bitmap) {
-		/* Accumulate specific required resources, if any */
-		for (j = 0; j < switch_record_cnt; j++) {
-			if (alloc_nodes > max_nodes)
-				break;
-			if (switches_node_cnt[j] == 0 ||
-			    bit_overlap_any(req_nodes_bitmap,
-					    switches_bitmap[j]) == 0)
-				continue;
-
-			/* Use nodes from this leaf */
-			first = bit_ffs(switches_bitmap[j]);
-			if (first < 0) {
-				switches_node_cnt[j] = 0;
-				continue;
-			}
-			last  = bit_fls(switches_bitmap[j]);
-			for (i=first; i<=last; i++) {
-				if (!bit_test(switches_bitmap[j], i))
-					continue;
-				if (!bit_test(req_nodes_bitmap, i)) {
-					/* node wasn't requested */
-					continue;
-				}
-
-				bit_clear(switches_bitmap[j], i);
-				switches_node_cnt[j]--;
-				avail_cpus = _get_avail_cpus(job_ptr, i);
-				switches_cpu_cnt[j] -= avail_cpus;
-
-				if (bit_test(bitmap, i)) {
-					/* node on multiple leaf switches
-					 * and already selected */
-					continue;
-				}
-
-				switches_required[j] = 1;
-				bit_set(bitmap, i);
-				alloc_nodes++;
-				rem_cpus -= avail_cpus;
-				total_cpus += _get_total_cpus(i);
-			}
-		}
-		/* Accumulate additional resources from leafs that
-		 * contain required nodes */
-		for (j=0; j<switch_record_cnt; j++) {
-			if ((alloc_nodes > max_nodes) ||
-			    ((alloc_nodes >= want_nodes) && (rem_cpus <= 0)))
-				break;
-			if (switches_required[j] == 0)
-				continue;
-
-			/* Use nodes from this leaf */
-			first = bit_ffs(switches_bitmap[j]);
-			if (first < 0) {
-				switches_node_cnt[j] = 0;
-				continue;
-			}
-			last  = bit_fls(switches_bitmap[j]);
-			for (i=first; i<=last; i++) {
-				if (!bit_test(switches_bitmap[j], i))
-					continue;
-
-				/* there is no need here to reset anything
-				   for switch j as we disable it after cycle
-				   by setting switches_node_cnt[j] to 0 */
-				if (bit_test(bitmap, i)) {
-					/* node on multiple leaf switches
-					 * and already selected */
-					continue;
-				}
-
-				bit_set(bitmap, i);
-				alloc_nodes++;
-				rem_cpus -= _get_avail_cpus(job_ptr, i);
-				total_cpus += _get_total_cpus(i);
-				if ((alloc_nodes > max_nodes) ||
-				    ((alloc_nodes >= want_nodes) &&
-				     (rem_cpus <= 0)))
-					break;
-			}
-			switches_node_cnt[j] = 0; /* it's used up */
-		}
-	}
-
-	/* phase 5 */
-	/* Select resources from these leafs on a best-fit basis */
-	/* Compute best-switch nodes available array */
-	while ((alloc_nodes <= max_nodes) &&
-	       ((alloc_nodes < want_nodes) || (rem_cpus > 0))) {
-		best_fit_cpus = best_fit_nodes = 0;
-		for (j=0; j<switch_record_cnt; j++) {
-			if (switches_node_cnt[j] == 0)
-				continue;
-			/* If multiple leaf switches must be used, prefer use
-			 * of leaf switches with fewest number of idle CPUs.
-			 * This results in more leaf switches being used and
-			 * achieves better network bandwidth. */
-			if ((best_fit_nodes == 0) ||
-			    (!switches_required[best_fit_location] &&
-			     switches_required[j]) ||
-			    (switches_cpu_cnt[j] < best_fit_cpus)) {
-				best_fit_cpus =  switches_cpu_cnt[j];
-				best_fit_nodes = switches_node_cnt[j];
-				best_fit_location = j;
-			}
-		}
-#if SELECT_DEBUG
-		debug("%s: found switch %d for allocation: nodes %d cpus %d "
-		       "allocated %u", __func__, best_fit_location,
-		       best_fit_nodes, best_fit_cpus, alloc_nodes);
-#endif
-		if (best_fit_nodes == 0)
-			break;
-
-		/* Use select nodes from this leaf */
-		first = bit_ffs(switches_bitmap[best_fit_location]);
-		if (first < 0) {
-			switches_node_cnt[best_fit_location] = 0;
-			continue;
-		}
-		last  = bit_fls(switches_bitmap[best_fit_location]);
-		for (i=first; i<=last; i++) {
-			if (!bit_test(switches_bitmap[best_fit_location], i))
-				continue;
-
-			if (bit_test(bitmap, i)) {
-				/* node on multiple leaf switches
-				 * and already selected */
-				continue;
-			}
-
-			switches_required[best_fit_location] = 1;
-			bit_set(bitmap, i);
-			alloc_nodes++;
-			rem_cpus -= _get_avail_cpus(job_ptr, i);
-			total_cpus += _get_total_cpus(i);
-			if ((alloc_nodes > max_nodes) ||
-			    ((alloc_nodes >= want_nodes) && (rem_cpus <= 0)))
-				break;
-		}
-		switches_node_cnt[best_fit_location] = 0;
-		leaf_switch_count++;
-		if (job_ptr->req_switch > 0) {
-			if (time_waiting >= job_ptr->wait4switch) {
-				job_ptr->best_switch = true;
-				debug3("%pJ Waited %ld sec for switches use=%d",
-					job_ptr, time_waiting,
-					leaf_switch_count);
-			} else if (leaf_switch_count > job_ptr->req_switch) {
-				/* Allocation is for more than requested number
-				 * of switches */
-				job_ptr->best_switch = false;
-				debug3("%pJ waited %ld sec for switches=%u found=%d wait %u",
-					job_ptr, time_waiting,
-					job_ptr->req_switch,
-					leaf_switch_count,
-					job_ptr->wait4switch);
-			} else {
-				job_ptr->best_switch = true;
-			}
-		}
-	}
-	if ((alloc_nodes <= max_nodes) && (rem_cpus <= 0) &&
-	    (alloc_nodes >= min_nodes)) {
-		rc = SLURM_SUCCESS;
-	} else
-		rc = EINVAL;
-
-fini:	if (rc == SLURM_SUCCESS) {
-		/* Job's total_cpus is needed for SELECT_MODE_WILL_RUN */
-		job_ptr->total_cpus = total_cpus;
-	} else if (alloc_nodes > max_nodes)
-		info("%pJ requires more nodes than allowed", job_ptr);
-	FREE_NULL_BITMAP(req_nodes_bitmap);
-	for (i=0; i<switch_record_cnt; i++)
-		FREE_NULL_BITMAP(switches_bitmap[i]);
-	xfree(switches_bitmap);
-	xfree(switches_cpu_cnt);
-	xfree(switches_node_cnt);
-	xfree(switches_required);
-
-	return rc;
-}
-
-
-/*
  * deallocate resources that were assigned to this job
  *
  * if remove_all = false: the job has been suspended, so just deallocate CPUs
@@ -1675,10 +1025,11 @@ static int _rm_job_from_nodes(struct cr_record *cr_ptr, job_record_t *job_ptr,
 			else
 				node_gres_list = node_ptr->gres_list;
 
-			gres_ctld_job_dealloc(job_ptr->gres_list_alloc,
-					      node_gres_list, node_offset,
-					      job_ptr->job_id, node_ptr->name,
-					      old_job, false);
+			gres_stepmgr_job_dealloc(job_ptr->gres_list_alloc,
+						 node_gres_list, node_offset,
+						 job_ptr->job_id,
+						 node_ptr->name,
+						 old_job, false);
 			gres_node_state_log(node_gres_list, node_ptr->name);
 		}
 
@@ -1885,15 +1236,15 @@ static int _job_expand(job_record_t *from_job_ptr, job_record_t *to_job_ptr)
 					  cpus[new_node_offset];
 	}
 	build_job_resources_cpu_array(new_job_resrcs_ptr);
-	gres_ctld_job_merge(from_job_ptr->gres_list_req,
-			    from_job_resrcs_ptr->node_bitmap,
-			    to_job_ptr->gres_list_req,
-			    to_job_resrcs_ptr->node_bitmap);
+	gres_stepmgr_job_merge(from_job_ptr->gres_list_req,
+			       from_job_resrcs_ptr->node_bitmap,
+			       to_job_ptr->gres_list_req,
+			       to_job_resrcs_ptr->node_bitmap);
 	/* copy the allocated gres */
-	gres_ctld_job_merge(from_job_ptr->gres_list_alloc,
-			    from_job_resrcs_ptr->node_bitmap,
-			    to_job_ptr->gres_list_alloc,
-			    to_job_resrcs_ptr->node_bitmap);
+	gres_stepmgr_job_merge(from_job_ptr->gres_list_alloc,
+			       from_job_resrcs_ptr->node_bitmap,
+			       to_job_ptr->gres_list_alloc,
+			       to_job_resrcs_ptr->node_bitmap);
 
 	/* Now swap data: "new" -> "to" and clear "from" */
 	free_job_resources(&to_job_ptr->job_resrcs);
@@ -2077,7 +1428,7 @@ static int _rm_job_from_one_node(job_record_t *job_ptr, node_record_t *node_ptr,
 		node_gres_list = cr_ptr->nodes[node_inx].gres_list;
 	else
 		node_gres_list = node_ptr->gres_list;
-	gres_ctld_job_dealloc(job_ptr->gres_list_alloc,
+	gres_stepmgr_job_dealloc(job_ptr->gres_list_alloc,
 			      node_gres_list, node_offset,
 			      job_ptr->job_id, node_ptr->name, old_job, true);
 	gres_node_state_log(node_gres_list, node_ptr->name);
@@ -2158,11 +1509,12 @@ static int _add_job_to_nodes(struct cr_record *cr_ptr,
 				gres_list = cr_ptr->nodes[i].gres_list;
 			else
 				gres_list = node_ptr->gres_list;
-			gres_ctld_job_alloc(job_ptr->gres_list_req,
-					    &job_ptr->gres_list_alloc,
-					    gres_list, node_cnt, i, node_offset,
-					    job_ptr->job_id, node_ptr->name,
-					    NULL, new_alloc);
+			gres_stepmgr_job_alloc(job_ptr->gres_list_req,
+					       &job_ptr->gres_list_alloc,
+					       gres_list, node_cnt, i,
+					       node_offset,
+					       job_ptr->job_id, node_ptr->name,
+					       NULL, new_alloc);
 			gres_node_state_log(gres_list, node_ptr->name);
 		}
 
@@ -2190,11 +1542,11 @@ static int _add_job_to_nodes(struct cr_record *cr_ptr,
 	}
 
 	if (alloc_all) {
-		gres_ctld_job_build_details(job_ptr->gres_list_alloc,
-					    job_ptr->nodes,
-					    &job_ptr->gres_detail_cnt,
-					    &job_ptr->gres_detail_str,
-					    &job_ptr->gres_used);
+		gres_stepmgr_job_build_details(job_ptr->gres_list_alloc,
+					       job_ptr->nodes,
+					       &job_ptr->gres_detail_cnt,
+					       &job_ptr->gres_detail_str,
+					       &job_ptr->gres_used);
 	}
 	return rc;
 }
@@ -2326,9 +1678,9 @@ static void _init_node_cr(void)
 	struct part_cr_record *part_cr_ptr;
 	job_resources_t *job_resrcs_ptr;
 	node_record_t *node_ptr;
-	ListIterator part_iterator;
+	list_itr_t *part_iterator;
 	job_record_t *job_ptr;
-	ListIterator job_iterator;
+	list_itr_t *job_iterator;
 	uint64_t job_memory_cpu, job_memory_node;
 	int exclusive, i, node_offset;
 
@@ -2426,14 +1778,15 @@ static void _init_node_cr(void)
 			}
 
 			if (bit_test(job_ptr->node_bitmap, i)) {
-				gres_ctld_job_alloc(job_ptr->gres_list_req,
-						    &job_ptr->gres_list_alloc,
-						    node_ptr->gres_list,
-						    job_resrcs_ptr->nhosts,
-						    i, node_offset,
-						    job_ptr->job_id,
-						    node_ptr->name,
-						    NULL, new_alloc);
+				gres_stepmgr_job_alloc(
+					job_ptr->gres_list_req,
+					&job_ptr->gres_list_alloc,
+					node_ptr->gres_list,
+					job_resrcs_ptr->nhosts,
+					i, node_offset,
+					job_ptr->job_id,
+					node_ptr->name,
+					NULL, new_alloc);
 			}
 
 			part_cr_ptr = cr_ptr->nodes[i].parts;
@@ -2536,7 +1889,7 @@ static int _run_now(job_record_t *job_ptr, bitstr_t *bitmap,
 	bitstr_t *orig_map;
 	int max_run_job, j, sus_jobs, rc = EINVAL, prev_cnt = -1;
 	job_record_t *tmp_job_ptr;
-	ListIterator job_iterator, preemptee_iterator;
+	list_itr_t *job_iterator, *preemptee_iterator;
 	struct cr_record *exp_cr;
 	uint16_t pass_count = 0;
 
@@ -2677,7 +2030,7 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *bitmap,
 	struct cr_record *exp_cr;
 	job_record_t *tmp_job_ptr;
 	List cr_job_list;
-	ListIterator job_iterator, preemptee_iterator;
+	list_itr_t *job_iterator, *preemptee_iterator;
 	bitstr_t *orig_map;
 	int i, max_run_jobs, rc = SLURM_ERROR;
 	time_t now = time(NULL);
@@ -2814,7 +2167,9 @@ static int  _cr_job_list_sort(void *x, void *y)
 {
 	job_record_t *job1_ptr = *(job_record_t **) x;
 	job_record_t *job2_ptr = *(job_record_t **) y;
-	return (int) (job1_ptr->end_time - job2_ptr->end_time);
+
+	return slurm_sort_uint_list_asc(&job1_ptr->end_time,
+					&job2_ptr->end_time);
 }
 
 /*
@@ -2828,11 +2183,6 @@ extern int init ( void )
 	cr_type = slurm_conf.select_type_param;
 	if (cr_type)
 		verbose("%s loaded with argument %u", plugin_name, cr_type);
-
-	if (xstrcasestr(slurm_conf.topology_param, "dragonfly"))
-		have_dragonfly = true;
-	if (xstrcasestr(slurm_conf.topology_param, "TopoOptional"))
-		topo_optional = true;
 
 	return rc;
 }

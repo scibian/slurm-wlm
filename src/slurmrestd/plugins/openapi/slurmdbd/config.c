@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  config.c - Slurm REST API config http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -62,9 +61,8 @@ static void _dump(ctxt_t *ctxt, openapi_resp_slurmdbd_config_t *resp)
 	};
 	slurmdb_account_cond_t acct_cond = {
 		.assoc_cond = &assoc_cond,
-		.with_deleted = true,
-		.with_assocs = true,
-		.with_coords = true,
+		.flags = SLURMDB_ACCT_FLAG_DELETED |
+		SLURMDB_ACCT_FLAG_WASSOC | SLURMDB_ACCT_FLAG_WCOORD,
 	};
 	slurmdb_user_cond_t user_cond = {
 		.assoc_cond = &assoc_cond,
@@ -95,7 +93,7 @@ static void _dump(ctxt_t *ctxt, openapi_resp_slurmdbd_config_t *resp)
 			  ctxt->resp);
 }
 
-static int _op_handler_config(ctxt_t *ctxt)
+extern int op_handler_config(ctxt_t *ctxt)
 {
 	openapi_resp_slurmdbd_config_t resp = {0};
 	openapi_resp_slurmdbd_config_t *resp_ptr = &resp;
@@ -140,14 +138,4 @@ cleanup:
 	FREE_NULL_LIST(resp.associations);
 	FREE_OPENAPI_RESP_COMMON_CONTENTS(resp_ptr);
 	return SLURM_SUCCESS;
-}
-
-extern void init_op_config(void)
-{
-	bind_handler("/slurmdb/{data_parser}/config", _op_handler_config, 0);
-}
-
-extern void destroy_op_config(void)
-{
-	unbind_operation_ctxt_handler(_op_handler_config);
 }

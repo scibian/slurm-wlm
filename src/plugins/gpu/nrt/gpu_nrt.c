@@ -2,7 +2,6 @@
  *  gpu_nrt.c
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Caden Ellis <caden@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -257,11 +256,6 @@ extern void gpu_p_get_device_count(unsigned int *device_count)
 	if (_count_devices(device_count) != SLURM_SUCCESS)
 		error("Failed to get device count from neuron sysfs interface");
 
-	return;
-}
-
-extern void gpu_p_reconfig(void)
-{
 	return;
 }
 

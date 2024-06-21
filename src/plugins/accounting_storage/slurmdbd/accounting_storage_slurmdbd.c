@@ -48,21 +48,25 @@
 #include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
-
 #include "src/common/slurm_xlator.h"
+
+#include "src/common/persist_conn.h"
 #include "src/common/read_config.h"
-#include "src/interfaces/select.h"
-#include "src/interfaces/accounting_storage.h"
 #include "src/common/slurmdbd_defs.h"
-#include "src/common/slurm_persist_conn.h"
 #include "src/common/uid.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/accounting_storage.h"
+#include "src/interfaces/select.h"
+
+#include "src/slurmctld/locks.h"
 #include "src/slurmctld/reservation.h"
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/locks.h"
 
 #include "as_ext_dbd.h"
 #include "slurmdbd_agent.h"
+
+#include "../common/common_as.h"
 
 /* These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
@@ -131,6 +135,17 @@ static pthread_mutex_t cluster_hl_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int prev_node_record_count = -1;
 static bitstr_t *total_node_bitmap = NULL;
 
+/* Satisfy common lib */
+char *assoc_day_table = NULL;
+char *assoc_hour_table = NULL;
+char *assoc_month_table = NULL;
+char *cluster_day_table = NULL;
+char *cluster_hour_table = NULL;
+char *cluster_month_table = NULL;
+char *wckey_day_table = NULL;
+char *wckey_hour_table = NULL;
+char *wckey_month_table = NULL;
+
 extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr);
 extern int jobacct_storage_p_job_heavy(void *db_conn, job_record_t *job_ptr);
 extern void acct_storage_p_send_all(void *db_conn, time_t event_time,
@@ -154,6 +169,9 @@ static void _partial_free_dbd_job_start(void *object)
 		xfree(req->wckey);
 		xfree(req->gres_used);
 		xfree(req->script_hash);
+		xfree(req->std_err);
+		xfree(req->std_in);
+		xfree(req->std_out);
 		xfree(req->submit_line);
 		xfree(req->tres_alloc_str);
 		xfree(req->tres_req_str);
@@ -167,6 +185,20 @@ static void _partial_destroy_dbd_job_start(void *object)
 	if (req) {
 		_partial_free_dbd_job_start(req);
 		xfree(req);
+	}
+}
+
+static void _fill_stdout_str(dbd_job_start_msg_t *req, job_record_t *job_ptr)
+{
+	if (job_ptr->details->std_out) {
+		req->std_out = xstrdup(job_ptr->details->std_out);
+	} else if (job_ptr->batch_flag) {
+		if (job_ptr->array_job_id)
+			xstrfmtcat(req->std_out, "%s/slurm-%%A_%%a.out",
+				   job_ptr->details->work_dir);
+                else
+			xstrfmtcat(req->std_out, "%s/slurm-%%j.out",
+				   job_ptr->details->work_dir);
 	}
 }
 
@@ -249,6 +281,9 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	if (job_ptr->details) {
 		req->req_cpus = job_ptr->details->min_cpus;
 		req->req_mem = job_ptr->details->pn_min_memory;
+		req->std_err = xstrdup(job_ptr->details->std_err);
+		req->std_in = xstrdup(job_ptr->details->std_in);
+		_fill_stdout_str(req, job_ptr);
 		req->submit_line = xstrdup(job_ptr->details->submit_line);
 		/* Only send this once per instance of the job! */
 		if (!job_ptr->db_index || (job_ptr->db_index == NO_VAL64)) {
@@ -277,11 +312,11 @@ static void _sending_script_env(dbd_id_rc_msg_t *id_ptr, job_record_t *job_ptr)
 	xassert(job_ptr);
 	xassert(job_ptr->details);
 
-	if ((slurm_conf.conf_flags & CTL_CONF_SJS) &&
+	if ((slurm_conf.conf_flags & CONF_FLAG_SJS) &&
 	    (id_ptr->flags & JOB_SEND_SCRIPT) &&
 	    job_ptr->details->script_hash)
 		job_ptr->bit_flags |= JOB_SEND_SCRIPT;
-	if ((slurm_conf.conf_flags & CTL_CONF_SJE) &&
+	if ((slurm_conf.conf_flags & CONF_FLAG_SJE) &&
 	    (id_ptr->flags & JOB_SEND_ENV) &&
 	    job_ptr->details->env_hash)
 		job_ptr->bit_flags |= JOB_SEND_ENV;
@@ -330,7 +365,7 @@ static int _reset_db_inx_for_each(void *x, void *arg)
 static void *_set_db_inx_thread(void *no_data)
 {
 	job_record_t *job_ptr = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	struct timeval tvnow;
 	struct timespec abs;
 	bool more_jobs;
@@ -416,6 +451,7 @@ static void *_set_db_inx_thread(void *no_data)
 			   amount of messages at once.
 			*/
 			if (list_count(local_job_list) > 1000) {
+				log_flag(DBD_AGENT, "local_job_list size limit reached");
 				more_jobs = true;
 				break;
 			}
@@ -637,8 +673,7 @@ extern int fini ( void )
 	slurm_mutex_unlock(&db_inx_lock);
 
 	/* Now join outside the lock */
-	if (db_inx_handler_thread)
-		pthread_join(db_inx_handler_thread, NULL);
+	slurm_thread_join(db_inx_handler_thread);
 
 	ext_dbd_fini();
 	xfree(cluster_nodes);
@@ -656,7 +691,7 @@ extern void *acct_storage_p_get_connection(
 	int conn_num, uint16_t *persist_conn_flags,
 	bool rollback, char *cluster_name)
 {
-	slurm_persist_conn_t *pc;
+	persist_conn_t *pc;
 
 	if (first)
 		init();
@@ -675,7 +710,7 @@ extern int acct_storage_p_close_connection(void **db_conn)
 {
 	slurmdbd_agent_rem_conn();
 
-	dbd_conn_close((slurm_persist_conn_t **)db_conn);
+	dbd_conn_close((persist_conn_t **) db_conn);
 
 	return SLURM_SUCCESS;
 }
@@ -2913,19 +2948,18 @@ extern int clusteracct_storage_p_register_ctld(void *db_conn, uint16_t port)
 	req.port         = port;
 	req.dimensions   = SYSTEM_DIMENSIONS;
 	req.flags        = slurmdb_setup_cluster_flags();
-	req.plugin_id_select = select_get_plugin_id();
 
 	msg.msg_type     = DBD_REGISTER_CTLD;
 	msg.conn         = db_conn;
 	msg.data         = &req;
 
 	if (db_conn &&
-	    (((slurm_persist_conn_t *)db_conn)->flags & PERSIST_FLAG_EXT_DBD)) {
+	    (((persist_conn_t *) db_conn)->flags & PERSIST_FLAG_EXT_DBD)) {
 		req.flags |= CLUSTER_FLAG_EXT;
 		info("Registering slurmctld at port %u with slurmdbd %s:%d",
 		     port,
-		     ((slurm_persist_conn_t *)db_conn)->rem_host,
-		     ((slurm_persist_conn_t *)db_conn)->rem_port);
+		     ((persist_conn_t *) db_conn)->rem_host,
+		     ((persist_conn_t *) db_conn)->rem_port);
 	} else
 		info("Registering slurmctld at port %u with slurmdbd", port);
 
@@ -3084,9 +3118,9 @@ extern int jobacct_storage_p_job_complete(void *db_conn, job_record_t *job_ptr)
 
 	req.admin_comment = job_ptr->admin_comment;
 
-	if (slurm_conf.conf_flags & CTL_CONF_SJC)
+	if (slurm_conf.conf_flags & CONF_FLAG_SJC)
 		req.comment = job_ptr->comment;
-	if (slurm_conf.conf_flags & CTL_CONF_SJX)
+	if (slurm_conf.conf_flags & CONF_FLAG_SJX)
 		req.extra = job_ptr->extra;
 
 	req.db_index    = job_ptr->db_index;
@@ -3136,62 +3170,11 @@ extern int jobacct_storage_p_job_complete(void *db_conn, job_record_t *job_ptr)
  */
 extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 {
-	uint32_t tasks = 0, nodes = 0, task_dist = 0;
-	char *node_list = NULL;
 	persist_msg_t msg = {0};
-	dbd_step_start_msg_t req;
+	dbd_step_start_msg_t req = {0};
 
-	if (!step_ptr->step_layout || !step_ptr->step_layout->task_cnt) {
-		tasks = step_ptr->job_ptr->total_cpus;
-		nodes = step_ptr->job_ptr->total_nodes;
-		node_list = step_ptr->job_ptr->nodes;
-	} else {
-		tasks = step_ptr->step_layout->task_cnt;
-		nodes = step_ptr->step_layout->node_cnt;
-		task_dist = step_ptr->step_layout->task_dist;
-		node_list = step_ptr->step_layout->node_list;
-	}
-
-	if (!step_ptr->job_ptr->db_index
-	    && (!step_ptr->job_ptr->details
-		|| !step_ptr->job_ptr->details->submit_time)) {
-		error("jobacct_storage_p_step_start: "
-		      "Not inputing this job, it has no submit time.");
-		return SLURM_ERROR;
-	}
-	memset(&req, 0, sizeof(dbd_step_start_msg_t));
-
-	req.assoc_id    = step_ptr->job_ptr->assoc_id;
-	req.container   = step_ptr->container;
-	req.db_index    = step_ptr->job_ptr->db_index;
-	req.name        = step_ptr->name;
-	req.nodes       = node_list;
-	/* reate req->node_inx outside of locks when packing */
-	req.node_cnt    = nodes;
-	if (step_ptr->start_time > step_ptr->job_ptr->resize_time)
-		req.start_time = step_ptr->start_time;
-	else
-		req.start_time = step_ptr->job_ptr->resize_time;
-
-	if (step_ptr->job_ptr->resize_time)
-		req.job_submit_time   = step_ptr->job_ptr->resize_time;
-	else if (step_ptr->job_ptr->details)
-		req.job_submit_time   = step_ptr->job_ptr->details->submit_time;
-
-	memcpy(&req.step_id, &step_ptr->step_id, sizeof(req.step_id));
-
-	if (step_ptr->step_layout)
-		req.task_dist   = step_ptr->step_layout->task_dist;
-	req.task_dist   = task_dist;
-
-	req.total_tasks = tasks;
-
-	req.submit_line = step_ptr->submit_line;
-	req.tres_alloc_str = step_ptr->tres_alloc_str;
-
-	req.req_cpufreq_min = step_ptr->cpu_freq_min;
-	req.req_cpufreq_max = step_ptr->cpu_freq_max;
-	req.req_cpufreq_gov = step_ptr->cpu_freq_gov;
+	if (as_build_step_start_msg(&req, step_ptr))
+	    return SLURM_ERROR;
 
 	msg.msg_type    = DBD_STEP_START;
 	msg.conn        = db_conn;
@@ -3209,64 +3192,11 @@ extern int jobacct_storage_p_step_start(void *db_conn, step_record_t *step_ptr)
 extern int jobacct_storage_p_step_complete(void *db_conn,
 					   step_record_t *step_ptr)
 {
-	uint32_t tasks = 0;
 	persist_msg_t msg = {0};
-	dbd_step_comp_msg_t req;
+	dbd_step_comp_msg_t req = {0};
 
-	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
-		tasks = 1;
-	else {
-		if (!step_ptr->step_layout || !step_ptr->step_layout->task_cnt)
-			tasks = step_ptr->job_ptr->total_cpus;
-		else
-			tasks = step_ptr->step_layout->task_cnt;
-	}
-
-	if (!step_ptr->job_ptr->db_index
-	    && ((!step_ptr->job_ptr->details
-		 || !step_ptr->job_ptr->details->submit_time)
-		&& !step_ptr->job_ptr->resize_time)) {
-		error("jobacct_storage_p_step_complete: "
-		      "Not inputing this job, it has no submit time.");
+	if (as_build_step_comp_msg(&req, step_ptr))
 		return SLURM_ERROR;
-	}
-
-	memset(&req, 0, sizeof(dbd_step_comp_msg_t));
-
-	req.assoc_id    = step_ptr->job_ptr->assoc_id;
-	req.db_index    = step_ptr->job_ptr->db_index;
-	req.end_time    = time(NULL);	/* called at step completion */
-	req.exit_code   = step_ptr->exit_code;
-#ifndef HAVE_FRONT_END
-	/* Only send this info on a non-frontend system since this
-	 * information is of no use on systems that run on a front-end
-	 * node.  Since something else is running the job.
-	 */
-	req.jobacct     = step_ptr->jobacct;
-#else
-	if (step_ptr->step_id.step_id == SLURM_BATCH_SCRIPT)
-		req.jobacct     = step_ptr->jobacct;
-#endif
-
-	req.req_uid     = step_ptr->requid;
-	if (step_ptr->start_time > step_ptr->job_ptr->resize_time)
-		req.start_time = step_ptr->start_time;
-	else
-		req.start_time = step_ptr->job_ptr->resize_time;
-
-	if (step_ptr->job_ptr->resize_time)
-		req.job_submit_time   = step_ptr->job_ptr->resize_time;
-	else if (step_ptr->job_ptr->details)
-		req.job_submit_time   = step_ptr->job_ptr->details->submit_time;
-
-	if (step_ptr->job_ptr->bit_flags & TRES_STR_CALC)
-		req.job_tres_alloc_str = step_ptr->job_ptr->tres_alloc_str;
-
-	req.state       = step_ptr->state;
-
-	memcpy(&req.step_id, &step_ptr->step_id, sizeof(req.step_id));
-
-	req.total_tasks = tasks;
 
 	msg.msg_type    = DBD_STEP_COMPLETE;
 	msg.conn        = db_conn;
@@ -3599,4 +3529,14 @@ extern int acct_storage_p_shutdown(void *db_conn)
 	dbd_conn_send_recv_rc_msg(SLURM_PROTOCOL_VERSION, &msg, &rc);
 
 	return rc;
+}
+
+extern int acct_storage_p_relay_msg(void *db_conn, persist_msg_t *msg)
+{
+	msg->conn = db_conn;
+
+	if (slurmdbd_agent_send(SLURM_PROTOCOL_VERSION, msg) < 0)
+		return SLURM_ERROR;
+
+	return SLURM_SUCCESS;
 }

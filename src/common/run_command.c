@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  run_command.c - run a command asynchronously and return output
  *****************************************************************************
- *  Copyright (C) 2014-2017 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -161,11 +160,60 @@ static void _kill_pg(pid_t pid)
 	killpg(pid, SIGKILL);
 }
 
+static void _run_command_child(run_command_args_t *args, int write_fd)
+{
+	int devnull;
+
+	if ((devnull = open("/dev/null", O_RDWR)) < 0) {
+		/*
+		 * We must avoid calling non-async-signal-safe functions at
+		 * this point (like error() or similar), so we won't log
+		 * anything now. If we want to log we could use write().
+		 */
+		_exit(127);
+	}
+	dup2(devnull, STDIN_FILENO);
+	dup2(write_fd, STDERR_FILENO);
+	dup2(write_fd, STDOUT_FILENO);
+	run_command_child_pre_exec();
+	run_command_child_exec(args->script_path, args->script_argv, args->env);
+}
+
+extern void run_command_child_exec(const char *path, char **argv, char **env)
+{
+	if (!env)
+		execv(path, argv);
+	else
+		execve(path, argv, env);
+	error("%s: execv(%s): %m", __func__, path);
+	_exit(127);
+}
+
+extern void run_command_child_pre_exec(void)
+{
+	closeall(3);
+	/* coverity[leaked_handle] */
+	setpgid(0, 0);
+	/*
+	 * sync euid -> ruid, egid -> rgid to avoid issues with fork'd
+	 * processes using access() or similar calls.
+	 */
+	if (setresgid(getegid(), getegid(), -1)) {
+		error("%s: Unable to setresgid()", __func__);
+		_exit(127);
+	}
+	if (setresuid(geteuid(), geteuid(), -1)) {
+		error("%s: Unable to setresuid()", __func__);
+		_exit(127);
+	}
+}
+
 extern char *run_command(run_command_args_t *args)
 {
 	pid_t cpid;
 	char *resp = NULL;
 	int pfd[2] = { -1, -1 };
+	bool free_argv = false;
 
 	if ((args->script_path == NULL) || (args->script_path[0] == '\0')) {
 		error("%s: no script specified", __func__);
@@ -187,72 +235,31 @@ extern char *run_command(run_command_args_t *args)
 		resp = xstrdup("Run command failed - configuration error");
 		return resp;
 	}
-	if (!args->turnoff_output) {
-		if (pipe(pfd) != 0) {
-			error("%s: pipe(): %m", __func__);
-			*(args->status) = 127;
-			resp = xstrdup("System error");
-			return resp;
-		}
+	if (pipe(pfd) != 0) {
+		error("%s: pipe(): %m", __func__);
+		*(args->status) = 127;
+		resp = xstrdup("System error");
+		return resp;
+	}
+	if (!(args->script_argv)) {
+		args->script_argv = xcalloc(2, sizeof(char *));
+		args->script_argv[0] = xstrdup(args->script_path);
+		free_argv = true;
 	}
 	slurm_mutex_lock(&proc_count_mutex);
 	child_proc_count++;
 	slurm_mutex_unlock(&proc_count_mutex);
 	if ((cpid = fork()) == 0) {
-		/*
-		 * container_g_join() needs to be called in the child process
-		 * to avoid a race condition if this process makes a file
-		 * before we add the pid to the container in the parent.
-		 */
-		if (args->container_join &&
-		    ((*(args->container_join))(args->job_id, getuid()) !=
-		     SLURM_SUCCESS))
-			error("container_g_join(%u): %m", args->job_id);
-
-		if (!args->turnoff_output) {
-			int devnull;
-			if ((devnull = open("/dev/null", O_RDWR)) < 0) {
-				error("%s: Unable to open /dev/null: %m",
-				      __func__);
-				_exit(127);
-			}
-			dup2(devnull, STDIN_FILENO);
-			dup2(pfd[1], STDERR_FILENO);
-			dup2(pfd[1], STDOUT_FILENO);
-			closeall(3);
-			/* coverity[leaked_handle] */
-		} else {
-			closeall(0);
-		}
-		setpgid(0, 0);
-		/*
-		 * sync euid -> ruid, egid -> rgid to avoid issues with fork'd
-		 * processes using access() or similar calls.
-		 */
-		if (setresgid(getegid(), getegid(), -1)) {
-			error("%s: Unable to setresgid()", __func__);
-			_exit(127);
-		}
-		if (setresuid(geteuid(), geteuid(), -1)) {
-			error("%s: Unable to setresuid()", __func__);
-			_exit(127);
-		}
-		if (!args->env)
-			execv(args->script_path, args->script_argv);
-		else
-			execve(args->script_path, args->script_argv, args->env);
-		error("%s: execv(%s): %m", __func__, args->script_path);
-		_exit(127);
+		_run_command_child(args, pfd[1]);
+		/* We should never get here. */
 	} else if (cpid < 0) {
-		if (!args->turnoff_output) {
-			close(pfd[0]);
-			close(pfd[1]);
-		}
+		close(pfd[0]);
+		close(pfd[1]);
 		error("%s: fork(): %m", __func__);
 		slurm_mutex_lock(&proc_count_mutex);
 		child_proc_count--;
 		slurm_mutex_unlock(&proc_count_mutex);
-	} else if (!args->turnoff_output) {
+	} else {
 		close(pfd[1]);
 		if (args->tid)
 			track_script_reset_cpid(args->tid, cpid);
@@ -269,10 +276,10 @@ extern char *run_command(run_command_args_t *args)
 		slurm_mutex_lock(&proc_count_mutex);
 		child_proc_count--;
 		slurm_mutex_unlock(&proc_count_mutex);
-	} else {
-		if (args->tid)
-			track_script_reset_cpid(args->tid, cpid);
-		waitpid(cpid, args->status, 0);
+	}
+	if (free_argv) {
+		xfree(args->script_argv[0]);
+		xfree(args->script_argv);
 	}
 
 	return resp;

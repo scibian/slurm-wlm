@@ -2,7 +2,7 @@
  *  part_data.h - Functions for structures dealing with partitions unique
  *                to the select plugin.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Derived in large part from select/cons_[res|tres] plugins
  *
  *  This file is part of Slurm, a resource management program.
@@ -57,6 +57,7 @@ typedef struct part_res_record {
 	struct part_res_record *next; /* Ptr to next part_res_record */
 	uint16_t num_rows;	      /* Number of elements in "row" array */
 	part_record_t *part_ptr; /* controller part record pointer */
+	bool rebuild_rows;
 	part_row_data_t *row;    /* array of rows containing jobs */
 } part_res_record_t;
 
@@ -91,6 +92,9 @@ extern void part_data_destroy_row(part_row_data_t *row, uint16_t num_rows);
 
 /* Log contents of partition structure */
 extern void part_data_dump_res(part_res_record_t *p_ptr);
+
+/* rebuild select_part_record rows*/
+extern void part_data_rebuild_rows(part_res_record_t *part_ptr);
 
 /* Create a duplicate part_res_record list */
 extern part_res_record_t *part_data_dup_res(

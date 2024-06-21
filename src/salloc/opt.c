@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2018 SchedMD LLC <https://www.schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -403,6 +403,13 @@ static bool _opt_verify(void)
 		verified = false;
 	}
 
+	if ((opt.resv_port_cnt != NO_VAL) &&
+	    !(opt.job_flags & STEPMGR_ENABLED) &&
+	    !xstrstr(slurm_conf.slurmctld_params, "enable_stepmgr")) {
+		error("Slurmstepd step management must be enabled to use --resv-ports for job allocations");
+		verified = false;
+	}
+
 	if (opt.burst_buffer && opt.burst_buffer_file) {
 		error("Cannot specify both --bb and --bbf");
 		exit(error_exit);
@@ -441,10 +448,8 @@ static bool _opt_verify(void)
 
 	if (opt.nodelist && !opt.nodes_set) {
 		hl = hostlist_create(opt.nodelist);
-		if (!hl) {
-			error("memory allocation failure");
-			exit(error_exit);
-		}
+		if (!hl)
+			fatal("Invalid node list specified");
 		hostlist_uniq(hl);
 		hl_cnt = hostlist_count(hl);
 		opt.min_nodes = hl_cnt;
@@ -555,6 +560,8 @@ static bool _opt_verify(void)
 	    && (!opt.nodes_set || !opt.ntasks_set)) {
 		FREE_NULL_HOSTLIST(hl);
 		hl = hostlist_create(opt.nodelist);
+		if (!hl)
+			fatal("Invalid node list specified");
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = 1;
 			opt.ntasks = hostlist_count(hl);
@@ -572,13 +579,6 @@ static bool _opt_verify(void)
 		error("Incompatible begin and deadline time specification");
 		exit(error_exit);
 	}
-
-#ifdef HAVE_NATIVE_CRAY
-	if (opt.network && opt.shared)
-		fatal("Requesting network performance counters requires "
-		      "exclusive access.  Please add the --exclusive option "
-		      "to your request.");
-#endif
 
 	if (opt.mem_bind_type && (getenv("SLURM_MEM_BIND") == NULL)) {
 		char *tmp = slurm_xstr_mem_bind_type(opt.mem_bind_type);
@@ -889,6 +889,7 @@ static void _help(void)
 "      --mem-per-cpu=MB        maximum amount of real memory per allocated\n"
 "                              cpu required by the job.\n"
 "                              --mem >= --mem-per-cpu if --mem is specified.\n"
+"      --resv-ports            reserve communication ports\n"
 "\n"
 "Affinity/Multi-core options: (when the task/affinity plugin is enabled)\n"
 "                              For the following 4 options, you are\n"
@@ -928,12 +929,6 @@ static void _help(void)
 	spank_print_options(stdout, 6, 30);
 
 	printf("\n"
-#ifdef HAVE_NATIVE_CRAY			/* Native Cray specific options */
-"Cray related options:\n"
-"      --network=type          Use network performance counters\n"
-"                              (system, network, or processor)\n"
-"\n"
-#endif
 "\n"
 "Help options:\n"
 "  -h, --help                  show this help message\n"

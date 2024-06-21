@@ -79,7 +79,7 @@ bool is_ping_done (void)
 		is_done = false;
 		if (!ping_msg_sent &&
 		    (difftime(time(NULL), ping_start) >= PING_TIMEOUT)) {
-			error("A node ping cycle took more than %d seconds. Node RPC requests like ping, register status, health check and/or accounting gather update are triggered less frequently than configured. Either many nodes are non-responsive or one of SlurmdTimeout, HealthCheckInterval, JobAcctGatherFrequency, ExtSensorsFreq should be increased.",
+			error("A node ping cycle took more than %d seconds. Node RPC requests like ping, register status, health check and/or accounting gather update are triggered less frequently than configured. Either many nodes are non-responsive or one of SlurmdTimeout, HealthCheckInterval, JobAcctGatherFrequency should be increased.",
 			      PING_TIMEOUT);
 			ping_msg_sent = true;
 		}
@@ -394,6 +394,12 @@ extern void run_health_check(void)
 	char *host_str = NULL;
 	agent_arg_t *check_agent_args = NULL;
 
+	check_agent_args = xmalloc (sizeof (agent_arg_t));
+	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
+	check_agent_args->retry = 0;
+	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
+	check_agent_args->hostlist = hostlist_create(NULL);
+
 	/* Sync plugin internal data with
 	 * node select_nodeinfo. This is important
 	 * after reconfig otherwise select_nodeinfo
@@ -403,11 +409,6 @@ extern void run_health_check(void)
 	select_g_select_nodeinfo_set_all();
 
 #ifdef HAVE_FRONT_END
-	check_agent_args = xmalloc (sizeof (agent_arg_t));
-	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
-	check_agent_args->retry = 0;
-	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
-	check_agent_args->hostlist = hostlist_create(NULL);
 	for (i = 0, front_end_ptr = front_end_nodes;
 	     i < front_end_node_cnt; i++, front_end_ptr++) {
 		if (IS_NODE_NO_RESPOND(front_end_ptr))
@@ -444,11 +445,6 @@ extern void run_health_check(void)
 		node_limit = MAX(node_limit, 10);
 	}
 
-	check_agent_args = xmalloc (sizeof (agent_arg_t));
-	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
-	check_agent_args->retry = 0;
-	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
-	check_agent_args->hostlist = hostlist_create(NULL);
 	for (; (node_ptr = next_node(&base_node_loc)); base_node_loc++) {
 		if (run_cyclic &&
 		    (node_test_cnt++ >= node_limit))

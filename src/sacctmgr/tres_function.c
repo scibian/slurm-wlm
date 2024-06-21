@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  tres_functions.c - functions dealing with TRES in the accounting system.
  *****************************************************************************
- *  Copyright (C) 2015 SchedMD LLC.
- *  Written by David Bigagli <david@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -124,8 +123,8 @@ static int _set_cond(int *start, int argc, char **argv,
 int sacctmgr_list_tres(int argc, char **argv)
 {
 	List tres_list;
-	ListIterator itr;
-	ListIterator itr2;
+	list_itr_t *itr;
+	list_itr_t *itr2;
 	List format_list = list_create(xfree_ptr);
 	List print_fields_list;
 	slurmdb_tres_cond_t *tres_cond = xmalloc(sizeof(slurmdb_tres_cond_t));

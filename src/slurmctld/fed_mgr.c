@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  fed_mgr.c - functions for federations
  *****************************************************************************
- *  Copyright (C) 2016 SchedMD LLC.
- *  Written by Brian Christiansen <brian@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -56,9 +55,9 @@
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/slurmctld.h"
-#include "src/slurmctld/srun_comm.h"
 #include "src/slurmctld/state_save.h"
 #include "src/slurmdbd/read_config.h"
+#include "src/stepmgr/srun_comm.h"
 
 #define FED_MGR_STATE_FILE       "fed_mgr_state"
 #define FED_MGR_CLUSTER_ID_BEGIN 26
@@ -239,7 +238,7 @@ static bool _comm_fail_log(slurmdb_cluster_rec_t *cluster)
 static int _close_controller_conn(slurmdb_cluster_rec_t *cluster)
 {
 	int rc = SLURM_SUCCESS;
-//	slurm_persist_conn_t *persist_conn = NULL;
+//	persist_conn_t *persist_conn = NULL;
 
 	xassert(cluster);
 	slurm_mutex_lock(&cluster->lock);
@@ -272,7 +271,7 @@ static int _close_controller_conn(slurmdb_cluster_rec_t *cluster)
 static List _get_sync_jobid_list(uint32_t sib_id, time_t sync_time)
 {
 	List jobids = NULL;
-	ListIterator job_itr;
+	list_itr_t *job_itr;
 	job_record_t *job_ptr;
 
 	jobids = list_create(xfree_ptr);
@@ -307,7 +306,7 @@ static List _get_sync_jobid_list(uint32_t sib_id, time_t sync_time)
 static int _open_controller_conn(slurmdb_cluster_rec_t *cluster, bool locked)
 {
 	int rc;
-	slurm_persist_conn_t *persist_conn = NULL;
+	persist_conn_t *persist_conn = NULL;
 	static int timeout = -1;
 
 	if (timeout < 0)
@@ -341,7 +340,7 @@ static int _open_controller_conn(slurmdb_cluster_rec_t *cluster, bool locked)
 		 cluster->name, cluster->control_host, cluster->control_port);
 
 	if (!cluster->fed.send) {
-		persist_conn = xmalloc(sizeof(slurm_persist_conn_t));
+		persist_conn = xmalloc(sizeof(*persist_conn));
 
 		cluster->fed.send = persist_conn;
 
@@ -389,7 +388,7 @@ static int _open_controller_conn(slurmdb_cluster_rec_t *cluster, bool locked)
 /* The cluster->lock should be locked before this is called */
 static int _check_send(slurmdb_cluster_rec_t *cluster)
 {
-	slurm_persist_conn_t *send = cluster->fed.send;
+	persist_conn_t *send = cluster->fed.send;
 
 	if (!send || send->fd == -1) {
 		return _open_controller_conn(cluster, true);
@@ -402,9 +401,9 @@ static int _check_send(slurmdb_cluster_rec_t *cluster)
  * not the write lock */
 static void _open_persist_sends(void)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *cluster = NULL;
-	slurm_persist_conn_t *send = NULL;
+	persist_conn_t *send = NULL;
 
 	if (!fed_mgr_fed_rec || !fed_mgr_fed_rec->cluster_list) {
 		log_flag(FEDR, "bailing on empty cluster list");
@@ -503,7 +502,7 @@ static int _queue_rpc(slurmdb_cluster_rec_t *cluster, slurm_msg_t *req,
  */
 static int _close_sibling_conns(void)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *cluster;
 
 	if (!fed_mgr_fed_rec || !fed_mgr_fed_rec->cluster_list)
@@ -717,7 +716,7 @@ static void _fed_mgr_ptr_init(slurmdb_federation_rec_t *db_fed,
 			      slurmdb_cluster_rec_t *cluster,
 			      uint64_t *added_clusters)
 {
-	ListIterator c_itr;
+	list_itr_t *c_itr;
 	slurmdb_cluster_rec_t *tmp_cluster, *db_cluster;
 	uint32_t cluster_state;
 	int  base_state;
@@ -827,7 +826,7 @@ static void _leave_federation(void)
 
 static void _persist_callback_fini(void *arg)
 {
-	slurm_persist_conn_t *persist_conn = arg;
+	persist_conn_t *persist_conn = arg;
 	slurmdb_cluster_rec_t *cluster;
 	slurmctld_lock_t fed_write_lock = {
 		NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, WRITE_LOCK };
@@ -970,7 +969,7 @@ static int _persist_fed_job_revoke(slurmdb_cluster_rec_t *conn, uint32_t job_id,
 	sib_msg_t   sib_msg;
 
 	if (!conn->fed.send ||
-	    (((slurm_persist_conn_t *)conn->fed.send)->fd == -1))
+	    (((persist_conn_t *) conn->fed.send)->fd == -1))
 		return SLURM_SUCCESS;
 
 	slurm_msg_t_init(&req_msg);
@@ -1337,7 +1336,7 @@ static void _destroy_dep_job(void *object)
 			FREE_NULL_LIST(job_ptr->details->depend_list);
 			xfree(job_ptr->details);
 		}
-		free_null_array_recs(job_ptr);
+		job_record_free_null_array_recs(job_ptr);
 		job_ptr->magic = 0;
 		job_ptr->job_id = 0;
 		job_ptr->user_id = 0;
@@ -1428,7 +1427,7 @@ static int _remove_sibling_bit(job_record_t *job_ptr,
  */
 static void _cleanup_removed_origin_jobs(void)
 {
-	ListIterator job_itr;
+	list_itr_t *job_itr;
 	job_record_t *job_ptr;
 	time_t now = time(NULL);
 	uint32_t origin_id, sibling_id;
@@ -1458,7 +1457,7 @@ static void _cleanup_removed_origin_jobs(void)
 			running_remotely = true;
 
 		/* free fed_job_details so it can't call home. */
-		free_job_fed_details(&job_ptr->fed_details);
+		job_record_free_fed_details(&job_ptr->fed_details);
 
 		/* allow running/completing jobs to finish. */
 		if (IS_JOB_COMPLETED(job_ptr) ||
@@ -1509,7 +1508,7 @@ static void _cleanup_removed_origin_jobs(void)
  */
 static void _cleanup_removed_cluster_jobs(slurmdb_cluster_rec_t *cluster)
 {
-	ListIterator job_itr;
+	list_itr_t *job_itr;
 	job_record_t *job_ptr;
 	time_t now = time(NULL);
 	uint32_t origin_id, sibling_id;
@@ -1564,7 +1563,7 @@ static void _cleanup_removed_cluster_jobs(slurmdb_cluster_rec_t *cluster)
 				continue;
 
 			/* free fed_job_details so it can't call home. */
-			free_job_fed_details(&job_ptr->fed_details);
+			job_record_free_fed_details(&job_ptr->fed_details);
 
 			/*
 			 * If this job originated from the origin (which is
@@ -1600,7 +1599,7 @@ static void _cleanup_removed_cluster_jobs(slurmdb_cluster_rec_t *cluster)
 static void _handle_removed_clusters(slurmdb_federation_rec_t *db_fed,
 				     uint64_t *removed_clusters)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *tmp_cluster = NULL;
 
 	itr = list_iterator_create(fed_mgr_fed_rec->cluster_list);
@@ -1624,7 +1623,7 @@ static void _handle_removed_clusters(slurmdb_federation_rec_t *db_fed,
 bitstr_t *_parse_resp_ctld_mult(slurm_msg_t *resp_msg)
 {
 	ctld_list_msg_t *ctld_resp_msg = resp_msg->data;
-	ListIterator iter = NULL;
+	list_itr_t *iter = NULL;
 	bitstr_t *success_bits;
 	slurm_msg_t sub_msg;
 	return_code_msg_t *rc_msg;
@@ -2116,10 +2115,8 @@ static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 	List jobids;
         slurm_msg_t req_msg, job_msg;
 	sib_msg_t sib_msg = {0};
-	char *dump = NULL;
-	int dump_size = 0;
 	slurmdb_cluster_rec_t *sibling;
-	buf_t *buffer;
+	buf_t *job_buffer = NULL, *buffer = NULL;
 	time_t sync_time = 0;
 	char *sib_name = job_update_info->submit_cluster;
 
@@ -2137,7 +2134,7 @@ static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 	slurm_mutex_lock(&sibling->lock);
 	if (!sibling->rpc_version && sibling->fed.recv) {
 		sibling->rpc_version =
-			((slurm_persist_conn_t *)sibling->fed.recv)->version;
+			((persist_conn_t *) sibling->fed.recv)->version;
 	}
 	slurm_mutex_unlock(&sibling->lock);
 
@@ -2150,9 +2147,8 @@ static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 
 	sync_time = time(NULL);
 	jobids = _get_sync_jobid_list(sibling->fed.id, sync_time);
-	pack_spec_jobs(&dump, &dump_size, jobids, SHOW_ALL,
-	               slurm_conf.slurm_user_id, NO_VAL,
-	               sibling->rpc_version);
+	job_buffer = pack_spec_jobs(jobids, SHOW_ALL, slurm_conf.slurm_user_id,
+				    NO_VAL, sibling->rpc_version);
 	FREE_NULL_LIST(jobids);
 
 	unlock_slurmctld(job_read_lock);
@@ -2160,8 +2156,7 @@ static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 	slurm_msg_t_init(&job_msg);
 	job_msg.protocol_version = sibling->rpc_version;
 	job_msg.msg_type         = RESPONSE_JOB_INFO;
-	job_msg.data             = dump;
-	job_msg.data_size        = dump_size;
+	job_msg.data = job_buffer;
 
 	buffer = init_buf(BUF_SIZE);
 	pack_msg(&job_msg, buffer);
@@ -2182,8 +2177,8 @@ static int _handle_fed_send_job_sync(fed_job_update_info_t *job_update_info)
 
 	rc = _queue_rpc(sibling, &req_msg, 0, false);
 
+	FREE_NULL_BUFFER(job_buffer);
 	FREE_NULL_BUFFER(buffer);
-	xfree(dump);
 
 	return rc;
 }
@@ -2342,7 +2337,7 @@ static void _handle_recv_remote_dep(dep_msg_t *remote_dep_info)
 		_destroy_dep_job(job_ptr);
 	} else {
 		job_record_t *tmp_job;
-		ListIterator itr;
+		list_itr_t *itr;
 
 		/*
 		 * Remove the old reference to this job from remote_dep_job_list
@@ -2568,7 +2563,7 @@ static void *_agent_thread(void *arg)
 {
 	slurmdb_cluster_rec_t *cluster;
 	struct timespec ts = {0, 0};
-	ListIterator cluster_iter, rpc_iter;
+	list_itr_t *cluster_iter, *rpc_iter;
 	agent_queue_t *rpc_rec;
 	slurm_msg_t req_msg, resp_msg;
 	ctld_list_msg_t ctld_req_msg;
@@ -2772,7 +2767,7 @@ static void _spawn_threads(void)
 static void _add_missing_fed_job_info()
 {
 	job_record_t *job_ptr;
-	ListIterator job_itr;
+	list_itr_t *job_itr;
 
 	slurmctld_lock_t job_read_lock = { .job = READ_LOCK };
 
@@ -2898,7 +2893,7 @@ extern int fed_mgr_init(void *db_conn)
 		                               slurmdb_find_cluster_in_list,
 		                               slurm_conf.cluster_name))) {
 			job_record_t *job_ptr;
-			ListIterator itr;
+			list_itr_t *itr;
 
 			_join_federation(fed, cluster, &tmp);
 
@@ -2978,20 +2973,11 @@ extern int fed_mgr_fini(void)
 	slurm_cond_signal(&origin_dep_cond);
 	/* _job_watch_thread signaled by _leave_federation() */
 
-	if (agent_thread_id)
-		pthread_join(agent_thread_id, NULL);
-
-	if (fed_job_update_thread_id)
-		pthread_join(fed_job_update_thread_id, NULL);
-
-	if (remote_dep_thread_id)
-		pthread_join(remote_dep_thread_id, NULL);
-
-	if (dep_job_thread_id)
-		pthread_join(dep_job_thread_id, NULL);
-
-	if (origin_dep_thread_id)
-		pthread_join(origin_dep_thread_id, NULL);
+	slurm_thread_join(agent_thread_id);
+	slurm_thread_join(fed_job_update_thread_id);
+	slurm_thread_join(remote_dep_thread_id);
+	slurm_thread_join(dep_job_thread_id);
+	slurm_thread_join(origin_dep_thread_id);
 
 	slurm_mutex_lock(&fed_job_list_mutex);
 	FREE_NULL_LIST(fed_job_list);
@@ -3007,10 +2993,10 @@ static void _handle_dependencies_for_modified_fed(uint64_t added_clusters,
 {
 	uint32_t origin_id;
 	job_record_t *job_ptr;
-	ListIterator itr;
+	list_itr_t *itr;
 	depend_spec_t find_dep = { 0 };
 
-	xassert(verify_lock(JOB_LOCK, READ_LOCK));
+	xassert(verify_lock(JOB_LOCK, WRITE_LOCK));
 	xassert(verify_lock(FED_LOCK, READ_LOCK));
 
 	if (!fed_mgr_cluster_rec)
@@ -3179,7 +3165,7 @@ static void _dump_fed_job_list(buf_t *buffer, uint16_t protocol_version)
 
 		pack32(count, buffer);
 		if (count && (count != NO_VAL)) {
-			ListIterator itr = list_iterator_create(fed_job_list);
+			list_itr_t *itr = list_iterator_create(fed_job_list);
 			while ((fed_job_info = list_next(itr))) {
 				_pack_fed_job_info(fed_job_info, buffer,
 						   protocol_version);
@@ -3308,7 +3294,7 @@ static void _dump_remote_dep_job_list(buf_t *buffer, uint16_t protocol_version)
 			count = NO_VAL;
 		pack32(count, buffer);
 		if (count && (count != NO_VAL)) {
-			ListIterator itr =
+			list_itr_t *itr =
 				list_iterator_create(remote_dep_job_list);
 			while ((job_ptr = list_next(itr)))
 				_pack_remote_dep_job(job_ptr, buffer,
@@ -3481,7 +3467,7 @@ static slurmdb_federation_rec_t *_state_load(char *state_save_location)
 		/* We want to free the connections here since they don't exist
 		 * anymore, but they were packed when state was saved. */
 		slurmdb_cluster_rec_t *cluster;
-		ListIterator itr = list_iterator_create(
+		list_itr_t *itr = list_iterator_create(
 			ret_fed->cluster_list);
 		while ((cluster = list_next(itr))) {
 			slurm_persist_conn_destroy(cluster->fed.recv);
@@ -3577,7 +3563,7 @@ extern uint32_t fed_mgr_get_cluster_id(uint32_t id)
 	return id >> FED_MGR_CLUSTER_ID_BEGIN;
 }
 
-extern int fed_mgr_add_sibling_conn(slurm_persist_conn_t *persist_conn,
+extern int fed_mgr_add_sibling_conn(persist_conn_t *persist_conn,
 				    char **out_buffer)
 {
 	slurmdb_cluster_rec_t *cluster = NULL;
@@ -3670,7 +3656,7 @@ static int _validate_cluster_names(char *clusters, uint64_t *cluster_bitmap)
 
 	cluster_names = list_create(xfree_ptr);
 	if (slurm_addto_char_list(cluster_names, clusters)) {
-		ListIterator itr = list_iterator_create(cluster_names);
+		list_itr_t *itr = list_iterator_create(cluster_names);
 		char *cluster_name;
 		slurmdb_cluster_rec_t *sibling;
 
@@ -3706,7 +3692,7 @@ end_it:
 extern int fed_mgr_update_job(uint32_t job_id, job_desc_msg_t *job_desc,
 			      uint64_t update_sibs, uid_t uid)
 {
-	ListIterator sib_itr;
+	list_itr_t *sib_itr;
 	slurmdb_cluster_rec_t *sibling;
 	fed_job_info_t *job_info;
 
@@ -3763,7 +3749,7 @@ static int _submit_sibling_jobs(job_desc_msg_t *job_desc, slurm_msg_t *msg,
 				uint16_t start_protocol_version)
 {
 	int ret_rc = SLURM_SUCCESS;
-	ListIterator sib_itr;
+	list_itr_t *sib_itr;
 	sib_msg_t sib_msg = {0};
 	slurmdb_cluster_rec_t *sibling = NULL;
         slurm_msg_t req_msg;
@@ -3911,7 +3897,7 @@ static int _prepare_submit_siblings(job_record_t *job_ptr, uint64_t dest_sibs)
 
 static uint64_t _get_all_sibling_bits()
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *cluster;
 	uint64_t sib_bits = 0;
 
@@ -4081,7 +4067,7 @@ static int _validate_cluster_features(char *spec_features,
 	char *feature = NULL;
 	slurmdb_cluster_rec_t *sib;
 	List req_features;
-	ListIterator feature_itr, sib_itr;
+	list_itr_t *feature_itr, *sib_itr;
 
 	if (!spec_features || !fed_mgr_fed_rec) {
 		if (cluster_bitmap)
@@ -4204,7 +4190,7 @@ extern int fed_mgr_submit_remote_dependencies(job_record_t *job_ptr,
 {
 	int rc = SLURM_SUCCESS;
 	uint64_t send_sib_bits = 0;
-	ListIterator sib_itr;
+	list_itr_t *sib_itr;
 	slurm_msg_t req_msg;
 	dep_msg_t dep_msg = { 0 };
 	slurmdb_cluster_rec_t *sibling;
@@ -4513,7 +4499,7 @@ static int _job_lock_all_sibs(job_record_t *job_ptr)
 			}
 		} else if (!(sibling = fed_mgr_get_cluster_by_id(sib_id)) ||
 			   (!sibling->fed.send) ||
-			   (((slurm_persist_conn_t *)sibling->fed.send) < 0)) {
+			   (((persist_conn_t *) sibling->fed.send) < 0)) {
 			/*
 			 * Don't consider clusters that are down. They will sync
 			 * up later.
@@ -4582,14 +4568,14 @@ extern int fed_mgr_job_lock(job_record_t *job_ptr)
 		 job_ptr, cluster_id);
 
 	if (origin_id != fed_mgr_cluster_rec->fed.id) {
-		slurm_persist_conn_t *origin_conn = NULL;
+		persist_conn_t *origin_conn = NULL;
 		slurmdb_cluster_rec_t *origin_cluster;
 		if (!(origin_cluster = fed_mgr_get_cluster_by_id(origin_id))) {
 			info("Unable to find origin cluster for %pJ from origin id %d",
 			     job_ptr, origin_id);
 		} else
-			origin_conn = (slurm_persist_conn_t *)
-				       origin_cluster->fed.send;
+			origin_conn =
+				(persist_conn_t *) origin_cluster->fed.send;
 
 		/* Check dbd is up to make sure ctld isn't on an island. */
 		if (acct_db_conn && _slurmdbd_conn_active() &&
@@ -4734,14 +4720,14 @@ extern int fed_mgr_job_unlock(job_record_t *job_ptr)
 		 job_ptr, cluster_id);
 
 	if (origin_id != fed_mgr_cluster_rec->fed.id) {
-		slurm_persist_conn_t *origin_conn = NULL;
+		persist_conn_t *origin_conn = NULL;
 		slurmdb_cluster_rec_t *origin_cluster;
 		if (!(origin_cluster = fed_mgr_get_cluster_by_id(origin_id))) {
 			info("Unable to find origin cluster for %pJ from origin id %d",
 			     job_ptr, origin_id);
 		} else {
-			origin_conn = (slurm_persist_conn_t *)
-				origin_cluster->fed.send;
+			origin_conn =
+				(persist_conn_t *) origin_cluster->fed.send;
 		}
 
 		if (!origin_conn || (origin_conn->fd < 0)) {
@@ -4795,14 +4781,14 @@ extern int fed_mgr_job_start(job_record_t *job_ptr, time_t start_time)
 		 job_ptr, cluster_id);
 
 	if (origin_id != fed_mgr_cluster_rec->fed.id) {
-		slurm_persist_conn_t *origin_conn = NULL;
+		persist_conn_t *origin_conn = NULL;
 		slurmdb_cluster_rec_t *origin_cluster;
 		if (!(origin_cluster = fed_mgr_get_cluster_by_id(origin_id))) {
 			info("Unable to find origin cluster for %pJ from origin id %d",
 			     job_ptr, origin_id);
 		} else {
-			origin_conn = (slurm_persist_conn_t *)
-				origin_cluster->fed.send;
+			origin_conn =
+				(persist_conn_t *) origin_cluster->fed.send;
 		}
 
 		if (!origin_conn || (origin_conn->fd < 0)) {
@@ -5204,7 +5190,7 @@ static int _cancel_sibling_jobs(job_record_t *job_ptr, uint16_t signal,
 {
 	int id = 1;
 	uint64_t tmp_sibs;
-	slurm_persist_conn_t *sib_conn;
+	persist_conn_t *sib_conn;
 
 	if (kill_viable) {
 		tmp_sibs = job_ptr->fed_details->siblings_viable;
@@ -5226,7 +5212,7 @@ static int _cancel_sibling_jobs(job_record_t *job_ptr, uint16_t signal,
 
 			/* Don't send request to siblings that are down when
 			 * killing viables */
-			sib_conn = (slurm_persist_conn_t *)cluster->fed.send;
+			sib_conn = (persist_conn_t *) cluster->fed.send;
 			if (kill_viable && (!sib_conn || sib_conn->fd == -1))
 				goto next_job;
 
@@ -5750,7 +5736,7 @@ static int _reconcile_fed_job(job_record_t *job_ptr, reconcile_sib_t *rec_sib)
 static int _sync_jobs(const char *sib_name, job_info_msg_t *job_info_msg,
 		      time_t sync_time)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	reconcile_sib_t rec_sib = {0};
 	slurmdb_cluster_rec_t *sib;
 	job_record_t *job_ptr;
@@ -5827,18 +5813,8 @@ static int _q_sib_job_submission(slurm_msg_t *msg, bool interactive_job)
 	job_desc->job_id              = sib_msg->job_id;
 	job_desc->fed_siblings_viable = sib_msg->fed_siblings;
 	job_desc->alloc_node          = sib_msg->submit_host;
-	/*
-	 * Prior to 23.02, the uid and gid were in the client sent
-	 * job_desc_msg_t. In 23.02, the client sends SLURM_AUTH_NOBODY and the
-	 * origin cluster will set user_id and group_id from the auth. So the
-	 * origin cluster has to send them to the siblings since the
-	 * job_desc from the client isn't repacked when being sent to the
-	 * siblings.
-	 */
-	if (msg->protocol_version >= SLURM_23_02_PROTOCOL_VERSION) {
-		job_desc->user_id = sib_msg->user_id;
-		job_desc->group_id = sib_msg->group_id;
-	}
+	job_desc->user_id = sib_msg->user_id;
+	job_desc->group_id = sib_msg->group_id;
 
 	/*
 	 * If the job has a dependency, it won't be submitted to siblings
@@ -6148,7 +6124,7 @@ static int _list_find_not_synced_sib(void *x, void *key)
 
 	if (sib != fed_mgr_cluster_rec &&
 	    sib->fed.send &&
-	    (((slurm_persist_conn_t *)sib->fed.send)->fd >= 0) &&
+	    (((persist_conn_t *) sib->fed.send)->fd >= 0) &&
 	    !sib->fed.sync_recvd)
 		return 1;
 
@@ -6179,7 +6155,7 @@ extern void fed_mgr_test_remote_dependencies(void)
 	uint32_t origin_id;
 	bool was_changed;
 	job_record_t *job_ptr;
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *origin;
 
 	xassert(verify_lock(JOB_LOCK, READ_LOCK));

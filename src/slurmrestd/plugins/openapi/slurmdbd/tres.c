@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  tres.c - Slurm REST API accounting TRES http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -67,7 +66,7 @@ extern int update_tres(ctxt_t *ctxt, bool commit, list_t *tres_list)
 #endif /* NDEBUG */
 }
 
-static int _op_handler_tres(ctxt_t *ctxt)
+extern int op_handler_tres(ctxt_t *ctxt)
 {
 	if (ctxt->method == HTTP_REQUEST_GET) {
 		list_t *tres_list = NULL;
@@ -111,14 +110,4 @@ static int _op_handler_tres(ctxt_t *ctxt)
 	}
 
 	return SLURM_SUCCESS;
-}
-
-extern void init_op_tres(void)
-{
-	bind_handler("/slurmdb/{data_parser}/tres/", _op_handler_tres, 0);
-}
-
-extern void destroy_op_tres(void)
-{
-	unbind_operation_ctxt_handler(_op_handler_tres);
 }

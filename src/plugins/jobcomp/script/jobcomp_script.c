@@ -43,6 +43,7 @@
  *  DEPENDENCY		Original list of jobids dependencies
  *  DERIVED_EC		Derived exit code and after : the signal number (if any)
  *  END			Time of job termination, UTS
+ *  ELIGIBLE		Eligble time of job, UTS
  *  EXITCODE		Job's exit code and after : the signal number (if any)
  *  GID			Group ID of job owner
  *  GROUPNAME		Group name of job owner
@@ -164,6 +165,7 @@ struct jobcomp_info {
 	uint16_t batch_flag;
 	time_t submit;
 	time_t start;
+	time_t eligible;
 	time_t end;
 	char *cluster;
 	char *constraints;
@@ -250,6 +252,10 @@ static struct jobcomp_info *_jobcomp_info_create(job_record_t *job)
 		j->limit = job->part_ptr->max_time;
 	else
 		j->limit = job->time_limit;
+
+	if (job->details && job->details->begin_time)
+		j->eligible = job->details->begin_time;
+
 	j->submit = job->details ? job->details->submit_time:job->start_time;
 	j->batch_flag = job->batch_flag;
 	j->nodes = xstrdup (job->nodes);
@@ -417,6 +423,7 @@ static char ** _create_environment (struct jobcomp_info *job)
 	_env_append_fmt (&env, "START", "%ld", (long)job->start);
 	_env_append_fmt (&env, "END",   "%ld", (long)job->end);
 	_env_append_fmt (&env, "SUBMIT","%ld", (long)job->submit);
+	_env_append_fmt(&env, "ELIGIBLE","%ld", (long)job->eligible);
 	_env_append_fmt (&env, "PROCS", "%u",  job->nprocs);
 	_env_append_fmt (&env, "NODECNT", "%u", job->nnodes);
 
@@ -439,7 +446,7 @@ static char ** _create_environment (struct jobcomp_info *job)
 	_env_append (&env, "USERNAME", job->user_name);
 	_env_append (&env, "GROUPNAME", job->group_name);
 	_env_append (&env, "STATEREASONPREV",
-		     job_reason_string(job->state_reason_prev));
+		     job_state_reason_string(job->state_reason_prev));
 	if (job->std_in)
 		_env_append (&env, "STDIN",     job->std_in);
 	if (job->std_out)
@@ -654,8 +661,7 @@ extern int fini ( void )
 		slurm_mutex_lock(&comp_list_mutex);
 		slurm_cond_broadcast(&comp_list_cond);
 		slurm_mutex_unlock(&comp_list_mutex);
-		pthread_join(script_thread, NULL);
-		script_thread = 0;
+		slurm_thread_join(script_thread);
 	}
 	slurm_mutex_unlock(&thread_flag_mutex);
 

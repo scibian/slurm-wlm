@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  accounts.c - Slurm REST API accounting accounts http operations handlers
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -97,7 +96,8 @@ static data_for_each_cmd_t _foreach_query_search(const char *key, data_t *data,
 			return DATA_FOR_EACH_FAIL;
 		}
 
-		args->account_cond->with_deleted = data_get_bool(data);
+		if (data_get_bool(data))
+			args->account_cond->flags |= SLURMDB_ACCT_FLAG_DELETED;
 		return DATA_FOR_EACH_CONT;
 	}
 
@@ -272,7 +272,7 @@ static int _foreach_update_acct(void *x, void *arg)
 	slurmdb_assoc_cond_t assoc_cond = {};
 	slurmdb_account_cond_t acct_cond = {
 		.assoc_cond = &assoc_cond,
-		.with_coords = true,
+		.flags = SLURMDB_ACCT_FLAG_WCOORD,
 	};
 	assoc_cond.acct_list = list_create(NULL);
 	list_append(assoc_cond.acct_list, acct->name);
@@ -417,9 +417,8 @@ extern int op_handler_account(const char *context_id,
 		slurmdb_assoc_cond_t assoc_cond = {};
 		slurmdb_account_cond_t acct_cond = {
 			.assoc_cond = &assoc_cond,
-			.with_assocs = true,
-			.with_coords = true,
-			/* with_deleted defaults to false */
+			.flags = SLURMDB_ACCT_FLAG_WASSOC |
+			SLURMDB_ACCT_FLAG_WCOORD,
 		};
 
 		assoc_cond.acct_list = list_create(NULL);
@@ -456,9 +455,8 @@ extern int op_handler_accounts(const char *context_id,
 		/* no-op already logged */
 	} else if (method == HTTP_REQUEST_GET) {
 		slurmdb_account_cond_t acct_cond = {
-			.with_assocs = true,
-			.with_coords = true,
-			/* with_deleted defaults to false */
+			.flags = SLURMDB_ACCT_FLAG_WASSOC |
+			SLURMDB_ACCT_FLAG_WCOORD,
 		};
 
 		/* Change search conditions based on parameters */

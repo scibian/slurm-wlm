@@ -240,17 +240,29 @@ enum cluster_fed_states {
 #define CLUSTER_FLAG_MULTSD SLURM_BIT(7) /* This cluster is multiple slurmd */
 #define CLUSTER_FLAG_A9     SLURM_BIT(8) /* UNUSED */
 #define CLUSTER_FLAG_FE     SLURM_BIT(9) /* This cluster is a front end system*/
-#define CLUSTER_FLAG_CRAY   SLURM_BIT(10) /* This cluster is a Native cray */
+/*                          SLURM_BIT(10)   UNUSED */
 #define CLUSTER_FLAG_FED    SLURM_BIT(11) /* This cluster is in a federation. */
 #define CLUSTER_FLAG_EXT    SLURM_BIT(12) /* This cluster is external */
 
 /* Assoc flags */
-#define ASSOC_FLAG_DELETED  SLURM_BIT(0)
-#define ASSOC_FLAG_NO_UPDATE SLURM_BIT(1)
-#define ASSOC_FLAG_EXACT SLURM_BIT(2) /* If looking for a partition based
-				       * association don't return SUCCESS for a
-				       * non-partition based association when
-				       * calling assoc_mgr_fill_in_assoc() */
+typedef enum {
+	ASSOC_FLAG_NONE = 0,
+	ASSOC_FLAG_DELETED = SLURM_BIT(0),
+	ASSOC_FLAG_NO_UPDATE = SLURM_BIT(1),
+	ASSOC_FLAG_EXACT = SLURM_BIT(2), /* If looking for a partition based
+					  * association don't return SUCCESS for
+					  * a non-partition based association
+					  * when calling
+					  * assoc_mgr_fill_in_assoc() */
+	ASSOC_FLAG_USER_COORD_NO = SLURM_BIT(3),
+
+	/* Anything above this (0-15) will not be stored in the database. */
+	ASSOC_FLAG_BASE = 0x0000ffff,
+
+	ASSOC_FLAG_USER_COORD = SLURM_BIT(16),
+
+	ASSOC_FLAG_INVALID
+} slurmdb_assoc_flags_t;
 
 /* Event condition flags */
 #define SLURMDB_EVENT_COND_OPEN SLURM_BIT(0) /* Return only open events */
@@ -373,26 +385,34 @@ typedef struct {
 
 /************** alphabetical order of structures **************/
 
+typedef enum {
+	SLURMDB_ACCT_FLAG_NONE = 0,
+	SLURMDB_ACCT_FLAG_DELETED = SLURM_BIT(0),
+	SLURMDB_ACCT_FLAG_WASSOC = SLURM_BIT(1),
+	SLURMDB_ACCT_FLAG_WCOORD = SLURM_BIT(2),
+	SLURMDB_ACCT_FLAG_USER_COORD_NO = SLURM_BIT(3),
+
+	/* Anything above this (0-15) will not be stored in the database. */
+	SLURMDB_ACCT_FLAG_BASE = 0x0000ffff,
+
+	SLURMDB_ACCT_FLAG_USER_COORD = SLURM_BIT(16),
+
+	SLURMDB_ACCT_FLAG_INVALID
+} slurmdb_acct_flags_t;
+
 typedef struct {
 	slurmdb_assoc_cond_t *assoc_cond;/* use acct_list here for
 						  names */
 	List description_list; /* list of char * */
+	slurmdb_acct_flags_t flags;  /* SLURMDB_ACCT_FLAG_* */
 	List organization_list; /* list of char * */
-	uint16_t with_assocs;
-	uint16_t with_coords;
-	uint16_t with_deleted;
 } slurmdb_account_cond_t;
-
-enum {
-	SLURMDB_ACCT_FLAG_NONE          = 0,
-	SLURMDB_ACCT_FLAG_DELETED       = (1 << 0),
-};
 
 typedef struct {
 	List assoc_list; /* list of slurmdb_assoc_rec_t *'s */
 	List coordinators; /* list of slurmdb_coord_rec_t *'s */
 	char *description;
-	uint32_t flags; /* SLURMDB_ACCT_FLAG_* */
+	slurmdb_acct_flags_t flags; /* SLURMDB_ACCT_FLAG_* */
 	char *name;
 	char *organization;
 } slurmdb_account_rec_t;
@@ -486,7 +506,7 @@ typedef struct slurmdb_assoc_rec {
 
 	uint32_t def_qos_id;       /* Which QOS id is this
 				    * associations default */
-	uint16_t flags;            /* various flags see ASSOC_FLAG_* */
+	slurmdb_assoc_flags_t flags; /* various flags see ASSOC_FLAG_* */
 	uint32_t grp_jobs;	   /* max number of jobs the
 				    * underlying group of associations can run
 				    * at one time */
@@ -730,7 +750,6 @@ struct slurmdb_cluster_rec {
 	pthread_mutex_t lock; /* For convenience only. DOESN"T GET PACKED */
 	char *name;
 	char *nodes;
-	uint32_t plugin_id_select; /* Remove 2 versions after 23.02 */
 	slurmdb_assoc_rec_t *root_assoc; /* root assoc for
 						* cluster */
 	uint16_t rpc_version; /* rpc version this cluster is running */
@@ -888,6 +907,9 @@ typedef struct {
 	uint32_t state;
 	uint32_t state_reason_prev;
 	List    steps; /* list of slurmdb_step_rec_t *'s */
+	char *std_err;
+	char *std_in;
+	char *std_out;
 	time_t submit;
 	char *submit_line;
 	uint32_t suspended;
@@ -1221,9 +1243,8 @@ typedef struct {
 	uint32_t jobs;	/* count of active jobs */
 	uint32_t submit_jobs; /* count of jobs pending or running */
 	uint64_t *tres; /* array of TRES allocated */
-	uint64_t *tres_run_mins; /* array of how many TRES mins are
-				  * allocated currently, currently this doesn't
-				  * do anything and isn't set up. */
+	uint64_t *tres_run_secs; /* array of how many TRES secs are
+				  * allocated currently */
 	bitstr_t *node_bitmap;	/* Bitmap of allocated nodes */
 	uint16_t *node_job_cnt;	/* Count of jobs allocated on each node */
 	uint32_t uid; /* If limits for a user this is the users uid */
@@ -1251,7 +1272,7 @@ typedef struct {
 
 enum {
 	SLURMDB_USER_FLAG_NONE		= 0,
-	SLURMDB_USER_FLAG_DELETED	= (1 << 0),
+	SLURMDB_USER_FLAG_DELETED	= SLURM_BIT(0),
 };
 
 struct slurmdb_user_rec {
@@ -1297,7 +1318,7 @@ typedef struct {
 
 enum {
 	SLURMDB_WCKEY_FLAG_NONE          = 0,
-	SLURMDB_WCKEY_FLAG_DELETED       = (1 << 0),
+	SLURMDB_WCKEY_FLAG_DELETED       = SLURM_BIT(0),
 };
 
 typedef struct {
@@ -1832,9 +1853,8 @@ extern List slurmdb_txn_get(void *db_conn, slurmdb_txn_cond_t *txn_cond);
 /*
  * Get information about requested cluster(s). Similar to
  * slurmdb_clusters_get, but should be used when setting up the
- * working_cluster_rec.  It replaces the plugin_id_select with
- * the position of the id in the select plugin array, as well as sets up the
- * control_addr and dim_size parts of the structure.
+ * working_cluster_rec.  It sets up the control_addr and dim_size parts of the
+ * structure.
  *
  * IN: cluster_names - comma separated string of cluster names
  * RET: List of slurmdb_cluster_rec_t *

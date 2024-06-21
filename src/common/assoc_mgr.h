@@ -138,6 +138,8 @@ extern bool verify_assoc_lock(assoc_mgr_lock_datatype_t datatype,
 extern bool verify_assoc_unlock(assoc_mgr_lock_datatype_t datatype);
 #endif
 
+extern int assoc_mgr_find_nondirect_coord_by_name(void *x, void *y);
+
 /* ran after a new tres_list is given */
 extern int assoc_mgr_post_tres_list(List new_list);
 
@@ -327,15 +329,13 @@ extern void assoc_mgr_get_shares(void *db_conn,
 
 /*
  * get the state of the association manager and pack it up in buffer
- * OUT buffer_ptr - the pointer is set to the allocated buffer.
- * OUT buffer_size - set to size of the buffer in bytes
  * IN: msg: request for various states
  * IN: uid: uid_t of user issuing the request
  * IN: db_conn: needed if not already connected to the database or DBD
  * IN: protocol_version: version of Slurm we are sending to.
+ * OUT: buffer
  */
-extern void assoc_mgr_info_get_pack_msg(
-	char **buffer_ptr, int *buffer_size,
+extern buf_t *assoc_mgr_info_get_pack_msg(
 	assoc_mgr_info_request_msg_t *msg, uid_t uid,
 	void *db_conn, uint16_t protocol_version);
 
@@ -613,4 +613,48 @@ extern int assoc_mgr_get_old_tres_pos(int cur_pos);
  */
 extern int assoc_mgr_tres_pos_changed(void);
 
+/*
+ * To be used finding account a slurmdb_user_rec_t->coord_accts
+ */
+extern int assoc_mgr_find_coord_in_user(void *x, void *y);
+
+/*
+ * Validate TRES specification of the form:
+ * "name=tres_type/name|count[:#|type:#]"
+ * For example: "cpu:2,gres/gpu:kepler:2,gres/craynetwork:1"
+ */
+extern bool assoc_mgr_valid_tres_cnt(char *tres, bool gres_tres_enforce);
+
+/* set the tres_alloc_str and tres_alloc_fmt_str for the job.  assoc_mgr_locked
+ * is set if the assoc_mgr read lock is already set.
+ */
+extern void assoc_mgr_set_job_tres_alloc_str(job_record_t *job_ptr,
+					     bool assoc_mgr_locked);
+
+/*
+ * Check if any assoc job limits are increasing the current ones.
+ * IN: assoc - assoc to check
+ * IN/OUT: str - description of parameter found to be increasing the limit
+ * RET: returns true if any limit is increasing the current one
+ */
+extern bool assoc_mgr_check_assoc_lim_incr(slurmdb_assoc_rec_t *assoc,
+					   char **str);
+
+/*
+ * Verify a User 'coord_name' is a coordinator of all the qos in qos_list
+ * IN: cluster_name: Cluster we are dealing with.
+ * IN: account: Account name we are interested in.
+ * IN: coord_name: User name given.
+ * IN: qos_list: List of all QOS we need to verify.
+ * RET: true if they are or false if they are not
+ */
+extern bool assoc_mgr_check_coord_qos(char *cluster_name, char *account,
+				     char *coord_name, list_t *qos_list);
+
+/*
+ * Here we are checking to see if the association given has the flag
+ * ASSOC_FLAG_USER_COORD set anywhere in the upper tree.
+ */
+extern bool assoc_mgr_tree_has_user_coord(slurmdb_assoc_rec_t *assoc,
+					  bool locked);
 #endif /* _SLURM_ASSOC_MGR_H */

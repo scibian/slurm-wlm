@@ -1,10 +1,9 @@
 /****************************************************************************\
  *  dbd_conn.c - functions to manage the connection to the SlurmDBD
  *****************************************************************************
- *  Copyright (C) 2011-2020 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
- *  Written by Danny Auble <da@schedmd.com>
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
@@ -75,7 +74,7 @@ static void _db_res_op(void)
 		trigger_primary_db_res_op();
 }
 
-static int _connect_dbd_conn(slurm_persist_conn_t *pc)
+static int _connect_dbd_conn(persist_conn_t *pc)
 {
 
 	int rc;
@@ -136,12 +135,12 @@ again:
 	return rc;
 }
 
-extern slurm_persist_conn_t *dbd_conn_open(uint16_t *persist_conn_flags,
-					   char *cluster_name,
-					   char *rem_host,
-					   uint16_t rem_port)
+extern persist_conn_t *dbd_conn_open(uint16_t *persist_conn_flags,
+				     char *cluster_name,
+				     char *rem_host,
+				     uint16_t rem_port)
 {
-	slurm_persist_conn_t *pc = xmalloc(sizeof(*pc));
+	persist_conn_t *pc = xmalloc(sizeof(*pc));
 
 	if (persist_conn_flags)
 		pc->flags = *persist_conn_flags;
@@ -177,7 +176,7 @@ extern slurm_persist_conn_t *dbd_conn_open(uint16_t *persist_conn_flags,
 	return pc;
 }
 
-extern int dbd_conn_check_and_reopen(slurm_persist_conn_t *pc)
+extern int dbd_conn_check_and_reopen(persist_conn_t *pc)
 {
 	xassert(pc);
 
@@ -198,7 +197,7 @@ extern int dbd_conn_check_and_reopen(slurm_persist_conn_t *pc)
 	return _connect_dbd_conn(pc);
 }
 
-extern void dbd_conn_close(slurm_persist_conn_t **pc)
+extern void dbd_conn_close(persist_conn_t **pc)
 {
 	int rc;
 	buf_t *buffer;
@@ -256,7 +255,7 @@ extern int dbd_conn_send_recv_direct(uint16_t rpc_version,
 {
 	int rc = SLURM_SUCCESS;
 	buf_t *buffer;
-	slurm_persist_conn_t *use_conn = req->conn;
+	persist_conn_t *use_conn = req->conn;
 
 	xassert(req);
 	xassert(resp);

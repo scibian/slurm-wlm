@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  http.c - handling HTTP
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -516,7 +515,7 @@ extern int send_http_response(const send_http_response_args_t *args)
 
 	/* send along any requested headers */
 	if (args->headers) {
-		ListIterator itr = list_iterator_create(args->headers);
+		list_itr_t *itr = list_iterator_create(args->headers);
 		http_header_entry_t *header = NULL;
 		while ((header = list_next(itr))) {
 			if ((rc = _write_fmt_header(args->con, header->name,

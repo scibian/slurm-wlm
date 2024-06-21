@@ -91,8 +91,37 @@ extern buf_t *create_mmap_buf(const char *file);
 extern buf_t *create_shadow_buf(char *data, uint32_t size);
 extern void free_buf(buf_t *my_buf);
 extern buf_t *init_buf(uint32_t size);
+/*
+ * Try to create buffer by given number of bytes.
+ * IN size - number of bytes in buffer
+ * RET ptr to buffer or NULL on error
+ */
+extern buf_t *try_init_buf(uint32_t size);
 extern void grow_buf(buf_t *my_buf, uint32_t size);
+/*
+ * Try to grow buffer by given number of bytes.
+ * Buffer's head pointer may be resized or replaced.
+ * IN my_buf - pointer to buffer
+ * IN size - number of bytes to grow buffer by
+ * RET SLURM_SUCCESS or error
+ */
+extern int try_grow_buf(buf_t *buffer, uint32_t size);
+/*
+ * Ensure buffer has enough remaining bytes
+ * Note: Buffer's head pointer may be resized or replaced.
+ * IN my_buf - pointer to buffer
+ * IN size - number of bytes to grow buffer by
+ * RET SLURM_SUCCESS or error
+ */
+extern int try_grow_buf_remaining(buf_t *buffer, uint32_t size);
 extern void *xfer_buf_data(buf_t *my_buf);
+/*
+ * Swap data between two buffers
+ * IN x - pointer to buffer to swap
+ * IN y - pointer to buffer to swap
+ * RET SLURM_SUCCESS or error
+ */
+extern int swap_buf_data(buf_t *x, buf_t *y);
 
 extern void pack_time(time_t val, buf_t *buffer);
 extern int unpack_time(time_t *valp, buf_t *buffer);
@@ -336,6 +365,15 @@ extern int unpackmem_array(char *valp, uint32_t size_valp, buf_t *buffer);
 	if (b)						\
 		*str = bit_fmt_full(b);			\
 	FREE_NULL_BITMAP(b);				\
+} while (0)
+
+#define safe_skipstr(buf) do {					\
+	char *valp = NULL;					\
+	uint32_t size_valp;					\
+	xassert(buf->magic == BUF_MAGIC);			\
+	if (unpackstr_xmalloc_chooser(&valp, &size_valp, buf))	\
+		goto unpack_error;				\
+	xfree(valp);						\
 } while (0)
 
 #define safe_unpackstr(valp, buf) do {				\

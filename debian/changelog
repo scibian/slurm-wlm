@@ -1,4 +1,17 @@
-slurm-wlm (23.11.7-1sci11u1) scibian11; urgency=medium
+slurm-wlm (24.05.0-0) scibian11; urgency=medium
+
+  * New upstream version 24.05.0
+  * Rebase patches
+  * Bump libslurm to libslurm41
+  * Remove smd_ns.h
+  * Remove slurm-wlm-rrd-plugin
+  * Use installsitearch for perl
+  * Ignore perllocal.pod and .packlist
+  * Update symbols for libslurm41
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 21 Jun 2024 09:38:51 +0200
+
+ slurm-wlm (23.11.7-1sci11u1) scibian11; urgency=medium
 
   * Fix pam_dir path without usrmerge
   * Remove kafka plugin

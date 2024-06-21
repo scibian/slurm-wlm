@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  oci_config.h - parse oci.conf configuration file.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  All rights reserved.
  *
  *  This file is part of Slurm, a resource management program.
@@ -58,7 +57,7 @@ typedef struct {
 	char *runtime_create; /* OCI runtime pattern to execute create */
 	char *runtime_delete; /* OCI runtime pattern to execute delete */
 	char *runtime_kill; /* OCI runtime pattern to execute kill */
-	regex_t runtime_env_exclude; /* REGEX to filter runtime_* environmentt */
+	regex_t runtime_env_exclude; /* REGEX to filter runtime_* environment */
 	bool runtime_env_exclude_set; /* true if runtime_env_exclude populated */
 	char *runtime_query; /* OCI runtime pattern to execute query */
 	char *runtime_run; /* OCI runtime pattern to execute run */

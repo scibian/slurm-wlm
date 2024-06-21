@@ -187,7 +187,7 @@ MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
 .br
-today, midnight, noon, fika (3 PM), teatime (4 PM)
+today, midnight, noon, elevenses (11 AM), fika (3 PM), teatime (4 PM)
 .br
 now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 .IP
@@ -200,6 +200,13 @@ is output.
 \fBNOTE\fR: AccountingStoreFlags=job_env is required for this.
 .br
 \fBNOTE\fR: Requesting specific job(s) with '\-j' is required for this.
+.IP
+
+.TP
+\fB\-\-expand\-patterns\fR
+Expand any filename patterns from in \f3StdOut\fP, \f3StdErr\fP and \f3StdIn\fP.
+Fields that map to a range of values will use the first value of the range. For
+example "%t" for task id will be replaced by "0".
 .IP
 
 .TP
@@ -284,14 +291,15 @@ Priority            QOS                 QOSRAW              Reason
 ReqCPUFreq          ReqCPUFreqGov       ReqCPUFreqMax       ReqCPUFreqMin
 ReqCPUS             ReqMem              ReqNodes            ReqTRES
 Reservation         ReservationId       Start               State
-Submit              SubmitLine          Suspended           SystemComment
-SystemCPU           Timelimit           TimelimitRaw        TotalCPU
-TRESUsageInAve      TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask
-TRESUsageInMin      TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot
-TRESUsageOutAve     TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask
-TRESUsageOutMin     TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot
-UID                 User                UserCPU             WCKey
-WCKeyID             WorkDir
+StdErr              StdIn               StdOut              Submit
+SubmitLine          Suspended           SystemComment       SystemCPU
+Timelimit           TimelimitRaw        TotalCPU            TRESUsageInAve
+TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask  TRESUsageInMin
+TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot      TRESUsageOutAve
+TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask TRESUsageOutMin
+TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot     UID
+User                UserCPU             WCKey               WCKeyID
+WorkDir
 .ft 1
 .fi
 .RE
@@ -451,7 +459,7 @@ MM/DD[/YY][\-HH:MM[:SS]]
 .br
 YYYY\-MM\-DD[THH:MM[:SS]]
 .br
-today, midnight, noon, fika (3 PM), teatime (4 PM)
+today, midnight, noon, elevenses (11 AM), fika (3 PM), teatime (4 PM)
 .br
 now[{+|\-}\fIcount\fR[seconds(default)|minutes|hours|days|weeks]]
 .IP
@@ -1090,6 +1098,27 @@ from RUNNING.
 otherwise) in the time period requested as the job was also RUNNING during that
 time. If you are only looking for jobs that finished, please choose the
 appropriate state(s) without the RUNNING state.
+.IP
+
+.TP
+\f3StdErr\fP
+Display the "\fIfilename pattern\fR" for stderr redirection specified in a
+batch job. Path wildcards will not be substituted and will be shown as defined
+in the original batch submission.
+.IP
+
+.TP
+\f3StdIn\fP
+Display the "\fIfilename pattern\fR" for stdin redirection specified in a
+batch job. Path wildcards will not be substituted and will be shown as defined
+in the original batch submission.
+.IP
+
+.TP
+\f3StdOut\fP
+Display the "\fIfilename pattern\fR" for stdout redirection specified in a
+batch job. Path wildcards will not be substituted and will be shown as defined
+in the original batch submission.
 .IP
 
 .TP

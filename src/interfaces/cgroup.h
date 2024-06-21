@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  cgroup.h - driver for cgroup plugin
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Felip Moll <felip.moll@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -185,6 +184,7 @@ typedef struct {
 
 	bool enable_controllers;
 	bool signal_children_processes;
+	uint64_t systemd_timeout; /* How much time to wait on systemd operations (msec)*/
 } cgroup_conf_t;
 
 
@@ -193,7 +193,6 @@ extern cgroup_conf_t slurm_cgroup_conf;
 /* global functions */
 extern int cgroup_conf_init(void);
 extern void cgroup_conf_destroy(void);
-extern void cgroup_conf_reinit(void);
 extern void cgroup_free_limits(cgroup_limits_t *limits);
 extern void cgroup_init_limits(cgroup_limits_t *limits);
 extern List cgroup_get_conf_list(void);

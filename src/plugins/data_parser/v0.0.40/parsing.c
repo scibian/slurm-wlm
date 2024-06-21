@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parsers.c - Slurm data parsers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -766,6 +765,15 @@ static int _parser_linked(args_t *args, const parser_t *const array,
 			openapi_append_rel_path(ppath, parser->key);
 	}
 
+	if (parser->model == PARSER_MODEL_ARRAY_REMOVED_FIELD) {
+		log_flag(DATA, "%s: skip parsing removed %s object %s(0x%" PRIxPTR ") via parser %s(0x%" PRIxPTR ")",
+			__func__, set_source_path(&path, args, ppath),
+			parser->obj_type_string, (uintptr_t) dst,
+			parser->type_string, (uintptr_t) src);
+		rc = SLURM_SUCCESS;
+		goto cleanup;
+	}
+
 	if (!src) {
 		if (parser->required) {
 			if ((rc = on_error(PARSING, parser->type, args,
@@ -1025,6 +1033,9 @@ extern int parse(void *dst, ssize_t dst_bytes, const parser_t *const parser,
 			    __func__, parser->model);
 	case PARSER_MODEL_ARRAY_SKIP_FIELD:
 		fatal_abort("%s: skip model not allowed %u",
+			    __func__, parser->model);
+	case PARSER_MODEL_ARRAY_REMOVED_FIELD:
+		fatal_abort("%s: removed model not allowed %u",
 			    __func__, parser->model);
 	case PARSER_MODEL_INVALID:
 	case PARSER_MODEL_MAX:
@@ -1375,6 +1386,59 @@ static int _dump_linked(args_t *args, const parser_t *const array,
 		goto cleanup;
 	}
 
+	if (parser->model == PARSER_MODEL_ARRAY_REMOVED_FIELD) {
+		const parser_t *rparser = find_parser_by_type(parser->type);
+
+		while ((rparser->model == PARSER_MODEL_ARRAY_REMOVED_FIELD) ||
+		       rparser->pointer_type) {
+			while (rparser->pointer_type)
+				rparser = find_parser_by_type(
+					rparser->pointer_type);
+
+			while (rparser->model ==
+			       PARSER_MODEL_ARRAY_REMOVED_FIELD)
+				rparser = find_parser_by_type(rparser->type);
+		}
+
+		log_flag(DATA, "removed: %s parser %s->%s(0x%" PRIxPTR ") for %s(0x%" PRIxPTR ") for data(0x%" PRIxPTR ")/%s(0x%" PRIxPTR ")",
+			 parser->obj_type_string,
+			 array->type_string,
+			 parser->type_string, (uintptr_t)
+			 parser, array->obj_type_string,
+			 (uintptr_t) src, (uintptr_t) dst,
+			 array->key, (uintptr_t) dst);
+
+		switch (rparser->obj_openapi) {
+			case OPENAPI_FORMAT_INT:
+			case OPENAPI_FORMAT_INT32:
+			case OPENAPI_FORMAT_INT64:
+				data_set_int(dst, 0);
+				break;
+			case OPENAPI_FORMAT_NUMBER:
+			case OPENAPI_FORMAT_FLOAT:
+			case OPENAPI_FORMAT_DOUBLE:
+				data_set_float(dst, 0);
+				break;
+			case OPENAPI_FORMAT_STRING:
+			case OPENAPI_FORMAT_PASSWORD:
+				data_set_string(dst, "");
+				break;
+			case OPENAPI_FORMAT_BOOL:
+				data_set_bool(dst, false);
+			case OPENAPI_FORMAT_OBJECT:
+				data_set_dict(dst);
+				break;
+			case OPENAPI_FORMAT_ARRAY:
+				data_set_list(dst);
+				break;
+			case OPENAPI_FORMAT_MAX:
+			case OPENAPI_FORMAT_INVALID:
+				fatal_abort("invalid type");
+		};
+
+		return SLURM_SUCCESS;
+	}
+
 	if (parser->model ==
 	    PARSER_MODEL_ARRAY_LINKED_EXPLODED_FLAG_ARRAY_FIELD) {
 		uint64_t used_equal_bits = 0;
@@ -1531,6 +1595,9 @@ extern int dump(void *src, ssize_t src_bytes, const parser_t *const parser,
 			    __func__, parser->model);
 	case PARSER_MODEL_ARRAY_SKIP_FIELD:
 		fatal_abort("%s: skip model not allowed %u",
+			    __func__, parser->model);
+	case PARSER_MODEL_ARRAY_REMOVED_FIELD:
+		fatal_abort("%s: removed model not allowed %u",
 			    __func__, parser->model);
 	case PARSER_MODEL_INVALID:
 	case PARSER_MODEL_MAX:

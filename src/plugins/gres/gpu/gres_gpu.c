@@ -93,8 +93,6 @@ const char	plugin_type[]		= "gres/gpu";
 const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 static List	gres_devices		= NULL;
 static uint32_t	node_flags		= 0;
-static int tres_mem_pos = -1;
-static int tres_util_pos = -1;
 
 extern void gres_p_step_hardware_init(bitstr_t *usable_gpus, char *tres_freq)
 {
@@ -145,7 +143,7 @@ static int _sort_gpu_by_type_name(void *x, void *y)
 	 * By default, qsort orders in ascending order (smallest first). We want
 	 * descending order (longest first), so invert order by negating.
 	 */
-	ret = -(val1 - val2);
+	ret = slurm_sort_int_list_desc(&val1, &val2);
 
 	/* Sort by type name value if type name length is equal */
 	if (ret == 0)
@@ -209,7 +207,7 @@ static void _normalize_sys_gres_types(List gres_list_system,
 				      List gres_list_conf_single)
 {
 	gres_slurmd_conf_t *sys_gres, *conf_gres;
-	ListIterator itr;
+	list_itr_t *itr;
 	bool strip_type = true;
 
 	/* No need to sync anything if configured GRES list is empty */
@@ -371,7 +369,7 @@ static int _sort_gpu_by_links_order(void *x, void *y)
 	if (index_x < -1 || index_y < -1)
 		error("%s: invalid links value found", __func__);
 
-	return (index_x - index_y);
+	return slurm_sort_int_list_asc(&index_x, &index_y);
 }
 
 /*
@@ -401,7 +399,7 @@ static int _sort_gpu_by_links_order(void *x, void *y)
  */
 static void _merge_system_gres_conf(List gres_list_conf, List gres_list_system)
 {
-	ListIterator itr, itr2;
+	list_itr_t *itr, *itr2;
 	gres_slurmd_conf_t *gres_slurmd_conf, *gres_slurmd_conf_sys;
 	List gres_list_conf_single, gres_list_gpu = NULL, gres_list_non_gpu;
 
@@ -772,20 +770,7 @@ static List _get_system_gpu_list_fake(void)
 
 extern int init(void)
 {
-	slurmdb_tres_rec_t tres_rec;
-
 	debug("loaded");
-
-	if (!running_in_slurmstepd())
-		return SLURM_SUCCESS;
-
-	memset(&tres_rec, 0, sizeof(slurmdb_tres_rec_t));
-	tres_rec.type = "gres";
-	tres_rec.name = "gpumem";
-	tres_mem_pos = assoc_mgr_find_tres_pos(&tres_rec, false);
-	tres_rec.type = "gres";
-	tres_rec.name = "gpuutil";
-	tres_util_pos = assoc_mgr_find_tres_pos(&tres_rec, false);
 
 	return SLURM_SUCCESS;
 }

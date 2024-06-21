@@ -4,7 +4,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2016 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -72,6 +72,8 @@ typedef struct {
 	bitstr_t *node_bitmap;	/* bitmap of nodes with this configuration */
 	char *nodes;		/* name of nodes with this configuration */
 	uint64_t real_memory;	/* MB real memory on the node */
+	uint16_t res_cores_per_gpu; /* number of cores per GPU to allow
+				     * to only GPU jobs */
 	uint16_t threads;	/* number of threads per core */
 	uint32_t tmp_disk;	/* MB total storage in TMP_FS file system */
 	uint16_t tot_sockets;	/* number of sockets per node */
@@ -106,7 +108,6 @@ struct node_record {
 	uint16_t cpus_efctv;		/* count of effective cpus on the node.
 					   i.e. cpus minus specialized cpus*/
 	acct_gather_energy_t *energy;	/* power consumption data */
-	ext_sensors_data_t *ext_sensors; /* external sensor data */
 	char *extra;			/* arbitrary string */
 	data_t *extra_data;		/* Data serialized from extra */
 	char *features;			/* node's available features, used only
@@ -117,6 +118,9 @@ struct node_record {
 					 * use for scheduling purposes */
 	uint64_t free_mem;		/* Free memory in MiB */
 	time_t free_mem_time;		/* Time when free_mem last set */
+	char *gpu_spec;                 /* node's cores reserved for GPU jobs */
+	bitstr_t *gpu_spec_bitmap;	/* node gpu core specialization
+					 * bitmap */
 	char *gres;			/* node's generic resources, used only
 					 * for state save/restore, DO NOT
 					 * use for scheduling purposes */
@@ -153,7 +157,6 @@ struct node_record {
 	void **part_pptr;		/* array of pointers to partitions
 					 * associated with this node*/
 	uint16_t port;			/* TCP port number of the slurmd */
-	power_mgmt_data_t *power;	/* power management data */
 	time_t power_save_req_time;	/* Time of power_save request */
 	uint16_t protocol_version;	/* Slurm version number */
 	uint64_t real_memory;		/* MB real memory on the node */
@@ -162,6 +165,8 @@ struct node_record {
 					 * set, ignore if no reason is set. */
 	uint32_t reason_uid;		/* User that set the reason, ignore if
 					 * no reason is set. */
+	uint16_t res_cores_per_gpu;	/* number of cores per GPU to allow to
+					 * only GPU jobs */
 	time_t resume_after;		/* automatically resume DOWN or DRAINED
 					 * node at this point in time */
 	uint16_t resume_timeout; 	/* time required in order to perform a
@@ -336,13 +341,12 @@ extern int add_node_record(char *alias, config_record_t *config_ptr,
 			   node_record_t **node_ptr);
 
 /*
- * Add existing record to node_record_table_ptr
+ * Add existing record to node_record_table_ptr at specific index
  *
- * e.g. Preserving dynamic nodes after a reconfig.
  * Node must fit in currently allocated node_record_count/MaxNodeCount.
  * node_ptr->config_ptr is added to the the global config_list.
  */
-extern void insert_node_record(node_record_t *node_ptr);
+extern void insert_node_record_at(node_record_t *node_ptr, int index);
 
 /*
  * Delete node from node_record_table_ptr.
@@ -413,7 +417,7 @@ extern int node_name2bitmap (char *node_names, bool best_effort,
 			     bitstr_t **bitmap);
 
 /* Purge the contents of a node record */
-extern void purge_node_rec(node_record_t *node_ptr);
+extern void purge_node_rec(void *in);
 
 /*
  * rehash_node - build a hash table of the node_record entries.
@@ -515,5 +519,12 @@ extern char *node_conf_nodestr_tokenize(char *s, char **save_ptr);
  *                      size of the cluster.
  */
 extern void node_conf_create_cluster_core_bitmap(bitstr_t **core_bitmap);
+
+extern void node_record_pack(void *in,
+			     uint16_t protocol_version,
+			     buf_t *buffer);
+extern int node_record_unpack(void **out,
+			      uint16_t protocol_version,
+			      buf_t *buffer);
 
 #endif /* !_HAVE_NODE_CONF_H */

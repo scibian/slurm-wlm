@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2018 SchedMD LLC <https://www.schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -508,8 +508,15 @@ extern char *get_argument(const char *file, int lineno, const char *line,
 		if (escape_flag) {
 			escape_flag = false;
 		} else if (*ptr == '\\') {
-			escape_flag = true;
 			ptr++;
+			if (*ptr == ' ') {
+				if (!argument)
+					argument = xmalloc(strlen(line) + 1);
+				argument[i++] = *(ptr++);
+				escape_flag = false;
+			} else
+				escape_flag = true;
+
 			continue;
 		} else if (quoted) {
 			if (*ptr == q_char) {
@@ -682,6 +689,13 @@ static bool _opt_verify(void)
 		verified = false;
 	}
 
+	if ((opt.resv_port_cnt != NO_VAL) &&
+	    !(opt.job_flags & STEPMGR_ENABLED) &&
+	    !xstrstr(slurm_conf.slurmctld_params, "enable_stepmgr")) {
+		error("Slurmstepd step management must be enabled to use --resv-ports for job allocations");
+		verified = false;
+	}
+
 	if (opt.burst_buffer && opt.burst_buffer_file) {
 		error("Cannot specify both --burst-buffer and --bbf");
 		exit(error_exit);
@@ -723,10 +737,8 @@ static bool _opt_verify(void)
 
 	if (opt.nodelist && !opt.nodes_set) {
 		hl = hostlist_create(opt.nodelist);
-		if (!hl) {
-			error("memory allocation failure");
-			exit(error_exit);
-		}
+		if (!hl)
+			fatal("Invalid node list specified");
 		hostlist_uniq(hl);
 		hl_cnt = hostlist_count(hl);
 		opt.min_nodes = hl_cnt;
@@ -851,6 +863,8 @@ static bool _opt_verify(void)
 	    && (!opt.nodes_set || !opt.ntasks_set)) {
 		FREE_NULL_HOSTLIST(hl);
 		hl = hostlist_create(opt.nodelist);
+		if (!hl)
+			fatal("Invalid node list specified");
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = 1;
 			opt.ntasks = hostlist_count(hl);
@@ -918,15 +932,6 @@ static bool _opt_verify(void)
 
 	if (opt.acctg_freq)
 		setenvf(NULL, "SLURM_ACCTG_FREQ", "%s", opt.acctg_freq);
-
-#ifdef HAVE_NATIVE_CRAY
-	if (opt.network && opt.shared)
-		fatal("Requesting network performance counters requires "
-		      "exclusive access.  Please add the --exclusive option "
-		      "to your request.");
-	if (opt.network)
-		setenv("SLURM_NETWORK", opt.network, 1);
-#endif
 
 	if (opt.mem_bind_type && (getenv("SBATCH_MEM_BIND") == NULL)) {
 		char *tmp = slurm_xstr_mem_bind_type(opt.mem_bind_type);
@@ -1100,7 +1105,8 @@ static void _usage(void)
 "              [--core-spec=cores] [--thread-spec=threads]\n"
 "              [--bb=burst_buffer_spec] [--bbf=burst_buffer_file]\n"
 "              [--array=index_values] [--profile=...] [--ignore-pbs] [--spread-job]\n"
-"              [--export[=names]] [--delay-boot=mins] [--use-min-nodes]\n"
+"              [--export[=names]] [--export-file=file|fd] [--delay-boot=mins]\n"
+"              [--use-min-nodes]\n"
 "              [--cpus-per-gpu=n] [--gpus=n] [--gpu-bind=...] [--gpu-freq=...]\n"
 "              [--gpus-per-node=n] [--gpus-per-socket=n] [--gpus-per-task=n]\n"
 "              [--mem-per-gpu=MB] [--tres-bind=...] [--tres-per-task=list]\n"
@@ -1131,6 +1137,8 @@ static void _help(void)
 "  -D, --chdir=directory       set working directory for batch script\n"
 "  -e, --error=err             file for batch script's standard error\n"
 "      --export[=names]        specify environment variables to export\n"
+"      --export-file=file|fd   specify environment variables file or file\n"
+"                              descriptor to export\n"
 "      --get-user-env          load environment from local cluster\n"
 "      --gid=group_id          group ID to run job as (user root only)\n"
 "      --gres=list             required generic resources\n"
@@ -1215,6 +1223,7 @@ static void _help(void)
 "      --mem-per-cpu=MB        maximum amount of real memory per allocated\n"
 "                              cpu required by the job.\n"
 "                              --mem >= --mem-per-cpu if --mem is specified.\n"
+"      --resv-ports            reserve communication ports\n"
 "\n"
 "Affinity/Multi-core options: (when the task/affinity plugin is enabled)\n"
 "                              For the following 4 options, you are\n"
@@ -1254,12 +1263,6 @@ static void _help(void)
 		);
 
 	printf("\n"
-#ifdef HAVE_NATIVE_CRAY			/* Native Cray specific options */
-"Cray related options:\n"
-"      --network=type          Use network performance counters\n"
-"                              (system, network, or processor)\n"
-"\n"
-#endif
 "Help options:\n"
 "  -h, --help                  show this help message\n"
 "      --usage                 display brief usage message\n"

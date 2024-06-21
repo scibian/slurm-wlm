@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parsers.h - Slurm data parsing handlers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -78,6 +77,7 @@ typedef enum {
 	PARSER_MODEL_ARRAY, /* parser array to parse every field in a struct */
 	PARSER_MODEL_ARRAY_LINKED_FIELD, /* link to parser in a parser array */
 	PARSER_MODEL_ARRAY_SKIP_FIELD, /* parser to mark field as not being parsed in a parser array */
+	PARSER_MODEL_ARRAY_REMOVED_FIELD, /* parser to mark field as placeholder for field already removed from struct */
 
 	PARSER_MODEL_SIMPLE, /* parser for single field */
 	PARSER_MODEL_COMPLEX, /* parser for uses multiple fields in struct */

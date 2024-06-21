@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  gpu_nvml.c - Support nvml interface to an Nvidia GPU.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -264,7 +263,7 @@ static bool _nvml_get_mem_freqs(nvmlDevice_t *device,
 	}
 
 	qsort(mem_freqs, *mem_freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 
 	if ((*mem_freqs_size > 1) &&
 	    (mem_freqs[0] <= mem_freqs[(*mem_freqs_size)-1])) {
@@ -309,7 +308,7 @@ static bool _nvml_get_gfx_freqs(nvmlDevice_t *device,
 	}
 
 	qsort(gfx_freqs, *gfx_freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 
 	if ((*gfx_freqs_size > 1) &&
 	    (gfx_freqs[0] <= gfx_freqs[(*gfx_freqs_size)-1])) {
@@ -1355,7 +1354,7 @@ static List _get_system_gpu_list_nvml(node_config_load_t *node_config)
 		device_lut[i] = xstrdup(pci_info.busId);
 	}
 
-	if (!xstrcasestr(slurm_conf.slurmd_params, "allow_ecores")) {
+	if (!(slurm_conf.conf_flags & CONF_FLAG_ECORE)) {
 		enabled_cpus_bits = bit_alloc(MAX_CPUS);
 		for (i = 0; i < conf->block_map_size; i++) {
 			bit_set(enabled_cpus_bits, conf->block_map[i]);
@@ -1705,12 +1704,6 @@ extern int fini(void)
 
 	return SLURM_SUCCESS;
 }
-
-extern int gpu_p_reconfig(void)
-{
-	return SLURM_SUCCESS;
-}
-
 
 extern List gpu_p_get_system_gpu_list(node_config_load_t *node_config)
 {
