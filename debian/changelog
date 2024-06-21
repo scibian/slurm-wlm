@@ -1,3 +1,9 @@
+slurm-wlm (24.05.0-0sci9u1) scibian9; urgency=medium
+
+  * Rebase META patch
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 21 Jun 2024 12:04:54 +0200
+
 slurm-wlm (24.05.0-0) scibian11; urgency=medium
 
   * New upstream version 24.05.0
