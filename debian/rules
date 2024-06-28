@@ -20,7 +20,7 @@ ifneq ($(DEB_TARGET_ARCH_BITS),64)
 endif
 
 # PMIX is now only available on 64-bit systems
-PMIX_ARCH:= amd64 arm64 mips64el ppc64el riscv64 s390x alpha ia64 loong64 ppc64
+PMIX_ARCH:= amd64 arm64 mips64el ppc64el riscv64 s390x alpha ia64 ppc64
 PMIX:=    $(if $(filter $(DEB_TARGET_ARCH), $(PMIX_ARCH)), --with-pmix=/usr/lib/$(DEB_HOST_MULTIARCH)/pmix2, )
 
 %:
