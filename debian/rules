@@ -151,7 +151,6 @@ override_dh_strip:
 	dh_strip -pslurm-wlm-ipmi-plugins
 	dh_strip -pslurm-wlm-jwt-plugin
 	dh_strip -pslurm-wlm-mysql-plugin
-	dh_strip -pslurm-wlm-rsmi-plugin
 	dh_strip -psackd
 	dh_strip -pslurm-client --dbgsym-migration='slurm-client-dbg (<< 17.02.6~)'
 	dh_strip -pslurmd --dbgsym-migration='slurmd-dbg (<< 17.02.6~)'
