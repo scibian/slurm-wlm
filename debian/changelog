@@ -1,3 +1,9 @@
+slurm-wlm (24.05.0-0sci11u2) scibian11; urgency=medium
+
+  * Remove reference to loong64 arch
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 28 Jun 2024 18:15:03 +0200
+
 slurm-wlm (24.05.0-0sci11u1) scibian11; urgency=medium
 
   * Rebase META patch
