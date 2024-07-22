@@ -2,7 +2,6 @@
  * privileges.h
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -44,7 +43,6 @@ struct priv_state {
 	gid_t saved_gid;
 	gid_t *gid_list;
 	int ngids;
-	char saved_cwd[4096];
 };
 
 extern int drop_privileges(stepd_step_rec_t *step, bool do_setuid,

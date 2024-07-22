@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  jobcomp_kafka_message.c - Kafka message helper for jobcomp/kafka.
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Alejandro Sanchez <alex@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -595,10 +594,7 @@ static void _save_jobcomp_kafka_state(void)
 	buf_t *buffer = NULL;
 	DEF_TIMERS;
 
-	if (!(buffer = init_buf(high_buffer_size))) {
-		error("%s: init_buf() failed. Can't save state.", plugin_type);
-		return;
-	}
+	buffer = init_buf(high_buffer_size);
 
 	START_TIMER;
 	_pack_jobcomp_kafka_state(buffer);
@@ -614,9 +610,7 @@ static void _terminate_poll_handler(void)
 	terminate = true;
 	slurm_cond_broadcast(&poll_stop_cond);
 	slurm_mutex_unlock(&poll_mutex);
-	if (pthread_join(poll_thread, NULL))
-		error("%s: pthread_join() on poll thread failed: %m",
-		      plugin_type);
+	slurm_thread_join(poll_thread);
 }
 
 extern int jobcomp_kafka_message_init(void)

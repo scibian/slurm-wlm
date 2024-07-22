@@ -2,7 +2,6 @@
  *  privileges.c
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -59,11 +58,6 @@ extern int drop_privileges(stepd_step_rec_t *step, bool do_setuid,
 	auth_setuid_lock();
 	ps->saved_uid = getuid();
 	ps->saved_gid = getgid();
-
-	if (!getcwd(ps->saved_cwd, sizeof(ps->saved_cwd))) {
-		error ("Unable to get current working directory: %m");
-		strlcpy(ps->saved_cwd, "/tmp", sizeof(ps->saved_cwd));
-	}
 
 	ps->ngids = getgroups(0, NULL);
 	if (ps->ngids == -1) {

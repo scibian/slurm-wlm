@@ -2,7 +2,6 @@
  *  sackd.c
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -81,6 +80,7 @@ static void _parse_args(int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	int c = 0, option_index = 0;
+	char *str = NULL;
 
 	enum {
 		LONG_OPT_ENUM_START = 0x100,
@@ -94,6 +94,27 @@ static void _parse_args(int argc, char **argv)
 		{NULL, no_argument, 0, 'v'},
 		{NULL, 0, 0, 0}
 	};
+
+	if ((str = getenv("SACKD_DEBUG"))) {
+		logopt.stderr_level = logopt.syslog_level = log_string2num(str);
+
+		if (logopt.syslog_level == NO_VAL16)
+			fatal("Invalid env SACKD_DEBUG: %s", str);
+	}
+
+	if ((str = getenv("SACKD_SYSLOG_DEBUG"))) {
+		logopt.syslog_level = log_string2num(str);
+
+		if (logopt.syslog_level == NO_VAL16)
+			fatal("Invalid env SACKD_SYSLOG_DEBUG: %s", str);
+	}
+
+	if ((str = getenv("SACKD_STDERR_DEBUG"))) {
+		logopt.stderr_level = log_string2num(str);
+
+		if (logopt.stderr_level == NO_VAL16)
+			fatal("Invalid env SACKD_STDERR_DEBUG: %s", str);
+	}
 
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
 
@@ -129,6 +150,9 @@ static void _parse_args(int argc, char **argv)
 			break;
 		}
 	}
+
+	if (under_systemd && !daemonize)
+		fatal("--systemd and -D options are mutually exclusive");
 
 	if (under_systemd) {
 		if (!getenv("NOTIFY_SOCKET"))
@@ -276,6 +300,13 @@ static void _on_sigusr2(conmgr_fd_t *con, conmgr_work_type_t type,
 	info("Caught SIGUSR2. Ignoring.");
 }
 
+static void _on_sigpipe(conmgr_fd_t *con, conmgr_work_type_t type,
+		        conmgr_work_status_t status, const char *tag,
+		        void *arg)
+{
+	info("Caught SIGPIPE. Ignoring.");
+}
+
 static void _try_to_reconfig(void)
 {
 	extern char **environ;
@@ -401,6 +432,7 @@ extern int main(int argc, char **argv)
 	conmgr_add_signal_work(SIGINT, _on_sigint, NULL, "on_sigint()");
 	conmgr_add_signal_work(SIGHUP, _on_sighup, NULL, "_on_sighup()");
 	conmgr_add_signal_work(SIGUSR2, _on_sigusr2, NULL, "_on_sigusr2()");
+	conmgr_add_signal_work(SIGPIPE, _on_sigpipe, NULL, "on_sigpipe()");
 
 	_establish_config_source();
 	slurm_conf_init(conf_file);

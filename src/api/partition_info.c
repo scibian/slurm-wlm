@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -225,6 +225,11 @@ char *slurm_sprint_partition_info ( partition_info_t * part_ptr,
 		xstrcat(out, " ExclusiveUser=YES");
 	else
 		xstrcat(out, " ExclusiveUser=NO");
+
+	if (part_ptr->flags & PART_FLAG_EXCLUSIVE_TOPO)
+		xstrcat(out, " ExclusiveTopo=YES");
+	else
+		xstrcat(out, " ExclusiveTopo=NO");
 
 	xstrfmtcat(out, " GraceTime=%u", part_ptr->grace_time);
 
@@ -520,7 +525,7 @@ static int _load_fed_parts(slurm_msg_t *req_msg,
 	partition_info_msg_t *orig_msg = NULL, *new_msg = NULL;
 	uint32_t new_rec_cnt;
 	slurmdb_cluster_rec_t *cluster;
-	ListIterator iter;
+	list_itr_t *iter;
 	int pthread_count = 0;
 	pthread_t *load_thread = 0;
 	load_part_req_struct_t *load_args;
@@ -553,7 +558,7 @@ static int _load_fed_parts(slurm_msg_t *req_msg,
 
 	/* Wait for all pthreads to complete */
 	for (i = 0; i < pthread_count; i++)
-		pthread_join(load_thread[i], NULL);
+		slurm_thread_join(load_thread[i]);
 	xfree(load_thread);
 
 	/* Maintain a consistent cluster/node ordering */

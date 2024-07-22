@@ -2,9 +2,9 @@
  *  slurm_acct_gather_energy.c - implementation-independent job energy
  *  accounting plugin definitions
  *****************************************************************************
- *  Copyright (C) 2012-2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2012 Bull-HN-PHX.
- *  Written by Bull-HN-PHX/d.rusak, Danny Auble <da@schedmd.com>
+ *  Written by Bull-HN-PHX/d.rusak
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -192,7 +192,7 @@ extern int acct_gather_energy_fini(void)
 		slurm_mutex_lock(&profile_timer->notify_mutex);
 		slurm_cond_signal(&profile_timer->notify);
 		slurm_mutex_unlock(&profile_timer->notify_mutex);
-		pthread_join(watch_node_thread_id, NULL);
+		slurm_thread_join(watch_node_thread_id);
 		slurm_mutex_lock(&g_context_lock);
 	}
 

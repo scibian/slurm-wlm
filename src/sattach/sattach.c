@@ -357,7 +357,7 @@ void _handle_response_msg(slurm_msg_type_t msg_type, void *msg,
 
 void _handle_response_msg_list(List other_nodes_resp, bitstr_t *tasks_started)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	ret_data_info_t *ret_data_info = NULL;
 	uint32_t msg_rc;
 
@@ -452,8 +452,9 @@ static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 {
 	int sock = -1;
 	uint16_t port;
+	uint16_t *ports;
 	eio_obj_t *obj;
-	int i;
+	int i, rc;
 	message_thread_state_t *mts;
 
 	debug("Entering _msg_thr_create()");
@@ -466,7 +467,13 @@ static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 	mts->num_resp_port = _estimate_nports(num_nodes, 48);
 	mts->resp_port = xmalloc(sizeof(uint16_t) * mts->num_resp_port);
 	for (i = 0; i < mts->num_resp_port; i++) {
-		if (net_stream_listen(&sock, &port) < 0) {
+		ports = slurm_get_srun_port_range();
+		if (ports)
+			rc = net_stream_listen_ports(&sock, &port, ports,
+						     false);
+		else
+			rc = net_stream_listen(&sock, &port);
+		if (rc < 0) {
 			error("unable to initialize step launch"
 			      " listening socket: %m");
 			goto fail;
@@ -500,7 +507,7 @@ static void _msg_thr_wait(message_thread_state_t *mts)
 static void _msg_thr_destroy(message_thread_state_t *mts)
 {
 	eio_signal_shutdown(mts->msg_handle);
-	pthread_join(mts->msg_thread, NULL);
+	slurm_thread_join(mts->msg_thread);
 	eio_handle_destroy(mts->msg_handle);
 	slurm_mutex_destroy(&mts->lock);
 	slurm_cond_destroy(&mts->cond);

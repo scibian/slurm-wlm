@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2015 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
@@ -66,6 +66,7 @@ enum {
 	SORTID_PORT,
 	SORTID_REAL_MEMORY,
 	SORTID_REASON,
+	SORTID_RES_CORES_PER_GPU,
 	SORTID_RESV_NAME,
 	SORTID_SLURMD_START_TIME,
 	SORTID_SOCKETS,
@@ -166,6 +167,9 @@ static display_data_t display_data_node[] = {
 	 EDIT_TEXTBOX, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_REASON, "Reason", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
+	{G_TYPE_INT, SORTID_RES_CORES_PER_GPU,
+	 "RestrictedCoresPerGPU", false,
+	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_RESV_NAME, "ReservationName", false,
 	 EDIT_NONE, refresh_node, create_model_node, admin_edit_node},
 	{G_TYPE_STRING, SORTID_SLURMD_START_TIME, "SlurmdStartTime", false,
@@ -213,7 +217,7 @@ static void _layout_node_record(GtkTreeView *treeview,
 	char tmp_cnt[50];
 	char tmp_current_watts[50];
 	char tmp_ave_watts[50];
-	char tmp_cap_watts[50], tmp_owner[32];
+	char tmp_owner[32];
 	char tmp_version[50];
 	char *upper = NULL, *lower = NULL;
 	GtkTreeIter iter;
@@ -435,6 +439,13 @@ static void _layout_node_record(GtkTreeView *treeview,
 				   find_col_name(display_data_node,
 						 SORTID_REASON),
 				   sview_node_info_ptr->reason);
+	convert_num_unit((float)node_ptr->res_cores_per_gpu,
+			 tmp_cnt, sizeof(tmp_cnt),
+			 UNIT_NONE, NO_VAL, working_sview_config.convert_flags);
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_node,
+						 SORTID_RES_CORES_PER_GPU),
+				   tmp_cnt);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_node,
 						 SORTID_RESV_NAME),
@@ -461,17 +472,6 @@ static void _layout_node_record(GtkTreeView *treeview,
 				   find_col_name(display_data_node,
 						 SORTID_AVE_WATTS),
 				   tmp_ave_watts);
-
-	if (!node_ptr->power || (node_ptr->power->cap_watts == NO_VAL)) {
-		snprintf(tmp_cap_watts, sizeof(tmp_cap_watts), "N/A");
-	} else {
-		snprintf(tmp_cap_watts, sizeof(tmp_cap_watts), "%u",
-			 node_ptr->power->cap_watts);
-	}
-	add_display_treestore_line(update, treestore, &iter,
-				   find_col_name(display_data_node,
-						 SORTID_CAP_WATTS),
-				   tmp_cap_watts);
 
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_node,
@@ -506,7 +506,7 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 	char tmp_mem[20], tmp_used_memory[20];
 	char tmp_used_cpus[20], tmp_cpu_load[20], tmp_free_mem[20], tmp_owner[32];
 	char tmp_current_watts[50], tmp_ave_watts[50];
-	char tmp_cap_watts[50], tmp_version[50];
+	char tmp_version[50];
 	char *tmp_state_lower, *tmp_state_upper, *tmp_state_complete;
 	char *node_alloc_tres = NULL;
 
@@ -520,13 +520,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			 "%u ", node_ptr->energy->current_watts);
 		snprintf(tmp_ave_watts, sizeof(tmp_ave_watts),
 			 "%u", node_ptr->energy->ave_watts);
-	}
-
-	if (!node_ptr->power || (node_ptr->power->cap_watts == NO_VAL)) {
-		snprintf(tmp_cap_watts, sizeof(tmp_cap_watts), "N/A");
-	} else {
-		snprintf(tmp_cap_watts, sizeof(tmp_cap_watts), "%u",
-			 node_ptr->power->cap_watts);
 	}
 
 	snprintf(tmp_cpu_load, sizeof(tmp_cpu_load), "%.2f",
@@ -566,13 +559,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 	convert_num_unit((float)idle_cpus, tmp_idle_cpus, sizeof(tmp_idle_cpus),
 			 UNIT_NONE, NO_VAL, working_sview_config.convert_flags);
 
-	if (IS_NODE_DRAIN(node_ptr)) {
-		/* don't worry about mixed since the
-		 * whole node is being drained. */
-	} else if (idle_cpus && (idle_cpus != node_ptr->cpus_efctv)) {
-		node_ptr->node_state &= NODE_STATE_FLAGS;
-		node_ptr->node_state |= NODE_STATE_MIXED;
-	}
 	tmp_state_upper = node_state_string(node_ptr->node_state);
 	tmp_state_lower = str_tolower(tmp_state_upper);
 
@@ -615,7 +601,6 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			   SORTID_BOARDS,    node_ptr->boards,
 			   SORTID_BOOT_TIME, sview_node_info_ptr->boot_time,
 			   SORTID_CLUSTER_NAME, node_ptr->cluster_name,
-			   SORTID_CAP_WATTS, tmp_cap_watts,
 			   SORTID_COLOR,
 				sview_colors[sview_node_info_ptr->pos
 				% sview_colors_cnt],
@@ -637,6 +622,8 @@ static void _update_node_record(sview_node_info_t *sview_node_info_ptr,
 			   SORTID_NODE_HOSTNAME, node_ptr->node_hostname,
 			   SORTID_OWNER,     tmp_owner,
 			   SORTID_REASON,    sview_node_info_ptr->reason,
+			   SORTID_RES_CORES_PER_GPU,
+			   node_ptr->res_cores_per_gpu,
 			   SORTID_RESV_NAME, node_ptr->resv_name,
 			   SORTID_SLURMD_START_TIME,
 				sview_node_info_ptr->slurmd_start_time,

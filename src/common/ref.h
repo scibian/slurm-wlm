@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  ref.h - Static strings reference
  *****************************************************************************
- *  Copyright (C) 2019-2020 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -81,9 +80,9 @@
 	do {                                                      \
 		char *json_data_ptr;                              \
 		static_ref_to_cstring(json_data_ptr, name);       \
-		serialize_g_string_to_data(&data, json_data_ptr,  \
-					   static_ref_size(name), \
-					   MIME_TYPE_JSON);       \
+		(void) serialize_g_string_to_data(&data,          \
+			json_data_ptr,  static_ref_size(name),    \
+			MIME_TYPE_JSON);                          \
 		xfree(json_data_ptr);                             \
 	} while (0);
 

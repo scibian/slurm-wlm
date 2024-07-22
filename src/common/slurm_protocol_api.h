@@ -52,8 +52,8 @@
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_common.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/slurm_protocol_util.h"
-#include "src/common/slurm_protocol_interface.h"
 
 #define MIN_NOALLOC_JOBID ((uint32_t) 0xffff0000)
 #define MAX_NOALLOC_JOBID ((uint32_t) 0xfffffffd)
@@ -136,27 +136,11 @@ char *slurm_get_preempt_type(void);
  */
 char *slurm_get_acct_gather_interconnect_type(void);
 
-/* slurm_get_ext_sensors_type
- * get ExtSensorsType from slurm_conf object
- * RET char *   - ext_sensors type, MUST be xfreed by caller
- */
-char *slurm_get_ext_sensors_type(void);
-
-/* slurm_get_ext_sensors_freq
- * returns the external sensors sampling frequency from the slurm_conf
- * object for requesting info from a hardware component (node, switch, etc.)
- * RET int    - external sensors sampling frequency
- */
-extern uint16_t slurm_get_ext_sensors_freq(void);
-
 /* slurm_get_select_type
  * get select_type from slurm_conf object
  * RET char *   - select_type, MUST be xfreed by caller
  */
 char *slurm_get_select_type(void);
-
-/** Return true if (remote) system runs Cray XT/XE */
-bool is_cray_select_type(void);
 
 /* slurm_get_srun_port_range()
  *
@@ -164,10 +148,6 @@ bool is_cray_select_type(void);
  * min and max ports that srun should use to listen to.
  */
 uint16_t *slurm_get_srun_port_range(void);
-
-/* slurm_get_core_spec_plugin
- * RET core_spec plugin name, must be xfreed by caller */
-char *slurm_get_core_spec_plugin(void);
 
 /*
  * slurm_get_jobcomp_type
@@ -474,7 +454,8 @@ List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout);
  * IN cluster_rec - cluster to direct msg to.
  */
 int slurm_send_reroute_msg(slurm_msg_t *msg,
-			   slurmdb_cluster_rec_t *cluster_rec);
+			   slurmdb_cluster_rec_t *cluster_rec,
+			   char *stepmgr);
 
 /*
  *  Send a message to msg->address
@@ -558,7 +539,6 @@ extern void convert_num_unit(double num, char *buf, int buf_size,
 extern int revert_num_unit(const char *buf);
 extern int get_convert_unit_val(int base_type, char convert_to);
 extern int get_unit_type(char unit);
-extern void parse_int_to_array(int in, int *out);
 
 /*
  * slurm_job_step_create - Ask the slurm controller for a new job step

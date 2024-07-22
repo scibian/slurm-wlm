@@ -40,8 +40,6 @@ libcommon_interfaces_la_SOURCES =    \
 	cred.c					\
 	data_parser.c				\
 	data_parser.h				\
-	ext_sensors.c				\
-	ext_sensors.h				\
 	gpu.c					\
 	gpu.h					\
 	gres.c					\
@@ -58,8 +56,6 @@ libcommon_interfaces_la_SOURCES =    \
 	mpi.h					\
 	node_features.c				\
 	node_features.h				\
-	power.c					\
-	power.h					\
 	prep.c					\
 	prep.h					\
 	priority.c				\
@@ -72,6 +68,8 @@ libcommon_interfaces_la_SOURCES =    \
 	site_factor.h				\
 	switch.c				\
 	switch.h				\
+	tls.c					\
+	tls.h					\
 	topology.c				\
 	topology.h
 
@@ -86,8 +84,6 @@ libslurmctld_interfaces_la_SOURCES =    \
 	sched_plugin.h
 
 libslurmd_interfaces_la_SOURCES =    \
-	core_spec.c \
-	core_spec.h \
 	job_container.c \
 	job_container.h \
 	proctrack.c \

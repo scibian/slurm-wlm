@@ -50,6 +50,8 @@
 #include "src/common/log.h"	/* for error() */
 #include "src/common/strlcpy.h"
 
+#define STACK_SIZE (1024 * 1024)
+
 #ifndef MAX
 #  define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
@@ -268,7 +270,7 @@
 			errno = err;					\
 			error("pthread_attr_setscope: %m");		\
 		}							\
-		err = pthread_attr_setstacksize(attr, 1024*1024);	\
+		err = pthread_attr_setstacksize(attr, STACK_SIZE);	\
 		if (err) {						\
 			errno = err;					\
 			error("pthread_attr_setstacksize: %m");		\
@@ -282,7 +284,7 @@
 			errno = err;					\
 			fatal("pthread_attr_init: %m");			\
 		}							\
-		err = pthread_attr_setstacksize(attr, 1024*1024);	\
+		err = pthread_attr_setstacksize(attr, STACK_SIZE);	\
 		if (err) {						\
 			errno = err;					\
 			error("pthread_attr_setstacksize: %m");		\
@@ -380,8 +382,11 @@
 #define FUZZY_EPSILON 0.00001
 #define fuzzy_equal(v1, v2) ((((v1)-(v2)) > -FUZZY_EPSILON) && (((v1)-(v2)) < FUZZY_EPSILON))
 
-/* Number of elements in an array */
+/* Number of elements in a static array */
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+
+/* Number of elements in an allocated array */
+#define PTR_ARRAY_SIZE(x) (xsize(x) / sizeof((x)[0]))
 
 #define SWAP(x, y)		\
 do {				\

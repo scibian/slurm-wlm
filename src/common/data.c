@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  data.c - generic data_t structures
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -2030,11 +2029,25 @@ extern bool data_check_match(const data_t *a, const data_t *b, bool mask)
 	_check_magic(a);
 	_check_magic(b);
 
-	if (a->type != b->type) {
-		log_flag(DATA, "type mismatch: %s(0x%"PRIXPTR") != %s(0x%"PRIXPTR")",
-			 _type_to_string(a->type), (uintptr_t) a,
-			 _type_to_string(b->type), (uintptr_t) b);
-		return false;
+	if (data_get_type(a) != data_get_type(b)) {
+		data_t *conv = data_copy(data_new(), b);
+
+		if ((a->type == TYPE_NULL) || (b->type == TYPE_NULL) ||
+		    (data_convert_type(conv, data_get_type(a)) !=
+		     data_get_type(a))) {
+			log_flag(DATA, "type mismatch: %s(0x%"PRIXPTR") != %s(0x%"PRIXPTR")",
+				 _type_to_string(a->type), (uintptr_t) a,
+				 _type_to_string(b->type), (uintptr_t) b);
+			FREE_NULL_DATA(conv);
+			return false;
+		}
+
+		rc = data_check_match(a, conv, mask);
+		log_flag(DATA, "compare: %pD %s %pD (converted from %pD)",
+		         a, (rc ? "=" : "!="), conv, b);
+
+		FREE_NULL_DATA(conv);
+		return rc;
 	}
 
 	switch (a->type) {
@@ -2110,11 +2123,15 @@ extern bool data_check_match(const data_t *a, const data_t *b, bool mask)
 			 _type_to_string(b->type), (uintptr_t) b,
 			 data_get_list_length(b));
 		return rc;
-	default:
+	case TYPE_NONE:
+		/* fall through */
+	case TYPE_START:
+		/* fall through */
+	case TYPE_MAX:
 		fatal_abort("%s: unexpected data type", __func__);
 	}
 
-	return rc;
+	fatal_abort("%s: should never run", __func__);
 }
 
 extern data_t *data_resolve_dict_path(data_t *data, const char *path)
@@ -2426,6 +2443,7 @@ extern char *data_type_to_string(data_type_t type)
 		case DATA_TYPE_BOOL:
 			return "boolean";
 		case DATA_TYPE_NONE:
+			/* fall through */
 		case DATA_TYPE_MAX:
 			return "INVALID";
 	}

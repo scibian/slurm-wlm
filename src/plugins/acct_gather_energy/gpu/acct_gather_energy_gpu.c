@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  acct_gather_energy_gpu.c - slurm energy accounting plugin for GPUs.
  *****************************************************************************
- *  Copyright (C) 2019-2021 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (c) 2019, Advanced Micro Devices, Inc. All rights reserved.
  *  Written by Advanced Micro Devices,
  *  who borrowed from the ipmi plugin of the same type
@@ -316,17 +316,15 @@ static void *_thread_gpu_run(void *no_data)
 	abs.tv_nsec = tvnow.tv_usec * 1000;
 
 	//loop until slurm stop
+	slurm_mutex_lock(&gpu_mutex);
 	while (!flag_energy_accounting_shutdown) {
-		slurm_mutex_lock(&gpu_mutex);
-
 		_thread_update_node_energy();
 
 		/* Sleep until the next time. */
 		abs.tv_sec += DEFAULT_GPU_FREQ;
 		slurm_cond_timedwait(&gpu_cond, &gpu_mutex, &abs);
-
-		slurm_mutex_unlock(&gpu_mutex);
 	}
+	slurm_mutex_unlock(&gpu_mutex);
 
 	log_flag(ENERGY, "gpu-thread: ended");
 
@@ -482,11 +480,23 @@ static int _get_joules_task(uint16_t delta)
 
 	xassert(context_id != -1);
 
+	/* If there are no gres then there is no energy to get, just return. */
+	if (!gres_get_gres_cnt())
+		return SLURM_SUCCESS;
+
 	if (slurm_get_node_energy(conf->node_name, context_id, delta, &gpu_cnt,
 				  &energies)) {
-		error("%s: can't get info from slurmd", __func__);
+		if (errno == ESLURMD_TOO_MANY_RPCS)
+			log_flag(ENERGY, "energy RPC limit reached on slurmd, request dropped");
+		else
+			error("%s: can't get info from slurmd", __func__);
 		return SLURM_ERROR;
 	}
+
+	/* If there are no gpus then there is no energy to get, just return. */
+	if (!gpu_cnt)
+		return SLURM_SUCCESS;
+
 	if (stepd_first) {
 		gpus_len = gpu_cnt;
 		gpus = xcalloc(sizeof(gpu_status_t), gpus_len);
@@ -577,16 +587,14 @@ extern int fini(void)
 	slurm_cond_signal(&launch_cond);
 	slurm_mutex_unlock(&launch_mutex);
 
-	if (thread_gpu_id_launcher)
-		pthread_join(thread_gpu_id_launcher, NULL);
+	slurm_thread_join(thread_gpu_id_launcher);
 
 	slurm_mutex_lock(&gpu_mutex);
 	/* clean up the run thread */
 	slurm_cond_signal(&gpu_cond);
 	slurm_mutex_unlock(&gpu_mutex);
 
-	if (thread_gpu_id_run)
-		pthread_join(thread_gpu_id_run, NULL);
+	slurm_thread_join(thread_gpu_id_run);
 
 	/*
 	 * We don't really want to destroy the the state, so those values
@@ -621,13 +629,13 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	xassert(running_in_slurmd_stepd());
 	switch (data_type) {
 	case ENERGY_DATA_NODE_ENERGY_UP:
-		slurm_mutex_lock(&gpu_mutex);
 		if (running_in_slurmd()) {
-			if (_thread_init() == SLURM_SUCCESS) {
-				_thread_update_node_energy();
-				_get_node_energy(energy);
-			}
+			/* Signal the thread to update node energy */
+			slurm_cond_signal(&gpu_cond);
+			slurm_mutex_lock(&gpu_mutex);
+			_get_node_energy(energy);
 		} else {
+			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 			_get_node_energy_up(energy);
 		}
@@ -659,11 +667,12 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_JOULES_TASK:
-		slurm_mutex_lock(&gpu_mutex);
 		if (running_in_slurmd()) {
-			if (_thread_init() == SLURM_SUCCESS)
-				_thread_update_node_energy();
+			/* Signal the thread to update node energy */
+			slurm_cond_signal(&gpu_cond);
+			slurm_mutex_lock(&gpu_mutex);
 		} else {
+			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 		}
 		for (i = 0; i < gpus_len; ++i)
@@ -752,7 +761,9 @@ extern void acct_gather_energy_p_conf_set(int context_id_in,
 	if (!flag_init) {
 		flag_init = true;
 		if (running_in_slurmd()) {
-			gpu_g_get_device_count((unsigned int *)&gpus_len);
+			if (gres_get_gres_cnt())
+				gpu_g_get_device_count(
+					(unsigned int *) &gpus_len);
 			if (gpus_len) {
 				gpus = xcalloc(sizeof(gpu_status_t), gpus_len);
 				slurm_thread_create(&thread_gpu_id_launcher,

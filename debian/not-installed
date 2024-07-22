@@ -2,3 +2,5 @@ debian/tmp/usr/lib/*/slurm-wlm/src/sattach/sattach.wrapper.c
 debian/tmp/usr/lib/*/slurm-wlm/src/srun/srun.wrapper.c
 debian/tmp/usr/lib/*/security/*.a
 debian/tmp/usr/lib/*/security/*.la
+debian/tmp/usr/lib/x86_64-linux-gnu/perl/5.38.2/auto/Slurm/.packlist
+debian/tmp/usr/lib/x86_64-linux-gnu/perl/5.38.2/auto/Slurmdb/.packlist

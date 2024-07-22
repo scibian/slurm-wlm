@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  as_mysql_tres.c - functions dealing with accounts.
  *****************************************************************************
- *  Copyright (C) 2015 SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -41,7 +40,7 @@
 extern int as_mysql_add_tres(mysql_conn_t *mysql_conn,
 			     uint32_t uid, List tres_list_in)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int rc = SLURM_SUCCESS;
 	slurmdb_tres_rec_t *object = NULL;
 	char *cols = NULL, *extra = NULL, *vals = NULL, *query = NULL,
@@ -169,7 +168,7 @@ extern List as_mysql_get_tres(mysql_conn_t *mysql_conn, uid_t uid,
 	char *extra = NULL;
 	char *tmp = NULL;
 	List my_tres_list = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *object = NULL;
 	int set = 0;
 	int i=0;

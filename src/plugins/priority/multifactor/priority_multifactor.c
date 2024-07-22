@@ -67,6 +67,7 @@
 #include "src/common/xstring.h"
 #include "src/interfaces/gres.h"
 
+#include "src/slurmctld/acct_policy.h"
 #include "src/slurmctld/licenses.h"
 #include "src/slurmctld/read_config.h"
 
@@ -84,6 +85,7 @@ extern void *acct_db_conn  __attribute__((weak_import));
 extern uint32_t cluster_cpus __attribute__((weak_import));
 extern List job_list  __attribute__((weak_import));
 extern time_t last_job_update __attribute__((weak_import));
+extern time_t last_part_update __attribute__((weak_import));
 extern slurm_conf_t slurm_conf __attribute__((weak_import));
 extern int slurmctld_tres_cnt __attribute__((weak_import));
 extern uint16_t accounting_enforce __attribute__((weak_import));
@@ -93,6 +95,7 @@ void *acct_db_conn = NULL;
 uint32_t cluster_cpus = NO_VAL;
 List job_list = NULL;
 time_t last_job_update = (time_t) 0;
+time_t last_part_update = (time_t) 0;
 slurm_conf_t slurm_conf;
 int slurmctld_tres_cnt = 0;
 uint16_t accounting_enforce = 0;
@@ -174,7 +177,7 @@ static void _destroy_priority_factors_obj_light(void *object)
 static int _apply_decay(double real_decay)
 {
 	int i;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
@@ -235,7 +238,7 @@ static int _apply_decay(double real_decay)
  */
 static int _reset_usage(void)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	int i;
@@ -408,7 +411,7 @@ static int _write_last_decay_ran(time_t last_ran, time_t last_reset)
 static int _set_children_usage_efctv(List children_list)
 {
 	slurmdb_assoc_rec_t *assoc = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 
 	if (!children_list || !list_count(children_list))
 		return SLURM_SUCCESS;
@@ -527,6 +530,76 @@ static double _get_tres_prio_weighted(double *tres_factors)
 	return tmp_tres;
 }
 
+typedef struct {
+	int *counter;
+	job_record_t *job_ptr;
+	char *multi_part_str;
+} part_prio_args_t;
+
+static int _priority_each_partition(void *object, void *arg)
+{
+	part_record_t *part_ptr = (part_record_t *)object;
+	part_prio_args_t *args = arg;
+	job_record_t *job_ptr = args->job_ptr;
+	char *multi_part_str = args->multi_part_str;
+	int *counter = args->counter;
+
+	double part_tres = 0.0;
+	double priority_part;
+	uint64_t tmp_64;
+
+	if (weight_tres) {
+		double part_tres_factors[slurmctld_tres_cnt];
+		memset(part_tres_factors, 0,
+		       sizeof(double) * slurmctld_tres_cnt);
+		_get_tres_factors(job_ptr, part_ptr, part_tres_factors);
+		part_tres = _get_tres_prio_weighted(part_tres_factors);
+	}
+
+	priority_part = ((flags & PRIORITY_FLAGS_NO_NORMAL_PART) ?
+			 part_ptr->priority_job_factor :
+			 part_ptr->norm_priority) *
+			 (double)weight_part;
+
+	priority_part +=
+		(job_ptr->prio_factors->priority_age
+		  + job_ptr->prio_factors->priority_assoc
+		  + job_ptr->prio_factors->priority_fs
+		  + job_ptr->prio_factors->priority_js
+		  + job_ptr->prio_factors->priority_qos
+		  + part_tres
+		  + (double)(((int64_t)job_ptr->prio_factors->priority_site)
+			     - NICE_OFFSET)
+		  - (double)(((int64_t)job_ptr->prio_factors->nice)
+			     - NICE_OFFSET));
+
+	/* Priority 0 is reserved for held jobs */
+	if (priority_part < 1)
+		priority_part = 1;
+
+	tmp_64 = (uint64_t) priority_part;
+	if (tmp_64 > 0xffffffff) {
+		error("%pJ priority '%"PRIu64"' exceeds 32 bits. Reducing it to 4294967295 (2^32 - 1)",
+		      job_ptr, tmp_64);
+		tmp_64 = 0xffffffff;
+		priority_part = (double) tmp_64;
+	}
+	if (((flags & PRIORITY_FLAGS_INCR_ONLY) == 0) ||
+	    (job_ptr->part_prio->priority_array[*counter] <
+	     (uint32_t) priority_part)) {
+		job_ptr->part_prio->priority_array[*counter] =
+			(uint32_t) priority_part;
+	}
+	if (slurm_conf.debug_flags & DEBUG_FLAG_PRIO) {
+		xstrfmtcat(multi_part_str, multi_part_str ?
+			   ", %s=%u" : "%s=%u", part_ptr->name,
+			   job_ptr->part_prio->priority_array[*counter]);
+	}
+	(*counter)++;
+	return SLURM_SUCCESS;
+}
+
+
 /* Returns the priority after applying the weight factors */
 static uint32_t _get_priority_internal(time_t start_time,
 				       job_record_t *job_ptr)
@@ -612,80 +685,48 @@ static uint32_t _get_priority_internal(time_t start_time,
 		priority = (double) tmp_64;
 	}
 
-	if (job_ptr->part_ptr_list) {
-		part_record_t *part_ptr;
-		double priority_part;
-		ListIterator part_iterator;
-		int i = 0;
+	/* Free after transitioning from multi-part job to single part job. */
+	if (!job_ptr->part_ptr_list && job_ptr->part_prio) {
+		xfree(job_ptr->part_prio->priority_array);
+		xfree(job_ptr->part_prio->priority_array_parts);
+		xfree(job_ptr->part_prio);
+	}
 
-		if (!job_ptr->priority_array) {
-			i = list_count(job_ptr->part_ptr_list) + 1;
-			job_ptr->priority_array = xcalloc(i, sizeof(uint32_t));
+	if (job_ptr->part_ptr_list) {
+		int i = 0;
+		part_prio_args_t arg;
+
+		if (!job_ptr->part_prio)
+			job_ptr->part_prio = xmalloc(sizeof(priority_parts_t));
+
+		if (job_ptr->part_prio &&
+		    (!job_ptr->part_prio->priority_array ||
+		     (job_ptr->part_prio->last_update < last_part_update))) {
+
+			xfree(job_ptr->part_prio->priority_array);
+			i = list_count(job_ptr->part_ptr_list);
+			job_ptr->part_prio->priority_array =
+				xcalloc(i, sizeof(uint32_t));
+
+			list_sort(job_ptr->part_ptr_list,
+				  priority_sort_part_tier);
+			xfree(job_ptr->part_prio->priority_array_parts);
+			job_ptr->part_prio->priority_array_parts =
+				part_list_to_xstr(job_ptr->part_ptr_list);
+
+			job_ptr->part_prio->last_update = time(NULL);
 		}
 
 		i = 0;
-		list_sort(job_ptr->part_ptr_list, priority_sort_part_tier);
-		part_iterator = list_iterator_create(job_ptr->part_ptr_list);
-		while ((part_ptr = list_next(part_iterator))) {
-			double part_tres = 0.0;
+		arg.job_ptr = job_ptr,
+		arg.multi_part_str = multi_part_str,
+		arg.counter = &i,
+		list_for_each(job_ptr->part_ptr_list, _priority_each_partition,
+			      &arg);
 
-			if (weight_tres) {
-				double part_tres_factors[slurmctld_tres_cnt];
-				memset(part_tres_factors, 0,
-				       sizeof(double) * slurmctld_tres_cnt);
-				_get_tres_factors(job_ptr, part_ptr,
-						  part_tres_factors);
-				part_tres = _get_tres_prio_weighted(
-							part_tres_factors);
-			}
-
-			priority_part =
-				((flags & PRIORITY_FLAGS_NO_NORMAL_PART) ?
-				 part_ptr->priority_job_factor :
-				 part_ptr->norm_priority) *
-				(double)weight_part;
-			priority_part +=
-				 (job_ptr->prio_factors->priority_age
-				 + job_ptr->prio_factors->priority_assoc
-				 + job_ptr->prio_factors->priority_fs
-				 + job_ptr->prio_factors->priority_js
-				 + job_ptr->prio_factors->priority_qos
-				 + part_tres
-				 + (double)
-				   (((int64_t)job_ptr->prio_factors->priority_site)
-				    - NICE_OFFSET)
-				 - (double)
-				   (((int64_t)job_ptr->prio_factors->nice)
-				    - NICE_OFFSET));
-
-			/* Priority 0 is reserved for held jobs */
-			if (priority_part < 1)
-				priority_part = 1;
-
-			tmp_64 = (uint64_t) priority_part;
-			if (tmp_64 > 0xffffffff) {
-				error("%pJ priority '%"PRIu64"' exceeds 32 bits. Reducing it to 4294967295 (2^32 - 1)",
-				      job_ptr, tmp_64);
-				tmp_64 = 0xffffffff;
-				priority_part = (double) tmp_64;
-			}
-			if (((flags & PRIORITY_FLAGS_INCR_ONLY) == 0) ||
-			    (job_ptr->priority_array[i] <
-			     (uint32_t) priority_part)) {
-				job_ptr->priority_array[i] =
-					(uint32_t) priority_part;
-			}
-			if (slurm_conf.debug_flags & DEBUG_FLAG_PRIO) {
-				xstrfmtcat(multi_part_str, multi_part_str ?
-					   ", %s=%u" : "%s=%u", part_ptr->name,
-					   job_ptr->priority_array[i]);
-			}
-			i++;
-		}
 		log_flag(PRIO, "%pJ multi-partition priorities: %s",
 			 job_ptr, multi_part_str);
 		xfree(multi_part_str);
-		list_iterator_destroy(part_iterator);
 	}
 
 	if (slurm_conf.debug_flags & DEBUG_FLAG_PRIO) {
@@ -813,13 +854,21 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 
 static void _handle_qos_tres_run_secs(long double *tres_run_decay,
 				      uint64_t *tres_run_delta,
-				      uint32_t job_id,
+				      job_record_t *job_ptr,
 				      slurmdb_qos_rec_t *qos)
 {
+	slurmdb_used_limits_t *used_limits_a = NULL;
+	slurmdb_used_limits_t *used_limits_u = NULL;
+
 	int i;
 
 	if (!qos || !(accounting_enforce & ACCOUNTING_ENFORCE_LIMITS))
 		return;
+
+	used_limits_a = acct_policy_get_acct_used_limits(
+		&qos->usage->acct_limit_list, job_ptr->assoc_ptr->acct);
+	used_limits_u = acct_policy_get_user_used_limits(
+		&qos->usage->user_limit_list, job_ptr->user_id);
 
 	for (i=0; i<slurmctld_tres_cnt; i++) {
 		if (i == TRES_ARRAY_ENERGY)
@@ -833,7 +882,7 @@ static void _handle_qos_tres_run_secs(long double *tres_run_decay,
 			      "QOS %s TRES %s grp_used_tres_run_secs "
 			      "underflow, tried to remove %"PRIu64" seconds "
 			      "when only %"PRIu64" remained.",
-			      job_id,
+			      job_ptr->job_id,
 			      qos->name,
 			      assoc_mgr_tres_name_array[i],
 			      tres_run_delta[i],
@@ -844,9 +893,48 @@ static void _handle_qos_tres_run_secs(long double *tres_run_decay,
 				tres_run_delta[i];
 
 		log_flag(PRIO, "%s: job %u: Removed %"PRIu64" unused seconds from QOS %s TRES %s grp_used_tres_run_secs = %"PRIu64,
-			 __func__, job_id, tres_run_delta[i], qos->name,
+			 __func__, job_ptr->job_id, tres_run_delta[i], qos->name,
 			 assoc_mgr_tres_name_array[i],
 			 qos->usage->grp_used_tres_run_secs[i]);
+
+		if (tres_run_delta[i] >
+		    used_limits_a->tres_run_secs[i]) {
+			error("_handle_qos_tres_run_secs: job %u: "
+			      "QOS %s TRES %s account used limit tres_run_secs "
+			      "underflow, tried to remove %"PRIu64" seconds "
+			      "when only %"PRIu64" remained.",
+			      job_ptr->job_id,
+			      qos->name,
+			      assoc_mgr_tres_name_array[i],
+			      tres_run_delta[i],
+			      used_limits_a->tres_run_secs[i]);
+			used_limits_a->tres_run_secs[i] = 0;
+		} else
+			used_limits_a->tres_run_secs[i] -=
+				tres_run_delta[i];
+
+		log_flag(PRIO, "%s: job %u: Removed %"PRIu64" unused seconds from QOS %s TRES %s user used limit tres_run_secs = %"PRIu64,
+			 __func__, job_ptr->job_id, tres_run_delta[i], qos->name,
+			 assoc_mgr_tres_name_array[i],
+			 used_limits_a->tres_run_secs[i]);
+
+		if (tres_run_delta[i] >
+		    used_limits_u->tres_run_secs[i]) {
+			error("_handle_qos_tres_run_secs: job %u: QOS %s TRES %s user used limit tres_run_secs underflow, tried to remove %"PRIu64" seconds when only %"PRIu64" remained.",
+			      job_ptr->job_id,
+			      qos->name,
+			      assoc_mgr_tres_name_array[i],
+			      tres_run_delta[i],
+			      used_limits_u->tres_run_secs[i]);
+			used_limits_u->tres_run_secs[i] = 0;
+		} else
+			used_limits_u->tres_run_secs[i] -=
+				tres_run_delta[i];
+
+		log_flag(PRIO, "%s: job %u: Removed %"PRIu64" unused seconds from QOS %s TRES %s account used limit tres_run_secs = %"PRIu64,
+			 __func__, job_ptr->job_id, tres_run_delta[i], qos->name,
+			 assoc_mgr_tres_name_array[i],
+			 used_limits_a->tres_run_secs[i]);
 	}
 }
 
@@ -896,12 +984,12 @@ static void _handle_tres_run_secs(uint64_t *tres_run_delta,
 	slurmdb_assoc_rec_t *assoc = job_ptr->assoc_ptr;
 
 	_handle_qos_tres_run_secs(NULL, tres_run_delta,
-				  job_ptr->job_id, job_ptr->qos_ptr);
+				  job_ptr, job_ptr->qos_ptr);
 
 	/* Only update partition qos if not being used by job */
 	if (job_ptr->part_ptr &&
 	    (job_ptr->part_ptr->qos_ptr != job_ptr->qos_ptr))
-		_handle_qos_tres_run_secs(NULL, tres_run_delta, job_ptr->job_id,
+		_handle_qos_tres_run_secs(NULL, tres_run_delta, job_ptr,
 					  job_ptr->part_ptr->qos_ptr);
 
 	while (assoc) {
@@ -925,7 +1013,7 @@ static void _handle_tres_run_secs(uint64_t *tres_run_delta,
 static void _init_grp_used_tres_run_secs(time_t last_ran)
 {
 	job_record_t *job_ptr = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK,
 				   READ_LOCK, NO_LOCK, NO_LOCK };
 	slurmctld_lock_t job_read_lock =
@@ -1131,14 +1219,14 @@ static int _apply_new_usage(job_record_t *job_ptr, time_t start_period,
 
 			_handle_qos_tres_run_secs(tres_run_nodecay,
 						  tres_run_delta,
-						  job_ptr->job_id, qos);
+						  job_ptr, qos);
 		} else {
 			qos->usage->grp_used_wall += run_decay;
 			qos->usage->usage_raw += (long double)real_decay;
 
 			_handle_qos_tres_run_secs(tres_run_decay,
 						  tres_run_delta,
-						  job_ptr->job_id, qos);
+						  job_ptr, qos);
 		}
 	}
 
@@ -1162,14 +1250,14 @@ static int _apply_new_usage(job_record_t *job_ptr, time_t start_period,
 
 			_handle_qos_tres_run_secs(tres_run_nodecay,
 						  tres_run_delta,
-						  job_ptr->job_id, qos);
+						  job_ptr, qos);
 		} else {
 			qos->usage->grp_used_wall += run_decay;
 			qos->usage->usage_raw += (long double)real_decay;
 
 			_handle_qos_tres_run_secs(tres_run_decay,
 						  tres_run_delta,
-						  job_ptr->job_id, qos);
+						  job_ptr, qos);
 		}
 	}
 
@@ -1413,110 +1501,6 @@ static priority_factors_object_t *_create_prio_factors_obj(
 	return obj;
 }
 
-/* this function can be removed 2 versions after 23.02 */
-/* If the specified job record satisfies the filter specifications in req_msg
- * and part_ptr_list (partition name filters), then add its priority specs
- * to ret_list */
-static void _filter_job(job_record_t *job_ptr,
-			priority_factors_request_msg_t *req_msg,
-			List part_ptr_list, List ret_list)
-{
-	part_record_t *job_part_ptr = NULL, *filter_part_ptr = NULL;
-	List req_job_list, req_user_list;
-	int filter = 0;
-	ListIterator iterator, job_iter, filter_iter;
-	uint32_t *job_id;
-	uint32_t *user_id;
-
-	/* Filter by job ID */
-	req_job_list = req_msg->job_id_list;
-	if (req_job_list) {
-		filter = 1;
-		iterator = list_iterator_create(req_job_list);
-		while ((job_id = list_next(iterator))) {
-			if (*job_id == job_ptr->job_id) {
-				filter = 0;
-				break;
-			}
-		}
-		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return;
-	}
-
-	/* Filter by user/UID */
-	req_user_list = req_msg->uid_list;
-	if (req_user_list) {
-		filter = 1;
-		iterator = list_iterator_create(req_user_list);
-		while ((user_id = list_next(iterator))) {
-			if (*user_id == job_ptr->user_id) {
-				filter = 0;
-				break;
-			}
-		}
-		list_iterator_destroy(iterator);
-		if (filter == 1)
-			return;
-	}
-
-	/*
-	 * Job is not in any partition, so there is nothing to return.
-	 * This can happen if the Partition was deleted, CALCULATE_RUNNING
-	 * is enabled, and this job is still waiting out MinJobAge before
-	 * being removed from the system.
-	 */
-	if (!job_ptr->part_ptr && !job_ptr->part_ptr_list)
-		return;
-
-	/* Filter by partition, job in one partition */
-	if (!job_ptr->part_ptr_list) {
-		job_part_ptr =  job_ptr->part_ptr;
-		filter = 0;
-		if (part_ptr_list) {
-			filter = 1;
-			filter_iter = list_iterator_create(part_ptr_list);
-			while ((filter_part_ptr = list_next(filter_iter))) {
-				if (filter_part_ptr == job_part_ptr) {
-					filter = 0;
-					break;
-				}
-			}
-			list_iterator_destroy(filter_iter);
-		}
-
-		if (filter == 0) {
-			list_append(ret_list,
-				    _create_prio_factors_obj(job_ptr, NULL));
-		}
-		return;
-	}
-
-	/* Filter by partition, job in multiple partitions */
-	job_iter = list_iterator_create(job_ptr->part_ptr_list);
-	while ((job_part_ptr = list_next(job_iter))) {
-		filter = 0;
-		if (part_ptr_list) {
-			filter = 1;
-			filter_iter = list_iterator_create(part_ptr_list);
-			while ((filter_part_ptr = list_next(filter_iter))) {
-				if (filter_part_ptr == job_part_ptr) {
-					filter = 0;
-					break;
-				}
-			}
-			list_iterator_destroy(filter_iter);
-		}
-
-		if (filter == 0) {
-			list_append(ret_list,
-				    _create_prio_factors_obj(job_ptr,
-							     job_part_ptr));
-		}
-	}
-	list_iterator_destroy(job_iter);
-}
-
 static void _internal_setup(void)
 {
 	damp_factor = (long double) slurm_conf.fs_dampening_factor;
@@ -1551,7 +1535,7 @@ static void _internal_setup(void)
  */
 static void _set_norm_shares(List children_list)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 
 	if (!children_list || list_is_empty(children_list))
@@ -1617,7 +1601,7 @@ static void _depth_oblivious_set_usage_efctv(slurmdb_assoc_rec_t *assoc)
 {
 	long double ratio_p, ratio_l, k, f, ratio_s;
 	slurmdb_assoc_rec_t *parent_assoc = NULL;
-	ListIterator sib_itr = NULL;
+	list_itr_t *sib_itr = NULL;
 	slurmdb_assoc_rec_t *sibling = NULL;
 	char *child;
 	char *child_str;
@@ -1799,8 +1783,7 @@ int fini ( void )
 	slurm_mutex_unlock(&decay_lock);
 
 	/* Now join outside the lock */
-	if (decay_handler_thread)
-		pthread_join(decay_handler_thread, NULL);
+	slurm_thread_join(decay_handler_thread);
 
 	site_factor_g_fini();
 
@@ -1860,8 +1843,6 @@ extern void priority_p_reconfig(bool assoc_clear)
 	if (assoc_clear)
 		_init_grp_used_tres_run_secs(g_last_ran);
 
-	site_factor_g_reconfig();
-
 	debug2("%s reconfigured", plugin_name);
 
 	return;
@@ -1919,32 +1900,17 @@ extern double priority_p_calc_fs_factor(long double usage_efctv,
 	return priority_fs;
 }
 
-/* req_msg can be removed 2 versions after 23.02 */
-extern List priority_p_get_priority_factors_list(
-	priority_factors_request_msg_t *req_msg, uid_t uid)
+extern List priority_p_get_priority_factors_list(uid_t uid)
 {
-	List ret_list = NULL, part_filter_list = NULL;
-	ListIterator itr, job_iter;
+	List ret_list = NULL;
+	list_itr_t *itr, *job_iter;
 	job_record_t *job_ptr = NULL;
-	part_record_t *part_ptr, *job_part_ptr = NULL;
+	part_record_t *job_part_ptr = NULL;
 	time_t start_time = time(NULL);
-	char *part_str, *tok, *last = NULL;
 
 	xassert(verify_lock(JOB_LOCK, READ_LOCK));
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 	xassert(verify_lock(PART_LOCK, READ_LOCK));
-
-	if (req_msg && req_msg->partitions) {
-		part_filter_list = list_create(NULL);
-		part_str = xstrdup(req_msg->partitions);
-		tok = strtok_r(part_str, ",", &last);
-		while (tok) {
-			if ((part_ptr = find_part_record(tok)))
-				list_append(part_filter_list, part_ptr);
-			tok = strtok_r(NULL, ",", &last);
-		}
-		xfree(part_str);
-	}
 
 	if (job_list && list_count(job_list)) {
 		time_t use_time;
@@ -1989,13 +1955,6 @@ extern List priority_p_get_priority_factors_list(
 						     false) != 0))))
 				continue;
 
-			/* this can be removed 2 versions after 23.02 */
-			if(req_msg) {
-				_filter_job(job_ptr, req_msg, part_filter_list,
-					    ret_list);
-				continue;
-			}
-
 			/*
 			 * Job is not in any partition, so there is nothing to
 			 * return. This can happen if the Partition was deleted,
@@ -2027,7 +1986,6 @@ extern List priority_p_get_priority_factors_list(
 		if (!list_count(ret_list))
 			FREE_NULL_LIST(ret_list);
 	}
-	FREE_NULL_LIST(part_filter_list);
 
 	return ret_list;
 }

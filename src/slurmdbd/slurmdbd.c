@@ -68,6 +68,7 @@
 #include "src/common/xstring.h"
 
 #include "src/interfaces/hash.h"
+#include "src/interfaces/tls.h"
 
 #include "src/slurmdbd/read_config.h"
 #include "src/slurmdbd/rpc_mgr.h"
@@ -154,6 +155,13 @@ int main(int argc, char **argv)
 	_become_slurm_user();
 
 	/*
+	 * This must happen before we spawn any threads
+	* which are not designed to handle them
+	*/
+	if (xsignal_block(dbd_sigarray) < 0)
+		error("Unable to block signals");
+
+	/*
 	 * Do plugin init's after _init_pidfile so systemd is happy as
 	 * acct_storage_g_init() could take a long time to finish if running
 	 * for the first time after an upgrade.
@@ -163,6 +171,9 @@ int main(int argc, char **argv)
 	}
 	if (hash_g_init() != SLURM_SUCCESS) {
 		fatal("failed to initialize hash plugin");
+	}
+	if (tls_g_init() != SLURM_SUCCESS) {
+		fatal("Failed to initialize tls plugin");
 	}
 	if (acct_storage_g_init() != SLURM_SUCCESS) {
 		fatal("Unable to initialize %s accounting storage plugin",
@@ -178,9 +189,6 @@ int main(int argc, char **argv)
 	if (prctl(PR_SET_DUMPABLE, 1) < 0)
 		debug ("Unable to set dumpable to 1");
 #endif /* PR_SET_DUMPABLE */
-
-	if (xsignal_block(dbd_sigarray) < 0)
-		error("Unable to block signals");
 
 	/* Create attached thread for signal handling */
 	slurm_thread_create(&signal_handler_thread, _signal_handler, NULL);
@@ -276,14 +284,8 @@ int main(int argc, char **argv)
 		acct_storage_g_commit(db_conn, 1);
 
 		/* this is only ran if not backup */
-		if (rollup_handler_thread) {
-			pthread_join(rollup_handler_thread, NULL);
-			rollup_handler_thread = 0;
-		}
-		if (rpc_handler_thread) {
-			pthread_join(rpc_handler_thread, NULL);
-			rpc_handler_thread = 0;
-		}
+		slurm_thread_join(rollup_handler_thread);
+		slurm_thread_join(rpc_handler_thread);
 
 		if (backup && primary_resumed && !restart_backup) {
 			shutdown_time = 0;
@@ -297,10 +299,9 @@ int main(int argc, char **argv)
 
 end_it:
 
-	if (signal_handler_thread && (!backup || !restart_backup))
-		pthread_join(signal_handler_thread, NULL);
-	if (commit_handler_thread)
-		pthread_join(commit_handler_thread, NULL);
+	if (!backup || !restart_backup)
+		slurm_thread_join(signal_handler_thread);
+	slurm_thread_join(commit_handler_thread);
 
 	acct_storage_g_commit(db_conn, 1);
 	acct_storage_g_close_connection(&db_conn);
@@ -324,6 +325,7 @@ end_it:
 	acct_storage_g_fini();
 	auth_g_fini();
 	hash_g_fini();
+	tls_g_fini();
 	log_fini();
 	free_slurmdbd_conf();
 	slurm_mutex_lock(&rpc_mutex);
@@ -343,7 +345,7 @@ extern void reconfig(void)
 extern void handle_rollup_stats(List rollup_stats_list,
 				long delta_time, int type)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_rollup_stats_t *rollup_stats, *rpc_rollup_stats;
 
 	xassert(type < DBD_ROLLUP_COUNT);
@@ -677,7 +679,7 @@ static void _request_registrations(void *db_conn)
 {
 	List cluster_list = acct_storage_g_get_clusters(
 		db_conn, getuid(), NULL);
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *cluster_rec = NULL;
 
 	if (!cluster_list)
@@ -805,7 +807,7 @@ static void _commit_handler_cancel()
 /* _commit_handler - Process commit's of registered clusters */
 static void *_commit_handler(void *db_conn)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdbd_conn_t *slurmdbd_conn;
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);

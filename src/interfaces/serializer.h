@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  serializer plugin interface
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -92,7 +91,7 @@ extern int serialize_g_string_to_data(data_t **dest, const char *src,
 extern const char *resolve_mime_type(const char *mime_type,
 				     const char **plugin_ptr);
 
-/* Provide ptr to NULL terminated array of all supported mimetypes */
+/* Provide ptr to NULL terminated array of primary mime_type per plugin */
 extern const char **get_mime_type_array(void);
 
 /*

@@ -391,7 +391,7 @@ char *auth_p_get_host(auth_credential_t *cred)
 		/* at this point, the name lookup failed */
 		hostname = xmalloc(INET_ADDRSTRLEN);
 		slurm_get_ip_str(&addr, hostname, INET_ADDRSTRLEN);
-		if (!(slurm_conf.conf_flags & CTL_CONF_IPV6_ENABLED))
+		if (!(slurm_conf.conf_flags & CONF_FLAG_IPV6_ENABLED))
 			error("%s: Lookup failed for %s", __func__, hostname);
 	}
 
@@ -607,10 +607,9 @@ static void _print_cred(munge_ctx_t ctx)
 		info("DECODED: %s", slurm_ctime2_r(&decoded, buf));
 }
 
-
 /*
  * auth/munge does not support user aliasing. Only permit this call from the
- * same user (which means no internal state changes are necessary.
+ * same user (which means no internal state changes are necessary).
  */
 int auth_p_thread_config(const char *token, const char *username)
 {

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parsers.c - Slurm data parsers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -443,8 +442,28 @@ extern void check_parser_funcname(const parser_t *const parser,
 
 	xassert(parser->model > PARSER_MODEL_INVALID);
 	xassert(parser->model < PARSER_MODEL_MAX);
-	xassert(parser->size > 0);
 	xassert(parser->obj_type_string && parser->obj_type_string[0]);
+
+	if (parser->model == PARSER_MODEL_ARRAY_REMOVED_FIELD) {
+		xassert(!parser->size);
+		xassert(!parser->field_name);
+		xassert(parser->ptr_offset == NO_VAL);
+		xassert(parser->key && parser->key[0]);
+		xassert(parser->deprecated);
+		xassert(!parser->flag_bit_array_count);
+		xassert(parser->type_string && parser->type_string[0]);
+		xassert(parser->list_type == DATA_PARSER_TYPE_INVALID);
+		xassert(!parser->fields);
+		xassert(!parser->field_count);
+		xassert(!parser->parse);
+		xassert(!parser->dump);
+		xassert(!parser->pointer_type);
+		xassert(!parser->array_type);
+		xassert(parser->obj_openapi == OPENAPI_FORMAT_INVALID);
+		return;
+	}
+
+	xassert(parser->size > 0);
 
 	if (parser->model == PARSER_MODEL_ARRAY_SKIP_FIELD) {
 		/* field is only a place holder so most assert()s dont apply */
@@ -523,7 +542,7 @@ extern void check_parser_funcname(const parser_t *const parser,
 		xassert(parser->fields);
 		xassert(!parser->pointer_type);
 		xassert(!parser->array_type);
-		xassert(!parser->obj_openapi);
+		xassert(parser->obj_openapi == OPENAPI_FORMAT_OBJECT);
 
 		for (int i = 0; i < parser->field_count; i++) {
 			/* recursively check the child parsers */
@@ -615,6 +634,8 @@ extern void check_parser_funcname(const parser_t *const parser,
 			fatal_abort("linked parsers must not link to other linked parsers");
 		case PARSER_MODEL_ARRAY_SKIP_FIELD:
 			fatal_abort("linked parsers must not link to a skip parsers");
+		case PARSER_MODEL_ARRAY_REMOVED_FIELD:
+			fatal_abort("linked parsers must not link to a removed parser");
 		case PARSER_MODEL_INVALID:
 		case PARSER_MODEL_MAX:
 			fatal_abort("invalid model");
@@ -1268,7 +1289,7 @@ static int _foreach_list_per_tres_type_nct(void *x, void *arg)
 		xassert(!tres_nct->count);
 		tres_nct->count = tres->count;
 		return 1;
-	default :
+	default:
 		fatal("%s: unexpected type", __func__);
 	}
 }
@@ -1500,26 +1521,15 @@ static int PARSE_FUNC(SELECT_PLUGIN_ID)(const parser_t *const parser, void *obj,
 					data_t *src, args_t *args,
 					data_t *parent_path)
 {
-	int *id = obj;
-
-	if (data_get_type(src) == DATA_TYPE_NULL)
-		return ESLURM_PLUGIN_INVALID;
-	else if (data_convert_type(src, DATA_TYPE_STRING) == DATA_TYPE_STRING &&
-		 (*id = select_string_to_plugin_id(data_get_string(src)) > 0))
-		return SLURM_SUCCESS;
-
-	return ESLURM_DATA_CONV_FAILED;
+	/* select plugin removed - no-op place holder */
+	return SLURM_SUCCESS;
 }
 
 static int DUMP_FUNC(SELECT_PLUGIN_ID)(const parser_t *const parser, void *obj,
 				       data_t *dst, args_t *args)
 {
-	int *id = obj;
-	char *s = select_plugin_id_to_string(*id);
-
-	if (s) {
-		data_set_string(dst, s);
-	} else
+	/* select plugin removed - default to empty string */
+	if (!is_complex_mode(args))
 		data_set_string(dst, "");
 
 	return SLURM_SUCCESS;
@@ -1797,7 +1807,7 @@ static int DUMP_FUNC(JOB_REASON)(const parser_t *const parser, void *obj,
 {
 	uint32_t *state = obj;
 
-	data_set_string(dst, job_reason_string(*state));
+	data_set_string(dst, job_state_reason_string(*state));
 
 	return SLURM_SUCCESS;
 }
@@ -4409,6 +4419,27 @@ static int DUMP_FUNC(JOB_DESC_MSG_CPU_FREQ)(const parser_t *const parser,
 	return SLURM_SUCCESS;
 }
 
+static int PARSE_FUNC(JOB_DESC_MSG_CRON_ENTRY)(const parser_t *const parser,
+					       void *obj, data_t *src,
+					       args_t *args,
+					       data_t *parent_path)
+{
+	char *path = NULL;
+	on_warn(PARSING, parser->type, args,
+		set_source_path(&path, args, parent_path), __func__,
+		"crontab submissions are not supported");
+	xfree(path);
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(JOB_DESC_MSG_CRON_ENTRY)(const parser_t *const parser,
+					      void *obj, data_t *dst,
+					      args_t *args)
+{
+	cron_entry_t **cron_entry = obj;
+	return DUMP(CRON_ENTRY_PTR, *cron_entry, dst, args);
+}
+
 static int PARSE_FUNC(JOB_DESC_MSG_ENV)(const parser_t *const parser, void *obj,
 					data_t *src, args_t *args,
 					data_t *parent_path)
@@ -5935,6 +5966,72 @@ static int DUMP_FUNC(JOB_STATE_RESP_JOB_JOB_ID)(const parser_t *const parser,
 	return rc;
 }
 
+static int PARSE_FUNC(EXT_SENSORS_DATA)(const parser_t *const parser, void *obj,
+					data_t *src, args_t *args,
+					data_t *parent_path)
+{
+	/* ext_sensors_data_t removed - no-op place holder */
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(EXT_SENSORS_DATA)(const parser_t *const parser, void *obj,
+				       data_t *dst, args_t *args)
+{
+	data_set_dict(dst);
+	return SLURM_SUCCESS;
+}
+
+static void SPEC_FUNC(EXT_SENSORS_DATA)(const parser_t *const parser,
+					args_t *args, data_t *spec, data_t *dst)
+{
+	(void) set_openapi_props(dst, OPENAPI_FORMAT_OBJECT, "removed field");
+	data_set_bool(data_key_set(dst, "deprecated"), true);
+}
+
+static int PARSE_FUNC(POWER_FLAGS)(const parser_t *const parser, void *obj,
+				   data_t *src, args_t *args,
+				   data_t *parent_path)
+{
+	/* SLURM_POWER_FLAGS_* removed - no-op place holder */
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(POWER_FLAGS)(const parser_t *const parser, void *obj,
+				  data_t *dst, args_t *args)
+{
+	data_set_list(dst);
+	return SLURM_SUCCESS;
+}
+
+static void SPEC_FUNC(POWER_FLAGS)(const parser_t *const parser, args_t *args,
+				   data_t *spec, data_t *dst)
+{
+	(void) set_openapi_props(dst, OPENAPI_FORMAT_ARRAY, "removed field");
+	data_set_bool(data_key_set(dst, "deprecated"), true);
+}
+
+static int PARSE_FUNC(POWER_MGMT_DATA)(const parser_t *const parser, void *obj,
+				       data_t *src, args_t *args,
+				       data_t *parent_path)
+{
+	/* power_mgmt_data_t removed - no-op place holder */
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(POWER_MGMT_DATA)(const parser_t *const parser, void *obj,
+				      data_t *dst, args_t *args)
+{
+	data_set_dict(dst);
+	return SLURM_SUCCESS;
+}
+
+static void SPEC_FUNC(POWER_MGMT_DATA)(const parser_t *const parser,
+				       args_t *args, data_t *spec, data_t *dst)
+{
+	(void) set_openapi_props(dst, OPENAPI_FORMAT_OBJECT, "removed field");
+	data_set_bool(data_key_set(dst, "deprecated"), true);
+}
+
 static void *NEW_FUNC(KILL_JOBS_MSG)(void)
 {
 	kill_jobs_msg_t *msg = xmalloc_nz(sizeof(*msg));
@@ -6108,6 +6205,90 @@ static int DUMP_FUNC(KILL_JOBS_RESP_MSG)(const parser_t *const parser,
 	return rc;
 }
 
+static int PARSE_FUNC(ACCOUNT_CONDITION_WITH_ASSOC_V40)(
+	const parser_t *const parser, void *obj, data_t *src, args_t *args,
+	data_t *parent_path)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag;
+	int rc;
+
+	if ((rc = PARSE(BOOL, flag, src, parent_path, args)))
+		return rc;
+
+	if (flag)
+		cond->flags |= SLURMDB_ACCT_FLAG_WASSOC;
+	else
+		cond->flags &= SLURMDB_ACCT_FLAG_WASSOC;
+
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(ACCOUNT_CONDITION_WITH_ASSOC_V40)(
+	const parser_t *const parser, void *obj, data_t *dst, args_t *args)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag = cond->flags & SLURMDB_ACCT_FLAG_WASSOC;
+
+	return DUMP(BOOL, flag, dst, args);
+}
+
+static int PARSE_FUNC(ACCOUNT_CONDITION_WITH_WCOORD_V40)(
+	const parser_t *const parser, void *obj, data_t *src, args_t *args,
+	data_t *parent_path)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag;
+	int rc;
+
+	if ((rc = PARSE(BOOL, flag, src, parent_path, args)))
+		return rc;
+
+	if (flag)
+		cond->flags |= SLURMDB_ACCT_FLAG_WCOORD;
+	else
+		cond->flags &= SLURMDB_ACCT_FLAG_WCOORD;
+
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(ACCOUNT_CONDITION_WITH_WCOORD_V40)(
+	const parser_t *const parser, void *obj, data_t *dst, args_t *args)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag = cond->flags & SLURMDB_ACCT_FLAG_WCOORD;
+
+	return DUMP(BOOL, flag, dst, args);
+}
+
+static int PARSE_FUNC(ACCOUNT_CONDITION_WITH_DELETED_V40)(
+	const parser_t *const parser, void *obj, data_t *src, args_t *args,
+	data_t *parent_path)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag;
+	int rc;
+
+	if ((rc = PARSE(BOOL, flag, src, parent_path, args)))
+		return rc;
+
+	if (flag)
+		cond->flags |= SLURMDB_ACCT_FLAG_DELETED;
+	else
+		cond->flags &= SLURMDB_ACCT_FLAG_DELETED;
+
+	return SLURM_SUCCESS;
+}
+
+static int DUMP_FUNC(ACCOUNT_CONDITION_WITH_DELETED_V40)(
+	const parser_t *const parser, void *obj, data_t *dst, args_t *args)
+{
+	slurmdb_account_cond_t *cond = obj;
+	bool flag = cond->flags & SLURMDB_ACCT_FLAG_DELETED;
+
+	return DUMP(BOOL, flag, dst, args);
+}
+
 /*
  * The following struct arrays are not following the normal Slurm style but are
  * instead being treated as piles of data instead of code.
@@ -6144,6 +6325,20 @@ static int DUMP_FUNC(KILL_JOBS_RESP_MSG)(const parser_t *const parser,
 	.obj_desc = desc,                                                 \
 	.obj_type_string = XSTRINGIFY(stype),                             \
 	.size = sizeof(((stype *) NULL)->field),                          \
+	.needs = NEED_NONE,                                               \
+	.deprecated = deprec,                                             \
+}
+#define add_parser_removed(stype, mtype, req, path, desc, deprec)                                        \
+{                                                                         \
+	.magic = MAGIC_PARSER,                                            \
+	.model = PARSER_MODEL_ARRAY_REMOVED_FIELD,                        \
+	.ptr_offset = NO_VAL,                                             \
+	.key = path,                                                      \
+	.required = req,                                                  \
+	.type = DATA_PARSER_ ## mtype,                                    \
+	.type_string = XSTRINGIFY(DATA_PARSER_ ## mtype),                 \
+	.obj_desc = desc,                                                 \
+	.obj_type_string = XSTRINGIFY(stype),                             \
 	.needs = NEED_NONE,                                               \
 	.deprecated = deprec,                                             \
 }
@@ -6848,7 +7043,6 @@ static const flag_bit_t PARSER_FLAG_ARRAY(CLUSTER_REC_FLAGS)[] = {
 	add_flag_bit(CLUSTER_FLAG_REGISTER, "REGISTERING"),
 	add_flag_bit(CLUSTER_FLAG_MULTSD, "MULTIPLE_SLURMD"),
 	add_flag_bit(CLUSTER_FLAG_FE, "FRONT_END"),
-	add_flag_bit(CLUSTER_FLAG_CRAY, "CRAY_NATIVE"),
 	add_flag_bit(CLUSTER_FLAG_FED, "FEDERATION"),
 	add_flag_bit(CLUSTER_FLAG_EXT, "EXTERNAL"),
 };
@@ -6857,6 +7051,8 @@ static const flag_bit_t PARSER_FLAG_ARRAY(CLUSTER_REC_FLAGS)[] = {
 	add_parser_skip(slurmdb_cluster_rec_t, field)
 #define add_parse(mtype, field, path, desc) \
 	add_parser(slurmdb_cluster_rec_t, mtype, false, field, 0, path, desc)
+#define add_removed(mtype, path, desc, deprec) \
+	add_parser_removed(slurmdb_cluster_rec_t, mtype, false, path, desc, deprec)
 /* should mirror the structure of slurmdb_cluster_rec_t */
 static const parser_t PARSER_ARRAY(CLUSTER_REC)[] = {
 	add_skip(classification), /* to be deprecated */
@@ -6870,7 +7066,7 @@ static const parser_t PARSER_ARRAY(CLUSTER_REC)[] = {
 	add_skip(lock), /* not packed */
 	add_parse(STRING, name, "name", NULL),
 	add_parse(STRING, nodes, "nodes", NULL),
-	add_parse(SELECT_PLUGIN_ID, plugin_id_select, "select_plugin", NULL),
+	add_removed(SELECT_PLUGIN_ID, "select_plugin", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(ASSOC_SHORT_PTR, root_assoc, "associations/root", NULL),
 	add_parse(UINT16, rpc_version, "rpc_version", NULL),
 	add_skip(send_rpc), /* not packed */
@@ -6878,6 +7074,7 @@ static const parser_t PARSER_ARRAY(CLUSTER_REC)[] = {
 };
 #undef add_parse
 #undef add_skip
+#undef add_removed
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(slurmdb_cluster_accounting_rec_t, mtype, false, field, 0, path, desc)
@@ -7052,7 +7249,6 @@ static const flag_bit_t PARSER_FLAG_ARRAY(NODE_STATES)[] = {
 	add_flag_equal(NODE_STATE_ERROR, NODE_STATE_BASE, "ERROR"),
 	add_flag_equal(NODE_STATE_MIXED, NODE_STATE_BASE, "MIXED"),
 	add_flag_equal(NODE_STATE_FUTURE, NODE_STATE_BASE, "FUTURE"),
-	add_flag_masked_bit(NODE_STATE_NET, NODE_STATE_FLAGS, "PERFCTRS"),
 	add_flag_masked_bit(NODE_STATE_RES, NODE_STATE_FLAGS, "RESERVED"),
 	add_flag_masked_bit(NODE_STATE_UNDRAIN, NODE_STATE_FLAGS, "UNDRAIN"),
 	add_flag_masked_bit(NODE_STATE_CLOUD, NODE_STATE_FLAGS, "CLOUD"),
@@ -7089,6 +7285,8 @@ static const flag_bit_t PARSER_FLAG_ARRAY(PARTITION_STATES)[] = {
 	add_parser(node_info_t, mtype, false, field, 0, path, desc)
 #define add_cparse(mtype, path, desc) \
 	add_complex_parser(node_info_t, mtype, false, path, desc)
+#define add_removed(mtype, path, desc, deprec) \
+	add_parser_removed(node_info_t, mtype, false, path, desc, deprec)
 static const parser_t PARSER_ARRAY(NODE)[] = {
 	add_parse(STRING, arch, "architecture", NULL),
 	add_parse(STRING, bcast_address, "burstbuffer_network_address", NULL),
@@ -7104,9 +7302,9 @@ static const parser_t PARSER_ARRAY(NODE)[] = {
 	add_parse(UINT16, cpus_efctv, "effective_cpus", NULL),
 	add_parse(STRING, cpu_spec_list, "specialized_cpus", NULL),
 	add_parse(ACCT_GATHER_ENERGY_PTR, energy, "energy", NULL),
-	add_parse(EXT_SENSORS_DATA_PTR, ext_sensors, "external_sensors", NULL),
+	add_removed(EXT_SENSORS_DATA_PTR, "external_sensors", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(STRING, extra, "extra", NULL),
-	add_parse(POWER_MGMT_DATA_PTR, power, "power", NULL),
+	add_removed(POWER_MGMT_DATA_PTR, "power", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(CSV_STRING, features, "features", NULL),
 	add_parse(CSV_STRING, features_act, "active_features", NULL),
 	add_parse(STRING, gres, "gres", NULL),
@@ -7148,6 +7346,7 @@ static const parser_t PARSER_ARRAY(NODE)[] = {
 };
 #undef add_parse
 #undef add_cparse
+#undef add_removed
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(slurm_license_info_t, mtype, false, field, 0, path, desc)
@@ -7214,10 +7413,6 @@ static const flag_bit_t PARSER_FLAG_ARRAY(JOB_SHOW_FLAGS)[] = {
 	add_flag_bit(SHOW_FUTURE, "FUTURE"),
 };
 
-static const flag_bit_t PARSER_FLAG_ARRAY(POWER_FLAGS)[] = {
-	add_flag_bit(SLURM_POWER_FLAGS_LEVEL, "EQUAL_POWER"),
-};
-
 static const flag_bit_t PARSER_FLAG_ARRAY(JOB_MAIL_FLAGS)[] = {
 	add_flag_bit(MAIL_JOB_BEGIN, "BEGIN"),
 	add_flag_bit(MAIL_JOB_END, "END"),
@@ -7269,6 +7464,8 @@ static const flag_bit_t PARSER_FLAG_ARRAY(OVERSUBSCRIBE_FLAGS)[] = {
 	add_parser_deprec(slurm_job_info_t, mtype, false, field, overloads, path, desc, deprec)
 #define add_cparse(mtype, path, desc) \
 	add_complex_parser(slurm_job_info_t, mtype, false, path, desc)
+#define add_removed(mtype, path, desc, deprec) \
+	add_parser_removed(slurm_job_info_t, mtype, false, path, desc, deprec)
 static const parser_t PARSER_ARRAY(JOB_INFO)[] = {
 	add_parse(STRING, account, "account", NULL),
 	add_parse(TIMESTAMP_NO_VAL, accrue_time, "accrue_time", NULL),
@@ -7360,7 +7557,7 @@ static const parser_t PARSER_ARRAY(JOB_INFO)[] = {
 	add_parse_overload(MEM_PER_NODE, pn_min_memory, 1, "memory_per_node", NULL),
 	add_parse(UINT16_NO_VAL, pn_min_cpus, "minimum_cpus_per_node", NULL),
 	add_parse(UINT32_NO_VAL, pn_min_tmp_disk, "minimum_tmp_disk_per_node", NULL),
-	add_parse_bit_flag_array(slurm_job_info_t, POWER_FLAGS, false, power_flags, "power/flags", NULL),
+	add_removed(POWER_FLAGS, "power/flags", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(TIMESTAMP_NO_VAL, preempt_time, "preempt_time", NULL),
 	add_parse(TIMESTAMP_NO_VAL, preemptable_time, "preemptable_time", NULL),
 	add_parse(TIMESTAMP_NO_VAL, pre_sus_time, "pre_sus_time", NULL),
@@ -7419,6 +7616,7 @@ static const parser_t PARSER_ARRAY(JOB_INFO)[] = {
 #undef add_parse_deprec
 #undef add_cparse
 #undef add_skip
+#undef add_removed
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(job_resources_t, mtype, false, field, 0, path, desc)
@@ -7618,31 +7816,6 @@ static const parser_t PARSER_ARRAY(ACCT_GATHER_ENERGY)[] = {
 };
 #undef add_parse
 
-#define add_parse(mtype, field, path, desc) \
-	add_parser(ext_sensors_data_t, mtype, false, field, 0, path, desc)
-static const parser_t PARSER_ARRAY(EXT_SENSORS_DATA)[] = {
-	add_parse(UINT64_NO_VAL, consumed_energy, "consumed_energy", NULL),
-	add_parse(UINT32_NO_VAL, temperature, "temperature", NULL),
-	add_parse(TIMESTAMP, energy_update_time, "energy_update_time", NULL),
-	add_parse(UINT32, current_watts, "current_watts", NULL),
-};
-#undef add_parse
-
-#define add_parse(mtype, field, path, desc) \
-	add_parser(power_mgmt_data_t, mtype, false, field, 0, path, desc)
-static const parser_t PARSER_ARRAY(POWER_MGMT_DATA)[] = {
-	add_parse(UINT32_NO_VAL, cap_watts, "maximum_watts", NULL),
-	add_parse(UINT32, current_watts, "current_watts", NULL),
-	add_parse(UINT64, joule_counter, "total_energy", NULL),
-	add_parse(UINT32, new_cap_watts, "new_maximum_watts", NULL),
-	add_parse(UINT32, max_watts, "peak_watts", NULL),
-	add_parse(UINT32, min_watts, "lowest_watts", NULL),
-	add_parse(TIMESTAMP_NO_VAL, new_job_time, "new_job_time", NULL),
-	add_parse(UINT16, state, "state", NULL),
-	add_parse(TIMESTAMP, time_usec, "time_start_day", NULL),
-};
-#undef add_parse
-
 static const flag_bit_t PARSER_FLAG_ARRAY(RESERVATION_FLAGS)[] = {
 	add_flag_bit(RESERVE_FLAG_MAINT, "MAINT"),
 	add_flag_bit(RESERVE_FLAG_NO_MAINT, "NO_MAINT"),
@@ -7694,6 +7867,8 @@ static const parser_t PARSER_ARRAY(RESERVATION_CORE_SPEC)[] = {
 	add_parser(reserve_info_t, mtype, false, field, 0, path, desc)
 #define add_skip(field) \
 	add_parser_skip(reserve_info_t, field)
+#define add_removed(mtype, path, desc, deprec) \
+	add_parser_removed(reserve_info_t, mtype, false, path, desc, deprec)
 static const parser_t PARSER_ARRAY(RESERVATION_INFO)[] = {
 	add_parse(STRING, accounts, "accounts", NULL),
 	add_parse(STRING, burst_buffer, "burst_buffer", NULL),
@@ -7714,13 +7889,14 @@ static const parser_t PARSER_ARRAY(RESERVATION_INFO)[] = {
 	add_parse(STRING, partition, "partition", NULL),
 	add_parse(UINT32_NO_VAL, purge_comp_time, "purge_completed/time", NULL),
 	add_parse(TIMESTAMP_NO_VAL, start_time, "start_time", NULL),
-	add_parse(UINT32_NO_VAL, resv_watts, "watts", NULL),
+	add_removed(UINT32_NO_VAL, "watts", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(STRING, tres_str, "tres", NULL),
 	add_parse(STRING, users, "users", NULL),
 };
 #undef add_parse
 #undef add_cparse
 #undef add_skip
+#undef add_removed
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(submit_response_msg_t, mtype, false, field, 0, path, desc)
@@ -7765,11 +7941,11 @@ static const flag_bit_t PARSER_FLAG_ARRAY(CRON_ENTRY_FLAGS)[] = {
 	add_parser(cron_entry_t, mtype, false, field, 0, path, desc)
 static const parser_t PARSER_ARRAY(CRON_ENTRY)[] = {
 	add_parse_bit_flag_array(cron_entry_t, CRON_ENTRY_FLAGS, false, flags, "flags", NULL),
-	add_parse(BITSTR, minute, "minute", NULL),
-	add_parse(BITSTR, hour, "hour", NULL),
-	add_parse(BITSTR, day_of_month, "day_of_month", NULL),
-	add_parse(BITSTR, month, "month", NULL),
-	add_parse(BITSTR, day_of_week, "day_of_week", NULL),
+	add_parse(BITSTR_PTR, minute, "minute", NULL),
+	add_parse(BITSTR_PTR, hour, "hour", NULL),
+	add_parse(BITSTR_PTR, day_of_month, "day_of_month", NULL),
+	add_parse(BITSTR_PTR, month, "month", NULL),
+	add_parse(BITSTR_PTR, day_of_week, "day_of_week", NULL),
 	add_parse(STRING, cronspec, "specification", NULL),
 	add_parse(STRING, command, "command", NULL),
 	add_parse(UINT32, line_start, "line/start", NULL),
@@ -7805,6 +7981,7 @@ static const flag_bit_t PARSER_FLAG_ARRAY(WARN_FLAGS)[] = {
 	add_flag_bit(KILL_JOB_RESV, "RESERVATION_JOB"),
 	add_flag_bit(KILL_NO_CRON, "NO_CRON_JOBS"),
 	add_flag_bit(KILL_JOBS_VERBOSE, "VERBOSE"),
+	add_flag_bit(KILL_CRON, "CRON_JOBS"),
 	add_flag_bit(WARN_SENT, "WARNING_SENT"),
 };
 
@@ -7827,6 +8004,8 @@ static const flag_bit_t PARSER_FLAG_ARRAY(X11_FLAGS)[] = {
 	add_parser_skip(job_desc_msg_t, field)
 #define add_flags(mtype, field, path, desc) \
 	add_parse_bit_flag_array(job_desc_msg_t, mtype, false, field, path, desc)
+#define add_removed(mtype, path, desc, deprec) \
+	add_parser_removed(job_desc_msg_t, mtype, false, path, desc, deprec)
 static const parser_t PARSER_ARRAY(JOB_DESC_MSG)[] = {
 	add_parse(STRING, account, "account", NULL),
 	add_parse(STRING, acctg_freq, "account_gather_frequency", NULL),
@@ -7859,7 +8038,7 @@ static const parser_t PARSER_ARRAY(JOB_DESC_MSG)[] = {
 	add_skip(cpu_freq_max),
 	add_skip(cpu_freq_gov),
 	add_parse(STRING, cpus_per_tres, "cpus_per_tres", NULL),
-	add_parse(CRON_ENTRY_PTR, crontab_entry, "crontab", NULL),
+	add_parse(JOB_DESC_MSG_CRON_ENTRY, crontab_entry, "crontab", NULL),
 	add_parse(TIMESTAMP, deadline, "deadline", NULL),
 	add_parse(UINT32, delay_boot, "delay_boot", NULL),
 	add_parse(STRING, dependency, "dependency", NULL),
@@ -7907,7 +8086,7 @@ static const parser_t PARSER_ARRAY(JOB_DESC_MSG)[] = {
 	add_parse(BOOL, overcommit, "overcommit", NULL),
 	add_parse(STRING, partition, "partition", NULL),
 	add_parse(UINT16, plane_size, "distribution_plane_size", NULL),
-	add_flags(POWER_FLAGS, power_flags, "power_flags", NULL),
+	add_removed(POWER_FLAGS, "power_flags", NULL, SLURM_24_05_PROTOCOL_VERSION),
 	add_parse(STRING, prefer, "prefer", NULL),
 	add_parse_overload(HOLD, priority, 1, "hold", "Hold (true) or release (false) job"),
 	add_parse_overload(UINT32_NO_VAL, priority, 1, "priority", "Request specific job priority"),
@@ -7983,6 +8162,7 @@ static const parser_t PARSER_ARRAY(JOB_DESC_MSG)[] = {
 #undef add_cparse
 #undef add_skip
 #undef add_flags
+#undef add_removed
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(update_node_msg_t, mtype, false, field, 0, path, desc)
@@ -8309,16 +8489,19 @@ static const parser_t PARSER_ARRAY(OPENAPI_ACCOUNT_QUERY)[] = {
 };
 #undef add_parse
 
+#define add_cparse(mtype, path, desc) \
+	add_complex_parser(shares_response_msg_t, mtype, false, path, desc)
 #define add_parse(mtype, field, path, desc) \
 	add_parser(slurmdb_account_cond_t , mtype, false, field, 0, path, desc)
 static const parser_t PARSER_ARRAY(ACCOUNT_CONDITION)[] = {
 	add_parse(ASSOC_CONDITION_PTR, assoc_cond, "assocation", "assocation filter"),
 	add_parse(STRING_LIST, description_list, "description", "CSV description list"),
-	add_parse(BOOL16, with_assocs, "with_assocs", "include associations"),
-	add_parse(BOOL16, with_coords, "with_coords", "include coordinators"),
-	add_parse(BOOL16, with_deleted, "with_deleted", "include deleted accounts"),
+	add_cparse(ACCOUNT_CONDITION_WITH_ASSOC_V40, "with_assocs", "include associations"),
+	add_cparse(ACCOUNT_CONDITION_WITH_WCOORD_V40, "with_coords", "include coordinators"),
+	add_cparse(ACCOUNT_CONDITION_WITH_DELETED_V40, "with_deleted", "include deleted accounts"),
 };
 #undef add_parse
+#undef add_cparse
 
 #define add_parse(mtype, field, path, desc) \
 	add_parser(openapi_cluster_param_t, mtype, false, field, 0, path, desc)
@@ -8935,6 +9118,7 @@ static const parser_t PARSER_ARRAY(OPENAPI_JOB_STATE_RESP)[] = {
 		.type = DATA_PARSER_##typev,                                   \
 		.type_string = XSTRINGIFY(DATA_PARSER_ ## typev),              \
 		.obj_type_string = XSTRINGIFY(typet),                          \
+		.obj_openapi = OPENAPI_FORMAT_OBJECT,                          \
 		.size = sizeof(typet),                                         \
 		.needs = NEED_NONE,                                            \
 		.fields = PARSER_ARRAY(typev),                                 \
@@ -9139,6 +9323,23 @@ static const parser_t PARSER_ARRAY(OPENAPI_JOB_STATE_RESP)[] = {
 		.flag_bit_array_count = ARRAY_SIZE(PARSER_FLAG_ARRAY(typev)),  \
 		.ptr_offset = NO_VAL,                                          \
 	}
+/* add removed parser - Use callbacks to add stub values */
+#define addr(typev, stype, typeo, deprec)                                      \
+	{                                                                      \
+		.magic = MAGIC_PARSER,                                         \
+		.type = DATA_PARSER_##typev,                                   \
+		.model = PARSER_MODEL_SIMPLE,                                  \
+		.type_string = XSTRINGIFY(DATA_PARSER_ ## typev),              \
+		.obj_type_string = XSTRINGIFY(stype),                          \
+		.obj_openapi = OPENAPI_FORMAT_ ## typeo,                       \
+		.size = sizeof(stype),                                         \
+		.needs = NEED_NONE,                                            \
+		.parse = PARSE_FUNC(typev),                                    \
+		.dump = DUMP_FUNC(typev),                                      \
+		.openapi_spec = SPEC_FUNC(typev),                              \
+		.ptr_offset = NO_VAL,                                          \
+		.deprecated = deprec,                                          \
+	}
 /* add OpenAPI singular response */
 #define addoar(mtype) addpap(mtype, openapi_resp_single_t, NULL, NULL)
 static const parser_t parsers[] = {
@@ -9211,6 +9412,7 @@ static const parser_t parsers[] = {
 	addpsp(SLURM_STEP_ID_STRING, SELECTED_STEP, slurm_step_id_t, NEED_NONE, "Slurm Job StepId"),
 	addpsa(JOB_STATE_RESP_MSG, JOB_STATE_RESP_JOB, job_state_response_msg_t, NEED_NONE, "List of jobs"),
 	addpsa(KILL_JOBS_RESP_MSG, KILL_JOBS_RESP_JOB, kill_jobs_resp_msg_t, NEED_NONE, "List of jobs signal responses"),
+	addpsp(JOB_DESC_MSG_CRON_ENTRY, CRON_ENTRY_PTR, cron_entry_t *, NEED_NONE, "crontab entry"),
 
 	/* Complex type parsers */
 	addpcp(ASSOC_ID, ASSOC_SHORT, slurmdb_assoc_rec_t, NEED_ASSOC, "Association ID"),
@@ -9272,6 +9474,14 @@ static const parser_t parsers[] = {
 	addpcp(ASSOC_SHARES_OBJ_WRAP_TRES_USAGE_RAW, SHARES_FLOAT128_TRES_LIST, assoc_shares_object_wrap_t, NEED_NONE, NULL),
 	addpcp(JOB_STATE_RESP_JOB_JOB_ID, STRING, job_state_response_job_t, NEED_NONE, NULL),
 	addpca(KILL_JOBS_MSG_JOBS_ARRAY, STRING, kill_jobs_msg_t, NEED_NONE, NULL),
+	addpcp(ACCOUNT_CONDITION_WITH_ASSOC_V40, BOOL, slurmdb_account_cond_t, NEED_NONE, NULL),
+	addpcp(ACCOUNT_CONDITION_WITH_WCOORD_V40, BOOL, slurmdb_account_cond_t, NEED_NONE, NULL),
+	addpcp(ACCOUNT_CONDITION_WITH_DELETED_V40, BOOL, slurmdb_account_cond_t, NEED_NONE, NULL),
+
+	/* Removed parsers */
+	addr(EXT_SENSORS_DATA, void *, OBJECT, SLURM_24_05_PROTOCOL_VERSION),
+	addr(POWER_FLAGS, uint8_t, ARRAY, SLURM_24_05_PROTOCOL_VERSION),
+	addr(POWER_MGMT_DATA, void *, OBJECT, SLURM_24_05_PROTOCOL_VERSION),
 
 	/* NULL terminated model parsers */
 	addnt(CONTROLLER_PING_ARRAY, CONTROLLER_PING),
@@ -9294,6 +9504,8 @@ static const parser_t parsers[] = {
 	addpp(STEP_INFO_MSG_PTR, job_step_info_response_msg_t *, STEP_INFO_MSG, false, NULL, NULL),
 	addpp(BITSTR_PTR, bitstr_t *, BITSTR, false, NULL, NULL),
 	addpp(JOB_STATE_RESP_MSG_PTR, job_state_response_msg_t *, JOB_STATE_RESP_MSG, false, NULL, NULL),
+	addpp(EXT_SENSORS_DATA_PTR, void *, EXT_SENSORS_DATA, true, NULL, NULL),
+	addpp(POWER_MGMT_DATA_PTR, void *, POWER_MGMT_DATA, true, NULL, NULL),
 	addpp(KILL_JOBS_RESP_MSG_PTR, kill_jobs_resp_msg_t *, KILL_JOBS_RESP_MSG, false, NULL, FREE_FUNC(KILL_JOBS_RESP_MSG)),
 
 	/* Array of parsers */
@@ -9332,8 +9544,6 @@ static const parser_t parsers[] = {
 	addpap(PARTITION_INFO, partition_info_t, NULL, NULL),
 	addpap(SINFO_DATA, sinfo_data_t, NULL, NULL),
 	addpap(ACCT_GATHER_ENERGY, acct_gather_energy_t, NULL, NULL),
-	addpap(EXT_SENSORS_DATA, ext_sensors_data_t, NULL, NULL),
-	addpap(POWER_MGMT_DATA, power_mgmt_data_t, NULL, NULL),
 	addpap(RESERVATION_INFO, reserve_info_t, NULL, NULL),
 	addpap(RESERVATION_CORE_SPEC, resv_core_spec_t, NULL, NULL),
 	addpap(JOB_SUBMIT_RESPONSE_MSG, submit_response_msg_t, NULL, NULL),
@@ -9425,7 +9635,7 @@ static const parser_t parsers[] = {
 	addoar(OPENAPI_KILL_JOBS_RESP),
 
 	/* Flag bit arrays */
-	addfa(ASSOC_FLAGS, uint16_t),
+	addfa(ASSOC_FLAGS, slurmdb_assoc_flags_t),
 	addfa(USER_FLAGS, uint32_t),
 	addfa(SLURMDB_JOB_FLAGS, uint32_t),
 	addfa(ACCOUNT_FLAGS, uint32_t),
@@ -9437,7 +9647,6 @@ static const parser_t parsers[] = {
 	addfa(PARTITION_STATES, uint16_t),
 	addfa(JOB_FLAGS, uint64_t),
 	addfa(JOB_SHOW_FLAGS, uint16_t),
-	addfa(POWER_FLAGS, uint8_t),
 	addfa(JOB_MAIL_FLAGS, uint16_t),
 	addfa(RESERVATION_FLAGS, uint64_t),
 	addfa(CPU_BINDING_FLAGS, uint16_t), /* cpu_bind_type_t */
@@ -9500,6 +9709,7 @@ static const parser_t parsers[] = {
 #undef addpc
 #undef addpa
 #undef addoar
+#undef addr
 
 // clang-format on
 

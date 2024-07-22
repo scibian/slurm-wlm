@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2017 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -74,7 +74,6 @@ static void *_get_script_buffer(const char *filename, int *size);
 static int   _job_wait(uint32_t job_id);
 static char *_script_wrap(char *command_string);
 static void  _set_exit_code(void);
-static void  _set_prio_process_env(void);
 static int   _set_rlimit_env(void);
 static void  _set_spank_env(void);
 static void  _set_submit_dir_env(void);
@@ -188,7 +187,14 @@ int main(int argc, char **argv)
 			(void) _set_rlimit_env();
 		}
 
-		_set_prio_process_env();
+		/*
+		 * if the environment is coming from a file, the
+		 * environment at execution startup, must be unset.
+		 */
+		if (sbopt.export_file != NULL)
+			env_unset_environment();
+
+		set_prio_process_env();
 		_set_spank_env();
 		_set_submit_dir_env();
 		_set_umask_env();
@@ -225,7 +231,7 @@ int main(int argc, char **argv)
 	}
 
 	if (job_env_list) {
-		ListIterator desc_iter, env_iter;
+		list_itr_t *desc_iter, *env_iter;
 		i = 0;
 		desc_iter = list_iterator_create(job_req_list);
 		env_iter  = list_iterator_create(job_env_list);
@@ -287,7 +293,8 @@ int main(int argc, char **argv)
 			break;
 		if (errno == ESLURM_ERROR_ON_DESC_TO_RECORD_COPY) {
 			msg = "Slurm job queue full, sleeping and retrying";
-		} else if (errno == ESLURM_NODES_BUSY) {
+		} else if ((errno == ESLURM_NODES_BUSY) ||
+			   (errno == ESLURM_PORTS_BUSY)) {
 			msg = "Job creation temporarily disabled, retrying";
 		} else if (errno == EAGAIN) {
 			msg = "Slurm temporarily unable to accept job, "
@@ -301,7 +308,8 @@ int main(int argc, char **argv)
 
 		if (retries)
 			debug("%s", msg);
-		else if (errno == ESLURM_NODES_BUSY)
+		else if ((errno == ESLURM_NODES_BUSY) ||
+			 (errno == ESLURM_PORTS_BUSY))
 			info("%s", msg); /* Not an error, powering up nodes */
 		else
 			error("%s", msg);
@@ -423,6 +431,11 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->wait_all_nodes = sbopt.wait_all_nodes;
 
 	desc->environment = NULL;
+	if (sbopt.export_file) {
+		desc->environment = env_array_from_file(sbopt.export_file);
+		if (desc->environment == NULL)
+			exit(1);
+	}
 	if (opt.export_env == NULL) {
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "ALL")) {
@@ -533,34 +546,6 @@ static int _set_umask_env(void)
 	}
 	debug ("propagating UMASK=%s", mask_char);
 	return SLURM_SUCCESS;
-}
-
-/*
- * _set_prio_process_env
- *
- * Set the internal SLURM_PRIO_PROCESS environment variable to support
- * the propagation of the users nice value and the "PropagatePrioProcess"
- * config keyword.
- */
-static void  _set_prio_process_env(void)
-{
-	int retval;
-
-	errno = 0; /* needed to detect a real failure since prio can be -1 */
-
-	if ((retval = getpriority (PRIO_PROCESS, 0)) == -1)  {
-		if (errno) {
-			error ("getpriority(PRIO_PROCESS): %m");
-			return;
-		}
-	}
-
-	if (setenvf (NULL, "SLURM_PRIO_PROCESS", "%d", retval) < 0) {
-		error ("unable to set SLURM_PRIO_PROCESS in environment");
-		return;
-	}
-
-	debug ("propagating SLURM_PRIO_PROCESS=%d", retval);
 }
 
 /*

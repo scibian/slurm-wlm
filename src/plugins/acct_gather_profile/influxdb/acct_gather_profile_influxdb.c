@@ -10,7 +10,7 @@
  *  Portions Copyright (C) 2013 Bull S. A. S.
  *		Bull, Rue Jean Jaures, B.P.68, 78340, Les Clayes-sous-Bois.
  *
- *  Portions Copyright (C) 2013 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <http://www.schedmd.com/slurmdocs/>.
@@ -227,11 +227,7 @@ static int _send_data(const char *data)
 	DEF_TIMERS;
 	START_TIMER;
 
-	if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
-		error("%s %s: curl_global_init: %m", plugin_type, __func__);
-		rc = SLURM_ERROR;
-		goto cleanup_global_init;
-	} else if ((curl_handle = curl_easy_init()) == NULL) {
+	if ((curl_handle = curl_easy_init()) == NULL) {
 		error("%s %s: curl_easy_init: %m", plugin_type, __func__);
 		rc = SLURM_ERROR;
 		goto cleanup_easy_init;
@@ -301,8 +297,6 @@ cleanup:
 	xfree(url);
 cleanup_easy_init:
 	curl_easy_cleanup(curl_handle);
-cleanup_global_init:
-	curl_global_cleanup();
 
 	END_TIMER;
 	log_flag(PROFILE, "%s %s: took %s to send data",
@@ -330,6 +324,11 @@ extern int init(void)
 	if (!running_in_slurmstepd())
 		return SLURM_SUCCESS;
 
+	if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
+		error("%s %s: curl_global_init: %m", plugin_type, __func__);
+		return SLURM_ERROR;
+	}
+
 	datastr = xmalloc(BUF_SIZE);
 	return SLURM_SUCCESS;
 }
@@ -337,6 +336,8 @@ extern int init(void)
 extern int fini(void)
 {
 	debug3("%s %s called", plugin_type, __func__);
+
+	curl_global_cleanup();
 
 	_free_tables();
 	xfree(datastr);
@@ -600,50 +601,24 @@ extern int acct_gather_profile_p_add_sample_data(int table_id, void *data,
 
 extern void acct_gather_profile_p_conf_values(List *data)
 {
-	config_key_pair_t *key_pair;
+	add_key_pair(*data, "ProfileInfluxDBHost", "%s",
+		     influxdb_conf.host);
 
-	debug3("%s %s called", plugin_type, __func__);
+	add_key_pair(*data, "ProfileInfluxDBDatabase", "%s",
+		     influxdb_conf.database);
 
-	xassert(*data);
+	add_key_pair(*data, "ProfileInfluxDBDefault", "%s",
+		     acct_gather_profile_to_string(influxdb_conf.def));
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBHost");
-	key_pair->value = xstrdup(influxdb_conf.host);
-	list_append(*data, key_pair);
+	/* skip over ProfileInfluxDBPass for security reasons */
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBDatabase");
-	key_pair->value = xstrdup(influxdb_conf.database);
-	list_append(*data, key_pair);
+	add_key_pair(*data, "ProfileInfluxDBRTPolicy", "%s",
+		     influxdb_conf.rt_policy);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBDefault");
-	key_pair->value =
-		xstrdup(acct_gather_profile_to_string(influxdb_conf.def));
-	list_append(*data, key_pair);
+	add_key_pair(*data, "ProfileInfluxDBTimeout", "%u",
+		     influxdb_conf.timeout);
 
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBPass");
-	key_pair->value = xstrdup(influxdb_conf.password);
-	list_append(*data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBRTPolicy");
-	key_pair->value = xstrdup(influxdb_conf.rt_policy);
-	list_append(*data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBTimeout");
-	key_pair->value = xstrdup_printf("%u", influxdb_conf.timeout);
-	list_append(*data, key_pair);
-
-	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ProfileInfluxDBUser");
-	key_pair->value = xstrdup(influxdb_conf.username);
-	list_append(*data, key_pair);
-
-	return;
-
+	/* skip over ProfileInfluxDBUser for security reasons */
 }
 
 extern bool acct_gather_profile_p_is_active(uint32_t type)

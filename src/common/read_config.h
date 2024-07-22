@@ -5,7 +5,7 @@
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Portions Copyright (C) 2008 Vijay Ramasubramanian.
- *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -98,12 +98,11 @@ typedef struct node_record node_record_t;
 #define DEFAULT_INTERACTIVE_STEP_OPTS "--interactive --preserve-env --pty $SHELL"
 #define DEFAULT_JOB_ACCT_GATHER_FREQ  "30"
 #define DEFAULT_ENFORCE_PART_LIMITS 0
-#if defined HAVE_NATIVE_CRAY
-#  define DEFAULT_ALLOW_SPEC_RESOURCE_USAGE 1
-#else
-#  define DEFAULT_ALLOW_SPEC_RESOURCE_USAGE 0
-#endif
+#define DEFAULT_ALLOW_SPEC_RESOURCE_USAGE 0
+#define DEFAULT_HASH_PLUGIN "hash/k12"
 #define DEFAULT_KEEPALIVE_TIME (NO_VAL)
+#define DEFAULT_KEEPALIVE_INTERVAL (NO_VAL)
+#define DEFAULT_KEEPALIVE_PROBES (NO_VAL)
 #define DEFAULT_KILL_ON_BAD_EXIT    0
 #define DEFAULT_KILL_TREE           0
 #define DEFAULT_KILL_WAIT           30
@@ -139,11 +138,7 @@ typedef struct node_record node_record_t;
 #define DEFAULT_SCHED_LOG_LEVEL     0
 #define DEFAULT_SCHED_TIME_SLICE    30
 #define DEFAULT_SCHEDTYPE           "sched/backfill"
-#if defined HAVE_NATIVE_CRAY
-#  define DEFAULT_SELECT_TYPE       "select/cray_aries"
-#else
-#  define DEFAULT_SELECT_TYPE       "select/cons_tres"
-#endif
+#define DEFAULT_SELECT_TYPE         "select/cons_tres"
 #define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 #define DEFAULT_SLURMCTLD_TIMEOUT   120
 #define DEFAULT_SLURMD_PIDFILE      "/var/run/slurmd.pid"
@@ -158,6 +153,7 @@ typedef struct node_record node_record_t;
 #define DEFAULT_SUSPEND_TIME        0
 #define DEFAULT_SUSPEND_TIMEOUT     30
 #define DEFAULT_TCP_TIMEOUT         2
+#define DEFAULT_TLS_TYPE "tls/none"
 #define DEFAULT_TMP_FS              "/tmp"
 #if defined HAVE_3D
 #  define DEFAULT_TOPOLOGY_PLUGIN     "topology/3d_torus"
@@ -209,6 +205,8 @@ typedef struct slurm_conf_node {
 	uint64_t real_memory;	/* MB real memory on the node */
 	uint64_t mem_spec_limit; /* MB real memory for memory specialization */
 	char *reason;
+	uint16_t res_cores_per_gpu; /* number of cores per GPU to allow
+				     * to only GPU jobs */
 	char *state;
 	uint32_t tmp_disk;	/* MB total storage in TMP_FS file system */
 	char *tres_weights_str;	/* per TRES billing weight string */
@@ -241,6 +239,7 @@ typedef struct slurm_conf_partition {
 	uint8_t disable_root_jobs; /* if set then user root can't run jobs
 				    * if NO_VAL8, use global default */
 	bool exclusive_user; /* true if node allocations by user */
+	bool exclusive_topo; /* true if exclusive topology*/
 	uint32_t grace_time;	/* default grace time for partition */
 	bool     hidden_flag;	/* 1 if hidden by default */
 	List job_defaults_list;	/* List of job_defaults_t elements */
@@ -299,17 +298,6 @@ typedef struct {
 	List key_pairs;
 } config_plugin_params_t;
 
-/*
- * Get result of configuration file test.
- * RET SLURM_SUCCESS or error code
- */
-extern int config_test_result(void);
-
-/*
- * Start configuration file test mode. Disables fatal errors.
- */
-extern void config_test_start(void);
-
 /* Destroy a front_end record built by slurm_conf_frontend_array() */
 extern void destroy_frontend(void *ptr);
 
@@ -365,12 +353,25 @@ extern void read_conf_recv_stepd(int fd);
  *
  * IN: list_t *key_pair_list
  * IN: char *key
- * IN: char *value
+ * IN: char *fmt - printf style format of "value" args that follow
  */
-extern void read_config_add_key_pair(list_t *key_pair_list,
-				     char *key,
-				     char *value);
+extern void add_key_pair(list_t *key_pair_list, const char *key,
+			 const char *fmt, ...)
+	__attribute__((format(printf, 3, 4)));
 
+/*
+ * Allocate a config_key_pair_t, duplicate the key, and set the value
+ * to "yes" or "no".
+ */
+extern void add_key_pair_bool(list_t *key_pair_list, const char *key,
+			      bool value);
+
+/*
+ * Allocate a config_key_pair_t, duplicate the key, and take ownership of the
+ * value string.
+ */
+extern void add_key_pair_own(list_t *key_pair_list, const char *key,
+			     char *value);
 
 /*
  * slurm_conf_init_stepd - Since the stepd does not read in the file and

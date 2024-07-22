@@ -17,10 +17,10 @@
 
 extern char* slurm_xstrdup(const char* str);
 extern int slurmdb_report_set_start_end_time(time_t* start, time_t* end);
-extern char *slurmdb_get_qos_complete_str_bitstr(List qos_list, bitstr_t *valid_qos);
+extern char *slurmdb_get_qos_complete_str_bitstr(list_t *qos_list, bitstr_t *valid_qos);
 
 int
-av_to_cluster_grouping_list(AV* av, List grouping_list)
+av_to_cluster_grouping_list(AV* av, list_t *grouping_list)
 {
     SV**   svp;
     char*  str = NULL;
@@ -230,7 +230,7 @@ report_job_grouping_to_hv(slurmdb_report_job_grouping_t* rec, HV* hv)
     AV* my_av;
     HV* rh;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     /* FIX ME: include the job list here (is is not NULL, as
      * previously thought) */
@@ -265,7 +265,7 @@ report_acct_grouping_to_hv(slurmdb_report_acct_grouping_t* rec, HV* hv)
     HV* rh;
     slurmdb_report_job_grouping_t* jgr = NULL;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     STORE_FIELD(hv, rec, acct,     charp);
     STORE_FIELD(hv, rec, count,    uint32_t);
@@ -315,7 +315,7 @@ report_cluster_grouping_to_hv(slurmdb_report_cluster_grouping_t* rec, HV* hv)
     HV* rh;
     slurmdb_report_acct_grouping_t* agr = NULL;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     STORE_FIELD(hv, rec, cluster,  charp);
     STORE_FIELD(hv, rec, count,    uint32_t);
@@ -358,10 +358,10 @@ report_cluster_grouping_to_hv(slurmdb_report_cluster_grouping_t* rec, HV* hv)
 }
 
 int
-cluster_grouping_list_to_av(List list, AV* av)
+cluster_grouping_list_to_av(list_t *list, AV* av)
 {
     HV* rh;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
     slurmdb_report_cluster_grouping_t* rec = NULL;
 
     if (list) {
@@ -410,7 +410,7 @@ cluster_rec_to_hv(slurmdb_cluster_rec_t* rec, HV* hv)
 {
     AV* my_av;
     HV* rh;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
     slurmdb_cluster_accounting_rec_t* ar = NULL;
 
     my_av = (AV*)sv_2mortal((SV*)newAV());
@@ -437,7 +437,6 @@ cluster_rec_to_hv(slurmdb_cluster_rec_t* rec, HV* hv)
     STORE_FIELD(hv, rec, flags,          uint32_t);
     STORE_FIELD(hv, rec, name,           charp);
     STORE_FIELD(hv, rec, nodes,          charp);
-    STORE_FIELD(hv, rec, plugin_id_select, uint32_t);
     /* slurmdb_assoc_rec_t* root_assoc; */
     STORE_FIELD(hv, rec, rpc_version,    uint16_t);
     STORE_FIELD(hv, rec, tres_str,          charp);
@@ -451,7 +450,7 @@ report_assoc_rec_to_hv(slurmdb_report_assoc_rec_t* rec, HV* hv)
     AV* my_av;
     HV* rh;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     STORE_FIELD(hv, rec, acct,        charp);
     STORE_FIELD(hv, rec, cluster,     charp);
@@ -487,7 +486,7 @@ report_cluster_rec_to_hv(slurmdb_report_cluster_rec_t* rec, HV* hv)
     slurmdb_report_assoc_rec_t* ar = NULL;
     slurmdb_report_user_rec_t* ur = NULL;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     /* FIXME: do the accounting_list (add function to parse
      * slurmdb_accounting_rec_t) */
@@ -549,10 +548,10 @@ report_cluster_rec_to_hv(slurmdb_report_cluster_rec_t* rec, HV* hv)
 }
 
 int
-report_cluster_rec_list_to_av(List list, AV* av)
+report_cluster_rec_list_to_av(list_t *list, AV* av)
 {
     HV* rh;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
     slurmdb_report_cluster_rec_t* rec = NULL;
 
     if (list) {
@@ -581,7 +580,7 @@ report_user_rec_to_hv(slurmdb_report_user_rec_t* rec, HV* hv)
     char* acct;
     slurmdb_report_assoc_rec_t* ar = NULL;
     slurmdb_tres_rec_t *tres_rec = NULL;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
 
     my_av = (AV*)sv_2mortal((SV*)newAV());
     if (rec->acct_list) {
@@ -703,7 +702,7 @@ int
 job_rec_to_hv(slurmdb_job_rec_t* rec, HV* hv)
 {
     slurmdb_step_rec_t *step;
-    ListIterator itr = NULL;
+    list_itr_t *itr = NULL;
     AV* steps_av = (AV*)sv_2mortal((SV*)newAV());
     HV* step_hv;
 
@@ -792,7 +791,7 @@ hv_to_qos_cond(HV* hv, slurmdb_qos_cond_t* qos_cond)
 }
 
 int
-qos_rec_to_hv(slurmdb_qos_rec_t* rec, HV* hv, List all_qos)
+qos_rec_to_hv(slurmdb_qos_rec_t* rec, HV* hv, list_t *all_qos)
 {
     char *preempt = NULL;
     preempt = slurmdb_get_qos_complete_str_bitstr(all_qos, rec->preempt_bitstr);

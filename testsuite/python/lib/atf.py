@@ -185,8 +185,9 @@ def run_command(
                     "This test requires the test user to have unprompted sudo rights",
                     allow_module_level=True,
                 )
+            # Use su to honor ulimits, specially core
             cp = subprocess.run(
-                ["sudo", "-nu", user, "/bin/bash", "-lc", command],
+                ["sudo", "su", user, "/bin/bash", "-lc", command],
                 capture_output=True,
                 text=True,
                 **additional_run_kwargs,
@@ -957,7 +958,7 @@ def restore_config_file(config="slurm"):
         )
 
 
-def get_config(live=True, source="slurm", quiet=False):
+def get_config(live=True, source="slurm", quiet=False, delimiter="="):
     """Returns the Slurm configuration as a dictionary.
 
     Args:
@@ -971,6 +972,7 @@ def get_config(live=True, source="slurm", quiet=False):
             If live is False, source should be the name of the config file
             without the .conf prefix (e.g. slurmdbd).
         quiet (boolean): If True, logging is performed at the TRACE log level.
+        delimiter (string): The delimiter between the parameter name and the value.
 
     Returns:
         A dictionary comprised of the parameter names and their values.
@@ -999,7 +1001,7 @@ def get_config(live=True, source="slurm", quiet=False):
         output = run_command_output(f"{command} show config", fatal=True, quiet=quiet)
 
         for line in output.splitlines():
-            if match := re.search(rf"^\s*(\S+)\s*=\s*(.*)$", line):
+            if match := re.search(rf"^\s*(\S+)\s*{re.escape(delimiter)}\s*(.*)$", line):
                 slurm_dict[match.group(1)] = match.group(2).rstrip()
     else:
         config = source
@@ -1011,7 +1013,7 @@ def get_config(live=True, source="slurm", quiet=False):
             f"cat {config_file}", user=properties["slurm-user"], quiet=quiet
         )
         for line in output.splitlines():
-            if match := re.search(rf"^\s*(\S+)\s*=\s*(.*)$", line):
+            if match := re.search(rf"^\s*(\S+)\s*{re.escape(delimiter)}\s*(.*)$", line):
                 parameter_name, parameter_value = (
                     match.group(1),
                     match.group(2).rstrip(),
@@ -1028,7 +1030,7 @@ def get_config(live=True, source="slurm", quiet=False):
                     instance_name, subparameters = parameter_value.split(" ", 1)
                     subparameters_dict = {}
                     for subparameter_name, subparameter_value in re.findall(
-                        r" *([^= ]+) *= *([^ ]+)", subparameters
+                        rf" *([^= ]+) *{re.escape(delimiter)} *([^ ]+)", subparameters
                     ):
                         # Reformat the value if necessary
                         if is_integer(subparameter_value):
@@ -1125,7 +1127,11 @@ def config_parameter_includes(name, value, **get_config_kwargs):
 
 
 def set_config_parameter(
-    parameter_name, parameter_value, source="slurm", restart=False
+    parameter_name,
+    parameter_value,
+    source="slurm",
+    restart=False,
+    delimiter="=",
 ):
     """Sets the value of the specified configuration parameter.
 
@@ -1143,6 +1149,7 @@ def set_config_parameter(
         source (string): Name of the config file without the .conf prefix.
         restart (boolean): If True and slurm is running, slurm will be
             restarted rather than reconfigured.
+        delimiter (string): The delimiter between the parameter name and the value.
 
     Note:
         When setting a complex parameter (one which may be repeated and has
@@ -1153,7 +1160,8 @@ def set_config_parameter(
         None
 
     Example:
-        >>> set_config_parameter('ClusterName', 'cluster1')
+        >>> set_config_parameter("ClusterName", "cluster1")
+        >>> set_config_parameter("required", "/tmp/spank_plugin.so", source="plugstack", delimiter=" ")
     """
 
     if not properties["auto-config"]:
@@ -1175,19 +1183,19 @@ def set_config_parameter(
         f"cat {config_file}", user=properties["slurm-user"], quiet=True
     )
     for line in output.splitlines():
-        if not re.search(rf"(?i)^\s*{parameter_name}\s*=", line):
-            lines.append(f"{line}\n")
+        if not re.search(rf"(?i)^\s*{parameter_name}\s*{re.escape(delimiter)}", line):
+            lines.append(line)
     if isinstance(parameter_value, dict):
         for instance_name in parameter_value:
-            line = f"{parameter_name}={instance_name}"
+            line = f"{parameter_name}{delimiter}{instance_name}"
             for subparameter_name, subparameter_value in parameter_value[
                 instance_name
             ].items():
-                line += f" {subparameter_name}={subparameter_value}"
-            lines.append(f"{line}\n")
+                line += f" {subparameter_name}{delimiter}{subparameter_value}"
+            lines.append(line)
     elif parameter_value != None:
-        lines.append(f"{parameter_name}={parameter_value}\n")
-    input = "".join(lines)
+        lines.append(f"{parameter_name}{delimiter}{parameter_value}")
+    input = "\n".join(lines)
     run_command(
         f"cat > {config_file}",
         input=input,
@@ -1340,13 +1348,13 @@ def require_tool(tool):
         pytest.skip(msg, allow_module_level=True)
 
 
-def require_whereami(is_cray=False):
+def require_whereami():
     """Compiles the whereami.c program to be used by tests.
 
     This function installs the whereami program.  To get the
     correct output, TaskPlugin is required in the slurm.conf
     file before slurm starts up.
-    ex: TaskPlugin=task/cray_aries,task/cgroup,task/affinity
+    ex: TaskPlugin=task/cgroup,task/affinity
 
     The file will be installed in the testsuite/python/lib/scripts
     directory where the whereami.c file is located
@@ -1365,12 +1373,6 @@ def require_whereami(is_cray=False):
     """
     require_config_parameter("TaskPlugin", "task/cgroup,task/affinity")
 
-    # Set requirement for cray systems
-    if is_cray:
-        require_config_parameter(
-            "TaskPlugin", "task/cray_aries,task/cgroup,task/affinity"
-        )
-
     # If the file already exists and we don't need to recompile
     dest_file = f"{properties['testsuite_scripts_dir']}/whereami"
     if os.path.isfile(dest_file):
@@ -1388,7 +1390,12 @@ def require_whereami(is_cray=False):
 
 
 def require_config_parameter(
-    parameter_name, parameter_value, condition=None, source="slurm", skip_message=None
+    parameter_name,
+    parameter_value,
+    condition=None,
+    source="slurm",
+    skip_message=None,
+    delimiter="=",
 ):
     """Ensures that a configuration parameter has the required value.
 
@@ -1405,6 +1412,7 @@ def require_config_parameter(
         source (string): Name of the config file without the .conf prefix.
         skip_message (string): Message to be displayed if in local-config mode
             and parameter not present.
+        delimiter (string): The delimiter between the parameter name and the value.
 
     Note:
         When requiring a complex parameter (one which may be repeated and has
@@ -1438,7 +1446,7 @@ def require_config_parameter(
         parameter_value = parameter_value.casefold()
 
     observed_value = get_config_parameter(
-        parameter_name, live=False, source=source, quiet=True
+        parameter_name, live=False, source=source, quiet=True, delimiter=delimiter
     )
 
     condition_satisfied = False
@@ -1452,7 +1460,9 @@ def require_config_parameter(
 
     if not condition_satisfied:
         if properties["auto-config"]:
-            set_config_parameter(parameter_name, parameter_value, source=source)
+            set_config_parameter(
+                parameter_name, parameter_value, source=source, delimiter=delimiter
+            )
         else:
             if skip_message is None:
                 skip_message = f"This test requires the {parameter_name} parameter to be {parameter_value} (but it is {observed_value})"
@@ -2465,13 +2475,18 @@ def get_steps(step_id=None, **run_command_kwargs):
     """
 
     steps_dict = {}
+    step_dict = {}
 
     command = "scontrol -d -o show steps"
     if step_id is not None:
         command += f" {step_id}"
-    output = run_command_output(command, fatal=True, **run_command_kwargs)
+    result = run_command(command, **run_command_kwargs)
 
-    step_dict = {}
+    if result["exit_code"]:
+        logging.debug(f"scontrol command failed, no steps returned")
+        return step_dict
+
+    output = result["stdout"]
     for line in output.splitlines():
         if line == "":
             continue
@@ -2485,19 +2500,19 @@ def get_steps(step_id=None, **run_command_kwargs):
             # Reformat the value if necessary
             if is_integer(param_value):
                 param_value = int(param_value)
-            elif is_float(param_value):
+            elif is_float(param_value) and param_name != "StepId":
                 param_value = float(param_value)
             elif param_value == "(null)":
                 param_value = None
 
-            # Add it to the temporary job dictionary
+            # Add it to the temporary step dictionary
             step_dict[param_name] = param_value
 
-        # Add the job dictionary to the jobs dictionary
+        # Add the step dictionary to the steps dictionary
         if step_dict:
             steps_dict[str(step_dict["StepId"])] = step_dict
 
-            # Clear the job dictionary for use by the next job
+            # Clear the step dictionary for use by the next step
             step_dict = {}
 
     return steps_dict
@@ -2610,7 +2625,7 @@ def get_step_parameter(step_id, parameter_name, default=None, quiet=False):
         'primary'
     """
 
-    steps_dict = get_steps(quiet=quiet)
+    steps_dict = get_steps(step_id, quiet=quiet)
 
     if step_id not in steps_dict:
         logging.debug(f"Step ({step_id}) was not found in the step list")
@@ -2621,6 +2636,54 @@ def get_step_parameter(step_id, parameter_name, default=None, quiet=False):
         return step_dict[parameter_name]
     else:
         return default
+
+
+def wait_for_node_state_any(
+    nodename,
+    desired_node_states,
+    timeout=default_polling_timeout,
+    poll_interval=None,
+    fatal=False,
+    reverse=False,
+):
+    """Wait for any of the specified node states to be reached.
+
+    Polls the node state every poll interval seconds, waiting up to the timeout
+    for the specified node state to be reached.
+
+    Args:
+        nodename (string): The name of the node whose state is being monitored.
+        desired_node_states (iterable): The states that the node is expected to reach.
+        timeout (integer): The number of seconds to wait before timing out.
+        poll_interval (float): Number of seconds between node state polls.
+        fatal (boolean): If True, a timeout will cause the test to fail.
+        reverse (boolean): If True, wait for the node to lose the desired state.
+
+    Returns:
+        Boolean value indicating whether the node ever reached the desired state.
+
+    Example:
+        >>> wait_for_node_state_any('node1', ['IDLE', 'ALLOCATED'], timeout=60, poll_interval=5)
+        True
+        >>> wait_for_node_state_any('node2', ['DOWN'], timeout=30, fatal=True)
+        False
+    """
+
+    state_set = frozenset(desired_node_states)
+
+    def any_overlap(state):
+        return bool(state_set & set(state.split("+"))) != reverse
+
+    # Wrapper for the repeat_until command to do all our state checking for us
+    repeat_until(
+        lambda: get_node_parameter(nodename, "State"),
+        any_overlap,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        fatal=fatal,
+    )
+
+    return any_overlap(get_node_parameter(nodename, "State"))
 
 
 def wait_for_node_state(
@@ -2697,7 +2760,7 @@ def wait_for_step(job_id, step_id, **repeat_until_kwargs):
     step_str = f"{job_id}.{step_id}"
     return repeat_until(
         lambda: run_command_output(f"scontrol -o show step {step_str}"),
-        lambda out: re.search(f"StepId={step_str}", out) is not None,
+        lambda out: re.search(rf"StepId={step_str}", out) is not None,
         **repeat_until_kwargs,
     )
 
@@ -2726,7 +2789,7 @@ def wait_for_step_accounted(job_id, step_id, **repeat_until_kwargs):
     step_str = f"{job_id}.{step_id}"
     return repeat_until(
         lambda: run_command_output(f"sacct -j {job_id} -o jobid"),
-        lambda out: re.search(f"{step_str}", out) is not None,
+        lambda out: re.search(rf"{step_str}", out) is not None,
         **repeat_until_kwargs,
     )
 
@@ -2734,10 +2797,12 @@ def wait_for_step_accounted(job_id, step_id, **repeat_until_kwargs):
 def wait_for_job_state(
     job_id,
     desired_job_state,
+    desired_reason=None,
     timeout=default_polling_timeout,
     poll_interval=None,
     fatal=False,
     quiet=False,
+    xfail=False,
 ):
     """Wait for the specified job to reach the desired state.
 
@@ -2754,10 +2819,12 @@ def wait_for_job_state(
     Args:
         job_id (integer): The id of the job.
         desired_job_state (string): The desired state of the job.
+        desired_reason (string): Optional reason to also match.
         timeout (integer): The number of seconds to poll before timing out.
         poll_interval (float): Time (in seconds) between job state polls.
         fatal (boolean): If True, a timeout will cause the test to fail.
         quiet (boolean): If True, logging is performed at the TRACE log level.
+        xfail (boolean): If True, state (or reason) are not expected to be reached.
 
     Returns:
         Boolean value indicating whether the job reached the desired state.
@@ -2784,16 +2851,24 @@ def wait_for_job_state(
 
     # We don't use repeat_until here because we support pseudo-job states and
     # we want to allow early return (e.g. for a DONE state if we want RUNNING)
-    begin_time = time.time()
-    logging.log(
-        log_level, f"Waiting for job ({job_id}) to reach state {desired_job_state}"
-    )
 
+    xfail_str = ""
+    if xfail:
+        xfail_str = "not "
+    message = (
+        f"Waiting for job ({job_id}) to {xfail_str}reach state {desired_job_state}"
+    )
+    if desired_reason is not None:
+        message += f" and reason {desired_reason}"
+    logging.log(log_level, message)
+
+    begin_time = time.time()
     while time.time() < begin_time + timeout:
         job_state = get_job_parameter(
             job_id, "JobState", default="NOT_FOUND", quiet=True
         )
 
+        message = f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}"
         if job_state in [
             "NOT_FOUND",
             "BOOT_FAIL",
@@ -2807,36 +2882,69 @@ def wait_for_job_state(
             "PREEMPTED",
         ]:
             if desired_job_state == "DONE" or job_state == desired_job_state:
-                logging.log(
-                    log_level, f"Job ({job_id}) is in desired state {desired_job_state}"
+                message = f"Job ({job_id}) is in the {xfail_str}desired state {desired_job_state}"
+                reason = get_job_parameter(
+                    job_id, "Reason", default="NOT_FOUND", quiet=True
                 )
-                return True
-            else:
-                message = f"Job ({job_id}) is in state {job_state}, but we wanted {desired_job_state}"
+                if desired_reason is None or reason == desired_reason:
+                    if desired_reason is not None:
+                        message += (
+                            f" with the {xfail_str}desired reason {desired_reason}"
+                        )
+                    if not xfail:
+                        logging.log(log_level, message)
+                    else:
+                        logging.warning(message)
+                    return True
+                else:
+                    message += (
+                        f", but with reason {reason} and we waited for {desired_reason}"
+                    )
+
+            if not xfail:
                 if fatal:
                     pytest.fail(message)
                 else:
                     logging.warning(message)
-                    return False
+            else:
+                logging.log(log_level, message)
+            return False
         elif job_state == desired_job_state:
-            logging.log(
-                log_level, f"Job ({job_id}) is in desired state {desired_job_state}"
+            message = (
+                f"Job ({job_id}) is in the {xfail_str}desired state {desired_job_state}"
             )
-            return True
-        else:
-            logging.log(
-                log_level,
-                f"Job ({job_id}) is in state {job_state}, but we are waiting for {desired_job_state}",
+            reason = get_job_parameter(
+                job_id, "Reason", default="NOT_FOUND", quiet=True
             )
+            if desired_reason is None or reason == desired_reason:
+                if desired_reason is not None:
+                    message += f" with the {xfail_str}desired reason {desired_reason}"
+                if not xfail:
+                    logging.log(log_level, message)
+                else:
+                    logging.warning(message)
+                return True
+            else:
+                message += (
+                    f", but with reason {reason} and we waited for {desired_reason}"
+                )
 
+        logging.log(log_level, message)
         time.sleep(poll_interval)
 
-    message = f"Job ({job_id}) did not reach the {desired_job_state} state within the {timeout} second timeout"
-    if fatal:
-        pytest.fail(message)
+    message = f"Job ({job_id}) did not reach the {desired_job_state} state"
+    if desired_reason is not None:
+        message += f" or the reason {desired_reason}"
+    message += f" within the {timeout} second(s) timeout"
+    if not xfail:
+        if fatal:
+            pytest.fail(message)
+        else:
+            logging.warning(message)
     else:
-        logging.warning(message)
-        return False
+        logging.log(log_level, message)
+
+    return False
 
 
 def check_steps_delayed(job_id, job_output, expected_delayed):
@@ -3037,12 +3145,16 @@ def require_nodes(requested_node_count, requirements_list=[]):
         Gres
         Features
 
+    Other node requirement types will still be appended to the requirements,
+    but this could stop slurm from starting.
+
     Returns:
         None
 
     Example:
         >>> require_nodes(2, [('CPUs', 4), ('RealMemory', 40)])
         >>> require_nodes(2, [('CPUs', 2), ('RealMemory', 30), ('Features', 'gpu,mpi')])
+        >>> require_nodes(2, [('CPUs', 4), ('Sockets', 1)])
     """
 
     # If using local-config and slurm is running, use live node information
@@ -3185,7 +3297,16 @@ def require_nodes(requested_node_count, requirements_list=[]):
                     if nonqualifying_node_count == 1:
                         augmentation_dict[parameter_name] = parameter_value
             else:
-                pytest.fail(f"{parameter_name} is not a supported requirement type")
+                logging.debug(
+                    f"{parameter_name} is not a supported node requirement type."
+                )
+                logging.debug(
+                    f"{parameter_name}={parameter_value} will be added anyways!"
+                )
+                augmentation_dict[parameter_name] = parameter_value
+                if node_qualifies:
+                    node_qualifies = False
+                    nonqualifying_node_count += 1
         if node_qualifies:
             qualifying_node_count += 1
             if first_qualifying_node_name == "":
@@ -3232,9 +3353,9 @@ def require_nodes(requested_node_count, requirements_list=[]):
                 new_node_dict["NodeName"] = template_node_prefix + str(new_indices[0])
                 new_node_dict["Port"] = base_port - template_node_index + new_indices[0]
             else:
-                new_node_dict[
-                    "NodeName"
-                ] = f"{template_node_prefix}[{list_to_range(new_indices)}]"
+                new_node_dict["NodeName"] = (
+                    f"{template_node_prefix}[{list_to_range(new_indices)}]"
+                )
                 new_node_dict["Port"] = list_to_range(
                     list(
                         map(lambda x: base_port - template_node_index + x, new_indices)

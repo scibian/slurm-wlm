@@ -3,14 +3,14 @@ Description: Fix default pidfile paths
 Author: Mehdi Dogguy <mehdi@debian.org> and Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Bug-Debian: http://bugs.debian.org/885759
 Forwarded: not-needed
-Last-Update: 2018-12-13
+Last-Update: 2024-07-21
 
---- slurm-wlm-23.11.1.orig/src/common/read_config.h
-+++ slurm-wlm-23.11.1/src/common/read_config.h
-@@ -144,9 +144,9 @@ typedef struct node_record node_record_t
- #else
- #  define DEFAULT_SELECT_TYPE       "select/cons_tres"
- #endif
+--- a/src/common/read_config.h
++++ b/src/common/read_config.h
+@@ -139,9 +139,9 @@
+ #define DEFAULT_SCHED_TIME_SLICE    30
+ #define DEFAULT_SCHEDTYPE           "sched/backfill"
+ #define DEFAULT_SELECT_TYPE         "select/cons_tres"
 -#define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 +#define DEFAULT_SLURMCTLD_PIDFILE   "/run/slurmctld.pid"
  #define DEFAULT_SLURMCTLD_TIMEOUT   120
@@ -19,8 +19,8 @@ Last-Update: 2018-12-13
  #define DEFAULT_SLURMD_TIMEOUT      300
  #define DEFAULT_SPOOLDIR            "/var/spool/slurmd"
  #define DEFAULT_STORAGE_HOST        "localhost"
---- slurm-wlm-23.11.1.orig/src/slurmdbd/read_config.h
-+++ slurm-wlm-23.11.1/src/slurmdbd/read_config.h
+--- a/src/slurmdbd/read_config.h
++++ b/src/slurmdbd/read_config.h
 @@ -48,7 +48,7 @@
  
  #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/munge"

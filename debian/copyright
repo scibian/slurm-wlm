@@ -131,7 +131,6 @@ License: GPL-2+ with OpenSSL exception or apache-2.0
 
 Files: src/slurmrestd/plugins/openapi/slurmctld/reservations.c
        src/slurmrestd/plugins/openapi/v0.0.39/reservations.c
-       src/slurmrestd/plugins/openapi/v0.0.38/reservations.c
 Copyright: 2020 UT-Battelle, LLC.
 License: GPL-2+ with OpenSSL exception or apache-2.0
 
@@ -253,11 +252,6 @@ Files: src/plugins/mpi/pmix/pmixp_coll_ring.c
 Copyright: 2018 Mellanox Technologies, Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: contribs/cray/libalps_test_programs.tar.gz
-Copyright: 2009-2011 Centro Svizzero di Calcolo Scientifico (CSCS)
-           1996-2003 Maximum Entropy Data Consultants Ltd
-License: GPL-2 and LGPL-2.1+
-
 Files: src/common/proc_args.h
        src/common/slurm_resource_info.c
        src/common/slurm_resource_info.h
@@ -289,23 +283,6 @@ Files: src/plugins/mpi/pmi2/agent.h
 Copyright: 2007-2009,2011-2013 National University of Defense Technology, China
 License: GPL-2+ with OpenSSL exception
 
-Files: src/plugins/job_submit/cray_aries/job_submit_cray_aries.c
-       src/plugins/select/cray_aries/ccm.c
-       src/plugins/select/cray_aries/ccm.h
-       src/plugins/select/cray_aries/select_cray_aries.c
-       src/plugins/switch/cray_aries/cookies.c
-       src/plugins/switch/cray_aries/gpu.c
-       src/plugins/switch/cray_aries/iaa.c
-       src/plugins/switch/cray_aries/pe_info.c
-       src/plugins/switch/cray_aries/scaling.c
-       src/plugins/switch/cray_aries/switch_cray_aries.c
-       src/plugins/switch/cray_aries/switch_cray_aries.h
-       src/plugins/switch/cray_aries/util.c
-       src/plugins/task/cray_aries/task_cray_aries.c
-Copyright: 2013,2014,2016 SchedMD LLC
-           2013,2014,2016 Cray Inc
-License: GPL-2+ with OpenSSL exception
-
 Files: src/interfaces/jobacct_gather.?
        src/plugins/jobacct_gather/linux/jobacct_gather_linux.c
        src/slurmd/slurmd/get_mach_stat.c
@@ -325,15 +302,6 @@ Files: src/plugins/acct_gather_profile/hdf5/hdf5_api.h
 Copyright: 2013,2015 Bull
            2013-2016 SchedMD LLC
 License: GPL-2+ with OpenSSL exception
-
-Files: auxdir/x_ac_cray.m4
-       contribs/cray/csm/gres.conf.j2
-       contribs/cray/csm/slurm.conf.j2
-       contribs/cray/csm/slurmconfgen_smw.py
-       contribs/cray/slurm.conf.template
-       contribs/cray/slurmconfgen.py.in
-Copyright: 2013,2015-2016 Cray Inc
-License: None
 
 Files: auxdir/x_ac_hpe_slingshot.m4
 Copyright: 2021 Hewlett Packard Enterprise Development LP
@@ -376,10 +344,6 @@ Copyright: 2007 The Regents of the University of California
            2006-2007 Cluster Resources, Inc
 License: GPL-2+ with OpenSSL exception
 
-Files: contribs/cray/slurmsmwd/*
-Copyright: 2017 Regents of the University of California
-License: GPL-2+ with OpenSSL exception
-
 Files: src/plugins/mpi/pmi2/agent.c
        src/plugins/mpi/pmi2/mpi_pmi2.c
        src/plugins/mpi/pmi2/setup.c
@@ -408,10 +372,6 @@ License: GPL-2+ with OpenSSL exception
 
 Files: src/interfaces/acct_gather_energy.h
 Copyright: 2012-2013 Bull-HN-PHX
-License: GPL-2+ with OpenSSL exception
-
-Files: src/interfaces/ext_sensors.?
-Copyright: 2013 Bull-HN-PHX
 License: GPL-2+ with OpenSSL exception
 
 Files: src/sview/job_info.c
@@ -443,11 +403,6 @@ Files: src/common/slurm_protocol_api.h
 Copyright: 2002-2007 The Regents of the University of California
            2008-2010 Lawrence Livermore National Security, LLC
            2013 Intel Inc
-License: GPL-2+ with OpenSSL exception
-
-Files: src/plugins/ext_sensors/rrd/ext_sensors_rrd.c
-       src/plugins/ext_sensors/rrd/ext_sensors_rrd.h
-Copyright: 2013 Bull - Thomas Cadeau/Martin Perry/Yiannis Georgiou
 License: GPL-2+ with OpenSSL exception
 
 Files: src/interfaces/topology.?
@@ -707,11 +662,6 @@ Copyright: 2007 The Regents of the University of California
            2008-2009 Lawrence Livermore National Security, LLC
            2006-2007 Cluster Resources, Inc
 License: GPL-2+ with OpenSSL exception
-
-Files: contribs/cray/pam_job.c
-Copyright: 2000-2006 Silicon Graphics, Inc
-           2011 Centro Svizzero di Calcolo Scientifico (CSCS)
-License: LGPL-2.1+
 
 Files: contribs/torque/qrerun.pl
 Copyright: 2006-2007 Cluster Resources, Inc

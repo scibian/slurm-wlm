@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2018 SchedMD LLC <https://www.schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -62,7 +62,7 @@
 #include "src/common/proc_args.h"
 #include "src/interfaces/mpi.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/slurm_protocol_interface.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/interfaces/acct_gather_profile.h"
@@ -131,7 +131,7 @@ static bool  _valid_node_list(char **node_list_pptr);
  */
 static slurm_opt_t *_get_first_opt(int het_job_offset)
 {
-	ListIterator opt_iter;
+	list_itr_t *opt_iter;
 	slurm_opt_t *opt_local;
 
 	if (!opt_list) {
@@ -167,7 +167,7 @@ static slurm_opt_t *_get_first_opt(int het_job_offset)
  */
 static slurm_opt_t *_get_next_opt(int het_job_offset, slurm_opt_t *opt_last)
 {
-	ListIterator opt_iter;
+	list_itr_t *opt_iter;
 	slurm_opt_t *opt_local;
 	bool found_last = false;
 
@@ -224,7 +224,7 @@ extern slurm_opt_t *get_next_opt(int het_job_offset)
  */
 extern int get_max_het_group(void)
 {
-	ListIterator opt_iter;
+	list_itr_t *opt_iter;
 	slurm_opt_t *opt_local;
 	int max_het_job_offset = 0, het_job_offset = 0;
 
@@ -786,15 +786,8 @@ static void _opt_args(int argc, char **argv, int het_job_offset)
 	if (opt.container_id && !getenv("SLURM_CONTAINER_ID"))
 		setenvf(NULL, "SLURM_CONTAINER_ID", "%s", opt.container_id);
 
-#ifdef HAVE_NATIVE_CRAY
-	/* only fatal on the allocation */
-	if (opt.network && opt.shared && (sropt.jobid == NO_VAL))
-		fatal("Requesting network performance counters requires "
-		      "exclusive access.  Please add the --exclusive option "
-		      "to your request.");
 	if (opt.network)
-		setenv("SLURM_NETWORK", opt.network, 1);
-#endif
+		setenvf(NULL, "SLURM_NETWORK", "%s", opt.network);
 
 	if (opt.dependency)
 		setenvfs("SLURM_JOB_DEPENDENCY=%s", opt.dependency);
@@ -1060,6 +1053,9 @@ static bool _opt_verify(void)
 	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	   && (!opt.nodes_set || !opt.ntasks_set)) {
 		hostlist_t *hl = hostlist_create(opt.nodelist);
+
+		if (!hl)
+			fatal("Invalid node list specified");
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = true;
 			opt.ntasks = hostlist_count(hl);
@@ -1149,10 +1145,8 @@ static bool _opt_verify(void)
 	/* massage the numbers */
 	if (opt.nodelist && !opt.nodes_set) {
 		hl = hostlist_create(opt.nodelist);
-		if (!hl) {
-			error("memory allocation failure");
-			exit(error_exit);
-		}
+		if (!hl)
+			fatal("Invalid node list specified");
 		hostlist_uniq(hl);
 		hl_cnt = hostlist_count(hl);
 		opt.min_nodes = hl_cnt;
@@ -1183,10 +1177,8 @@ static bool _opt_verify(void)
 		if (opt.nodelist) {
 			FREE_NULL_HOSTLIST(hl);
 			hl = hostlist_create(opt.nodelist);
-			if (!hl) {
-				error("memory allocation failure");
-				exit(error_exit);
-			}
+			if (!hl)
+				fatal("Invalid node list specified");
 			if (((opt.distribution & SLURM_DIST_STATE_BASE) ==
 			     SLURM_DIST_ARBITRARY) && !opt.ntasks_set) {
 				opt.ntasks = hostlist_count(hl);
@@ -1241,19 +1233,38 @@ static bool _opt_verify(void)
 		    slurm_option_set_by_env(&opt, 'n') &&
 		    !slurm_option_set_by_env(&opt, 'N')) {
 			slurm_option_reset(&opt, "ntasks");
-		} else if ((opt.ntasks_per_node != NO_VAL) && opt.min_nodes &&
-			   (opt.ntasks_per_node !=
-			    (opt.ntasks / opt.min_nodes))) {
-			if ((opt.ntasks > opt.ntasks_per_node) &&
-			    !mpack_reset_nodes)
-				warning("can't honor --ntasks-per-node set to %u which doesn't match the requested tasks %u with the number of requested nodes %u. Ignoring --ntasks-per-node.",
+		} else if (opt.ntasks_per_node != NO_VAL) {
+			bool ntasks_per_node_reset = false;
+			int min_ntasks, max_ntasks;
+
+			min_ntasks = opt.min_nodes * opt.ntasks_per_node;
+			max_ntasks = opt.max_nodes * opt.ntasks_per_node;
+
+			/*
+			* We only want to notify incoherent combinations of
+			* -n/-N/--ntasks-per-node for steps, since job
+			* allocations will be already rejected.
+			*/
+			if (opt.max_nodes &&
+			    (opt.ntasks > max_ntasks) &&
+			    !mpack_reset_nodes &&
+			    getenv("SLURM_JOB_ID")) {
+				warning("can't honor --ntasks-per-node set to %u which doesn't match the requested tasks %u with the maximum number of requested nodes %u. Ignoring --ntasks-per-node.",
 					opt.ntasks_per_node, opt.ntasks,
-					opt.min_nodes);
-			else if (opt.ntasks > opt.ntasks_per_node)
+					opt.max_nodes);
+				ntasks_per_node_reset = true;
+			}
+			else if (opt.min_nodes &&
+				 (opt.ntasks != min_ntasks) &&
+				 (opt.ntasks > opt.ntasks_per_node) &&
+				 mpack_reset_nodes) {
 				warning("can't honor --ntasks-per-node set to %u which doesn't match the requested tasks %u and -mpack, which forces min number of nodes to 1",
 					opt.ntasks_per_node, opt.ntasks);
+				ntasks_per_node_reset = true;
+			}
 
-			slurm_option_reset(&opt, "ntasks-per-node");
+			if (ntasks_per_node_reset)
+				slurm_option_reset(&opt, "ntasks-per-node");
 		}
 
 	} /* else if (opt.ntasks_set && !opt.nodes_set) */
@@ -1671,12 +1682,6 @@ static void _help(void)
 		);
 
 	printf("\n"
-#ifdef HAVE_NATIVE_CRAY			/* Native Cray specific options */
-"Cray related options:\n"
-"      --network=type          Use network performance counters\n"
-"                              (system, network, or processor)\n"
-"\n"
-#endif
 "Help options:\n"
 "  -h, --help                  show this help message\n"
 "      --usage                 display brief usage message\n"

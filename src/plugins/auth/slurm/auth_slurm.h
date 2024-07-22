@@ -2,7 +2,6 @@
  *  auth_slurm.h
  *****************************************************************************
  *  Copyright (C) SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -110,6 +109,6 @@ extern char *encode_sbcast(sbcast_cred_arg_t *cred);
 extern sbcast_cred_t *extract_sbcast(char *json);
 
 extern char *encode_net_aliases(slurm_node_alias_addrs_t *aliases);
-extern slurm_node_alias_addrs_t *extract_net_aliases(char *json);
+extern slurm_node_alias_addrs_t *extract_net_aliases(jwt_t *jwt);
 
 #endif

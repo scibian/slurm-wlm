@@ -6,7 +6,7 @@
  *  When the node is restored to normal operation, another script will be
  *  executed. Many parameters are available to control this mode of operation.
  *****************************************************************************
- *  Copyright (C) 2016 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -50,6 +50,7 @@ extern List resume_job_list;
  * config_power_mgr - Read power management configuration
  */
 extern void config_power_mgr(void);
+extern void config_power_mgr_fini(void);
 
 extern void power_save_init(void);
 extern void power_save_fini(void);

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  openapi.h - OpenAPI plugin handler
  *****************************************************************************
- *  Copyright (C) 2019-2021 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -50,6 +49,27 @@
 
 #include "src/interfaces/data_parser.h"
 
+typedef struct {
+	int rc;
+	list_t *errors;
+	list_t *warnings;
+	data_parser_t *parser;
+	const char *id; /* string identifying client (usually IP) */
+	void *db_conn;
+	http_request_method_t method;
+	data_t *parameters;
+	data_t *query;
+	data_t *resp;
+	data_t *parent_path;
+	int tag;
+} openapi_ctxt_t;
+
+/*
+ * Callback from openapi caller.
+ * RET SLURM_SUCCESS or error to kill the connection
+ */
+typedef int (*openapi_ctxt_handler_t)(openapi_ctxt_t *ctxt);
+
 /*
  * Callback from openapi caller.
  * we are not passing any http information to make this generic.
@@ -75,6 +95,41 @@ typedef enum {
 	OAS_FLAG_MAX = SLURM_BIT(63) /* place holder */
 } openapi_spec_flags_t;
 
+typedef enum {
+	OP_BIND_INVALID = 0,
+	OP_BIND_NONE = SLURM_BIT(1),
+	OP_BIND_DATA_PARSER = SLURM_BIT(2), /* populate {data_parser} in URL */
+	OP_BIND_OPENAPI_RESP_FMT = SLURM_BIT(3), /* populate errors,warnings,meta */
+	OP_BIND_HIDDEN_OAS = SLURM_BIT(4), /* Hide from OpenAPI specification */
+	OP_BIND_NO_SLURMDBD = SLURM_BIT(5), /* Do not prepare slurmdbd connection */
+	OP_BIND_INVALID_MAX = INFINITE16
+} op_bind_flags_t;
+
+typedef struct {
+	http_request_method_t method;
+	const char *const *tags;
+	const char *summary;
+	const char *description;
+	struct {
+		data_parser_type_t type;
+		const char *description;
+	} response;
+	data_parser_type_t parameters;
+	data_parser_type_t query;
+	struct {
+		data_parser_type_t type;
+		const char *description;
+		bool optional;
+	} body;
+} openapi_path_binding_method_t;
+
+typedef struct {
+	const char *path;
+	openapi_ctxt_handler_t callback;
+	const openapi_path_binding_method_t *methods;
+	op_bind_flags_t flags;
+} openapi_path_binding_t;
+
 /*
  * Register a given unique tag against a path.
  *
@@ -84,6 +139,26 @@ typedef enum {
  * Can safely be called multiple times for same path.
  */
 extern int register_path_tag(const char *path);
+
+/*
+ * Register a given unique tag against a path binding.
+ *
+ * IN in_path - string path to assign to given tag or
+ * 	NULL (to use path in op_path)
+ * IN op_path - Operation binding for path
+ * IN meta - Meta information from plugin (or NULL)
+ * IN parser - Relavent data_parser (or NULL)
+ * IN/OUT tag_ptr - Sets tag on success
+ * RET SLURM_SUCCESS or
+ *	ESLURM_NOT_SUPPORTED: if data_parser doesnt support all types in method
+ *	or any other Slurm error
+ *
+ * Can safely be called multiple times for same path.
+ */
+extern int register_path_binding(const char *in_path,
+				 const openapi_path_binding_t *op_path,
+				 const openapi_resp_meta_t *meta,
+				 data_parser_t *parser, int *tag_ptr);
 
 /*
  * Unregister a given unique tag against a path.
@@ -117,10 +192,13 @@ extern void print_path_tag_methods(int tag);
  * 	pass NULL to load all found or "" to load none of them
  * IN listf - function to call if plugins="list" (may be NULL)
  * IN parsers_ptr - array of loaded data_parsers
+ * IN response_status_codes - HTTP_STATUS_NONE terminated array of HTTP status
+ *	codes to generate or NULL for default
  * RET SLURM_SUCCESS or error
  */
 extern int init_openapi(const char *plugin_list, plugrack_foreach_t listf,
-			data_parser_t **parsers_ptr);
+			data_parser_t **parsers_ptr,
+			const http_status_code_t *resp_status_codes);
 
 /*
  * Free openapi
@@ -128,36 +206,10 @@ extern int init_openapi(const char *plugin_list, plugrack_foreach_t listf,
 extern void destroy_openapi(void);
 
 /*
- * Joins all of the loaded specs into a single spec
- */
-extern int get_openapi_specification(data_t *resp);
-
-/*
  * Extracts the db_conn using given auth context
  * Note: This must be implemented in process calling openapi functions.
  */
 extern void *openapi_get_db_conn(void *ctxt);
-
-typedef struct {
-	int rc;
-	list_t *errors;
-	list_t *warnings;
-	data_parser_t *parser;
-	const char *id; /* string identifying client (usually IP) */
-	void *db_conn;
-	http_request_method_t method;
-	data_t *parameters;
-	data_t *query;
-	data_t *resp;
-	data_t *parent_path;
-	int tag;
-} openapi_ctxt_t;
-
-/*
- * Callback from openapi caller.
- * RET SLURM_SUCCESS or error to kill the connection
- */
-typedef int (*openapi_ctxt_handler_t)(openapi_ctxt_t *ctxt);
 
 /* Wraps ctxt callback to apply standardised response schema */
 extern int wrap_openapi_ctxt_callback(const char *context_id,
@@ -165,8 +217,8 @@ extern int wrap_openapi_ctxt_callback(const char *context_id,
 				      data_t *parameters, data_t *query,
 				      int tag, data_t *resp, void *auth,
 				      data_parser_t *parser,
-				      openapi_ctxt_handler_t callback,
-				      const openapi_resp_meta_t *meta);
+				      const openapi_path_binding_t *op_path,
+				      const openapi_resp_meta_t *plugin_meta);
 
 /*
  * Macro to make a single response dumping easy
@@ -234,5 +286,20 @@ extern char *openapi_get_str_param(openapi_ctxt_t *ctxt, bool required,
 extern int openapi_get_date_param(openapi_ctxt_t *ctxt, bool required,
 				  const char *name, time_t *time_ptr,
 				  const char *caller);
+
+/*
+ * Generate OpenAPI specification
+ * IN/OUT dst - data_t to populate with specification
+ * RET SLURM_SUCCESS or error
+ */
+extern int generate_spec(data_t *dst);
+
+/*
+ * True if only generating an OAS
+ * IN set - Set to true
+ * RET true if only generating a spec file
+ * Warning: Do not call with set=true after multithreading started
+ */
+extern bool is_spec_generation_only(bool set);
 
 #endif /* SLURMRESTD_OPENAPI_H */

@@ -46,6 +46,7 @@
 #include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 
+#define SLURM_22_05_PROTOCOL_VERSION ((38 << 8) | 0)
 #define SLURM_21_08_PROTOCOL_VERSION ((37 << 8) | 0)
 #define SLURM_20_11_PROTOCOL_VERSION ((36 << 8) | 0)
 #define SLURM_20_02_PROTOCOL_VERSION ((35 << 8) | 0)
@@ -152,6 +153,9 @@ typedef struct {
 	char *start;
 	char *state;
 	char *state_reason_prev;
+	char *std_err;
+	char *std_in;
+	char *std_out;
 	char *submit;
 	char *submit_line;
 	char *suspended;
@@ -226,6 +230,9 @@ static void _free_local_job_members(local_job_t *object)
 		xfree(object->start);
 		xfree(object->state);
 		xfree(object->state_reason_prev);
+		xfree(object->std_err);
+		xfree(object->std_in);
+		xfree(object->std_out);
 		xfree(object->submit);
 		xfree(object->submit_line);
 		xfree(object->suspended);
@@ -577,6 +584,9 @@ static char *job_req_inx[] = {
 	"time_start",
 	"state",
 	"state_reason_prev",
+	"std_err",
+	"std_in",
+	"std_out",
 	"submit_line",
 	"system_comment",
 	"time_submit",
@@ -635,6 +645,9 @@ enum {
 	JOB_REQ_START,
 	JOB_REQ_STATE,
 	JOB_REQ_STATE_REASON,
+	JOB_REQ_STDERR,
+	JOB_REQ_STDIN,
+	JOB_REQ_STDOUT,
 	JOB_REQ_SUBMIT_LINE,
 	JOB_REQ_SYSTEM_COMMENT,
 	JOB_REQ_SUBMIT,
@@ -1034,6 +1047,9 @@ static void _pack_local_job(local_job_t *object, buf_t *buffer)
 	packstr(object->start, buffer);
 	packstr(object->state, buffer);
 	packstr(object->state_reason_prev, buffer);
+	packstr(object->std_err, buffer);
+	packstr(object->std_in, buffer);
+	packstr(object->std_out, buffer);
 	packstr(object->submit, buffer);
 	packstr(object->suspended, buffer);
 	packstr(object->submit_line, buffer);
@@ -1073,8 +1089,66 @@ static int _unpack_local_job(local_job_t *object, uint16_t rpc_version,
 	 * 15.08: job_req_inx and the it's corresponding enum were synced up
 	 * and it unpacks in the expected order.
 	 */
-
-	if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_24_05_PROTOCOL_VERSION) {
+		safe_unpackstr(&object->account, buffer);
+		safe_unpackstr(&object->admin_comment, buffer);
+		safe_unpackstr(&object->alloc_nodes, buffer);
+		safe_unpackstr(&object->associd, buffer);
+		safe_unpackstr(&object->array_jobid, buffer);
+		safe_unpackstr(&object->array_max_tasks, buffer);
+		safe_unpackstr(&object->array_taskid, buffer);
+		safe_unpackstr(&object->array_task_pending, buffer);
+		safe_unpackstr(&object->array_task_str, buffer);
+		safe_unpackstr(&object->script_hash_inx, buffer);
+		safe_unpackstr(&object->blockid, buffer);
+		safe_unpackstr(&object->constraints, buffer);
+		safe_unpackstr(&object->container, buffer);
+		safe_unpackstr(&object->deleted, buffer);
+		safe_unpackstr(&object->derived_ec, buffer);
+		safe_unpackstr(&object->derived_es, buffer);
+		safe_unpackstr(&object->env_hash_inx, buffer);
+		safe_unpackstr(&object->exit_code, buffer);
+		safe_unpackstr(&object->extra, buffer);
+		safe_unpackstr(&object->flags, buffer);
+		safe_unpackstr(&object->timelimit, buffer);
+		safe_unpackstr(&object->eligible, buffer);
+		safe_unpackstr(&object->end, buffer);
+		safe_unpackstr(&object->gid, buffer);
+		safe_unpackstr(&object->gres_used, buffer);
+		safe_unpackstr(&object->job_db_inx, buffer);
+		safe_unpackstr(&object->jobid, buffer);
+		safe_unpackstr(&object->kill_requid, buffer);
+		safe_unpackstr(&object->licenses, buffer);
+		safe_unpackstr(&object->mcs_label, buffer);
+		safe_unpackstr(&object->mod_time, buffer);
+		safe_unpackstr(&object->name, buffer);
+		safe_unpackstr(&object->nodelist, buffer);
+		safe_unpackstr(&object->node_inx, buffer);
+		safe_unpackstr(&object->het_job_id, buffer);
+		safe_unpackstr(&object->het_job_offset, buffer);
+		safe_unpackstr(&object->partition, buffer);
+		safe_unpackstr(&object->priority, buffer);
+		safe_unpackstr(&object->qos, buffer);
+		safe_unpackstr(&object->req_cpus, buffer);
+		safe_unpackstr(&object->req_mem, buffer);
+		safe_unpackstr(&object->resvid, buffer);
+		safe_unpackstr(&object->start, buffer);
+		safe_unpackstr(&object->state, buffer);
+		safe_unpackstr(&object->state_reason_prev, buffer);
+		safe_unpackstr(&object->std_err, buffer);
+		safe_unpackstr(&object->std_in, buffer);
+		safe_unpackstr(&object->std_out, buffer);
+		safe_unpackstr(&object->submit, buffer);
+		safe_unpackstr(&object->suspended, buffer);
+		safe_unpackstr(&object->submit_line, buffer);
+		safe_unpackstr(&object->system_comment, buffer);
+		safe_unpackstr(&object->tres_alloc_str, buffer);
+		safe_unpackstr(&object->tres_req_str, buffer);
+		safe_unpackstr(&object->uid, buffer);
+		safe_unpackstr(&object->wckey, buffer);
+		safe_unpackstr(&object->wckey_id, buffer);
+		safe_unpackstr(&object->work_dir, buffer);
+	} else if (rpc_version >= SLURM_23_02_PROTOCOL_VERSION) {
 		safe_unpackstr(&object->account, buffer);
 		safe_unpackstr(&object->admin_comment, buffer);
 		safe_unpackstr(&object->alloc_nodes, buffer);
@@ -3460,6 +3534,9 @@ static buf_t *_pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
 		job.start = row[JOB_REQ_START];
 		job.state = row[JOB_REQ_STATE];
 		job.state_reason_prev = row[JOB_REQ_STATE_REASON];
+		job.std_err = row[JOB_REQ_STDERR];
+		job.std_in = row[JOB_REQ_STDIN];
+		job.std_out = row[JOB_REQ_STDOUT];
 		job.submit = row[JOB_REQ_SUBMIT];
 		job.submit_line = row[JOB_REQ_SUBMIT_LINE];
 		job.suspended = row[JOB_REQ_SUSPENDED];
@@ -3516,6 +3593,9 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 		JOB_REQ_START,
 		JOB_REQ_STATE,
 		JOB_REQ_STATE_REASON,
+		JOB_REQ_STDERR,
+		JOB_REQ_STDIN,
+		JOB_REQ_STDOUT,
 		JOB_REQ_SUBMIT,
 		JOB_REQ_SUSPENDED,
 		JOB_REQ_UID,
@@ -3673,6 +3753,9 @@ static char *_load_jobs(uint16_t rpc_version, buf_t *buffer,
 			     object.start,
 			     object.state,
 			     object.state_reason_prev,
+			     object.std_err,
+			     object.std_in,
+			     object.std_out,
 			     object.submit,
 			     object.suspended,
 			     object.uid,
@@ -5343,7 +5426,7 @@ extern int as_mysql_jobacct_process_archive(mysql_conn_t *mysql_conn,
 	char *cluster_name = NULL;
 	List use_cluster_list;
 	bool new_cluster_list = false;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 
 	if (!arch_cond) {
 		error("No arch_cond was given to archive from.  returning");

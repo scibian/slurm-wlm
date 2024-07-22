@@ -77,9 +77,6 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 		av_store(av, i, newSVpv(conf->control_machine[i], 0));
 	hv_store_sv(hv, "control_machine", newRV_noinc((SV*)av));
 
-	if (conf->core_spec_plugin)
-		STORE_FIELD(hv, conf, core_spec_plugin, charp);
-
 	STORE_FIELD(hv, conf, cpu_freq_def, uint32_t);
 
 	if (conf->cred_type)
@@ -93,17 +90,7 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 
 	STORE_FIELD(hv, conf, enforce_part_limits, uint16_t);
 
-	if (conf->epilog)
-		STORE_FIELD(hv, conf, epilog, charp);
 	STORE_FIELD(hv, conf, epilog_msg_time, uint32_t);
-	if (conf->epilog_slurmctld)
-		STORE_FIELD(hv, conf, epilog_slurmctld, charp);
-
-	if (conf->ext_sensors_conf)
-		STORE_FIELD(hv, conf, ext_sensors_conf, charp);
-	STORE_FIELD(hv, conf, ext_sensors_freq, uint16_t);
-	if (conf->ext_sensors_type)
-		STORE_FIELD(hv, conf, ext_sensors_type, charp);
 
 	STORE_FIELD(hv, conf, conf_flags, uint32_t);
 
@@ -208,9 +195,6 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 	if (conf->plugstack)
 		STORE_FIELD(hv, conf, plugstack, charp);
 
-	if (conf->power_parameters)
-		STORE_FIELD(hv, conf, power_parameters, charp);
-
 	STORE_FIELD(hv, conf, preempt_mode, uint16_t);
 
 	if (conf->preempt_params)
@@ -240,11 +224,7 @@ int slurm_ctl_conf_to_hv(slurm_conf_t *conf, HV *hv)
 	if (conf->proctrack_type)
 		STORE_FIELD(hv, conf, proctrack_type, charp);
 
-	if (conf->prolog)
-		STORE_FIELD(hv, conf, prolog, charp);
 	STORE_FIELD(hv, conf, prolog_flags, uint16_t);
-	if (conf->prolog_slurmctld)
-		STORE_FIELD(hv, conf, prolog_slurmctld, charp);
 
 	STORE_FIELD(hv, conf, propagate_prio_process, uint16_t);
 	if (conf->propagate_rlimits)
@@ -441,19 +421,13 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, control_addr[1], charp, FALSE);
 	FETCH_FIELD(hv, conf, control_machine[1], charp, FALSE);
 
-	FETCH_FIELD(hv, conf, core_spec_plugin, charp, FALSE);
 	FETCH_FIELD(hv, conf, cpu_freq_def, uint32_t, FALSE);
 	FETCH_FIELD(hv, conf, cred_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, debug_flags, uint64_t, TRUE);
 	FETCH_FIELD(hv, conf, def_mem_per_cpu, uint64_t, TRUE);
 	FETCH_FIELD(hv, conf, eio_timeout, uint16_t, FALSE);
 	FETCH_FIELD(hv, conf, enforce_part_limits, uint16_t, TRUE);
-	FETCH_FIELD(hv, conf, epilog, charp, FALSE);
 	FETCH_FIELD(hv, conf, epilog_msg_time, uint32_t, TRUE);
-	FETCH_FIELD(hv, conf, epilog_slurmctld, charp, FALSE);
-	FETCH_FIELD(hv, conf, ext_sensors_conf, charp, FALSE);
-	FETCH_FIELD(hv, conf, ext_sensors_freq, uint16_t, TRUE);
-	FETCH_FIELD(hv, conf, ext_sensors_type, charp, FALSE);
 
 	FETCH_FIELD(hv, conf, conf_flags, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, first_job_id, uint32_t, TRUE);
@@ -506,7 +480,6 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, over_time_limit, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, plugindir, charp, FALSE);
 	FETCH_FIELD(hv, conf, plugstack, charp, FALSE);
-	FETCH_FIELD(hv, conf, power_parameters, charp, FALSE);
 	FETCH_FIELD(hv, conf, preempt_mode, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, preempt_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, priority_calc_period, uint32_t, TRUE);
@@ -526,9 +499,7 @@ int hv_to_slurm_ctl_conf(HV *hv, slurm_conf_t *conf)
 	FETCH_FIELD(hv, conf, priority_weight_tres, charp, FALSE);
 	FETCH_FIELD(hv, conf, private_data, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, proctrack_type, charp, FALSE);
-	FETCH_FIELD(hv, conf, prolog, charp, FALSE);
 	FETCH_FIELD(hv, conf, prolog_flags, uint16_t, TRUE);
-	FETCH_FIELD(hv, conf, prolog_slurmctld, charp, FALSE);
 
 	FETCH_FIELD(hv, conf, propagate_prio_process, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, propagate_rlimits, charp, FALSE);

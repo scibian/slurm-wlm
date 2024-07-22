@@ -205,11 +205,7 @@ static int _index_job(const char *jobcomp)
 		return SLURM_ERROR;
 	}
 
-	if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
-		error("%s: curl_global_init: %m", plugin_type);
-		rc = SLURM_ERROR;
-		goto cleanup_global_init;
-	} else if ((curl_handle = curl_easy_init()) == NULL) {
+	if ((curl_handle = curl_easy_init()) == NULL) {
 		error("%s: curl_easy_init: %m", plugin_type);
 		rc = SLURM_ERROR;
 		goto cleanup_easy_init;
@@ -285,8 +281,6 @@ cleanup:
 	xfree(chunk.message);
 cleanup_easy_init:
 	curl_easy_cleanup(curl_handle);
-cleanup_global_init:
-	curl_global_cleanup();
 	slurm_mutex_unlock(&location_mutex);
 	return rc;
 }
@@ -295,7 +289,7 @@ cleanup_global_init:
 static int _save_state(void)
 {
 	int rc = SLURM_SUCCESS;
-	ListIterator iter;
+	list_itr_t *iter;
 	static int high_buffer_size = (1024 * 1024);
 	buf_t *buffer = init_buf(high_buffer_size);
 	uint32_t job_cnt;
@@ -348,7 +342,7 @@ extern int jobcomp_p_log_record(job_record_t *job_ptr)
 
 extern void *_process_jobs(void *x)
 {
-	ListIterator iter;
+	list_itr_t *iter;
 	struct job_node *jnode = NULL;
 	struct timespec ts = {0, 0};
 	time_t now;
@@ -416,17 +410,25 @@ extern int init(void)
 	(void) _load_pending_jobs();
 	slurm_mutex_unlock(&pend_jobs_lock);
 
+	if (curl_global_init(CURL_GLOBAL_ALL) != 0) {
+		error("%s: curl_global_init: %m", plugin_type);
+		return SLURM_ERROR;
+	}
+
 	return SLURM_SUCCESS;
 }
 
 extern int fini(void)
 {
 	thread_shutdown = true;
-	pthread_join(job_handler_thread, NULL);
+	slurm_thread_join(job_handler_thread);
 
 	_save_state();
 	FREE_NULL_LIST(jobslist);
 	xfree(log_url);
+
+	curl_global_cleanup();
+
 	return SLURM_SUCCESS;
 }
 

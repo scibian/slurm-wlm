@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurm_opt.c - salloc/sbatch/srun option processing functions
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -1633,6 +1632,8 @@ static int arg_set_exclusive(slurm_opt_t *opt, const char *arg)
 		opt->shared = JOB_SHARED_USER;
 	} else if (!xstrcasecmp(arg, "mcs")) {
 		opt->shared = JOB_SHARED_MCS;
+	} else if (!xstrcasecmp(arg, "topo")) {
+		opt->shared = JOB_SHARED_TOPO;
 	} else {
 		error("Invalid --exclusive specification");
 		return SLURM_ERROR;
@@ -1677,6 +1678,8 @@ static int arg_set_data_exclusive(slurm_opt_t *opt, const data_t *arg,
 			opt->shared = JOB_SHARED_USER;
 		} else if (!xstrcasecmp(str, "mcs")) {
 			opt->shared = JOB_SHARED_MCS;
+		} else if (!xstrcasecmp(str, "topo")) {
+			opt->shared = JOB_SHARED_TOPO;
 		} else {
 			rc = SLURM_ERROR;
 			ADD_DATA_ERROR("Invalid exclusive specification", rc);
@@ -1696,6 +1699,8 @@ static char *arg_get_exclusive(slurm_opt_t *opt)
 		return xstrdup("user");
 	if (opt->shared == JOB_SHARED_MCS)
 		return xstrdup("mcs");
+	if (opt->shared == JOB_SHARED_TOPO)
+		return xstrdup("topo");
 	if (opt->shared == NO_VAL16)
 		return xstrdup("unset");
 	return NULL;
@@ -1761,10 +1766,21 @@ static slurm_cli_opt_t slurm_opt_export = {
 	.reset_func = arg_reset_export,
 };
 
+COMMON_SBATCH_STRING_OPTION(export_file);
+static slurm_cli_opt_t slurm_opt_export_file = {
+	.name = "export-file",
+	.has_arg = required_argument,
+	.val = LONG_OPT_EXPORT_FILE,
+	.set_func_sbatch = arg_set_export_file,
+	.set_func_data = arg_set_data_export_file,
+	.get_func = arg_get_export_file,
+	.reset_func = arg_reset_export_file,
+};
+
 COMMON_SRUN_BOOL_OPTION(external_launcher);
 static slurm_cli_opt_t slurm_opt_external_launcher = {
 	.name = "external-launcher",
-	.has_arg = no_argument,
+	.has_arg = optional_argument,
 	.val = LONG_OPT_EXTERNAL_LAUNCHER,
 	.set_func_srun = arg_set_external_launcher,
 	.get_func = arg_get_external_launcher,
@@ -3380,6 +3396,7 @@ static int arg_set_ntasks(slurm_opt_t *opt, const char *arg)
 {
 	opt->ntasks = parse_int("--ntasks", arg, true);
 	opt->ntasks_set = true;
+	opt->ntasks_opt_set = true;
 	return SLURM_SUCCESS;
 }
 static int arg_set_data_ntasks(slurm_opt_t *opt, const data_t *arg,
@@ -3398,6 +3415,7 @@ static int arg_set_data_ntasks(slurm_opt_t *opt, const data_t *arg,
 	} else {
 		opt->ntasks = (int) val;
 		opt->ntasks_set = true;
+		opt->ntasks_opt_set = true;
 	}
 	return rc;
 }
@@ -3772,47 +3790,6 @@ static slurm_cli_opt_t slurm_opt_partition = {
 	.reset_each_pass = true,
 };
 
-static int arg_set_power(slurm_opt_t *opt, const char *arg)
-{
-	opt->power = power_flags_id(arg);
-
-	return SLURM_SUCCESS;
-}
-static int arg_set_data_power(slurm_opt_t *opt, const data_t *arg,
-			      data_t *errors)
-{
-	int rc;
-	char *str = NULL;
-
-	if (!opt->sbatch_opt && !opt->srun_opt)
-		return SLURM_ERROR;
-
-	if ((rc = data_get_string_converted(arg, &str)))
-		ADD_DATA_ERROR("Unable to read string", rc);
-	else
-		opt->power = power_flags_id(str);
-
-	xfree(str);
-	return rc;
-}
-static char *arg_get_power(slurm_opt_t *opt)
-{
-	if (opt->power)
-		return xstrdup(power_flags_str(opt->power));
-	return xstrdup("unset");
-}
-COMMON_OPTION_RESET(power, 0);
-static slurm_cli_opt_t slurm_opt_power = {
-	.name = "power",
-	.has_arg = required_argument,
-	.val = LONG_OPT_POWER,
-	.set_func = arg_set_power,
-	.set_func_data = arg_set_data_power,
-	.get_func = arg_get_power,
-	.reset_func = arg_reset_power,
-	.reset_each_pass = true,
-};
-
 COMMON_STRING_OPTION(prefer);
 static slurm_cli_opt_t slurm_opt_prefer = {
 	.name = "prefer",
@@ -4136,39 +4113,60 @@ static slurm_cli_opt_t slurm_opt_reservation = {
 
 static int arg_set_resv_port_cnt(slurm_opt_t *opt, const char *arg)
 {
-	if (!opt->srun_opt)
-		return SLURM_ERROR;
-
 	if (!arg)
-		opt->srun_opt->resv_port_cnt = 0;
+		opt->resv_port_cnt = 0;
 	else
-		opt->srun_opt->resv_port_cnt = parse_int("--resv-port",
-							 arg, false);
+		opt->resv_port_cnt = parse_int("--resv-port", arg, false);
 
 	return SLURM_SUCCESS;
 }
 static char *arg_get_resv_port_cnt(slurm_opt_t *opt)
 {
-	if (!opt->srun_opt)
-		return xstrdup("invalid-context");
-
-	if (opt->srun_opt->resv_port_cnt == NO_VAL)
+	if (opt->resv_port_cnt == NO_VAL)
 		return xstrdup("unset");
 
-	return xstrdup_printf("%d", opt->srun_opt->resv_port_cnt);
+	return xstrdup_printf("%d", opt->resv_port_cnt);
 }
 static void arg_reset_resv_port_cnt(slurm_opt_t *opt)
 {
-	if (opt->srun_opt)
-		opt->srun_opt->resv_port_cnt = NO_VAL;
+	opt->resv_port_cnt = NO_VAL;
 }
 static slurm_cli_opt_t slurm_opt_resv_ports = {
 	.name = "resv-ports",
 	.has_arg = optional_argument,
 	.val = LONG_OPT_RESV_PORTS,
-	.set_func_srun = arg_set_resv_port_cnt,
+	.set_func = arg_set_resv_port_cnt,
 	.get_func = arg_get_resv_port_cnt,
 	.reset_func = arg_reset_resv_port_cnt,
+	.reset_each_pass = true,
+};
+
+static int arg_set_segment_size(slurm_opt_t *opt, const char *arg)
+{
+	if (parse_uint16((char *) arg, &opt->segment_size)) {
+		error("Invalid --segment specification");
+		exit(-1);
+	}
+
+	return SLURM_SUCCESS;
+}
+static char *arg_get_segment_size(slurm_opt_t *opt)
+{
+	if (opt->segment_size != 0)
+		return xstrdup_printf("%u", opt->segment_size);
+	return xstrdup("unset");
+}
+static void arg_reset_segment_size(slurm_opt_t *opt)
+{
+	opt->segment_size = 0;
+}
+static slurm_cli_opt_t slurm_opt_segment_size = {
+	.name = "segment",
+	.has_arg = required_argument,
+	.val = LONG_OPT_SEND_LIBS,
+	.set_func = arg_set_segment_size,
+	.get_func = arg_get_segment_size,
+	.reset_func = arg_reset_segment_size,
 	.reset_each_pass = true,
 };
 
@@ -4349,6 +4347,39 @@ static slurm_cli_opt_t slurm_opt_spread_job = {
 	.get_func = arg_get_spread_job,
 	.reset_func = arg_reset_spread_job,
 	.reset_each_pass = true,
+};
+
+static int arg_set_stepmgr(slurm_opt_t *opt, const char *arg)
+{
+	opt->job_flags |= STEPMGR_ENABLED;
+
+	return SLURM_SUCCESS;
+}
+static char *arg_get_stepmgr(slurm_opt_t *opt)
+{
+	if (opt->job_flags & STEPMGR_ENABLED)
+		return xstrdup("set");
+	return xstrdup("unset");
+}
+static int arg_set_data_stepmgr(slurm_opt_t *opt, const data_t *arg,
+				data_t *errors)
+{
+	opt->job_flags |= STEPMGR_ENABLED;
+
+	return SLURM_SUCCESS;
+}
+static void arg_reset_stepmgr(slurm_opt_t *opt)
+{
+	opt->job_flags &= ~STEPMGR_ENABLED;
+}
+static slurm_cli_opt_t slurm_opt_stepmgr = {
+	.name = "stepmgr",
+	.has_arg = no_argument,
+	.val = LONG_OPT_STEPMGR,
+	.set_func = arg_set_stepmgr,
+	.set_func_data = arg_set_data_stepmgr,
+	.get_func = arg_get_stepmgr,
+	.reset_func = arg_reset_stepmgr,
 };
 
 static int arg_set_switch_req(slurm_opt_t *opt, const char *arg)
@@ -5335,6 +5366,7 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_exclude,
 	&slurm_opt_exclusive,
 	&slurm_opt_export,
+	&slurm_opt_export_file,
 	&slurm_opt_external_launcher,
 	&slurm_opt_extra,
 	&slurm_opt_extra_node_info,
@@ -5399,7 +5431,6 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_pack_group,
 	&slurm_opt_parsable,
 	&slurm_opt_partition,
-	&slurm_opt_power,
 	&slurm_opt_prefer,
 	&slurm_opt_preserve_env,
 	&slurm_opt_priority,
@@ -5415,11 +5446,13 @@ static const slurm_cli_opt_t *common_options[] = {
 	&slurm_opt_requeue,
 	&slurm_opt_reservation,
 	&slurm_opt_resv_ports,
+	&slurm_opt_segment_size,
 	&slurm_opt_send_libs,
 	&slurm_opt_signal,
 	&slurm_opt_slurmd_debug,
 	&slurm_opt_sockets_per_node,
 	&slurm_opt_spread_job,
+	&slurm_opt_stepmgr,
 	&slurm_opt_switch_req,
 	&slurm_opt_switch_wait,
 	&slurm_opt_switches,
@@ -5778,25 +5811,31 @@ extern void slurm_reset_all_options(slurm_opt_t *opt, bool first_pass)
 }
 
 /*
- * Was the option set by a cli argument?
+ * Find the index into common_options for a given option name.
  */
-extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
+static int _find_option_index_from_optval(int optval)
 {
 	int i;
 
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
-
 	for (i = 0; common_options[i]; i++) {
 		if (common_options[i]->val == optval)
-			break;
+			return i;
 	}
 
-	/* This should not happen... */
-	if (!common_options[i])
+	xassert(false);
+
+	return 0; /* slurm_opt__unknown_ */
+}
+
+/*
+ * Was the option set by a cli argument?
+ */
+static bool _option_index_set_by_cli(slurm_opt_t *opt, int index)
+{
+	if (!opt) {
+		debug3("%s: opt=NULL", __func__);
 		return false;
+	}
 
 	if (!opt->state)
 		return false;
@@ -5806,8 +5845,48 @@ extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
 	 * are true, then the argument was set through the environment not the
 	 * cli, and we must return false.
 	 */
+	return (opt->state[index].set && !opt->state[index].set_by_env);
+}
 
-	return (opt->state[i].set && !opt->state[i].set_by_env);
+/*
+ * Was the option set by an data_t value?
+ */
+static bool _option_index_set_by_data(slurm_opt_t *opt, int index)
+{
+	if (!opt) {
+		debug3("%s: opt=NULL", __func__);
+		return false;
+	}
+
+	if (!opt->state)
+		return false;
+
+	return opt->state[index].set_by_data;
+}
+
+/*
+ * Was the option set by an env var?
+ */
+static bool _option_index_set_by_env(slurm_opt_t *opt, int index)
+{
+	if (!opt) {
+		debug3("%s: opt=NULL", __func__);
+		return false;
+	}
+
+	if (!opt->state)
+		return false;
+
+	return opt->state[index].set_by_env;
+}
+
+/*
+ * Was the option set by a cli argument?
+ */
+extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
+{
+	int i = _find_option_index_from_optval(optval);
+	return _option_index_set_by_cli(opt, i);
 }
 
 /*
@@ -5815,26 +5894,8 @@ extern bool slurm_option_set_by_cli(slurm_opt_t *opt, int optval)
  */
 extern bool slurm_option_set_by_data(slurm_opt_t *opt, int optval)
 {
-	int i;
-
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
-
-	for (i = 0; common_options[i]; i++) {
-		if (common_options[i]->val == optval)
-			break;
-	}
-
-	/* This should not happen... */
-	if (!common_options[i])
-		return false;
-
-	if (!opt->state)
-		return false;
-
-	return opt->state[i].set_by_data;
+	int i = _find_option_index_from_optval(optval);
+	return _option_index_set_by_data(opt, i);
 }
 
 /*
@@ -5842,26 +5903,8 @@ extern bool slurm_option_set_by_data(slurm_opt_t *opt, int optval)
  */
 extern bool slurm_option_set_by_env(slurm_opt_t *opt, int optval)
 {
-	int i;
-
-	if (!opt) {
-		debug3("%s: opt=NULL optval=%u", __func__, optval);
-		return false;
-	}
-
-	for (i = 0; common_options[i]; i++) {
-		if (common_options[i]->val == optval)
-			break;
-	}
-
-	/* This should not happen... */
-	if (!common_options[i])
-		return false;
-
-	if (!opt->state)
-		return false;
-
-	return opt->state[i].set_by_env;
+	int i = _find_option_index_from_optval(optval);
+	return _option_index_set_by_env(opt, i);
 }
 
 /*
@@ -6060,7 +6103,7 @@ extern int validate_hint_option(slurm_opt_t *opt)
 	      (slurm_option_set_by_cli(opt, LONG_OPT_CPU_BIND) &&
 	       (cpu_bind_type & ~CPU_BIND_VERBOSE))))) {
 		if (opt->verbose)
-			info("Following options are mutually exclusive with --hint: --ntasks-per-core, --threads-per-core, -B and --cpu-bind (other then --cpu-bind=verbose). Ignoring --hint.");
+			info("Following options are mutually exclusive with --hint: --ntasks-per-core, --threads-per-core, -B and --cpu-bind (other than --cpu-bind=verbose). Ignoring --hint.");
 		slurm_option_reset(opt, "hint");
 		return SLURM_ERROR;
 	} else if (slurm_option_set_by_cli(opt, LONG_OPT_HINT)) {
@@ -6172,7 +6215,7 @@ static void _validate_spec_cores_options(slurm_opt_t *opt)
 		    slurm_option_set_by_cli(opt, LONG_OPT_THREAD_SPEC))) == 0))
 		fatal("Both --core-spec and --thread-spec set using environment variables. Those options are mutually exclusive.");
 
-	if (!(slurm_conf.conf_flags & CTL_CONF_ASRU)) {
+	if (!(slurm_conf.conf_flags & CONF_FLAG_ASRU)) {
 		error("Ignoring %s since it's not allowed by configuration (AllowSpecResourcesUsage = No)",
 		      (opt->core_spec & CORE_SPEC_THREAD) ?
 		      "--thread-spec":"-S");
@@ -6221,7 +6264,7 @@ extern bool slurm_option_get_tres_per_tres(
  *
  * If cnt == 0, then just remove the string from tres_per_task.
  *
- * tres_per_task takes a form similar to "cpu:10,gres/gpu:gtx:1,license/iop1:1".
+ * tres_per_task takes a form similar to "cpu=10,gres/gpu:gtx=1,license/iop1=1".
  *
  * IN: cnt - new value
  * IN: tres_str - name of tres we want to to be update
@@ -6243,10 +6286,10 @@ extern void slurm_option_update_tres_per_task(int cnt, char *tres_str,
 		if (cnt) {
 			/* Add tres to tres_per_task. */
 			if (tres_per_task) {
-				xstrfmtcat(new_str, "%s:%d,%s", tres_str, cnt,
+				xstrfmtcat(new_str, "%s=%d,%s", tres_str, cnt,
 					   tres_per_task);
 			} else {
-				xstrfmtcat(new_str, "%s:%d", tres_str, cnt);
+				xstrfmtcat(new_str, "%s=%d", tres_str, cnt);
 			}
 			xfree(tres_per_task);
 			tres_per_task = new_str;
@@ -6295,14 +6338,14 @@ extern void slurm_option_update_tres_per_task(int cnt, char *tres_str,
 	} else {
 		/* Compose the new string. */
 		if (prefix && suffix)
-			xstrfmtcat(new_str, "%s,%s:%d,%s", prefix, tres_str,
+			xstrfmtcat(new_str, "%s,%s=%d,%s", prefix, tres_str,
 				   cnt, suffix);
 		if (prefix && !suffix)
-			xstrfmtcat(new_str, "%s,%s:%d", prefix, tres_str, cnt);
+			xstrfmtcat(new_str, "%s,%s=%d", prefix, tres_str, cnt);
 		if (!prefix && suffix)
-			xstrfmtcat(new_str, "%s:%d,%s", tres_str, cnt, suffix);
+			xstrfmtcat(new_str, "%s=%d,%s", tres_str, cnt, suffix);
 		if (!prefix && !suffix)
-			xstrfmtcat(new_str, "%s:%d", tres_str, cnt);
+			xstrfmtcat(new_str, "%s=%d", tres_str, cnt);
 	}
 
 	xfree(tres_per_task);
@@ -6310,157 +6353,129 @@ extern void slurm_option_update_tres_per_task(int cnt, char *tres_str,
 	*tres_per_task_p = tres_per_task;
 }
 
-static void _validate_gpus_per_task(slurm_opt_t *opt)
+static bool _get_gpu_cnt_and_str(slurm_opt_t *opt, int *gpu_cnt, char **gpu_str)
 {
-	int gpu_cnt = 0, tmp_int;
-	char *gpu_per_task_ptr = NULL, *gpu_str = NULL, *num_str;
-	/*
-	 * See if gpus-per-task was set with tres-per-task
-	 * Either one specified on the command line overrides the other in the
-	 * environment.
-	 * They can both be in the environment because specifying just
-	 * --tres-per-task=gres/gpu=# will cause SLURM_GPUS_PER_TASK to be set
-	 * as well. So if they're both in the environment, verify that they're
-	 * the same.
-	 *
-	 * If either of these options are set, then make sure that both of these
-	 * options are set to the same thing:
-	 * opt->gpus_per_task and opt->tres_per_task=gres/gpu=#.
-	 */
+	char *num_str = NULL, sep_char;
 
-	if (opt->gpus_per_task) {
-		xstrcat(gpu_str, "gres/gpu");
-		if ((num_str = xstrstr(opt->gpus_per_task, ":"))) {
-			*num_str = '\0';
-			xstrfmtcat(gpu_str, ":%s", opt->gpus_per_task);
-			*num_str = ':';
-			num_str += 1;
-		} else {
-			num_str = opt->gpus_per_task;
-		}
-		gpu_cnt = atoi(num_str);
+	if (!opt->gpus_per_task)
+		return false;
+
+	xstrcat(*gpu_str, "gres/gpu");
+
+	if ((num_str = xstrstr(opt->gpus_per_task, ":")))
+		sep_char = ':';
+	else if ((num_str = xstrstr(opt->gpus_per_task, "=")))
+		sep_char = '=';
+
+	if (num_str) { /* Has type string */
+		*num_str = '\0';
+		/* Add type string to gpu_str */
+		xstrfmtcat(*gpu_str, ":%s", opt->gpus_per_task);
+		*num_str = sep_char;
+		num_str += 1;
+	} else {
+		num_str = opt->gpus_per_task;
 	}
 
-	gpu_per_task_ptr = xstrcasestr(opt->tres_per_task, gpu_str);
-	if (!gpu_per_task_ptr) {
-		if (opt->gpus_per_task)
-			slurm_option_update_tres_per_task(gpu_cnt, gpu_str,
-				&opt->tres_per_task);
-		return;
-	}
+	if (gpu_cnt)
+		(*gpu_cnt) = strtol(num_str, NULL, 10);
 
-	if (slurm_option_set_by_cli(opt, LONG_OPT_GPUS_PER_TASK) &&
-	    slurm_option_set_by_cli(opt, LONG_OPT_TRES_PER_TASK)) {
-		fatal("You can not have --tres-per-task=gres/gpu: and gpus-per-task please use one or the other");
-	} else if (slurm_option_set_by_cli(opt, LONG_OPT_GPUS_PER_TASK) &&
-		   slurm_option_set_by_env(opt, LONG_OPT_TRES_PER_TASK)) {
-		/*
-		 * The value is already in opt->gpus_per_task.
-		 * Update the gpus part of the env variable.
-		 */
-		slurm_option_update_tres_per_task(gpu_cnt, gpu_str,
-						  &opt->tres_per_task);
-		if (opt->verbose)
-			info("Updating SLURM_TRES_PER_TASK to %s as --gpus-per-task takes precedence over the environment variables.",
-			     opt->tres_per_task);
-		return;
-	}
-
-
-	tmp_int = atoi(gpu_per_task_ptr + strlen(gpu_str) + 1);
-	if (tmp_int <= 0) {
-		fatal("Invalid --tres-per-task=cpu:%d",
-		      tmp_int);
-	}
-
-	if (slurm_option_set_by_env(opt, LONG_OPT_GPUS_PER_TASK) &&
-	    slurm_option_set_by_env(opt, LONG_OPT_TRES_PER_TASK) &&
-	    (tmp_int != gpu_cnt)) {
-		fatal("gpus_per_task set by two different environment variables SLURM_GPUS_PER_TASK=%s != SLURM_TRES_PER_TASK=gres/gpu:%s",
-		      opt->gpus_per_task, gpu_per_task_ptr);
-	}
-
-	/*
-	 * Now we know that either tres-per-task is set by cli and gpus-per-task
-	 * is set by env, or only tres-per-task is set either by cli or env.
-	 * Either way, set gpus_per_task from tres-per-task.
-	 */
-	opt->gpus_per_task = gpu_per_task_ptr;
-
-	if (opt->verbose &&
-	    slurm_option_set_by_env(opt, LONG_OPT_GPUS_PER_TASK) &&
-	    slurm_option_set_by_cli(opt, LONG_OPT_TRES_PER_TASK))
-		info("Ignoring SLURM_GPUS_PER_TASK since --tres-per-task=gres/gpu: was given as a command line option.");
+	return true;
 }
 
-static void _validate_cpus_per_task(slurm_opt_t *opt)
+static void _set_tres_per_task_from_sibling_opt(slurm_opt_t *opt, int optval)
 {
-	int tmp_int;
-	char *cpu_per_task_ptr = NULL;
+	bool set;
+	int tmp_int, cnt = 0, opt_index, tpt_index;
+	char *opt_in_tpt_ptr = NULL, *str = NULL;
+	char *env_variable;
 
 	/*
-	 * See if cpus-per-task was set with tres-per-task
+	 * See if the sibling option was set with tres-per-task
 	 * Either one specified on the command line overrides the other in the
 	 * environment.
 	 * They can both be in the environment because specifying just
-	 * --tres-per-task=cpu:# will cause SLURM_CPUS_PER_TASK to be set as
-	 * well. So if they're both in the environment, verify that they're the
-	 * same.
+	 * --tres-per-task=cpu=# for example, will cause SLURM_CPUS_PER_TASK to
+	 * be set as well. So if they're both in the environment, verify that
+	 * they're the same.
 	 *
-	 * If either of these options are set, then make sure that both of these
-	 * options are set to the same thing:
-	 * opt->cpus_per_task and opt->tres_per_task=cpu:#.
+	 * If tres-per-task or a sibling option are set, then make sure that
+	 * both are set to the same thing:
 	 */
-	cpu_per_task_ptr = xstrcasestr(opt->tres_per_task, "cpu:");
-	if (!cpu_per_task_ptr) {
-		if (opt->cpus_set)
-			slurm_option_update_tres_per_task(
-				opt->cpus_per_task, "cpu", &opt->tres_per_task);
+
+	if (optval == LONG_OPT_GPUS_PER_TASK) {
+		set = _get_gpu_cnt_and_str(opt, &cnt, &str);
+		env_variable = "SLURM_GPUS_PER_TASK";
+	} else if (optval == 'c') {
+		cnt = opt->cpus_per_task;
+		str = "cpu";
+		set = opt->cpus_set;
+		env_variable = "SLURM_CPUS_PER_TASK";
+	} else {
+		/* This function only supports [gpus|cpus]_per_task */
+		xassert(0); /* let me know if it isn't */
 		return;
 	}
 
-	if (slurm_option_set_by_cli(opt, 'c') &&
-	    slurm_option_set_by_cli(opt, LONG_OPT_TRES_PER_TASK)) {
-		fatal("You can not have --tres-per-task=cpu: and -c please use one or the other");
-	} else if (slurm_option_set_by_cli(opt, 'c') &&
-		   slurm_option_set_by_env(opt, LONG_OPT_TRES_PER_TASK)) {
+	opt_in_tpt_ptr = xstrcasestr(opt->tres_per_task, str);
+	if (!opt_in_tpt_ptr) {
+		if (set)
+			slurm_option_update_tres_per_task(cnt, str,
+							  &opt->tres_per_task);
+		return;
+	}
+
+	opt_index = _find_option_index_from_optval(optval);
+	tpt_index = _find_option_index_from_optval(LONG_OPT_TRES_PER_TASK);
+
+	if (_option_index_set_by_cli(opt, opt_index) &&
+	    _option_index_set_by_cli(opt, tpt_index)) {
+		fatal("You can not have --tres-per-task=%s= and --%s please use one or the other",
+		      str, common_options[opt_index]->name);
+	} else if (_option_index_set_by_cli(opt, opt_index) &&
+		   _option_index_set_by_env(opt, tpt_index)) {
 		/*
 		 * The value is already in opt->cpus_per_task.
 		 * Update the cpus part of the env variable.
 		 */
-		slurm_option_update_tres_per_task(opt->cpus_per_task, "cpu",
+		slurm_option_update_tres_per_task(cnt, str,
 						  &opt->tres_per_task);
 		if (opt->verbose)
-			info("Updating SLURM_TRES_PER_TASK to %s as --cpus-per-task takes precedence over the environment variables.",
-			     opt->tres_per_task);
+			info("Updating SLURM_TRES_PER_TASK to %s as --%s takes precedence over the environment variables.",
+			     opt->tres_per_task,
+			     common_options[opt_index]->name);
 		return;
 	}
 
-	tmp_int = atoi(cpu_per_task_ptr + 4);
+	tmp_int = atoi(opt_in_tpt_ptr + strlen(str) + 1);
 	if (tmp_int <= 0) {
-		fatal("Invalid --tres-per-task=cpu:%d",
+		fatal("Invalid --tres-per-task=%s=%d", str, tmp_int);
+	}
+
+	if (_option_index_set_by_env(opt, opt_index) &&
+	    _option_index_set_by_env(opt, tpt_index) &&
+	    (tmp_int != opt->cpus_per_task)) {
+		fatal("%s set by two different environment variables %s=%d != SLURM_TRES_PER_TASK=cpu=%d",
+		      common_options[opt_index]->name, env_variable, cnt,
 		      tmp_int);
 	}
 
-	if (slurm_option_set_by_env(opt, 'c') &&
-	    slurm_option_set_by_env(opt, LONG_OPT_TRES_PER_TASK) &&
-	    (tmp_int != opt->cpus_per_task)) {
-		fatal("cpus_per_task set by two different environment variables SLURM_CPUS_PER_TASK=%d != SLURM_TRES_PER_TASK=cpu:%d",
-		      opt->cpus_per_task, tmp_int);
+	/*
+	 * Now we know that either tres-per-task is set by cli and the option
+	 * Either way, set the option from tres-per-task.
+	 */
+	if (optval == LONG_OPT_GPUS_PER_TASK) {
+		opt->gpus_per_task = opt_in_tpt_ptr;
+	} else if (optval == 'c') {
+		opt->cpus_per_task = tmp_int;
+		opt->cpus_set = true;
 	}
 
-	/*
-	 * Now we know that either tres-per-task is set by cli and cpus-per-task
-	 * is set by env, or only tres-per-task is set either by cli or env.
-	 * Either way, set cpus_per_task from tres-per-task.
-	 */
-	opt->cpus_per_task = tmp_int;
-	opt->cpus_set = true;
-
 	if (opt->verbose &&
-	    slurm_option_set_by_env(opt, 'c') &&
-	    slurm_option_set_by_cli(opt, LONG_OPT_TRES_PER_TASK))
-		info("Ignoring SLURM_CPUS_PER_TASK since --tres-per-task=cpu: was given as a command line option.");
+	    _option_index_set_by_env(opt, opt_index) &&
+	    _option_index_set_by_cli(opt, tpt_index))
+		info("Ignoring %s since --tres-per-task=%s= was given as a command line option.",
+		     env_variable, str);
 }
 
 /*
@@ -6518,8 +6533,8 @@ static void _validate_tres_per_task(slurm_opt_t *opt)
 	slurm_format_tres_string(&opt->tres_per_task, "license");
 	slurm_format_tres_string(&opt->tres_per_task, "gres");
 
-	_validate_gpus_per_task(opt);
-	_validate_cpus_per_task(opt);
+	_set_tres_per_task_from_sibling_opt(opt, LONG_OPT_GPUS_PER_TASK);
+	_set_tres_per_task_from_sibling_opt(opt, 'c');
 	_implicitly_bind_tres_per_task(opt);
 }
 
@@ -6528,7 +6543,7 @@ static void _validate_cpus_per_tres(slurm_opt_t *opt)
 	bool cpt_set_by_cli;
 	bool cpt_set_by_env;
 
-	if (xstrcasestr(opt->tres_per_task, "cpu:")) {
+	if (xstrcasestr(opt->tres_per_task, "cpu")) {
 		cpt_set_by_cli =
 			(slurm_option_set_by_cli(opt, 'c') ||
 			 slurm_option_set_by_cli(opt, LONG_OPT_TRES_PER_TASK));
@@ -6875,8 +6890,6 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	if (opt_local->plane_size != NO_VAL)
 		job_desc->plane_size = opt_local->plane_size;
 
-	job_desc->power_flags = opt_local->power;
-
 	if (slurm_option_isset(opt_local, "hold")) {
 		if (opt_local->hold)
 			job_desc->priority = 0;
@@ -6900,6 +6913,10 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	 */
 	if (opt_local->nodelist) {
 		hostlist_t *hl = hostlist_create(opt_local->nodelist);
+		if (!hl) {
+			error("Invalid node list specified");
+			return NULL;
+		}
 		xfree(opt_local->nodelist);
 		opt_local->nodelist = hostlist_ranged_string_xmalloc(hl);
 		if (((opt_local->distribution & SLURM_DIST_STATE_BASE) !=
@@ -6920,8 +6937,16 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 
 	job_desc->reservation = xstrdup(opt_local->reservation);
 
+	if (opt_local->resv_port_cnt != NO_VAL)
+		job_desc->resv_port_cnt = opt_local->resv_port_cnt;
+	else
+		job_desc->resv_port_cnt = NO_VAL16;
+
 	/* script not filled in here */
 	/* script_buf not filled in here */
+
+	if (opt_local->segment_size != NO_VAL16)
+		job_desc->segment_size = opt_local->segment_size;
 
 	if (opt_local->shared != NO_VAL16)
 		job_desc->shared = opt_local->shared;
@@ -7065,22 +7090,29 @@ extern job_desc_msg_t *slurm_opt_create_job_desc(slurm_opt_t *opt_local,
 	 */
 	if (!opt_local->clusters) {
 		List tmp_gres_list = NULL;
-		rc = gres_job_state_validate(job_desc->cpus_per_tres,
-					     job_desc->tres_freq,
-					     job_desc->tres_per_job,
-					     job_desc->tres_per_node,
-					     job_desc->tres_per_socket,
-					     job_desc->tres_per_task,
-					     job_desc->mem_per_tres,
-					     &job_desc->num_tasks,
-					     &job_desc->min_nodes,
-					     &job_desc->max_nodes,
-					     &job_desc->ntasks_per_node,
-					     &job_desc->ntasks_per_socket,
-					     &job_desc->sockets_per_node,
-					     &job_desc->cpus_per_task,
-					     &job_desc->ntasks_per_tres,
-					     &tmp_gres_list);
+		gres_job_state_validate_t gres_js_val = {
+			.cpus_per_tres = job_desc->cpus_per_tres,
+			.mem_per_tres = job_desc->mem_per_tres,
+			.tres_freq = job_desc->tres_freq,
+			.tres_per_job = job_desc->tres_per_job,
+			.tres_per_node = job_desc->tres_per_node,
+			.tres_per_socket = job_desc->tres_per_socket,
+			.tres_per_task = job_desc->tres_per_task,
+
+			.cpus_per_task = &job_desc->cpus_per_task,
+			.max_nodes = &job_desc->max_nodes,
+			.min_cpus = &job_desc->min_cpus,
+			.min_nodes = &job_desc->min_nodes,
+			.ntasks_per_node = &job_desc->ntasks_per_node,
+			.ntasks_per_socket = &job_desc->ntasks_per_socket,
+			.ntasks_per_tres = &job_desc->ntasks_per_tres,
+			.num_tasks = &job_desc->num_tasks,
+			.sockets_per_node = &job_desc->sockets_per_node,
+
+			.gres_list = &tmp_gres_list,
+		};
+
+		rc = gres_job_state_validate(&gres_js_val);
 		FREE_NULL_LIST(tmp_gres_list);
 	}
 

@@ -159,6 +159,7 @@ extern const char *auth_get_plugin_name(int plugin_id)
 
 extern bool slurm_get_plugin_hash_enable(int index)
 {
+	xassert(g_context_num > 0);
 	if (g_context_num <= 0)
 		fatal("No hash plugins loaded. Was slurm_init() called before calling any Slurm API functions?");
 
@@ -192,7 +193,7 @@ extern int auth_g_init(void)
 			auth_get_plugin_name(AUTH_PLUGIN_JWT));
 	}
 
-	if (getenv("SLURM_SACK_KEY")) {
+	if (getenv("SLURM_SACK_KEY") || getenv("SLURM_SACK_JWKS")) {
 		xfree(slurm_conf.authtype);
 		slurm_conf.authtype = xstrdup(
 			auth_get_plugin_name(AUTH_PLUGIN_SLURM));

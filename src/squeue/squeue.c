@@ -125,7 +125,7 @@ main (int argc, char **argv)
 
 static int _multi_cluster(List clusters, int argc, char **argv)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	bool log_cluster_name = false, first = true;
 	int rc = 0, rc2;
 
@@ -280,8 +280,8 @@ static int _query_job_states(int argc, char **argv)
 		}
 	}
 
-	rc = print_jobs_array(job_msg->job_array, job_msg->record_count,
-			      params.format_list);
+	print_jobs_array(job_msg->job_array, job_msg->record_count,
+			 params.format_list);
 
 cleanup:
 #ifdef MEMORY_LEAK_DEBUG
@@ -359,6 +359,7 @@ static int _print_job(bool clear_old, bool log_cluster_name, int argc,
 
 	if (params.mimetype) {
 		int rc;
+		squeue_filter_jobs_for_json(new_job_ptr);
 		openapi_resp_job_info_msg_t resp = {
 			.jobs = new_job_ptr,
 			.last_backfill = new_job_ptr->last_backfill,

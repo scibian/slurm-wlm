@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>,
  *    Christopher J. Morrone <morrone2@llnl.gov>, et. al.
@@ -103,6 +103,7 @@ enum {
 	LONG_OPT_EXACT,
 	LONG_OPT_EXCLUSIVE,
 	LONG_OPT_EXPORT,
+	LONG_OPT_EXPORT_FILE,
 	LONG_OPT_EXTERNAL_LAUNCHER,
 	LONG_OPT_EXTRA,
 	LONG_OPT_GET_USER_ENV,
@@ -165,11 +166,13 @@ enum {
 	LONG_OPT_REQUEUE,
 	LONG_OPT_RESERVATION,
 	LONG_OPT_RESV_PORTS,
+	LONG_OPT_SEGMENT_SIZE,
 	LONG_OPT_SEND_LIBS,
 	LONG_OPT_SIGNAL,
 	LONG_OPT_SLURMD_DEBUG,
 	LONG_OPT_SOCKETSPERNODE,
 	LONG_OPT_SPREAD_JOB,
+	LONG_OPT_STEPMGR,
 	LONG_OPT_SWITCH_REQ,
 	LONG_OPT_SWITCH_WAIT,
 	LONG_OPT_SWITCHES,
@@ -212,6 +215,7 @@ typedef struct {
 typedef struct {
 	char *array_inx;		/* --array			*/
 	char *batch_features;		/* --batch			*/
+	char *export_file;		/* --export-file=file		*/
 	bool ignore_pbs;		/* --ignore-pbs			*/
 	int minsockets;			/* --minsockets=n		*/
 	int mincores;			/* --mincores=n			*/
@@ -273,7 +277,6 @@ typedef struct {
 	char *pty;			/* --pty[=fd]			*/
 	bool quit_on_intr;		/* --quit-on-interrupt		*/
 	int relative;			/* --relative			*/
-	int resv_port_cnt;		/* --resv_ports			*/
 	bool send_libs;			/* --send-libs			*/
 	int slurmd_debug;		/* --slurmd-debug		*/
 	char *task_epilog;		/* --task-epilog		*/
@@ -312,7 +315,8 @@ typedef struct {
 	gid_t gid;			/* local gid			*/
 	char *chdir;			/* --chdir			*/
 	int ntasks;			/* --ntasks			*/
-	bool ntasks_set;		/* ntasks explicitly set	*/
+	bool ntasks_set;		/* ntasks explicit or implicitly set */
+	bool ntasks_opt_set;		/* ntasks explicitly set by user opt */
 	int cpus_per_task;		/* --cpus-per-task=n		*/
 	bool cpus_set;			/* cpus_per_task explicitly set	*/
 	int min_nodes;			/* --nodes=n			*/
@@ -400,6 +404,7 @@ typedef struct {
 	int get_user_env_mode;		/* --get-user-env=[S|L]		*/
 	char *wckey;			/* workload characterization key */
 	char *reservation;		/* --reservation		*/
+	int resv_port_cnt;		/* --resv_ports			*/
 	int req_switch;			/* min number of switches	*/
 	int wait4switch;		/* max time to wait for min switches */
 	char **spank_job_env;		/* SPANK controlled environment for job
@@ -409,10 +414,10 @@ typedef struct {
 	uint32_t cpu_freq_min;		/* Minimum cpu frequency	*/
 	uint32_t cpu_freq_max;		/* Maximum cpu frequency	*/
 	uint32_t cpu_freq_gov;		/* cpu frequency governor	*/
-	uint8_t power;			/* power management flags	*/
 	char *mcs_label;		/* mcs label			*/
 	time_t deadline;		/* ---deadline			*/
 	uint32_t delay_boot;		/* --delay-boot			*/
+	uint16_t segment_size;		/* --segment			*/
 	uint32_t step_het_comp_cnt;     /* How many components are in this het
 					 * step that is part of a non-hetjob. */
 	char *step_het_grps;		/* what het groups are used by step */

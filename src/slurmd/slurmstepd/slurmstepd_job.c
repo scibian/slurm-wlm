@@ -143,18 +143,6 @@ _job_init_task_info(stepd_step_rec_t *step, uint32_t **gtid,
 	if (step->het_job_offset != NO_VAL)
 		het_job_offset = step->het_job_offset;
 
-#if defined(HAVE_NATIVE_CRAY)
-	for (i = 0; i < step->nnodes; i++) {
-		int j;
-		for (j = 1; j < step->task_cnts[i]; j++) {
-			if (gtid[i][j] != gtid[i][j-1] + 1) {
-				step->non_smp = 1;
-				break;
-			}
-		}
-	}
-#endif
-
 	step->task = (stepd_step_task_info_t **)
 		xmalloc(step->node_tasks * sizeof(stepd_step_task_info_t *));
 
@@ -177,8 +165,6 @@ _job_init_task_info(stepd_step_rec_t *step, uint32_t **gtid,
 	}
 
 	if (step->flags & LAUNCH_MULTI_PROG) {
-		if (!xstrcmp(slurm_conf.switch_type, "switch/cray_aries"))
-			multi_prog_parse(step, gtid);
 		for (i = 0; i < step->node_tasks; i++){
 			multi_prog_get_argv(step->argv[1], step->env,
 					    gtid[node_id][i],
@@ -203,6 +189,9 @@ _task_info_destroy(stepd_step_task_info_t *t, uint16_t multi_prog)
 	slurm_mutex_lock(&t->mutex);
 	slurm_mutex_unlock(&t->mutex);
 	slurm_mutex_destroy(&t->mutex);
+	xfree(t->efname);
+	xfree(t->ifname);
+	xfree(t->ofname);
 	if (multi_prog) {
 		xfree(t->argv);
 	} /* otherwise, t->argv is a pointer to step->argv */
@@ -465,7 +454,7 @@ extern stepd_step_rec_t *stepd_step_rec_create(launch_tasks_request_msg_t *msg,
 
 	step->timelimit   = (time_t) -1;
 	step->flags       = msg->flags;
-	step->switch_job  = msg->switch_job;
+	step->switch_step = msg->switch_step;
 	step->open_mode   = msg->open_mode;
 	step->options     = msg->options;
 
@@ -694,7 +683,6 @@ stepd_step_rec_destroy(stepd_step_rec_t *step)
 		step->msg_handle = NULL;
 	}
 	xfree(step->node_name);
-	mpmd_free(step);
 	xfree(step->het_job_task_cnts);
 	if (step->het_job_nnodes != NO_VAL) {
 		for (i = 0; i < step->het_job_nnodes; i++)
@@ -705,6 +693,7 @@ stepd_step_rec_destroy(stepd_step_rec_t *step)
 	xfree(step->task_prolog);
 	xfree(step->task_epilog);
 	xfree(step->job_alloc_cores);
+	xfree(step->node_list);
 	xfree(step->step_alloc_cores);
 	xfree(step->task_cnts);
 	xfree(step->tres_bind);

@@ -61,7 +61,7 @@ static int _change_user_name(mysql_conn_t *mysql_conn, slurmdb_user_rec_t *user)
 {
 	int rc = SLURM_SUCCESS;
 	char *query = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *cluster_name = NULL;
 
 	xassert(user->old_name);
@@ -100,7 +100,7 @@ static List _get_other_user_names_to_mod(mysql_conn_t *mysql_conn, uint32_t uid,
 {
 	List tmp_list = NULL;
 	List ret_list = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 
 	slurmdb_assoc_cond_t assoc_cond;
 	slurmdb_wckey_cond_t wckey_cond;
@@ -178,7 +178,7 @@ static int _get_user_coords(mysql_conn_t *mysql_conn, slurmdb_user_rec_t *user)
 	slurmdb_coord_rec_t *coord = NULL;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *cluster_name = NULL;
 
 	if (!user) {
@@ -189,6 +189,9 @@ static int _get_user_coords(mysql_conn_t *mysql_conn, slurmdb_user_rec_t *user)
 	if (!user->coord_accts)
 		user->coord_accts = list_create(slurmdb_destroy_coord_rec);
 
+	/*
+	 * Get explicit account coordinators
+	 */
 	query = xstrdup_printf(
 		"select acct from %s where user='%s' && deleted=0",
 		acct_coord_table, user->name);
@@ -210,6 +213,51 @@ static int _get_user_coords(mysql_conn_t *mysql_conn, slurmdb_user_rec_t *user)
 		coord->direct = 1;
 	}
 	mysql_free_result(result);
+
+	/*
+	 * Get implicit account coordinators
+	 */
+	query_pos = NULL;
+	slurm_rwlock_rdlock(&as_mysql_cluster_list_lock);
+	itr = list_iterator_create(as_mysql_cluster_list);
+	while ((cluster_name = list_next(itr))) {
+		xstrfmtcatat(query, &query_pos,
+			     "%sselect distinct t2.acct from \"%s_%s\" as t1, "
+			     "\"%s_%s\" as t2 where t1.deleted=0 && "
+			     "t2.deleted=0 && "
+			     "(t1.flags & %u) && t2.lineage like "
+			     "concat('%%/', t1.acct, '/%%0-%s/%%')",
+			     query ? " union " : "", cluster_name, assoc_table,
+			     cluster_name, assoc_table,
+			     ASSOC_FLAG_USER_COORD, user->name);
+	}
+	list_iterator_destroy(itr);
+	slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
+
+	if (query) {
+		query_pos = NULL;
+
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+
+		if (!(result =
+		      mysql_db_query_ret(mysql_conn, query, 0))) {
+			xfree(query);
+			return SLURM_ERROR;
+		}
+		xfree(query);
+
+		while ((row = mysql_fetch_row(result))) {
+			if (assoc_mgr_is_user_acct_coord_user_rec(user, row[0]))
+				continue;
+
+			coord = xmalloc(sizeof(slurmdb_coord_rec_t));
+			debug2("adding %s to coord_accts for user %s",
+			       row[0], user->name);
+			list_append(user->coord_accts, coord);
+			coord->name = xstrdup(row[0]);
+		}
+		mysql_free_result(result);
+	}
 
 	if (!list_count(user->coord_accts))
 		return SLURM_SUCCESS;
@@ -476,7 +524,7 @@ static int _foreach_add_user(void *x, void *arg)
 extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 			      List user_list)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	int rc = SLURM_SUCCESS;
 	slurmdb_user_rec_t *object = NULL;
 	char *cols = NULL, *vals = NULL, *query = NULL, *txn_query = NULL;
@@ -493,6 +541,11 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
 		slurmdb_user_rec_t user;
+
+		if (slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+			error("Coordinator privilege revoked with DisableCoordDBD, only admins/operators can add accounts.");
+			return ESLURM_ACCESS_DENIED;
+		}
 
 		memset(&user, 0, sizeof(slurmdb_user_rec_t));
 		user.uid = uid;
@@ -660,6 +713,13 @@ extern char *as_mysql_add_users_cond(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
 		slurmdb_user_rec_t user;
 
+		if (slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+			ret_str = xstrdup("Coordinator privilege revoked with DisableCoordDBD, only admins/operators can add accounts.");
+			error("%s", ret_str);
+			errno = ESLURM_ACCESS_DENIED;
+			return ret_str;
+		}
+
 		memset(&user, 0, sizeof(slurmdb_user_rec_t));
 		user.uid = uid;
 
@@ -802,7 +862,7 @@ extern int as_mysql_add_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 			      List acct_list, slurmdb_user_cond_t *user_cond)
 {
 	char *user = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	int rc = SLURM_SUCCESS;
 	add_user_cond_t add_user_cond;
 
@@ -821,7 +881,12 @@ extern int as_mysql_add_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 		slurmdb_user_rec_t user;
 		slurmdb_coord_rec_t *coord = NULL;
 		char *acct = NULL;
-		ListIterator itr2;
+		list_itr_t *itr2;
+
+		if (slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+			error("Coordinator privilege revoked with DisableCoordDBD, only admins/operators can add account coordinators.");
+			return ESLURM_ACCESS_DENIED;
+		}
 
 		memset(&user, 0, sizeof(slurmdb_user_rec_t));
 		user.uid = uid;
@@ -906,7 +971,7 @@ extern List as_mysql_modify_users(mysql_conn_t *mysql_conn, uint32_t uid,
 				  slurmdb_user_cond_t *user_cond,
 				  slurmdb_user_rec_t *user)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	List ret_list = NULL;
 	int rc = SLURM_SUCCESS;
 	char *object = NULL;
@@ -1065,7 +1130,7 @@ no_user_table:
 			goto end_it;
 		}
 		/* char *names = NULL; */
-		/* ListIterator itr = list_iterator_create(tmp_list); */
+		/* list_itr_t *itr = list_iterator_create(tmp_list); */
 		/* while ((names = list_next(itr))) { */
 		/* 	info("%s", names); */
 		/* } */
@@ -1110,7 +1175,7 @@ no_user_table:
 			goto end_it;
 		}
 		/* char *names = NULL; */
-		/* ListIterator itr = list_iterator_create(tmp_list); */
+		/* list_itr_t *itr = list_iterator_create(tmp_list); */
 		/* while ((names = list_next(itr))) { */
 		/* 	info("%s", names); */
 		/* } */
@@ -1133,7 +1198,7 @@ static bool _is_coord_over_all_accts(mysql_conn_t *mysql_conn,
 	bool has_access;
 	char *query = NULL, *sep_str = "";
 	MYSQL_RES *result;
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_coord_rec_t *coord_acct;
 
 	if (!coord->coord_accts || !list_count(coord->coord_accts)) {
@@ -1178,7 +1243,7 @@ static bool _is_coord_over_all_accts(mysql_conn_t *mysql_conn,
 extern List as_mysql_remove_users(mysql_conn_t *mysql_conn, uint32_t uid,
 				  slurmdb_user_cond_t *user_cond)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	List ret_list = NULL;
 	List coord_list = NULL;
 	int rc = SLURM_SUCCESS;
@@ -1211,6 +1276,12 @@ extern List as_mysql_remove_users(mysql_conn_t *mysql_conn, uint32_t uid,
 		return NULL;
 
 	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
+		if (slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+			error("Coordinator privilege revoked with DisableCoordDBD, only admins/operators can remove users.");
+			errno = ESLURM_ACCESS_DENIED;
+			return NULL;
+		}
+
 		/*
 		 * Allow coordinators to delete users from accounts that
 		 * they coordinate. After we have gotten every association that
@@ -1415,7 +1486,7 @@ extern List as_mysql_remove_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *user_name = NULL;
 	time_t now = time(NULL);
 	int set = 0, is_admin=0, rc = SLURM_SUCCESS;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_user_rec_t *user_rec = NULL;
 	List ret_list = NULL;
 	List user_list = NULL;
@@ -1437,6 +1508,11 @@ extern List as_mysql_remove_coord(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!(is_admin = is_user_min_admin_level(
 		      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
+		if (slurmdbd_conf->flags & DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+			error("Coordinator privilege revoked with DisableCoordDBD, only admins/operators can remove coordinators.");
+			errno = ESLURM_ACCESS_DENIED;
+			return NULL;
+		}
 		if (!is_user_any_coord(mysql_conn, &user)) {
 			error("Only admins/coordinators can "
 			      "remove coordinators");
@@ -1586,7 +1662,7 @@ extern List as_mysql_get_users(mysql_conn_t *mysql_conn, uid_t uid,
 	char *extra = NULL;
 	char *tmp = NULL;
 	List user_list = NULL;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *object = NULL;
 	int set = 0;
 	int i=0, is_admin=1;
@@ -1735,7 +1811,7 @@ empty:
 	if (user_cond && (user_cond->with_assocs
 			  || (user_cond->assoc_cond
 			      && user_cond->assoc_cond->only_defs))) {
-		ListIterator assoc_itr = NULL;
+		list_itr_t *assoc_itr = NULL;
 		slurmdb_user_rec_t *user = NULL;
 		slurmdb_assoc_rec_t *assoc = NULL;
 		List assoc_list = NULL;
@@ -1802,7 +1878,7 @@ get_wckeys:
 	if (user_cond && (user_cond->with_wckeys
 			  || (user_cond->assoc_cond
 			      && user_cond->assoc_cond->only_defs))) {
-		ListIterator wckey_itr = NULL;
+		list_itr_t *wckey_itr = NULL;
 		slurmdb_user_rec_t *user = NULL;
 		slurmdb_wckey_rec_t *wckey = NULL;
 		List wckey_list = NULL;
@@ -1873,4 +1949,129 @@ get_wckeys:
 	}
 
 	return user_list;
+}
+
+static int _find_user(void *x, void *arg)
+{
+	slurmdb_user_rec_t *user_rec = x;
+	char *name = arg;
+
+	return slurm_find_char_exact_in_list(user_rec->name, name);
+}
+
+static slurmdb_user_rec_t *_make_user_rec_with_coords(
+	mysql_conn_t *mysql_conn, char *user, bool locked)
+{
+	slurmdb_user_rec_t *user_rec = NULL;
+	/*
+	 * We can't use user_rec just yet since we get that filled up
+	 * with variables that we don't own. We will eventually free it
+	 * later which causes issues memory wise.
+	 */
+	slurmdb_user_rec_t user_tmp = {
+		.name = user,
+		.uid = NO_VAL,
+	};
+
+	assoc_mgr_lock_t locks = {
+		.user = READ_LOCK
+	};
+
+	if (!locked)
+		assoc_mgr_lock(&locks);
+
+	xassert(verify_assoc_lock(USER_LOCK, READ_LOCK));
+
+	/* Grab the current coord_accts if user exists already */
+	(void) assoc_mgr_fill_in_user(mysql_conn, &user_tmp,
+				      ACCOUNTING_ENFORCE_ASSOCS,
+				      NULL, true);
+
+	/*
+	 * The association manager expects the dbd to do all the lifting
+	 * here, so we get a full list and then remove from it.
+	 */
+	user_rec = xmalloc(sizeof(slurmdb_user_rec_t));
+	user_rec->name = xstrdup(user_tmp.name);
+	user_rec->uid = NO_VAL;
+	user_rec->coord_accts = slurmdb_list_copy_coord(
+		user_tmp.coord_accts);
+
+	/*
+	 * This is needed if the user is being added for the first time right
+	 * now as they will not be in the assoc mgr just yet.
+	 */
+	if (!user_rec->coord_accts)
+		user_rec->coord_accts =
+			list_create(slurmdb_destroy_coord_rec);
+
+	if (!locked)
+		assoc_mgr_unlock(&locks);
+	return user_rec;
+}
+
+extern slurmdb_user_rec_t *as_mysql_user_add_coord_update(
+	mysql_conn_t *mysql_conn, list_t **user_list, char *user, bool locked)
+{
+	slurmdb_user_rec_t *user_rec;
+
+	xassert(user_list);
+	xassert(user);
+
+	if (!*user_list) {
+		/* the mysql_conn->update_list will free the contents */
+		*user_list = list_create(NULL);
+	}
+
+	/* See if we have already added it. */
+	if ((user_rec = list_find_first(*user_list, _find_user, user)))
+		return user_rec;
+
+	user_rec = _make_user_rec_with_coords(mysql_conn, user, locked);
+
+	if (!user_rec)
+		return NULL;
+
+	list_append(*user_list, user_rec);
+
+	/*
+	 * NOTE: REMOVE|ADD do the same thing, they both expect the full list so
+	 * we can use either one to do the same thing.
+	 */
+	if (addto_update_list(mysql_conn->update_list,
+			      SLURMDB_REMOVE_COORD, user_rec) !=
+	    SLURM_SUCCESS) {
+		error("Couldn't add removal of coord, this should never happen.");
+		slurmdb_destroy_user_rec(user_rec);
+		return NULL;
+	}
+
+	return user_rec;
+}
+
+extern void as_mysql_user_handle_user_coord_flag(slurmdb_user_rec_t *user_rec,
+						 slurmdb_assoc_flags_t flags,
+						 char *acct)
+{
+	xassert(user_rec);
+	xassert(user_rec->coord_accts);
+	xassert(acct);
+
+	if (flags & ASSOC_FLAG_USER_COORD_NO) {
+		(void) list_delete_first(user_rec->coord_accts,
+					 assoc_mgr_find_nondirect_coord_by_name,
+					 acct);
+		debug2("Removing user %s from being a coordinator of account %s",
+		       user_rec->name, acct);
+	} else if ((flags & ASSOC_FLAG_USER_COORD) &&
+		 !list_find_first(user_rec->coord_accts,
+				  assoc_mgr_find_coord_in_user,
+				  acct)) {
+		slurmdb_coord_rec_t *coord = xmalloc(sizeof(*coord));
+
+		coord->name = xstrdup(acct);
+		list_append(user_rec->coord_accts, coord);
+		debug2("Adding user %s as a coordinator of account %s",
+		       user_rec->name, acct);
+	}
 }

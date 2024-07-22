@@ -4,3 +4,4 @@ ${PERL_ARCHLIB}/Slurm/Bitstr.pm
 ${PERL_ARCHLIB}/Slurm/Constant.pm
 ${PERL_ARCHLIB}/Slurm/Hostlist.pm
 ${PERL_ARCHLIB}/Slurm.pm
+${PERL_ARCHLIB}/perllocal.pod

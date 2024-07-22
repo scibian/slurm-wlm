@@ -60,6 +60,7 @@
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+#include "src/interfaces/switch.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "read_jcconf.h"
@@ -141,11 +142,6 @@ static int _restore_ns(List steps, const char *d_name)
 	return SLURM_SUCCESS;
 }
 
-extern void container_p_reconfig(void)
-{
-	return;
-}
-
 /*
  * init() is called when the plugin is loaded, before any other functions
  *	are called.  Put global initialization here.
@@ -180,10 +176,6 @@ extern int fini(void)
 	int rc = SLURM_SUCCESS;
 	debug("%s unloaded", plugin_name);
 
-#ifdef HAVE_NATIVE_CRAY
-	return SLURM_SUCCESS;
-#endif
-
 	if (step_ns_fd != -1) {
 		close(step_ns_fd);
 		step_ns_fd = -1;
@@ -201,10 +193,6 @@ extern int container_p_restore(char *dir_name, bool recover)
 	struct dirent *ep;
 	List steps;
 	int rc = SLURM_SUCCESS;
-
-#ifdef HAVE_NATIVE_CRAY
-	return SLURM_SUCCESS;
-#endif
 
 	if (plugin_disabled)
 		return SLURM_SUCCESS;
@@ -380,10 +368,6 @@ static int _create_ns(uint32_t job_id, stepd_step_rec_t *step)
 	sem_t *sem1 = NULL;
 	sem_t *sem2 = NULL;
 	pid_t cpid;
-
-#ifdef HAVE_NATIVE_CRAY
-	return 0;
-#endif
 
 	_create_paths(job_id, &job_mount, &ns_holder, &src_bind);
 
@@ -576,6 +560,16 @@ static int _create_ns(uint32_t job_id, stepd_step_rec_t *step)
 		}
 
 		/*
+		 * switch/nvidia_imex needs to create an ephemeral device
+		 * node under /dev in this new namespace.
+		 */
+		if ((rc = switch_g_fs_init(step))) {
+			error("%s: switch_g_fs_init failed", __func__);
+			rc = -1;
+			goto child_exit;
+		}
+
+		/*
 		 * This umount is to remove the basepath mount from being
 		 * visible inside the namespace. So if a user looks up the
 		 * mounts inside the job, they will only see their job mount
@@ -672,11 +666,6 @@ end_it:
 	return rc;
 }
 
-extern int container_p_create(uint32_t job_id, uid_t uid)
-{
-	return SLURM_SUCCESS;
-}
-
 extern int container_p_join_external(uint32_t job_id)
 {
 	char *job_mount = NULL, *ns_holder = NULL;
@@ -698,20 +687,11 @@ extern int container_p_join_external(uint32_t job_id)
 	return step_ns_fd;
 }
 
-extern int container_p_add_cont(uint32_t job_id, uint64_t cont_id)
-{
-	return SLURM_SUCCESS;
-}
-
 extern int container_p_join(uint32_t job_id, uid_t uid)
 {
 	char *job_mount = NULL, *ns_holder = NULL;
 	int fd;
 	int rc = SLURM_SUCCESS;
-
-#ifdef HAVE_NATIVE_CRAY
-	return SLURM_SUCCESS;
-#endif
 
 	if (plugin_disabled)
 		return SLURM_SUCCESS;
@@ -757,10 +737,6 @@ static int _delete_ns(uint32_t job_id)
 {
 	char *job_mount = NULL, *ns_holder = NULL;
 	int rc = 0, failures = 0;
-
-#ifdef HAVE_NATIVE_CRAY
-	return SLURM_SUCCESS;
-#endif
 
 	_create_paths(job_id, &job_mount, &ns_holder, NULL);
 
@@ -810,11 +786,6 @@ static int _delete_ns(uint32_t job_id)
 	xfree(job_mount);
 	xfree(ns_holder);
 
-	return SLURM_SUCCESS;
-}
-
-extern int container_p_delete(uint32_t job_id)
-{
 	return SLURM_SUCCESS;
 }
 
