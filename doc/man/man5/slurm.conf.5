@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "May 2024" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "June 2024" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -234,8 +234,8 @@ Only used for database type storage plugins, ignored otherwise.
 
 .TP
 \fBAccountingStoreFlags\fR
-Comma separated list used to tell the slurmctld to store extra fields that may
-be more heavy weight than the normal job information.
+Comma separated list used to modify which fields the slurmctld send to the
+accounting database.
 .IP
 .RS
 .TP
@@ -263,6 +263,12 @@ Storage database.
 .TP
 \fBjob_script\fR
 Include the job's batch script in the job start message sent to the Accounting Storage database.
+.IP
+
+.TP
+\fBno_stdio\fR
+Exclude the stdio paths when recording data into the database on a job start.
+StdOut, StdErr and StdIn fields for a job will be empty.
 .RE
 .IP
 
@@ -2472,9 +2478,26 @@ More information about MPI use is available here
 
 .TP
 \fBMpiParams\fR
-MPI parameters.
-Used to identify ports used by native Cray's PMI. The format to identify a
-range of communication ports is "ports=12000\-12999".
+MPI-related parameters. Multiple parameters may be comma separated. Currently
+supported parameters include:
+.IP
+.RS
+
+.TP
+\fBports=#\-#\fR
+Identifies a range of communication ports used by native Cray's PMI.
+.IP
+
+.TP
+\fBdisable_slurm_hydra_bootstrap\fR
+Disable environment variable injection in allocations for the following
+variables: I_MPI_HYDRA_BOOTSTRAP, I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS,
+HYDRA_BOOTSTRAP, HYDRA_LAUNCHER_EXTRA_ARGS.
+
+Manually setting I_MPI_HYDRA_BOOTSTRAP or HYDRA_BOOTSTRAP to 'slurm' in the
+allocation will skip this parameter and injection of extra args will be
+performed as usual.
+.RE
 .IP
 
 .TP
@@ -5159,7 +5182,6 @@ Requires hwloc v2.
 .TP
 \fBshutdown_on_reboot\fR
 If set, the Slurmd will shut itself down when a reboot request is received.
-.RE
 .IP
 
 .TP
@@ -5480,7 +5502,7 @@ The default value is 30 seconds.
 \fBSwitchParameters\fR
 Optional parameters for the switch plugin.
 
-On HPE Slingshot systems configured with SwitchType=switch/hpe_slingshot,
+On HPE Slingshot systems configured with \fBSwitchType=switch/hpe_slingshot\fR,
 the following parameters are supported
 (separate multiple parameters with a comma):
 .IP
@@ -5622,6 +5644,16 @@ List entries. The default is 16 per-CPU, maximum 16384 per-node.
 .TP
 \fBacs\fR
 Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
+.IP
+.RE
+
+On systems configured with \fBSwitchType=switch/nvidia_imex\fR, the following
+parameters are supported:
+.RS
+.TP
+\fBimex_channel_count\fR
+Number of channels that can be configured. Channels allow nodes to create a
+secure method of sharing memory. The default value is 2048.
 .RE
 .IP
 
@@ -5629,13 +5661,24 @@ Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
 \fBSwitchType\fR
 Identifies the type of switch or interconnect used for application
 communications.
-Acceptable values include "switch/hpe_slingshot" for HPE Slingshot systems.
 The default value is no special plugin requiring special processing for job
 launch or termination (Ethernet, and InfiniBand).
 All Slurm daemons, commands and running jobs must be restarted or reconfigured
 for a change in \fBSwitchType\fR to take effect.
 If running jobs exist at the time \fBslurmctld\fR is restarted with a new
 value of \fBSwitchType\fR, records of all jobs in any state may be lost.
+Acceptable values include:
+.IP
+.RS
+.TP 15
+\fBswitch/hpe_slingshot\fR
+For HPE Slingshot systems.
+.IP
+
+.TP
+\fBswitch/nvidia_imex\fR
+For allocating unique channels within an NVIDIA IMEX domain.
+.RE
 .IP
 
 .TP
