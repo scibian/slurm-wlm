@@ -77,6 +77,7 @@ typedef struct slurm_switch_ops {
 					    buf_t *buffer,
 					    uint16_t protocol_version );
 	int          (*job_preinit)       ( stepd_step_rec_t *step );
+	int          (*job_init)          ( stepd_step_rec_t *step );
 	int          (*job_postfini)      ( stepd_step_rec_t *step);
 	int          (*job_attach)        ( switch_stepinfo_t *stepinfo,
 					    char ***env, uint32_t nodeid,
@@ -86,6 +87,7 @@ typedef struct slurm_switch_ops {
 					    char *nodelist );
 	void         (*job_start)         ( job_record_t *job_ptr );
 	void         (*job_complete)      ( job_record_t *job_ptr );
+	int          (*fs_init)           ( stepd_step_rec_t *step );
 } slurm_switch_ops_t;
 
 /*
@@ -104,11 +106,13 @@ static const char *syms[] = {
 	"switch_p_pack_stepinfo",
 	"switch_p_unpack_stepinfo",
 	"switch_p_job_preinit",
+	"switch_p_job_init",
 	"switch_p_job_postfini",
 	"switch_p_job_attach",
 	"switch_p_job_step_complete",
 	"switch_p_job_start",
 	"switch_p_job_complete",
+	"switch_p_fs_init",
 };
 
 static slurm_switch_ops_t  *ops            = NULL;
@@ -481,6 +485,16 @@ extern int switch_g_job_preinit(stepd_step_rec_t *step)
 	return (*(ops[switch_context_default].job_preinit))(step);
 }
 
+extern int switch_g_job_init(stepd_step_rec_t *step)
+{
+	xassert(switch_context_cnt >= 0);
+
+	if (!switch_context_cnt)
+		return SLURM_SUCCESS;
+
+	return (*(ops[switch_context_default].job_init))(step);
+}
+
 extern int switch_g_job_postfini(stepd_step_rec_t *step)
 {
 	xassert(switch_context_cnt >= 0);
@@ -551,4 +565,14 @@ extern void switch_g_job_complete(job_record_t *job_ptr)
 		return;
 
 	(*(ops[switch_context_default].job_complete))(job_ptr);
+}
+
+extern int switch_g_fs_init(stepd_step_rec_t *step)
+{
+	xassert(switch_context_cnt >= 0);
+
+	if (!switch_context_cnt)
+		return SLURM_SUCCESS;
+
+	return (*(ops[switch_context_default].fs_init))(step);
 }

@@ -1,14 +1,28 @@
-slurm-wlm (24.05.0-0sci10u2) scibian10; urgency=medium
+slurm-wlm (24.05.1-1) unstable; urgency=medium
 
-  * Remove reference to loong64 arch
+  * New upstream major release
+  * Fix typos
+  * Fix libpmix2t64 dependency (Closes: #1074384)
+  * Bump SONAME to 41 and update symbols
+  * Fix libslurm-perl package
+  * Remove smd_ns.h from libslurm-dev
+  * Update copyright
+  * Remove ext_sensors/rrd plugin
+  * Refresh patches
 
- -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 28 Jun 2024 18:12:10 +0200
+ -- Gennaro Oliva <oliva@debian.org>  Mon, 22 Jul 2024 09:14:39 +0200
+
+ slurm-wlm (24.05.0-0sci10u2) scibian10; urgency=medium
+
+ * Remove reference to loong64 arch
+
+-- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 28 Jun 2024 18:12:10 +0200
 
 slurm-wlm (24.05.0-0sci10u1) scibian10; urgency=medium
 
-  * Rebase META patch
+ * Rebase META patch
 
- -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 21 Jun 2024 11:41:28 +0200
+-- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 21 Jun 2024 11:41:28 +0200
 
 slurm-wlm (24.05.0-0) scibian11; urgency=medium
 
@@ -32,6 +46,8 @@ slurm-wlm (23.11.7-1sci10u1) scibian10; urgency=medium
   * Fix pmix2 path for Scibian10
 
  -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Wed, 19 Jun 2024 10:34:11 +0200
+
+
 
 slurm-wlm (23.11.7-1) unstable; urgency=medium
 
@@ -183,6 +199,14 @@ slurm-wlm (22.05.8-3sci10u1) scibian10; urgency=medium
 
  -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 05 Apr 2023 11:06:00 +0200
 
+slurm-wlm (22.05.8-3sci11u1) scibian11; urgency=medium
+
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Thu, 06 Apr 2023 09:05:54 +0200
+
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
   * Source only upload for testing
@@ -301,7 +325,7 @@ slurm-wlm (21.08.7-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 21 Apr 2022 21:51:00 +0200
 
-slurm-wlm (21.08.4-1sci10u2) scibian10; urgency=medium
+slurm-wlm (21.08.4-1sci9u2) scibian9; urgency=medium
 
   * Remove generated debian/files
   * Restore pmix support
@@ -310,15 +334,14 @@ slurm-wlm (21.08.4-1sci10u2) scibian10; urgency=medium
   * Update PMIx v3 dlopen patch for slurm 21.08
   * Update wait health check patch for slurm 21.08
   * Install new slurm_version.h in libslurm-dev
-  * Restore slurmrestd build-deps
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 01 Feb 2022 16:33:41 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 01 Feb 2022 11:06:47 +0100
 
-slurm-wlm (21.08.4-1sci10u1) scibian10; urgency=medium
+slurm-wlm (21.08.4-1sci9u1) scibian9; urgency=medium
 
-  * Backport to scibian10
+  * Backport to scibian9
 
- -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 25 Jan 2022 16:07:41 +0100
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 25 Jan 2022 15:58:00 +0100
 
 slurm-wlm (21.08.6-1) unstable; urgency=medium
 
@@ -335,13 +358,19 @@ slurm-wlm (21.08.5-2) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Fri, 28 Jan 2022 23:36:39 +0100
 
-slurm-wlm (21.08.5-1sci10u1) scibian10; urgency=medium
+slurm-wlm (21.08.5-1sci9u2) scibian9; urgency=medium
 
-  * Backport to scibian10
+  * Remove slurmrestd binary package dependencies
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 22:27:09 +0100
+
+slurm-wlm (21.08.5-1sci9u1) scibian9; urgency=medium
+
+  * Backport to scibian9
   * Remove no more need health_check_interval patch
   * Remove pmix support as per uptream do!
 
- -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 21:32:26 +0100
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Mon, 24 Jan 2022 21:49:12 +0100
 
 slurm-wlm (21.08.5-1) unstable; urgency=medium
 
@@ -364,11 +393,11 @@ slurm-wlm (21.08.5-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 13 Jan 2022 16:30:47 +0100
 
-slurm-wlm (20.11.8-1sci10u1) scibian10; urgency=medium
+slurm-wlm (20.11.8-1sci9u1) scibian9; urgency=medium
 
-  * Backport to scibian10
+  * Backport to scibian9
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 01 Sep 2021 10:37:06 +0200
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Wed, 01 Sep 2021 09:49:25 +0200
 
 slurm-wlm (20.11.8-1) unstable; urgency=medium
 
@@ -384,13 +413,14 @@ slurm-wlm (20.11.7-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 15 Jun 2021 17:49:41 +0200
 
-slurm-wlm (20.11.5-1sci10u1) scibian10; urgency=medium
+slurm-wlm (20.11.5-1sci9u1) scibian9; urgency=medium
 
   * Import Upstream version 20.11.5
   * Update Scibian patches to apply on new release
+  * Remove slurmrestd binary package
   * Update health check patch after upstream cleanup
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Apr 2021 16:21:13 +0200
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 13 Apr 2021 10:40:09 +0200
 
 slurm-wlm (20.11.5-1) unstable; urgency=medium
 
@@ -439,20 +469,20 @@ slurm-wlm (20.11.3-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Sun, 24 Jan 2021 18:29:47 +0100
 
-slurm-wlm (20.02.6-2sci10u2) scibian10; urgency=medium
+slurm-wlm (20.02.6-2sci9u2) scibian9; urgency=medium
 
   * Update Vcs URL following rename
   * Add patch to enforce cred cache clearing
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 23 Feb 2021 12:30:55 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 23 Feb 2021 12:30:08 +0100
 
-slurm-wlm (20.02.6-2sci10u1) scibian10; urgency=medium
+slurm-wlm (20.02.6-2sci9u1) scibian9; urgency=medium
 
-  * Backport to scibian10
+  * Backport to scibian9
   * Update patch NHC before slurmd registering to apply on new upstream release
   * Remove add-missing-locks-slurmd-creds patch applied in new upstream release
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 15 Dec 2020 10:43:47 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Tue, 15 Dec 2020 10:23:53 +0100
 
 slurm-wlm (20.02.6-2) unstable; urgency=medium
 
@@ -480,21 +510,21 @@ slurm-wlm (20.02.6-1) unstable; urgency=medium
   * Update d/copyright
   * Update libslurm35.symbols
 
-slurm-llnl (19.05.8-0sci10u1) scibian10; urgency=medium
+ -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 17 Nov 2020 00:11:42 +0100
+
+slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
 
   * New upstream version 19.05.8
   * 2 patches to fix creds handling for requeued jobs
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 04 Dec 2020 13:37:14 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 04 Dec 2020 13:35:14 +0100
 
-slurm-llnl (19.05.7-0sci10u1) scibian10; urgency=medium
+slurm-llnl (19.05.7-0sci9u1) scibian9; urgency=medium
 
-  * New upstreamm release 19.05.7
-  * Adjust man page patch to new upstream release
+  * New upstream release 19.05.7
+  * Adjust man patch to new upstream release
 
- -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 11:58:07 +0200
-
- -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 17 Nov 2020 00:11:42 +0100
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 10:38:45 +0200
 
 slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
 
@@ -553,12 +583,6 @@ slurm-llnl (19.05.5-1) unstable; urgency=medium
   * Improve sacct test
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 16 Jan 2020 22:46:11 +0100
-
-slurm-llnl (19.05.5-0sci10u1) scibian10; urgency=medium
-
-  * New release for scibian10.
-
- -- MHamed Bouaziz <mhamed-externe.bouaziz@edf.fr>  Thu, 30 Jan 2020 14:56:15 +0100
 
 slurm-llnl (19.05.5-0sci9u2) scibian9; urgency=medium
 

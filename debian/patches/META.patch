@@ -1,5 +1,5 @@
 From: Scibian Project <packaging@scibian.org>
-Date: Wed, 19 Jun 2024 15:18:18 +0200
+Date: Tue, 23 Jul 2024 13:43:29 +0200
 Subject: META
 
 ---
@@ -7,15 +7,15 @@ Subject: META
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/META b/META
-index 2324d63..a7812a4 100644
+index 9ee34d6..46e9f39 100644
 --- a/META
 +++ b/META
 @@ -9,7 +9,7 @@
    Minor:	05
-   Micro:	0
-   Version:	24.05.0
+   Micro:	1
+   Version:	24.05.1
 -  Release:	1
-+  Release:	Edf.1.0
++  Release:	Scibian.1.0
  
  ##
  #  When making a new Major/Minor version update
