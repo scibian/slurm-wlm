@@ -1,3 +1,9 @@
+slurm-wlm (24.05.1-1sci10u1) scibian10; urgency=medium
+  * patch META : Refresh patch for new version
+  * patches delete useless patches
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Tue, 23 Jul 2024 17:56:36 +0200
+
 slurm-wlm (24.05.1-1) unstable; urgency=medium
 
   * New upstream major release
