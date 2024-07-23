@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -102,6 +103,7 @@ typedef struct {
 	int rlimit;
 	char **tmp_env;
 	const char *username;
+	bool setup_namespaces;
 } child_args_t;
 
 /*
@@ -141,7 +143,7 @@ static char **
 _extend_env(char ***envp)
 {
 	char **ep;
-	size_t newcnt = (xsize (*envp) / sizeof (char *)) + 1;
+	size_t newcnt = PTR_ARRAY_SIZE(*envp) + 1;
 
 	*envp = xrealloc (*envp, newcnt * sizeof (char *));
 
@@ -2093,6 +2095,20 @@ static int _child_fn(void *arg)
 	cmdstr = child_args->cmdstr;
 	tmp_env = child_args->tmp_env;
 
+	/*
+	 * Setting propagation and mounting our own /proc for this namespace.
+	 * This is done to ensure that this cloned process and its children
+	 * have coherent /proc contents with their virtual PIDs.
+	 * Check _clone_env_child to see namespace flags used in clone.
+	 */
+	if (child_args->setup_namespaces) {
+		if (mount("none", "/proc", NULL, MS_PRIVATE|MS_REC, NULL))
+			_exit(1);
+		if (mount("proc", "/proc", "proc",
+			  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL))
+			_exit(1);
+	}
+
 	if ((devnull = open("/dev/null", O_RDWR)) != -1) {
 		dup2(devnull, STDIN_FILENO);
 		dup2(devnull, STDERR_FILENO);
@@ -2139,8 +2155,9 @@ static int _clone_env_child(child_args_t *child_args)
 	 * Killing the 'child' pid will kill all the namespace, since in the
 	 * namespace, this 'child' is pid 1.
 	 */
+	child_args->setup_namespaces = true;
 	return clone(_child_fn, child_stack + STACK_SIZE,
-		     (SIGCHLD|CLONE_NEWPID), child_args);
+		     (SIGCHLD|CLONE_NEWPID|CLONE_NEWNS), child_args);
 }
 #endif
 
@@ -2216,6 +2233,7 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	child_args.fildes = fildes;
 	child_args.username = username;
 	child_args.cmdstr = cmdstr;
+	child_args.setup_namespaces = false;
 	child_args.tmp_env = env_array_create();
 	env_array_overwrite(&child_args.tmp_env, "ENVIRONMENT", "BATCH");
 	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
@@ -2389,8 +2407,14 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 static void _set_ext_launcher_hydra(char ***dest, char *b_env, char *extra)
 {
 	char *bootstrap = getenv(b_env);
+	bool disabled_slurm_hydra_bootstrap = false;
 
-	if (!bootstrap || !xstrcmp(bootstrap, "slurm")) {
+	if (slurm_conf.mpi_params &&
+	    xstrstr(slurm_conf.mpi_params,"disable_slurm_hydra_bootstrap"))
+		disabled_slurm_hydra_bootstrap = true;
+
+	if ((!bootstrap && !disabled_slurm_hydra_bootstrap) ||
+	    !xstrcmp(bootstrap, "slurm")) {
 		env_array_append(dest, b_env, "slurm");
 		env_array_append(dest, extra, "--external-launcher");
 	}
@@ -2569,4 +2593,25 @@ extern char **env_array_exclude(const char **env, const regex_t *regex)
 	}
 
 	return purged;
+}
+
+extern void set_prio_process_env(void)
+{
+        int retval;
+
+        errno = 0; /* needed to detect a real failure since prio can be -1 */
+
+        if ((retval = getpriority(PRIO_PROCESS, 0)) == -1)  {
+                if (errno) {
+                        error("getpriority(PRIO_PROCESS): %m");
+                        return;
+                }
+        }
+
+        if (setenvf(NULL, "SLURM_PRIO_PROCESS", "%d", retval) < 0) {
+                error("unable to set SLURM_PRIO_PROCESS in environment");
+                return;
+        }
+
+        debug("propagating SLURM_PRIO_PROCESS=%d", retval);
 }

@@ -1,6 +1,114 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 24.05.1
+==========================
+ -- Fix slurmctld and slurmdbd potentially stopping instead of performing a
+    logrotate when recieving SIGUSR2 when using auth/slurm.
+ -- switch/hpe_slingshot - Fix slurmctld crash when upgrading from 23.02.
+ -- Fix "Could not find group" errors from validate_group() when using
+    AllowGroups with large /etc/group files.
+ -- Prevent an assertion in debugging builds when triggering log rotation
+    in a backup slurmctld.
+ -- Add AccountingStoreFlags=no_stdio which allows to not record the stdio
+    paths of the job when set.
+ -- slurmrestd - Prevent a slurmrestd segfault when parsing the crontab field,
+    which was never usable. Now it explicitly ignores the value and emits a
+    warning if it is used for the following endpoints:
+      'POST /slurm/v0.0.39/job/{job_id}'
+      'POST /slurm/v0.0.39/job/submit'
+      'POST /slurm/v0.0.40/job/{job_id}'
+      'POST /slurm/v0.0.40/job/submit'
+      'POST /slurm/v0.0.41/job/{job_id}'
+      'POST /slurm/v0.0.41/job/submit'
+      'POST /slurm/v0.0.41/job/allocate'
+ -- mpi/pmi2 - Fix communication issue leading to task launch failure with
+    "invalid kvs seq from node".
+ -- Fix getting user environment when using sbatch with "--get-user-env" or
+    "--export=" when there is a user profile script that reads /proc.
+ -- Prevent slurmd from crashing if acct_gather_energy/gpu is configured but
+    GresTypes is not configured.
+ -- Do not log the following errors when AcctGatherEnergyType plugins are used
+    but a node does not have or cannot find sensors:
+    "error: _get_joules_task: can't get info from slurmd"
+    "error: slurm_get_node_energy: Zero Bytes were transmitted or received"
+    However, the following error will continue to be logged:
+    "error: Can't get energy data. No power sensors are available. Try later"
+ -- sbatch, srun - Set SLURM_NETWORK environment variable if --network is set.
+ -- Fix cloud nodes not being able to forward to nodes that restarted with new
+    IP addresses.
+ -- Fix cwd not being set correctly when running a SPANK plugin with a
+    spank_user_init() hook and the new "contain_spank" option set.
+ -- slurmctld - Avoid deadlock during shutdown when auth/slurm is active.
+ -- Fix segfault in slurmctld with topology/block.
+ -- sacct - Fix printing of job group for job steps.
+ -- scrun - Log when an invalid environment variable causes the job submission
+    to be rejected.
+ -- accounting_storage/mysql - Fix problem where listing or modifying an
+    association when specifying a qos list could hang or take a very long time.
+ -- gpu/nvml - Fix gpuutil/gpumem only tracking last GPU in step. Now,
+    gpuutil/gpumem will record sums of all GPUS in the step.
+ -- Fix error in scrontab jobs when using slurm.conf:PropagatePrioProcess=1.
+ -- Fix slurmctld crash on a batch job submission with "--nodes 0,...".
+ -- Fix dynamic IP address fanout forwarding when using auth/slurm.
+ -- Restrict listening sockets in the mpi/pmix plugin and sattach to the
+    SrunPortRange.
+ -- slurmrestd - Limit mime types returned from query to 'GET /openapi/v3' to
+    only return one mime type per serializer plugin to fix issues with OpenAPI
+    client generators that are unable to handle multiple mime type aliases.
+ -- Fix many commands possibly reporting an "Unexpected Message Received" when
+    in reality the connection timed out.
+ -- Prevent slurmctld from starting if there is not a json serializer present
+    and the extra_constraints feature is enabled.
+ -- Fix heterogeneous job components not being signaled with scancel --ctld and
+    'DELETE slurm/v0.0.40/jobs' if the job ids are not explicitly given,
+    the heterogeneous job components match the given filters, and the
+    heterogeneous job leader does not match the given filters.
+ -- Fix regression from 23.02 impeding job licenses from being cleared.
+ -- Move error to log_flag which made _get_joules_task error to be logged to the
+    user when too many rpcs were queued in slurmd for gathering energy.
+ -- For scancel --ctld and the associated rest api endpoints:
+      'DELETE /slurm/v0.0.40/jobs'
+      'DELETE /slurm/v0.0.41/jobs'
+    Fix canceling the final array task in a job array when the task is pending
+    and all array tasks have been split into separate job records. Previously
+    this task was not canceled.
+ -- Fix power_save operation after recovering from a failed reconfigure.
+ -- slurmctld - Skip removing the pidfile when running under systemd. In that
+    situation it is never created in the first place.
+ -- Fix issue where altering the flags on a Slurm account (UsersAreCoords)
+    several limits on the account's association would be set to 0 in
+    Slurm's internal cache.
+ -- Fix memory leak in the controller when relaying stepmgr step accounting to
+    the dbd.
+ -- Fix segfault when submitting stepmgr jobs within an existing allocation.
+ -- Added "disable_slurm_hydra_bootstrap" as a possible MpiParams parameter in
+    slurm.conf. Using this will disable env variable injection to allocations
+    for the following variables: I_MPI_HYDRA_BOOTSTRAP,
+    I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS, HYDRA_BOOTSTRAP,
+    HYDRA_LAUNCHER_EXTRA_ARGS.
+ -- scrun - Delay shutdown until after start requested. This caused scrun
+    to never start or shutdown and hung forever when using --tty.
+ -- Fix backup slurmctld potentially not running the agent when taking over as
+    the primary controller.
+ -- Fix primary controller not running the agent when a reconfigure of the
+    slurmctld fails.
+ -- slurmd - fix premature timeout waiting for REQUEST_LAUNCH_PROLOG with large
+    array jobs causing node to drain.
+ -- jobcomp/{elasticsearch,kafka} - Avoid sending fields with invalid date/time.
+ -- jobcomp/elasticsearch - Fix slurmctld memory leak from curl usage
+ -- acct_gather_profile/influxdb - Fix slurmstepd memory leak from curl usage
+ -- Fix 24.05.0 regression not deleting job hash dirs after MinJobAge.
+ -- Fix filtering arguments being ignored when using squeue --json.
+ -- switch/nvidia_imex - Move setup call after spank_init() to allow namespace
+    manipulation within the SPANK plugin.
+ -- switch/nvidia_imex - Skip plugin operation if nvidia-caps-imex-channels
+    device is not present rather than preventing slurmd from starting.
+ -- switch/nvidia_imex - Skip plugin operation if job_container/tmpfs
+    is configured due to incompatibility.
+ -- switch/nvidia_imex - Remove any pre-existing channels when slurmd starts.
+ -- rpc_queue - Add support for an optional rpc_queue.yaml configuration file.
+
 * Changes in Slurm 24.05.0
 ==========================
  -- Fix regresssion in rc1 causing power_save thread to spin continuously.
@@ -329,9 +437,70 @@ documents those changes that are of interest to users and administrators.
  -- slurmrestd - Fix possible memory leak from failed job allocation requests to
     'POST /slurm/v0.0.{39,40,41}/job/allocate'.
 
+* Changes in Slurm 23.11.9
+==========================
+ -- Fix many commands possibly reporting an "Unexpected Message Received" when
+    in reality the connection timed out.
+ -- Fix heterogeneous job components not being signaled with scancel --ctld and
+    'DELETE slurm/v0.0.40/jobs' if the job ids are not explicitly given,
+    the heterogeneous job components match the given filters, and the
+    heterogeneous job leader does not match the given filters.
+ -- Fix regression from 23.02 impeding job licenses from being cleared.
+ -- Move error to log_flag which made _get_joules_task error to be logged to the
+    user when too many rpcs were queued in slurmd for gathering energy.
+ -- slurmrestd - Prevent a slurmrestd segfault when modifying an association
+    without specifying max TRES limits in the request if those TRES
+    limits are currently defined in the association. This affects the following
+    fields of endpoint 'POST /slurmdb/v0.0.38/associations/':
+      'associations/max/tres/per/job'
+      'associations/max/tres/per/node'
+      'associations/max/tres/total'
+      'associations/max/tres/minutes/per/job'
+      'associations/max/tres/minutes/total'
+ -- Fix power_save operation after recovering from a failed reconfigure.
+ -- scrun - Delay shutdown until after start requested. This caused scrun
+    to never start or shutdown and hung forever when using --tty.
+ -- Fix backup slurmctld potentially not running the agent when taking over as
+    the primary controller.
+ -- Fix primary controller not running the agent when a reconfigure of the
+    slurmctld fails.
+ -- jobcomp/{elasticsearch,kafka} - Avoid sending fields with invalid date/time.
+
 * Changes in Slurm 23.11.8
 ==========================
  -- Fix slurmctld crash when reconfiguring with a PrologSlurmctld is running.
+ -- Fix slurmctld crash after a job has been resized.
+ -- Fix slurmctld and slurmdbd potentially stopping instead of performing a
+    logrotate when recieving SIGUSR2 when using auth/slurm.
+ -- Fix not having a disabled value for keepalive CommunicationParameters in
+    slurm.conf when these parameters are not set. This can log an error when
+    setting a socket, for example during slurmdbd registration with ctld.
+ -- switch/hpe_slingshot - Fix slurmctld crash when upgrading from 23.02.
+ -- Fix "Could not find group" errors from validate_group() when using
+    AllowGroups with large /etc/group files.
+ -- slurmrestd - Prevent a slurmrestd segfault when parsing the crontab field,
+    which was never usable. Now it explicitly ignores the value and emits a
+    warning if it is used for the following endpoints:
+      'POST /slurm/v0.0.39/job/{job_id}'
+      'POST /slurm/v0.0.39/job/submit'
+      'POST /slurm/v0.0.40/job/{job_id}'
+      'POST /slurm/v0.0.40/job/submit'
+ -- Fix getting user environment when using sbatch with "--get-user-env" or
+    "--export=" when there is a user profile script that reads /proc.
+ -- Prevent slurmd from crashing if acct_gather_energy/gpu is configured but
+    GresTypes is not configured.
+ -- Do not log the following errors when AcctGatherEnergyType plugins are used
+    but a node does not have or cannot find sensors:
+    "error: _get_joules_task: can't get info from slurmd"
+    "error: slurm_get_node_energy: Zero Bytes were transmitted or received"
+    However, the following error will continue to be logged:
+    "error: Can't get energy data. No power sensors are available. Try later"
+ -- Fix cloud nodes not being able to forward to nodes that restarted with new
+    IP addresses.
+ -- sacct - Fix printing of job group for job steps.
+ -- Fix error in scrontab jobs when using slurm.conf:PropagatePrioProcess=1.
+ -- Fix slurmctld crash on a batch job submission with "--nodes 0,...".
+ -- Fix dynamic IP address fanout forwarding when using auth/slurm.
 
 * Changes in Slurm 23.11.7
 ==========================

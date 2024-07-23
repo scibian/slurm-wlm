@@ -820,6 +820,7 @@ test_107_#   Testing of scancel options.
 ========================================
 test_107_1   /commands/scancel/test_--help.py
 test_107_2   /commands/scancel/test_--usage.py
+test_107_3   Test scancel --ctld and filtering options
 
 test_108_#   Testing of scontrol options.
 =========================================
@@ -1043,3 +1044,7 @@ test_145_2   Test --constraint
 test_146_#   Testing partitions.
 ================================
 test_146_1   Test MaxCPUsPerNode and MaxCPUsPerSocket
+
+test_147_#   Testing SPANK.
+===========================
+test_147_1   Test SPANK contained when SlurmdParameters=contain_spank
