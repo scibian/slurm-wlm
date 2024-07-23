@@ -5,19 +5,11 @@ Subject: Fix default pidfile paths
 
 Bug-Debian: http://bugs.debian.org/885759
 Forwarded: not-needed
-Last-Update: 2018-12-13
+Last-Update: 2024-07-21
 
-This patch points default pidfild paths under /run
----
- src/common/read_config.h   | 4 ++--
- src/slurmdbd/read_config.h | 2 +-
- 2 files changed, 3 insertions(+), 3 deletions(-)
-
-diff --git a/src/common/read_config.h b/src/common/read_config.h
-index 702c9c6..05df85a 100644
 --- a/src/common/read_config.h
 +++ b/src/common/read_config.h
-@@ -137,9 +137,9 @@ typedef struct node_record node_record_t;
+@@ -139,9 +139,9 @@
  #define DEFAULT_SCHED_TIME_SLICE    30
  #define DEFAULT_SCHEDTYPE           "sched/backfill"
  #define DEFAULT_SELECT_TYPE         "select/cons_tres"
@@ -29,8 +21,6 @@ index 702c9c6..05df85a 100644
  #define DEFAULT_SLURMD_TIMEOUT      300
  #define DEFAULT_SPOOLDIR            "/var/spool/slurmd"
  #define DEFAULT_STORAGE_HOST        "localhost"
-diff --git a/src/slurmdbd/read_config.h b/src/slurmdbd/read_config.h
-index 2a98570..1ba1ef1 100644
 --- a/src/slurmdbd/read_config.h
 +++ b/src/slurmdbd/read_config.h
 @@ -48,7 +48,7 @@

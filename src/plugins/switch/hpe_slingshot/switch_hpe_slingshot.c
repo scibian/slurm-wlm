@@ -976,7 +976,7 @@ extern int switch_p_unpack_stepinfo(switch_stepinfo_t **switch_job,
 				goto unpack_error;
 		}
 		unpack_bit_str_hex(&vni_pids, buffer); /* Unused */
-		bit_free(vni_pids);
+		FREE_NULL_BITMAP(vni_pids);
 		safe_unpack32(&stepinfo->flags, buffer);
 
 		safe_unpack32(&stepinfo->num_nics, buffer);
@@ -1017,6 +1017,14 @@ extern int switch_p_job_preinit(stepd_step_rec_t *step)
 		return SLURM_ERROR;
 	if (!create_slingshot_apinfo(step))
 		return SLURM_ERROR;
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Privileged.
+ */
+extern int switch_p_job_init(stepd_step_rec_t *step)
+{
 	return SLURM_SUCCESS;
 }
 
@@ -1146,4 +1154,9 @@ extern void switch_p_job_complete(job_record_t *job_ptr)
 
 	/* Release any hardware collectives multicast addresses */
 	slingshot_release_collectives_job(job_id);
+}
+
+extern int switch_p_fs_init(stepd_step_rec_t *step)
+{
+	return SLURM_SUCCESS;
 }

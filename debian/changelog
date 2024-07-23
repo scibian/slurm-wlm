@@ -1,3 +1,17 @@
+slurm-wlm (24.05.1-1) unstable; urgency=medium
+
+  * New upstream major release
+  * Fix typos
+  * Fix libpmix2t64 dependency (Closes: #1074384)
+  * Bump SONAME to 41 and update symbols
+  * Fix libslurm-perl package
+  * Remove smd_ns.h from libslurm-dev
+  * Update copyright
+  * Remove ext_sensors/rrd plugin
+  * Refresh patches
+
+ -- Gennaro Oliva <oliva@debian.org>  Mon, 22 Jul 2024 09:14:39 +0200
+
 slurm-wlm (24.05.0-0sci11u2) scibian11; urgency=medium
 
   * Remove reference to loong64 arch

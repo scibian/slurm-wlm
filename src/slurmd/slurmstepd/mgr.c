@@ -1623,6 +1623,14 @@ job_manager(stepd_step_rec_t *step)
 	}
 	debug2("After call to spank_init()");
 
+	/* Call switch_g_job_init() before becoming user */
+	if (!step->batch && (step->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
+	    step->argv && (switch_g_job_init(step) < 0)) {
+		/* error("switch_g_job_init: %m"); already logged */
+		rc = ESLURM_INTERCONNECT_FAILURE;
+		goto fail2;
+	}
+
 	/* fork necessary threads for MPI */
 	if (!step->batch && (step->step_id.step_id != SLURM_INTERACTIVE_STEP) &&
 	    (mpi_g_slurmstepd_prefork(step, &step->env) != SLURM_SUCCESS)) {
@@ -2074,6 +2082,7 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 	jobacct_id_t jobacct_id;
 	List exec_wait_list = NULL;
 	uint32_t node_offset = 0, task_offset = 0;
+	char saved_cwd[PATH_MAX];
 
 	if (step->het_job_node_offset != NO_VAL)
 		node_offset = step->het_job_node_offset;
@@ -2084,6 +2093,11 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 	START_TIMER;
 
 	xassert(step != NULL);
+
+	if (!getcwd(saved_cwd, sizeof(saved_cwd))) {
+		error ("Unable to get current working directory: %m");
+		strlcpy(saved_cwd, "/tmp", sizeof(saved_cwd));
+	}
 
 	if (task_g_pre_setuid(step)) {
 		error("Failed to invoke task plugins: one of task_p_pre_setuid functions returned error");
@@ -2316,7 +2330,7 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 		/* Don't bother erroring out here */
 	}
 
-	if (chdir(sprivs.saved_cwd) < 0) {
+	if (chdir(saved_cwd) < 0) {
 		error ("Unable to return to working directory");
 	}
 
@@ -2410,7 +2424,7 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 	return rc;
 
 fail4:
-	if (chdir (sprivs.saved_cwd) < 0) {
+	if (chdir(saved_cwd) < 0) {
 		error ("Unable to return to working directory");
 	}
 fail3:

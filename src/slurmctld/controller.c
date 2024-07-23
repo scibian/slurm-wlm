@@ -62,6 +62,7 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/conmgr.h"
 #include "src/common/daemonize.h"
+#include "src/common/extra_constraints.h"
 #include "src/common/fd.h"
 #include "src/common/group_cache.h"
 #include "src/common/hostlist.h"
@@ -395,6 +396,13 @@ int main(int argc, char **argv)
 		sched_debug("slurmctld starting");
 	}
 
+	/*
+	 * This must happen before we spawn any threads
+	* which are not designed to handle them
+	*/
+	if (xsignal_block(controller_sigarray) < 0)
+		error("Unable to block signals");
+
 	if (auth_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize auth plugin");
 	if (hash_g_init() != SLURM_SUCCESS)
@@ -452,12 +460,6 @@ int main(int argc, char **argv)
 	test_core_limit();
 	_test_thread_limit();
 
-	/*
-	 * This must happen before we spawn any threads
-	 * which are not designed to handle them
-	 */
-	if (xsignal_block(controller_sigarray) < 0)
-		error("Unable to block signals");
 
 	/*
 	 * This creates a thread to listen to slurmscriptd, so this needs to
@@ -540,12 +542,14 @@ int main(int argc, char **argv)
 		fatal("failed to initialize node_features plugin");
 	if (mpi_g_daemon_init() != SLURM_SUCCESS)
 		fatal("Failed to initialize MPI plugins.");
+	/* Fatal if we use extra_constraints without json serializer */
+	if (extra_constraints_enabled() &&
+	    serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
+		fatal("Extra constraints feature requires a json serializer.");
 	if (serializer_g_init(NULL, NULL))
 		fatal("Failed to initialize serialization plugins.");
 	if (switch_g_init(true) != SLURM_SUCCESS)
 		fatal("Failed to initialize switch plugin");
-
-	agent_init();
 
 	if (original && under_systemd)
 		xsystemd_change_mainpid(getpid());
@@ -558,6 +562,8 @@ int main(int argc, char **argv)
 		control_time = 0;
 		reconfig = false;
 
+		agent_init();
+
 		/* start in primary or backup mode */
 		if (!slurmctld_primary && !backup_has_control) {
 			controller_fini_scheduling(); /* make sure shutdown */
@@ -567,7 +573,6 @@ int main(int argc, char **argv)
 			if (bb_g_init() != SLURM_SUCCESS)
 				fatal("failed to initialize burst buffer plugin");
 			run_backup();
-			agent_init();	/* Killed at any previous shutdown */
 			(void) _shutdown_backup_controller();
 		} else {
 			if (acct_storage_g_init() != SLURM_SUCCESS)
@@ -792,6 +797,8 @@ int main(int argc, char **argv)
 			continue;
 		}
 
+		config_power_mgr_fini();
+
 		/* stop the heartbeat last */
 		heartbeat_stop();
 
@@ -821,7 +828,7 @@ int main(int argc, char **argv)
 	 *   changed to SlurmUser) SlurmUser may not be able to
 	 *   remove it, so this is not necessarily an error.
 	 */
-	if (unlink(slurm_conf.slurmctld_pidfile) < 0) {
+	if (!under_systemd && (unlink(slurm_conf.slurmctld_pidfile) < 0)) {
 		verbose("Unable to remove pidfile '%s': %m",
 			slurm_conf.slurmctld_pidfile);
 	}
