@@ -1,3 +1,17 @@
+slurm-wlm (24.05.1-1) unstable; urgency=medium
+
+  * New upstream major release
+  * Fix typos
+  * Fix libpmix2t64 dependency (Closes: #1074384)
+  * Bump SONAME to 41 and update symbols
+  * Fix libslurm-perl package
+  * Remove smd_ns.h from libslurm-dev
+  * Update copyright
+  * Remove ext_sensors/rrd plugin
+  * Refresh patches
+
+ -- Gennaro Oliva <oliva@debian.org>  Mon, 22 Jul 2024 09:14:39 +0200
+
 slurm-wlm (24.05.0-0sci9u2) scibian9; urgency=medium
 
   * Remove rsmi leftovers
@@ -129,6 +143,19 @@ slurm-wlm (23.11.3-1) unstable; urgency=medium
 
  -- Gennaro Oliva <oliva@debian.org>  Thu, 08 Feb 2024 18:32:27 +0100
 
+slurm-wlm (23.02.6-1sci10u2) scibian10; urgency=medium
+
+ * Apply schedmd security patch
+
+-- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 20 Dec 2023 17:15:39 +0100
+
+slurm-wlm (23.02.6-1sci10u1) scibian10; urgency=medium
+
+ * update scibian specific patches
+ * suppress kafka related packages
+
+-- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Tue, 12 Dec 2023 17:50:29 +0100
+
 slurm-wlm (23.02.6-1sci9u2) scibian9; urgency=medium
 
   * Apply schedmd security patch
@@ -162,6 +189,22 @@ slurm-wlm (22.05.8-3sci9u1) scibian9; urgency=medium
   * Update PMIx v3 dlopen path for slurm 22.05.8
 
  -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Sat, 01 Apr 2023 18:34:40 +0200
+
+slurm-wlm (22.05.8-3sci10u1) scibian10; urgency=medium
+
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 05 Apr 2023 11:06:00 +0200
+
+slurm-wlm (22.05.8-3sci11u1) scibian11; urgency=medium
+
+  * drop down support of ROCm System Management
+  * Update wait health check patch for slurm 22.05.8
+  * Update PMIx v3 dlopen path for slurm 22.05.8
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Thu, 06 Apr 2023 09:05:54 +0200
 
 slurm-wlm (22.05.8-3) unstable; urgency=medium
 
@@ -220,6 +263,22 @@ slurm-wlm (22.05.7-1) experimental; urgency=medium
   * Update slurm description
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Thu, 12 Jan 2023 01:20:28 +0100
+
+slurm-wlm (21.08.8.2-1sci10u1) scibian10; urgency=medium
+
+  * Import Upstream release fixes CVE-2022-29500,
+    CVE-2022-29501 and CVE-2022-29502
+    (Closes: #1010632, #1010633, #1010634)
+  * Update libslurm symbols file
+
+ -- Thierno BALDE <thierno.balde@edf.fr>  Wed, 08 Jun 2022 15:13:22 +0200
+
+slurm-wlm (21.08.7-1sci10u1) scibian10; urgency=medium
+
+  * Backport to scibian10
+  * Update wait health check patch for slurm 21.08.7
+
+ -- Kwame Amedodji <kwame-externe.amedodji@edf.fr>  Wed, 04 May 2022 13:14:50 +0200
 
 slurm-wlm (21.08.8.2-1.1) unstable; urgency=medium
 
@@ -451,6 +510,20 @@ slurm-wlm (20.02.6-1) unstable; urgency=medium
   * Update libslurm35.symbols
 
  -- Gennaro Oliva <oliva.g@na.icar.cnr.it>  Tue, 17 Nov 2020 00:11:42 +0100
+
+slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
+
+  * New upstream version 19.05.8
+  * 2 patches to fix creds handling for requeued jobs
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 04 Dec 2020 13:35:14 +0100
+
+slurm-llnl (19.05.7-0sci9u1) scibian9; urgency=medium
+
+  * New upstream release 19.05.7
+  * Adjust man patch to new upstream release
+
+ -- Rémi Palancher <remi-externe.palancher@edf.fr>  Fri, 17 Jul 2020 10:38:45 +0200
 
 slurm-llnl (19.05.8-0sci9u1) scibian9; urgency=medium
 

@@ -4,11 +4,11 @@ Description: mail command absolute pathname
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>                    
 Bug-Debian: http://bugs.debian.org/588862
 Forwarded: not-needed
-Last-Update: 2018-10-01
+Last-Update: 2024-07-21
 
 --- a/doc/man/man1/strigger.1
 +++ b/doc/man/man1/strigger.1
-@@ -390,7 +390,7 @@
+@@ -391,7 +391,7 @@
  strigger \-\-set \-\-primary_slurmctld_failure \\
           \-\-program=/usr/sbin/primary_slurmctld_failure
  # Notify the administrator of the failure using e\-mail
@@ -17,7 +17,7 @@ Last-Update: 2018-10-01
  
  $ strigger \-\-set \-\-primary_slurmctld_failure \\
             \-\-program=/usr/sbin/primary_slurmctld_failure
-@@ -409,7 +409,7 @@
+@@ -410,7 +410,7 @@
  strigger \-\-set \-\-node \-\-down \\
           \-\-program=/usr/sbin/slurm_admin_notify
  # Notify administrator using by e\-mail

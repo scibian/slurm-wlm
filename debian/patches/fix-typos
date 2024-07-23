@@ -1,0 +1,39 @@
+Description: Fix typos in code and man pages
+ This patch fix some typos in tcode and man pages
+Author: Gennaro Oliva <oliva@debian.org>
+Forwarded: https://support.schedmd.com/show_bug.cgi?id=20460
+Last-Update: 2024-07-21
+
+--- slurm-wlm-24.05.1.orig/doc/man/man5/cgroup.conf.5
++++ slurm-wlm-24.05.1/doc/man/man5/cgroup.conf.5
+@@ -45,7 +45,7 @@ cgroup versions. The default value is "a
+ \fBSystemdTimeout\fR=\fI<number>\fR
+ On slow systems like virtual machines or when systemd is busy, it can take
+ a lot of time to initialize and prepare the scope for slurmd during startup.
+-Slurm will wait a maximum of this amount of time (in miliseconds) for the
++Slurm will wait a maximum of this amount of time (in milliseconds) for the
+ scope to be ready before failing. Only applies to cgroup/v2.
+ The default is 1000 ms.
+ .IP
+--- slurm-wlm-24.05.1.orig/doc/man/man5/slurm.conf.5
++++ slurm-wlm-24.05.1/doc/man/man5/slurm.conf.5
+@@ -6385,7 +6385,7 @@ Number of cores per GPU restricted for o
+ GPU it will not have access to these cores.
+ 
+ \fBNOTE\fR: Configuring multiple GPU types on overlapping sockets can result in
+-erroneous GPU type and restricted core pairings in allocations requsting gpus
++erroneous GPU type and restricted core pairings in allocations requesting gpus
+ without specifying a type.
+ .IP
+ 
+--- slurm-wlm-24.05.1.orig/src/slurmd/slurmd/req.c
++++ slurm-wlm-24.05.1/src/slurmd/slurmd/req.c
+@@ -3043,7 +3043,7 @@ _rpc_reboot(slurm_msg_t *msg)
+ 			log_flag(NODE_FEATURES, "Features on node updated successfully");
+ 		}
+ 		if (!need_reboot) {
+-			log_flag(NODE_FEATURES, "Reboot not required - sending registration mesage");
++			log_flag(NODE_FEATURES, "Reboot not required - sending registration message");
+ 			conf->boot_time = time(NULL);
+ 			slurm_mutex_lock(&cached_features_mutex);
+ 			refresh_cached_features = true;

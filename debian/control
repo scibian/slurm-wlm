@@ -17,7 +17,7 @@ Build-Depends: dpkg-dev (>= 1.18.26),
  libperl-dev,
  chrpath,
  libpam0g-dev,
- liblua5.2-dev,
+ liblua5.1-0-dev,
  libhwloc-dev,
  dh-exec,
  libipmimonitoring-dev,
@@ -207,7 +207,7 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
- libpmix2,
+ libpmix2 [amd64 arm64 mips64el ppc64el riscv64 s390x alpha ia64 ppc64 sparc64],
  adduser,
  ucf
 Recommends: slurm-wlm-plugins (= ${binary:Version}),

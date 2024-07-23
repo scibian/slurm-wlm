@@ -172,6 +172,7 @@ typedef struct {
 	list_t *pending_array_task_list; /* List of array_task_filter_t */
 	uid_t auth_uid;
 	bool filter_specific_job_ids;
+	job_record_t *het_leader;
 	kill_jobs_msg_t *kill_msg;
 	time_t now;
 	list_t *other_job_list; /* list of job_record_t */
@@ -201,7 +202,6 @@ typedef struct {
 List   job_list = NULL;		/* job_record list */
 time_t last_job_update;		/* time of last update to job records */
 
-List purge_files_list = NULL;	/* job files to delete */
 list_t *purge_jobs_list = NULL;	/* job_record_t entries to free */
 
 /* Local variables */
@@ -4670,11 +4670,26 @@ static bool _signal_job_matches_filter(job_record_t *job_ptr,
 	}
 
 	if (job_ptr->het_job_offset) {
-		if (!signal_args->filter_specific_job_ids) {
+		if (signal_args->het_leader &&
+		    signal_args->het_leader->job_id &&
+		    (job_ptr->het_job_id ==
+		     signal_args->het_leader->het_job_id)) {
 			/*
-			 * Specific job ids were not requested, so we will
-			 * always signal the whole het job by signalling
-			 * component 0.
+			 * Filter out HetJob non-leader component as its leader
+			 * should have already been evaluated and hasn't been
+			 * filtered out.
+			 *
+			 * The leader RPC signal handler will affect all the
+			 * components, so this avoids extra unneeded RPCs, races
+			 * and issues interpreting multiple error codes.
+			 *
+			 * This can be done assuming the walking of the loaded
+			 * jobs is guaranteed to evaluate in an order such that
+			 * HetJob leaders are evaluated before their matching
+			 * non-leaders and the whole HetJob is evaluated
+			 * contiguously. The slurmctld job_list is ordered by
+			 * job creation time (always leader first) and HetJobs
+			 * are created in a row.
 			 */
 			return false;
 		}
@@ -4701,6 +4716,12 @@ fini:
 	if (!matches_filter)
 		_handle_signal_filter_mismatch(job_ptr, signal_args,
 					       error_code, filter_err_msg);
+	else {
+		/* Track most recent het leader. */
+		if (job_ptr->het_job_id && !job_ptr->het_job_offset)
+			signal_args->het_leader = job_ptr;
+	}
+
 	xfree(filter_err_msg);
 
 	return matches_filter;
@@ -4710,6 +4731,7 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 				      slurm_selected_step_t *filter_id,
 				      signal_jobs_args_t *signal_args)
 {
+	bool is_pending_meta_record_with_tasks;
 	uid_t auth_uid = signal_args->auth_uid;
 
 	if (!_signal_job_matches_filter(job_ptr, signal_args))
@@ -4734,9 +4756,13 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 		return;
 	}
 
+	is_pending_meta_record_with_tasks = (IS_JOB_PENDING(job_ptr) &&
+					     job_ptr->array_recs &&
+					     job_ptr->array_recs->task_cnt);
+
 	if (filter_id && !filter_id->array_bitmap &&
 	    (filter_id->array_task_id != NO_VAL) &&
-	    IS_JOB_PENDING(job_ptr) && job_ptr->array_recs) {
+	    is_pending_meta_record_with_tasks) {
 		/*
 		 * A pending job array task that has not been split from the
 		 * meta array record.
@@ -4754,7 +4780,7 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 
 		list_append(signal_args->pending_array_task_list, atf);
 	} else if (filter_id && filter_id->array_bitmap &&
-		   IS_JOB_PENDING(job_ptr) && job_ptr->array_recs) {
+		   is_pending_meta_record_with_tasks) {
 		/* A job array expression with pending array tasks */
 		array_task_filter_t *atf = xmalloc(sizeof(*atf));
 
@@ -5698,6 +5724,11 @@ extern int job_mgr_signal_jobs(kill_jobs_msg_t *kill_msg, uid_t auth_uid,
 	else
 		list_for_each_ro(job_list, _foreach_filter_job_list,
 				 &signal_args);
+	/*
+	 * het_leader is only used during filtering; explicitly NULL it out
+	 * so it cannot accidentally be used later.
+	 */
+	signal_args.het_leader = NULL;
 	assoc_mgr_unlock(&assoc_lock);
 
 	list_for_each(signal_args.array_leader_list, _foreach_signal_job,
@@ -6814,7 +6845,8 @@ static void _set_tot_license_req(job_desc_msg_t *job_desc,
 	 * Here we are seeing we we are setting something explicit. If we are
 	 * set it. If we are changing tasks we need what was already on the job.
 	 */
-	if (job_desc->licenses && job_desc->licenses[0])
+	if (job_desc->licenses && (job_desc->licenses[0] ||
+				   (job_desc->bitflags & RESET_LIC_JOB)))
 		xstrfmtcatat(lic_req, &lic_req_pos, "%s", job_desc->licenses);
 	else if (tres_per_task &&
 		 !(job_desc->bitflags & RESET_LIC_JOB) &&
@@ -8020,7 +8052,7 @@ static int _read_data_array_from_file(int fd, char *file_name, char ***data,
 	}
 
 	/* We have all the data, now let's compute the pointers */
-	array_ptr = xcalloc((rec_cnt + job_ptr->details->env_cnt),
+	array_ptr = xcalloc((rec_cnt + job_ptr->details->env_cnt) + 1,
 			    sizeof(char *));
 	for (i = 0, pos = 0; i < rec_cnt; i++) {
 		array_ptr[i] = &buffer[pos];
