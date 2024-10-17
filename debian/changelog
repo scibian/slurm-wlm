@@ -1,3 +1,9 @@
+slurm-wlm (24.05.1-1sci9u2) scibian9; urgency=medium
+
+  * fix liblua from 5.1 to 5.2
+
+ -- Abderrahmane CHEGROUNI <abderrahmane-externe.chegrouni@edf.fr>  Thu, 17 Oct 2024 17:22:39 +0200
+
 slurm-wlm (24.05.1-1sci9u1) scibian9; urgency=medium
 
   * patch META : Refresh patch for new version
