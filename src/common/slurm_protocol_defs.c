@@ -3490,6 +3490,8 @@ extern char *node_state_string(uint32_t inx)
 		return "POWERED_DOWN";
 	if (inx == NODE_STATE_POWERING_UP)
 		return "POWERING_UP";
+	if (inx == NODE_STATE_UNDRAIN)
+		return "UNDRAIN";
 	if (base == NODE_STATE_DOWN) {
 		if (maint_flag)
 			return "DOWN$";
@@ -5246,6 +5248,7 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		break;
 	case REQUEST_DBD_RELAY:
 		slurmdbd_free_msg(data);
+		xfree(data);
 		break;
 	case RESPONSE_CONTROL_STATUS:
 		slurm_free_control_status_msg(data);

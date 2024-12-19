@@ -3522,6 +3522,7 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 	static bool first_msg = true;
 	static uint32_t req_cnt = 0;
 	static pthread_mutex_t req_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
+	bool req_added = false;
 
 	if (!_slurm_authorized_user(msg->auth_uid)) {
 		error("Security violation, acct_gather_update RPC from uid %u",
@@ -3542,9 +3543,10 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 	slurm_mutex_lock(&req_cnt_mutex);
 	if (req_cnt < 10) {
 		req_cnt++;
+		req_added = true;
 	} else {
 		error("%s: Too many pending requests", __func__);
-		rc = SLURM_ERROR;
+		rc = ESLURMD_TOO_MANY_RPCS;
 	}
 	slurm_mutex_unlock(&req_cnt_mutex);
 
@@ -3563,7 +3565,7 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 			rc = SLURM_PROTOCOL_VERSION_ERROR;
 			if (slurm_send_rc_msg(msg, rc) < 0)
 				error("Error responding to energy request: %m");
-			return;
+			goto end;
 		}
 
 		acct_gather_energy_g_get_data(req->context_id,
@@ -3573,24 +3575,25 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 					      ENERGY_DATA_SENSOR_CNT,
 					      &sensor_cnt);
 
+		memset(&acct_msg, 0, sizeof(acct_msg));
 		if (!sensor_cnt) {
 			error("Can't get energy data. No power sensors are available. Try later.");
-			goto fini;
+		} else {
+			/*
+			 * If we polled later than delta seconds then force a
+			 * new poll.
+			 */
+			if ((now - last_poll) > req->delta)
+				data_type = ENERGY_DATA_JOULES_TASK;
+
+			acct_msg.sensor_cnt = sensor_cnt;
+			acct_msg.energy =
+				acct_gather_energy_alloc(acct_msg.sensor_cnt);
+
+			acct_gather_energy_g_get_data(req->context_id,
+						      data_type,
+						      acct_msg.energy);
 		}
-
-		/* If we polled later than delta seconds then force a
-		   new poll.
-		*/
-		if ((now - last_poll) > req->delta)
-			data_type = ENERGY_DATA_JOULES_TASK;
-
-		memset(&acct_msg, 0, sizeof(acct_msg));
-		acct_msg.sensor_cnt = sensor_cnt;
-		acct_msg.energy = acct_gather_energy_alloc(acct_msg.sensor_cnt);
-
-		acct_gather_energy_g_get_data(req->context_id,
-					      data_type,
-					      acct_msg.energy);
 
 		slurm_msg_t_copy(&resp_msg, msg);
 		resp_msg.msg_type = RESPONSE_ACCT_GATHER_ENERGY;
@@ -3600,11 +3603,12 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 
 		acct_gather_energy_destroy(acct_msg.energy);
 	}
-
-fini:
-	slurm_mutex_lock(&req_cnt_mutex);
-	req_cnt--;
-	slurm_mutex_unlock(&req_cnt_mutex);
+end:
+	if (req_added) {
+		slurm_mutex_lock(&req_cnt_mutex);
+		req_cnt--;
+		slurm_mutex_unlock(&req_cnt_mutex);
+	}
 }
 
 static int _signal_jobstep(slurm_step_id_t *step_id, uint16_t signal,
@@ -5832,7 +5836,7 @@ static int _wait_for_request_launch_prolog(uint32_t job_id,
 {
 	struct timespec ts = {0, 0};
 	struct timeval now;
-	int retry_cnt = 0;
+	struct timeval timeout;
 
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_ALLOC) || !(*first_job_run))
 		return SLURM_SUCCESS;
@@ -5844,8 +5848,9 @@ static int _wait_for_request_launch_prolog(uint32_t job_id,
 	 * conf->prolog_running_cond.
 	 */
 	debug("Waiting for job %d's prolog launch request", job_id);
+	gettimeofday(&timeout, NULL);
+	timeout.tv_sec += slurm_conf.msg_timeout * 2;
 	while (*first_job_run) {
-		retry_cnt++;
 		/*
 		 * This race should only happen for at most a second as
 		 * we are only waiting for the other rpc to get here.
@@ -5854,15 +5859,14 @@ static int _wait_for_request_launch_prolog(uint32_t job_id,
 		 * direct retry from slurmctld will happen after
 		 * MessageTimeout.
 		 */
-		if (retry_cnt > (slurm_conf.msg_timeout * 2)) {
+		gettimeofday(&now, NULL);
+		ts.tv_sec = now.tv_sec + 1;
+		ts.tv_nsec = now.tv_usec * 1000;
+		if (now.tv_sec > timeout.tv_sec) {
 			error("Waiting for JobId=%u REQUEST_LAUNCH_PROLOG notification failed, giving up after %u sec",
 			      job_id, slurm_conf.msg_timeout * 2);
 			return ESLURMD_PROLOG_FAILED;
 		}
-
-		gettimeofday(&now, NULL);
-		ts.tv_sec = now.tv_sec + 1;
-		ts.tv_nsec = now.tv_usec * 1000;
 
 		slurm_cond_timedwait(&conf->prolog_running_cond,
 				     &prolog_mutex, &ts);

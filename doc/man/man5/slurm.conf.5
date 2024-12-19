@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "May 2024" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "August 2024" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -234,8 +234,8 @@ Only used for database type storage plugins, ignored otherwise.
 
 .TP
 \fBAccountingStoreFlags\fR
-Comma separated list used to tell the slurmctld to store extra fields that may
-be more heavy weight than the normal job information.
+Comma separated list used to modify which fields the slurmctld send to the
+accounting database.
 .IP
 .RS
 .TP
@@ -263,6 +263,12 @@ Storage database.
 .TP
 \fBjob_script\fR
 Include the job's batch script in the job start message sent to the Accounting Storage database.
+.IP
+
+.TP
+\fBno_stdio\fR
+Exclude the stdio paths when recording data into the database on a job start.
+StdOut, StdErr and StdIn fields for a job will be empty.
 .RE
 .IP
 
@@ -678,7 +684,7 @@ The above will result in a user defined default for each of their jobs of
 .TP
 \fBClusterName\fR
 The name by which this Slurm managed cluster is known in the
-accounting database. This is needed distinguish accounting records
+accounting database. This is needed to distinguish accounting records
 when multiple clusters report to the same database. Because of limitations
 in some databases, any upper case letters in the name will be silently mapped
 to lower case. In order to avoid confusion, it is recommended that the name
@@ -2363,8 +2369,8 @@ submit LUA plugin instead to enforce auto\-adjustments to your specific needs.
 
 .TP
 \fBMaxMemPerNode\fR
-Maximum real memory size available per allocated node in megabytes.
-Used to avoid over\-subscribing memory and causing paging.
+Maximum real memory size available per allocated node in a job allocation in
+megabytes. Used to avoid over\-subscribing memory and causing paging.
 \fBMaxMemPerNode\fR would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR) and
 resources are over\-subscribed (\fBOverSubscribe=yes\fR or
@@ -2472,9 +2478,26 @@ More information about MPI use is available here
 
 .TP
 \fBMpiParams\fR
-MPI parameters.
-Used to identify ports used by native Cray's PMI. The format to identify a
-range of communication ports is "ports=12000\-12999".
+MPI-related parameters. Multiple parameters may be comma separated. Currently
+supported parameters include:
+.IP
+.RS
+
+.TP
+\fBports=#\-#\fR
+Identifies a range of communication ports used by native Cray's PMI.
+.IP
+
+.TP
+\fBdisable_slurm_hydra_bootstrap\fR
+Disable environment variable injection in allocations for the following
+variables: I_MPI_HYDRA_BOOTSTRAP, I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS,
+HYDRA_BOOTSTRAP, HYDRA_LAUNCHER_EXTRA_ARGS.
+
+Manually setting I_MPI_HYDRA_BOOTSTRAP or HYDRA_BOOTSTRAP to 'slurm' in the
+allocation will skip this parameter and injection of extra args will be
+performed as usual.
+.RE
 .IP
 
 .TP
@@ -3718,7 +3741,7 @@ preferential treatment in scheduling).
 
 Note that this operation does not update the \fBPriority\fR values of the
 heterogeneous job components, only their order within the list, so the output of
-the sprio command will not be effected.
+the sprio command will not be affected.
 
 Heterogeneous jobs have special scheduling properties: they are only scheduled
 by the backfill scheduling plugin, each of their components is considered
@@ -4786,7 +4809,7 @@ Glob patterns (See \fBglob\fR (7)) are not supported.
 .TP
 \fBenable_job_state_cache\fR
 Enables an independent cache of job state details within slurmctld. This allows
-processing of `\fBsqueue\fR --only-state-only` and replaced RPCs with minimal
+processing of `\fBsqueue\fR \-\-only\-job\-state` and replaced RPCs with minimal
 impact on other slurmctld operations.
 .IP
 
@@ -5159,7 +5182,6 @@ Requires hwloc v2.
 .TP
 \fBshutdown_on_reboot\fR
 If set, the Slurmd will shut itself down when a reboot request is received.
-.RE
 .IP
 
 .TP
@@ -5480,7 +5502,7 @@ The default value is 30 seconds.
 \fBSwitchParameters\fR
 Optional parameters for the switch plugin.
 
-On HPE Slingshot systems configured with SwitchType=switch/hpe_slingshot,
+On HPE Slingshot systems configured with \fBSwitchType=switch/hpe_slingshot\fR,
 the following parameters are supported
 (separate multiple parameters with a comma):
 .IP
@@ -5622,6 +5644,16 @@ List entries. The default is 16 per-CPU, maximum 16384 per-node.
 .TP
 \fBacs\fR
 Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
+.IP
+.RE
+
+On systems configured with \fBSwitchType=switch/nvidia_imex\fR, the following
+parameters are supported:
+.RS
+.TP
+\fBimex_channel_count\fR
+Number of channels that can be configured. Channels allow nodes to create a
+secure method of sharing memory. The default value is 2048.
 .RE
 .IP
 
@@ -5629,13 +5661,24 @@ Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
 \fBSwitchType\fR
 Identifies the type of switch or interconnect used for application
 communications.
-Acceptable values include "switch/hpe_slingshot" for HPE Slingshot systems.
 The default value is no special plugin requiring special processing for job
 launch or termination (Ethernet, and InfiniBand).
 All Slurm daemons, commands and running jobs must be restarted or reconfigured
 for a change in \fBSwitchType\fR to take effect.
 If running jobs exist at the time \fBslurmctld\fR is restarted with a new
 value of \fBSwitchType\fR, records of all jobs in any state may be lost.
+Acceptable values include:
+.IP
+.RS
+.TP 15
+\fBswitch/hpe_slingshot\fR
+For HPE Slingshot systems.
+.IP
+
+.TP
+\fBswitch/nvidia_imex\fR
+For allocating unique channels within an NVIDIA IMEX domain.
+.RE
 .IP
 
 .TP
@@ -5984,6 +6027,7 @@ session     required      pam_unix.so
 .br
 For sites configuring PAM with a general configuration file, the appropriate
 lines (see above), where \fBslurm\fR is the service\-name, should be added.
+See <https://slurm.schedmd.com/pam_slurm_adopt.html> for more details.
 
 \fBNOTE\fR: UsePAM option has nothing to do with the
 \fBcontribs/pam/pam_slurm\fR and/or \fBcontribs/pam_slurm_adopt\fR modules. So
@@ -6206,10 +6250,13 @@ The default value is 1.
 .TP
 \fBCpuBind\fR
 If a job step request does not specify an option to control how tasks are bound
-to allocated CPUs (\-\-cpu\-bind) and all nodes allocated to the job have the same
-\fBCpuBind\fR option the node \fBCpuBind\fR option will control how tasks are
-bound to allocated resources. Supported values for \fBCpuBind\fR are "none",
-"socket", "ldom" (NUMA), "core" and "thread".
+to allocated CPUs (by using \-\-cpu\-bind) and all nodes allocated to the job
+have the same \fBCpuBind\fR option, the node \fBCpuBind\fR option will control
+how tasks are bound to allocated resources. Partition definitions are used next
+if the node definition(s) can't be used, followed by \fBTaskPluginParam\fR as a
+last resort, with the default being no binding. Supported values for
+CpuBind are \fBnone\fR, \fBsocket\fR, \fBldom\fR (NUMA), \fBcore\fR and
+\fBthread\fR.
 .IP
 
 .TP
@@ -6342,7 +6389,7 @@ Number of cores per GPU restricted for only GPU use. If a job does not request a
 GPU it will not have access to these cores.
 
 \fBNOTE\fR: Configuring multiple GPU types on overlapping sockets can result in
-erroneous GPU type and restricted core pairings in allocations requsting gpus
+erroneous GPU type and restricted core pairings in allocations requesting gpus
 without specifying a type.
 .IP
 
@@ -6712,7 +6759,7 @@ The default value is "ALL".
 .TP
 \fBAllowAccounts\fR
 Comma\-separated list of accounts which may execute jobs in the partition.
-The default value is "ALL". This list is also hierarchical, meaning subaccounts
+The default value is "ALL". This list is hierarchical, meaning subaccounts
 are included automatically.
 \fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to DenyAccounts.
@@ -6768,11 +6815,12 @@ is "DRAIN" or "INACTIVE."
 .TP
 \fBCpuBind\fR
 If a job step request does not specify an option to control how tasks are bound
-to allocated CPUs (\-\-cpu\-bind) and all nodes allocated to the job do not have
-the same \fBCpuBind\fR option the node. Then the partition's \fBCpuBind\fR
-option will control how tasks are bound to allocated resources.
-Supported values for\fBCpuBind\fR are "none", "socket", "ldom" (NUMA),
-"core" and "thread".
+to allocated CPUs (by using \-\-cpu\-bind) and all nodes allocated to the job
+do not have the same \fBCpuBind\fR option for the node, then the partition's
+\fBCpuBind\fR option will control how tasks are bound to allocated resources.
+The \fBTaskPluginParam\fR will be used as a last resort, with the default being
+no binding. Supported values for CpuBind are \fBnone\fR, \fBsocket\fR,
+\fBldom\fR (NUMA), \fBcore\fR and \fBthread\fR.
 .IP
 
 .TP
@@ -6833,7 +6881,7 @@ exclusive.
 .TP
 \fBDenyAccounts\fR
 Comma\-separated list of accounts which may not execute jobs in the partition.
-By default, no accounts are denied access. This list is also hierarchical,
+By default, no accounts are denied access. This list is hierarchical,
 meaning subaccounts are included automatically.
 \fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to AllowAccounts.
@@ -6944,8 +6992,8 @@ Also see \fBDefMemPerCPU\fR and \fBMaxMemPerNode\fR.
 
 .TP
 \fBMaxMemPerNode\fR
-Maximum real memory size available per allocated node in megabytes.
-Used to avoid over\-subscribing memory and causing paging.
+Maximum real memory size available per allocated node in a job allocation in
+megabytes. Used to avoid over\-subscribing memory and causing paging.
 \fBMaxMemPerNode\fR would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR) and
 resources are over\-subscribed (\fBOverSubscribe=yes\fR or
@@ -7411,13 +7459,13 @@ job allocated 8GB will be billed 2048 (8192MB *.25) units. A memory weight of
 Negative values are allowed.
 
 When a job is allocated 1 CPU and 8 GB of memory on a partition configured with
-TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0", the billable TRES will be:
-(1*1.0) + (8*0.25) + (0*2.0) = 3.0.
+TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0,license/licA=1.5", the
+billable TRES will be: (1*1.0) + (8*0.25) + (0*2.0) + (0*1.5) = 3.0.
 
 If PriorityFlags=MAX_TRES is configured, the billable TRES is calculated as the
 MAX of individual TRESs on a node (e.g. cpus, mem, gres) plus the sum of all
 global TRESs (e.g. licenses). Using the same example above the billable TRES
-will be MAX(1*1.0, 8*0.25) + (0*2.0) = 2.0.
+will be MAX(1*1.0, 8*0.25, 0*2.0) + (0*1.5) = 2.0.
 
 If TRESBillingWeights is not defined then the job is billed against the total
 number of allocated CPUs.

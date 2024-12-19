@@ -1,4 +1,4 @@
-.TH scontrol "1" "Slurm Commands" "March 2024" "Slurm Commands"
+.TH scontrol "1" "Slurm Commands" "August 2024" "Slurm Commands"
 
 .SH "NAME"
 scontrol \- view or modify Slurm configuration and state.
@@ -75,7 +75,8 @@ unavailable to user's group will be displayed (i.e. this is the default behavior
 Dump information as JSON using the default data_parser plugin or explicit
 data_parser with parameters. All information is dumped, even if it would
 normally not be. Sorting and formatting arguments passed to other options are
-ignored; however, filtering arguments are still used.
+ignored; however, filtering arguments are still used. This option is not
+available for every command.
 This option implicitly sets the \fB\-\-details\fR option.
 .IP
 
@@ -117,10 +118,12 @@ Print version information and exit.
 .IP
 
 .TP
+\f3\-\-yaml\fP, \f3\-\-yaml\fP=\fIlist\fR, \f3\-\-yaml\fP=<\fIdata_parser\fR>
 Dump information as YAML using the default data_parser plugin or explicit
 data_parser with parameters. All information is dumped, even if it would
 normally not be. Sorting and formatting arguments passed to other options are
-ignored; however, filtering arguments are still used.
+ignored; however, filtering arguments are still used. This option is not
+available for every command.
 This option implicitly sets the \fB\-\-details\fR option.
 
 .IP
@@ -290,7 +293,7 @@ The "ASAP" option adds the "DRAIN" flag to each node's state, preventing
 additional jobs from running on the node so it can be
 rebooted and returned to service "As Soon As Possible" (i.e. ASAP).
 "ASAP" will also set the node reason to "Reboot ASAP" if the "reason" option
-isn't specified.
+isn't specified and will set nextstate=UNDRAIN if nextstate isn't specified.
 If the "nextstate" option is specified
 as "DOWN", then the node will remain in a down state after rebooting. If
 "nextstate" is specified as "RESUME", then the nodes will resume as normal
@@ -503,8 +506,9 @@ all record types are displayed.
 
 .TP
 \fBbbstat\fR
-Displays output from Cray's burst buffer status tool. Options following
-\fBbbstat\fR are passed directly to the dwstat command by the slurmctld daemon
+Displays output from the current burst buffer plugin's status tool
+(slurm_bb_get_status for lua or dwstat for datawarp). Options following
+\fBbbstat\fR are passed directly to the status tool by the slurmctld daemon
 and the response returned to the user. Equivalent to \fBdwstat\fR.
 .IP
 
@@ -527,8 +531,9 @@ Reports which daemons should be running on this node.
 
 .TP
 \fBdwstat\fR
-Displays output from Cray's burst buffer status tool. Options following
-\fBdwstat\fR are passed directly to the dwstat command by the slurmctld daemon
+Displays output from the current burst buffer plugin's status tool
+(slurm_bb_get_status for lua or dwstat for datawarp). Options following
+\fBdwstat\fR are passed directly to the status tool by the slurmctld daemon
 and the response returned to the user. Equivalent to \fBbbstat\fR.
 .IP
 
@@ -1483,7 +1488,9 @@ Time the job ran prior to last suspend.
 
 .TP
 \fBReason\fR
-The reason job is not running: e.g., waiting "Resources".
+The reason a job has not been started by the scheduler: e.g., waiting for
+"Resources". Details of job reason codes are found on this page:
+<https://slurm.schedmd.com/job_reason_codes.html>
 .IP
 
 .TP
@@ -2058,9 +2065,11 @@ The default value is "ALL".
 
 .TP
 \fBAllowAccounts\fR=<\fIname\fR>
-Identify the Accounts which may use this partition.
-Multiple Accounts may be specified in a comma separated list.
-To permit all Accounts to use the partition specify "AllowAccounts=ALL".
+Comma\-separated list of accounts which may execute jobs in the partition.
+The default value is "ALL". This list is hierarchical, meaning subaccounts
+are included automatically.
+\fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
+Also refer to DenyAccounts.
 .IP
 
 .TP
@@ -2121,8 +2130,11 @@ The memory size is specified in megabytes.
 
 .TP
 \fBDenyAccounts\fR=<\fIname\fR>
-Identify the Accounts which should be denied access to this partition.
-Multiple Accounts may be specified in a comma separated list.
+Comma\-separated list of accounts which may not execute jobs in the partition.
+By default, no accounts are denied access. This list is hierarchical,
+meaning subaccounts are included automatically.
+\fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
+Also refer to AllowAccounts.
 .IP
 
 .TP
@@ -2302,16 +2314,6 @@ Possible values are "OFF", "CANCEL", "REQUEUE" and "SUSPEND".
 .IP
 
 .TP
-\fBPriority\fR=<\fIcount\fR>
-Jobs submitted to a higher priority partition will be dispatched
-before pending jobs in lower priority partitions and if possible
-they will preempt running jobs from lower priority partitions.
-Note that a partition's priority takes precedence over a job's
-priority.
-The value may not exceed 65533.
-.IP
-
-.TP
 \fBPriorityJobFactor\fR=<\fIcount\fR>
 Partition factor used by priority/multifactor plugin in calculating
 job priority. The value may not exceed 65533. Also see PriorityTier.
@@ -2412,8 +2414,8 @@ For create, if you do not want to give a reservation name, use
 \fBAccounts\fR=<\fIaccount list\fR>
 List of accounts permitted to use the reserved nodes, for example
 "Accounts=physcode1,physcode2".
-A user in any of the accounts may use the reserved nodes.
-A new reservation must specify Users or Groups and/or Accounts.
+A user in any of the specified accounts or subaccounts may use the reserved
+nodes. A new reservation must specify Users or Groups and/or Accounts.
 If both Users/Groups and Accounts are specified, a job must match both in order
 to use the reservation.
 Accounts can also be denied access to reservations by preceding all of the
@@ -2425,6 +2427,8 @@ using the update command and adding a '+' or '\-' sign before the '=' sign.
 If accounts are denied access to a reservation (account name preceded by a '\-'),
 then all other accounts are implicitly allowed to use the reservation and it is
 not possible to also explicitly specify allowed accounts.
+Root and the SlurmUser are given access to all reservations, regardless of the
+accounts set here.
 .IP
 
 .TP
@@ -2679,7 +2683,8 @@ not supported.
 
 .TP
 \fBREPLACE_DOWN\fR
-Nodes which are DOWN or DRAINED are automatically replenished using idle resources.
+Nodes which are DOWN or DRAINED are automatically replenished using idle
+resources. This is the default behavior.
 This option can be used to maintain a constant sized pool of resources
 available for pending jobs (subject to availability of idle resources).
 This should be used with the \fINodeCnt\fP reservation option; do not identify
@@ -2757,6 +2762,8 @@ to use the reservation.
 Unlike users groups do not allow denied access to reservations.
 You can add or remove individual groups from an existing reservation by
 using the update command and adding a '+' or '\-' sign before the '=' sign.
+Root and the SlurmUser are given access to all reservations, regardless of the
+groups set here.
 \fBNOTE\fR: Groups and Users are mutually exclusive in reservations, if you
 want to switch between the 2 you must update the reservation with a group=''
 or user='' and fill in the opposite with the appropriate setting.
@@ -2784,6 +2791,8 @@ using the update command and adding a '+' or '\-' sign before the '=' sign.
 If users are denied access to a reservation (user name preceded by a '\-'),
 then all other users are implicitly allowed to use the reservation and it is
 not possible to also explicitly specify allowed users.
+Root and the SlurmUser are given access to all reservations, regardless of the
+users set here.
 \fBNOTE\fR: Groups and Users are mutually exclusive in reservations, if you
 want to switch between the 2 you must update the reservation with a group=''
 or user='' and fill in the opposite with the appropriate setting.
@@ -2988,12 +2997,18 @@ restriction has been defined in the slurm.conf file.
 $ scontrol
 scontrol: show part debug
 PartitionName=debug
-   AllocNodes=ALL AllowGroups=ALL Default=YES
-   DefaultTime=NONE DisableRootJobs=NO Hidden=NO
-   MaxNodes=UNLIMITED MaxTime=UNLIMITED MinNodes=1
+   AllowGroups=ALL AllowAccounts=ALL AllowQos=ALL
+   AllocNodes=ALL Default=YES QoS=N/A
+   DefaultTime=NONE DisableRootJobs=NO ExclusiveUser=NO ExclusiveTopo=NO GraceTime=0 Hidden=NO
+   MaxNodes=UNLIMITED MaxTime=UNLIMITED MinNodes=0 LLN=NO MaxCPUsPerNode=UNLIMITED MaxCPUsPerSocket=UNLIMITED
+   NodeSets=ALL
    Nodes=snowflake[0\-48]
-   Priority=1 RootOnly=NO OverSubscribe=YES:4
-   State=UP TotalCPUs=694 TotalNodes=49
+   PriorityJobFactor=100 PriorityTier=100 RootOnly=NO ReqResv=NO OverSubscribe=NO
+   OverTimeLimit=NONE PreemptMode=REQUEUE
+   State=UP TotalCPUs=588 TotalNodes=49 SelectTypeParameters=NONE
+   JobDefaults=(null)
+   DefMemPerNode=UNLIMITED MaxMemPerNode=UNLIMITED
+   TRES=cpu=588,mem=1204224M,node=49,billing=49
 scontrol: update PartitionName=debug MaxTime=60:00 MaxNodes=4
 scontrol: show job 71701
 JobId=71701 Name=hostname

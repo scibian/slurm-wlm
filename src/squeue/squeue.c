@@ -236,8 +236,13 @@ static int _query_job_states(int argc, char **argv)
 			.jobs = jsr,
 		};
 
-		DATA_DUMP_CLI(OPENAPI_JOB_STATE_RESP, resp, argc, argv, NULL,
-			      params.mimetype, params.data_parser, rc);
+		if (is_data_parser_deprecated(params.data_parser))
+			rc = error("%s does not support dumping for job states",
+				   params.data_parser);
+		else
+			DATA_DUMP_CLI(OPENAPI_JOB_STATE_RESP, resp, argc, argv,
+				      NULL, params.mimetype, params.data_parser,
+				      rc);
 		goto cleanup;
 	}
 
@@ -359,14 +364,21 @@ static int _print_job(bool clear_old, bool log_cluster_name, int argc,
 
 	if (params.mimetype) {
 		int rc;
+		squeue_filter_jobs_for_json(new_job_ptr);
 		openapi_resp_job_info_msg_t resp = {
 			.jobs = new_job_ptr,
 			.last_backfill = new_job_ptr->last_backfill,
 			.last_update = new_job_ptr->last_update,
 		};
 
-		DATA_DUMP_CLI(OPENAPI_JOB_INFO_RESP, resp, argc, argv, NULL,
-			      params.mimetype, params.data_parser, rc);
+		if (is_data_parser_deprecated(params.data_parser))
+			DATA_DUMP_CLI_DEPRECATED(JOB_INFO_MSG, *new_job_ptr,
+						 "jobs", argc, argv, NULL,
+						 params.mimetype, rc);
+		else
+			DATA_DUMP_CLI(OPENAPI_JOB_INFO_RESP, resp, argc, argv,
+				      NULL, params.mimetype, params.data_parser,
+				      rc);
 #ifdef MEMORY_LEAK_DEBUG
 		slurm_free_job_info_msg(new_job_ptr);
 #endif
@@ -454,8 +466,15 @@ static int _print_job_steps(bool clear_old, int argc, char **argv)
 			.last_update = new_step_ptr->last_update,
 		};
 
-		DATA_DUMP_CLI(OPENAPI_STEP_INFO_MSG, resp, argc, argv, NULL,
-			      params.mimetype, params.data_parser, rc);
+		if (is_data_parser_deprecated(params.data_parser))
+			DATA_DUMP_CLI_DEPRECATED(STEP_INFO_MSG_PTR,
+						 new_step_ptr, "steps", argc,
+						 argv, NULL, params.mimetype,
+						 rc);
+		else
+			DATA_DUMP_CLI(OPENAPI_STEP_INFO_MSG, resp, argc, argv,
+				      NULL, params.mimetype, params.data_parser,
+				      rc);
 
 #ifdef MEMORY_LEAK_DEBUG
 		slurm_free_job_step_info_response_msg(new_step_ptr);

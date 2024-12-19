@@ -3241,6 +3241,7 @@ extern int step_create(job_record_t *job_ptr,
 	uint32_t task_dist;
 	uint32_t max_tasks;
 	uint32_t over_time_limit;
+	bool resv_ports_present = false;
 
 	*new_step_record = NULL;
 
@@ -3609,8 +3610,10 @@ extern int step_create(job_record_t *job_ptr,
 			return ESLURM_INVALID_TASK_MEMORY;
 		return SLURM_ERROR;
 	}
+	if (slurm_conf.mpi_params && xstrstr(slurm_conf.mpi_params, "ports="))
+		resv_ports_present = true;
 	if ((step_specs->resv_port_cnt == NO_VAL16) &&
-	    (slurm_conf.mpi_params || job_ptr->resv_ports)) {
+	    (resv_ports_present || job_ptr->resv_ports)) {
 		step_specs->resv_port_cnt = 0;
 		/*
 		 * reserved port count set to maximum task count on
@@ -5092,6 +5095,8 @@ static int _make_step_cred(step_record_t *step_ptr, slurm_cred_t **slurm_cred,
 					    &cred_arg.step_mem_alloc_rep_count,
 					    &cred_arg.step_mem_alloc_size);
 	}
+
+	cred_arg.switch_step = step_ptr->switch_step;
 
 	*slurm_cred = slurm_cred_create(&cred_arg, true, protocol_version);
 

@@ -40,6 +40,7 @@
 #include <sys/stat.h>
 
 #include "src/common/slurm_xlator.h"
+#include "src/common/fd.h"
 #include "src/common/strlcpy.h"
 
 #include "src/slurmctld/slurmctld.h"
@@ -219,6 +220,10 @@ extern int switch_p_save(void)
 		goto error;
 	}
 
+	if (fsync_and_close(state_fd, "switch"))
+		goto error;
+	state_fd = -1;
+
 	/* Overwrite the current state file with rename */
 	if (rename(new_state_file, state_file) == -1) {
 		error("Couldn't rename %s to %s: %m", new_state_file,
@@ -227,14 +232,14 @@ extern int switch_p_save(void)
 	}
 
 	debug("State file %s saved", state_file);
-	close(state_fd);
 	FREE_NULL_BUFFER(state_buf);
 	xfree(new_state_file);
 	xfree(state_file);
 	return SLURM_SUCCESS;
 
 error:
-	close(state_fd);
+	if (state_fd)
+		close(state_fd);
 	FREE_NULL_BUFFER(state_buf);
 	unlink(new_state_file);
 	xfree(new_state_file);
@@ -976,7 +981,7 @@ extern int switch_p_unpack_stepinfo(switch_stepinfo_t **switch_job,
 				goto unpack_error;
 		}
 		unpack_bit_str_hex(&vni_pids, buffer); /* Unused */
-		bit_free(vni_pids);
+		FREE_NULL_BITMAP(vni_pids);
 		safe_unpack32(&stepinfo->flags, buffer);
 
 		safe_unpack32(&stepinfo->num_nics, buffer);
@@ -1017,6 +1022,14 @@ extern int switch_p_job_preinit(stepd_step_rec_t *step)
 		return SLURM_ERROR;
 	if (!create_slingshot_apinfo(step))
 		return SLURM_ERROR;
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Privileged.
+ */
+extern int switch_p_job_init(stepd_step_rec_t *step)
+{
 	return SLURM_SUCCESS;
 }
 
@@ -1146,4 +1159,15 @@ extern void switch_p_job_complete(job_record_t *job_ptr)
 
 	/* Release any hardware collectives multicast addresses */
 	slingshot_release_collectives_job(job_id);
+}
+
+extern int switch_p_fs_init(stepd_step_rec_t *step)
+{
+	return SLURM_SUCCESS;
+}
+
+extern void switch_p_extern_stepinfo(switch_stepinfo_t **stepinfo,
+				     job_record_t *job_ptr)
+{
+	/* not supported */
 }

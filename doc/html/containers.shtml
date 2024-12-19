@@ -108,10 +108,14 @@ Slurm to catch when container execution is complete.
 The examples provided have been tested to work but are only suggestions. Sites
 are expected to ensure that the resultant root directory used will be secure
 from cross user viewing and modifications. The examples provided point to
-"/run/user/%U" where %U will be replaced with the numeric user id which should
-be created and managed by systemd independently of Slurm. Be aware that the
-directory in this example will be cleaned up by systemd once the user logs
-out of the node.
+"/run/user/%U" where %U will be replaced with the numeric user id. Systemd
+manages "/run/user/" (independently of Slurm) and will likely need additional
+configuration to ensure the directories exist on compute nodes when the users
+will not log in to the nodes directly. This configuration is generally achieved
+by calling
+<a href="https://www.freedesktop.org/software/systemd/man/latest/loginctl.html#enable-linger%20USER%E2%80%A6">
+loginctl to enable lingering sessions</a>. Be aware that the directory in this
+example will be cleaned up by systemd once the user session ends on the node.
 </p>
 
 <h3 id="runc_create_start">oci.conf example for runc using create/start:
@@ -128,8 +132,8 @@ RunTimeDelete="runc --rootless=true --root=/run/user/%U/ delete --force %n.%u.%j
 </pre>
 </p>
 
-<h3 id="runc_run">oci.conf example for runc using run (suggested):
-<a class="slurm_link" href="#runc_run"></a></h3>
+<h3 id="runc_run">oci.conf example for runc using run (recommended over using
+create/start):<a class="slurm_link" href="#runc_run"></a></h3>
 <p>
 <pre>
 EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
@@ -155,8 +159,8 @@ RunTimeStart="crun --rootless=true --root=/run/user/%U/ start %n.%u.%j.%s.%t"
 </pre>
 </p>
 
-<h3 id="crun_run">oci.conf example for crun using run (suggested):
-<a class="slurm_link" href="#crun_run"></a></h3>
+<h3 id="crun_run">oci.conf example for crun using run (recommended over using
+create/start):<a class="slurm_link" href="#crun_run"></a></h3>
 <p>
 <pre>
 EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
@@ -184,8 +188,8 @@ RunTimeDelete="nvidia-container-runtime --rootless=true --root=/run/user/%U/ del
 </p>
 
 <h3 id="nvidia_run">
-oci.conf example for nvidia-container-runtime using run (suggested):
-<a class="slurm_link" href="#nvidia_run"></a></h3>
+oci.conf example for nvidia-container-runtime using run (recommended over using
+create/start):<a class="slurm_link" href="#nvidia_run"></a></h3>
 <p>
 <pre>
 EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
@@ -572,6 +576,10 @@ host networking</a></li>
 Podman</a><br>Podman must be fully operational and able to run containers
 before continuing.</li>
 <li>
+<a href="https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md">
+Configure rootless Podman</a><br>Podman must be in rootless mode to be able
+to interact with Slurm via scrun.</li>
+<li>
 Configure Podman to call scrun instead of the <a
 href="https://github.com/opencontainers/runtime-spec"> default OCI runtime</a>.
 <ul>
@@ -835,6 +843,6 @@ Overview slides of Sarus are
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 21 May 2024</p>
+<p style="text-align:center;">Last modified 04 June 2024</p>
 
 <!--#include virtual="footer.txt"-->

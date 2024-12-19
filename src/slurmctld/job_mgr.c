@@ -172,6 +172,7 @@ typedef struct {
 	list_t *pending_array_task_list; /* List of array_task_filter_t */
 	uid_t auth_uid;
 	bool filter_specific_job_ids;
+	job_record_t *het_leader;
 	kill_jobs_msg_t *kill_msg;
 	time_t now;
 	list_t *other_job_list; /* list of job_record_t */
@@ -201,7 +202,6 @@ typedef struct {
 List   job_list = NULL;		/* job_record list */
 time_t last_job_update;		/* time of last update to job records */
 
-List purge_files_list = NULL;	/* job files to delete */
 list_t *purge_jobs_list = NULL;	/* job_record_t entries to free */
 
 /* Local variables */
@@ -4670,11 +4670,26 @@ static bool _signal_job_matches_filter(job_record_t *job_ptr,
 	}
 
 	if (job_ptr->het_job_offset) {
-		if (!signal_args->filter_specific_job_ids) {
+		if (signal_args->het_leader &&
+		    signal_args->het_leader->job_id &&
+		    (job_ptr->het_job_id ==
+		     signal_args->het_leader->het_job_id)) {
 			/*
-			 * Specific job ids were not requested, so we will
-			 * always signal the whole het job by signalling
-			 * component 0.
+			 * Filter out HetJob non-leader component as its leader
+			 * should have already been evaluated and hasn't been
+			 * filtered out.
+			 *
+			 * The leader RPC signal handler will affect all the
+			 * components, so this avoids extra unneeded RPCs, races
+			 * and issues interpreting multiple error codes.
+			 *
+			 * This can be done assuming the walking of the loaded
+			 * jobs is guaranteed to evaluate in an order such that
+			 * HetJob leaders are evaluated before their matching
+			 * non-leaders and the whole HetJob is evaluated
+			 * contiguously. The slurmctld job_list is ordered by
+			 * job creation time (always leader first) and HetJobs
+			 * are created in a row.
 			 */
 			return false;
 		}
@@ -4701,6 +4716,12 @@ fini:
 	if (!matches_filter)
 		_handle_signal_filter_mismatch(job_ptr, signal_args,
 					       error_code, filter_err_msg);
+	else {
+		/* Track most recent het leader. */
+		if (job_ptr->het_job_id && !job_ptr->het_job_offset)
+			signal_args->het_leader = job_ptr;
+	}
+
 	xfree(filter_err_msg);
 
 	return matches_filter;
@@ -4710,6 +4731,7 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 				      slurm_selected_step_t *filter_id,
 				      signal_jobs_args_t *signal_args)
 {
+	bool is_pending_meta_record_with_tasks;
 	uid_t auth_uid = signal_args->auth_uid;
 
 	if (!_signal_job_matches_filter(job_ptr, signal_args))
@@ -4734,9 +4756,13 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 		return;
 	}
 
+	is_pending_meta_record_with_tasks = (IS_JOB_PENDING(job_ptr) &&
+					     job_ptr->array_recs &&
+					     job_ptr->array_recs->task_cnt);
+
 	if (filter_id && !filter_id->array_bitmap &&
 	    (filter_id->array_task_id != NO_VAL) &&
-	    IS_JOB_PENDING(job_ptr) && job_ptr->array_recs) {
+	    is_pending_meta_record_with_tasks) {
 		/*
 		 * A pending job array task that has not been split from the
 		 * meta array record.
@@ -4754,7 +4780,7 @@ static void _apply_signal_jobs_filter(job_record_t *job_ptr,
 
 		list_append(signal_args->pending_array_task_list, atf);
 	} else if (filter_id && filter_id->array_bitmap &&
-		   IS_JOB_PENDING(job_ptr) && job_ptr->array_recs) {
+		   is_pending_meta_record_with_tasks) {
 		/* A job array expression with pending array tasks */
 		array_task_filter_t *atf = xmalloc(sizeof(*atf));
 
@@ -5698,6 +5724,11 @@ extern int job_mgr_signal_jobs(kill_jobs_msg_t *kill_msg, uid_t auth_uid,
 	else
 		list_for_each_ro(job_list, _foreach_filter_job_list,
 				 &signal_args);
+	/*
+	 * het_leader is only used during filtering; explicitly NULL it out
+	 * so it cannot accidentally be used later.
+	 */
+	signal_args.het_leader = NULL;
 	assoc_mgr_unlock(&assoc_lock);
 
 	list_for_each(signal_args.array_leader_list, _foreach_signal_job,
@@ -6778,6 +6809,7 @@ extern int job_limits_check(job_record_t **job_pptr, bool check_min_time)
 		job_desc.ntasks_per_tres = detail_ptr->ntasks_per_tres;
 		job_desc.pn_min_cpus = detail_ptr->orig_pn_min_cpus;
 		job_desc.job_id = job_ptr->job_id;
+		job_desc.bitflags = job_ptr->bit_flags;
 		if (!_valid_pn_min_mem(&job_desc, part_ptr)) {
 			/* debug2 message already logged inside the function. */
 			fail_reason = WAIT_PN_MEM_LIMIT;
@@ -6814,7 +6846,8 @@ static void _set_tot_license_req(job_desc_msg_t *job_desc,
 	 * Here we are seeing we we are setting something explicit. If we are
 	 * set it. If we are changing tasks we need what was already on the job.
 	 */
-	if (job_desc->licenses && job_desc->licenses[0])
+	if (job_desc->licenses && (job_desc->licenses[0] ||
+				   (job_desc->bitflags & RESET_LIC_JOB)))
 		xstrfmtcatat(lic_req, &lic_req_pos, "%s", job_desc->licenses);
 	else if (tres_per_task &&
 		 !(job_desc->bitflags & RESET_LIC_JOB) &&
@@ -8020,7 +8053,7 @@ static int _read_data_array_from_file(int fd, char *file_name, char ***data,
 	}
 
 	/* We have all the data, now let's compute the pointers */
-	array_ptr = xcalloc((rec_cnt + job_ptr->details->env_cnt),
+	array_ptr = xcalloc((rec_cnt + job_ptr->details->env_cnt) + 1,
 			    sizeof(char *));
 	for (i = 0, pos = 0; i < rec_cnt; i++) {
 		array_ptr[i] = &buffer[pos];
@@ -8545,6 +8578,7 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 	uint64_t job_mem_limit = job_desc_msg->pn_min_memory;
 	uint64_t sys_mem_limit;
 	uint16_t cpus_per_node;
+	bool cpus_set = job_desc_msg->bitflags & JOB_CPUS_SET;
 
 	if (part_ptr && part_ptr->max_mem_per_cpu)
 		sys_mem_limit = part_ptr->max_mem_per_cpu;
@@ -8555,7 +8589,7 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 		return true;
 
 	if ((job_mem_limit & MEM_PER_CPU) && (sys_mem_limit & MEM_PER_CPU)) {
-		uint64_t mem_ratio;
+		uint64_t mem_ratio, cpu_factor;
 		job_mem_limit &= (~MEM_PER_CPU);
 		sys_mem_limit &= (~MEM_PER_CPU);
 		if (job_mem_limit <= sys_mem_limit)
@@ -8563,10 +8597,12 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 		mem_ratio = ROUNDUP(job_mem_limit, sys_mem_limit);
 		debug("JobId=%u: increasing cpus_per_task and decreasing mem_per_cpu by factor of %"PRIu64" based upon mem_per_cpu limits",
 		      job_desc_msg->job_id, mem_ratio);
-		if (job_desc_msg->cpus_per_task == NO_VAL16)
+		if (!cpus_set || (job_desc_msg->cpus_per_task == NO_VAL16)) {
 			job_desc_msg->cpus_per_task = mem_ratio;
+			cpu_factor = 1;
+		}
 		else
-			job_desc_msg->cpus_per_task *= mem_ratio;
+			cpu_factor = mem_ratio;
 		job_desc_msg->pn_min_memory = ((job_mem_limit + mem_ratio - 1) /
 					       mem_ratio) | MEM_PER_CPU;
 		if ((job_desc_msg->num_tasks != NO_VAL) &&
@@ -8574,14 +8610,17 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 		    (job_desc_msg->min_cpus  != NO_VAL)) {
 			job_desc_msg->min_cpus =
 				job_desc_msg->num_tasks *
-				job_desc_msg->cpus_per_task;
+				job_desc_msg->cpus_per_task *
+				cpu_factor;
 
 			if ((job_desc_msg->max_cpus != NO_VAL) &&
 			    (job_desc_msg->max_cpus < job_desc_msg->min_cpus)) {
 				job_desc_msg->max_cpus = job_desc_msg->min_cpus;
 			}
 		} else {
-			job_desc_msg->pn_min_cpus = job_desc_msg->cpus_per_task;
+			job_desc_msg->pn_min_cpus =
+				job_desc_msg->cpus_per_task *
+				cpu_factor;
 		}
 		return true;
 	}
@@ -12567,6 +12606,10 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 	if (job_desc->cpus_per_task != NO_VAL16) {
 		if ((!IS_JOB_PENDING(job_ptr)) || (detail_ptr == NULL)) {
 			error_code = ESLURM_JOB_NOT_PENDING;
+		} else if (job_desc->cpus_per_task == 0) {
+			error("%s: trying to set cpus_per_task to an erroneous value: %u",
+			      __func__, job_desc->cpus_per_task);
+			error_code = ESLURM_INVALID_CPU_COUNT;
 		} else if (detail_ptr->cpus_per_task !=
 			   job_desc->cpus_per_task) {
 			info("%s: setting cpus_per_task from %u to %u for %pJ",
@@ -13696,6 +13739,7 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 				 * dependency locally, so we still need to
 				 * do these things.
 				 */
+				xfree(job_ptr->details->orig_dependency);
 				job_ptr->details->orig_dependency =
 					xstrdup(job_ptr->details->dependency);
 				sched_info("%s: setting dependency to %s for %pJ",
@@ -18485,11 +18529,20 @@ extern job_record_t *job_mgr_copy_resv_desc_to_job_record(
 {
 	job_record_t *job_ptr;
 	job_details_t *detail_ptr;
+	part_record_t *part_ptr = NULL;
 
 	job_ptr = _create_job_record(1, false);
 	detail_ptr = job_ptr->details;
 
 	job_ptr->partition = xstrdup(resv_desc_ptr->partition);
+
+	if (job_ptr->partition)
+		part_ptr = find_part_record(job_ptr->partition);
+	if (part_ptr && part_ptr->def_mem_per_cpu)
+		detail_ptr->pn_min_memory = part_ptr->def_mem_per_cpu;
+	else
+		detail_ptr->pn_min_memory = slurm_conf.def_mem_per_cpu;
+
 	job_ptr->time_limit = resv_desc_ptr->duration;
 
 	detail_ptr->begin_time = resv_desc_ptr->start_time;
@@ -18525,6 +18578,8 @@ extern job_record_t *job_mgr_copy_resv_desc_to_job_record(
 
 		detail_ptr->num_tasks = detail_ptr->min_cpus =
 			resv_desc_ptr->core_cnt;
+		if (detail_ptr->min_cpus == NO_VAL)
+			detail_ptr->min_cpus = detail_ptr->min_nodes;
 	} else {
 		detail_ptr->num_tasks = detail_ptr->min_cpus =
 			detail_ptr->min_nodes;
@@ -18534,7 +18589,13 @@ extern job_record_t *job_mgr_copy_resv_desc_to_job_record(
 	detail_ptr->cpus_per_task = 1;
 	detail_ptr->orig_min_cpus = detail_ptr->min_cpus;
 	detail_ptr->orig_max_cpus = detail_ptr->max_cpus = NO_VAL;
-	detail_ptr->orig_pn_min_cpus = detail_ptr->pn_min_cpus = 1;
+	if ((resv_desc_ptr->flags & RESERVE_TRES_PER_NODE) &&
+	    (resv_desc_ptr->core_cnt != NO_VAL) &&
+	    (resv_desc_ptr->node_cnt != NO_VAL)) {
+		detail_ptr->orig_pn_min_cpus = detail_ptr->pn_min_cpus =
+			resv_desc_ptr->core_cnt / resv_desc_ptr->node_cnt;
+	} else
+		detail_ptr->orig_pn_min_cpus = detail_ptr->pn_min_cpus = 1;
 	detail_ptr->features = xstrdup(resv_desc_ptr->features);
 
 	if (build_feature_list(job_ptr, false, true)) {
@@ -18568,7 +18629,6 @@ extern job_record_t *job_mgr_copy_resv_desc_to_job_record(
 			.gres_list = &job_ptr->gres_list_req,
 		};
 
-		detail_ptr->ntasks_per_node = NO_VAL16;
 		detail_ptr->mc_ptr->ntasks_per_socket = NO_VAL16;
 		detail_ptr->mc_ptr->sockets_per_node = NO_VAL16;
 		detail_ptr->orig_cpus_per_task = NO_VAL16;
@@ -18590,8 +18650,12 @@ extern job_record_t *job_mgr_copy_resv_desc_to_job_record(
 			detail_ptr->num_tasks = 0;
 		if (detail_ptr->min_cpus == NO_VAL)
 			detail_ptr->min_cpus = 1;
-		if (detail_ptr->ntasks_per_node == NO_VAL16)
+
+		if (resv_desc_ptr->flags & RESERVE_TRES_PER_NODE)
+			detail_ptr->ntasks_per_node = detail_ptr->pn_min_cpus;
+		else if (detail_ptr->ntasks_per_node == NO_VAL16)
 			detail_ptr->ntasks_per_node = 0;
+
 		if (detail_ptr->mc_ptr->ntasks_per_socket == NO_VAL16)
 			detail_ptr->mc_ptr->ntasks_per_socket = INFINITE16;
 		if (job_ptr->gres_list_req)

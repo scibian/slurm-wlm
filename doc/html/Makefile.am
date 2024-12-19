@@ -38,6 +38,8 @@ generated_html = \
 	job_container_tmpfs.html \
 	job_exit_code.html \
 	job_launch.html \
+	job_reason_codes.html \
+	job_state_codes.html \
 	job_submit_plugins.html \
 	jwt.html \
 	kubernetes.html \
@@ -74,6 +76,7 @@ generated_html = \
 	resource_limits.html \
 	rest.html \
 	rest_api.html \
+	rest_clients.html \
 	rest_quickstart.html \
 	rosetta.html \
 	sched_config.html \
