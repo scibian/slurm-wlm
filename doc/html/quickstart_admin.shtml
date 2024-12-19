@@ -47,7 +47,8 @@ across the cluster.</li>
 authentication. Make sure that all nodes in your cluster have the
 same <i>munge.key</i>. Make sure the MUNGE daemon, <i>munged</i>,
 is started before you start the Slurm daemons.</li>
-<li><a href="download.html">Download</a> the latest version of Slurm</li>
+<li><a href="https://www.schedmd.com/download-slurm/">Download</a> the latest
+version of Slurm.</li>
 <li>Install Slurm using one of the following methods:
 <ul>
 <li>Build <a href="#rpmbuild">RPM</a> or <a href="#debuild">DEB</a> packages
@@ -102,7 +103,7 @@ plugins and what is required to build them.</p>
 
 <ul>
 <li> <b>auth/Slurm</b> The auth/slurm plugin will be built if the jwt
-		developmenty library is installed. This is an alternative to the
+		development library is installed. This is an alternative to the
 		traditional MUNGE authentication mechanism.</li>
 <li> <b>AMD GPU Support</b> Autodetection of AMD GPUs will be available
 		if the <i>ROCm</i> development library is installed.
@@ -116,6 +117,9 @@ plugins and what is required to build them.</p>
 		present.</li>
 <li> <b>HTML Man Pages</b> HTML versions of the man pages will be generated if
 		the <i>man2html</i> command is present.</li>
+<li> <b>HPE Slingshot</b> The <i>switch/hpe_slingshot</i> plugin will be built
+		if the <i>cray-libcxi</i>, <i>curl</i>, and <i>json-c</i>
+		development libraries are present.</li>
 <li> <b>InfiniBand Accounting</b> The <i>acct_gather_interconnect/ofed</i>
 		InfiniBand accounting plugin will be built if the
 		<i>libibmad</i> and <i>libibumad</i> development libraries are
@@ -146,7 +150,8 @@ plugins and what is required to build them.</p>
 <li> <b>PAM Support</b> PAM support will be added if the <i>PAM</i> development
 		library is installed.</li>
 <li> <b>PMIx</b> PMIx support will be added if the <i>pmix</i> development
-		library is installed.</li>
+		library is installed and the <code>--with-pmix</code> flag is
+		provided at build time.</li>
 <li> <b>Readline Support</b> Readline support in scontrol and sacctmgr's
 		interactive modes will be available if the <i>readline</i>
 		development library is present.</li>
@@ -158,8 +163,8 @@ plugins and what is required to build them.</p>
 <li> <b>sview</b> The sview command will be built only if <i>gtk+-2.0</i>
 		is installed.</li>
 </ul>
-<p>Please see the <a href="download.html">Download</a> page for references to
-required software to build these plugins.</p>
+<p>Please see the <a href="related_software.html">Related Software</a> page for
+references to required software to build these plugins.</p>
 
 <p>If required libraries or header files are in non-standard locations, set
 <code>CFLAGS</code> and <code>LDFLAGS</code> environment variables accordingly.
@@ -236,7 +241,7 @@ the packages:</p>
 
 <ul>
 <li>Install basic Debian package build requirements:<br>
-<code>apt-get install build-essential fakeroot devscripts</code>
+<code>apt-get install build-essential fakeroot devscripts equivs</code>
 </li>
 <li>Unpack the distributed tarball:<br>
 <code>tar -xaf slurm*tar.bz2</code>
@@ -445,7 +450,7 @@ synchronized throughout the cluster, usually done by NTP.</p>
 <a href="authentication.html#slurm">slurm</a>, an internal authentication
 plugin. This plugin has similar requirements to MUNGE, requiring a key file
 shared to all Slurm daemons. The auth/slurm plugin requires installation of the
-jwt pacakge.</p>
+jwt package.</p>
 <p>MUNGE is currently the default and recommended option.
 The configure script in the top-level directory of this distribution will
 determine which authentication plugins may be built.
@@ -790,6 +795,6 @@ cd /usr/ports/sysutils/slurm-wlm && make install
 typical compute nodes.  Installing from source allows the user to enable
 options such as mysql and gui tools via a configuration menu.</p>
 
-<p style="text-align:center;">Last modified 24 May 2024</p>
+<p style="text-align:center;">Last modified 16 August 2024</p>
 
 <!--#include virtual="footer.txt"-->

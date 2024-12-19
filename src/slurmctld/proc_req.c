@@ -3233,17 +3233,6 @@ static void _slurm_rpc_shutdown_controller(slurm_msg_t *msg)
 		/* save_all_state();	performed by _slurmctld_background */
 
 		/*
-		 * jobcomp/elasticsearch saves/loads the state to/from file
-		 * elasticsearch_state. Since the jobcomp API isn't designed
-		 * with save/load state operations, the jobcomp/elasticsearch
-		 * _save_state() is highly coupled to its fini() function. This
-		 * state doesn't follow the same execution path as the rest of
-		 * Slurm states, where in save_all_sate() they are all indepen-
-		 * dently scheduled. So we save it manually here.
-		 */
-		(void) jobcomp_g_fini();
-
-		/*
 		 * Wait for the backup to dump state and finish up everything.
 		 * This should happen in _slurmctld_background and then release
 		 * once we know for sure we are in backup mode in run_backup().
@@ -3255,6 +3244,17 @@ static void _slurm_rpc_shutdown_controller(slurm_msg_t *msg)
 				     &slurmctld_config.backup_finish_lock,
 				     &ts);
 		slurm_mutex_unlock(&slurmctld_config.backup_finish_lock);
+
+		/*
+		 * jobcomp/elasticsearch saves/loads the state to/from file
+		 * elasticsearch_state. Since the jobcomp API isn't designed
+		 * with save/load state operations, the jobcomp/elasticsearch
+		 * _save_state() is highly coupled to its fini() function. This
+		 * state doesn't follow the same execution path as the rest of
+		 * Slurm states, where in save_all_sate() they are all indepen-
+		 * dently scheduled. So we save it manually here.
+		 */
+		jobcomp_g_fini();
 
 		if (slurmctld_config.resume_backup)
 			error("%s: REQUEST_CONTROL reply but backup not completely done relinquishing control.  Old state possible", __func__);
@@ -5504,11 +5504,14 @@ static void _slurm_rpc_reboot_nodes(slurm_msg_t *msg)
 				node_ptr->reason_uid = msg->auth_uid;
 			}
 			if (reboot_msg->flags & REBOOT_FLAGS_ASAP) {
-				if (node_ptr->next_state == NO_VAL)
-					node_ptr->next_state = NODE_RESUME;
-				if (!IS_NODE_DRAIN(node_ptr))
-					node_ptr->next_state |=
-						NODE_STATE_UNDRAIN;
+				if (!IS_NODE_DRAIN(node_ptr)) {
+					if (node_ptr->next_state == NO_VAL)
+						node_ptr->next_state =
+							NODE_STATE_UNDRAIN;
+					else
+						node_ptr->next_state |=
+							NODE_STATE_UNDRAIN;
+				}
 
 				node_ptr->node_state |= NODE_STATE_DRAIN;
 				bit_clear(avail_node_bitmap, node_ptr->index);
