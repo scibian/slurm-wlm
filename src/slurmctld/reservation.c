@@ -294,22 +294,25 @@ static int _parse_tres_str(resv_desc_msg_t *resv_desc_ptr)
 	}
 
 	tres_sub_str = slurm_get_tres_sub_string(
-		resv_desc_ptr->tres_str, "cpu", NO_VAL,
-		false, false);
-	if (tres_sub_str) {
-		if (resv_desc_ptr->core_cnt != NO_VAL)
-			return ESLURM_INVALID_CPU_COUNT;
-		resv_desc_ptr->core_cnt = atoi(tres_sub_str + 1);
-		xfree(tres_sub_str);
-	}
-
-	tres_sub_str = slurm_get_tres_sub_string(
 		resv_desc_ptr->tres_str, "node", NO_VAL,
 		false, false);
 	if (tres_sub_str) {
 		if (resv_desc_ptr->node_cnt != NO_VAL)
 			return ESLURM_INVALID_NODE_COUNT;
 		resv_desc_ptr->node_cnt = atoi(tres_sub_str + 1);
+		xfree(tres_sub_str);
+	}
+
+	tres_sub_str = slurm_get_tres_sub_string(
+		resv_desc_ptr->tres_str, "cpu", NO_VAL,
+		false, false);
+	if (tres_sub_str) {
+		if (resv_desc_ptr->core_cnt != NO_VAL)
+			return ESLURM_INVALID_CPU_COUNT;
+		resv_desc_ptr->core_cnt = atoi(tres_sub_str + 1);
+		if ((resv_desc_ptr->flags & RESERVE_TRES_PER_NODE) &&
+		    (resv_desc_ptr->node_cnt != NO_VAL))
+			resv_desc_ptr->core_cnt *= resv_desc_ptr->node_cnt;
 		xfree(tres_sub_str);
 	}
 
@@ -2817,13 +2820,6 @@ extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg)
 
 	_create_resv_lists(false);
 
-	if ((rc = _parse_tres_str(resv_desc_ptr)) != SLURM_SUCCESS) {
-		_set_tres_err_msg(err_msg, rc);
-		return rc;
-	}
-
-	_dump_resv_req(resv_desc_ptr, "create_resv");
-
 	if (resv_desc_ptr->flags == NO_VAL64)
 		resv_desc_ptr->flags = 0;
 	else {
@@ -2848,6 +2844,13 @@ extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg)
 					RESERVE_FLAG_USER_DEL |
 					RESERVE_TRES_PER_NODE;
 	}
+
+	if ((rc = _parse_tres_str(resv_desc_ptr)) != SLURM_SUCCESS) {
+		_set_tres_err_msg(err_msg, rc);
+		return rc;
+	}
+
+	_dump_resv_req(resv_desc_ptr, "create_resv");
 
 	if (xstrcasestr(resv_desc_ptr->tres_str, "gres"))
 		resv_desc_ptr->flags |= RESERVE_FLAG_GRES_REQ;
@@ -3048,6 +3051,14 @@ extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg)
 			goto bad_parse;
 		}
 		total_node_cnt = bit_set_count(resv_select.node_bitmap);
+		if ((resv_desc_ptr->node_cnt == NO_VAL) ||
+		    (resv_desc_ptr->node_cnt < total_node_cnt)) {
+			resv_desc_ptr->node_cnt = total_node_cnt;
+			if ((resv_desc_ptr->flags & RESERVE_TRES_PER_NODE) &&
+			    (resv_desc_ptr->core_cnt != NO_VAL))
+				resv_desc_ptr->core_cnt *=
+					resv_desc_ptr->node_cnt;
+		}
 		if (!(resv_desc_ptr->flags & RESERVE_FLAG_IGN_JOBS) &&
 		    (resv_desc_ptr->core_cnt == NO_VAL)) {
 			uint64_t flags = resv_desc_ptr->flags;
@@ -6860,7 +6871,8 @@ extern int job_test_resv(job_record_t *job_ptr, time_t *when,
 			 * Check if we are able to use this reservation's
 			 * resources even though we didn't request it.
 			 */
-			if ((job_ptr->warn_time <= resv_ptr->max_start_delay) &&
+			if (resv_ptr->max_start_delay &&
+			    (job_ptr->warn_time <= resv_ptr->max_start_delay) &&
 			    (job_ptr->warn_flags & KILL_JOB_RESV)) {
 				continue;
 			}

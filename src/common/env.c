@@ -103,7 +103,6 @@ typedef struct {
 	int rlimit;
 	char **tmp_env;
 	const char *username;
-	bool setup_namespaces;
 } child_args_t;
 
 /*
@@ -2095,19 +2094,19 @@ static int _child_fn(void *arg)
 	cmdstr = child_args->cmdstr;
 	tmp_env = child_args->tmp_env;
 
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__NetBSD__)
 	/*
 	 * Setting propagation and mounting our own /proc for this namespace.
 	 * This is done to ensure that this cloned process and its children
 	 * have coherent /proc contents with their virtual PIDs.
 	 * Check _clone_env_child to see namespace flags used in clone.
 	 */
-	if (child_args->setup_namespaces) {
-		if (mount("none", "/proc", NULL, MS_PRIVATE|MS_REC, NULL))
-			_exit(1);
-		if (mount("proc", "/proc", "proc",
-			  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL))
-			_exit(1);
-	}
+	if (mount("none", "/proc", NULL, MS_PRIVATE|MS_REC, NULL))
+		_exit(1);
+	if (mount("proc", "/proc", "proc",
+		  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL))
+		_exit(1);
+#endif
 
 	if ((devnull = open("/dev/null", O_RDWR)) != -1) {
 		dup2(devnull, STDIN_FILENO);
@@ -2140,6 +2139,7 @@ static int _child_fn(void *arg)
 static int _clone_env_child(child_args_t *child_args)
 {
 	char *child_stack;
+	int rc = 0;
 	child_stack = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
 			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
 	if (child_stack == MAP_FAILED) {
@@ -2155,9 +2155,12 @@ static int _clone_env_child(child_args_t *child_args)
 	 * Killing the 'child' pid will kill all the namespace, since in the
 	 * namespace, this 'child' is pid 1.
 	 */
-	child_args->setup_namespaces = true;
-	return clone(_child_fn, child_stack + STACK_SIZE,
-		     (SIGCHLD|CLONE_NEWPID|CLONE_NEWNS), child_args);
+	rc = clone(_child_fn, child_stack + STACK_SIZE,
+		   (SIGCHLD|CLONE_NEWPID|CLONE_NEWNS), child_args);
+	/* Memory deallocated only in parent address space, child unaffected */
+	if (munmap(child_stack, STACK_SIZE))
+		error("%s: failed to munmap child stack: %m", __func__);
+	return rc;
 }
 #endif
 
@@ -2233,7 +2236,6 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	child_args.fildes = fildes;
 	child_args.username = username;
 	child_args.cmdstr = cmdstr;
-	child_args.setup_namespaces = false;
 	child_args.tmp_env = env_array_create();
 	env_array_overwrite(&child_args.tmp_env, "ENVIRONMENT", "BATCH");
 	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
