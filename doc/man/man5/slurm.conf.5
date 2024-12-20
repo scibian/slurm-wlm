@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "June 2024" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "August 2024" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -684,7 +684,7 @@ The above will result in a user defined default for each of their jobs of
 .TP
 \fBClusterName\fR
 The name by which this Slurm managed cluster is known in the
-accounting database. This is needed distinguish accounting records
+accounting database. This is needed to distinguish accounting records
 when multiple clusters report to the same database. Because of limitations
 in some databases, any upper case letters in the name will be silently mapped
 to lower case. In order to avoid confusion, it is recommended that the name
@@ -2369,8 +2369,8 @@ submit LUA plugin instead to enforce auto\-adjustments to your specific needs.
 
 .TP
 \fBMaxMemPerNode\fR
-Maximum real memory size available per allocated node in megabytes.
-Used to avoid over\-subscribing memory and causing paging.
+Maximum real memory size available per allocated node in a job allocation in
+megabytes. Used to avoid over\-subscribing memory and causing paging.
 \fBMaxMemPerNode\fR would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR) and
 resources are over\-subscribed (\fBOverSubscribe=yes\fR or
@@ -3741,7 +3741,7 @@ preferential treatment in scheduling).
 
 Note that this operation does not update the \fBPriority\fR values of the
 heterogeneous job components, only their order within the list, so the output of
-the sprio command will not be effected.
+the sprio command will not be affected.
 
 Heterogeneous jobs have special scheduling properties: they are only scheduled
 by the backfill scheduling plugin, each of their components is considered
@@ -4809,7 +4809,7 @@ Glob patterns (See \fBglob\fR (7)) are not supported.
 .TP
 \fBenable_job_state_cache\fR
 Enables an independent cache of job state details within slurmctld. This allows
-processing of `\fBsqueue\fR --only-state-only` and replaced RPCs with minimal
+processing of `\fBsqueue\fR \-\-only\-job\-state` and replaced RPCs with minimal
 impact on other slurmctld operations.
 .IP
 
@@ -6027,6 +6027,7 @@ session     required      pam_unix.so
 .br
 For sites configuring PAM with a general configuration file, the appropriate
 lines (see above), where \fBslurm\fR is the service\-name, should be added.
+See <https://slurm.schedmd.com/pam_slurm_adopt.html> for more details.
 
 \fBNOTE\fR: UsePAM option has nothing to do with the
 \fBcontribs/pam/pam_slurm\fR and/or \fBcontribs/pam_slurm_adopt\fR modules. So
@@ -6249,10 +6250,13 @@ The default value is 1.
 .TP
 \fBCpuBind\fR
 If a job step request does not specify an option to control how tasks are bound
-to allocated CPUs (\-\-cpu\-bind) and all nodes allocated to the job have the same
-\fBCpuBind\fR option the node \fBCpuBind\fR option will control how tasks are
-bound to allocated resources. Supported values for \fBCpuBind\fR are "none",
-"socket", "ldom" (NUMA), "core" and "thread".
+to allocated CPUs (by using \-\-cpu\-bind) and all nodes allocated to the job
+have the same \fBCpuBind\fR option, the node \fBCpuBind\fR option will control
+how tasks are bound to allocated resources. Partition definitions are used next
+if the node definition(s) can't be used, followed by \fBTaskPluginParam\fR as a
+last resort, with the default being no binding. Supported values for
+CpuBind are \fBnone\fR, \fBsocket\fR, \fBldom\fR (NUMA), \fBcore\fR and
+\fBthread\fR.
 .IP
 
 .TP
@@ -6385,7 +6389,7 @@ Number of cores per GPU restricted for only GPU use. If a job does not request a
 GPU it will not have access to these cores.
 
 \fBNOTE\fR: Configuring multiple GPU types on overlapping sockets can result in
-erroneous GPU type and restricted core pairings in allocations requsting gpus
+erroneous GPU type and restricted core pairings in allocations requesting gpus
 without specifying a type.
 .IP
 
@@ -6755,7 +6759,7 @@ The default value is "ALL".
 .TP
 \fBAllowAccounts\fR
 Comma\-separated list of accounts which may execute jobs in the partition.
-The default value is "ALL". This list is also hierarchical, meaning subaccounts
+The default value is "ALL". This list is hierarchical, meaning subaccounts
 are included automatically.
 \fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to DenyAccounts.
@@ -6811,11 +6815,12 @@ is "DRAIN" or "INACTIVE."
 .TP
 \fBCpuBind\fR
 If a job step request does not specify an option to control how tasks are bound
-to allocated CPUs (\-\-cpu\-bind) and all nodes allocated to the job do not have
-the same \fBCpuBind\fR option the node. Then the partition's \fBCpuBind\fR
-option will control how tasks are bound to allocated resources.
-Supported values for\fBCpuBind\fR are "none", "socket", "ldom" (NUMA),
-"core" and "thread".
+to allocated CPUs (by using \-\-cpu\-bind) and all nodes allocated to the job
+do not have the same \fBCpuBind\fR option for the node, then the partition's
+\fBCpuBind\fR option will control how tasks are bound to allocated resources.
+The \fBTaskPluginParam\fR will be used as a last resort, with the default being
+no binding. Supported values for CpuBind are \fBnone\fR, \fBsocket\fR,
+\fBldom\fR (NUMA), \fBcore\fR and \fBthread\fR.
 .IP
 
 .TP
@@ -6876,7 +6881,7 @@ exclusive.
 .TP
 \fBDenyAccounts\fR
 Comma\-separated list of accounts which may not execute jobs in the partition.
-By default, no accounts are denied access. This list is also hierarchical,
+By default, no accounts are denied access. This list is hierarchical,
 meaning subaccounts are included automatically.
 \fBNOTE\fR: If AllowAccounts is used then DenyAccounts will not be enforced.
 Also refer to AllowAccounts.
@@ -6987,8 +6992,8 @@ Also see \fBDefMemPerCPU\fR and \fBMaxMemPerNode\fR.
 
 .TP
 \fBMaxMemPerNode\fR
-Maximum real memory size available per allocated node in megabytes.
-Used to avoid over\-subscribing memory and causing paging.
+Maximum real memory size available per allocated node in a job allocation in
+megabytes. Used to avoid over\-subscribing memory and causing paging.
 \fBMaxMemPerNode\fR would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR) and
 resources are over\-subscribed (\fBOverSubscribe=yes\fR or
@@ -7454,13 +7459,13 @@ job allocated 8GB will be billed 2048 (8192MB *.25) units. A memory weight of
 Negative values are allowed.
 
 When a job is allocated 1 CPU and 8 GB of memory on a partition configured with
-TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0", the billable TRES will be:
-(1*1.0) + (8*0.25) + (0*2.0) = 3.0.
+TRESBillingWeights="CPU=1.0,Mem=0.25G,GRES/gpu=2.0,license/licA=1.5", the
+billable TRES will be: (1*1.0) + (8*0.25) + (0*2.0) + (0*1.5) = 3.0.
 
 If PriorityFlags=MAX_TRES is configured, the billable TRES is calculated as the
 MAX of individual TRESs on a node (e.g. cpus, mem, gres) plus the sum of all
 global TRESs (e.g. licenses). Using the same example above the billable TRES
-will be MAX(1*1.0, 8*0.25) + (0*2.0) = 2.0.
+will be MAX(1*1.0, 8*0.25, 0*2.0) + (0*1.5) = 2.0.
 
 If TRESBillingWeights is not defined then the job is billed against the total
 number of allocated CPUs.

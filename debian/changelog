@@ -1,3 +1,11 @@
+slurm-wlm (24.05.3-0) unstable; urgency=medium
+
+  * Import Upstream version 24.05.1
+  * New upstream version 24.05.3
+  * Update libslurm symbols
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Thu, 19 Dec 2024 14:43:39 +0100
+
 slurm-wlm (24.05.1-1sci9u2) scibian9; urgency=medium
 
   * fix liblua from 5.1 to 5.2
