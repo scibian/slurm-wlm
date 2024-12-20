@@ -4163,7 +4163,7 @@ static void arg_reset_segment_size(slurm_opt_t *opt)
 static slurm_cli_opt_t slurm_opt_segment_size = {
 	.name = "segment",
 	.has_arg = required_argument,
-	.val = LONG_OPT_SEND_LIBS,
+	.val = LONG_OPT_SEGMENT_SIZE,
 	.set_func = arg_set_segment_size,
 	.get_func = arg_get_segment_size,
 	.reset_func = arg_reset_segment_size,
@@ -6462,6 +6462,7 @@ static void _set_tres_per_task_from_sibling_opt(slurm_opt_t *opt, int optval)
 
 	/*
 	 * Now we know that either tres-per-task is set by cli and the option
+	 * is set by env, or only tres-per-task is set either by cli or env.
 	 * Either way, set the option from tres-per-task.
 	 */
 	if (optval == LONG_OPT_GPUS_PER_TASK) {
