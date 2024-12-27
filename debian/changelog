@@ -1,3 +1,9 @@
+slurm-wlm (23.02.6-1sci12u1) scibian12; urgency=medium
+
+  * UNRELEASED
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 27 Dec 2024 11:45:24 +0100
+
 slurm-wlm (23.02.6-1sci11u1) scibian11; urgency=medium
 
   * update scibian specific patches
