@@ -36,8 +36,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _JOB_SUBMIT_H
-#define _JOB_SUBMIT_H
+#ifndef _INTERFACES_JOB_SUBMIT_H
+#define _INTERFACES_JOB_SUBMIT_H
 
 #include "slurm/slurm.h"
 
@@ -64,11 +64,6 @@ extern int job_submit_g_fini(bool locked);
  */
 
 /*
- * Perform reconfig, re-read any configuration files
- */
-extern int job_submit_g_reconfig(void);
-
-/*
  * Execute the job_submit() function in each job submit plugin.
  * If any plugin function returns anything other than SLURM_SUCCESS
  * then stop and forward it's return value.
@@ -88,4 +83,4 @@ extern int job_submit_g_submit(job_desc_msg_t *job_desc, uint32_t submit_uid,
 extern int job_submit_g_modify(job_desc_msg_t *job_desc, job_record_t *job_ptr,
 			       uint32_t submit_uid, char **err_msg);
 
-#endif /* !_JOB_SUBMIT_H */
+#endif

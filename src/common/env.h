@@ -62,7 +62,6 @@ typedef struct env_options {
 	char **env;             /* job environment */
 	uint16_t comm_port;	/* srun's communication port */
 	slurm_addr_t *cli;	/* launch node address */
-	slurm_addr_t *self;
 	char *job_name;		/* assigned job name */
 	int jobid;		/* assigned job id */
 	int stepid;	        /* assigned step id */
@@ -217,11 +216,11 @@ void env_unset_environment(void);
 void env_array_merge(char ***dest_array, const char **src_array);
 
 /*
- * Merge the environment variables in src_array beginning with "SLURM" into the
- * array dest_array.  Any variables already found in dest_array will be
- * overwritten with the value from src_array.
+ * Merge the environment variables in src_array beginning with "SLURM" or
+ * SPANK_OPTION_ENV_PREFIX into the array dest_array.  Any variables already
+ * found in dest_array will be overwritten with the value from src_array.
  */
-void env_array_merge_slurm(char ***dest_array, const char **src_array);
+void env_array_merge_slurm_spank(char ***dest_array, const char **src_array);
 
 /*
  * Remove environment variables in env_ptr matching regex.
@@ -403,5 +402,12 @@ extern char *find_quote_token(char *tmp, char *sep, char **last);
  * environment as well.
  */
 extern void env_merge_filter(slurm_opt_t *opt, job_desc_msg_t *desc);
+
+/*
+ * Set the internal SLURM_PRIO_PROCESS environment variable to support
+ * the propagation of the users nice value and the "PropagatePrioProcess"
+ * config keyword.
+ */
+extern void set_prio_process_env(void);
 
 #endif

@@ -281,7 +281,8 @@ static int _ring_forward_data(pmixp_coll_ring_ctx_t *coll_ctx, uint32_t contrib_
 
 	/* insert payload to buf */
 	offset = get_buf_offset(buf);
-	pmixp_server_buf_reserve(buf, size);
+	if ((rc = try_grow_buf_remaining(buf, size)))
+		goto exit;
 	memcpy(get_buf_data(buf) + offset, data, size);
 	set_buf_offset(buf, offset + size);
 
@@ -475,7 +476,7 @@ pmixp_coll_ring_ctx_t *pmixp_coll_ring_ctx_select(pmixp_coll_t *coll,
 	return ret;
 }
 
-int pmixp_coll_ring_init(pmixp_coll_t *coll, hostlist_t *hl)
+int pmixp_coll_ring_init(pmixp_coll_t *coll, hostlist_t **hl)
 {
 #ifdef PMIXP_COLL_DEBUG
 	PMIXP_DEBUG("called");
@@ -535,14 +536,9 @@ inline static int _pmixp_coll_contrib(pmixp_coll_ring_ctx_t *coll_ctx,
 	coll->ts = time(NULL);
 
 	/* save contribution */
-	if (!size_buf(coll_ctx->ring_buf)) {
-		grow_buf(coll_ctx->ring_buf, size * coll->peers_cnt);
-	} else if(remaining_buf(coll_ctx->ring_buf) < size) {
-		uint32_t new_size = size_buf(coll_ctx->ring_buf) + size *
-			_ring_remain_contrib(coll_ctx);
-		grow_buf(coll_ctx->ring_buf, new_size);
-	}
-	grow_buf(coll_ctx->ring_buf, size);
+	if (try_grow_buf_remaining(coll_ctx->ring_buf, size))
+		return SLURM_ERROR;
+
 	data_ptr = get_buf_data(coll_ctx->ring_buf) +
 		get_buf_offset(coll_ctx->ring_buf);
 	memcpy(data_ptr, data, size);
@@ -629,7 +625,7 @@ int pmixp_coll_ring_check(pmixp_coll_t *coll, pmixp_coll_ring_msg_hdr_t *hdr)
 			    hdr->seq, nodename, hdr->nodeid, coll->seq);
 		pmixp_debug_hang(0); /* enable hang to debug this! */
 		slurm_kill_job_step(pmixp_info_jobid(),
-				    pmixp_info_stepid(), SIGKILL);
+				    pmixp_info_stepid(), SIGKILL, 0);
 		xfree(nodename);
 		return SLURM_SUCCESS;
 	} else if (PMIXP_COLL_REQ_SKIP == rc) {
@@ -781,8 +777,8 @@ void pmixp_coll_ring_log(pmixp_coll_t *coll)
 		if (coll_ctx->in_use) {
 			int id;
 			char *done_contrib = NULL, *wait_contrib = NULL;
-			hostlist_t hl_done_contrib = NULL,
-				hl_wait_contrib = NULL, *tmp_list;
+			hostlist_t *hl_done_contrib = NULL,
+				*hl_wait_contrib = NULL, **tmp_list;
 
 			PMIXP_ERROR("\t seq=%d contribs: loc=%d/prev=%d/fwd=%d",
 				    coll_ctx->seq, coll_ctx->contrib_local,

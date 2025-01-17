@@ -7,7 +7,7 @@
  *  Portions copyright (C) 2015 Mellanox Technologies Inc.
  *  Written by Artem Y. Polyakov <artemp@mellanox.com>.
  *  All rights reserved.
- *  Portions copyright (C) 2017 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -205,7 +205,7 @@ _setup_stepd_job_info(const stepd_step_rec_t *step, char ***env)
 static int
 _setup_stepd_tree_info(char ***env)
 {
-	hostlist_t hl;
+	hostlist_t *hl;
 	char *srun_host;
 	uint16_t port;
 	char *p;
@@ -502,18 +502,8 @@ _get_proc_mapping(const mpi_step_info_t *mpi_step)
 		}
 		xfree(rounds);
 		xstrcat(mapping, ")");
-	} else if (task_dist == SLURM_DIST_ARBITRARY) {
-		/*
-		 * MPICH2 will think that each task runs on a separate node.
-		 * The program will run, but no SHM will be used for
-		 * communication.
-		 */
-		mapping = xstrdup("(vector");
-		xstrfmtcat(mapping, ",(0,%u,1)",
-			   mpi_step->step_layout->task_cnt);
-		xstrcat(mapping, ")");
-
-	} else if (task_dist == SLURM_DIST_PLANE) {
+	} else if ((task_dist == SLURM_DIST_PLANE) ||
+		   (task_dist == SLURM_DIST_ARBITRARY)) {
 		mapping = xstrdup("(vector");
 
 		rounds = xmalloc (node_cnt * sizeof(uint16_t));
@@ -820,8 +810,7 @@ pmi2_setup_srun(const mpi_step_info_t *mpi_step, char ***env)
 		if (rc == SLURM_SUCCESS)
 			rc = _setup_srun_environ(mpi_step, env);
 		if ((rc == SLURM_SUCCESS) && job_info.spawn_seq) {
-			slurm_thread_create_detached(NULL,
-						     _task_launch_detection,
+			slurm_thread_create_detached(_task_launch_detection,
 						     NULL);
 		}
 		slurm_mutex_lock(&setup_mutex);

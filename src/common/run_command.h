@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  run_command.h - run a command asynchronously and return output
  *****************************************************************************
- *  Copyright (C) 2014-2017 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -40,7 +39,6 @@
 #include "src/common/track_script.h"
 
 typedef struct {
-	int (*container_join)(uint32_t job_id, uid_t uid);
 	char **env;
 	uint32_t job_id;
 	int max_wait;
@@ -51,7 +49,6 @@ typedef struct {
 	int *status;
 	pthread_t tid;
 	bool *timed_out;
-	bool turnoff_output;
 } run_command_args_t;
 
 /*
@@ -103,6 +100,18 @@ extern int run_command_count(void);
  * Return stdout+stderr of spawned program, value must be xfreed.
  */
 extern char *run_command(run_command_args_t *run_command_args);
+
+/*
+ * Wrapper for execv/execve. This should never return.
+ */
+extern void run_command_child_exec(const char *script_path, char **argv,
+				   char **env);
+
+/*
+ * Called in the child before exec. Do setup like closing unneeded files and
+ * setting uid/gid.
+ */
+extern void run_command_child_pre_exec(void);
 
 /*
  * Read stdout of a child process and wait for the child process to terminate.

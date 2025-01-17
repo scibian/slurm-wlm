@@ -2,8 +2,7 @@
 ############################################################################
 # Purpose: Test for accounting records of specific job names with their ID
 ############################################################################
-# Copyright (C) 2015 SchedMD LLC.
-# Written by Nathan Yee <nyee32@schedmd.com>
+# Copyright (C) SchedMD LLC.
 #
 # This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
@@ -201,11 +200,11 @@ sleep 10"
 	set running 0
 	spawn $squeue -A $ta -h -o "\%t \%r"
 	expect {
-		-re "PD." {
+		-re "PD ." {
 			incr pending
 			exp_continue
 		}
-		-re "R." {
+		-re "R ." {
 			incr running
 			exp_continue
 		}

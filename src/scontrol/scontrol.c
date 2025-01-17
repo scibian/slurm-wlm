@@ -41,6 +41,8 @@
 
 #include "config.h"
 
+#include <limits.h>
+
 #include "scontrol.h"
 #include "src/common/data.h"
 #include "src/common/proc_args.h"
@@ -62,6 +64,7 @@
 /* Global externs from scontrol.h */
 char *command_name;
 List clusters = NULL;
+char *cluster_names = NULL;
 int all_flag = 0;	/* display even hidden partitions */
 int detail_flag = 0;	/* display additional details */
 int future_flag = 0;	/* display future nodes */
@@ -76,6 +79,7 @@ int verbosity = 0;	/* count of "-v" options */
 uint32_t cluster_flags; /* what type of cluster are we talking to */
 uint32_t euid = SLURM_AUTH_NOBODY; /* proxy request as user */
 const char *mime_type = NULL; /* mimetype if we are using data_parser */
+const char *data_parser = NULL; /* data_parser args */
 
 front_end_info_msg_t *old_front_end_info_ptr = NULL;
 job_info_msg_t *old_job_info_ptr = NULL;
@@ -120,7 +124,7 @@ int main(int argc, char **argv)
 		{"future",   0, 0, 'F'},
 		{"help",     0, 0, 'h'},
 		{"hide",     0, 0, OPT_LONG_HIDE},
-		{"json", 0, 0, OPT_LONG_JSON},
+		{"json", optional_argument, 0, OPT_LONG_JSON},
 		{"local",    0, 0, OPT_LONG_LOCAL},
 		{"oneliner", 0, 0, 'o'},
 		{"quiet",    0, 0, 'Q'},
@@ -129,7 +133,7 @@ int main(int argc, char **argv)
 		{"usage",    0, 0, 'h'},
 		{"verbose",  0, 0, 'v'},
 		{"version",  0, 0, 'V'},
-		{"yaml", 0, 0, OPT_LONG_YAML},
+		{"yaml", optional_argument, 0, OPT_LONG_YAML},
 		{NULL,       0, 0, 0}
 	};
 
@@ -143,11 +147,8 @@ int main(int argc, char **argv)
 	if (getenv ("SCONTROL_ALL"))
 		all_flag = 1;
 	if ((env_val = getenv("SLURM_CLUSTERS"))) {
-		if (!(clusters = slurmdb_get_info_cluster(env_val))) {
-			print_db_notok(env_val, 1);
-			exit(1);
-		}
-		working_cluster_rec = list_peek(clusters);
+		xfree(cluster_names);
+		cluster_names = xstrdup(env_val);
 		local_flag = 1;
 	}
 	if (getenv("SCONTROL_FEDERATION"))
@@ -196,15 +197,8 @@ int main(int argc, char **argv)
 			local_flag = 1;
 			break;
 		case (int)'M':
-			if (clusters) {
-				FREE_NULL_LIST(clusters);
-				working_cluster_rec = NULL;
-			}
-			if (!(clusters = slurmdb_get_info_cluster(optarg))) {
-				print_db_notok(optarg, 0);
-				exit(1);
-			}
-			working_cluster_rec = list_peek(clusters);
+			xfree(cluster_names);
+			cluster_names = xstrdup(optarg);
 			local_flag = 1;
 			break;
 		case (int)'o':
@@ -235,17 +229,15 @@ int main(int argc, char **argv)
 			exit(0);
 		case OPT_LONG_JSON :
 			mime_type = MIME_TYPE_JSON;
+			data_parser = optarg;
 			detail_flag = 1;
-			if (data_init())
-				fatal("data_init() failed");
 			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
 				fatal("JSON plugin load failure");
 			break;
 		case OPT_LONG_YAML :
 			mime_type = MIME_TYPE_YAML;
+			data_parser = optarg;
 			detail_flag = 1;
-			if (data_init())
-				fatal("data_init() failed");
 			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
 				fatal("YAML plugin load failure");
 			break;
@@ -255,6 +247,20 @@ int main(int argc, char **argv)
 				opt_char);
 			exit(exit_code);
 		}
+	}
+
+	FREE_NULL_LIST(clusters);
+	if (cluster_names) {
+		if (slurm_get_cluster_info(&(clusters),
+					   cluster_names,
+					   (federation_flag ?
+					    SHOW_FEDERATION : SHOW_LOCAL))) {
+
+			print_db_notok(cluster_names, 0);
+			fatal("Could not get cluster information");
+		}
+		working_cluster_rec = list_peek(clusters);
+		local_flag = true;
 	}
 
 	if (clusters && (list_count(clusters) > 1))
@@ -267,9 +273,19 @@ int main(int argc, char **argv)
 	}
 
 	/* We are only running a single command and exiting */
-	if (optind < argc)
+	if (optind < argc) {
 		error_code = _process_command(argc - optind, argv + optind);
-	else {
+	} else if ((argc == 2) && (optind == argc) && mime_type &&
+		   !xstrcmp(data_parser, "list")) {
+		/*
+		 * We are only listing the available data parser plugins.
+		 * Calling DATA_DUMP_CLI_SINGLE() with a dummy type to get to
+		 * "list".
+		 * TODO: After Bug 18109 is fixed, replace this logic:
+		 */
+		DATA_DUMP_CLI_SINGLE(OPENAPI_PING_ARRAY_RESP, NULL, argc, argv,
+				     NULL, mime_type, data_parser, exit_code);
+	} else {
 		/* We are running interactively multiple commands */
 		int input_field_count = 0;
 		char **input_fields = xcalloc(MAX_INPUT_FIELDS, sizeof(char *));
@@ -293,7 +309,6 @@ int main(int argc, char **argv)
 	FREE_NULL_LIST(clusters);
 	slurm_conf_destroy();
 	serializer_g_fini();
-	data_fini();
 #endif /* MEMORY_LEAK_DEBUG */
 
 	exit(exit_code);
@@ -561,8 +576,14 @@ static void _print_ping(int argc, char **argv)
 	controller_ping_t *pings = ping_all_controllers();
 
 	if (mime_type) {
-		exit_code = DATA_DUMP_CLI(CONTROLLER_PING_ARRAY, pings, "pings",
-					  argc, argv, NULL, mime_type);
+		if (is_data_parser_deprecated(data_parser))
+			DATA_DUMP_CLI_DEPRECATED(CONTROLLER_PING_ARRAY, pings,
+						 "pings", argc, argv, NULL,
+						 mime_type, exit_code);
+		else
+			DATA_DUMP_CLI_SINGLE(OPENAPI_PING_ARRAY_RESP, pings,
+					     argc, argv, NULL, mime_type,
+					     data_parser, exit_code);
 		xfree(pings);
 		return;
 	}
@@ -769,6 +790,82 @@ void _process_reboot_command(const char *tag, int argc, char **argv)
 	}
 }
 
+void _process_power_command(const char *tag, int argc, char **argv)
+{
+	int error_code = SLURM_SUCCESS;
+	bool power_up;
+	bool asap = false;
+	bool force = false;
+	int min_argv = 3;
+	int max_argv = 4;
+
+	/* at least 'power' should have been supplied */
+	xassert(argc);
+
+	if ((argc <= max_argv) && (argc >= min_argv)) {
+		int idx = 1;
+
+		/* up or down subcommand */
+		if (!xstrcasecmp(argv[idx], "UP")) {
+			power_up = true;
+		} else if (!xstrcasecmp(argv[idx], "DOWN")) {
+			power_up = false;
+		} else {
+			exit_code = 1;
+			fprintf(stderr, "unexpected argument: %s\n",
+				argv[idx]);
+			goto done;
+		}
+		idx++;
+
+		/*
+		 * Optional asap|force if powerering down. Silently ignore
+		 * asap|force if powering up as there's no such option.
+		 */
+		if (argc == max_argv) {
+			if (!xstrcasecmp(argv[idx], "ASAP")) {
+				asap = true;
+			} else if (!xstrcasecmp(argv[idx], "FORCE")) {
+				force = true;
+			} else {
+				exit_code = 1;
+				fprintf(stderr, "unrecognized optional command:%s\n",
+					argv[idx]);
+				goto done;
+			}
+
+			if ((force || asap) && power_up) {
+				exit_code = 1;
+				fprintf(stderr, "The '%s' argument is not valid for power up requests\n",
+					argv[idx]);
+				goto done;
+			}
+
+			idx++;
+		}
+
+		/* call with nodelist */
+		error_code = scontrol_power_nodes(argv[idx], power_up, asap,
+						  force);
+
+	} else if (argc < min_argv) {
+		exit_code = 1;
+		fprintf(stderr, "too few arguments for keyword:%s\n",
+			argv[0]);
+	} else if (argc > max_argv) {
+		exit_code = 1;
+		fprintf(stderr, "too many arguments for keyword:%s\n",
+			argv[0]);
+	}
+
+done:
+	if (error_code) {
+		exit_code = 1;
+		if (quiet_flag != 1)
+			slurm_perror("scontrol_power_nodes error");
+	}
+}
+
 static void _setdebug(int argc, char **argv)
 {
 	int level = -1, index = 0;
@@ -912,7 +1009,11 @@ static void _fetch_token(int argc, char **argv)
 	for (int i = 1; i < argc; i++) {
 		if (!xstrncasecmp("lifespan=", argv[i], 9)) {
 			char *val = argv[i] + 9;
-			lifespan = parse_int("lifespan", val, true);
+			if ((!xstrcasecmp("infinite", val)) ||
+			    (!xstrcasecmp("unlimited", val)))
+				lifespan = INT_MAX - 1;
+			else
+				lifespan = parse_int("lifespan", val, true);
 		} else if (!xstrncasecmp("username=", argv[i], 9))
 			username = argv[i] + 9;
 		else {
@@ -962,21 +1063,7 @@ static int _process_command (int argc, char **argv)
 		return 0;
 	}
 
-	if (!xstrncasecmp(tag, "abort", MAX(tag_len, 5))) {
-		/* require full command name */
-		if (argc > 2) {
-			exit_code = 1;
-			fprintf (stderr,
-				 "too many arguments for keyword:%s\n",
-				 tag);
-		}
-		error_code = slurm_shutdown (1);
-		if (error_code) {
-			exit_code = 1;
-			if (quiet_flag != 1)
-				slurm_perror ("slurm_shutdown error");
-		}
-	} else if (!xstrncasecmp(tag, "all", MAX(tag_len, 2))) {
+	if (!xstrncasecmp(tag, "all", MAX(tag_len, 2))) {
 		all_flag = 1;
 	} else if (!xstrncasecmp(tag, "cancel_reboot", MAX(tag_len, 3))) {
 		if (argc > 2) {
@@ -1005,9 +1092,13 @@ static int _process_command (int argc, char **argv)
 			working_cluster_rec = NULL;
 		}
 		if (argc >= 2) {
-			if (!(clusters = slurmdb_get_info_cluster(argv[1]))) {
+			if (slurm_get_cluster_info(&(clusters), argv[1],
+						   (federation_flag ?
+							    SHOW_FEDERATION :
+							    SHOW_LOCAL))) {
+
 				print_db_notok(argv[1], 0);
-				exit(1);
+				fatal("Could not get cluster information");
 			}
 			working_cluster_rec = list_peek(clusters);
 			if (list_count(clusters) > 1) {
@@ -1082,6 +1173,15 @@ static int _process_command (int argc, char **argv)
 				 tag);
 		}
 		exit_flag = 1;
+	} else if (!xstrncasecmp(tag, "getaddrs", MAX(tag_len, 8))) {
+		if (argc == 2)
+			scontrol_getaddrs(argv[1]);
+		else {
+			exit_code = 1;
+			fprintf(stderr,
+				"one argument required for keyword:%s\n",
+				tag);
+		}
 	} else if (!xstrncasecmp(tag, "gethost", MAX(tag_len, 7))) {
 		if (argc == 3)
 			scontrol_gethost(argv[1], argv[2]);
@@ -1183,6 +1283,8 @@ static int _process_command (int argc, char **argv)
 				 tag);
 		} else
 			_print_ping(argc, argv);
+	} else if (!xstrncasecmp(tag, "power", MAX(tag_len, 2))) {
+		_process_power_command(tag, argc, argv);
 	} else if (!xstrncasecmp(tag, "\\q", 2) ||
 		   !xstrncasecmp(tag, "quiet", MAX(tag_len, 4))) {
 		if (argc > 1) {
@@ -1664,7 +1766,8 @@ static void _delete_it(int argc, char **argv)
 
 	/* First identify the entity type to delete */
 	if (xstrncasecmp(tag, "NodeName", MAX(tag_len, 3)) == 0) {
-		update_node_msg_t node_msg = {0};
+		update_node_msg_t node_msg;
+		slurm_init_update_node_msg(&node_msg);
 		node_msg.node_names = val;
 		if (slurm_delete_node(&node_msg)) {
 			char errmsg[64];

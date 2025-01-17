@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  jobcomp_kafka.c - Kafka Slurm job completion logging plugin.
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Alejandro Sanchez <alex@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -81,12 +80,6 @@ extern int init(void)
 	int rc = SLURM_SUCCESS;
 
 	log_flag(JOBCOMP, "loaded");
-
-	if ((rc = data_init())) {
-		error("%s: unable to init data structures: %s",
-		      plugin_type, slurm_strerror(rc));
-		return rc;
-	}
 
 	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))) {
 		error("%s: unable to load JSON serializer: %s",

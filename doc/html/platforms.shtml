@@ -9,7 +9,6 @@ distributions using arm64 (aarch64), ppc64, and x86_64 architectures. Some
 features are limited to recent releases and newer Linux kernel versions.
 Currently supported distributions include:
 <ul>
-<li>Cray Linux Environment 7</li>
 <li>Debian 10 (Buster)</li>
 <li>Debian 11 (Bullseye)</li>
 <li>Debian 12 (Bookworm)</li>
@@ -51,13 +50,14 @@ Specific plugins have been developed for:</p>
 through their proprietary NVML library. AutoDetect=rsmi enables
 autodetection of AMD GPUs through their proprietary RSMI library
 (tested on x86_64 and arm64). AutoDetect=oneapi enables
-autodetection of Intel GPUs through their proprietary oneAPI library.</li>
+autodetection of Intel GPUs through their proprietary oneAPI library.
+AutoDetect=nrt enables autodetection of AWS Trainium/Inferentia devices.</li>
 <li>gres/mps &mdash; NVIDIA CUDA Multi-Process Service provides ways to
 share GPUs between multiple compute processes</li>
 <li>gres/shard &mdash; Generic mechanism that provides a way to share
 GPUs between multiple compute processes</li>
 </ul>
 
-<p style="text-align:center;">Last modified 10 January 2023</p>
+<p style="text-align:center;">Last modified 13 March 2024</p>
 
 <!--#include virtual="footer.txt"-->

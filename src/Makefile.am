@@ -8,6 +8,7 @@ SUBDIRS =		\
 	plugins		\
 	sacct		\
 	sacctmgr	\
+	sackd		\
 	salloc		\
 	sattach		\
 	sbatch		\
@@ -15,7 +16,6 @@ SUBDIRS =		\
 	scancel		\
 	scontrol	\
 	scrontab	\
-	scrun		\
 	sdiag		\
 	sinfo		\
 	slurmctld	\
@@ -28,5 +28,10 @@ SUBDIRS =		\
 	srun		\
 	sshare		\
 	sstat		\
+	stepmgr 	\
 	strigger	\
 	sview
+
+if LINUX_BUILD
+SUBDIRS += scrun
+endif

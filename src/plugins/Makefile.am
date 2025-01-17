@@ -6,12 +6,9 @@ SUBDIRS = \
 	acct_gather_filesystem  \
 	auth			\
 	burst_buffer		\
-	cgroup			\
 	cli_filter		\
-	core_spec		\
 	cred			\
 	data_parser		\
-	ext_sensors		\
 	gpu			\
 	gres			\
 	hash			\
@@ -22,17 +19,19 @@ SUBDIRS = \
 	mcs			\
 	mpi			\
 	node_features		\
-	openapi			\
-	power			\
 	preempt			\
 	prep			\
 	priority		\
 	proctrack		\
-	route			\
 	sched			\
 	select			\
 	serializer		\
 	site_factor		\
 	switch			\
 	task			\
+	tls			\
 	topology
+
+if WITH_CGROUP
+SUBDIRS += cgroup
+endif

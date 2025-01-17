@@ -130,7 +130,7 @@ static void _signal_while_allocating(int signo)
 
 	local_signal = xmalloc(sizeof(int));
 	*local_signal = signo;
-	slurm_thread_create_detached(NULL, _safe_signal_while_allocating,
+	slurm_thread_create_detached(_safe_signal_while_allocating,
 				     local_signal);
 }
 
@@ -204,7 +204,8 @@ static bool _retry(void)
 		      "retrying.");
 		return true;
 	} else if (opt.immediate &&
-		   ((errno == ETIMEDOUT) || (errno == ESLURM_NODES_BUSY))) {
+		   ((errno == ETIMEDOUT) || (errno == ESLURM_NODES_BUSY) ||
+		    (errno == ESLURM_PORTS_BUSY))) {
 		error("Unable to allocate resources: %s",
 		      slurm_strerror(ESLURM_NODES_BUSY));
 		error_exit = immediate_exit;
@@ -277,21 +278,8 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		}
 	}
 	if (is_ready) {
-		resource_allocation_response_msg_t *resp;
-		char *tmp_str;
 		if (i > 0)
      			verbose("Nodes %s are ready for job", alloc->node_list);
-		if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD") &&
-		    (slurm_allocation_lookup(pending_job_id, &resp)
-		     == SLURM_SUCCESS)) {
-			tmp_str = alloc->alias_list;
-			alloc->alias_list = resp->alias_list;
-			resp->alias_list = tmp_str;
-			if (resp->node_addr)
-				add_remote_nodes_to_conf_tbls(resp->node_list,
-							      resp->node_addr);
-			slurm_free_resource_allocation_response_msg(resp);
-		}
 	} else if (!destroy_job) {
 		if (job_killed) {
 			error("Job allocation %u has been revoked",
@@ -332,7 +320,7 @@ static int _allocate_test(slurm_opt_t *opt_local)
 extern int allocate_test(void)
 {
 	int rc = SLURM_SUCCESS;
-	ListIterator iter;
+	list_itr_t *iter;
 	slurm_opt_t *opt_local;
 
 	if (opt_list) {
@@ -357,9 +345,8 @@ extern int allocate_test(void)
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-extern resource_allocation_response_msg_t *
-	allocate_nodes(bool handle_signals, slurm_opt_t *opt_local)
-
+extern resource_allocation_response_msg_t *allocate_nodes(
+	slurm_opt_t *opt_local)
 {
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	resource_allocation_response_msg_t *resp = NULL;
@@ -396,11 +383,9 @@ extern resource_allocation_response_msg_t *
 
 	/* NOTE: Do not process signals in separate pthread. The signal will
 	 * cause slurm_allocate_resources_blocking() to exit immediately. */
-	if (handle_signals) {
-		xsignal_unblock(sig_array);
-		for (i = 0; sig_array[i]; i++)
-			xsignal(sig_array[i], _signal_while_allocating);
-	}
+	xsignal_unblock(sig_array);
+	for (i = 0; sig_array[i]; i++)
+		xsignal(sig_array[i], _signal_while_allocating);
 
 	while (!resp) {
 		resp = slurm_allocate_resources_blocking(j,
@@ -461,8 +446,7 @@ extern resource_allocation_response_msg_t *
 		goto relinquish;
 	}
 
-	if (handle_signals)
-		xsignal_block(sig_array);
+	xsignal_block(sig_array);
 
 	job_desc_msg_destroy(j);
 
@@ -494,12 +478,12 @@ static int _copy_other_port(void *x, void *arg)
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-List allocate_het_job_nodes(bool handle_signals)
+list_t *allocate_het_job_nodes(void)
 {
 	resource_allocation_response_msg_t *resp = NULL;
 	job_desc_msg_t *j, *first_job = NULL;
 	slurm_allocation_callbacks_t callbacks;
-	ListIterator opt_iter, resp_iter;
+	list_itr_t *opt_iter, *resp_iter;
 	slurm_opt_t *opt_local, *first_opt = NULL;
 	List job_req_list = NULL, job_resp_list = NULL;
 	uint32_t my_job_id = 0;
@@ -557,11 +541,9 @@ List allocate_het_job_nodes(bool handle_signals)
 
 	/* NOTE: Do not process signals in separate pthread. The signal will
 	 * cause slurm_allocate_resources_blocking() to exit immediately. */
-	if (handle_signals) {
-		xsignal_unblock(sig_array);
-		for (i = 0; sig_array[i]; i++)
-			xsignal(sig_array[i], _signal_while_allocating);
-	}
+	xsignal_unblock(sig_array);
+	for (i = 0; sig_array[i]; i++)
+		xsignal(sig_array[i], _signal_while_allocating);
 
 	is_het_job = true;
 
@@ -641,8 +623,7 @@ List allocate_het_job_nodes(bool handle_signals)
 		goto relinquish;
 	}
 
-	if (handle_signals)
-		xsignal_block(sig_array);
+	xsignal_block(sig_array);
 
 	return job_resp_list;
 
@@ -686,9 +667,9 @@ extern List existing_allocation(void)
 
 	if (opt.clusters) {
 		List clusters = NULL;
-		if (!(clusters = slurmdb_get_info_cluster(opt.clusters))) {
+		if (slurm_get_cluster_info(&(clusters), opt.clusters, 0)) {
 			print_db_notok(opt.clusters, 0);
-			exit(1);
+			fatal("Could not get cluster information");
 		}
 		working_cluster_rec = list_peek(clusters);
 		debug2("Looking for job %d on cluster %s (addr: %s)",
@@ -726,6 +707,16 @@ static job_desc_msg_t *_job_desc_msg_create_from_opts(slurm_opt_t *opt_local)
 	if (!j) {
 		return NULL;
 	}
+
+	/*
+	 * The controller rejects any non-stepmgr allocation requesting
+	 * resv-ports. To allow srun to request --resv-ports outside of stepmgr
+	 * jobs, clear resv_port_cnt when creating a non-stepmgr allocation.
+	 */
+	if ((opt_local->resv_port_cnt != NO_VAL) &&
+	    !(opt_local->job_flags & STEPMGR_ENABLED) &&
+	    !xstrstr(slurm_conf.slurmctld_params, "enable_stepmgr"))
+		j->resv_port_cnt = NO_VAL16;
 
 	xassert(srun_opt);
 

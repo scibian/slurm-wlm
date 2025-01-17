@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  x11_forwarding.c - setup x11 port forwarding
  *****************************************************************************
- *  Copyright (C) 2017-2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -67,7 +66,7 @@ static uint32_t job_id = NO_VAL;
 static uid_t job_uid;
 
 static bool local_xauthority = false;
-static char hostname[256] = {0};
+static char hostname[HOST_NAME_MAX] = {0};
 
 static eio_handle_t *eio_handle;
 
@@ -150,6 +149,9 @@ static int _x11_socket_read(eio_obj_t *obj, List objs)
 
 	slurm_free_msg_members(&resp);
 
+	net_set_nodelay(*local);
+	net_set_nodelay(*remote);
+
 	/* setup eio to handle both sides of the connection now */
 	e1 = eio_obj_create(*local, &half_duplex_ops, remote);
 	e2 = eio_obj_create(*remote, &half_duplex_ops, local);
@@ -168,31 +170,6 @@ shutdown:
 	xfree(remote);
 
 	return SLURM_ERROR;
-}
-
-/*
- * Get home directory for a given uid.
- *
- * IN: uid
- * OUT: an xmalloc'd string, or NULL on error.
- */
-static char *_get_home(uid_t uid)
-{
-	struct passwd pwd, *pwd_ptr = NULL;
-	char pwd_buf[PW_BUF_SIZE];
-	int rc;
-
-	rc = slurm_getpwuid_r(uid, &pwd, pwd_buf, PW_BUF_SIZE, &pwd_ptr);
-	if (rc || !pwd_ptr) {
-		if (!pwd_ptr && !rc)
-			error("%s: getpwuid_r(%u): no record found",
-			      __func__, uid);
-		else
-			error("%s: getpwuid_r(%u): %m", __func__, uid);
-		return NULL;
-	}
-
-	return xstrdup(pwd.pw_dir);
 }
 
 extern int shutdown_x11_forward(stepd_step_rec_t *step)
@@ -260,9 +237,9 @@ extern int setup_x11_forward(stepd_step_rec_t *step)
 	debug("X11Parameters: %s", slurm_conf.x11_params);
 
 	if (xstrcasestr(slurm_conf.x11_params, "home_xauthority")) {
-		char *home = NULL;
-		if (!(home = _get_home(step->uid))) {
-			error("could not find HOME in environment");
+		char *home = xstrdup(step->pw_dir);
+		if (!home && !(home = uid_to_dir(step->uid))) {
+			error("Could not look up user home directory");
 			goto shutdown;
 		}
 		step->x11_xauthority = xstrdup_printf("%s/.Xauthority", home);
@@ -305,7 +282,7 @@ extern int setup_x11_forward(stepd_step_rec_t *step)
 	eio_handle = eio_handle_create(0);
 	obj = eio_obj_create(listen_socket, &x11_socket_ops, NULL);
 	eio_new_initial_obj(eio_handle, obj);
-	slurm_thread_create_detached(NULL, _eio_thread, NULL);
+	slurm_thread_create_detached(_eio_thread, NULL);
 
 	return SLURM_SUCCESS;
 

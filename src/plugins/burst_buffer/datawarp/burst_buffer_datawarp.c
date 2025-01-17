@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  burst_buffer_datawarp.c - Plugin for managing a Cray DataWarp burst_buffer
  *****************************************************************************
- *  Copyright (C) 2014-2018 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -36,7 +35,7 @@
 
 #include "config.h"
 
-#define _GNU_SOURCE	/* For POLLRDHUP */
+#define _GNU_SOURCE
 #include <ctype.h>
 #include <poll.h>
 #include <stdlib.h>
@@ -1313,7 +1312,7 @@ static int _queue_stage_in(job_record_t *job_ptr, bb_job_t *bb_job)
 	stage_args->args1   = setup_argv;
 	stage_args->args2   = data_in_argv;
 
-	slurm_thread_create_detached(NULL, _start_stage_in, stage_args);
+	slurm_thread_create_detached(_start_stage_in, stage_args);
 
 	xfree(hash_dir);
 	xfree(job_dir);
@@ -1636,7 +1635,7 @@ static int _queue_stage_out(job_record_t *job_ptr, bb_job_t *bb_job)
 	stage_args->job_id  = bb_job->job_id;
 	stage_args->user_id = bb_job->user_id;
 
-	slurm_thread_create_detached(NULL, _start_stage_out, stage_args);
+	slurm_thread_create_detached(_start_stage_out, stage_args);
 
 	xfree(hash_dir);
 	xfree(job_dir);
@@ -1790,7 +1789,7 @@ static void *_start_stage_out(void *x)
 			xstrfmtcat(job_ptr->state_desc, "%s: %s: %s",
 				   plugin_type, op, resp_msg);
 		} else {
-			job_ptr->job_state &= (~JOB_STAGE_OUT);
+			job_state_unset_flag(job_ptr, JOB_STAGE_OUT);
 			xfree(job_ptr->state_desc);
 			last_job_update = time(NULL);
 		}
@@ -1887,7 +1886,7 @@ static void _queue_teardown(uint32_t job_id, uint32_t user_id, bool hurry)
 	teardown_args->user_id = user_id;
 	teardown_args->args1   = teardown_argv;
 
-	slurm_thread_create_detached(NULL, _start_teardown, teardown_args);
+	slurm_thread_create_detached(_start_teardown, teardown_args);
 
 	xfree(hash_dir);
 	xfree(job_script);
@@ -2005,7 +2004,7 @@ static void *_start_teardown(void *x)
 						    BB_STATE_COMPLETE);
 				bb_job_del(&bb_state, bb_job->job_id);
 			}
-			job_ptr->job_state &= (~JOB_STAGE_OUT);
+			job_state_unset_flag(job_ptr, JOB_STAGE_OUT);
 			if (!IS_JOB_PENDING(job_ptr) &&	/* No email if requeue */
 			    (job_ptr->mail_type & MAIL_JOB_STAGE_OUT)) {
 				/*
@@ -2536,7 +2535,6 @@ extern int init(void)
 	_test_config();
 	log_flag(BURST_BUF, "");
 	bb_alloc_cache(&bb_state);
-	run_command_init();
 	slurm_thread_create(&bb_state.bb_thread, _bb_agent, NULL);
 	slurm_mutex_unlock(&bb_state.bb_mutex);
 
@@ -2551,7 +2549,6 @@ extern int fini(void)
 {
 	int pc, last_pc = 0;
 
-	run_command_shutdown();
 	while ((pc = run_command_count()) > 0) {
 		if ((last_pc != 0) && (last_pc != pc)) {
 			info("waiting for %d running processes",
@@ -2571,9 +2568,8 @@ extern int fini(void)
 
 	if (bb_state.bb_thread) {
 		slurm_mutex_unlock(&bb_state.bb_mutex);
-		pthread_join(bb_state.bb_thread, NULL);
+		slurm_thread_join(bb_state.bb_thread);
 		slurm_mutex_lock(&bb_state.bb_mutex);
-		bb_state.bb_thread = 0;
 	}
 	bb_clear_config(&bb_state.bb_config, true);
 	bb_clear_cache(&bb_state);
@@ -2585,7 +2581,7 @@ extern int fini(void)
 static void _pre_queue_stage_out(job_record_t *job_ptr, bb_job_t *bb_job)
 {
 	bb_set_job_bb_state(job_ptr, bb_job, BB_STATE_POST_RUN);
-	job_ptr->job_state |= JOB_STAGE_OUT;
+	job_state_set_flag(job_ptr, JOB_STAGE_OUT);
 	xfree(job_ptr->state_desc);
 	xstrfmtcat(job_ptr->state_desc, "%s: Stage-out in progress",
 		   plugin_type);
@@ -3353,7 +3349,7 @@ extern int bb_p_job_try_stage_in(List job_queue)
 {
 	bb_job_queue_rec_t *job_rec;
 	List job_candidates;
-	ListIterator job_iter;
+	list_itr_t *job_iter;
 	job_record_t *job_ptr;
 	bb_job_t *bb_job;
 	int rc;
@@ -3632,11 +3628,10 @@ extern int bb_p_job_begin(job_record_t *job_ptr)
 		pre_run_args->user_id = job_ptr->user_id;
 		if (job_ptr->details) {	/* Defer launch until completion */
 			job_ptr->details->prolog_running++;
-			job_ptr->job_state |= JOB_CONFIGURING;
+			job_state_set_flag(job_ptr, JOB_CONFIGURING);
 		}
 
-		slurm_thread_create_detached(NULL, _start_pre_run,
-					     pre_run_args);
+		slurm_thread_create_detached(_start_pre_run, pre_run_args);
 	}
 
 fini:
@@ -3658,9 +3653,9 @@ static void _kill_job(job_record_t *job_ptr, bool hold_job)
 	xfree(job_ptr->state_desc);
 	job_ptr->state_desc = xstrdup("Burst buffer pre_run error");
 
-	job_ptr->job_state  = JOB_REQUEUE;
+	job_state_set(job_ptr, JOB_REQUEUE);
 	job_completion_logger(job_ptr, true);
-	job_ptr->job_state = JOB_PENDING | JOB_COMPLETING;
+	job_state_set(job_ptr, (JOB_PENDING | JOB_COMPLETING));
 
 	deallocate_nodes(job_ptr, false, false, false);
 }
@@ -3765,7 +3760,7 @@ static void *_start_pre_run(void *x)
 	}
 	if (job_ptr) {
 		if (run_kill_job)
-			job_ptr->job_state &= ~JOB_CONFIGURING;
+			job_state_unset_flag(job_ptr, JOB_CONFIGURING);
 		prolog_running_decr(job_ptr);
 	}
 	slurm_mutex_unlock(&bb_state.bb_mutex);
@@ -4086,7 +4081,7 @@ static int _create_bufs(job_record_t *job_ptr, bb_job_t *bb_job,
 			create_args->type = xstrdup(buf_ptr->type);
 			create_args->user_id = job_ptr->user_id;
 
-			slurm_thread_create_detached(NULL, _create_persistent,
+			slurm_thread_create_detached(_create_persistent,
 						     create_args);
 		} else if ((buf_ptr->flags == BB_FLAG_BB_OP) &&
 			   buf_ptr->destroy && job_ready) {
@@ -4128,7 +4123,7 @@ static int _create_bufs(job_record_t *job_ptr, bb_job_t *bb_job,
 			create_args->name = xstrdup(buf_ptr->name);
 			create_args->user_id = job_ptr->user_id;
 
-			slurm_thread_create_detached(NULL, _destroy_persistent,
+			slurm_thread_create_detached(_destroy_persistent,
 						     create_args);
 		} else if ((buf_ptr->flags == BB_FLAG_BB_OP) &&
 			   buf_ptr->destroy) {
@@ -5234,7 +5229,7 @@ extern char *bb_p_xlate_bb_2_tres_str(char *burst_buffer)
 			uint64_t mb_xlate = 1024 * 1024;
 			size = bb_get_size_num(tok,
 					       bb_state.bb_config.granularity);
-			total += (size + mb_xlate - 1) / mb_xlate;
+			total += ROUNDUP(size, mb_xlate);
 		}
 
 		tok = strtok_r(NULL, ",", &save_ptr);

@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_auth.h - implementation-independent authentication API definitions
+ *  auth.h - implementation-independent authentication API definitions
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -36,20 +36,14 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef __SLURM_AUTHENTICATION_H__
-#define __SLURM_AUTHENTICATION_H__
+#ifndef _INTERFACES_AUTH_H
+#define _INTERFACES_AUTH_H
 
 #include <inttypes.h>
 #include <stdio.h>
 
 #include "src/common/plugrack.h"
 #include "src/common/pack.h"
-
-/*
- * This is what the UID and GID accessors return on error.
- * The value is currently RedHat Linux's ID for the user "nobody".
- */
-#define SLURM_AUTH_NOBODY 99
 
 /*
  * This should be equal to MUNGE_UID_ANY
@@ -67,18 +61,18 @@
  * auth_type IN: authentication mechanism (e.g. "auth/munge") or
  *	NULL to use slurm_conf.auth_type
  */
-extern int slurm_auth_init(char *auth_type);
+extern int auth_g_init(void);
 
 /*
  * Destroy global context, free memory.
  */
-extern int slurm_auth_fini(void);
+extern int auth_g_fini(void);
 
 /*
  * Retrieve the auth_index corresponding to the authentication
  * plugin used to create a given credential.
  */
-extern int slurm_auth_index(void *cred);
+extern int auth_index(void *cred);
 
 /*
  * Check if plugin type corresponding to the authentication
@@ -105,10 +99,11 @@ extern void *auth_g_create(int index, char *auth_info, uid_t r_uid,
 			   void *data, int dlen);
 extern void auth_g_destroy(void *cred);
 extern int auth_g_verify(void *cred, char *auth_info);
+extern void auth_g_get_ids(void *cred, uid_t *uid, gid_t *gid);
 extern uid_t auth_g_get_uid(void *cred);
-extern gid_t auth_g_get_gid(void *cred);
-extern char *auth_g_get_host(void *cred);
+extern char *auth_g_get_host(void *slurm_msg);
 extern int auth_g_get_data(void *cred, char **data, uint32_t *len);
+extern void *auth_g_get_identity(void *cred);
 extern int auth_g_pack(void *cred, buf_t *buf, uint16_t protocol_version);
 extern void *auth_g_unpack(buf_t *buf, uint16_t protocol_version);
 
@@ -132,4 +127,4 @@ extern void auth_g_thread_clear(void);
  */
 extern const char *auth_get_plugin_name(int plugin_id);
 
-#endif /*__SLURM_AUTHENTICATION_H__*/
+#endif

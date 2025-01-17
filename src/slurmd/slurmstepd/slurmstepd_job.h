@@ -64,12 +64,7 @@ typedef cpuset_t cpu_set_t;
 #define STEP_CONTAINER_MAGIC 0xa0b9b2ba
 
 typedef struct {
-	char *data;
-	uint32_t len;
-} srun_key_t;
-
-typedef struct {
-	srun_key_t *key;	   /* srun key for IO verification         */
+	char *key;                 /* srun key for IO verification         */
 	slurm_addr_t resp_addr;	   /* response addr for task exit msg      */
 	slurm_addr_t ioaddr;       /* Address to connect on for normal I/O.
 				      Spawn IO uses messages to the normal
@@ -117,19 +112,6 @@ typedef struct {
 	char	      **argv;
 } stepd_step_task_info_t;
 
-typedef struct {		/* MPMD specifications, needed for Cray */
-	uint64_t apid;		/* Application ID */
-	int num_cmds;		/* Number of executables in MPMD set */
-	char **args;		/* Array of argument string for each executable */
-	char **command;		/* Array of command name for each executable */
-	int *first_pe;		/* First rank on this node of each executable,
-				 * -1 if executable not on this node */
-	int *start_pe;		/* Starting rank of each executable in set */
-	int *total_pe;		/* Total ranks of each executable in set */
-
-	int *placement;		/* NID of each rank (ntasks in length) */
-} mpmd_set_t;
-
 typedef struct {
 	int magic;
 	char *bundle; /* OCI Container Bundle path	*/
@@ -152,6 +134,8 @@ typedef struct {
 	uint32_t       ntasks; /* total number of tasks in current job      */
 	uint32_t       nodeid; /* relative position of this node in job     */
 	uint32_t       node_tasks;	/* number of tasks on *this* node   */
+	slurm_addr_t *node_addrs; /* allocated node addrs -- from cred */
+	char *node_list; /* allocated nodes -- from cred */
 	uint32_t       het_job_id;	/* Hetjob ID or NO_VAL */
 	uint32_t       het_job_nnodes;	/* total node count for entire hetjob */
 	char          *het_job_node_list; /* Hetjob step node list */
@@ -184,7 +168,7 @@ typedef struct {
 	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
 	uint32_t cpu_freq_max; /* Maximum cpu frequency  */
 	uint32_t cpu_freq_gov; /* cpu frequency governor */
-	dynamic_plugin_data_t *switch_job; /* switch-specific job information     */
+	dynamic_plugin_data_t *switch_step; /* switch-specific job information */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
 	/* fields from the launch cred used to support nss_slurm	    */
@@ -238,7 +222,6 @@ typedef struct {
 	pid_t          jmgr_pid;     /* job manager pid                     */
 	pid_t          pgid;         /* process group id for tasks          */
 	uint32_t       flags;        /* See LAUNCH_* flags defined in slurm_protocol_defs.h */
-	uint16_t       overcommit;
 	env_t          *envtp;
 	uint64_t       cont_id;
 
@@ -260,11 +243,7 @@ typedef struct {
 					  * is the message sent.  DO
 					  * NOT FREE, IT IS JUST A
 					  * POINTER. */
-	mpmd_set_t     *mpmd_set;	/* MPMD specifications for Cray */
 	uint16_t	job_core_spec;	/* count of specialized cores */
-	int		non_smp;	/* Set if task IDs are not monotonically
-					 * increasing across all nodes, set only
-					 * native Cray systems */
 	bool		oom_error;	/* step out of memory error */
 
 	uint16_t x11;			/* only set for extern step */
@@ -277,6 +256,7 @@ typedef struct {
 	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
 
 	char *selinux_context;
+	char *stepmgr;
 } stepd_step_rec_t;
 
 
@@ -291,8 +271,6 @@ srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
 			       uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
-
-void srun_key_destroy(srun_key_t *key);
 
 stepd_step_task_info_t * task_info_create(int taskid, int gtaskid,
 					  char *ifname, char *ofname,

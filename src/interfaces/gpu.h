@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  gpu.h - driver for gpu plugin
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,8 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _GPU_PLUGIN_H
-#define _GPU_PLUGIN_H
+#ifndef _INTERFACES_GPU_H
+#define _INTERFACES_GPU_H
 
 #include "slurm/slurm.h"
 #include "src/interfaces/gres.h"
@@ -52,7 +51,6 @@ typedef struct {
 extern int gpu_plugin_init(void);
 extern int gpu_plugin_fini(void);
 extern void gpu_get_tres_pos(int *gpumem_pos, int *gpuutil_pos);
-extern void gpu_g_reconfig(void);
 extern List gpu_g_get_system_gpu_list(node_config_load_t *node_conf);
 extern void gpu_g_step_hardware_init(bitstr_t *usable_gpus, char *tres_freq);
 extern void gpu_g_step_hardware_fini(void);
@@ -61,4 +59,4 @@ extern int gpu_g_energy_read(uint32_t dv_ind, gpu_status_t *gpu);
 extern void gpu_g_get_device_count(unsigned int *device_count);
 extern int gpu_g_usage_read(pid_t pid, acct_gather_data_t *data);
 
-#endif /* !_GPU_PLUGIN_H */
+#endif

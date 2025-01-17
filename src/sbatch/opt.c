@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2018 SchedMD LLC <https://www.schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -48,7 +48,6 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>		/* getenv     */
-#include <sys/param.h>		/* MAXPATHLEN */
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
@@ -232,6 +231,7 @@ env_vars_t env_vars[] = {
   { "SBATCH_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
   { "SBATCH_THREADS_PER_CORE", LONG_OPT_THREADSPERCORE },
   { "SBATCH_TIMELIMIT", 't' },
+  { "SBATCH_TRES_BIND", LONG_OPT_TRES_BIND },
   { "SBATCH_TRES_PER_TASK", LONG_OPT_TRES_PER_TASK },
   { "SBATCH_USE_MIN_NODES", LONG_OPT_USE_MIN_NODES },
   { "SBATCH_WAIT", 'W' },
@@ -508,8 +508,15 @@ extern char *get_argument(const char *file, int lineno, const char *line,
 		if (escape_flag) {
 			escape_flag = false;
 		} else if (*ptr == '\\') {
-			escape_flag = true;
 			ptr++;
+			if (*ptr == ' ') {
+				if (!argument)
+					argument = xmalloc(strlen(line) + 1);
+				argument[i++] = *(ptr++);
+				escape_flag = false;
+			} else
+				escape_flag = true;
+
 			continue;
 		} else if (quoted) {
 			if (*ptr == q_char) {
@@ -672,13 +679,20 @@ static bool _opt_verify(void)
 {
 	bool verified = true;
 	char *dist = NULL;
-	hostlist_t hl = NULL;
+	hostlist_t *hl = NULL;
 	int hl_cnt = 0;
 
 	validate_options_salloc_sbatch_srun(&opt);
 
 	if (opt.quiet && opt.verbose) {
 		error ("don't specify both --verbose (-v) and --quiet (-Q)");
+		verified = false;
+	}
+
+	if ((opt.resv_port_cnt != NO_VAL) &&
+	    !(opt.job_flags & STEPMGR_ENABLED) &&
+	    !xstrstr(slurm_conf.slurmctld_params, "enable_stepmgr")) {
+		error("Slurmstepd step management must be enabled to use --resv-ports for job allocations");
 		verified = false;
 	}
 
@@ -691,6 +705,9 @@ static bool _opt_verify(void)
 		setenvf(NULL, "SLURM_CONTAINER", "%s", opt.container);
 	if (opt.container_id && !getenv("SLURM_CONTAINER_ID"))
 		setenvf(NULL, "SLURM_CONTAINER_ID", "%s", opt.container_id);
+
+	if (opt.network)
+		setenvf(NULL, "SLURM_NETWORK", "%s", opt.network);
 
 	/*
 	 * NOTE: this burst_buffer_file processing is intentionally different
@@ -721,49 +738,10 @@ static bool _opt_verify(void)
 	if (opt.exclude && !_valid_node_list(&opt.exclude))
 		exit(error_exit);
 
-	if (opt.nodefile) {
-		char *tmp;
-		xfree(opt.nodelist);
-		if (!(tmp = slurm_read_hostfile(opt.nodefile, 0))) {
-			error("Invalid --nodefile node file");
-			exit(-1);
-		}
-		opt.nodelist = xstrdup(tmp);
-		free(tmp);
-	}
-
-	if (!opt.nodelist) {
-		if ((opt.nodelist = xstrdup(getenv("SLURM_HOSTFILE")))) {
-			/* make sure the file being read in has a / in
-			   it to make sure it is a file in the
-			   valid_node_list function */
-			if (!strstr(opt.nodelist, "/")) {
-				char *add_slash = xstrdup("./");
-				xstrcat(add_slash, opt.nodelist);
-				xfree(opt.nodelist);
-				opt.nodelist = add_slash;
-			}
-			opt.distribution &= SLURM_DIST_STATE_FLAGS;
-			opt.distribution |= SLURM_DIST_ARBITRARY;
-			if (!_valid_node_list(&opt.nodelist)) {
-				error("Failure getting NodeNames from hostfile");
-				exit(error_exit);
-			} else {
-				debug("loaded nodes (%s) from hostfile",
-				      opt.nodelist);
-			}
-		}
-	} else {
-		if (!_valid_node_list(&opt.nodelist))
-			exit(error_exit);
-	}
-
 	if (opt.nodelist && !opt.nodes_set) {
 		hl = hostlist_create(opt.nodelist);
-		if (!hl) {
-			error("memory allocation failure");
-			exit(error_exit);
-		}
+		if (!hl)
+			fatal("Invalid node list specified");
 		hostlist_uniq(hl);
 		hl_cnt = hostlist_count(hl);
 		opt.min_nodes = hl_cnt;
@@ -805,7 +783,7 @@ static bool _opt_verify(void)
 	 * if (n/plane_size < N) and ((N-1) * plane_size >= n) -->
 	 * problem Simple check will not catch all the problem/invalid
 	 * cases.
-	 * The limitations of the plane distribution in the cons_res
+	 * The limitations of the plane distribution in the cons_tres
 	 * environment are more extensive and are documented in the
 	 * Slurm reference guide.  */
 	if ((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE &&
@@ -886,8 +864,10 @@ static bool _opt_verify(void)
 	   of nodes */
 	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	    && (!opt.nodes_set || !opt.ntasks_set)) {
+		FREE_NULL_HOSTLIST(hl);
+		hl = hostlist_create(opt.nodelist);
 		if (!hl)
-			hl = hostlist_create(opt.nodelist);
+			fatal("Invalid node list specified");
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = 1;
 			opt.ntasks = hostlist_count(hl);
@@ -926,8 +906,7 @@ static bool _opt_verify(void)
 	if (opt.threads_per_core != NO_VAL)
 		het_job_env.threads_per_core = opt.threads_per_core;
 
-	if (hl)
-		hostlist_destroy(hl);
+	FREE_NULL_HOSTLIST(hl);
 
 	if ((opt.deadline) && (opt.begin) && (opt.deadline < opt.begin)) {
 		error("Incompatible begin and deadline time specification");
@@ -956,15 +935,6 @@ static bool _opt_verify(void)
 
 	if (opt.acctg_freq)
 		setenvf(NULL, "SLURM_ACCTG_FREQ", "%s", opt.acctg_freq);
-
-#ifdef HAVE_NATIVE_CRAY
-	if (opt.network && opt.shared)
-		fatal("Requesting network performance counters requires "
-		      "exclusive access.  Please add the --exclusive option "
-		      "to your request.");
-	if (opt.network)
-		setenv("SLURM_NETWORK", opt.network, 1);
-#endif
 
 	if (opt.mem_bind_type && (getenv("SBATCH_MEM_BIND") == NULL)) {
 		char *tmp = slurm_xstr_mem_bind_type(opt.mem_bind_type);
@@ -1142,7 +1112,7 @@ static void _usage(void)
 "              [--use-min-nodes]\n"
 "              [--cpus-per-gpu=n] [--gpus=n] [--gpu-bind=...] [--gpu-freq=...]\n"
 "              [--gpus-per-node=n] [--gpus-per-socket=n] [--gpus-per-task=n]\n"
-"              [--mem-per-gpu=MB] [--tres-per-task=list]\n"
+"              [--mem-per-gpu=MB] [--tres-bind=...] [--tres-per-task=list]\n"
 "              executable [args...]\n");
 }
 
@@ -1223,6 +1193,7 @@ static void _help(void)
 "      --thread-spec=threads   count of reserved threads\n"
 "  -t, --time=minutes          time limit\n"
 "      --time-min=minutes      minimum time limit (if distinct)\n"
+"      --tres-bind=...         task to tres binding options\n"
 "      --tres-per-task=list    list of tres required per task\n"
 "      --uid=user_id           user ID to run job as (user root only)\n"
 "      --use-min-nodes         if a range of node counts is given, prefer the\n"
@@ -1255,6 +1226,7 @@ static void _help(void)
 "      --mem-per-cpu=MB        maximum amount of real memory per allocated\n"
 "                              cpu required by the job.\n"
 "                              --mem >= --mem-per-cpu if --mem is specified.\n"
+"      --resv-ports            reserve communication ports\n"
 "\n"
 "Affinity/Multi-core options: (when the task/affinity plugin is enabled)\n"
 "                              For the following 4 options, you are\n"
@@ -1294,12 +1266,6 @@ static void _help(void)
 		);
 
 	printf("\n"
-#ifdef HAVE_NATIVE_CRAY			/* Native Cray specific options */
-"Cray related options:\n"
-"      --network=type          Use network performance counters\n"
-"                              (system, network, or processor)\n"
-"\n"
-#endif
 "Help options:\n"
 "  -h, --help                  show this help message\n"
 "      --usage                 display brief usage message\n"

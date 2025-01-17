@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  serializer plugin interface
  ******************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -44,15 +43,27 @@
 
 #include "src/interfaces/serializer.h"
 
+/* Define slurm-specific aliases for use by plugins, see slurm_xlator.h. */
+strong_alias(serializer_g_init, slurm_serializer_g_init);
+strong_alias(serialize_g_data_to_string, slurm_serialize_g_data_to_string);
+strong_alias(serialize_g_string_to_data, slurm_serialize_g_string_to_data);
+strong_alias(serializer_g_fini, slurm_serializer_g_fini);
+
 #define SERIALIZER_MAJOR_TYPE "serializer"
 #define SERIALIZER_MIME_TYPES_SYM "mime_types"
 #define PMT_MAGIC 0xaaba8031
+#define MIME_ARRAY_MAGIC 0xabb00031
 
 typedef struct {
 	int (*data_to_string)(char **dest, size_t *length, const data_t *src,
 			      serializer_flags_t flags);
 	int (*string_to_data)(data_t **dest, const char *src, size_t length);
 } funcs_t;
+
+typedef struct {
+	int magic; /* MIME_ARRAY_MAGIC */
+	int index;
+} mime_type_array_args_t;
 
 /* Must be synchronized with funcs_t above */
 static const char *syms[] = {
@@ -71,6 +82,7 @@ typedef struct {
 
 /* list of all of the known mime types */
 static List mime_types_list = NULL;
+static const char **mime_array = NULL;
 
 static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -128,7 +140,7 @@ extern int serialize_g_data_to_string(char **dest, size_t *length,
 	const funcs_t *func_ptr;
 	plugin_mime_type_t *pmt = NULL;
 
-	xassert(dest && (*dest == NULL));
+	xassert(dest && ((*dest == NULL) || (*dest[0] == '\0')));
 
 	pmt = _find_serializer(mime_type);
 	if (!pmt)
@@ -171,13 +183,15 @@ extern int serialize_g_string_to_data(data_t **dest, const char *src,
 	return rc;
 }
 
-extern const char *resolve_mime_type(const char *mime_type)
+extern const char *resolve_mime_type(const char *mime_type,
+				     const char **plugin_ptr)
 {
 	plugin_mime_type_t *pmt = _find_serializer(mime_type);
 
 	if (!pmt)
 		return NULL;
 
+	*plugin_ptr = plugins->types[pmt->index];
 	return pmt->mime_type;
 }
 
@@ -202,6 +216,11 @@ static int _register_mime_types(List mime_types_list, size_t plugin_index,
 	return SLURM_SUCCESS;
 }
 
+extern const char **get_mime_type_array(void)
+{
+	return mime_array;
+}
+
 extern int serializer_g_init(const char *plugin_list, plugrack_foreach_t listf)
 {
 	int rc = SLURM_SUCCESS;
@@ -219,6 +238,8 @@ extern int serializer_g_init(const char *plugin_list, plugrack_foreach_t listf)
 	if (!mime_types_list)
 		mime_types_list = list_create(xfree_ptr);
 
+	xrecalloc(mime_array, (plugins->count + 1), sizeof(*mime_array));
+
 	for (size_t i = 0; plugins && (i < plugins->count); i++) {
 		const char **mime_types;
 
@@ -229,6 +250,9 @@ extern int serializer_g_init(const char *plugin_list, plugrack_foreach_t listf)
 		if (!mime_types)
 			fatal_abort("%s: unable to load %s from plugin",
 				    __func__, SERIALIZER_MIME_TYPES_SYM);
+
+		/* First mime_type is always considered primary */
+		mime_array[i] = mime_types[0];
 
 		_register_mime_types(mime_types_list, i, mime_types);
 	}
@@ -243,6 +267,7 @@ extern void serializer_g_fini(void)
 #ifdef MEMORY_LEAK_DEBUG
 	debug3("%s: cleaning up", __func__);
 	slurm_mutex_lock(&init_mutex);
+	xfree(mime_array);
 	FREE_NULL_LIST(mime_types_list);
 	FREE_NULL_PLUGINS(plugins);
 	slurm_mutex_unlock(&init_mutex);

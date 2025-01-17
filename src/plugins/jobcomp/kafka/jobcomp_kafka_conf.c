@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  jobcomp_kafka_conf.c - Parse config helper for jobcomp/kafka.
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Alejandro Sanchez <alex@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -168,7 +167,7 @@ extern int jobcomp_kafka_conf_parse_location(char *location)
 		if (!_parse_key_value_line(line, &key, &value))
 			continue;
 
-		read_config_add_key_pair(rd_kafka_conf_list, key, value);
+		add_key_pair(rd_kafka_conf_list, key, "%s", value);
 	}
 
 	free(line);

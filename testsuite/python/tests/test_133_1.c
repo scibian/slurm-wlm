@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  test_plugin.c - standalone program to test route/topology
+ *  test_plugin.c - standalone program to test TopologyParam=RouteTree
  *****************************************************************************
  *  Copyright (C) 2014 Bull S. A. S.
  *		Bull, Rue Jean Jaures, B.P.68, 78340, Les Clayes-sous-Bois.
@@ -59,7 +59,7 @@
 #include "src/common/timers.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/interfaces/route.h"
+#include "src/interfaces/topology.h"
 
 #define MAX_LINES_IN_TEST 200
 #define MAX_LINE 100
@@ -179,14 +179,14 @@ int _measure_api(char* measure_case)
 	int i,j,et;
 	int hl_count = 0;
 	char* nodes;
-	hostlist_t hl;
+	hostlist_t *hl;
 	DEF_TIMERS;
 
-	hostlist_t* sp_hl;
+	hostlist_t **sp_hl;
 	nodes = measure_case;
 	hl = hostlist_create(nodes);
 	START_TIMER;
-	if (route_g_split_hostlist(hl, &sp_hl, &hl_count, 0)) {
+	if (topology_g_split_hostlist(hl, &sp_hl, &hl_count, 0)) {
 		hostlist_destroy(hl);
 		fatal("unable to split forward hostlist");
 	}
@@ -209,7 +209,7 @@ void _print_test(char** testcase, int lines)
 	}
 }
 
-void _print_results(hostlist_t* hll, int hl_count)
+void _print_results(hostlist_t **hll, int hl_count)
 {
 	int i;
 	char *list;
@@ -224,14 +224,14 @@ void _print_results(hostlist_t* hll, int hl_count)
 int _run_test(char** testcase, int lines)
 {
 	int i, rc;
-	hostlist_t* hll = NULL;
+	hostlist_t **hll = NULL;
 	int hl_count = 0;
 	int level;
 	char *list;
 	char *nodes;
 	nodes = testcase[0];
-	hostlist_t hl = hostlist_create(nodes);
-	if (route_g_split_hostlist(hl, &hll, &hl_count, 0)) {
+	hostlist_t *hl = hostlist_create(nodes);
+	if (topology_g_split_hostlist(hl, &hll, &hl_count, 0)) {
 		info("Unable to split forward hostlist");
 		_print_test(testcase,lines);
 		rc = SLURM_ERROR;
@@ -292,13 +292,9 @@ int main(int argc, char *argv[])
 		goto ouch;
 
 	slurm_init(NULL);
-	if (route_init() != SLURM_SUCCESS) {
-		error("failed to initialize route plugins");
-		exit(1);
-	}
 
-	if (slurm_topo_init() != SLURM_SUCCESS) {
-		error("failed to initialize route plugins");
+	if (topology_g_init() != SLURM_SUCCESS) {
+		error("failed to initialize topology plugins");
 		exit(1);
 	}
 

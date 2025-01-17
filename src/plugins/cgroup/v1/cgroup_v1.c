@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  cgroup_v1.c - Cgroup v1 plugin
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Felip Moll <felip.moll@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -266,7 +265,7 @@ static int _remove_cg_subsystem(xcgroup_t int_cg[], const char *log_str,
 		error("Unable to move pid %d to root cgroup", getpid());
 		goto end;
 	}
-	xcgroup_wait_pid_moved(step_cg, log_str);
+	common_cgroup_wait_pid_moved(step_cg, getpid(), log_str);
 
 	/* Delete step cgroup. */
 	if ((rc = common_cgroup_delete(step_cg)) != SLURM_SUCCESS)
@@ -600,7 +599,8 @@ extern int cgroup_p_system_destroy(cgroup_ctl_type_t sub)
 		error("Unable to move pid %d to root cgroup", getpid());
 		goto end;
 	}
-	xcgroup_wait_pid_moved(&int_cg[sub][CG_LEVEL_SYSTEM], g_cg_name[sub]);
+	common_cgroup_wait_pid_moved(&int_cg[sub][CG_LEVEL_SYSTEM], getpid(),
+				     g_cg_name[sub]);
 
 	if ((rc = common_cgroup_delete(&int_cg[sub][CG_LEVEL_SYSTEM]))
 	    != SLURM_SUCCESS) {
@@ -855,10 +855,11 @@ extern int cgroup_p_step_destroy(cgroup_ctl_type_t sub)
 extern bool cgroup_p_has_pid(pid_t pid)
 {
 	bool rc;
+	int rc2;
 	xcgroup_t cg;
 
-	rc = xcgroup_ns_find_by_pid(&g_cg_ns[CG_TRACK], &cg, pid);
-	if (rc != SLURM_SUCCESS)
+	rc2 = xcgroup_ns_find_by_pid(&g_cg_ns[CG_TRACK], &cg, pid);
+	if (rc2 != SLURM_SUCCESS)
 		return false;
 
 	rc = true;
@@ -923,10 +924,6 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 	int rc = SLURM_SUCCESS;
 	task_cg_info_t *task_cg_info;
 	char *dev_str = NULL;
-#ifdef HAVE_NATIVE_CRAY
-	char expected_usage[32];
-	uint64_t exp;
-#endif
 
 	if (!limits)
 		return SLURM_ERROR;
@@ -955,23 +952,6 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 			    != SLURM_SUCCESS)
 				rc = SLURM_ERROR;
 		}
-#ifdef HAVE_NATIVE_CRAY
-		/*
-		 * on Cray systems, set the expected usage in bytes.
-		 * This is used by the Cray OOM killer
-		 */
-		if (level == CG_LEVEL_STEP) {
-			exp = (uint64_t) (limits->step)->step_mem * 1024 * 1024;
-			snprintf(expected_usage, sizeof(expected_usage),
-				 "%"PRIu64, exp);
-
-			if (common_cgroup_set_param(
-				    &int_cg[sub][level],
-				    "cpuset.expected_usage_in_bytes",
-				    expected_usage) != SLURM_SUCCESS)
-				rc = SLURM_ERROR;
-		}
-#endif
 		break;
 	case CG_MEMORY:
 		if ((level == CG_LEVEL_JOB) &&
@@ -1000,14 +980,6 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 				    limits->soft_limit_in_bytes)
 			    != SLURM_SUCCESS)
 				rc = SLURM_ERROR;
-
-			if (limits->kmem_limit_in_bytes != NO_VAL64)
-				if (common_cgroup_set_uint64_param(
-					    &int_cg[sub][level],
-					    "memory.kmem.limit_in_bytes",
-					    limits->kmem_limit_in_bytes)
-				    != SLURM_SUCCESS)
-					rc = SLURM_ERROR;
 
 			if (limits->memsw_limit_in_bytes != NO_VAL64)
 				if (common_cgroup_set_uint64_param(
@@ -1083,19 +1055,6 @@ extern int cgroup_p_constrain_apply(cgroup_ctl_type_t sub, cgroup_level_t level,
  * Code based on linux tools/cgroup/cgroup_event_listener.c with adapted
  * modifications for Slurm logic and needs.
  */
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
-extern int cgroup_p_step_start_oom_mgr(void)
-{
-	log_flag(CGROUP, "OOM not available on FreeBSD, NetBSD, or macOS");
-	return SLURM_SUCCESS;
-}
-
-extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *step)
-{
-	log_flag(CGROUP, "OOM not available on FreeBSD, NetBSD, or macOS");
-	return NULL;
-}
-#else
 static int _read_fd(int fd, uint64_t *buf)
 {
 	int rc = SLURM_ERROR;
@@ -1426,8 +1385,7 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *step)
 
 rwfail: /* Ignore safe_write issues. */
 	log_flag(CGROUP, "attempt to join oom_thread.");
-	if (oom_thread && pthread_join(oom_thread, NULL) != 0)
-		error("pthread_join(): %m");
+	slurm_thread_join(oom_thread);
 
 	slurm_mutex_lock(&oom_mutex);
 	results->oom_kill_cnt = oom_kill_count;
@@ -1439,7 +1397,6 @@ fail_oom_results:
 
 	return results;
 }
-#endif
 
 /***************************************
  ***** CGROUP TASK FUNCTIONS *****
@@ -1534,7 +1491,7 @@ extern cgroup_acct_t *cgroup_p_task_get_acct_data(uint32_t taskid)
 }
 
 /* cgroup/v1 usec and ssec are provided in USER_HZ. */
-extern long int cgroup_p_get_acct_units()
+extern long int cgroup_p_get_acct_units(void)
 {
 	return jobacct_gather_get_clk_tck();
 }

@@ -449,15 +449,15 @@ static int _get_object_usage(mysql_conn_t *mysql_conn,
 	switch (type) {
 	case DBD_GET_ASSOC_USAGE:
 		query = xstrdup_printf(
-			"select %s from \"%s_%s\" as t1, "
-			"\"%s_%s\" as t2, \"%s_%s\" as t3 "
-			"where (t1.time_start < %ld && t1.time_start >= %ld) "
-			"&& t1.id=t2.id_assoc && (%s) && "
-			"t2.lft between t3.lft and t3.rgt "
-			"order by t3.id_assoc, time_start;",
-			tmp, cluster_name, my_usage_table,
-			cluster_name, assoc_table, cluster_name, assoc_table,
-			end, start, id_str);
+		        "select %s from \"%s_%s\" as t1, "
+		        "\"%s_%s\" as t2, \"%s_%s\" as t3 "
+		        "where (t1.time_start < %ld && t1.time_start >= %ld) "
+		        "&& t1.id=t2.id_assoc && (%s) && "
+		        "t2.lineage like concat(t3.lineage, '%%') "
+		        "order by t3.id_assoc, time_start;",
+		        tmp, cluster_name, my_usage_table,
+		        cluster_name, assoc_table, cluster_name, assoc_table,
+		        end, start, id_str);
 		break;
 	case DBD_GET_WCKEY_USAGE:
 		query = xstrdup_printf(
@@ -631,7 +631,7 @@ extern int get_usage_for_list(mysql_conn_t *mysql_conn,
 	char *my_usage_table = NULL;
 	List usage_list = NULL;
 	char *id_str = NULL, *name_char = NULL;
-	ListIterator itr = NULL, u_itr = NULL;
+	list_itr_t *itr = NULL, *u_itr = NULL;
 	void *object = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	slurmdb_wckey_rec_t *wckey = NULL;
@@ -824,7 +824,7 @@ extern int as_mysql_get_usage(mysql_conn_t *mysql_conn, uid_t uid,
 	if (slurm_conf.private_data & PRIVATE_DATA_USAGE) {
 		if (!(is_admin = is_user_min_admin_level(
 			      mysql_conn, uid, SLURMDB_ADMIN_OPERATOR))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			slurmdb_coord_rec_t *coord = NULL;
 			slurmdb_user_rec_t user;
 			bool is_coord;
@@ -847,6 +847,12 @@ extern int as_mysql_get_usage(mysql_conn_t *mysql_conn, uid_t uid,
 
 			if (!is_coord) {
 				debug4("This user is not a coordinator.");
+				goto bad_user;
+			}
+
+			if (slurmdbd_conf->flags &
+			    DBD_CONF_FLAG_DISABLE_COORD_DBD) {
+				debug4("Coordinator privilege revoked with DisableCoordDBD.");
 				goto bad_user;
 			}
 
@@ -892,7 +898,7 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 	int rolledup = 0;
 	int roll_started = 0;
 	char *cluster_name = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	pthread_mutex_t rolledup_lock = PTHREAD_MUTEX_INITIALIZER;
 	pthread_cond_t rolledup_cond;
 	//DEF_TIMERS;
@@ -944,7 +950,7 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 		 * fashion buys a bunch on systems with lots
 		 * (millions) of jobs.
 		 */
-		slurm_thread_create_detached(NULL, _cluster_rollup_usage,
+		slurm_thread_create_detached(_cluster_rollup_usage,
 					     local_rollup);
 		roll_started++;
 	}

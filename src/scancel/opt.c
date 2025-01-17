@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Mark Grondona <grondona1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -126,6 +126,11 @@ extern bool has_default_opt(void)
 {
 	if (opt.account == NULL
 	    && opt.batch == false
+#ifdef HAVE_FRONT_END
+	    && opt.ctld
+#else
+	    && !opt.ctld
+#endif
 	    && opt.interactive == false
 	    && opt.job_name == NULL
 	    && opt.partition == NULL
@@ -211,11 +216,12 @@ static void _opt_clusters(char *clusters)
 {
 	opt.ctld = true;
 	FREE_NULL_LIST(opt.clusters);
-	opt.clusters = slurmdb_get_info_cluster(clusters);
-	if (!opt.clusters) {
+
+	if (slurm_get_cluster_info(&(opt.clusters), clusters, 0)) {
 		print_db_notok(clusters, 0);
-		exit(1);
+		fatal("Could not get cluster information");
 	}
+
 	working_cluster_rec = list_peek(opt.clusters);
 }
 
@@ -229,7 +235,8 @@ static void _opt_env(void)
 	char *val;
 
 	if ( (val=getenv("SCANCEL_ACCOUNT")) ) {
-		opt.account = xstrtolower(xstrdup(val));
+		opt.account = xstrdup(val);
+		xstrtolower(opt.account);
 	}
 
 	if ( (val=getenv("SCANCEL_BATCH")) ) {
@@ -290,7 +297,8 @@ static void _opt_env(void)
 	}
 
 	if ( (val=getenv("SCANCEL_QOS")) ) {
-		opt.qos = xstrtolower(xstrdup(val));
+		opt.qos = xstrdup(val);
+		xstrtolower(opt.qos);
 	}
 
 	if ( (val=getenv("SCANCEL_STATE")) ) {
@@ -327,6 +335,18 @@ static void _opt_env(void)
 		char *valdup = xstrdup(val);
 		_opt_clusters(valdup);
 		xfree(valdup);
+	}
+}
+
+static void _handle_nodelist(void)
+{
+	/* If nodelist contains a '/', treat it as a file name */
+	if (strchr(opt.nodelist, '/') != NULL) {
+		char *reallist = slurm_read_hostfile(opt.nodelist, NO_VAL);
+		if (reallist) {
+			xfree(opt.nodelist);
+			opt.nodelist = reallist;
+		}
 	}
 }
 
@@ -379,7 +399,8 @@ static void _opt_args(int argc, char **argv)
 			exit(1);
 			break;
 		case (int)'A':
-			opt.account = xstrtolower(xstrdup(optarg));
+			opt.account = xstrdup(optarg);
+			xstrtolower(opt.account);
 			break;
 		case (int)'b':
 			opt.batch = true;
@@ -415,7 +436,8 @@ static void _opt_args(int argc, char **argv)
 			opt.verbose = -1;
 			break;
 		case (int)'q':
-			opt.qos = xstrtolower(xstrdup(optarg));
+			opt.qos = xstrdup(optarg);
+			xstrtolower(opt.qos);
 			break;
 		case (int)'R':
 			opt.reservation = xstrdup(optarg);
@@ -467,6 +489,8 @@ static void _opt_args(int argc, char **argv)
 
 	if (rest)
 		opt.job_list = _xlate_job_step_ids(rest);
+	if (opt.nodelist)
+		_handle_nodelist();
 
 	if (!_opt_verify())
 		exit(1);
@@ -507,7 +531,7 @@ _xlate_job_step_ids(char **rest)
 		opt.job_id[buf_offset] = job_id;
 
 		if ((next_str[0] == '_') && (next_str[1] == '[')) {
-			hostlist_t hl;
+			hostlist_t *hl;
 			char save_char, *next_elem;
 			char *end_char = strchr(next_str + 2, ']');
 			if (!end_char || (end_char[1] != '\0')) {
@@ -694,7 +718,7 @@ static void _opt_list(void)
 
 static void _usage(void)
 {
-	printf("Usage: scancel [-A account] [--batch] [--full] [--interactive] [-n job_name]\n");
+	printf("Usage: scancel [-A account] [--batch] [--ctld] [--full] [--interactive] [-n job_name]\n");
 	printf("               [-p partition] [-Q] [-q qos] [-R reservation] [-s signal | integer]\n");
 	printf("               [-t PENDING | RUNNING | SUSPENDED] [--usage] [-u user_name]\n");
 	printf("               [--hurry] [-V] [-v] [-w hosts...] [--wckey=wckey]\n");
@@ -706,7 +730,7 @@ static void _help(void)
 	printf("Usage: scancel [OPTIONS] [job_id[_array_id][.step_id]]\n");
 	printf("  -A, --account=account           act only on jobs charging this account\n");
 	printf("  -b, --batch                     signal batch shell for specified job\n");
-/*	printf("      --ctld                      send request directly to slurmctld\n"); */
+	printf("      --ctld                      send request directly to slurmctld\n");
 	printf("  -c, --cron                      cancel an scrontab job\n");
 	printf("  -f, --full                      signal batch shell and all steps for specified job\n");
 	printf("  -H, --hurry                     avoid burst buffer stage out\n");

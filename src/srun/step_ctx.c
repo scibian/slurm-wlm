@@ -129,11 +129,12 @@ static void _job_fake_cred(struct slurm_step_ctx_struct *ctx)
  * step_ctx_create - Create a job step and its context.
  * IN step_params - job step parameters
  * IN timeout - in milliseconds
+ * OUT timed_out - indicate if poll timed-out
  * RET the step context or NULL on failure with slurm errno set
  * NOTE: Free allocated memory using slurm_step_ctx_destroy.
  */
 extern slurm_step_ctx_t *step_ctx_create_timeout(
-	job_step_create_request_msg_t *step_req, int timeout)
+	job_step_create_request_msg_t *step_req, int timeout, bool *timed_out)
 {
 	struct slurm_step_ctx_struct *ctx = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
@@ -181,6 +182,8 @@ extern slurm_step_ctx_t *step_ctx_create_timeout(
 				break;
 			time_left = timeout - elapsed_time;
 			i = poll(&fds, 1, time_left);
+			if (i == 0)
+				*timed_out = true;
 			if ((i >= 0) || destroy_step)
 				break;
 			if ((errno == EINTR) || (errno == EAGAIN))
@@ -238,13 +241,20 @@ extern slurm_step_ctx_t *step_ctx_create_no_alloc(
 	job_step_create_response_msg_t *step_resp = NULL;
 	int sock = -1;
 	uint16_t port = 0;
+	uint16_t *ports;
+	int rc;
 
 	xassert(step_req);
 	/* We will handle the messages in the step_launch.c mesage handler,
 	 * but we need to open the socket right now so we can tell the
 	 * controller which port to use.
 	 */
-	if (net_stream_listen(&sock, &port) < 0) {
+	ports = slurm_get_srun_port_range();
+	if (ports)
+		rc = net_stream_listen_ports(&sock, &port, ports, false);
+	else
+		rc = net_stream_listen(&sock, &port);
+	if (rc < 0) {
 		error("unable to initialize step context socket: %m");
 		return NULL;
 	}
@@ -260,15 +270,6 @@ extern slurm_step_ctx_t *step_ctx_create_no_alloc(
 		step_req->min_nodes,
 		step_req->num_tasks,
 		0);
-
-	if (switch_g_alloc_jobinfo(&step_resp->switch_job,
-				   step_req->step_id.job_id,
-				   step_resp->job_step_id) < 0)
-		fatal("switch_g_alloc_jobinfo: %m");
-	if (switch_g_build_jobinfo(step_resp->switch_job,
-				   step_resp->step_layout,
-				   NULL) < 0)
-		fatal("switch_g_build_jobinfo: %m");
 
 	step_resp->job_step_id = step_id;
 

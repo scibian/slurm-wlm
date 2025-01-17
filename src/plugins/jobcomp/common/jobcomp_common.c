@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  jobcomp_common.c - common functions for jobcomp plugins
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC
- *  Written by Alejandro Sanchez <alex@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -37,10 +36,20 @@
 #include "src/common/assoc_mgr.h"
 #include "src/common/data.h"
 #include "src/common/fd.h"
+#include "src/common/id_util.h"
 #include "src/common/parse_time.h"
-#include "src/common/uid.h"
 #include "src/plugins/jobcomp/common/jobcomp_common.h"
 #include "src/slurmctld/slurmctld.h"
+
+static bool _valid_date_format(char *date_str)
+{
+	if (!date_str || !*date_str ||
+	    !xstrcasecmp(date_str, "unknown") ||
+	    !xstrcasecmp(date_str, "none"))
+		return false;
+
+	return true;
+}
 
 /*
  * Open jobcomp state file, or backup if necessary.
@@ -135,8 +144,8 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 	uint32_t time_limit;
 	data_t *record = NULL;
 
-	usr_str = uid_to_string_or_null(job_ptr->user_id);
-	grp_str = gid_to_string_or_null(job_ptr->group_id);
+	usr_str = user_from_job(job_ptr);
+	grp_str = group_from_job(job_ptr);
 
 	if ((job_ptr->time_limit == NO_VAL) && job_ptr->part_ptr)
 		time_limit = job_ptr->part_ptr->max_time;
@@ -175,7 +184,11 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 					sizeof(end_str));
 	}
 
-	elapsed_time = job_ptr->end_time - job_ptr->start_time;
+	if (job_ptr->end_time && job_ptr->start_time &&
+	    job_ptr->start_time < job_ptr->end_time)
+		elapsed_time = job_ptr->end_time - job_ptr->start_time;
+	else
+		elapsed_time = 0;
 
 	tmp_int = tmp_int2 = 0;
 	if (job_ptr->derived_ec == NO_VAL)
@@ -203,8 +216,10 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 	data_set_int(data_key_set(record, "user_id"), job_ptr->user_id);
 	data_set_string(data_key_set(record, "groupname"), grp_str);
 	data_set_int(data_key_set(record, "group_id"), job_ptr->group_id);
-	data_set_string(data_key_set(record, "@start"), start_str);
-	data_set_string(data_key_set(record, "@end"), end_str);
+	if (_valid_date_format(start_str))
+		data_set_string(data_key_set(record, "@start"), start_str);
+	if (_valid_date_format(end_str))
+		data_set_string(data_key_set(record, "@end"), end_str);
 	data_set_int(data_key_set(record, "elapsed"), elapsed_time);
 	data_set_string(data_key_set(record, "partition"), job_ptr->partition);
 	data_set_string(data_key_set(record, "alloc_node"),
@@ -241,22 +256,32 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 			     job_ptr->het_job_offset);
 	}
 
+	if ((job_ptr->priority != NO_VAL) && (job_ptr->priority != INFINITE))
+		data_set_int(data_key_set(record, "priority"),
+			     job_ptr->priority);
+
 	if (job_ptr->details && job_ptr->details->submit_time) {
 		parse_time_make_str_utc(&job_ptr->details->submit_time,
 					time_str, sizeof(time_str));
-		data_set_string(data_key_set(record, "@submit"), time_str);
+		if (_valid_date_format(time_str))
+			data_set_string(data_key_set(record, "@submit"),
+					time_str);
 	}
 
 	if (job_ptr->details && job_ptr->details->begin_time) {
 		parse_time_make_str_utc(&job_ptr->details->begin_time, time_str,
 					sizeof(time_str));
-		data_set_string(data_key_set(record, "@eligible"), time_str);
+		if (_valid_date_format(time_str))
+			data_set_string(data_key_set(record, "@eligible"),
+					time_str);
 		if (job_ptr->start_time) {
 			int64_t queue_wait = (int64_t)difftime(
 				job_ptr->start_time,
 				job_ptr->details->begin_time);
-			data_set_int(data_key_set(record, "@queue_wait"),
-				     queue_wait);
+			if (queue_wait >= 0)
+				data_set_int(data_key_set(record,
+							  "@queue_wait"),
+							  queue_wait);
 		}
 	}
 
@@ -327,9 +352,17 @@ extern data_t *jobcomp_common_job_record_to_data(job_record_t *job_ptr) {
 	if (job_ptr->wckey)
 		data_set_string(data_key_set(record, "wc_key"), job_ptr->wckey);
 
+	if (job_ptr->tres_req_str)
+		data_set_string(data_key_set(record, "tres_req_raw"),
+				job_ptr->tres_req_str);
+
 	if (job_ptr->tres_fmt_req_str)
 		data_set_string(data_key_set(record, "tres_req"),
 				job_ptr->tres_fmt_req_str);
+
+	if (job_ptr->tres_alloc_str)
+		data_set_string(data_key_set(record, "tres_alloc_raw"),
+				job_ptr->tres_alloc_str);
 
 	if (job_ptr->tres_fmt_alloc_str)
 		data_set_string(data_key_set(record, "tres_alloc"),

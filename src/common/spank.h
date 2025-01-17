@@ -35,8 +35,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _PLUGSTACK_H
-#define _PLUGSTACK_H
+#ifndef _COMMON_SPANK_H
+#define _COMMON_SPANK_H
 
 #include <config.h>
 
@@ -47,6 +47,24 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #define SPANK_OPTION_ENV_PREFIX "_SLURM_SPANK_OPTION_"
+
+/*
+ *  SPANK plugin hook types
+ */
+typedef enum {
+	SPANK_INIT = 0,
+	SPANK_JOB_PROLOG = 2,
+	SPANK_INIT_POST_OPT,
+	SPANK_LOCAL_USER_INIT,
+	SPANK_STEP_USER_INIT,
+	SPANK_STEP_TASK_INIT_PRIV,
+	SPANK_STEP_USER_TASK_INIT,
+	SPANK_STEP_TASK_POST_FORK,
+	SPANK_STEP_TASK_EXIT,
+	SPANK_JOB_EPILOG,
+	SPANK_SLURMD_EXIT,
+	SPANK_EXIT,
+} step_fn_t;
 
 struct spank_launcher_job_info {
 	uid_t       uid;
@@ -97,6 +115,21 @@ extern bool spank_has_prolog(void);
 extern bool spank_has_epilog(void);
 
 /*
+ * Return true if a loaded spank plugin has a user_init function defined.
+ */
+extern bool spank_has_user_init(void);
+
+/*
+ * Return true if a loaded spank plugin has a task_post_fork function defined.
+ */
+extern bool spank_has_task_post_fork(void);
+
+/*
+ * Return true if a loaded spank plugin has a task_exit function defined.
+ */
+extern bool spank_has_task_exit(void);
+
+/*
  *  Option processing
  */
 
@@ -125,7 +158,7 @@ void spank_option_table_destroy (struct option *opt_table);
  *
  *  Returns <0 if any option's callback fails. Zero otherwise.
  */
-extern int spank_process_env_options();
+extern int spank_process_env_options(void);
 
 /*
  *  Process a single spank option which was tagged by `optval' in the
@@ -145,16 +178,16 @@ int spank_process_option (int optval, const char *optarg);
  *   after which the usage text may be displayed, and `left_pad' is the
  *   amount of space to pad on the left before printing the --option.
  */
-int spank_print_options(FILE *fp, int left_pad, int width);
+void spank_print_options(FILE *fp, int left_pad, int width);
 
 /*  Set all registered remote options (i.e. those passed to
  *   spank_process_option) in the job options `options'.
  */
-int spank_set_remote_options(List options);
+void spank_set_remote_options(List options);
 
 /*  Clear any spank remote options encoded in environment.
  */
-int spank_clear_remote_options_env (char **env);
+void spank_clear_remote_options_env(char **env);
 
 /*
  * spank_get_plugin_names
@@ -217,4 +250,4 @@ extern bool spank_option_isset(char *optname);
  */
 extern bool spank_option_get_next_set(char **plugin, char **name,
 				      char **value, void **state);
-#endif /* !_PLUGSTACK_H */
+#endif /* !_COMMON_SPANK_H */

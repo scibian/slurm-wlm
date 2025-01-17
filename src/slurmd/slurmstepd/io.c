@@ -99,7 +99,7 @@ struct client_io_info {
 	stepd_step_rec_t *step; /* pointer back to step data */
 
 	/* incoming variables */
-	struct slurm_io_header header;
+	io_hdr_t header;
 	struct io_buf *in_msg;
 	int32_t in_remaining;
 	bool in_eof;
@@ -263,7 +263,7 @@ _client_writable(eio_obj_t *obj)
 	 * to be added to the List of clients.
 	 */
 	if (client->msg_queue == NULL) {
-		ListIterator msgs;
+		list_itr_t *msgs;
 		struct io_buf *msg;
 		client->msg_queue = list_create(NULL); /* need destructor */
 		msgs = list_iterator_create(client->step->outgoing_cache);
@@ -516,7 +516,7 @@ _local_file_write(eio_obj_t *obj, List objs)
 	struct client_io_info *client = (struct client_io_info *) obj->arg;
 	void *buf;
 	int n;
-	struct slurm_io_header header;
+	io_hdr_t header;
 	buf_t *header_tmp_buf;
 
 	xassert(client->magic == CLIENT_IO_MAGIC);
@@ -902,7 +902,7 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 	win_info->task   = task;
 	win_info->step    = step;
 	win_info->pty_fd = pty_fd;
-	slurm_thread_create_detached(NULL, _window_manager, win_info);
+	slurm_thread_create_detached(_window_manager, win_info);
 }
 #endif
 
@@ -912,7 +912,7 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 
 /*
  * This function sets the close-on-exec flag on all opened file descriptors.
- * io_dup_stdio will will remove the close-on-exec flags for just one task's
+ * io_dup_stdio will remove the close-on-exec flags for just one task's
  * file descriptors.
  */
 static int
@@ -1190,7 +1190,7 @@ io_init_tasks_stdio(stepd_step_rec_t *step)
 extern void io_thread_start(stepd_step_rec_t *step)
 {
 	slurm_mutex_lock(&step->io_mutex);
-	slurm_thread_create_detached(NULL, _io_thr, step);
+	slurm_thread_create_detached(_io_thr, step);
 	step->io_running = true;
 	slurm_mutex_unlock(&step->io_mutex);
 }
@@ -1220,7 +1220,7 @@ static int
 _send_connection_okay_response(stepd_step_rec_t *step)
 {
 	eio_obj_t *eio;
-	ListIterator clients;
+	list_itr_t *clients;
 	struct io_buf *msg;
 	struct client_io_info *client;
 
@@ -1254,7 +1254,7 @@ _build_connection_okay_message(stepd_step_rec_t *step)
 {
 	struct io_buf *msg;
 	buf_t *packbuf;
-	struct slurm_io_header header;
+	io_hdr_t header;
 
 	if (_outgoing_buf_free(step)) {
 		msg = list_dequeue(step->free_outgoing);
@@ -1292,7 +1292,7 @@ _route_msg_task_to_client(eio_obj_t *obj)
 	struct client_io_info *client;
 	struct io_buf *msg = NULL;
 	eio_obj_t *eio;
-	ListIterator clients;
+	list_itr_t *clients;
 
 	/* Pack task output into messages for transfer to a client */
 	while (cbuf_used(out->buf) > 0
@@ -1381,7 +1381,7 @@ _free_outgoing_msg(struct io_buf *msg, stepd_step_rec_t *step)
 static void
 _free_all_outgoing_msgs(List msg_queue, stepd_step_rec_t *step)
 {
-	ListIterator msgs;
+	list_itr_t *msgs;
 	struct io_buf *msg;
 
 	msgs = list_iterator_create(msg_queue);
@@ -1440,7 +1440,7 @@ io_close_all(stepd_step_rec_t *step)
 void
 io_close_local_fds(stepd_step_rec_t *step)
 {
-	ListIterator clients;
+	list_itr_t *clients;
 	eio_obj_t *eio;
 	int rc;
 	struct client_io_info *client;
@@ -1660,9 +1660,7 @@ _send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *step, bool init
 {
 	io_init_msg_t msg;
 
-	msg.io_key = xmalloc(srun->key->len);
-	msg.io_key_len = srun->key->len;
-	memcpy(msg.io_key, srun->key->data, srun->key->len);
+	msg.io_key = xstrdup(srun->key);
 	msg.nodeid = step->nodeid;
 	msg.version = srun->protocol_version;
 
@@ -1729,8 +1727,8 @@ _send_eof_msg(struct task_read_info *out)
 	struct client_io_info *client;
 	struct io_buf *msg = NULL;
 	eio_obj_t *eio;
-	ListIterator clients;
-	struct slurm_io_header header;
+	list_itr_t *clients;
+	io_hdr_t header;
 	buf_t *packbuf;
 
 	debug4("Entering _send_eof_msg");
@@ -1795,7 +1793,7 @@ static struct io_buf *_task_build_message(struct task_read_info *out,
 	buf_t *packbuf;
 	bool must_truncate = false;
 	int avail;
-	struct slurm_io_header header;
+	io_hdr_t header;
 	int n;
 	bool buffered_stdio = step->flags & LAUNCH_BUFFERED_IO;
 

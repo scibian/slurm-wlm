@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  config.c - Library for managing HPE Slingshot networks
  *****************************************************************************
- *  Copyright 2021-2022 Hewlett Packard Enterprise Development LP
+ *  Copyright 2021-2023 Hewlett Packard Enterprise Development LP
  *  Written by Jim Nordby <james.nordby@hpe.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -39,11 +39,15 @@
 #include <sys/stat.h>
 
 #include "switch_hpe_slingshot.h"
+#include "rest.h"
+
+#include "src/common/job_record.h"
+#include "src/common/node_conf.h"
 
 /* Set this to true if VNI table is re-sized and loses some bits */
 static bool lost_vnis = false;
 /* Number of free VNIs */
-static int free_vnis = 0;
+int free_vnis = 0;
 
 /*
  * Set up slingshot_config defaults
@@ -323,10 +327,10 @@ static bool _config_jlope_auth(const char *token, char *arg)
 {
 	if (!arg)
 		goto err;
-	if (!xstrcasecmp(arg, SLINGSHOT_JLOPE_AUTH_BASIC_STR))
-		slingshot_config.jlope_auth = SLINGSHOT_JLOPE_AUTH_BASIC;
-	else if (!xstrcasecmp(arg, SLINGSHOT_JLOPE_AUTH_OAUTH_STR))
-		slingshot_config.jlope_auth = SLINGSHOT_JLOPE_AUTH_OAUTH;
+	if (!xstrcasecmp(arg, SLINGSHOT_AUTH_BASIC_STR))
+		slingshot_config.jlope_auth = SLINGSHOT_AUTH_BASIC;
+	else if (!xstrcasecmp(arg, SLINGSHOT_AUTH_OAUTH_STR))
+		slingshot_config.jlope_auth = SLINGSHOT_AUTH_OAUTH;
 	else
 		goto err;
 
@@ -371,18 +375,156 @@ static void _config_jlope_defaults(void)
 {
 	if (!slingshot_config.jlope_url)
 		return;
-	if (slingshot_config.jlope_auth == SLINGSHOT_JLOPE_AUTH_NONE)
-		slingshot_config.jlope_auth = SLINGSHOT_JLOPE_AUTH_OAUTH;
+	if (slingshot_config.jlope_auth == SLINGSHOT_AUTH_NONE)
+		slingshot_config.jlope_auth = SLINGSHOT_AUTH_OAUTH;
 	if (!slingshot_config.jlope_authdir) {
-		if (slingshot_config.jlope_auth == SLINGSHOT_JLOPE_AUTH_OAUTH)
+		if (slingshot_config.jlope_auth == SLINGSHOT_AUTH_OAUTH)
 			slingshot_config.jlope_authdir =
 					xstrdup(SLINGSHOT_JLOPE_AUTH_OAUTH_DIR);
-		else if (slingshot_config.jlope_auth ==
-				SLINGSHOT_JLOPE_AUTH_BASIC)
+		else if (slingshot_config.jlope_auth == SLINGSHOT_AUTH_BASIC)
 			slingshot_config.jlope_authdir =
 					xstrdup(SLINGSHOT_JLOPE_AUTH_BASIC_DIR);
 	}
 	xassert(slingshot_config.jlope_authdir);
+}
+
+/*
+ * Parse the "hwcoll_addrs_per_job" token, with format
+ * "hwcoll_addrs_per_job=<number>"
+ */
+static bool _config_hwcoll_addrs_per_job(const char *token, char *arg)
+{
+	char *end_ptr = NULL;
+        uint32_t num;
+
+	if (!arg)
+		goto err;
+	num = strtol(arg, &end_ptr, 10);
+	if (!end_ptr || (end_ptr == arg))
+		goto err;
+        if (num <= 0)
+            goto err;
+	slingshot_config.hwcoll_addrs_per_job = num;
+
+	log_flag(SWITCH, "[token=%s]: hwcoll_addrs_per_job %u",
+		 token, slingshot_config.hwcoll_addrs_per_job);
+	return true;
+err:
+	error("Invalid hwcoll_addrs_per_job token '%s' (example 'hwcoll_addrs_per_job=26')",
+	      token);
+	return false;
+}
+
+/*
+ * Parse the "hwcoll_num_nodes" token, with format "hwcoll_num_nodes=<number>"
+ */
+static bool _config_hwcoll_num_nodes(const char *token, char *arg)
+{
+	char *end_ptr = NULL;
+        uint32_t num;
+
+	if (!arg)
+		goto err;
+	num = strtol(arg, &end_ptr, 10);
+	if (!end_ptr || (end_ptr == arg))
+		goto err;
+        if (num <= 0)
+            goto err;
+	slingshot_config.hwcoll_num_nodes = num;
+
+	log_flag(SWITCH, "[token=%s]: hwcoll_num_nodes %u",
+		 token, slingshot_config.hwcoll_num_nodes);
+	return true;
+err:
+	error("Invalid hwcoll_num_nodes token '%s' (example 'hwcoll_num_nodes=64')",
+	      token);
+	return false;
+}
+
+/*
+ * Parse the "fm_url" token, with format "fm_url=<url>"
+ */
+static bool _config_fm_url(const char *token, char *arg)
+{
+	if (!arg)
+		goto err;
+	slingshot_config.fm_url = xstrdup(arg);
+
+	log_flag(SWITCH, "[token=%s]: fm_url %s",
+		 token, slingshot_config.fm_url);
+	return true;
+err:
+	error("Invalid fm_url token '%s' (example 'fm_url=https://api-gw-service-nmn.local/apis/fm')",
+	      token);
+	return false;
+}
+
+/*
+ * Parse the "fm_auth" token, with format "fm_auth={BASIC,OAUTH}"
+ */
+static bool _config_fm_auth(const char *token, char *arg)
+{
+	if (!arg)
+		goto err;
+	if (!xstrcasecmp(arg, SLINGSHOT_AUTH_BASIC_STR))
+		slingshot_config.fm_auth = SLINGSHOT_AUTH_BASIC;
+	else if (!xstrcasecmp(arg, SLINGSHOT_AUTH_OAUTH_STR))
+		slingshot_config.fm_auth = SLINGSHOT_AUTH_OAUTH;
+	else
+		goto err;
+
+	log_flag(SWITCH, "[token=%s]: fm_auth %d",
+		 token, slingshot_config.fm_auth);
+	return true;
+err:
+	error("Invalid fm_auth token '%s' (example 'fm_auth={BASIC,OAUTH}')",
+	      token);
+	return false;
+}
+
+/*
+ * Parse the "fm_authdir" token, with format "fm_authdir=<dirpath>"
+ */
+static bool _config_fm_authdir(const char *token, char *arg)
+{
+	struct stat statbuf;
+
+	if (!arg)
+		goto err;
+	if (stat(arg, &statbuf) != 0 || !S_ISDIR(statbuf.st_mode)) {
+		error("fm_authdir directory '%s' is not a directory", arg);
+		return false;
+	}
+	slingshot_config.fm_authdir = xstrdup(arg);
+
+	log_flag(SWITCH, "[token=%s]: fm_authdir %s",
+		 token, slingshot_config.fm_authdir);
+	return true;
+err:
+	error("Invalid fm_authdir token '%s' (example 'fm_authdir=/etc/wlm-client-auth')",
+	      token);
+	return false;
+}
+
+/*
+ * If fm_url is set, set up default values for fm_auth{dir}
+ * (if not already set)
+ */
+static void _config_fm_defaults(void)
+{
+	if (!slingshot_config.fm_url)
+		return;
+	if (slingshot_config.fm_auth == SLINGSHOT_AUTH_NONE)
+		slingshot_config.fm_auth = SLINGSHOT_AUTH_OAUTH;
+	if (!slingshot_config.fm_authdir) {
+		if (slingshot_config.fm_auth == SLINGSHOT_AUTH_OAUTH)
+			slingshot_config.fm_authdir =
+					xstrdup(SLINGSHOT_FM_AUTH_OAUTH_DIR);
+		else if (slingshot_config.fm_auth == SLINGSHOT_AUTH_BASIC)
+			slingshot_config.fm_authdir =
+					xstrdup(SLINGSHOT_FM_AUTH_BASIC_DIR);
+	}
+	xassert(slingshot_config.fm_authdir);
 }
 
 /*
@@ -509,6 +651,8 @@ extern void slingshot_free_config(void)
 {
 	xfree(slingshot_config.jlope_url);
 	xfree(slingshot_config.jlope_authdir);
+	xfree(slingshot_config.fm_url);
+	xfree(slingshot_config.fm_authdir);
 }
 
 /*
@@ -536,6 +680,17 @@ extern bool slingshot_setup_config(const char *switch_params)
 	const size_t size_jlope_auth = sizeof(jlope_auth) - 1;
 	const char jlope_authdir[] = "jlope_authdir";
 	const size_t size_jlope_authdir = sizeof(jlope_authdir) - 1;
+	const char hwcoll_addrs_per_job[] = "hwcoll_addrs_per_job";
+	const size_t size_hwcoll_addrs_per_job =
+                                        sizeof(hwcoll_addrs_per_job) - 1;
+	const char hwcoll_num_nodes[] = "hwcoll_num_nodes";
+	const size_t size_hwcoll_num_nodes = sizeof(hwcoll_num_nodes) - 1;
+	const char fm_url[] = "fm_url";
+	const size_t size_fm_url = sizeof(fm_url) - 1;
+	const char fm_auth[] = "fm_auth";
+	const size_t size_fm_auth = sizeof(fm_auth) - 1;
+	const char fm_authdir[] = "fm_authdir";
+	const size_t size_fm_authdir = sizeof(fm_authdir) - 1;
 	/* Use min/max in state file if SwitchParameters not set */
 	uint16_t vni_min = slingshot_state.vni_min;
 	uint16_t vni_max = slingshot_state.vni_max;
@@ -557,8 +712,17 @@ extern bool slingshot_setup_config(const char *switch_params)
 	 *     used/reserved by system services
 	 *   jlope_url=<url>: use URL for jackaloped REST requests
 	 *   jlope_auth="BASIC|OAUTH": jackaloped REST API authentication type
-	 *   jlope_authdir=<dir>: directory containing authentication info
+	 *   jlope_authdir=<dir>: jackaloped authentication info directory
 	 *     (i.e. /etc/jackaloped for BASIC, /etc/wlm-client-auth for OAUTH)
+	 *   hwcoll_addrs_per_job=<number>: allocate <number> of Slingshot
+         *     hardware collectives multicast addresses per job
+         *     (that are larger than <hwcoll_min_nodes> nodes)
+	 *   hwcoll_num_nodes=<num_nodes>: minimum number of nodes for a
+         *     job to be allocated Slingshot hardware collectives
+	 *   fm_url=<url>: use URL for fabric manager REST requests
+	 *   fm_auth="BASIC|OAUTH": fabric manager REST API authentication type
+	 *   fm_authdir=<dir>: fabric manager authentication info directory
+	 *     (i.e. /etc/fmsim for BASIC, /etc/wlm-client-auth for OAUTH)
 	 *
 	 *   def_<NIC_resource>: default per-thread value for resource
 	 *   res_<NIC_resource>: reserved value for resource
@@ -625,6 +789,27 @@ extern bool slingshot_setup_config(const char *switch_params)
 		} else if (!xstrncasecmp(token, jlope_auth, size_jlope_auth)) {
 			if (!_config_jlope_auth(token, arg))
 				goto err;
+		} else if (!xstrncasecmp(token, hwcoll_addrs_per_job,
+                                         size_hwcoll_addrs_per_job)) {
+			if (!_config_hwcoll_addrs_per_job(token, arg))
+				goto err;
+		} else if (!xstrncasecmp(token, hwcoll_num_nodes,
+					 size_hwcoll_num_nodes)) {
+			if (!_config_hwcoll_num_nodes(token, arg))
+				goto err;
+		} else if (!xstrncasecmp(token, fm_url, size_fm_url)) {
+			if (!_config_fm_url(token, arg))
+				goto err;
+		/*
+		 * NOTE: fm_authdir needs to come before fm_auth
+		 * since fm_auth is a prefix of fm_authdir
+		 */
+		} else if (!xstrncasecmp(token, fm_authdir, size_fm_authdir)) {
+			if (!_config_fm_authdir(token, arg))
+				goto err;
+		} else if (!xstrncasecmp(token, fm_auth, size_fm_auth)) {
+			if (!_config_fm_auth(token, arg))
+				goto err;
 		} else {
 			if (!_config_limits(token, &slingshot_config.limits))
 				goto err;
@@ -632,9 +817,14 @@ extern bool slingshot_setup_config(const char *switch_params)
 	}
 	/* If jlope_url is set, set up default values for jlope_auth{dir} */
 	_config_jlope_defaults();
+	/* If fm_url is set, set up default values for fm_auth{dir} */
+	_config_fm_defaults();
 
 	/* Set up connection to jackaloped */
 	if (!slingshot_init_instant_on())
+		goto err;
+	/* Set up connection to fabric manager */
+	if (!slingshot_init_collectives())
 		goto err;
 
 out:
@@ -644,12 +834,18 @@ out:
 	debug("jlope_url=%s jlope_auth=%u jlope_authdir=%s",
 	      slingshot_config.jlope_url, slingshot_config.jlope_auth,
 	      slingshot_config.jlope_authdir);
+	debug("fm_url=%s fm_auth=%u fm_authdir=%s hwcoll_addrs_per_job=%d hwcoll_num_nodes=%d",
+              slingshot_config.fm_url, slingshot_config.fm_auth,
+	      slingshot_config.fm_authdir,
+	      slingshot_config.hwcoll_addrs_per_job,
+	      slingshot_config.hwcoll_num_nodes);
 	_print_limits(&slingshot_config.limits);
 
 	xfree(params);
 	return true;
 
 err:
+	error("SwitchParameters parsing encountered errors, exiting");
 	xfree(params);
 	return false;
 }
@@ -726,10 +922,14 @@ static bool _alloc_job_vni(uint32_t job_id, uint16_t *vnip)
 				 slingshot_state.num_job_vnis);
 			*vnip = jobvni->vni;
 			return true;
-		} else if (jobvni->job_id == 0) {
+		} else if (jobvni->job_id == 0 && freeslot < 0) {
 			freeslot = i;
 		}
 	}
+
+	/* Allocate VNI from bitmap */
+	if (!_alloc_vni(vnip))
+		return false;
 
 	/* If no free slot, allocate a new slot in the job_vnis table */
 	if (freeslot < 0) {
@@ -738,10 +938,6 @@ static bool _alloc_job_vni(uint32_t job_id, uint16_t *vnip)
 		xrecalloc(slingshot_state.job_vnis,
 			slingshot_state.num_job_vnis, sizeof(job_vni_t));
 	}
-
-	if (!_alloc_vni(vnip))
-		return false;
-
 	slingshot_state.job_vnis[freeslot].job_id = job_id;
 	slingshot_state.job_vnis[freeslot].vni = *vnip;
 	log_flag(SWITCH, "[job_id=%u]: new vni[%d] vni=%hu num_job_vnis=%d",
@@ -840,13 +1036,14 @@ err:
  *   no_vni: _don't_ allocate a VNI for this job even if multi-node
  *   {no_}adjust_limits: {don't} adjust resource limit reservations
  *     by subtracting system service reserved/used values
+ *   disable_rdzv_get: disable rendezvous gets
  *   tcs: set of traffic classes (job only)
  *   def_<NIC_resource>: default per-thread value for resource
  *   res_<NIC_resource>: reserved value for resource
  *   max_<NIC_resource>: maximum value for resource
  */
 static bool _parse_network_token(const char *token, bool is_job,
-				 slingshot_jobinfo_t *job,
+				 slingshot_stepinfo_t *job,
 				 bool *job_vni, bool *single_node_vni,
 				 bool *no_vni)
 {
@@ -862,6 +1059,8 @@ static bool _parse_network_token(const char *token, bool is_job,
 	size_t adjust_limits_siz = sizeof(adjust_limits_str) - 1;
 	char no_adjust_limits_str[] = "no_adjust_limits";
 	size_t no_adjust_limits_siz = sizeof(no_adjust_limits_str) - 1;
+	char rdzv_get_str[] = "disable_rdzv_get";
+	size_t rdzv_get_siz = sizeof(rdzv_get_str) - 1;
 	char tcs_str[] = "tcs";
 	size_t tcs_siz = sizeof(tcs_str) - 1;
 
@@ -905,6 +1104,8 @@ static bool _parse_network_token(const char *token, bool is_job,
 	} else if (!xstrncmp(token, no_adjust_limits_str,
 			     no_adjust_limits_siz)) {
 		job->flags &= ~(SLINGSHOT_FLAGS_ADJUST_LIMITS);
+	} else if (!xstrncmp(token, rdzv_get_str, rdzv_get_siz)) {
+		job->flags |= SLINGSHOT_FLAGS_DISABLE_RDZV_GET;
 	} else if (!xstrncmp(token, tcs_str, tcs_siz)) {
 		if (is_job)
 			return _config_tcs(token, arg, &job->tcs);
@@ -916,12 +1117,12 @@ static bool _parse_network_token(const char *token, bool is_job,
 }
 
 /*
- * Set up passed-in slingshot_jobinfo_t based on values in srun/sbatch/salloc
+ * Set up passed-in slingshot_stepinfo_t based on values in srun/sbatch/salloc
  * --network parameters.  Return true on successful parsing, false otherwise.
  */
 static bool _setup_network_params(const char *network_params,
 				  const char *job_network_params,
-				  slingshot_jobinfo_t *job,
+				  slingshot_stepinfo_t *job,
 				  bool *job_vni,
 				  bool *single_node_vni,
 				  bool *no_vni)
@@ -984,17 +1185,74 @@ err:
 	return false;
 }
 
+extern bool slingshot_setup_job_vni_pool(job_record_t *job_ptr)
+{
+	int alloc_vnis = 0;
+	bool alloc_job_vni, alloc_single_node_vni, no_vni;
+	slingshot_stepinfo_t stepinfo = {0};
+	slingshot_jobinfo_t *jobinfo = NULL;
+
+	if (!job_ptr->switch_jobinfo)
+		job_ptr->switch_jobinfo = xmalloc(sizeof(slingshot_jobinfo_t));
+
+	/*
+	 * If --network specified, add any depth, limits,
+	 * {job,single_node,no}_vni settings
+	 * Copy configured Slingshot limits to job, add any --network settings
+	 */
+	if (!_setup_network_params(NULL, job_ptr->network,
+				   &stepinfo, &alloc_job_vni,
+				   &alloc_single_node_vni, &no_vni))
+		goto err;
+
+	jobinfo = (slingshot_jobinfo_t *) job_ptr->switch_jobinfo;
+
+	/*
+	 * VNIs and traffic classes are not allocated if:
+	 * --network=no_vni is set, or single-node jobs,
+	 * unless 'single_node_vni=all' is set in the configuration,
+	 * or 'single_node_vni=user' is set in the configuration and
+	 *    'srun --network=single_node_vni' is used
+	 */
+	jobinfo->num_vnis = 0;
+	if (!no_vni &&
+	    ((job_ptr->node_cnt > 1) || alloc_single_node_vni)) {
+		alloc_vnis = job_ptr->node_cnt;
+		if (alloc_job_vni)
+			alloc_vnis++;
+	}
+
+	jobinfo->vnis = xcalloc(alloc_vnis, sizeof(uint16_t));
+	for (int i = 0; i < alloc_vnis; i++) {
+		if (!_alloc_vni(&jobinfo->vnis[i]))
+			goto err;
+		jobinfo->num_vnis++;
+	}
+
+	return true;
+
+err:
+	if (jobinfo) {
+		for (int i = 0; i < jobinfo->num_vnis; i++)
+			_free_vni(jobinfo->vnis[i]);
+		slingshot_free_jobinfo(jobinfo);
+	}
+	job_ptr->switch_jobinfo = NULL;
+
+	return false;
+}
+
 /*
- * Set up slingshot_jobinfo_t struct with VNIs, and CXI limits,
+ * Set up slingshot_stepinfo_t struct with VNIs, and CXI limits,
  * based on configured limits as well as any specified with
  * the --network option
  * Return true on success, false if VNI cannot be allocated,
  * or --network parameters have syntax errors
  */
-extern bool slingshot_setup_job_step(slingshot_jobinfo_t *job, int node_cnt,
-				     uint32_t job_id,
-				     const char *network_params,
-				     const char *job_network_params)
+extern bool slingshot_setup_job_step_vni(slingshot_stepinfo_t *job, int node_cnt,
+					 uint32_t job_id,
+					 const char *network_params,
+					 const char *job_network_params)
 {
 	int alloc_vnis = 0;
 	uint16_t vni = 0, job_vni = 0;
@@ -1045,9 +1303,6 @@ extern bool slingshot_setup_job_step(slingshot_jobinfo_t *job, int node_cnt,
 	job->num_profiles = 0;
 	job->profiles = NULL;
 
-	/* vni_pids are deprecated */
-	job->vni_pids = NULL;
-
 	return true;
 
 err:
@@ -1063,10 +1318,32 @@ err:
 }
 
 /*
+ * Free job VNI pool (if any)
+ */
+extern void slingshot_free_job_vni_pool(slingshot_jobinfo_t *job)
+{
+	/* slingshot_config is only initialized on the ctld and stepmgr */
+	if (!running_in_slurmctld() && !active_outside_ctld)
+		return;
+
+	if (!job)
+		return;
+
+	for (int i = 0; i < job->num_vnis; i++) {
+		_free_vni(job->vnis[i]);
+		debug("free vni=%hu free_vnis=%d", job->vnis[0], free_vnis);
+	}
+}
+
+/*
  * Free job-step VNI (if any)
  */
-extern void slingshot_free_job_step(slingshot_jobinfo_t *job)
+extern void slingshot_free_job_step_vni(slingshot_stepinfo_t *job)
 {
+	/* slingshot_config is only initialized on the ctld and stepmgr */
+	if (!running_in_slurmctld() && !active_outside_ctld)
+		return;
+
 	/* Second VNI is a job VNI - don't free until job is complete */
 	if (job->vnis && (job->num_vnis > 0)) {
 		_free_vni(job->vnis[0]);
@@ -1077,8 +1354,37 @@ extern void slingshot_free_job_step(slingshot_jobinfo_t *job)
 /*
  * Free this job's job-specific VNI; called at end of job
  */
-extern void slingshot_free_job(uint32_t job_id)
+extern void slingshot_free_job_vni(uint32_t job_id)
 {
 	uint16_t vni = _free_job_vni(job_id);
 	debug("free job_vni=%hu free_vnis=%d", vni, free_vnis);
+}
+
+extern void slingshot_free_jobinfo(slingshot_jobinfo_t *jobinfo)
+{
+	if (!jobinfo)
+		return;
+
+	xfree(jobinfo->vnis);
+	xfree(jobinfo);
+}
+
+extern int slingshot_update_config(slingshot_jobinfo_t *jobinfo)
+{
+	free_vnis = 0;
+	bit_set_all(slingshot_state.vni_table);
+	for (int i = 0; i < jobinfo->num_vnis; i++) {
+		bit_clear(slingshot_state.vni_table,
+			  (jobinfo->vnis[i] - slingshot_state.vni_min));
+		free_vnis++;
+	}
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SWITCH)	{
+		char *bit_str = bit_fmt_full(slingshot_state.vni_table);
+		log_flag(SWITCH, "%s: min/max: %hu/%hu free_vnis: %d bitstr: %s",
+			 __func__, slingshot_state.vni_min,
+			 slingshot_state.vni_max, free_vnis, bit_str);
+		xfree(bit_str);
+	}
+
+	return SLURM_SUCCESS;
 }

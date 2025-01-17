@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  prep.c - driver for PrEpPlugins ('Pr'olog and 'Ep'ilog)
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -166,33 +165,6 @@ extern int prep_g_fini(void)
 
 fini:
 	slurm_rwlock_unlock(&g_context_lock);
-	return rc;
-}
-
-/*
- * Perform reconfig, re-read any configuration files
- */
-extern int prep_g_reconfig(void)
-{
-	int rc = SLURM_SUCCESS;
-	bool plugin_change = false;
-
-	if (!slurm_conf.prep_plugins && !prep_plugin_list)
-		return rc;
-
-	slurm_rwlock_rdlock(&g_context_lock);
-	if (xstrcmp(slurm_conf.prep_plugins, prep_plugin_list))
-		plugin_change = true;
-	slurm_rwlock_unlock(&g_context_lock);
-
-	if (plugin_change) {
-		info("%s: PrEpPlugins changed to %s",
-		     __func__, slurm_conf.prep_plugins);
-		rc = prep_g_fini();
-		if (rc == SLURM_SUCCESS)
-			rc = prep_g_init(NULL);
-	}
-
 	return rc;
 }
 

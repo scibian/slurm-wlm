@@ -85,7 +85,7 @@ static int _set_cond(int *start, int argc, char **argv,
 				set = 1;
 		} else if (!xstrncasecmp(argv[i], "Ids",
 					 MAX(command_len, 1))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			char *temp = NULL;
 			uint32_t id = 0;
 
@@ -151,8 +151,8 @@ extern int sacctmgr_list_wckey(int argc, char **argv)
 		xmalloc(sizeof(slurmdb_wckey_cond_t));
 	List wckey_list = NULL;
 	int i=0;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	slurmdb_wckey_rec_t *wckey = NULL;
 	char *object;
 
@@ -251,8 +251,14 @@ extern int sacctmgr_list_wckey(int argc, char **argv)
 	slurmdb_destroy_wckey_cond(wckey_cond);
 
 	if (mime_type) {
-		rc = DATA_DUMP_CLI(WCKEY_LIST, wckey_list, "wckeys", argc, argv,
-				   db_conn, mime_type);
+		if (is_data_parser_deprecated(data_parser))
+			DATA_DUMP_CLI_DEPRECATED(WCKEY_LIST, wckey_list,
+						 "wckeys", argc, argv, db_conn,
+						 mime_type, rc);
+		else
+			DATA_DUMP_CLI_SINGLE(OPENAPI_WCKEY_RESP, wckey_list,
+					     argc, argv, db_conn, mime_type,
+					     data_parser, rc);
 		FREE_NULL_LIST(print_fields_list);
 		FREE_NULL_LIST(wckey_list);
 		return rc;

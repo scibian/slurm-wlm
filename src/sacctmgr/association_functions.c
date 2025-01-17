@@ -95,7 +95,7 @@ static int _set_cond(int *start, int argc, char **argv,
 						MAX(command_len, 1))
 			  || !xstrncasecmp(argv[i], "Associations",
 					   MAX(command_len, 2))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			char *temp = NULL;
 			uint32_t id = 0;
 
@@ -132,103 +132,6 @@ static int _set_cond(int *start, int argc, char **argv,
 	return set;
 }
 
-extern bool sacctmgr_check_default_qos(uint32_t qos_id,
-				       slurmdb_assoc_cond_t *assoc_cond)
-{
-	char *object = NULL;
-	ListIterator itr;
-	slurmdb_assoc_rec_t *assoc;
-	List no_access_list = NULL;
-	List assoc_list = NULL;
-
-	if (qos_id == NO_VAL)
-		return true;
-
-	assoc_list = slurmdb_associations_get(
-		db_conn, assoc_cond);
-	if (!assoc_list) {
-		fprintf(stderr, "Couldn't get a list back for checking qos.\n");
-		return false;
-	}
-
-	if (!g_qos_list)
-		g_qos_list = slurmdb_qos_get(db_conn, NULL);
-
-	itr = list_iterator_create(assoc_list);
-	while ((assoc = list_next(itr))) {
-		char *qos = NULL;
-
-		if (assoc->qos_list) {
-			int check_qos = qos_id;
-			if (check_qos == -1)
-				check_qos = assoc->def_qos_id;
-			if ((int)check_qos > 0) {
-				ListIterator qos_itr =
-					list_iterator_create(assoc->qos_list);
-				while ((qos = list_next(qos_itr))) {
-					if (qos[0] == '-')
-						continue;
-					else if (qos[0] == '+')
-						qos++;
-					/* info("looking for %u ?= %u", */
-					/*      check_qos, slurm_atoul(qos)); */
-					if (check_qos == slurm_atoul(qos))
-						break;
-				}
-				list_iterator_destroy(qos_itr);
-			} else
-				qos = "";
-		}
-
-		if (!qos) {
-			char *name = slurmdb_qos_str(g_qos_list,
-						     assoc->def_qos_id);
-			if (!assoc->user) {
-				// see if this isn't a user
-				object = xstrdup_printf(
-					"  DefQOS = %-10s C = %-10s A = %-20s ",
-					name, assoc->cluster, assoc->acct);
-			} else if (assoc->partition) {
-				// see if there is a partition name
-				object = xstrdup_printf(
-					"  DefQOS = %-10s C = %-10s A = %-20s "
-					"U = %-9s P = %s",
-					name, assoc->cluster, assoc->acct,
-					assoc->user, assoc->partition);
-			} else {
-				object = xstrdup_printf(
-					"  DefQOS = %-10s C = %-10s A = %-20s "
-					"U = %-9s",
-					name, assoc->cluster,
-					assoc->acct, assoc->user);
-			}
-
-			if (!no_access_list)
-				no_access_list = list_create(xfree_ptr);
-			list_append(no_access_list, object);
-		}
-	}
-	list_iterator_destroy(itr);
-	FREE_NULL_LIST(assoc_list);
-
-	if (!no_access_list)
-		return true;
-	fprintf(stderr,
-		" These associations don't have access to their "
-		"default qos.\n");
-	fprintf(stderr,
-		" Please give them access before they the default "
-		"can be set to this.\n");
-	itr = list_iterator_create(no_access_list);
-	while ((object = list_next(itr)))
-		fprintf(stderr, "%s\n", object);
-	list_iterator_destroy(itr);
-	FREE_NULL_LIST(no_access_list);
-
-	return 0;
-}
-
-
 extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 					 char *type, char *value,
 					 int command_len, int option)
@@ -248,7 +151,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 			set = 1;
 	} else if (!xstrncasecmp(type, "Ids", MAX(command_len, 1))
 		   || !xstrncasecmp(type, "Associations", MAX(command_len, 2))) {
-		ListIterator itr = NULL;
+		list_itr_t *itr = NULL;
 		char *temp = NULL;
 		uint32_t id = 0;
 
@@ -537,7 +440,12 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		if (get_uint(value, &assoc->max_submit_jobs,
 			     "MaxSubmitJobs") == SLURM_SUCCESS)
 			set = 1;
-	} else if (!xstrncasecmp(type, "MaxTRESPerJob", MAX(command_len, 7))) {
+	} else if (!xstrncasecmp(type, "MaxTRES",
+				 MAX(command_len, 7)) ||
+		   !xstrncasecmp(type, "MaxTRESPJ",
+				 MAX(command_len, 9)) ||
+		   !xstrncasecmp(type, "MaxTRESPerJob",
+				 MAX(command_len, 11))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -549,7 +457,10 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 			xfree(tmp_char);
 		} else
 			exit_code = 1;
-	} else if (!xstrncasecmp(type, "MaxTRESPerNode", MAX(command_len, 11))) {
+	} else if (!xstrncasecmp(type, "MaxTRESPerNode",
+				 MAX(command_len, 11)) ||
+		   !xstrncasecmp(type, "MaxTRESPN",
+				 MAX(command_len, 9))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -562,7 +473,9 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		} else
 			exit_code = 1;
 	} else if (!xstrncasecmp(type, "MaxTRESMinsPerJob",
-				MAX(command_len, 8))) {
+				MAX(command_len, 8)) ||
+		   !xstrncasecmp(type, "MaxTRESMinsPJ",
+				 MAX(command_len, 13))) {
 		sacctmgr_initialize_g_tres_list();
 
 		if ((tmp_char = slurmdb_format_tres_str(
@@ -687,6 +600,10 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 		else
 			field->print_routine(field, &assoc->shares_raw, last);
 		break;
+	case PRINT_FLAGS:
+		tmp_char = slurmdb_assoc_flags_2_str(assoc->flags);
+		field->print_routine(field, tmp_char, last);
+		break;
 	case PRINT_GRPCM:
 		tmp_uint64 = slurmdb_find_tres_count_in_string(
 					assoc->grp_tres_mins, TRES_CPU),
@@ -746,8 +663,8 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	case PRINT_ID:
 		field->print_routine(field, &assoc->id, last);
 		break;
-	case PRINT_LFT:
-		field->print_routine(field, &assoc->lft, last);
+	case PRINT_LINEAGE:
+		field->print_routine(field, assoc->lineage, last);
 		break;
 	case PRINT_MAXCM:
 		tmp_uint64 = slurmdb_find_tres_count_in_string(
@@ -847,8 +764,8 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	List assoc_list = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	int i=0;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	char *last_cluster = NULL;
 	List tree_list = NULL;
 
@@ -894,8 +811,14 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 	slurmdb_destroy_assoc_cond(assoc_cond);
 
 	if (mime_type) {
-		rc = DATA_DUMP_CLI(ASSOC_LIST, assoc_list, "associations", argc,
-				   argv, db_conn, mime_type);
+		if (is_data_parser_deprecated(data_parser))
+			DATA_DUMP_CLI_DEPRECATED(ASSOC_LIST, assoc_list,
+						 "associations", argc, argv,
+						 db_conn, mime_type, rc);
+		else
+			DATA_DUMP_CLI_SINGLE(OPENAPI_ASSOCS_RESP, assoc_list,
+					     argc, argv, db_conn, mime_type,
+					     data_parser, rc);
 		FREE_NULL_LIST(print_fields_list);
 		FREE_NULL_LIST(assoc_list);
 		return rc;
@@ -909,7 +832,7 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 		return SLURM_ERROR;
 	}
 
-	slurmdb_sort_hierarchical_assoc_list(assoc_list, true);
+	slurmdb_sort_hierarchical_assoc_list(assoc_list);
 
 	itr = list_iterator_create(assoc_list);
 	itr2 = list_iterator_create(print_fields_list);

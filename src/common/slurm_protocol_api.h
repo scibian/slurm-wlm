@@ -52,8 +52,8 @@
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_common.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/slurm_protocol_util.h"
-#include "src/common/slurm_protocol_interface.h"
 
 #define MIN_NOALLOC_JOBID ((uint32_t) 0xffff0000)
 #define MAX_NOALLOC_JOBID ((uint32_t) 0xfffffffd)
@@ -136,41 +136,11 @@ char *slurm_get_preempt_type(void);
  */
 char *slurm_get_acct_gather_interconnect_type(void);
 
-/* slurm_get_acct_filesystem_profile_type
- * get FilesystemAccountingType from slurm_conf object
- * RET char *   - acct_gather_filesystem_type, MUST be xfreed by caller
- */
-char *slurm_get_acct_gather_filesystem_type(void);
-
-
-/* slurm_get_acct_gather_node_freq
- * returns the accounting poll frequency for requesting info from a
- * node from the slurm_conf object
- * RET int    - accounting node frequency
- */
-extern uint16_t slurm_get_acct_gather_node_freq(void);
-
-/* slurm_get_ext_sensors_type
- * get ExtSensorsType from slurm_conf object
- * RET char *   - ext_sensors type, MUST be xfreed by caller
- */
-char *slurm_get_ext_sensors_type(void);
-
-/* slurm_get_ext_sensors_freq
- * returns the external sensors sampling frequency from the slurm_conf
- * object for requesting info from a hardware component (node, switch, etc.)
- * RET int    - external sensors sampling frequency
- */
-extern uint16_t slurm_get_ext_sensors_freq(void);
-
 /* slurm_get_select_type
  * get select_type from slurm_conf object
  * RET char *   - select_type, MUST be xfreed by caller
  */
 char *slurm_get_select_type(void);
-
-/** Return true if (remote) system runs Cray XT/XE */
-bool is_cray_select_type(void);
 
 /* slurm_get_srun_port_range()
  *
@@ -178,10 +148,6 @@ bool is_cray_select_type(void);
  * min and max ports that srun should use to listen to.
  */
 uint16_t *slurm_get_srun_port_range(void);
-
-/* slurm_get_core_spec_plugin
- * RET core_spec plugin name, must be xfreed by caller */
-char *slurm_get_core_spec_plugin(void);
 
 /*
  * slurm_get_jobcomp_type
@@ -305,18 +271,6 @@ int slurm_send_node_msg(int open_fd, slurm_msg_t *msg);
 /**********************************************************************\
  * msg connection establishment functions used by msg clients
 \**********************************************************************/
-
-/*
- * Calls connect to make a connection-less datagram connection to the
- *	primary or secondary slurmctld message engine
- * IN/OUT addr       - address of controller contacted
- * IN/OUT use_backup - IN: whether to try the backup first or not
- *                     OUT: set to true if connection established with backup
- * IN comm_cluster_rec	- Communication record (host/port/version)/
- * RET slurm_fd	- file descriptor of the connection created
- */
-extern int slurm_open_controller_conn(slurm_addr_t *addr, bool *use_backup,
-				      slurmdb_cluster_rec_t *comm_cluster_rec);
 
 /*
  * Calls connect to make a connection-less datagram connection to a specific
@@ -500,7 +454,8 @@ List slurm_send_recv_msgs(const char *nodelist, slurm_msg_t *msg, int timeout);
  * IN cluster_rec - cluster to direct msg to.
  */
 int slurm_send_reroute_msg(slurm_msg_t *msg,
-			   slurmdb_cluster_rec_t *cluster_rec);
+			   slurmdb_cluster_rec_t *cluster_rec,
+			   char *stepmgr);
 
 /*
  *  Send a message to msg->address
@@ -568,13 +523,6 @@ extern int slurm_send_recv_msg(int fd, slurm_msg_t *req,
 
 /* Slurm message functions */
 
-/* set_span
- * build an array indicating how message fanout should occur
- * IN total - total number of nodes to communicate with
- * IN tree_width - message fanout, use system default if zero
- * NOTE: Returned array MUST be release by caller using xfree */
-extern int *set_span(int total, uint16_t tree_width);
-
 extern void slurm_free_msg_members(slurm_msg_t *msg);
 extern void slurm_free_msg(slurm_msg_t * msg);
 
@@ -591,7 +539,6 @@ extern void convert_num_unit(double num, char *buf, int buf_size,
 extern int revert_num_unit(const char *buf);
 extern int get_convert_unit_val(int base_type, char convert_to);
 extern int get_unit_type(char unit);
-extern void parse_int_to_array(int in, int *out);
 
 /*
  * slurm_job_step_create - Ask the slurm controller for a new job step
@@ -641,5 +588,14 @@ extern int slurm_hex_to_char(int v);
  * RET value as an int, -1 on error.
  */
 extern int slurm_char_to_hex(int c);
+
+/*
+ * Query assoc share info from slurmctld
+ * IN shares_req - which accounts and users to query
+ * IN/OUT shares_resp - populated result
+ * RET: SLURM_SUCCESS or error
+ */
+extern int slurm_associations_get_shares(shares_request_msg_t *shares_req,
+					 shares_response_msg_t **shares_resp);
 
 #endif

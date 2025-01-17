@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -53,7 +53,6 @@
 #include "src/interfaces/select.h"
 #include "src/interfaces/acct_gather_energy.h"
 #include "src/interfaces/auth.h"
-#include "src/interfaces/ext_sensors.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/uid.h"
@@ -177,25 +176,12 @@ slurm_populate_node_partitions(node_info_msg_t *node_buffer_ptr,
  */
 char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 {
-	uint32_t my_state = node_ptr->node_state;
 	char time_str[256];
 	char *out = NULL, *reason_str = NULL, *complete_state = NULL;
 	uint16_t alloc_cpus = 0;
-	int idle_cpus;
 	uint64_t alloc_memory;
 	char *node_alloc_tres = NULL;
 	char *line_end = (one_liner) ? " " : "\n   ";
-
-	slurm_get_select_nodeinfo(node_ptr->select_nodeinfo,
-				  SELECT_NODEDATA_SUBCNT,
-				  NODE_STATE_ALLOCATED,
-				  &alloc_cpus);
-	idle_cpus = node_ptr->cpus_efctv - alloc_cpus;
-
-	if (idle_cpus  && (idle_cpus != node_ptr->cpus_efctv)) {
-		my_state &= NODE_STATE_FLAGS;
-		my_state |= NODE_STATE_MIXED;
-	}
 
 	/****** Line 1 ******/
 	xstrfmtcat(out, "NodeName=%s ", node_ptr->name);
@@ -214,13 +200,13 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 	xstrcat(out, line_end);
 
 	/****** Line ******/
+	select_g_select_nodeinfo_get(node_ptr->select_nodeinfo,
+				     SELECT_NODEDATA_SUBCNT,
+				     NODE_STATE_ALLOCATED, &alloc_cpus);
 	xstrfmtcat(out, "CPUAlloc=%u CPUEfctv=%u CPUTot=%u ",
 		   alloc_cpus, node_ptr->cpus_efctv, node_ptr->cpus);
 
-	if (node_ptr->cpu_load == NO_VAL)
-		xstrcat(out, "CPULoad=N/A");
-	else
-		xstrfmtcat(out, "CPULoad=%.2f", (node_ptr->cpu_load / 100.0));
+	xstrfmtcat(out, "CPULoad=%.2f", (node_ptr->cpu_load / 100.0));
 
 	xstrcat(out, line_end);
 
@@ -323,8 +309,15 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 		xstrcat(out, line_end);
 	}
 
+	/* cores per gpu (optional) */
+	if (node_ptr->res_cores_per_gpu) {
+		xstrfmtcat(out, "RestrictedCoresPerGPU=%u(%s) ",
+			   node_ptr->res_cores_per_gpu, node_ptr->gpu_spec);
+		xstrcat(out, line_end);
+	}
+
 	/****** Line ******/
-	complete_state = node_state_string_complete(my_state);
+	complete_state = node_state_string_complete(node_ptr->node_state);
 	xstrfmtcat(out, "State=%s ThreadsPerCore=%u TmpDisk=%u Weight=%u ",
 		   complete_state, node_ptr->threads, node_ptr->tmp_disk,
 		   node_ptr->weight);
@@ -345,8 +338,8 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 
 	/****** Line ******/
 	if ((node_ptr->next_state != NO_VAL) &&
-	    ((my_state & NODE_STATE_REBOOT_REQUESTED) ||
-	     (my_state & NODE_STATE_REBOOT_ISSUED))) {
+	    (IS_NODE_REBOOT_REQUESTED(node_ptr) ||
+	     IS_NODE_REBOOT_ISSUED(node_ptr))) {
 		xstrfmtcat(out, "NextState=%s",
 			   node_state_string(node_ptr->next_state));
 		xstrcat(out, line_end);
@@ -400,45 +393,15 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 	xfree(node_alloc_tres);
 	xstrcat(out, line_end);
 
-	/****** Power Management Line ******/
-	if (!node_ptr->power || (node_ptr->power->cap_watts == NO_VAL))
-		xstrcat(out, "CapWatts=n/a");
-	else
-		xstrfmtcat(out, "CapWatts=%u", node_ptr->power->cap_watts);
-
-	xstrcat(out, line_end);
-
 	/****** Power Consumption Line ******/
 	if (!node_ptr->energy || node_ptr->energy->current_watts == NO_VAL)
-		xstrcat(out, "CurrentWatts=n/s AveWatts=n/s");
+		xstrcat(out, "CurrentWatts=n/a AveWatts=n/a");
 	else
 		xstrfmtcat(out, "CurrentWatts=%u AveWatts=%u",
 				node_ptr->energy->current_watts,
 				node_ptr->energy->ave_watts);
 
 	xstrcat(out, line_end);
-
-	/****** external sensors Line ******/
-	if (!node_ptr->ext_sensors
-	    || node_ptr->ext_sensors->consumed_energy == NO_VAL64)
-		xstrcat(out, "ExtSensorsJoules=n/s ");
-	else
-		xstrfmtcat(out, "ExtSensorsJoules=%"PRIu64" ",
-			   node_ptr->ext_sensors->consumed_energy);
-
-	if (!node_ptr->ext_sensors
-	    || node_ptr->ext_sensors->current_watts == NO_VAL)
-		xstrcat(out, "ExtSensorsWatts=n/s ");
-	else
-		xstrfmtcat(out, "ExtSensorsWatts=%u ",
-			   node_ptr->ext_sensors->current_watts);
-
-	if (!node_ptr->ext_sensors
-	    || node_ptr->ext_sensors->temperature == NO_VAL)
-		xstrcat(out, "ExtSensorsTemp=n/s");
-	else
-		xstrfmtcat(out, "ExtSensorsTemp=%u",
-			   node_ptr->ext_sensors->temperature);
 
 	/****** Line ******/
 	if (node_ptr->reason && node_ptr->reason[0])
@@ -481,6 +444,18 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 	}
 
 	/****** Line (optional) ******/
+	if (node_ptr->instance_id || node_ptr->instance_type) {
+		xstrcat(out, line_end);
+
+		if (node_ptr->instance_id)
+			xstrfmtcat(out, "InstanceId=%s ",
+				   node_ptr->instance_id);
+		if (node_ptr->instance_type)
+			xstrfmtcat(out, "InstanceType=%s",
+				   node_ptr->instance_type);
+	}
+
+	/****** Line (optional) ******/
 	if (node_ptr->resv_name) {
 		xstrcat(out, line_end);
 		xstrfmtcat(out, "ReservationName=%s", node_ptr->resv_name);
@@ -494,6 +469,36 @@ char *slurm_sprint_node_table(node_info_t *node_ptr, int one_liner)
 	return out;
 }
 
+static void _set_node_mixed_op(node_info_t *node_ptr)
+{
+	uint16_t alloc_cpus = 0;
+	uint16_t idle_cpus = 0;
+	char *alloc_tres = NULL;
+	bool make_mixed = false;
+
+	xassert(node_ptr);
+
+	select_g_select_nodeinfo_get(node_ptr->select_nodeinfo,
+				     SELECT_NODEDATA_SUBCNT,
+				     NODE_STATE_ALLOCATED, &alloc_cpus);
+	idle_cpus = node_ptr->cpus_efctv - alloc_cpus;
+
+	select_g_select_nodeinfo_get(node_ptr->select_nodeinfo,
+				     SELECT_NODEDATA_TRES_ALLOC_FMT_STR,
+				     NODE_STATE_ALLOCATED, &alloc_tres);
+
+	if (idle_cpus && (idle_cpus < node_ptr->cpus_efctv))
+		make_mixed = true;
+	if (alloc_tres && (idle_cpus == node_ptr->cpus_efctv))
+		make_mixed = true;
+	if (make_mixed) {
+		node_ptr->node_state &= NODE_STATE_FLAGS;
+		node_ptr->node_state |= NODE_STATE_MIXED;
+	}
+
+	xfree(alloc_tres);
+}
+
 static void _set_node_mixed(node_info_msg_t *resp)
 {
 	node_info_t *node_ptr = NULL;
@@ -504,14 +509,7 @@ static void _set_node_mixed(node_info_msg_t *resp)
 
 	for (i = 0, node_ptr = resp->node_array;
 	     i < resp->record_count; i++, node_ptr++) {
-		uint16_t used_cpus = 0;
-		select_g_select_nodeinfo_get(node_ptr->select_nodeinfo,
-					     SELECT_NODEDATA_SUBCNT,
-					     NODE_STATE_ALLOCATED, &used_cpus);
-		if (used_cpus && (used_cpus != node_ptr->cpus_efctv)) {
-			node_ptr->node_state &= NODE_STATE_FLAGS;
-			node_ptr->node_state |= NODE_STATE_MIXED;
-		}
+		_set_node_mixed_op(node_ptr);
 	}
 }
 
@@ -522,6 +520,9 @@ static int _load_cluster_nodes(slurm_msg_t *req_msg,
 {
 	slurm_msg_t resp_msg;
 	int rc;
+
+	if (select_g_init(0) != SLURM_SUCCESS)
+		fatal("failed to initialize node selection plugin");
 
 	slurm_msg_t_init(&resp_msg);
 
@@ -589,7 +590,7 @@ static void *_load_node_thread(void *args)
 	}
 	xfree(args);
 
-	return (void *) NULL;
+	return NULL;
 }
 
 static int _load_fed_nodes(slurm_msg_t *req_msg,
@@ -602,7 +603,7 @@ static int _load_fed_nodes(slurm_msg_t *req_msg,
 	node_info_msg_t *orig_msg = NULL, *new_msg = NULL;
 	uint32_t new_rec_cnt;
 	slurmdb_cluster_rec_t *cluster;
-	ListIterator iter;
+	list_itr_t *iter;
 	int pthread_count = 0;
 	pthread_t *load_thread = 0;
 	load_node_req_struct_t *load_args;
@@ -634,7 +635,7 @@ static int _load_fed_nodes(slurm_msg_t *req_msg,
 
 	/* Wait for all pthreads to complete */
 	for (i = 0; i < pthread_count; i++)
-		pthread_join(load_thread[i], NULL);
+		slurm_thread_join(load_thread[i]);
 	xfree(load_thread);
 
 	/* Maintain a consistent cluster/node ordering */
@@ -887,6 +888,46 @@ extern int slurm_get_node_energy(char *host, uint16_t context_id,
 			   resp_msg.data)->energy;
 		((acct_gather_node_resp_msg_t *) resp_msg.data)->energy = NULL;
 		slurm_free_acct_gather_node_resp_msg(resp_msg.data);
+		break;
+	case RESPONSE_SLURM_RC:
+		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+		slurm_free_return_code_msg(resp_msg.data);
+		if (rc)
+			slurm_seterrno_ret(rc);
+		break;
+	default:
+		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
+		break;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+extern int slurm_get_node_alias_addrs(char *node_list,
+				      slurm_node_alias_addrs_t **alias_addrs)
+{
+	int rc;
+	slurm_msg_t req_msg, resp_msg;
+	slurm_node_alias_addrs_t data = {.node_list = node_list};
+
+	xassert(node_list);
+	if (!node_list)
+		return SLURM_SUCCESS;
+
+	slurm_msg_t_init(&req_msg);
+	slurm_msg_t_init(&resp_msg);
+
+	req_msg.data = &data;
+	req_msg.msg_type = REQUEST_NODE_ALIAS_ADDRS;
+
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
+		return SLURM_ERROR;
+
+	switch (resp_msg.msg_type) {
+	case RESPONSE_NODE_ALIAS_ADDRS:
+		*alias_addrs = resp_msg.data;
+		resp_msg.data = NULL;
 		break;
 	case RESPONSE_SLURM_RC:
 		rc = ((return_code_msg_t *) resp_msg.data)->return_code;

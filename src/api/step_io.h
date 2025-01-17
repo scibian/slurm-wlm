@@ -39,7 +39,7 @@
 struct step_launch_state;
 
 
-struct client_io {
+typedef struct {
 	/* input parameters - set (indirectly) by user */
 	int num_tasks;
 	int num_nodes;
@@ -50,10 +50,12 @@ struct client_io {
 					 * NO_VAL */
 
 	char *io_key;
-	uint32_t io_key_len;
 
 	/* internal variables */
-	pthread_t ioid;		/* stdio thread id 		  */
+	bool io_running;		/* I/O thread running */
+	pthread_cond_t io_cond;         /* I/O thread state conditional */
+	pthread_mutex_t io_mutex;       /* I/O thread state mutex */
+
 	int num_listen;		/* Number of stdio listen sockets */
 	int *listensock;	/* Array of stdio listen sockets  */
 	uint16_t *listenport;	/* Array of stdio listen port numbers */
@@ -92,10 +94,7 @@ struct client_io {
 
 	struct step_launch_state *sls; /* Used to notify the main thread of an
 				       I/O problem.  */
-};
-
-typedef struct client_io client_io_t;
-
+} client_io_t;
 
 /*
  * IN cred - cred need not be a real job credential, it may be a "fake"
@@ -110,7 +109,7 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 				      bool label, uint32_t het_job_offset,
 				      uint32_t het_job_task_offset);
 
-int client_io_handler_start(client_io_t *cio);
+extern void client_io_handler_start(client_io_t *cio);
 
 /*
  * Tell the client IO handler that a set of remote nodes are now considered
@@ -147,7 +146,7 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
  */
 void client_io_handler_abort(client_io_t *cio);
 
-int client_io_handler_finish(client_io_t *cio);
+extern void client_io_handler_finish(client_io_t *cio);
 
 void client_io_handler_destroy(client_io_t *cio);
 

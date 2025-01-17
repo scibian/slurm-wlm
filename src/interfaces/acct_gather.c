@@ -2,8 +2,7 @@
  *  slurm_acct_gather.c - generic interface needed for some
  *                        acct_gather plugins.
  *****************************************************************************
- *  Copyright (C) 2013 SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -136,7 +135,7 @@ extern int acct_gather_conf_init(void)
 	} else {
 		debug2("Reading acct_gather.conf file %s", conf_path);
 
-		if (s_p_parse_file(tbl, NULL, conf_path, false, NULL, false) ==
+		if (s_p_parse_file(tbl, NULL, conf_path, 0, NULL) ==
 		    SLURM_ERROR) {
 			fatal("Could not open/read/parse acct_gather.conf file "
 			      "%s.  Many times this is because you have "
@@ -208,15 +207,6 @@ extern int acct_gather_read_conf(int fd)
 	return SLURM_SUCCESS;
 rwfail:
 	return SLURM_ERROR;
-}
-
-extern int acct_gather_reconfig(void)
-{
-	acct_gather_conf_destroy();
-	slurm_mutex_init(&conf_mutex);
-	acct_gather_conf_init();
-
-	return SLURM_SUCCESS;
 }
 
 extern int acct_gather_conf_destroy(void)

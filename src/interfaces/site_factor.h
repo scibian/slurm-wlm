@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  site_factor.h - site priority factor driver
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,18 +33,13 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SITE_FACTOR_H
-#define _SITE_FACTOR_H
+#ifndef _INTERFACES_SITE_FACTOR_H
+#define _INTERFACES_SITE_FACTOR_H
 
 #include "src/slurmctld/slurmctld.h"
 
 extern int site_factor_g_init(void);
 extern int site_factor_g_fini(void);
-
-/*
- * Reconfigure the plugin.
- */
-extern void site_factor_g_reconfig(void);
 
 /*
  * Set an initial value for site_factor.
@@ -57,4 +51,4 @@ extern void site_factor_g_set(job_record_t *job_ptr);
  */
 extern void site_factor_g_update(void);
 
-#endif /* !_SITE_FACTOR_H */
+#endif

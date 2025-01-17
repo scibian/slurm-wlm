@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  serializer plugin interface
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,8 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SERIALIZER_H
-#define _SERIALIZER_H
+#ifndef _INTERFACES_SERIALIZER_H
+#define _INTERFACES_SERIALIZER_H
 
 #include "src/common/data.h"
 
@@ -89,7 +88,11 @@ extern int serialize_g_string_to_data(data_t **dest, const char *src,
  * Check if there is a plugin loaded that can handle the requested mime type
  * RET ptr to best matching mime type or NULL if none can match
  */
-extern const char *resolve_mime_type(const char *mime_type);
+extern const char *resolve_mime_type(const char *mime_type,
+				     const char **plugin_ptr);
+
+/* Provide ptr to NULL terminated array of primary mime_type per plugin */
+extern const char **get_mime_type_array(void);
 
 /*
  * Load and initialize serializer plugins

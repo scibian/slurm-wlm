@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parsers.h - Slurm data parsing handlers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -39,7 +38,7 @@
 
 #include "api.h"
 #include "src/interfaces/data_parser.h"
-#include "src/interfaces/openapi.h"
+#include "src/slurmrestd/openapi.h"
 
 typedef data_parser_type_t type_t;
 typedef struct parser_s parser_t;
@@ -78,6 +77,7 @@ typedef enum {
 	PARSER_MODEL_ARRAY, /* parser array to parse every field in a struct */
 	PARSER_MODEL_ARRAY_LINKED_FIELD, /* link to parser in a parser array */
 	PARSER_MODEL_ARRAY_SKIP_FIELD, /* parser to mark field as not being parsed in a parser array */
+	PARSER_MODEL_ARRAY_REMOVED_FIELD, /* parser to mark field as placeholder for field already removed from struct */
 
 	PARSER_MODEL_SIMPLE, /* parser for single field */
 	PARSER_MODEL_COMPLEX, /* parser for uses multiple fields in struct */
@@ -138,7 +138,7 @@ typedef struct parser_s {
 	/*
 	 * Populates OpenAPI specification.
 	 * 	For parsers where the normal OpenAPI specification generation is
-	 * 	insufficent. This allows the parser to explicitly set the
+	 * 	insufficient. This allows the parser to explicitly set the
 	 * 	specification for the type. General goal is to not to need to
 	 * 	use this function but some output formats are just too different
 	 * 	the original data source.
@@ -154,7 +154,7 @@ typedef struct parser_s {
 /*
  * Called at startup to run any setup of parsers and testing
  */
-extern void parsers_init();
+extern void parsers_init(void);
 
 #ifndef NDEBUG
 extern void check_parser_funcname(const parser_t *const parser,

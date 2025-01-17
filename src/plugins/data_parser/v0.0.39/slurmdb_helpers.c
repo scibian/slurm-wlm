@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurmdb_helpers.c - data parsing slurmdb helpers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -204,14 +203,8 @@ extern int resolve_qos(parse_op_t op, const parser_t *const parser,
 		   DATA_TYPE_STRING) {
 		char *qos_name = data_get_string(src);
 
-		if (!qos_name || !qos_name[0]) {
-			rc = ESLURM_INVALID_QOS;
-			if (ignore_failure)
-				on_error(op, parser->type, args, rc,
-					 set_source_path(&path, parent_path),
-					 caller, "Unable to resolve QOS with empty name");
-			goto done;
-		}
+		if (!qos_name || !qos_name[0])
+			return SLURM_SUCCESS;
 
 		qos = list_find_first(args->qos_list,
 				      slurmdb_find_qos_in_list_by_name,
@@ -222,7 +215,7 @@ extern int resolve_qos(parse_op_t op, const parser_t *const parser,
 			on_error(op, parser->type, args, rc,
 				 set_source_path(&path, parent_path), caller,
 				 "QOS resolution failed with unexpected QOS name/id formated as data type:%s",
-				 data_type_to_string(data_get_type(src)));
+				 data_get_type_string(src));
 		goto done;
 	}
 
@@ -239,6 +232,18 @@ done:
 	return SLURM_SUCCESS;
 }
 
+static int _prereqs_placeholder(const parser_t *const parser, args_t *args)
+{
+	if (!args->tres_list && (parser->needs & NEED_TRES))
+		args->tres_list = list_create(NULL);
+	if (!args->assoc_list && (parser->needs & NEED_ASSOC))
+		args->assoc_list = list_create(NULL);
+	if (!args->qos_list && (parser->needs & NEED_QOS))
+		args->qos_list = list_create(NULL);
+
+	return SLURM_SUCCESS;
+}
+
 extern int load_prereqs_funcname(parse_op_t op, const parser_t *const parser,
 				 args_t *args, const char *func_name)
 {
@@ -247,6 +252,9 @@ extern int load_prereqs_funcname(parse_op_t op, const parser_t *const parser,
 	check_parser(parser);
 	xassert(args->magic == MAGIC_ARGS);
 	xassert((op == PARSING) || (op == DUMPING) || (op == QUERYING));
+
+	if (parser->needs && !slurm_conf.accounting_storage_type)
+		return _prereqs_placeholder(parser, args);
 
 	if (parser->needs && !args->db_conn) {
 		args->db_conn = slurmdb_connection_get(NULL);
@@ -273,7 +281,9 @@ extern int load_prereqs_funcname(parse_op_t op, const parser_t *const parser,
 	}
 
 	if ((parser->needs & NEED_QOS) && !args->qos_list) {
-		slurmdb_qos_cond_t cond = { 0 };
+		slurmdb_qos_cond_t cond = {
+			.with_deleted = 1,
+		};
 
 		if ((rc = _db_query_list(QUERYING, parser->type, args,
 					 &args->qos_list, slurmdb_qos_get,
@@ -290,7 +300,9 @@ extern int load_prereqs_funcname(parse_op_t op, const parser_t *const parser,
 	}
 
 	if ((parser->needs & NEED_ASSOC) && !args->assoc_list) {
-		slurmdb_assoc_cond_t cond = { 0 };
+		slurmdb_assoc_cond_t cond = {
+			.with_deleted = 1,
+		 };
 
 		if ((rc = _db_query_list(QUERYING, parser->type, args,
 					 &args->assoc_list,

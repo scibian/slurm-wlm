@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  parsing.h - Slurm data parsing handlers
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -38,7 +37,7 @@
 #define DATA_PARSER_PARSING
 
 #include "src/interfaces/data_parser.h"
-#include "src/interfaces/openapi.h"
+#include "src/slurmrestd/openapi.h"
 #include "api.h"
 #include "parsers.h"
 

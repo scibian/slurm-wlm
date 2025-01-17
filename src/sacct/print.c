@@ -39,6 +39,8 @@
 #include "sacct.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/parse_time.h"
+#include "src/common/print_fields.h"
+#include "src/common/uid.h"
 #include "slurm/slurm.h"
 
 print_field_t *field = NULL;
@@ -277,13 +279,43 @@ static void _print_expanded_array_job(slurmdb_job_rec_t *job)
 	FREE_NULL_BITMAP(bitmap);
 }
 
+static void _expand_stdio_patterns(slurmdb_job_rec_t *job)
+{
+	char *tmp_path;
+	job_std_pattern_t job_stp;
+	slurmdb_step_rec_t *step = job->first_step_ptr;
+
+	job_stp.array_task_id = job->array_task_id;
+	job_stp.first_step_name = step ? step->stepname : NULL;
+	job_stp.first_step_node = step ? step->nodes : NULL;
+	job_stp.jobid = job->jobid;
+	job_stp.jobname = job->jobname;
+	job_stp.user = job->user;
+	job_stp.work_dir = job->work_dir;
+
+	if (job->std_in && (*job->std_in != '\0')) {
+		tmp_path = expand_stdio_fields(job->std_in, &job_stp);
+		xfree(job->std_in);
+		job->std_in = tmp_path;
+	}
+	if (job->std_err && (*job->std_err != '\0')) {
+		tmp_path = expand_stdio_fields(job->std_err, &job_stp);
+		xfree(job->std_err);
+		job->std_err = tmp_path;
+	}
+	if (job->std_out && (*job->std_out != '\0')) {
+		tmp_path = expand_stdio_fields(job->std_out, &job_stp);
+		xfree(job->std_out);
+		job->std_out = tmp_path;
+	}
+}
+
 extern void print_fields(type_t type, void *object)
 {
 	slurmdb_job_rec_t *job = (slurmdb_job_rec_t *)object;
 	slurmdb_step_rec_t *step = (slurmdb_step_rec_t *)object;
 	jobcomp_job_rec_t *job_comp = (jobcomp_job_rec_t *)object;
 	struct passwd *pw = NULL;
-	struct	group *gr = NULL;
 	int cpu_tres_rec_count = 0;
 	int step_cpu_tres_rec_count = 0;
 	char tmp1[128];
@@ -301,6 +333,8 @@ extern void print_fields(type_t type, void *object)
 
 	switch (type) {
 	case JOB:
+		if (params.expand_patterns)
+			_expand_stdio_patterns(job);
 		job_comp = NULL;
 		cpu_tres_rec_count = slurmdb_find_tres_count_in_string(
 			job->tres_alloc_str,
@@ -907,23 +941,21 @@ extern void print_fields(type_t type, void *object)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_GROUP:
+			tmp_char = NULL;
 			switch(type) {
 			case JOB:
-				tmp_uint32 = job->gid;
+				tmp_char = gid_to_string(job->gid);
 				break;
 			case JOBCOMP:
-				tmp_uint32 = job_comp->gid;
+				tmp_char = gid_to_string(job_comp->gid);
 				break;
 			default:
 				break;
 			}
-			tmp_char = NULL;
-			if ((gr=getgrgid(tmp_uint32)))
-				tmp_char=gr->gr_name;
-
 			field->print_routine(field,
 					     tmp_char,
 					     (curr_inx == field_count));
+			xfree(tmp_char);
 			break;
 		case PRINT_JOBID:
 			if (type == JOBSTEP)
@@ -1561,7 +1593,7 @@ extern void print_fields(type_t type, void *object)
 		case PRINT_REASON:
 			switch(type) {
 			case JOB:
-				tmp_char = job_reason_string(
+				tmp_char = (char *) job_state_reason_string(
 					job->state_reason_prev);
 				break;
 			default:
@@ -1845,6 +1877,48 @@ extern void print_fields(type_t type, void *object)
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
+		case PRINT_STDERR:
+			switch(type) {
+			case JOB:
+				tmp_char = job->std_err;
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field, tmp_char,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_STDIN:
+			switch(type) {
+			case JOB:
+				tmp_char = job->std_in;
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field, tmp_char,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_STDOUT:
+			switch(type) {
+			case JOB:
+				tmp_char = job->std_out;
+				break;
+			case JOBSTEP:
+			case JOBCOMP:
+			default:
+				tmp_char = NULL;
+				break;
+			}
+			field->print_routine(field, tmp_char,
+					     (curr_inx == field_count));
+			break;
 		case PRINT_SUBMIT:
 			switch(type) {
 			case JOB:
@@ -2039,12 +2113,16 @@ extern void print_fields(type_t type, void *object)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_USER:
+		{
+			char *user = NULL;
 			switch(type) {
 			case JOB:
 				if (job->user)
 					tmp_char = job->user;
-				else if ((pw=getpwuid(job->uid)))
-						tmp_char = pw->pw_name;
+				else {
+					user = uid_to_string(job->uid);
+					tmp_char = user;
+				}
 				break;
 			case JOBCOMP:
 				tmp_char = job_comp->uid_name;
@@ -2056,7 +2134,9 @@ extern void print_fields(type_t type, void *object)
 			field->print_routine(field,
 					     tmp_char,
 					     (curr_inx == field_count));
+			xfree(user);
 			break;
+		}
 		case PRINT_USERCPU:
 			switch(type) {
 			case JOB:

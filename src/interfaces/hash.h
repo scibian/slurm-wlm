@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  hash.h - hash plugin driver
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Dominik Bartkiewicz <bart@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,12 +33,19 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _COMMON_HASH_H_
-#define _COMMON_HASH_H_
+#ifndef _INTERFACES_HASH_H
+#define _INTERFACES_HASH_H
 
 #include "slurm/slurm.h"
 
 extern int hash_g_init(void);
+
+/*
+ * Terminate the hash plugin, free memory.
+ *
+ * RET - slurm error code
+ */
+extern int hash_g_fini(void);
 
 extern int hash_g_compute(char *input, int len, char *custom_str, int cs_len,
 			  slurm_hash_t *hash);

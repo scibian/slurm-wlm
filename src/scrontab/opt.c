@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  opt.c
  *****************************************************************************
- *  Copyright (C) 2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -169,17 +168,16 @@ extern void fill_job_desc_from_opts(job_desc_msg_t *desc)
 	if (opt.wait4switch >= 0)
 		desc->wait4switch = opt.wait4switch;
 
-	desc->power_flags = opt.power;
 	if (opt.job_flags)
 		desc->bitflags = opt.job_flags;
 	desc->mcs_label = xstrdup(opt.mcs_label);
 
 	if (opt.cpus_per_gpu)
-		xstrfmtcat(desc->cpus_per_tres, "gres:gpu:%d", opt.cpus_per_gpu);
+		xstrfmtcat(desc->cpus_per_tres, "gres/gpu:%d", opt.cpus_per_gpu);
 	desc->tres_bind = xstrdup(opt.tres_bind);
 	desc->tres_freq = xstrdup(opt.tres_freq);
-	xfmt_tres(&desc->tres_per_job, "gres:gpu", opt.gpus);
-	xfmt_tres(&desc->tres_per_node, "gres:gpu", opt.gpus_per_node);
+	xfmt_tres(&desc->tres_per_job, "gres/gpu", opt.gpus);
+	xfmt_tres(&desc->tres_per_node, "gres/gpu", opt.gpus_per_node);
 	/* --gres=none for jobs means no GRES, so don't send it to slurmctld */
 	if (opt.gres && xstrcasecmp(opt.gres, "NONE")) {
 		if (desc->tres_per_node)
@@ -187,8 +185,8 @@ extern void fill_job_desc_from_opts(job_desc_msg_t *desc)
 		else
 			desc->tres_per_node = xstrdup(opt.gres);
 	}
-	xfmt_tres(&desc->tres_per_socket, "gres:gpu", opt.gpus_per_socket);
-	xfmt_tres(&desc->tres_per_task, "gres:gpu", opt.gpus_per_task);
+	xfmt_tres(&desc->tres_per_socket, "gres/gpu", opt.gpus_per_socket);
+	desc->tres_per_task = xstrdup(opt.tres_per_task);
 	if (opt.mem_per_gpu != NO_VAL64)
-		xstrfmtcat(desc->mem_per_tres, "gres:gpu:%"PRIu64, opt.mem_per_gpu);
+		xstrfmtcat(desc->mem_per_tres, "gres/gpu:%"PRIu64, opt.mem_per_gpu);
 }

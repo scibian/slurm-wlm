@@ -2,8 +2,7 @@
  *  node_features.c - Infrastructure for changing a node's features on user
  *	demand
  *****************************************************************************
- *  Copyright (C) 2015 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -60,7 +59,7 @@ typedef struct node_features_ops {
 	bitstr_t * (*get_node_bitmap) (void);
 	int     (*overlap)      (bitstr_t *active_bitmap);
 	bool	(*node_power)	(void);
-	int	(*node_set)	(char *active_features);
+	int	(*node_set)	(char *active_features, bool *need_reboot);
 	void	(*node_state)	(char **avail_modes, char **current_mode);
 	int	(*node_update)	(char *active_features, bitstr_t *node_bitmap);
 	bool	(*node_update_valid) (void *node_ptr,
@@ -69,7 +68,6 @@ typedef struct node_features_ops {
 				 char *avail_features, int node_inx);
 	char *	(*node_xlate2)	(char *new_features);
 	void	(*step_config)	(bool mem_sort, bitstr_t *numa_bitmap);
-	int	(*reconfig)	(void);
 	bool	(*user_update)	(uid_t uid);
 	void	(*get_config)	(config_plugin_params_t *p);
 } node_features_ops_t;
@@ -94,7 +92,6 @@ static const char *syms[] = {
 	"node_features_p_node_xlate",
 	"node_features_p_node_xlate2",
 	"node_features_p_step_config",
-	"node_features_p_reconfig",
 	"node_features_p_user_update",
 	"node_features_p_get_config"
 };
@@ -211,23 +208,6 @@ extern void node_features_g_step_config(bool mem_sort, bitstr_t *numa_bitmap)
 		(*(ops[i].step_config))(mem_sort, numa_bitmap);
 	slurm_mutex_unlock(&g_context_lock);
 	END_TIMER2(__func__);
-}
-
-/* Reset plugin configuration information */
-extern int node_features_g_reconfig(void)
-{
-	DEF_TIMERS;
-	int i, rc = SLURM_SUCCESS;
-
-	START_TIMER;
-	xassert(g_context_cnt >= 0);
-	slurm_mutex_lock(&g_context_lock);
-	for (i = 0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)
-		rc = (*(ops[i].reconfig))();
-	slurm_mutex_unlock(&g_context_lock);
-	END_TIMER2(__func__);
-
-	return rc;
 }
 
 /* Return TRUE if this (one) feature name is under this plugin's control */
@@ -382,7 +362,7 @@ extern bool node_features_g_node_power(void)
  * NOTE: Executed by the slurmd daemon.
  * IN active_features - New active features
  * RET error code */
-extern int node_features_g_node_set(char *active_features)
+extern int node_features_g_node_set(char *active_features, bool *need_reboot)
 {
 	DEF_TIMERS;
 	int i, rc = SLURM_SUCCESS;
@@ -391,7 +371,7 @@ extern int node_features_g_node_set(char *active_features)
 	xassert(g_context_cnt >= 0);
 	slurm_mutex_lock(&g_context_lock);
 	for (i = 0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++) {
-		rc = (*(ops[i].node_set))(active_features);
+		rc = (*(ops[i].node_set))(active_features, need_reboot);
 	}
 	slurm_mutex_unlock(&g_context_lock);
 	END_TIMER2(__func__);

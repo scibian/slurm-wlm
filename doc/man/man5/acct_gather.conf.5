@@ -1,4 +1,4 @@
-.TH "acct_gather.conf" "5" "Slurm Configuration File" "April 2022" "Slurm Configuration File"
+.TH "acct_gather.conf" "5" "Slurm Configuration File" "December 2023" "Slurm Configuration File"
 
 .SH "NAME"
 \fBacct_gather.conf\fR \- Slurm configuration file for the acct_gather plugins
@@ -36,8 +36,21 @@ specified in the \fBslurm.conf\fR under the following configuration entries:
 
 .LP
 If the respective plugin for an option is not loaded then that option will
-appear to be unknown by Slurm and silently ignored. If you decide to change
-plugin types you may also have to change the related options.
+be unknown to Slurm, causing the daemon to fatal on initialization.
+If you decide to change plugin types in \fBslurm.conf\fR, also make sure to
+change the related options in \fBacct_gather.conf\fR.
+
+.SH acct_gather_energy/gpu
+Required entry in slurm.conf:
+.RS
+.nf
+AcctGatherEnergyType=acct_gather_energy/gpu
+.fi
+.RE
+This plugin doesn't read any options from \fBacct_gather.conf\fR.
+.br
+Dataset provided by the plugin is: Energy.
+.IP
 
 .SH acct_gather_energy/IPMI
 Required entry in slurm.conf:
@@ -118,6 +131,14 @@ Specify BMC Password.
 .RE
 Datasets provided by the plugin have name: <IPMI_SENSOR_LABEL>Power.
 .IP
+
+.SS
+NOTES:
+.LP
+This plugin requires the freeipmi development files to be installed and linkable
+at configure time. The plugin will not build otherwise. When building the RPM,
+\fIrpmbuild ... --with freeipmi\fR can be specified to explicitly check for
+these dependencies.
 
 .SH acct_gather_energy/rapl
 Required entry in slurm.conf:
@@ -429,7 +450,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"

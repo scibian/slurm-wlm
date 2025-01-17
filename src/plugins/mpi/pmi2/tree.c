@@ -48,8 +48,8 @@
 #include <unistd.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/slurm_protocol_interface.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/xmalloc.h"
 
 #include "kvs.h"
@@ -152,7 +152,7 @@ static int _handle_kvs_fence(int fd, buf_t *buf)
 			/* cancel the step to avoid tasks hang */
 			slurm_kill_job_step(job_info.step_id.job_id,
 					    job_info.step_id.step_id,
-					    SIGKILL);
+					    SIGKILL, 0);
 		} else {
 			if (in_stepd())
 				waiting_kvs_resp = 1;
@@ -213,7 +213,7 @@ resp:
 	send_kvs_fence_resp_to_clients(rc, errmsg);
 	if (rc != SLURM_SUCCESS) {
 		slurm_kill_job_step(job_info.step_id.job_id,
-				    job_info.step_id.step_id, SIGKILL);
+				    job_info.step_id.step_id, SIGKILL, 0);
 	}
 	return rc;
 

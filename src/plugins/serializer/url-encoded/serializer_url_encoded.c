@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  serializer_url_encoded.c - Serializer for url-encoded.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -96,8 +95,30 @@ extern int serialize_p_data_to_string(char **dest, size_t *length,
 	return ESLURM_NOT_SUPPORTED;
 }
 
-static int _handle_new_key_char(data_t *d, char **key, char **buffer,
-				bool convert_types)
+static data_t *_on_key(data_t *dst, const char *key)
+{
+	data_t *c = data_key_get(dst, key);
+
+	if (!c)
+		return data_key_set(dst, key);
+
+	if (data_get_type(c) != DATA_TYPE_LIST) {
+		/*
+		 * Multiple values for the same key requires conversion to a
+		 * list of each value. Extract out the prior value and convert
+		 * to a list with the prior value as the first entry.
+		 */
+		data_t *k = data_new();
+		data_move(k, c);
+		data_set_list(c);
+		data_move(data_list_append(c), k);
+		FREE_NULL_DATA(k);
+	}
+
+	return data_list_append(c);
+}
+
+static int _handle_new_key_char(data_t *d, char **key, char **buffer)
 {
 	if (*key == NULL && *buffer == NULL) {
 		/* example: &test=value */
@@ -114,22 +135,19 @@ static int _handle_new_key_char(data_t *d, char **key, char **buffer,
 		 * RFC3986 provides an example of "key=value" but leaves
 		 * the flag values ambiguous.
 		 */
-		data_t *c = data_key_set(d, *buffer);
+		data_t *c = _on_key(d, *buffer);
 		data_set_bool(c, true);
 		xfree(*buffer);
 		*buffer = NULL;
 	} else if (*key != NULL && *buffer == NULL) {
 		/* example: &test1=&=value */
-		data_t *c = data_key_set(d, *key);
+		data_t *c = _on_key(d, *key);
 		data_set_null(c);
 		xfree(*key);
 		*key = NULL;
 	} else if (*key != NULL && *buffer != NULL) {
-		data_t *c = data_key_set(d, *key);
+		data_t *c = _on_key(d, *key);
 		data_set_string(c, *buffer);
-
-		if (convert_types)
-			(void) data_convert_type(c, DATA_TYPE_NONE);
 
 		xfree(*key);
 		xfree(*buffer);
@@ -234,7 +252,7 @@ extern int serialize_p_string_to_data(data_t **dest, const char *src,
 			break;
 		case ';': /* rfc1866 requests ';' treated like '&' */
 		case '&': /* rfc1866 only */
-			rc = _handle_new_key_char(d, &key, &buffer, true);
+			rc = _handle_new_key_char(d, &key, &buffer);
 			break;
 		case '=': /* rfc1866 only */
 			if (key == NULL && buffer == NULL) {
@@ -265,10 +283,10 @@ extern int serialize_p_string_to_data(data_t **dest, const char *src,
 
 	/* account for last entry */
 	if (!rc)
-		rc = _handle_new_key_char(d, &key, &buffer, true);
+		rc = _handle_new_key_char(d, &key, &buffer);
 	if (!rc && buffer)
 		/* account for last entry not having a value */
-		rc = _handle_new_key_char(d, &key, &buffer, true);
+		rc = _handle_new_key_char(d, &key, &buffer);
 
 	xassert(rc || !buffer);
 	xassert(rc || !key);

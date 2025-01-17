@@ -2,7 +2,7 @@
  *  gres_shard.c - Support SHARD as a generic resources.
  *  Sharding is a mechanism to share GPUs generically.
  *****************************************************************************
- *  Copyright (C) 2021-2022 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Written by Danny Auble
  *
  *  This file is part of Slurm, a resource management program.
@@ -206,15 +206,15 @@ extern void gres_p_step_set_env(char ***step_env_ptr,
  */
 extern void gres_p_task_set_env(char ***task_env_ptr,
 				bitstr_t *gres_bit_alloc,
+				uint64_t gres_cnt,
 				bitstr_t *usable_gres,
-				uint64_t gres_per_node,
 				gres_internal_flags_t flags)
 {
 	common_gres_env_t gres_env = {
 		.bit_alloc = gres_bit_alloc,
 		.env_ptr = task_env_ptr,
 		.flags = flags,
-		.gres_cnt = gres_per_node,
+		.gres_cnt = gres_cnt,
 		.gres_conf_flags = node_flags,
 		.gres_devices = gres_devices,
 		.is_task = true,

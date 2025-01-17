@@ -5,7 +5,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -56,6 +56,7 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/pack.h"
+#include "src/common/part_record.h"
 #include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurm_resource_info.h"
 #include "src/common/uid.h"
@@ -145,18 +146,43 @@ static int _calc_part_tres(void *x, void *arg)
 		assoc_mgr_make_tres_str_from_array(part_ptr->tres_cnt,
 						   TRES_STR_CONVERT_UNITS,
 						   true);
+	if (part_ptr->qos_ptr) {
+		part_ptr->qos_ptr->flags |= QOS_FLAG_PART_QOS;
+		assoc_mgr_set_qos_tres_relative_cnt(part_ptr->qos_ptr,
+						    part_ptr->tres_cnt);
+	}
+
 	return 0;
 }
 
 /*
  * Calculate and populate the number of tres' for all partitions.
  */
-extern void set_partition_tres()
+extern void set_partition_tres(bool assoc_mgr_locked)
 {
+	assoc_mgr_lock_t locks = {
+		.qos = WRITE_LOCK,
+		.tres = READ_LOCK,
+	};
+
 	xassert(verify_lock(PART_LOCK, WRITE_LOCK));
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
 
+	if (!assoc_mgr_locked)
+		assoc_mgr_lock(&locks);
+	else {
+		xassert(verify_assoc_lock(QOS_LOCK, WRITE_LOCK));
+		xassert(verify_assoc_lock(TRES_LOCK, READ_LOCK));
+	}
+
+	assoc_mgr_clear_qos_tres_relative_cnt(true);
+
 	list_for_each(part_list, _calc_part_tres, NULL);
+
+	assoc_mgr_set_unset_qos_tres_relative_cnt(true);
+
+	if (!assoc_mgr_locked)
+		assoc_mgr_unlock(&locks);
 }
 
 /*
@@ -175,7 +201,7 @@ extern int build_part_bitmap(part_record_t *part_ptr)
 	char *this_node_name;
 	bitstr_t *old_bitmap;
 	node_record_t *node_ptr;
-	hostlist_t host_list, missing_hostlist = NULL;
+	hostlist_t *host_list, *missing_hostlist = NULL;
 	int i;
 
 	part_ptr->total_cpus = 0;
@@ -260,7 +286,7 @@ extern int build_part_bitmap(part_record_t *part_ptr)
 		 * Remove missing node from partition nodes so we don't keep
 		 * trying to remove them.
 		 */
-		hostlist_t hl;
+		hostlist_t *hl;
 		char *missing_nodes;
 
 		hl = hostlist_create(part_ptr->orig_nodes);
@@ -311,52 +337,16 @@ static void _unlink_free_nodes(bitstr_t *old_bitmap, part_record_t *part_ptr)
 }
 
 /*
- * Sync with _init_conf_part().
- *
- * _init_conf_part() initializes default values from slurm.conf parameters.
- * After parsing slurm.conf, _build_single_partitionline_info() copies
- * slurm_conf_partition_t to part_record_t. Default values between
- * slurm_conf_partition_t and part_record_t should stay in sync in case a
- * part_record_t is created outside of slurm.conf parsing.
- */
-static void _init_part_record(part_record_t *part_ptr)
-{
-	part_ptr->magic = PART_MAGIC;
-	if (slurm_conf.conf_flags & CTL_CONF_DRJ)
-		part_ptr->flags |= PART_FLAG_NO_ROOT;
-	part_ptr->max_nodes_orig = INFINITE;
-	part_ptr->min_nodes = 1;
-	part_ptr->min_nodes_orig = 1;
-
-	/* sync with slurm_conf_partition_t */
-	part_ptr->default_time = NO_VAL;
-	part_ptr->max_cpus_per_node = INFINITE;
-	part_ptr->max_cpus_per_socket = INFINITE;
-	part_ptr->max_nodes = INFINITE;
-	part_ptr->max_share = 1;
-	part_ptr->max_time = INFINITE;
-	part_ptr->over_time_limit = NO_VAL16;
-	part_ptr->preempt_mode = NO_VAL16;
-	part_ptr->priority_job_factor = 1;
-	part_ptr->priority_tier = 1;
-	part_ptr->resume_timeout = NO_VAL16;
-	part_ptr->state_up = PARTITION_UP;
-	part_ptr->suspend_time = NO_VAL;
-	part_ptr->suspend_timeout = NO_VAL16;
-}
-
-/*
- * create_part_record - create a partition record
+ * create_ctld_part_record - create a partition record
  * RET a pointer to the record or NULL if error
  * global: part_list - global partition list
  */
-part_record_t *create_part_record(const char *name)
+part_record_t *create_ctld_part_record(const char *name)
 {
-	part_record_t *part_ptr = xmalloc(sizeof(*part_ptr));
+	part_record_t *part_ptr = part_record_create();
 
 	last_part_update = time(NULL);
 
-	_init_part_record(part_ptr);
 	part_ptr->name = xstrdup(name);
 
 	list_append(part_list, part_ptr);
@@ -467,36 +457,7 @@ static int _dump_part_state(void *x, void *arg)
 	else
 		part_ptr->flags &= (~PART_FLAG_DEFAULT);
 
-	pack32(part_ptr->cpu_bind,	 buffer);
-	packstr(part_ptr->name,          buffer);
-	pack32(part_ptr->grace_time,	 buffer);
-	pack32(part_ptr->max_time,       buffer);
-	pack32(part_ptr->default_time,   buffer);
-	pack32(part_ptr->max_cpus_per_node, buffer);
-	pack32(part_ptr->max_cpus_per_socket, buffer);
-	pack32(part_ptr->max_nodes_orig, buffer);
-	pack32(part_ptr->min_nodes_orig, buffer);
-
-	pack16(part_ptr->flags,          buffer);
-	pack16(part_ptr->max_share,      buffer);
-	pack16(part_ptr->over_time_limit,buffer);
-	pack16(part_ptr->preempt_mode,   buffer);
-	pack16(part_ptr->priority_job_factor, buffer);
-	pack16(part_ptr->priority_tier,  buffer);
-
-	pack16(part_ptr->state_up,       buffer);
-	pack16(part_ptr->cr_type,        buffer);
-
-	packstr(part_ptr->allow_accounts, buffer);
-	packstr(part_ptr->allow_groups,  buffer);
-	packstr(part_ptr->allow_qos,     buffer);
-	packstr(part_ptr->qos_char,      buffer);
-	packstr(part_ptr->allow_alloc_nodes, buffer);
-	packstr(part_ptr->alternate,     buffer);
-	packstr(part_ptr->deny_accounts, buffer);
-	packstr(part_ptr->deny_qos,      buffer);
-	/* Save orig_nodes as nodes will be built from orig_nodes */
-	packstr(part_ptr->orig_nodes, buffer);
+	part_record_pack(part_ptr, buffer, SLURM_PROTOCOL_VERSION);
 
 	return 0;
 }
@@ -531,29 +492,23 @@ static buf_t *_open_part_state_file(char **state_file)
  *
  * Note: reads dump from _dump_part_state().
  */
-int load_all_part_state(void)
+extern int load_all_part_state(uint16_t reconfig_flags)
 {
-	char *part_name = NULL, *nodes = NULL;
-	char *allow_accounts = NULL, *allow_groups = NULL, *allow_qos = NULL;
-	char *deny_accounts = NULL, *deny_qos = NULL, *qos_char = NULL;
 	char *state_file = NULL;
-	uint32_t max_time, default_time, max_nodes, min_nodes;
-	uint32_t max_cpus_per_node = INFINITE, cpu_bind = 0, grace_time = 0;
-	uint32_t max_cpus_per_socket = INFINITE;
 	time_t time;
-	uint16_t flags, priority_job_factor, priority_tier;
-	uint16_t max_share, over_time_limit = NO_VAL16, preempt_mode;
-	uint16_t state_up, cr_type;
 	part_record_t *part_ptr;
-	uint32_t name_len;
 	int error_code = 0, part_cnt = 0;
 	buf_t *buffer;
 	char *ver_str = NULL;
-	char* allow_alloc_nodes = NULL;
 	uint16_t protocol_version = NO_VAL16;
-	char* alternate = NULL;
 
 	xassert(verify_lock(CONF_LOCK, READ_LOCK));
+
+	if (!(reconfig_flags & RECONFIG_KEEP_PART_INFO) &&
+	    !(reconfig_flags & RECONFIG_KEEP_PART_STAT)) {
+		debug("Restoring partition state from state file disabled");
+		return SLURM_SUCCESS;
+	}
 
 	/* read the file */
 	lock_state_files();
@@ -568,7 +523,7 @@ int load_all_part_state(void)
 	xfree(state_file);
 	unlock_state_files();
 
-	safe_unpackstr_xmalloc(&ver_str, &name_len, buffer);
+	safe_unpackstr(&ver_str, buffer);
 	debug3("Version string in part_state header is %s", ver_str);
 	if (ver_str && !xstrcmp(ver_str, PART_STATE_VERSION))
 		safe_unpack16(&protocol_version, buffer);
@@ -587,185 +542,111 @@ int load_all_part_state(void)
 	safe_unpack_time(&time, buffer);
 
 	while (remaining_buf(buffer) > 0) {
-		if (protocol_version >= SLURM_23_02_PROTOCOL_VERSION) {
-			safe_unpack32(&cpu_bind, buffer);
-			safe_unpackstr_xmalloc(&part_name, &name_len, buffer);
-			safe_unpack32(&grace_time, buffer);
-			safe_unpack32(&max_time, buffer);
-			safe_unpack32(&default_time, buffer);
-			safe_unpack32(&max_cpus_per_node, buffer);
-			safe_unpack32(&max_cpus_per_socket, buffer);
-			safe_unpack32(&max_nodes, buffer);
-			safe_unpack32(&min_nodes, buffer);
+		part_record_t *part_rec_state = NULL;
 
-			safe_unpack16(&flags,        buffer);
-			safe_unpack16(&max_share,    buffer);
-			safe_unpack16(&over_time_limit, buffer);
-			safe_unpack16(&preempt_mode, buffer);
-
-			safe_unpack16(&priority_job_factor, buffer);
-			safe_unpack16(&priority_tier, buffer);
-			if (priority_job_factor > part_max_priority)
-				part_max_priority = priority_job_factor;
-
-			safe_unpack16(&state_up, buffer);
-			safe_unpack16(&cr_type, buffer);
-
-			safe_unpackstr_xmalloc(&allow_accounts,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_groups,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_qos,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&qos_char,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_alloc_nodes, &name_len,
-					       buffer);
-			safe_unpackstr_xmalloc(&alternate, &name_len, buffer);
-			safe_unpackstr_xmalloc(&deny_accounts,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&deny_qos,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&nodes, &name_len, buffer);
-			if ((flags & PART_FLAG_DEFAULT_CLR)   ||
-			    (flags & PART_FLAG_EXC_USER_CLR)  ||
-			    (flags & PART_FLAG_HIDDEN_CLR)    ||
-			    (flags & PART_FLAG_NO_ROOT_CLR)   ||
-			    (flags & PART_FLAG_PDOI_CLR)      ||
-			    (flags & PART_FLAG_ROOT_ONLY_CLR) ||
-			    (flags & PART_FLAG_REQ_RESV_CLR)  ||
-			    (flags & PART_FLAG_LLN_CLR)) {
-				error("Invalid data for partition %s: flags=%u",
-				      part_name, flags);
-				error_code = EINVAL;
-			}
-		} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-			safe_unpack32(&cpu_bind, buffer);
-			safe_unpackstr_xmalloc(&part_name, &name_len, buffer);
-			safe_unpack32(&grace_time, buffer);
-			safe_unpack32(&max_time, buffer);
-			safe_unpack32(&default_time, buffer);
-			safe_unpack32(&max_cpus_per_node, buffer);
-			safe_unpack32(&max_nodes, buffer);
-			safe_unpack32(&min_nodes, buffer);
-
-			safe_unpack16(&flags,        buffer);
-			safe_unpack16(&max_share,    buffer);
-			safe_unpack16(&over_time_limit, buffer);
-			safe_unpack16(&preempt_mode, buffer);
-
-			safe_unpack16(&priority_job_factor, buffer);
-			safe_unpack16(&priority_tier, buffer);
-			if (priority_job_factor > part_max_priority)
-				part_max_priority = priority_job_factor;
-
-			safe_unpack16(&state_up, buffer);
-			safe_unpack16(&cr_type, buffer);
-
-			safe_unpackstr_xmalloc(&allow_accounts,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_groups,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_qos,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&qos_char,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&allow_alloc_nodes, &name_len,
-					       buffer);
-			safe_unpackstr_xmalloc(&alternate, &name_len, buffer);
-			safe_unpackstr_xmalloc(&deny_accounts,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&deny_qos,
-					       &name_len, buffer);
-			safe_unpackstr_xmalloc(&nodes, &name_len, buffer);
-			if ((flags & PART_FLAG_DEFAULT_CLR)   ||
-			    (flags & PART_FLAG_EXC_USER_CLR)  ||
-			    (flags & PART_FLAG_HIDDEN_CLR)    ||
-			    (flags & PART_FLAG_NO_ROOT_CLR)   ||
-			    (flags & PART_FLAG_ROOT_ONLY_CLR) ||
-			    (flags & PART_FLAG_REQ_RESV_CLR)  ||
-			    (flags & PART_FLAG_LLN_CLR)) {
-				error("Invalid data for partition %s: flags=%u",
-				      part_name, flags);
-				error_code = EINVAL;
-			}
-		} else {
-			error("%s: protocol_version %hu not supported",
-			      __func__, protocol_version);
+		if ((error_code = part_record_unpack(&part_rec_state, buffer,
+						     protocol_version)))
 			goto unpack_error;
+
+		if ((part_rec_state->flags & PART_FLAG_DEFAULT_CLR)   ||
+		    (part_rec_state->flags & PART_FLAG_EXC_USER_CLR)  ||
+		    (part_rec_state->flags & PART_FLAG_EXC_TOPO_CLR)  ||
+		    (part_rec_state->flags & PART_FLAG_HIDDEN_CLR)    ||
+		    (part_rec_state->flags & PART_FLAG_NO_ROOT_CLR)   ||
+		    (part_rec_state->flags & PART_FLAG_PDOI_CLR)      ||
+		    (part_rec_state->flags & PART_FLAG_ROOT_ONLY_CLR) ||
+		    (part_rec_state->flags & PART_FLAG_REQ_RESV_CLR)  ||
+		    (part_rec_state->flags & PART_FLAG_LLN_CLR)) {
+			error("Invalid data for partition %s: flags=%u",
+			      part_rec_state->name, part_rec_state->flags);
+			error_code = EINVAL;
 		}
 		/* validity test as possible */
-		if (state_up > PARTITION_UP) {
+		if (part_rec_state->state_up > PARTITION_UP) {
 			error("Invalid data for partition %s: state_up=%u",
-			      part_name, state_up);
+			      part_rec_state->name, part_rec_state->state_up);
 			error_code = EINVAL;
 		}
 		if (error_code) {
 			error("No more partition data will be processed from "
 			      "the checkpoint file");
-			xfree(allow_accounts);
-			xfree(allow_groups);
-			xfree(allow_qos);
-			xfree(qos_char);
-			xfree(allow_alloc_nodes);
-			xfree(alternate);
-			xfree(deny_accounts);
-			xfree(deny_qos);
-			xfree(part_name);
-			xfree(nodes);
+			part_record_delete(part_rec_state);
 			error_code = EINVAL;
 			break;
 		}
 
 		/* find record and perform update */
 		part_ptr = list_find_first(part_list, &list_find_part,
-					   part_name);
-		part_cnt++;
-		if (part_ptr == NULL) {
-			info("%s: partition %s missing from configuration file",
-			     __func__, part_name);
-			part_ptr = create_part_record(part_name);
+					   part_rec_state->name);
+		if (!part_ptr && (reconfig_flags & RECONFIG_KEEP_PART_INFO)) {
+			info("%s: partition %s missing from configuration file, creating",
+			     __func__, part_rec_state->name);
+			part_ptr = create_ctld_part_record(part_rec_state->name);
+		} else if (!part_ptr) {
+			info("%s: partition %s removed from configuration file, skipping",
+			     __func__, part_rec_state->name);
 		}
 
-		part_ptr->cpu_bind       = cpu_bind;
-		part_ptr->flags          = flags;
+		/* Handle RECONFIG_KEEP_PART_STAT */
+		if (part_ptr) {
+			part_cnt++;
+			part_ptr->state_up = part_rec_state->state_up;
+		}
+
+		if (!(reconfig_flags & RECONFIG_KEEP_PART_INFO)) {
+			part_record_delete(part_rec_state);
+			continue;
+		}
+
+		part_ptr->cpu_bind = part_rec_state->cpu_bind;
+		part_ptr->flags = part_rec_state->flags;
 		if (part_ptr->flags & PART_FLAG_DEFAULT) {
 			xfree(default_part_name);
-			default_part_name = xstrdup(part_name);
+			default_part_name = xstrdup(part_rec_state->name);
 			default_part_loc = part_ptr;
 		}
-		part_ptr->max_time       = max_time;
-		part_ptr->default_time   = default_time;
-		part_ptr->max_cpus_per_node = max_cpus_per_node;
-		part_ptr->max_cpus_per_socket = max_cpus_per_socket;
-		part_ptr->max_nodes      = max_nodes;
-		part_ptr->max_nodes_orig = max_nodes;
-		part_ptr->min_nodes      = min_nodes;
-		part_ptr->min_nodes_orig = min_nodes;
-		part_ptr->max_share      = max_share;
-		part_ptr->grace_time     = grace_time;
-		part_ptr->over_time_limit = over_time_limit;
-		if (preempt_mode != NO_VAL16)
-			part_ptr->preempt_mode   = preempt_mode;
-		part_ptr->priority_job_factor = priority_job_factor;
-		part_ptr->priority_tier  = priority_tier;
-		part_ptr->state_up       = state_up;
-		part_ptr->cr_type	 = cr_type;
+		part_ptr->max_time = part_rec_state->max_time;
+		part_ptr->default_time = part_rec_state->default_time;
+		part_ptr->max_cpus_per_node = part_rec_state->max_cpus_per_node;
+		part_ptr->max_cpus_per_socket =
+			part_rec_state->max_cpus_per_socket;
+		part_ptr->max_nodes = part_rec_state->max_nodes;
+		part_ptr->max_nodes_orig = part_rec_state->max_nodes;
+		part_ptr->min_nodes = part_rec_state->min_nodes;
+		part_ptr->min_nodes_orig = part_rec_state->min_nodes;
+		part_ptr->max_share = part_rec_state->max_share;
+		part_ptr->grace_time = part_rec_state->grace_time;
+		part_ptr->over_time_limit = part_rec_state->over_time_limit;
+		if (part_rec_state->preempt_mode != NO_VAL16)
+			part_ptr->preempt_mode = part_rec_state->preempt_mode;
+		part_ptr->priority_job_factor =
+			part_rec_state->priority_job_factor;
+		part_ptr->priority_tier = part_rec_state->priority_tier;
+		part_ptr->cr_type = part_rec_state->cr_type;
+
 		xfree(part_ptr->allow_accounts);
-		part_ptr->allow_accounts = allow_accounts;
-		xfree(part_ptr->allow_groups);
+		part_ptr->allow_accounts = part_rec_state->allow_accounts;
+		part_rec_state->allow_accounts = NULL;
+
 		FREE_NULL_LIST(part_ptr->allow_accts_list);
 		part_ptr->allow_accts_list =
 			accounts_list_build(part_ptr->allow_accounts, false);
-		part_ptr->allow_groups   = allow_groups;
-		xfree(part_ptr->allow_qos);
-		part_ptr->allow_qos      = allow_qos;
-		qos_list_build(part_ptr->allow_qos,&part_ptr->allow_qos_bitstr);
 
-		if (qos_char) {
+		xfree(part_ptr->allow_groups);
+		part_ptr->allow_groups   = part_rec_state->allow_groups;
+		part_rec_state->allow_groups = NULL;
+
+		xfree(part_ptr->allow_qos);
+		part_ptr->allow_qos = part_rec_state->allow_qos;
+		part_rec_state->allow_qos = NULL;
+		qos_list_build(part_ptr->allow_qos,
+			       &part_ptr->allow_qos_bitstr);
+
+		if (part_rec_state->qos_char) {
 			slurmdb_qos_rec_t qos_rec;
 			xfree(part_ptr->qos_char);
-			part_ptr->qos_char = qos_char;
+			part_ptr->qos_char = part_rec_state->qos_char;
+			part_rec_state->qos_char = NULL;
 
 			memset(&qos_rec, 0, sizeof(slurmdb_qos_rec_t));
 			qos_rec.name = part_ptr->qos_char;
@@ -781,16 +662,23 @@ int load_all_part_state(void)
 		}
 
 		xfree(part_ptr->allow_alloc_nodes);
-		part_ptr->allow_alloc_nodes   = allow_alloc_nodes;
+		part_ptr->allow_alloc_nodes = part_rec_state->allow_alloc_nodes;
+		part_rec_state->allow_alloc_nodes = NULL;
+
 		xfree(part_ptr->alternate);
-		part_ptr->alternate      = alternate;
+		part_ptr->alternate = part_rec_state->alternate;
+		part_rec_state->alternate = NULL;
+
 		xfree(part_ptr->deny_accounts);
-		part_ptr->deny_accounts  = deny_accounts;
+		part_ptr->deny_accounts = part_rec_state->deny_accounts;
+		part_rec_state->deny_accounts = NULL;
 		FREE_NULL_LIST(part_ptr->deny_accts_list);
 		part_ptr->deny_accts_list =
 			accounts_list_build(part_ptr->deny_accounts, false);
+
 		xfree(part_ptr->deny_qos);
-		part_ptr->deny_qos       = deny_qos;
+		part_ptr->deny_qos = part_rec_state->deny_qos;
+		part_rec_state->deny_qos = NULL;
 		qos_list_build(part_ptr->deny_qos, &part_ptr->deny_qos_bitstr);
 
 		/*
@@ -799,9 +687,10 @@ int load_all_part_state(void)
 		 */
 		xfree(part_ptr->nodes);
 		xfree(part_ptr->orig_nodes);
-		part_ptr->orig_nodes = nodes;
+		part_ptr->orig_nodes = part_rec_state->nodes;
+		part_rec_state->nodes = NULL;
 
-		xfree(part_name);
+		part_record_delete(part_rec_state);
 	}
 
 	info("Recovered state of %d partitions", part_cnt);
@@ -839,7 +728,7 @@ part_record_t *find_part_record(char *name)
 extern List part_list_copy(List part_list_src)
 {
 	part_record_t *part_ptr;
-	ListIterator iter;
+	list_itr_t *iter;
 	List part_list_dest = NULL;
 
 	if (!part_list_src)
@@ -917,26 +806,6 @@ void init_part_conf(void)
 }
 
 /*
- * Free memory for cached backfill data in partition record
- */
-static void _bf_data_free(bf_part_data_t **datap)
-{
-	bf_part_data_t *data;
-	if (!datap || !*datap)
-		return;
-
-	data = *datap;
-
-	slurmdb_destroy_bf_usage(data->job_usage);
-        slurmdb_destroy_bf_usage(data->resv_usage);
-	xhash_free(data->user_usage);
-	xfree(data);
-
-	*datap = NULL;
-	return;
-}
-
-/*
  * _list_delete_part - delete an entry from the global partition list,
  *	see common/list.h for documentation
  * global: node_record_count - count of nodes in the system
@@ -966,34 +835,8 @@ static void _list_delete_part(void *part_entry)
 		}
 	}
 
-	xfree(part_ptr->allow_accounts);
-	FREE_NULL_LIST(part_ptr->allow_accts_list);
-	xfree(part_ptr->allow_alloc_nodes);
-	xfree(part_ptr->allow_groups);
-	xfree(part_ptr->allow_uids);
-	xfree(part_ptr->allow_qos);
-	FREE_NULL_BITMAP(part_ptr->allow_qos_bitstr);
-	xfree(part_ptr->alternate);
-	xfree(part_ptr->billing_weights_str);
-	xfree(part_ptr->billing_weights);
-	xfree(part_ptr->deny_accounts);
-	FREE_NULL_LIST(part_ptr->deny_accts_list);
-	xfree(part_ptr->deny_qos);
-	FREE_NULL_BITMAP(part_ptr->deny_qos_bitstr);
-	FREE_NULL_LIST(part_ptr->job_defaults_list);
-	xfree(part_ptr->name);
-	xfree(part_ptr->orig_nodes);
-	xfree(part_ptr->nodes);
-	xfree(part_ptr->nodesets);
-	FREE_NULL_BITMAP(part_ptr->node_bitmap);
-	xfree(part_ptr->qos_char);
-	xfree(part_ptr->tres_cnt);
-	xfree(part_ptr->tres_fmt_str);
-	_bf_data_free(&part_ptr->bf_data);
-
-	xfree(part_entry);
+	part_record_delete(part_ptr);
 }
-
 
 /*
  * list_find_part - find an entry in the partition list, see common/list.h
@@ -1065,6 +908,15 @@ static int _build_visible_parts_foreach(void *elem, void *x)
 	return SLURM_SUCCESS;
 }
 
+static int _find_part_qos(void *x, void *arg)
+{
+	part_record_t *part_ptr = x;
+
+	if (part_ptr->qos_ptr == arg)
+		return 1;
+	return 0;
+}
+
 extern part_record_t **build_visible_parts(uid_t uid, bool skip)
 {
 	part_record_t **visible_parts_save;
@@ -1128,17 +980,14 @@ static int _pack_part(void *object, void *arg)
 /*
  * pack_all_part - dump all partition information for all partitions in
  *	machine independent form (for network transmission)
- * OUT buffer_ptr - the pointer is set to the allocated buffer.
- * OUT buffer_size - set to size of the buffer in bytes
  * IN show_flags - partition filtering options
  * IN uid - uid of user making request (for partition filtering)
  * global: part_list - global list of partition records
- * NOTE: the buffer at *buffer_ptr must be xfreed by the caller
+ * OUT buffer
  * NOTE: change slurm_load_part() in api/part_info.c if data format changes
  */
-extern void pack_all_part(char **buffer_ptr, int *buffer_size,
-			  uint16_t show_flags, uid_t uid,
-			  uint16_t protocol_version)
+extern buf_t *pack_all_part(uint16_t show_flags, uid_t uid,
+			    uint16_t protocol_version)
 {
 	int tmp_offset;
 	time_t now = time(NULL);
@@ -1153,9 +1002,6 @@ extern void pack_all_part(char **buffer_ptr, int *buffer_size,
 		.visible_parts = build_visible_parts(uid, privileged),
 	};
 
-	buffer_ptr[0] = NULL;
-	*buffer_size = 0;
-
 	/* write header: version and time */
 	pack32(0, pack_info.buffer);
 	pack_time(now, pack_info.buffer);
@@ -1168,9 +1014,8 @@ extern void pack_all_part(char **buffer_ptr, int *buffer_size,
 	pack32(pack_info.parts_packed, pack_info.buffer);
 	set_buf_offset(pack_info.buffer, tmp_offset);
 
-	*buffer_size = get_buf_offset(pack_info.buffer);
-	buffer_ptr[0] = xfer_buf_data(pack_info.buffer);
 	xfree(pack_info.visible_parts);
+	return pack_info.buffer;
 }
 
 
@@ -1186,7 +1031,7 @@ extern void pack_all_part(char **buffer_ptr, int *buffer_size,
  */
 void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version)
 {
-	if (protocol_version >= SLURM_23_02_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_24_05_PROTOCOL_VERSION) {
 		if (default_part_loc == part_ptr)
 			part_ptr->flags |= PART_FLAG_DEFAULT;
 		else
@@ -1206,7 +1051,7 @@ void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version
 		pack32(part_ptr->max_cpus_per_socket, buffer);
 		pack64(part_ptr->max_mem_per_cpu, buffer);
 
-		pack16(part_ptr->flags, buffer);
+		pack32(part_ptr->flags, buffer);
 		pack16(part_ptr->max_share, buffer);
 		pack16(part_ptr->over_time_limit, buffer);
 		pack16(part_ptr->preempt_mode, buffer);
@@ -1234,7 +1079,8 @@ void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version
 		(void)slurm_pack_list(part_ptr->job_defaults_list,
 				      job_defaults_pack, buffer,
 				      protocol_version);
-	} else if (protocol_version >= SLURM_22_05_PROTOCOL_VERSION) {
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		uint16_t tmp_uint16;
 		if (default_part_loc == part_ptr)
 			part_ptr->flags |= PART_FLAG_DEFAULT;
 		else
@@ -1251,10 +1097,12 @@ void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version
 		pack32(part_ptr->total_cpus, buffer);
 		pack64(part_ptr->def_mem_per_cpu, buffer);
 		pack32(part_ptr->max_cpus_per_node, buffer);
+		pack32(part_ptr->max_cpus_per_socket, buffer);
 		pack64(part_ptr->max_mem_per_cpu, buffer);
 
-		pack16(part_ptr->flags,      buffer);
-		pack16(part_ptr->max_share,  buffer);
+		tmp_uint16 = part_ptr->flags;
+		pack16(tmp_uint16, buffer);
+		pack16(part_ptr->max_share, buffer);
 		pack16(part_ptr->over_time_limit, buffer);
 		pack16(part_ptr->preempt_mode, buffer);
 		pack16(part_ptr->priority_job_factor, buffer);
@@ -1275,52 +1123,6 @@ void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version
 		packstr(part_ptr->deny_qos, buffer);
 		packstr(part_ptr->nodes, buffer);
 		packstr(part_ptr->nodesets, buffer);
-		pack_bit_str_hex(part_ptr->node_bitmap, buffer);
-		packstr(part_ptr->billing_weights_str, buffer);
-		packstr(part_ptr->tres_fmt_str, buffer);
-		(void)slurm_pack_list(part_ptr->job_defaults_list,
-				      job_defaults_pack, buffer,
-				      protocol_version);
-	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-		if (default_part_loc == part_ptr)
-			part_ptr->flags |= PART_FLAG_DEFAULT;
-		else
-			part_ptr->flags &= (~PART_FLAG_DEFAULT);
-
-		packstr(part_ptr->name, buffer);
-		pack32(part_ptr->cpu_bind, buffer);
-		pack32(part_ptr->grace_time, buffer);
-		pack32(part_ptr->max_time, buffer);
-		pack32(part_ptr->default_time, buffer);
-		pack32(part_ptr->max_nodes_orig, buffer);
-		pack32(part_ptr->min_nodes_orig, buffer);
-		pack32(part_ptr->total_nodes, buffer);
-		pack32(part_ptr->total_cpus, buffer);
-		pack64(part_ptr->def_mem_per_cpu, buffer);
-		pack32(part_ptr->max_cpus_per_node, buffer);
-		pack64(part_ptr->max_mem_per_cpu, buffer);
-
-		pack16(part_ptr->flags,      buffer);
-		pack16(part_ptr->max_share,  buffer);
-		pack16(part_ptr->over_time_limit, buffer);
-		pack16(part_ptr->preempt_mode, buffer);
-		pack16(part_ptr->priority_job_factor, buffer);
-		pack16(part_ptr->priority_tier, buffer);
-		pack16(part_ptr->state_up, buffer);
-		pack16(part_ptr->cr_type, buffer);
-		pack16(part_ptr->resume_timeout, buffer);
-		pack16(part_ptr->suspend_timeout, buffer);
-		pack32(part_ptr->suspend_time, buffer);
-
-		packstr(part_ptr->allow_accounts, buffer);
-		packstr(part_ptr->allow_groups, buffer);
-		packstr(part_ptr->allow_alloc_nodes, buffer);
-		packstr(part_ptr->allow_qos, buffer);
-		packstr(part_ptr->qos_char, buffer);
-		packstr(part_ptr->alternate, buffer);
-		packstr(part_ptr->deny_accounts, buffer);
-		packstr(part_ptr->deny_qos, buffer);
-		packstr(part_ptr->nodes, buffer);
 		pack_bit_str_hex(part_ptr->node_bitmap, buffer);
 		packstr(part_ptr->billing_weights_str, buffer);
 		packstr(part_ptr->tres_fmt_str, buffer);
@@ -1396,7 +1198,7 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 		}
 		info("%s: partition %s being created", __func__,
 		     part_desc->name);
-		part_ptr = create_part_record(part_desc->name);
+		part_ptr = create_ctld_part_record(part_desc->name);
 	} else {
 		if (!part_ptr) {
 			verbose("%s: Update for partition not found (%s)",
@@ -1410,14 +1212,9 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 	if (part_desc->billing_weights_str &&
 	    set_partition_billing_weights(part_desc->billing_weights_str,
 					  part_ptr, false)) {
-
-		if (create_flag)
-			list_delete_all(part_list, &list_find_part,
-					part_desc->name);
-
-		return ESLURM_INVALID_TRES_BILLING_WEIGHTS;
+		error_code = ESLURM_INVALID_TRES_BILLING_WEIGHTS;
+		goto fini;
 	}
-
 	if (part_desc->cpu_bind) {
 		char tmp_str[128];
 		slurm_sprint_cpu_bind_type(tmp_str, part_desc->cpu_bind);
@@ -1537,6 +1334,16 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 		part_ptr->flags &= (~PART_FLAG_EXCLUSIVE_USER);
 	}
 
+	if (part_desc->flags & PART_FLAG_EXCLUSIVE_TOPO) {
+		info("%s: setting exclusive_topo for partition %s", __func__,
+		     part_desc->name);
+		part_ptr->flags |= PART_FLAG_EXCLUSIVE_TOPO;
+	} else if (part_desc->flags & PART_FLAG_EXC_TOPO_CLR) {
+		info("%s: clearing exclusive_topo for partition %s", __func__,
+		     part_desc->name);
+		part_ptr->flags &= (~PART_FLAG_EXCLUSIVE_TOPO);
+	}
+
 	if (part_desc->flags & PART_FLAG_DEFAULT) {
 		if (default_part_name == NULL) {
 			info("%s: setting default partition to %s", __func__,
@@ -1634,7 +1441,7 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 		 * partitions. If not then just set this partition.
 		 */
 		if (redo_prio) {
-			ListIterator itr = list_iterator_create(part_list);
+			list_itr_t *itr = list_iterator_create(part_list);
 			part_record_t *part2 = NULL;
 
 			if (redo_prio == 2) {
@@ -1716,22 +1523,55 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 	}
 
 	if (part_desc->qos_char && part_desc->qos_char[0] == '\0') {
-		info("%s: removing partition QOS %s from partition %s",
-		     __func__, part_ptr->qos_char, part_ptr->name);
+		slurmdb_qos_rec_t *qos = part_ptr->qos_ptr;
 		xfree(part_ptr->qos_char);
 		part_ptr->qos_ptr = NULL;
+		if (qos) {
+			assoc_mgr_lock_t locks = {
+				.qos = WRITE_LOCK,
+				.tres = READ_LOCK,
+			};
+			assoc_mgr_lock(&locks);
+			info("%s: removing partition QOS '%s' from partition '%s'",
+			     __func__, qos->name, part_ptr->name);
+		        if (!list_find_first(part_list, _find_part_qos, qos))
+				qos->flags &= ~QOS_FLAG_PART_QOS;
+			/*
+			 * Reset relative QOS to the full system cnts
+			 */
+			if ((qos->flags & QOS_FLAG_RELATIVE) &&
+			    !(qos->flags & QOS_FLAG_PART_QOS)) {
+				qos->flags &= ~QOS_FLAG_RELATIVE_SET;
+				assoc_mgr_set_qos_tres_relative_cnt(qos, NULL);
+			}
+			assoc_mgr_unlock(&locks);
+		}
 	} else if (part_desc->qos_char) {
+		assoc_mgr_lock_t locks = {
+			.qos = WRITE_LOCK,
+			.tres = READ_LOCK,
+		};
 		slurmdb_qos_rec_t qos_rec, *backup_qos_ptr = part_ptr->qos_ptr;
-
+		slurmdb_qos_rec_t *qos = NULL;
+		part_record_t *qos_part_ptr = NULL;
 		memset(&qos_rec, 0, sizeof(slurmdb_qos_rec_t));
 		qos_rec.name = part_desc->qos_char;
+		assoc_mgr_lock(&locks);
 		if (assoc_mgr_fill_in_qos(
 			    acct_db_conn, &qos_rec, accounting_enforce,
-			    (slurmdb_qos_rec_t **)&part_ptr->qos_ptr, 0)
+			    (slurmdb_qos_rec_t **)&qos, true)
 		    != SLURM_SUCCESS) {
 			error("%s: invalid qos (%s) given",
 			      __func__, qos_rec.name);
 			error_code = ESLURM_INVALID_QOS;
+			part_ptr->qos_ptr = backup_qos_ptr;
+		} else if ((qos->flags & QOS_FLAG_RELATIVE) &&
+			   (qos_part_ptr = list_find_first(
+				   part_list, _find_part_qos, qos))) {
+			error_code = ESLURM_INVALID_RELATIVE_QOS;
+			error("%s: %s Partition %s already uses relative QOS (%s).",
+			      __func__, slurm_strerror(error_code),
+			      qos_part_ptr->name, qos_rec.name);
 			part_ptr->qos_ptr = backup_qos_ptr;
 		} else {
 			info("%s: changing partition QOS from "
@@ -1741,7 +1581,39 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 
 			xfree(part_ptr->qos_char);
 			part_ptr->qos_char = xstrdup(part_desc->qos_char);
+			part_ptr->qos_ptr = qos;
+			part_ptr->qos_ptr->flags |= QOS_FLAG_PART_QOS;
+			/*
+			 * Set a relative QOS' counts based on the partition.
+			 */
+			if (qos->flags & QOS_FLAG_RELATIVE) {
+				qos->flags &= ~QOS_FLAG_RELATIVE_SET;
+				assoc_mgr_set_qos_tres_relative_cnt(
+					qos, part_ptr->tres_cnt);
+			}
+
+			if (backup_qos_ptr) {
+				if (!list_find_first(part_list, _find_part_qos,
+						     backup_qos_ptr))
+					backup_qos_ptr->flags &=
+						~QOS_FLAG_PART_QOS;
+
+				/*
+				 * Reset relative QOS to the full system cnts
+				 */
+				if ((backup_qos_ptr->flags &
+				     QOS_FLAG_RELATIVE) &&
+				    !(backup_qos_ptr->flags &
+				      QOS_FLAG_PART_QOS)) {
+					backup_qos_ptr->flags &=
+						~QOS_FLAG_RELATIVE_SET;
+					assoc_mgr_set_qos_tres_relative_cnt(
+						backup_qos_ptr, NULL);
+				}
+
+			}
 		}
+		assoc_mgr_unlock(&locks);
 	}
 
 	if (part_desc->allow_alloc_nodes != NULL) {
@@ -1855,47 +1727,98 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 	}
 
 	if (part_desc->nodes != NULL) {
-		assoc_mgr_lock_t assoc_tres_read_lock = { .tres = READ_LOCK };
-		char *backup_node_list = part_ptr->nodes;
+		assoc_mgr_lock_t assoc_tres_read_lock = {
+			.qos = WRITE_LOCK,
+			.tres = READ_LOCK,
+		};
+		int rc;
+		char *backup_orig_nodes = xstrdup(part_ptr->orig_nodes);
 
 		if (part_desc->nodes[0] == '\0')
 			part_ptr->nodes = NULL;	/* avoid empty string */
-		else {
-			int i;
+		else if ((part_desc->nodes[0] != '+') &&
+			 (part_desc->nodes[0] != '-')) {
+			xfree(part_ptr->nodes);
 			part_ptr->nodes = xstrdup(part_desc->nodes);
-			for (i = 0; part_ptr->nodes[i]; i++) {
-				if (isspace(part_ptr->nodes[i]))
-					part_ptr->nodes[i] = ',';
+		} else {
+			char *p, *tmp, *tok, *save_ptr = NULL;
+			hostset_t *hs = hostset_create(part_ptr->nodes);
+
+			p = tmp = xstrdup(part_desc->nodes);
+			errno = 0;
+			while ((tok = node_conf_nodestr_tokenize(p,
+								 &save_ptr))) {
+				bool plus_minus = false;
+				if (tok[0] == '+') {
+					hostset_insert(hs, tok + 1);
+					plus_minus = true;
+				} else if (tok[0] == '-') {
+					hostset_delete(hs, tok + 1);
+					plus_minus = true;
+				}
+				/* errno set in hostset functions */
+				if (!plus_minus || errno) {
+					error("%s: invalid node name %s",
+					      __func__, tok);
+					xfree(tmp);
+					hostset_destroy(hs);
+					error_code = ESLURM_INVALID_NODE_NAME;
+					goto fini;
+				}
+				p = NULL;
 			}
+			xfree(tmp);
+			part_ptr->nodes = hostset_ranged_string_xmalloc(hs);
+			hostset_destroy(hs);
 		}
 		xfree(part_ptr->orig_nodes);
 		part_ptr->orig_nodes = xstrdup(part_ptr->nodes);
 
-		error_code = build_part_bitmap(part_ptr);
-		if (error_code) {
-			xfree(part_ptr->nodes);
-			part_ptr->nodes = backup_node_list;
+		if ((rc = build_part_bitmap(part_ptr))) {
+			error_code = rc;
+
+			if (!create_flag) {
+				/* Restore previous nodes */
+				xfree(part_ptr->orig_nodes);
+				part_ptr->orig_nodes = backup_orig_nodes;
+
+				/*
+				 * build_part_bitmap() is destructive of the
+				 * partition record. We need to rebuild the
+				 * partition record with the original nodelists
+				 * and nodesets.
+				 */
+				(void) build_part_bitmap(part_ptr);
+			} else {
+				xfree(backup_orig_nodes);
+			}
 		} else {
 			info("%s: setting nodes to %s for partition %s",
 			     __func__, part_ptr->nodes, part_desc->name);
-			xfree(backup_node_list);
-		}
-		update_part_nodes_in_resv(part_ptr);
-		power_save_set_timeouts(NULL);
+			xfree(backup_orig_nodes);
 
-		assoc_mgr_lock(&assoc_tres_read_lock);
-		_calc_part_tres(part_ptr, NULL);
-		assoc_mgr_unlock(&assoc_tres_read_lock);
+			update_part_nodes_in_resv(part_ptr);
+			power_save_set_timeouts(NULL);
+
+			assoc_mgr_lock(&assoc_tres_read_lock);
+			if (part_ptr->qos_ptr)
+				part_ptr->qos_ptr->flags &= ~QOS_FLAG_RELATIVE_SET;
+			_calc_part_tres(part_ptr, NULL);
+			assoc_mgr_unlock(&assoc_tres_read_lock);
+		}
 	} else if (part_ptr->node_bitmap == NULL) {
 		/* Newly created partition needs a bitmap, even if empty */
 		part_ptr->node_bitmap = bit_alloc(node_record_count);
 	}
 
+fini:
 	if (error_code == SLURM_SUCCESS) {
 		gs_reconfig();
 		select_g_reconfigure();		/* notify select plugin too */
+	} else if (create_flag) {
+		/* Delete the created partition in case of failure */
+		list_delete_all(part_list, &list_find_part, part_desc->name);
 	}
-
 	return error_code;
 }
 
@@ -1912,15 +1835,8 @@ extern int validate_group(part_record_t *part_ptr, uid_t run_uid)
 	static part_record_t *last_fail_part_ptr = NULL;
 	static time_t last_fail_time = 0;
 	time_t now;
-#if defined(_SC_GETPW_R_SIZE_MAX)
-	long ii;
-#endif
-	int res;
-	size_t buflen;
-	struct passwd pwd, *pwd_result;
-	char *buf;
-	char *grp_buffer;
-	struct group grp, *grp_result;
+	gid_t primary_gid;
+	char *primary_group = NULL;
 	char *groups, *saveptr = NULL, *one_group_name;
 	int ret = 0;
 
@@ -1946,80 +1862,37 @@ extern int validate_group(part_record_t *part_ptr, uid_t run_uid)
 		return 0;
 	}
 
-	/* The allow_uids list is built from the allow_groups list,
-	 * and if user/group enumeration has been disabled, it's
-	 * possible that the users primary group is not returned as a
-	 * member of a group.  Enumeration is problematic if the
-	 * user/group database is large (think university-wide central
-	 * account database or such), as in such environments
-	 * enumeration would load the directory servers a lot, so the
-	 * recommendation is to have it disabled (e.g. enumerate=False
-	 * in sssd.conf).  So check explicitly whether the primary
-	 * group is allowed as a final resort.  This should
-	 * (hopefully) not happen that often, and anyway the
-	 * getpwuid_r and getgrgid_r calls should be cached by
-	 * sssd/nscd/etc. so should be fast.  */
+	/*
+	 * The allow_uids list is built from the allow_groups list.  If
+	 * user/group enumeration has been disabled, it's possible that the
+	 * user's primary group is not returned as a member of a group.
+	 * Enumeration is problematic if the user/group database is large
+	 * (think university-wide central account database or such), as in such
+	 * environments enumeration would load the directory servers a lot, so
+	 * the recommendation is to have it disabled (e.g. enumerate=False in
+	 * sssd.conf). So check explicitly whether the primary group is allowed
+	 * as a final resort.
+	 * This should (hopefully) not happen that often.
+	 */
 
 	/* First figure out the primary GID.  */
-	buflen = PW_BUF_SIZE;
-#if defined(_SC_GETPW_R_SIZE_MAX)
-	ii = sysconf(_SC_GETPW_R_SIZE_MAX);
-	if ((ii >= 0) && (ii > buflen))
-		buflen = ii;
-#endif
-	buf = xmalloc(buflen);
-	while (1) {
-		slurm_seterrno(0);
-		res = getpwuid_r(run_uid, &pwd, buf, buflen, &pwd_result);
-		/* We need to check for !pwd_result, since it appears some
-		 * versions of this function do not return an error on
-		 * failure.
-		 */
-		if (res != 0 || !pwd_result) {
-			if (errno == ERANGE) {
-				buflen *= 2;
-				xrealloc(buf, buflen);
-				continue;
-			}
-			error("%s: Could not find passwd entry for uid %u",
-			      __func__, run_uid);
-			xfree(buf);
-			goto fini;
-		}
-		break;
+	primary_gid = gid_from_uid(run_uid);
+
+	if (primary_gid == (gid_t) -1) {
+		error("%s: Could not find passwd entry for uid %u",
+		      __func__, run_uid);
+		goto fini;
 	}
 
 	/* Then use the primary GID to figure out the name of the
 	 * group with that GID.  */
-#ifdef _SC_GETGR_R_SIZE_MAX
-	ii = sysconf(_SC_GETGR_R_SIZE_MAX);
-	buflen = PW_BUF_SIZE;
-	if ((ii >= 0) && (ii > buflen))
-		buflen = ii;
-#endif
-	grp_buffer = xmalloc(buflen);
-	while (1) {
-		slurm_seterrno(0);
-		res = getgrgid_r(pwd.pw_gid, &grp, grp_buffer, buflen,
-				 &grp_result);
 
-		/* We need to check for !grp_result, since it appears some
-		 * versions of this function do not return an error on
-		 * failure.
-		 */
-		if (res != 0 || !grp_result) {
-			if (errno == ERANGE) {
-				buflen *= 2;
-				xrealloc(grp_buffer, buflen);
-				continue;
-			}
-			error("%s: Could not find group with gid %u",
-			      __func__, pwd.pw_gid);
-			xfree(buf);
-			xfree(grp_buffer);
-			goto fini;
-		}
-		break;
+	primary_group = gid_to_string_or_null(primary_gid);
+
+	if (!primary_group) {
+		error("%s: Could not find group with gid %u",
+		      __func__, primary_gid);
+		goto fini;
 	}
 
 	/* And finally check the name of the primary group against the
@@ -2027,19 +1900,18 @@ extern int validate_group(part_record_t *part_ptr, uid_t run_uid)
 	groups = xstrdup(part_ptr->allow_groups);
 	one_group_name = strtok_r(groups, ",", &saveptr);
 	while (one_group_name) {
-		if (xstrcmp (one_group_name, grp.gr_name) == 0) {
+		if (!xstrcmp(one_group_name, primary_group)) {
 			ret = 1;
 			break;
 		}
 		one_group_name = strtok_r(NULL, ",", &saveptr);
 	}
 	xfree(groups);
-	xfree(buf);
-	xfree(grp_buffer);
+	xfree(primary_group);
 
 	if (ret == 1) {
-		debug("UID %ld added to AllowGroup %s of partition %s",
-		      (long) run_uid, grp.gr_name, part_ptr->name);
+		debug("UID %u added to AllowGroup %s of partition %s",
+		      run_uid, primary_group, part_ptr->name);
 		part_ptr->allow_uids =
 			xrealloc(part_ptr->allow_uids,
 				 (sizeof(uid_t) *
@@ -2071,7 +1943,7 @@ extern int validate_alloc_node(part_record_t *part_ptr, char *alloc_node)
  	if (alloc_node == NULL)
 		return 0;	/* if no allocating node deny */
 
- 	hostlist_t hl = hostlist_create(part_ptr->allow_alloc_nodes);
+	hostlist_t *hl = hostlist_create(part_ptr->allow_alloc_nodes);
  	status=hostlist_find(hl,alloc_node);
  	hostlist_destroy(hl);
 
@@ -2133,7 +2005,7 @@ static int _find_acct_in_list(void *x, void *arg)
  *	if required (updated group file or force set)
  * IN force - if set then always reload the allow_uid list
  */
-void load_part_uid_allow_list(int force)
+void load_part_uid_allow_list(bool force)
 {
 	static time_t last_update_time;
 	int updated = 0;
@@ -2142,7 +2014,7 @@ void load_part_uid_allow_list(int force)
 
 	START_TIMER;
 	temp_time = get_group_tlm();
-	if ((force == 0) && (temp_time == last_update_time))
+	if (!force && (temp_time == last_update_time))
 		return;
 	debug("Updating partition uid access list");
 	last_update_time = temp_time;
@@ -2191,40 +2063,6 @@ extern int delete_partition(delete_part_msg_t *part_desc_ptr)
 	select_g_reconfigure();		/* notify select plugin too */
 
 	return SLURM_SUCCESS;
-}
-
-/*
- * Determine of the specified job can execute right now or is currently
- * blocked by a miscellaneous limit. This does not re-validate job state,
- * but relies upon schedule() in src/slurmctld/job_scheduler.c to do so.
- */
-extern bool misc_policy_job_runnable_state(job_record_t *job_ptr)
-{
-	if ((job_ptr->state_reason == FAIL_ACCOUNT) ||
-	    (job_ptr->state_reason == FAIL_QOS) ||
-	    (job_ptr->state_reason == WAIT_NODE_NOT_AVAIL)) {
-		return false;
-	}
-
-	return true;
-}
-
-/*
- * Determine of the specified job can execute right now or is currently
- * blocked by a partition state or limit. These job states should match the
- * reason values returned by job_limits_check().
- */
-extern bool part_policy_job_runnable_state(job_record_t *job_ptr)
-{
-	if ((job_ptr->state_reason == WAIT_PART_DOWN) ||
-	    (job_ptr->state_reason == WAIT_PART_INACTIVE) ||
-	    (job_ptr->state_reason == WAIT_PART_NODE_LIMIT) ||
-	    (job_ptr->state_reason == WAIT_PART_TIME_LIMIT) ||
-	    (job_ptr->state_reason == WAIT_QOS_THRES)) {
-		return false;
-	}
-
-	return true;
 }
 
 /*
@@ -2367,7 +2205,7 @@ extern int part_policy_valid_qos(part_record_t *part_ptr,
 	return SLURM_SUCCESS;
 }
 
-extern void part_list_update_assoc_lists()
+extern void part_list_update_assoc_lists(void)
 {
 	/* Write lock on part */
 	slurmctld_lock_t part_write_lock = {
@@ -2383,7 +2221,6 @@ extern void part_list_update_assoc_lists()
 	list_for_each(part_list, part_update_assoc_lists, NULL);
 	assoc_mgr_unlock(&locks);
 	unlock_slurmctld(part_write_lock);
-	return;
 }
 
 extern int part_update_assoc_lists(void *x, void *arg)
@@ -2400,4 +2237,31 @@ extern int part_update_assoc_lists(void *x, void *arg)
 		accounts_list_build(part_ptr->deny_accounts, true);
 
 	return 0;
+}
+
+typedef struct {
+	char *names;
+	char *pos;
+} _foreach_part_names_t;
+
+static int _foreach_part_name_to_xstr(void *x, void *arg)
+{
+	part_record_t *part_ptr = x;
+	_foreach_part_names_t *part_names = arg;
+
+	xstrfmtcatat(part_names->names, &part_names->pos, "%s%s",
+		     part_names->names ? "," : "", part_ptr->name);
+
+	return SLURM_SUCCESS;
+}
+
+extern char *part_list_to_xstr(list_t *list)
+{
+	_foreach_part_names_t part_names = {0};
+
+	xassert(list);
+
+	list_for_each(list, _foreach_part_name_to_xstr, &part_names);
+
+	return part_names.names;
 }

@@ -127,6 +127,9 @@ print_field_t fields[] = {
 	{8,  "ReservationId",  print_fields_uint, PRINT_RESERVATION_ID},
 	{19, "Start", print_fields_date, PRINT_START},
 	{10, "State", print_fields_str, PRINT_STATE},
+	{20, "StdErr", print_fields_str, PRINT_STDERR},
+	{20, "StdIn", print_fields_str, PRINT_STDIN},
+	{20, "StdOut", print_fields_str, PRINT_STDOUT},
 	{19, "Submit", print_fields_date, PRINT_SUBMIT},
 	{20, "SubmitLine", print_fields_str, PRINT_SUBMIT_LINE},
 	{10, "Suspended", print_fields_time_from_secs, PRINT_SUSPENDED},
@@ -192,7 +195,7 @@ int main(int argc, char **argv)
 		    !(params.job_cond->flags & JOBCOND_FLAG_ENV))
 			print_fields_header(print_fields_list);
 		if (get_data() == SLURM_ERROR)
-			exit(errno);
+			exit(1);
 		if (params.opt_completion)
 			do_list_completion();
 		else
@@ -210,8 +213,7 @@ int main(int argc, char **argv)
 	sacct_fini();
 
 #if MEMORY_LEAK_DEBUG
-	data_fini();
-	slurm_auth_fini();
+	auth_g_fini();
 	slurm_conf_destroy();
 	log_fini();
 #endif

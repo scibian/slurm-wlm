@@ -84,7 +84,7 @@
  * tasks_per_node	- Expected tasks to launch per node. Currently used only
  *			  by cons_tres for tres_per_task support at resource
  *			  allocation time. No need to save/restore or pack.
- * whole_node		- Job allocated full node (used only by select/cons_res)
+ * whole_node		- Job allocated full node (used only by select/cons_tres)
  *
  * NOTES:
  * cpu_array_* contains the same information as "cpus", but in a more compact
@@ -280,23 +280,19 @@ extern int get_job_resources_cpus(job_resources_t *job_resrcs_ptr,
  * Test if job can fit into the given full-length core_bitmap
  * IN job_resrcs_ptr - resources allocated to a job
  * IN full_bitmap - bitmap of available CPUs
- * IN bits_per_node - bits per node in the full_bitmap
  * RET 1 on success, 0 otherwise
  */
 extern int job_fits_into_cores(job_resources_t *job_resrcs_ptr,
-			       bitstr_t *full_bitmap,
-			       const uint16_t *bits_per_node);
+			       bitstr_t *full_bitmap);
 
 /*
  * Add job to full-length core_bitmap
  * IN job_resrcs_ptr - resources allocated to a job
  * IN/OUT full_bitmap - bitmap of available CPUs, allocate as needed
- * IN bits_per_node - bits per node in the full_bitmap
  * RET 1 on success, 0 otherwise
  */
 extern void add_job_to_cores(job_resources_t *job_resrcs_ptr,
-			     bitstr_t **full_core_bitmap,
-			     const uint16_t *bits_per_node);
+			     bitstr_t **full_core_bitmap);
 
 /* Given a job pointer and a global node index, return the index of that
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */

@@ -39,16 +39,20 @@
 
 #include "config.h"
 
+#define _GNU_SOURCE /* For clone */
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/param.h>		/* MAXPATHLEN */
 #include <unistd.h>
 
 #include "slurm/slurm.h"
@@ -65,6 +69,7 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_step_layout.h"
 #include "src/common/slurmdb_defs.h"
+#include "src/common/spank.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
@@ -91,6 +96,14 @@ strong_alias(env_unset_environment,	slurm_env_unset_environment);
 #define ENV_BUFSIZE (256 * 1024)
 #define MAX_ENV_STRLEN (32 * 4096)	/* Needed for CPU_BIND and MEM_BIND on
 					 * SGI systems with huge CPU counts */
+typedef struct {
+	char *cmdstr;
+	int *fildes;
+	int mode;
+	int rlimit;
+	char **tmp_env;
+	const char *username;
+} child_args_t;
 
 /*
  *  Return pointer to `name' entry in environment if found, or
@@ -129,7 +142,7 @@ static char **
 _extend_env(char ***envp)
 {
 	char **ep;
-	size_t newcnt = (xsize (*envp) / sizeof (char *)) + 1;
+	size_t newcnt = PTR_ARRAY_SIZE(*envp) + 1;
 
 	*envp = xrealloc (*envp, newcnt * sizeof (char *));
 
@@ -286,7 +299,7 @@ char *getenvp(char **env, const char *name)
 int setup_env(env_t *env, bool preserve_env)
 {
 	int rc = SLURM_SUCCESS;
-	char *addr, *dist = NULL;
+	char *dist = NULL;
 	char addrbuf[INET6_ADDRSTRLEN];
 
 	if (env == NULL)
@@ -843,14 +856,6 @@ int setup_env(env_t *env, bool preserve_env)
 		}
 	}
 
-	if (slurm_conf.slurmctld_addr)
-		addr = slurm_conf.slurmctld_addr;
-	else
-		addr = slurm_conf.control_addr[0];
-	setenvf(&env->env, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d:%d",
-	        slurm_conf.cluster_name, addr, slurm_conf.slurmctld_port,
-	        SLURM_PROTOCOL_VERSION, select_get_plugin_id());
-
 	return rc;
 }
 
@@ -952,7 +957,6 @@ extern char *uint32_compressed_to_str(uint32_t array_len,
  *	SLURM_JOB_NUM_NODES
  *	SLURM_JOB_NODELIST
  *	SLURM_JOB_CPUS_PER_NODE
- *	SLURM_NODE_ALIASES
  *	SLURM_NTASKS_PER_NODE
  *
  * dest OUT - array in which to the set environment variables
@@ -964,6 +968,7 @@ extern char *uint32_compressed_to_str(uint32_t array_len,
  *	SLURM_JOBID
  *	SLURM_NNODES
  *	SLURM_NODELIST
+ *	SLURM_NPROCS
  *	SLURM_TASKS_PER_NODE
  */
 extern int env_array_for_job(char ***dest,
@@ -1000,8 +1005,6 @@ extern int env_array_for_job(char ***dest,
 				    "%u", step_layout_req.num_hosts);
 	env_array_overwrite_het_fmt(dest, "SLURM_JOB_NODELIST", het_job_offset,
 				    "%s", alloc->node_list);
-	env_array_overwrite_het_fmt(dest, "SLURM_NODE_ALIASES", het_job_offset,
-				    "%s", alloc->alias_list);
 	env_array_overwrite_het_fmt(dest, "SLURM_JOB_PARTITION", het_job_offset,
 				    "%s", alloc->partition);
 
@@ -1206,7 +1209,6 @@ extern int env_array_for_job(char ***dest,
  *	SLURM_JOB_NUM_NODES
  *	SLURM_JOB_NODELIST
  *	SLURM_JOB_CPUS_PER_NODE
- *	SLURM_NODE_ALIASES
  *	ENVIRONMENT=BATCH
  *	HOSTNAME
  *
@@ -1281,8 +1283,6 @@ env_array_for_batch_job(char ***dest, const batch_job_launch_msg_t *batch,
 	env_array_overwrite_fmt(dest, "SLURM_JOB_NODELIST", "%s", batch->nodes);
 	env_array_overwrite_fmt(dest, "SLURM_JOB_PARTITION", "%s",
 				batch->partition);
-	env_array_overwrite_fmt(dest, "SLURM_NODE_ALIASES", "%s",
-				batch->alias_list);
 
 	tmp = uint32_compressed_to_str(batch->num_cpu_groups,
 				       batch->cpus_per_node,
@@ -1831,23 +1831,26 @@ void env_array_merge(char ***dest_array, const char **src_array)
 }
 
 /*
- * Merge the environment variables in src_array beginning with "SLURM" into the
- * array dest_array.  Any variables already found in dest_array will be
- * overwritten with the value from src_array.
+ * Merge the environment variables in src_array beginning with "SLURM" or
+ * SPANK_OPTION_ENV_PREFIX into the array dest_array. Any variables already
+ * found in dest_array will be overwritten with the value from src_array.
  */
-void env_array_merge_slurm(char ***dest_array, const char **src_array)
+void env_array_merge_slurm_spank(char ***dest_array, const char **src_array)
 {
 	char **ptr;
 	char name[256], *value;
+	int spank_len;
 
 	if (src_array == NULL)
 		return;
 
+	spank_len = strlen(SPANK_OPTION_ENV_PREFIX);
 	value = xmalloc(ENV_BUFSIZE);
 	for (ptr = (char **)src_array; *ptr != NULL; ptr++) {
 		if (_env_array_entry_splitter(*ptr, name, sizeof(name),
 					      value, ENV_BUFSIZE) &&
-		    (xstrncmp(name, "SLURM", 5) == 0))
+		    ((xstrncmp(name, "SLURM", 5) == 0) ||
+		     (xstrncmp(name, SPANK_OPTION_ENV_PREFIX, spank_len) == 0)))
 			env_array_overwrite(dest_array, name, value);
 	}
 	xfree(value);
@@ -2026,7 +2029,7 @@ rwfail:
  */
 static char **_load_env_cache(const char *username)
 {
-	char fname[MAXPATHLEN];
+	char fname[PATH_MAX];
 	char *line, name[256], *value;
 	char **env = NULL;
 	FILE *fp;
@@ -2079,6 +2082,88 @@ static char **_load_env_cache(const char *username)
 	return env;
 }
 
+static int _child_fn(void *arg)
+{
+	char **tmp_env = NULL;
+	int devnull, fd = 3;
+	child_args_t *child_args = arg;
+	char *cmdstr;
+	const char *username;
+
+	username = child_args->username;
+	cmdstr = child_args->cmdstr;
+	tmp_env = child_args->tmp_env;
+
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__NetBSD__)
+	/*
+	 * Setting propagation and mounting our own /proc for this namespace.
+	 * This is done to ensure that this cloned process and its children
+	 * have coherent /proc contents with their virtual PIDs.
+	 * Check _clone_env_child to see namespace flags used in clone.
+	 */
+	if (mount("none", "/proc", NULL, MS_PRIVATE|MS_REC, NULL))
+		_exit(1);
+	if (mount("proc", "/proc", "proc",
+		  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL))
+		_exit(1);
+#endif
+
+	if ((devnull = open("/dev/null", O_RDWR)) != -1) {
+		dup2(devnull, STDIN_FILENO);
+		dup2(devnull, STDERR_FILENO);
+	}
+	dup2(child_args->fildes[1], STDOUT_FILENO);
+
+	/* slow close all fds */
+	while (fd < child_args->rlimit)
+		close(fd++);
+
+	if (child_args->mode == 1)
+		execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
+	else if (child_args->mode == 2)
+		execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
+	else {	/* Default system configuration */
+#ifdef LOAD_ENV_NO_LOGIN
+		execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
+#else
+		execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
+#endif
+	}
+	if (devnull >= 0)	/* Avoid Coverity resource leak notification */
+		(void) close(devnull);
+
+	_exit(1);
+}
+
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__NetBSD__)
+static int _clone_env_child(child_args_t *child_args)
+{
+	char *child_stack;
+	int rc = 0;
+	child_stack = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
+	if (child_stack == MAP_FAILED) {
+		error("Cannot allocate stack for child: %m");
+		return -1;
+	}
+	/*
+	 * In Linux (since 2.6.24), use CLONE_NEWPID to clone the child into a
+	 * new pid namespace. We are not into a job cgroup so we want to be
+	 * able to terminate any possible background process, specially because
+	 * we're using sudo here and running some user scripts (e.g. .bashrc).
+	 *
+	 * Killing the 'child' pid will kill all the namespace, since in the
+	 * namespace, this 'child' is pid 1.
+	 */
+	rc = clone(_child_fn, child_stack + STACK_SIZE,
+		   (SIGCHLD|CLONE_NEWPID|CLONE_NEWNS), child_args);
+	/* Memory deallocated only in parent address space, child unaffected */
+	if (munmap(child_stack, STACK_SIZE))
+		error("%s: failed to munmap child stack: %m", __func__);
+	return rc;
+}
+#endif
+
 /*
  * Return an array of strings representing the specified user's default
  * environment variables following a two-prongged approach.
@@ -2099,7 +2184,7 @@ static char **_load_env_cache(const char *username)
 char **env_array_user_default(const char *username, int timeout, int mode,
 			      bool no_cache)
 {
-	char *line = NULL, *last = NULL, name[MAXPATHLEN], *value, *buffer;
+	char *line = NULL, *last = NULL, name[PATH_MAX], *value, *buffer;
 	char **env = NULL;
 	char *starttoken = "XXXXSLURMSTARTPARSINGHEREXXXX";
 	char *stoptoken  = "XXXXSLURMSTOPPARSINGHEREXXXXX";
@@ -2108,9 +2193,11 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	int fildes[2], found, fval, len, rc, timeleft;
 	int buf_read, buf_rem, config_timeout;
 	pid_t child;
+	child_args_t child_args = {0};
 	struct timeval begin, now;
 	struct pollfd ufds;
 	struct stat buf;
+	struct rlimit rlim;
 
 	if (geteuid() != (uid_t)0) {
 		error("SlurmdUser must be root to use --get-user-env");
@@ -2145,41 +2232,32 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 		return NULL;
 	}
 
+	child_args.mode = mode;
+	child_args.fildes = fildes;
+	child_args.username = username;
+	child_args.cmdstr = cmdstr;
+	child_args.tmp_env = env_array_create();
+	env_array_overwrite(&child_args.tmp_env, "ENVIRONMENT", "BATCH");
+	if (getrlimit(RLIMIT_NOFILE, &rlim) < 0) {
+		error("getrlimit(RLIMIT_NOFILE): %m");
+		rlim.rlim_cur = 4096;
+	}
+	child_args.rlimit = rlim.rlim_cur;
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
 	child = fork();
 	if (child == -1) {
 		fatal("fork: %m");
 		return NULL;
 	}
-	if (child == 0) {
-		char **tmp_env = NULL;
-		int devnull;
-		tmp_env = env_array_create();
-		env_array_overwrite(&tmp_env, "ENVIRONMENT", "BATCH");
-		setpgid(0, 0);
-
-		if ((devnull = open("/dev/null", O_RDONLY)) == -1)
-			error("%s: open(/dev/null): %m", __func__);
-		dup2(devnull, STDIN_FILENO);
-		dup2(fildes[1], STDOUT_FILENO);
-		dup2(devnull, STDERR_FILENO);
-		closeall(3);
-
-		if      (mode == 1)
-			execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
-		else if (mode == 2)
-			execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
-		else {	/* Default system configuration */
-#ifdef LOAD_ENV_NO_LOGIN
-			execle(SUCMD, "su", username, "-c", cmdstr, NULL, tmp_env);
+	if (child == 0)
+		_child_fn(&child_args);
 #else
-			execle(SUCMD, "su", "-", username, "-c", cmdstr, NULL, tmp_env);
-#endif
-		}
-		if (devnull >= 0)	/* Avoid Coverity resource leak notification */
-			(void) close(devnull);
-		_exit(1);
+	if ((child = _clone_env_child(&child_args)) == -1) {
+		fatal("clone: %m");
+		return NULL;
 	}
-
+#endif
 	close(fildes[1]);
 	if ((fval = fcntl(fildes[0], F_GETFL, 0)) < 0)
 		error("fcntl(F_GETFL) failed: %m");
@@ -2243,6 +2321,8 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 		}
 	}
 	close(fildes[0]);
+	env_array_free(child_args.tmp_env);
+
 	for (config_timeout=0; ; config_timeout++) {
 		kill(-child, SIGKILL);	/* Typically a no-op */
 		if (config_timeout)
@@ -2326,6 +2406,22 @@ char **env_array_user_default(const char *username, int timeout, int mode,
 	return env;
 }
 
+static void _set_ext_launcher_hydra(char ***dest, char *b_env, char *extra)
+{
+	char *bootstrap = getenv(b_env);
+	bool disabled_slurm_hydra_bootstrap = false;
+
+	if (slurm_conf.mpi_params &&
+	    xstrstr(slurm_conf.mpi_params,"disable_slurm_hydra_bootstrap"))
+		disabled_slurm_hydra_bootstrap = true;
+
+	if ((!bootstrap && !disabled_slurm_hydra_bootstrap) ||
+	    !xstrcmp(bootstrap, "slurm")) {
+		env_array_append(dest, b_env, "slurm");
+		env_array_append(dest, extra, "--external-launcher");
+	}
+}
+
 /*
  * Set TRES related env vars. Set here rather than env_array_for_job() since
  * we don't have array of opt values and the raw values are not stored in the
@@ -2348,11 +2444,6 @@ extern void set_env_from_opts(slurm_opt_t *opt, char ***dest,
 					    het_job_offset, "%s",
 					    opt->gpus);
 	}
-	if (opt->gpu_bind) {
-		env_array_overwrite_het_fmt(dest, "SLURM_GPU_BIND",
-					    het_job_offset, "%s",
-					    opt->gpu_bind);
-	}
 	if (opt->gpu_freq) {
 		env_array_overwrite_het_fmt(dest, "SLURM_GPU_FREQ",
 					    het_job_offset, "%s",
@@ -2368,11 +2459,6 @@ extern void set_env_from_opts(slurm_opt_t *opt, char ***dest,
 					    het_job_offset, "%s",
 					    opt->gpus_per_socket);
 	}
-	if (opt->gpus_per_task) {
-		env_array_overwrite_het_fmt(dest, "SLURM_GPUS_PER_TASK",
-					    het_job_offset, "%s",
-					    opt->gpus_per_task);
-	}
 	if (opt->mem_per_gpu != NO_VAL64) {
 		env_array_overwrite_het_fmt(dest, "SLURM_MEM_PER_GPU",
 					    het_job_offset, "%"PRIu64,
@@ -2383,6 +2469,30 @@ extern void set_env_from_opts(slurm_opt_t *opt, char ***dest,
 					    het_job_offset, "%s",
 					    opt->tres_per_task);
 	}
+	if (opt->tres_bind) {
+		env_array_overwrite_het_fmt(dest, "SLURM_TRES_BIND",
+					    het_job_offset, "%s",
+					    opt->tres_bind);
+	}
+
+	/*
+	 * In the case that an external launcher (mpirun) is launching instead
+	 * of srun let the srun it launches to treat the request differently.
+	 */
+	env_array_append(dest, "OMPI_MCA_plm_slurm_args",
+			 "--external-launcher");
+	env_array_append(dest, "PRTE_MCA_plm_slurm_args",
+			 "--external-launcher");
+
+	/*
+	 * Some mpirun implementations like intel will pass the
+	 * bootstrap exec extra args to any bootstrap method (e.g. ssh,
+	 * rsh), so force 'slurm' bootstrap if no other one is set.
+	 */
+	_set_ext_launcher_hydra(dest, "HYDRA_BOOTSTRAP",
+				"HYDRA_LAUNCHER_EXTRA_ARGS");
+	_set_ext_launcher_hydra(dest, "I_MPI_HYDRA_BOOTSTRAP",
+				"I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS");
 }
 
 extern char *find_quote_token(char *tmp, char *sep, char **last)
@@ -2468,13 +2578,7 @@ extern void env_merge_filter(slurm_opt_t *opt, job_desc_msg_t *desc)
 	}
 	xfree(tmp);
 
-	for (i = 0; environ[i]; i++) {
-		if (xstrncmp("SLURM_", environ[i], 6))
-			continue;
-		save_env[0] = environ[i];
-		env_array_merge(&desc->environment,
-				(const char **)save_env);
-	}
+	env_array_merge_slurm_spank(&desc->environment, (const char **)environ);
 }
 
 extern char **env_array_exclude(const char **env, const regex_t *regex)
@@ -2491,4 +2595,25 @@ extern char **env_array_exclude(const char **env, const regex_t *regex)
 	}
 
 	return purged;
+}
+
+extern void set_prio_process_env(void)
+{
+        int retval;
+
+        errno = 0; /* needed to detect a real failure since prio can be -1 */
+
+        if ((retval = getpriority(PRIO_PROCESS, 0)) == -1)  {
+                if (errno) {
+                        error("getpriority(PRIO_PROCESS): %m");
+                        return;
+                }
+        }
+
+        if (setenvf(NULL, "SLURM_PRIO_PROCESS", "%d", retval) < 0) {
+                error("unable to set SLURM_PRIO_PROCESS in environment");
+                return;
+        }
+
+        debug("propagating SLURM_PRIO_PROCESS=%d", retval);
 }

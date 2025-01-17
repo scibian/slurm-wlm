@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  gpu_oneapi.c - Support oneAPI interface to an Intel GPU.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2022 Intel Corporation
  *  Written by Kemp Ke <kemp.ke@intel.com>
  *  Based on gpu_nvml.c, written by Danny Auble <da@schedmd.com>
@@ -319,7 +319,7 @@ static bool _oneapi_get_nearest_freq(zes_freq_handle_t freq_handle,
 
 	memcpy(freqs_sort, freqs, freqs_size * sizeof(unsigned int));
 	qsort(freqs_sort, freqs_size, sizeof(unsigned int),
-	      gpu_common_sort_freq_descending);
+	      slurm_sort_uint_list_desc);
 
 	/* Set the nearest valid frequency for the requested frequency */
 	gpu_common_get_nearest_freq(freq, freqs_size, freqs_sort);
@@ -388,7 +388,7 @@ static void _oneapi_print_freqs(ze_device_handle_t device, log_level_t l)
 						  &freqs_size))
 			continue;
 		qsort(freqs, freqs_size, sizeof(unsigned int),
-		      gpu_common_sort_freq_descending);
+		      slurm_sort_uint_list_desc);
 
 		/* Get frequency property */
 		oneapi_rc = zesFrequencyGetProperties(freq_handles[i],
@@ -865,11 +865,11 @@ static bool _oneapi_get_device_name(uint32_t domain, uint32_t bus,
 	/*
 	 * Build search pattern to search strings like
 	 * "../../devices/pci0000:89/0000:89:02.0/0000:8a:00.0
-	 * /0000:8b:01.0/0000:8c:00.0/drm/card0"
+	 * /0000:8b:01.0/0000:8c:00.0/drm/renderD0"
 	 */
 	snprintf(device_pattern, sizeof(device_pattern),
-		 "/%04x:%02x:%02x.%0x/drm/renderD[0-9]+$", domain, bus,
-		 device, function);
+		 "/%04x:%02x:%02x.%0x/%s",
+		 domain, bus, device, function, card_reg_string);
 	if ((rc = regcomp(&search_reg, device_pattern, REG_EXTENDED))) {
 		dump_regex_error(rc, &search_reg,
 				 "Device file regex \"%s\" compilation failed",
@@ -969,6 +969,9 @@ extern int init(void)
 
 	/* Init oneAPI */
 	setenv("ZES_ENABLE_SYSMAN", "1", 1);
+	setenv("ZE_FLAT_DEVICE_HIERARCHY", "COMPOSITE", 1);
+	setenv("ZE_ENABLE_PCI_ID_DEVICE_ORDER", "1", 1);
+
 	if (zeInit(0) != ZE_RESULT_SUCCESS)
 		fatal("zeInit failed");
 
@@ -979,11 +982,6 @@ extern int fini(void)
 {
 	debug("unloading");
 
-	return SLURM_SUCCESS;
-}
-
-extern int gpu_p_reconfig(void)
-{
 	return SLURM_SUCCESS;
 }
 

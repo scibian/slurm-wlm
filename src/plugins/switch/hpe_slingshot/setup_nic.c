@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  setup_nic.c - Library for managing HPE Slingshot networks
  *****************************************************************************
- *  Copyright 2021 Hewlett Packard Enterprise Development LP
+ *  Copyright 2021-2023 Hewlett Packard Enterprise Development LP
  *  Written by Jim Nordby <james.nordby@hpe.com>
  *
  *  This file is part of Slurm, a resource management program.
@@ -52,6 +52,7 @@ static void *cxi_handle = NULL;
 static bool cxi_avail = false;
 static struct cxil_dev **cxi_devs = NULL;
 static int cxi_ndevs = 0;
+static bool rdzv_get_en_default = true;
 
 /* Define struct not defined in earlier versions of libcxi */
 #ifndef HAVE_STRUCT_CXI_RSRC_USE
@@ -209,7 +210,7 @@ static bool _adjust_dev_limits(int dev, struct cxil_devinfo *devinfo)
 /*
  * Set up basic access to the CXI devices in the daemon
  */
-static bool _create_cxi_devs(slingshot_jobinfo_t *job)
+static bool _create_cxi_devs(slingshot_stepinfo_t *job)
 {
 	struct cxil_device_list *list;
 	int dev, rc;
@@ -286,7 +287,7 @@ static struct cxi_limits _set_desc_limits(int rsrc,
  */
 static void _create_cxi_descriptor(struct cxi_svc_desc *desc,
 				   const struct cxil_devinfo *devinfo,
-				   const slingshot_jobinfo_t *job,
+				   const slingshot_stepinfo_t *job,
 				   uint32_t uid, uint16_t step_cpus)
 {
 	int cpus;
@@ -360,7 +361,7 @@ static void _create_cxi_descriptor(struct cxi_svc_desc *desc,
  * Open the Slingshot CXI library; set up functions and set cxi_avail
  * if successful (default is 'false')
  */
-extern bool slingshot_open_cxi_lib(slingshot_jobinfo_t *job)
+extern bool slingshot_open_cxi_lib(slingshot_stepinfo_t *job)
 {
 	if (!(cxi_handle = dlopen(HPE_SLINGSHOT_LIB,
 				  RTLD_LAZY | RTLD_GLOBAL))) {
@@ -422,10 +423,90 @@ static bool _destroy_cxi_service(struct cxil_dev *dev, const char *devname,
 }
 
 /*
+ * Determine whether "rdzv_get_en" is enabled or disabled on this node
+ * Returns true on failure, since this parameter is enabled by default
+ */
+static bool _get_rdzv_get_en_default(void)
+{
+	bool enabled = true;
+	FILE *fp = NULL;
+	int param;
+
+	/* Open the file */
+	if (!(fp = fopen(SLINGSHOT_RDZV_GET_EN_DEFAULT_FILE, "r"))) {
+		error("Couldn't open %s for reading: %m",
+		      SLINGSHOT_RDZV_GET_EN_DEFAULT_FILE);
+		return enabled;
+	}
+
+	/* The file will contain a single character, Y/y/1/N/n/0 */
+	param = fgetc(fp);
+	switch (param) {
+	case 'Y':
+	case 'y':
+	case '1':
+		enabled = true;
+		break;
+	case 'N':
+	case 'n':
+	case '0':
+		enabled = false;
+		break;
+	case EOF:
+		error("Couldn't read from %s: %m",
+		      SLINGSHOT_RDZV_GET_EN_DEFAULT_FILE);
+		break;
+	default:
+		error("Unexpected char '%c' from %s",
+		      param, SLINGSHOT_RDZV_GET_EN_DEFAULT_FILE);
+		break;
+	}
+
+	log_flag(SWITCH, "Rendezvous gets are %s by default",
+		 enabled ? "enabled" : "disabled");
+	fclose(fp);
+	return enabled;
+}
+
+/*
+ * Configure rendezvous gets for the given device.
+ * Set to 1 to enable, or 0 to disable.
+ * Returns the value written, or -1 on failure.
+ */
+static int _set_rdzv_get_en(int device, int val)
+{
+	char *fname = NULL;
+	FILE *fp = NULL;
+
+	/* Get the file name to write to */
+	xstrfmtcat(fname, SLINGSHOT_RDZV_GET_EN_FMT, device);
+
+	/* Open the file */
+	if (!(fp = fopen(fname, "w"))) {
+		error("Couldn't open %s for writing: %m", fname);
+		xfree(fname);
+		return -1;
+	}
+
+	/* Write to the file */
+	log_flag(SWITCH, "Writing %d to %s", val, fname);
+	if (fprintf(fp, "%d", val) < 0) {
+		error("Couldn't write %d to %s: %m", val, fname);
+		fclose(fp);
+		xfree(fname);
+		return -1;
+	}
+
+	fclose(fp);
+	xfree(fname);
+	return val;
+}
+
+/*
  * In the daemon, when the shepherd for an App terminates, free any CXI
  * Services we have allocated for it
  */
-extern bool slingshot_destroy_services(slingshot_jobinfo_t *job,
+extern bool slingshot_destroy_services(slingshot_stepinfo_t *job,
 				       uint32_t job_id)
 {
 	bool retval = true;
@@ -454,6 +535,11 @@ extern bool slingshot_destroy_services(slingshot_jobinfo_t *job,
 		/* Try to destroy service (with retries) */
 		if (!_destroy_cxi_service(dev, devname, svc_id))
 			retval = false;
+
+		/* Reset rendezvous gets to default */
+		if (rdzv_get_en_default &&
+		    (job->flags & SLINGSHOT_FLAGS_DISABLE_RDZV_GET))
+			_set_rdzv_get_en(dev->info.dev_id, 1);
 	}
 
 	xfree(job->profiles);
@@ -518,7 +604,7 @@ static void _alloc_fail_info(struct cxil_dev *dev,
 /*
  * Set up CXI services for each of the CXI NICs on this host
  */
-extern bool slingshot_create_services(slingshot_jobinfo_t *job, uint32_t uid,
+extern bool slingshot_create_services(slingshot_stepinfo_t *job, uint32_t uid,
 				      uint16_t step_cpus, uint32_t job_id)
 {
 	int prof, devn;
@@ -538,6 +624,9 @@ extern bool slingshot_create_services(slingshot_jobinfo_t *job, uint32_t uid,
 			 cxi_avail, job->num_vnis);
 		return true;
 	}
+
+	/* Determine whether rendezvous gets are enabled */
+	rdzv_get_en_default = _get_rdzv_get_en_default();
 
 	/* Figure out number of working NICs = services to create */
 	job->num_profiles = 0;
@@ -564,6 +653,11 @@ extern bool slingshot_create_services(slingshot_jobinfo_t *job, uint32_t uid,
 			_alloc_fail_info(dev, &desc, &failinfo);
 			goto error;
 		}
+
+		/* Disable rendezvous gets if requested */
+		if (rdzv_get_en_default &&
+		    (job->flags & SLINGSHOT_FLAGS_DISABLE_RDZV_GET))
+			_set_rdzv_get_en(dev->info.dev_id, 0);
 
 		profile = &job->profiles[prof];
 		profile->svc_id = svc_id;

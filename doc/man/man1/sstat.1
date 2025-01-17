@@ -1,4 +1,4 @@
-.TH sstat "1" "Slurm Commands" "August 2022" "Slurm Commands"
+.TH sstat "1" "Slurm Commands" "January 2024" "Slurm Commands"
 
 .SH "NAME"
 sstat \- Display the status information of a running job/step.
@@ -24,9 +24,11 @@ For the non\-root user, the \fBsstat\fR output is limited to the user's jobs.
 .PP
 \fBNOTE\fR: The \fBsstat\fR command requires that the \fBjobacct_gather\fP
 plugin be installed and operational.
-.PP
-\fBNOTE\fR: The \fBsstat\fR command is not supported on Cray ALPS.
 
+\fBNOTE\fR: Availability of metrics rely on the \fBjobacct_gather\fP plugin
+used. For example the jobacct_gather/cgroup in combination with cgroup/v2 does
+not provide Virtual Memory metrics due to limitations in the kernel cgroups
+interfaces and will show a 0 for the related fields.
 .SH "OPTIONS"
 
 .TP
@@ -43,7 +45,7 @@ Comma separated list of fields.
 a %NUMBER afterwards to specify how many characters should be printed.
 
 i.e. format=name%30 will print 30 characters of field name right
-justified.  A \-30 will print 30 characters left justified.
+justified. A \-30 will print 30 characters left justified.
 .IP
 
 .TP
@@ -59,14 +61,14 @@ Print a list of fields that can be specified with the '\-\-format' option.
 .TP
 \fB\-j\fR, \fB\-\-jobs\fR
 Format is <job(.step)>. Stat this job step or comma\-separated list of
-job steps. This option is required.  The step portion will default to
+job steps. This option is required. The step portion will default to
 the lowest numbered (not batch, extern, etc) step running if not specified,
 unless the \-\-allsteps flag is set where not specifying a step will result in
 all running steps to be displayed.
 \fBNOTE\fR: A step id of 'batch' will display the information about the batch
 step.
 \fBNOTE\fR: A step id of 'extern' will display the information about the
-extern step.  This step is only available when using PrologFlags=contain
+extern step. This step is only available when using PrologFlags=contain
 .IP
 
 .TP
@@ -383,7 +385,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"

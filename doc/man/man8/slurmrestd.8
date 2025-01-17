@@ -69,8 +69,74 @@ is active. User must specify the following HTTP cookies with each request:
 .IP
 
 .TP
+\fB\-d <plugin_description>,...\fR
+Comma\-delimited list of data_parser plugins including per plugin flags as
+denoted by '+' symbol.
+.BR
+Defaults: all builtin supported data_parser plugins.
+.RS
+.TP
+\fBlist\fR
+Display a list of the possible plugins to load.
+.IP
+
+.TP
+\fB[data_parser/]v0.0.39\fR
+Load data_parser/]v0.0.39 plugin to for formatting of data. Only compatible
+with \fBopenapi/v0.0.39\fR and \fBopenapi/dbv0.0.39\fR content plugins.
+.IP
+
+.TP
+\fB[data_parser/]v0.0.40[+fast]\fR
+Load data_parser/]v0.0.40 plugin to for formatting of data. Only compatible
+with \fBopenapi/slurmctld\fR and \fBopenapi/slurmdbd\fR content plugins.
+.RS
+.TP
+\fB+fast\fR
+Disable builtin warnings and other logic to strictly validate
+incoming requests. Should only ever be used in a production environment with
+very well tested clients and potentially malformatted requests will be accepted
+as given and no warnings will be generated about ignored or incorrect fields or
+values.
+.IP
+.RE
+.IP
+
+.TP
+\fB[data_parser/]v0.0.41[+fast][+prefer_refs]\fR
+Load data_parser/]v0.0.41 plugin to for formatting of data. Only compatible
+with \fBopenapi/slurmctld\fR and \fBopenapi/slurmdbd\fR content plugins.
+.RS
+.TP
+\fB+fast\fR
+Disable builtin warnings and other logic to strictly validate
+incoming requests. Should only ever be used in a production environment with
+very well tested clients and potentially malformatted requests will be accepted
+as given and no warnings will be generated about ignored or incorrect fields or
+values.
+.IP
+.TP
+\fB+prefer_refs\fR
+Avoid inline expansion of referenced schemas (via \fI$ref\fR) in generated
+OpenAPI specifications if the schema is only referenced once.
+.IP
+.RE
+.IP
+
+.RE
+.IP
+
+.TP
 \fB\-f <file>\fR
 Read Slurm configuration from the specified file. See \fBNOTES\fR below.
+.IP
+
+.TP
+\fB\-\-generate\-openapi\-spec\fR
+Dump JSON formatted OpenAPI specification to stdout and exit immediately.
+Loads miminal plugins required. Loading of \fBslurm.conf\fR(5) can be disabled
+by passing additional arguments \fB\-f /dev/null\fR or setting
+\fBSLURM_CONF\fR=/dev/null in the environment.
 .IP
 
 .TP
@@ -82,7 +148,7 @@ root or the daemon won't start with the default settings.
 .IP
 
 .TP
-\fB\-h\fR
+\fB\-h\fR, \fB\-\-help\fR
 Help; print a brief summary of command options.
 .IP
 
@@ -139,7 +205,7 @@ Print version information and exit.
 
 .SH "ENVIRONMENT VARIABLES"
 The following environment variables can be used to override settings
-compiled into slurmctld.
+compiled into slurmrestd.
 
 .TP
 \fBSLURM_CONF\fR
@@ -154,6 +220,22 @@ variable takes precedence over the setting in the slurm.conf.
 .IP
 
 .TP
+\fBSLURMRESTD_JSON\fR
+Control JSON serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR
+Output JSON as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR
+Output JSON in pretty format to make it more readable.
+.IP
+.RE
+
+.TP
 \fBSLURM_JWT\fR
 This variable must be set to use JWT token authentication.
 .IP
@@ -165,7 +247,14 @@ Set allowed authentication types. See \fB\-a\fR
 
 .TP
 \fBSLURMRESTD_DEBUG\fR
-Set debug level explicitly. Valid values are 1\-10. See \fB\-v\fR
+Set debug level explicitly. Valid values are 0\-9, or the same string values as
+the debug options such as SlurmctldDebug in slurm.conf(5).
+Ignored if \fB\-v\fR passed as argument during invocation.
+.IP
+
+.TP
+\fBSLURMRESTD_DATA_PARSER_PLUGINS\fR
+Comma\-delimited list of data_parser plugins to load. See \fB\-d\fR
 .IP
 
 .TP
@@ -182,6 +271,14 @@ Set the maximum number of connections to process at any one time. See
 .TP
 \fBSLURMRESTD_OPENAPI_PLUGINS\fR
 Comma\-delimited list of OpenAPI plugins to load. See \fB\-s\fR
+.IP
+
+.TP
+\fBSLURMRESTD_RESPONSE_STATUS_CODES\fR
+Comma\-delimited list of OpenAPI method responses to generate in OpenAPI
+specification.
+.BR
+Default: 200,default
 .IP
 
 .TP
@@ -215,6 +312,22 @@ Disables unsharing the SYSV namespace.
 \fBdisable_user_check\fR
 Disables check that slurmrestd is not running as root or SlurmUser, or with the
 root or SlurmUser's primary group.
+.RE
+.IP
+
+.TP
+\fBSLURMRESTD_YAML\fR
+Control YAML serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR
+Output YAML as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR
+Output YAML in pretty format to make it more readable.
 .RE
 .IP
 
@@ -546,7 +659,7 @@ any later version.
 .LP
 Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"

@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Copyright (C) 2013 SchedMD
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by David Bigagli david@schemd.com
  *  CODE-OCEC-09-009. All rights reserved.
@@ -110,8 +110,22 @@ extern void scontrol_print_licenses(const char *name, int argc, char **argv)
 	 * Print the info
 	 */
 	if (mime_type) {
-		exit_code = DATA_DUMP_CLI(LICENSES, *msg, "licenses", argc, argv,
-					  NULL, mime_type);
+		int rc;
+		openapi_resp_license_info_msg_t resp = {
+			.licenses = msg,
+			.last_update = msg->last_update,
+		};
+
+		if (is_data_parser_deprecated(data_parser))
+			DATA_DUMP_CLI_DEPRECATED(LICENSES, *msg, "licenses",
+						 argc, argv, NULL, mime_type,
+						 rc);
+		else
+			DATA_DUMP_CLI(OPENAPI_LICENSES_RESP, resp, argc, argv,
+				      NULL, mime_type, data_parser, rc);
+
+		if (rc)
+			exit_code = 1;
 	} else {
 		_print_license_info(name, msg);
 	}

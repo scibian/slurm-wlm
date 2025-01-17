@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  slurm_lua.c - Lua integration common functions
  *****************************************************************************
- *  Copyright (C) 2015-2020 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -297,10 +296,16 @@ static void _register_slurm_output_functions(lua_State *L)
 	/*
 	 * job_desc bitflags
 	 */
+	lua_pushnumber(L, GRES_ALLOW_TASK_SHARING);
+	lua_setfield(L, -2, "GRES_ALLOW_TASK_SHARING");
 	lua_pushnumber(L, GRES_DISABLE_BIND);
 	lua_setfield(L, -2, "GRES_DISABLE_BIND");
 	lua_pushnumber(L, GRES_ENFORCE_BIND);
 	lua_setfield(L, -2, "GRES_ENFORCE_BIND");
+	lua_pushnumber(L, GRES_MULT_TASKS_PER_SHARING);
+	lua_setfield(L, -2, "GRES_MULT_TASKS_PER_SHARING");
+	lua_pushnumber(L, GRES_ONE_TASK_PER_SHARING);
+	lua_setfield(L, -2, "GRES_ONE_TASK_PER_SHARING");
 	lua_pushnumber(L, KILL_INV_DEP);
 	lua_setfield(L, -2, "KILL_INV_DEP");
 	lua_pushnumber(L, NO_KILL_INV_DEP);
@@ -309,6 +314,8 @@ static void _register_slurm_output_functions(lua_State *L)
 	lua_setfield(L, -2, "SPREAD_JOB");
 	lua_pushnumber(L, USE_MIN_NODES);
 	lua_setfield(L, -2, "USE_MIN_NODES");
+	lua_pushnumber(L, STEPMGR_ENABLED);
+	lua_setfield(L, -2, "STEPMGR_ENABLED");
 
 	lua_pushstring(L, slurm_conf.cluster_name);
 	lua_setfield(L, -2, "CLUSTER_NAME");
@@ -377,6 +384,22 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 		lua_pushstring(L, job_ptr->cpus_per_tres);
 	} else if (!xstrcmp(name, "delay_boot")) {
 		lua_pushnumber(L, job_ptr->delay_boot);
+	} else if (!xstrcmp(name, "curr_dependency")) {
+		/*
+		 * Name it "curr_dependency" rather than "dependency" because
+		 * the job's dependency value can change as individual
+		 * dependencies change. This prevents the use of "dependency"
+		 * when someone is expecting the original dependency value.
+		 */
+		if (job_ptr->details)
+			lua_pushstring(L, job_ptr->details->dependency);
+		else
+			lua_pushnil(L);
+	} else if (!xstrcmp(name, "orig_dependency")) {
+		if (job_ptr->details)
+			lua_pushstring(L, job_ptr->details->orig_dependency);
+		else
+			lua_pushnil(L);
 	} else if (!xstrcmp(name, "derived_ec")) {
 		lua_pushnumber(L, job_ptr->derived_ec);
 	} else if (!xstrcmp(name, "direct_set_prio")) {
@@ -417,6 +440,8 @@ extern int slurm_lua_job_record_field(lua_State *L, const job_record_t *job_ptr,
 			lua_pushnumber(L, job_ptr->details->max_nodes);
 		else
 			lua_pushnumber(L, 0);
+	} else if (!xstrcmp(name, "mcs_label")) {
+		lua_pushstring(L, job_ptr->mcs_label);
 	} else if (!xstrcmp(name, "mem_per_tres")) {
 		lua_pushstring(L, job_ptr->mem_per_tres);
 	} else if (!xstrcmp(name, "min_cpus")) {
@@ -663,12 +688,12 @@ extern int slurm_lua_loadscript(lua_State **L, const char *plugin,
 
 	if (stat(script_path, &st) != 0) {
 		if (curr) {
-			(void) error("%s: Unable to stat %s, using old script: %s",
-			             plugin, script_path, strerror(errno));
+			error("%s: Unable to stat %s, using old script: %s",
+			      plugin, script_path, strerror(errno));
 			return SLURM_SUCCESS;
 		}
-		(void) error("%s: Unable to stat %s: %s",
-		             plugin, script_path, strerror(errno));
+		error("%s: Unable to stat %s: %s",
+		      plugin, script_path, strerror(errno));
 		return SLURM_ERROR;
 	}
 
@@ -737,13 +762,13 @@ extern int slurm_lua_loadscript(lua_State **L, const char *plugin,
 	rc = (int) lua_tonumber(new, -1);
 	if (rc != SLURM_SUCCESS) {
 		if (curr) {
-			(void) error("%s: %s: returned %d on load, using previous script",
-			             plugin, script_path, rc);
+			error("%s: %s: returned %d on load, using previous script",
+			      plugin, script_path, rc);
 			lua_close(new);
 			return SLURM_SUCCESS;
 		}
-		(void) error("%s: %s: returned %d on load", plugin,
-			     script_path, rc);
+		error("%s: %s: returned %d on load", plugin,
+		      script_path, rc);
 		lua_pop(new, 1);
 		lua_close(new);
 		return SLURM_ERROR;
@@ -755,8 +780,8 @@ extern int slurm_lua_loadscript(lua_State **L, const char *plugin,
 	rc = _check_lua_script_functions(new, plugin, script_path, req_fxns);
 	if (rc != SLURM_SUCCESS) {
 		if (curr) {
-			(void) error("%s: %s: required function(s) not present, using previous script",
-			             plugin, script_path);
+			error("%s: %s: required function(s) not present, using previous script",
+			      plugin, script_path);
 			lua_close(new);
 			return SLURM_SUCCESS;
 		}

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  gpu_generic.c - Support generic interface to a GPU.
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -83,12 +82,6 @@ extern int fini(void)
 
 	return SLURM_SUCCESS;
 }
-
-extern int gpu_p_reconfig(void)
-{
-	return SLURM_SUCCESS;
-}
-
 
 extern List gpu_p_get_system_gpu_list(node_config_load_t *node_config)
 {

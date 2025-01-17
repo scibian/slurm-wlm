@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Copyright (C) 2010-2017 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -39,13 +39,13 @@
 \*****************************************************************************/
 
 #include <fcntl.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/param.h>               /* MAXPATHLEN */
 #include <sys/resource.h> /* for RLIMIT_NOFILE */
 
 #include "slurm/slurm.h"
@@ -58,7 +58,6 @@
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/run_command.h"
-#include "src/interfaces/select.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/spank.h"
@@ -75,7 +74,6 @@ static void *_get_script_buffer(const char *filename, int *size);
 static int   _job_wait(uint32_t job_id);
 static char *_script_wrap(char *command_string);
 static void  _set_exit_code(void);
-static void  _set_prio_process_env(void);
 static int   _set_rlimit_env(void);
 static void  _set_spank_env(void);
 static void  _set_submit_dir_env(void);
@@ -196,7 +194,7 @@ int main(int argc, char **argv)
 		if (sbopt.export_file != NULL)
 			env_unset_environment();
 
-		_set_prio_process_env();
+		set_prio_process_env();
 		_set_spank_env();
 		_set_submit_dir_env();
 		_set_umask_env();
@@ -233,7 +231,7 @@ int main(int argc, char **argv)
 	}
 
 	if (job_env_list) {
-		ListIterator desc_iter, env_iter;
+		list_itr_t *desc_iter, *env_iter;
 		i = 0;
 		desc_iter = list_iterator_create(job_req_list);
 		env_iter  = list_iterator_create(job_env_list);
@@ -295,7 +293,8 @@ int main(int argc, char **argv)
 			break;
 		if (errno == ESLURM_ERROR_ON_DESC_TO_RECORD_COPY) {
 			msg = "Slurm job queue full, sleeping and retrying";
-		} else if (errno == ESLURM_NODES_BUSY) {
+		} else if ((errno == ESLURM_NODES_BUSY) ||
+			   (errno == ESLURM_PORTS_BUSY)) {
 			msg = "Job creation temporarily disabled, retrying";
 		} else if (errno == EAGAIN) {
 			msg = "Slurm temporarily unable to accept job, "
@@ -309,7 +308,8 @@ int main(int argc, char **argv)
 
 		if (retries)
 			debug("%s", msg);
-		else if (errno == ESLURM_NODES_BUSY)
+		else if ((errno == ESLURM_NODES_BUSY) ||
+			 (errno == ESLURM_PORTS_BUSY))
 			info("%s", msg); /* Not an error, powering up nodes */
 		else
 			error("%s", msg);
@@ -348,9 +348,8 @@ int main(int argc, char **argv)
 
 #ifdef MEMORY_LEAK_DEBUG
 	cli_filter_fini();
-	select_g_fini();
 	slurm_reset_all_options(&opt, false);
-	slurm_auth_fini();
+	auth_g_fini();
 	slurm_conf_destroy();
 	log_fini();
 #endif /* MEMORY_LEAK_DEBUG */
@@ -443,12 +442,12 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		env_array_merge(&desc->environment, (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "NIL")) {
 		desc->environment = env_array_create();
-		env_array_merge_slurm(&desc->environment,
-				      (const char **)environ);
+		env_array_merge_slurm_spank(&desc->environment,
+					    (const char **) environ);
 	} else if (!xstrcasecmp(opt.export_env, "NONE")) {
 		desc->environment = env_array_create();
-		env_array_merge_slurm(&desc->environment,
-				      (const char **)environ);
+		env_array_merge_slurm_spank(&desc->environment,
+					    (const char **) environ);
 		opt.get_user_env_time = 0;
 	} else {
 		env_merge_filter(&opt, desc);
@@ -510,9 +509,9 @@ static void _set_spank_env(void)
  * current state */
 static void _set_submit_dir_env(void)
 {
-	char buf[MAXPATHLEN + 1], host[256];
+	char buf[PATH_MAX], host[256];
 
-	if ((getcwd(buf, MAXPATHLEN)) == NULL)
+	if ((getcwd(buf, PATH_MAX)) == NULL)
 		error("getcwd failed: %m");
 	else if (setenvf(NULL, "SLURM_SUBMIT_DIR", "%s", buf) < 0)
 		error("unable to set SLURM_SUBMIT_DIR in environment");
@@ -547,34 +546,6 @@ static int _set_umask_env(void)
 	}
 	debug ("propagating UMASK=%s", mask_char);
 	return SLURM_SUCCESS;
-}
-
-/*
- * _set_prio_process_env
- *
- * Set the internal SLURM_PRIO_PROCESS environment variable to support
- * the propagation of the users nice value and the "PropagatePrioProcess"
- * config keyword.
- */
-static void  _set_prio_process_env(void)
-{
-	int retval;
-
-	errno = 0; /* needed to detect a real failure since prio can be -1 */
-
-	if ((retval = getpriority (PRIO_PROCESS, 0)) == -1)  {
-		if (errno) {
-			error ("getpriority(PRIO_PROCESS): %m");
-			return;
-		}
-	}
-
-	if (setenvf (NULL, "SLURM_PRIO_PROCESS", "%d", retval) < 0) {
-		error ("unable to set SLURM_PRIO_PROCESS in environment");
-		return;
-	}
-
-	debug ("propagating SLURM_PRIO_PROCESS=%d", retval);
 }
 
 /*

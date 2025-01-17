@@ -2,7 +2,7 @@
  *  preempt.h - Define job preemption plugin functions.
  *****************************************************************************
  *  Copyright (C) 2009-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -37,8 +37,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef __SLURM_CONTROLLER_PREEMPT_H__
-#define __SLURM_CONTROLLER_PREEMPT_H__
+#ifndef _INTERFACES_PREEMPT_H
+#define _INTERFACES_PREEMPT_H
 
 #include "slurm/slurm.h"
 #include "src/slurmctld/slurmctld.h"
@@ -56,14 +56,14 @@ typedef enum {
  *
  * Returns a Slurm errno.
  */
-int slurm_preempt_init(void);
+int preempt_g_init(void);
 
 /*
  * Terminate the preemption plugin.
  *
  * Returns a Slurm errno.
  */
-extern int slurm_preempt_fini(void);
+extern int preempt_g_fini(void);
 
 /*
  * slurm_find_preemptable_jobs - Given a pointer to a pending job, return list
@@ -128,4 +128,4 @@ extern int preempt_g_get_data(job_record_t *job_ptr,
 			      slurm_preempt_data_type_t data_type,
 			      void *data);
 
-#endif /*__SLURM_CONTROLLER_PREEMPT_H__*/
+#endif

@@ -3,8 +3,7 @@
  *	releasing storage for slurmscriptd RPC data structures.
  *	This is only used for communication between slurmctld and slurmscriptd.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Marshall Garey <marshall@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -39,15 +38,6 @@
 #include "src/common/xmalloc.h"
 #include "src/slurmctld/slurmscriptd_protocol_defs.h"
 
-extern void slurmscriptd_free_reconfig(reconfig_msg_t *msg)
-{
-	if (!msg)
-		return;
-
-	xfree(msg->logfile);
-	xfree(msg);
-}
-
 extern void slurmscriptd_free_run_script_msg(run_script_msg_t *msg)
 {
 	if (!msg)
@@ -79,9 +69,6 @@ extern void slurmscriptd_free_msg(slurmscriptd_msg_t *msg)
 		return;
 
 	switch(msg->msg_type) {
-	case SLURMSCRIPTD_REQUEST_RECONFIG:
-		slurmscriptd_free_reconfig(msg->msg_data);
-		break;
 	case SLURMSCRIPTD_REQUEST_RUN_SCRIPT:
 		slurmscriptd_free_run_script_msg(msg->msg_data);
 		break;

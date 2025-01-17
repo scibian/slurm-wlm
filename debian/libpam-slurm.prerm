@@ -1,8 +1,3 @@
-<<<<<<< HEAD
-#! /bin/sh -e
-
-pam-auth-update --package --remove slurm
-=======
 #!/bin/sh
 
 set -e
@@ -24,6 +19,5 @@ set -e
 if [ "$1" = remove ] && [ "${DPKG_MAINTSCRIPT_PACKAGE_REFCOUNT:-1}" = 1 ]; then
     pam-auth-update --package --remove slurm
 fi
->>>>>>> master
 
 #DEBHELPER#

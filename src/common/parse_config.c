@@ -59,7 +59,7 @@
 #include "src/common/read_config.h"
 #include "src/common/run_in_daemon.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/common/slurm_protocol_interface.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xregex.h"
@@ -123,12 +123,6 @@ typedef struct _expline_values_st {
 } _expline_values_t;
 
 List conf_includes_list = NULL;
-
-static bool _run_in_daemon(void)
-{
-	static bool run = false, set = false;
-	return run_in_daemon(&run, &set, "slurmctld,slurmd,slurmdbd");
-}
 
 /*
  * NOTE - "key" is case insensitive.
@@ -539,9 +533,8 @@ static int _handle_common(s_p_values_t *v,
 			  void* (*convert)(const char* key, const char* value))
 {
 	if (v->data_count != 0) {
-		if (_run_in_daemon())
-			error("%s 1 specified more than once, latest value used",
-			      v->key);
+		error_in_daemon("%s 1 specified more than once, latest value used",
+				v->key);
 		xfree(v->data);
 		v->data_count = 0;
 	}
@@ -661,9 +654,8 @@ static int _handle_pointer(s_p_values_t *v, const char *value,
 			return rc == 0 ? 0 : -1;
 	} else {
 		if (v->data_count != 0) {
-			if (_run_in_daemon())
-				error("%s 2 specified more than once, latest value used",
-				      v->key);
+			error_in_daemon("%s 2 specified more than once, latest value used",
+					v->key);
 			xfree(v->data);
 			v->data_count = 0;
 		}
@@ -1163,8 +1155,8 @@ static void _handle_include(char *include_file, char *conf_file)
  */
 static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 				    const char *line, char **leftover,
-				    bool ignore_new, char *slurm_conf_path,
-				    char *last_ancestor, bool check_permissions)
+				    uint32_t flags, char *slurm_conf_path,
+				    char *last_ancestor)
 {
 	char *ptr;
 	char *fn_start, *fn_stop;
@@ -1194,7 +1186,7 @@ static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 		path_name = get_extra_conf_path(file_name);
 
 		stat(path_name, &temp);
-		if ((check_permissions) &&
+		if ((flags & PARSE_FLAGS_CHECK_PERMISSIONS) &&
 		   ((temp.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO)) != 0600))
 			fatal("Included file %s at %s should be 600 is %o accessible for group or others",
 			      file_name,
@@ -1202,8 +1194,21 @@ static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 			      temp.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO));
 		if (!last_ancestor)
 			last_ancestor = xbasename(slurm_conf_path);
-		rc = s_p_parse_file(hashtbl, hash_val, path_name, ignore_new,
-				    last_ancestor, check_permissions);
+
+		if (xstrstr(file_name, "*")) {
+			if ((!xstrcasecmp(last_ancestor,"slurm.conf")) ||
+			    (!(slurm_conf.debug_flags & DEBUG_FLAG_GLOB_SILENCE))) {
+				error("Slurm does not support glob parsing. %s from %s will be skipped over. If this expected, ignore this message and set DebugFlags=GLOB_SILENCE in your slurm.conf.",
+				      path_name, last_ancestor);
+			}
+			xfree(path_name);
+			xfree(file_name);
+			return -1;
+		} else {
+			rc = s_p_parse_file(hashtbl, hash_val, path_name, flags,
+					    last_ancestor);
+		}
+
 		xfree(path_name);
 		if (rc == SLURM_SUCCESS) {
 			if (!xstrstr(file_name, "/") && running_in_slurmctld())
@@ -1220,7 +1225,7 @@ static int _parse_include_directive(s_p_hashtbl_t *hashtbl, uint32_t *hash_val,
 }
 
 int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
-		   bool ignore_new, char *last_ancestor, bool check_permissions)
+		   uint32_t flags, char *last_ancestor)
 {
 	FILE *f;
 	char *leftover = NULL;
@@ -1230,6 +1235,7 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 	int inc_rc;
 	struct stat stat_buf;
 	char *line = NULL;
+	bool ignore_new = (flags & PARSE_FLAGS_IGNORE_NEW);
 
 	if (!filename) {
 		error("s_p_parse_file: No filename given.");
@@ -1271,10 +1277,9 @@ int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
 		}
 
 		inc_rc = _parse_include_directive(hashtbl, hash_val,
-						  line, &leftover, ignore_new,
-						  filename, last_ancestor,
-						  check_permissions);
-		if (inc_rc == 0) {
+						  line, &leftover, flags,
+						  filename, last_ancestor);
+		if (inc_rc == 0 && !(flags & PARSE_FLAGS_INCLUDE_ONLY)) {
 			if (!_parse_next_key(hashtbl, line, &leftover,
 					     ignore_new)) {
 				rc = SLURM_ERROR;
@@ -1625,7 +1630,7 @@ static int _parse_expline_doexpand(s_p_hashtbl_t** tables,
 				   int tables_count,
 				   s_p_values_t* item)
 {
-	hostlist_t item_hl, sub_item_hl;
+	hostlist_t *item_hl, *sub_item_hl;
 	int item_count, i;
 	int j, items_per_record, items_idx = 0;
 	char* item_str = NULL;
@@ -1665,7 +1670,7 @@ static int _parse_expline_doexpand(s_p_hashtbl_t** tables,
 	 * of key tables n (entities) and (m mod(n)) is zero, then split the
 	 * set of expanded values in n consecutive sets (strings).
 	 */
-	item_hl = (hostlist_t)(item->data);
+	item_hl = item->data;
 	item_count = hostlist_count(item_hl);
 	if ((item_count < tables_count) || (item_count == 1)) {
 		items_per_record = 1;
@@ -1747,7 +1752,7 @@ int s_p_parse_line_expanded(const s_p_hashtbl_t *hashtbl,
 	s_p_hashtbl_t* strtbl = NULL;
 	s_p_hashtbl_t** tables = NULL;
 	int tables_count = 0;
-	hostlist_t value_hl = NULL;
+	hostlist_t *value_hl = NULL;
 	char* value_str = NULL;
 	s_p_values_t* attr = NULL;
 
@@ -1813,8 +1818,7 @@ int s_p_parse_line_expanded(const s_p_hashtbl_t *hashtbl,
 cleanup:
 	if (value_str)
 		free(value_str);
-	if (value_hl)
-		hostlist_destroy(value_hl);
+	FREE_NULL_HOSTLIST(value_hl);
 	s_p_hashtbl_destroy(strtbl);
 
 	if (status == SLURM_ERROR && tables) {

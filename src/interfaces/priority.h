@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  slurm_priority.h - Define priority plugin functions
+ *  priority.h - Define priority plugin functions
  *****************************************************************************
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -36,8 +36,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SLURM_PRIORITY_H
-#define _SLURM_PRIORITY_H
+#ifndef _INTERFACES_PRIORITY_H
+#define _INTERFACES_PRIORITY_H
 
 #include <inttypes.h>
 
@@ -54,6 +54,7 @@ extern int priority_g_fini(void);
 extern uint32_t priority_g_set(uint32_t last_prio, job_record_t *job_ptr);
 extern void priority_g_reconfig(bool assoc_clear);
 extern uint32_t priority_g_recover(uint32_t prio_boost);
+extern void priority_g_thread_start(void);
 
 /* sets up the normalized usage and the effective usage of an
  * association.
@@ -63,9 +64,7 @@ extern void priority_g_set_assoc_usage(slurmdb_assoc_rec_t *assoc);
 extern double priority_g_calc_fs_factor(long double usage_efctv,
 					long double shares_norm);
 
-/* this function can be removed 2 versions after 23.02 */
-extern List priority_g_get_priority_factors_list(
-	priority_factors_request_msg_t *req_msg, uid_t uid);
+extern List priority_g_get_priority_factors_list(uid_t uid);
 
 /* Call at end of job to remove decayable limits at the end of the job
  * at least slurmctld_lock_t job_write_lock = { NO_LOCK, WRITE_LOCK,
@@ -73,4 +72,4 @@ extern List priority_g_get_priority_factors_list(
  */
 extern void priority_g_job_end(job_record_t *job_ptr);
 
-#endif /*_SLURM_PRIORIY_H */
+#endif

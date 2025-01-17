@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  common.c - definitions for functions common to all modules in sacctmgr.
  *****************************************************************************
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -39,6 +39,7 @@
 \*****************************************************************************/
 
 #include "src/sacctmgr/sacctmgr.h"
+#include "src/common/macros.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -46,12 +47,23 @@
 #include <unistd.h>
 #include <termios.h>
 
-static pthread_t lock_warning_thread;
+static bool warn_needed = false;
+static pthread_mutex_t warn_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t warn_cond = PTHREAD_COND_INITIALIZER;
 
 static void *_print_lock_warn(void *no_data)
 {
-	sleep(5);
-	printf(" Database is busy or waiting for lock from other user.\n");
+	struct timespec ts = { 0, 0 };
+	ts.tv_sec = time(NULL) + 5;
+
+	slurm_mutex_lock(&warn_mutex);
+	if (warn_needed) {
+		slurm_cond_timedwait(&warn_cond, &warn_mutex, &ts);
+		if (warn_needed)
+			printf(" Database is busy or waiting for lock from other user.\n");
+		warn_needed = false;
+	}
+	slurm_mutex_unlock(&warn_mutex);
 
 	return NULL;
 }
@@ -298,6 +310,11 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Event");
 		field->len = 7;
 		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("Extra", object, MAX(command_len, 2))) {
+		field->type = PRINT_EXTRA;
+		field->name = xstrdup("Extra");
+		field->len = 20;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("Features", object, MAX(command_len, 3))) {
 		field->type = PRINT_FEATURES;
 		field->name = xstrdup("Features");
@@ -395,16 +412,26 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("ID");
 		field->len = 6;
 		field->print_routine = print_fields_uint;
-	} else if (!xstrncasecmp("Info", object, MAX(command_len, 2))) {
+	} else if (!xstrncasecmp("Info", object, MAX(command_len, 3))) {
 		field->type = PRINT_INFO;
 		field->name = xstrdup("Info");
 		field->len = 20;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("LFT", object, MAX(command_len, 1))) {
-		field->type = PRINT_LFT;
-		field->name = xstrdup("LFT");
-		field->len = 6;
-		field->print_routine = print_fields_uint;
+	} else if (!xstrncasecmp("InstanceId", object, MAX(command_len, 9))) {
+		field->type = PRINT_INSTANCE_ID;
+		field->name = xstrdup("InstanceId");
+		field->len = 20;
+		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("InstanceType", object, MAX(command_len, 9))) {
+		field->type = PRINT_INSTANCE_TYPE;
+		field->name = xstrdup("InstanceType");
+		field->len = 20;
+		field->print_routine = print_fields_str;
+	} else if (!xstrncasecmp("Lineage", object, MAX(command_len, 1))) {
+		field->type = PRINT_LINEAGE;
+		field->name = xstrdup("Lineage");
+		field->len = -20;
+		field->print_routine = print_fields_str;
 	} else if (!xstrncasecmp("servertype", object, MAX(command_len, 10))) {
 		field->type = PRINT_SERVERTYPE;
 		field->name = xstrdup("ServerType");
@@ -440,6 +467,8 @@ static print_field_t *_get_print_field(char *object)
 		field->print_routine = print_fields_uint;
 	} else if (!xstrncasecmp("MaxTRES", object,
 				 MAX(command_len, 7)) ||
+		   !xstrncasecmp("MaxTRESPJ", object,
+				 MAX(command_len, 9)) ||
 		   !xstrncasecmp("MaxTRESPerJob", object,
 				 MAX(command_len, 11))) {
 		field->type = PRINT_MAXT;
@@ -447,13 +476,17 @@ static print_field_t *_get_print_field(char *object)
 		field->len = 13;
 		field->print_routine = sacctmgr_print_tres;
 	} else if (!xstrncasecmp("MaxTRESPerNode", object,
-				 MAX(command_len, 11))) {
+				 MAX(command_len, 11)) ||
+		   !xstrncasecmp("MaxTRESPN", object,
+				 MAX(command_len, 9))) {
 		field->type = PRINT_MAXTN;
 		field->name = xstrdup("MaxTRESPerNode");
 		field->len = 14;
 		field->print_routine = sacctmgr_print_tres;
 	} else if (!xstrncasecmp("MaxTRESMinsPerJob", object,
-				 MAX(command_len, 8))) {
+				 MAX(command_len, 8)) ||
+		   !xstrncasecmp("MaxTRESMinsPJ", object,
+				 MAX(command_len, 13))) {
 		field->type = PRINT_MAXTM;
 		field->name = xstrdup("MaxTRESMins");
 		field->len = 13;
@@ -466,7 +499,7 @@ static print_field_t *_get_print_field(char *object)
 				 MAX(command_len, 15))) {
 		field->type = PRINT_MAXTRMA;
 		field->name = xstrdup("MaxTRESRunMinsPA");
-		field->len = 15;
+		field->len = 16;
 		field->print_routine = sacctmgr_print_tres;
 	} else if (!xstrncasecmp("MaxTRESRunMinsPerUser", object,
 				 MAX(command_len, 8)) ||
@@ -474,7 +507,7 @@ static print_field_t *_get_print_field(char *object)
 				 MAX(command_len, 8))) {
 		field->type = PRINT_MAXTRM;
 		field->name = xstrdup("MaxTRESRunMinsPU");
-		field->len = 15;
+		field->len = 16;
 		field->print_routine = sacctmgr_print_tres;
 	} else if (!xstrncasecmp("MaxTRESPerAccount", object,
 				 MAX(command_len, 11)) ||
@@ -647,12 +680,6 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Partition");
 		field->len = 10;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("PluginIDSelect", object,
-				 MAX(command_len, 2))) {
-		field->type = PRINT_SELECT;
-		field->name = xstrdup("PluginIDSelect");
-		field->len = 14;
-		field->print_routine = print_fields_uint;
 	} else if (!xstrncasecmp("PreemptMode", object, MAX(command_len, 8))) {
 		field->type = PRINT_PREEM;
 		field->name = xstrdup("PreemptMode");
@@ -825,15 +852,20 @@ static print_field_t *_get_print_field(char *object)
 	return field;
 }
 
-extern void notice_thread_init()
+extern void notice_thread_init(void)
 {
-	slurm_thread_create_detached(&lock_warning_thread,
-				     _print_lock_warn, NULL);
+	slurm_mutex_lock(&warn_mutex);
+	warn_needed = true;
+	slurm_thread_create_detached(_print_lock_warn, NULL);
+	slurm_mutex_unlock(&warn_mutex);
 }
 
-extern void notice_thread_fini()
+extern void notice_thread_fini(void)
 {
-	pthread_cancel(lock_warning_thread);
+	slurm_mutex_lock(&warn_mutex);
+	warn_needed = false;
+	slurm_cond_broadcast(&warn_cond);
+	slurm_mutex_unlock(&warn_mutex);
 }
 
 extern int commit_check(char *warning)
@@ -882,9 +914,9 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 	List update_list = NULL;
 	List local_assoc_list = NULL;
 	List local_cluster_list = NULL;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
-	ListIterator itr3 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
+	list_itr_t *itr3 = NULL;
 	char *account = NULL;
 	char *cluster = NULL;
 	char *user = NULL;
@@ -1009,13 +1041,14 @@ end_it:
 	return rc;
 }
 
-extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
+extern int sacctmgr_update_qos_usage(slurmdb_qos_cond_t *qos_cond,
+				     long double new_raw_usage)
 {
 	List update_list = NULL;
 	List cluster_list;
 	List local_qos_list = NULL;
 	List local_cluster_list = NULL;
-	ListIterator itr = NULL, itr2 = NULL;
+	list_itr_t *itr = NULL, *itr2 = NULL;
 	char *qos_name = NULL, *cluster_name = NULL;
 	slurmdb_qos_rec_t* rec = NULL;
 	slurmdb_cluster_rec_t* cluster_rec = NULL;
@@ -1035,7 +1068,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 		list_append(cluster_list, xstrdup(slurm_conf.cluster_name));
 	}
 
-	if (!commit_check("Would you like to reset usage?")) {
+	if (!commit_check("Would you like to update usage?")) {
 		printf(" Changes Discarded\n");
 		return rc;
 	}
@@ -1060,7 +1093,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 
 		update_list = list_create(slurmdb_destroy_update_object);
 		update_obj = xmalloc(sizeof(slurmdb_update_object_t));
-		update_obj->type = SLURMDB_REMOVE_QOS_USAGE;
+		update_obj->type = SLURMDB_UPDATE_QOS_USAGE;
 		update_obj->objects = list_create(NULL);
 
 		while ((qos_name = list_next(itr2))) {
@@ -1072,6 +1105,9 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 				slurmdb_destroy_update_object(update_obj);
 				goto end_it;
 			}
+			if (!rec->usage)
+				rec->usage = xmalloc(sizeof(*rec->usage));
+			rec->usage->usage_raw = new_raw_usage;
 			list_append(update_obj->objects, rec);
 		}
 		list_iterator_reset(itr2);
@@ -1225,7 +1261,7 @@ extern slurmdb_assoc_rec_t *sacctmgr_find_assoc_from_list(
 	List assoc_list, char *user, char *account,
 	char *cluster, char *partition)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_assoc_rec_t * assoc = NULL;
 
 	if (!assoc_list)
@@ -1261,7 +1297,7 @@ extern slurmdb_assoc_rec_t *sacctmgr_find_assoc_from_list(
 extern slurmdb_assoc_rec_t *sacctmgr_find_account_base_assoc_from_list(
 	List assoc_list, char *account, char *cluster)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_assoc_rec_t *assoc = NULL;
 	char *temp = "root";
 
@@ -1290,7 +1326,7 @@ extern slurmdb_assoc_rec_t *sacctmgr_find_account_base_assoc_from_list(
 extern slurmdb_qos_rec_t *sacctmgr_find_qos_from_list(
 	List qos_list, char *name)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	char *working_name = NULL;
 
@@ -1316,7 +1352,7 @@ extern slurmdb_qos_rec_t *sacctmgr_find_qos_from_list(
 extern slurmdb_res_rec_t *sacctmgr_find_res_from_list(
 	List res_list, uint32_t id, char *name, char *server)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_res_rec_t *res = NULL;
 
 	if ((id == NO_VAL) && (!name || !res_list))
@@ -1338,7 +1374,7 @@ extern slurmdb_res_rec_t *sacctmgr_find_res_from_list(
 extern slurmdb_user_rec_t *sacctmgr_find_user_from_list(
 	List user_list, char *name)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_user_rec_t *user = NULL;
 
 	if (!name || !user_list)
@@ -1358,7 +1394,7 @@ extern slurmdb_user_rec_t *sacctmgr_find_user_from_list(
 extern slurmdb_account_rec_t *sacctmgr_find_account_from_list(
 	List acct_list, char *name)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_account_rec_t *account = NULL;
 
 	if (!name || !acct_list)
@@ -1378,7 +1414,7 @@ extern slurmdb_account_rec_t *sacctmgr_find_account_from_list(
 extern slurmdb_cluster_rec_t *sacctmgr_find_cluster_from_list(
 	List cluster_list, char *name)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_cluster_rec_t *cluster = NULL;
 
 	if (!name || !cluster_list)
@@ -1397,7 +1433,7 @@ extern slurmdb_cluster_rec_t *sacctmgr_find_cluster_from_list(
 extern slurmdb_wckey_rec_t *sacctmgr_find_wckey_from_list(
 	List wckey_list, char *user, char *name, char *cluster)
 {
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_wckey_rec_t * wckey = NULL;
 
 	if (!wckey_list)
@@ -1558,7 +1594,7 @@ extern void sacctmgr_print_coord_list(
 	print_field_t *field, void *input, int last)
 {
 	int abs_len = abs(field->len);
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	char *print_this = NULL;
 	List value = NULL;
 	slurmdb_coord_rec_t *object = NULL;
@@ -1857,7 +1893,7 @@ extern void sacctmgr_print_federation(slurmdb_federation_rec_t *fed)
 		xfree(tmp_flags);
 	}
 	if (fed->cluster_list) {
-		ListIterator itr = list_iterator_create(fed->cluster_list);
+		list_itr_t *itr = list_iterator_create(fed->cluster_list);
 		slurmdb_cluster_rec_t *cluster = NULL;
 		while ((cluster = list_next(itr))) {
 			char *tmp_name = cluster->name;
@@ -2126,7 +2162,7 @@ extern int sort_coord_list(void *a, void *b)
 extern List sacctmgr_process_format_list(List format_list)
 {
 	List print_fields_list = list_create(destroy_print_field);
-	ListIterator itr = list_iterator_create(format_list);
+	list_itr_t *itr = list_iterator_create(format_list);
 	print_field_t *field = NULL;
 	char *object = NULL;
 
@@ -2146,7 +2182,7 @@ extern int sacctmgr_validate_cluster_list(List cluster_list)
 	List temp_list = NULL;
 	char *cluster = NULL;
 	int rc = SLURM_SUCCESS;
-	ListIterator itr = NULL, itr_c = NULL;
+	list_itr_t *itr = NULL, *itr_c = NULL;
 
 	xassert(cluster_list);
 

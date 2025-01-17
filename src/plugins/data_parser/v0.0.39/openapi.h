@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  openapi.h - Slurm data parser openapi specifier
  *****************************************************************************
- *  Copyright (C) 2023 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -38,8 +37,8 @@
 #define _DATA_PARSER_OPENAPI_H
 
 #include "parsers.h"
+#include "src/common/openapi.h"
 #include "src/interfaces/data_parser.h"
-#include "src/interfaces/openapi.h"
 
 /*
  * Populate OpenAPI specification field with reference to parser

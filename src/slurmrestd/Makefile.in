@@ -117,6 +117,7 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
+	$(top_srcdir)/auxdir/gtk-2.0.m4 \
 	$(top_srcdir)/auxdir/libtool.m4 \
 	$(top_srcdir)/auxdir/ltoptions.m4 \
 	$(top_srcdir)/auxdir/ltsugar.m4 \
@@ -127,7 +128,6 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_affinity.m4 \
 	$(top_srcdir)/auxdir/x_ac_c99.m4 \
 	$(top_srcdir)/auxdir/x_ac_cgroup.m4 \
-	$(top_srcdir)/auxdir/x_ac_cray.m4 \
 	$(top_srcdir)/auxdir/x_ac_curl.m4 \
 	$(top_srcdir)/auxdir/x_ac_databases.m4 \
 	$(top_srcdir)/auxdir/x_ac_debug.m4 \
@@ -143,20 +143,21 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_compile_flag.m4 \
 	$(top_srcdir)/auxdir/x_ac_lz4.m4 \
 	$(top_srcdir)/auxdir/x_ac_man2html.m4 \
 	$(top_srcdir)/auxdir/x_ac_munge.m4 \
-	$(top_srcdir)/auxdir/x_ac_netloc.m4 \
 	$(top_srcdir)/auxdir/x_ac_nvml.m4 \
 	$(top_srcdir)/auxdir/x_ac_ofed.m4 \
 	$(top_srcdir)/auxdir/x_ac_oneapi.m4 \
 	$(top_srcdir)/auxdir/x_ac_pam.m4 \
+	$(top_srcdir)/auxdir/x_ac_pkgconfig.m4 \
 	$(top_srcdir)/auxdir/x_ac_pmix.m4 \
 	$(top_srcdir)/auxdir/x_ac_printf_null.m4 \
 	$(top_srcdir)/auxdir/x_ac_ptrace.m4 \
 	$(top_srcdir)/auxdir/x_ac_rdkafka.m4 \
 	$(top_srcdir)/auxdir/x_ac_readline.m4 \
-	$(top_srcdir)/auxdir/x_ac_rrdtool.m4 \
 	$(top_srcdir)/auxdir/x_ac_rsmi.m4 \
+	$(top_srcdir)/auxdir/x_ac_s2n.m4 \
 	$(top_srcdir)/auxdir/x_ac_selinux.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
+	$(top_srcdir)/auxdir/x_ac_sview.m4 \
 	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
 	$(top_srcdir)/auxdir/x_ac_ucx.m4 \
 	$(top_srcdir)/auxdir/x_ac_uid_gid_size.m4 \
@@ -182,7 +183,7 @@ am__v_lt_0 = --silent
 am__v_lt_1 = 
 @WITH_SLURMRESTD_TRUE@am_lib_ref_la_rpath =
 am__objects_1 = http.$(OBJEXT) operations.$(OBJEXT) \
-	slurmrestd.$(OBJEXT) rest_auth.$(OBJEXT)
+	slurmrestd.$(OBJEXT) openapi.$(OBJEXT) rest_auth.$(OBJEXT)
 @WITH_SLURMRESTD_TRUE@am_slurmrestd_OBJECTS = $(am__objects_1)
 slurmrestd_OBJECTS = $(am_slurmrestd_OBJECTS)
 am__DEPENDENCIES_1 =
@@ -204,8 +205,9 @@ am__v_at_1 =
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir) -I$(top_builddir)/slurm
 depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
 am__maybe_remake_depfiles = depfiles
-am__depfiles_remade = ./$(DEPDIR)/http.Po ./$(DEPDIR)/operations.Po \
-	./$(DEPDIR)/rest_auth.Po ./$(DEPDIR)/slurmrestd.Po
+am__depfiles_remade = ./$(DEPDIR)/http.Po ./$(DEPDIR)/openapi.Po \
+	./$(DEPDIR)/operations.Po ./$(DEPDIR)/rest_auth.Po \
+	./$(DEPDIR)/slurmrestd.Po
 am__mv = mv -f
 COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
@@ -281,14 +283,6 @@ CHECK_CFLAGS = @CHECK_CFLAGS@
 CHECK_LIBS = @CHECK_LIBS@
 CPP = @CPP@
 CPPFLAGS = @CPPFLAGS@
-CRAY_JOB_CPPFLAGS = @CRAY_JOB_CPPFLAGS@
-CRAY_JOB_LDFLAGS = @CRAY_JOB_LDFLAGS@
-CRAY_SELECT_CPPFLAGS = @CRAY_SELECT_CPPFLAGS@
-CRAY_SELECT_LDFLAGS = @CRAY_SELECT_LDFLAGS@
-CRAY_SWITCH_CPPFLAGS = @CRAY_SWITCH_CPPFLAGS@
-CRAY_SWITCH_LDFLAGS = @CRAY_SWITCH_LDFLAGS@
-CRAY_TASK_CPPFLAGS = @CRAY_TASK_CPPFLAGS@
-CRAY_TASK_LDFLAGS = @CRAY_TASK_LDFLAGS@
 CSCOPE = @CSCOPE@
 CTAGS = @CTAGS@
 CXX = @CXX@
@@ -296,8 +290,6 @@ CXXCPP = @CXXCPP@
 CXXDEPMODE = @CXXDEPMODE@
 CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
-DATAWARP_CPPFLAGS = @DATAWARP_CPPFLAGS@
-DATAWARP_LDFLAGS = @DATAWARP_LDFLAGS@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 DLLTOOL = @DLLTOOL@
@@ -377,9 +369,6 @@ MUNGE_LDFLAGS = @MUNGE_LDFLAGS@
 MUNGE_LIBS = @MUNGE_LIBS@
 MYSQL_CFLAGS = @MYSQL_CFLAGS@
 MYSQL_LIBS = @MYSQL_LIBS@
-NETLOC_CPPFLAGS = @NETLOC_CPPFLAGS@
-NETLOC_LDFLAGS = @NETLOC_LDFLAGS@
-NETLOC_LIBS = @NETLOC_LIBS@
 NM = @NM@
 NMEDIT = @NMEDIT@
 NUMA_LIBS = @NUMA_LIBS@
@@ -425,10 +414,11 @@ RDKAFKA_LDFLAGS = @RDKAFKA_LDFLAGS@
 RDKAFKA_LIBS = @RDKAFKA_LIBS@
 READLINE_LIBS = @READLINE_LIBS@
 RELEASE = @RELEASE@
-RRDTOOL_CPPFLAGS = @RRDTOOL_CPPFLAGS@
-RRDTOOL_LDFLAGS = @RRDTOOL_LDFLAGS@
-RRDTOOL_LIBS = @RRDTOOL_LIBS@
 RSMI_CPPFLAGS = @RSMI_CPPFLAGS@
+S2N_CPPFLAGS = @S2N_CPPFLAGS@
+S2N_DIR = @S2N_DIR@
+S2N_LDFLAGS = @S2N_LDFLAGS@
+S2N_LIBS = @S2N_LIBS@
 SED = @SED@
 SET_MAKE = @SET_MAKE@
 SHELL = @SHELL@
@@ -512,6 +502,7 @@ mandir = @mandir@
 mkdir_p = @mkdir_p@
 oldincludedir = @oldincludedir@
 pdfdir = @pdfdir@
+pkgconfigdir = @pkgconfigdir@
 prefix = @prefix@
 program_transform_name = @program_transform_name@
 psdir = @psdir@
@@ -536,6 +527,7 @@ SRCS = \
 	http.c http.h \
 	operations.c operations.h \
 	slurmrestd.c \
+	openapi.h openapi.c \
 	rest_auth.h rest_auth.c
 
 @WITH_SLURMRESTD_TRUE@AM_CPPFLAGS = -I$(top_srcdir) $(HTTP_PARSER_CPPFLAGS)
@@ -662,6 +654,7 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/http.Po@am__quote@ # am--include-marker
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/openapi.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/operations.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/rest_auth.Po@am__quote@ # am--include-marker
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurmrestd.Po@am__quote@ # am--include-marker
@@ -843,6 +836,7 @@ clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
 
 distclean: distclean-recursive
 		-rm -f ./$(DEPDIR)/http.Po
+	-rm -f ./$(DEPDIR)/openapi.Po
 	-rm -f ./$(DEPDIR)/operations.Po
 	-rm -f ./$(DEPDIR)/rest_auth.Po
 	-rm -f ./$(DEPDIR)/slurmrestd.Po
@@ -892,6 +886,7 @@ installcheck-am:
 
 maintainer-clean: maintainer-clean-recursive
 		-rm -f ./$(DEPDIR)/http.Po
+	-rm -f ./$(DEPDIR)/openapi.Po
 	-rm -f ./$(DEPDIR)/operations.Po
 	-rm -f ./$(DEPDIR)/rest_auth.Po
 	-rm -f ./$(DEPDIR)/slurmrestd.Po
@@ -939,7 +934,8 @@ uninstall-am: uninstall-sbinPROGRAMS
 
 @WITH_SLURMRESTD_TRUE@lib_ref.lo: $(BIN_REF)
 @WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# $@ - a libtool object file" >"$@"
-@WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# Generated by $(shell @LIBTOOL@ --version | head -n 1)" >>"$@"
+@WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# Generated by libtool" >>"$@"
+@WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# (Not really... but we need libtool to believe it was.)" >>"$@"
 @WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "#" >>"$@"
 @WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# Please DO NOT delete this file!" >>"$@"
 @WITH_SLURMRESTD_TRUE@	$(AM_V_at)echo "# It is necessary for linking the library." >>"$@"

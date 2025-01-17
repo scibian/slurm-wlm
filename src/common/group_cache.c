@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  group_cache.c - locally cache results from getgrouplist()
  *****************************************************************************
- *  Copyright (C) 2017 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  Based on code originally contributed by Takao Hatazaki (HP).
  *
  *  This file is part of Slurm, a resource management program.
@@ -232,6 +231,7 @@ static int _group_cache_lookup_internal(gids_cache_needle_t *needle, gid_t **gid
 		 */
 		*gids = xmalloc(sizeof(gid_t));
 		*gids[0] = needle->gid;
+		slurm_mutex_unlock(&gids_mutex);
 		return 1;
 	}
 

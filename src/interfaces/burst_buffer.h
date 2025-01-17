@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  burst_buffer.h - driver for burst buffer infrastructure and plugin
  *****************************************************************************
- *  Copyright (C) 2014 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,8 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _SLURM_BURST_BUFFER_H
-#define _SLURM_BURST_BUFFER_H
+#ifndef _INTERFACES_BURST_BUFFER_H
+#define _INTERFACES_BURST_BUFFER_H
 
 #include "slurm/slurm.h"
 #include "src/common/pack.h"
@@ -241,4 +240,4 @@ extern int bb_g_run_script(char *func, uint32_t job_id, uint32_t argc,
  */
 extern char *bb_g_xlate_bb_2_tres_str(char *burst_buffer);
 
-#endif /* !_SLURM_BURST_BUFFER_H */
+#endif

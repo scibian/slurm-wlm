@@ -1,9 +1,7 @@
 /*****************************************************************************\
- *  slurm_acct_gather.h - generic interface needed for some
- *                        acct_gather plugins.
+ *  acct_gather.h - generic interface needed for some acct_gather plugins
  *****************************************************************************
- *  Copyright (C) 2013 SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -35,8 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef __SLURM_ACCT_GATHER_H__
-#define __SLURM_ACCT_GATHER_H__
+#ifndef _INTERFACES_ACCT_GATHER_H
+#define _INTERFACES_ACCT_GATHER_H
 
 #include <inttypes.h>
 
@@ -55,7 +53,6 @@ typedef struct acct_gather_data {
 extern int acct_gather_conf_init(void);
 extern int acct_gather_write_conf(int fd);
 extern int acct_gather_read_conf(int fd);
-extern int acct_gather_reconfig(void);
 extern int acct_gather_conf_destroy(void);
 
 /* don't forget to free this */

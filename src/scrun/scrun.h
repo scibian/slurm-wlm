@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  scrun.h - Slurm OCI runtime headers
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -37,6 +36,9 @@
 #ifndef _SCRUN_H
 #define _SCRUN_H
 
+#include <pty.h>
+#include <termios.h>
+
 #include "src/common/conmgr.h"
 #include "src/common/data.h"
 #include "src/common/oci_config.h"
@@ -53,8 +55,13 @@ typedef struct {
 	 * this field.
 	 */
 	pthread_rwlock_t lock; /* lock must be used for access */
+
+#ifndef NDEBUG
+	/* lock must be used for access needs_lock and locked*/
+	pthread_mutex_t debug_lock;
 	bool needs_lock;
 	int locked;
+#endif
 
 	/* every field required by OCI runtime-spec v1.0.2 state query. */
 	char *oci_version;
@@ -83,6 +90,7 @@ typedef struct {
 	char *anchor_socket; /* path to anchor msg socket */
 	char *spool_dir; /* container specific work space */
 	char **job_env; /* env to hand to srun */
+	char **spank_job_env; /* spank set env */
 	char *config_file; /* path to config.json */
 	uint32_t user_id; /* user job is running as */
 	uint32_t group_id; /* group job is running as */
@@ -94,7 +102,7 @@ typedef struct {
 	data_t *config; /* container's config.json */
 	list_t *start_requests; /* list of (blocking_req_t *) */
 	list_t *delete_requests; /* list of (blocking_req_t *) */
-	con_mgr_fd_t *startup_con; /* conmgr connection for the SIGCHILD handler */
+	conmgr_fd_t *startup_con; /* conmgr connection for the SIGCHILD handler */
 } state_t;
 
 extern state_t state;
@@ -111,9 +119,11 @@ extern void check_state(void);
 extern void init_state(void);
 extern void destroy_state(void);
 
+#ifndef NDEBUG
 #define read_lock_state()                                                    \
 	do {                                                                 \
 		slurm_rwlock_rdlock(&state.lock);                            \
+		slurm_mutex_lock(&state.debug_lock);                         \
 		xassert(state.needs_lock);                                   \
 		xassert(state.locked >= 0);                                  \
 		state.locked++;                                              \
@@ -121,15 +131,18 @@ extern void destroy_state(void);
 		debug3("%s: taking state read lock needs_lock=%c locked=%d", \
 		       __func__, (state.needs_lock ? 'T' : 'F'),             \
 		       state.locked);                                        \
+		slurm_mutex_unlock(&state.debug_lock);                         \
 	} while (false)
 
 #define write_lock_state()                                                    \
 	do {                                                                  \
 		slurm_rwlock_wrlock(&state.lock);                             \
+		slurm_mutex_lock(&state.debug_lock);                          \
 		xassert(state.needs_lock);                                    \
 		xassert(state.locked >= 0);                                   \
 		state.locked++;                                               \
 		check_state();                                                \
+		slurm_mutex_unlock(&state.debug_lock);                        \
 		debug3("%s: taking state write lock needs_lock=%c locked=%d", \
 		       __func__, (state.needs_lock ? 'T' : 'F'),              \
 		       state.locked);                                         \
@@ -137,6 +150,7 @@ extern void destroy_state(void);
 
 #define unlock_state()                                                       \
 	do {                                                                 \
+		slurm_mutex_lock(&state.debug_lock);                         \
 		debug3("%s: unlock state needs_lock=%c locked=%d",           \
 		       __func__, (state.needs_lock ? 'T' : 'F'),             \
 		       state.locked);                                        \
@@ -144,8 +158,14 @@ extern void destroy_state(void);
 		xassert(state.needs_lock);                                   \
 		xassert(state.locked > 0);                                   \
 		state.locked--;                                              \
+		slurm_mutex_unlock(&state.debug_lock);                       \
 		slurm_rwlock_unlock(&state.lock);                            \
 	} while (false)
+#else /* NDEBUG */
+#define read_lock_state() slurm_rwlock_rdlock(&state.lock)
+#define write_lock_state() slurm_rwlock_wrlock(&state.lock)
+#define unlock_state() slurm_rwlock_unlock(&state.lock)
+#endif /* NDEBUG */
 
 extern int command_create(void);
 extern int command_start(void);
@@ -179,15 +199,13 @@ extern int get_anchor_state(void);
  * Request allocation for job
  * IN arg - ptr to conmgr
  */
-extern void get_allocation(con_mgr_t *mgr, con_mgr_fd_t *con,
-			   con_mgr_work_type_t type,
-			   con_mgr_work_status_t status, const char *tag,
+extern void get_allocation(conmgr_fd_t *con, conmgr_work_type_t type,
+			   conmgr_work_status_t status, const char *tag,
 			   void *arg);
 
 /* callback after allocation success */
-extern void on_allocation(con_mgr_t *mgr, con_mgr_fd_t *con,
-			  con_mgr_work_type_t type,
-			  con_mgr_work_status_t status, const char *tag,
+extern void on_allocation(conmgr_fd_t *con, conmgr_work_type_t type,
+			  conmgr_work_status_t status, const char *tag,
 			  void *arg);
 
 /*
@@ -197,7 +215,7 @@ extern void on_allocation(con_mgr_t *mgr, con_mgr_fd_t *con,
 extern void stop_anchor(int status);
 
 /* run srun container command against job */
-extern void exec_srun_container();
+extern void exec_srun_container(void);
 
 /* convert data array of arguments into argv[] for execv() */
 extern char **create_argv(data_t *args);

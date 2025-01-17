@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  oci_config.c - parse oci.conf configuration file.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC.
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *  All rights reserved.
  *
  *  This file is part of Slurm, a resource management program.
@@ -98,8 +97,7 @@ extern int get_oci_conf(oci_conf_t **oci_ptr)
 
 	debug("Reading %s file %s", OCI_CONF, conf_path);
 	tbl = s_p_hashtbl_create(options);
-	if (s_p_parse_file(tbl, NULL, conf_path, false, NULL, false) ==
-			   SLURM_ERROR)
+	if (s_p_parse_file(tbl, NULL, conf_path, 0, NULL) == SLURM_ERROR)
 		fatal("Could not parse %s file: %s", OCI_CONF, conf_path);
 
 	(void) s_p_get_string(&oci->container_path, "ContainerPath", tbl);

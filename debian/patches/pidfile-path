@@ -1,16 +1,18 @@
-Description: Fix default pidfile paths
- This patch points default pidfild paths under /run
-Author: Mehdi Dogguy <mehdi@debian.org> and Gennaro Oliva <oliva.g@na.icar.cnr.it>
+From: "Mehdi Dogguy mehdi@debian.org and Gennaro Oliva"
+ <oliva.g@na.icar.cnr.it>
+Date: Wed, 19 Jun 2024 14:50:23 +0200
+Subject: Fix default pidfile paths
+
 Bug-Debian: http://bugs.debian.org/885759
 Forwarded: not-needed
-Last-Update: 2018-12-13
+Last-Update: 2024-07-21
 
 --- a/src/common/read_config.h
 +++ b/src/common/read_config.h
-@@ -162,9 +162,9 @@
- #  define DEFAULT_SELECT_TYPE       "select/linear"
- #endif
- #define DEFAULT_SITE_FACTOR_PLUGIN  "site_factor/none"
+@@ -139,9 +139,9 @@
+ #define DEFAULT_SCHED_TIME_SLICE    30
+ #define DEFAULT_SCHEDTYPE           "sched/backfill"
+ #define DEFAULT_SELECT_TYPE         "select/cons_tres"
 -#define DEFAULT_SLURMCTLD_PIDFILE   "/var/run/slurmctld.pid"
 +#define DEFAULT_SLURMCTLD_PIDFILE   "/run/slurmctld.pid"
  #define DEFAULT_SLURMCTLD_TIMEOUT   120

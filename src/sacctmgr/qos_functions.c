@@ -2,7 +2,7 @@
  *  qos_functions.c - functions dealing with qoss in the
  *                        accounting system.
  *****************************************************************************
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Copyright (C) 2002-2008 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
@@ -145,7 +145,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			if (format_list)
 				slurm_addto_char_list(format_list, argv[i]+end);
 		} else if (!xstrncasecmp(argv[i], "Ids", MAX(command_len, 1))) {
-			ListIterator itr = NULL;
+			list_itr_t *itr = NULL;
 			char *temp = NULL;
 			uint32_t id = 0;
 
@@ -510,8 +510,12 @@ static int _set_rec(int *start, int argc, char **argv,
 				xfree(tmp_char);
 			} else
 				exit_code = 1;
-		} else if (!xstrncasecmp(argv[i], "MaxTRESPerJob",
-					 MAX(command_len, 7))) {
+		} else if (!xstrncasecmp(argv[i], "MaxTRES",
+					 MAX(command_len, 7)) ||
+		           !xstrncasecmp(argv[i], "MaxTRESPJ",
+					 MAX(command_len, 9)) ||
+		           !xstrncasecmp(argv[i], "MaxTRESPerJob",
+					 MAX(command_len, 11))) {
 			sacctmgr_initialize_g_tres_list();
 
 			if ((tmp_char = slurmdb_format_tres_str(
@@ -524,7 +528,9 @@ static int _set_rec(int *start, int argc, char **argv,
 			} else
 				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESPerNode",
-					 MAX(command_len, 11))) {
+					 MAX(command_len, 11)) ||
+			   !xstrncasecmp(argv[i], "MaxTRESPN",
+					 MAX(command_len, 9))) {
 			sacctmgr_initialize_g_tres_list();
 
 			if ((tmp_char = slurmdb_format_tres_str(
@@ -552,7 +558,9 @@ static int _set_rec(int *start, int argc, char **argv,
 			} else
 				exit_code = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxTRESMinsPerJob",
-					 MAX(command_len, 8))) {
+					 MAX(command_len, 8)) ||
+			   !xstrncasecmp(argv[i], "MaxTRESMinsPJ",
+					 MAX(command_len, 13))) {
 			sacctmgr_initialize_g_tres_list();
 
 			if ((tmp_char = slurmdb_format_tres_str(
@@ -564,7 +572,11 @@ static int _set_rec(int *start, int argc, char **argv,
 				xfree(tmp_char);
 			} else
 				exit_code = 1;
-		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPA",
+		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPerAccount",
+					 MAX(command_len, 24)) ||
+			   !xstrncasecmp(argv[i], "MaxTRESRunMinsPerAcct",
+					 MAX(command_len, 20)) ||
+			   !xstrncasecmp(argv[i], "MaxTRESRunMinsPA",
 					 MAX(command_len, 16))) {
 			sacctmgr_initialize_g_tres_list();
 
@@ -577,8 +589,10 @@ static int _set_rec(int *start, int argc, char **argv,
 				xfree(tmp_char);
 			} else
 				exit_code = 1;
-		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPU",
-					 MAX(command_len, 8))) {
+		} else if (!xstrncasecmp(argv[i], "MaxTRESRunMinsPerUser",
+					 MAX(command_len, 20)) ||
+			   !xstrncasecmp(argv[i], "MaxTRESRunMinsPU",
+					 MAX(command_len, 16))) {
 			sacctmgr_initialize_g_tres_list();
 
 			if ((tmp_char = slurmdb_format_tres_str(
@@ -677,12 +691,18 @@ static int _set_rec(int *start, int argc, char **argv,
 				set = 1;
 		} else if (!xstrncasecmp(argv[i], "RawUsage",
 					 MAX(command_len, 7))) {
-			uint32_t usage;
+			double usage;
 			qos->usage = xmalloc(sizeof(slurmdb_qos_usage_t));
-			if (get_uint(argv[i]+end, &usage,
-				     "RawUsage") == SLURM_SUCCESS) {
+			if ((get_double(argv[i] + end, &usage,
+					"RawUsage") == SLURM_SUCCESS) &&
+			    (usage != (double) INFINITE)) {
 				qos->usage->usage_raw = usage;
 				set = 1;
+			} else {
+				exit_code = 1;
+				fprintf(stderr,
+					" Bad RawUsage value: %s\n",
+					argv[i] + end);
 			}
 		} else if (!xstrncasecmp(argv[i], "UsageFactor",
 					 MAX(command_len, 6))) {
@@ -712,7 +732,7 @@ static bool _isdefault(List qos_list)
 	int rc = 0;
 	slurmdb_assoc_cond_t assoc_cond;
 	slurmdb_assoc_rec_t *assoc = NULL;
-	ListIterator itr;
+	list_itr_t *itr;
 	List ret_list = NULL;
 	char *name = NULL;
 
@@ -781,7 +801,7 @@ extern int sacctmgr_add_qos(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	int i;
-	ListIterator itr = NULL;
+	list_itr_t *itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	slurmdb_qos_rec_t *start_qos = xmalloc(sizeof(slurmdb_qos_rec_t));
 	List name_list = list_create(xfree_ptr);
@@ -906,8 +926,8 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 	int rc = SLURM_SUCCESS;
 	slurmdb_qos_cond_t *qos_cond = xmalloc(sizeof(slurmdb_qos_cond_t));
  	int i=0;
-	ListIterator itr = NULL;
-	ListIterator itr2 = NULL;
+	list_itr_t *itr = NULL;
+	list_itr_t *itr2 = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	List qos_list = NULL;
 	int field_count = 0;
@@ -943,6 +963,8 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 				      "MaxJobsPerUser,"
 				      "MaxSubmitJobsPerUser,"
 				      "MaxTRESPerAcct,"
+				      "MaxTRESRunMinsPerAcct%22,"
+				      "MaxTRESRunMinsPerUser%22,"
 				      "MaxJobsPerAcct,"
 				      "MaxSubmitJobsPerAcct,MinTRES");
 	}
@@ -958,8 +980,14 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 	slurmdb_destroy_qos_cond(qos_cond);
 
 	if (mime_type) {
-		rc = DATA_DUMP_CLI(QOS_LIST, qos_list, "QOS", argc, argv,
-				   db_conn, mime_type);
+		if (is_data_parser_deprecated(data_parser))
+			DATA_DUMP_CLI_DEPRECATED(QOS_LIST, qos_list, "QOS",
+						 argc, argv, db_conn, mime_type,
+						 rc);
+		else
+			DATA_DUMP_CLI_SINGLE(OPENAPI_SLURMDBD_QOS_RESP,
+					     qos_list, argc, argv, db_conn,
+					     mime_type, data_parser, rc);
 		FREE_NULL_LIST(print_fields_list);
 		FREE_NULL_LIST(qos_list);
 		return rc;
@@ -1343,14 +1371,8 @@ extern int sacctmgr_modify_qos(int argc, char **argv)
 		}
 	}
 
-	// Special case:  reset raw usage only
 	if (qos->usage) {
-		rc = SLURM_ERROR;
-		if (qos->usage->usage_raw == 0.0)
-			rc = sacctmgr_remove_qos_usage(qos_cond);
-		else
-			error("Raw usage can only be set to 0 (zero)");
-
+		rc = sacctmgr_update_qos_usage(qos_cond, qos->usage->usage_raw);
 		slurmdb_destroy_qos_cond(qos_cond);
 		slurmdb_destroy_qos_rec(qos);
 		return rc;
@@ -1361,7 +1383,7 @@ extern int sacctmgr_modify_qos(int argc, char **argv)
 	ret_list = slurmdb_qos_modify(db_conn, qos_cond, qos);
 	if (ret_list && list_count(ret_list)) {
 		char *object = NULL;
-		ListIterator itr = list_iterator_create(ret_list);
+		list_itr_t *itr = list_iterator_create(ret_list);
 		printf(" Modified qos...\n");
 		while((object = list_next(itr))) {
 			printf("  %s\n", object);
@@ -1436,7 +1458,7 @@ extern int sacctmgr_delete_qos(int argc, char **argv)
 
 	if (ret_list && list_count(ret_list)) {
 		char *object = NULL;
-		ListIterator itr = NULL;
+		list_itr_t *itr = NULL;
 
 		/* Check to see if person is trying to remove a default
 		 * qos of an association.  _isdefault only works with the

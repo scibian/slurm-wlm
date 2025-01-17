@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include "src/common/data.h"
+#include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
 #include "src/interfaces/serializer.h"
@@ -60,10 +61,8 @@ static void _opt_env(void)
 	char *env_val;
 
 	if ((env_val = getenv("SLURM_CLUSTERS"))) {
-		if (!(params.clusters = slurmdb_get_info_cluster(env_val))) {
-			print_db_notok(env_val, 1);
-			exit(1);
-		}
+		xfree(params.cluster_names);
+		params.cluster_names = xstrdup(env_val);
 	}
 }
 
@@ -86,8 +85,8 @@ extern void parse_command_line(int argc, char **argv)
 		{"sort-by-time2",no_argument,	0,	'T'},
 		{"usage",	no_argument,	0,	OPT_LONG_USAGE},
 		{"version",     no_argument,	0,	'V'},
-		{"json", no_argument, 0, OPT_LONG_JSON},
-		{"yaml", no_argument, 0, OPT_LONG_YAML},
+		{"json", optional_argument, 0, OPT_LONG_JSON},
+		{"yaml", optional_argument, 0, OPT_LONG_YAML},
 		{NULL,		0,		0,	0}
 	};
 
@@ -117,12 +116,8 @@ extern void parse_command_line(int argc, char **argv)
 				params.sort = SORT_ID;
 				break;
 			case (int)'M':
-				if (params.clusters)
-					FREE_NULL_LIST(params.clusters);
-				if (!(params.clusters = slurmdb_get_info_cluster(optarg))) {
-					print_db_notok(optarg, 0);
-					exit(1);
-				}
+				xfree(params.cluster_names);
+				params.cluster_names = xstrdup(optarg);
 				break;
 			case (int)'r':
 				params.mode = STAT_COMMAND_RESET;
@@ -143,21 +138,34 @@ extern void parse_command_line(int argc, char **argv)
 				break;
 			case OPT_LONG_JSON:
 				params.mimetype = MIME_TYPE_JSON;
-				(void) data_init();
-				(void) serializer_g_init(MIME_TYPE_JSON_PLUGIN,
-							 NULL);
+				params.data_parser = optarg;
+				if (serializer_g_init(MIME_TYPE_JSON_PLUGIN,
+						      NULL))
+					fatal("JSON plugin load failure");
 				break;
 			case OPT_LONG_YAML:
 				params.mimetype = MIME_TYPE_YAML;
-				(void) data_init();
-				(void) serializer_g_init(MIME_TYPE_YAML_PLUGIN,
-							 NULL);
+				params.data_parser = optarg;
+				if (serializer_g_init(MIME_TYPE_YAML_PLUGIN,
+						      NULL))
+					fatal("YAML plugin load failure");
 				break;
 			case OPT_LONG_AUTOCOMP:
 				suggest_completion(long_options, optarg);
 				exit(0);
 				break;
 		}
+	}
+
+	FREE_NULL_LIST(params.clusters);
+	if (params.cluster_names) {
+		if (slurm_get_cluster_info(&(params.clusters),
+					   params.cluster_names, 0)) {
+
+			print_db_notok(params.cluster_names, 0);
+			fatal("Could not get cluster information");
+		}
+		working_cluster_rec = list_peek(params.clusters);
 	}
 
 	if (params.clusters) {
@@ -185,8 +193,8 @@ Usage: sdiag [OPTIONS]\n\
   -t, --sort-by-time  sort RPCs by total run time\n\
   -T, --sort-by-time2 sort RPCs by average run time\n\
   -V, --version       display current version number\n\
-  --json              Produce JSON output\n\
-  --yaml              Produce YAML output\n\
+  --json[=data_parser] Produce JSON output\n\
+  --yaml[=data_parser] Produce YAML output\n\
 \nHelp options:\n\
   --help          show this help message\n\
   --usage         display brief usage message\n");

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  sort.c - sprio sorting functions
  *****************************************************************************
- *  Copyright (C) 2018 SchedMD LLC
- *  Written by Broderick Gardner <broderick@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -68,7 +67,7 @@ static int _sort_by_job_prio(void *v1, void *v2);
 static int _sort_by_tres_prio(void *v1, void *v2);
 
 
-extern void sort_job_list(List job_list)
+extern void sort_job_list(list_t *job_list)
 {
 	int i;
 	char c;

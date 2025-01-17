@@ -129,7 +129,7 @@ plugrack_t *plugrack_create(const char *major_type)
 
 int plugrack_destroy(plugrack_t *rack)
 {
-	ListIterator it;
+	list_itr_t *it;
 	plugrack_entry_t *e;
 
 	if (!rack)
@@ -275,8 +275,8 @@ static int _plugrack_read_single_dir(plugrack_t *rack, char *dir)
 			continue;
 
 		/* Test the type. */
-		if (plugin_peek(fq_path, plugin_type, type_len, NULL) !=
-		    EPLUGIN_SUCCESS) {
+		if (plugin_peek(fq_path, plugin_type, type_len) !=
+		    SLURM_SUCCESS) {
 			continue;
 		}
 
@@ -330,7 +330,7 @@ static bool _match_major(const char *path_name, const char *major_type)
 
 plugin_handle_t plugrack_use_by_type(plugrack_t *rack, const char *full_type)
 {
-	ListIterator it;
+	list_itr_t *it;
 	plugrack_entry_t *e;
 
 	if ((!rack) || (!full_type))
@@ -338,7 +338,7 @@ plugin_handle_t plugrack_use_by_type(plugrack_t *rack, const char *full_type)
 
 	it = list_iterator_create(rack->entries);
 	while ((e = list_next(it))) {
-		plugin_err_t err;
+		int err;
 
 		if (xstrcmp(full_type, e->full_type) != 0)
 			continue;
@@ -346,7 +346,7 @@ plugin_handle_t plugrack_use_by_type(plugrack_t *rack, const char *full_type)
 		/* See if plugin is loaded. */
 		if (e->plug == PLUGIN_INVALID_HANDLE  &&
 		    (err = plugin_load_from_file(&e->plug, e->fq_path)))
-			error("%s: %s", e->fq_path, plugin_strerror(err));
+			error("%s: %s", e->fq_path, slurm_strerror(err));
 
 		/* If load was successful, increment the reference count. */
 		if (e->plug != PLUGIN_INVALID_HANDLE) {
@@ -405,7 +405,7 @@ typedef struct {
 
 extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	plugrack_entry_t *e = NULL;
 	char *sep, tmp[64], *pmix_vers = NULL, *comma = "";
 	int i;
@@ -413,6 +413,7 @@ extern int plugrack_print_mpi_plugins(plugrack_t *rack)
 	xassert(rack->entries);
 	itr = list_iterator_create(rack->entries);
 	printf("MPI plugin types are...\n");
+	printf("\tnone\n");
 	while ((e = list_next(itr))) {
 		/*
 		 * Support symbolic links for various pmix plugins with names
@@ -516,11 +517,18 @@ extern int load_plugins(plugins_t **plugins_ptr, const char *major_type,
 
 	xassert(plugins_ptr);
 	if (!*plugins_ptr) {
+		const char *plugin_dir;
+
 		plugins = xmalloc(sizeof(*plugins));
 		plugins->magic = PLUGINS_MAGIC;
 		plugins->rack = plugrack_create(major_type);
 
-		if ((rc = plugrack_read_dir(plugins->rack, slurm_conf.plugindir))) {
+		if (slurm_conf.plugindir)
+			plugin_dir = slurm_conf.plugindir;
+		else
+			plugin_dir = default_plugin_path;
+
+		if ((rc = plugrack_read_dir(plugins->rack, plugin_dir))) {
 			error("%s: plugrack_read_dir(%s) failed: %s",
 			      __func__, slurm_conf.plugindir, slurm_strerror(rc));
 			goto cleanup;
@@ -565,7 +573,7 @@ extern int load_plugins(plugins_t **plugins_ptr, const char *major_type,
 				otype = type;
 
 			ntype = xstrdup_printf("%s/%s", major_type, otype);
-			_plugrack_foreach(type, NULL, PLUGIN_INVALID_HANDLE,
+			_plugrack_foreach(ntype, NULL, PLUGIN_INVALID_HANDLE,
 					  plugins);
 			xfree(ntype);
 
@@ -626,6 +634,9 @@ cleanup:
 
 extern void unload_plugins(plugins_t *plugins)
 {
+	if (!plugins)
+		return;
+
 	if (plugins->rack) {
 		for (size_t i = 0; i < plugins->count; i++)
 			plugrack_release_by_type(plugins->rack,
@@ -635,8 +646,10 @@ extern void unload_plugins(plugins_t *plugins)
 	}
 
 	for (size_t i = 0; i < plugins->count; i++) {
-		xfree(plugins->functions[i]);
-		xfree(plugins->types[i]);
+		if (plugins->functions)
+			xfree(plugins->functions[i]);
+		if (plugins->types)
+			xfree(plugins->types[i]);
 	}
 
 	xfree(plugins->functions);

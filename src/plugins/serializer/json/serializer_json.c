@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  serializer_json.c - Serializer for JSON.
  *****************************************************************************
- *  Copyright (C) 2021 SchedMD LLC
- *  Written by Nathan Rini <nate@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -272,6 +271,7 @@ extern int serialize_p_string_to_data(data_t **dest, const char *src,
 	json_object *jobj = NULL;
 	data_t *data = NULL;
 	struct json_tokener *tok = json_tokener_new();
+	int rc;
 
 	if (!tok)
 		return ENOMEM;
@@ -290,10 +290,12 @@ extern int serialize_p_string_to_data(data_t **dest, const char *src,
 	if (jobj) {
 		data = _json_to_data(jobj, NULL);
 		json_object_put(jobj);
-	}
+		rc = SLURM_SUCCESS;
+	} else
+		rc = ESLURM_REST_FAIL_PARSING;
 
 	json_tokener_free(tok);
 
 	*dest = data;
-	return SLURM_SUCCESS;
+	return rc;
 }

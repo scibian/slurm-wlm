@@ -114,7 +114,7 @@ struct server_io_info {
 	bool testing_connection;
 
 	/* incoming variables */
-	struct slurm_io_header header;
+	io_hdr_t header;
 	struct io_buf *in_msg;
 	int32_t in_remaining;
 	bool in_eof;
@@ -168,7 +168,7 @@ struct file_read_info {
 	client_io_t *cio;
 
 	/* header contains destination of file input */
-	struct slurm_io_header header;
+	io_hdr_t header;
 	uint32_t nodeid;
 
 	bool eof;
@@ -813,6 +813,11 @@ _io_thr_internal(void *cio_arg)
 	/* start the eio engine */
 	eio_handle_mainloop(cio->eio);
 
+	slurm_mutex_lock(&cio->io_mutex);
+	cio->io_running = false;
+	slurm_cond_broadcast(&cio->io_cond);
+	slurm_mutex_unlock(&cio->io_mutex);
+
 	debug("IO thread exiting");
 
 	return NULL;
@@ -832,11 +837,10 @@ static int _read_io_init_msg(int fd, client_io_t *cio, slurm_addr_t *host)
 {
 	io_init_msg_t msg = { 0 };
 
-	if (io_init_msg_read_from_fd(fd, &msg) != SLURM_SUCCESS) {
-		error("failed reading io init message");
+	if (io_init_msg_read_from_fd(fd, &msg) != SLURM_SUCCESS)
 		goto fail;
-	}
-	if (io_init_msg_validate(&msg, cio->io_key, cio->io_key_len) < 0) {
+
+	if (io_init_msg_validate(&msg, cio->io_key) < 0) {
 		goto fail;
 	}
 	if (msg.nodeid >= cio->num_nodes) {
@@ -1072,8 +1076,6 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 				      uint32_t het_job_task_offset)
 {
 	int i;
-	uint32_t siglen;
-	char *sig;
 	uint16_t *ports;
 	client_io_t *cio = xmalloc(sizeof(*cio));
 
@@ -1088,14 +1090,7 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 	else
 		cio->taskid_width = 0;
 
-	if (slurm_cred_get_signature(cred, &sig, &siglen) < 0) {
-		error("%s: invalid credential", __func__);
-		return NULL;
-	}
-	cio->io_key = xmalloc(siglen);
-	cio->io_key_len = siglen;
-	memcpy(cio->io_key, sig, siglen);
-	/* no need to free "sig", it is just a pointer into the credential */
+	cio->io_key = slurm_cred_get_signature(cred);
 
 	cio->eio = eio_handle_create(slurm_conf.eio_timeout);
 
@@ -1150,56 +1145,39 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 	return cio;
 }
 
-int
-client_io_handler_start(client_io_t *cio)
+extern void client_io_handler_start(client_io_t *cio)
 {
 	xsignal(SIGTTIN, SIG_IGN);
 
-	slurm_thread_create(&cio->ioid, _io_thr_internal, cio);
+	slurm_mutex_lock(&cio->io_mutex);
+	slurm_thread_create_detached(_io_thr_internal, cio);
+	cio->io_running = true;
+	slurm_mutex_unlock(&cio->io_mutex);
 
-	debug("Started IO server thread (%lu)", (unsigned long) cio->ioid);
-
-	return SLURM_SUCCESS;
+	debug("Started IO server thread");
 }
 
-static void *_kill_thr(void *args)
-{
-	kill_thread_t *kt = ( kill_thread_t *) args;
-	unsigned int pause = kt->secs;
-	do {
-		pause = sleep(pause);
-	} while (pause > 0);
-	pthread_cancel(kt->thread_id);
-	xfree(kt);
-	return NULL;
-}
-
-static void _delay_kill_thread(pthread_t thread_id, int secs)
-{
-	kill_thread_t *kt = xmalloc(sizeof(kill_thread_t));
-
-	kt->thread_id = thread_id;
-	kt->secs = secs;
-	slurm_thread_create_detached(NULL, _kill_thr, kt);
-}
-
-int
-client_io_handler_finish(client_io_t *cio)
+extern void client_io_handler_finish(client_io_t *cio)
 {
 	if (cio == NULL)
-		return SLURM_SUCCESS;
+		return;
 
 	eio_signal_shutdown(cio->eio);
-	/* Make the thread timeout consistent with
-	 * EIO_SHUTDOWN_WAIT
-	 */
-	_delay_kill_thread(cio->ioid, 180);
-	if (pthread_join(cio->ioid, NULL) < 0) {
-		error("Waiting for client io pthread: %m");
-		return SLURM_ERROR;
-	}
 
-	return SLURM_SUCCESS;
+	slurm_mutex_lock(&cio->io_mutex);
+	if (cio->io_running) {
+		struct timespec ts = { 0, 0 };
+
+		/*
+		 * FIXME: a comment here stated "Make the thread timeout
+		 * consistent with EIO_SHUTDOWN_WAIT", but this 180 second
+		 * value is not DEFAULT_EIO_SHUTDOWN_WAIT.
+		 */
+		ts.tv_sec = time(NULL) + 180;
+
+		slurm_cond_timedwait(&cio->io_cond, &cio->io_mutex, &ts);
+	}
+	slurm_mutex_unlock(&cio->io_mutex);
 }
 
 void

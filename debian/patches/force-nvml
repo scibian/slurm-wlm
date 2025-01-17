@@ -4,11 +4,11 @@ Description: Force nvml configuration without autodetection
 Author: Gennaro Oliva <oliva.g@na.icar.cnr.it>
 Origin: vendor
 Forwarded: https://bugs.schedmd.com/show_bug.cgi?id=15909
-Last-Update: 2023-01-31
+Last-Update: 2024-07-21
 
 --- a/src/interfaces/gpu.c
 +++ b/src/interfaces/gpu.c
-@@ -96,14 +96,10 @@
+@@ -93,14 +93,10 @@
  	uint32_t autodetect_flags = gres_get_autodetect_flags();
  
  	if (autodetect_flags & GRES_AUTODETECT_GPU_NVML) {

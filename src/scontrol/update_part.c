@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -65,10 +65,15 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 	}
 
 	for (i = 0; i < argc; i++) {
+		char plus_minus = '\0';
 		tag = argv[i];
 		val = strchr(argv[i], '=');
 		if (val) {
 			taglen = val - argv[i];
+			if ((val[-1] == '+') || (val[-1] == '-')) {
+				plus_minus = val[-1];
+				taglen--;
+			}
 			val++;
 			vallen = strlen(val);
 		} else {
@@ -186,6 +191,19 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 				exit_code = 1;
 				error("Invalid input: %s", argv[i]);
 				error("Acceptable ExclusiveUser values are YES and NO");
+				return SLURM_ERROR;
+			}
+			(*update_cnt_ptr)++;
+		}
+		else if (!xstrncasecmp(tag, "ExclusiveTopo", MAX(taglen, 1))) {
+			if (xstrncasecmp(val, "NO", MAX(vallen, 1)) == 0)
+				part_msg_ptr->flags |= PART_FLAG_EXC_TOPO_CLR;
+			else if (xstrncasecmp(val, "YES", MAX(vallen, 1)) == 0)
+				part_msg_ptr->flags |= PART_FLAG_EXCLUSIVE_TOPO;
+			else {
+				exit_code = 1;
+				error("Invalid input: %s", argv[i]);
+				error("Acceptable ExclusiveTopo values are YES and NO");
 				return SLURM_ERROR;
 			}
 			(*update_cnt_ptr)++;
@@ -363,7 +381,12 @@ scontrol_parse_part_options (int argc, char **argv, int *update_cnt_ptr,
 			(*update_cnt_ptr)++;
 		}
 		else if (!xstrncasecmp(tag, "Nodes", MAX(taglen, 1))) {
-			part_msg_ptr->nodes = val;
+			if (plus_minus)
+				part_msg_ptr->nodes =
+					scontrol_process_plus_minus(plus_minus,
+								    val, true);
+			else
+				part_msg_ptr->nodes = val;
 			(*update_cnt_ptr)++;
 		}
 		else if (!xstrncasecmp(tag, "AllowGroups", MAX(taglen, 6))) {

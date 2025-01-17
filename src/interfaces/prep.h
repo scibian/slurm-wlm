@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  prep.h - driver for PrEpPlugins ('Pr'olog and 'Ep'ilog)
  *****************************************************************************
- *  Copyright (C) 2019 SchedMD LLC.
- *  Written by Tim Wickberg <tim@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -34,8 +33,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef _PREP_H_
-#define _PREP_H_
+#ifndef _INTERFACES_PREP_H
+#define _INTERFACES_PREP_H
 
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmd/slurmd/slurmd.h"
@@ -70,8 +69,6 @@ extern int prep_g_init(prep_callbacks_t *callbacks);
  */
 extern int prep_g_fini(void);
 
-extern int prep_g_reconfig(void);
-
 /*
  **************************************************************************
  *                          P L U G I N   C A L L S                       *
@@ -103,4 +100,4 @@ extern void prep_g_epilog_slurmctld(job_record_t *job_ptr);
 /* Whether or not the requested prep is configured or not */
 extern bool prep_g_required(prep_call_type_t type);
 
-#endif /* !_PREP_H_ */
+#endif

@@ -54,7 +54,6 @@ void batch_finish(stepd_step_rec_t *step, int rc);
  */
 stepd_step_rec_t *mgr_launch_tasks_setup(launch_tasks_request_msg_t *msg,
 					 slurm_addr_t *cli,
-					 slurm_addr_t *self,
 					 uint16_t protocol_version);
 
 /*
@@ -78,23 +77,6 @@ void mgr_launch_batch_job_cleanup(stepd_step_rec_t *step, int rc);
  */
 int job_manager(stepd_step_rec_t *step);
 
-/*
- * Register passwd entries so that we do not need to call initgroups(2)
- * frequently.
- */
-extern void init_initgroups(int);
-
-
-struct priv_state {
-	uid_t saved_uid;
-	gid_t saved_gid;
-	gid_t *gid_list;
-	int ngids;
-	char saved_cwd[4096];
-};
-
-extern int drop_privileges(stepd_step_rec_t *step, bool do_setuid,
-			   struct priv_state *state, bool get_list);
-extern int reclaim_privileges(struct priv_state *state);
+extern void set_job_state(stepd_step_rec_t *step, slurmstepd_state_t new_state);
 
 #endif

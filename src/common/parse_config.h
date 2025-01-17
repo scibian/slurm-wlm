@@ -308,14 +308,12 @@ void s_p_hashtbl_destroy(s_p_hashtbl_t *hashtbl);
 /* Returns SLURM_SUCCESS if file was opened and parse correctly
  * OUT hash_val - cyclic redundancy check (CRC) character-wise value
  *                of file.
- * IN ignore_new - do not treat unrecognized keywords as a fatal error,
- *                 print debug() message and continue
+ * IN flags - flags affecting behavior.
  * OUT last_ancestor - last ancestor configuration filename used to map nested
  * 		       Include files in configless configurations.
  */
 int s_p_parse_file(s_p_hashtbl_t *hashtbl, uint32_t *hash_val, char *filename,
-		   bool ignore_new, char *last_ancestor,
-		   bool check_permissions);
+		   uint32_t flags, char *last_ancestor);
 
 /* Returns SLURM_SUCCESS if buffer was opened and parse correctly.
  * buffer must be a valid buf_t buffer only containing strings. The parsing
@@ -408,7 +406,7 @@ int s_p_parse_line_expanded(const s_p_hashtbl_t *hashtbl,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * string.  If the key is found and has a set value, the
- * value is retuned in "str".
+ * value is returned in "str".
  *
  * OUT str - pointer to a copy of the string value
  *           (caller is resonsible for freeing str with xfree())
@@ -427,7 +425,7 @@ int s_p_get_string(char **str, const char *key, const s_p_hashtbl_t *hashtbl);
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * long.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a long where the value is returned
  * IN key - hash table key
@@ -443,7 +441,7 @@ int s_p_get_long(long *num, const char *key, const s_p_hashtbl_t *hashtbl);
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * uint16.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a uint16_t where the value is returned
  * IN key - hash table key
@@ -460,7 +458,7 @@ int s_p_get_uint16(uint16_t *num, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * uint32.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a uint32_t where the value is returned
  * IN key - hash table key
@@ -477,7 +475,7 @@ int s_p_get_uint32(uint32_t *num, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * uint64.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a uint64_t where the value is returned
  * IN key - hash table key
@@ -494,7 +492,7 @@ int s_p_get_uint64(uint64_t *num, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * float.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a float where the value is returned
  * IN key - hash table key
@@ -511,7 +509,7 @@ int s_p_get_float(float *num, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * double.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a double where the value is returned
  * IN key - hash table key
@@ -528,7 +526,7 @@ int s_p_get_double(double *num, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * long double.  If the key is found and has a set value, the
- * value is retuned in "num".
+ * value is returned in "num".
  *
  * OUT num - pointer to a long double where the value is returned
  * IN key - hash table key
@@ -563,7 +561,7 @@ int s_p_get_operator(slurm_parser_operator_t *opt, const char *key,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * pointer.  If the key is found and has a set value, the
- * value is retuned in "ptr".
+ * value is returned in "ptr".
  *
  * OUT num - pointer to a void pointer where the value is returned
  * IN key - hash table key
@@ -608,7 +606,7 @@ int s_p_get_expline(s_p_hashtbl_t **ptr_array[], int *count,
  *
  * Search for a key in a s_p_hashtbl_t with value of type
  * boolean.  If the key is found and has a set value, the
- * value is retuned in "flag".
+ * value is returned in "flag".
  *
  * OUT flag - pointer to a bool where the value is returned
  * IN key - hash table key

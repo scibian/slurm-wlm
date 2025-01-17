@@ -68,6 +68,7 @@
 #include "src/common/xstring.h"
 
 #include "src/interfaces/hash.h"
+#include "src/interfaces/tls.h"
 
 #include "src/slurmdbd/read_config.h"
 #include "src/slurmdbd/rpc_mgr.h"
@@ -88,7 +89,7 @@ static int    dbd_sigarray[] = {	/* blocked signals for this process */
 	SIGUSR2, SIGTSTP, SIGXCPU, SIGQUIT,
 	SIGPIPE, SIGALRM, SIGABRT, SIGHUP, 0 };
 static int    debug_level = 0;		/* incremented for -v on command line */
-static int    foreground = 0;		/* run process as a daemon */
+static bool daemonize = true;		/* run process as a daemon */
 static int    setwd = 0;		/* change working directory -s  */
 static log_options_t log_opts = 	/* Log to stderr & syslog */
 	LOG_OPTS_INITIALIZER;
@@ -108,7 +109,6 @@ static void  _become_slurm_user(void);
 static void  _commit_handler_cancel(void);
 static void *_commit_handler(void *no_data);
 static void  _daemonize(void);
-static void  _default_sigaction(int sig);
 static void  _init_config(void);
 static void  _init_pidfile(void);
 static void  _kill_old_slurmdbd(void);
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 	_update_nice();
 
 	_kill_old_slurmdbd();
-	if (foreground == 0)
+	if (daemonize)
 		_daemonize();
 
 	/*
@@ -155,22 +155,32 @@ int main(int argc, char **argv)
 	_become_slurm_user();
 
 	/*
+	 * This must happen before we spawn any threads
+	* which are not designed to handle them
+	*/
+	if (xsignal_block(dbd_sigarray) < 0)
+		error("Unable to block signals");
+
+	/*
 	 * Do plugin init's after _init_pidfile so systemd is happy as
-	 * slurm_acct_storage_init() could take a long time to finish if running
+	 * acct_storage_g_init() could take a long time to finish if running
 	 * for the first time after an upgrade.
 	 */
-	if (slurm_auth_init(NULL) != SLURM_SUCCESS) {
+	if (auth_g_init() != SLURM_SUCCESS) {
 		fatal("Unable to initialize authentication plugins");
 	}
 	if (hash_g_init() != SLURM_SUCCESS) {
 		fatal("failed to initialize hash plugin");
 	}
-	if (slurm_acct_storage_init() != SLURM_SUCCESS) {
+	if (tls_g_init() != SLURM_SUCCESS) {
+		fatal("Failed to initialize tls plugin");
+	}
+	if (acct_storage_g_init() != SLURM_SUCCESS) {
 		fatal("Unable to initialize %s accounting storage plugin",
 		      slurm_conf.accounting_storage_type);
 	}
 
-	if (foreground == 0 || setwd)
+	if (daemonize || setwd)
 		_set_work_dir();
 	log_config();
 	init_dbd_stats();
@@ -179,9 +189,6 @@ int main(int argc, char **argv)
 	if (prctl(PR_SET_DUMPABLE, 1) < 0)
 		debug ("Unable to set dumpable to 1");
 #endif /* PR_SET_DUMPABLE */
-
-	if (xsignal_block(dbd_sigarray) < 0)
-		error("Unable to block signals");
 
 	/* Create attached thread for signal handling */
 	slurm_thread_create(&signal_handler_thread, _signal_handler, NULL);
@@ -194,12 +201,12 @@ int main(int argc, char **argv)
 
 	/*
 	 * If we are tracking wckey we need to cache wckeys,
-	 * if we aren't only cache the users, qos, and tres.
+	 * if we aren't only cache the assoc, users, qos, and tres.
 	 */
 	assoc_init_arg.cache_level = ASSOC_MGR_CACHE_USER |
-		ASSOC_MGR_CACHE_QOS | ASSOC_MGR_CACHE_TRES;
-	if (slurmdbd_conf->track_wckey)
-		assoc_init_arg.cache_level |= ASSOC_MGR_CACHE_WCKEY;
+		ASSOC_MGR_CACHE_ASSOC |
+		ASSOC_MGR_CACHE_QOS | ASSOC_MGR_CACHE_TRES |
+		ASSOC_MGR_CACHE_WCKEY;
 
 	db_conn = acct_storage_g_get_connection(0, NULL, true, NULL);
 	if (assoc_mgr_init(db_conn, &assoc_init_arg, errno) == SLURM_ERROR) {
@@ -277,14 +284,8 @@ int main(int argc, char **argv)
 		acct_storage_g_commit(db_conn, 1);
 
 		/* this is only ran if not backup */
-		if (rollup_handler_thread) {
-			pthread_join(rollup_handler_thread, NULL);
-			rollup_handler_thread = 0;
-		}
-		if (rpc_handler_thread) {
-			pthread_join(rpc_handler_thread, NULL);
-			rpc_handler_thread = 0;
-		}
+		slurm_thread_join(rollup_handler_thread);
+		slurm_thread_join(rpc_handler_thread);
 
 		if (backup && primary_resumed && !restart_backup) {
 			shutdown_time = 0;
@@ -298,10 +299,9 @@ int main(int argc, char **argv)
 
 end_it:
 
-	if (signal_handler_thread && (!backup || !restart_backup))
-		pthread_join(signal_handler_thread, NULL);
-	if (commit_handler_thread)
-		pthread_join(commit_handler_thread, NULL);
+	if (!backup || !restart_backup)
+		slurm_thread_join(signal_handler_thread);
+	slurm_thread_join(commit_handler_thread);
 
 	acct_storage_g_commit(db_conn, 1);
 	acct_storage_g_close_connection(&db_conn);
@@ -322,8 +322,10 @@ end_it:
 	}
 
 	assoc_mgr_fini(0);
-	slurm_acct_storage_fini();
-	slurm_auth_fini();
+	acct_storage_g_fini();
+	auth_g_fini();
+	hash_g_fini();
+	tls_g_fini();
 	log_fini();
 	free_slurmdbd_conf();
 	slurm_mutex_lock(&rpc_mutex);
@@ -343,7 +345,7 @@ extern void reconfig(void)
 extern void handle_rollup_stats(List rollup_stats_list,
 				long delta_time, int type)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_rollup_stats_t *rollup_stats, *rpc_rollup_stats;
 
 	xassert(type < DBD_ROLLUP_COUNT);
@@ -470,7 +472,7 @@ static void _parse_commandline(int argc, char **argv)
 	while ((c = getopt(argc, argv, "Dhn:R::svV")) != -1)
 		switch (c) {
 		case 'D':
-			foreground = 1;
+			daemonize = 0;
 			break;
 		case 'h':
 			_usage(argv[0]);
@@ -546,14 +548,14 @@ static void _update_logging(bool startup)
 
 	log_opts.logfile_level = slurmdbd_conf->debug_level;
 
-	if (foreground)
+	if (!daemonize)
 		log_opts.stderr_level  = slurmdbd_conf->debug_level;
 	else
 		log_opts.stderr_level = LOG_LEVEL_QUIET;
 
 	if (slurmdbd_conf->syslog_debug != LOG_LEVEL_END) {
 		log_opts.syslog_level =	slurmdbd_conf->syslog_debug;
-	} else if (foreground) {
+	} else if (!daemonize) {
 		log_opts.syslog_level = LOG_LEVEL_QUIET;
 	} else if ((slurmdbd_conf->debug_level > LOG_LEVEL_QUIET)
 		   && !slurmdbd_conf->log_file) {
@@ -677,7 +679,7 @@ static void _request_registrations(void *db_conn)
 {
 	List cluster_list = acct_storage_g_get_clusters(
 		db_conn, getuid(), NULL);
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdb_cluster_rec_t *cluster_rec = NULL;
 
 	if (!cluster_list)
@@ -805,7 +807,7 @@ static void _commit_handler_cancel()
 /* _commit_handler - Process commit's of registered clusters */
 static void *_commit_handler(void *db_conn)
 {
-	ListIterator itr;
+	list_itr_t *itr;
 	slurmdbd_conn_t *slurmdbd_conn;
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
@@ -887,11 +889,11 @@ static void *_signal_handler(void *no_data)
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	/* Make sure no required signals are ignored (possibly inherited) */
-	_default_sigaction(SIGINT);
-	_default_sigaction(SIGTERM);
-	_default_sigaction(SIGHUP);
-	_default_sigaction(SIGABRT);
-	_default_sigaction(SIGUSR2);
+	xsignal_default(SIGINT);
+	xsignal_default(SIGTERM);
+	xsignal_default(SIGHUP);
+	xsignal_default(SIGABRT);
+	xsignal_default(SIGUSR2);
 
 	while (1) {
 		xsignal_sigset_create(sig_array, &set);
@@ -922,24 +924,6 @@ static void *_signal_handler(void *no_data)
 		}
 	}
 
-}
-
-/* Reset some signals to their default state to clear any
- * inherited signal states */
-static void _default_sigaction(int sig)
-{
-	struct sigaction act;
-
-	if (sigaction(sig, NULL, &act)) {
-		error("sigaction(%d): %m", sig);
-		return;
-	}
-	if (act.sa_handler != SIG_IGN)
-		return;
-
-	act.sa_handler = SIG_DFL;
-	if (sigaction(sig, &act, NULL))
-		error("sigaction(%d): %m", sig);
 }
 
 static void _become_slurm_user(void)

@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  filter.c - filter for sprio.
  *****************************************************************************
- *  Copyright (C) 2022 SchedMD LLC
- *  Written by Ben Glines <ben.glines@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -87,7 +86,7 @@ static int _filter_job(void *x, void *key)
 	return false;
 }
 
-extern void filter_job_list(List job_list)
+extern void filter_job_list(list_t *job_list)
 {
 	if ((!params.job_list && !params.part_list && !params.user_list) ||
 	    (!job_list))

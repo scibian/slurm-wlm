@@ -18,6 +18,8 @@ libcommon_la_SOURCES =				\
 	cbuf.h					\
 	conmgr.c				\
 	conmgr.h				\
+	core_array.c				\
+	core_array.h				\
 	cpu_frequency.c				\
 	cpu_frequency.h				\
 	cron.c					\
@@ -30,12 +32,15 @@ libcommon_la_SOURCES =				\
 	eio.h					\
 	env.c					\
 	env.h					\
+	extra_constraints.c			\
+	extra_constraints.h			\
 	fd.c					\
 	fd.h					\
 	fetch_config.c				\
 	fetch_config.h				\
 	forward.c				\
 	forward.h				\
+	front_end.h				\
 	global_defaults.c			\
 	group_cache.c				\
 	group_cache.h				\
@@ -45,25 +50,37 @@ libcommon_la_SOURCES =				\
 	hostlist.h				\
 	http.h					\
 	http.c					\
+	identity.h				\
+	identity.c				\
+	id_util.h				\
+	id_util.c				\
 	io_hdr.c				\
 	io_hdr.h				\
 	job_features.c				\
 	job_features.h				\
 	job_options.c				\
 	job_options.h				\
+	job_record.c				\
+	job_record.h				\
 	job_resources.c				\
 	job_resources.h				\
+	job_state_reason.c			\
+	job_state_reason.h			\
 	list.c					\
 	list.h					\
 	log.c					\
 	log.h					\
 	macros.h				\
+	msg_type.c				\
+	msg_type.h				\
 	net.c					\
 	net.h					\
 	node_conf.c				\
 	node_conf.h				\
 	oci_config.c				\
 	oci_config.h				\
+	openapi.c				\
+	openapi.h				\
 	optz.c					\
 	optz.h					\
 	pack.c					\
@@ -74,10 +91,16 @@ libcommon_la_SOURCES =				\
 	parse_time.h				\
 	parse_value.c				\
 	parse_value.h				\
+	part_record.c				\
+	part_record.h				\
+	persist_conn.c				\
+	persist_conn.h				\
 	plugin.c				\
 	plugin.h				\
 	plugrack.c				\
 	plugrack.h				\
+	port_mgr.c				\
+	port_mgr.h				\
 	print_fields.c				\
 	print_fields.h				\
 	proc_args.c				\
@@ -91,24 +114,24 @@ libcommon_la_SOURCES =				\
 	run_command.h				\
 	run_in_daemon.c				\
 	run_in_daemon.h				\
+	sack_api.c				\
+	sack_api.h				\
 	setproctitle.c				\
 	setproctitle.h				\
 	slurm_errno.c				\
 	slurm_opt.c				\
 	slurm_opt.h				\
-	slurm_persist_conn.c			\
-	slurm_persist_conn.h			\
 	slurm_protocol_api.c			\
 	slurm_protocol_api.h			\
 	slurm_protocol_common.h			\
 	slurm_protocol_defs.c			\
 	slurm_protocol_defs.h			\
-	slurm_protocol_interface.h		\
 	slurm_protocol_pack.c			\
 	slurm_protocol_pack.h			\
 	slurm_protocol_util.c			\
 	slurm_protocol_util.h			\
 	slurm_protocol_socket.c			\
+	slurm_protocol_socket.h			\
 	slurm_resolv.c				\
 	slurm_resolv.h				\
 	slurm_resource_info.c			\
@@ -130,8 +153,6 @@ libcommon_la_SOURCES =				\
 	slurmdbd_pack.h				\
 	spank.c					\
 	spank.h					\
-	state_control.c				\
-	state_control.h				\
 	stepd_api.c				\
 	stepd_api.h				\
 	strlcpy.c				\
@@ -161,12 +182,16 @@ libcommon_la_SOURCES =				\
 	x11_util.h				\
 	xassert.c				\
 	xassert.h				\
+	xahash.c				\
+	xahash.h				\
 	xhash.c					\
 	xhash.h					\
 	xmalloc.c				\
 	xmalloc.h				\
 	xregex.c				\
 	xregex.h				\
+	xsystemd.c				\
+	xsystemd.h				\
 	xsignal.c				\
 	xsignal.h				\
 	xstring.c				\

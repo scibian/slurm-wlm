@@ -2,7 +2,7 @@
  *  proctrack.c - Process tracking plugin stub.
  *****************************************************************************
  *  Copyright (C) 2005 The Regents of the University of California.
- *  Copyright (C) 2013 SchedMD LLC.
+ *  Copyright (C) SchedMD LLC.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>.
  *
@@ -101,7 +101,7 @@ static pthread_mutex_t g_context_lock = PTHREAD_MUTEX_INITIALIZER;
  * The proctrack plugin can only be changed by restarting slurmd
  * without preserving state (-c option).
  */
-extern int slurm_proctrack_init(void)
+extern int proctrack_g_init(void)
 {
 	int retval = SLURM_SUCCESS;
 	char *plugin_type = "proctrack";
@@ -127,7 +127,7 @@ done:
 	return retval;
 }
 
-extern int slurm_proctrack_fini(void)
+extern int proctrack_g_fini(void)
 {
 	int rc;
 
@@ -276,15 +276,15 @@ static bool _test_core_dumping(char* stat_fname)
 	return dumping_results;
 }
 
-typedef struct agent_arg {
+typedef struct {
 	uint64_t cont_id;
 	int signal;
-} agent_arg_t;
+} sig_agent_arg_t;
 
 static void *_sig_agent(void *args)
 {
 	bool hung_pids = false;
-	agent_arg_t *agent_arg_ptr = args;
+	sig_agent_arg_t *agent_arg_ptr = args;
 
 	while (1) {
 		pid_t *pids = NULL;
@@ -345,13 +345,13 @@ static void *_sig_agent(void *args)
 
 static void _spawn_signal_thread(uint64_t cont_id, int signal)
 {
-	agent_arg_t *agent_arg_ptr;
+	sig_agent_arg_t *agent_arg_ptr;
 
-	agent_arg_ptr = xmalloc(sizeof(agent_arg_t));
+	agent_arg_ptr = xmalloc(sizeof(sig_agent_arg_t));
 	agent_arg_ptr->cont_id = cont_id;
 	agent_arg_ptr->signal  = signal;
 
-	slurm_thread_create_detached(NULL, _sig_agent, agent_arg_ptr);
+	slurm_thread_create_detached(_sig_agent, agent_arg_ptr);
 }
 
 /*

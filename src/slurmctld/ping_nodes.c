@@ -79,7 +79,7 @@ bool is_ping_done (void)
 		is_done = false;
 		if (!ping_msg_sent &&
 		    (difftime(time(NULL), ping_start) >= PING_TIMEOUT)) {
-			error("A node ping cycle took more than %d seconds. Node RPC requests like ping, register status, health check and/or accounting gather update are triggered less frequently than configured. Either many nodes are non-responsive or one of SlurmdTimeout, HealthCheckInterval, JobAcctGatherFrequency, ExtSensorsFreq should be increased.",
+			error("A node ping cycle took more than %d seconds. Node RPC requests like ping, register status, health check and/or accounting gather update are triggered less frequently than configured. Either many nodes are non-responsive or one of SlurmdTimeout, HealthCheckInterval, JobAcctGatherFrequency should be increased.",
 			      PING_TIMEOUT);
 			ping_msg_sent = true;
 		}
@@ -141,7 +141,7 @@ void ping_nodes (void)
 	time_t now = time(NULL), still_live_time, node_dead_time;
 	static time_t last_ping_time = (time_t) 0;
 	static time_t last_ping_timeout = (time_t) 0;
-	hostlist_t down_hostlist = NULL;
+	hostlist_t *down_hostlist = NULL;
 	char *host_str = NULL;
 	agent_arg_t *ping_agent_args = NULL;
 	agent_arg_t *reg_agent_args = NULL;
@@ -313,6 +313,8 @@ void ping_nodes (void)
 			hostlist_push_host(reg_agent_args->hostlist,
 					   node_ptr->name);
 			reg_agent_args->node_count++;
+			if (PACK_FANOUT_ADDRS(node_ptr))
+				reg_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 			continue;
 		}
 
@@ -333,6 +335,8 @@ void ping_nodes (void)
 				node_ptr->protocol_version;
 		hostlist_push_host(ping_agent_args->hostlist, node_ptr->name);
 		ping_agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			ping_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
 #endif
 
@@ -390,6 +394,12 @@ extern void run_health_check(void)
 	char *host_str = NULL;
 	agent_arg_t *check_agent_args = NULL;
 
+	check_agent_args = xmalloc (sizeof (agent_arg_t));
+	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
+	check_agent_args->retry = 0;
+	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
+	check_agent_args->hostlist = hostlist_create(NULL);
+
 	/* Sync plugin internal data with
 	 * node select_nodeinfo. This is important
 	 * after reconfig otherwise select_nodeinfo
@@ -399,11 +409,6 @@ extern void run_health_check(void)
 	select_g_select_nodeinfo_set_all();
 
 #ifdef HAVE_FRONT_END
-	check_agent_args = xmalloc (sizeof (agent_arg_t));
-	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
-	check_agent_args->retry = 0;
-	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
-	check_agent_args->hostlist = hostlist_create(NULL);
 	for (i = 0, front_end_ptr = front_end_nodes;
 	     i < front_end_node_cnt; i++, front_end_ptr++) {
 		if (IS_NODE_NO_RESPOND(front_end_ptr))
@@ -440,19 +445,17 @@ extern void run_health_check(void)
 		node_limit = MAX(node_limit, 10);
 	}
 
-	check_agent_args = xmalloc (sizeof (agent_arg_t));
-	check_agent_args->msg_type = REQUEST_HEALTH_CHECK;
-	check_agent_args->retry = 0;
-	check_agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
-	check_agent_args->hostlist = hostlist_create(NULL);
 	for (; (node_ptr = next_node(&base_node_loc)); base_node_loc++) {
 		if (run_cyclic &&
 		    (node_test_cnt++ >= node_limit))
 				break;
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
+		if (IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_INVALID_REG(node_ptr) ||
+		    IS_NODE_NO_RESPOND(node_ptr) ||
+		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		    IS_NODE_POWERING_UP(node_ptr) ||
+		    IS_NODE_REBOOT_ISSUED(node_ptr))
 			continue;
 		if (node_states != HEALTH_CHECK_NODE_ANY) {
 			uint16_t cpus_total, cpus_used = 0;
@@ -495,8 +498,10 @@ extern void run_health_check(void)
 				node_ptr->protocol_version;
 		hostlist_push_host(check_agent_args->hostlist, node_ptr->name);
 		check_agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			check_agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
-	if (base_node_loc >= node_record_count)
+	if (!node_ptr)
 		base_node_loc = 0;
 #endif
 
@@ -548,16 +553,21 @@ extern void update_nodes_acct_gather_data(void)
 	}
 #else
 	for (i = 0; (node_ptr = next_node(&i)); i++) {
-		if (IS_NODE_NO_RESPOND(node_ptr) ||
-		    IS_NODE_FUTURE(node_ptr) ||
+		if (IS_NODE_FUTURE(node_ptr) ||
+		    IS_NODE_INVALID_REG(node_ptr) ||
+		    IS_NODE_NO_RESPOND(node_ptr) ||
+		    IS_NODE_POWERED_DOWN(node_ptr) ||
 		    IS_NODE_POWERING_DOWN(node_ptr) ||
-		    IS_NODE_POWERED_DOWN(node_ptr))
+		    IS_NODE_POWERING_UP(node_ptr) ||
+		    IS_NODE_REBOOT_ISSUED(node_ptr))
 			continue;
 		if (agent_args->protocol_version > node_ptr->protocol_version)
 			agent_args->protocol_version =
 				node_ptr->protocol_version;
 		hostlist_push_host(agent_args->hostlist, node_ptr->name);
 		agent_args->node_count++;
+		if (PACK_FANOUT_ADDRS(node_ptr))
+			agent_args->msg_flags |= SLURM_PACK_ADDRS;
 	}
 #endif
 

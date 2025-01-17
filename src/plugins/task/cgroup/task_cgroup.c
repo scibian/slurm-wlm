@@ -64,6 +64,12 @@ extern int init(void)
 {
 	int rc = SLURM_SUCCESS;
 
+	/* Sanity check for incompatible plugins */
+	if (!xstrcmp(slurm_cgroup_conf.cgroup_plugin, "disabled")) {
+		fatal("%s: CgroupPlugin=disabled in cgroup.conf is not compatible with task/cgroup.",
+		      __func__);
+	}
+
 	if (slurm_cgroup_conf.constrain_swap_space &&
 	    !cgroup_g_has_feature(CG_MEMCG_SWAP)) {
 		error("ConstrainSwapSpace is enabled but there is no support for swap in the memory cgroup controller.");
@@ -177,7 +183,8 @@ extern int task_p_pre_setuid(stepd_step_rec_t *step)
  * task_p_pre_launch_priv() is called prior to exec of application task.
  * Runs in privileged mode.
  */
-extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid,
+				  uint32_t global_tid)
 {
 	int rc = SLURM_SUCCESS;
 
@@ -188,16 +195,17 @@ extern int task_p_pre_launch_priv(stepd_step_rec_t *step, uint32_t node_tid)
 
 	if (use_memory &&
 	    (task_cgroup_memory_add_pid(step, step->task[node_tid]->pid,
-					node_tid) != SLURM_SUCCESS))
+					global_tid) != SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
 	if (use_devices &&
 	    (task_cgroup_devices_add_pid(step, step->task[node_tid]->pid,
-					 node_tid) != SLURM_SUCCESS))
+					 global_tid) != SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
 	if (use_devices &&
-	    (task_cgroup_devices_constrain(step, node_tid) != SLURM_SUCCESS))
+	    (task_cgroup_devices_constrain(step, node_tid, global_tid) !=
+	     SLURM_SUCCESS))
 		rc = SLURM_ERROR;
 
 	return rc;

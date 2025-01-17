@@ -126,13 +126,13 @@ def llnl_references(line):
         lineFix = line.replace(manStr,htmlStr)
         if lineFix != line:
             return lineFix
-        manStr = '<A HREF="https://slurm.schedmd.com/cons_res.html">https://slurm.schedmd.com/cons_res.html</A>'
-        htmlStr = '<a href="cons_res.html">cons_res</a>'
+        manStr = '<A HREF="https://slurm.schedmd.com/cons_tres.html">https://slurm.schedmd.com/cons_tres.html</A>'
+        htmlStr = '<a href="cons_tres.html">cons_tres</a>'
         lineFix = line.replace(manStr,htmlStr)
         if lineFix != line:
             return lineFix
-        manStr = '<A HREF="https://slurm.schedmd.com/cons_res_share.html">https://slurm.schedmd.com/cons_res_share.html</A>'
-        htmlStr = '<a href="cons_res_share.html">cons_res_share</a>'
+        manStr = '<A HREF="https://slurm.schedmd.com/cons_tres_share.html">https://slurm.schedmd.com/cons_tres_share.html</A>'
+        htmlStr = '<a href="cons_tres_share.html">cons_tres_share</a>'
         lineFix = line.replace(manStr,htmlStr)
         if lineFix != line:
             return lineFix
@@ -249,16 +249,16 @@ def version_rewrite(matchobj):
 files = []
 version = sys.argv[1]
 for f in sys.argv[4:]:
-    posLastDot = f.rfind(".")
-    mhtmlname = f[:posLastDot] + ".mhtml"
+    dirname, basefilename = os.path.split(f)
+    posLastDot = basefilename.rfind(".")
+    mhtmlname = basefilename[:posLastDot] + ".mhtml"
     cmd = "man2html < " + f + "> " + mhtmlname
     os.system(cmd)
     print(">>>>>>> " + mhtmlname)
     files.append(mhtmlname)
 
 for filename in files:
-    dirname, basefilename = os.path.split(filename)
-    newfilename = basefilename[:-6] + '.html'
+    newfilename = filename[:-6] + '.html'
     print('Converting', filename, '->', newfilename)
     shtml = codecs.open(filename, 'r', encoding='utf-8')
     html = codecs.open(newfilename, 'w', encoding='utf-8')

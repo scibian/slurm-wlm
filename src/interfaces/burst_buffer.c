@@ -1,8 +1,7 @@
 /*****************************************************************************\
  *  burst_buffer.c - driver for burst buffer infrastructure and plugin
  *****************************************************************************
- *  Copyright (C) 2014-2015 SchedMD LLC.
- *  Written by Morris Jette <jette@schedmd.com>
+ *  Copyright (C) SchedMD LLC.
  *
  *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
@@ -527,7 +526,7 @@ extern int bb_g_job_try_stage_in(void)
 {
 	DEF_TIMERS;
 	int i, rc = 1, rc2;
-	ListIterator job_iterator;
+	list_itr_t *job_iterator;
 	job_record_t *job_ptr;
 	time_t now = time(NULL);
 	List job_queue;

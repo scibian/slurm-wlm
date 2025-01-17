@@ -47,25 +47,12 @@ extern int xcgroup_ns_create(xcgroup_ns_t *cgns, char *mnt_args,
 	cgns->subsystems = xstrdup(subsys);
 
 	if (!xcgroup_ns_is_available(cgns)) {
-		if (slurm_cgroup_conf.cgroup_automount) {
-			if (xcgroup_ns_mount(cgns)) {
-				error("unable to mount %s cgroup "
-				      "namespace: %s",
-				      subsys, slurm_strerror(errno));
-				goto clean;
-			}
-			info("cgroup namespace '%s' is now mounted", subsys);
-		} else {
-			error("cgroup namespace '%s' not mounted. aborting",
-			      subsys);
-			goto clean;
-		}
+		error("cgroup namespace '%s' not mounted. aborting", subsys);
+		common_cgroup_ns_destroy(cgns);
+		return SLURM_ERROR;
 	}
 
 	return SLURM_SUCCESS;
-clean:
-	common_cgroup_ns_destroy(cgns);
-	return SLURM_ERROR;
 }
 
 extern int xcgroup_ns_mount(xcgroup_ns_t *cgns)
@@ -130,13 +117,8 @@ extern int xcgroup_ns_mount(xcgroup_ns_t *cgns)
 		options = opt_combined;
 	}
 
-#if defined(__APPLE__) || defined(__FreeBSD__)
-	if (mount("cgroup", cgns->mnt_point,
-		  MS_NOSUID|MS_NOEXEC|MS_NODEV, options))
-#else
 	if (mount("cgroup", cgns->mnt_point, "cgroup",
 		  MS_NOSUID|MS_NOEXEC|MS_NODEV, options))
-#endif
 		return SLURM_ERROR;
 
 	return SLURM_SUCCESS;
@@ -256,54 +238,6 @@ extern int xcgroup_load(xcgroup_ns_t *cgns, xcgroup_t *cg, char *uri)
 	cg->gid = buf.st_gid;
 
 	return SLURM_SUCCESS;
-}
-
-extern void xcgroup_wait_pid_moved(xcgroup_t *cg, const char *cg_name)
-{
-	pid_t *pids = NULL;
-	int npids = 0;
-	int cnt = 0;
-	int i = 0;
-	pid_t pid = getpid();
-	bool found;
-
-	/*
-	 * There is a delay in the cgroup system when moving the pid from one
-	 * cgroup to another. This is usually short, but we need to wait to make
-	 * sure the pid is out of the step cgroup or we will occur an error
-	 * leaving the cgroup unable to be removed.
-	 *
-	 * The way it is implemented of checking whether the pid is in the
-	 * cgroup or not is not 100% reliable. In slow cgroup subsystems there
-	 * is the possibility that the internal kernel references are not
-	 * cleaned up even if the pid is not in the cgroup.procs anymore, in
-	 * that case we will receive an -EBUSY when trying to delete later the
-	 * cgroup. This is explained here:
-	 * https://bugs.schedmd.com/show_bug.cgi?id=8911#c18
-	 *
-	 * So try to mitigate this issue in a best-effort by waiting
-	 * MAX_MOVE_WAIT/10 milis when we find the pid, and retry 10 times.
-	 */
-	do {
-		cnt++;
-		common_cgroup_get_pids(cg, &pids, &npids);
-		found = false;
-		for (i = 0; i < npids; i++) {
-			if (pids[i] == pid) {
-				found = true;
-				poll(NULL, 0, MAX_MOVE_WAIT/10);
-				break;
-			}
-		}
-		xfree(pids);
-	}  while (found && (cnt < 10));
-
-	if (!found)
-		log_flag(CGROUP, "Took %d checks before stepd pid %d was removed from the %s cgroup.",
-			 cnt, pid, cg_name);
-	else
-		error("Pid %d is still in the %s cgroup after %d tries and %d ms. It might be left uncleaned after the job.",
-		      pid, cg_name, cnt, MAX_MOVE_WAIT);
 }
 
 extern int xcgroup_get_uint32_param(xcgroup_t *cg, char *param, uint32_t *value)
