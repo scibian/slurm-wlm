@@ -1,3 +1,9 @@
+slurm-wlm (24.05.3-0sci12u1) scibian12; urgency=medium
+
+  * Scibian12 update to 24.05.3
+
+ -- Thomas HAMEL <thomas-t.hamel@edf.fr>  Fri, 17 Jan 2025 17:43:47 +0100
+
 slurm-wlm (24.05.3-0sci11u1) scibian11; urgency=medium
 
   * Drop fix-typos patch
